@@ -135,11 +135,9 @@ Current geometry transitions are:
 A stable per-clump selector spatially dithers the transition instead of producing one exact circular
 distance ring.
 
-At 80% zoom the renderer begins converging every clump toward mid geometry. At 97% zoom and above,
-all retained clumps use mid geometry. Full top-down movement made screen-space geometry boundaries
-more visible than the detail they saved. Uniform mid removes those moving boundaries while retaining
-density reduction, subpixel rejection, frustum culling, and page streaming. It is not equivalent to
-rendering all grass at full detail.
+The playable camera currently stops at 17.6 metres, normalized zoom 0.68 on the original 24-metre
+camera curve. Ground cover keeps its normal near, mid, and far classification throughout that range;
+there is no top-down override that forces every retained clump into one geometry tier.
 
 Normalized camera distance is the only input for the third-person-to-overhead visual transition.
 Grass must not independently infer the mode from camera pitch or maintain another transition timer;
@@ -153,6 +151,34 @@ strength, spatial scale, speed, and elapsed time. Species limit their own maximu
 Wind phases are derived from world position and stable instance values, so adjacent pages participate
 in the same moving field and streaming a page out and back in does not reset its motion.
 
+## Actor interaction
+
+Presented actors opt into decorative interaction with `GroundCoverInteractor`. The current
+character profile defines a 0.72-metre radius, 0.48-metre maximum displacement, and 1.2-second
+recovery. These controls belong to the visual interaction source; they do not create physics bodies
+or identities for grass clumps.
+
+The main world records movement as short world-space capsules. One capsule remains live beneath each
+actor, while recently released capsules carry normalized recovery age. Sampling uses fixed time
+intervals rather than one point per rendered frame, and each capsule spans the distance travelled in
+that interval. This prevents a fast actor from stepping over gaps in the field. Movement longer than
+five metres in one frame is treated as a teleport and resets contact instead of bending a line across
+an area transition.
+
+At most 16 stamps are uploaded. Active actors are selected first by explicit priority, then the
+newest released capsules fill the remaining slots. The GPU evaluates these stamps once for each
+reconstructed clump during the existing culling/expansion pass and stores one world-space tip
+displacement with the visible instance. The vertex shader applies that displacement quadratically
+over card height, pinning the root. Every card and every geometry LOD of the clump therefore shares
+the same response.
+
+This bounded capsule field is deliberately an initial backend, not a promise that 16 stamps will
+serve a crowded final scene. It is cheap for the current player-focused test and independent of
+streamed page lifetime. If representative gameplay proves that many simultaneous actors need long
+trails, the public interactor concept can feed a low-resolution world-space deformation texture
+instead. That decision should follow a measured scene; recreating per-blade or per-page history is
+not an acceptable scaling path.
+
 ## Debugging
 
 Press `G` to cycle:
@@ -162,9 +188,8 @@ Press `G` to cycle:
 3. `far only`;
 4. `far disabled`.
 
-At maximum zoom, LOD colors should be uniformly yellow because geometry is intentionally fixed to
-mid. If movement artifacts remain there, geometry LOD is no longer the cause; inspect density
-retention, page residency, card mipmaps, or wind instead.
+At maximum zoom, LOD colors should still show the normal near, mid, and far classification. Use this
+view to check whether moving transition boundaries remain acceptable under the reduced camera range.
 
 `far only` and `far disabled` do not disable the common compute dispatch. They are useful for visual
 isolation, but small timing differences in the macOS Metal HUD are not reliable measurements of the
@@ -178,6 +203,7 @@ Future changes should preserve these unless measurements justify replacing them:
 - Stream clusters through the normal world-page system.
 - Expand and cull instances on the GPU.
 - Keep placement deterministic in world space.
+- Keep interaction world-anchored and independent of clump/page lifetime.
 - Keep authored coverage extents separate from conservative culling bounds.
 - Keep LOD geometry nested so surviving cards never move when tiers change.
 - Use resolved camera zoom as the single view-transition input.
@@ -188,7 +214,9 @@ Future changes should preserve these unless measurements justify replacing them:
 - The cooked clusters currently assume each source cell has one flat height.
 - Coverage masks are populated by demo generation; there is no editor painting tool yet.
 - The clump atlas is procedural and not artist-authored.
-- Grass has no terrain lighting integration, shadow casting, collision, or interaction response.
+- Grass has no terrain lighting integration, shadow casting, or collision.
+- Interaction response is currently a fixed-capacity actor field; it has not been tested with a
+  crowded scene or authored per-species response.
 - Visible-instance capacity is fixed rather than quality-scaled.
 - The current constants are initial tuning for the demo meadow, not permanent engine defaults.
 

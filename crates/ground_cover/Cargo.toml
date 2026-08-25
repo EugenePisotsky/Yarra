@@ -8,3 +8,6 @@ publish.workspace = true
 bevy.workspace = true
 bytemuck.workspace = true
 world.workspace = true
+
+[dev-dependencies]
+naga.workspace = true

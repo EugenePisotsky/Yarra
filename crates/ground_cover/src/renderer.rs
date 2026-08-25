@@ -51,7 +51,10 @@ use bevy::{
 use bytemuck::{Pod, Zeroable};
 use world::GroundCoverSpeciesId;
 
-use crate::{GroundCoverDebug, GroundCoverPageAsset, GroundCoverView, GroundCoverWind};
+use crate::{
+    GroundCoverDebug, GroundCoverInteraction, GroundCoverPageAsset, GroundCoverView,
+    GroundCoverWind, MAX_GROUND_COVER_INTERACTION_STAMPS,
+};
 
 const COMPUTE_SHADER_PATH: &str = "shaders/ground_cover_cull.wgsl";
 const RENDER_SHADER_PATH: &str = "shaders/ground_cover.wgsl";
@@ -241,6 +244,24 @@ struct DrawConfigGpu {
     geometry: [u32; 4],
 }
 
+#[derive(Clone, Copy, Pod, Zeroable)]
+#[repr(C)]
+pub(super) struct VisibleInstanceGpu {
+    position_yaw: [f32; 4],
+    bottom_height: [f32; 4],
+    top_half_width: [f32; 4],
+    motion: [f32; 4],
+    interaction: [f32; 4],
+}
+
+#[derive(Clone, Copy, Pod, Zeroable)]
+#[repr(C)]
+struct InteractionGpu {
+    metadata: [u32; 4],
+    centers: [[f32; 4]; MAX_GROUND_COVER_INTERACTION_STAMPS],
+    ends: [[f32; 4]; MAX_GROUND_COVER_INTERACTION_STAMPS],
+}
+
 struct PageComputeBinding {
     bind_group: BindGroup,
     cluster_count: u32,
@@ -256,6 +277,7 @@ struct GroundCoverBuffers {
     mid_args: Buffer,
     far_args: Buffer,
     camera: Buffer,
+    interaction: Buffer,
     _near_config: Buffer,
     _mid_config: Buffer,
     _far_config: Buffer,
@@ -277,7 +299,8 @@ impl FromWorld for GroundCoverBuffers {
         let finalize_layout = pipeline_cache.get_bind_group_layout(&pipelines.finalize_layout);
         let render_device = world.resource::<RenderDevice>();
         let render_queue = world.resource::<RenderQueue>();
-        let visible_size = u64::from(MAX_VISIBLE_INSTANCES) * 64;
+        let visible_size =
+            u64::from(MAX_VISIBLE_INSTANCES) * size_of::<VisibleInstanceGpu>() as u64;
         let near_visible = render_device.create_buffer(&BufferDescriptor {
             label: Some("ground-cover near visible instances"),
             size: visible_size,
@@ -318,6 +341,12 @@ impl FromWorld for GroundCoverBuffers {
         let camera = render_device.create_buffer(&BufferDescriptor {
             label: Some("ground-cover camera"),
             size: size_of::<CameraGpu>() as u64,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let interaction = render_device.create_buffer(&BufferDescriptor {
+            label: Some("ground-cover interaction"),
+            size: size_of::<InteractionGpu>() as u64,
             usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -430,6 +459,7 @@ impl FromWorld for GroundCoverBuffers {
             mid_args,
             far_args,
             camera,
+            interaction,
             _near_config: near_config,
             _mid_config: mid_config,
             _far_config: far_config,
@@ -578,6 +608,7 @@ impl FromWorld for GroundCoverPipelines {
                     storage_buffer_sized(false, None),
                     storage_buffer_sized(false, None),
                     uniform_buffer_sized(false, None),
+                    uniform_buffer_sized(false, None),
                 ),
             ),
         );
@@ -703,6 +734,7 @@ fn prepare_ground_cover(
     views: Query<(&ExtractedView, &GroundCoverView)>,
     wind: Res<GroundCoverWind>,
     debug: Res<GroundCoverDebug>,
+    interaction: Res<GroundCoverInteraction>,
     mut buffers: ResMut<GroundCoverBuffers>,
 ) {
     buffers
@@ -731,6 +763,7 @@ fn prepare_ground_cover(
                 buffers.mid_args.as_entire_binding(),
                 buffers.far_args.as_entire_binding(),
                 buffers.camera.as_entire_binding(),
+                buffers.interaction.as_entire_binding(),
             )),
         );
         buffers.page_bind_groups.insert(
@@ -769,6 +802,32 @@ fn prepare_ground_cover(
         debug: [debug.mode.gpu_value(), 0, 0, 0],
     };
     render_queue.write_buffer(&buffers.camera, 0, bytemuck::bytes_of(&uniform));
+
+    let mut interaction_uniform = InteractionGpu::zeroed();
+    let stamp_count = interaction
+        .stamps
+        .len()
+        .min(MAX_GROUND_COVER_INTERACTION_STAMPS);
+    interaction_uniform.metadata[0] = stamp_count as u32;
+    for (index, stamp) in interaction.stamps.iter().take(stamp_count).enumerate() {
+        interaction_uniform.centers[index] = [
+            stamp.start.x,
+            stamp.start.y,
+            stamp.start_recovery,
+            stamp.radius,
+        ];
+        interaction_uniform.ends[index] = [
+            stamp.end.x,
+            stamp.end.y,
+            stamp.end_recovery,
+            stamp.maximum_displacement,
+        ];
+    }
+    render_queue.write_buffer(
+        &buffers.interaction,
+        0,
+        bytemuck::bytes_of(&interaction_uniform),
+    );
 }
 
 fn run_ground_cover_culling(
@@ -880,6 +939,24 @@ impl<P: PhaseItem> RenderCommand<P> for DrawGroundCoverIndirect {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn validate_shader(source: &str) {
+        let module = naga::front::wgsl::parse_str(source).expect("shader should parse as WGSL");
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .expect("shader should pass Naga validation");
+    }
+
+    #[test]
+    fn ground_cover_shaders_are_valid_wgsl() {
+        validate_shader(include_str!("../../../assets/shaders/ground_cover.wgsl"));
+        validate_shader(include_str!(
+            "../../../assets/shaders/ground_cover_cull.wgsl"
+        ));
+    }
 
     #[test]
     fn procedural_clump_texture_has_complete_coverage_preserving_mips() {

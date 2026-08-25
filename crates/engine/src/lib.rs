@@ -10,7 +10,7 @@ use bevy::{
     render::view::Msaa,
     window::{PrimaryWindow, Window},
 };
-use ground_cover::{GroundCoverDebug, GroundCoverPlugin, GroundCoverView};
+use ground_cover::{GroundCoverDebug, GroundCoverInteractor, GroundCoverPlugin, GroundCoverView};
 pub use world_streaming::{ActiveWorldSpace, GameplayObject};
 use world_streaming::{StreamingStats, WorldStreamingPlugin};
 
@@ -18,8 +18,9 @@ const OBJECT_SPEED_METERS_PER_SECOND: f32 = 7.0;
 const OBJECT_HALF_HEIGHT: f32 = 0.5;
 const GAMEPAD_DEAD_ZONE: f32 = 0.15;
 const CAMERA_MIN_DISTANCE: f32 = 4.0;
-const CAMERA_MAX_DISTANCE: f32 = 24.0;
-const CAMERA_DEFAULT_DISTANCE: f32 = 20.0;
+const CAMERA_MAX_DISTANCE: f32 = 17.6;
+const CAMERA_ZOOM_REFERENCE_DISTANCE: f32 = 24.0;
+const CAMERA_DEFAULT_DISTANCE: f32 = CAMERA_MAX_DISTANCE;
 const CAMERA_FOCUS_HEIGHT: f32 = 0.5;
 const CAMERA_NEAR_PITCH: f32 = 18.0_f32.to_radians();
 const CAMERA_FAR_PITCH: f32 = 55.0_f32.to_radians();
@@ -119,6 +120,7 @@ fn setup(
         Transform::from_translation(start),
         MovementTarget(None),
         MovableObject,
+        GroundCoverInteractor::character(),
         Name::new("Movable object"),
     ));
 
@@ -382,7 +384,8 @@ fn update_camera_transform(
 }
 
 fn normalized_camera_zoom(distance: f32) -> f32 {
-    ((distance - CAMERA_MIN_DISTANCE) / (CAMERA_MAX_DISTANCE - CAMERA_MIN_DISTANCE)).clamp(0.0, 1.0)
+    ((distance - CAMERA_MIN_DISTANCE) / (CAMERA_ZOOM_REFERENCE_DISTANCE - CAMERA_MIN_DISTANCE))
+        .clamp(0.0, 1.0)
 }
 
 fn camera_transform(object_position: Vec3, rig: &CameraRig) -> Transform {
@@ -405,6 +408,7 @@ fn update_performance_label(
     diagnostics: Res<DiagnosticsStore>,
     streaming: Option<Res<StreamingStats>>,
     ground_cover_debug: Res<GroundCoverDebug>,
+    camera: Single<(&CameraRig, &GroundCoverView), With<MainCamera>>,
     mut label: Single<&mut Text, With<PerformanceLabel>>,
     time: Res<Time>,
     mut elapsed: Local<f32>,
@@ -465,7 +469,11 @@ fn update_performance_label(
         "Left click: move | WASD / left stick: direct movement | Tab: change area | G: grass debug\n\
          Trackpad horizontal / right drag / right stick: orbit\n\
          Trackpad vertical / wheel: smooth zoom\n\
+         Camera: {distance:.2} m (target {target_distance:.2} m) | normalized zoom: {normalized_zoom:.3}\n\
          VSync baseline: {fps:.0} FPS | {frame_time:.2} ms\n\
-         {streaming}"
+         {streaming}",
+        distance = camera.0.distance,
+        target_distance = camera.0.target_distance,
+        normalized_zoom = camera.1.normalized_zoom,
     ));
 }

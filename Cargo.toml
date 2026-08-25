@@ -24,6 +24,7 @@ crossbeam-channel = "0.5"
 engine = { package = "yarra-engine", path = "crates/engine" }
 ground-cover = { package = "yarra-ground-cover", path = "crates/ground_cover" }
 log = { version = "0.4", features = ["max_level_debug", "release_max_level_warn"] }
+naga = { version = "29", features = ["wgsl-in"] }
 rusqlite = { version = "0.40.1", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"

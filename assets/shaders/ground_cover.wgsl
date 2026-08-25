@@ -3,6 +3,8 @@ struct VisibleInstance {
     bottom_height: vec4<f32>,
     top_half_width: vec4<f32>,
     motion: vec4<f32>,
+    // xy: world-space tip displacement, zw: reserved
+    interaction: vec4<f32>,
 }
 
 struct Camera {
@@ -151,12 +153,28 @@ fn vertex(
         * wind_signal
         * height_fraction
         * height_fraction;
+    // Interaction is evaluated once per clump by the compute pass. Every card and LOD tier
+    // receives the same world-space response, while the quadratic height weight pins roots.
+    let interaction_bend = instance.interaction.xy
+        * height_fraction
+        * height_fraction;
+    let interaction_length_squared = dot(interaction_bend, interaction_bend);
+    let remaining_vertical = sqrt(max(
+        card_distance * card_distance - interaction_length_squared,
+        0.0,
+    ));
+    let interaction_vertical_drop = card_distance - remaining_vertical;
     let horizontal = direction * local_x
         + tilt_direction * card_distance * sin(tilt)
         + bend_direction * bend
-        + wind_bend;
+        + wind_bend
+        + interaction_bend;
     let world_position = instance.position_yaw.xyz
-        + vec3<f32>(horizontal.x, card_distance * cos(tilt), horizontal.y);
+        + vec3<f32>(
+            horizontal.x,
+            max(card_distance * cos(tilt) - interaction_vertical_drop, 0.0),
+            horizontal.y,
+        );
 
     var output: VertexOutput;
     output.clip_position = camera.clip_from_world * vec4<f32>(world_position, 1.0);

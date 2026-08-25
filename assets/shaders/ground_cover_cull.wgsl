@@ -20,6 +20,17 @@ struct VisibleInstance {
     bottom_height: vec4<f32>,
     top_half_width: vec4<f32>,
     motion: vec4<f32>,
+    // xy: world-space tip displacement, zw: reserved
+    interaction: vec4<f32>,
+}
+
+struct Interaction {
+    // x: stamp count
+    metadata: vec4<u32>,
+    // xy: capsule start, z: normalized recovery age (negative means live), w: radius
+    centers: array<vec4<f32>, 16>,
+    // xy: capsule end, z: normalized recovery age, w: maximum displacement
+    ends: array<vec4<f32>, 16>,
 }
 
 struct DrawIndirectArgs {
@@ -52,6 +63,7 @@ struct Camera {
 @group(0) @binding(6) var<storage, read_write> mid_args: DrawIndirectArgs;
 @group(0) @binding(7) var<storage, read_write> far_args: DrawIndirectArgs;
 @group(0) @binding(8) var<uniform> camera: Camera;
+@group(0) @binding(9) var<uniform> interaction: Interaction;
 
 fn hash32(value: u32) -> u32 {
     var x = value;
@@ -84,6 +96,72 @@ fn density_fraction(projected_height: f32) -> f32 {
         );
     }
     return 1.0;
+}
+
+fn interaction_displacement(root: vec2<f32>) -> vec2<f32> {
+    let stamp_count = min(interaction.metadata.x, 16u);
+    var offset = vec2<f32>(0.0);
+    var maximum_displacement = 0.0;
+    for (var index = 0u; index < 16u; index += 1u) {
+        if (index >= stamp_count) {
+            break;
+        }
+        let center = interaction.centers[index];
+        let end = interaction.ends[index];
+        let capsule = end.xy - center.xy;
+        let capsule_length_squared = dot(capsule, capsule);
+        let capsule_fraction = clamp(
+            dot(root - center.xy, capsule) / max(capsule_length_squared, 0.000001),
+            0.0,
+            1.0,
+        );
+        let closest = center.xy + capsule * capsule_fraction;
+        let relative = root - closest;
+        let distance_squared = dot(relative, relative);
+        let radius = max(center.w, 0.01);
+        let radius_squared = radius * radius;
+        if (distance_squared >= radius_squared) {
+            continue;
+        }
+
+        let falloff = 1.0 - smoothstep(0.04, 1.0, distance_squared / radius_squared);
+        let radial = select(
+            vec2<f32>(1.0, 0.0),
+            relative * inverseSqrt(max(distance_squared, 0.000001)),
+            distance_squared > 0.000001,
+        );
+        let movement = select(
+            radial,
+            capsule * inverseSqrt(max(capsule_length_squared, 0.000001)),
+            capsule_length_squared > 0.000001,
+        );
+        let mixed_push = mix(radial, movement, 0.58);
+        let mixed_length_squared = dot(mixed_push, mixed_push);
+        let push = select(
+            radial,
+            mixed_push * inverseSqrt(max(mixed_length_squared, 0.000001)),
+            mixed_length_squared > 0.000001,
+        );
+        let live = center.z < 0.0;
+        let recovery_age = mix(center.z, end.z, capsule_fraction);
+        let recovery = select(
+            1.0 - smoothstep(0.0, 1.0, recovery_age),
+            1.0,
+            live,
+        );
+        let displacement = max(end.w, 0.0) * falloff * recovery;
+        offset += push * displacement;
+        maximum_displacement = max(maximum_displacement, displacement);
+    }
+
+    let offset_length_squared = dot(offset, offset);
+    if (
+        maximum_displacement > 0.0
+        && offset_length_squared > maximum_displacement * maximum_displacement
+    ) {
+        offset *= maximum_displacement / sqrt(offset_length_squared);
+    }
+    return offset;
 }
 
 fn cluster_visible(cluster: Cluster) -> bool {
@@ -212,12 +290,6 @@ fn cull(@builtin(global_invocation_id) global_id: vec3<u32>) {
         projected_detail_size,
     );
     var far_weight = 1.0 - smoothstep(10.0, 20.0, projected_detail_size);
-    // At the fully zoomed-out overhead view, changing geometry tiers is more visible than
-    // the saved detail. Converge on the mid tier while keeping density thinning, subpixel
-    // rejection, frustum culling, and streaming intact.
-    let uniform_mid_blend = smoothstep(0.80, 0.97, overhead_zoom);
-    near_weight *= 1.0 - uniform_mid_blend;
-    far_weight *= 1.0 - uniform_mid_blend;
     let capacity = u32(camera.limits.z);
     let grid_x = max(1u, u32(ceil(sqrt(f32(full_count)))));
     let grid_z = max(1u, (full_count + grid_x - 1u) / grid_x);
@@ -262,6 +334,7 @@ fn cull(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 random01(seed ^ 0x165667b1u),
                 random01(seed ^ 0x85ebca77u),
             ),
+            vec4<f32>(interaction_displacement(vec2<f32>(x, z)), 0.0, 0.0),
         );
 
         let lod_selector = random01(seed ^ 0xd6e8feb9u);
