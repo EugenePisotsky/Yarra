@@ -1,3 +1,8 @@
 /target
+/assets/local/
+/assets/generated/
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
+*.sqlite.building
 .DS_Store
-

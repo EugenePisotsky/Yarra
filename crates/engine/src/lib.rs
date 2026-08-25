@@ -1,61 +1,109 @@
+mod world_streaming;
+
+use std::path::PathBuf;
+
 use bevy::{
     diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin},
+    input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit},
+    light::CascadeShadowConfigBuilder,
     prelude::*,
+    render::view::Msaa,
     window::{PrimaryWindow, Window},
 };
+pub use world_streaming::ActiveWorldSpace;
+use world_streaming::{StreamingStats, WorldStreamingPlugin};
 
-const GROUND_SIZE: f32 = 80.0;
 const OBJECT_SPEED_METERS_PER_SECOND: f32 = 7.0;
 const OBJECT_HALF_HEIGHT: f32 = 0.5;
+const GAMEPAD_DEAD_ZONE: f32 = 0.15;
+const CAMERA_MIN_DISTANCE: f32 = 4.0;
+const CAMERA_MAX_DISTANCE: f32 = 24.0;
+const CAMERA_DEFAULT_DISTANCE: f32 = 20.0;
+const CAMERA_FOCUS_HEIGHT: f32 = 0.5;
+const CAMERA_NEAR_PITCH: f32 = 18.0_f32.to_radians();
+const CAMERA_FAR_PITCH: f32 = 55.0_f32.to_radians();
+const CAMERA_MAX_PITCH_OFFSET: f32 = 15.0_f32.to_radians();
+const CAMERA_MOUSE_ORBIT_SPEED: f32 = 0.006;
+const CAMERA_GAMEPAD_ORBIT_SPEED: f32 = 1.8;
+const CAMERA_TRACKPAD_ORBIT_SPEED: f32 = 0.003;
+const CAMERA_WHEEL_ORBIT_SPEED: f32 = 0.08;
+const CAMERA_TRACKPAD_ZOOM_SPEED: f32 = 0.012;
+const CAMERA_WHEEL_ZOOM_SPEED: f32 = 0.8;
+const CAMERA_ZOOM_SMOOTHING: f32 = 8.0;
+const TARGET_INDICATOR_HEIGHT: f32 = 0.025;
 
 /// The complete gameplay surface for the first vertical slice.
 ///
 /// The application crate owns the executable and platform window. This plugin
 /// owns the reusable game scene, input, movement, and diagnostics.
-pub struct MinimalGamePlugin;
+pub struct MinimalGamePlugin {
+    runtime_database: PathBuf,
+}
+
+impl MinimalGamePlugin {
+    pub fn new(runtime_database: impl Into<PathBuf>) -> Self {
+        Self {
+            runtime_database: runtime_database.into(),
+        }
+    }
+}
 
 impl Plugin for MinimalGamePlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(FrameTimeDiagnosticsPlugin::default())
-            .add_systems(Startup, setup)
-            .add_systems(
-                Update,
-                (
-                    set_target_from_pointer,
-                    move_object,
-                    update_performance_label,
-                ),
-            );
+        app.add_plugins((
+            FrameTimeDiagnosticsPlugin::default(),
+            WorldStreamingPlugin::new(self.runtime_database.clone()),
+        ))
+        .add_systems(Startup, setup)
+        .add_systems(
+            Update,
+            (
+                update_camera_controls,
+                set_target_from_pointer,
+                move_object,
+                update_camera_transform,
+            )
+                .chain(),
+        )
+        .add_systems(Update, update_performance_label);
     }
 }
 
 #[derive(Component)]
-struct MainCamera;
+pub(crate) struct MainCamera;
 
 #[derive(Component)]
-struct MovableObject;
+pub(crate) struct MovableObject;
 
 #[derive(Component, Deref, DerefMut)]
-struct MovementTarget(Vec3);
+struct MovementTarget(Option<Vec3>);
+
+#[derive(Component)]
+struct CameraRig {
+    yaw: f32,
+    distance: f32,
+    target_distance: f32,
+    pitch_offset: f32,
+}
+
+#[derive(Component)]
+struct TargetIndicator;
 
 #[derive(Component)]
 struct PerformanceLabel;
+
+type TargetIndicatorState<'w, 's> = Single<
+    'w,
+    's,
+    (&'static mut Transform, &'static mut Visibility),
+    (With<TargetIndicator>, Without<MovableObject>),
+>;
 
 fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    commands.spawn((
-        Mesh3d(meshes.add(Plane3d::default().mesh().size(GROUND_SIZE, GROUND_SIZE))),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(0.22, 0.28, 0.24),
-            perceptual_roughness: 1.0,
-            ..default()
-        })),
-        Name::new("Ground"),
-    ));
-
     let start = Vec3::new(0.0, OBJECT_HALF_HEIGHT, 0.0);
     commands.spawn((
         Mesh3d(meshes.add(Cuboid::new(1.0, 1.0, 1.0))),
@@ -65,7 +113,7 @@ fn setup(
             ..default()
         })),
         Transform::from_translation(start),
-        MovementTarget(start),
+        MovementTarget(None),
         MovableObject,
         Name::new("Movable object"),
     ));
@@ -73,22 +121,57 @@ fn setup(
     commands.spawn((
         DirectionalLight {
             illuminance: 12_000.0,
-            shadow_maps_enabled: false,
+            shadow_maps_enabled: true,
             ..default()
         },
+        CascadeShadowConfigBuilder {
+            num_cascades: 3,
+            first_cascade_far_bound: 20.0,
+            maximum_distance: 80.0,
+            ..default()
+        }
+        .build(),
         Transform::from_rotation(Quat::from_euler(EulerRot::XYZ, -0.9, -0.7, 0.0)),
         Name::new("Sun"),
     ));
 
+    let camera_rig = CameraRig {
+        yaw: 45.0_f32.to_radians(),
+        distance: CAMERA_DEFAULT_DISTANCE,
+        target_distance: CAMERA_DEFAULT_DISTANCE,
+        pitch_offset: 0.0,
+    };
     commands.spawn((
         Camera3d::default(),
-        Transform::from_xyz(12.0, 16.0, 12.0).looking_at(Vec3::ZERO, Vec3::Y),
+        Msaa::Off,
+        camera_transform(start, &camera_rig),
+        camera_rig,
         MainCamera,
         Name::new("Main camera"),
     ));
 
     commands.spawn((
-        Text::new("Left click the ground to move"),
+        Mesh3d(
+            meshes.add(
+                Torus::new(0.55, 0.68)
+                    .mesh()
+                    .minor_resolution(8)
+                    .major_resolution(48),
+            ),
+        ),
+        MeshMaterial3d(materials.add(StandardMaterial {
+            base_color: Color::srgb(1.0, 0.72, 0.12),
+            unlit: true,
+            ..default()
+        })),
+        Transform::from_xyz(0.0, TARGET_INDICATOR_HEIGHT, 0.0),
+        Visibility::Hidden,
+        TargetIndicator,
+        Name::new("Movement target indicator"),
+    ));
+
+    commands.spawn((
+        Text::new("Left click: move | WASD / left stick: direct movement"),
         TextFont {
             font_size: FontSize::Px(16.0),
             ..default()
@@ -110,6 +193,7 @@ fn set_target_from_pointer(
     window: Single<&Window, With<PrimaryWindow>>,
     camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
     mut target: Single<&mut MovementTarget, With<MovableObject>>,
+    mut indicator: TargetIndicatorState,
 ) {
     if !mouse.just_pressed(MouseButton::Left) {
         return;
@@ -130,26 +214,176 @@ fn set_target_from_pointer(
     }
 
     let point = ray.origin + direction * distance;
-    target.0 = Vec3::new(point.x, OBJECT_HALF_HEIGHT, point.z);
+    target.0 = Some(Vec3::new(point.x, OBJECT_HALF_HEIGHT, point.z));
+    indicator.0.translation = Vec3::new(point.x, TARGET_INDICATOR_HEIGHT, point.z);
+    *indicator.1 = Visibility::Visible;
 }
 
 fn move_object(
     time: Res<Time>,
-    mut object: Single<(&mut Transform, &MovementTarget), With<MovableObject>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    gamepads: Query<&Gamepad>,
+    camera: Single<&GlobalTransform, With<MainCamera>>,
+    mut object: Single<(&mut Transform, &mut MovementTarget), With<MovableObject>>,
+    mut indicator: Single<&mut Visibility, (With<TargetIndicator>, Without<MovableObject>)>,
 ) {
-    let offset = **object.1 - object.0.translation;
+    let direct_input = direct_movement_input(&keys, &gamepads);
+    if direct_input != Vec2::ZERO {
+        object.1.0 = None;
+        **indicator = Visibility::Hidden;
+
+        let camera_forward = camera.forward();
+        let forward = Vec3::new(camera_forward.x, 0.0, camera_forward.z).normalize_or_zero();
+        let camera_right = camera.right();
+        let right = Vec3::new(camera_right.x, 0.0, camera_right.z).normalize_or_zero();
+        let direction = (right * direct_input.x + forward * direct_input.y).normalize_or_zero();
+        let speed = OBJECT_SPEED_METERS_PER_SECOND * direct_input.length().min(1.0);
+
+        object.0.translation += direction * speed * time.delta_secs();
+        face_movement(&mut object.0, direction);
+        return;
+    }
+
+    let Some(target) = object.1.0 else {
+        return;
+    };
+    let offset = target - object.0.translation;
     let distance = offset.length();
     if distance <= 0.001 {
-        object.0.translation = **object.1;
+        object.0.translation = target;
+        object.1.0 = None;
+        **indicator = Visibility::Hidden;
         return;
     }
 
     let step = OBJECT_SPEED_METERS_PER_SECOND * time.delta_secs();
+    let direction = offset / distance;
     object.0.translation += offset * (step / distance).min(1.0);
+    face_movement(&mut object.0, direction);
+}
+
+fn direct_movement_input(keys: &ButtonInput<KeyCode>, gamepads: &Query<&Gamepad>) -> Vec2 {
+    let mut keyboard = Vec2::ZERO;
+    if keys.pressed(KeyCode::KeyA) {
+        keyboard.x -= 1.0;
+    }
+    if keys.pressed(KeyCode::KeyD) {
+        keyboard.x += 1.0;
+    }
+    if keys.pressed(KeyCode::KeyS) {
+        keyboard.y -= 1.0;
+    }
+    if keys.pressed(KeyCode::KeyW) {
+        keyboard.y += 1.0;
+    }
+    if keyboard != Vec2::ZERO {
+        return keyboard.normalize();
+    }
+
+    gamepads
+        .iter()
+        .map(|gamepad| {
+            Vec2::new(
+                gamepad.get(GamepadAxis::LeftStickX).unwrap_or_default(),
+                gamepad.get(GamepadAxis::LeftStickY).unwrap_or_default(),
+            )
+        })
+        .map(apply_stick_dead_zone)
+        .max_by(|left, right| left.length_squared().total_cmp(&right.length_squared()))
+        .unwrap_or_default()
+}
+
+fn apply_stick_dead_zone(stick: Vec2) -> Vec2 {
+    let length = stick.length().min(1.0);
+    if length <= GAMEPAD_DEAD_ZONE {
+        return Vec2::ZERO;
+    }
+
+    stick.normalize_or_zero() * ((length - GAMEPAD_DEAD_ZONE) / (1.0 - GAMEPAD_DEAD_ZONE))
+}
+
+fn face_movement(transform: &mut Transform, direction: Vec3) {
+    if direction.length_squared() > 0.0 {
+        transform.rotation = Quat::from_rotation_y((-direction.x).atan2(-direction.z));
+    }
+}
+
+fn update_camera_controls(
+    time: Res<Time>,
+    mouse_buttons: Res<ButtonInput<MouseButton>>,
+    mouse_motion: Res<AccumulatedMouseMotion>,
+    mouse_scroll: Res<AccumulatedMouseScroll>,
+    gamepads: Query<&Gamepad>,
+    mut rig: Single<&mut CameraRig, With<MainCamera>>,
+) {
+    if mouse_buttons.pressed(MouseButton::Right) {
+        rig.yaw -= mouse_motion.delta.x * CAMERA_MOUSE_ORBIT_SPEED;
+        rig.pitch_offset = (rig.pitch_offset + mouse_motion.delta.y * CAMERA_MOUSE_ORBIT_SPEED)
+            .clamp(-CAMERA_MAX_PITCH_OFFSET, CAMERA_MAX_PITCH_OFFSET);
+    }
+
+    let right_stick = gamepads
+        .iter()
+        .map(|gamepad| {
+            Vec2::new(
+                gamepad.get(GamepadAxis::RightStickX).unwrap_or_default(),
+                gamepad.get(GamepadAxis::RightStickY).unwrap_or_default(),
+            )
+        })
+        .map(apply_stick_dead_zone)
+        .max_by(|left, right| left.length_squared().total_cmp(&right.length_squared()))
+        .unwrap_or_default();
+    rig.yaw -= right_stick.x * CAMERA_GAMEPAD_ORBIT_SPEED * time.delta_secs();
+    rig.pitch_offset = (rig.pitch_offset
+        + right_stick.y * CAMERA_GAMEPAD_ORBIT_SPEED * time.delta_secs())
+    .clamp(-CAMERA_MAX_PITCH_OFFSET, CAMERA_MAX_PITCH_OFFSET);
+
+    if time.elapsed_secs() > 0.5 {
+        let (orbit_delta, zoom_delta) = match mouse_scroll.unit {
+            MouseScrollUnit::Line => (
+                mouse_scroll.delta.x.clamp(-3.0, 3.0) * CAMERA_WHEEL_ORBIT_SPEED,
+                mouse_scroll.delta.y.clamp(-3.0, 3.0) * CAMERA_WHEEL_ZOOM_SPEED,
+            ),
+            MouseScrollUnit::Pixel => (
+                mouse_scroll.delta.x.clamp(-80.0, 80.0) * CAMERA_TRACKPAD_ORBIT_SPEED,
+                mouse_scroll.delta.y.clamp(-80.0, 80.0) * CAMERA_TRACKPAD_ZOOM_SPEED,
+            ),
+        };
+        rig.yaw -= orbit_delta;
+        rig.target_distance =
+            (rig.target_distance - zoom_delta).clamp(CAMERA_MIN_DISTANCE, CAMERA_MAX_DISTANCE);
+    }
+
+    let zoom_blend = 1.0 - (-CAMERA_ZOOM_SMOOTHING * time.delta_secs()).exp();
+    rig.distance += (rig.target_distance - rig.distance) * zoom_blend;
+}
+
+fn update_camera_transform(
+    object: Single<&Transform, (With<MovableObject>, Without<MainCamera>)>,
+    mut camera: Single<(&mut Transform, &CameraRig), With<MainCamera>>,
+) {
+    *camera.0 = camera_transform(object.translation, camera.1);
+}
+
+fn camera_transform(object_position: Vec3, rig: &CameraRig) -> Transform {
+    let zoom = (rig.distance - CAMERA_MIN_DISTANCE) / (CAMERA_MAX_DISTANCE - CAMERA_MIN_DISTANCE);
+    let pitch =
+        (CAMERA_NEAR_PITCH + (CAMERA_FAR_PITCH - CAMERA_NEAR_PITCH) * zoom + rig.pitch_offset)
+            .clamp(5.0_f32.to_radians(), 80.0_f32.to_radians());
+    let horizontal_distance = rig.distance * pitch.cos();
+    let focus = object_position + Vec3::Y * CAMERA_FOCUS_HEIGHT;
+    let offset = Vec3::new(
+        rig.yaw.sin() * horizontal_distance,
+        rig.distance * pitch.sin(),
+        rig.yaw.cos() * horizontal_distance,
+    );
+
+    Transform::from_translation(focus + offset).looking_at(focus, Vec3::Y)
 }
 
 fn update_performance_label(
     diagnostics: Res<DiagnosticsStore>,
+    streaming: Option<Res<StreamingStats>>,
     mut label: Single<&mut Text, With<PerformanceLabel>>,
     time: Res<Time>,
     mut elapsed: Local<f32>,
@@ -169,7 +403,28 @@ fn update_performance_label(
         .and_then(|diagnostic| diagnostic.smoothed())
         .unwrap_or_default();
 
+    let streaming = streaming
+        .map(|stats| {
+            format!(
+                "World: {}\nPages: {} demanded | {} loading | {} resident | {} cooling | {} failed\n\
+                 Residency: {:.2} MiB decoded | {:.2} MiB estimated GPU",
+                stats.status,
+                stats.demanded,
+                stats.loading,
+                stats.resident,
+                stats.cooling,
+                stats.failed,
+                stats.decoded_bytes as f64 / (1024.0 * 1024.0),
+                stats.gpu_bytes_estimate as f64 / (1024.0 * 1024.0),
+            )
+        })
+        .unwrap_or_else(|| "World: initializing".into());
+
     **label = Text::new(format!(
-        "Left click the ground to move\nUncapped baseline: {fps:.0} FPS · {frame_time:.2} ms"
+        "Left click: move | WASD / left stick: direct movement | Tab: change area\n\
+         Trackpad horizontal / right drag / right stick: orbit\n\
+         Trackpad vertical / wheel: smooth zoom\n\
+         VSync baseline: {fps:.0} FPS | {frame_time:.2} ms\n\
+         {streaming}"
     ));
 }

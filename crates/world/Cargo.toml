@@ -1,9 +1,10 @@
 [package]
-name = "yarra-app-game"
+name = "yarra-world"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
 [dependencies]
-bevy.workspace = true
-engine.workspace = true
+bincode.workspace = true
+serde.workspace = true
+thiserror.workspace = true
