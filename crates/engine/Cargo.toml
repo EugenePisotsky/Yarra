@@ -1,0 +1,9 @@
+[package]
+name = "yarra-engine"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+bevy.workspace = true
+
