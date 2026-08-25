@@ -1,3 +1,5 @@
+#[cfg(target_os = "ios")]
+use bevy::window::{MonitorSelection, ScreenEdge, WindowMode};
 use bevy::{
     asset::AssetPlugin,
     prelude::*,
@@ -17,17 +19,38 @@ fn main() {
                     ..default()
                 })
                 .set(WindowPlugin {
-                    primary_window: Some(Window {
-                        title: "Yarra — SQLite World Streaming".into(),
-                        resolution: WindowResolution::new(1280, 720),
-                        present_mode: PresentMode::AutoVsync,
-                        ..default()
-                    }),
+                    primary_window: Some(game_window()),
                     ..default()
                 }),
         )
         .add_plugins(MinimalGamePlugin::new(runtime_database))
         .run();
+}
+
+fn game_window() -> Window {
+    let window = Window {
+        title: "Yarra — SQLite World Streaming".into(),
+        resolution: WindowResolution::new(1280, 720),
+        present_mode: PresentMode::AutoVsync,
+        ..default()
+    };
+
+    #[cfg(target_os = "ios")]
+    let window = {
+        let mut window = window;
+        // Windowed mode causes winit to use the desktop-sized resolution above
+        // as the actual UIWindow size. Fullscreen uses the device surface.
+        window.mode = WindowMode::BorderlessFullscreen(MonitorSelection::Primary);
+        window.resizable = false;
+        window.recognize_pinch_gesture = true;
+        window.recognize_pan_gesture = Some((2, 2));
+        window.prefers_home_indicator_hidden = true;
+        window.prefers_status_bar_hidden = true;
+        window.preferred_screen_edges_deferring_system_gestures = ScreenEdge::Bottom;
+        window
+    };
+
+    window
 }
 
 fn runtime_database_path(asset_root: &std::path::Path) -> std::path::PathBuf {

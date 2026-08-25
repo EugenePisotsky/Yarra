@@ -33,6 +33,7 @@ pub const DEMO_TREE_LOD_URIS: [&str; 4] = [
 const DEMO_TREE_MINIMUM_SCREEN_HEIGHTS: [f32; 4] = [320.0, 160.0, 80.0, 0.0];
 const DEMO_TREE_GPU_BYTES: [u64; 4] = [593_464, 324_612, 175_064, 85_164];
 const DEMO_TREE_BOUNDS: [f32; 3] = [7.9161, 15.9346, 5.5864];
+const DEMO_MEADOW_CELL_RANGE: std::ops::Range<i32> = -30..30;
 
 pub fn create_demo_project(path: &Path) -> Result<()> {
     let document = demo_project_document();
@@ -678,7 +679,7 @@ fn demo_project_document() -> ProjectDocument {
                 ],
                 source_revision: 1,
             });
-            if (-4..=4).contains(&x) && (-4..=4).contains(&z) {
+            if DEMO_MEADOW_CELL_RANGE.contains(&x) && DEMO_MEADOW_CELL_RANGE.contains(&z) {
                 ground_cover_masks.push(SourceGroundCoverCellMaskRecord {
                     layer: meadow_layer,
                     space: overworld.id,
@@ -847,7 +848,7 @@ mod tests {
             .iter()
             .filter(|page| page.key.domain == PageDomain::GroundCover)
             .collect::<Vec<_>>();
-        assert_eq!(ground_cover_pages.len(), 9 * 9);
+        assert_eq!(ground_cover_pages.len(), 60 * 60);
         assert_eq!(build.ground_cover_species.len(), 1);
         assert_eq!(
             build.ground_cover_species_dependencies.len(),

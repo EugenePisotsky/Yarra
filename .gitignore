@@ -6,3 +6,5 @@
 *.sqlite-journal
 *.sqlite.building
 .DS_Store
+**/xcuserdata/
+**/com.apple.DeveloperTools/

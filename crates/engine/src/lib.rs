@@ -4,11 +4,12 @@ use std::path::PathBuf;
 
 use bevy::{
     diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin},
+    input::gestures::{PanGesture, PinchGesture},
     input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit},
     light::CascadeShadowConfigBuilder,
     prelude::*,
     render::view::Msaa,
-    window::{PrimaryWindow, Window},
+    window::{Monitor, PrimaryMonitor, PrimaryWindow, Window},
 };
 use ground_cover::{GroundCoverDebug, GroundCoverInteractor, GroundCoverPlugin, GroundCoverView};
 pub use world_streaming::{ActiveWorldSpace, GameplayObject};
@@ -31,9 +32,13 @@ const CAMERA_TRACKPAD_ORBIT_SPEED: f32 = 0.003;
 const CAMERA_WHEEL_ORBIT_SPEED: f32 = 0.08;
 const CAMERA_TRACKPAD_ZOOM_SPEED: f32 = 0.012;
 const CAMERA_WHEEL_ZOOM_SPEED: f32 = 0.8;
+const CAMERA_TOUCH_ORBIT_SPEED: f32 = 0.006;
+const CAMERA_TOUCH_PAN_ZOOM_SPEED: f32 = 0.025;
+const CAMERA_TOUCH_PINCH_ZOOM_SPEED: f32 = 8.0;
 const CAMERA_ORBIT_SMOOTHING: f32 = 20.0;
 const CAMERA_ZOOM_SMOOTHING: f32 = 8.0;
 const TARGET_INDICATOR_HEIGHT: f32 = 0.025;
+const TOUCH_TAP_MAX_MOVEMENT: f32 = 18.0;
 
 /// The complete gameplay surface for the first vertical slice.
 ///
@@ -58,6 +63,7 @@ impl Plugin for MinimalGamePlugin {
             GroundCoverPlugin,
             WorldStreamingPlugin::new(self.runtime_database.clone()),
         ))
+        .init_resource::<TouchTapState>()
         .add_systems(Startup, setup)
         .add_systems(
             Update,
@@ -96,6 +102,12 @@ struct TargetIndicator;
 
 #[derive(Component)]
 struct PerformanceLabel;
+
+#[derive(Resource, Default)]
+struct TouchTapState {
+    primary_touch: Option<u64>,
+    disqualified: bool,
+}
 
 type TargetIndicatorState<'w, 's> = Single<
     'w,
@@ -200,15 +212,19 @@ fn setup(
 
 fn set_target_from_pointer(
     mouse: Res<ButtonInput<MouseButton>>,
+    touches: Res<Touches>,
+    mut touch_tap: ResMut<TouchTapState>,
     window: Single<&Window, With<PrimaryWindow>>,
     camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
     mut target: Single<&mut MovementTarget, With<MovableObject>>,
     mut indicator: TargetIndicatorState,
 ) {
-    if !mouse.just_pressed(MouseButton::Left) {
-        return;
-    }
-    let Some(cursor) = window.cursor_position() else {
+    let pointer_position = if mouse.just_pressed(MouseButton::Left) {
+        window.cursor_position()
+    } else {
+        touch_tap_position(&touches, &mut touch_tap)
+    };
+    let Some(cursor) = pointer_position else {
         return;
     };
     let Ok(ray) = camera.0.viewport_to_world(camera.1, cursor) else {
@@ -227,6 +243,39 @@ fn set_target_from_pointer(
     target.0 = Some(Vec3::new(point.x, OBJECT_HALF_HEIGHT, point.z));
     indicator.0.translation = Vec3::new(point.x, TARGET_INDICATOR_HEIGHT, point.z);
     *indicator.1 = Visibility::Visible;
+}
+
+fn touch_tap_position(touches: &Touches, state: &mut TouchTapState) -> Option<Vec2> {
+    let active_touch_count = touches.iter().count();
+
+    for touch in touches.iter_just_pressed() {
+        if state.primary_touch.is_none() && active_touch_count == 1 {
+            state.primary_touch = Some(touch.id());
+            state.disqualified = false;
+        } else {
+            state.disqualified = true;
+        }
+    }
+    if active_touch_count > 1 {
+        state.disqualified = true;
+    }
+
+    if let Some(touch) = touches
+        .iter_just_released()
+        .find(|touch| Some(touch.id()) == state.primary_touch)
+    {
+        let is_tap = !state.disqualified && touch.distance().length() <= TOUCH_TAP_MAX_MOVEMENT;
+        let position = is_tap.then(|| touch.position());
+        state.primary_touch = None;
+        state.disqualified = false;
+        return position;
+    }
+
+    if touches.any_just_canceled() {
+        state.primary_touch = None;
+        state.disqualified = false;
+    }
+    None
 }
 
 fn move_object(
@@ -323,6 +372,8 @@ fn update_camera_controls(
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     mouse_motion: Res<AccumulatedMouseMotion>,
     mouse_scroll: Res<AccumulatedMouseScroll>,
+    mut pan_gestures: MessageReader<PanGesture>,
+    mut pinch_gestures: MessageReader<PinchGesture>,
     gamepads: Query<&Gamepad>,
     mut rig: Single<&mut CameraRig, With<MainCamera>>,
 ) {
@@ -369,6 +420,19 @@ fn update_camera_controls(
             (rig.target_distance - zoom_delta).clamp(CAMERA_MIN_DISTANCE, CAMERA_MAX_DISTANCE);
     }
 
+    let touch_pan: Vec2 = pan_gestures.read().map(|gesture| gesture.0).sum();
+    if touch_pan != Vec2::ZERO {
+        rig.target_yaw -= touch_pan.x * CAMERA_TOUCH_ORBIT_SPEED;
+        rig.target_distance = (rig.target_distance + touch_pan.y * CAMERA_TOUCH_PAN_ZOOM_SPEED)
+            .clamp(CAMERA_MIN_DISTANCE, CAMERA_MAX_DISTANCE);
+    }
+
+    let touch_pinch: f32 = pinch_gestures.read().map(|gesture| gesture.0).sum();
+    if touch_pinch != 0.0 {
+        rig.target_distance = (rig.target_distance - touch_pinch * CAMERA_TOUCH_PINCH_ZOOM_SPEED)
+            .clamp(CAMERA_MIN_DISTANCE, CAMERA_MAX_DISTANCE);
+    }
+
     let orbit_blend = 1.0 - (-CAMERA_ORBIT_SMOOTHING * time.delta_secs()).exp();
     rig.yaw += (rig.target_yaw - rig.yaw) * orbit_blend;
     let zoom_blend = 1.0 - (-CAMERA_ZOOM_SMOOTHING * time.delta_secs()).exp();
@@ -409,6 +473,7 @@ fn update_performance_label(
     streaming: Option<Res<StreamingStats>>,
     ground_cover_debug: Res<GroundCoverDebug>,
     camera: Single<(&CameraRig, &GroundCoverView), With<MainCamera>>,
+    primary_monitor: Option<Single<&Monitor, With<PrimaryMonitor>>>,
     mut label: Single<&mut Text, With<PerformanceLabel>>,
     time: Res<Time>,
     mut elapsed: Local<f32>,
@@ -427,6 +492,10 @@ fn update_performance_label(
         .get(&FrameTimeDiagnosticsPlugin::FRAME_TIME)
         .and_then(|diagnostic| diagnostic.smoothed())
         .unwrap_or_default();
+    let display_refresh = primary_monitor
+        .and_then(|monitor| monitor.refresh_rate_millihertz)
+        .map(|millihertz| format!("{:.0} Hz display max", millihertz as f32 / 1_000.0))
+        .unwrap_or_else(|| "display rate unknown".into());
 
     let streaming = streaming
         .map(|stats| {
@@ -466,11 +535,11 @@ fn update_performance_label(
         .unwrap_or_else(|| "World: initializing".into());
 
     **label = Text::new(format!(
-        "Left click: move | WASD / left stick: direct movement | Tab: change area | G: grass debug\n\
-         Trackpad horizontal / right drag / right stick: orbit\n\
-         Trackpad vertical / wheel: smooth zoom\n\
+        "Tap / left click: move | WASD / left stick: direct movement | Tab: change area | G: grass debug\n\
+         Two-finger horizontal / right drag / right stick: orbit\n\
+         Pinch / two-finger vertical / wheel: smooth zoom\n\
          Camera: {distance:.2} m (target {target_distance:.2} m) | normalized zoom: {normalized_zoom:.3}\n\
-         VSync baseline: {fps:.0} FPS | {frame_time:.2} ms\n\
+         VSync baseline: {fps:.0} FPS | {frame_time:.2} ms | {display_refresh}\n\
          {streaming}",
         distance = camera.0.distance,
         target_distance = camera.0.target_distance,

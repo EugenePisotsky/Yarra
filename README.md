@@ -45,6 +45,12 @@ Run the game:
 cargo run --release -p yarra-app-game
 ```
 
+For a physical iPhone build, open
+[`ios/Yarra/Yarra.xcodeproj`](ios/Yarra/Yarra.xcodeproj) and run the `Yarra`
+scheme. Its build phase cooks the current world, cross-compiles the Rust
+executable, and packages only runtime assets. Use the Release configuration for
+performance measurements; see [`ios/README.md`](ios/README.md).
+
 The current scene contains:
 
 - SQLite-streamed flat terrain cells;
@@ -60,9 +66,9 @@ separate gameplay pages only for proximity-activated definitions. The runtime
 requests those gameplay pages for the player's current cell and immediate
 neighbours, then fetches all page definitions in one SQLite query.
 
-Left-click anywhere on the ground to set a movement target, or use WASD / the
-left gamepad stick for direct camera-relative movement. A circular ground marker
-shows the active click target. Swipe horizontally with two fingers, right-drag,
+Tap or left-click anywhere on the ground to set a movement target, or use WASD /
+the left gamepad stick for direct camera-relative movement. A circular ground
+marker shows the active target. Swipe horizontally with two fingers, right-drag,
 or use the right stick to orbit. Swipe vertically or use the mouse wheel for
 smooth zoom between the default high-angle view and a close third-person view.
 Press Tab to move between the demo overworld and interior. A transition removes
