@@ -4,9 +4,9 @@ use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_CELL_SIZE: f32 = 32.0;
 pub const MAX_DECODED_PAGE_BYTES: u64 = 64 * 1024 * 1024;
-pub const PROJECT_SCHEMA_VERSION: i64 = 2;
-pub const RUNTIME_SCHEMA_VERSION: i64 = 2;
-pub const PAGE_PAYLOAD_VERSION: u16 = 1;
+pub const PROJECT_SCHEMA_VERSION: i64 = 3;
+pub const RUNTIME_SCHEMA_VERSION: i64 = 3;
+pub const PAGE_PAYLOAD_VERSION: u16 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct WorldSpaceId(pub i64);
@@ -91,6 +91,9 @@ impl WorldPosition {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct StableObjectId(pub [u8; 16]);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ObjectDefinitionId(pub [u8; 16]);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AssetId(pub [u8; 32]);
 
@@ -104,6 +107,7 @@ pub enum PageDomain {
     Collision = 5,
     Navigation = 6,
     ShadowCasters = 7,
+    GameplayObjects = 8,
 }
 
 impl TryFrom<i64> for PageDomain {
@@ -118,6 +122,7 @@ impl TryFrom<i64> for PageDomain {
             5 => Ok(Self::Collision),
             6 => Ok(Self::Navigation),
             7 => Ok(Self::ShadowCasters),
+            8 => Ok(Self::GameplayObjects),
             _ => Err(UnknownPageDomain(value)),
         }
     }
@@ -192,11 +197,56 @@ pub struct StaticObjectsPage {
     pub instances: Vec<StaticObjectInstance>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[repr(i64)]
+pub enum ObjectActivationPolicy {
+    RenderOnly = 0,
+    Proximity = 1,
+}
+
+impl TryFrom<i64> for ObjectActivationPolicy {
+    type Error = UnknownObjectActivationPolicy;
+
+    fn try_from(value: i64) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::RenderOnly),
+            1 => Ok(Self::Proximity),
+            _ => Err(UnknownObjectActivationPolicy(value)),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UnknownObjectActivationPolicy(pub i64);
+
+impl fmt::Display for UnknownObjectActivationPolicy {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "unknown object activation policy {}", self.0)
+    }
+}
+
+impl Error for UnknownObjectActivationPolicy {}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GameplayObjectInstance {
+    pub id: StableObjectId,
+    pub definition: ObjectDefinitionId,
+    pub translation: [f32; 3],
+    pub yaw: f32,
+    pub scale: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GameplayObjectsPage {
+    pub instances: Vec<GameplayObjectInstance>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum PagePayload {
     TerrainRender(TerrainRenderPage),
     StaticObjects(StaticObjectsPage),
     ShadowCasters(StaticObjectsPage),
+    GameplayObjects(GameplayObjectsPage),
 }
 
 impl PagePayload {
@@ -205,6 +255,7 @@ impl PagePayload {
             Self::TerrainRender(_) => PageDomain::TerrainRender,
             Self::StaticObjects(_) => PageDomain::StaticObjects,
             Self::ShadowCasters(_) => PageDomain::ShadowCasters,
+            Self::GameplayObjects(_) => PageDomain::GameplayObjects,
         }
     }
 }
@@ -294,5 +345,22 @@ mod tests {
         });
         let bytes = encode_page_payload(&payload).unwrap();
         assert_eq!(decode_page_payload(&bytes).unwrap(), payload);
+    }
+
+    #[test]
+    fn gameplay_page_keeps_definition_identity() {
+        let definition = ObjectDefinitionId([3; 16]);
+        let payload = PagePayload::GameplayObjects(GameplayObjectsPage {
+            instances: vec![GameplayObjectInstance {
+                id: StableObjectId([7; 16]),
+                definition,
+                translation: [2.0, 0.0, 4.0],
+                yaw: 0.5,
+                scale: 1.0,
+            }],
+        });
+        let bytes = encode_page_payload(&payload).unwrap();
+        assert_eq!(decode_page_payload(&bytes).unwrap(), payload);
+        assert_eq!(payload.domain(), PageDomain::GameplayObjects);
     }
 }

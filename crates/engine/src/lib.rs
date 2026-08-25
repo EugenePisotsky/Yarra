@@ -10,7 +10,7 @@ use bevy::{
     render::view::Msaa,
     window::{PrimaryWindow, Window},
 };
-pub use world_streaming::ActiveWorldSpace;
+pub use world_streaming::{ActiveWorldSpace, GameplayObject};
 use world_streaming::{StreamingStats, WorldStreamingPlugin};
 
 const OBJECT_SPEED_METERS_PER_SECOND: f32 = 7.0;
@@ -407,6 +407,7 @@ fn update_performance_label(
         .map(|stats| {
             format!(
                 "World: {}\nPages: {} demanded | {} loading | {} resident | {} cooling | {} failed\n\
+                 Nearby gameplay: {} objects | {} definitions cached\n\
                  Residency: {:.2} MiB decoded | {:.2} MiB estimated GPU",
                 stats.status,
                 stats.demanded,
@@ -414,6 +415,8 @@ fn update_performance_label(
                 stats.resident,
                 stats.cooling,
                 stats.failed,
+                stats.gameplay_objects,
+                stats.cached_definitions,
                 stats.decoded_bytes as f64 / (1024.0 * 1024.0),
                 stats.gpu_bytes_estimate as f64 / (1024.0 * 1024.0),
             )

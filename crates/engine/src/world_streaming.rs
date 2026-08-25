@@ -12,9 +12,13 @@ use bevy::{
     tasks::{AsyncComputeTaskPool, Task, futures::check_ready},
 };
 use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded};
-use world::{AssetId, CellCoord, PageDomain, PageKey, PagePayload, WorldSpaceId};
+use world::{
+    AssetId, CellCoord, ObjectActivationPolicy, ObjectDefinitionId, PageDomain, PageKey,
+    PagePayload, StableObjectId, WorldSpaceId,
+};
 use world_db::{
-    CellDescriptor, DecodedPage, EncodedPage, PageDependency, RuntimeManifest, RuntimeReader,
+    CellDescriptor, DecodedPage, EncodedPage, PageDependency, RuntimeManifest,
+    RuntimeObjectDefinition, RuntimeReader,
 };
 
 use crate::{MainCamera, MovableObject, MovementTarget, TargetIndicator};
@@ -133,8 +137,15 @@ enum DatabaseResult {
     Page {
         request_id: u64,
         key: PageKey,
-        result: Result<Option<(EncodedPage, Vec<PageDependency>)>, String>,
+        result: Result<Option<FetchedPage>, String>,
     },
+}
+
+#[derive(Debug)]
+struct FetchedPage {
+    encoded: EncodedPage,
+    dependencies: Vec<PageDependency>,
+    definitions: Vec<RuntimeObjectDefinition>,
 }
 
 fn start_database_worker(mut commands: Commands, path: Res<WorldDatabasePath>) {
@@ -203,9 +214,17 @@ fn database_worker(
                     .read_page(key)
                     .and_then(|page| {
                         page.map(|page| {
-                            reader
-                                .read_dependencies(key)
-                                .map(|dependencies| (page, dependencies))
+                            let dependencies = reader.read_dependencies(key)?;
+                            let definitions = if key.domain == PageDomain::GameplayObjects {
+                                reader.read_object_definitions(key)?
+                            } else {
+                                Vec::new()
+                            };
+                            Ok(FetchedPage {
+                                encoded: page,
+                                dependencies,
+                                definitions,
+                            })
                         })
                         .transpose()
                     })
@@ -236,6 +255,7 @@ struct WorldStream {
     descriptors: Vec<CellDescriptor>,
     desired: BTreeSet<PageKey>,
     pages: HashMap<PageKey, PageState>,
+    definition_cache: HashMap<ObjectDefinitionId, RuntimeObjectDefinition>,
     decode_tasks: Vec<DecodeTask>,
     next_request_id: u64,
 }
@@ -267,6 +287,7 @@ enum PageState {
 struct PreparedPage {
     decoded: DecodedPage,
     dependencies: Vec<PageDependency>,
+    definitions: Vec<RuntimeObjectDefinition>,
 }
 
 struct DecodeTask {
@@ -280,6 +301,7 @@ struct PageAttachment {
     owned_materials: Vec<Handle<StandardMaterial>>,
     decoded_bytes: u64,
     gpu_bytes_estimate: u64,
+    gameplay_objects: usize,
 }
 
 #[derive(Resource)]
@@ -360,13 +382,15 @@ fn receive_database_results(
                     continue;
                 }
                 match result {
-                    Ok(Some((encoded, dependencies))) => {
+                    Ok(Some(fetched)) => {
                         let task = AsyncComputeTaskPool::get().spawn(async move {
-                            encoded
+                            fetched
+                                .encoded
                                 .decode()
                                 .map(|decoded| PreparedPage {
                                     decoded,
-                                    dependencies,
+                                    dependencies: fetched.dependencies,
+                                    definitions: fetched.definitions,
                                 })
                                 .map_err(|error| error.to_string())
                         });
@@ -584,6 +608,14 @@ fn calculate_page_demand(
                 lod: 0,
             });
         }
+        if preloaded && descriptor.has_domain(PageDomain::GameplayObjects) {
+            desired.insert(PageKey {
+                space: space_id,
+                cell: descriptor.cell,
+                domain: PageDomain::GameplayObjects,
+                lod: 0,
+            });
+        }
     }
     stream.desired = desired;
 
@@ -651,6 +683,11 @@ fn receive_decode_results(mut stream: ResMut<WorldStream>) {
         }
         match result {
             Ok(prepared) => {
+                for definition in &prepared.definitions {
+                    stream
+                        .definition_cache
+                        .insert(definition.id, definition.clone());
+                }
                 stream.pages.insert(key, PageState::Prepared(prepared));
             }
             Err(error) => {
@@ -758,6 +795,7 @@ fn attach_page(
     let key = prepared.decoded.key;
     let mut entities = Vec::new();
     let mut owned_materials = Vec::new();
+    let mut gameplay_objects = 0;
     match prepared.decoded.payload {
         PagePayload::TerrainRender(terrain) => {
             let center = key.cell.center(cell_size);
@@ -824,6 +862,48 @@ fn attach_page(
         PagePayload::ShadowCasters(_) => {
             return Err("shadow-caster page attachment is not enabled in the first slice".into());
         }
+        PagePayload::GameplayObjects(objects) => {
+            let definitions: HashMap<_, _> = prepared
+                .definitions
+                .iter()
+                .map(|definition| (definition.id, definition))
+                .collect();
+            let cell_origin = key.cell.origin(cell_size);
+            for instance in objects.instances {
+                let definition = definitions.get(&instance.definition).ok_or_else(|| {
+                    format!(
+                        "gameplay object {:?} has no fetched definition {:?}",
+                        instance.id, instance.definition
+                    )
+                })?;
+                if definition.activation != ObjectActivationPolicy::Proximity {
+                    return Err(format!(
+                        "gameplay page contains render-only definition {}",
+                        definition.key
+                    ));
+                }
+                let translation = Vec3::new(
+                    cell_origin[0] as f32 + instance.translation[0],
+                    instance.translation[1],
+                    cell_origin[1] as f32 + instance.translation[2],
+                );
+                let entity = commands
+                    .spawn((
+                        Transform::from_translation(translation)
+                            .with_rotation(Quat::from_rotation_y(instance.yaw))
+                            .with_scale(Vec3::splat(instance.scale)),
+                        GameplayObject {
+                            id: instance.id,
+                            definition: instance.definition,
+                        },
+                        StreamedPageEntity(key),
+                        Name::new(definition.display_name.clone()),
+                    ))
+                    .id();
+                entities.push(entity);
+                gameplay_objects += 1;
+            }
+        }
     }
 
     Ok(PageAttachment {
@@ -836,7 +916,14 @@ fn attach_page(
                 .iter()
                 .map(|dependency| dependency.gpu_bytes_estimate)
                 .sum::<u64>(),
+        gameplay_objects,
     })
+}
+
+#[derive(Component, Debug, Clone, Copy)]
+pub struct GameplayObject {
+    pub id: StableObjectId,
+    pub definition: ObjectDefinitionId,
 }
 
 #[derive(Component)]
@@ -907,6 +994,8 @@ pub(crate) struct StreamingStats {
     pub(crate) owned_entities: usize,
     pub(crate) decoded_bytes: u64,
     pub(crate) gpu_bytes_estimate: u64,
+    pub(crate) cached_definitions: usize,
+    pub(crate) gameplay_objects: usize,
 }
 
 fn update_streaming_stats(
@@ -938,6 +1027,8 @@ fn update_streaming_stats(
     stats.owned_entities = 0;
     stats.decoded_bytes = 0;
     stats.gpu_bytes_estimate = 0;
+    stats.cached_definitions = stream.definition_cache.len();
+    stats.gameplay_objects = 0;
     for state in stream.pages.values() {
         match state {
             PageState::Loading { .. } | PageState::Decoding { .. } => stats.loading += 1,
@@ -947,12 +1038,14 @@ fn update_streaming_stats(
                 stats.owned_entities += attachment.entities.len();
                 stats.decoded_bytes += attachment.decoded_bytes;
                 stats.gpu_bytes_estimate += attachment.gpu_bytes_estimate;
+                stats.gameplay_objects += attachment.gameplay_objects;
             }
             PageState::Cooling { attachment, .. } => {
                 stats.cooling += 1;
                 stats.owned_entities += attachment.entities.len();
                 stats.decoded_bytes += attachment.decoded_bytes;
                 stats.gpu_bytes_estimate += attachment.gpu_bytes_estimate;
+                stats.gameplay_objects += attachment.gameplay_objects;
             }
             PageState::Failed(error) => {
                 let _ = error;
@@ -980,6 +1073,14 @@ fn report_streaming_smoke(
     }
     if smoke.stage == 0 && time.elapsed_secs() >= 3.0 {
         assert_streaming_is_healthy(&stats);
+        assert_eq!(
+            stats.gameplay_objects, 0,
+            "distant gameplay objects were activated in the overworld"
+        );
+        assert_eq!(
+            stats.cached_definitions, 0,
+            "the distant interior definition was fetched before entering its proximity set"
+        );
         println!(
             "YARRA_STREAMING_SMOKE initial status={:?} demanded={} resident={} failed={} \
              owned_entities={} decoded_bytes={} gpu_bytes_estimate={}",
@@ -1070,6 +1171,14 @@ fn report_streaming_smoke(
             "old world-space pages remained in the cooling set"
         );
         assert_eq!(
+            stats.gameplay_objects, 1,
+            "the nearby interior gameplay object was not activated"
+        );
+        assert_eq!(
+            stats.cached_definitions, 1,
+            "the nearby gameplay definition was not fetched exactly once"
+        );
+        assert_eq!(
             streamed_entities.iter().count(),
             stats.owned_entities,
             "tracked page ownership does not match live streamed root entities"
@@ -1082,12 +1191,14 @@ fn report_streaming_smoke(
         }
         println!(
             "YARRA_STREAMING_SMOKE multi-world passed active_space={} demanded={} resident={} \
-             cooling={} owned_entities={} failed={}",
+             cooling={} owned_entities={} gameplay_objects={} definitions_cached={} failed={}",
             expected_space.0,
             stats.demanded,
             stats.resident,
             stats.cooling,
             stats.owned_entities,
+            stats.gameplay_objects,
+            stats.cached_definitions,
             stats.failed,
         );
         smoke.stage = 3;

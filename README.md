@@ -52,6 +52,12 @@ The current scene contains:
 - a following camera and bounded cascaded directional shadows;
 - FPS/frame-time and page residency diagnostics.
 
+Authored placements reference stable object definitions rather than models
+directly. The cooker resolves visuals into camera-driven render pages and emits
+separate gameplay pages only for proximity-activated definitions. The runtime
+requests those gameplay pages for the player's current cell and immediate
+neighbours, then fetches all page definitions in one SQLite query.
+
 Left-click anywhere on the ground to set a movement target, or use WASD / the
 left gamepad stick for direct camera-relative movement. A circular ground marker
 shows the active click target. Swipe horizontally with two fingers, right-drag,

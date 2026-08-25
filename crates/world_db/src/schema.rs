@@ -38,12 +38,20 @@ CREATE TABLE source_assets (
     source_uri TEXT NOT NULL
 ) STRICT;
 
+CREATE TABLE object_definitions (
+    definition_id BLOB PRIMARY KEY CHECK(length(definition_id) = 16),
+    definition_key TEXT NOT NULL UNIQUE,
+    display_name TEXT NOT NULL,
+    visual_asset_id BLOB REFERENCES source_assets(asset_id),
+    activation_policy INTEGER NOT NULL CHECK(activation_policy IN (0, 1))
+) STRICT;
+
 CREATE TABLE object_placements (
     object_id BLOB PRIMARY KEY CHECK(length(object_id) = 16),
     world_space_id INTEGER NOT NULL,
     owner_cell_x INTEGER NOT NULL,
     owner_cell_z INTEGER NOT NULL,
-    asset_id BLOB NOT NULL REFERENCES source_assets(asset_id),
+    definition_id BLOB NOT NULL REFERENCES object_definitions(definition_id),
     local_x REAL NOT NULL,
     local_y REAL NOT NULL,
     local_z REAL NOT NULL,
@@ -65,7 +73,7 @@ CREATE TABLE object_cell_overlaps (
     PRIMARY KEY(object_id, world_space_id, cell_x, cell_z)
 ) STRICT, WITHOUT ROWID;
 
-PRAGMA user_version = 2;
+PRAGMA user_version = 3;
 "#;
 
 pub const RUNTIME_SCHEMA: &str = r#"
@@ -103,7 +111,7 @@ CREATE TABLE cell_pages (
     world_space_id INTEGER NOT NULL,
     cell_x INTEGER NOT NULL,
     cell_z INTEGER NOT NULL,
-    domain INTEGER NOT NULL CHECK(domain BETWEEN 1 AND 7),
+    domain INTEGER NOT NULL CHECK(domain BETWEEN 1 AND 8),
     lod INTEGER NOT NULL CHECK(lod BETWEEN 0 AND 255),
     codec INTEGER NOT NULL CHECK(codec IN (0, 1)),
     encoded_bytes INTEGER NOT NULL CHECK(encoded_bytes >= 0),
@@ -129,6 +137,14 @@ CREATE TABLE asset_variants (
     PRIMARY KEY(asset_id, lod)
 ) STRICT, WITHOUT ROWID;
 
+CREATE TABLE object_definitions (
+    definition_id BLOB PRIMARY KEY CHECK(length(definition_id) = 16),
+    definition_key TEXT NOT NULL UNIQUE,
+    display_name TEXT NOT NULL,
+    visual_asset_id BLOB CHECK(visual_asset_id IS NULL OR length(visual_asset_id) = 32),
+    activation_policy INTEGER NOT NULL CHECK(activation_policy IN (0, 1))
+) STRICT;
+
 CREATE TABLE page_dependencies (
     world_space_id INTEGER NOT NULL,
     cell_x INTEGER NOT NULL,
@@ -152,5 +168,17 @@ CREATE TABLE page_dependencies (
         REFERENCES asset_variants(asset_id, lod)
 ) STRICT, WITHOUT ROWID;
 
-PRAGMA user_version = 2;
+CREATE TABLE page_object_definitions (
+    world_space_id INTEGER NOT NULL,
+    cell_x INTEGER NOT NULL,
+    cell_z INTEGER NOT NULL,
+    domain INTEGER NOT NULL,
+    lod INTEGER NOT NULL,
+    definition_id BLOB NOT NULL REFERENCES object_definitions(definition_id),
+    PRIMARY KEY(world_space_id, cell_x, cell_z, domain, lod, definition_id),
+    FOREIGN KEY(world_space_id, cell_x, cell_z, domain, lod)
+        REFERENCES cell_pages(world_space_id, cell_x, cell_z, domain, lod)
+) STRICT, WITHOUT ROWID;
+
+PRAGMA user_version = 3;
 "#;

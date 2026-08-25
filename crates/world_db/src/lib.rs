@@ -8,9 +8,9 @@ use std::{
 
 use rusqlite::{Connection, OpenFlags, OptionalExtension, Transaction, params};
 use world::{
-    AssetId, CellCoord, MAX_DECODED_PAGE_BYTES, PROJECT_SCHEMA_VERSION, PageCodec, PageDomain,
-    PageKey, PagePayload, RUNTIME_SCHEMA_VERSION, StableObjectId, WorldSpaceId,
-    decode_page_payload,
+    AssetId, CellCoord, MAX_DECODED_PAGE_BYTES, ObjectActivationPolicy, ObjectDefinitionId,
+    PROJECT_SCHEMA_VERSION, PageCodec, PageDomain, PageKey, PagePayload, RUNTIME_SCHEMA_VERSION,
+    StableObjectId, WorldSpaceId, decode_page_payload,
 };
 
 #[derive(Debug, Clone)]
@@ -19,6 +19,7 @@ pub struct ProjectDocument {
     pub world_spaces: Vec<WorldSpaceRecord>,
     pub cells: Vec<SourceCellRecord>,
     pub assets: Vec<SourceAssetRecord>,
+    pub definitions: Vec<SourceObjectDefinitionRecord>,
     pub objects: Vec<SourceObjectRecord>,
 }
 
@@ -48,11 +49,20 @@ pub struct SourceAssetRecord {
 }
 
 #[derive(Debug, Clone)]
+pub struct SourceObjectDefinitionRecord {
+    pub id: ObjectDefinitionId,
+    pub key: String,
+    pub display_name: String,
+    pub visual_asset: Option<AssetId>,
+    pub activation: ObjectActivationPolicy,
+}
+
+#[derive(Debug, Clone)]
 pub struct SourceObjectRecord {
     pub id: StableObjectId,
     pub space: WorldSpaceId,
     pub owner_cell: CellCoord,
-    pub asset: AssetId,
+    pub definition: ObjectDefinitionId,
     pub local_translation: [f32; 3],
     pub yaw: f32,
     pub scale: f32,
@@ -65,7 +75,9 @@ pub struct RuntimeBuild {
     pub cells: Vec<RuntimeCellRecord>,
     pub pages: Vec<EncodedPage>,
     pub assets: Vec<AssetVariantRecord>,
+    pub definitions: Vec<RuntimeObjectDefinition>,
     pub dependencies: Vec<PageDependencyRecord>,
+    pub definition_dependencies: Vec<PageObjectDefinitionRecord>,
 }
 
 #[derive(Debug, Clone)]
@@ -203,6 +215,21 @@ pub struct PageDependencyRecord {
 }
 
 #[derive(Debug, Clone)]
+pub struct RuntimeObjectDefinition {
+    pub id: ObjectDefinitionId,
+    pub key: String,
+    pub display_name: String,
+    pub visual_asset: Option<AssetId>,
+    pub activation: ObjectActivationPolicy,
+}
+
+#[derive(Debug, Clone)]
+pub struct PageObjectDefinitionRecord {
+    pub page: PageKey,
+    pub definition: ObjectDefinitionId,
+}
+
+#[derive(Debug, Clone)]
 pub struct PageDependency {
     pub asset: AssetId,
     pub asset_lod: u8,
@@ -276,10 +303,24 @@ fn write_project_document(
             params![asset.id.0.as_slice(), asset.kind, asset.source_uri],
         )?;
     }
+    for definition in &document.definitions {
+        transaction.execute(
+            "INSERT INTO object_definitions( \
+                definition_id, definition_key, display_name, visual_asset_id, activation_policy \
+             ) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                definition.id.0.as_slice(),
+                definition.key,
+                definition.display_name,
+                definition.visual_asset.map(|asset| asset.0),
+                definition.activation as i64,
+            ],
+        )?;
+    }
     for object in &document.objects {
         transaction.execute(
             "INSERT INTO object_placements( \
-                object_id, world_space_id, owner_cell_x, owner_cell_z, asset_id, \
+                object_id, world_space_id, owner_cell_x, owner_cell_z, definition_id, \
                 local_x, local_y, local_z, yaw, scale, source_revision \
              ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
@@ -287,7 +328,7 @@ fn write_project_document(
                 object.space.0,
                 object.owner_cell.x,
                 object.owner_cell.z,
-                object.asset.0.as_slice(),
+                object.definition.0.as_slice(),
                 object.local_translation[0],
                 object.local_translation[1],
                 object.local_translation[2],
@@ -342,7 +383,34 @@ pub fn read_project_database(path: &Path) -> Result<ProjectDocument, WorldDbErro
         .collect::<Result<Vec<_>, _>>()?;
 
     let mut statement = connection.prepare(
-        "SELECT object_id, world_space_id, owner_cell_x, owner_cell_z, asset_id, \
+        "SELECT definition_id, definition_key, display_name, visual_asset_id, activation_policy \
+         FROM object_definitions ORDER BY definition_id",
+    )?;
+    let definitions = statement
+        .query_map([], |row| {
+            Ok(SourceObjectDefinitionRecord {
+                id: ObjectDefinitionId(blob_array(row.get_ref(0)?.as_blob()?, "definition_id")?),
+                key: row.get(1)?,
+                display_name: row.get(2)?,
+                visual_asset: row
+                    .get::<_, Option<Vec<u8>>>(3)?
+                    .map(|bytes| blob_array(&bytes, "visual_asset_id").map(AssetId))
+                    .transpose()?,
+                activation: ObjectActivationPolicy::try_from(row.get::<_, i64>(4)?).map_err(
+                    |error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            4,
+                            rusqlite::types::Type::Integer,
+                            Box::new(error),
+                        )
+                    },
+                )?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut statement = connection.prepare(
+        "SELECT object_id, world_space_id, owner_cell_x, owner_cell_z, definition_id, \
                 local_x, local_y, local_z, yaw, scale, source_revision \
          FROM object_placements ORDER BY object_id",
     )?;
@@ -355,7 +423,10 @@ pub fn read_project_database(path: &Path) -> Result<ProjectDocument, WorldDbErro
                     x: row.get(2)?,
                     z: row.get(3)?,
                 },
-                asset: AssetId(blob_array(row.get_ref(4)?.as_blob()?, "asset_id")?),
+                definition: ObjectDefinitionId(blob_array(
+                    row.get_ref(4)?.as_blob()?,
+                    "definition_id",
+                )?),
                 local_translation: [row.get(5)?, row.get(6)?, row.get(7)?],
                 yaw: row.get(8)?,
                 scale: row.get(9)?,
@@ -369,6 +440,7 @@ pub fn read_project_database(path: &Path) -> Result<ProjectDocument, WorldDbErro
         world_spaces,
         cells,
         assets,
+        definitions,
         objects,
     })
 }
@@ -449,6 +521,20 @@ fn write_runtime_build(
             ],
         )?;
     }
+    for definition in &build.definitions {
+        transaction.execute(
+            "INSERT INTO object_definitions( \
+                definition_id, definition_key, display_name, visual_asset_id, activation_policy \
+             ) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                definition.id.0.as_slice(),
+                definition.key,
+                definition.display_name,
+                definition.visual_asset.map(|asset| asset.0),
+                definition.activation as i64,
+            ],
+        )?;
+    }
     for page in &build.pages {
         transaction.execute(
             "INSERT INTO cell_pages( \
@@ -484,6 +570,21 @@ fn write_runtime_build(
                 i64::from(dependency.page.lod),
                 dependency.asset.0.as_slice(),
                 i64::from(dependency.asset_lod)
+            ],
+        )?;
+    }
+    for dependency in &build.definition_dependencies {
+        transaction.execute(
+            "INSERT INTO page_object_definitions( \
+                world_space_id, cell_x, cell_z, domain, lod, definition_id \
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                dependency.page.space.0,
+                dependency.page.cell.x,
+                dependency.page.cell.z,
+                dependency.page.domain as i64,
+                i64::from(dependency.page.lod),
+                dependency.definition.0.as_slice(),
             ],
         )?;
     }
@@ -628,6 +729,55 @@ impl RuntimeReader {
             .collect::<Result<Vec<_>, _>>()
             .map_err(Into::into)
     }
+
+    pub fn read_object_definitions(
+        &self,
+        key: PageKey,
+    ) -> Result<Vec<RuntimeObjectDefinition>, WorldDbError> {
+        let mut statement = self.connection.prepare_cached(
+            "SELECT d.definition_id, d.definition_key, d.display_name, \
+                    d.visual_asset_id, d.activation_policy \
+             FROM page_object_definitions p \
+             JOIN object_definitions d ON d.definition_id = p.definition_id \
+             WHERE p.world_space_id = ?1 AND p.cell_x = ?2 AND p.cell_z = ?3 \
+               AND p.domain = ?4 AND p.lod = ?5 \
+             ORDER BY d.definition_id",
+        )?;
+        statement
+            .query_map(
+                params![
+                    key.space.0,
+                    key.cell.x,
+                    key.cell.z,
+                    key.domain as i64,
+                    i64::from(key.lod),
+                ],
+                |row| {
+                    Ok(RuntimeObjectDefinition {
+                        id: ObjectDefinitionId(blob_array(
+                            row.get_ref(0)?.as_blob()?,
+                            "definition_id",
+                        )?),
+                        key: row.get(1)?,
+                        display_name: row.get(2)?,
+                        visual_asset: row
+                            .get::<_, Option<Vec<u8>>>(3)?
+                            .map(|bytes| blob_array(&bytes, "visual_asset_id").map(AssetId))
+                            .transpose()?,
+                        activation: ObjectActivationPolicy::try_from(row.get::<_, i64>(4)?)
+                            .map_err(|error| {
+                                rusqlite::Error::FromSqlConversionFailure(
+                                    4,
+                                    rusqlite::types::Type::Integer,
+                                    Box::new(error),
+                                )
+                            })?,
+                    })
+                },
+            )?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(Into::into)
+    }
 }
 
 fn query_world_spaces(connection: &Connection) -> Result<Vec<WorldSpaceRecord>, WorldDbError> {
@@ -757,7 +907,9 @@ pub enum WorldDbError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use world::{TerrainRenderPage, encode_page_payload};
+    use world::{
+        GameplayObjectInstance, GameplayObjectsPage, TerrainRenderPage, encode_page_payload,
+    };
 
     #[test]
     fn project_and_runtime_databases_are_distinct_and_readable() {
@@ -779,6 +931,8 @@ mod tests {
             minimum_y: -4.0,
             maximum_y: 8.0,
         };
+        let definition_id = ObjectDefinitionId([3; 16]);
+        let object_id = StableObjectId([5; 16]);
         write_project_database(
             &project_path,
             &ProjectDocument {
@@ -801,7 +955,23 @@ mod tests {
                     },
                 ],
                 assets: Vec::new(),
-                objects: Vec::new(),
+                definitions: vec![SourceObjectDefinitionRecord {
+                    id: definition_id,
+                    key: "test-door".into(),
+                    display_name: "Test door".into(),
+                    visual_asset: None,
+                    activation: ObjectActivationPolicy::Proximity,
+                }],
+                objects: vec![SourceObjectRecord {
+                    id: object_id,
+                    space: space.id,
+                    owner_cell: CellCoord::ZERO,
+                    definition: definition_id,
+                    local_translation: [1.0, 0.0, 2.0],
+                    yaw: 0.0,
+                    scale: 1.0,
+                    source_revision: 1,
+                }],
             },
         )
         .unwrap();
@@ -809,6 +979,8 @@ mod tests {
         assert_eq!(project.default_world_space, space.id);
         assert_eq!(project.world_spaces.len(), 2);
         assert_eq!(project.cells.len(), 2);
+        assert_eq!(project.definitions.len(), 1);
+        assert_eq!(project.objects[0].definition, definition_id);
 
         let payload = PagePayload::TerrainRender(TerrainRenderPage {
             height: 0.0,
@@ -828,6 +1000,29 @@ mod tests {
             checksum: *blake3::hash(&decoded).as_bytes(),
             payload: decoded,
         };
+        let gameplay_payload = PagePayload::GameplayObjects(GameplayObjectsPage {
+            instances: vec![GameplayObjectInstance {
+                id: object_id,
+                definition: definition_id,
+                translation: [1.0, 0.0, 2.0],
+                yaw: 0.0,
+                scale: 1.0,
+            }],
+        });
+        let gameplay_decoded = encode_page_payload(&gameplay_payload).unwrap();
+        let gameplay_page = EncodedPage {
+            key: PageKey {
+                space: space.id,
+                cell: CellCoord::ZERO,
+                domain: PageDomain::GameplayObjects,
+                lod: 0,
+            },
+            codec: PageCodec::Raw,
+            decoded_bytes: gameplay_decoded.len() as u64,
+            gpu_bytes_estimate: 0,
+            checksum: *blake3::hash(&gameplay_decoded).as_bytes(),
+            payload: gameplay_decoded,
+        };
         write_runtime_database(
             &runtime_path,
             &RuntimeBuild {
@@ -843,12 +1038,24 @@ mod tests {
                     cell: CellCoord::ZERO,
                     minimum_y: 0.0,
                     maximum_y: 0.0,
-                    domain_mask: domain_bit(PageDomain::TerrainRender),
+                    domain_mask: domain_bit(PageDomain::TerrainRender)
+                        | domain_bit(PageDomain::GameplayObjects),
                     source_revision: 1,
                 }],
-                pages: vec![page.clone()],
+                pages: vec![page.clone(), gameplay_page.clone()],
                 assets: Vec::new(),
+                definitions: vec![RuntimeObjectDefinition {
+                    id: definition_id,
+                    key: "test-door".into(),
+                    display_name: "Test door".into(),
+                    visual_asset: None,
+                    activation: ObjectActivationPolicy::Proximity,
+                }],
                 dependencies: Vec::new(),
+                definition_dependencies: vec![PageObjectDefinitionRecord {
+                    page: gameplay_page.key,
+                    definition: definition_id,
+                }],
             },
         )
         .unwrap();
@@ -867,6 +1074,10 @@ mod tests {
                 .payload,
             payload
         );
+        let definitions = reader.read_object_definitions(gameplay_page.key).unwrap();
+        assert_eq!(definitions.len(), 1);
+        assert_eq!(definitions[0].id, definition_id);
+        assert_eq!(definitions[0].key, "test-door");
         fs::remove_dir_all(directory).unwrap();
     }
 
