@@ -6,6 +6,7 @@ Yarra now has a minimal SQLite-backed world path while keeping gameplay small:
 crates/
   app_game/   Executable and platform composition
   engine/     Bevy gameplay, rendering, and bounded page streaming
+  ground_cover/ Dedicated GPU-driven grass and decorative field rendering
   world/      Bevy-free coordinates, IDs, page domains, and payload ABI
   world_db/   Strict authoring/runtime SQLite schemas and readers
   world_cook/ Authoring database to immutable runtime generation
@@ -47,7 +48,8 @@ cargo run --release -p yarra-app-game
 The current scene contains:
 
 - SQLite-streamed flat terrain cells;
-- sparse streamed instances of the local evaluation tree;
+- authored meadow coverage rendered as procedural ground cover;
+- sparse streamed instances of the local evaluation tree with four mesh LODs;
 - one movable cube;
 - a following camera and bounded cascaded directional shadows;
 - FPS/frame-time and page residency diagnostics.
@@ -67,6 +69,23 @@ Press Tab to move between the demo overworld and interior. A transition removes
 the previous area's residency set before requesting pages for the destination.
 VSync follows the display's refresh rate; on a 120 Hz display, every frame has
 an 8.33 ms deadline.
+
+Tree LOD is selected from projected logical-pixel height rather than world
+distance, so camera zoom, third-person perspective, and elevation affect it
+correctly. The current thresholds are LOD0 at 320 px, LOD1 at 160 px, LOD2 at
+80 px, and LOD3 below that, with 12% hysteresis. The HUD shows active LOD counts
+and the projected-size range of resident trees.
+
+Ground cover is stored as species, layers, and small per-cell coverage masks in
+the authoring database. Cooking turns non-empty mask samples into bounded
+clusters; it never creates a database row or Bevy entity per blade. The render
+crate uploads each resident page once, rejects clusters and selects density LOD
+on the GPU, then issues two bounded indirect draws. Each emitted instance is a
+small randomly rotated clump of alpha-clipped cards. Its coverage atlas and
+coverage-preserving mip chain are generated deterministically once at renderer
+startup, so the experiment requires no untracked texture asset. Wind, terrain
+conformance, and grass-shadow experiments remain later steps rather than hidden
+assumptions.
 
 Run the automated live traversal check with:
 

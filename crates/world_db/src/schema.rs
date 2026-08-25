@@ -32,11 +32,68 @@ CREATE TABLE source_cells (
     PRIMARY KEY(world_space_id, cell_x, cell_z)
 ) STRICT, WITHOUT ROWID;
 
+CREATE TABLE ground_cover_species (
+    species_id BLOB PRIMARY KEY CHECK(length(species_id) = 16),
+    species_key TEXT NOT NULL UNIQUE,
+    bottom_color_r REAL NOT NULL CHECK(bottom_color_r BETWEEN 0.0 AND 1.0),
+    bottom_color_g REAL NOT NULL CHECK(bottom_color_g BETWEEN 0.0 AND 1.0),
+    bottom_color_b REAL NOT NULL CHECK(bottom_color_b BETWEEN 0.0 AND 1.0),
+    top_color_r REAL NOT NULL CHECK(top_color_r BETWEEN 0.0 AND 1.0),
+    top_color_g REAL NOT NULL CHECK(top_color_g BETWEEN 0.0 AND 1.0),
+    top_color_b REAL NOT NULL CHECK(top_color_b BETWEEN 0.0 AND 1.0),
+    minimum_card_height REAL NOT NULL CHECK(minimum_card_height > 0.0),
+    maximum_card_height REAL NOT NULL CHECK(maximum_card_height >= minimum_card_height),
+    minimum_card_width REAL NOT NULL CHECK(minimum_card_width > 0.0),
+    maximum_card_width REAL NOT NULL CHECK(maximum_card_width >= minimum_card_width),
+    flattened_card_probability REAL NOT NULL CHECK(flattened_card_probability BETWEEN 0.0 AND 1.0),
+    maximum_wind_displacement REAL NOT NULL CHECK(maximum_wind_displacement >= 0.0)
+) STRICT;
+
+CREATE TABLE ground_cover_layers (
+    layer_id BLOB PRIMARY KEY CHECK(length(layer_id) = 16),
+    world_space_id INTEGER NOT NULL REFERENCES world_spaces(id),
+    layer_key TEXT NOT NULL,
+    species_id BLOB NOT NULL REFERENCES ground_cover_species(species_id),
+    density_per_square_meter REAL NOT NULL CHECK(density_per_square_meter > 0.0),
+    seed INTEGER NOT NULL CHECK(seed BETWEEN 0 AND 4294967295),
+    UNIQUE(world_space_id, layer_key),
+    UNIQUE(layer_id, world_space_id)
+) STRICT;
+
+CREATE TABLE ground_cover_cell_masks (
+    layer_id BLOB NOT NULL,
+    world_space_id INTEGER NOT NULL,
+    cell_x INTEGER NOT NULL,
+    cell_z INTEGER NOT NULL,
+    resolution INTEGER NOT NULL CHECK(resolution BETWEEN 1 AND 64),
+    coverage BLOB NOT NULL CHECK(length(coverage) = resolution * resolution),
+    source_revision INTEGER NOT NULL CHECK(source_revision >= 0),
+    PRIMARY KEY(layer_id, world_space_id, cell_x, cell_z),
+    FOREIGN KEY(layer_id, world_space_id)
+        REFERENCES ground_cover_layers(layer_id, world_space_id) ON DELETE CASCADE,
+    FOREIGN KEY(world_space_id, cell_x, cell_z)
+        REFERENCES source_cells(world_space_id, cell_x, cell_z) ON DELETE CASCADE
+) STRICT, WITHOUT ROWID;
+
 CREATE TABLE source_assets (
     asset_id BLOB PRIMARY KEY CHECK(length(asset_id) = 32),
+    asset_key TEXT NOT NULL UNIQUE,
     kind TEXT NOT NULL,
     source_uri TEXT NOT NULL
 ) STRICT;
+
+CREATE TABLE source_asset_variants (
+    asset_id BLOB NOT NULL REFERENCES source_assets(asset_id) ON DELETE CASCADE,
+    lod INTEGER NOT NULL CHECK(lod BETWEEN 0 AND 255),
+    uri TEXT NOT NULL,
+    bounds_x REAL NOT NULL CHECK(bounds_x >= 0.0),
+    bounds_y REAL NOT NULL CHECK(bounds_y >= 0.0),
+    bounds_z REAL NOT NULL CHECK(bounds_z >= 0.0),
+    gpu_bytes_estimate INTEGER NOT NULL CHECK(gpu_bytes_estimate >= 0),
+    shadow_policy INTEGER NOT NULL CHECK(shadow_policy BETWEEN 0 AND 2),
+    minimum_screen_height REAL NOT NULL CHECK(minimum_screen_height >= 0.0),
+    PRIMARY KEY(asset_id, lod)
+) STRICT, WITHOUT ROWID;
 
 CREATE TABLE object_definitions (
     definition_id BLOB PRIMARY KEY CHECK(length(definition_id) = 16),
@@ -73,7 +130,7 @@ CREATE TABLE object_cell_overlaps (
     PRIMARY KEY(object_id, world_space_id, cell_x, cell_z)
 ) STRICT, WITHOUT ROWID;
 
-PRAGMA user_version = 3;
+PRAGMA user_version = 6;
 "#;
 
 pub const RUNTIME_SCHEMA: &str = r#"
@@ -134,6 +191,7 @@ CREATE TABLE asset_variants (
     bounds_z REAL NOT NULL CHECK(bounds_z >= 0.0),
     gpu_bytes_estimate INTEGER NOT NULL CHECK(gpu_bytes_estimate >= 0),
     shadow_policy INTEGER NOT NULL CHECK(shadow_policy BETWEEN 0 AND 2),
+    minimum_screen_height REAL NOT NULL CHECK(minimum_screen_height >= 0.0),
     PRIMARY KEY(asset_id, lod)
 ) STRICT, WITHOUT ROWID;
 
@@ -143,6 +201,23 @@ CREATE TABLE object_definitions (
     display_name TEXT NOT NULL,
     visual_asset_id BLOB CHECK(visual_asset_id IS NULL OR length(visual_asset_id) = 32),
     activation_policy INTEGER NOT NULL CHECK(activation_policy IN (0, 1))
+) STRICT;
+
+CREATE TABLE ground_cover_species (
+    species_id BLOB PRIMARY KEY CHECK(length(species_id) = 16),
+    species_key TEXT NOT NULL UNIQUE,
+    bottom_color_r REAL NOT NULL CHECK(bottom_color_r BETWEEN 0.0 AND 1.0),
+    bottom_color_g REAL NOT NULL CHECK(bottom_color_g BETWEEN 0.0 AND 1.0),
+    bottom_color_b REAL NOT NULL CHECK(bottom_color_b BETWEEN 0.0 AND 1.0),
+    top_color_r REAL NOT NULL CHECK(top_color_r BETWEEN 0.0 AND 1.0),
+    top_color_g REAL NOT NULL CHECK(top_color_g BETWEEN 0.0 AND 1.0),
+    top_color_b REAL NOT NULL CHECK(top_color_b BETWEEN 0.0 AND 1.0),
+    minimum_card_height REAL NOT NULL CHECK(minimum_card_height > 0.0),
+    maximum_card_height REAL NOT NULL CHECK(maximum_card_height >= minimum_card_height),
+    minimum_card_width REAL NOT NULL CHECK(minimum_card_width > 0.0),
+    maximum_card_width REAL NOT NULL CHECK(maximum_card_width >= minimum_card_width),
+    flattened_card_probability REAL NOT NULL CHECK(flattened_card_probability BETWEEN 0.0 AND 1.0),
+    maximum_wind_displacement REAL NOT NULL CHECK(maximum_wind_displacement >= 0.0)
 ) STRICT;
 
 CREATE TABLE page_dependencies (
@@ -180,5 +255,17 @@ CREATE TABLE page_object_definitions (
         REFERENCES cell_pages(world_space_id, cell_x, cell_z, domain, lod)
 ) STRICT, WITHOUT ROWID;
 
-PRAGMA user_version = 3;
+CREATE TABLE page_ground_cover_species (
+    world_space_id INTEGER NOT NULL,
+    cell_x INTEGER NOT NULL,
+    cell_z INTEGER NOT NULL,
+    domain INTEGER NOT NULL,
+    lod INTEGER NOT NULL,
+    species_id BLOB NOT NULL REFERENCES ground_cover_species(species_id),
+    PRIMARY KEY(world_space_id, cell_x, cell_z, domain, lod, species_id),
+    FOREIGN KEY(world_space_id, cell_x, cell_z, domain, lod)
+        REFERENCES cell_pages(world_space_id, cell_x, cell_z, domain, lod)
+) STRICT, WITHOUT ROWID;
+
+PRAGMA user_version = 6;
 "#;

@@ -8,9 +8,10 @@ use std::{
 
 use rusqlite::{Connection, OpenFlags, OptionalExtension, Transaction, params};
 use world::{
-    AssetId, CellCoord, MAX_DECODED_PAGE_BYTES, ObjectActivationPolicy, ObjectDefinitionId,
-    PROJECT_SCHEMA_VERSION, PageCodec, PageDomain, PageKey, PagePayload, RUNTIME_SCHEMA_VERSION,
-    StableObjectId, WorldSpaceId, decode_page_payload,
+    AssetId, CellCoord, GroundCoverLayerId, GroundCoverSpecies, GroundCoverSpeciesId,
+    MAX_DECODED_PAGE_BYTES, ObjectActivationPolicy, ObjectDefinitionId, PROJECT_SCHEMA_VERSION,
+    PageCodec, PageDomain, PageKey, PagePayload, RUNTIME_SCHEMA_VERSION, StableObjectId,
+    WorldSpaceId, decode_page_payload,
 };
 
 #[derive(Debug, Clone)]
@@ -18,7 +19,11 @@ pub struct ProjectDocument {
     pub default_world_space: WorldSpaceId,
     pub world_spaces: Vec<WorldSpaceRecord>,
     pub cells: Vec<SourceCellRecord>,
+    pub ground_cover_species: Vec<GroundCoverSpecies>,
+    pub ground_cover_layers: Vec<SourceGroundCoverLayerRecord>,
+    pub ground_cover_masks: Vec<SourceGroundCoverCellMaskRecord>,
     pub assets: Vec<SourceAssetRecord>,
+    pub asset_variants: Vec<SourceAssetVariantRecord>,
     pub definitions: Vec<SourceObjectDefinitionRecord>,
     pub objects: Vec<SourceObjectRecord>,
 }
@@ -42,10 +47,42 @@ pub struct SourceCellRecord {
 }
 
 #[derive(Debug, Clone)]
+pub struct SourceGroundCoverLayerRecord {
+    pub id: GroundCoverLayerId,
+    pub space: WorldSpaceId,
+    pub key: String,
+    pub species: GroundCoverSpeciesId,
+    pub density_per_square_meter: f32,
+    pub seed: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct SourceGroundCoverCellMaskRecord {
+    pub layer: GroundCoverLayerId,
+    pub space: WorldSpaceId,
+    pub cell: CellCoord,
+    pub resolution: u8,
+    pub coverage: Vec<u8>,
+    pub source_revision: i64,
+}
+
+#[derive(Debug, Clone)]
 pub struct SourceAssetRecord {
     pub id: AssetId,
+    pub key: String,
     pub kind: String,
     pub source_uri: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct SourceAssetVariantRecord {
+    pub asset: AssetId,
+    pub lod: u8,
+    pub uri: String,
+    pub bounds: [f32; 3],
+    pub gpu_bytes_estimate: u64,
+    pub shadow_policy: i64,
+    pub minimum_screen_height: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -76,8 +113,10 @@ pub struct RuntimeBuild {
     pub pages: Vec<EncodedPage>,
     pub assets: Vec<AssetVariantRecord>,
     pub definitions: Vec<RuntimeObjectDefinition>,
+    pub ground_cover_species: Vec<GroundCoverSpecies>,
     pub dependencies: Vec<PageDependencyRecord>,
     pub definition_dependencies: Vec<PageObjectDefinitionRecord>,
+    pub ground_cover_species_dependencies: Vec<PageGroundCoverSpeciesRecord>,
 }
 
 #[derive(Debug, Clone)]
@@ -205,6 +244,7 @@ pub struct AssetVariantRecord {
     pub bounds: [f32; 3],
     pub gpu_bytes_estimate: u64,
     pub shadow_policy: i64,
+    pub minimum_screen_height: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -230,6 +270,12 @@ pub struct PageObjectDefinitionRecord {
 }
 
 #[derive(Debug, Clone)]
+pub struct PageGroundCoverSpeciesRecord {
+    pub page: PageKey,
+    pub species: GroundCoverSpeciesId,
+}
+
+#[derive(Debug, Clone)]
 pub struct PageDependency {
     pub asset: AssetId,
     pub asset_lod: u8,
@@ -238,6 +284,7 @@ pub struct PageDependency {
     pub bounds: [f32; 3],
     pub gpu_bytes_estimate: u64,
     pub shadow_policy: i64,
+    pub minimum_screen_height: f32,
 }
 
 pub fn domain_bit(domain: PageDomain) -> u64 {
@@ -297,10 +344,69 @@ fn write_project_document(
             ],
         )?;
     }
+    write_ground_cover_species(transaction, &document.ground_cover_species)?;
+    for layer in &document.ground_cover_layers {
+        transaction.execute(
+            "INSERT INTO ground_cover_layers( \
+                layer_id, world_space_id, layer_key, species_id, \
+                density_per_square_meter, seed \
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                layer.id.0.as_slice(),
+                layer.space.0,
+                layer.key,
+                layer.species.0.as_slice(),
+                layer.density_per_square_meter,
+                i64::from(layer.seed),
+            ],
+        )?;
+    }
+    for mask in &document.ground_cover_masks {
+        transaction.execute(
+            "INSERT INTO ground_cover_cell_masks( \
+                layer_id, world_space_id, cell_x, cell_z, resolution, coverage, source_revision \
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                mask.layer.0.as_slice(),
+                mask.space.0,
+                mask.cell.x,
+                mask.cell.z,
+                i64::from(mask.resolution),
+                mask.coverage,
+                mask.source_revision,
+            ],
+        )?;
+    }
     for asset in &document.assets {
         transaction.execute(
-            "INSERT INTO source_assets(asset_id, kind, source_uri) VALUES (?1, ?2, ?3)",
-            params![asset.id.0.as_slice(), asset.kind, asset.source_uri],
+            "INSERT INTO source_assets(asset_id, asset_key, kind, source_uri) \
+             VALUES (?1, ?2, ?3, ?4)",
+            params![
+                asset.id.0.as_slice(),
+                asset.key,
+                asset.kind,
+                asset.source_uri
+            ],
+        )?;
+    }
+    for variant in &document.asset_variants {
+        transaction.execute(
+            "INSERT INTO source_asset_variants( \
+                asset_id, lod, uri, bounds_x, bounds_y, bounds_z, gpu_bytes_estimate, \
+                shadow_policy, minimum_screen_height \
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                variant.asset.0.as_slice(),
+                i64::from(variant.lod),
+                variant.uri,
+                variant.bounds[0],
+                variant.bounds[1],
+                variant.bounds[2],
+                i64::try_from(variant.gpu_bytes_estimate)
+                    .map_err(|_| WorldDbError::IntegerOverflow)?,
+                variant.shadow_policy,
+                variant.minimum_screen_height,
+            ],
         )?;
     }
     for definition in &document.definitions {
@@ -341,6 +447,39 @@ fn write_project_document(
     Ok(())
 }
 
+fn write_ground_cover_species(
+    transaction: &Transaction<'_>,
+    species: &[GroundCoverSpecies],
+) -> Result<(), WorldDbError> {
+    for species in species {
+        transaction.execute(
+            "INSERT INTO ground_cover_species( \
+                species_id, species_key, bottom_color_r, bottom_color_g, bottom_color_b, \
+                top_color_r, top_color_g, top_color_b, minimum_card_height, \
+                maximum_card_height, minimum_card_width, maximum_card_width, \
+                flattened_card_probability, maximum_wind_displacement \
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            params![
+                species.id.0.as_slice(),
+                species.key,
+                species.bottom_color[0],
+                species.bottom_color[1],
+                species.bottom_color[2],
+                species.top_color[0],
+                species.top_color[1],
+                species.top_color[2],
+                species.minimum_card_height,
+                species.maximum_card_height,
+                species.minimum_card_width,
+                species.maximum_card_width,
+                species.flattened_card_probability,
+                species.maximum_wind_displacement,
+            ],
+        )?;
+    }
+    Ok(())
+}
+
 pub fn read_project_database(path: &Path) -> Result<ProjectDocument, WorldDbError> {
     let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     ensure_schema_version(&connection, PROJECT_SCHEMA_VERSION, "project")?;
@@ -370,14 +509,78 @@ pub fn read_project_database(path: &Path) -> Result<ProjectDocument, WorldDbErro
         })?
         .collect::<Result<Vec<_>, _>>()?;
 
-    let mut statement = connection
-        .prepare("SELECT asset_id, kind, source_uri FROM source_assets ORDER BY asset_id")?;
+    let ground_cover_species = query_all_ground_cover_species(&connection)?;
+    let mut statement = connection.prepare(
+        "SELECT layer_id, world_space_id, layer_key, species_id, \
+                density_per_square_meter, seed \
+         FROM ground_cover_layers ORDER BY layer_id",
+    )?;
+    let ground_cover_layers = statement
+        .query_map([], |row| {
+            Ok(SourceGroundCoverLayerRecord {
+                id: GroundCoverLayerId(blob_array(row.get_ref(0)?.as_blob()?, "layer_id")?),
+                space: WorldSpaceId(row.get(1)?),
+                key: row.get(2)?,
+                species: GroundCoverSpeciesId(blob_array(
+                    row.get_ref(3)?.as_blob()?,
+                    "species_id",
+                )?),
+                density_per_square_meter: row.get(4)?,
+                seed: row.get::<_, i64>(5)? as u32,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut statement = connection.prepare(
+        "SELECT layer_id, world_space_id, cell_x, cell_z, resolution, coverage, source_revision \
+         FROM ground_cover_cell_masks \
+         ORDER BY layer_id, world_space_id, cell_x, cell_z",
+    )?;
+    let ground_cover_masks = statement
+        .query_map([], |row| {
+            Ok(SourceGroundCoverCellMaskRecord {
+                layer: GroundCoverLayerId(blob_array(row.get_ref(0)?.as_blob()?, "layer_id")?),
+                space: WorldSpaceId(row.get(1)?),
+                cell: CellCoord {
+                    x: row.get(2)?,
+                    z: row.get(3)?,
+                },
+                resolution: row.get::<_, i64>(4)? as u8,
+                coverage: row.get(5)?,
+                source_revision: row.get(6)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut statement = connection.prepare(
+        "SELECT asset_id, asset_key, kind, source_uri FROM source_assets ORDER BY asset_id",
+    )?;
     let assets = statement
         .query_map([], |row| {
             Ok(SourceAssetRecord {
                 id: AssetId(blob_array(row.get_ref(0)?.as_blob()?, "asset_id")?),
-                kind: row.get(1)?,
-                source_uri: row.get(2)?,
+                key: row.get(1)?,
+                kind: row.get(2)?,
+                source_uri: row.get(3)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut statement = connection.prepare(
+        "SELECT asset_id, lod, uri, bounds_x, bounds_y, bounds_z, gpu_bytes_estimate, \
+                shadow_policy, minimum_screen_height \
+         FROM source_asset_variants ORDER BY asset_id, lod",
+    )?;
+    let asset_variants = statement
+        .query_map([], |row| {
+            let gpu_bytes_estimate: i64 = row.get(6)?;
+            Ok(SourceAssetVariantRecord {
+                asset: AssetId(blob_array(row.get_ref(0)?.as_blob()?, "asset_id")?),
+                lod: row.get::<_, i64>(1)? as u8,
+                uri: row.get(2)?,
+                bounds: [row.get(3)?, row.get(4)?, row.get(5)?],
+                gpu_bytes_estimate: gpu_bytes_estimate as u64,
+                shadow_policy: row.get(7)?,
+                minimum_screen_height: row.get(8)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -439,7 +642,11 @@ pub fn read_project_database(path: &Path) -> Result<ProjectDocument, WorldDbErro
         default_world_space,
         world_spaces,
         cells,
+        ground_cover_species,
+        ground_cover_layers,
+        ground_cover_masks,
         assets,
+        asset_variants,
         definitions,
         objects,
     })
@@ -505,8 +712,8 @@ fn write_runtime_build(
         transaction.execute(
             "INSERT INTO asset_variants( \
                 asset_id, lod, kind, uri, bounds_x, bounds_y, bounds_z, \
-                gpu_bytes_estimate, shadow_policy \
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                gpu_bytes_estimate, shadow_policy, minimum_screen_height \
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 asset.asset.0.as_slice(),
                 i64::from(asset.lod),
@@ -517,7 +724,8 @@ fn write_runtime_build(
                 asset.bounds[2],
                 i64::try_from(asset.gpu_bytes_estimate)
                     .map_err(|_| WorldDbError::IntegerOverflow)?,
-                asset.shadow_policy
+                asset.shadow_policy,
+                asset.minimum_screen_height,
             ],
         )?;
     }
@@ -535,6 +743,7 @@ fn write_runtime_build(
             ],
         )?;
     }
+    write_ground_cover_species(transaction, &build.ground_cover_species)?;
     for page in &build.pages {
         transaction.execute(
             "INSERT INTO cell_pages( \
@@ -585,6 +794,21 @@ fn write_runtime_build(
                 dependency.page.domain as i64,
                 i64::from(dependency.page.lod),
                 dependency.definition.0.as_slice(),
+            ],
+        )?;
+    }
+    for dependency in &build.ground_cover_species_dependencies {
+        transaction.execute(
+            "INSERT INTO page_ground_cover_species( \
+                world_space_id, cell_x, cell_z, domain, lod, species_id \
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                dependency.page.space.0,
+                dependency.page.cell.x,
+                dependency.page.cell.z,
+                dependency.page.domain as i64,
+                i64::from(dependency.page.lod),
+                dependency.species.0.as_slice(),
             ],
         )?;
     }
@@ -697,7 +921,8 @@ impl RuntimeReader {
     pub fn read_dependencies(&self, key: PageKey) -> Result<Vec<PageDependency>, WorldDbError> {
         let mut statement = self.connection.prepare_cached(
             "SELECT d.asset_id, d.asset_lod, a.kind, a.uri, \
-                    a.bounds_x, a.bounds_y, a.bounds_z, a.gpu_bytes_estimate, a.shadow_policy \
+                    a.bounds_x, a.bounds_y, a.bounds_z, a.gpu_bytes_estimate, a.shadow_policy, \
+                    a.minimum_screen_height \
              FROM page_dependencies d \
              JOIN asset_variants a ON a.asset_id = d.asset_id AND a.lod = d.asset_lod \
              WHERE d.world_space_id = ?1 AND d.cell_x = ?2 AND d.cell_z = ?3 \
@@ -723,6 +948,7 @@ impl RuntimeReader {
                         bounds: [row.get(4)?, row.get(5)?, row.get(6)?],
                         gpu_bytes_estimate: gpu_bytes_estimate as u64,
                         shadow_policy: row.get(8)?,
+                        minimum_screen_height: row.get(9)?,
                     })
                 },
             )?
@@ -778,6 +1004,70 @@ impl RuntimeReader {
             .collect::<Result<Vec<_>, _>>()
             .map_err(Into::into)
     }
+
+    pub fn read_ground_cover_species(
+        &self,
+        key: PageKey,
+    ) -> Result<Vec<GroundCoverSpecies>, WorldDbError> {
+        let mut statement = self.connection.prepare_cached(
+            "SELECT s.species_id, s.species_key, \
+                    s.bottom_color_r, s.bottom_color_g, s.bottom_color_b, \
+                    s.top_color_r, s.top_color_g, s.top_color_b, \
+                    s.minimum_card_height, s.maximum_card_height, \
+                    s.minimum_card_width, s.maximum_card_width, \
+                    s.flattened_card_probability, s.maximum_wind_displacement \
+             FROM page_ground_cover_species p \
+             JOIN ground_cover_species s ON s.species_id = p.species_id \
+             WHERE p.world_space_id = ?1 AND p.cell_x = ?2 AND p.cell_z = ?3 \
+               AND p.domain = ?4 AND p.lod = ?5 \
+             ORDER BY s.species_id",
+        )?;
+        statement
+            .query_map(
+                params![
+                    key.space.0,
+                    key.cell.x,
+                    key.cell.z,
+                    key.domain as i64,
+                    i64::from(key.lod),
+                ],
+                ground_cover_species_from_row,
+            )?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(Into::into)
+    }
+}
+
+fn query_all_ground_cover_species(
+    connection: &Connection,
+) -> Result<Vec<GroundCoverSpecies>, WorldDbError> {
+    let mut statement = connection.prepare(
+        "SELECT species_id, species_key, \
+                bottom_color_r, bottom_color_g, bottom_color_b, \
+                top_color_r, top_color_g, top_color_b, \
+                minimum_card_height, maximum_card_height, \
+                minimum_card_width, maximum_card_width, \
+                flattened_card_probability, maximum_wind_displacement \
+         FROM ground_cover_species ORDER BY species_id",
+    )?;
+    Ok(statement
+        .query_map([], ground_cover_species_from_row)?
+        .collect::<Result<Vec<_>, _>>()?)
+}
+
+fn ground_cover_species_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<GroundCoverSpecies> {
+    Ok(GroundCoverSpecies {
+        id: GroundCoverSpeciesId(blob_array(row.get_ref(0)?.as_blob()?, "species_id")?),
+        key: row.get(1)?,
+        bottom_color: [row.get(2)?, row.get(3)?, row.get(4)?],
+        top_color: [row.get(5)?, row.get(6)?, row.get(7)?],
+        minimum_card_height: row.get(8)?,
+        maximum_card_height: row.get(9)?,
+        minimum_card_width: row.get(10)?,
+        maximum_card_width: row.get(11)?,
+        flattened_card_probability: row.get(12)?,
+        maximum_wind_displacement: row.get(13)?,
+    })
 }
 
 fn query_world_spaces(connection: &Connection) -> Result<Vec<WorldSpaceRecord>, WorldDbError> {
@@ -908,7 +1198,9 @@ pub enum WorldDbError {
 mod tests {
     use super::*;
     use world::{
-        GameplayObjectInstance, GameplayObjectsPage, TerrainRenderPage, encode_page_payload,
+        GameplayObjectInstance, GameplayObjectsPage, GroundCoverCluster, GroundCoverLayerId,
+        GroundCoverPage, GroundCoverSpecies, GroundCoverSpeciesId, TerrainRenderPage,
+        encode_page_payload,
     };
 
     #[test]
@@ -933,6 +1225,21 @@ mod tests {
         };
         let definition_id = ObjectDefinitionId([3; 16]);
         let object_id = StableObjectId([5; 16]);
+        let asset_id = AssetId([9; 32]);
+        let ground_cover_species_id = GroundCoverSpeciesId([11; 16]);
+        let ground_cover_layer_id = GroundCoverLayerId([12; 16]);
+        let ground_cover_species = GroundCoverSpecies {
+            id: ground_cover_species_id,
+            key: "test/meadow-grass".into(),
+            bottom_color: [0.04, 0.11, 0.03],
+            top_color: [0.18, 0.32, 0.10],
+            minimum_card_height: 0.55,
+            maximum_card_height: 0.78,
+            minimum_card_width: 0.7,
+            maximum_card_width: 1.4,
+            flattened_card_probability: 0.2,
+            maximum_wind_displacement: 0.2,
+        };
         write_project_database(
             &project_path,
             &ProjectDocument {
@@ -954,7 +1261,38 @@ mod tests {
                         source_revision: 1,
                     },
                 ],
-                assets: Vec::new(),
+                ground_cover_species: vec![ground_cover_species.clone()],
+                ground_cover_layers: vec![SourceGroundCoverLayerRecord {
+                    id: ground_cover_layer_id,
+                    space: space.id,
+                    key: "test/meadow".into(),
+                    species: ground_cover_species_id,
+                    density_per_square_meter: 7.0,
+                    seed: 91,
+                }],
+                ground_cover_masks: vec![SourceGroundCoverCellMaskRecord {
+                    layer: ground_cover_layer_id,
+                    space: space.id,
+                    cell: CellCoord::ZERO,
+                    resolution: 2,
+                    coverage: vec![255, 128, 0, 255],
+                    source_revision: 2,
+                }],
+                assets: vec![SourceAssetRecord {
+                    id: asset_id,
+                    key: "test/tree".into(),
+                    kind: "gltf-scene".into(),
+                    source_uri: "local/source/tree.fbx".into(),
+                }],
+                asset_variants: vec![SourceAssetVariantRecord {
+                    asset: asset_id,
+                    lod: 0,
+                    uri: "local/runtime/tree_lod0.gltf".into(),
+                    bounds: [2.0, 8.0, 2.0],
+                    gpu_bytes_estimate: 4096,
+                    shadow_policy: 1,
+                    minimum_screen_height: 0.0,
+                }],
                 definitions: vec![SourceObjectDefinitionRecord {
                     id: definition_id,
                     key: "test-door".into(),
@@ -979,8 +1317,19 @@ mod tests {
         assert_eq!(project.default_world_space, space.id);
         assert_eq!(project.world_spaces.len(), 2);
         assert_eq!(project.cells.len(), 2);
+        assert_eq!(project.assets[0].key, "test/tree");
+        assert_eq!(project.asset_variants[0].minimum_screen_height, 0.0);
         assert_eq!(project.definitions.len(), 1);
         assert_eq!(project.objects[0].definition, definition_id);
+        assert_eq!(
+            project.ground_cover_species,
+            vec![ground_cover_species.clone()]
+        );
+        assert_eq!(project.ground_cover_layers.len(), 1);
+        assert_eq!(
+            project.ground_cover_masks[0].coverage,
+            vec![255, 128, 0, 255]
+        );
 
         let payload = PagePayload::TerrainRender(TerrainRenderPage {
             height: 0.0,
@@ -1023,6 +1372,30 @@ mod tests {
             checksum: *blake3::hash(&gameplay_decoded).as_bytes(),
             payload: gameplay_decoded,
         };
+        let ground_cover_payload = PagePayload::GroundCover(GroundCoverPage {
+            clusters: vec![GroundCoverCluster {
+                species: ground_cover_species_id,
+                local_center: [8.0, 0.35, 8.0],
+                half_extents: [8.2, 0.35, 8.2],
+                coverage_half_extents: [8.0, 8.0],
+                density_per_square_meter: 7.0,
+                seed: 91,
+            }],
+        });
+        let ground_cover_decoded = encode_page_payload(&ground_cover_payload).unwrap();
+        let ground_cover_page = EncodedPage {
+            key: PageKey {
+                space: space.id,
+                cell: CellCoord::ZERO,
+                domain: PageDomain::GroundCover,
+                lod: 0,
+            },
+            codec: PageCodec::Raw,
+            decoded_bytes: ground_cover_decoded.len() as u64,
+            gpu_bytes_estimate: 64,
+            checksum: *blake3::hash(&ground_cover_decoded).as_bytes(),
+            payload: ground_cover_decoded,
+        };
         write_runtime_database(
             &runtime_path,
             &RuntimeBuild {
@@ -1039,10 +1412,15 @@ mod tests {
                     minimum_y: 0.0,
                     maximum_y: 0.0,
                     domain_mask: domain_bit(PageDomain::TerrainRender)
-                        | domain_bit(PageDomain::GameplayObjects),
+                        | domain_bit(PageDomain::GameplayObjects)
+                        | domain_bit(PageDomain::GroundCover),
                     source_revision: 1,
                 }],
-                pages: vec![page.clone(), gameplay_page.clone()],
+                pages: vec![
+                    page.clone(),
+                    gameplay_page.clone(),
+                    ground_cover_page.clone(),
+                ],
                 assets: Vec::new(),
                 definitions: vec![RuntimeObjectDefinition {
                     id: definition_id,
@@ -1051,10 +1429,15 @@ mod tests {
                     visual_asset: None,
                     activation: ObjectActivationPolicy::Proximity,
                 }],
+                ground_cover_species: vec![ground_cover_species.clone()],
                 dependencies: Vec::new(),
                 definition_dependencies: vec![PageObjectDefinitionRecord {
                     page: gameplay_page.key,
                     definition: definition_id,
+                }],
+                ground_cover_species_dependencies: vec![PageGroundCoverSpeciesRecord {
+                    page: ground_cover_page.key,
+                    species: ground_cover_species_id,
                 }],
             },
         )
@@ -1078,6 +1461,22 @@ mod tests {
         assert_eq!(definitions.len(), 1);
         assert_eq!(definitions[0].id, definition_id);
         assert_eq!(definitions[0].key, "test-door");
+        assert_eq!(
+            reader
+                .read_page(ground_cover_page.key)
+                .unwrap()
+                .unwrap()
+                .decode()
+                .unwrap()
+                .payload,
+            ground_cover_payload
+        );
+        assert_eq!(
+            reader
+                .read_ground_cover_species(ground_cover_page.key)
+                .unwrap(),
+            vec![ground_cover_species]
+        );
         fs::remove_dir_all(directory).unwrap();
     }
 

@@ -5909,8 +5909,18 @@ dependencies = [
  "bevy",
  "crossbeam-channel",
  "log",
+ "yarra-ground-cover",
  "yarra-world",
  "yarra-world-db",
+]
+
+[[package]]
+name = "yarra-ground-cover"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "bytemuck",
+ "yarra-world",
 ]
 
 [[package]]

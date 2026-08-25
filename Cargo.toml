@@ -2,6 +2,7 @@
 members = [
     "crates/app_game",
     "crates/engine",
+    "crates/ground_cover",
     "crates/world",
     "crates/world_cook",
     "crates/world_db",
@@ -18,8 +19,10 @@ anyhow = "1"
 bevy = { version = "0.19", default-features = false, features = ["3d", "png", "ui"] }
 blake3 = "1"
 bincode = { version = "2", features = ["serde"] }
+bytemuck = { version = "1", features = ["derive"] }
 crossbeam-channel = "0.5"
 engine = { package = "yarra-engine", path = "crates/engine" }
+ground-cover = { package = "yarra-ground-cover", path = "crates/ground_cover" }
 log = { version = "0.4", features = ["max_level_debug", "release_max_level_warn"] }
 rusqlite = { version = "0.40.1", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }

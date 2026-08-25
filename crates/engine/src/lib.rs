@@ -10,6 +10,7 @@ use bevy::{
     render::view::Msaa,
     window::{PrimaryWindow, Window},
 };
+use ground_cover::{GroundCoverDebug, GroundCoverPlugin, GroundCoverView};
 pub use world_streaming::{ActiveWorldSpace, GameplayObject};
 use world_streaming::{StreamingStats, WorldStreamingPlugin};
 
@@ -29,6 +30,7 @@ const CAMERA_TRACKPAD_ORBIT_SPEED: f32 = 0.003;
 const CAMERA_WHEEL_ORBIT_SPEED: f32 = 0.08;
 const CAMERA_TRACKPAD_ZOOM_SPEED: f32 = 0.012;
 const CAMERA_WHEEL_ZOOM_SPEED: f32 = 0.8;
+const CAMERA_ORBIT_SMOOTHING: f32 = 20.0;
 const CAMERA_ZOOM_SMOOTHING: f32 = 8.0;
 const TARGET_INDICATOR_HEIGHT: f32 = 0.025;
 
@@ -52,6 +54,7 @@ impl Plugin for MinimalGamePlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((
             FrameTimeDiagnosticsPlugin::default(),
+            GroundCoverPlugin,
             WorldStreamingPlugin::new(self.runtime_database.clone()),
         ))
         .add_systems(Startup, setup)
@@ -81,6 +84,7 @@ struct MovementTarget(Option<Vec3>);
 #[derive(Component)]
 struct CameraRig {
     yaw: f32,
+    target_yaw: f32,
     distance: f32,
     target_distance: f32,
     pitch_offset: f32,
@@ -137,6 +141,7 @@ fn setup(
 
     let camera_rig = CameraRig {
         yaw: 45.0_f32.to_radians(),
+        target_yaw: 45.0_f32.to_radians(),
         distance: CAMERA_DEFAULT_DISTANCE,
         target_distance: CAMERA_DEFAULT_DISTANCE,
         pitch_offset: 0.0,
@@ -144,6 +149,9 @@ fn setup(
     commands.spawn((
         Camera3d::default(),
         Msaa::Off,
+        GroundCoverView {
+            normalized_zoom: normalized_camera_zoom(camera_rig.distance),
+        },
         camera_transform(start, &camera_rig),
         camera_rig,
         MainCamera,
@@ -318,6 +326,7 @@ fn update_camera_controls(
 ) {
     if mouse_buttons.pressed(MouseButton::Right) {
         rig.yaw -= mouse_motion.delta.x * CAMERA_MOUSE_ORBIT_SPEED;
+        rig.target_yaw = rig.yaw;
         rig.pitch_offset = (rig.pitch_offset + mouse_motion.delta.y * CAMERA_MOUSE_ORBIT_SPEED)
             .clamp(-CAMERA_MAX_PITCH_OFFSET, CAMERA_MAX_PITCH_OFFSET);
     }
@@ -333,7 +342,11 @@ fn update_camera_controls(
         .map(apply_stick_dead_zone)
         .max_by(|left, right| left.length_squared().total_cmp(&right.length_squared()))
         .unwrap_or_default();
-    rig.yaw -= right_stick.x * CAMERA_GAMEPAD_ORBIT_SPEED * time.delta_secs();
+    let gamepad_yaw_delta = right_stick.x * CAMERA_GAMEPAD_ORBIT_SPEED * time.delta_secs();
+    if gamepad_yaw_delta != 0.0 {
+        rig.yaw -= gamepad_yaw_delta;
+        rig.target_yaw = rig.yaw;
+    }
     rig.pitch_offset = (rig.pitch_offset
         + right_stick.y * CAMERA_GAMEPAD_ORBIT_SPEED * time.delta_secs())
     .clamp(-CAMERA_MAX_PITCH_OFFSET, CAMERA_MAX_PITCH_OFFSET);
@@ -349,24 +362,31 @@ fn update_camera_controls(
                 mouse_scroll.delta.y.clamp(-80.0, 80.0) * CAMERA_TRACKPAD_ZOOM_SPEED,
             ),
         };
-        rig.yaw -= orbit_delta;
+        rig.target_yaw -= orbit_delta;
         rig.target_distance =
             (rig.target_distance - zoom_delta).clamp(CAMERA_MIN_DISTANCE, CAMERA_MAX_DISTANCE);
     }
 
+    let orbit_blend = 1.0 - (-CAMERA_ORBIT_SMOOTHING * time.delta_secs()).exp();
+    rig.yaw += (rig.target_yaw - rig.yaw) * orbit_blend;
     let zoom_blend = 1.0 - (-CAMERA_ZOOM_SMOOTHING * time.delta_secs()).exp();
     rig.distance += (rig.target_distance - rig.distance) * zoom_blend;
 }
 
 fn update_camera_transform(
     object: Single<&Transform, (With<MovableObject>, Without<MainCamera>)>,
-    mut camera: Single<(&mut Transform, &CameraRig), With<MainCamera>>,
+    mut camera: Single<(&mut Transform, &CameraRig, &mut GroundCoverView), With<MainCamera>>,
 ) {
     *camera.0 = camera_transform(object.translation, camera.1);
+    camera.2.normalized_zoom = normalized_camera_zoom(camera.1.distance);
+}
+
+fn normalized_camera_zoom(distance: f32) -> f32 {
+    ((distance - CAMERA_MIN_DISTANCE) / (CAMERA_MAX_DISTANCE - CAMERA_MIN_DISTANCE)).clamp(0.0, 1.0)
 }
 
 fn camera_transform(object_position: Vec3, rig: &CameraRig) -> Transform {
-    let zoom = (rig.distance - CAMERA_MIN_DISTANCE) / (CAMERA_MAX_DISTANCE - CAMERA_MIN_DISTANCE);
+    let zoom = normalized_camera_zoom(rig.distance);
     let pitch =
         (CAMERA_NEAR_PITCH + (CAMERA_FAR_PITCH - CAMERA_NEAR_PITCH) * zoom + rig.pitch_offset)
             .clamp(5.0_f32.to_radians(), 80.0_f32.to_radians());
@@ -384,6 +404,7 @@ fn camera_transform(object_position: Vec3, rig: &CameraRig) -> Transform {
 fn update_performance_label(
     diagnostics: Res<DiagnosticsStore>,
     streaming: Option<Res<StreamingStats>>,
+    ground_cover_debug: Res<GroundCoverDebug>,
     mut label: Single<&mut Text, With<PerformanceLabel>>,
     time: Res<Time>,
     mut elapsed: Local<f32>,
@@ -405,8 +426,20 @@ fn update_performance_label(
 
     let streaming = streaming
         .map(|stats| {
+            let lods = if stats.lod_counts.is_empty() {
+                "none".into()
+            } else {
+                stats
+                    .lod_counts
+                    .iter()
+                    .map(|(lod, count)| format!("L{lod}: {count}"))
+                    .collect::<Vec<_>>()
+                    .join(" | ")
+            };
             format!(
                 "World: {}\nPages: {} demanded | {} loading | {} resident | {} cooling | {} failed\n\
+                 Visual LODs: {} | projected height: {:.0}-{:.0} px\n\
+                 Ground cover: {} resident clusters | debug: {}\n\
                  Nearby gameplay: {} objects | {} definitions cached\n\
                  Residency: {:.2} MiB decoded | {:.2} MiB estimated GPU",
                 stats.status,
@@ -415,6 +448,11 @@ fn update_performance_label(
                 stats.resident,
                 stats.cooling,
                 stats.failed,
+                lods,
+                stats.minimum_projected_height,
+                stats.maximum_projected_height,
+                stats.ground_cover_clusters,
+                ground_cover_debug.mode.label(),
                 stats.gameplay_objects,
                 stats.cached_definitions,
                 stats.decoded_bytes as f64 / (1024.0 * 1024.0),
@@ -424,7 +462,7 @@ fn update_performance_label(
         .unwrap_or_else(|| "World: initializing".into());
 
     **label = Text::new(format!(
-        "Left click: move | WASD / left stick: direct movement | Tab: change area\n\
+        "Left click: move | WASD / left stick: direct movement | Tab: change area | G: grass debug\n\
          Trackpad horizontal / right drag / right stick: orbit\n\
          Trackpad vertical / wheel: smooth zoom\n\
          VSync baseline: {fps:.0} FPS | {frame_time:.2} ms\n\

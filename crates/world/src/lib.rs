@@ -4,9 +4,9 @@ use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_CELL_SIZE: f32 = 32.0;
 pub const MAX_DECODED_PAGE_BYTES: u64 = 64 * 1024 * 1024;
-pub const PROJECT_SCHEMA_VERSION: i64 = 3;
-pub const RUNTIME_SCHEMA_VERSION: i64 = 3;
-pub const PAGE_PAYLOAD_VERSION: u16 = 2;
+pub const PROJECT_SCHEMA_VERSION: i64 = 6;
+pub const RUNTIME_SCHEMA_VERSION: i64 = 6;
+pub const PAGE_PAYLOAD_VERSION: u16 = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct WorldSpaceId(pub i64);
@@ -94,6 +94,12 @@ pub struct StableObjectId(pub [u8; 16]);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ObjectDefinitionId(pub [u8; 16]);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct GroundCoverSpeciesId(pub [u8; 16]);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct GroundCoverLayerId(pub [u8; 16]);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AssetId(pub [u8; 32]);
 
@@ -103,7 +109,7 @@ pub enum PageDomain {
     TerrainRender = 1,
     StaticObjects = 2,
     Foliage = 3,
-    Grass = 4,
+    GroundCover = 4,
     Collision = 5,
     Navigation = 6,
     ShadowCasters = 7,
@@ -118,7 +124,7 @@ impl TryFrom<i64> for PageDomain {
             1 => Ok(Self::TerrainRender),
             2 => Ok(Self::StaticObjects),
             3 => Ok(Self::Foliage),
-            4 => Ok(Self::Grass),
+            4 => Ok(Self::GroundCover),
             5 => Ok(Self::Collision),
             6 => Ok(Self::Navigation),
             7 => Ok(Self::ShadowCasters),
@@ -183,6 +189,44 @@ pub struct TerrainRenderPage {
     pub base_color: [f32; 3],
 }
 
+/// One globally defined decorative ground-cover species.
+///
+/// Ground cover has no stable identity per plant. A species describes its
+/// visual response while [`GroundCoverCluster`] describes authored coverage.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GroundCoverSpecies {
+    pub id: GroundCoverSpeciesId,
+    pub key: String,
+    pub bottom_color: [f32; 3],
+    pub top_color: [f32; 3],
+    pub minimum_card_height: f32,
+    pub maximum_card_height: f32,
+    pub minimum_card_width: f32,
+    pub maximum_card_width: f32,
+    pub flattened_card_probability: f32,
+    pub maximum_wind_displacement: f32,
+}
+
+/// A renderer-sized unit of authored ground-cover coverage.
+///
+/// Coordinates are local to the owning world cell. `coverage_half_extents`
+/// describe the authored patch used for density, while `half_extents` are
+/// conservative animated/card bounds used only for visibility tests.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GroundCoverCluster {
+    pub species: GroundCoverSpeciesId,
+    pub local_center: [f32; 3],
+    pub half_extents: [f32; 3],
+    pub coverage_half_extents: [f32; 2],
+    pub density_per_square_meter: f32,
+    pub seed: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GroundCoverPage {
+    pub clusters: Vec<GroundCoverCluster>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StaticObjectInstance {
     pub id: StableObjectId,
@@ -245,6 +289,7 @@ pub struct GameplayObjectsPage {
 pub enum PagePayload {
     TerrainRender(TerrainRenderPage),
     StaticObjects(StaticObjectsPage),
+    GroundCover(GroundCoverPage),
     ShadowCasters(StaticObjectsPage),
     GameplayObjects(GameplayObjectsPage),
 }
@@ -254,6 +299,7 @@ impl PagePayload {
         match self {
             Self::TerrainRender(_) => PageDomain::TerrainRender,
             Self::StaticObjects(_) => PageDomain::StaticObjects,
+            Self::GroundCover(_) => PageDomain::GroundCover,
             Self::ShadowCasters(_) => PageDomain::ShadowCasters,
             Self::GameplayObjects(_) => PageDomain::GameplayObjects,
         }
@@ -362,5 +408,24 @@ mod tests {
         let bytes = encode_page_payload(&payload).unwrap();
         assert_eq!(decode_page_payload(&bytes).unwrap(), payload);
         assert_eq!(payload.domain(), PageDomain::GameplayObjects);
+    }
+
+    #[test]
+    fn ground_cover_page_round_trips_without_expanding_tufts() {
+        let species = GroundCoverSpeciesId([11; 16]);
+        let payload = PagePayload::GroundCover(GroundCoverPage {
+            clusters: vec![GroundCoverCluster {
+                species,
+                local_center: [4.0, 0.0, 6.0],
+                half_extents: [1.25, 0.5, 1.25],
+                coverage_half_extents: [1.0, 1.0],
+                density_per_square_meter: 8.0,
+                seed: 42,
+            }],
+        });
+
+        let bytes = encode_page_payload(&payload).unwrap();
+        assert_eq!(decode_page_payload(&bytes).unwrap(), payload);
+        assert_eq!(payload.domain(), PageDomain::GroundCover);
     }
 }

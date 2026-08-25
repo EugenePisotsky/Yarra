@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     path::PathBuf,
     thread::{self, JoinHandle},
     time::Duration,
@@ -10,11 +10,13 @@ use bevy::{
     gltf::GltfAssetLabel,
     prelude::*,
     tasks::{AsyncComputeTaskPool, Task, futures::check_ready},
+    transform::TransformSystems,
 };
 use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded};
+use ground_cover::{GroundCoverPage3d, GroundCoverPageAsset};
 use world::{
-    AssetId, CellCoord, ObjectActivationPolicy, ObjectDefinitionId, PageDomain, PageKey,
-    PagePayload, StableObjectId, WorldSpaceId,
+    AssetId, CellCoord, GroundCoverSpecies, ObjectActivationPolicy, ObjectDefinitionId, PageDomain,
+    PageKey, PagePayload, StableObjectId, WorldSpaceId,
 };
 use world_db::{
     CellDescriptor, DecodedPage, EncodedPage, PageDependency, RuntimeManifest,
@@ -28,8 +30,10 @@ const PLAYER_PRELOAD_RADIUS_CELLS: u32 = 1;
 const COOLING_SECONDS: f32 = 2.0;
 const MAX_DATABASE_REQUESTS_IN_FLIGHT: usize = 16;
 const MAX_ATTACHMENTS_PER_FRAME: usize = 2;
+const MAX_LOD_SWITCHES_PER_FRAME: usize = 32;
 const MAX_RESIDENT_DECODED_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_RESIDENT_GPU_BYTES_ESTIMATE: u64 = 256 * 1024 * 1024;
+const LOD_HYSTERESIS_FRACTION: f32 = 0.12;
 
 pub(crate) struct WorldStreamingPlugin {
     database_path: PathBuf,
@@ -63,6 +67,10 @@ impl Plugin for WorldStreamingPlugin {
                     report_streaming_smoke,
                 )
                     .chain(),
+            )
+            .add_systems(
+                PostUpdate,
+                update_screen_space_lods.after(TransformSystems::Propagate),
             );
     }
 }
@@ -146,6 +154,7 @@ struct FetchedPage {
     encoded: EncodedPage,
     dependencies: Vec<PageDependency>,
     definitions: Vec<RuntimeObjectDefinition>,
+    ground_cover_species: Vec<GroundCoverSpecies>,
 }
 
 fn start_database_worker(mut commands: Commands, path: Res<WorldDatabasePath>) {
@@ -220,10 +229,16 @@ fn database_worker(
                             } else {
                                 Vec::new()
                             };
+                            let ground_cover_species = if key.domain == PageDomain::GroundCover {
+                                reader.read_ground_cover_species(key)?
+                            } else {
+                                Vec::new()
+                            };
                             Ok(FetchedPage {
                                 encoded: page,
                                 dependencies,
                                 definitions,
+                                ground_cover_species,
                             })
                         })
                         .transpose()
@@ -288,6 +303,7 @@ struct PreparedPage {
     decoded: DecodedPage,
     dependencies: Vec<PageDependency>,
     definitions: Vec<RuntimeObjectDefinition>,
+    ground_cover_species: Vec<GroundCoverSpecies>,
 }
 
 struct DecodeTask {
@@ -299,9 +315,25 @@ struct DecodeTask {
 struct PageAttachment {
     entities: Vec<Entity>,
     owned_materials: Vec<Handle<StandardMaterial>>,
+    owned_ground_cover_pages: Vec<Handle<GroundCoverPageAsset>>,
     decoded_bytes: u64,
     gpu_bytes_estimate: u64,
     gameplay_objects: usize,
+    ground_cover_clusters: usize,
+}
+
+#[derive(Component)]
+struct ScreenSpaceLod {
+    variants: Vec<ScreenSpaceLodVariant>,
+    current: usize,
+    bounds_height: f32,
+    projected_height: f32,
+}
+
+struct ScreenSpaceLodVariant {
+    lod: u8,
+    scene: Handle<WorldAsset>,
+    minimum_screen_height: f32,
 }
 
 #[derive(Resource)]
@@ -391,6 +423,7 @@ fn receive_database_results(
                                     decoded,
                                     dependencies: fetched.dependencies,
                                     definitions: fetched.definitions,
+                                    ground_cover_species: fetched.ground_cover_species,
                                 })
                                 .map_err(|error| error.to_string())
                         });
@@ -453,6 +486,7 @@ fn request_world_space_from_keyboard(
 fn apply_world_space_transition(
     mut commands: Commands,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut ground_cover_pages: ResMut<Assets<GroundCoverPageAsset>>,
     mut active_space: ResMut<ActiveWorldSpace>,
     mut stream: ResMut<WorldStream>,
     mut object: Single<(&mut Transform, &mut MovementTarget), With<MovableObject>>,
@@ -478,7 +512,12 @@ fn apply_world_space_transition(
         for (_, state) in stream.pages.drain() {
             match state {
                 PageState::Resident(attachment) | PageState::Cooling { attachment, .. } => {
-                    despawn_attachment(&mut commands, &mut materials, attachment);
+                    despawn_attachment(
+                        &mut commands,
+                        &mut materials,
+                        &mut ground_cover_pages,
+                        attachment,
+                    );
                 }
                 _ => {}
             }
@@ -616,6 +655,14 @@ fn calculate_page_demand(
                 lod: 0,
             });
         }
+        if (visible || preloaded) && descriptor.has_domain(PageDomain::GroundCover) {
+            desired.insert(PageKey {
+                space: space_id,
+                cell: descriptor.cell,
+                domain: PageDomain::GroundCover,
+                lod: 0,
+            });
+        }
     }
     stream.desired = desired;
 
@@ -703,6 +750,7 @@ fn attach_prepared_pages(
     render_assets: Option<Res<WorldRenderAssets>>,
     stats: Res<StreamingStats>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut ground_cover_pages: ResMut<Assets<GroundCoverPageAsset>>,
     mut stream: ResMut<WorldStream>,
 ) {
     let Some(render_assets) = render_assets else {
@@ -767,6 +815,7 @@ fn attach_prepared_pages(
             &asset_server,
             &render_assets,
             &mut materials,
+            &mut ground_cover_pages,
             cell_size,
             prepared,
         ) {
@@ -789,13 +838,16 @@ fn attach_page(
     asset_server: &AssetServer,
     render_assets: &WorldRenderAssets,
     materials: &mut Assets<StandardMaterial>,
+    ground_cover_pages: &mut Assets<GroundCoverPageAsset>,
     cell_size: f32,
     prepared: PreparedPage,
 ) -> Result<PageAttachment, String> {
     let key = prepared.decoded.key;
     let mut entities = Vec::new();
     let mut owned_materials = Vec::new();
+    let mut owned_ground_cover_pages = Vec::new();
     let mut gameplay_objects = 0;
+    let mut ground_cover_clusters = 0;
     match prepared.decoded.payload {
         PagePayload::TerrainRender(terrain) => {
             let center = key.cell.center(cell_size);
@@ -822,42 +874,108 @@ fn attach_page(
             owned_materials.push(material);
         }
         PagePayload::StaticObjects(objects) => {
-            let dependencies: HashMap<AssetId, &PageDependency> = prepared
-                .dependencies
-                .iter()
-                .map(|dependency| (dependency.asset, dependency))
-                .collect();
+            let mut dependencies: HashMap<AssetId, Vec<&PageDependency>> = HashMap::new();
+            for dependency in &prepared.dependencies {
+                dependencies
+                    .entry(dependency.asset)
+                    .or_default()
+                    .push(dependency);
+            }
+            for variants in dependencies.values_mut() {
+                variants.sort_by_key(|variant| variant.asset_lod);
+            }
             let cell_origin = key.cell.origin(cell_size);
             for instance in objects.instances {
-                let dependency = dependencies.get(&instance.asset).ok_or_else(|| {
+                let dependencies = dependencies.get(&instance.asset).ok_or_else(|| {
                     format!("object {:?} has no cooked asset dependency", instance.id)
                 })?;
-                if dependency.kind != "gltf-scene" {
-                    return Err(format!(
-                        "asset {:?} has unsupported kind {}",
-                        dependency.asset, dependency.kind
-                    ));
+                if dependencies.is_empty() {
+                    return Err(format!("asset {:?} has no LOD variants", instance.asset));
+                }
+                let mut previous_minimum = f32::INFINITY;
+                for dependency in dependencies {
+                    if dependency.kind != "gltf-scene" {
+                        return Err(format!(
+                            "asset {:?} has unsupported kind {}",
+                            dependency.asset, dependency.kind
+                        ));
+                    }
+                    if dependency.minimum_screen_height > previous_minimum {
+                        return Err(format!(
+                            "asset {:?} LOD thresholds are not descending",
+                            dependency.asset
+                        ));
+                    }
+                    previous_minimum = dependency.minimum_screen_height;
                 }
                 let translation = Vec3::new(
                     cell_origin[0] as f32 + instance.translation[0],
                     instance.translation[1],
                     cell_origin[1] as f32 + instance.translation[2],
                 );
+                let variants: Vec<_> = dependencies
+                    .iter()
+                    .map(|dependency| ScreenSpaceLodVariant {
+                        lod: dependency.asset_lod,
+                        scene: asset_server
+                            .load(GltfAssetLabel::Scene(0).from_asset(dependency.uri.clone())),
+                        minimum_screen_height: dependency.minimum_screen_height,
+                    })
+                    .collect();
+                let bounds_height = dependencies
+                    .iter()
+                    .map(|dependency| dependency.bounds[1])
+                    .fold(0.0_f32, f32::max);
+                let initial_lod = variants.len() - 1;
                 let entity = commands
                     .spawn((
-                        WorldAssetRoot(
-                            asset_server
-                                .load(GltfAssetLabel::Scene(0).from_asset(dependency.uri.clone())),
-                        ),
+                        WorldAssetRoot(variants[initial_lod].scene.clone()),
                         Transform::from_translation(translation)
                             .with_rotation(Quat::from_rotation_y(instance.yaw))
                             .with_scale(Vec3::splat(instance.scale)),
+                        ScreenSpaceLod {
+                            variants,
+                            current: initial_lod,
+                            bounds_height,
+                            projected_height: 0.0,
+                        },
                         StreamedPageEntity(key),
                         Name::new(format!("Streamed object {:?}", instance.id)),
                     ))
                     .id();
                 entities.push(entity);
             }
+        }
+        PagePayload::GroundCover(page) => {
+            let species: HashMap<_, _> = prepared
+                .ground_cover_species
+                .iter()
+                .map(|species| (species.id, species))
+                .collect();
+            for cluster in &page.clusters {
+                if !species.contains_key(&cluster.species) {
+                    return Err(format!(
+                        "ground-cover cluster references unresolved species {:?}",
+                        cluster.species
+                    ));
+                }
+            }
+            ground_cover_clusters = page.clusters.len();
+            let asset = ground_cover_pages.add(GroundCoverPageAsset {
+                key,
+                cell_size,
+                page,
+                species: prepared.ground_cover_species,
+            });
+            let entity = commands
+                .spawn((
+                    GroundCoverPage3d(asset.clone()),
+                    StreamedPageEntity(key),
+                    Name::new(format!("Ground cover cell {}, {}", key.cell.x, key.cell.z)),
+                ))
+                .id();
+            entities.push(entity);
+            owned_ground_cover_pages.push(asset);
         }
         PagePayload::ShadowCasters(_) => {
             return Err("shadow-caster page attachment is not enabled in the first slice".into());
@@ -909,6 +1027,7 @@ fn attach_page(
     Ok(PageAttachment {
         entities,
         owned_materials,
+        owned_ground_cover_pages,
         decoded_bytes: prepared.decoded.decoded_bytes,
         gpu_bytes_estimate: prepared.decoded.gpu_bytes_estimate
             + prepared
@@ -917,7 +1036,79 @@ fn attach_page(
                 .map(|dependency| dependency.gpu_bytes_estimate)
                 .sum::<u64>(),
         gameplay_objects,
+        ground_cover_clusters,
     })
+}
+
+fn update_screen_space_lods(
+    camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
+    mut objects: Query<(&GlobalTransform, &mut WorldAssetRoot, &mut ScreenSpaceLod)>,
+) {
+    let (camera, camera_transform) = *camera;
+    let mut switches = 0;
+    for (transform, mut scene_root, mut screen_lod) in &mut objects {
+        let (scale, _, translation) = transform.to_scale_rotation_translation();
+        let bottom = translation;
+        let top = translation + Vec3::Y * screen_lod.bounds_height * scale.y.abs();
+        let (Ok(bottom), Ok(top)) = (
+            camera.world_to_viewport(camera_transform, bottom),
+            camera.world_to_viewport(camera_transform, top),
+        ) else {
+            continue;
+        };
+        let projected_height = bottom.distance(top);
+        if !projected_height.is_finite() {
+            continue;
+        }
+        screen_lod.projected_height = projected_height;
+
+        let current = screen_lod.current;
+        let target = select_lod_index(
+            screen_lod.variants.len(),
+            current,
+            projected_height,
+            |index| screen_lod.variants[index].minimum_screen_height,
+        );
+        if target == current {
+            continue;
+        }
+        if switches >= MAX_LOD_SWITCHES_PER_FRAME {
+            continue;
+        }
+
+        scene_root.0 = screen_lod.variants[target].scene.clone();
+        screen_lod.current = target;
+        switches += 1;
+    }
+}
+
+fn select_lod_index(
+    variant_count: usize,
+    current: usize,
+    projected_height: f32,
+    minimum_screen_height: impl Fn(usize) -> f32,
+) -> usize {
+    debug_assert!(variant_count > 0 && current < variant_count);
+    let raw_target = (0..variant_count)
+        .find(|index| projected_height >= minimum_screen_height(*index))
+        .unwrap_or(variant_count - 1);
+    if raw_target > current {
+        let downgrade_below = minimum_screen_height(current) * (1.0 - LOD_HYSTERESIS_FRACTION);
+        if projected_height >= downgrade_below {
+            current
+        } else {
+            raw_target
+        }
+    } else if raw_target < current {
+        let upgrade_above = minimum_screen_height(raw_target) * (1.0 + LOD_HYSTERESIS_FRACTION);
+        if projected_height <= upgrade_above {
+            current
+        } else {
+            raw_target
+        }
+    } else {
+        current
+    }
 }
 
 #[derive(Component, Debug, Clone, Copy)]
@@ -932,6 +1123,7 @@ struct StreamedPageEntity(PageKey);
 fn despawn_attachment(
     commands: &mut Commands,
     materials: &mut Assets<StandardMaterial>,
+    ground_cover_pages: &mut Assets<GroundCoverPageAsset>,
     attachment: PageAttachment,
 ) {
     for entity in attachment.entities {
@@ -940,12 +1132,16 @@ fn despawn_attachment(
     for material in attachment.owned_materials {
         materials.remove(material.id());
     }
+    for page in attachment.owned_ground_cover_pages {
+        ground_cover_pages.remove(page.id());
+    }
 }
 
 fn cool_and_remove_pages(
     mut commands: Commands,
     time: Res<Time>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut ground_cover_pages: ResMut<Assets<GroundCoverPageAsset>>,
     mut stream: ResMut<WorldStream>,
 ) {
     let now = time.elapsed();
@@ -972,7 +1168,12 @@ fn cool_and_remove_pages(
                 attachment,
                 remove_at,
             } if now >= remove_at => {
-                despawn_attachment(&mut commands, &mut materials, attachment);
+                despawn_attachment(
+                    &mut commands,
+                    &mut materials,
+                    &mut ground_cover_pages,
+                    attachment,
+                );
             }
             PageState::Prepared(_) if !demanded => {}
             other => {
@@ -996,11 +1197,16 @@ pub(crate) struct StreamingStats {
     pub(crate) gpu_bytes_estimate: u64,
     pub(crate) cached_definitions: usize,
     pub(crate) gameplay_objects: usize,
+    pub(crate) ground_cover_clusters: usize,
+    pub(crate) lod_counts: BTreeMap<u8, usize>,
+    pub(crate) minimum_projected_height: f32,
+    pub(crate) maximum_projected_height: f32,
 }
 
 fn update_streaming_stats(
     stream: Res<WorldStream>,
     active_space: Res<ActiveWorldSpace>,
+    lod_objects: Query<&ScreenSpaceLod>,
     mut stats: ResMut<StreamingStats>,
 ) {
     stats.status = match &stream.phase {
@@ -1029,6 +1235,21 @@ fn update_streaming_stats(
     stats.gpu_bytes_estimate = 0;
     stats.cached_definitions = stream.definition_cache.len();
     stats.gameplay_objects = 0;
+    stats.ground_cover_clusters = 0;
+    stats.lod_counts.clear();
+    stats.minimum_projected_height = f32::INFINITY;
+    stats.maximum_projected_height = 0.0;
+    for lod in &lod_objects {
+        *stats
+            .lod_counts
+            .entry(lod.variants[lod.current].lod)
+            .or_default() += 1;
+        stats.minimum_projected_height = stats.minimum_projected_height.min(lod.projected_height);
+        stats.maximum_projected_height = stats.maximum_projected_height.max(lod.projected_height);
+    }
+    if stats.lod_counts.is_empty() {
+        stats.minimum_projected_height = 0.0;
+    }
     for state in stream.pages.values() {
         match state {
             PageState::Loading { .. } | PageState::Decoding { .. } => stats.loading += 1,
@@ -1039,6 +1260,7 @@ fn update_streaming_stats(
                 stats.decoded_bytes += attachment.decoded_bytes;
                 stats.gpu_bytes_estimate += attachment.gpu_bytes_estimate;
                 stats.gameplay_objects += attachment.gameplay_objects;
+                stats.ground_cover_clusters += attachment.ground_cover_clusters;
             }
             PageState::Cooling { attachment, .. } => {
                 stats.cooling += 1;
@@ -1046,6 +1268,7 @@ fn update_streaming_stats(
                 stats.decoded_bytes += attachment.decoded_bytes;
                 stats.gpu_bytes_estimate += attachment.gpu_bytes_estimate;
                 stats.gameplay_objects += attachment.gameplay_objects;
+                stats.ground_cover_clusters += attachment.ground_cover_clusters;
             }
             PageState::Failed(error) => {
                 let _ = error;
@@ -1059,10 +1282,13 @@ fn report_streaming_smoke(
     stats: Res<StreamingStats>,
     time: Res<Time>,
     stream: Res<WorldStream>,
+    asset_server: Res<AssetServer>,
     mut active_space: ResMut<ActiveWorldSpace>,
     mut object: Single<&mut Transform, With<MovableObject>>,
     streamed_entities: Query<&StreamedPageEntity>,
+    lod_objects: Query<&ScreenSpaceLod>,
     mut smoke: Local<StreamingSmokeState>,
+    mut app_exit: MessageWriter<AppExit>,
 ) {
     if !smoke.initialized {
         smoke.initialized = true;
@@ -1073,6 +1299,19 @@ fn report_streaming_smoke(
     }
     if smoke.stage == 0 && time.elapsed_secs() >= 3.0 {
         assert_streaming_is_healthy(&stats);
+        assert!(
+            !lod_objects.is_empty(),
+            "the smoke-test camera did not stream any LOD object"
+        );
+        for lod_object in &lod_objects {
+            for variant in &lod_object.variants {
+                assert!(
+                    asset_server.is_loaded_with_dependencies(&variant.scene),
+                    "LOD{} and its dependencies did not finish loading",
+                    variant.lod
+                );
+            }
+        }
         assert_eq!(
             stats.gameplay_objects, 0,
             "distant gameplay objects were activated in the overworld"
@@ -1081,16 +1320,22 @@ fn report_streaming_smoke(
             stats.cached_definitions, 0,
             "the distant interior definition was fetched before entering its proximity set"
         );
+        assert!(
+            stats.ground_cover_clusters > 0,
+            "the overworld did not stream any ground-cover clusters"
+        );
         println!(
             "YARRA_STREAMING_SMOKE initial status={:?} demanded={} resident={} failed={} \
-             owned_entities={} decoded_bytes={} gpu_bytes_estimate={}",
+             owned_entities={} ground_cover_clusters={} decoded_bytes={} gpu_bytes_estimate={} lods={:?}",
             stats.status,
             stats.demanded,
             stats.resident,
             stats.failed,
             stats.owned_entities,
+            stats.ground_cover_clusters,
             stats.decoded_bytes,
             stats.gpu_bytes_estimate,
+            stats.lod_counts,
         );
         let cell_size = active_space
             .current
@@ -1202,6 +1447,7 @@ fn report_streaming_smoke(
             stats.failed,
         );
         smoke.stage = 3;
+        app_exit.write(AppExit::Success);
     }
 }
 
@@ -1222,4 +1468,25 @@ fn assert_streaming_is_healthy(stats: &StreamingStats) {
     assert!(stats.demanded > 0, "streaming produced no demanded pages");
     assert!(stats.resident > 0, "streaming produced no resident pages");
     assert_eq!(stats.failed, 0, "one or more streamed pages failed");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn screen_space_lod_selection_has_hysteresis_in_both_directions() {
+        let minimums = [320.0, 160.0, 80.0, 0.0];
+        let select = |current, height| {
+            select_lod_index(minimums.len(), current, height, |index| minimums[index])
+        };
+
+        assert_eq!(select(0, 300.0), 0);
+        assert_eq!(select(0, 280.0), 1);
+        assert_eq!(select(1, 350.0), 1);
+        assert_eq!(select(1, 360.0), 0);
+        assert_eq!(select(3, 85.0), 3);
+        assert_eq!(select(3, 90.0), 2);
+        assert_eq!(select(2, 60.0), 3);
+    }
 }
