@@ -1,0 +1,99 @@
+(
+    schema_version: 1,
+    skeletons: [
+        (
+            id: "skeletons/yarra_humanoid_v1",
+            name: "Yarra Humanoid V1",
+        ),
+    ],
+    models: [
+        (
+            id: "models/female_main",
+            name: "Female Main",
+            skeleton: "skeletons/yarra_humanoid_v1",
+            visual: (
+                asset: "local/characters/female_main/female_main_locomotion.glb",
+                scene: 0,
+                translation_m: (0.0, 0.0, 0.0),
+                yaw_degrees: 0.0,
+                uniform_scale: 1.0,
+            ),
+        ),
+    ],
+    animation_banks: [
+        (
+            id: "banks/female_main/locomotion",
+            name: "Female Main Locomotion",
+            skeleton: "skeletons/yarra_humanoid_v1",
+            asset: "local/characters/female_main/female_main_locomotion.glb",
+        ),
+    ],
+    clips: [
+        (
+            id: "clips/female_main/idle/base",
+            name: "Idle",
+            bank: "banks/female_main/locomotion",
+            animation: "Idle",
+            playback: Loop,
+        ),
+        (
+            id: "clips/female_main/walk/loop",
+            name: "Walk",
+            bank: "banks/female_main/locomotion",
+            animation: "Walk",
+            playback: Loop,
+        ),
+        (
+            id: "clips/female_main/jog/loop",
+            name: "Jog",
+            bank: "banks/female_main/locomotion",
+            animation: "Jog",
+            playback: Loop,
+        ),
+    ],
+    movement_sets: [
+        (
+            id: "movement/female_main/standing",
+            name: "Female Main Standing",
+            skeleton: "skeletons/yarra_humanoid_v1",
+            idle_clip: "clips/female_main/idle/base",
+            walk: (
+                clip: "clips/female_main/walk/loop",
+                speed_mps: 1.9686075,
+            ),
+            jog: (
+                clip: "clips/female_main/jog/loop",
+                speed_mps: 2.941954,
+            ),
+            tuning: (
+                input_dead_zone: 0.18,
+                input_response_exponent: 1.0,
+                walk_to_jog_threshold: 0.72,
+                jog_to_walk_threshold: 0.60,
+                walk_acceleration_seconds: 0.22,
+                jog_acceleration_seconds: 0.22,
+                release_seconds: 0.16,
+                gait_blend_seconds: 0.24,
+                arrival_radius_m: 0.01,
+                start_blend_seconds: 0.22,
+                stop_blend_seconds: 0.26,
+                walk_turn_rate_radians: 7.0685835,
+                jog_turn_rate_radians: 5.497787,
+            ),
+        ),
+    ],
+    profiles: [
+        (
+            id: "presentations/female/default",
+            name: "Female Default",
+            model: "models/female_main",
+            default_movement_context: "standing",
+            movement_sets: [
+                (
+                    context: "standing",
+                    movement_set: "movement/female_main/standing",
+                ),
+            ],
+        ),
+    ],
+)

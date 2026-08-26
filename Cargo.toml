@@ -29,6 +29,7 @@ terrain-render = { package = "yarra-terrain-render", path = "crates/terrain_rend
 log = { version = "0.4", features = ["max_level_debug", "release_max_level_warn"] }
 naga = { version = "29", features = ["wgsl-in"] }
 rusqlite = { version = "0.40.1", features = ["bundled"] }
+ron = "0.12"
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 world = { package = "yarra-world", path = "crates/world" }

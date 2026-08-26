@@ -1,3 +1,6 @@
+mod actor;
+mod character;
+mod character_catalog;
 mod world_streaming;
 
 use std::path::PathBuf;
@@ -17,14 +20,23 @@ use terrain_render::{TerrainMacroVariation, TerrainRenderPlugin};
 pub use world_streaming::{ActiveWorldSpace, GameplayObject};
 use world_streaming::{StreamingStats, WorldStreamingPlugin};
 
-const OBJECT_SPEED_METERS_PER_SECOND: f32 = 7.0;
-const OBJECT_HALF_HEIGHT: f32 = 0.5;
-const GAMEPAD_DEAD_ZONE: f32 = 0.15;
+use crate::{
+    actor::{
+        CameraTarget, CharacterGait, CharacterMotion, CharacterMotor, MoveIntent, PlayerControlled,
+        WorldStreamFocus, advance_character_motors,
+    },
+    character::{
+        CharacterPresentationPlugin, CharacterPresentationRef, CharacterPresentationResolveSet,
+    },
+    character_catalog::DEFAULT_CHARACTER_PRESENTATION_ID,
+};
+
+const CAMERA_STICK_DEAD_ZONE: f32 = 0.15;
 const CAMERA_MIN_DISTANCE: f32 = 4.0;
 const CAMERA_MAX_DISTANCE: f32 = 17.6;
 const CAMERA_ZOOM_REFERENCE_DISTANCE: f32 = 24.0;
 const CAMERA_DEFAULT_DISTANCE: f32 = CAMERA_MAX_DISTANCE;
-const CAMERA_FOCUS_HEIGHT: f32 = 0.5;
+const CAMERA_FOCUS_HEIGHT: f32 = 0.9;
 const CAMERA_NEAR_PITCH: f32 = 18.0_f32.to_radians();
 const CAMERA_FAR_PITCH: f32 = 55.0_f32.to_radians();
 const CAMERA_MAX_PITCH_OFFSET: f32 = 15.0_f32.to_radians();
@@ -64,6 +76,7 @@ impl Plugin for MinimalGamePlugin {
             FrameTimeDiagnosticsPlugin::default(),
             GroundCoverPlugin,
             TerrainRenderPlugin,
+            CharacterPresentationPlugin,
             WorldStreamingPlugin::new(self.runtime_database.clone()),
         ))
         .init_resource::<TouchTapState>()
@@ -73,7 +86,9 @@ impl Plugin for MinimalGamePlugin {
             (
                 update_camera_controls,
                 set_target_from_pointer,
-                move_object,
+                update_player_move_intent,
+                advance_character_motors.after(CharacterPresentationResolveSet),
+                update_target_indicator,
                 update_camera_transform,
             )
                 .chain(),
@@ -84,12 +99,6 @@ impl Plugin for MinimalGamePlugin {
 
 #[derive(Component)]
 pub(crate) struct MainCamera;
-
-#[derive(Component)]
-pub(crate) struct MovableObject;
-
-#[derive(Component, Deref, DerefMut)]
-struct MovementTarget(Option<Vec3>);
 
 #[derive(Component)]
 struct CameraRig {
@@ -116,7 +125,7 @@ type TargetIndicatorState<'w, 's> = Single<
     'w,
     's,
     (&'static mut Transform, &'static mut Visibility),
-    (With<TargetIndicator>, Without<MovableObject>),
+    (With<TargetIndicator>, Without<PlayerControlled>),
 >;
 
 fn setup(
@@ -132,19 +141,19 @@ fn setup(
         ..default()
     });
 
-    let start = Vec3::new(0.0, OBJECT_HALF_HEIGHT, 0.0);
+    let start = Vec3::ZERO;
     commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(1.0, 1.0, 1.0))),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(0.95, 0.42, 0.14),
-            perceptual_roughness: 0.7,
-            ..default()
-        })),
         Transform::from_translation(start),
-        MovementTarget(None),
-        MovableObject,
+        Visibility::Inherited,
+        MoveIntent::default(),
+        CharacterMotor::default(),
+        CharacterMotion::default(),
+        CharacterPresentationRef::new(DEFAULT_CHARACTER_PRESENTATION_ID),
+        PlayerControlled,
+        CameraTarget,
+        WorldStreamFocus,
         GroundCoverInteractor::character(),
-        Name::new("Movable object"),
+        Name::new("Player actor root"),
     ));
 
     commands.spawn((
@@ -230,8 +239,7 @@ fn set_target_from_pointer(
     mut touch_tap: ResMut<TouchTapState>,
     window: Single<&Window, With<PrimaryWindow>>,
     camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
-    mut target: Single<&mut MovementTarget, With<MovableObject>>,
-    mut indicator: TargetIndicatorState,
+    mut player: Single<(&Transform, &mut MoveIntent), With<PlayerControlled>>,
 ) {
     let pointer_position = if mouse.just_pressed(MouseButton::Left) {
         window.cursor_position()
@@ -248,15 +256,17 @@ fn set_target_from_pointer(
     if direction.y.abs() < 1.0e-5 {
         return;
     }
-    let distance = -ray.origin.y / direction.y;
+    let distance = (player.0.translation.y - ray.origin.y) / direction.y;
     if distance < 0.0 {
         return;
     }
 
     let point = ray.origin + direction * distance;
-    target.0 = Some(Vec3::new(point.x, OBJECT_HALF_HEIGHT, point.z));
-    indicator.0.translation = Vec3::new(point.x, TARGET_INDICATOR_HEIGHT, point.z);
-    *indicator.1 = Visibility::Visible;
+    let ground_height = player.0.translation.y;
+    player.1.set_destination(
+        Vec3::new(point.x, ground_height, point.z),
+        CharacterGait::Walk,
+    );
 }
 
 fn touch_tap_position(touches: &Touches, state: &mut TouchTapState) -> Option<Vec2> {
@@ -292,47 +302,39 @@ fn touch_tap_position(touches: &Touches, state: &mut TouchTapState) -> Option<Ve
     None
 }
 
-fn move_object(
-    time: Res<Time>,
+fn update_player_move_intent(
     keys: Res<ButtonInput<KeyCode>>,
     gamepads: Query<&Gamepad>,
     camera: Single<&GlobalTransform, With<MainCamera>>,
-    mut object: Single<(&mut Transform, &mut MovementTarget), With<MovableObject>>,
-    mut indicator: Single<&mut Visibility, (With<TargetIndicator>, Without<MovableObject>)>,
+    mut intent: Single<&mut MoveIntent, With<PlayerControlled>>,
 ) {
     let direct_input = direct_movement_input(&keys, &gamepads);
     if direct_input != Vec2::ZERO {
-        object.1.0 = None;
-        **indicator = Visibility::Hidden;
-
         let camera_forward = camera.forward();
         let forward = Vec3::new(camera_forward.x, 0.0, camera_forward.z).normalize_or_zero();
         let camera_right = camera.right();
         let right = Vec3::new(camera_right.x, 0.0, camera_right.z).normalize_or_zero();
         let direction = (right * direct_input.x + forward * direct_input.y).normalize_or_zero();
-        let speed = OBJECT_SPEED_METERS_PER_SECOND * direct_input.length().min(1.0);
-
-        object.0.translation += direction * speed * time.delta_secs();
-        face_movement(&mut object.0, direction);
-        return;
+        intent.set_direct(
+            Vec2::new(direction.x, direction.z),
+            direct_input.length().min(1.0),
+            None,
+        );
+    } else {
+        intent.set_direct(Vec2::ZERO, 0.0, None);
     }
+}
 
-    let Some(target) = object.1.0 else {
-        return;
-    };
-    let offset = target - object.0.translation;
-    let distance = offset.length();
-    if distance <= 0.001 {
-        object.0.translation = target;
-        object.1.0 = None;
-        **indicator = Visibility::Hidden;
-        return;
+fn update_target_indicator(
+    intent: Single<&MoveIntent, With<PlayerControlled>>,
+    mut indicator: TargetIndicatorState,
+) {
+    if let Some(target) = intent.destination() {
+        indicator.0.translation = Vec3::new(target.x, TARGET_INDICATOR_HEIGHT, target.z);
+        *indicator.1 = Visibility::Visible;
+    } else {
+        *indicator.1 = Visibility::Hidden;
     }
-
-    let step = OBJECT_SPEED_METERS_PER_SECOND * time.delta_secs();
-    let direction = offset / distance;
-    object.0.translation += offset * (step / distance).min(1.0);
-    face_movement(&mut object.0, direction);
 }
 
 fn direct_movement_input(keys: &ButtonInput<KeyCode>, gamepads: &Query<&Gamepad>) -> Vec2 {
@@ -361,24 +363,18 @@ fn direct_movement_input(keys: &ButtonInput<KeyCode>, gamepads: &Query<&Gamepad>
                 gamepad.get(GamepadAxis::LeftStickY).unwrap_or_default(),
             )
         })
-        .map(apply_stick_dead_zone)
+        .map(|stick| stick.clamp_length_max(1.0))
         .max_by(|left, right| left.length_squared().total_cmp(&right.length_squared()))
         .unwrap_or_default()
 }
 
 fn apply_stick_dead_zone(stick: Vec2) -> Vec2 {
     let length = stick.length().min(1.0);
-    if length <= GAMEPAD_DEAD_ZONE {
+    if length <= CAMERA_STICK_DEAD_ZONE {
         return Vec2::ZERO;
     }
 
-    stick.normalize_or_zero() * ((length - GAMEPAD_DEAD_ZONE) / (1.0 - GAMEPAD_DEAD_ZONE))
-}
-
-fn face_movement(transform: &mut Transform, direction: Vec3) {
-    if direction.length_squared() > 0.0 {
-        transform.rotation = Quat::from_rotation_y((-direction.x).atan2(-direction.z));
-    }
+    stick.normalize_or_zero() * ((length - CAMERA_STICK_DEAD_ZONE) / (1.0 - CAMERA_STICK_DEAD_ZONE))
 }
 
 fn update_camera_controls(
@@ -454,7 +450,7 @@ fn update_camera_controls(
 }
 
 fn update_camera_transform(
-    object: Single<&Transform, (With<MovableObject>, Without<MainCamera>)>,
+    object: Single<&Transform, (With<CameraTarget>, Without<MainCamera>)>,
     mut camera: Single<(&mut Transform, &CameraRig, &mut GroundCoverView), With<MainCamera>>,
 ) {
     *camera.0 = camera_transform(object.translation, camera.1);
@@ -488,6 +484,7 @@ fn update_performance_label(
     ground_cover_debug: Res<GroundCoverDebug>,
     terrain_macro: Res<TerrainMacroVariation>,
     camera: Single<(&CameraRig, &GroundCoverView), With<MainCamera>>,
+    player_motion: Single<&CharacterMotion, With<PlayerControlled>>,
     primary_monitor: Option<Single<&Monitor, With<PrimaryMonitor>>>,
     mut label: Single<&mut Text, With<PerformanceLabel>>,
     time: Res<Time>,
@@ -553,10 +550,15 @@ fn update_performance_label(
         "Tap / left click: move | WASD / left stick: direct movement | Tab: change area | G: grass debug | V: terrain macro\n\
          Two-finger horizontal / right drag / right stick: orbit\n\
          Pinch / two-finger vertical / wheel: smooth zoom\n\
+         Actor: {:?} {:?} | {:.2} m/s | playback {:.2}x\n\
          Camera: {distance:.2} m (target {target_distance:.2} m) | normalized zoom: {normalized_zoom:.3}\n\
          Terrain macro: {terrain_macro}\n\
          VSync baseline: {fps:.0} FPS | {frame_time:.2} ms | {display_refresh}\n\
          {streaming}",
+        player_motion.gait,
+        player_motion.phase,
+        player_motion.speed_mps,
+        player_motion.playback_rate,
         distance = camera.0.distance,
         target_distance = camera.0.target_distance,
         normalized_zoom = camera.1.normalized_zoom,

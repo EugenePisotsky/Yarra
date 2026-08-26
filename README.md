@@ -56,7 +56,7 @@ The current scene contains:
 - SQLite-streamed flat terrain cells;
 - authored meadow coverage rendered as procedural ground cover;
 - sparse streamed instances of the local evaluation tree with four mesh LODs;
-- one movable cube;
+- one catalog-selected animated character with controller-owned Idle/Walk/Jog locomotion;
 - a following camera and bounded cascaded directional shadows;
 - FPS/frame-time and page residency diagnostics.
 
@@ -75,6 +75,14 @@ Press Tab to move between the demo overworld and interior. A transition removes
 the previous area's residency set before requesting pages for the destination.
 VSync follows the display's refresh rate; on a 120 Hz display, every frame has
 an 8.33 ms deadline.
+
+The actor root owns movement while a stable presentation-profile reference
+selects a presentation-only imported scene, compatible animation bank, and
+movement tuning. Camera follow and world streaming are explicit leader roles,
+so future party followers and NPCs can reuse the same motor and animation output
+without affecting either. The character/animation spec also records the reserved
+extension points for alternate meshes, crouch, actions, equipment, and combat;
+see [`docs/CHARACTERS.md`](docs/CHARACTERS.md).
 
 Tree LOD is selected from projected logical-pixel height rather than world
 distance, so camera zoom, third-person perspective, and elevation affect it

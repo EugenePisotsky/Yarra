@@ -31,6 +31,24 @@ assets/local/terrain/temperate_meadow/
   runtime/{universal,astc}/{base_color_array,normal_material_array,macro_variation}.ktx2
 ```
 
+The first character presentation is also restored from the legacy project into
+ignored local storage:
+
+```text
+assets/local/characters/female_main/female_main_locomotion.glb
+```
+
+Its tracked contract is `assets/packs/characters/female_main.toml`. The GLB is a
+validated in-place export containing the body, skeleton, and animation clips;
+its expected SHA-256 is recorded in that manifest.
+
+Runtime character composition is separate from pack provenance. The checked-in
+`assets/catalogs/character_presentations.catalog.ron` assigns stable IDs to
+skeleton contracts, models, animation banks, clips, movement sets, and
+presentation profiles. It may reference ignored local assets, but it never
+changes their licensing or redistribution policy. See `docs/CHARACTERS.md` for
+the runtime contract and future animation extension points.
+
 After restoring the five source images from the legacy repository, compile the
 portable UASTC and native iOS ASTC variants with:
 

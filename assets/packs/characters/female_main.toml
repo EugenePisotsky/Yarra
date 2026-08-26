@@ -1,0 +1,38 @@
+schema_version = 1
+asset_key = "characters/female_main"
+display_name = "Female Main"
+
+[provenance]
+status = "project-local licensed sources"
+redistributable = false
+reason = "The generated model retains the licensing requirements of both the character and animation source packs. Keep it outside Git."
+
+[runtime]
+local_uri = "local/characters/female_main/female_main_locomotion.glb"
+format = "glb"
+scene = 0
+skeleton = "yarra_humanoid_v1"
+sha256 = "043a74bf4bbf66c78582b0a009f9afce766273c2d704218a38023c0f7dcd3016"
+bounds_m = [1.246697, 1.742465, 0.286081]
+
+[catalog]
+semantic_catalog = "assets/catalogs/character_presentations.catalog.ron"
+model = "models/female_main"
+animation_bank = "banks/female_main/locomotion"
+movement_set = "movement/female_main/standing"
+presentation = "presentations/female/default"
+
+[locomotion]
+motion_policy = "in-place; actor motor owns translation and yaw"
+idle_clip = "Idle"
+walk_clip = "Walk"
+jog_clip = "Jog"
+walk_speed_mps = 1.9686075
+jog_speed_mps = 2.941954
+walk_duration_seconds = 1.9
+jog_duration_seconds = 1.5
+
+[source_workflow]
+legacy_documentation = "assets/characters/female_main/SOURCE.md in the previous yarra repository"
+legacy_exporter = "tools/export_female_main.py in the previous yarra repository"
+notes = "The validated GLB contains the body, rig, Idle/Walk/Jog loops, idle breaks, and unused authored start/stop clips. The first runtime slice loads only Idle/Walk/Jog."

@@ -5930,6 +5930,8 @@ dependencies = [
  "bevy",
  "crossbeam-channel",
  "log",
+ "ron",
+ "serde",
  "yarra-ground-cover",
  "yarra-terrain-render",
  "yarra-world",

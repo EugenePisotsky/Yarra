@@ -73,10 +73,14 @@ ASSET_DESTINATION="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/assets"
 /bin/mkdir -p \
     "$ASSET_DESTINATION/generated" \
     "$ASSET_DESTINATION/shaders" \
+    "$ASSET_DESTINATION/local/characters/female_main" \
     "$ASSET_DESTINATION/local/forest_tree_starter_kit/runtime/tree_07" \
     "$ASSET_DESTINATION/local/terrain/temperate_meadow/runtime"
 /usr/bin/install -m 644 "$RUNTIME_DATABASE" "$ASSET_DESTINATION/generated/demo.runtime.sqlite"
 /usr/bin/ditto "$REPOSITORY_ROOT/assets/shaders" "$ASSET_DESTINATION/shaders"
+/usr/bin/install -m 644 \
+    "$REPOSITORY_ROOT/assets/local/characters/female_main/female_main_locomotion.glb" \
+    "$ASSET_DESTINATION/local/characters/female_main/female_main_locomotion.glb"
 /usr/bin/ditto \
     "$REPOSITORY_ROOT/assets/local/forest_tree_starter_kit/runtime/tree_07/summer" \
     "$ASSET_DESTINATION/local/forest_tree_starter_kit/runtime/tree_07/summer"

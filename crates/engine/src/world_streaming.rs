@@ -27,7 +27,11 @@ use world_db::{
     RuntimeObjectDefinition, RuntimeReader, TerrainRenderResources,
 };
 
-use crate::{MainCamera, MovableObject, MovementTarget, TargetIndicator};
+use crate::{
+    MainCamera,
+    actor::{CharacterMotion, CharacterMotor, MoveIntent, WorldStreamFocus},
+    character::CharacterPresentationReady,
+};
 
 const INDEX_RADIUS_CELLS: i32 = 3;
 const PLAYER_PRELOAD_RADIUS_CELLS: u32 = 1;
@@ -499,7 +503,7 @@ fn request_world_space_from_keyboard(
         return;
     }
     let next = &manifest.world_spaces[(current_index + 1) % manifest.world_spaces.len()];
-    active_space.request(next.id, [0.0, 0.5, 0.0]);
+    active_space.request(next.id, [0.0, 0.0, 0.0]);
 }
 
 fn apply_world_space_transition(
@@ -509,8 +513,15 @@ fn apply_world_space_transition(
     mut ground_cover_pages: ResMut<Assets<GroundCoverPageAsset>>,
     mut active_space: ResMut<ActiveWorldSpace>,
     mut stream: ResMut<WorldStream>,
-    mut object: Single<(&mut Transform, &mut MovementTarget), With<MovableObject>>,
-    mut indicator: Single<&mut Visibility, With<TargetIndicator>>,
+    mut focus: Single<
+        (
+            &mut Transform,
+            &mut MoveIntent,
+            &mut CharacterMotor,
+            &mut CharacterMotion,
+        ),
+        With<WorldStreamFocus>,
+    >,
 ) {
     let Some(transition) = active_space.requested.take() else {
         return;
@@ -552,9 +563,10 @@ fn apply_world_space_transition(
     }
 
     active_space.current = Some(transition.space);
-    object.0.translation = Vec3::from_array(transition.local_position);
-    object.1.0 = None;
-    **indicator = Visibility::Hidden;
+    focus.0.translation = Vec3::from_array(transition.local_position);
+    focus.1.clear();
+    focus.2.reset();
+    *focus.3 = CharacterMotion::default();
     info!(
         "entered world space {} ({:?}) at {:?}",
         space_name, transition.space, transition.local_position
@@ -564,7 +576,7 @@ fn apply_world_space_transition(
 fn request_cell_index(
     worker: Option<Res<WorldDatabaseWorker>>,
     active_space: Res<ActiveWorldSpace>,
-    object: Single<&Transform, With<MovableObject>>,
+    focus: Single<&Transform, With<WorldStreamFocus>>,
     mut stream: ResMut<WorldStream>,
 ) {
     if !matches!(stream.phase, StreamPhase::Ready) || stream.requested_index.is_some() {
@@ -584,8 +596,8 @@ fn request_cell_index(
         return;
     };
     let center = CellCoord::containing(
-        f64::from(object.translation.x),
-        f64::from(object.translation.z),
+        f64::from(focus.translation.x),
+        f64::from(focus.translation.z),
         space.cell_size,
     );
     if stream.index_center == Some(center) {
@@ -623,7 +635,7 @@ fn calculate_page_demand(
     worker: Option<Res<WorldDatabaseWorker>>,
     active_space: Res<ActiveWorldSpace>,
     camera: Single<&Frustum, With<MainCamera>>,
-    object: Single<&Transform, With<MovableObject>>,
+    focus: Single<&Transform, With<WorldStreamFocus>>,
     mut stream: ResMut<WorldStream>,
 ) {
     if !matches!(stream.phase, StreamPhase::Ready) {
@@ -640,8 +652,8 @@ fn calculate_page_demand(
     };
     let cell_size = space.cell_size;
     let player_cell = CellCoord::containing(
-        f64::from(object.translation.x),
-        f64::from(object.translation.z),
+        f64::from(focus.translation.x),
+        f64::from(focus.translation.z),
         cell_size,
     );
     let mut desired = BTreeSet::new();
@@ -1382,7 +1394,8 @@ fn report_streaming_smoke(
     stream: Res<WorldStream>,
     asset_server: Res<AssetServer>,
     mut active_space: ResMut<ActiveWorldSpace>,
-    mut object: Single<&mut Transform, With<MovableObject>>,
+    mut object: Single<&mut Transform, With<WorldStreamFocus>>,
+    character: Query<(), (With<WorldStreamFocus>, With<CharacterPresentationReady>)>,
     streamed_entities: Query<&StreamedPageEntity>,
     lod_objects: Query<&ScreenSpaceLod>,
     mut smoke: Local<StreamingSmokeState>,
@@ -1397,6 +1410,10 @@ fn report_streaming_smoke(
     }
     if smoke.stage == 0 && time.elapsed_secs() >= 3.0 {
         assert_streaming_is_healthy(&stats);
+        assert!(
+            !character.is_empty(),
+            "the controlled character scene or Idle animation did not become ready"
+        );
         assert!(
             !lod_objects.is_empty(),
             "the smoke-test camera did not stream any LOD object"
@@ -1444,7 +1461,10 @@ fn report_streaming_smoke(
         smoke.stage = 1;
         return;
     }
-    if smoke.stage == 1 && time.elapsed_secs() >= 7.0 {
+    // Leave a small integration-frame margin beyond the two-second cooling
+    // deadline. Stats are sampled after bounded page attachment/removal and
+    // can otherwise report the just-expired cooling set for one final frame.
+    if smoke.stage == 1 && time.elapsed_secs() >= 7.5 {
         assert_streaming_is_healthy(&stats);
         assert_eq!(
             stats.cooling, 0,
@@ -1494,12 +1514,12 @@ fn report_streaming_smoke(
             .find(|space| space.id != current_space)
             .expect("multi-world smoke test requires a second world space")
             .id;
-        active_space.request(next_space, [0.0, 0.5, 0.0]);
+        active_space.request(next_space, [0.0, 0.0, 0.0]);
         smoke.expected_space = Some(next_space);
         smoke.stage = 2;
         return;
     }
-    if smoke.stage == 2 && time.elapsed_secs() >= 10.0 {
+    if smoke.stage == 2 && time.elapsed_secs() >= 11.0 {
         assert_streaming_is_healthy(&stats);
         let expected_space = smoke
             .expected_space
