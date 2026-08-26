@@ -25,11 +25,77 @@ CREATE TABLE source_cells (
     cell_x INTEGER NOT NULL,
     cell_z INTEGER NOT NULL,
     height REAL NOT NULL,
-    color_r REAL NOT NULL CHECK(color_r BETWEEN 0.0 AND 1.0),
-    color_g REAL NOT NULL CHECK(color_g BETWEEN 0.0 AND 1.0),
-    color_b REAL NOT NULL CHECK(color_b BETWEEN 0.0 AND 1.0),
     source_revision INTEGER NOT NULL CHECK(source_revision >= 0),
     PRIMARY KEY(world_space_id, cell_x, cell_z)
+) STRICT, WITHOUT ROWID;
+
+CREATE TABLE terrain_surfaces (
+    surface_id BLOB PRIMARY KEY CHECK(length(surface_id) = 16),
+    surface_key TEXT NOT NULL UNIQUE,
+    display_name TEXT NOT NULL,
+    tile_size REAL NOT NULL CHECK(tile_size > 0.0),
+    anti_tiling INTEGER NOT NULL CHECK(anti_tiling IN (0, 1)),
+    normal_y_sign REAL NOT NULL CHECK(normal_y_sign IN (-1.0, 1.0)),
+    normal_strength REAL NOT NULL CHECK(normal_strength BETWEEN 0.0 AND 1.0),
+    roughness_min REAL NOT NULL CHECK(roughness_min BETWEEN 0.0 AND 1.0),
+    roughness_max REAL NOT NULL CHECK(roughness_max BETWEEN roughness_min AND 1.0)
+) STRICT;
+
+CREATE TABLE terrain_texture_sets (
+    texture_set_id BLOB PRIMARY KEY CHECK(length(texture_set_id) = 16),
+    texture_set_key TEXT NOT NULL UNIQUE,
+    base_color_universal_uri TEXT NOT NULL,
+    normal_material_universal_uri TEXT NOT NULL,
+    macro_variation_universal_uri TEXT NOT NULL,
+    base_color_astc_uri TEXT NOT NULL,
+    normal_material_astc_uri TEXT NOT NULL,
+    macro_variation_astc_uri TEXT NOT NULL,
+    universal_gpu_bytes INTEGER NOT NULL CHECK(universal_gpu_bytes >= 0),
+    astc_gpu_bytes INTEGER NOT NULL CHECK(astc_gpu_bytes >= 0)
+) STRICT;
+
+CREATE TABLE terrain_texture_set_layers (
+    texture_set_id BLOB NOT NULL REFERENCES terrain_texture_sets(texture_set_id) ON DELETE CASCADE,
+    layer INTEGER NOT NULL CHECK(layer BETWEEN 0 AND 65535),
+    surface_id BLOB NOT NULL REFERENCES terrain_surfaces(surface_id),
+    PRIMARY KEY(texture_set_id, layer),
+    UNIQUE(texture_set_id, surface_id)
+) STRICT, WITHOUT ROWID;
+
+CREATE TABLE world_space_terrain_profiles (
+    world_space_id INTEGER PRIMARY KEY REFERENCES world_spaces(id) ON DELETE CASCADE,
+    texture_set_id BLOB NOT NULL REFERENCES terrain_texture_sets(texture_set_id),
+    weight_resolution INTEGER NOT NULL CHECK(weight_resolution BETWEEN 2 AND 257),
+    macro_small_scale REAL NOT NULL CHECK(macro_small_scale > 0.0),
+    macro_medium_scale REAL NOT NULL CHECK(macro_medium_scale > 0.0),
+    macro_large_scale REAL NOT NULL CHECK(macro_large_scale > 0.0),
+    macro_contrast REAL NOT NULL CHECK(macro_contrast >= 0.0),
+    macro_albedo_strength REAL NOT NULL CHECK(macro_albedo_strength BETWEEN 0.0 AND 0.5)
+) STRICT;
+
+CREATE TABLE terrain_cell_surface_slots (
+    world_space_id INTEGER NOT NULL,
+    cell_x INTEGER NOT NULL,
+    cell_z INTEGER NOT NULL,
+    slot INTEGER NOT NULL CHECK(slot BETWEEN 0 AND 7),
+    surface_id BLOB NOT NULL REFERENCES terrain_surfaces(surface_id),
+    PRIMARY KEY(world_space_id, cell_x, cell_z, slot),
+    UNIQUE(world_space_id, cell_x, cell_z, surface_id),
+    FOREIGN KEY(world_space_id, cell_x, cell_z)
+        REFERENCES source_cells(world_space_id, cell_x, cell_z) ON DELETE CASCADE
+) STRICT, WITHOUT ROWID;
+
+CREATE TABLE terrain_cell_weight_pages (
+    world_space_id INTEGER NOT NULL,
+    cell_x INTEGER NOT NULL,
+    cell_z INTEGER NOT NULL,
+    page INTEGER NOT NULL CHECK(page BETWEEN 0 AND 1),
+    resolution INTEGER NOT NULL CHECK(resolution BETWEEN 2 AND 257),
+    rgba BLOB NOT NULL CHECK(length(rgba) = resolution * resolution * 4),
+    source_revision INTEGER NOT NULL CHECK(source_revision >= 0),
+    PRIMARY KEY(world_space_id, cell_x, cell_z, page),
+    FOREIGN KEY(world_space_id, cell_x, cell_z)
+        REFERENCES source_cells(world_space_id, cell_x, cell_z) ON DELETE CASCADE
 ) STRICT, WITHOUT ROWID;
 
 CREATE TABLE ground_cover_species (
@@ -130,7 +196,7 @@ CREATE TABLE object_cell_overlaps (
     PRIMARY KEY(object_id, world_space_id, cell_x, cell_z)
 ) STRICT, WITHOUT ROWID;
 
-PRAGMA user_version = 6;
+PRAGMA user_version = 7;
 "#;
 
 pub const RUNTIME_SCHEMA: &str = r#"
@@ -163,6 +229,50 @@ CREATE TABLE cells (
     source_revision INTEGER NOT NULL CHECK(source_revision >= 0),
     PRIMARY KEY(world_space_id, cell_x, cell_z)
 ) STRICT, WITHOUT ROWID;
+
+CREATE TABLE terrain_surfaces (
+    surface_id BLOB PRIMARY KEY CHECK(length(surface_id) = 16),
+    surface_key TEXT NOT NULL UNIQUE,
+    display_name TEXT NOT NULL,
+    tile_size REAL NOT NULL CHECK(tile_size > 0.0),
+    anti_tiling INTEGER NOT NULL CHECK(anti_tiling IN (0, 1)),
+    normal_y_sign REAL NOT NULL CHECK(normal_y_sign IN (-1.0, 1.0)),
+    normal_strength REAL NOT NULL CHECK(normal_strength BETWEEN 0.0 AND 1.0),
+    roughness_min REAL NOT NULL CHECK(roughness_min BETWEEN 0.0 AND 1.0),
+    roughness_max REAL NOT NULL CHECK(roughness_max BETWEEN roughness_min AND 1.0)
+) STRICT;
+
+CREATE TABLE terrain_texture_sets (
+    texture_set_id BLOB PRIMARY KEY CHECK(length(texture_set_id) = 16),
+    texture_set_key TEXT NOT NULL UNIQUE,
+    base_color_universal_uri TEXT NOT NULL,
+    normal_material_universal_uri TEXT NOT NULL,
+    macro_variation_universal_uri TEXT NOT NULL,
+    base_color_astc_uri TEXT NOT NULL,
+    normal_material_astc_uri TEXT NOT NULL,
+    macro_variation_astc_uri TEXT NOT NULL,
+    universal_gpu_bytes INTEGER NOT NULL CHECK(universal_gpu_bytes >= 0),
+    astc_gpu_bytes INTEGER NOT NULL CHECK(astc_gpu_bytes >= 0)
+) STRICT;
+
+CREATE TABLE terrain_texture_set_layers (
+    texture_set_id BLOB NOT NULL REFERENCES terrain_texture_sets(texture_set_id) ON DELETE CASCADE,
+    layer INTEGER NOT NULL CHECK(layer BETWEEN 0 AND 65535),
+    surface_id BLOB NOT NULL REFERENCES terrain_surfaces(surface_id),
+    PRIMARY KEY(texture_set_id, layer),
+    UNIQUE(texture_set_id, surface_id)
+) STRICT, WITHOUT ROWID;
+
+CREATE TABLE world_space_terrain_profiles (
+    world_space_id INTEGER PRIMARY KEY REFERENCES world_spaces(id) ON DELETE CASCADE,
+    texture_set_id BLOB NOT NULL REFERENCES terrain_texture_sets(texture_set_id),
+    weight_resolution INTEGER NOT NULL CHECK(weight_resolution BETWEEN 2 AND 257),
+    macro_small_scale REAL NOT NULL CHECK(macro_small_scale > 0.0),
+    macro_medium_scale REAL NOT NULL CHECK(macro_medium_scale > 0.0),
+    macro_large_scale REAL NOT NULL CHECK(macro_large_scale > 0.0),
+    macro_contrast REAL NOT NULL CHECK(macro_contrast >= 0.0),
+    macro_albedo_strength REAL NOT NULL CHECK(macro_albedo_strength BETWEEN 0.0 AND 0.5)
+) STRICT;
 
 CREATE TABLE cell_pages (
     world_space_id INTEGER NOT NULL,
@@ -267,5 +377,17 @@ CREATE TABLE page_ground_cover_species (
         REFERENCES cell_pages(world_space_id, cell_x, cell_z, domain, lod)
 ) STRICT, WITHOUT ROWID;
 
-PRAGMA user_version = 6;
+CREATE TABLE page_terrain_surfaces (
+    world_space_id INTEGER NOT NULL,
+    cell_x INTEGER NOT NULL,
+    cell_z INTEGER NOT NULL,
+    domain INTEGER NOT NULL,
+    lod INTEGER NOT NULL,
+    surface_id BLOB NOT NULL REFERENCES terrain_surfaces(surface_id),
+    PRIMARY KEY(world_space_id, cell_x, cell_z, domain, lod, surface_id),
+    FOREIGN KEY(world_space_id, cell_x, cell_z, domain, lod)
+        REFERENCES cell_pages(world_space_id, cell_x, cell_z, domain, lod)
+) STRICT, WITHOUT ROWID;
+
+PRAGMA user_version = 7;
 "#;

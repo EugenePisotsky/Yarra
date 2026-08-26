@@ -4,9 +4,12 @@ use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_CELL_SIZE: f32 = 32.0;
 pub const MAX_DECODED_PAGE_BYTES: u64 = 64 * 1024 * 1024;
-pub const PROJECT_SCHEMA_VERSION: i64 = 6;
-pub const RUNTIME_SCHEMA_VERSION: i64 = 6;
-pub const PAGE_PAYLOAD_VERSION: u16 = 4;
+pub const PROJECT_SCHEMA_VERSION: i64 = 7;
+pub const RUNTIME_SCHEMA_VERSION: i64 = 7;
+pub const PAGE_PAYLOAD_VERSION: u16 = 5;
+pub const MAX_TERRAIN_SURFACES_PER_CELL: usize = 8;
+pub const MAX_TERRAIN_WEIGHT_PAGES: usize = 2;
+pub const MAX_TERRAIN_WEIGHT_RESOLUTION: u16 = 257;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct WorldSpaceId(pub i64);
@@ -100,6 +103,12 @@ pub struct GroundCoverSpeciesId(pub [u8; 16]);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct GroundCoverLayerId(pub [u8; 16]);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct TerrainSurfaceId(pub [u8; 16]);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct TerrainTextureSetId(pub [u8; 16]);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AssetId(pub [u8; 32]);
 
@@ -183,10 +192,93 @@ impl fmt::Display for UnknownPageCodec {
 
 impl Error for UnknownPageCodec {}
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct TerrainSurface {
+    pub id: TerrainSurfaceId,
+    pub key: String,
+    pub display_name: String,
+    /// The world-space width and height, in metres, of one texture repetition.
+    pub tile_size: f32,
+    /// Breaks up visible repetition by blending stable, randomly transformed
+    /// albedo samples. This is an authored surface property because noisy
+    /// surfaces benefit from it while strongly directional ones may not.
+    pub anti_tiling: bool,
+    pub normal_y_sign: f32,
+    pub normal_strength: f32,
+    pub roughness_min: f32,
+    pub roughness_max: f32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TerrainTextureSet {
+    pub id: TerrainTextureSetId,
+    pub key: String,
+    pub base_color_universal_uri: String,
+    pub normal_material_universal_uri: String,
+    pub macro_variation_universal_uri: String,
+    pub base_color_astc_uri: String,
+    pub normal_material_astc_uri: String,
+    pub macro_variation_astc_uri: String,
+    pub universal_gpu_bytes: u64,
+    pub astc_gpu_bytes: u64,
+}
+
+impl TerrainTextureSet {
+    pub fn runtime_uris(&self) -> (&str, &str, &str) {
+        if cfg!(target_os = "ios") {
+            (
+                &self.base_color_astc_uri,
+                &self.normal_material_astc_uri,
+                &self.macro_variation_astc_uri,
+            )
+        } else {
+            (
+                &self.base_color_universal_uri,
+                &self.normal_material_universal_uri,
+                &self.macro_variation_universal_uri,
+            )
+        }
+    }
+
+    pub fn runtime_gpu_bytes(&self) -> u64 {
+        if cfg!(target_os = "ios") {
+            self.astc_gpu_bytes
+        } else {
+            self.universal_gpu_bytes
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TerrainTextureLayer {
+    pub texture_set: TerrainTextureSetId,
+    pub surface: TerrainSurfaceId,
+    pub layer: u16,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TerrainProfile {
+    pub space: WorldSpaceId,
+    pub texture_set: TerrainTextureSetId,
+    pub weight_resolution: u16,
+    pub macro_scales: [f32; 3],
+    pub macro_contrast: f32,
+    pub macro_albedo_strength: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TerrainWeightPage {
+    pub resolution: u16,
+    pub rgba: Vec<u8>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TerrainRenderPage {
     pub height: f32,
-    pub base_color: [f32; 3],
+    /// Local material slots. Their order maps directly to RGBA channels in
+    /// `weight_pages`, four surfaces per page.
+    pub surfaces: Vec<TerrainSurfaceId>,
+    pub weight_pages: Vec<TerrainWeightPage>,
 }
 
 /// One globally defined decorative ground-cover species.
@@ -387,7 +479,11 @@ mod tests {
     fn page_payload_round_trips_with_version() {
         let payload = PagePayload::TerrainRender(TerrainRenderPage {
             height: 2.0,
-            base_color: [0.2, 0.3, 0.4],
+            surfaces: vec![TerrainSurfaceId([4; 16]), TerrainSurfaceId([5; 16])],
+            weight_pages: vec![TerrainWeightPage {
+                resolution: 2,
+                rgba: vec![255, 0, 0, 0, 128, 127, 0, 0, 64, 191, 0, 0, 0, 255, 0, 0],
+            }],
         });
         let bytes = encode_page_payload(&payload).unwrap();
         assert_eq!(decode_page_payload(&bytes).unwrap(), payload);

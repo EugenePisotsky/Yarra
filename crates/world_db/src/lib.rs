@@ -11,7 +11,8 @@ use world::{
     AssetId, CellCoord, GroundCoverLayerId, GroundCoverSpecies, GroundCoverSpeciesId,
     MAX_DECODED_PAGE_BYTES, ObjectActivationPolicy, ObjectDefinitionId, PROJECT_SCHEMA_VERSION,
     PageCodec, PageDomain, PageKey, PagePayload, RUNTIME_SCHEMA_VERSION, StableObjectId,
-    WorldSpaceId, decode_page_payload,
+    TerrainProfile, TerrainSurface, TerrainSurfaceId, TerrainTextureLayer, TerrainTextureSet,
+    TerrainTextureSetId, WorldSpaceId, decode_page_payload,
 };
 
 #[derive(Debug, Clone)]
@@ -19,6 +20,12 @@ pub struct ProjectDocument {
     pub default_world_space: WorldSpaceId,
     pub world_spaces: Vec<WorldSpaceRecord>,
     pub cells: Vec<SourceCellRecord>,
+    pub terrain_surfaces: Vec<TerrainSurface>,
+    pub terrain_texture_sets: Vec<TerrainTextureSet>,
+    pub terrain_texture_layers: Vec<TerrainTextureLayer>,
+    pub terrain_profiles: Vec<TerrainProfile>,
+    pub terrain_cell_surface_slots: Vec<SourceTerrainCellSurfaceSlotRecord>,
+    pub terrain_cell_weight_pages: Vec<SourceTerrainCellWeightPageRecord>,
     pub ground_cover_species: Vec<GroundCoverSpecies>,
     pub ground_cover_layers: Vec<SourceGroundCoverLayerRecord>,
     pub ground_cover_masks: Vec<SourceGroundCoverCellMaskRecord>,
@@ -42,7 +49,24 @@ pub struct SourceCellRecord {
     pub space: WorldSpaceId,
     pub cell: CellCoord,
     pub height: f32,
-    pub base_color: [f32; 3],
+    pub source_revision: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct SourceTerrainCellSurfaceSlotRecord {
+    pub space: WorldSpaceId,
+    pub cell: CellCoord,
+    pub slot: u8,
+    pub surface: TerrainSurfaceId,
+}
+
+#[derive(Debug, Clone)]
+pub struct SourceTerrainCellWeightPageRecord {
+    pub space: WorldSpaceId,
+    pub cell: CellCoord,
+    pub page: u8,
+    pub resolution: u16,
+    pub rgba: Vec<u8>,
     pub source_revision: i64,
 }
 
@@ -111,12 +135,17 @@ pub struct RuntimeBuild {
     pub manifest: RuntimeManifest,
     pub cells: Vec<RuntimeCellRecord>,
     pub pages: Vec<EncodedPage>,
+    pub terrain_surfaces: Vec<TerrainSurface>,
+    pub terrain_texture_sets: Vec<TerrainTextureSet>,
+    pub terrain_texture_layers: Vec<TerrainTextureLayer>,
+    pub terrain_profiles: Vec<TerrainProfile>,
     pub assets: Vec<AssetVariantRecord>,
     pub definitions: Vec<RuntimeObjectDefinition>,
     pub ground_cover_species: Vec<GroundCoverSpecies>,
     pub dependencies: Vec<PageDependencyRecord>,
     pub definition_dependencies: Vec<PageObjectDefinitionRecord>,
     pub ground_cover_species_dependencies: Vec<PageGroundCoverSpeciesRecord>,
+    pub terrain_surface_dependencies: Vec<PageTerrainSurfaceRecord>,
 }
 
 #[derive(Debug, Clone)]
@@ -276,6 +305,25 @@ pub struct PageGroundCoverSpeciesRecord {
 }
 
 #[derive(Debug, Clone)]
+pub struct PageTerrainSurfaceRecord {
+    pub page: PageKey,
+    pub surface: TerrainSurfaceId,
+}
+
+#[derive(Debug, Clone)]
+pub struct RuntimeTerrainSurface {
+    pub surface: TerrainSurface,
+    pub layer: u16,
+}
+
+#[derive(Debug, Clone)]
+pub struct TerrainRenderResources {
+    pub profile: TerrainProfile,
+    pub texture_set: TerrainTextureSet,
+    pub surfaces: Vec<RuntimeTerrainSurface>,
+}
+
+#[derive(Debug, Clone)]
 pub struct PageDependency {
     pub asset: AssetId,
     pub asset_lod: u8,
@@ -329,18 +377,51 @@ fn write_project_document(
     )?;
     for cell in &document.cells {
         transaction.execute(
-            "INSERT INTO source_cells( \
-                world_space_id, cell_x, cell_z, height, color_r, color_g, color_b, source_revision \
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO source_cells(world_space_id, cell_x, cell_z, height, source_revision) \
+             VALUES (?1, ?2, ?3, ?4, ?5)",
             params![
                 cell.space.0,
                 cell.cell.x,
                 cell.cell.z,
                 cell.height,
-                cell.base_color[0],
-                cell.base_color[1],
-                cell.base_color[2],
                 cell.source_revision
+            ],
+        )?;
+    }
+    write_terrain_catalog(
+        transaction,
+        &document.terrain_surfaces,
+        &document.terrain_texture_sets,
+        &document.terrain_texture_layers,
+        &document.terrain_profiles,
+    )?;
+    for slot in &document.terrain_cell_surface_slots {
+        transaction.execute(
+            "INSERT INTO terrain_cell_surface_slots( \
+                world_space_id, cell_x, cell_z, slot, surface_id \
+             ) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                slot.space.0,
+                slot.cell.x,
+                slot.cell.z,
+                i64::from(slot.slot),
+                slot.surface.0.as_slice(),
+            ],
+        )?;
+    }
+    for weights in &document.terrain_cell_weight_pages {
+        transaction.execute(
+            "INSERT INTO terrain_cell_weight_pages( \
+                world_space_id, cell_x, cell_z, page, resolution, rgba, source_revision \
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                weights.space.0,
+                weights.cell.x,
+                weights.cell.z,
+                i64::from(weights.page),
+                i64::from(weights.resolution),
+                weights.rgba,
+                weights.source_revision,
             ],
         )?;
     }
@@ -447,6 +528,88 @@ fn write_project_document(
     Ok(())
 }
 
+fn write_terrain_catalog(
+    transaction: &Transaction<'_>,
+    surfaces: &[TerrainSurface],
+    texture_sets: &[TerrainTextureSet],
+    texture_layers: &[TerrainTextureLayer],
+    profiles: &[TerrainProfile],
+) -> Result<(), WorldDbError> {
+    for surface in surfaces {
+        transaction.execute(
+            "INSERT INTO terrain_surfaces( \
+                surface_id, surface_key, display_name, tile_size, anti_tiling, normal_y_sign, \
+                normal_strength, roughness_min, roughness_max \
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                surface.id.0.as_slice(),
+                surface.key,
+                surface.display_name,
+                surface.tile_size,
+                surface.anti_tiling,
+                surface.normal_y_sign,
+                surface.normal_strength,
+                surface.roughness_min,
+                surface.roughness_max,
+            ],
+        )?;
+    }
+    for texture_set in texture_sets {
+        transaction.execute(
+            "INSERT INTO terrain_texture_sets( \
+                texture_set_id, texture_set_key, base_color_universal_uri, \
+                normal_material_universal_uri, macro_variation_universal_uri, \
+                base_color_astc_uri, normal_material_astc_uri, macro_variation_astc_uri, \
+                universal_gpu_bytes, astc_gpu_bytes \
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                texture_set.id.0.as_slice(),
+                texture_set.key,
+                texture_set.base_color_universal_uri,
+                texture_set.normal_material_universal_uri,
+                texture_set.macro_variation_universal_uri,
+                texture_set.base_color_astc_uri,
+                texture_set.normal_material_astc_uri,
+                texture_set.macro_variation_astc_uri,
+                i64::try_from(texture_set.universal_gpu_bytes)
+                    .map_err(|_| WorldDbError::IntegerOverflow)?,
+                i64::try_from(texture_set.astc_gpu_bytes)
+                    .map_err(|_| WorldDbError::IntegerOverflow)?,
+            ],
+        )?;
+    }
+    for layer in texture_layers {
+        transaction.execute(
+            "INSERT INTO terrain_texture_set_layers(texture_set_id, layer, surface_id) \
+             VALUES (?1, ?2, ?3)",
+            params![
+                layer.texture_set.0.as_slice(),
+                i64::from(layer.layer),
+                layer.surface.0.as_slice(),
+            ],
+        )?;
+    }
+    for profile in profiles {
+        transaction.execute(
+            "INSERT INTO world_space_terrain_profiles( \
+                world_space_id, texture_set_id, weight_resolution, macro_small_scale, \
+                macro_medium_scale, macro_large_scale, macro_contrast, macro_albedo_strength \
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                profile.space.0,
+                profile.texture_set.0.as_slice(),
+                i64::from(profile.weight_resolution),
+                profile.macro_scales[0],
+                profile.macro_scales[1],
+                profile.macro_scales[2],
+                profile.macro_contrast,
+                profile.macro_albedo_strength,
+            ],
+        )?;
+    }
+    Ok(())
+}
+
 fn write_ground_cover_species(
     transaction: &Transaction<'_>,
     species: &[GroundCoverSpecies],
@@ -491,7 +654,7 @@ pub fn read_project_database(path: &Path) -> Result<ProjectDocument, WorldDbErro
         |row| Ok(WorldSpaceId(row.get(0)?)),
     )?;
     let mut statement = connection.prepare(
-        "SELECT world_space_id, cell_x, cell_z, height, color_r, color_g, color_b, source_revision \
+        "SELECT world_space_id, cell_x, cell_z, height, source_revision \
          FROM source_cells ORDER BY world_space_id, cell_x, cell_z",
     )?;
     let cells = statement
@@ -503,8 +666,50 @@ pub fn read_project_database(path: &Path) -> Result<ProjectDocument, WorldDbErro
                     z: row.get(2)?,
                 },
                 height: row.get(3)?,
-                base_color: [row.get(4)?, row.get(5)?, row.get(6)?],
-                source_revision: row.get(7)?,
+                source_revision: row.get(4)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let terrain_surfaces = query_all_terrain_surfaces(&connection)?;
+    let terrain_texture_sets = query_all_terrain_texture_sets(&connection)?;
+    let terrain_texture_layers = query_all_terrain_texture_layers(&connection)?;
+    let terrain_profiles = query_all_terrain_profiles(&connection)?;
+    let mut statement = connection.prepare(
+        "SELECT world_space_id, cell_x, cell_z, slot, surface_id \
+         FROM terrain_cell_surface_slots \
+         ORDER BY world_space_id, cell_x, cell_z, slot",
+    )?;
+    let terrain_cell_surface_slots = statement
+        .query_map([], |row| {
+            Ok(SourceTerrainCellSurfaceSlotRecord {
+                space: WorldSpaceId(row.get(0)?),
+                cell: CellCoord {
+                    x: row.get(1)?,
+                    z: row.get(2)?,
+                },
+                slot: row.get::<_, i64>(3)? as u8,
+                surface: TerrainSurfaceId(blob_array(row.get_ref(4)?.as_blob()?, "surface_id")?),
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut statement = connection.prepare(
+        "SELECT world_space_id, cell_x, cell_z, page, resolution, rgba, source_revision \
+         FROM terrain_cell_weight_pages \
+         ORDER BY world_space_id, cell_x, cell_z, page",
+    )?;
+    let terrain_cell_weight_pages = statement
+        .query_map([], |row| {
+            Ok(SourceTerrainCellWeightPageRecord {
+                space: WorldSpaceId(row.get(0)?),
+                cell: CellCoord {
+                    x: row.get(1)?,
+                    z: row.get(2)?,
+                },
+                page: row.get::<_, i64>(3)? as u8,
+                resolution: row.get::<_, i64>(4)? as u16,
+                rgba: row.get(5)?,
+                source_revision: row.get(6)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -642,6 +847,12 @@ pub fn read_project_database(path: &Path) -> Result<ProjectDocument, WorldDbErro
         default_world_space,
         world_spaces,
         cells,
+        terrain_surfaces,
+        terrain_texture_sets,
+        terrain_texture_layers,
+        terrain_profiles,
+        terrain_cell_surface_slots,
+        terrain_cell_weight_pages,
         ground_cover_species,
         ground_cover_layers,
         ground_cover_masks,
@@ -691,6 +902,13 @@ fn write_runtime_build(
             manifest.content_hash.as_slice(),
             manifest.default_world_space.0
         ],
+    )?;
+    write_terrain_catalog(
+        transaction,
+        &build.terrain_surfaces,
+        &build.terrain_texture_sets,
+        &build.terrain_texture_layers,
+        &build.terrain_profiles,
     )?;
     for cell in &build.cells {
         transaction.execute(
@@ -809,6 +1027,21 @@ fn write_runtime_build(
                 dependency.page.domain as i64,
                 i64::from(dependency.page.lod),
                 dependency.species.0.as_slice(),
+            ],
+        )?;
+    }
+    for dependency in &build.terrain_surface_dependencies {
+        transaction.execute(
+            "INSERT INTO page_terrain_surfaces( \
+                world_space_id, cell_x, cell_z, domain, lod, surface_id \
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                dependency.page.space.0,
+                dependency.page.cell.x,
+                dependency.page.cell.z,
+                dependency.page.domain as i64,
+                i64::from(dependency.page.lod),
+                dependency.surface.0.as_slice(),
             ],
         )?;
     }
@@ -1036,6 +1269,62 @@ impl RuntimeReader {
             .collect::<Result<Vec<_>, _>>()
             .map_err(Into::into)
     }
+
+    pub fn read_terrain_resources(
+        &self,
+        key: PageKey,
+    ) -> Result<TerrainRenderResources, WorldDbError> {
+        let profile = self.connection.query_row(
+            "SELECT world_space_id, texture_set_id, weight_resolution, macro_small_scale, \
+                    macro_medium_scale, macro_large_scale, macro_contrast, macro_albedo_strength \
+             FROM world_space_terrain_profiles WHERE world_space_id = ?1",
+            [key.space.0],
+            terrain_profile_from_row,
+        )?;
+        let texture_set = self.connection.query_row(
+            "SELECT texture_set_id, texture_set_key, base_color_universal_uri, \
+                    normal_material_universal_uri, macro_variation_universal_uri, \
+                    base_color_astc_uri, normal_material_astc_uri, macro_variation_astc_uri, \
+                    universal_gpu_bytes, astc_gpu_bytes \
+             FROM terrain_texture_sets WHERE texture_set_id = ?1",
+            [profile.texture_set.0.as_slice()],
+            terrain_texture_set_from_row,
+        )?;
+        let mut statement = self.connection.prepare_cached(
+            "SELECT s.surface_id, s.surface_key, s.display_name, s.tile_size, s.anti_tiling, \
+                    s.normal_y_sign, s.normal_strength, s.roughness_min, s.roughness_max, l.layer \
+             FROM page_terrain_surfaces p \
+             JOIN terrain_surfaces s ON s.surface_id = p.surface_id \
+             JOIN terrain_texture_set_layers l \
+               ON l.surface_id = s.surface_id AND l.texture_set_id = ?6 \
+             WHERE p.world_space_id = ?1 AND p.cell_x = ?2 AND p.cell_z = ?3 \
+               AND p.domain = ?4 AND p.lod = ?5 \
+             ORDER BY l.layer",
+        )?;
+        let surfaces = statement
+            .query_map(
+                params![
+                    key.space.0,
+                    key.cell.x,
+                    key.cell.z,
+                    key.domain as i64,
+                    i64::from(key.lod),
+                    profile.texture_set.0.as_slice(),
+                ],
+                |row| {
+                    Ok(RuntimeTerrainSurface {
+                        surface: terrain_surface_from_row(row)?,
+                        layer: row.get::<_, i64>(9)? as u16,
+                    })
+                },
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(TerrainRenderResources {
+            profile,
+            texture_set,
+            surfaces,
+        })
+    }
 }
 
 fn query_all_ground_cover_species(
@@ -1067,6 +1356,108 @@ fn ground_cover_species_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Gr
         maximum_card_width: row.get(11)?,
         flattened_card_probability: row.get(12)?,
         maximum_wind_displacement: row.get(13)?,
+    })
+}
+
+fn query_all_terrain_surfaces(
+    connection: &Connection,
+) -> Result<Vec<TerrainSurface>, WorldDbError> {
+    let mut statement = connection.prepare(
+        "SELECT surface_id, surface_key, display_name, tile_size, anti_tiling, normal_y_sign, \
+                normal_strength, roughness_min, roughness_max \
+         FROM terrain_surfaces ORDER BY surface_id",
+    )?;
+    Ok(statement
+        .query_map([], terrain_surface_from_row)?
+        .collect::<Result<Vec<_>, _>>()?)
+}
+
+fn terrain_surface_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TerrainSurface> {
+    Ok(TerrainSurface {
+        id: TerrainSurfaceId(blob_array(row.get_ref(0)?.as_blob()?, "surface_id")?),
+        key: row.get(1)?,
+        display_name: row.get(2)?,
+        tile_size: row.get(3)?,
+        anti_tiling: row.get(4)?,
+        normal_y_sign: row.get(5)?,
+        normal_strength: row.get(6)?,
+        roughness_min: row.get(7)?,
+        roughness_max: row.get(8)?,
+    })
+}
+
+fn query_all_terrain_texture_sets(
+    connection: &Connection,
+) -> Result<Vec<TerrainTextureSet>, WorldDbError> {
+    let mut statement = connection.prepare(
+        "SELECT texture_set_id, texture_set_key, base_color_universal_uri, \
+                normal_material_universal_uri, macro_variation_universal_uri, \
+                base_color_astc_uri, normal_material_astc_uri, macro_variation_astc_uri, \
+                universal_gpu_bytes, astc_gpu_bytes \
+         FROM terrain_texture_sets ORDER BY texture_set_id",
+    )?;
+    Ok(statement
+        .query_map([], terrain_texture_set_from_row)?
+        .collect::<Result<Vec<_>, _>>()?)
+}
+
+fn terrain_texture_set_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TerrainTextureSet> {
+    Ok(TerrainTextureSet {
+        id: TerrainTextureSetId(blob_array(row.get_ref(0)?.as_blob()?, "texture_set_id")?),
+        key: row.get(1)?,
+        base_color_universal_uri: row.get(2)?,
+        normal_material_universal_uri: row.get(3)?,
+        macro_variation_universal_uri: row.get(4)?,
+        base_color_astc_uri: row.get(5)?,
+        normal_material_astc_uri: row.get(6)?,
+        macro_variation_astc_uri: row.get(7)?,
+        universal_gpu_bytes: row.get::<_, i64>(8)? as u64,
+        astc_gpu_bytes: row.get::<_, i64>(9)? as u64,
+    })
+}
+
+fn query_all_terrain_texture_layers(
+    connection: &Connection,
+) -> Result<Vec<TerrainTextureLayer>, WorldDbError> {
+    let mut statement = connection.prepare(
+        "SELECT texture_set_id, surface_id, layer \
+         FROM terrain_texture_set_layers ORDER BY texture_set_id, layer",
+    )?;
+    Ok(statement
+        .query_map([], |row| {
+            Ok(TerrainTextureLayer {
+                texture_set: TerrainTextureSetId(blob_array(
+                    row.get_ref(0)?.as_blob()?,
+                    "texture_set_id",
+                )?),
+                surface: TerrainSurfaceId(blob_array(row.get_ref(1)?.as_blob()?, "surface_id")?),
+                layer: row.get::<_, i64>(2)? as u16,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?)
+}
+
+fn query_all_terrain_profiles(
+    connection: &Connection,
+) -> Result<Vec<TerrainProfile>, WorldDbError> {
+    let mut statement = connection.prepare(
+        "SELECT world_space_id, texture_set_id, weight_resolution, macro_small_scale, \
+                macro_medium_scale, macro_large_scale, macro_contrast, macro_albedo_strength \
+         FROM world_space_terrain_profiles ORDER BY world_space_id",
+    )?;
+    Ok(statement
+        .query_map([], terrain_profile_from_row)?
+        .collect::<Result<Vec<_>, _>>()?)
+}
+
+fn terrain_profile_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TerrainProfile> {
+    Ok(TerrainProfile {
+        space: WorldSpaceId(row.get(0)?),
+        texture_set: TerrainTextureSetId(blob_array(row.get_ref(1)?.as_blob()?, "texture_set_id")?),
+        weight_resolution: row.get::<_, i64>(2)? as u16,
+        macro_scales: [row.get(3)?, row.get(4)?, row.get(5)?],
+        macro_contrast: row.get(6)?,
+        macro_albedo_strength: row.get(7)?,
     })
 }
 
@@ -1228,6 +1619,31 @@ mod tests {
         let asset_id = AssetId([9; 32]);
         let ground_cover_species_id = GroundCoverSpeciesId([11; 16]);
         let ground_cover_layer_id = GroundCoverLayerId([12; 16]);
+        let terrain_surface_id = TerrainSurfaceId([13; 16]);
+        let terrain_texture_set_id = TerrainTextureSetId([14; 16]);
+        let terrain_surface = TerrainSurface {
+            id: terrain_surface_id,
+            key: "test-grass".into(),
+            display_name: "Test grass".into(),
+            tile_size: 2.0,
+            anti_tiling: true,
+            normal_y_sign: 1.0,
+            normal_strength: 0.5,
+            roughness_min: 0.8,
+            roughness_max: 1.0,
+        };
+        let terrain_texture_set = TerrainTextureSet {
+            id: terrain_texture_set_id,
+            key: "test-terrain".into(),
+            base_color_universal_uri: "base-universal.ktx2".into(),
+            normal_material_universal_uri: "normal-universal.ktx2".into(),
+            macro_variation_universal_uri: "macro-universal.ktx2".into(),
+            base_color_astc_uri: "base-astc.ktx2".into(),
+            normal_material_astc_uri: "normal-astc.ktx2".into(),
+            macro_variation_astc_uri: "macro-astc.ktx2".into(),
+            universal_gpu_bytes: 1200,
+            astc_gpu_bytes: 600,
+        };
         let ground_cover_species = GroundCoverSpecies {
             id: ground_cover_species_id,
             key: "test/meadow-grass".into(),
@@ -1250,17 +1666,55 @@ mod tests {
                         space: space.id,
                         cell: CellCoord::ZERO,
                         height: 0.0,
-                        base_color: [0.2, 0.3, 0.4],
                         source_revision: 1,
                     },
                     SourceCellRecord {
                         space: second_space.id,
                         cell: CellCoord::ZERO,
                         height: 2.0,
-                        base_color: [0.4, 0.3, 0.2],
                         source_revision: 1,
                     },
                 ],
+                terrain_surfaces: vec![terrain_surface.clone()],
+                terrain_texture_sets: vec![terrain_texture_set.clone()],
+                terrain_texture_layers: vec![TerrainTextureLayer {
+                    texture_set: terrain_texture_set_id,
+                    surface: terrain_surface_id,
+                    layer: 0,
+                }],
+                terrain_profiles: vec![
+                    TerrainProfile {
+                        space: space.id,
+                        texture_set: terrain_texture_set_id,
+                        weight_resolution: 2,
+                        macro_scales: [8.0, 32.0, 128.0],
+                        macro_contrast: 1.25,
+                        macro_albedo_strength: 0.12,
+                    },
+                    TerrainProfile {
+                        space: second_space.id,
+                        texture_set: terrain_texture_set_id,
+                        weight_resolution: 2,
+                        macro_scales: [8.0, 32.0, 128.0],
+                        macro_contrast: 1.25,
+                        macro_albedo_strength: 0.12,
+                    },
+                ],
+                terrain_cell_surface_slots: vec![
+                    SourceTerrainCellSurfaceSlotRecord {
+                        space: space.id,
+                        cell: CellCoord::ZERO,
+                        slot: 0,
+                        surface: terrain_surface_id,
+                    },
+                    SourceTerrainCellSurfaceSlotRecord {
+                        space: second_space.id,
+                        cell: CellCoord::ZERO,
+                        slot: 0,
+                        surface: terrain_surface_id,
+                    },
+                ],
+                terrain_cell_weight_pages: Vec::new(),
                 ground_cover_species: vec![ground_cover_species.clone()],
                 ground_cover_layers: vec![SourceGroundCoverLayerRecord {
                     id: ground_cover_layer_id,
@@ -1317,6 +1771,12 @@ mod tests {
         assert_eq!(project.default_world_space, space.id);
         assert_eq!(project.world_spaces.len(), 2);
         assert_eq!(project.cells.len(), 2);
+        assert_eq!(project.terrain_surfaces, vec![terrain_surface.clone()]);
+        assert_eq!(
+            project.terrain_texture_sets,
+            vec![terrain_texture_set.clone()]
+        );
+        assert_eq!(project.terrain_cell_surface_slots.len(), 2);
         assert_eq!(project.assets[0].key, "test/tree");
         assert_eq!(project.asset_variants[0].minimum_screen_height, 0.0);
         assert_eq!(project.definitions.len(), 1);
@@ -1333,7 +1793,8 @@ mod tests {
 
         let payload = PagePayload::TerrainRender(TerrainRenderPage {
             height: 0.0,
-            base_color: [0.2, 0.3, 0.4],
+            surfaces: vec![terrain_surface_id],
+            weight_pages: Vec::new(),
         });
         let decoded = encode_page_payload(&payload).unwrap();
         let page = EncodedPage {
@@ -1421,6 +1882,21 @@ mod tests {
                     gameplay_page.clone(),
                     ground_cover_page.clone(),
                 ],
+                terrain_surfaces: vec![terrain_surface.clone()],
+                terrain_texture_sets: vec![terrain_texture_set.clone()],
+                terrain_texture_layers: vec![TerrainTextureLayer {
+                    texture_set: terrain_texture_set_id,
+                    surface: terrain_surface_id,
+                    layer: 0,
+                }],
+                terrain_profiles: vec![TerrainProfile {
+                    space: space.id,
+                    texture_set: terrain_texture_set_id,
+                    weight_resolution: 2,
+                    macro_scales: [8.0, 32.0, 128.0],
+                    macro_contrast: 1.25,
+                    macro_albedo_strength: 0.12,
+                }],
                 assets: Vec::new(),
                 definitions: vec![RuntimeObjectDefinition {
                     id: definition_id,
@@ -1438,6 +1914,10 @@ mod tests {
                 ground_cover_species_dependencies: vec![PageGroundCoverSpeciesRecord {
                     page: ground_cover_page.key,
                     species: ground_cover_species_id,
+                }],
+                terrain_surface_dependencies: vec![PageTerrainSurfaceRecord {
+                    page: page.key,
+                    surface: terrain_surface_id,
                 }],
             },
         )
@@ -1457,6 +1937,11 @@ mod tests {
                 .payload,
             payload
         );
+        let terrain = reader.read_terrain_resources(page.key).unwrap();
+        assert_eq!(terrain.profile.space, space.id);
+        assert_eq!(terrain.texture_set, terrain_texture_set);
+        assert_eq!(terrain.surfaces[0].surface, terrain_surface);
+        assert_eq!(terrain.surfaces[0].layer, 0);
         let definitions = reader.read_object_definitions(gameplay_page.key).unwrap();
         assert_eq!(definitions.len(), 1);
         assert_eq!(definitions[0].id, definition_id);

@@ -3,6 +3,7 @@ mod world_streaming;
 use std::path::PathBuf;
 
 use bevy::{
+    camera::Exposure,
     diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin},
     input::gestures::{PanGesture, PinchGesture},
     input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit},
@@ -12,6 +13,7 @@ use bevy::{
     window::{Monitor, PrimaryMonitor, PrimaryWindow, Window},
 };
 use ground_cover::{GroundCoverDebug, GroundCoverInteractor, GroundCoverPlugin, GroundCoverView};
+use terrain_render::{TerrainMacroVariation, TerrainRenderPlugin};
 pub use world_streaming::{ActiveWorldSpace, GameplayObject};
 use world_streaming::{StreamingStats, WorldStreamingPlugin};
 
@@ -61,6 +63,7 @@ impl Plugin for MinimalGamePlugin {
         app.add_plugins((
             FrameTimeDiagnosticsPlugin::default(),
             GroundCoverPlugin,
+            TerrainRenderPlugin,
             WorldStreamingPlugin::new(self.runtime_database.clone()),
         ))
         .init_resource::<TouchTapState>()
@@ -121,6 +124,14 @@ fn setup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
+    // Match the procedural meadow reference environment so authored terrain
+    // response is evaluated under its intended exposure and lighting.
+    commands.insert_resource(GlobalAmbientLight {
+        color: Color::srgb(0.72, 0.78, 0.74),
+        brightness: 270.0,
+        ..default()
+    });
+
     let start = Vec3::new(0.0, OBJECT_HALF_HEIGHT, 0.0);
     commands.spawn((
         Mesh3d(meshes.add(Cuboid::new(1.0, 1.0, 1.0))),
@@ -138,7 +149,8 @@ fn setup(
 
     commands.spawn((
         DirectionalLight {
-            illuminance: 12_000.0,
+            color: Color::srgb(0.63, 0.65, 0.81),
+            illuminance: 8_000.0,
             shadow_maps_enabled: true,
             ..default()
         },
@@ -149,7 +161,8 @@ fn setup(
             ..default()
         }
         .build(),
-        Transform::from_rotation(Quat::from_euler(EulerRot::XYZ, -0.9, -0.7, 0.0)),
+        Transform::from_translation(Vec3::new(7.878_527_6, 8.691_806, -12.131_867))
+            .looking_at(Vec3::ZERO, Vec3::Y),
         Name::new("Sun"),
     ));
 
@@ -162,6 +175,7 @@ fn setup(
     };
     commands.spawn((
         Camera3d::default(),
+        Exposure { ev100: 10.4 },
         Msaa::Off,
         GroundCoverView {
             normalized_zoom: normalized_camera_zoom(camera_rig.distance),
@@ -472,6 +486,7 @@ fn update_performance_label(
     diagnostics: Res<DiagnosticsStore>,
     streaming: Option<Res<StreamingStats>>,
     ground_cover_debug: Res<GroundCoverDebug>,
+    terrain_macro: Res<TerrainMacroVariation>,
     camera: Single<(&CameraRig, &GroundCoverView), With<MainCamera>>,
     primary_monitor: Option<Single<&Monitor, With<PrimaryMonitor>>>,
     mut label: Single<&mut Text, With<PerformanceLabel>>,
@@ -535,14 +550,16 @@ fn update_performance_label(
         .unwrap_or_else(|| "World: initializing".into());
 
     **label = Text::new(format!(
-        "Tap / left click: move | WASD / left stick: direct movement | Tab: change area | G: grass debug\n\
+        "Tap / left click: move | WASD / left stick: direct movement | Tab: change area | G: grass debug | V: terrain macro\n\
          Two-finger horizontal / right drag / right stick: orbit\n\
          Pinch / two-finger vertical / wheel: smooth zoom\n\
          Camera: {distance:.2} m (target {target_distance:.2} m) | normalized zoom: {normalized_zoom:.3}\n\
+         Terrain macro: {terrain_macro}\n\
          VSync baseline: {fps:.0} FPS | {frame_time:.2} ms | {display_refresh}\n\
          {streaming}",
         distance = camera.0.distance,
         target_distance = camera.0.target_distance,
         normalized_zoom = camera.1.normalized_zoom,
+        terrain_macro = terrain_macro.label(),
     ));
 }

@@ -21,6 +21,27 @@ assets/local/forest_tree_starter_kit/
   runtime/tree_07/summer/tree_07_summer_lod{0,1,2,3}.gltf
 ```
 
+The first terrain pack follows the same local-only rule:
+
+```text
+assets/local/terrain/temperate_meadow/
+  source/uncut_grass_oilpt20/{base_color.jpg,normal_material.png}
+  source/grass_dried_pjwhw0/{base_color.jpg,normal_material.png}
+  source/macro_variation.png
+  runtime/{universal,astc}/{base_color_array,normal_material_array,macro_variation}.ktx2
+```
+
+After restoring the five source images from the legacy repository, compile the
+portable UASTC and native iOS ASTC variants with:
+
+```bash
+python3 tools/compile_terrain_textures.py
+```
+
+Layer order and source hashes are tracked in
+`assets/packs/terrain/temperate_meadow.toml`. The SQLite terrain catalog refers
+to these runtime URIs; source images and compiled KTX2 files remain ignored.
+
 Regenerate the four local variants with Blender:
 
 ```bash

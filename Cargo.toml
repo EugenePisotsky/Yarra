@@ -3,6 +3,7 @@ members = [
     "crates/app_game",
     "crates/engine",
     "crates/ground_cover",
+    "crates/terrain_render",
     "crates/world",
     "crates/world_cook",
     "crates/world_db",
@@ -16,13 +17,15 @@ publish = false
 
 [workspace.dependencies]
 anyhow = "1"
-bevy = { version = "0.19", default-features = false, features = ["3d", "png", "ui"] }
+bevy = { version = "0.19", default-features = false, features = ["3d", "basis-universal", "ktx2", "png", "ui", "zstd_rust"] }
 blake3 = "1"
 bincode = { version = "2", features = ["serde"] }
 bytemuck = { version = "1", features = ["derive"] }
 crossbeam-channel = "0.5"
 engine = { package = "yarra-engine", path = "crates/engine" }
+glam = "0.32"
 ground-cover = { package = "yarra-ground-cover", path = "crates/ground_cover" }
+terrain-render = { package = "yarra-terrain-render", path = "crates/terrain_render" }
 log = { version = "0.4", features = ["max_level_debug", "release_max_level_warn"] }
 naga = { version = "29", features = ["wgsl-in"] }
 rusqlite = { version = "0.40.1", features = ["bundled"] }

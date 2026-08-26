@@ -2,23 +2,29 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fs,
     path::Path,
+    sync::OnceLock,
 };
 
 use anyhow::{Context, Result, bail};
+use glam::Vec2;
 use world::{
     AssetId, CellCoord, DEFAULT_CELL_SIZE, GameplayObjectInstance, GameplayObjectsPage,
     GroundCoverCluster, GroundCoverLayerId, GroundCoverPage, GroundCoverSpecies,
-    GroundCoverSpeciesId, ObjectActivationPolicy, ObjectDefinitionId, PageCodec, PageDomain,
-    PageKey, PagePayload, RUNTIME_SCHEMA_VERSION, StableObjectId, StaticObjectInstance,
-    StaticObjectsPage, TerrainRenderPage, WorldSpaceId, encode_page_payload,
+    GroundCoverSpeciesId, MAX_TERRAIN_SURFACES_PER_CELL, MAX_TERRAIN_WEIGHT_PAGES,
+    MAX_TERRAIN_WEIGHT_RESOLUTION, ObjectActivationPolicy, ObjectDefinitionId, PageCodec,
+    PageDomain, PageKey, PagePayload, RUNTIME_SCHEMA_VERSION, StableObjectId, StaticObjectInstance,
+    StaticObjectsPage, TerrainProfile, TerrainRenderPage, TerrainSurface, TerrainSurfaceId,
+    TerrainTextureLayer, TerrainTextureSet, TerrainTextureSetId, TerrainWeightPage, WorldSpaceId,
+    encode_page_payload,
 };
 use world_db::{
     AssetVariantRecord, EncodedPage, PageDependencyRecord, PageGroundCoverSpeciesRecord,
-    PageObjectDefinitionRecord, ProjectDocument, RuntimeBuild, RuntimeCellRecord, RuntimeManifest,
-    RuntimeObjectDefinition, SourceAssetRecord, SourceAssetVariantRecord, SourceCellRecord,
-    SourceGroundCoverCellMaskRecord, SourceGroundCoverLayerRecord, SourceObjectDefinitionRecord,
-    SourceObjectRecord, WorldSpaceRecord, domain_bit, read_project_database,
-    write_project_database, write_runtime_database,
+    PageObjectDefinitionRecord, PageTerrainSurfaceRecord, ProjectDocument, RuntimeBuild,
+    RuntimeCellRecord, RuntimeManifest, RuntimeObjectDefinition, SourceAssetRecord,
+    SourceAssetVariantRecord, SourceCellRecord, SourceGroundCoverCellMaskRecord,
+    SourceGroundCoverLayerRecord, SourceObjectDefinitionRecord, SourceObjectRecord,
+    SourceTerrainCellSurfaceSlotRecord, SourceTerrainCellWeightPageRecord, WorldSpaceRecord,
+    domain_bit, read_project_database, write_project_database, write_runtime_database,
 };
 
 pub const DEMO_TREE_KEY: &str = "forest_tree_starter_kit/tree_07";
@@ -34,6 +40,11 @@ const DEMO_TREE_MINIMUM_SCREEN_HEIGHTS: [f32; 4] = [320.0, 160.0, 80.0, 0.0];
 const DEMO_TREE_GPU_BYTES: [u64; 4] = [593_464, 324_612, 175_064, 85_164];
 const DEMO_TREE_BOUNDS: [f32; 3] = [7.9161, 15.9346, 5.5864];
 const DEMO_MEADOW_CELL_RANGE: std::ops::Range<i32> = -30..30;
+// Endpoint-inclusive samples: 65 gives the large 60-by-60-cell demo a
+// half-metre control-map interval while keeping its Git-tracked project
+// database below the practical size of the legacy 256-sample authoring maps.
+const DEMO_TERRAIN_WEIGHT_RESOLUTION: u16 = 65;
+const DEMO_TERRAIN_TEXTURE_ROOT: &str = "local/terrain/temperate_meadow/runtime";
 
 pub fn create_demo_project(path: &Path) -> Result<()> {
     let document = demo_project_document();
@@ -65,6 +76,22 @@ pub fn build_runtime(mut project: ProjectDocument) -> Result<RuntimeBuild> {
     }
     project.world_spaces.sort_by_key(|space| space.id);
     project.cells.sort_by_key(|cell| (cell.space, cell.cell));
+    project.terrain_surfaces.sort_by_key(|surface| surface.id);
+    project
+        .terrain_texture_sets
+        .sort_by_key(|texture_set| texture_set.id);
+    project
+        .terrain_texture_layers
+        .sort_by_key(|layer| (layer.texture_set, layer.layer));
+    project
+        .terrain_profiles
+        .sort_by_key(|profile| profile.space);
+    project
+        .terrain_cell_surface_slots
+        .sort_by_key(|slot| (slot.space, slot.cell, slot.slot));
+    project
+        .terrain_cell_weight_pages
+        .sort_by_key(|weights| (weights.space, weights.cell, weights.page));
     project
         .ground_cover_species
         .sort_by_key(|species| species.id);
@@ -89,6 +116,197 @@ pub fn build_runtime(mut project: ProjectDocument) -> Result<RuntimeBuild> {
         .iter()
         .map(|cell| (cell.space, cell.cell))
         .collect();
+    let terrain_surfaces_by_id: HashMap<_, _> = project
+        .terrain_surfaces
+        .iter()
+        .map(|surface| (surface.id, surface))
+        .collect();
+    if terrain_surfaces_by_id.len() != project.terrain_surfaces.len() {
+        bail!("terrain surface IDs must be unique");
+    }
+    if project
+        .terrain_surfaces
+        .iter()
+        .map(|surface| surface.key.as_str())
+        .collect::<HashSet<_>>()
+        .len()
+        != project.terrain_surfaces.len()
+    {
+        bail!("terrain surface keys must be unique");
+    }
+    for surface in &project.terrain_surfaces {
+        validate_terrain_surface(surface)?;
+    }
+    let terrain_texture_sets_by_id: HashMap<_, _> = project
+        .terrain_texture_sets
+        .iter()
+        .map(|texture_set| (texture_set.id, texture_set))
+        .collect();
+    if terrain_texture_sets_by_id.len() != project.terrain_texture_sets.len() {
+        bail!("terrain texture-set IDs must be unique");
+    }
+    if project
+        .terrain_texture_sets
+        .iter()
+        .map(|texture_set| texture_set.key.as_str())
+        .collect::<HashSet<_>>()
+        .len()
+        != project.terrain_texture_sets.len()
+    {
+        bail!("terrain texture-set keys must be unique");
+    }
+    for texture_set in &project.terrain_texture_sets {
+        validate_terrain_texture_set(texture_set)?;
+    }
+    let mut terrain_layers_by_surface = HashMap::new();
+    let mut terrain_layers_by_index = HashSet::new();
+    let mut terrain_layer_indices_by_set: BTreeMap<TerrainTextureSetId, Vec<u16>> = BTreeMap::new();
+    for layer in &project.terrain_texture_layers {
+        if !terrain_texture_sets_by_id.contains_key(&layer.texture_set) {
+            bail!("terrain texture layer references a missing texture set");
+        }
+        if !terrain_surfaces_by_id.contains_key(&layer.surface) {
+            bail!("terrain texture layer references a missing surface");
+        }
+        if terrain_layers_by_surface
+            .insert((layer.texture_set, layer.surface), layer.layer)
+            .is_some()
+            || !terrain_layers_by_index.insert((layer.texture_set, layer.layer))
+        {
+            bail!("terrain texture-set layers must be unique");
+        }
+        terrain_layer_indices_by_set
+            .entry(layer.texture_set)
+            .or_default()
+            .push(layer.layer);
+    }
+    for (texture_set, layers) in &terrain_layer_indices_by_set {
+        if layers
+            .iter()
+            .enumerate()
+            .any(|(expected, layer)| usize::from(*layer) != expected)
+        {
+            bail!(
+                "terrain texture set {:?} layers must be contiguous from zero",
+                texture_set
+            );
+        }
+    }
+    let terrain_profiles_by_space: HashMap<_, _> = project
+        .terrain_profiles
+        .iter()
+        .map(|profile| (profile.space, profile))
+        .collect();
+    if terrain_profiles_by_space.len() != project.terrain_profiles.len() {
+        bail!("world spaces may have only one terrain profile");
+    }
+    for space in &project.world_spaces {
+        let Some(profile) = terrain_profiles_by_space.get(&space.id) else {
+            bail!("world space {:?} has no terrain profile", space.id);
+        };
+        validate_terrain_profile(profile)?;
+        if !terrain_texture_sets_by_id.contains_key(&profile.texture_set) {
+            bail!(
+                "world space {:?} references a missing terrain texture set",
+                space.id
+            );
+        }
+    }
+    let mut terrain_slots_by_cell: BTreeMap<
+        (WorldSpaceId, CellCoord),
+        Vec<&SourceTerrainCellSurfaceSlotRecord>,
+    > = BTreeMap::new();
+    for slot in &project.terrain_cell_surface_slots {
+        if !source_cells.contains(&(slot.space, slot.cell)) {
+            bail!(
+                "terrain surface slot references missing cell {:?}",
+                slot.cell
+            );
+        }
+        let Some(profile) = terrain_profiles_by_space.get(&slot.space) else {
+            bail!("terrain surface slot references an unprofiled world space");
+        };
+        if !terrain_layers_by_surface.contains_key(&(profile.texture_set, slot.surface)) {
+            bail!("terrain surface slot is not present in the world's texture set");
+        }
+        terrain_slots_by_cell
+            .entry((slot.space, slot.cell))
+            .or_default()
+            .push(slot);
+    }
+    let mut terrain_weights_by_cell: BTreeMap<
+        (WorldSpaceId, CellCoord),
+        Vec<&SourceTerrainCellWeightPageRecord>,
+    > = BTreeMap::new();
+    for weights in &project.terrain_cell_weight_pages {
+        if !source_cells.contains(&(weights.space, weights.cell)) {
+            bail!(
+                "terrain weight page references missing cell {:?}",
+                weights.cell
+            );
+        }
+        let profile = terrain_profiles_by_space[&weights.space];
+        let expected_bytes = usize::from(weights.resolution).pow(2) * 4;
+        if weights.resolution != profile.weight_resolution || weights.rgba.len() != expected_bytes {
+            bail!("terrain weight page has the wrong resolution or byte count");
+        }
+        terrain_weights_by_cell
+            .entry((weights.space, weights.cell))
+            .or_default()
+            .push(weights);
+    }
+    for source_cell in &project.cells {
+        let Some(slots) = terrain_slots_by_cell.get(&(source_cell.space, source_cell.cell)) else {
+            bail!("terrain cell {:?} has no surface slots", source_cell.cell);
+        };
+        if slots.is_empty() || slots.len() > MAX_TERRAIN_SURFACES_PER_CELL {
+            bail!(
+                "terrain cell {:?} has an invalid surface count",
+                source_cell.cell
+            );
+        }
+        if slots
+            .iter()
+            .enumerate()
+            .any(|(expected, slot)| usize::from(slot.slot) != expected)
+        {
+            bail!(
+                "terrain cell {:?} surface slots must be contiguous",
+                source_cell.cell
+            );
+        }
+        let expected_weight_pages = slots.len().div_ceil(4);
+        let actual_weight_pages = terrain_weights_by_cell
+            .get(&(source_cell.space, source_cell.cell))
+            .map_or(0, Vec::len);
+        if terrain_weights_by_cell
+            .get(&(source_cell.space, source_cell.cell))
+            .is_some_and(|pages| {
+                pages
+                    .iter()
+                    .enumerate()
+                    .any(|(expected, page)| usize::from(page.page) != expected)
+            })
+        {
+            bail!(
+                "terrain cell {:?} weight pages must be contiguous",
+                source_cell.cell
+            );
+        }
+        if slots.len() == 1 {
+            if actual_weight_pages != 0 {
+                bail!("constant terrain cells must not store weight pages");
+            }
+        } else if actual_weight_pages != expected_weight_pages
+            || actual_weight_pages > MAX_TERRAIN_WEIGHT_PAGES
+        {
+            bail!(
+                "terrain cell {:?} has the wrong number of weight pages",
+                source_cell.cell
+            );
+        }
+    }
+    validate_terrain_weight_borders(&terrain_weights_by_cell)?;
     let ground_cover_species_by_id: HashMap<_, _> = project
         .ground_cover_species
         .iter()
@@ -240,6 +458,7 @@ pub fn build_runtime(mut project: ProjectDocument) -> Result<RuntimeBuild> {
     let mut dependencies = Vec::new();
     let mut definition_dependencies = Vec::new();
     let mut ground_cover_species_dependencies = Vec::new();
+    let mut terrain_surface_dependencies = Vec::new();
     let mut content_hasher = blake3::Hasher::new();
 
     content_hasher.update(&project.default_world_space.0.to_le_bytes());
@@ -250,6 +469,7 @@ pub fn build_runtime(mut project: ProjectDocument) -> Result<RuntimeBuild> {
         content_hasher.update(&space.minimum_y.to_bits().to_le_bytes());
         content_hasher.update(&space.maximum_y.to_bits().to_le_bytes());
     }
+    hash_terrain_catalog(&mut content_hasher, &project);
     for species in &project.ground_cover_species {
         content_hasher.update(&species.id.0);
         content_hasher.update(species.key.as_bytes());
@@ -308,6 +528,12 @@ pub fn build_runtime(mut project: ProjectDocument) -> Result<RuntimeBuild> {
     }
 
     for source_cell in &project.cells {
+        let terrain_slots =
+            terrain_slots_by_cell[&(source_cell.space, source_cell.cell)].as_slice();
+        let terrain_weights = terrain_weights_by_cell
+            .get(&(source_cell.space, source_cell.cell))
+            .map(Vec::as_slice)
+            .unwrap_or_default();
         let terrain_key = PageKey {
             space: source_cell.space,
             cell: source_cell.cell,
@@ -318,12 +544,28 @@ pub fn build_runtime(mut project: ProjectDocument) -> Result<RuntimeBuild> {
             terrain_key,
             PagePayload::TerrainRender(TerrainRenderPage {
                 height: source_cell.height,
-                base_color: source_cell.base_color,
+                surfaces: terrain_slots.iter().map(|slot| slot.surface).collect(),
+                weight_pages: terrain_weights
+                    .iter()
+                    .map(|weights| TerrainWeightPage {
+                        resolution: weights.resolution,
+                        rgba: weights.rgba.clone(),
+                    })
+                    .collect(),
             }),
-            256,
+            terrain_weights
+                .iter()
+                .map(|weights| weights.rgba.len() as u64)
+                .sum(),
         )?;
         hash_page(&mut content_hasher, &terrain_page);
         pages.push(terrain_page);
+        terrain_surface_dependencies.extend(terrain_slots.iter().map(|slot| {
+            PageTerrainSurfaceRecord {
+                page: terrain_key,
+                surface: slot.surface,
+            }
+        }));
 
         let source_objects = objects_by_cell
             .get(&(source_cell.space, source_cell.cell))
@@ -542,13 +784,199 @@ pub fn build_runtime(mut project: ProjectDocument) -> Result<RuntimeBuild> {
         },
         cells,
         pages,
+        terrain_surfaces: project.terrain_surfaces,
+        terrain_texture_sets: project.terrain_texture_sets,
+        terrain_texture_layers: project.terrain_texture_layers,
+        terrain_profiles: project.terrain_profiles,
         assets,
         definitions,
         ground_cover_species,
         dependencies,
         definition_dependencies,
         ground_cover_species_dependencies,
+        terrain_surface_dependencies,
     })
+}
+
+fn validate_terrain_surface(surface: &TerrainSurface) -> Result<()> {
+    if surface.key.is_empty()
+        || surface.display_name.is_empty()
+        || !surface.tile_size.is_finite()
+        || surface.tile_size <= 0.0
+        || !surface.normal_y_sign.is_finite()
+        || surface.normal_y_sign.abs() != 1.0
+        || !surface.normal_strength.is_finite()
+        || surface.normal_strength < 0.0
+        || !surface.roughness_min.is_finite()
+        || !surface.roughness_max.is_finite()
+        || !(0.0..=1.0).contains(&surface.roughness_min)
+        || !(surface.roughness_min..=1.0).contains(&surface.roughness_max)
+    {
+        bail!("terrain surface {:?} is invalid", surface.id);
+    }
+    Ok(())
+}
+
+fn validate_terrain_profile(profile: &TerrainProfile) -> Result<()> {
+    if profile.weight_resolution < 2
+        || profile.weight_resolution > MAX_TERRAIN_WEIGHT_RESOLUTION
+        || profile
+            .macro_scales
+            .into_iter()
+            .any(|scale| !scale.is_finite() || scale <= 0.0)
+        || profile
+            .macro_scales
+            .windows(2)
+            .any(|pair| pair[1] <= pair[0])
+        || !profile.macro_contrast.is_finite()
+        || profile.macro_contrast < 0.0
+        || !profile.macro_albedo_strength.is_finite()
+        || !(0.0..=0.5).contains(&profile.macro_albedo_strength)
+    {
+        bail!("terrain profile for {:?} is invalid", profile.space);
+    }
+    Ok(())
+}
+
+fn validate_terrain_texture_set(texture_set: &TerrainTextureSet) -> Result<()> {
+    if texture_set.key.is_empty()
+        || [
+            &texture_set.base_color_universal_uri,
+            &texture_set.normal_material_universal_uri,
+            &texture_set.macro_variation_universal_uri,
+            &texture_set.base_color_astc_uri,
+            &texture_set.normal_material_astc_uri,
+            &texture_set.macro_variation_astc_uri,
+        ]
+        .into_iter()
+        .any(|uri| uri.is_empty())
+    {
+        bail!("terrain texture set {:?} is invalid", texture_set.id);
+    }
+    Ok(())
+}
+
+fn validate_terrain_weight_borders(
+    pages_by_cell: &BTreeMap<(WorldSpaceId, CellCoord), Vec<&SourceTerrainCellWeightPageRecord>>,
+) -> Result<()> {
+    for (&(space, cell), pages) in pages_by_cell {
+        for &(dx, dz, current_edge, neighbour_edge) in &[
+            (1, 0, WeightEdge::Right, WeightEdge::Left),
+            (0, 1, WeightEdge::Top, WeightEdge::Bottom),
+        ] {
+            let neighbour_cell = CellCoord {
+                x: cell.x + dx,
+                z: cell.z + dz,
+            };
+            let Some(neighbour_pages) = pages_by_cell.get(&(space, neighbour_cell)) else {
+                continue;
+            };
+            if pages.len() != neighbour_pages.len() {
+                bail!("adjacent terrain cells have incompatible weight pages");
+            }
+            for (current, neighbour) in pages.iter().zip(neighbour_pages) {
+                if current.page != neighbour.page
+                    || current.resolution != neighbour.resolution
+                    || weight_edge(current, current_edge) != weight_edge(neighbour, neighbour_edge)
+                {
+                    bail!(
+                        "terrain weight-map borders do not match between {:?} and {:?}",
+                        cell,
+                        neighbour_cell
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum WeightEdge {
+    Left,
+    Right,
+    Bottom,
+    Top,
+}
+
+fn weight_edge(page: &SourceTerrainCellWeightPageRecord, edge: WeightEdge) -> Vec<u8> {
+    let resolution = usize::from(page.resolution);
+    let mut result = Vec::with_capacity(resolution * 4);
+    for index in 0..resolution {
+        let sample = match edge {
+            WeightEdge::Left => index * resolution,
+            WeightEdge::Right => index * resolution + resolution - 1,
+            WeightEdge::Bottom => index,
+            WeightEdge::Top => (resolution - 1) * resolution + index,
+        };
+        result.extend_from_slice(&page.rgba[sample * 4..sample * 4 + 4]);
+    }
+    result
+}
+
+fn hash_terrain_catalog(hasher: &mut blake3::Hasher, project: &ProjectDocument) {
+    for surface in &project.terrain_surfaces {
+        hasher.update(&surface.id.0);
+        hasher.update(surface.key.as_bytes());
+        hasher.update(surface.display_name.as_bytes());
+        hasher.update(&[u8::from(surface.anti_tiling)]);
+        for value in [
+            surface.tile_size,
+            surface.normal_y_sign,
+            surface.normal_strength,
+            surface.roughness_min,
+            surface.roughness_max,
+        ] {
+            hasher.update(&value.to_bits().to_le_bytes());
+        }
+    }
+    for texture_set in &project.terrain_texture_sets {
+        hasher.update(&texture_set.id.0);
+        hasher.update(texture_set.key.as_bytes());
+        for uri in [
+            &texture_set.base_color_universal_uri,
+            &texture_set.normal_material_universal_uri,
+            &texture_set.macro_variation_universal_uri,
+            &texture_set.base_color_astc_uri,
+            &texture_set.normal_material_astc_uri,
+            &texture_set.macro_variation_astc_uri,
+        ] {
+            hasher.update(uri.as_bytes());
+        }
+        hasher.update(&texture_set.universal_gpu_bytes.to_le_bytes());
+        hasher.update(&texture_set.astc_gpu_bytes.to_le_bytes());
+    }
+    for layer in &project.terrain_texture_layers {
+        hasher.update(&layer.texture_set.0);
+        hasher.update(&layer.surface.0);
+        hasher.update(&layer.layer.to_le_bytes());
+    }
+    for profile in &project.terrain_profiles {
+        hasher.update(&profile.space.0.to_le_bytes());
+        hasher.update(&profile.texture_set.0);
+        hasher.update(&profile.weight_resolution.to_le_bytes());
+        for value in profile.macro_scales {
+            hasher.update(&value.to_bits().to_le_bytes());
+        }
+        hasher.update(&profile.macro_contrast.to_bits().to_le_bytes());
+        hasher.update(&profile.macro_albedo_strength.to_bits().to_le_bytes());
+    }
+    for slot in &project.terrain_cell_surface_slots {
+        hasher.update(&slot.space.0.to_le_bytes());
+        hasher.update(&slot.cell.x.to_le_bytes());
+        hasher.update(&slot.cell.z.to_le_bytes());
+        hasher.update(&[slot.slot]);
+        hasher.update(&slot.surface.0);
+    }
+    for weights in &project.terrain_cell_weight_pages {
+        hasher.update(&weights.space.0.to_le_bytes());
+        hasher.update(&weights.cell.x.to_le_bytes());
+        hasher.update(&weights.cell.z.to_le_bytes());
+        hasher.update(&[weights.page]);
+        hasher.update(&weights.resolution.to_le_bytes());
+        hasher.update(&weights.rgba);
+        hasher.update(&weights.source_revision.to_le_bytes());
+    }
 }
 
 fn validate_ground_cover_species(species: &GroundCoverSpecies) -> Result<()> {
@@ -657,6 +1085,10 @@ fn demo_project_document() -> ProjectDocument {
         maximum_y: 0.0,
     };
     let overworld_id = overworld.id;
+    let interior_id = interior.id;
+    let terrain_texture_set = TerrainTextureSetId(stable_id("temperate-meadow-texture-set"));
+    let uncut_grass = TerrainSurfaceId(stable_id("uncut-grass-oilpt20"));
+    let dried_grass = TerrainSurfaceId(stable_id("grass-dried-pjwhw0"));
     let tree_asset = AssetId(*blake3::hash(DEMO_TREE_KEY.as_bytes()).as_bytes());
     let meadow_species = GroundCoverSpeciesId(stable_id("demo-meadow-grass"));
     let meadow_layer = GroundCoverLayerId(stable_id("demo-meadow-layer"));
@@ -665,18 +1097,36 @@ fn demo_project_document() -> ProjectDocument {
     let mut cells = Vec::with_capacity(64 * 64 + 9 * 9);
     let mut objects = Vec::new();
     let mut ground_cover_masks = Vec::new();
+    let mut terrain_cell_surface_slots = Vec::with_capacity((64 * 64 * 2) + 9 * 9);
+    let mut terrain_cell_weight_pages = Vec::with_capacity(64 * 64);
     for x in -32_i32..32 {
         for z in -32_i32..32 {
-            let checker = (x + z).rem_euclid(2) as f32;
             cells.push(SourceCellRecord {
                 space: overworld.id,
                 cell: CellCoord { x, z },
                 height: 0.0,
-                base_color: [
-                    0.205 + checker * 0.012,
-                    0.265 + checker * 0.012,
-                    0.225 + checker * 0.010,
-                ],
+                source_revision: 1,
+            });
+            terrain_cell_surface_slots.extend([
+                SourceTerrainCellSurfaceSlotRecord {
+                    space: overworld.id,
+                    cell: CellCoord { x, z },
+                    slot: 0,
+                    surface: uncut_grass,
+                },
+                SourceTerrainCellSurfaceSlotRecord {
+                    space: overworld.id,
+                    cell: CellCoord { x, z },
+                    slot: 1,
+                    surface: dried_grass,
+                },
+            ]);
+            terrain_cell_weight_pages.push(SourceTerrainCellWeightPageRecord {
+                space: overworld.id,
+                cell: CellCoord { x, z },
+                page: 0,
+                resolution: DEMO_TERRAIN_WEIGHT_RESOLUTION,
+                rgba: demo_terrain_weights(CellCoord { x, z }),
                 source_revision: 1,
             });
             if DEMO_MEADOW_CELL_RANGE.contains(&x) && DEMO_MEADOW_CELL_RANGE.contains(&z) {
@@ -709,17 +1159,17 @@ fn demo_project_document() -> ProjectDocument {
     }
     for x in -4_i32..=4 {
         for z in -4_i32..=4 {
-            let checker = (x + z).rem_euclid(2) as f32;
             cells.push(SourceCellRecord {
                 space: interior.id,
                 cell: CellCoord { x, z },
                 height: 0.0,
-                base_color: [
-                    0.115 + checker * 0.010,
-                    0.145 + checker * 0.010,
-                    0.205 + checker * 0.015,
-                ],
                 source_revision: 1,
+            });
+            terrain_cell_surface_slots.push(SourceTerrainCellSurfaceSlotRecord {
+                space: interior.id,
+                cell: CellCoord { x, z },
+                slot: 0,
+                surface: dried_grass,
             });
         }
     }
@@ -738,6 +1188,86 @@ fn demo_project_document() -> ProjectDocument {
         default_world_space: overworld.id,
         world_spaces: vec![overworld, interior],
         cells,
+        terrain_surfaces: vec![
+            TerrainSurface {
+                id: uncut_grass,
+                key: "uncut-grass-oilpt20".into(),
+                display_name: "Uncut grass".into(),
+                // The legacy prototype meadow applied a 1.6x area-wide
+                // appearance multiplier to this surface's 2 m source scale.
+                tile_size: 3.2,
+                anti_tiling: true,
+                normal_y_sign: 1.0,
+                normal_strength: 0.48,
+                roughness_min: 0.82,
+                roughness_max: 0.98,
+            },
+            TerrainSurface {
+                id: dried_grass,
+                key: "grass-dried-pjwhw0".into(),
+                display_name: "Dried grass".into(),
+                tile_size: 1.6,
+                anti_tiling: true,
+                normal_y_sign: 1.0,
+                normal_strength: 0.42,
+                roughness_min: 0.86,
+                roughness_max: 1.0,
+            },
+        ],
+        terrain_texture_sets: vec![TerrainTextureSet {
+            id: terrain_texture_set,
+            key: "temperate-meadow".into(),
+            base_color_universal_uri: format!(
+                "{DEMO_TERRAIN_TEXTURE_ROOT}/universal/base_color_array.ktx2"
+            ),
+            normal_material_universal_uri: format!(
+                "{DEMO_TERRAIN_TEXTURE_ROOT}/universal/normal_material_array.ktx2"
+            ),
+            macro_variation_universal_uri: format!(
+                "{DEMO_TERRAIN_TEXTURE_ROOT}/universal/macro_variation.ktx2"
+            ),
+            base_color_astc_uri: format!("{DEMO_TERRAIN_TEXTURE_ROOT}/astc/base_color_array.ktx2"),
+            normal_material_astc_uri: format!(
+                "{DEMO_TERRAIN_TEXTURE_ROOT}/astc/normal_material_array.ktx2"
+            ),
+            macro_variation_astc_uri: format!(
+                "{DEMO_TERRAIN_TEXTURE_ROOT}/astc/macro_variation.ktx2"
+            ),
+            universal_gpu_bytes: 6_554_120,
+            astc_gpu_bytes: 3_846_512,
+        }],
+        terrain_texture_layers: vec![
+            TerrainTextureLayer {
+                texture_set: terrain_texture_set,
+                surface: uncut_grass,
+                layer: 0,
+            },
+            TerrainTextureLayer {
+                texture_set: terrain_texture_set,
+                surface: dried_grass,
+                layer: 1,
+            },
+        ],
+        terrain_profiles: vec![
+            TerrainProfile {
+                space: overworld_id,
+                texture_set: terrain_texture_set,
+                weight_resolution: DEMO_TERRAIN_WEIGHT_RESOLUTION,
+                macro_scales: [7.7, 31.5, 235.0],
+                macro_contrast: 2.5,
+                macro_albedo_strength: 0.395,
+            },
+            TerrainProfile {
+                space: interior_id,
+                texture_set: terrain_texture_set,
+                weight_resolution: DEMO_TERRAIN_WEIGHT_RESOLUTION,
+                macro_scales: [7.7, 31.5, 235.0],
+                macro_contrast: 2.5,
+                macro_albedo_strength: 0.395,
+            },
+        ],
+        terrain_cell_surface_slots,
+        terrain_cell_weight_pages,
         ground_cover_species: vec![GroundCoverSpecies {
             id: meadow_species,
             key: "meadow-long-grass".into(),
@@ -796,6 +1326,217 @@ fn demo_project_document() -> ProjectDocument {
         ],
         objects,
     }
+}
+
+fn demo_terrain_weights(cell: CellCoord) -> Vec<u8> {
+    let resolution = usize::from(DEMO_TERRAIN_WEIGHT_RESOLUTION);
+    let intervals = (resolution - 1) as f32;
+    let mut rgba = Vec::with_capacity(resolution * resolution * 4);
+    for z in 0..resolution {
+        for x in 0..resolution {
+            let world_x =
+                cell.x as f32 * DEFAULT_CELL_SIZE + x as f32 * DEFAULT_CELL_SIZE / intervals;
+            let world_z =
+                cell.z as f32 * DEFAULT_CELL_SIZE + z as f32 * DEFAULT_CELL_SIZE / intervals;
+            // This is the useful two-compatible-surface path from the legacy
+            // meadow compiler: warped coherent noise at broad, medium, small,
+            // and mottling scales, followed by a calibrated continuous mix.
+            // It produces irregular internal structure rather than one huge
+            // analytic gradient between two regions.
+            let signal = demo_terrain_mix_signal(Vec2::new(world_x, world_z));
+            let dried =
+                (demo_terrain_mix_offset() + signal * demo_terrain_mix_amplitude()).clamp(0.0, 1.0);
+            let dried_byte = (dried * 255.0).round() as u8;
+            rgba.extend_from_slice(&[255 - dried_byte, dried_byte, 0, 0]);
+        }
+    }
+    rgba
+}
+
+const DEMO_TERRAIN_SEED: u32 = 1_863_996_882;
+const DEMO_TERRAIN_MIX_SCALE: f32 = 8.7;
+const DEMO_TERRAIN_DETAIL_SIZE: f32 = 0.5;
+const DEMO_TERRAIN_FINE_VARIATION: f32 = 0.82;
+const DEMO_TERRAIN_VARIANT_MOTTLING: f32 = 0.71;
+const DEMO_TERRAIN_BLEND_SOFTNESS: f32 = 0.14;
+const DEMO_DRY_COVERAGE: f32 = 0.32 / (0.62 + 0.32);
+
+fn demo_terrain_mix_signal(world: Vec2) -> f32 {
+    let region_scale = DEMO_TERRAIN_MIX_SCALE;
+    let broad_offset = terrain_material_offset(DEMO_TERRAIN_SEED, 1);
+    let warp = Vec2::new(
+        terrain_fbm(
+            world / (region_scale * 3.2) + broad_offset,
+            DEMO_TERRAIN_SEED ^ 0x3c6e_f372,
+        ),
+        terrain_fbm(
+            world / (region_scale * 3.2) + broad_offset + Vec2::new(17.3, -29.1),
+            DEMO_TERRAIN_SEED ^ 0xbb67_ae85,
+        ),
+    ) * (region_scale * 0.58);
+    let warped_world = world + warp;
+    let broad = terrain_patch_signal(
+        warped_world / region_scale + broad_offset,
+        DEMO_TERRAIN_SEED ^ 0x679d_443f,
+    );
+    let medium = terrain_patch_signal(
+        warped_world / (region_scale * 0.55 * DEMO_TERRAIN_DETAIL_SIZE)
+            + terrain_material_offset(DEMO_TERRAIN_SEED, 2),
+        DEMO_TERRAIN_SEED ^ 0x243f_6a88,
+    );
+    let small = terrain_patch_signal(
+        (world + warp * 0.35) / (region_scale * 0.28 * DEMO_TERRAIN_DETAIL_SIZE)
+            + terrain_material_offset(DEMO_TERRAIN_SEED, 3),
+        DEMO_TERRAIN_SEED ^ 0xb7e1_5163,
+    );
+    let hole_field = terrain_patch_signal(
+        (world - warp * 0.2) / (region_scale * 0.36 * DEMO_TERRAIN_DETAIL_SIZE)
+            + terrain_material_offset(DEMO_TERRAIN_SEED, 4),
+        DEMO_TERRAIN_SEED ^ 0x1319_8a2e,
+    );
+    let detail = smootherstep(DEMO_TERRAIN_FINE_VARIATION);
+    let medium_strength = 0.65 * detail;
+    let small_strength = 0.35 * detail;
+    let variation = (broad + medium * medium_strength + small * small_strength)
+        / (1.0 + medium_strength + small_strength);
+    let green_mottling =
+        (smoothstep(0.05, 0.75, hole_field) - 0.35) * DEMO_TERRAIN_VARIANT_MOTTLING * 0.42;
+    // Flat terrain has the same neutral feature response as the legacy
+    // sampler: moisture 0.65, slope 0.0.
+    let flat_terrain_bias = (0.65 - 0.5) * -0.55 * 0.2 + (0.0 - 0.35) * 0.2 * 0.14;
+    variation - green_mottling + flat_terrain_bias
+}
+
+fn demo_terrain_mix_amplitude() -> f32 {
+    const HARD_AMPLITUDE: f32 = 3.0;
+    const SOFT_AMPLITUDE: f32 = 0.10;
+    HARD_AMPLITUDE
+        * (SOFT_AMPLITUDE / HARD_AMPLITUDE).powf(DEMO_TERRAIN_BLEND_SOFTNESS.clamp(0.0, 1.0))
+}
+
+fn demo_terrain_mix_offset() -> f32 {
+    static OFFSET: OnceLock<f32> = OnceLock::new();
+    *OFFSET.get_or_init(|| {
+        // The original compiler calibrates coverage over the complete area.
+        // A deterministic stratified grid is sufficient for this flat demo
+        // and avoids making each cell choose its own incompatible threshold.
+        const SIDE: usize = 192;
+        let extent = DEFAULT_CELL_SIZE * 60.0;
+        let minimum = -extent * 0.5;
+        let signals = (0..SIDE)
+            .flat_map(|z| {
+                (0..SIDE).map(move |x| {
+                    let world = Vec2::new(
+                        minimum + (x as f32 + 0.5) / SIDE as f32 * extent,
+                        minimum + (z as f32 + 0.5) / SIDE as f32 * extent,
+                    );
+                    demo_terrain_mix_signal(world)
+                })
+            })
+            .collect::<Vec<_>>();
+        let amplitude = demo_terrain_mix_amplitude();
+        let mut lower = -(amplitude * 2.0 + 1.0);
+        let mut upper = amplitude * 2.0 + 1.0;
+        for _ in 0..24 {
+            let offset = (lower + upper) * 0.5;
+            let average = signals
+                .iter()
+                .map(|signal| (offset + signal * amplitude).clamp(0.0, 1.0))
+                .sum::<f32>()
+                / signals.len() as f32;
+            if average < DEMO_DRY_COVERAGE {
+                lower = offset;
+            } else {
+                upper = offset;
+            }
+        }
+        (lower + upper) * 0.5
+    })
+}
+
+fn terrain_patch_signal(mut point: Vec2, seed: u32) -> f32 {
+    let mut signal = terrain_value_noise(point, seed) * 0.7;
+    point = Vec2::new(
+        point.x * 1.71 - point.y * 1.04 + 7.3,
+        point.x * 1.04 + point.y * 1.71 - 11.9,
+    );
+    signal += terrain_value_noise(point, seed ^ 0x510e_527f) * 0.22;
+    point = Vec2::new(
+        point.x * 1.53 + point.y * 1.29 - 19.7,
+        -point.x * 1.29 + point.y * 1.53 + 3.1,
+    );
+    signal + terrain_value_noise(point, seed ^ 0x9b05_688c) * 0.08
+}
+
+fn terrain_material_offset(seed: u32, index: usize) -> Vec2 {
+    Vec2::new(
+        terrain_hash01(index as i32, 17, seed ^ 0xa409_3822) * 97.0,
+        terrain_hash01(index as i32, 53, seed ^ 0x299f_31d0) * 97.0,
+    )
+}
+
+fn terrain_value_noise(point: Vec2, seed: u32) -> f32 {
+    let cell = point.floor();
+    let local = point - cell;
+    let fade = Vec2::new(smootherstep(local.x), smootherstep(local.y));
+    let x = cell.x as i32;
+    let z = cell.y as i32;
+    let lower = mix(
+        terrain_hash_signed(x, z, seed),
+        terrain_hash_signed(x + 1, z, seed),
+        fade.x,
+    );
+    let upper = mix(
+        terrain_hash_signed(x, z + 1, seed),
+        terrain_hash_signed(x + 1, z + 1, seed),
+        fade.x,
+    );
+    mix(lower, upper, fade.y)
+}
+
+fn terrain_fbm(mut point: Vec2, seed: u32) -> f32 {
+    let mut sum = 0.0;
+    let mut amplitude = 0.55;
+    let mut normalization = 0.0;
+    for octave in 0..5_u32 {
+        sum += terrain_value_noise(point, seed ^ octave.wrapping_mul(0x9e37_79b9)) * amplitude;
+        normalization += amplitude;
+        point = Vec2::new(
+            point.x * 1.76 - point.y * 1.13 + 13.1,
+            point.x * 1.13 + point.y * 1.76 - 7.9,
+        );
+        amplitude *= 0.5;
+    }
+    sum / normalization
+}
+
+fn terrain_hash_signed(x: i32, z: i32, seed: u32) -> f32 {
+    terrain_hash01(x, z, seed) * 2.0 - 1.0
+}
+
+fn terrain_hash01(x: i32, z: i32, seed: u32) -> f32 {
+    let mut value =
+        seed ^ (x as u32).wrapping_mul(0x9e37_79b1) ^ (z as u32).wrapping_mul(0x85eb_ca77);
+    value ^= value >> 16;
+    value = value.wrapping_mul(0x7feb_352d);
+    value ^= value >> 15;
+    value = value.wrapping_mul(0x846c_a68b);
+    value ^= value >> 16;
+    value as f32 / u32::MAX as f32
+}
+
+fn smootherstep(value: f32) -> f32 {
+    let value = value.clamp(0.0, 1.0);
+    value * value * value * (value * (value * 6.0 - 15.0) + 10.0)
+}
+
+fn mix(a: f32, b: f32, amount: f32) -> f32 {
+    a + (b - a) * amount
+}
+
+fn smoothstep(minimum: f32, maximum: f32, value: f32) -> f32 {
+    let normalized = ((value - minimum) / (maximum - minimum)).clamp(0.0, 1.0);
+    normalized * normalized * (3.0 - 2.0 * normalized)
 }
 
 fn definition_id(key: &str) -> ObjectDefinitionId {
@@ -889,5 +1630,50 @@ mod tests {
                 "the demo URI {uri} and tree pack manifest must change together"
             );
         }
+    }
+
+    #[test]
+    fn demo_terrain_blend_contains_green_dry_and_transition_regions() {
+        let dried_weights = (-4..=4)
+            .flat_map(|cell_x| {
+                (-4..=4).flat_map(move |cell_z| {
+                    demo_terrain_weights(CellCoord {
+                        x: cell_x,
+                        z: cell_z,
+                    })
+                    .into_iter()
+                    .skip(1)
+                    .step_by(4)
+                })
+            })
+            .collect::<Vec<_>>();
+
+        assert!(dried_weights.iter().any(|weight| *weight <= 8));
+        assert!(dried_weights.iter().any(|weight| *weight >= 247));
+        assert!(
+            dried_weights
+                .iter()
+                .any(|weight| (32..=223).contains(weight))
+        );
+    }
+
+    #[test]
+    fn terrain_profile_validation_matches_sqlite_bounds() {
+        let mut profile = TerrainProfile {
+            space: WorldSpaceId(1),
+            texture_set: TerrainTextureSetId([1; 16]),
+            weight_resolution: MAX_TERRAIN_WEIGHT_RESOLUTION,
+            macro_scales: [7.7, 31.5, 235.0],
+            macro_contrast: 0.0,
+            macro_albedo_strength: 0.5,
+        };
+        assert!(validate_terrain_profile(&profile).is_ok());
+
+        profile.weight_resolution = MAX_TERRAIN_WEIGHT_RESOLUTION + 1;
+        assert!(validate_terrain_profile(&profile).is_err());
+
+        profile.weight_resolution = MAX_TERRAIN_WEIGHT_RESOLUTION;
+        profile.macro_albedo_strength = 0.500_1;
+        assert!(validate_terrain_profile(&profile).is_err());
     }
 }

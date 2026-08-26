@@ -1,0 +1,30 @@
+pack_key = "temperate-meadow"
+storage = "local-ignored"
+source = "Recovered from the legacy Yarra Quixel/Megascans terrain library"
+redistribution_license = "unknown"
+notes = "Keep source and derived images outside Git until redistribution rights are confirmed."
+
+[[surfaces]]
+key = "uncut-grass-oilpt20"
+array_layer = 0
+tile_size_meters = 2.0
+base_color_sha256 = "bf699ae6e83402eb86fb3d7048d2af0a9ceeca6429ab0c7c9a336186cdded9a4"
+normal_material_sha256 = "081d23320971db402af799784810260ec22307e5b615e5f57209e8a181930315"
+
+[[surfaces]]
+key = "grass-dried-pjwhw0"
+array_layer = 1
+tile_size_meters = 1.0
+base_color_sha256 = "4f2d6c1d876fc07d86594d3d4e174b4576d9abb05944c6647ff96efa6338f922"
+normal_material_sha256 = "0c61a80f7e1795a08911c9e7eef576c6243b86a87c4a1b5d16aebc43bb63ed7b"
+
+[macro_variation]
+sha256 = "19ae021894ab2cd06b1d154f2232f136b0c5e12b21e347ea15c9b1a81b980421"
+
+[runtime]
+universal_base_color = "local/terrain/temperate_meadow/runtime/universal/base_color_array.ktx2"
+universal_normal_material = "local/terrain/temperate_meadow/runtime/universal/normal_material_array.ktx2"
+universal_macro_variation = "local/terrain/temperate_meadow/runtime/universal/macro_variation.ktx2"
+astc_base_color = "local/terrain/temperate_meadow/runtime/astc/base_color_array.ktx2"
+astc_normal_material = "local/terrain/temperate_meadow/runtime/astc/normal_material_array.ktx2"
+astc_macro_variation = "local/terrain/temperate_meadow/runtime/astc/macro_variation.ktx2"

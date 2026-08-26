@@ -14,13 +14,17 @@ use bevy::{
 };
 use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded};
 use ground_cover::{GroundCoverPage3d, GroundCoverPageAsset};
+use terrain_render::{
+    PrepareTerrainMaterialContext, TerrainMacroVariation, TerrainMaterial, TerrainSurfaceLayer,
+    prepare_terrain_material,
+};
 use world::{
     AssetId, CellCoord, GroundCoverSpecies, ObjectActivationPolicy, ObjectDefinitionId, PageDomain,
-    PageKey, PagePayload, StableObjectId, WorldSpaceId,
+    PageKey, PagePayload, StableObjectId, TerrainTextureSetId, WorldSpaceId,
 };
 use world_db::{
     CellDescriptor, DecodedPage, EncodedPage, PageDependency, RuntimeManifest,
-    RuntimeObjectDefinition, RuntimeReader,
+    RuntimeObjectDefinition, RuntimeReader, TerrainRenderResources,
 };
 
 use crate::{MainCamera, MovableObject, MovementTarget, TargetIndicator};
@@ -155,6 +159,7 @@ struct FetchedPage {
     dependencies: Vec<PageDependency>,
     definitions: Vec<RuntimeObjectDefinition>,
     ground_cover_species: Vec<GroundCoverSpecies>,
+    terrain: Option<TerrainRenderResources>,
 }
 
 fn start_database_worker(mut commands: Commands, path: Res<WorldDatabasePath>) {
@@ -234,11 +239,17 @@ fn database_worker(
                             } else {
                                 Vec::new()
                             };
+                            let terrain = if key.domain == PageDomain::TerrainRender {
+                                Some(reader.read_terrain_resources(key)?)
+                            } else {
+                                None
+                            };
                             Ok(FetchedPage {
                                 encoded: page,
                                 dependencies,
                                 definitions,
                                 ground_cover_species,
+                                terrain,
                             })
                         })
                         .transpose()
@@ -304,6 +315,7 @@ struct PreparedPage {
     dependencies: Vec<PageDependency>,
     definitions: Vec<RuntimeObjectDefinition>,
     ground_cover_species: Vec<GroundCoverSpecies>,
+    terrain: Option<TerrainRenderResources>,
 }
 
 struct DecodeTask {
@@ -314,12 +326,14 @@ struct DecodeTask {
 
 struct PageAttachment {
     entities: Vec<Entity>,
-    owned_materials: Vec<Handle<StandardMaterial>>,
+    owned_terrain_materials: Vec<Handle<TerrainMaterial>>,
+    owned_terrain_images: Vec<Handle<Image>>,
     owned_ground_cover_pages: Vec<Handle<GroundCoverPageAsset>>,
     decoded_bytes: u64,
     gpu_bytes_estimate: u64,
     gameplay_objects: usize,
     ground_cover_clusters: usize,
+    terrain_texture_set: Option<(TerrainTextureSetId, u64)>,
 }
 
 #[derive(Component)]
@@ -342,8 +356,12 @@ struct WorldRenderAssets {
 }
 
 fn create_world_render_assets(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
+    let mut unit_plane = Plane3d::default().mesh().size(1.0, 1.0).build();
+    unit_plane
+        .generate_tangents()
+        .expect("the built-in terrain plane must support tangent generation");
     commands.insert_resource(WorldRenderAssets {
-        unit_plane: meshes.add(Plane3d::default().mesh().size(1.0, 1.0)),
+        unit_plane: meshes.add(unit_plane),
     });
 }
 
@@ -424,6 +442,7 @@ fn receive_database_results(
                                     dependencies: fetched.dependencies,
                                     definitions: fetched.definitions,
                                     ground_cover_species: fetched.ground_cover_species,
+                                    terrain: fetched.terrain,
                                 })
                                 .map_err(|error| error.to_string())
                         });
@@ -485,7 +504,8 @@ fn request_world_space_from_keyboard(
 
 fn apply_world_space_transition(
     mut commands: Commands,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut terrain_materials: ResMut<Assets<TerrainMaterial>>,
+    mut terrain_images: ResMut<Assets<Image>>,
     mut ground_cover_pages: ResMut<Assets<GroundCoverPageAsset>>,
     mut active_space: ResMut<ActiveWorldSpace>,
     mut stream: ResMut<WorldStream>,
@@ -514,7 +534,8 @@ fn apply_world_space_transition(
                 PageState::Resident(attachment) | PageState::Cooling { attachment, .. } => {
                     despawn_attachment(
                         &mut commands,
-                        &mut materials,
+                        &mut terrain_materials,
+                        &mut terrain_images,
                         &mut ground_cover_pages,
                         attachment,
                     );
@@ -749,7 +770,9 @@ fn attach_prepared_pages(
     asset_server: Res<AssetServer>,
     render_assets: Option<Res<WorldRenderAssets>>,
     stats: Res<StreamingStats>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut terrain_materials: ResMut<Assets<TerrainMaterial>>,
+    mut terrain_images: ResMut<Assets<Image>>,
+    macro_variation: Res<TerrainMacroVariation>,
     mut ground_cover_pages: ResMut<Assets<GroundCoverPageAsset>>,
     mut stream: ResMut<WorldStream>,
 ) {
@@ -765,6 +788,7 @@ fn attach_prepared_pages(
     keys.truncate(MAX_ATTACHMENTS_PER_FRAME);
     let mut admitted_decoded_bytes = stats.decoded_bytes;
     let mut admitted_gpu_bytes = stats.gpu_bytes_estimate;
+    let mut admitted_terrain_texture_sets = stats.terrain_texture_sets.clone();
 
     for key in keys {
         let Some(cell_size) = stream
@@ -791,7 +815,14 @@ fn attach_prepared_pages(
                 .dependencies
                 .iter()
                 .map(|dependency| dependency.gpu_bytes_estimate)
-                .sum::<u64>();
+                .sum::<u64>()
+            + prepared.terrain.as_ref().map_or(0, |terrain| {
+                if admitted_terrain_texture_sets.contains(&terrain.texture_set.id) {
+                    0
+                } else {
+                    terrain.texture_set.runtime_gpu_bytes()
+                }
+            });
         if page_decoded_bytes > MAX_RESIDENT_DECODED_BYTES
             || page_gpu_bytes > MAX_RESIDENT_GPU_BYTES_ESTIMATE
         {
@@ -814,8 +845,10 @@ fn attach_prepared_pages(
             &mut commands,
             &asset_server,
             &render_assets,
-            &mut materials,
+            &mut terrain_materials,
+            &mut terrain_images,
             &mut ground_cover_pages,
+            *macro_variation,
             cell_size,
             prepared,
         ) {
@@ -824,6 +857,11 @@ fn attach_prepared_pages(
                     admitted_decoded_bytes.saturating_add(attachment.decoded_bytes);
                 admitted_gpu_bytes =
                     admitted_gpu_bytes.saturating_add(attachment.gpu_bytes_estimate);
+                if let Some((texture_set, gpu_bytes)) = attachment.terrain_texture_set {
+                    if admitted_terrain_texture_sets.insert(texture_set) {
+                        admitted_gpu_bytes = admitted_gpu_bytes.saturating_add(gpu_bytes);
+                    }
+                }
                 stream.pages.insert(key, PageState::Resident(attachment));
             }
             Err(error) => {
@@ -837,33 +875,71 @@ fn attach_page(
     commands: &mut Commands,
     asset_server: &AssetServer,
     render_assets: &WorldRenderAssets,
-    materials: &mut Assets<StandardMaterial>,
+    terrain_materials: &mut Assets<TerrainMaterial>,
+    terrain_images: &mut Assets<Image>,
     ground_cover_pages: &mut Assets<GroundCoverPageAsset>,
+    macro_variation: TerrainMacroVariation,
     cell_size: f32,
     prepared: PreparedPage,
 ) -> Result<PageAttachment, String> {
     let key = prepared.decoded.key;
     let mut entities = Vec::new();
-    let mut owned_materials = Vec::new();
+    let mut owned_terrain_materials = Vec::new();
+    let mut owned_terrain_images = Vec::new();
     let mut owned_ground_cover_pages = Vec::new();
     let mut gameplay_objects = 0;
     let mut ground_cover_clusters = 0;
+    let mut terrain_texture_set = None;
     match prepared.decoded.payload {
         PagePayload::TerrainRender(terrain) => {
+            let resources = prepared
+                .terrain
+                .as_ref()
+                .ok_or_else(|| "terrain page has no fetched render resources".to_owned())?;
+            if resources.profile.space != key.space
+                || resources.profile.texture_set != resources.texture_set.id
+            {
+                return Err("terrain page render resources are inconsistent".into());
+            }
+            terrain_texture_set = Some((
+                resources.texture_set.id,
+                resources.texture_set.runtime_gpu_bytes(),
+            ));
+            let surface_lookup: HashMap<_, _> = resources
+                .surfaces
+                .iter()
+                .map(|runtime| (runtime.surface.id, runtime))
+                .collect();
+            let surface_layers = terrain
+                .surfaces
+                .iter()
+                .map(|surface| {
+                    let runtime = surface_lookup.get(surface).ok_or_else(|| {
+                        format!("terrain page has unresolved surface {:?}", surface)
+                    })?;
+                    Ok(TerrainSurfaceLayer {
+                        surface: runtime.surface.clone(),
+                        layer: runtime.layer,
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()?;
             let center = key.cell.center(cell_size);
-            let material = materials.add(StandardMaterial {
-                base_color: Color::srgb(
-                    terrain.base_color[0],
-                    terrain.base_color[1],
-                    terrain.base_color[2],
-                ),
-                perceptual_roughness: 1.0,
-                ..default()
-            });
+            let prepared_material = prepare_terrain_material(PrepareTerrainMaterialContext {
+                asset_server,
+                images: terrain_images,
+                materials: terrain_materials,
+                cell: key.cell,
+                cell_size,
+                page: &terrain,
+                profile: &resources.profile,
+                texture_set: &resources.texture_set,
+                surfaces: &surface_layers,
+                macro_variation,
+            })?;
             let entity = commands
                 .spawn((
                     Mesh3d(render_assets.unit_plane.clone()),
-                    MeshMaterial3d(material.clone()),
+                    MeshMaterial3d(prepared_material.material.clone()),
                     Transform::from_xyz(center[0], terrain.height, center[1])
                         .with_scale(Vec3::new(cell_size, 1.0, cell_size)),
                     StreamedPageEntity(key),
@@ -871,7 +947,8 @@ fn attach_page(
                 ))
                 .id();
             entities.push(entity);
-            owned_materials.push(material);
+            owned_terrain_materials.push(prepared_material.material);
+            owned_terrain_images.push(prepared_material.weight_image);
         }
         PagePayload::StaticObjects(objects) => {
             let mut dependencies: HashMap<AssetId, Vec<&PageDependency>> = HashMap::new();
@@ -1026,7 +1103,8 @@ fn attach_page(
 
     Ok(PageAttachment {
         entities,
-        owned_materials,
+        owned_terrain_materials,
+        owned_terrain_images,
         owned_ground_cover_pages,
         decoded_bytes: prepared.decoded.decoded_bytes,
         gpu_bytes_estimate: prepared.decoded.gpu_bytes_estimate
@@ -1037,6 +1115,7 @@ fn attach_page(
                 .sum::<u64>(),
         gameplay_objects,
         ground_cover_clusters,
+        terrain_texture_set,
     })
 }
 
@@ -1122,15 +1201,19 @@ struct StreamedPageEntity(PageKey);
 
 fn despawn_attachment(
     commands: &mut Commands,
-    materials: &mut Assets<StandardMaterial>,
+    terrain_materials: &mut Assets<TerrainMaterial>,
+    terrain_images: &mut Assets<Image>,
     ground_cover_pages: &mut Assets<GroundCoverPageAsset>,
     attachment: PageAttachment,
 ) {
     for entity in attachment.entities {
         commands.entity(entity).despawn();
     }
-    for material in attachment.owned_materials {
-        materials.remove(material.id());
+    for material in attachment.owned_terrain_materials {
+        terrain_materials.remove(material.id());
+    }
+    for image in attachment.owned_terrain_images {
+        terrain_images.remove(image.id());
     }
     for page in attachment.owned_ground_cover_pages {
         ground_cover_pages.remove(page.id());
@@ -1140,7 +1223,8 @@ fn despawn_attachment(
 fn cool_and_remove_pages(
     mut commands: Commands,
     time: Res<Time>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut terrain_materials: ResMut<Assets<TerrainMaterial>>,
+    mut terrain_images: ResMut<Assets<Image>>,
     mut ground_cover_pages: ResMut<Assets<GroundCoverPageAsset>>,
     mut stream: ResMut<WorldStream>,
 ) {
@@ -1170,7 +1254,8 @@ fn cool_and_remove_pages(
             } if now >= remove_at => {
                 despawn_attachment(
                     &mut commands,
-                    &mut materials,
+                    &mut terrain_materials,
+                    &mut terrain_images,
                     &mut ground_cover_pages,
                     attachment,
                 );
@@ -1201,6 +1286,7 @@ pub(crate) struct StreamingStats {
     pub(crate) lod_counts: BTreeMap<u8, usize>,
     pub(crate) minimum_projected_height: f32,
     pub(crate) maximum_projected_height: f32,
+    terrain_texture_sets: BTreeSet<TerrainTextureSetId>,
 }
 
 fn update_streaming_stats(
@@ -1236,6 +1322,7 @@ fn update_streaming_stats(
     stats.cached_definitions = stream.definition_cache.len();
     stats.gameplay_objects = 0;
     stats.ground_cover_clusters = 0;
+    stats.terrain_texture_sets.clear();
     stats.lod_counts.clear();
     stats.minimum_projected_height = f32::INFINITY;
     stats.maximum_projected_height = 0.0;
@@ -1261,6 +1348,7 @@ fn update_streaming_stats(
                 stats.gpu_bytes_estimate += attachment.gpu_bytes_estimate;
                 stats.gameplay_objects += attachment.gameplay_objects;
                 stats.ground_cover_clusters += attachment.ground_cover_clusters;
+                account_terrain_texture_set(&mut stats, attachment);
             }
             PageState::Cooling { attachment, .. } => {
                 stats.cooling += 1;
@@ -1269,12 +1357,22 @@ fn update_streaming_stats(
                 stats.gpu_bytes_estimate += attachment.gpu_bytes_estimate;
                 stats.gameplay_objects += attachment.gameplay_objects;
                 stats.ground_cover_clusters += attachment.ground_cover_clusters;
+                account_terrain_texture_set(&mut stats, attachment);
             }
             PageState::Failed(error) => {
                 let _ = error;
                 stats.failed += 1;
             }
         }
+    }
+}
+
+fn account_terrain_texture_set(stats: &mut StreamingStats, attachment: &PageAttachment) {
+    let Some((texture_set, gpu_bytes)) = attachment.terrain_texture_set else {
+        return;
+    };
+    if stats.terrain_texture_sets.insert(texture_set) {
+        stats.gpu_bytes_estimate = stats.gpu_bytes_estimate.saturating_add(gpu_bytes);
     }
 }
 

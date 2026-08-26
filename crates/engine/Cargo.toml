@@ -9,5 +9,6 @@ bevy.workspace = true
 crossbeam-channel.workspace = true
 ground-cover.workspace = true
 log.workspace = true
+terrain-render.workspace = true
 world.workspace = true
 world-db.workspace = true
