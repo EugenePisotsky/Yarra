@@ -168,7 +168,12 @@ impl RenderAsset for GpuGroundCoverPage {
                 ],
             })
             .collect();
-        let cell_origin = source.key.cell.origin(source.cell_size);
+        let cell_origin = [
+            (f64::from(source.key.cell.x) - f64::from(source.origin_cell.x))
+                * f64::from(source.cell_size),
+            (f64::from(source.key.cell.z) - f64::from(source.origin_cell.z))
+                * f64::from(source.cell_size),
+        ];
         let clusters: Vec<_> = source
             .page
             .clusters

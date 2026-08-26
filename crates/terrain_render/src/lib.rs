@@ -144,6 +144,8 @@ pub struct PrepareTerrainMaterialContext<'a> {
     pub images: &'a mut Assets<Image>,
     pub materials: &'a mut Assets<TerrainMaterial>,
     pub cell: CellCoord,
+    /// The logical cell represented by render-space origin.
+    pub origin_cell: CellCoord,
     pub cell_size: f32,
     pub page: &'a TerrainRenderPage,
     pub profile: &'a TerrainProfile,
@@ -180,8 +182,10 @@ pub fn prepare_terrain_material(
     let material = context.materials.add(TerrainMaterial {
         settings: TerrainMaterialUniform {
             chunk_minimum: Vec2::new(
-                context.cell.x as f32 * context.cell_size,
-                context.cell.z as f32 * context.cell_size,
+                (i64::from(context.cell.x) - i64::from(context.origin_cell.x)) as f32
+                    * context.cell_size,
+                (i64::from(context.cell.z) - i64::from(context.origin_cell.z)) as f32
+                    * context.cell_size,
             ),
             chunk_extent: Vec2::splat(context.cell_size),
             surface_layers: Vec4::new(

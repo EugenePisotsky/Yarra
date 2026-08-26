@@ -196,6 +196,9 @@ CREATE TABLE object_cell_overlaps (
     PRIMARY KEY(object_id, world_space_id, cell_x, cell_z)
 ) STRICT, WITHOUT ROWID;
 
+CREATE INDEX object_cell_overlaps_cells
+ON object_cell_overlaps(world_space_id, cell_x, cell_z, object_id);
+
 PRAGMA user_version = 7;
 "#;
 

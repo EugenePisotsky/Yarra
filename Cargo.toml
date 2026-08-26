@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/app_editor",
     "crates/app_game",
     "crates/engine",
     "crates/ground_cover",
@@ -18,6 +19,7 @@ publish = false
 [workspace.dependencies]
 anyhow = "1"
 bevy = { version = "0.19", default-features = false, features = ["3d", "basis-universal", "ktx2", "png", "ui", "zstd_rust"] }
+bevy_egui = "0.41.1"
 blake3 = "1"
 bincode = { version = "2", features = ["serde"] }
 bytemuck = { version = "1", features = ["derive"] }
@@ -26,13 +28,14 @@ engine = { package = "yarra-engine", path = "crates/engine" }
 glam = "0.32"
 ground-cover = { package = "yarra-ground-cover", path = "crates/ground_cover" }
 terrain-render = { package = "yarra-terrain-render", path = "crates/terrain_render" }
+world = { package = "yarra-world", path = "crates/world" }
 log = { version = "0.4", features = ["max_level_debug", "release_max_level_warn"] }
 naga = { version = "29", features = ["wgsl-in"] }
 rusqlite = { version = "0.40.1", features = ["bundled"] }
 ron = "0.12"
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
-world = { package = "yarra-world", path = "crates/world" }
+uuid = { version = "1", features = ["v4"] }
 world-db = { package = "yarra-world-db", path = "crates/world_db" }
 zstd = "=0.13.3"
 

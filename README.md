@@ -4,6 +4,7 @@ Yarra now has a minimal SQLite-backed world path while keeping gameplay small:
 
 ```text
 crates/
+  app_editor/ Separate bounded world-editor viewport and shell
   app_game/   Executable and platform composition
   engine/     Bevy gameplay, rendering, and bounded page streaming
   ground_cover/ Dedicated GPU-driven grass and decorative field rendering
@@ -44,6 +45,49 @@ Run the game:
 ```bash
 cargo run --release -p yarra-app-game
 ```
+
+Run the editor foundation:
+
+```bash
+cargo run -p yarra-app-editor
+```
+
+The editor opens in a typed World workspace and can switch through its shell to an isolated
+Animation workspace with its own 3D camera, catalog-backed model/clip browser, and transport
+lifecycle. The shell has an always-on UI camera, while workspace input,
+viewport cameras, transient interactions, and preview frame-rate requests have separate lifecycles;
+world selection, history, dirty edits, and camera state survive a workflow switch. The World
+workspace renders the same cooked runtime pages as the game, but owns an independent logical
+viewpoint and floating render origin. Right-drag or middle-drag orbits, Shift+right-drag pans, the
+mouse wheel or trackpad pinch zooms, and holding right mouse while using WASD/QE flies the camera.
+Close-range navigation keeps a minimum useful sensitivity, and zooming inward at minimum orbit
+distance advances the focus instead of becoming stuck. Its shell exposes
+two default movable World and Inspector windows plus a Tools menu for Assets, Navigator, and
+Diagnostics. The World window switches between Terrain, Grass, and the bounded visible-assets
+tree; the Inspector follows that context or the active stable-ID object selection. Logical
+coordinates, origin state, and bounded page/memory details live in optional Diagnostics rather than
+occupying the viewport permanently. Objects, Terrain, and Ground Cover are registered bounded
+tools; window visibility is presentation-only, while tool activation controls source demand. Dense terrain/mask
+queries and revision-checked writes are in place, while brush gestures and publishing a newly cooked
+runtime generation remain later increments. A project worker follows the camera with a bounded 5×5
+domain-specific source query, reports source revisions, and discards stale results without loading a
+`ProjectDocument`. Its visible-assets tree selects by stable ID and promotes selected or edited
+placements to disposable floating-origin-relative editor proxies with source-backed LOD0 visuals.
+Matching cooked instances are hidden while authoring proxies are ready, and deletion tombstones hide
+stale cooked instances without mutating runtime data. Cyan
+placement handles retain source asset bounds as a fallback, while visible streamed meshes use
+triangle-accurate picking resolved back to stable object roots. Shift/Cmd-click builds an ordered
+multi-selection: the active item gets a blue bounds frame and gizmo, companions get gold frames, and
+gizmo transforms and deletion each remain one undo step. The active object gets
+Bevy's stock world-space move/yaw/uniform-scale control (`1`/`2`/`3`). The stock mesh layer is composited by the
+clearing world camera so reactive rendering cannot retain old control frames. Gizmo gestures and
+the transform inspector produce bounded stable-ID commands; gizmo deltas apply to same-world
+companions, while inspector fields remain active-item-only. Cmd+Z/Cmd+Shift+Z undo and redo across
+selection changes, Delete/Backspace creates a reversible tombstone, and Cmd+S atomically saves dirty
+placement changes only when their source revisions still match. A bounded definition palette places
+new UUID-backed objects at the logical viewpoint through the same command and save pipeline.
+The underlying cooked runtime snapshot intentionally remains unchanged until a later explicit cook; see
+[`docs/EDITOR.md`](docs/EDITOR.md) for the complete architecture contract and legacy-editor analysis.
 
 For a physical iPhone build, open
 [`ios/Yarra/Yarra.xcodeproj`](ios/Yarra/Yarra.xcodeproj) and run the `Yarra`

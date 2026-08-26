@@ -15,10 +15,21 @@ use bevy::{
     render::view::Msaa,
     window::{Monitor, PrimaryMonitor, PrimaryWindow, Window},
 };
+pub use character::{
+    CharacterPresentationPreview, CharacterPresentationPreviewPlugin, CharacterPreviewClip,
+};
+pub use character_catalog::{
+    CharacterMovementContextDefinition, CharacterPresentationCatalogSummary,
+    CharacterPresentationProfileSummary, CharacterPreviewClipDefinition, CharacterPreviewClipRole,
+    DEFAULT_CHARACTER_PRESENTATION_ID, load_character_presentation_catalog_summary,
+};
 use ground_cover::{GroundCoverDebug, GroundCoverInteractor, GroundCoverPlugin, GroundCoverView};
 use terrain_render::{TerrainMacroVariation, TerrainRenderPlugin};
-pub use world_streaming::{ActiveWorldSpace, GameplayObject};
-use world_streaming::{StreamingStats, WorldStreamingPlugin};
+pub use world_streaming::{
+    ActiveWorldSpace, GameplayObject, StreamedVisualObject, StreamingStats, WorldCatalog,
+    WorldDetailDemand, WorldOrigin, WorldSpaceInfo, WorldStreamingConfig, WorldStreamingPlugin,
+    WorldViewCamera, WorldViewpoint,
+};
 
 use crate::{
     actor::{
@@ -28,7 +39,6 @@ use crate::{
     character::{
         CharacterPresentationPlugin, CharacterPresentationRef, CharacterPresentationResolveSet,
     },
-    character_catalog::DEFAULT_CHARACTER_PRESENTATION_ID,
 };
 
 const CAMERA_STICK_DEAD_ZONE: f32 = 0.15;
@@ -77,7 +87,7 @@ impl Plugin for MinimalGamePlugin {
             GroundCoverPlugin,
             TerrainRenderPlugin,
             CharacterPresentationPlugin,
-            WorldStreamingPlugin::new(self.runtime_database.clone()),
+            WorldStreamingPlugin::game(self.runtime_database.clone()),
         ))
         .init_resource::<TouchTapState>()
         .add_systems(Startup, setup)
@@ -192,6 +202,7 @@ fn setup(
         camera_transform(start, &camera_rig),
         camera_rig,
         MainCamera,
+        WorldViewCamera,
         Name::new("Main camera"),
     ));
 

@@ -20,7 +20,7 @@ use terrain_render::{
 };
 use world::{
     AssetId, CellCoord, GroundCoverSpecies, ObjectActivationPolicy, ObjectDefinitionId, PageDomain,
-    PageKey, PagePayload, StableObjectId, TerrainTextureSetId, WorldSpaceId,
+    PageKey, PagePayload, StableObjectId, TerrainTextureSetId, WorldPosition, WorldSpaceId,
 };
 use world_db::{
     CellDescriptor, DecodedPage, EncodedPage, PageDependency, RuntimeManifest,
@@ -28,7 +28,6 @@ use world_db::{
 };
 
 use crate::{
-    MainCamera,
     actor::{CharacterMotion, CharacterMotor, MoveIntent, WorldStreamFocus},
     character::CharacterPresentationReady,
 };
@@ -43,21 +42,37 @@ const MAX_RESIDENT_DECODED_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_RESIDENT_GPU_BYTES_ESTIMATE: u64 = 256 * 1024 * 1024;
 const LOD_HYSTERESIS_FRACTION: f32 = 0.12;
 
-pub(crate) struct WorldStreamingPlugin {
+pub struct WorldStreamingPlugin {
     database_path: PathBuf,
+    config: WorldStreamingConfig,
 }
 
 impl WorldStreamingPlugin {
-    pub(crate) fn new(database_path: PathBuf) -> Self {
-        Self { database_path }
+    pub fn game(database_path: impl Into<PathBuf>) -> Self {
+        Self {
+            database_path: database_path.into(),
+            config: WorldStreamingConfig::game(),
+        }
+    }
+
+    pub fn editor(database_path: impl Into<PathBuf>) -> Self {
+        Self {
+            database_path: database_path.into(),
+            config: WorldStreamingConfig::editor(),
+        }
     }
 }
 
 impl Plugin for WorldStreamingPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(WorldDatabasePath(self.database_path.clone()))
+            .insert_resource(self.config)
             .init_resource::<WorldStream>()
             .init_resource::<ActiveWorldSpace>()
+            .init_resource::<WorldCatalog>()
+            .init_resource::<WorldViewpoint>()
+            .init_resource::<WorldOrigin>()
+            .init_resource::<WorldDetailDemand>()
             .init_resource::<StreamingStats>()
             .add_systems(Startup, (start_database_worker, create_world_render_assets))
             .add_systems(
@@ -66,13 +81,14 @@ impl Plugin for WorldStreamingPlugin {
                     receive_database_results,
                     request_world_space_from_keyboard,
                     apply_world_space_transition,
+                    sync_stream_focus_to_viewpoint,
+                    update_world_origin,
                     request_cell_index,
                     calculate_page_demand,
                     receive_decode_results,
                     attach_prepared_pages,
                     cool_and_remove_pages,
                     update_streaming_stats,
-                    report_streaming_smoke,
                 )
                     .chain(),
             )
@@ -80,6 +96,136 @@ impl Plugin for WorldStreamingPlugin {
                 PostUpdate,
                 update_screen_space_lods.after(TransformSystems::Propagate),
             );
+        if self.config.gameplay_pages {
+            app.add_systems(Update, report_streaming_smoke.after(update_streaming_stats));
+        }
+    }
+}
+
+#[derive(Resource, Clone, Copy, Debug)]
+pub struct WorldStreamingConfig {
+    gameplay_pages: bool,
+    keyboard_world_space_cycle: bool,
+    floating_origin_threshold_cells: Option<u32>,
+}
+
+impl WorldStreamingConfig {
+    pub const fn game() -> Self {
+        Self {
+            gameplay_pages: true,
+            keyboard_world_space_cycle: true,
+            floating_origin_threshold_cells: None,
+        }
+    }
+
+    pub const fn editor() -> Self {
+        Self {
+            gameplay_pages: false,
+            keyboard_world_space_cycle: false,
+            floating_origin_threshold_cells: Some(8),
+        }
+    }
+
+    pub const fn loads_gameplay_pages(self) -> bool {
+        self.gameplay_pages
+    }
+
+    pub const fn floating_origin_threshold_cells(self) -> Option<u32> {
+        self.floating_origin_threshold_cells
+    }
+}
+
+/// Marks the camera whose frustum drives visual world-page demand.
+#[derive(Component, Debug, Clone, Copy)]
+pub struct WorldViewCamera;
+
+/// Allows an overview editor to keep the local preload ring without expanding detailed frustum
+/// demand across an entire region. Gameplay leaves this enabled.
+#[derive(Resource, Debug, Clone, Copy)]
+pub struct WorldDetailDemand {
+    enabled: bool,
+}
+
+impl Default for WorldDetailDemand {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
+impl WorldDetailDemand {
+    pub const fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
+}
+
+/// Logical position around which the world index and preload set are requested.
+#[derive(Resource, Debug, Default, Clone, Copy)]
+pub struct WorldViewpoint {
+    position: Option<WorldPosition>,
+}
+
+impl WorldViewpoint {
+    pub fn position(&self) -> Option<WorldPosition> {
+        self.position
+    }
+
+    pub fn set(&mut self, position: WorldPosition) {
+        self.position = Some(position);
+    }
+}
+
+/// The logical cell represented by render-space origin.
+#[derive(Resource, Debug, Default, Clone, Copy)]
+pub struct WorldOrigin {
+    space: Option<WorldSpaceId>,
+    cell: CellCoord,
+}
+
+impl WorldOrigin {
+    pub fn space(&self) -> Option<WorldSpaceId> {
+        self.space
+    }
+
+    pub fn cell(&self) -> CellCoord {
+        self.cell
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct WorldSpaceInfo {
+    pub id: WorldSpaceId,
+    pub name: String,
+    pub cell_size: f32,
+    pub minimum_y: f32,
+    pub maximum_y: f32,
+}
+
+#[derive(Resource, Debug, Default, Clone)]
+pub struct WorldCatalog {
+    generation_id: String,
+    default_world_space: Option<WorldSpaceId>,
+    world_spaces: Vec<WorldSpaceInfo>,
+}
+
+impl WorldCatalog {
+    pub fn generation_id(&self) -> &str {
+        &self.generation_id
+    }
+
+    pub fn default_world_space(&self) -> Option<WorldSpaceId> {
+        self.default_world_space
+    }
+
+    pub fn world_spaces(&self) -> &[WorldSpaceInfo] {
+        &self.world_spaces
+    }
+
+    pub fn world_space(&self, id: WorldSpaceId) -> Option<&WorldSpaceInfo> {
+        self.world_spaces.iter().find(|space| space.id == id)
     }
 }
 
@@ -372,6 +518,9 @@ fn create_world_render_assets(mut commands: Commands, mut meshes: ResMut<Assets<
 fn receive_database_results(
     worker: Option<Res<WorldDatabaseWorker>>,
     mut active_space: ResMut<ActiveWorldSpace>,
+    mut catalog: ResMut<WorldCatalog>,
+    mut viewpoint: ResMut<WorldViewpoint>,
+    mut origin: ResMut<WorldOrigin>,
     mut stream: ResMut<WorldStream>,
 ) {
     let Some(worker) = worker else {
@@ -388,6 +537,30 @@ fn receive_database_results(
                     );
                     if active_space.current.is_none() {
                         active_space.current = Some(manifest.default_world_space);
+                    }
+                    catalog.generation_id = manifest.generation_id.clone();
+                    catalog.default_world_space = Some(manifest.default_world_space);
+                    catalog.world_spaces = manifest
+                        .world_spaces
+                        .iter()
+                        .map(|space| WorldSpaceInfo {
+                            id: space.id,
+                            name: space.name.clone(),
+                            cell_size: space.cell_size,
+                            minimum_y: space.minimum_y,
+                            maximum_y: space.maximum_y,
+                        })
+                        .collect();
+                    if viewpoint.position.is_none() {
+                        viewpoint.position = Some(WorldPosition {
+                            space: manifest.default_world_space,
+                            cell: CellCoord::ZERO,
+                            local: [0.0, 0.0, 0.0],
+                        });
+                    }
+                    if origin.space.is_none() {
+                        origin.space = Some(manifest.default_world_space);
+                        origin.cell = CellCoord::ZERO;
                     }
                     stream.manifest = Some(manifest);
                     stream.phase = StreamPhase::Ready;
@@ -480,10 +653,11 @@ fn receive_database_results(
 
 fn request_world_space_from_keyboard(
     keys: Res<ButtonInput<KeyCode>>,
+    config: Res<WorldStreamingConfig>,
     stream: Res<WorldStream>,
     mut active_space: ResMut<ActiveWorldSpace>,
 ) {
-    if !keys.just_pressed(KeyCode::Tab) {
+    if !config.keyboard_world_space_cycle || !keys.just_pressed(KeyCode::Tab) {
         return;
     }
     let Some(manifest) = stream.manifest.as_ref() else {
@@ -512,8 +686,11 @@ fn apply_world_space_transition(
     mut terrain_images: ResMut<Assets<Image>>,
     mut ground_cover_pages: ResMut<Assets<GroundCoverPageAsset>>,
     mut active_space: ResMut<ActiveWorldSpace>,
+    config: Res<WorldStreamingConfig>,
+    mut viewpoint: ResMut<WorldViewpoint>,
+    mut origin: ResMut<WorldOrigin>,
     mut stream: ResMut<WorldStream>,
-    mut focus: Single<
+    mut focuses: Query<
         (
             &mut Transform,
             &mut MoveIntent,
@@ -526,11 +703,11 @@ fn apply_world_space_transition(
     let Some(transition) = active_space.requested.take() else {
         return;
     };
-    let Some(space_name) = stream
+    let Some(space) = stream
         .manifest
         .as_ref()
         .and_then(|manifest| manifest.world_space(transition.space))
-        .map(|space| space.name.clone())
+        .cloned()
     else {
         error!(
             "ignored transition to unknown world space {:?}",
@@ -539,44 +716,165 @@ fn apply_world_space_transition(
         return;
     };
 
-    if active_space.current != Some(transition.space) {
-        for (_, state) in stream.pages.drain() {
-            match state {
-                PageState::Resident(attachment) | PageState::Cooling { attachment, .. } => {
-                    despawn_attachment(
-                        &mut commands,
-                        &mut terrain_materials,
-                        &mut terrain_images,
-                        &mut ground_cover_pages,
-                        attachment,
-                    );
-                }
-                _ => {}
-            }
-        }
-        stream.decode_tasks.clear();
-        stream.desired.clear();
-        stream.descriptors.clear();
-        stream.index_center = None;
-        stream.index_revision = stream.index_revision.wrapping_add(1).max(1);
-        stream.requested_index = None;
+    let changed_space = active_space.current != Some(transition.space);
+    if changed_space {
+        clear_streamed_pages(
+            &mut commands,
+            &mut terrain_materials,
+            &mut terrain_images,
+            &mut ground_cover_pages,
+            &mut stream,
+        );
     }
 
     active_space.current = Some(transition.space);
-    focus.0.translation = Vec3::from_array(transition.local_position);
-    focus.1.clear();
-    focus.2.reset();
-    *focus.3 = CharacterMotion::default();
+    let position = WorldPosition::from_world(
+        transition.space,
+        [
+            f64::from(transition.local_position[0]),
+            f64::from(transition.local_position[1]),
+            f64::from(transition.local_position[2]),
+        ],
+        space.cell_size,
+    );
+    viewpoint.set(position);
+    if changed_space {
+        origin.space = Some(transition.space);
+        origin.cell = if config.floating_origin_threshold_cells.is_some() {
+            position.cell
+        } else {
+            CellCoord::ZERO
+        };
+    }
+    for (mut transform, mut intent, mut motor, mut motion) in &mut focuses {
+        transform.translation =
+            Vec3::from_array(position.relative_to(origin.cell, space.cell_size));
+        intent.clear();
+        motor.reset();
+        *motion = CharacterMotion::default();
+    }
     info!(
         "entered world space {} ({:?}) at {:?}",
-        space_name, transition.space, transition.local_position
+        space.name, transition.space, transition.local_position
     );
+}
+
+fn sync_stream_focus_to_viewpoint(
+    active_space: Res<ActiveWorldSpace>,
+    origin: Res<WorldOrigin>,
+    stream: Res<WorldStream>,
+    focuses: Query<&Transform, With<WorldStreamFocus>>,
+    mut viewpoint: ResMut<WorldViewpoint>,
+) {
+    let Some(space_id) = active_space.current else {
+        return;
+    };
+    let Some(space) = stream
+        .manifest
+        .as_ref()
+        .and_then(|manifest| manifest.world_space(space_id))
+    else {
+        return;
+    };
+    let Some(transform) = focuses.iter().next() else {
+        return;
+    };
+    let origin_world = origin.cell.origin(space.cell_size);
+    viewpoint.set(WorldPosition::from_world(
+        space_id,
+        [
+            origin_world[0] + f64::from(transform.translation.x),
+            f64::from(transform.translation.y),
+            origin_world[1] + f64::from(transform.translation.z),
+        ],
+        space.cell_size,
+    ));
+}
+
+fn update_world_origin(
+    mut commands: Commands,
+    config: Res<WorldStreamingConfig>,
+    viewpoint: Res<WorldViewpoint>,
+    mut origin: ResMut<WorldOrigin>,
+    mut terrain_materials: ResMut<Assets<TerrainMaterial>>,
+    mut terrain_images: ResMut<Assets<Image>>,
+    mut ground_cover_pages: ResMut<Assets<GroundCoverPageAsset>>,
+    mut stream: ResMut<WorldStream>,
+) {
+    let Some(position) = viewpoint.position else {
+        return;
+    };
+    let desired_cell = desired_origin_cell(*config, *origin, position);
+    if origin.space == Some(position.space) && origin.cell == desired_cell {
+        return;
+    }
+
+    let previous = *origin;
+    origin.space = Some(position.space);
+    origin.cell = desired_cell;
+    clear_streamed_pages(
+        &mut commands,
+        &mut terrain_materials,
+        &mut terrain_images,
+        &mut ground_cover_pages,
+        &mut stream,
+    );
+    info!(
+        "rebased render origin from {:?}:{:?} to {:?}:{:?}",
+        previous.space, previous.cell, origin.space, origin.cell
+    );
+}
+
+fn desired_origin_cell(
+    config: WorldStreamingConfig,
+    origin: WorldOrigin,
+    position: WorldPosition,
+) -> CellCoord {
+    match config.floating_origin_threshold_cells {
+        Some(threshold)
+            if origin.space != Some(position.space)
+                || origin.cell.chebyshev_distance(position.cell) > threshold =>
+        {
+            position.cell
+        }
+        Some(_) => origin.cell,
+        None => CellCoord::ZERO,
+    }
+}
+
+fn clear_streamed_pages(
+    commands: &mut Commands,
+    terrain_materials: &mut Assets<TerrainMaterial>,
+    terrain_images: &mut Assets<Image>,
+    ground_cover_pages: &mut Assets<GroundCoverPageAsset>,
+    stream: &mut WorldStream,
+) {
+    for (_, state) in stream.pages.drain() {
+        match state {
+            PageState::Resident(attachment) | PageState::Cooling { attachment, .. } => {
+                despawn_attachment(
+                    commands,
+                    terrain_materials,
+                    terrain_images,
+                    ground_cover_pages,
+                    attachment,
+                );
+            }
+            _ => {}
+        }
+    }
+    stream.decode_tasks.clear();
+    stream.desired.clear();
+    stream.descriptors.clear();
+    stream.index_center = None;
+    stream.index_revision = stream.index_revision.wrapping_add(1).max(1);
+    stream.requested_index = None;
 }
 
 fn request_cell_index(
     worker: Option<Res<WorldDatabaseWorker>>,
     active_space: Res<ActiveWorldSpace>,
-    focus: Single<&Transform, With<WorldStreamFocus>>,
+    viewpoint: Res<WorldViewpoint>,
     mut stream: ResMut<WorldStream>,
 ) {
     if !matches!(stream.phase, StreamPhase::Ready) || stream.requested_index.is_some() {
@@ -588,18 +886,20 @@ fn request_cell_index(
     let Some(space_id) = active_space.current else {
         return;
     };
-    let Some(space) = manifest.world_space(space_id) else {
+    let Some(_space) = manifest.world_space(space_id) else {
         stream.phase = StreamPhase::Failed(format!(
             "active world space {:?} is missing from the runtime manifest",
             space_id
         ));
         return;
     };
-    let center = CellCoord::containing(
-        f64::from(focus.translation.x),
-        f64::from(focus.translation.z),
-        space.cell_size,
-    );
+    let Some(position) = viewpoint
+        .position
+        .filter(|position| position.space == space_id)
+    else {
+        return;
+    };
+    let center = position.cell;
     if stream.index_center == Some(center) {
         return;
     }
@@ -611,12 +911,12 @@ fn request_cell_index(
         revision,
         space: space_id,
         minimum: CellCoord {
-            x: center.x - INDEX_RADIUS_CELLS,
-            z: center.z - INDEX_RADIUS_CELLS,
+            x: center.x.saturating_sub(INDEX_RADIUS_CELLS),
+            z: center.z.saturating_sub(INDEX_RADIUS_CELLS),
         },
         maximum: CellCoord {
-            x: center.x + INDEX_RADIUS_CELLS,
-            z: center.z + INDEX_RADIUS_CELLS,
+            x: center.x.saturating_add(INDEX_RADIUS_CELLS),
+            z: center.z.saturating_add(INDEX_RADIUS_CELLS),
         },
     };
     match worker.requests.try_send(request) {
@@ -633,9 +933,12 @@ fn request_cell_index(
 
 fn calculate_page_demand(
     worker: Option<Res<WorldDatabaseWorker>>,
+    config: Res<WorldStreamingConfig>,
+    detail_demand: Res<WorldDetailDemand>,
     active_space: Res<ActiveWorldSpace>,
-    camera: Single<&Frustum, With<MainCamera>>,
-    focus: Single<&Transform, With<WorldStreamFocus>>,
+    origin: Res<WorldOrigin>,
+    camera: Single<&Frustum, With<WorldViewCamera>>,
+    viewpoint: Res<WorldViewpoint>,
     mut stream: ResMut<WorldStream>,
 ) {
     if !matches!(stream.phase, StreamPhase::Ready) {
@@ -651,16 +954,19 @@ fn calculate_page_demand(
         return;
     };
     let cell_size = space.cell_size;
-    let player_cell = CellCoord::containing(
-        f64::from(focus.translation.x),
-        f64::from(focus.translation.z),
-        cell_size,
-    );
+    let Some(position) = viewpoint
+        .position
+        .filter(|position| position.space == space_id)
+    else {
+        return;
+    };
+    let viewpoint_cell = position.cell;
     let mut desired = BTreeSet::new();
     for descriptor in &stream.descriptors {
-        let visible = cell_intersects_frustum(&camera, descriptor, cell_size);
+        let visible = detail_demand.enabled()
+            && cell_intersects_frustum(&camera, descriptor, origin.cell, cell_size);
         let preloaded =
-            descriptor.cell.chebyshev_distance(player_cell) <= PLAYER_PRELOAD_RADIUS_CELLS;
+            descriptor.cell.chebyshev_distance(viewpoint_cell) <= PLAYER_PRELOAD_RADIUS_CELLS;
         if !visible && !preloaded {
             continue;
         }
@@ -680,7 +986,8 @@ fn calculate_page_demand(
                 lod: 0,
             });
         }
-        if preloaded && descriptor.has_domain(PageDomain::GameplayObjects) {
+        if config.gameplay_pages && preloaded && descriptor.has_domain(PageDomain::GameplayObjects)
+        {
             desired.insert(PageKey {
                 space: space_id,
                 cell: descriptor.cell,
@@ -727,8 +1034,18 @@ fn calculate_page_demand(
     }
 }
 
-fn cell_intersects_frustum(frustum: &Frustum, descriptor: &CellDescriptor, cell_size: f32) -> bool {
-    let center = descriptor.cell.center(cell_size);
+fn cell_intersects_frustum(
+    frustum: &Frustum,
+    descriptor: &CellDescriptor,
+    origin_cell: CellCoord,
+    cell_size: f32,
+) -> bool {
+    let center = [
+        (i64::from(descriptor.cell.x) - i64::from(origin_cell.x)) as f32 * cell_size
+            + cell_size * 0.5,
+        (i64::from(descriptor.cell.z) - i64::from(origin_cell.z)) as f32 * cell_size
+            + cell_size * 0.5,
+    ];
     let vertical_extent = ((descriptor.maximum_y - descriptor.minimum_y) * 0.5).max(0.1);
     let aabb = Aabb {
         center: Vec3A::new(
@@ -786,6 +1103,7 @@ fn attach_prepared_pages(
     mut terrain_images: ResMut<Assets<Image>>,
     macro_variation: Res<TerrainMacroVariation>,
     mut ground_cover_pages: ResMut<Assets<GroundCoverPageAsset>>,
+    origin: Res<WorldOrigin>,
     mut stream: ResMut<WorldStream>,
 ) {
     let Some(render_assets) = render_assets else {
@@ -861,6 +1179,7 @@ fn attach_prepared_pages(
             &mut terrain_images,
             &mut ground_cover_pages,
             *macro_variation,
+            origin.cell,
             cell_size,
             prepared,
         ) {
@@ -891,6 +1210,7 @@ fn attach_page(
     terrain_images: &mut Assets<Image>,
     ground_cover_pages: &mut Assets<GroundCoverPageAsset>,
     macro_variation: TerrainMacroVariation,
+    origin_cell: CellCoord,
     cell_size: f32,
     prepared: PreparedPage,
 ) -> Result<PageAttachment, String> {
@@ -935,12 +1255,18 @@ fn attach_page(
                     })
                 })
                 .collect::<Result<Vec<_>, String>>()?;
-            let center = key.cell.center(cell_size);
+            let center = [
+                (i64::from(key.cell.x) - i64::from(origin_cell.x)) as f32 * cell_size
+                    + cell_size * 0.5,
+                (i64::from(key.cell.z) - i64::from(origin_cell.z)) as f32 * cell_size
+                    + cell_size * 0.5,
+            ];
             let prepared_material = prepare_terrain_material(PrepareTerrainMaterialContext {
                 asset_server,
                 images: terrain_images,
                 materials: terrain_materials,
                 cell: key.cell,
+                origin_cell,
                 cell_size,
                 page: &terrain,
                 profile: &resources.profile,
@@ -973,7 +1299,10 @@ fn attach_page(
             for variants in dependencies.values_mut() {
                 variants.sort_by_key(|variant| variant.asset_lod);
             }
-            let cell_origin = key.cell.origin(cell_size);
+            let cell_origin = [
+                (f64::from(key.cell.x) - f64::from(origin_cell.x)) * f64::from(cell_size),
+                (f64::from(key.cell.z) - f64::from(origin_cell.z)) * f64::from(cell_size),
+            ];
             for instance in objects.instances {
                 let dependencies = dependencies.get(&instance.asset).ok_or_else(|| {
                     format!("object {:?} has no cooked asset dependency", instance.id)
@@ -1028,6 +1357,7 @@ fn attach_page(
                             bounds_height,
                             projected_height: 0.0,
                         },
+                        StreamedVisualObject { id: instance.id },
                         StreamedPageEntity(key),
                         Name::new(format!("Streamed object {:?}", instance.id)),
                     ))
@@ -1052,6 +1382,7 @@ fn attach_page(
             ground_cover_clusters = page.clusters.len();
             let asset = ground_cover_pages.add(GroundCoverPageAsset {
                 key,
+                origin_cell,
                 cell_size,
                 page,
                 species: prepared.ground_cover_species,
@@ -1075,7 +1406,10 @@ fn attach_page(
                 .iter()
                 .map(|definition| (definition.id, definition))
                 .collect();
-            let cell_origin = key.cell.origin(cell_size);
+            let cell_origin = [
+                (f64::from(key.cell.x) - f64::from(origin_cell.x)) * f64::from(cell_size),
+                (f64::from(key.cell.z) - f64::from(origin_cell.z)) * f64::from(cell_size),
+            ];
             for instance in objects.instances {
                 let definition = definitions.get(&instance.definition).ok_or_else(|| {
                     format!(
@@ -1132,7 +1466,7 @@ fn attach_page(
 }
 
 fn update_screen_space_lods(
-    camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
+    camera: Single<(&Camera, &GlobalTransform), With<WorldViewCamera>>,
     mut objects: Query<(&GlobalTransform, &mut WorldAssetRoot, &mut ScreenSpaceLod)>,
 ) {
     let (camera, camera_transform) = *camera;
@@ -1200,6 +1534,11 @@ fn select_lod_index(
     } else {
         current
     }
+}
+
+#[derive(Component, Debug, Clone, Copy)]
+pub struct StreamedVisualObject {
+    pub id: StableObjectId,
 }
 
 #[derive(Component, Debug, Clone, Copy)]
@@ -1281,23 +1620,23 @@ fn cool_and_remove_pages(
 }
 
 #[derive(Resource, Default)]
-pub(crate) struct StreamingStats {
-    pub(crate) status: String,
-    pub(crate) demanded: usize,
-    pub(crate) loading: usize,
-    pub(crate) prepared: usize,
-    pub(crate) resident: usize,
-    pub(crate) cooling: usize,
-    pub(crate) failed: usize,
-    pub(crate) owned_entities: usize,
-    pub(crate) decoded_bytes: u64,
-    pub(crate) gpu_bytes_estimate: u64,
-    pub(crate) cached_definitions: usize,
-    pub(crate) gameplay_objects: usize,
-    pub(crate) ground_cover_clusters: usize,
-    pub(crate) lod_counts: BTreeMap<u8, usize>,
-    pub(crate) minimum_projected_height: f32,
-    pub(crate) maximum_projected_height: f32,
+pub struct StreamingStats {
+    pub status: String,
+    pub demanded: usize,
+    pub loading: usize,
+    pub prepared: usize,
+    pub resident: usize,
+    pub cooling: usize,
+    pub failed: usize,
+    pub owned_entities: usize,
+    pub decoded_bytes: u64,
+    pub gpu_bytes_estimate: u64,
+    pub cached_definitions: usize,
+    pub gameplay_objects: usize,
+    pub ground_cover_clusters: usize,
+    pub lod_counts: BTreeMap<u8, usize>,
+    pub minimum_projected_height: f32,
+    pub maximum_projected_height: f32,
     terrain_texture_sets: BTreeSet<TerrainTextureSetId>,
 }
 
@@ -1591,6 +1930,36 @@ fn assert_streaming_is_healthy(stats: &StreamingStats) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn editor_origin_rebases_only_after_its_threshold() {
+        let origin = WorldOrigin {
+            space: Some(WorldSpaceId(1)),
+            cell: CellCoord { x: 10, z: 20 },
+        };
+        let nearby = WorldPosition {
+            space: WorldSpaceId(1),
+            cell: CellCoord { x: 18, z: 12 },
+            local: [0.0; 3],
+        };
+        let remote = WorldPosition {
+            cell: CellCoord { x: 19, z: 12 },
+            ..nearby
+        };
+
+        assert_eq!(
+            desired_origin_cell(WorldStreamingConfig::editor(), origin, nearby),
+            origin.cell
+        );
+        assert_eq!(
+            desired_origin_cell(WorldStreamingConfig::editor(), origin, remote),
+            remote.cell
+        );
+        assert_eq!(
+            desired_origin_cell(WorldStreamingConfig::game(), origin, remote),
+            CellCoord::ZERO
+        );
+    }
 
     #[test]
     fn screen_space_lod_selection_has_hysteresis_in_both_directions() {

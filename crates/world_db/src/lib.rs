@@ -1,6 +1,7 @@
 mod schema;
 
 use std::{
+    collections::HashSet,
     fs,
     io::{Cursor, Read},
     path::{Path, PathBuf},
@@ -14,6 +15,9 @@ use world::{
     TerrainProfile, TerrainSurface, TerrainSurfaceId, TerrainTextureLayer, TerrainTextureSet,
     TerrainTextureSetId, WorldSpaceId, decode_page_payload,
 };
+
+pub const MAX_OBJECT_WRITES_PER_TRANSACTION: usize = 256;
+pub const MAX_DENSE_DOMAIN_WRITES_PER_TRANSACTION: usize = 64;
 
 #[derive(Debug, Clone)]
 pub struct ProjectDocument {
@@ -35,6 +39,68 @@ pub struct ProjectDocument {
     pub objects: Vec<SourceObjectRecord>,
 }
 
+/// Small project header retained by targeted editor readers.
+#[derive(Debug, Clone)]
+pub struct ProjectManifest {
+    pub schema_version: i64,
+    pub default_world_space: WorldSpaceId,
+    pub world_spaces: Vec<WorldSpaceRecord>,
+}
+
+impl ProjectManifest {
+    pub fn world_space(&self, id: WorldSpaceId) -> Option<&WorldSpaceRecord> {
+        self.world_spaces.iter().find(|space| space.id == id)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SourceCellQuery {
+    pub records: Vec<SourceCellRecord>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct SourceObjectQuery {
+    pub records: Vec<SourceObjectRecord>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct SourceObjectViewQuery {
+    pub records: Vec<SourceObjectViewRecord>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct SourceObjectPaletteQuery {
+    pub records: Vec<SourceObjectPaletteRecord>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceObjectOutlinerCursor {
+    pub owner_cell: CellCoord,
+    pub object: StableObjectId,
+}
+
+#[derive(Debug, Clone)]
+pub struct SourceObjectOutlinerPage {
+    pub records: Vec<SourceObjectViewRecord>,
+    pub next_cursor: Option<SourceObjectOutlinerCursor>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceObjectPaletteCursor {
+    pub definition_key: String,
+    pub definition: ObjectDefinitionId,
+}
+
+#[derive(Debug, Clone)]
+pub struct SourceObjectPalettePage {
+    pub records: Vec<SourceObjectPaletteRecord>,
+    pub next_cursor: Option<SourceObjectPaletteCursor>,
+}
+
 #[derive(Debug, Clone)]
 pub struct WorldSpaceRecord {
     pub id: WorldSpaceId,
@@ -52,7 +118,7 @@ pub struct SourceCellRecord {
     pub source_revision: i64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceTerrainCellSurfaceSlotRecord {
     pub space: WorldSpaceId,
     pub cell: CellCoord,
@@ -60,7 +126,7 @@ pub struct SourceTerrainCellSurfaceSlotRecord {
     pub surface: TerrainSurfaceId,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceTerrainCellWeightPageRecord {
     pub space: WorldSpaceId,
     pub cell: CellCoord,
@@ -70,7 +136,7 @@ pub struct SourceTerrainCellWeightPageRecord {
     pub source_revision: i64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SourceGroundCoverLayerRecord {
     pub id: GroundCoverLayerId,
     pub space: WorldSpaceId,
@@ -80,7 +146,7 @@ pub struct SourceGroundCoverLayerRecord {
     pub seed: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceGroundCoverCellMaskRecord {
     pub layer: GroundCoverLayerId,
     pub space: WorldSpaceId,
@@ -88,6 +154,76 @@ pub struct SourceGroundCoverCellMaskRecord {
     pub resolution: u8,
     pub coverage: Vec<u8>,
     pub source_revision: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct SourceTerrainCellWeightPageQuery {
+    pub records: Vec<SourceTerrainCellWeightPageRecord>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct SourceGroundCoverCellMaskQuery {
+    pub records: Vec<SourceGroundCoverCellMaskRecord>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum DenseSourceRecordKey {
+    TerrainWeights {
+        space: WorldSpaceId,
+        cell: CellCoord,
+        page: u8,
+    },
+    GroundCoverMask {
+        layer: GroundCoverLayerId,
+        space: WorldSpaceId,
+        cell: CellCoord,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub enum DenseSourceWrite {
+    TerrainWeights {
+        expected_source_revision: Option<i64>,
+        record: SourceTerrainCellWeightPageRecord,
+    },
+    GroundCoverMask {
+        expected_source_revision: Option<i64>,
+        record: SourceGroundCoverCellMaskRecord,
+    },
+}
+
+impl DenseSourceWrite {
+    pub fn key(&self) -> DenseSourceRecordKey {
+        match self {
+            Self::TerrainWeights { record, .. } => DenseSourceRecordKey::TerrainWeights {
+                space: record.space,
+                cell: record.cell,
+                page: record.page,
+            },
+            Self::GroundCoverMask { record, .. } => DenseSourceRecordKey::GroundCoverMask {
+                layer: record.layer,
+                space: record.space,
+                cell: record.cell,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DenseSourceRecord {
+    TerrainWeights(SourceTerrainCellWeightPageRecord),
+    GroundCoverMask(SourceGroundCoverCellMaskRecord),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DenseSourceWriteTransactionResult {
+    Committed(Vec<DenseSourceRecord>),
+    Conflict {
+        key: DenseSourceRecordKey,
+        actual: Option<DenseSourceRecord>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -118,7 +254,7 @@ pub struct SourceObjectDefinitionRecord {
     pub activation: ObjectActivationPolicy,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SourceObjectRecord {
     pub id: StableObjectId,
     pub space: WorldSpaceId,
@@ -128,6 +264,95 @@ pub struct SourceObjectRecord {
     pub yaw: f32,
     pub scale: f32,
     pub source_revision: i64,
+}
+
+/// An object placement plus the small catalog record needed to present it in editor UI.
+///
+/// This remains a bounded query result, not a durable editor identity. Callers pin the stable ID
+/// and this snapshot when an object is selected.
+#[derive(Debug, Clone)]
+pub struct SourceObjectViewRecord {
+    pub object: SourceObjectRecord,
+    pub definition: SourceObjectDefinitionRecord,
+    /// LOD0 visual scene URI used by the disposable editor proxy, when available.
+    pub visual_uri: Option<String>,
+    /// Full local-space visual dimensions from source asset LOD0, when available.
+    pub visual_bounds: Option<[f32; 3]>,
+}
+
+/// Definition metadata needed by a bounded editor object palette.
+#[derive(Debug, Clone)]
+pub struct SourceObjectPaletteRecord {
+    pub definition: SourceObjectDefinitionRecord,
+    pub visual_uri: Option<String>,
+    pub visual_bounds: Option<[f32; 3]>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SourceObjectTransform {
+    pub space: WorldSpaceId,
+    pub owner_cell: CellCoord,
+    pub local_translation: [f32; 3],
+    pub yaw: f32,
+    pub scale: f32,
+}
+
+impl From<&SourceObjectRecord> for SourceObjectTransform {
+    fn from(object: &SourceObjectRecord) -> Self {
+        Self {
+            space: object.space,
+            owner_cell: object.owner_cell,
+            local_translation: object.local_translation,
+            yaw: object.yaw,
+            scale: object.scale,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum ObjectTransformWriteResult {
+    Updated(SourceObjectRecord),
+    Conflict { actual: Option<SourceObjectRecord> },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SourceObjectWrite {
+    Create {
+        object: SourceObjectRecord,
+    },
+    UpdateTransform {
+        object: StableObjectId,
+        expected_source_revision: i64,
+        transform: SourceObjectTransform,
+    },
+    Delete {
+        object: StableObjectId,
+        expected_source_revision: i64,
+    },
+}
+
+impl SourceObjectWrite {
+    pub const fn object(&self) -> StableObjectId {
+        match self {
+            Self::Create { object } => object.id,
+            Self::UpdateTransform { object, .. } | Self::Delete { object, .. } => *object,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SourceObjectWriteCommit {
+    Updated(SourceObjectRecord),
+    Deleted(StableObjectId),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ObjectWriteTransactionResult {
+    Committed(Vec<SourceObjectWriteCommit>),
+    Conflict {
+        object: StableObjectId,
+        actual: Option<SourceObjectRecord>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -863,6 +1088,1009 @@ pub fn read_project_database(path: &Path) -> Result<ProjectDocument, WorldDbErro
     })
 }
 
+/// Read-only, query-shaped access to a mutable authoring database.
+///
+/// Unlike [`read_project_database`], this reader never constructs a complete project document.
+/// It is intended to live on an editor worker thread and return explicitly bounded spatial results.
+pub struct ProjectReader {
+    connection: Connection,
+    manifest: ProjectManifest,
+    has_spatial_object_overlap_index: bool,
+}
+
+impl ProjectReader {
+    pub fn open_read_only(path: &Path) -> Result<Self, WorldDbError> {
+        let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        connection.execute_batch(
+            "PRAGMA query_only = ON; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 250;",
+        )?;
+        ensure_schema_version(&connection, PROJECT_SCHEMA_VERSION, "project")?;
+        let world_spaces = query_world_spaces(&connection)?;
+        let default_world_space = connection.query_row(
+            "SELECT default_world_space_id FROM project_settings WHERE singleton = 1",
+            [],
+            |row| Ok(WorldSpaceId(row.get(0)?)),
+        )?;
+        if !world_spaces
+            .iter()
+            .any(|space| space.id == default_world_space)
+        {
+            return Err(WorldDbError::UnknownDefaultWorldSpace(default_world_space));
+        }
+        let has_spatial_object_overlap_index = connection.query_row(
+            "SELECT EXISTS( \
+                SELECT 1 FROM pragma_index_list('object_cell_overlaps') \
+                WHERE name = 'object_cell_overlaps_cells' \
+             )",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(Self {
+            connection,
+            manifest: ProjectManifest {
+                schema_version: PROJECT_SCHEMA_VERSION,
+                default_world_space,
+                world_spaces,
+            },
+            has_spatial_object_overlap_index,
+        })
+    }
+
+    pub fn manifest(&self) -> &ProjectManifest {
+        &self.manifest
+    }
+
+    pub fn read_cells(
+        &self,
+        space: WorldSpaceId,
+        minimum: CellCoord,
+        maximum: CellCoord,
+        maximum_records: usize,
+    ) -> Result<SourceCellQuery, WorldDbError> {
+        validate_spatial_query(minimum, maximum, maximum_records)?;
+        let sql_limit = query_sql_limit(maximum_records)?;
+        let mut statement = self.connection.prepare_cached(
+            "SELECT world_space_id, cell_x, cell_z, height, source_revision \
+             FROM source_cells \
+             WHERE world_space_id = ?1 \
+               AND cell_x BETWEEN ?2 AND ?3 \
+               AND cell_z BETWEEN ?4 AND ?5 \
+             ORDER BY cell_x, cell_z \
+             LIMIT ?6",
+        )?;
+        let mut records = statement
+            .query_map(
+                params![
+                    space.0, minimum.x, maximum.x, minimum.z, maximum.z, sql_limit
+                ],
+                source_cell_from_row,
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+        let truncated = records.len() > maximum_records;
+        records.truncate(maximum_records);
+        Ok(SourceCellQuery { records, truncated })
+    }
+
+    pub fn read_terrain_weight_pages_in_cells(
+        &self,
+        space: WorldSpaceId,
+        minimum: CellCoord,
+        maximum: CellCoord,
+        maximum_records: usize,
+    ) -> Result<SourceTerrainCellWeightPageQuery, WorldDbError> {
+        validate_spatial_query(minimum, maximum, maximum_records)?;
+        let sql_limit = query_sql_limit(maximum_records)?;
+        let mut statement = self.connection.prepare_cached(
+            "SELECT world_space_id, cell_x, cell_z, page, resolution, rgba, source_revision \
+             FROM terrain_cell_weight_pages \
+             WHERE world_space_id = ?1 \
+               AND cell_x BETWEEN ?2 AND ?3 \
+               AND cell_z BETWEEN ?4 AND ?5 \
+             ORDER BY cell_x, cell_z, page \
+             LIMIT ?6",
+        )?;
+        let mut records = statement
+            .query_map(
+                params![
+                    space.0, minimum.x, maximum.x, minimum.z, maximum.z, sql_limit
+                ],
+                source_terrain_weights_from_row,
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+        let truncated = records.len() > maximum_records;
+        records.truncate(maximum_records);
+        Ok(SourceTerrainCellWeightPageQuery { records, truncated })
+    }
+
+    pub fn read_ground_cover_masks_in_cells(
+        &self,
+        space: WorldSpaceId,
+        minimum: CellCoord,
+        maximum: CellCoord,
+        maximum_records: usize,
+    ) -> Result<SourceGroundCoverCellMaskQuery, WorldDbError> {
+        validate_spatial_query(minimum, maximum, maximum_records)?;
+        let sql_limit = query_sql_limit(maximum_records)?;
+        let mut statement = self.connection.prepare_cached(
+            "SELECT layer_id, world_space_id, cell_x, cell_z, resolution, coverage, \
+                    source_revision \
+             FROM ground_cover_cell_masks \
+             WHERE world_space_id = ?1 \
+               AND cell_x BETWEEN ?2 AND ?3 \
+               AND cell_z BETWEEN ?4 AND ?5 \
+             ORDER BY cell_x, cell_z, layer_id \
+             LIMIT ?6",
+        )?;
+        let mut records = statement
+            .query_map(
+                params![
+                    space.0, minimum.x, maximum.x, minimum.z, maximum.z, sql_limit
+                ],
+                source_ground_cover_mask_from_row,
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+        let truncated = records.len() > maximum_records;
+        records.truncate(maximum_records);
+        Ok(SourceGroundCoverCellMaskQuery { records, truncated })
+    }
+
+    pub fn read_ground_cover_layers(
+        &self,
+        space: WorldSpaceId,
+        maximum_records: usize,
+    ) -> Result<Vec<SourceGroundCoverLayerRecord>, WorldDbError> {
+        if maximum_records == 0 {
+            return Err(WorldDbError::InvalidQueryLimit);
+        }
+        let sql_limit = query_sql_limit(maximum_records)?;
+        let mut statement = self.connection.prepare_cached(
+            "SELECT layer_id, world_space_id, layer_key, species_id, \
+                    density_per_square_meter, seed \
+             FROM ground_cover_layers \
+             WHERE world_space_id = ?1 \
+             ORDER BY layer_key, layer_id \
+             LIMIT ?2",
+        )?;
+        statement
+            .query_map(
+                params![space.0, sql_limit],
+                source_ground_cover_layer_from_row,
+            )?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(Into::into)
+    }
+
+    pub fn read_objects_in_cells(
+        &self,
+        space: WorldSpaceId,
+        minimum: CellCoord,
+        maximum: CellCoord,
+        maximum_records: usize,
+    ) -> Result<SourceObjectQuery, WorldDbError> {
+        validate_spatial_query(minimum, maximum, maximum_records)?;
+        let sql_limit = query_sql_limit(maximum_records)?;
+        let sql = if self.has_spatial_object_overlap_index {
+            "SELECT o.object_id, o.world_space_id, o.owner_cell_x, o.owner_cell_z, \
+                    o.definition_id, o.local_x, o.local_y, o.local_z, o.yaw, o.scale, \
+                    o.source_revision \
+             FROM object_placements o \
+             WHERE o.world_space_id = ?1 \
+               AND o.owner_cell_x BETWEEN ?2 AND ?3 \
+               AND o.owner_cell_z BETWEEN ?4 AND ?5 \
+             UNION \
+             SELECT o.object_id, o.world_space_id, o.owner_cell_x, o.owner_cell_z, \
+                    o.definition_id, o.local_x, o.local_y, o.local_z, o.yaw, o.scale, \
+                    o.source_revision \
+             FROM object_cell_overlaps overlap \
+             JOIN object_placements o ON o.object_id = overlap.object_id \
+             WHERE overlap.world_space_id = ?1 \
+               AND overlap.cell_x BETWEEN ?2 AND ?3 \
+               AND overlap.cell_z BETWEEN ?4 AND ?5 \
+             ORDER BY object_id \
+             LIMIT ?6"
+        } else {
+            // Early version-7 databases do not have the optional overlap spatial index.
+            // Owner-cell queries remain indexed; scanning every object in a space does not.
+            "SELECT o.object_id, o.world_space_id, o.owner_cell_x, o.owner_cell_z, \
+                    o.definition_id, o.local_x, o.local_y, o.local_z, o.yaw, o.scale, \
+                    o.source_revision \
+             FROM object_placements o \
+             WHERE o.world_space_id = ?1 \
+               AND o.owner_cell_x BETWEEN ?2 AND ?3 \
+               AND o.owner_cell_z BETWEEN ?4 AND ?5 \
+             ORDER BY o.object_id \
+             LIMIT ?6"
+        };
+        let mut statement = self.connection.prepare_cached(sql)?;
+        let mut records = statement
+            .query_map(
+                params![
+                    space.0, minimum.x, maximum.x, minimum.z, maximum.z, sql_limit
+                ],
+                source_object_from_row,
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+        let truncated = records.len() > maximum_records;
+        records.truncate(maximum_records);
+        Ok(SourceObjectQuery { records, truncated })
+    }
+
+    pub fn read_object(
+        &self,
+        object: StableObjectId,
+    ) -> Result<Option<SourceObjectRecord>, WorldDbError> {
+        self.connection
+            .query_row(
+                "SELECT object_id, world_space_id, owner_cell_x, owner_cell_z, definition_id, \
+                        local_x, local_y, local_z, yaw, scale, source_revision \
+                 FROM object_placements WHERE object_id = ?1",
+                params![object.0.as_slice()],
+                source_object_from_row,
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn read_object_views_in_cells(
+        &self,
+        space: WorldSpaceId,
+        minimum: CellCoord,
+        maximum: CellCoord,
+        maximum_records: usize,
+    ) -> Result<SourceObjectViewQuery, WorldDbError> {
+        validate_spatial_query(minimum, maximum, maximum_records)?;
+        let sql_limit = query_sql_limit(maximum_records)?;
+        let sql = if self.has_spatial_object_overlap_index {
+            "SELECT o.object_id, o.world_space_id, o.owner_cell_x, o.owner_cell_z, \
+                    o.definition_id, o.local_x, o.local_y, o.local_z, o.yaw, o.scale, \
+                    o.source_revision, d.definition_key, d.display_name, d.visual_asset_id, \
+                    d.activation_policy, v.uri, v.bounds_x, v.bounds_y, v.bounds_z \
+             FROM object_placements o \
+             JOIN object_definitions d ON d.definition_id = o.definition_id \
+             LEFT JOIN source_asset_variants v \
+                    ON v.asset_id = d.visual_asset_id AND v.lod = 0 \
+             WHERE o.world_space_id = ?1 \
+               AND o.owner_cell_x BETWEEN ?2 AND ?3 \
+               AND o.owner_cell_z BETWEEN ?4 AND ?5 \
+             UNION \
+             SELECT o.object_id, o.world_space_id, o.owner_cell_x, o.owner_cell_z, \
+                    o.definition_id, o.local_x, o.local_y, o.local_z, o.yaw, o.scale, \
+                    o.source_revision, d.definition_key, d.display_name, d.visual_asset_id, \
+                    d.activation_policy, v.uri, v.bounds_x, v.bounds_y, v.bounds_z \
+             FROM object_cell_overlaps overlap \
+             JOIN object_placements o ON o.object_id = overlap.object_id \
+             JOIN object_definitions d ON d.definition_id = o.definition_id \
+             LEFT JOIN source_asset_variants v \
+                    ON v.asset_id = d.visual_asset_id AND v.lod = 0 \
+             WHERE overlap.world_space_id = ?1 \
+               AND overlap.cell_x BETWEEN ?2 AND ?3 \
+               AND overlap.cell_z BETWEEN ?4 AND ?5 \
+             ORDER BY object_id \
+             LIMIT ?6"
+        } else {
+            // Early version-7 databases do not have the optional overlap spatial index.
+            // Owner-cell queries remain indexed; scanning every object in a space does not.
+            "SELECT o.object_id, o.world_space_id, o.owner_cell_x, o.owner_cell_z, \
+                    o.definition_id, o.local_x, o.local_y, o.local_z, o.yaw, o.scale, \
+                    o.source_revision, d.definition_key, d.display_name, d.visual_asset_id, \
+                    d.activation_policy, v.uri, v.bounds_x, v.bounds_y, v.bounds_z \
+             FROM object_placements o \
+             JOIN object_definitions d ON d.definition_id = o.definition_id \
+             LEFT JOIN source_asset_variants v \
+                    ON v.asset_id = d.visual_asset_id AND v.lod = 0 \
+             WHERE o.world_space_id = ?1 \
+               AND o.owner_cell_x BETWEEN ?2 AND ?3 \
+               AND o.owner_cell_z BETWEEN ?4 AND ?5 \
+             ORDER BY o.object_id \
+             LIMIT ?6"
+        };
+        let mut statement = self.connection.prepare_cached(sql)?;
+        let mut records = statement
+            .query_map(
+                params![
+                    space.0, minimum.x, maximum.x, minimum.z, maximum.z, sql_limit
+                ],
+                source_object_view_from_row,
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+        let truncated = records.len() > maximum_records;
+        records.truncate(maximum_records);
+        Ok(SourceObjectViewQuery { records, truncated })
+    }
+
+    pub fn read_object_view(
+        &self,
+        object: StableObjectId,
+    ) -> Result<Option<SourceObjectViewRecord>, WorldDbError> {
+        self.connection
+            .query_row(
+                "SELECT o.object_id, o.world_space_id, o.owner_cell_x, o.owner_cell_z, \
+                        o.definition_id, o.local_x, o.local_y, o.local_z, o.yaw, o.scale, \
+                        o.source_revision, d.definition_key, d.display_name, d.visual_asset_id, \
+                        d.activation_policy, v.uri, v.bounds_x, v.bounds_y, v.bounds_z \
+                 FROM object_placements o \
+                 JOIN object_definitions d ON d.definition_id = o.definition_id \
+                 LEFT JOIN source_asset_variants v \
+                        ON v.asset_id = d.visual_asset_id AND v.lod = 0 \
+                 WHERE o.object_id = ?1",
+                params![object.0.as_slice()],
+                source_object_view_from_row,
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    /// Reads one stable owner-cell-ordered outliner page without materializing the project tree.
+    pub fn read_object_outliner_page(
+        &self,
+        space: WorldSpaceId,
+        search: &str,
+        cursor: Option<&SourceObjectOutlinerCursor>,
+        maximum_records: usize,
+    ) -> Result<SourceObjectOutlinerPage, WorldDbError> {
+        if maximum_records == 0 {
+            return Err(WorldDbError::InvalidQueryLimit);
+        }
+        let sql_limit = query_sql_limit(maximum_records)?;
+        let cursor_x = cursor.map(|cursor| cursor.owner_cell.x);
+        let cursor_z = cursor.map(|cursor| cursor.owner_cell.z);
+        let cursor_object = cursor.map(|cursor| cursor.object.0.to_vec());
+        let mut statement = self.connection.prepare_cached(
+            "SELECT o.object_id, o.world_space_id, o.owner_cell_x, o.owner_cell_z, \
+                    o.definition_id, o.local_x, o.local_y, o.local_z, o.yaw, o.scale, \
+                    o.source_revision, d.definition_key, d.display_name, d.visual_asset_id, \
+                    d.activation_policy, v.uri, v.bounds_x, v.bounds_y, v.bounds_z \
+             FROM object_placements o \
+             JOIN object_definitions d ON d.definition_id = o.definition_id \
+             LEFT JOIN source_asset_variants v \
+                    ON v.asset_id = d.visual_asset_id AND v.lod = 0 \
+             WHERE o.world_space_id = ?1 \
+               AND (?2 = '' OR instr(lower(d.definition_key), lower(?2)) > 0 \
+                            OR instr(lower(d.display_name), lower(?2)) > 0) \
+               AND (?3 IS NULL OR o.owner_cell_x > ?3 \
+                    OR (o.owner_cell_x = ?3 AND o.owner_cell_z > ?4) \
+                    OR (o.owner_cell_x = ?3 AND o.owner_cell_z = ?4 AND o.object_id > ?5)) \
+             ORDER BY o.owner_cell_x, o.owner_cell_z, o.object_id \
+             LIMIT ?6",
+        )?;
+        let mut records = statement
+            .query_map(
+                params![
+                    space.0,
+                    search.trim(),
+                    cursor_x,
+                    cursor_z,
+                    cursor_object,
+                    sql_limit
+                ],
+                source_object_view_from_row,
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+        let has_next = records.len() > maximum_records;
+        records.truncate(maximum_records);
+        let next_cursor = has_next.then(|| {
+            let last = records
+                .last()
+                .expect("a truncated query page has at least one retained record");
+            SourceObjectOutlinerCursor {
+                owner_cell: last.object.owner_cell,
+                object: last.object.id,
+            }
+        });
+        Ok(SourceObjectOutlinerPage {
+            records,
+            next_cursor,
+        })
+    }
+
+    pub fn read_object_palette(
+        &self,
+        maximum_records: usize,
+    ) -> Result<SourceObjectPaletteQuery, WorldDbError> {
+        if maximum_records == 0 {
+            return Err(WorldDbError::InvalidQueryLimit);
+        }
+        let sql_limit = query_sql_limit(maximum_records)?;
+        let mut statement = self.connection.prepare_cached(
+            "SELECT d.definition_id, d.definition_key, d.display_name, d.visual_asset_id, \
+                    d.activation_policy, v.uri, v.bounds_x, v.bounds_y, v.bounds_z \
+             FROM object_definitions d \
+             LEFT JOIN source_asset_variants v \
+                    ON v.asset_id = d.visual_asset_id AND v.lod = 0 \
+             ORDER BY d.definition_key \
+             LIMIT ?1",
+        )?;
+        let mut records = statement
+            .query_map(params![sql_limit], source_object_palette_from_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+        let truncated = records.len() > maximum_records;
+        records.truncate(maximum_records);
+        Ok(SourceObjectPaletteQuery { records, truncated })
+    }
+
+    /// Reads one searchable definition page using a stable key/ID cursor.
+    pub fn read_object_palette_page(
+        &self,
+        search: &str,
+        cursor: Option<&SourceObjectPaletteCursor>,
+        maximum_records: usize,
+    ) -> Result<SourceObjectPalettePage, WorldDbError> {
+        if maximum_records == 0 {
+            return Err(WorldDbError::InvalidQueryLimit);
+        }
+        let sql_limit = query_sql_limit(maximum_records)?;
+        let cursor_key = cursor.map(|cursor| cursor.definition_key.as_str());
+        let cursor_definition = cursor.map(|cursor| cursor.definition.0.to_vec());
+        let mut statement = self.connection.prepare_cached(
+            "SELECT d.definition_id, d.definition_key, d.display_name, d.visual_asset_id, \
+                    d.activation_policy, v.uri, v.bounds_x, v.bounds_y, v.bounds_z \
+             FROM object_definitions d \
+             LEFT JOIN source_asset_variants v \
+                    ON v.asset_id = d.visual_asset_id AND v.lod = 0 \
+             WHERE (?1 = '' OR instr(lower(d.definition_key), lower(?1)) > 0 \
+                             OR instr(lower(d.display_name), lower(?1)) > 0) \
+               AND (?2 IS NULL OR d.definition_key > ?2 \
+                    OR (d.definition_key = ?2 AND d.definition_id > ?3)) \
+             ORDER BY d.definition_key, d.definition_id \
+             LIMIT ?4",
+        )?;
+        let mut records = statement
+            .query_map(
+                params![search.trim(), cursor_key, cursor_definition, sql_limit],
+                source_object_palette_from_row,
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+        let has_next = records.len() > maximum_records;
+        records.truncate(maximum_records);
+        let next_cursor = has_next.then(|| {
+            let last = records
+                .last()
+                .expect("a truncated query page has at least one retained record");
+            SourceObjectPaletteCursor {
+                definition_key: last.definition.key.clone(),
+                definition: last.definition.id,
+            }
+        });
+        Ok(SourceObjectPalettePage {
+            records,
+            next_cursor,
+        })
+    }
+}
+
+/// Narrow transactional writer used by the editor's authoring worker.
+///
+/// Updates and deletes compare source revisions in SQLite. A conflict rolls back the whole batch;
+/// placement creation is used by the inverse of a previously committed deletion.
+pub struct ProjectWriter {
+    connection: Connection,
+}
+
+impl ProjectWriter {
+    pub fn open(path: &Path) -> Result<Self, WorldDbError> {
+        let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+        connection.execute_batch("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 1000;")?;
+        ensure_schema_version(&connection, PROJECT_SCHEMA_VERSION, "project")?;
+        Ok(Self { connection })
+    }
+
+    pub fn update_object_transform(
+        &mut self,
+        object: StableObjectId,
+        expected_source_revision: i64,
+        transform: SourceObjectTransform,
+    ) -> Result<ObjectTransformWriteResult, WorldDbError> {
+        let result = self.apply_object_transaction(&[SourceObjectWrite::UpdateTransform {
+            object,
+            expected_source_revision,
+            transform,
+        }])?;
+        match result {
+            ObjectWriteTransactionResult::Committed(mut commits) => match commits.pop() {
+                Some(SourceObjectWriteCommit::Updated(object)) => {
+                    Ok(ObjectTransformWriteResult::Updated(object))
+                }
+                _ => Err(WorldDbError::InvalidObjectTransaction),
+            },
+            ObjectWriteTransactionResult::Conflict { actual, .. } => {
+                Ok(ObjectTransformWriteResult::Conflict { actual })
+            }
+        }
+    }
+
+    pub fn apply_object_transaction(
+        &mut self,
+        writes: &[SourceObjectWrite],
+    ) -> Result<ObjectWriteTransactionResult, WorldDbError> {
+        if writes.is_empty() || writes.len() > MAX_OBJECT_WRITES_PER_TRANSACTION {
+            return Err(WorldDbError::InvalidObjectTransaction);
+        }
+        let mut objects = HashSet::with_capacity(writes.len());
+        if writes.iter().any(|write| !objects.insert(write.object())) {
+            return Err(WorldDbError::InvalidObjectTransaction);
+        }
+
+        let transaction = self.connection.transaction()?;
+        let mut commits = Vec::with_capacity(writes.len());
+        for write in writes {
+            let (object, updated) = match write {
+                SourceObjectWrite::Create { object } => {
+                    validate_object_transform(SourceObjectTransform::from(object))?;
+                    let actual = transaction
+                        .query_row(
+                            "SELECT object_id, world_space_id, owner_cell_x, owner_cell_z, \
+                                    definition_id, local_x, local_y, local_z, yaw, scale, \
+                                    source_revision \
+                             FROM object_placements WHERE object_id = ?1",
+                            params![object.id.0.as_slice()],
+                            source_object_from_row,
+                        )
+                        .optional()?;
+                    if actual.is_some() {
+                        transaction.rollback()?;
+                        return Ok(ObjectWriteTransactionResult::Conflict {
+                            object: object.id,
+                            actual,
+                        });
+                    }
+                    let source_revision = object.source_revision.saturating_add(1);
+                    let updated = transaction.execute(
+                        "INSERT INTO object_placements( \
+                            object_id, world_space_id, owner_cell_x, owner_cell_z, definition_id, \
+                            local_x, local_y, local_z, yaw, scale, source_revision \
+                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                        params![
+                            object.id.0.as_slice(),
+                            object.space.0,
+                            object.owner_cell.x,
+                            object.owner_cell.z,
+                            object.definition.0.as_slice(),
+                            object.local_translation[0],
+                            object.local_translation[1],
+                            object.local_translation[2],
+                            object.yaw,
+                            object.scale,
+                            source_revision,
+                        ],
+                    )?;
+                    (object.id, updated)
+                }
+                SourceObjectWrite::UpdateTransform {
+                    object,
+                    expected_source_revision,
+                    transform,
+                } => {
+                    validate_object_transform(*transform)?;
+                    let updated = transaction.execute(
+                        "UPDATE object_placements \
+                         SET world_space_id = ?1, owner_cell_x = ?2, owner_cell_z = ?3, \
+                             local_x = ?4, local_y = ?5, local_z = ?6, yaw = ?7, scale = ?8, \
+                             source_revision = source_revision + 1 \
+                         WHERE object_id = ?9 AND source_revision = ?10",
+                        params![
+                            transform.space.0,
+                            transform.owner_cell.x,
+                            transform.owner_cell.z,
+                            transform.local_translation[0],
+                            transform.local_translation[1],
+                            transform.local_translation[2],
+                            transform.yaw,
+                            transform.scale,
+                            object.0.as_slice(),
+                            expected_source_revision,
+                        ],
+                    )?;
+                    (*object, updated)
+                }
+                SourceObjectWrite::Delete {
+                    object,
+                    expected_source_revision,
+                } => {
+                    let updated = transaction.execute(
+                        "DELETE FROM object_placements \
+                         WHERE object_id = ?1 AND source_revision = ?2",
+                        params![object.0.as_slice(), expected_source_revision],
+                    )?;
+                    (*object, updated)
+                }
+            };
+            if updated == 0 {
+                let actual = transaction
+                    .query_row(
+                        "SELECT object_id, world_space_id, owner_cell_x, owner_cell_z, \
+                                definition_id, local_x, local_y, local_z, yaw, scale, \
+                                source_revision \
+                         FROM object_placements WHERE object_id = ?1",
+                        params![object.0.as_slice()],
+                        source_object_from_row,
+                    )
+                    .optional()?;
+                transaction.rollback()?;
+                return Ok(ObjectWriteTransactionResult::Conflict { object, actual });
+            }
+
+            match write {
+                SourceObjectWrite::Create { .. } | SourceObjectWrite::UpdateTransform { .. } => {
+                    transaction.execute(
+                        "DELETE FROM object_cell_overlaps WHERE object_id = ?1",
+                        params![object.0.as_slice()],
+                    )?;
+                    let updated_object = transaction.query_row(
+                        "SELECT object_id, world_space_id, owner_cell_x, owner_cell_z, \
+                                definition_id, local_x, local_y, local_z, yaw, scale, \
+                                source_revision \
+                         FROM object_placements WHERE object_id = ?1",
+                        params![object.0.as_slice()],
+                        source_object_from_row,
+                    )?;
+                    commits.push(SourceObjectWriteCommit::Updated(updated_object));
+                }
+                SourceObjectWrite::Delete { .. } => {
+                    commits.push(SourceObjectWriteCommit::Deleted(object));
+                }
+            }
+        }
+        transaction.commit()?;
+        Ok(ObjectWriteTransactionResult::Committed(commits))
+    }
+
+    /// Atomically writes bounded terrain-weight and ground-cover-mask records.
+    ///
+    /// `expected_source_revision = None` means the caller expects the key not to exist. Every
+    /// mismatch returns the current record and rolls back all earlier writes in the batch.
+    pub fn apply_dense_source_transaction(
+        &mut self,
+        writes: &[DenseSourceWrite],
+    ) -> Result<DenseSourceWriteTransactionResult, WorldDbError> {
+        if writes.is_empty() || writes.len() > MAX_DENSE_DOMAIN_WRITES_PER_TRANSACTION {
+            return Err(WorldDbError::InvalidDenseSourceTransaction);
+        }
+        let mut keys = HashSet::with_capacity(writes.len());
+        if writes.iter().any(|write| !keys.insert(write.key())) {
+            return Err(WorldDbError::InvalidDenseSourceTransaction);
+        }
+        for write in writes {
+            validate_dense_source_write(write)?;
+        }
+
+        let transaction = self.connection.transaction()?;
+        let mut commits = Vec::with_capacity(writes.len());
+        for write in writes {
+            let key = write.key();
+            let (expected_source_revision, actual) = match write {
+                DenseSourceWrite::TerrainWeights {
+                    expected_source_revision,
+                    record,
+                } => (
+                    *expected_source_revision,
+                    read_terrain_weights(&transaction, record.space, record.cell, record.page)?
+                        .map(DenseSourceRecord::TerrainWeights),
+                ),
+                DenseSourceWrite::GroundCoverMask {
+                    expected_source_revision,
+                    record,
+                } => (
+                    *expected_source_revision,
+                    read_ground_cover_mask(&transaction, record.layer, record.space, record.cell)?
+                        .map(DenseSourceRecord::GroundCoverMask),
+                ),
+            };
+            let actual_revision = actual.as_ref().map(dense_source_revision);
+            if expected_source_revision != actual_revision {
+                transaction.rollback()?;
+                return Ok(DenseSourceWriteTransactionResult::Conflict { key, actual });
+            }
+
+            let source_revision = actual_revision.unwrap_or(0).saturating_add(1);
+            let commit = match write {
+                DenseSourceWrite::TerrainWeights { record, .. } => {
+                    transaction.execute(
+                        "INSERT INTO terrain_cell_weight_pages( \
+                            world_space_id, cell_x, cell_z, page, resolution, rgba, \
+                            source_revision \
+                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
+                         ON CONFLICT(world_space_id, cell_x, cell_z, page) DO UPDATE SET \
+                            resolution = excluded.resolution, rgba = excluded.rgba, \
+                            source_revision = excluded.source_revision",
+                        params![
+                            record.space.0,
+                            record.cell.x,
+                            record.cell.z,
+                            i64::from(record.page),
+                            i64::from(record.resolution),
+                            record.rgba.as_slice(),
+                            source_revision,
+                        ],
+                    )?;
+                    let mut committed = record.clone();
+                    committed.source_revision = source_revision;
+                    DenseSourceRecord::TerrainWeights(committed)
+                }
+                DenseSourceWrite::GroundCoverMask { record, .. } => {
+                    transaction.execute(
+                        "INSERT INTO ground_cover_cell_masks( \
+                            layer_id, world_space_id, cell_x, cell_z, resolution, coverage, \
+                            source_revision \
+                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
+                         ON CONFLICT(layer_id, world_space_id, cell_x, cell_z) DO UPDATE SET \
+                            resolution = excluded.resolution, coverage = excluded.coverage, \
+                            source_revision = excluded.source_revision",
+                        params![
+                            record.layer.0.as_slice(),
+                            record.space.0,
+                            record.cell.x,
+                            record.cell.z,
+                            i64::from(record.resolution),
+                            record.coverage.as_slice(),
+                            source_revision,
+                        ],
+                    )?;
+                    let mut committed = record.clone();
+                    committed.source_revision = source_revision;
+                    DenseSourceRecord::GroundCoverMask(committed)
+                }
+            };
+            commits.push(commit);
+        }
+        transaction.commit()?;
+        Ok(DenseSourceWriteTransactionResult::Committed(commits))
+    }
+}
+
+fn dense_source_revision(record: &DenseSourceRecord) -> i64 {
+    match record {
+        DenseSourceRecord::TerrainWeights(record) => record.source_revision,
+        DenseSourceRecord::GroundCoverMask(record) => record.source_revision,
+    }
+}
+
+fn read_terrain_weights(
+    transaction: &Transaction<'_>,
+    space: WorldSpaceId,
+    cell: CellCoord,
+    page: u8,
+) -> Result<Option<SourceTerrainCellWeightPageRecord>, WorldDbError> {
+    transaction
+        .query_row(
+            "SELECT world_space_id, cell_x, cell_z, page, resolution, rgba, source_revision \
+             FROM terrain_cell_weight_pages \
+             WHERE world_space_id = ?1 AND cell_x = ?2 AND cell_z = ?3 AND page = ?4",
+            params![space.0, cell.x, cell.z, i64::from(page)],
+            source_terrain_weights_from_row,
+        )
+        .optional()
+        .map_err(Into::into)
+}
+
+fn read_ground_cover_mask(
+    transaction: &Transaction<'_>,
+    layer: GroundCoverLayerId,
+    space: WorldSpaceId,
+    cell: CellCoord,
+) -> Result<Option<SourceGroundCoverCellMaskRecord>, WorldDbError> {
+    transaction
+        .query_row(
+            "SELECT layer_id, world_space_id, cell_x, cell_z, resolution, coverage, \
+                    source_revision \
+             FROM ground_cover_cell_masks \
+             WHERE layer_id = ?1 AND world_space_id = ?2 AND cell_x = ?3 AND cell_z = ?4",
+            params![layer.0.as_slice(), space.0, cell.x, cell.z],
+            source_ground_cover_mask_from_row,
+        )
+        .optional()
+        .map_err(Into::into)
+}
+
+fn validate_dense_source_write(write: &DenseSourceWrite) -> Result<(), WorldDbError> {
+    let expected_revision = match write {
+        DenseSourceWrite::TerrainWeights {
+            expected_source_revision,
+            record,
+        } => {
+            let expected_length = usize::from(record.resolution)
+                .saturating_mul(usize::from(record.resolution))
+                .saturating_mul(4);
+            if record.page > 1
+                || !(2..=257).contains(&record.resolution)
+                || record.rgba.len() != expected_length
+                || record.source_revision < 0
+            {
+                return Err(WorldDbError::InvalidDenseSourceRecord);
+            }
+            *expected_source_revision
+        }
+        DenseSourceWrite::GroundCoverMask {
+            expected_source_revision,
+            record,
+        } => {
+            let expected_length =
+                usize::from(record.resolution).saturating_mul(usize::from(record.resolution));
+            if !(1..=64).contains(&record.resolution)
+                || record.coverage.len() != expected_length
+                || record.source_revision < 0
+            {
+                return Err(WorldDbError::InvalidDenseSourceRecord);
+            }
+            *expected_source_revision
+        }
+    };
+    if expected_revision.is_some_and(|revision| revision < 0) {
+        return Err(WorldDbError::InvalidDenseSourceRecord);
+    }
+    Ok(())
+}
+
+fn source_cell_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SourceCellRecord> {
+    Ok(SourceCellRecord {
+        space: WorldSpaceId(row.get(0)?),
+        cell: CellCoord {
+            x: row.get(1)?,
+            z: row.get(2)?,
+        },
+        height: row.get(3)?,
+        source_revision: row.get(4)?,
+    })
+}
+
+fn source_terrain_weights_from_row(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<SourceTerrainCellWeightPageRecord> {
+    Ok(SourceTerrainCellWeightPageRecord {
+        space: WorldSpaceId(row.get(0)?),
+        cell: CellCoord {
+            x: row.get(1)?,
+            z: row.get(2)?,
+        },
+        page: row.get::<_, i64>(3)? as u8,
+        resolution: row.get::<_, i64>(4)? as u16,
+        rgba: row.get(5)?,
+        source_revision: row.get(6)?,
+    })
+}
+
+fn source_ground_cover_layer_from_row(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<SourceGroundCoverLayerRecord> {
+    Ok(SourceGroundCoverLayerRecord {
+        id: GroundCoverLayerId(blob_array(row.get_ref(0)?.as_blob()?, "layer_id")?),
+        space: WorldSpaceId(row.get(1)?),
+        key: row.get(2)?,
+        species: GroundCoverSpeciesId(blob_array(row.get_ref(3)?.as_blob()?, "species_id")?),
+        density_per_square_meter: row.get(4)?,
+        seed: row.get::<_, i64>(5)? as u32,
+    })
+}
+
+fn source_ground_cover_mask_from_row(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<SourceGroundCoverCellMaskRecord> {
+    Ok(SourceGroundCoverCellMaskRecord {
+        layer: GroundCoverLayerId(blob_array(row.get_ref(0)?.as_blob()?, "layer_id")?),
+        space: WorldSpaceId(row.get(1)?),
+        cell: CellCoord {
+            x: row.get(2)?,
+            z: row.get(3)?,
+        },
+        resolution: row.get::<_, i64>(4)? as u8,
+        coverage: row.get(5)?,
+        source_revision: row.get(6)?,
+    })
+}
+
+fn source_object_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SourceObjectRecord> {
+    Ok(SourceObjectRecord {
+        id: StableObjectId(blob_array(row.get_ref(0)?.as_blob()?, "object_id")?),
+        space: WorldSpaceId(row.get(1)?),
+        owner_cell: CellCoord {
+            x: row.get(2)?,
+            z: row.get(3)?,
+        },
+        definition: ObjectDefinitionId(blob_array(row.get_ref(4)?.as_blob()?, "definition_id")?),
+        local_translation: [row.get(5)?, row.get(6)?, row.get(7)?],
+        yaw: row.get(8)?,
+        scale: row.get(9)?,
+        source_revision: row.get(10)?,
+    })
+}
+
+fn source_object_view_from_row(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<SourceObjectViewRecord> {
+    let object = source_object_from_row(row)?;
+    let visual_asset = row
+        .get::<_, Option<Vec<u8>>>(13)?
+        .map(|bytes| blob_array(&bytes, "visual_asset_id").map(AssetId))
+        .transpose()?;
+    let activation = ObjectActivationPolicy::try_from(row.get::<_, i64>(14)?).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(
+            14,
+            rusqlite::types::Type::Integer,
+            Box::new(error),
+        )
+    })?;
+    let definition = SourceObjectDefinitionRecord {
+        id: object.definition,
+        key: row.get(11)?,
+        display_name: row.get(12)?,
+        visual_asset,
+        activation,
+    };
+    let visual_uri = row.get(15)?;
+    let visual_bounds = row
+        .get::<_, Option<f32>>(16)?
+        .map(|bounds_x| -> rusqlite::Result<[f32; 3]> {
+            Ok([bounds_x, row.get(17)?, row.get(18)?])
+        })
+        .transpose()?;
+    Ok(SourceObjectViewRecord {
+        object,
+        definition,
+        visual_uri,
+        visual_bounds,
+    })
+}
+
+fn source_object_palette_from_row(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<SourceObjectPaletteRecord> {
+    let id = ObjectDefinitionId(blob_array(row.get_ref(0)?.as_blob()?, "definition_id")?);
+    let visual_asset = row
+        .get::<_, Option<Vec<u8>>>(3)?
+        .map(|bytes| blob_array(&bytes, "visual_asset_id").map(AssetId))
+        .transpose()?;
+    let activation = ObjectActivationPolicy::try_from(row.get::<_, i64>(4)?).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(
+            4,
+            rusqlite::types::Type::Integer,
+            Box::new(error),
+        )
+    })?;
+    let visual_bounds = row
+        .get::<_, Option<f32>>(6)?
+        .map(|bounds_x| -> rusqlite::Result<[f32; 3]> { Ok([bounds_x, row.get(7)?, row.get(8)?]) })
+        .transpose()?;
+    Ok(SourceObjectPaletteRecord {
+        definition: SourceObjectDefinitionRecord {
+            id,
+            key: row.get(1)?,
+            display_name: row.get(2)?,
+            visual_asset,
+            activation,
+        },
+        visual_uri: row.get(5)?,
+        visual_bounds,
+    })
+}
+
+fn validate_spatial_query(
+    minimum: CellCoord,
+    maximum: CellCoord,
+    maximum_records: usize,
+) -> Result<(), WorldDbError> {
+    if minimum.x > maximum.x || minimum.z > maximum.z {
+        return Err(WorldDbError::InvalidSpatialQueryBounds { minimum, maximum });
+    }
+    if maximum_records == 0 {
+        return Err(WorldDbError::InvalidQueryLimit);
+    }
+    Ok(())
+}
+
+fn query_sql_limit(maximum_records: usize) -> Result<i64, WorldDbError> {
+    i64::try_from(maximum_records.saturating_add(1)).map_err(|_| WorldDbError::IntegerOverflow)
+}
+
+fn validate_object_transform(transform: SourceObjectTransform) -> Result<(), WorldDbError> {
+    if !transform.local_translation.into_iter().all(f32::is_finite)
+        || !transform.yaw.is_finite()
+        || !transform.scale.is_finite()
+        || transform.scale <= 0.0
+    {
+        return Err(WorldDbError::InvalidObjectTransform);
+    }
+    Ok(())
+}
+
 pub fn write_runtime_database(path: &Path, build: &RuntimeBuild) -> Result<(), WorldDbError> {
     ensure_new_database_path(path)?;
     let mut connection = Connection::open(path)?;
@@ -1583,6 +2811,21 @@ pub enum WorldDbError {
     IntegerOverflow,
     #[error("default world space {0:?} is not present in the world-space catalog")]
     UnknownDefaultWorldSpace(WorldSpaceId),
+    #[error("invalid spatial query bounds: minimum {minimum:?}, maximum {maximum:?}")]
+    InvalidSpatialQueryBounds {
+        minimum: CellCoord,
+        maximum: CellCoord,
+    },
+    #[error("spatial query record limit must be greater than zero")]
+    InvalidQueryLimit,
+    #[error("object transform values must be finite and scale must be greater than zero")]
+    InvalidObjectTransform,
+    #[error("object transaction must contain 1 to 256 unique object writes")]
+    InvalidObjectTransaction,
+    #[error("dense source transaction must contain 1 to 64 unique terrain/mask writes")]
+    InvalidDenseSourceTransaction,
+    #[error("dense source record has an invalid page, resolution, payload length, or revision")]
+    InvalidDenseSourceRecord,
 }
 
 #[cfg(test)]
@@ -1616,6 +2859,7 @@ mod tests {
         };
         let definition_id = ObjectDefinitionId([3; 16]);
         let object_id = StableObjectId([5; 16]);
+        let second_object_id = StableObjectId([6; 16]);
         let asset_id = AssetId([9; 32]);
         let ground_cover_species_id = GroundCoverSpeciesId([11; 16]);
         let ground_cover_layer_id = GroundCoverLayerId([12; 16]);
@@ -1751,19 +2995,31 @@ mod tests {
                     id: definition_id,
                     key: "test-door".into(),
                     display_name: "Test door".into(),
-                    visual_asset: None,
+                    visual_asset: Some(asset_id),
                     activation: ObjectActivationPolicy::Proximity,
                 }],
-                objects: vec![SourceObjectRecord {
-                    id: object_id,
-                    space: space.id,
-                    owner_cell: CellCoord::ZERO,
-                    definition: definition_id,
-                    local_translation: [1.0, 0.0, 2.0],
-                    yaw: 0.0,
-                    scale: 1.0,
-                    source_revision: 1,
-                }],
+                objects: vec![
+                    SourceObjectRecord {
+                        id: object_id,
+                        space: space.id,
+                        owner_cell: CellCoord::ZERO,
+                        definition: definition_id,
+                        local_translation: [1.0, 0.0, 2.0],
+                        yaw: 0.0,
+                        scale: 1.0,
+                        source_revision: 1,
+                    },
+                    SourceObjectRecord {
+                        id: second_object_id,
+                        space: second_space.id,
+                        owner_cell: CellCoord::ZERO,
+                        definition: definition_id,
+                        local_translation: [2.0, 0.0, 1.0],
+                        yaw: 0.0,
+                        scale: 1.0,
+                        source_revision: 1,
+                    },
+                ],
             },
         )
         .unwrap();
@@ -1789,6 +3045,337 @@ mod tests {
         assert_eq!(
             project.ground_cover_masks[0].coverage,
             vec![255, 128, 0, 255]
+        );
+
+        let connection = Connection::open(&project_path).unwrap();
+        connection
+            .execute(
+                "INSERT INTO object_cell_overlaps( \
+                    object_id, world_space_id, cell_x, cell_z \
+                 ) VALUES (?1, ?2, ?3, ?4)",
+                params![object_id.0.as_slice(), space.id.0, 4, -3],
+            )
+            .unwrap();
+        drop(connection);
+
+        let project_reader = ProjectReader::open_read_only(&project_path).unwrap();
+        assert!(project_reader.has_spatial_object_overlap_index);
+        assert_eq!(project_reader.manifest().default_world_space, space.id);
+        assert_eq!(project_reader.manifest().world_spaces.len(), 2);
+        let cells = project_reader
+            .read_cells(space.id, CellCoord::ZERO, CellCoord::ZERO, 4)
+            .unwrap();
+        assert_eq!(cells.records.len(), 1);
+        assert_eq!(cells.records[0].source_revision, 1);
+        assert!(!cells.truncated);
+        assert!(
+            project_reader
+                .read_cells(
+                    space.id,
+                    CellCoord { x: 10, z: 10 },
+                    CellCoord { x: 11, z: 11 },
+                    4,
+                )
+                .unwrap()
+                .records
+                .is_empty()
+        );
+        let owner_objects = project_reader
+            .read_objects_in_cells(space.id, CellCoord::ZERO, CellCoord::ZERO, 4)
+            .unwrap();
+        assert_eq!(owner_objects.records.len(), 1);
+        let overlap_objects = project_reader
+            .read_objects_in_cells(
+                space.id,
+                CellCoord { x: 4, z: -3 },
+                CellCoord { x: 4, z: -3 },
+                4,
+            )
+            .unwrap();
+        assert_eq!(overlap_objects.records[0].id, object_id);
+        assert_eq!(
+            project_reader.read_object(object_id).unwrap().unwrap().id,
+            object_id
+        );
+        let object_views = project_reader
+            .read_object_views_in_cells(space.id, CellCoord::ZERO, CellCoord::ZERO, 4)
+            .unwrap();
+        assert_eq!(object_views.records.len(), 1);
+        assert_eq!(object_views.records[0].object.id, object_id);
+        assert_eq!(object_views.records[0].definition.display_name, "Test door");
+        assert_eq!(
+            object_views.records[0].visual_uri.as_deref(),
+            Some("local/runtime/tree_lod0.gltf")
+        );
+        assert_eq!(object_views.records[0].visual_bounds, Some([2.0, 8.0, 2.0]));
+        assert_eq!(
+            project_reader
+                .read_object_view(object_id)
+                .unwrap()
+                .unwrap()
+                .definition
+                .key,
+            "test-door"
+        );
+        let palette = project_reader.read_object_palette(8).unwrap();
+        assert_eq!(palette.records.len(), 1);
+        assert!(!palette.truncated);
+        assert_eq!(palette.records[0].definition.id, definition_id);
+        assert_eq!(
+            palette.records[0].visual_uri.as_deref(),
+            Some("local/runtime/tree_lod0.gltf")
+        );
+        let outliner_page = project_reader
+            .read_object_outliner_page(space.id, "door", None, 1)
+            .unwrap();
+        assert_eq!(outliner_page.records[0].object.id, object_id);
+        assert!(outliner_page.next_cursor.is_none());
+        assert!(
+            project_reader
+                .read_object_outliner_page(space.id, "missing", None, 1)
+                .unwrap()
+                .records
+                .is_empty()
+        );
+        let palette_page = project_reader
+            .read_object_palette_page("door", None, 1)
+            .unwrap();
+        assert_eq!(palette_page.records[0].definition.id, definition_id);
+        assert!(palette_page.next_cursor.is_none());
+        assert!(matches!(
+            project_reader.read_cells(space.id, CellCoord::ZERO, CellCoord::ZERO, 0),
+            Err(WorldDbError::InvalidQueryLimit)
+        ));
+        assert!(matches!(
+            project_reader.read_object_palette(0),
+            Err(WorldDbError::InvalidQueryLimit)
+        ));
+        assert!(matches!(
+            project_reader.read_object_palette_page("", None, 0),
+            Err(WorldDbError::InvalidQueryLimit)
+        ));
+        let masks = project_reader
+            .read_ground_cover_masks_in_cells(space.id, CellCoord::ZERO, CellCoord::ZERO, 4)
+            .unwrap();
+        assert_eq!(masks.records.len(), 1);
+        assert_eq!(masks.records[0].source_revision, 2);
+        assert!(!masks.truncated);
+        assert_eq!(
+            project_reader
+                .read_ground_cover_layers(space.id, 4)
+                .unwrap()[0]
+                .id,
+            ground_cover_layer_id
+        );
+        assert!(
+            project_reader
+                .read_terrain_weight_pages_in_cells(space.id, CellCoord::ZERO, CellCoord::ZERO, 4,)
+                .unwrap()
+                .records
+                .is_empty()
+        );
+
+        let mut project_writer = ProjectWriter::open(&project_path).unwrap();
+        let transform = SourceObjectTransform {
+            space: space.id,
+            owner_cell: CellCoord::ZERO,
+            local_translation: [3.0, 0.5, 4.0],
+            yaw: 0.25,
+            scale: 1.5,
+        };
+        let ObjectTransformWriteResult::Updated(updated) = project_writer
+            .update_object_transform(object_id, 1, transform)
+            .unwrap()
+        else {
+            panic!("matching source revision should update the object");
+        };
+        assert_eq!(updated.source_revision, 2);
+        assert_eq!(SourceObjectTransform::from(&updated), transform);
+        let ObjectTransformWriteResult::Conflict {
+            actual: Some(actual),
+        } = project_writer
+            .update_object_transform(object_id, 1, transform)
+            .unwrap()
+        else {
+            panic!("stale source revision should report a conflict");
+        };
+        assert_eq!(actual.source_revision, 2);
+        let overlap_count: i64 = Connection::open(&project_path)
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM object_cell_overlaps WHERE object_id = ?1",
+                params![object_id.0.as_slice()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(overlap_count, 0);
+
+        let mut rolled_back_transform = transform;
+        rolled_back_transform.local_translation[0] = 12.0;
+        let ObjectWriteTransactionResult::Conflict {
+            object: conflict_object,
+            actual: Some(actual),
+        } = project_writer
+            .apply_object_transaction(&[
+                SourceObjectWrite::UpdateTransform {
+                    object: object_id,
+                    expected_source_revision: 2,
+                    transform: rolled_back_transform,
+                },
+                SourceObjectWrite::Delete {
+                    object: second_object_id,
+                    expected_source_revision: 99,
+                },
+            ])
+            .unwrap()
+        else {
+            panic!("a stale write should roll back the complete object transaction");
+        };
+        assert_eq!(conflict_object, second_object_id);
+        assert_eq!(actual.source_revision, 1);
+        let unchanged = project_reader.read_object(object_id).unwrap().unwrap();
+        assert_eq!(unchanged.source_revision, 2);
+        assert_eq!(SourceObjectTransform::from(&unchanged), transform);
+
+        assert_eq!(
+            project_writer
+                .apply_object_transaction(&[SourceObjectWrite::Delete {
+                    object: second_object_id,
+                    expected_source_revision: 1,
+                }])
+                .unwrap(),
+            ObjectWriteTransactionResult::Committed(vec![SourceObjectWriteCommit::Deleted(
+                second_object_id
+            )])
+        );
+        assert!(
+            project_reader
+                .read_object(second_object_id)
+                .unwrap()
+                .is_none()
+        );
+        let restored_object = SourceObjectRecord {
+            id: second_object_id,
+            space: second_space.id,
+            owner_cell: CellCoord::ZERO,
+            definition: definition_id,
+            local_translation: [2.0, 0.0, 1.0],
+            yaw: 0.0,
+            scale: 1.0,
+            source_revision: 1,
+        };
+        let ObjectWriteTransactionResult::Committed(restored) = project_writer
+            .apply_object_transaction(&[SourceObjectWrite::Create {
+                object: restored_object,
+            }])
+            .unwrap()
+        else {
+            panic!("undoing a saved deletion should recreate the source placement");
+        };
+        let [SourceObjectWriteCommit::Updated(restored)] = restored.as_slice() else {
+            panic!("placement recreation should return its new source checkpoint");
+        };
+        assert_eq!(restored.id, second_object_id);
+        assert_eq!(restored.source_revision, 2);
+
+        let terrain_weights = SourceTerrainCellWeightPageRecord {
+            space: space.id,
+            cell: CellCoord::ZERO,
+            page: 0,
+            resolution: 2,
+            rgba: vec![255; 16],
+            source_revision: 0,
+        };
+        let ground_cover_mask = SourceGroundCoverCellMaskRecord {
+            layer: ground_cover_layer_id,
+            space: space.id,
+            cell: CellCoord::ZERO,
+            resolution: 2,
+            coverage: vec![64, 96, 128, 255],
+            source_revision: 2,
+        };
+        let DenseSourceWriteTransactionResult::Committed(dense_commits) = project_writer
+            .apply_dense_source_transaction(&[
+                DenseSourceWrite::TerrainWeights {
+                    expected_source_revision: None,
+                    record: terrain_weights,
+                },
+                DenseSourceWrite::GroundCoverMask {
+                    expected_source_revision: Some(2),
+                    record: ground_cover_mask,
+                },
+            ])
+            .unwrap()
+        else {
+            panic!("matching dense revisions should commit atomically");
+        };
+        assert_eq!(dense_commits.len(), 2);
+        assert_eq!(
+            project_reader
+                .read_terrain_weight_pages_in_cells(space.id, CellCoord::ZERO, CellCoord::ZERO, 4,)
+                .unwrap()
+                .records[0]
+                .source_revision,
+            1
+        );
+        assert_eq!(
+            project_reader
+                .read_ground_cover_masks_in_cells(space.id, CellCoord::ZERO, CellCoord::ZERO, 4,)
+                .unwrap()
+                .records[0]
+                .source_revision,
+            3
+        );
+
+        let DenseSourceWriteTransactionResult::Conflict { key, actual } = project_writer
+            .apply_dense_source_transaction(&[
+                DenseSourceWrite::TerrainWeights {
+                    expected_source_revision: Some(1),
+                    record: SourceTerrainCellWeightPageRecord {
+                        space: space.id,
+                        cell: CellCoord::ZERO,
+                        page: 0,
+                        resolution: 2,
+                        rgba: vec![0; 16],
+                        source_revision: 1,
+                    },
+                },
+                DenseSourceWrite::GroundCoverMask {
+                    expected_source_revision: Some(2),
+                    record: SourceGroundCoverCellMaskRecord {
+                        layer: ground_cover_layer_id,
+                        space: space.id,
+                        cell: CellCoord::ZERO,
+                        resolution: 2,
+                        coverage: vec![0; 4],
+                        source_revision: 3,
+                    },
+                },
+            ])
+            .unwrap()
+        else {
+            panic!("a stale dense write should roll back the complete batch");
+        };
+        assert_eq!(
+            key,
+            DenseSourceRecordKey::GroundCoverMask {
+                layer: ground_cover_layer_id,
+                space: space.id,
+                cell: CellCoord::ZERO,
+            }
+        );
+        assert!(matches!(
+            actual,
+            Some(DenseSourceRecord::GroundCoverMask(record)) if record.source_revision == 3
+        ));
+        assert_eq!(
+            project_reader
+                .read_terrain_weight_pages_in_cells(space.id, CellCoord::ZERO, CellCoord::ZERO, 4,)
+                .unwrap()
+                .records[0]
+                .rgba,
+            vec![255; 16],
+            "the earlier terrain update must roll back with the stale mask"
         );
 
         let payload = PagePayload::TerrainRender(TerrainRenderPage {

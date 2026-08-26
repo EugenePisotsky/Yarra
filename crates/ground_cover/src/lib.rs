@@ -12,7 +12,7 @@ use bevy::{
     },
     transform::TransformSystems,
 };
-use world::{GroundCoverPage, GroundCoverSpecies, PageKey};
+use world::{CellCoord, GroundCoverPage, GroundCoverSpecies, PageKey};
 
 pub(crate) const MAX_GROUND_COVER_INTERACTION_STAMPS: usize = 16;
 const GROUND_COVER_INTERACTION_HISTORY_LIMIT: usize = 64;
@@ -382,6 +382,8 @@ fn cycle_ground_cover_debug(
 #[derive(Asset, TypePath, Debug, Clone)]
 pub struct GroundCoverPageAsset {
     pub key: PageKey,
+    /// The logical cell represented by render-space origin for this upload.
+    pub origin_cell: CellCoord,
     pub cell_size: f32,
     pub page: GroundCoverPage,
     pub species: Vec<GroundCoverSpecies>,

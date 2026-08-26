@@ -14,7 +14,9 @@ pub const MAX_TERRAIN_WEIGHT_RESOLUTION: u16 = 257;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct WorldSpaceId(pub i64);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
+)]
 pub struct CellCoord {
     pub x: i32,
     pub z: i32,
@@ -84,10 +86,32 @@ impl WorldPosition {
 
     pub fn relative_to(self, origin_cell: CellCoord, cell_size: f32) -> [f32; 3] {
         [
-            (self.cell.x - origin_cell.x) as f32 * cell_size + self.local[0],
+            (i64::from(self.cell.x) - i64::from(origin_cell.x)) as f32 * cell_size + self.local[0],
             self.local[1],
-            (self.cell.z - origin_cell.z) as f32 * cell_size + self.local[2],
+            (i64::from(self.cell.z) - i64::from(origin_cell.z)) as f32 * cell_size + self.local[2],
         ]
+    }
+
+    pub fn world(self, cell_size: f32) -> [f64; 3] {
+        let origin = self.cell.origin(cell_size);
+        [
+            origin[0] + f64::from(self.local[0]),
+            f64::from(self.local[1]),
+            origin[1] + f64::from(self.local[2]),
+        ]
+    }
+
+    pub fn translated(self, delta: [f32; 3], cell_size: f32) -> Self {
+        let world = self.world(cell_size);
+        Self::from_world(
+            self.space,
+            [
+                world[0] + f64::from(delta[0]),
+                world[1] + f64::from(delta[1]),
+                world[2] + f64::from(delta[2]),
+            ],
+            cell_size,
+        )
     }
 }
 
@@ -473,6 +497,30 @@ mod tests {
             position.relative_to(CellCoord { x: -1, z: 1 }, 32.0),
             [-0.5, 4.0, 32.25]
         );
+        assert_eq!(position.world(32.0), [-32.5, 4.0, 64.25]);
+    }
+
+    #[test]
+    fn world_position_translation_stays_precise_far_from_render_origin() {
+        let position = WorldPosition {
+            space: WorldSpaceId(7),
+            cell: CellCoord {
+                x: 1_000_000,
+                z: -1_000_000,
+            },
+            local: [31.5, 4.0, 0.25],
+        };
+        let moved = position.translated([1.0, 2.0, -1.0], 32.0);
+
+        assert_eq!(
+            moved.cell,
+            CellCoord {
+                x: 1_000_001,
+                z: -1_000_001,
+            }
+        );
+        assert_eq!(moved.local, [0.5, 6.0, 31.25]);
+        assert_eq!(moved.relative_to(position.cell, 32.0), [32.5, 6.0, -0.75]);
     }
 
     #[test]

@@ -194,6 +194,163 @@ struct ResolvedCharacterPresentation {
 #[derive(Component)]
 pub(crate) struct CharacterPresentationReady;
 
+/// Editor-facing locomotion preview selector.
+///
+/// This component deliberately carries no gameplay, camera, or streaming role. The preview plugin
+/// translates it into the same private presentation components used by runtime actors.
+#[derive(Component, Clone, Debug)]
+pub struct CharacterPresentationPreview {
+    profile_id: String,
+    clip: CharacterPreviewClip,
+    playing: bool,
+    speed: f32,
+    restart_generation: u64,
+}
+
+impl CharacterPresentationPreview {
+    pub fn new(profile_id: impl Into<String>) -> Self {
+        Self {
+            profile_id: profile_id.into(),
+            clip: CharacterPreviewClip::Idle,
+            playing: false,
+            speed: 1.0,
+            restart_generation: 0,
+        }
+    }
+
+    pub fn profile_id(&self) -> &str {
+        &self.profile_id
+    }
+
+    pub fn set_profile(&mut self, profile_id: impl Into<String>) {
+        self.profile_id = profile_id.into();
+    }
+
+    pub fn clip(&self) -> CharacterPreviewClip {
+        self.clip
+    }
+
+    pub fn set_clip(&mut self, clip: CharacterPreviewClip) {
+        self.clip = clip;
+    }
+
+    pub fn set_transport(&mut self, playing: bool, speed: f32) {
+        self.playing = playing;
+        self.speed = speed.clamp(0.05, 4.0);
+    }
+
+    pub fn restart(&mut self) {
+        self.restart_generation = self.restart_generation.wrapping_add(1).max(1);
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum CharacterPreviewClip {
+    #[default]
+    Idle,
+    Walk,
+    Jog,
+}
+
+#[derive(Component, Debug, Default)]
+struct CharacterPreviewRestartState(u64);
+
+/// Loads and drives real catalog-backed models and clips for isolated editor preview actors.
+pub struct CharacterPresentationPreviewPlugin;
+
+impl Plugin for CharacterPresentationPreviewPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_plugins(CharacterPresentationPlugin).add_systems(
+            Update,
+            (
+                apply_character_preview.before(CharacterPresentationResolveSet),
+                restart_character_preview.after(drive_character_animation),
+            ),
+        );
+    }
+}
+
+fn apply_character_preview(
+    mut commands: Commands,
+    mut previews: Query<(
+        Entity,
+        &CharacterPresentationPreview,
+        Option<&CharacterPresentationRef>,
+        Option<&mut CharacterMotion>,
+    )>,
+) {
+    for (entity, preview, presentation, motion) in &mut previews {
+        if presentation.is_none_or(|presentation| presentation.profile_id != preview.profile_id) {
+            commands
+                .entity(entity)
+                .insert(CharacterPresentationRef::new(preview.profile_id.clone()));
+        }
+        let mut desired = CharacterMotion {
+            playback_rate: if preview.playing { preview.speed } else { 0.0 },
+            ..default()
+        };
+        match preview.clip {
+            CharacterPreviewClip::Idle => {}
+            CharacterPreviewClip::Walk => {
+                desired.displacement = Vec2::Y * 0.01;
+                desired.speed_mps = 1.0;
+                desired.gait = CharacterGait::Walk;
+                desired.phase = CharacterMotionPhase::Moving;
+            }
+            CharacterPreviewClip::Jog => {
+                desired.displacement = Vec2::Y * 0.01;
+                desired.speed_mps = 3.0;
+                desired.gait = CharacterGait::Jog;
+                desired.phase = CharacterMotionPhase::Moving;
+            }
+        }
+        if let Some(mut motion) = motion {
+            *motion = desired;
+        } else {
+            commands
+                .entity(entity)
+                .insert((desired, CharacterPreviewRestartState::default()));
+        }
+    }
+}
+
+fn restart_character_preview(
+    assets: Res<CharacterAssetCache>,
+    previews: Query<&CharacterPresentationPreview>,
+    mut restart_states: Query<&mut CharacterPreviewRestartState>,
+    mut players: Query<(
+        &mut AnimationPlayer,
+        &mut AnimationTransitions,
+        &CharacterAnimator,
+    )>,
+) {
+    for (mut player, mut transitions, animator) in &mut players {
+        let Ok(preview) = previews.get(animator.actor) else {
+            continue;
+        };
+        let Ok(mut restart_state) = restart_states.get_mut(animator.actor) else {
+            continue;
+        };
+        if restart_state.0 == preview.restart_generation {
+            continue;
+        }
+        let Some(animations) = assets.prepared_movement_set(&animator.movement_set_id) else {
+            continue;
+        };
+        let visual = match preview.clip {
+            CharacterPreviewClip::Idle => LocomotionVisual::Idle,
+            CharacterPreviewClip::Walk => LocomotionVisual::Walk,
+            CharacterPreviewClip::Jog => LocomotionVisual::Jog,
+        };
+        transitions
+            .play(&mut player, animations.nodes.get(visual), Duration::ZERO)
+            .set_speed(if preview.playing { preview.speed } else { 0.0 })
+            .set_seek_time(0.0)
+            .repeat();
+        restart_state.0 = preview.restart_generation;
+    }
+}
+
 #[derive(Component)]
 struct CharacterAnimator {
     actor: Entity,

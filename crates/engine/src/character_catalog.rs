@@ -10,7 +10,51 @@ use serde::Deserialize;
 
 use crate::actor::CharacterMotorConfig;
 
-pub(crate) const DEFAULT_CHARACTER_PRESENTATION_ID: &str = "presentations/female/default";
+pub const DEFAULT_CHARACTER_PRESENTATION_ID: &str = "presentations/female/default";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CharacterPreviewClipRole {
+    Idle,
+    Walk,
+    Jog,
+}
+
+#[derive(Clone, Debug)]
+pub struct CharacterPreviewClipDefinition {
+    pub id: String,
+    pub name: String,
+    pub role: CharacterPreviewClipRole,
+    pub playback: &'static str,
+}
+
+#[derive(Clone, Debug)]
+pub struct CharacterMovementContextDefinition {
+    pub context: String,
+    pub movement_set_id: String,
+    pub movement_set_name: String,
+    pub clips: Vec<CharacterPreviewClipDefinition>,
+}
+
+#[derive(Clone, Debug)]
+pub struct CharacterPresentationProfileSummary {
+    pub id: String,
+    pub name: String,
+    pub model_id: String,
+    pub model_name: String,
+    pub model_asset: String,
+    pub default_movement_context: String,
+    pub movement_contexts: Vec<CharacterMovementContextDefinition>,
+}
+
+#[derive(Clone, Debug)]
+pub struct CharacterPresentationCatalogSummary {
+    pub profiles: Vec<CharacterPresentationProfileSummary>,
+}
+
+pub fn load_character_presentation_catalog_summary()
+-> Result<CharacterPresentationCatalogSummary, String> {
+    CharacterPresentationCatalog::load().map(|catalog| catalog.summary())
+}
 
 const CHARACTER_PRESENTATION_CATALOG_SOURCE: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -378,6 +422,63 @@ impl CharacterPresentationCatalog {
             }
         }
         Ok(())
+    }
+
+    fn summary(&self) -> CharacterPresentationCatalogSummary {
+        CharacterPresentationCatalogSummary {
+            profiles: self
+                .profiles
+                .iter()
+                .map(|profile| {
+                    let model = self
+                        .model(&profile.model)
+                        .expect("validated presentation model must exist");
+                    CharacterPresentationProfileSummary {
+                        id: profile.id.clone(),
+                        name: profile.name.clone(),
+                        model_id: model.id.clone(),
+                        model_name: model.name.clone(),
+                        model_asset: model.visual.asset.clone(),
+                        default_movement_context: profile.default_movement_context.clone(),
+                        movement_contexts: profile
+                            .movement_sets
+                            .iter()
+                            .map(|binding| {
+                                let set = self
+                                    .movement_set(&binding.movement_set)
+                                    .expect("validated movement set must exist");
+                                CharacterMovementContextDefinition {
+                                    context: binding.context.clone(),
+                                    movement_set_id: set.id.clone(),
+                                    movement_set_name: set.name.clone(),
+                                    clips: [
+                                        (CharacterPreviewClipRole::Idle, set.idle_clip.as_str()),
+                                        (CharacterPreviewClipRole::Walk, set.walk.clip.as_str()),
+                                        (CharacterPreviewClipRole::Jog, set.jog.clip.as_str()),
+                                    ]
+                                    .into_iter()
+                                    .map(|(role, clip_id)| {
+                                        let clip = self
+                                            .clip(clip_id)
+                                            .expect("validated movement clip must exist");
+                                        CharacterPreviewClipDefinition {
+                                            id: clip.id.clone(),
+                                            name: clip.name.clone(),
+                                            role,
+                                            playback: match clip.playback {
+                                                ClipPlayback::Loop => "loop",
+                                                ClipPlayback::Once => "once",
+                                            },
+                                        }
+                                    })
+                                    .collect(),
+                                }
+                            })
+                            .collect(),
+                    }
+                })
+                .collect(),
+        }
     }
 
     fn validate_movement_set_clips(&self, set: &MovementSetDefinition) -> Result<(), String> {
