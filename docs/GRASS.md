@@ -112,9 +112,31 @@ coverage-preserving mip levels. This is a placeholder authoring path that gives 
 without requiring a painted asset while the renderer is being established.
 
 The cards are opaque with alpha testing, write depth, and use no face culling. They currently use a
-simple color gradient rather than the standard PBR material. Grass does not currently cast shadows.
-Both choices are intentional until lighting and shadow quality can be tested in a representative
-scene.
+simple color gradient rather than the standard PBR material. Grass does not cast shadows, but the
+current experiment lets it receive the normal directional cascaded shadow map through the optimized
+path described below.
+
+### Experimental alpha depth prepass
+
+Directly sampling the cascaded shadow map in the original single-pass grass fragment shader was
+prohibitively expensive. Alpha-tested rectangles overlap heavily, so many fragments performed a
+filtered shadow lookup before only the nearest surviving blade became visible. Caster count was not
+the bottleneck; receiver overdraw was.
+
+Ground-cover views now enable Bevy's depth prepass. Grass joins its alpha-mask phase using the exact
+same generated vertices, wind, interaction, LOD dither, artwork sample, and cutoff as the color pass.
+The prepass performs only that cutout test and writes the nearest depth. The color pipeline disables
+depth writes and requires exact depth equality, so hidden overlapping cards are rejected before the
+real directional-shadow lookup. Grass remains absent from all shadow-caster passes.
+
+The color pass uses Bevy's inexpensive hardware 2-by-2 comparison filter and an upward receiver
+normal for stable bias. Consequently characters and trees retain their real silhouettes, and moving
+the authoritative directional light updates their grass shadows normally. Press `U` in the demo to
+toggle accelerated sun motion and stress both cascade stability and receiver performance.
+
+This is still an experiment: it must be measured in the representative dense field at native display
+resolution. Tree wind may also require a simplified shadow-caster LOD later, but that concern is
+independent from receiving shadows efficiently on grass.
 
 ### Nested geometry LOD
 
@@ -233,7 +255,11 @@ Future changes should preserve these unless measurements justify replacing them:
 - Keep authored coverage extents separate from conservative culling bounds.
 - Keep LOD geometry nested so surviving cards never move when tiers change.
 - Use resolved camera zoom as the single view-transition input.
-- Do not add grass shadows or per-blade interaction without testing them in a representative scene.
+- Keep expensive grass shading behind the shared alpha-tested depth prepass. The depth and color
+  paths must generate identical geometry and apply identical cutout/dither decisions.
+- Keep grass out of shadow-caster passes unless representative measurements justify changing that.
+- Do not add grass shadow casting or per-blade interaction without testing them in a representative
+  scene.
 
 ## Current limitations
 
@@ -250,7 +276,8 @@ Future changes should preserve these unless measurements justify replacing them:
   atomically replaces the immutable runtime file, and asks the streamer to reopen the exact
   content-addressed generation before clean derived overrides are retired.
 - The current artwork sources are procedural. Direct painted/imported masks are still planned.
-- Grass has no terrain lighting integration, shadow casting, or collision.
+- Grass has no terrain lighting integration, shadow casting, or collision. Directional-shadow
+  reception through the alpha/depth prepass remains experimental.
 - Interaction response is currently a fixed-capacity actor field; it has not been tested with a
   crowded scene or authored per-species response.
 - Visible-instance capacity is fixed rather than quality-scaled.

@@ -7,6 +7,7 @@ use std::path::PathBuf;
 
 use bevy::{
     camera::Exposure,
+    core_pipeline::prepass::DepthPrepass,
     diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin},
     input::gestures::{PanGesture, PinchGesture},
     input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit},
@@ -100,6 +101,7 @@ impl Plugin for MinimalGamePlugin {
                 advance_character_motors.after(CharacterPresentationResolveSet),
                 update_target_indicator,
                 update_camera_transform,
+                update_demo_sun_motion,
             )
                 .chain(),
         )
@@ -109,6 +111,9 @@ impl Plugin for MinimalGamePlugin {
 
 #[derive(Component)]
 pub(crate) struct MainCamera;
+
+#[derive(Component)]
+struct WorldSun;
 
 #[derive(Component)]
 struct CameraRig {
@@ -182,6 +187,7 @@ fn setup(
         .build(),
         Transform::from_translation(Vec3::new(7.878_527_6, 8.691_806, -12.131_867))
             .looking_at(Vec3::ZERO, Vec3::Y),
+        WorldSun,
         Name::new("Sun"),
     ));
 
@@ -196,6 +202,7 @@ fn setup(
         Camera3d::default(),
         Exposure { ev100: 10.4 },
         Msaa::Off,
+        DepthPrepass,
         GroundCoverView {
             normalized_zoom: normalized_camera_zoom(camera_rig.distance),
         },
@@ -242,6 +249,24 @@ fn setup(
         PerformanceLabel,
         Name::new("Performance label"),
     ));
+}
+
+fn update_demo_sun_motion(
+    time: Res<Time>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mut enabled: Local<bool>,
+    mut sun: Single<&mut Transform, With<WorldSun>>,
+) {
+    if keys.just_pressed(KeyCode::KeyU) {
+        *enabled = !*enabled;
+        warn!(
+            "moving-sun grass-shadow stress test: {}",
+            if *enabled { "on" } else { "off" }
+        );
+    }
+    if *enabled {
+        sun.rotation = Quat::from_rotation_y(0.06 * time.delta_secs()) * sun.rotation;
+    }
 }
 
 fn set_target_from_pointer(
@@ -558,7 +583,7 @@ fn update_performance_label(
         .unwrap_or_else(|| "World: initializing".into());
 
     **label = Text::new(format!(
-        "Tap / left click: move | WASD / left stick: direct movement | Tab: change area | G: grass debug | V: terrain macro\n\
+        "Tap / left click: move | WASD / left stick: direct movement | Tab: change area | G: grass debug | V: terrain macro | U: sun motion\n\
          Two-finger horizontal / right drag / right stick: orbit\n\
          Pinch / two-finger vertical / wheel: smooth zoom\n\
          Actor: {:?} {:?} | {:.2} m/s | playback {:.2}x\n\

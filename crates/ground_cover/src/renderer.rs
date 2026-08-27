@@ -10,6 +10,7 @@ use bevy::{
     asset::AssetId,
     core_pipeline::{
         core_3d::{CORE_3D_DEPTH_FORMAT, Opaque3d, Opaque3dBatchSetKey, Opaque3dBinKey},
+        prepass::{AlphaMask3dPrepass, OpaqueNoLightmap3dBatchSetKey, OpaqueNoLightmap3dBinKey},
         schedule::camera_driver,
     },
     ecs::{
@@ -20,6 +21,10 @@ use bevy::{
         },
     },
     mesh::Mesh,
+    pbr::{
+        MeshPipelineSystems, MeshPipelineViewLayoutKey, MeshPipelineViewLayouts,
+        SetMeshViewBindGroup, ViewKeyCache,
+    },
     prelude::*,
     render::{
         Render, RenderApp, RenderStartup, RenderSystems,
@@ -85,7 +90,11 @@ impl Plugin for GroundCoverRenderPlugin {
         };
         render_app
             .add_render_command::<Opaque3d, DrawGroundCover>()
-            .add_systems(RenderStartup, init_ground_cover_resources)
+            .add_render_command::<AlphaMask3dPrepass, DrawGroundCoverPrepass>()
+            .add_systems(
+                RenderStartup,
+                init_ground_cover_resources.after(MeshPipelineSystems),
+            )
             .add_systems(
                 Render,
                 (
@@ -627,12 +636,14 @@ struct GroundCoverPipelines {
     cull_pipeline: CachedComputePipelineId,
     finalize_pipeline: CachedComputePipelineId,
     draw_variants: Variants<RenderPipeline, GroundCoverPipelineSpecializer>,
+    prepass_variants: Variants<RenderPipeline, GroundCoverPipelineSpecializer>,
 }
 
 impl FromWorld for GroundCoverPipelines {
     fn from_world(world: &mut World) -> Self {
         let asset_server = world.resource::<AssetServer>();
         let pipeline_cache = world.resource::<PipelineCache>();
+        let view_layouts = world.resource::<MeshPipelineViewLayouts>().clone();
         let compute_shader = asset_server.load(COMPUTE_SHADER_PATH);
         let render_shader = asset_server.load(RENDER_SHADER_PATH);
 
@@ -693,9 +704,50 @@ impl FromWorld for GroundCoverPipelines {
             entry_point: Some(Cow::Borrowed("finalize")),
             ..default()
         });
-        let base_descriptor = RenderPipelineDescriptor {
+        let draw_descriptor = RenderPipelineDescriptor {
             label: Some("ground-cover draw pipeline".into()),
-            layout: vec![draw_layout.clone()],
+            // The exact mesh-view layout is installed by the per-view specializer.
+            layout: Vec::new(),
+            vertex: VertexState {
+                shader: render_shader.clone(),
+                entry_point: Some(Cow::Borrowed("vertex")),
+                shader_defs: vec!["SHADOW_FILTER_METHOD_HARDWARE_2X2".into()],
+                buffers: Vec::new(),
+                ..default()
+            },
+            fragment: Some(FragmentState {
+                shader: render_shader.clone(),
+                entry_point: Some(Cow::Borrowed("fragment")),
+                shader_defs: vec!["SHADOW_FILTER_METHOD_HARDWARE_2X2".into()],
+                targets: vec![Some(ColorTargetState {
+                    format: TextureFormat::Rgba16Float,
+                    blend: None,
+                    write_mask: ColorWrites::ALL,
+                })],
+                ..default()
+            }),
+            primitive: PrimitiveState {
+                topology: PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: FrontFace::Ccw,
+                cull_mode: None,
+                polygon_mode: PolygonMode::Fill,
+                ..default()
+            },
+            depth_stencil: Some(DepthStencilState {
+                format: CORE_3D_DEPTH_FORMAT,
+                // The alpha-tested prepass owns depth. Exact equality ensures only the
+                // frontmost surviving blades execute the shadowed color pass.
+                depth_write_enabled: Some(false),
+                depth_compare: Some(CompareFunction::Equal),
+                stencil: default(),
+                bias: default(),
+            }),
+            ..default()
+        };
+        let prepass_descriptor = RenderPipelineDescriptor {
+            label: Some("ground-cover alpha depth prepass pipeline".into()),
+            layout: Vec::new(),
             vertex: VertexState {
                 shader: render_shader.clone(),
                 entry_point: Some(Cow::Borrowed("vertex")),
@@ -704,12 +756,8 @@ impl FromWorld for GroundCoverPipelines {
             },
             fragment: Some(FragmentState {
                 shader: render_shader,
-                entry_point: Some(Cow::Borrowed("fragment")),
-                targets: vec![Some(ColorTargetState {
-                    format: TextureFormat::Rgba16Float,
-                    blend: None,
-                    write_mask: ColorWrites::ALL,
-                })],
+                entry_point: Some(Cow::Borrowed("prepass_fragment")),
+                targets: Vec::new(),
                 ..default()
             }),
             primitive: PrimitiveState {
@@ -733,10 +781,25 @@ impl FromWorld for GroundCoverPipelines {
         Self {
             cull_layout,
             finalize_layout,
-            draw_layout,
+            draw_layout: draw_layout.clone(),
             cull_pipeline,
             finalize_pipeline,
-            draw_variants: Variants::new(GroundCoverPipelineSpecializer, base_descriptor),
+            draw_variants: Variants::new(
+                GroundCoverPipelineSpecializer {
+                    view_layouts: view_layouts.clone(),
+                    draw_layout: draw_layout.clone(),
+                    color_pass: true,
+                },
+                draw_descriptor,
+            ),
+            prepass_variants: Variants::new(
+                GroundCoverPipelineSpecializer {
+                    view_layouts,
+                    draw_layout,
+                    color_pass: false,
+                },
+                prepass_descriptor,
+            ),
         }
     }
 }
@@ -745,9 +808,14 @@ impl FromWorld for GroundCoverPipelines {
 struct GroundCoverPipelineKey {
     msaa: Msaa,
     target_format: TextureFormat,
+    view_layout_bits: u32,
 }
 
-struct GroundCoverPipelineSpecializer;
+struct GroundCoverPipelineSpecializer {
+    view_layouts: MeshPipelineViewLayouts,
+    draw_layout: BindGroupLayoutDescriptor,
+    color_pass: bool,
+}
 
 impl Specializer<RenderPipeline> for GroundCoverPipelineSpecializer {
     type Key = GroundCoverPipelineKey;
@@ -759,10 +827,18 @@ impl Specializer<RenderPipeline> for GroundCoverPipelineSpecializer {
     ) -> Result<Canonical<Self::Key>, BevyError> {
         descriptor.multisample.count = key.msaa.samples();
         descriptor.multisample.alpha_to_coverage_enabled = key.msaa.samples() > 1;
-        descriptor.fragment.as_mut().unwrap().targets[0]
-            .as_mut()
-            .unwrap()
-            .format = key.target_format;
+        let view_layout =
+            self.view_layouts
+                .get_view_layout(MeshPipelineViewLayoutKey::from_bits_retain(
+                    key.view_layout_bits,
+                ));
+        descriptor.layout = vec![view_layout.main_layout, self.draw_layout.clone()];
+        if self.color_pass {
+            descriptor.fragment.as_mut().unwrap().targets[0]
+                .as_mut()
+                .unwrap()
+                .format = key.target_format;
+        }
         Ok(key)
     }
 }
@@ -921,27 +997,52 @@ fn queue_ground_cover(
     mut pipelines: ResMut<GroundCoverPipelines>,
     pages: Res<RenderAssets<GpuGroundCoverPage>>,
     mut opaque_phases: ResMut<ViewBinnedRenderPhases<Opaque3d>>,
+    mut alpha_mask_prepass_phases: ResMut<ViewBinnedRenderPhases<AlphaMask3dPrepass>>,
     draw_functions: Res<DrawFunctions<Opaque3d>>,
+    prepass_draw_functions: Res<DrawFunctions<AlphaMask3dPrepass>>,
+    view_key_cache: Res<ViewKeyCache>,
     views: Query<(Entity, &MainEntity, &ExtractedView, &Msaa), With<GroundCoverView>>,
 ) {
     let draw_function = draw_functions.read().id::<DrawGroundCover>();
+    let prepass_draw_function = prepass_draw_functions.read().id::<DrawGroundCoverPrepass>();
     for (entity, main_entity, view, msaa) in &views {
-        let Some(phase) = opaque_phases.get_mut(&view.retained_view_entity) else {
-            continue;
-        };
-        phase.remove(*main_entity);
-        if pages.iter().next().is_none() {
-            continue;
-        }
-        let Ok(pipeline) = pipelines.draw_variants.specialize(
-            &pipeline_cache,
-            GroundCoverPipelineKey {
-                msaa: *msaa,
-                target_format: view.target_format,
-            },
+        let (Some(phase), Some(prepass_phase), Some(mesh_view_key)) = (
+            opaque_phases.get_mut(&view.retained_view_entity),
+            alpha_mask_prepass_phases.get_mut(&view.retained_view_entity),
+            view_key_cache.get(&view.retained_view_entity),
         ) else {
             continue;
         };
+        phase.remove(*main_entity);
+        prepass_phase.remove(*main_entity);
+        if pages.iter().next().is_none() {
+            continue;
+        }
+        let key = GroundCoverPipelineKey {
+            msaa: *msaa,
+            target_format: view.target_format,
+            view_layout_bits: MeshPipelineViewLayoutKey::from(*mesh_view_key).bits(),
+        };
+        let (Ok(pipeline), Ok(prepass_pipeline)) = (
+            pipelines.draw_variants.specialize(&pipeline_cache, key),
+            pipelines.prepass_variants.specialize(&pipeline_cache, key),
+        ) else {
+            continue;
+        };
+        prepass_phase.add(
+            OpaqueNoLightmap3dBatchSetKey {
+                draw_function: prepass_draw_function,
+                pipeline: prepass_pipeline,
+                material_bind_group_index: None,
+                slabs: MeshSlabs::default(),
+            },
+            OpaqueNoLightmap3dBinKey {
+                asset_id: AssetId::<Mesh>::invalid().untyped(),
+            },
+            (entity, *main_entity),
+            InputUniformIndex::default(),
+            BinnedRenderPhaseType::NonMesh,
+        );
         phase.add(
             Opaque3dBatchSetKey {
                 draw_function,
@@ -960,7 +1061,16 @@ fn queue_ground_cover(
     }
 }
 
-type DrawGroundCover = (SetItemPipeline, DrawGroundCoverIndirect);
+type DrawGroundCover = (
+    SetItemPipeline,
+    SetMeshViewBindGroup<0>,
+    DrawGroundCoverIndirect,
+);
+type DrawGroundCoverPrepass = (
+    SetItemPipeline,
+    SetMeshViewBindGroup<0>,
+    DrawGroundCoverIndirect,
+);
 
 struct DrawGroundCoverIndirect;
 
@@ -977,11 +1087,11 @@ impl<P: PhaseItem> RenderCommand<P> for DrawGroundCoverIndirect {
         pass: &mut TrackedRenderPass<'w>,
     ) -> RenderCommandResult {
         let buffers = buffers.into_inner();
-        pass.set_bind_group(0, &buffers.near_draw_bind_group, &[]);
+        pass.set_bind_group(1, &buffers.near_draw_bind_group, &[]);
         pass.draw_indirect(&buffers.near_args, 0);
-        pass.set_bind_group(0, &buffers.mid_draw_bind_group, &[]);
+        pass.set_bind_group(1, &buffers.mid_draw_bind_group, &[]);
         pass.draw_indirect(&buffers.mid_args, 0);
-        pass.set_bind_group(0, &buffers.far_draw_bind_group, &[]);
+        pass.set_bind_group(1, &buffers.far_draw_bind_group, &[]);
         pass.draw_indirect(&buffers.far_args, 0);
         RenderCommandResult::Success
     }
@@ -1001,10 +1111,44 @@ mod tests {
 
     #[test]
     fn ground_cover_shaders_are_valid_wgsl() {
-        validate_shader(include_str!("../../../assets/shaders/ground_cover.wgsl"));
         validate_shader(include_str!(
             "../../../assets/shaders/ground_cover_cull.wgsl"
         ));
+
+        // Naga alone does not understand Bevy/naga-oil `#import` directives. Validate the complete
+        // ground-cover shader with only the imported shadow adapter replaced by an identity stub;
+        // Bevy resolves and validates that adapter against its mesh-view libraries at runtime.
+        let render_shader = include_str!("../../../assets/shaders/ground_cover.wgsl");
+        let declarations = render_shader
+            .find("struct VisibleInstance")
+            .expect("ground-cover declarations should follow imports");
+        let shadow_adapter = render_shader
+            .find("fn directional_shadow_visibility")
+            .expect("ground cover should receive directional shadows");
+        let fragment_entries = render_shader
+            .find("// This fragment entry point")
+            .expect("ground cover should document its depth prepass");
+        let sanitized = format!(
+            "{}fn directional_shadow_visibility(_input: VertexOutput) -> f32 {{ return 1.0; }}\n\n{}",
+            &render_shader[declarations..shadow_adapter],
+            &render_shader[fragment_entries..],
+        );
+        validate_shader(&sanitized);
+    }
+
+    #[test]
+    fn depth_prepass_owns_cutout_before_the_shadowed_color_pass() {
+        let render_shader = include_str!("../../../assets/shaders/ground_cover.wgsl");
+        assert!(render_shader.contains("fn prepass_fragment(input: VertexOutput)"));
+        assert!(render_shader.contains("fn fragment(input: VertexOutput)"));
+        assert_eq!(
+            render_shader
+                .matches("visible_card_coverage(input)")
+                .count(),
+            2,
+            "the prepass and color pass must share the exact alpha test",
+        );
+        assert!(render_shader.contains("shadows::fetch_directional_shadow("));
     }
 
     #[test]

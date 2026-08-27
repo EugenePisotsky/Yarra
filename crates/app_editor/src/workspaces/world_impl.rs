@@ -5,6 +5,7 @@ use std::{collections::HashSet, f32::consts::FRAC_PI_4};
 use bevy::{
     camera::Exposure,
     camera::visibility::RenderLayers,
+    core_pipeline::prepass::DepthPrepass,
     gizmos::config::GizmoConfigStore,
     gizmos::transform_gizmo::{
         TransformGizmoAxis, TransformGizmoCamera, TransformGizmoFocus, TransformGizmoMeshMarker,
@@ -167,6 +168,7 @@ pub(crate) fn setup_world_workspace(mut commands: Commands) {
         Camera3d::default(),
         Exposure { ev100: 10.4 },
         Msaa::Off,
+        DepthPrepass,
         GroundCoverView {
             normalized_zoom: 1.0,
         },

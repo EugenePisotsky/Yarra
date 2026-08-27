@@ -1,3 +1,9 @@
+#import bevy_pbr::{
+    mesh_view_bindings as view_bindings,
+    mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT,
+    shadows,
+}
+
 struct VisibleInstance {
     position_yaw: vec4<f32>,
     bottom_height: vec4<f32>,
@@ -33,13 +39,15 @@ struct VertexOutput {
     @location(1) uv: vec2<f32>,
     @location(2) @interpolate(flat) texture_layer: u32,
     @location(3) @interpolate(flat) card_visibility: f32,
+    @location(4) world_position: vec3<f32>,
 }
 
-@group(0) @binding(0) var<storage, read> instances: array<VisibleInstance>;
-@group(0) @binding(1) var<uniform> camera: Camera;
-@group(0) @binding(2) var<uniform> config: DrawConfig;
-@group(0) @binding(3) var clump_texture: texture_2d_array<f32>;
-@group(0) @binding(4) var clump_sampler: sampler;
+// Group zero is Bevy's mesh-view bind group, including the directional shadow map.
+@group(1) @binding(0) var<storage, read> instances: array<VisibleInstance>;
+@group(1) @binding(1) var<uniform> camera: Camera;
+@group(1) @binding(2) var<uniform> config: DrawConfig;
+@group(1) @binding(3) var clump_texture: texture_2d_array<f32>;
+@group(1) @binding(4) var clump_sampler: sampler;
 
 fn quad_vertex(vertex_in_quad: u32) -> vec2<f32> {
     switch vertex_in_quad {
@@ -177,9 +185,9 @@ fn vertex(
             max(card_distance * cos(tilt) - interaction_vertical_drop, 0.0),
             horizontal.y,
         );
-
     var output: VertexOutput;
     output.clip_position = camera.clip_from_world * vec4<f32>(world_position, 1.0);
+    output.world_position = world_position;
     output.color = mix(instance.bottom_height.xyz, instance.top_half_width.xyz, height_fraction);
     if (camera.debug.x == 1u) {
         if (lod == 0u) {
@@ -209,8 +217,7 @@ fn interleaved_gradient_noise(pixel: vec2<f32>) -> f32 {
     return fract(52.9829189 * fract(dot(pixel, vec2<f32>(0.06711056, 0.00583715))));
 }
 
-@fragment
-fn fragment(input: VertexOutput) -> @location(0) vec4<f32> {
+fn visible_card_coverage(input: VertexOutput) -> f32 {
     let coverage = textureSample(
         clump_texture,
         clump_sampler,
@@ -229,7 +236,47 @@ fn fragment(input: VertexOutput) -> @location(0) vec4<f32> {
     if (coverage < 0.32) {
         discard;
     }
+    return coverage;
+}
+
+fn directional_shadow_visibility(input: VertexOutput) -> f32 {
+    if (camera.debug.x != 0u) {
+        return 1.0;
+    }
+    let light = &view_bindings::lights.directional_lights[0u];
+    if (((*light).flags & DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) == 0u) {
+        return 1.0;
+    }
+
+    let world_position = vec4<f32>(input.world_position, 1.0);
+    let view_z = dot(vec4<f32>(
+        view_bindings::view.view_from_world[0].z,
+        view_bindings::view.view_from_world[1].z,
+        view_bindings::view.view_from_world[2].z,
+        view_bindings::view.view_from_world[3].z
+    ), world_position);
+    return shadows::fetch_directional_shadow(
+        0u,
+        world_position,
+        vec3<f32>(0.0, 1.0, 0.0),
+        view_z,
+        input.clip_position.xy,
+    );
+}
+
+// This fragment entry point performs only the shared alpha test and writes depth. The color pass
+// uses depth equality, so overlapping cards that lost here never execute a shadow-map lookup.
+@fragment
+fn prepass_fragment(input: VertexOutput) {
+    visible_card_coverage(input);
+}
+
+@fragment
+fn fragment(input: VertexOutput) -> @location(0) vec4<f32> {
+    let coverage = visible_card_coverage(input);
     let edge_coverage = smoothstep(0.32, 0.68, coverage);
-    let shaded_color = input.color * mix(0.82, 1.06, coverage);
+    let shadow_visibility = directional_shadow_visibility(input);
+    let shadow_attenuation = mix(0.48, 1.0, shadow_visibility);
+    let shaded_color = input.color * mix(0.82, 1.06, coverage) * shadow_attenuation;
     return vec4<f32>(shaded_color, edge_coverage);
 }
