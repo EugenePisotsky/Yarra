@@ -13,8 +13,16 @@ use bevy::{
 };
 use bevy_egui::egui;
 use engine::{ActiveWorldSpace, StreamingStats, WorldCatalog, WorldOrigin, WorldViewpoint};
-use world::StableObjectId;
-use world_db::{SourceObjectTransform, SourceObjectViewRecord};
+use uuid::Uuid;
+use world::{
+    GroundCoverBladeRecipe, GroundCoverPresetId, GroundCoverRegionId, GroundCoverVisualId,
+    StableObjectId, generate_ground_cover_card_artwork,
+};
+use world_db::{
+    SourceGroundCoverCardVisualRecord, SourceGroundCoverPresetRecord,
+    SourceGroundCoverRegionRecord, SourceGroundCoverVisualDefinition,
+    SourceGroundCoverVisualRecord, SourceObjectTransform, SourceObjectViewRecord,
+};
 
 use super::{
     EditorWorkspace,
@@ -24,17 +32,22 @@ use super::{
     },
 };
 use crate::{
+    catalog_editing::GroundCoverRegionWorkingSet,
     derived_jobs::{DerivedArtifactStore, DerivedJobScheduler},
     domain_editing::DenseDomainWorkingSets,
     editing::{
         EditorHistory, EditorObjectWorkingSet, EditorSelection, TransformInspectorDraft,
         normalize_transform,
     },
+    ground_cover_catalog::GroundCoverCatalogWorkingSet,
+    ground_cover_editing::{GroundCoverBrushMode, GroundCoverToolState},
     journal::EditorJournalStatus,
     navigation::ProjectNavigationStore,
     overview::{OverviewMode, OverviewProductKind, OverviewState},
     preview::{EditorPreviewMode, PreviewModeState, PreviewRuntimeDiagnostics},
     project_store::{ProjectEditorStore, ProjectQueryWindow},
+    publication::RuntimePublicationState,
+    saving::EditorSaveCoordinator,
     shell::{EditorUiFrame, EditorWindowDescriptor, EditorWindowId, EditorWindowRegistry},
     tools::{EditorToolRegistry, GROUND_COVER_TOOL, OBJECT_TOOL, TERRAIN_TOOL},
 };
@@ -69,10 +82,39 @@ pub(crate) const DIAGNOSTICS_WINDOW: EditorWindowDescriptor = EditorWindowDescri
     label: "Diagnostics",
     default_open: false,
 };
+pub(crate) const GROUND_COVER_WINDOW: EditorWindowDescriptor = EditorWindowDescriptor {
+    id: EditorWindowId("world.ground_cover"),
+    workspace: EditorWorkspace::World,
+    label: "Ground Cover",
+    default_open: false,
+};
 
 #[derive(Resource, Default)]
 pub(crate) struct WorldWorkspaceUiState {
     visible_assets_search: String,
+}
+
+#[derive(Resource, Default)]
+pub(crate) struct GroundCoverCatalogUiState {
+    catalog_revision: u64,
+    selected_preset: Option<GroundCoverPresetId>,
+    preset_draft: Option<SourceGroundCoverPresetRecord>,
+    selected_visual: Option<GroundCoverVisualId>,
+    visual_draft: Option<SourceGroundCoverVisualRecord>,
+    selected_region: Option<GroundCoverRegionId>,
+    region_draft: Option<SourceGroundCoverRegionRecord>,
+    region_revision: u64,
+    artwork_preview_key: Option<ArtworkPreviewKey>,
+    artwork_preview_variant: u8,
+    artwork_preview_texture: Option<egui::TextureHandle>,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+struct ArtworkPreviewKey {
+    recipe: GroundCoverBladeRecipe,
+    bottom_color: [f32; 3],
+    top_color: [f32; 3],
+    variant: u8,
 }
 
 #[derive(SystemParam)]
@@ -84,12 +126,17 @@ pub(crate) struct WorldWorkspaceUiResources<'w> {
     stats: Res<'w, StreamingStats>,
     derived_jobs: Res<'w, DerivedJobScheduler>,
     derived_artifacts: Res<'w, DerivedArtifactStore>,
-    dense_domains: Res<'w, DenseDomainWorkingSets>,
+    dense_domains: ResMut<'w, DenseDomainWorkingSets>,
+    regions: ResMut<'w, GroundCoverRegionWorkingSet>,
+    ground_cover_catalog: ResMut<'w, GroundCoverCatalogWorkingSet>,
+    ground_cover_tool: ResMut<'w, GroundCoverToolState>,
     journal: Res<'w, EditorJournalStatus>,
     navigation: ResMut<'w, ProjectNavigationStore>,
     overview: Res<'w, OverviewState>,
     preview: ResMut<'w, PreviewModeState>,
     preview_runtime: Res<'w, PreviewRuntimeDiagnostics>,
+    publication: ResMut<'w, RuntimePublicationState>,
+    save: ResMut<'w, EditorSaveCoordinator>,
     project: ResMut<'w, ProjectEditorStore>,
     selection: ResMut<'w, EditorSelection>,
     objects: ResMut<'w, EditorObjectWorkingSet>,
@@ -101,6 +148,7 @@ pub(crate) struct WorldWorkspaceUiResources<'w> {
     active_space: ResMut<'w, ActiveWorldSpace>,
     tools: ResMut<'w, EditorToolRegistry>,
     ui_state: ResMut<'w, WorldWorkspaceUiState>,
+    ground_cover_catalog_ui: ResMut<'w, GroundCoverCatalogUiState>,
     windows: ResMut<'w, EditorWindowRegistry>,
 }
 
@@ -116,12 +164,17 @@ pub(crate) fn world_workspace_ui(
         stats,
         derived_jobs,
         derived_artifacts,
-        dense_domains,
+        mut dense_domains,
+        mut regions,
+        mut ground_cover_catalog,
+        mut ground_cover_tool,
         journal,
         mut navigation,
         overview,
         mut preview,
         preview_runtime,
+        publication,
+        mut save,
         mut project,
         mut selection,
         mut objects,
@@ -133,6 +186,7 @@ pub(crate) fn world_workspace_ui(
         mut active_space,
         mut tools,
         mut ui_state,
+        mut ground_cover_catalog_ui,
         mut windows,
     } = resources;
     let Some(viewport_ui) = frame.0.as_mut() else {
@@ -141,37 +195,97 @@ pub(crate) fn world_workspace_ui(
 
     egui::Panel::top("editor_world_toolbar").show(viewport_ui, |ui| {
         ui.horizontal(|ui| {
-            let can_save = objects.dirty_count() > 0
+            let remaining_changes = objects.dirty_count()
+                + ground_cover_catalog.dirty_count()
+                + regions.dirty_count()
+                + dense_domains.dirty_count();
+            let has_dirty_source = remaining_changes > 0;
+            let source_action_available = !save.active()
+                && !project.save_in_flight()
                 && !objects.saving()
+                && !ground_cover_catalog.saving()
+                && !regions.saving()
+                && !dense_domains.saving()
                 && !objects.has_any_conflict()
+                && !ground_cover_catalog.has_any_conflict()
+                && !regions.has_any_conflict()
+                && !dense_domains.has_any_conflict()
+                && !publication.active()
                 && project.write_error().is_none();
+            let can_save = has_dirty_source && source_action_available;
             if ui
                 .add_enabled(can_save, egui::Button::new("Save"))
-                .on_hover_text("Save local source changes (Cmd+S)")
+                .on_hover_text("Save all local source changes (Cmd+S)")
                 .clicked()
             {
-                objects.queue_save(&mut project);
+                save.request_save();
+            }
+            let can_publish = (project.source_epoch() > 0 || has_dirty_source)
+                && source_action_available;
+            let publish_label = if has_dirty_source {
+                "Save & Publish"
+            } else {
+                "Publish"
+            };
+            if ui
+                .add_enabled(can_publish, egui::Button::new(publish_label))
+                .on_hover_text(if has_dirty_source {
+                    "Save every local source change, then cook, validate, publish, and adopt it"
+                } else {
+                    "Cook, validate, atomically publish, and adopt a new immutable runtime generation"
+                })
+                .clicked()
+            {
+                save.request_publish();
             }
             if ui
                 .add_enabled(
-                    history.undo_len() > 0 && !objects.saving() && !objects.has_any_conflict(),
+                    history.undo_len() > 0
+                        && !save.active()
+                        && !objects.saving()
+                        && !ground_cover_catalog.saving()
+                        && !regions.saving()
+                        && !dense_domains.saving()
+                        && !objects.has_any_conflict()
+                        && !ground_cover_catalog.has_any_conflict()
+                        && !regions.has_any_conflict()
+                        && !dense_domains.has_any_conflict(),
                     egui::Button::new("Undo"),
                 )
                 .on_hover_text("Undo the last command (Cmd+Z)")
                 .clicked()
             {
-                history.undo(&mut objects);
+                history.undo_with_catalog(
+                    &mut objects,
+                    &mut dense_domains,
+                    &mut regions,
+                    &mut ground_cover_catalog,
+                );
                 transform_draft.sync(&selection, &objects);
             }
             if ui
                 .add_enabled(
-                    history.redo_len() > 0 && !objects.saving() && !objects.has_any_conflict(),
+                    history.redo_len() > 0
+                        && !save.active()
+                        && !objects.saving()
+                        && !ground_cover_catalog.saving()
+                        && !regions.saving()
+                        && !dense_domains.saving()
+                        && !objects.has_any_conflict()
+                        && !ground_cover_catalog.has_any_conflict()
+                        && !regions.has_any_conflict()
+                        && !dense_domains.has_any_conflict(),
                     egui::Button::new("Redo"),
                 )
                 .on_hover_text("Redo the last command (Cmd+Shift+Z)")
                 .clicked()
             {
-                history.redo(&mut objects);
+                history.redo_with_catalog(
+                    &mut objects,
+                    &mut dense_domains,
+                    &mut regions,
+                    &mut ground_cover_catalog,
+                );
                 transform_draft.sync(&selection, &objects);
             }
 
@@ -196,6 +310,42 @@ pub(crate) fn world_workspace_ui(
                     "3 Scale",
                 );
             });
+            let ground_cover_active = tools
+                .active(EditorWorkspace::World)
+                .is_some_and(|tool| tool.id == GROUND_COVER_TOOL.id);
+            if ground_cover_active {
+                ui.separator();
+                ui.selectable_value(
+                    &mut ground_cover_tool.mode,
+                    GroundCoverBrushMode::Paint,
+                    "Paint",
+                );
+                ui.selectable_value(
+                    &mut ground_cover_tool.mode,
+                    GroundCoverBrushMode::Erase,
+                    "Erase",
+                );
+                ui.add(
+                    egui::DragValue::new(&mut ground_cover_tool.radius)
+                        .range(0.25..=16.0)
+                        .speed(0.1)
+                        .suffix(" m"),
+                )
+                .on_hover_text("Brush radius");
+                let mut hardness_percent = ground_cover_tool.hardness * 100.0;
+                if ui
+                    .add(
+                        egui::DragValue::new(&mut hardness_percent)
+                            .range(0.0..=100.0)
+                            .speed(1.0)
+                            .suffix("%"),
+                    )
+                    .on_hover_text("Brush hardness: full-strength core before the soft edge")
+                    .changed()
+                {
+                    ground_cover_tool.hardness = hardness_percent / 100.0;
+                }
+            }
 
             ui.separator();
             egui::ComboBox::from_id_salt("world_preview_mode")
@@ -212,7 +362,36 @@ pub(crate) fn world_workspace_ui(
                     }
                 });
 
-            if objects.dirty_count() > 0 {
+            if save.active()
+                || project.save_in_flight()
+                || objects.saving()
+                || ground_cover_catalog.saving()
+                || regions.saving()
+                || dense_domains.saving()
+            {
+                ui.separator();
+                ui.spinner();
+                ui.weak(if save.active() {
+                    save.status(remaining_changes)
+                } else {
+                    "Saving source changes…".into()
+                });
+            } else if ground_cover_catalog.dirty_count() > 0 {
+                ui.separator();
+                ui.colored_label(
+                    egui::Color32::YELLOW,
+                    format!(
+                        "{} ground-cover definition(s) unsaved",
+                        ground_cover_catalog.dirty_count()
+                    ),
+                );
+            } else if regions.dirty_count() > 0 {
+                ui.separator();
+                ui.colored_label(
+                    egui::Color32::YELLOW,
+                    format!("{} grass region(s) unsaved", regions.dirty_count()),
+                );
+            } else if objects.dirty_count() > 0 {
                 ui.separator();
                 ui.menu_button(
                     egui::RichText::new(format!("{} unsaved", objects.dirty_count()))
@@ -225,14 +404,31 @@ pub(crate) fn world_workspace_ui(
                         }
                     },
                 );
-            } else if objects.saving() {
+            } else if dense_domains.dirty_count() > 0 {
                 ui.separator();
-                ui.spinner();
-                ui.weak("Saving…");
+                ui.colored_label(
+                    egui::Color32::YELLOW,
+                    format!("{} grass cell(s) unsaved", dense_domains.dirty_count()),
+                );
             }
-            if objects.has_any_conflict() {
+            if objects.has_any_conflict()
+                || ground_cover_catalog.has_any_conflict()
+                || regions.has_any_conflict()
+                || dense_domains.has_any_conflict()
+            {
                 ui.separator();
                 ui.colored_label(egui::Color32::LIGHT_RED, "Source conflict");
+            }
+            if publication.active() {
+                ui.separator();
+                ui.spinner();
+                ui.weak(publication.status());
+            } else if let Some(error) = publication.failure() {
+                ui.separator();
+                ui.colored_label(
+                    egui::Color32::LIGHT_RED,
+                    format!("Publication failed: {error}"),
+                );
             }
         });
     });
@@ -258,10 +454,14 @@ pub(crate) fn world_workspace_ui(
                     ui,
                     &catalog,
                     &project,
+                    &dense_domains,
+                    &mut regions,
                     &mut selection,
                     &mut objects,
+                    &mut history,
                     &mut active_space,
                     &mut tools,
+                    &mut ground_cover_tool,
                     &mut ui_state,
                 );
             });
@@ -286,7 +486,9 @@ pub(crate) fn world_workspace_ui(
                     ui,
                     &catalog,
                     &viewpoint,
-                    &dense_domains,
+                    &mut dense_domains,
+                    &mut regions,
+                    &ground_cover_catalog,
                     &project,
                     &mut selection,
                     &mut objects,
@@ -294,6 +496,7 @@ pub(crate) fn world_workspace_ui(
                     &mut transform_draft,
                     &mut focus_request,
                     &tools,
+                    &mut ground_cover_tool,
                     gizmo_settings.mode,
                 );
             });
@@ -352,6 +555,30 @@ pub(crate) fn world_workspace_ui(
         windows.set_open(NAVIGATOR_WINDOW.id, open);
     }
 
+    if windows.is_open(GROUND_COVER_WINDOW.id) {
+        let mut open = true;
+        egui::Window::new("Ground Cover")
+            .id(egui::Id::new(GROUND_COVER_WINDOW.id.0))
+            .open(&mut open)
+            .default_pos([workspace_rect.left() + 315.0, workspace_rect.top() + 70.0])
+            .default_size([390.0, 620.0])
+            .constrain_to(workspace_rect)
+            .resizable(true)
+            .vscroll(true)
+            .show(&context, |ui| {
+                draw_ground_cover_catalog(
+                    ui,
+                    &project,
+                    &mut ground_cover_catalog,
+                    &mut regions,
+                    &ground_cover_tool,
+                    &mut history,
+                    &mut ground_cover_catalog_ui,
+                );
+            });
+        windows.set_open(GROUND_COVER_WINDOW.id, open);
+    }
+
     if windows.is_open(DIAGNOSTICS_WINDOW.id) {
         let mut open = true;
         egui::Window::new("Diagnostics")
@@ -381,6 +608,7 @@ pub(crate) fn world_workspace_ui(
                     &overview,
                     &preview,
                     &preview_runtime,
+                    &publication,
                     &project,
                     &objects,
                     &history,
@@ -398,10 +626,14 @@ fn draw_world_hierarchy(
     ui: &mut egui::Ui,
     catalog: &WorldCatalog,
     project: &ProjectEditorStore,
+    dense_domains: &DenseDomainWorkingSets,
+    regions: &mut GroundCoverRegionWorkingSet,
     selection: &mut EditorSelection,
     objects: &mut EditorObjectWorkingSet,
+    history: &mut EditorHistory,
     active_space: &mut ActiveWorldSpace,
     tools: &mut EditorToolRegistry,
+    ground_cover_tool: &mut GroundCoverToolState,
     ui_state: &mut WorldWorkspaceUiState,
 ) {
     let current_space = active_space.current();
@@ -444,6 +676,114 @@ fn draw_world_hierarchy(
         .clicked()
     {
         tools.set_active(EditorWorkspace::World, GROUND_COVER_TOOL.id);
+    }
+    let ground_cover_active = tools
+        .active(EditorWorkspace::World)
+        .is_some_and(|tool| tool.id == GROUND_COVER_TOOL.id);
+    if ground_cover_active {
+        let current_regions = regions.current_records(project);
+        ui.indent("ground_cover_layers", |ui| {
+            for layer in project
+                .ground_cover_layers()
+                .iter()
+                .filter(|layer| Some(layer.space) == current_space)
+            {
+                let layer_regions = current_regions
+                    .iter()
+                    .filter(|region| region.layer == layer.id)
+                    .collect::<Vec<_>>();
+                egui::CollapsingHeader::new(format!(
+                    "{} ({})",
+                    layer.display_name,
+                    layer_regions.len()
+                ))
+                .default_open(true)
+                .show(ui, |ui| {
+                    for region in layer_regions {
+                        let selected = ground_cover_tool.selected_region == Some(region.id);
+                        let label = if region.enabled {
+                            region.display_name.clone()
+                        } else {
+                            format!("{} (disabled)", region.display_name)
+                        };
+                        if ui.selectable_label(selected, label).clicked() {
+                            ground_cover_tool.selected_region = Some(region.id);
+                        }
+                    }
+                });
+            }
+            if current_regions
+                .iter()
+                .all(|region| Some(region.space) != current_space)
+            {
+                ui.weak("No grass regions in this world space.");
+            }
+
+            ui.horizontal(|ui| {
+                let creation = current_space.and_then(|space| {
+                    if let Some(selected) = ground_cover_tool.selected_region.and_then(|id| {
+                        current_regions
+                            .iter()
+                            .find(|region| region.id == id && region.space == space)
+                    }) {
+                        return Some((space, selected.layer, selected.preset));
+                    }
+                    let layer = project
+                        .ground_cover_layers()
+                        .iter()
+                        .find(|layer| layer.space == space && layer.enabled)?;
+                    let preset = project
+                        .ground_cover_presets()
+                        .iter()
+                        .find(|preset| preset.enabled)?;
+                    Some((space, layer.id, preset.id))
+                });
+                if ui
+                    .add_enabled(creation.is_some(), egui::Button::new("+ Region"))
+                    .on_hover_text("Create an empty region in the first enabled layer")
+                    .clicked()
+                {
+                    let (space, layer, preset) = creation.expect("button requires a region target");
+                    let region = SourceGroundCoverRegionRecord {
+                        id: GroundCoverRegionId(*Uuid::new_v4().as_bytes()),
+                        layer,
+                        space,
+                        preset,
+                        display_name: format!("New region {}", current_regions.len() + 1),
+                        enabled: true,
+                        density_multiplier: 1.0,
+                        source_revision: 0,
+                    };
+                    let id = region.id;
+                    if history.create_region(regions, region) {
+                        ground_cover_tool.selected_region = Some(id);
+                    }
+                }
+
+                let selected = ground_cover_tool
+                    .selected_region
+                    .and_then(|id| regions.current(project, id));
+                let can_delete = selected.as_ref().is_some_and(|region| {
+                    !dense_domains.ground_cover_region_has_coverage(region.id)
+                        && !project
+                            .ground_cover_masks()
+                            .iter()
+                            .any(|mask| mask.region == region.id)
+                });
+                if ui
+                    .add_enabled(can_delete, egui::Button::new("Delete"))
+                    .on_hover_text(
+                        "Delete an empty region. The database checks all cells again when saving.",
+                    )
+                    .clicked()
+                {
+                    let selected = selected.expect("button requires an empty selected region");
+                    if history.delete_region(regions, selected) {
+                        ground_cover_tool.selected_region = None;
+                    }
+                }
+            });
+        });
     }
 
     let mut visible_assets = visible_asset_records(project, objects);
@@ -549,7 +889,9 @@ fn draw_context_inspector(
     ui: &mut egui::Ui,
     catalog: &WorldCatalog,
     viewpoint: &WorldViewpoint,
-    dense_domains: &DenseDomainWorkingSets,
+    dense_domains: &mut DenseDomainWorkingSets,
+    regions: &mut GroundCoverRegionWorkingSet,
+    ground_cover_catalog: &GroundCoverCatalogWorkingSet,
     project: &ProjectEditorStore,
     selection: &mut EditorSelection,
     objects: &mut EditorObjectWorkingSet,
@@ -557,6 +899,7 @@ fn draw_context_inspector(
     draft: &mut TransformInspectorDraft,
     focus_request: &mut EditorCameraFocusRequest,
     tools: &EditorToolRegistry,
+    ground_cover_tool: &mut GroundCoverToolState,
     gizmo_mode: TransformGizmoMode,
 ) {
     let Some(active_tool) = tools.active(EditorWorkspace::World) else {
@@ -585,6 +928,7 @@ fn draw_context_inspector(
 
     if active_tool.id == TERRAIN_TOOL.id {
         ui.heading("Terrain");
+        draw_dense_conflict_controls(ui, dense_domains, history);
         ui.label("Terrain settings apply to the active bounded cell patch.");
         draw_dense_domain_inspector(ui, viewpoint, dense_domains, project, true);
         ui.separator();
@@ -593,10 +937,155 @@ fn draw_context_inspector(
     }
 
     ui.heading("Grass");
-    ui.label("Grass settings apply to ground-cover layers and masks near the camera.");
+    draw_dense_conflict_controls(ui, dense_domains, history);
+    if regions.conflict_count() > 0 {
+        ui.colored_label(
+            egui::Color32::LIGHT_RED,
+            format!("{} region source conflict(s)", regions.conflict_count()),
+        );
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(
+                    regions.can_keep_local_conflicts(),
+                    egui::Button::new("Keep local"),
+                )
+                .on_hover_text(
+                    "Rebase compatible create/delete/update intent onto the latest source",
+                )
+                .clicked()
+                && regions.keep_local_conflicts() > 0
+            {
+                history.clear();
+            }
+            if ui.button("Accept database").clicked() && regions.accept_database_conflicts() > 0 {
+                history.clear();
+            }
+        });
+    } else if let Some(status) = regions.status() {
+        ui.colored_label(egui::Color32::YELLOW, status);
+        if ui.small_button("Dismiss").clicked() {
+            regions.dismiss_status();
+        }
+    }
+    if let Some(region) = ground_cover_tool
+        .selected_region
+        .and_then(|selected| regions.current(project, selected))
+    {
+        ui.strong(&region.display_name);
+        ui.monospace(format!("space    {}", region.space.0));
+        ui.monospace(format!("revision {}", region.source_revision));
+        if let Some(preset) = ground_cover_catalog
+            .current_presets(project)
+            .into_iter()
+            .find(|preset| preset.id == region.preset)
+        {
+            ui.label(format!("Preset: {}", preset.display_name));
+            ui.small(format!(
+                "{:.1} plants/m² × {:.2} region density",
+                preset.density_per_square_meter, region.density_multiplier
+            ));
+        }
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.selectable_value(
+                &mut ground_cover_tool.mode,
+                GroundCoverBrushMode::Paint,
+                "Paint",
+            );
+            ui.selectable_value(
+                &mut ground_cover_tool.mode,
+                GroundCoverBrushMode::Erase,
+                "Erase",
+            );
+        });
+        ui.horizontal(|ui| {
+            ui.label("Radius");
+            ui.add(
+                egui::Slider::new(&mut ground_cover_tool.radius, 0.25..=16.0)
+                    .logarithmic(true)
+                    .suffix(" m"),
+            );
+        });
+        ui.horizontal(|ui| {
+            ui.label("Hardness");
+            let mut hardness_percent = ground_cover_tool.hardness * 100.0;
+            if ui
+                .add(egui::Slider::new(&mut hardness_percent, 0.0..=100.0).suffix("%"))
+                .on_hover_text("The inner part is solid; the outer part fades smoothly")
+                .changed()
+            {
+                ground_cover_tool.hardness = hardness_percent / 100.0;
+            }
+        });
+        let mask_resolution = dense_domains
+            .ground_cover_region_resolution(region.id)
+            .or_else(|| {
+                project
+                    .ground_cover_masks()
+                    .iter()
+                    .find(|mask| mask.region == region.id)
+                    .map(|mask| mask.resolution)
+            })
+            .unwrap_or(16);
+        if let Some(space) = catalog.world_space(region.space) {
+            ui.small(format!(
+                "{}×{} mask · {:.2} m runtime clusters · area-sampled soft edge",
+                mask_resolution,
+                mask_resolution,
+                space.cell_size / f32::from(mask_resolution)
+            ));
+        }
+        ui.small(format!(
+            "Drag in the viewport to {} coverage. One drag is one undo command.",
+            ground_cover_tool.mode.label().to_lowercase()
+        ));
+    } else {
+        ui.weak("Select a region in the World window before painting.");
+    }
     draw_dense_domain_inspector(ui, viewpoint, dense_domains, project, false);
+}
+
+fn draw_dense_conflict_controls(
+    ui: &mut egui::Ui,
+    dense_domains: &mut DenseDomainWorkingSets,
+    history: &mut EditorHistory,
+) {
+    let conflicts = dense_domains.conflict_count();
+    if conflicts == 0 {
+        return;
+    }
+    ui.colored_label(
+        egui::Color32::LIGHT_RED,
+        format!("{conflicts} dense source conflict(s)"),
+    );
+    ui.small("Resolving a conflict clears command history because its old checkpoints are stale.");
+    if ui
+        .add_enabled(
+            dense_domains.can_keep_local_conflicts(),
+            egui::Button::new("Keep local on latest revision"),
+        )
+        .on_disabled_hover_text(
+            "The database changed this record's shape; automatic byte rebasing is unsafe.",
+        )
+        .clicked()
+        && dense_domains.keep_local_conflicts() > 0
+    {
+        history.clear();
+    }
+    if ui
+        .add_enabled(
+            dense_domains.can_accept_database_conflicts(),
+            egui::Button::new("Use database version"),
+        )
+        .on_disabled_hover_text(
+            "A disappeared dense record cannot be accepted until dense tombstones are supported.",
+        )
+        .clicked()
+        && dense_domains.accept_database_conflicts() > 0
+    {
+        history.clear();
+    }
     ui.separator();
-    ui.weak("Grass brush controls will use the existing bounded mask command seam.");
 }
 
 fn draw_dense_domain_inspector(
@@ -644,6 +1133,519 @@ fn draw_dense_domain_inspector(
     if let Some(status) = dense_domains.status() {
         ui.colored_label(egui::Color32::YELLOW, status);
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_ground_cover_catalog(
+    ui: &mut egui::Ui,
+    project: &ProjectEditorStore,
+    catalog: &mut GroundCoverCatalogWorkingSet,
+    regions: &mut GroundCoverRegionWorkingSet,
+    ground_cover_tool: &GroundCoverToolState,
+    history: &mut EditorHistory,
+    state: &mut GroundCoverCatalogUiState,
+) {
+    ui.heading("Ground Cover Definitions");
+    ui.small(
+        "Presets and visuals are project source. Apply creates one undo command; Save writes all pending definitions atomically in bounded batches.",
+    );
+
+    if catalog.conflict_count() > 0 {
+        ui.colored_label(
+            egui::Color32::LIGHT_RED,
+            format!("{} catalog conflict(s)", catalog.conflict_count()),
+        );
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(
+                    catalog.can_keep_local_conflicts(),
+                    egui::Button::new("Keep local on latest"),
+                )
+                .clicked()
+                && catalog.keep_local_conflicts() > 0
+            {
+                history.clear();
+                state.preset_draft = None;
+                state.visual_draft = None;
+            }
+            if ui.button("Use database version").clicked()
+                && catalog.accept_database_conflicts() > 0
+            {
+                history.clear();
+                state.preset_draft = None;
+                state.visual_draft = None;
+            }
+        });
+    } else if let Some(status) = catalog.status() {
+        ui.colored_label(egui::Color32::YELLOW, status);
+        if ui.small_button("Dismiss").clicked() {
+            catalog.dismiss_failures();
+        }
+    }
+
+    let presets = catalog.current_presets(project);
+    let visuals = catalog.current_visuals(project);
+    if state.selected_preset.is_none() {
+        state.selected_preset = presets.first().map(|record| record.id);
+    }
+    if state.selected_visual.is_none() {
+        state.selected_visual = visuals.first().map(|record| record.id);
+    }
+    if state.catalog_revision != catalog.edit_revision() {
+        state.catalog_revision = catalog.edit_revision();
+        state.preset_draft = state
+            .selected_preset
+            .and_then(|id| catalog.current_preset(project, id));
+        state.visual_draft = state
+            .selected_visual
+            .and_then(|id| catalog.current_visual(project, id));
+    }
+
+    ui.separator();
+    ui.strong("Preset");
+    let preset_label = state
+        .selected_preset
+        .and_then(|id| presets.iter().find(|record| record.id == id))
+        .map_or("Select preset", |record| record.display_name.as_str());
+    egui::ComboBox::from_id_salt("ground_cover_catalog_preset")
+        .width(ui.available_width())
+        .selected_text(preset_label)
+        .show_ui(ui, |ui| {
+            for preset in &presets {
+                if ui
+                    .selectable_label(
+                        state.selected_preset == Some(preset.id),
+                        &preset.display_name,
+                    )
+                    .clicked()
+                {
+                    state.selected_preset = Some(preset.id);
+                    state.preset_draft = Some(preset.clone());
+                    ui.close();
+                }
+            }
+        });
+    if state.preset_draft.as_ref().map(|record| record.id) != state.selected_preset {
+        state.preset_draft = state
+            .selected_preset
+            .and_then(|id| catalog.current_preset(project, id));
+    }
+    let mut created_preset = None;
+    let mut deleted_preset = false;
+    if let Some(draft) = state.preset_draft.as_mut() {
+        ui.horizontal(|ui| {
+            ui.label("Name");
+            ui.text_edit_singleline(&mut draft.display_name);
+        });
+        ui.checkbox(&mut draft.enabled, "Enabled");
+        ui.horizontal(|ui| {
+            ui.label("Visual");
+            let selected = visuals
+                .iter()
+                .find(|visual| visual.id == draft.visual)
+                .map_or("Missing visual", |visual| visual.display_name.as_str());
+            egui::ComboBox::from_id_salt("ground_cover_preset_visual")
+                .selected_text(selected)
+                .show_ui(ui, |ui| {
+                    for visual in &visuals {
+                        ui.selectable_value(&mut draft.visual, visual.id, &visual.display_name);
+                    }
+                });
+        });
+        ui.horizontal(|ui| {
+            ui.label("Plants / m²");
+            ui.add(
+                egui::DragValue::new(&mut draft.density_per_square_meter)
+                    .range(0.05..=100.0)
+                    .speed(0.1),
+            );
+        });
+        ui.horizontal(|ui| {
+            ui.label("Seed");
+            ui.add(egui::DragValue::new(&mut draft.seed).speed(1));
+        });
+        let current = catalog.current_preset(project, draft.id);
+        let can_apply = current.as_ref().is_some_and(|current| current != draft)
+            && !draft.display_name.trim().is_empty()
+            && draft.density_per_square_meter.is_finite()
+            && draft.density_per_square_meter > 0.0
+            && !catalog.saving()
+            && !catalog.has_any_conflict();
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(can_apply, egui::Button::new("Apply preset"))
+                .clicked()
+                && let Some(before) = current.clone()
+            {
+                let after = draft.clone();
+                if history.update_ground_cover_preset(catalog, before, after.clone()) {
+                    *draft = after;
+                }
+            }
+            if ui.small_button("Reset").clicked()
+                && let Some(current) = catalog.current_preset(project, draft.id)
+            {
+                *draft = current;
+            }
+            if ui.small_button("Duplicate").clicked()
+                && let Some(source) = current.clone()
+            {
+                let mut duplicate = source;
+                let id = Uuid::new_v4();
+                duplicate.id = GroundCoverPresetId(*id.as_bytes());
+                duplicate.key = duplicate_catalog_key(&duplicate.key, id);
+                duplicate.display_name = format!("{} Copy", duplicate.display_name);
+                duplicate.source_revision = 0;
+                if history.create_ground_cover_preset(catalog, duplicate.clone()) {
+                    created_preset = Some(duplicate);
+                }
+            }
+            if ui
+                .add_enabled(current.is_some(), egui::Button::new("Delete"))
+                .on_hover_text(
+                    "Creates an undoable tombstone. Save validates project-wide region dependencies.",
+                )
+                .clicked()
+                && let Some(record) = current.clone()
+                && history.delete_ground_cover_definition(
+                    catalog,
+                    world_db::GroundCoverCatalogRecord::Preset(record),
+                )
+            {
+                deleted_preset = true;
+            }
+        });
+    }
+    if let Some(record) = created_preset {
+        state.selected_preset = Some(record.id);
+        state.preset_draft = Some(record);
+    } else if deleted_preset {
+        state.selected_preset = None;
+        state.preset_draft = None;
+    }
+
+    ui.separator();
+    ui.strong("Card visual");
+    let visual_label = state
+        .selected_visual
+        .and_then(|id| visuals.iter().find(|record| record.id == id))
+        .map_or("Select visual", |record| record.display_name.as_str());
+    egui::ComboBox::from_id_salt("ground_cover_catalog_visual")
+        .width(ui.available_width())
+        .selected_text(visual_label)
+        .show_ui(ui, |ui| {
+            for visual in &visuals {
+                if ui
+                    .selectable_label(
+                        state.selected_visual == Some(visual.id),
+                        &visual.display_name,
+                    )
+                    .clicked()
+                {
+                    state.selected_visual = Some(visual.id);
+                    state.visual_draft = Some(visual.clone());
+                    ui.close();
+                }
+            }
+        });
+    if state.visual_draft.as_ref().map(|record| record.id) != state.selected_visual {
+        state.visual_draft = state
+            .selected_visual
+            .and_then(|id| catalog.current_visual(project, id));
+    }
+    let mut created_visual = None;
+    let mut deleted_visual = false;
+    if let Some(draft) = state.visual_draft.as_mut() {
+        ui.horizontal(|ui| {
+            ui.label("Name");
+            ui.text_edit_singleline(&mut draft.display_name);
+        });
+        let SourceGroundCoverVisualDefinition::CardCluster(card) = &mut draft.definition;
+        ui.horizontal(|ui| {
+            ui.label("Artwork");
+            let built_in = card.procedural_recipe.is_none();
+            if ui
+                .selectable_label(built_in, "Built-in artwork")
+                .on_hover_text(
+                    "Select the frozen original silhouette masks; colors and physical card settings are unchanged",
+                )
+                .clicked()
+            {
+                card.procedural_recipe = None;
+            }
+            if ui
+                .selectable_label(!built_in, "Generated artwork")
+                .clicked()
+                && card.procedural_recipe.is_none()
+            {
+                // Materializing the frozen recipe preserves the exact current meadow image while
+                // making every parameter independently editable.
+                card.procedural_recipe = Some(GroundCoverBladeRecipe::built_in_v1());
+            }
+        });
+        if ui
+            .small_button("Restore original meadow visual")
+            .on_hover_text(
+                "Restore the initial artwork, colors, card dimensions, flattening, and wind values. Use Apply visual to commit it as one undoable command.",
+            )
+            .clicked()
+        {
+            restore_original_meadow_visual(card);
+        }
+        if let Some(recipe) = card.procedural_recipe.as_mut() {
+            egui::Grid::new("ground_cover_artwork_recipe_grid")
+                .num_columns(2)
+                .show(ui, |ui| {
+                    ui.label("Variants / blades");
+                    ui.horizontal(|ui| {
+                        ui.add(egui::DragValue::new(&mut recipe.variant_count).range(1..=8));
+                        ui.add(egui::DragValue::new(&mut recipe.blade_count).range(1..=128));
+                    });
+                    ui.end_row();
+                    ui.label("Artwork seed");
+                    ui.add(egui::DragValue::new(&mut recipe.seed).speed(1));
+                    ui.end_row();
+                    ui.label("Blade height min / max");
+                    ui.horizontal(|ui| {
+                        ui.add(
+                            egui::DragValue::new(&mut recipe.minimum_blade_height)
+                                .range(0.05..=1.0)
+                                .speed(0.01),
+                        );
+                        ui.add(
+                            egui::DragValue::new(&mut recipe.maximum_blade_height)
+                                .range(0.05..=1.0)
+                                .speed(0.01),
+                        );
+                    });
+                    ui.end_row();
+                    ui.label("Blade half-width min / max");
+                    ui.horizontal(|ui| {
+                        ui.add(
+                            egui::DragValue::new(&mut recipe.minimum_blade_half_width)
+                                .range(0.001..=0.1)
+                                .speed(0.001),
+                        );
+                        ui.add(
+                            egui::DragValue::new(&mut recipe.maximum_blade_half_width)
+                                .range(0.001..=0.1)
+                                .speed(0.001),
+                        );
+                    });
+                    ui.end_row();
+                    ui.label("Base jitter");
+                    ui.add(
+                        egui::DragValue::new(&mut recipe.base_jitter)
+                            .range(0.0..=1.0)
+                            .speed(0.01),
+                    );
+                    ui.end_row();
+                    ui.label("Lean / curve / S-curve");
+                    ui.horizontal(|ui| {
+                        ui.add(
+                            egui::DragValue::new(&mut recipe.maximum_lean)
+                                .range(0.0..=0.5)
+                                .speed(0.005),
+                        );
+                        ui.add(
+                            egui::DragValue::new(&mut recipe.maximum_curve)
+                                .range(0.0..=0.5)
+                                .speed(0.005),
+                        );
+                        ui.add(
+                            egui::DragValue::new(&mut recipe.maximum_s_curve)
+                                .range(0.0..=0.25)
+                                .speed(0.005),
+                        );
+                    });
+                    ui.end_row();
+                });
+        } else {
+            ui.weak("Frozen original meadow recipe: 4 variants × 34 blades.");
+        }
+        egui::Grid::new("ground_cover_visual_card_grid")
+            .num_columns(2)
+            .show(ui, |ui| {
+                ui.label("Bottom color");
+                ui.color_edit_button_rgb(&mut card.bottom_color);
+                ui.end_row();
+                ui.label("Top color");
+                ui.color_edit_button_rgb(&mut card.top_color);
+                ui.end_row();
+                ui.label("Card height min / max");
+                ui.horizontal(|ui| {
+                    ui.add(egui::DragValue::new(&mut card.minimum_card_height).range(0.01..=8.0));
+                    ui.add(egui::DragValue::new(&mut card.maximum_card_height).range(0.01..=8.0));
+                });
+                ui.end_row();
+                ui.label("Card width min / max");
+                ui.horizontal(|ui| {
+                    ui.add(egui::DragValue::new(&mut card.minimum_card_width).range(0.01..=4.0));
+                    ui.add(egui::DragValue::new(&mut card.maximum_card_width).range(0.01..=4.0));
+                });
+                ui.end_row();
+                ui.label("Flattened chance");
+                ui.add(
+                    egui::DragValue::new(&mut card.flattened_card_probability)
+                        .range(0.0..=1.0)
+                        .speed(0.01),
+                );
+                ui.end_row();
+                ui.label("Max wind offset");
+                ui.add(
+                    egui::DragValue::new(&mut card.maximum_wind_displacement)
+                        .range(0.0..=4.0)
+                        .speed(0.01),
+                );
+                ui.end_row();
+            });
+        show_ground_cover_artwork_preview(
+            ui,
+            &mut state.artwork_preview_key,
+            &mut state.artwork_preview_variant,
+            &mut state.artwork_preview_texture,
+            card,
+        );
+        let dimensions_valid = card.minimum_card_height > 0.0
+            && card.maximum_card_height >= card.minimum_card_height
+            && card.minimum_card_width > 0.0
+            && card.maximum_card_width >= card.minimum_card_width;
+        let artwork_valid = card
+            .procedural_recipe
+            .is_none_or(GroundCoverBladeRecipe::is_valid);
+        let current = catalog.current_visual(project, draft.id);
+        let can_apply = current.as_ref().is_some_and(|current| current != draft)
+            && dimensions_valid
+            && artwork_valid
+            && !draft.display_name.trim().is_empty()
+            && !catalog.saving()
+            && !catalog.has_any_conflict();
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(can_apply, egui::Button::new("Apply visual"))
+                .clicked()
+                && let Some(before) = current.clone()
+            {
+                let after = draft.clone();
+                if history.update_ground_cover_visual(catalog, before, after.clone()) {
+                    *draft = after;
+                }
+            }
+            if ui.small_button("Reset").clicked()
+                && let Some(current) = catalog.current_visual(project, draft.id)
+            {
+                *draft = current;
+            }
+            if ui.small_button("Duplicate").clicked()
+                && let Some(source) = current.clone()
+            {
+                let mut duplicate = source;
+                let id = Uuid::new_v4();
+                duplicate.id = GroundCoverVisualId(*id.as_bytes());
+                duplicate.key = duplicate_catalog_key(&duplicate.key, id);
+                duplicate.display_name = format!("{} Copy", duplicate.display_name);
+                duplicate.source_revision = 0;
+                if history.create_ground_cover_visual(catalog, duplicate.clone()) {
+                    created_visual = Some(duplicate);
+                }
+            }
+            if ui
+                .add_enabled(current.is_some(), egui::Button::new("Delete"))
+                .on_hover_text(
+                    "Creates an undoable tombstone. Save validates project-wide preset dependencies.",
+                )
+                .clicked()
+                && let Some(record) = current.clone()
+                && history.delete_ground_cover_definition(
+                    catalog,
+                    world_db::GroundCoverCatalogRecord::Visual(record),
+                )
+            {
+                deleted_visual = true;
+            }
+        });
+        if !dimensions_valid {
+            ui.colored_label(
+                egui::Color32::YELLOW,
+                "Maximum dimensions must be greater than or equal to minimum dimensions.",
+            );
+        }
+        if !artwork_valid {
+            ui.colored_label(
+                egui::Color32::YELLOW,
+                "Artwork ranges must be ordered and remain inside their supported limits.",
+            );
+        }
+    }
+    if let Some(record) = created_visual {
+        state.selected_visual = Some(record.id);
+        state.visual_draft = Some(record);
+    } else if deleted_visual {
+        state.selected_visual = None;
+        state.visual_draft = None;
+    }
+
+    ui.separator();
+    ui.strong("Selected region");
+    let selected_region = ground_cover_tool.selected_region;
+    if state.selected_region != selected_region || state.region_revision != regions.edit_revision()
+    {
+        state.selected_region = selected_region;
+        state.region_revision = regions.edit_revision();
+        state.region_draft = selected_region.and_then(|id| regions.current(project, id));
+    }
+    let Some(draft) = state.region_draft.as_mut() else {
+        ui.weak("Select a grass region in the World window to edit its assignment.");
+        return;
+    };
+    ui.horizontal(|ui| {
+        ui.label("Name");
+        ui.text_edit_singleline(&mut draft.display_name);
+    });
+    ui.checkbox(&mut draft.enabled, "Enabled");
+    let selected = presets
+        .iter()
+        .find(|preset| preset.id == draft.preset)
+        .map_or("Missing preset", |preset| preset.display_name.as_str());
+    egui::ComboBox::from_id_salt("ground_cover_region_preset")
+        .selected_text(selected)
+        .show_ui(ui, |ui| {
+            for preset in &presets {
+                ui.selectable_value(&mut draft.preset, preset.id, &preset.display_name);
+            }
+        });
+    ui.horizontal(|ui| {
+        ui.label("Density multiplier");
+        ui.add(
+            egui::DragValue::new(&mut draft.density_multiplier)
+                .range(0.01..=20.0)
+                .speed(0.01),
+        );
+    });
+    let current = regions.current(project, draft.id);
+    let can_apply = current.as_ref().is_some_and(|current| current != draft)
+        && !draft.display_name.trim().is_empty()
+        && draft.density_multiplier.is_finite()
+        && draft.density_multiplier > 0.0
+        && !regions.saving()
+        && !regions.has_any_conflict();
+    ui.horizontal(|ui| {
+        if ui
+            .add_enabled(can_apply, egui::Button::new("Apply region"))
+            .clicked()
+            && let Some(before) = current
+        {
+            let after = draft.clone();
+            if history.update_region(regions, before, after.clone()) {
+                *draft = after;
+            }
+        }
+        if ui.small_button("Reset").clicked()
+            && let Some(current) = regions.current(project, draft.id)
+        {
+            *draft = current;
+        }
+    });
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1026,6 +2028,7 @@ fn draw_world_diagnostics(
     overview: &OverviewState,
     preview: &PreviewModeState,
     preview_runtime: &PreviewRuntimeDiagnostics,
+    publication: &RuntimePublicationState,
     project: &ProjectEditorStore,
     objects: &EditorObjectWorkingSet,
     history: &EditorHistory,
@@ -1039,6 +2042,10 @@ fn draw_world_diagnostics(
     ui.label(&stats.status);
     if !catalog.generation_id().is_empty() {
         ui.small(format!("Runtime generation {}", catalog.generation_id()));
+    }
+    ui.small(publication.status());
+    if let Some(generation) = publication.published_generation() {
+        ui.small(format!("Last publication adopted: {generation}"));
     }
 
     ui.separator();
@@ -1274,19 +2281,101 @@ fn object_id_hex(id: StableObjectId) -> String {
     id.0.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+fn duplicate_catalog_key(source: &str, id: Uuid) -> String {
+    let suffix = id.simple().to_string();
+    format!("{source}-copy-{}", &suffix[..8])
+}
+
+fn show_ground_cover_artwork_preview(
+    ui: &mut egui::Ui,
+    preview_key: &mut Option<ArtworkPreviewKey>,
+    preview_variant: &mut u8,
+    preview_texture: &mut Option<egui::TextureHandle>,
+    card: &SourceGroundCoverCardVisualRecord,
+) {
+    let recipe = card
+        .procedural_recipe
+        .unwrap_or_else(GroundCoverBladeRecipe::built_in_v1);
+    if !recipe.is_valid() {
+        return;
+    }
+    *preview_variant = (*preview_variant).min(recipe.variant_count - 1);
+    ui.horizontal_wrapped(|ui| {
+        ui.label("Mask preview");
+        for variant in 0..recipe.variant_count {
+            ui.selectable_value(preview_variant, variant, format!("{}", variant + 1));
+        }
+    });
+
+    let key = ArtworkPreviewKey {
+        recipe,
+        bottom_color: card.bottom_color,
+        top_color: card.top_color,
+        variant: *preview_variant,
+    };
+    if *preview_key != Some(key) {
+        let artwork = generate_ground_cover_card_artwork(recipe);
+        let coverage = artwork
+            .base_variant(*preview_variant)
+            .expect("validated recipe produces the selected variant");
+        let side = usize::from(artwork.resolution);
+        let mut pixels = Vec::with_capacity(side * side);
+        for y in 0..side {
+            let height = 1.0 - y as f32 / (side - 1) as f32;
+            let tint = [
+                card.bottom_color[0] + (card.top_color[0] - card.bottom_color[0]) * height,
+                card.bottom_color[1] + (card.top_color[1] - card.bottom_color[1]) * height,
+                card.bottom_color[2] + (card.top_color[2] - card.bottom_color[2]) * height,
+            ];
+            for x in 0..side {
+                let alpha = f32::from(coverage[y * side + x]) / 255.0;
+                let background = if ((x / 16) + (y / 16)) % 2 == 0 {
+                    0.075
+                } else {
+                    0.11
+                };
+                let channel = |value: f32| {
+                    ((background * (1.0 - alpha) + value * alpha).clamp(0.0, 1.0) * 255.0).round()
+                        as u8
+                };
+                pixels.push(egui::Color32::from_rgb(
+                    channel(tint[0]),
+                    channel(tint[1]),
+                    channel(tint[2]),
+                ));
+            }
+        }
+        *preview_texture = Some(ui.ctx().load_texture(
+            "ground-cover generated artwork preview",
+            egui::ColorImage::new([side, side], pixels),
+            egui::TextureOptions::LINEAR,
+        ));
+        *preview_key = Some(key);
+    }
+    if let Some(texture) = preview_texture {
+        ui.image((texture.id(), egui::vec2(180.0, 180.0)));
+    }
+}
+
+fn restore_original_meadow_visual(card: &mut SourceGroundCoverCardVisualRecord) {
+    *card = SourceGroundCoverCardVisualRecord::original_meadow_v1();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn world_registers_two_primary_and_three_optional_windows() {
+    fn world_registers_two_primary_and_four_optional_windows() {
         let descriptors = [
             WORLD_WINDOW,
             INSPECTOR_WINDOW,
             ASSETS_WINDOW,
             NAVIGATOR_WINDOW,
             DIAGNOSTICS_WINDOW,
+            GROUND_COVER_WINDOW,
         ];
+        assert_eq!(descriptors.len(), 6);
         assert_eq!(
             descriptors
                 .iter()
@@ -1299,6 +2388,30 @@ mod tests {
             descriptors
                 .iter()
                 .all(|descriptor| descriptor.workspace == EditorWorkspace::World)
+        );
+    }
+
+    #[test]
+    fn original_meadow_restore_replaces_artwork_and_every_physical_visual_value() {
+        let mut card = SourceGroundCoverCardVisualRecord::original_meadow_v1();
+        card.procedural_recipe = Some(GroundCoverBladeRecipe {
+            blade_count: 1,
+            ..GroundCoverBladeRecipe::built_in_v1()
+        });
+        card.bottom_color = [1.0; 3];
+        card.top_color = [0.0; 3];
+        card.minimum_card_height = 0.1;
+        card.maximum_card_height = 2.0;
+        card.minimum_card_width = 0.1;
+        card.maximum_card_width = 2.0;
+        card.flattened_card_probability = 0.9;
+        card.maximum_wind_displacement = 1.5;
+
+        restore_original_meadow_visual(&mut card);
+
+        assert_eq!(
+            card,
+            SourceGroundCoverCardVisualRecord::original_meadow_v1()
         );
     }
 }

@@ -13,6 +13,8 @@ struct Species {
     top_max_height: vec4<f32>,
     // x/y: card width range, z: flattened probability, w: maximum wind displacement
     card: vec4<f32>,
+    // x: first artwork texture layer, y: variant count
+    artwork: vec4<u32>,
 }
 
 struct VisibleInstance {
@@ -22,6 +24,8 @@ struct VisibleInstance {
     motion: vec4<f32>,
     // xy: world-space tip displacement, zw: reserved
     interaction: vec4<f32>,
+    // x: first artwork texture layer, y: variant count
+    artwork: vec4<u32>,
 }
 
 struct Interaction {
@@ -335,6 +339,7 @@ fn cull(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 random01(seed ^ 0x85ebca77u),
             ),
             vec4<f32>(interaction_displacement(vec2<f32>(x, z)), 0.0, 0.0),
+            species_data.artwork,
         );
 
         let lod_selector = random01(seed ^ 0xd6e8feb9u);

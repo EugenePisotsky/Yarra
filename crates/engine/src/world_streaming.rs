@@ -70,6 +70,7 @@ impl Plugin for WorldStreamingPlugin {
             .init_resource::<WorldStream>()
             .init_resource::<ActiveWorldSpace>()
             .init_resource::<WorldCatalog>()
+            .init_resource::<WorldGenerationReload>()
             .init_resource::<WorldViewpoint>()
             .init_resource::<WorldOrigin>()
             .init_resource::<WorldDetailDemand>()
@@ -79,6 +80,7 @@ impl Plugin for WorldStreamingPlugin {
                 Update,
                 (
                     receive_database_results,
+                    request_generation_reload,
                     request_world_space_from_keyboard,
                     apply_world_space_transition,
                     sync_stream_focus_to_viewpoint,
@@ -211,6 +213,41 @@ pub struct WorldCatalog {
     world_spaces: Vec<WorldSpaceInfo>,
 }
 
+/// Explicit handshake for replacing the streamer's immutable SQLite snapshot.
+///
+/// Publishing code first atomically replaces the database file, then requests the exact expected
+/// generation here. The worker reopens the path and validates that identity before the currently
+/// resident pages are allowed to repopulate.
+#[derive(Resource, Debug, Default)]
+pub struct WorldGenerationReload {
+    next_request_id: u64,
+    queued: Option<(u64, String)>,
+    in_flight: Option<(u64, String)>,
+    completion: Option<Result<String, String>>,
+}
+
+impl WorldGenerationReload {
+    pub fn request(&mut self, expected_generation: impl Into<String>) -> bool {
+        let expected_generation = expected_generation.into();
+        if expected_generation.is_empty() || self.queued.is_some() || self.in_flight.is_some() {
+            return false;
+        }
+        let request_id = self.next_request_id.wrapping_add(1).max(1);
+        self.next_request_id = request_id;
+        self.completion = None;
+        self.queued = Some((request_id, expected_generation));
+        true
+    }
+
+    pub fn active(&self) -> bool {
+        self.queued.is_some() || self.in_flight.is_some()
+    }
+
+    pub fn take_completion(&mut self) -> Option<Result<String, String>> {
+        self.completion.take()
+    }
+}
+
 impl WorldCatalog {
     pub fn generation_id(&self) -> &str {
         &self.generation_id
@@ -275,6 +312,10 @@ impl Drop for WorldDatabaseWorker {
 
 #[derive(Debug)]
 enum DatabaseRequest {
+    Reload {
+        request_id: u64,
+        expected_generation: String,
+    },
     ReadIndex {
         revision: u64,
         space: WorldSpaceId,
@@ -291,6 +332,10 @@ enum DatabaseRequest {
 #[derive(Debug)]
 enum DatabaseResult {
     Opened(Result<RuntimeManifest, String>),
+    Reloaded {
+        request_id: u64,
+        result: Result<RuntimeManifest, String>,
+    },
     Index {
         revision: u64,
         space: WorldSpaceId,
@@ -332,7 +377,7 @@ fn database_worker(
     requests: Receiver<DatabaseRequest>,
     results: Sender<DatabaseResult>,
 ) {
-    let reader = match RuntimeReader::open_immutable(&path) {
+    let mut reader = match RuntimeReader::open_immutable(&path) {
         Ok(reader) => {
             if results
                 .send(DatabaseResult::Opened(Ok(reader.manifest().clone())))
@@ -353,6 +398,30 @@ fn database_worker(
 
     while let Ok(request) = requests.recv() {
         match request {
+            DatabaseRequest::Reload {
+                request_id,
+                expected_generation,
+            } => {
+                let result = RuntimeReader::open_immutable(&path)
+                    .map_err(|error| format!("could not reopen {}: {error}", path.display()))
+                    .and_then(|candidate| {
+                        let manifest = candidate.manifest().clone();
+                        if manifest.generation_id != expected_generation {
+                            return Err(format!(
+                                "published generation mismatch: expected {expected_generation}, opened {}",
+                                manifest.generation_id
+                            ));
+                        }
+                        reader = candidate;
+                        Ok(manifest)
+                    });
+                if results
+                    .send(DatabaseResult::Reloaded { request_id, result })
+                    .is_err()
+                {
+                    return;
+                }
+            }
             DatabaseRequest::ReadIndex {
                 revision,
                 space,
@@ -522,6 +591,7 @@ fn receive_database_results(
     mut viewpoint: ResMut<WorldViewpoint>,
     mut origin: ResMut<WorldOrigin>,
     mut stream: ResMut<WorldStream>,
+    mut reload: ResMut<WorldGenerationReload>,
 ) {
     let Some(worker) = worker else {
         return;
@@ -570,6 +640,37 @@ fn receive_database_results(
                     stream.phase = StreamPhase::Failed(error);
                 }
             },
+            Ok(DatabaseResult::Reloaded { request_id, result }) => {
+                let Some((active_request, expected_generation)) = reload.in_flight.take() else {
+                    continue;
+                };
+                if active_request != request_id {
+                    reload.in_flight = Some((active_request, expected_generation));
+                    continue;
+                }
+                match result {
+                    Ok(manifest) => {
+                        info!(
+                            "adopted runtime world generation {} from SQLite",
+                            manifest.generation_id
+                        );
+                        let generation = manifest.generation_id.clone();
+                        adopt_runtime_manifest(
+                            manifest,
+                            &mut active_space,
+                            &mut catalog,
+                            &mut viewpoint,
+                            &mut origin,
+                            &mut stream,
+                        );
+                        reload.completion = Some(Ok(generation));
+                    }
+                    Err(error) => {
+                        stream.phase = StreamPhase::Failed(error.clone());
+                        reload.completion = Some(Err(error));
+                    }
+                }
+            }
             Ok(DatabaseResult::Index {
                 revision,
                 space,
@@ -649,6 +750,101 @@ fn receive_database_results(
             }
         }
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn request_generation_reload(
+    worker: Option<Res<WorldDatabaseWorker>>,
+    mut commands: Commands,
+    mut terrain_materials: ResMut<Assets<TerrainMaterial>>,
+    mut terrain_images: ResMut<Assets<Image>>,
+    mut ground_cover_pages: ResMut<Assets<GroundCoverPageAsset>>,
+    mut stream: ResMut<WorldStream>,
+    mut reload: ResMut<WorldGenerationReload>,
+) {
+    if reload.in_flight.is_some() {
+        return;
+    }
+    let Some((request_id, expected_generation)) = reload.queued.take() else {
+        return;
+    };
+    let Some(worker) = worker else {
+        reload.queued = Some((request_id, expected_generation));
+        return;
+    };
+    let request = DatabaseRequest::Reload {
+        request_id,
+        expected_generation: expected_generation.clone(),
+    };
+    match worker.requests.try_send(request) {
+        Ok(()) => {
+            clear_streamed_pages(
+                &mut commands,
+                &mut terrain_materials,
+                &mut terrain_images,
+                &mut ground_cover_pages,
+                &mut stream,
+            );
+            stream.definition_cache.clear();
+            stream.phase = StreamPhase::Opening;
+            reload.in_flight = Some((request_id, expected_generation));
+        }
+        Err(TrySendError::Full(_)) => {
+            reload.queued = Some((request_id, expected_generation));
+        }
+        Err(TrySendError::Disconnected(_)) => {
+            let error = "database request channel closed during generation reload".to_string();
+            stream.phase = StreamPhase::Failed(error.clone());
+            reload.completion = Some(Err(error));
+        }
+    }
+}
+
+fn adopt_runtime_manifest(
+    manifest: RuntimeManifest,
+    active_space: &mut ActiveWorldSpace,
+    catalog: &mut WorldCatalog,
+    viewpoint: &mut WorldViewpoint,
+    origin: &mut WorldOrigin,
+    stream: &mut WorldStream,
+) {
+    let active = active_space
+        .current
+        .filter(|space| manifest.world_space(*space).is_some())
+        .unwrap_or(manifest.default_world_space);
+    active_space.current = Some(active);
+    active_space.requested = None;
+    catalog.generation_id = manifest.generation_id.clone();
+    catalog.default_world_space = Some(manifest.default_world_space);
+    catalog.world_spaces = manifest
+        .world_spaces
+        .iter()
+        .map(|space| WorldSpaceInfo {
+            id: space.id,
+            name: space.name.clone(),
+            cell_size: space.cell_size,
+            minimum_y: space.minimum_y,
+            maximum_y: space.maximum_y,
+        })
+        .collect();
+    if viewpoint
+        .position
+        .is_none_or(|position| position.space != active)
+    {
+        viewpoint.position = Some(WorldPosition {
+            space: active,
+            cell: CellCoord::ZERO,
+            local: [0.0, 0.0, 0.0],
+        });
+    }
+    if origin.space != Some(active) {
+        origin.space = Some(active);
+        origin.cell = viewpoint
+            .position
+            .map_or(CellCoord::ZERO, |position| position.cell);
+    }
+    stream.manifest = Some(manifest);
+    stream.phase = StreamPhase::Ready;
 }
 
 fn request_world_space_from_keyboard(
@@ -1975,5 +2171,69 @@ mod tests {
         assert_eq!(select(3, 85.0), 3);
         assert_eq!(select(3, 90.0), 2);
         assert_eq!(select(2, 60.0), 3);
+    }
+
+    #[test]
+    fn generation_reload_is_an_exact_single_flight_handshake() {
+        let mut reload = WorldGenerationReload::default();
+        assert!(!reload.request(""));
+        assert!(reload.request("generation-a"));
+        assert!(reload.active());
+        assert!(!reload.request("generation-b"));
+
+        let queued = reload.queued.take().unwrap();
+        reload.in_flight = Some(queued);
+        reload.in_flight = None;
+        reload.completion = Some(Ok("generation-a".into()));
+        assert_eq!(reload.take_completion(), Some(Ok("generation-a".into())));
+        assert!(!reload.active());
+        assert!(reload.request("generation-b"));
+    }
+
+    #[test]
+    fn database_worker_reopens_the_exact_published_generation() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../assets/generated/demo.runtime.sqlite");
+        let (requests, request_receiver) = bounded(MAX_DATABASE_REQUESTS_IN_FLIGHT);
+        let (results, result_receiver) = bounded(MAX_DATABASE_REQUESTS_IN_FLIGHT * 2);
+        let worker = thread::spawn(move || database_worker(path, request_receiver, results));
+
+        let DatabaseResult::Opened(Ok(manifest)) = result_receiver.recv().unwrap() else {
+            panic!("runtime worker did not open the checked-in generation");
+        };
+        let expected = manifest.generation_id;
+        requests
+            .send(DatabaseRequest::Reload {
+                request_id: 4,
+                expected_generation: "not-the-published-generation".into(),
+            })
+            .unwrap();
+        let DatabaseResult::Reloaded {
+            request_id: 4,
+            result: Err(error),
+        } = result_receiver.recv().unwrap()
+        else {
+            panic!("runtime worker accepted the wrong generation identity");
+        };
+        assert!(error.contains("generation mismatch"));
+
+        requests
+            .send(DatabaseRequest::Reload {
+                request_id: 5,
+                expected_generation: expected.clone(),
+            })
+            .unwrap();
+        let DatabaseResult::Reloaded {
+            request_id,
+            result: Ok(reloaded),
+        } = result_receiver.recv().unwrap()
+        else {
+            panic!("runtime worker did not reopen the published generation");
+        };
+        assert_eq!(request_id, 5);
+        assert_eq!(reloaded.generation_id, expected);
+
+        requests.send(DatabaseRequest::Shutdown).unwrap();
+        worker.join().unwrap();
     }
 }

@@ -1,6 +1,7 @@
 use std::{
     borrow::Cow,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
+    hash::{DefaultHasher, Hash, Hasher},
     mem::size_of,
     sync::atomic::{AtomicU64, Ordering},
 };
@@ -13,7 +14,10 @@ use bevy::{
     },
     ecs::{
         query::ROQueryItem,
-        system::{SystemParamItem, lifetimeless::SRes},
+        system::{
+            SystemParamItem,
+            lifetimeless::{SRes, SResMut},
+        },
     },
     mesh::Mesh,
     prelude::*,
@@ -32,12 +36,13 @@ use bevy::{
             BindGroupLayoutEntries, Buffer, BufferDescriptor, BufferInitDescriptor, BufferUsages,
             CachedComputePipelineId, Canonical, ColorTargetState, ColorWrites, CompareFunction,
             ComputePassDescriptor, ComputePipelineDescriptor, DepthStencilState, Extent3d,
-            FilterMode, FragmentState, FrontFace, MipmapFilterMode, PipelineCache, PolygonMode,
-            PrimitiveState, PrimitiveTopology, RenderPipeline, RenderPipelineDescriptor, Sampler,
-            SamplerBindingType, SamplerDescriptor, ShaderStages, Specializer, SpecializerKey,
-            Texture, TextureDataOrder, TextureDescriptor, TextureDimension, TextureFormat,
-            TextureSampleType, TextureUsages, TextureView, TextureViewDescriptor,
-            TextureViewDimension, Variants, VertexState,
+            FilterMode, FragmentState, FrontFace, MipmapFilterMode, Origin3d, PipelineCache,
+            PolygonMode, PrimitiveState, PrimitiveTopology, RenderPipeline,
+            RenderPipelineDescriptor, Sampler, SamplerBindingType, SamplerDescriptor, ShaderStages,
+            Specializer, SpecializerKey, TexelCopyBufferLayout, TexelCopyTextureInfo, Texture,
+            TextureAspect, TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType,
+            TextureUsages, TextureView, TextureViewDescriptor, TextureViewDimension, Variants,
+            VertexState,
             binding_types::{
                 sampler, storage_buffer_read_only_sized, storage_buffer_sized, texture_2d_array,
                 uniform_buffer_sized,
@@ -49,20 +54,20 @@ use bevy::{
     },
 };
 use bytemuck::{Pod, Zeroable};
-use world::GroundCoverSpeciesId;
+use world::{
+    GROUND_COVER_ARTWORK_RESOLUTION, GroundCoverCardArtwork, GroundCoverSpeciesId,
+    MAX_GROUND_COVER_ARTWORK_ATLAS_LAYERS,
+};
 
 use crate::{
-    GroundCoverDebug, GroundCoverInteraction, GroundCoverPageAsset, GroundCoverView,
-    GroundCoverWind, MAX_GROUND_COVER_INTERACTION_STAMPS,
+    GroundCoverDebug, GroundCoverInteraction, GroundCoverPage3d, GroundCoverPageAsset,
+    GroundCoverView, GroundCoverWind, MAX_GROUND_COVER_INTERACTION_STAMPS,
 };
 
 const COMPUTE_SHADER_PATH: &str = "shaders/ground_cover_cull.wgsl";
 const RENDER_SHADER_PATH: &str = "shaders/ground_cover.wgsl";
 const MAX_VISIBLE_INSTANCES: u32 = 131_072;
 const CULL_WORKGROUP_SIZE: u32 = 64;
-const CLUMP_TEXTURE_SIZE: u32 = 256;
-const CLUMP_TEXTURE_LAYERS: u32 = 4;
-const CLUMP_BLADE_COUNT: u32 = 34;
 static NEXT_PAGE_UPLOAD: AtomicU64 = AtomicU64::new(1);
 
 pub(crate) struct GroundCoverRenderPlugin;
@@ -70,6 +75,7 @@ pub(crate) struct GroundCoverRenderPlugin;
 impl Plugin for GroundCoverRenderPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((
+            ExtractComponentPlugin::<GroundCoverPage3d>::default(),
             ExtractComponentPlugin::<GroundCoverView>::default(),
             RenderAssetPlugin::<GpuGroundCoverPage>::default(),
         ));
@@ -93,6 +99,7 @@ impl Plugin for GroundCoverRenderPlugin {
 
 fn init_ground_cover_resources(world: &mut World) {
     world.init_resource::<GroundCoverPipelines>();
+    world.init_resource::<GroundCoverArtworkAtlas>();
     world.init_resource::<GroundCoverBuffers>();
 }
 
@@ -111,6 +118,8 @@ struct SpeciesGpu {
     bottom_min_height: [f32; 4],
     top_max_height: [f32; 4],
     card: [f32; 4],
+    // x: first texture-array layer, y: variant count
+    artwork: [u32; 4],
 }
 
 pub(crate) struct GpuGroundCoverPage {
@@ -122,7 +131,11 @@ pub(crate) struct GpuGroundCoverPage {
 
 impl RenderAsset for GpuGroundCoverPage {
     type SourceAsset = GroundCoverPageAsset;
-    type Param = SRes<RenderDevice>;
+    type Param = (
+        SRes<RenderDevice>,
+        SRes<RenderQueue>,
+        SResMut<GroundCoverArtworkAtlas>,
+    );
 
     fn byte_len(source: &Self::SourceAsset) -> Option<usize> {
         Some(
@@ -134,10 +147,27 @@ impl RenderAsset for GpuGroundCoverPage {
     fn prepare_asset(
         source: Self::SourceAsset,
         _asset_id: AssetId<Self::SourceAsset>,
-        render_device: &mut SystemParamItem<Self::Param>,
+        parameters: &mut SystemParamItem<Self::Param>,
         _previous_asset: Option<&Self>,
     ) -> Result<Self, PrepareAssetError<Self::SourceAsset>> {
+        let (render_device, render_queue, atlas) = parameters;
         let render_device: &RenderDevice = render_device;
+        let allocations = source
+            .species
+            .iter()
+            .map(|species| {
+                atlas
+                    .register(render_queue, species.id, &species.artwork)
+                    .map(|allocation| (species.id, allocation))
+            })
+            .collect::<Option<HashMap<_, _>>>();
+        let Some(allocations) = allocations else {
+            error!(
+                "ground-cover artwork atlas exhausted its {} layers",
+                MAX_GROUND_COVER_ARTWORK_ATLAS_LAYERS
+            );
+            return Err(PrepareAssetError::RetryNextUpdate(source));
+        };
         let species_indices: HashMap<GroundCoverSpeciesId, u32> = source
             .species
             .iter()
@@ -165,6 +195,12 @@ impl RenderAsset for GpuGroundCoverPage {
                     species.maximum_card_width,
                     species.flattened_card_probability,
                     species.maximum_wind_displacement,
+                ],
+                artwork: [
+                    allocations[&species.id].first_layer,
+                    allocations[&species.id].variant_count,
+                    0,
+                    0,
                 ],
             })
             .collect();
@@ -257,6 +293,7 @@ pub(super) struct VisibleInstanceGpu {
     top_half_width: [f32; 4],
     motion: [f32; 4],
     interaction: [f32; 4],
+    artwork: [u32; 4],
 }
 
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -271,6 +308,146 @@ struct PageComputeBinding {
     bind_group: BindGroup,
     cluster_count: u32,
     upload_serial: u64,
+}
+
+#[derive(Clone, Copy)]
+struct ArtworkAllocation {
+    first_layer: u32,
+    variant_count: u32,
+    fingerprint: u64,
+}
+
+#[derive(Resource)]
+pub(crate) struct GroundCoverArtworkAtlas {
+    texture: Texture,
+    view: TextureView,
+    sampler: Sampler,
+    allocations: HashMap<GroundCoverSpeciesId, ArtworkAllocation>,
+    next_layer: u32,
+}
+
+impl FromWorld for GroundCoverArtworkAtlas {
+    fn from_world(world: &mut World) -> Self {
+        let render_device = world.resource::<RenderDevice>();
+        let texture = render_device.create_texture(&TextureDescriptor {
+            label: Some("ground-cover artwork atlas"),
+            size: Extent3d {
+                width: u32::from(GROUND_COVER_ARTWORK_RESOLUTION),
+                height: u32::from(GROUND_COVER_ARTWORK_RESOLUTION),
+                depth_or_array_layers: MAX_GROUND_COVER_ARTWORK_ATLAS_LAYERS,
+            },
+            mip_level_count: u32::from(GROUND_COVER_ARTWORK_RESOLUTION).ilog2() + 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: TextureFormat::R8Unorm,
+            usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&TextureViewDescriptor {
+            dimension: Some(TextureViewDimension::D2Array),
+            ..default()
+        });
+        let sampler = render_device.create_sampler(&SamplerDescriptor {
+            label: Some("ground-cover artwork sampler"),
+            address_mode_u: AddressMode::ClampToEdge,
+            address_mode_v: AddressMode::ClampToEdge,
+            address_mode_w: AddressMode::ClampToEdge,
+            mag_filter: FilterMode::Linear,
+            min_filter: FilterMode::Linear,
+            mipmap_filter: MipmapFilterMode::Linear,
+            ..default()
+        });
+        Self {
+            texture,
+            view,
+            sampler,
+            allocations: HashMap::new(),
+            next_layer: 0,
+        }
+    }
+}
+
+impl GroundCoverArtworkAtlas {
+    fn register(
+        &mut self,
+        render_queue: &RenderQueue,
+        species: GroundCoverSpeciesId,
+        artwork: &GroundCoverCardArtwork,
+    ) -> Option<ArtworkAllocation> {
+        if !artwork.is_valid() {
+            return None;
+        }
+        let mut hasher = DefaultHasher::new();
+        artwork.resolution.hash(&mut hasher);
+        artwork.variant_count.hash(&mut hasher);
+        artwork.mip_level_count.hash(&mut hasher);
+        artwork.coverage_mips.hash(&mut hasher);
+        let fingerprint = hasher.finish();
+        if let Some(existing) = self.allocations.get(&species).copied()
+            && existing.fingerprint == fingerprint
+        {
+            return Some(existing);
+        }
+
+        let variant_count = u32::from(artwork.variant_count);
+        let allocation = if let Some(existing) = self.allocations.get(&species).copied()
+            && existing.variant_count >= variant_count
+        {
+            ArtworkAllocation {
+                variant_count,
+                fingerprint,
+                ..existing
+            }
+        } else {
+            let next_layer = self.next_layer.checked_add(variant_count)?;
+            if next_layer > MAX_GROUND_COVER_ARTWORK_ATLAS_LAYERS {
+                return None;
+            }
+            let allocation = ArtworkAllocation {
+                first_layer: self.next_layer,
+                variant_count,
+                fingerprint,
+            };
+            self.next_layer = next_layer;
+            allocation
+        };
+
+        let per_variant = artwork.coverage_mips.len() / usize::from(artwork.variant_count);
+        for variant in 0..artwork.variant_count {
+            let mut offset = usize::from(variant) * per_variant;
+            let mut side = u32::from(artwork.resolution);
+            for mip_level in 0..u32::from(artwork.mip_level_count) {
+                let byte_count = (side * side) as usize;
+                render_queue.write_texture(
+                    TexelCopyTextureInfo {
+                        texture: &self.texture,
+                        mip_level,
+                        origin: Origin3d {
+                            x: 0,
+                            y: 0,
+                            z: allocation.first_layer + u32::from(variant),
+                        },
+                        aspect: TextureAspect::All,
+                    },
+                    &artwork.coverage_mips[offset..offset + byte_count],
+                    TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(side),
+                        rows_per_image: Some(side),
+                    },
+                    Extent3d {
+                        width: side,
+                        height: side,
+                        depth_or_array_layers: 1,
+                    },
+                );
+                offset += byte_count;
+                side = (side / 2).max(1);
+            }
+        }
+        self.allocations.insert(species, allocation);
+        Some(allocation)
+    }
 }
 
 #[derive(Resource)]
@@ -290,9 +467,6 @@ struct GroundCoverBuffers {
     mid_draw_bind_group: BindGroup,
     far_draw_bind_group: BindGroup,
     finalize_bind_group: BindGroup,
-    _clump_texture: Texture,
-    _clump_texture_view: TextureView,
-    _clump_sampler: Sampler,
     page_bind_groups: HashMap<AssetId<GroundCoverPageAsset>, PageComputeBinding>,
 }
 
@@ -303,7 +477,10 @@ impl FromWorld for GroundCoverBuffers {
         let draw_layout = pipeline_cache.get_bind_group_layout(&pipelines.draw_layout);
         let finalize_layout = pipeline_cache.get_bind_group_layout(&pipelines.finalize_layout);
         let render_device = world.resource::<RenderDevice>();
-        let render_queue = world.resource::<RenderQueue>();
+        let (artwork_view, artwork_sampler) = {
+            let atlas = world.resource::<GroundCoverArtworkAtlas>();
+            (atlas.view.clone(), atlas.sampler.clone())
+        };
         let visible_size =
             u64::from(MAX_VISIBLE_INSTANCES) * size_of::<VisibleInstanceGpu>() as u64;
         let near_visible = render_device.create_buffer(&BufferDescriptor {
@@ -377,41 +554,6 @@ impl FromWorld for GroundCoverBuffers {
             usage: BufferUsages::UNIFORM,
         });
 
-        let (clump_pixels, mip_level_count) = generate_clump_texture();
-        let clump_texture = render_device.create_texture_with_data(
-            render_queue,
-            &TextureDescriptor {
-                label: Some("procedural ground-cover clump atlas"),
-                size: Extent3d {
-                    width: CLUMP_TEXTURE_SIZE,
-                    height: CLUMP_TEXTURE_SIZE,
-                    depth_or_array_layers: CLUMP_TEXTURE_LAYERS,
-                },
-                mip_level_count,
-                sample_count: 1,
-                dimension: TextureDimension::D2,
-                format: TextureFormat::R8Unorm,
-                usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
-                view_formats: &[],
-            },
-            TextureDataOrder::LayerMajor,
-            &clump_pixels,
-        );
-        let clump_texture_view = clump_texture.create_view(&TextureViewDescriptor {
-            dimension: Some(TextureViewDimension::D2Array),
-            ..default()
-        });
-        let clump_sampler = render_device.create_sampler(&SamplerDescriptor {
-            label: Some("ground-cover clump sampler"),
-            address_mode_u: AddressMode::ClampToEdge,
-            address_mode_v: AddressMode::ClampToEdge,
-            address_mode_w: AddressMode::ClampToEdge,
-            mag_filter: FilterMode::Linear,
-            min_filter: FilterMode::Linear,
-            mipmap_filter: MipmapFilterMode::Linear,
-            ..default()
-        });
-
         let near_draw_bind_group = render_device.create_bind_group(
             Some("ground-cover near draw bind group"),
             &draw_layout,
@@ -419,8 +561,8 @@ impl FromWorld for GroundCoverBuffers {
                 near_visible.as_entire_binding(),
                 camera.as_entire_binding(),
                 near_config.as_entire_binding(),
-                &clump_texture_view,
-                &clump_sampler,
+                &artwork_view,
+                &artwork_sampler,
             )),
         );
         let mid_draw_bind_group = render_device.create_bind_group(
@@ -430,8 +572,8 @@ impl FromWorld for GroundCoverBuffers {
                 mid_visible.as_entire_binding(),
                 camera.as_entire_binding(),
                 mid_config.as_entire_binding(),
-                &clump_texture_view,
-                &clump_sampler,
+                &artwork_view,
+                &artwork_sampler,
             )),
         );
         let far_draw_bind_group = render_device.create_bind_group(
@@ -441,8 +583,8 @@ impl FromWorld for GroundCoverBuffers {
                 far_visible.as_entire_binding(),
                 camera.as_entire_binding(),
                 far_config.as_entire_binding(),
-                &clump_texture_view,
-                &clump_sampler,
+                &artwork_view,
+                &artwork_sampler,
             )),
         );
         let finalize_bind_group = render_device.create_bind_group(
@@ -472,114 +614,9 @@ impl FromWorld for GroundCoverBuffers {
             mid_draw_bind_group,
             far_draw_bind_group,
             finalize_bind_group,
-            _clump_texture: clump_texture,
-            _clump_texture_view: clump_texture_view,
-            _clump_sampler: clump_sampler,
             page_bind_groups: HashMap::new(),
         }
     }
-}
-
-fn generate_clump_texture() -> (Vec<u8>, u32) {
-    #[derive(Clone, Copy)]
-    struct Blade {
-        base: f32,
-        height: f32,
-        lean: f32,
-        curve: f32,
-        s_curve: f32,
-        half_width: f32,
-    }
-
-    let size = CLUMP_TEXTURE_SIZE as usize;
-    let texel = 1.0 / CLUMP_TEXTURE_SIZE as f32;
-    let mut pixels = Vec::new();
-    let mut mip_level_count = 0;
-    for layer in 0..CLUMP_TEXTURE_LAYERS {
-        let layer_seed = hash_u32(0x6f53_91d2 ^ layer.wrapping_mul(0x85eb_ca6b));
-        let blades: Vec<_> = (0..CLUMP_BLADE_COUNT)
-            .map(|index| {
-                let seed = hash_u32(
-                    index.wrapping_mul(0x9e37_79b9) ^ layer_seed ^ layer.wrapping_mul(0xc2b2_ae35),
-                );
-                let centered = (index as f32 + 0.5) / CLUMP_BLADE_COUNT as f32;
-                Blade {
-                    base: (centered + (unit_float(seed) - 0.5) * (0.7 / CLUMP_BLADE_COUNT as f32))
-                        .clamp(0.015, 0.985),
-                    height: 0.48 + unit_float(seed ^ 0xa511_e9b3) * 0.52,
-                    lean: (unit_float(seed ^ 0x63d8_3595) * 2.0 - 1.0) * 0.18,
-                    curve: (unit_float(seed ^ 0xc2b2_ae35) * 2.0 - 1.0) * 0.10,
-                    s_curve: (unit_float(seed ^ 0x1656_67b1) * 2.0 - 1.0) * 0.045,
-                    half_width: 0.004 + unit_float(seed ^ 0x27d4_eb2f) * 0.004,
-                }
-            })
-            .collect();
-
-        let mut level = vec![0_u8; size * size];
-        for y in 0..size {
-            let vertical = 1.0 - y as f32 / (size - 1) as f32;
-            for x in 0..size {
-                let horizontal = x as f32 / (size - 1) as f32;
-                let mut alpha = 0.0_f32;
-                for blade in &blades {
-                    if vertical > blade.height {
-                        continue;
-                    }
-                    let along = vertical / blade.height;
-                    let center = blade.base
-                        + blade.lean * along.powf(1.35)
-                        + blade.curve * (std::f32::consts::PI * along).sin()
-                        + blade.s_curve * (std::f32::consts::TAU * along).sin();
-                    let half_width = blade.half_width * (1.0 - along).powf(0.72) + texel * 0.45;
-                    let edge_distance = (horizontal - center).abs() - half_width;
-                    let coverage = (0.5 - edge_distance / (texel * 1.5)).clamp(0.0, 1.0);
-                    alpha = alpha.max(coverage);
-                }
-                level[y * size + x] = (alpha * 255.0).round() as u8;
-            }
-        }
-
-        pixels.extend_from_slice(&level);
-        let mut current_size = size;
-        let mut layer_mip_count = 1;
-        while current_size > 1 {
-            let next_size = (current_size / 2).max(1);
-            let mut next = vec![0_u8; next_size * next_size];
-            for y in 0..next_size {
-                for x in 0..next_size {
-                    let samples = [
-                        level[(y * 2) * current_size + x * 2],
-                        level[(y * 2) * current_size + (x * 2 + 1).min(current_size - 1)],
-                        level[((y * 2 + 1).min(current_size - 1)) * current_size + x * 2],
-                        level[((y * 2 + 1).min(current_size - 1)) * current_size
-                            + (x * 2 + 1).min(current_size - 1)],
-                    ];
-                    let maximum = *samples.iter().max().unwrap() as f32;
-                    let average =
-                        samples.iter().map(|sample| f32::from(*sample)).sum::<f32>() * 0.25;
-                    next[y * next_size + x] = maximum.max(average * 1.35).min(255.0) as u8;
-                }
-            }
-            pixels.extend_from_slice(&next);
-            level = next;
-            current_size = next_size;
-            layer_mip_count += 1;
-        }
-        mip_level_count = layer_mip_count;
-    }
-    (pixels, mip_level_count)
-}
-
-fn hash_u32(mut value: u32) -> u32 {
-    value ^= value >> 16;
-    value = value.wrapping_mul(0x7feb_352d);
-    value ^= value >> 15;
-    value = value.wrapping_mul(0x846c_a68b);
-    value ^ (value >> 16)
-}
-
-fn unit_float(value: u32) -> f32 {
-    hash_u32(value) as f32 / u32::MAX as f32
 }
 
 #[derive(Resource)]
@@ -730,24 +767,33 @@ impl Specializer<RenderPipeline> for GroundCoverPipelineSpecializer {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // Bevy render-world system parameters are independently borrowed resources.
 fn prepare_ground_cover(
     render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
     pipeline_cache: Res<PipelineCache>,
     pipelines: Res<GroundCoverPipelines>,
     pages: Res<RenderAssets<GpuGroundCoverPage>>,
+    active_pages: Query<&GroundCoverPage3d>,
     views: Query<(&ExtractedView, &GroundCoverView)>,
     wind: Res<GroundCoverWind>,
     debug: Res<GroundCoverDebug>,
     interaction: Res<GroundCoverInteraction>,
     mut buffers: ResMut<GroundCoverBuffers>,
 ) {
+    let active_page_ids = active_pages
+        .iter()
+        .map(|page| page.id())
+        .collect::<HashSet<_>>();
     buffers
         .page_bind_groups
-        .retain(|id, _| pages.get(*id).is_some());
+        .retain(|id, _| active_page_ids.contains(id) && pages.get(*id).is_some());
 
     let cull_layout = pipeline_cache.get_bind_group_layout(&pipelines.cull_layout);
-    for (id, page) in pages.iter() {
+    for id in active_page_ids {
+        let Some(page) = pages.get(id) else {
+            continue;
+        };
         if buffers
             .page_bind_groups
             .get(&id)
@@ -943,8 +989,6 @@ impl<P: PhaseItem> RenderCommand<P> for DrawGroundCoverIndirect {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     fn validate_shader(source: &str) {
         let module = naga::front::wgsl::parse_str(source).expect("shader should parse as WGSL");
         naga::valid::Validator::new(
@@ -965,20 +1009,15 @@ mod tests {
 
     #[test]
     fn procedural_clump_texture_has_complete_coverage_preserving_mips() {
-        let (pixels, mip_count) = generate_clump_texture();
-        assert_eq!(mip_count, 9);
-        let expected_bytes: usize = (0..mip_count)
-            .map(|mip| {
-                let side = (CLUMP_TEXTURE_SIZE >> mip).max(1) as usize;
-                side * side
-            })
-            .sum();
-        assert_eq!(pixels.len(), expected_bytes * CLUMP_TEXTURE_LAYERS as usize);
-
-        let base_level_bytes = (CLUMP_TEXTURE_SIZE * CLUMP_TEXTURE_SIZE) as usize;
-        for layer in 0..CLUMP_TEXTURE_LAYERS as usize {
+        let artwork =
+            world::generate_ground_cover_card_artwork(world::GroundCoverBladeRecipe::built_in_v1());
+        assert_eq!(artwork.mip_level_count, 9);
+        assert!(artwork.is_valid());
+        let expected_bytes = artwork.coverage_mips.len() / usize::from(artwork.variant_count);
+        let base_level_bytes = usize::from(artwork.resolution).pow(2);
+        for layer in 0..usize::from(artwork.variant_count) {
             let layer_start = layer * expected_bytes;
-            let covered_texels = pixels[layer_start..layer_start + base_level_bytes]
+            let covered_texels = artwork.coverage_mips[layer_start..layer_start + base_level_bytes]
                 .iter()
                 .filter(|alpha| **alpha >= 82)
                 .count();
@@ -989,7 +1028,7 @@ mod tests {
             );
         }
         assert_ne!(
-            *pixels.last().unwrap(),
+            *artwork.coverage_mips.last().unwrap(),
             0,
             "the final mip lost all coverage"
         );

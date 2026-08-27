@@ -6362,8 +6362,10 @@ dependencies = [
  "uuid",
  "yarra-engine",
  "yarra-ground-cover",
+ "yarra-ground-cover-compile",
  "yarra-terrain-render",
  "yarra-world",
+ "yarra-world-cook",
  "yarra-world-db",
 ]
 
@@ -6401,6 +6403,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "yarra-ground-cover-compile"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "thiserror 2.0.20",
+ "yarra-world",
+ "yarra-world-db",
+]
+
+[[package]]
 name = "yarra-terrain-render"
 version = "0.1.0"
 dependencies = [
@@ -6424,6 +6436,7 @@ dependencies = [
  "anyhow",
  "blake3",
  "glam",
+ "yarra-ground-cover-compile",
  "yarra-world",
  "yarra-world-db",
  "zstd",

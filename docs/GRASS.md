@@ -4,6 +4,9 @@ This document records the current implementation and the reasoning behind it. It
 limited to decisions that exist in the code today; it is not a roadmap for a complete vegetation
 system.
 
+The planned authoring, customization, and runtime-publication model is specified separately in
+[`GROUND_COVER_AUTHORING_PLAN.md`](GROUND_COVER_AUTHORING_PLAN.md).
+
 ## Scope
 
 Grass is decorative ground cover, not a collection of gameplay objects. Individual blades do not
@@ -18,14 +21,18 @@ path can later support other dense decorative fields such as small flowers or lo
 
 The system has four stages:
 
-1. The project SQLite database stores species, layers, and per-cell coverage masks.
-2. The world cooker converts occupied mask samples into compact ground-cover clusters.
+1. The project SQLite database stores visuals, presets, layers, regions, and per-cell coverage
+   masks.
+2. The shared bounded cell compiler resolves those records into compact ground-cover clusters; both
+   the world cooker and editor-derived page jobs call this exact function.
 3. The existing page streamer loads ground-cover pages with the terrain cells around the camera.
 4. A GPU compute pass culls clusters and expands visible coverage into indirect draw lists.
 
 ### Project database
 
-`ground_cover_species` contains appearance and motion limits shared by many fields:
+`ground_cover_visuals` and the family-specific `ground_cover_card_visuals` record the reusable
+appearance and motion limits shared by many painted areas. The currently implemented visual family
+is the existing card-cluster renderer, with:
 
 - bottom and top colors;
 - minimum and maximum card height;
@@ -33,12 +40,22 @@ The system has four stages:
 - probability of the optional nearly-flat card;
 - maximum wind displacement.
 
-`ground_cover_layers` associates a species with a world space, density, and deterministic seed.
-`ground_cover_cell_masks` stores an authoring-resolution coverage byte for every mask sample in a
-cell. Coverage scales layer density from zero through full density.
+Card visuals may retain the frozen built-in-v1 artwork or own a procedural blade recipe. A recipe
+controls variant and blade counts, normalized blade height/width, spacing jitter, seed, lean, and
+C/S silhouette curves. Bottom/top tint remains separate from R8 coverage. Cooking expands the
+recipe into complete 256×256 coverage-preserving mip chains; the runtime atlas assigns each visual
+a bounded layer range, and stable per-instance hashing selects one of its variants.
 
-This separation is deliberate: changing a species does not duplicate data across every cell, and
-the editor can paint coverage without creating rows for individual clumps.
+`ground_cover_presets` associates a visual with density and a deterministic seed.
+`ground_cover_layers` are world-space organizational groups. `ground_cover_regions` are named,
+enabled painted areas that reference a preset and may apply a density multiplier.
+`ground_cover_region_cell_masks` stores an authoring-resolution coverage byte for every mask sample
+in a cell. Coverage scales preset density from zero through full density. Regions using the same
+preset share its absolute candidate grid and combine by maximum effective coverage.
+
+This separation is deliberate: changing a visual or preset does not duplicate data across every
+cell, splitting a region does not reshuffle surviving candidates, and the editor can paint coverage
+without creating rows for individual clumps.
 
 ### Cooked runtime pages
 
@@ -59,6 +76,15 @@ disappear near the frustum edge.
 The demo uses 32-metre cells, a 16-by-16 mask, and therefore 2-metre clusters. Its current meadow
 species uses 0.55–0.78 m height, 0.7–1.4 m width, 20% flattened-card probability, 0.22 m maximum wind
 displacement, and five placements per square metre.
+
+The editor integrates a circular brush over each mask sample and stores fractional coverage at the
+boundary. Brush hardness controls the full-strength inner radius and a smooth outer falloff. This
+softens curved Paint/Erase edges through stable density variation without changing mask resolution,
+the maximum cluster budget, cooked data format, or the runtime renderer. A soft boundary can retain
+a few low-density clusters that a binary erase would remove, but it never refines or multiplies the
+fixed cluster lattice. It cannot encode an exact silhouette smaller than a 2-metre cluster; that is
+a separate representation concern rather than a reason to multiply the current cluster grid
+blindly.
 
 Runtime pages contain clusters and dependencies on the species they use. The streamer treats ground
 cover as its own page domain; unloading a cell also releases its ground-cover asset and GPU buffers.
@@ -212,8 +238,18 @@ Future changes should preserve these unless measurements justify replacing them:
 ## Current limitations
 
 - The cooked clusters currently assume each source cell has one flat height.
-- Coverage masks are populated by demo generation; there is no editor painting tool yet.
-- The clump atlas is procedural and not artist-authored.
+- The bounded editor can paint region-owned masks and edit existing presets, card visuals, and
+  region assignments through stable-ID working sets. Presets and visuals can be duplicated or
+  dependency-safely deleted. Procedural card artwork can be created entirely in the editor and is
+  visible through a per-variant mask preview and the normal derived world preview; direct canvas
+  painting and image import are not implemented yet.
+- Exact runtime-format pages produced by editor-derived jobs replace matching cooked pages through
+  bounded editor-owned assets while source and runtime revisions differ. Empty results suppress the
+  cooked page without allocating an empty GPU asset.
+- Explicit editor publication runs the shared full cooker into a validated staging database,
+  atomically replaces the immutable runtime file, and asks the streamer to reopen the exact
+  content-addressed generation before clean derived overrides are retired.
+- The current artwork sources are procedural. Direct painted/imported masks are still planned.
 - Grass has no terrain lighting integration, shadow casting, or collision.
 - Interaction response is currently a fixed-capacity actor field; it has not been tested with a
   crowded scene or authored per-species response.
@@ -222,5 +258,5 @@ Future changes should preserve these unless measurements justify replacing them:
 
 Relevant implementation files are `crates/ground_cover/src/lib.rs`,
 `crates/ground_cover/src/renderer.rs`, `assets/shaders/ground_cover_cull.wgsl`,
-`assets/shaders/ground_cover.wgsl`, and the ground-cover sections of the world, database, cooker, and
-streaming crates.
+`assets/shaders/ground_cover.wgsl`, `crates/ground_cover_compile/src/lib.rs`, and the ground-cover
+sections of the world, database, cooker, editor, and streaming crates.

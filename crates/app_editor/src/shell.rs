@@ -21,10 +21,10 @@ use terrain_render::TerrainRenderPlugin;
 
 use crate::{
     derived_jobs::DerivedJobsPlugin,
-    editing::process_project_save_completion,
     journal::EditorJournalPlugin,
     navigation::ProjectNavigationPlugin,
     project_store::ProjectEditorStorePlugin,
+    publication::RuntimePublicationPlugin,
     tools::EditorToolsPlugin,
     workspaces::{
         AnimationWorkspaceCamera, AnimationWorkspacePlugin, EditorFramePacing, EditorWorkspace,
@@ -76,10 +76,11 @@ pub(crate) fn run() {
             EditorWorkspacesPlugin,
             WorldWorkspacePlugin,
             AnimationWorkspacePlugin,
-            WorldStreamingPlugin::editor(runtime_database),
+            WorldStreamingPlugin::editor(runtime_database.clone()),
             ProjectEditorStorePlugin::new(project_database.clone()),
             ProjectNavigationPlugin::new(project_database.clone()),
-            EditorJournalPlugin::new(project_database),
+            EditorJournalPlugin::new(project_database.clone()),
+            RuntimePublicationPlugin::new(project_database, runtime_database),
         ))
         .configure_sets(
             EguiPrimaryContextPass,
@@ -93,12 +94,7 @@ pub(crate) fn run() {
         .add_systems(Startup, setup_editor_shell)
         .add_systems(
             Update,
-            (
-                process_project_save_completion,
-                sync_workspace_cameras,
-                update_workspace_frame_pacing,
-            )
-                .chain(),
+            (sync_workspace_cameras, update_workspace_frame_pacing).chain(),
         )
         .add_systems(
             EguiPrimaryContextPass,

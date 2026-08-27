@@ -98,9 +98,28 @@ CREATE TABLE terrain_cell_weight_pages (
         REFERENCES source_cells(world_space_id, cell_x, cell_z) ON DELETE CASCADE
 ) STRICT, WITHOUT ROWID;
 
-CREATE TABLE ground_cover_species (
-    species_id BLOB PRIMARY KEY CHECK(length(species_id) = 16),
-    species_key TEXT NOT NULL UNIQUE,
+CREATE TABLE ground_cover_visuals (
+    visual_id BLOB PRIMARY KEY CHECK(length(visual_id) = 16),
+    visual_key TEXT NOT NULL UNIQUE,
+    display_name TEXT NOT NULL CHECK(length(display_name) > 0),
+    visual_family INTEGER NOT NULL CHECK(visual_family = 0),
+    source_revision INTEGER NOT NULL CHECK(source_revision >= 0)
+) STRICT;
+
+CREATE TABLE ground_cover_card_visuals (
+    visual_id BLOB PRIMARY KEY REFERENCES ground_cover_visuals(visual_id) ON DELETE CASCADE,
+    built_in_atlas_version INTEGER NOT NULL CHECK(built_in_atlas_version = 1),
+    recipe_variant_count INTEGER CHECK(recipe_variant_count BETWEEN 1 AND 8),
+    recipe_blade_count INTEGER CHECK(recipe_blade_count BETWEEN 1 AND 128),
+    recipe_seed INTEGER CHECK(recipe_seed BETWEEN 0 AND 4294967295),
+    recipe_minimum_blade_height REAL,
+    recipe_maximum_blade_height REAL,
+    recipe_base_jitter REAL,
+    recipe_minimum_blade_half_width REAL,
+    recipe_maximum_blade_half_width REAL,
+    recipe_maximum_lean REAL,
+    recipe_maximum_curve REAL,
+    recipe_maximum_s_curve REAL,
     bottom_color_r REAL NOT NULL CHECK(bottom_color_r BETWEEN 0.0 AND 1.0),
     bottom_color_g REAL NOT NULL CHECK(bottom_color_g BETWEEN 0.0 AND 1.0),
     bottom_color_b REAL NOT NULL CHECK(bottom_color_b BETWEEN 0.0 AND 1.0),
@@ -115,28 +134,54 @@ CREATE TABLE ground_cover_species (
     maximum_wind_displacement REAL NOT NULL CHECK(maximum_wind_displacement >= 0.0)
 ) STRICT;
 
+CREATE TABLE ground_cover_presets (
+    preset_id BLOB PRIMARY KEY CHECK(length(preset_id) = 16),
+    preset_key TEXT NOT NULL UNIQUE,
+    display_name TEXT NOT NULL CHECK(length(display_name) > 0),
+    enabled INTEGER NOT NULL CHECK(enabled IN (0, 1)),
+    visual_id BLOB NOT NULL REFERENCES ground_cover_visuals(visual_id),
+    density_per_square_meter REAL NOT NULL CHECK(density_per_square_meter > 0.0),
+    seed INTEGER NOT NULL CHECK(seed BETWEEN 0 AND 4294967295),
+    source_revision INTEGER NOT NULL CHECK(source_revision >= 0)
+) STRICT;
+
 CREATE TABLE ground_cover_layers (
     layer_id BLOB PRIMARY KEY CHECK(length(layer_id) = 16),
     world_space_id INTEGER NOT NULL REFERENCES world_spaces(id),
     layer_key TEXT NOT NULL,
-    species_id BLOB NOT NULL REFERENCES ground_cover_species(species_id),
-    density_per_square_meter REAL NOT NULL CHECK(density_per_square_meter > 0.0),
-    seed INTEGER NOT NULL CHECK(seed BETWEEN 0 AND 4294967295),
+    display_name TEXT NOT NULL CHECK(length(display_name) > 0),
+    enabled INTEGER NOT NULL CHECK(enabled IN (0, 1)),
+    sort_order INTEGER NOT NULL,
+    source_revision INTEGER NOT NULL CHECK(source_revision >= 0),
     UNIQUE(world_space_id, layer_key),
     UNIQUE(layer_id, world_space_id)
 ) STRICT;
 
-CREATE TABLE ground_cover_cell_masks (
+CREATE TABLE ground_cover_regions (
+    region_id BLOB PRIMARY KEY CHECK(length(region_id) = 16),
     layer_id BLOB NOT NULL,
+    world_space_id INTEGER NOT NULL,
+    preset_id BLOB NOT NULL REFERENCES ground_cover_presets(preset_id),
+    display_name TEXT NOT NULL CHECK(length(display_name) > 0),
+    enabled INTEGER NOT NULL CHECK(enabled IN (0, 1)),
+    density_multiplier REAL NOT NULL CHECK(density_multiplier > 0.0),
+    source_revision INTEGER NOT NULL CHECK(source_revision >= 0),
+    UNIQUE(region_id, world_space_id),
+    FOREIGN KEY(layer_id, world_space_id)
+        REFERENCES ground_cover_layers(layer_id, world_space_id) ON DELETE CASCADE
+) STRICT;
+
+CREATE TABLE ground_cover_region_cell_masks (
+    region_id BLOB NOT NULL,
     world_space_id INTEGER NOT NULL,
     cell_x INTEGER NOT NULL,
     cell_z INTEGER NOT NULL,
     resolution INTEGER NOT NULL CHECK(resolution BETWEEN 1 AND 64),
     coverage BLOB NOT NULL CHECK(length(coverage) = resolution * resolution),
     source_revision INTEGER NOT NULL CHECK(source_revision >= 0),
-    PRIMARY KEY(layer_id, world_space_id, cell_x, cell_z),
-    FOREIGN KEY(layer_id, world_space_id)
-        REFERENCES ground_cover_layers(layer_id, world_space_id) ON DELETE CASCADE,
+    PRIMARY KEY(region_id, world_space_id, cell_x, cell_z),
+    FOREIGN KEY(region_id, world_space_id)
+        REFERENCES ground_cover_regions(region_id, world_space_id) ON DELETE CASCADE,
     FOREIGN KEY(world_space_id, cell_x, cell_z)
         REFERENCES source_cells(world_space_id, cell_x, cell_z) ON DELETE CASCADE
 ) STRICT, WITHOUT ROWID;
@@ -199,7 +244,159 @@ CREATE TABLE object_cell_overlaps (
 CREATE INDEX object_cell_overlaps_cells
 ON object_cell_overlaps(world_space_id, cell_x, cell_z, object_id);
 
-PRAGMA user_version = 7;
+PRAGMA user_version = 9;
+"#;
+
+pub const PROJECT_MIGRATION_7_TO_8: &str = r#"
+ALTER TABLE ground_cover_cell_masks RENAME TO ground_cover_cell_masks_v7;
+ALTER TABLE ground_cover_layers RENAME TO ground_cover_layers_v7;
+ALTER TABLE ground_cover_species RENAME TO ground_cover_species_v7;
+
+CREATE TABLE ground_cover_visuals (
+    visual_id BLOB PRIMARY KEY CHECK(length(visual_id) = 16),
+    visual_key TEXT NOT NULL UNIQUE,
+    display_name TEXT NOT NULL CHECK(length(display_name) > 0),
+    visual_family INTEGER NOT NULL CHECK(visual_family = 0),
+    source_revision INTEGER NOT NULL CHECK(source_revision >= 0)
+) STRICT;
+
+CREATE TABLE ground_cover_card_visuals (
+    visual_id BLOB PRIMARY KEY REFERENCES ground_cover_visuals(visual_id) ON DELETE CASCADE,
+    built_in_atlas_version INTEGER NOT NULL CHECK(built_in_atlas_version = 1),
+    bottom_color_r REAL NOT NULL CHECK(bottom_color_r BETWEEN 0.0 AND 1.0),
+    bottom_color_g REAL NOT NULL CHECK(bottom_color_g BETWEEN 0.0 AND 1.0),
+    bottom_color_b REAL NOT NULL CHECK(bottom_color_b BETWEEN 0.0 AND 1.0),
+    top_color_r REAL NOT NULL CHECK(top_color_r BETWEEN 0.0 AND 1.0),
+    top_color_g REAL NOT NULL CHECK(top_color_g BETWEEN 0.0 AND 1.0),
+    top_color_b REAL NOT NULL CHECK(top_color_b BETWEEN 0.0 AND 1.0),
+    minimum_card_height REAL NOT NULL CHECK(minimum_card_height > 0.0),
+    maximum_card_height REAL NOT NULL CHECK(maximum_card_height >= minimum_card_height),
+    minimum_card_width REAL NOT NULL CHECK(minimum_card_width > 0.0),
+    maximum_card_width REAL NOT NULL CHECK(maximum_card_width >= minimum_card_width),
+    flattened_card_probability REAL NOT NULL CHECK(flattened_card_probability BETWEEN 0.0 AND 1.0),
+    maximum_wind_displacement REAL NOT NULL CHECK(maximum_wind_displacement >= 0.0)
+) STRICT;
+
+CREATE TABLE ground_cover_presets (
+    preset_id BLOB PRIMARY KEY CHECK(length(preset_id) = 16),
+    preset_key TEXT NOT NULL UNIQUE,
+    display_name TEXT NOT NULL CHECK(length(display_name) > 0),
+    enabled INTEGER NOT NULL CHECK(enabled IN (0, 1)),
+    visual_id BLOB NOT NULL REFERENCES ground_cover_visuals(visual_id),
+    density_per_square_meter REAL NOT NULL CHECK(density_per_square_meter > 0.0),
+    seed INTEGER NOT NULL CHECK(seed BETWEEN 0 AND 4294967295),
+    source_revision INTEGER NOT NULL CHECK(source_revision >= 0)
+) STRICT;
+
+CREATE TABLE ground_cover_layers (
+    layer_id BLOB PRIMARY KEY CHECK(length(layer_id) = 16),
+    world_space_id INTEGER NOT NULL REFERENCES world_spaces(id),
+    layer_key TEXT NOT NULL,
+    display_name TEXT NOT NULL CHECK(length(display_name) > 0),
+    enabled INTEGER NOT NULL CHECK(enabled IN (0, 1)),
+    sort_order INTEGER NOT NULL,
+    source_revision INTEGER NOT NULL CHECK(source_revision >= 0),
+    UNIQUE(world_space_id, layer_key),
+    UNIQUE(layer_id, world_space_id)
+) STRICT;
+
+CREATE TABLE ground_cover_regions (
+    region_id BLOB PRIMARY KEY CHECK(length(region_id) = 16),
+    layer_id BLOB NOT NULL,
+    world_space_id INTEGER NOT NULL,
+    preset_id BLOB NOT NULL REFERENCES ground_cover_presets(preset_id),
+    display_name TEXT NOT NULL CHECK(length(display_name) > 0),
+    enabled INTEGER NOT NULL CHECK(enabled IN (0, 1)),
+    density_multiplier REAL NOT NULL CHECK(density_multiplier > 0.0),
+    source_revision INTEGER NOT NULL CHECK(source_revision >= 0),
+    UNIQUE(region_id, world_space_id),
+    FOREIGN KEY(layer_id, world_space_id)
+        REFERENCES ground_cover_layers(layer_id, world_space_id) ON DELETE CASCADE
+) STRICT;
+
+CREATE TABLE ground_cover_region_cell_masks (
+    region_id BLOB NOT NULL,
+    world_space_id INTEGER NOT NULL,
+    cell_x INTEGER NOT NULL,
+    cell_z INTEGER NOT NULL,
+    resolution INTEGER NOT NULL CHECK(resolution BETWEEN 1 AND 64),
+    coverage BLOB NOT NULL CHECK(length(coverage) = resolution * resolution),
+    source_revision INTEGER NOT NULL CHECK(source_revision >= 0),
+    PRIMARY KEY(region_id, world_space_id, cell_x, cell_z),
+    FOREIGN KEY(region_id, world_space_id)
+        REFERENCES ground_cover_regions(region_id, world_space_id) ON DELETE CASCADE,
+    FOREIGN KEY(world_space_id, cell_x, cell_z)
+        REFERENCES source_cells(world_space_id, cell_x, cell_z) ON DELETE CASCADE
+) STRICT, WITHOUT ROWID;
+
+INSERT INTO ground_cover_visuals(
+    visual_id, visual_key, display_name, visual_family, source_revision
+)
+SELECT species_id, species_key, species_key, 0, 1
+FROM ground_cover_species_v7;
+
+INSERT INTO ground_cover_card_visuals(
+    visual_id, built_in_atlas_version, bottom_color_r, bottom_color_g, bottom_color_b,
+    top_color_r, top_color_g, top_color_b, minimum_card_height, maximum_card_height,
+    minimum_card_width, maximum_card_width, flattened_card_probability,
+    maximum_wind_displacement
+)
+SELECT species_id, 1, bottom_color_r, bottom_color_g, bottom_color_b,
+       top_color_r, top_color_g, top_color_b, minimum_card_height, maximum_card_height,
+       minimum_card_width, maximum_card_width, flattened_card_probability,
+       maximum_wind_displacement
+FROM ground_cover_species_v7;
+
+INSERT INTO ground_cover_presets(
+    preset_id, preset_key, display_name, enabled, visual_id, density_per_square_meter, seed,
+    source_revision
+)
+SELECT layer_id, layer_key || '/preset/' || lower(hex(layer_id)), layer_key, 1, species_id,
+       density_per_square_meter, seed, 1
+FROM ground_cover_layers_v7;
+
+INSERT INTO ground_cover_layers(
+    layer_id, world_space_id, layer_key, display_name, enabled, sort_order, source_revision
+)
+SELECT layer_id, world_space_id, layer_key, layer_key, 1, 0, 1
+FROM ground_cover_layers_v7;
+
+INSERT INTO ground_cover_regions(
+    region_id, layer_id, world_space_id, preset_id, display_name, enabled, density_multiplier,
+    source_revision
+)
+SELECT layer_id, layer_id, world_space_id, layer_id, 'Existing coverage', 1, 1.0, 1
+FROM ground_cover_layers_v7;
+
+INSERT INTO ground_cover_region_cell_masks(
+    region_id, world_space_id, cell_x, cell_z, resolution, coverage, source_revision
+)
+SELECT layer_id, world_space_id, cell_x, cell_z, resolution, coverage, source_revision
+FROM ground_cover_cell_masks_v7;
+
+DROP TABLE ground_cover_cell_masks_v7;
+DROP TABLE ground_cover_layers_v7;
+DROP TABLE ground_cover_species_v7;
+
+PRAGMA user_version = 8;
+"#;
+
+pub const PROJECT_MIGRATION_8_TO_9: &str = r#"
+ALTER TABLE ground_cover_card_visuals ADD COLUMN recipe_variant_count INTEGER
+    CHECK(recipe_variant_count BETWEEN 1 AND 8);
+ALTER TABLE ground_cover_card_visuals ADD COLUMN recipe_blade_count INTEGER
+    CHECK(recipe_blade_count BETWEEN 1 AND 128);
+ALTER TABLE ground_cover_card_visuals ADD COLUMN recipe_seed INTEGER
+    CHECK(recipe_seed BETWEEN 0 AND 4294967295);
+ALTER TABLE ground_cover_card_visuals ADD COLUMN recipe_minimum_blade_height REAL;
+ALTER TABLE ground_cover_card_visuals ADD COLUMN recipe_maximum_blade_height REAL;
+ALTER TABLE ground_cover_card_visuals ADD COLUMN recipe_base_jitter REAL;
+ALTER TABLE ground_cover_card_visuals ADD COLUMN recipe_minimum_blade_half_width REAL;
+ALTER TABLE ground_cover_card_visuals ADD COLUMN recipe_maximum_blade_half_width REAL;
+ALTER TABLE ground_cover_card_visuals ADD COLUMN recipe_maximum_lean REAL;
+ALTER TABLE ground_cover_card_visuals ADD COLUMN recipe_maximum_curve REAL;
+ALTER TABLE ground_cover_card_visuals ADD COLUMN recipe_maximum_s_curve REAL;
+PRAGMA user_version = 9;
 "#;
 
 pub const RUNTIME_SCHEMA: &str = r#"
@@ -330,7 +527,11 @@ CREATE TABLE ground_cover_species (
     minimum_card_width REAL NOT NULL CHECK(minimum_card_width > 0.0),
     maximum_card_width REAL NOT NULL CHECK(maximum_card_width >= minimum_card_width),
     flattened_card_probability REAL NOT NULL CHECK(flattened_card_probability BETWEEN 0.0 AND 1.0),
-    maximum_wind_displacement REAL NOT NULL CHECK(maximum_wind_displacement >= 0.0)
+    maximum_wind_displacement REAL NOT NULL CHECK(maximum_wind_displacement >= 0.0),
+    artwork_resolution INTEGER NOT NULL CHECK(artwork_resolution = 256),
+    artwork_variant_count INTEGER NOT NULL CHECK(artwork_variant_count BETWEEN 1 AND 8),
+    artwork_mip_level_count INTEGER NOT NULL CHECK(artwork_mip_level_count = 9),
+    artwork_coverage_mips BLOB NOT NULL
 ) STRICT;
 
 CREATE TABLE page_dependencies (
@@ -392,5 +593,5 @@ CREATE TABLE page_terrain_surfaces (
         REFERENCES cell_pages(world_space_id, cell_x, cell_z, domain, lod)
 ) STRICT, WITHOUT ROWID;
 
-PRAGMA user_version = 7;
+PRAGMA user_version = 8;
 "#;

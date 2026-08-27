@@ -33,9 +33,14 @@ use world_db::{
     SourceObjectPaletteRecord, SourceObjectRecord, SourceObjectTransform, SourceObjectViewRecord,
 };
 
+use crate::catalog_editing::GroundCoverRegionWorkingSet;
+use crate::domain_editing::DenseDomainWorkingSets;
 use crate::editing::{EditorHistory, EditorObjectWorkingSet, EditorSelection};
+use crate::ground_cover_catalog::GroundCoverCatalogWorkingSet;
 use crate::preview::{EditorPreviewMode, PreviewModeState};
 use crate::project_store::ProjectEditorStore;
+use crate::publication::RuntimePublicationState;
+use crate::saving::EditorSaveCoordinator;
 use crate::shell::EditorInputCapture;
 use crate::tools::{EditorToolRegistry, OBJECT_TOOL};
 use crate::workspaces::EditorWorkspace;
@@ -455,34 +460,72 @@ pub(crate) fn handle_editor_shortcuts(
     capture: Res<EditorInputCapture>,
     gizmo: Res<TransformGizmoState>,
     mut gizmo_settings: ResMut<TransformGizmoSettings>,
-    mut project: ResMut<ProjectEditorStore>,
     mut selection: ResMut<EditorSelection>,
     mut objects: ResMut<EditorObjectWorkingSet>,
+    mut dense_domains: ResMut<DenseDomainWorkingSets>,
+    mut regions: ResMut<GroundCoverRegionWorkingSet>,
+    mut ground_cover_catalog: ResMut<GroundCoverCatalogWorkingSet>,
     mut history: ResMut<EditorHistory>,
+    publication: Res<RuntimePublicationState>,
+    mut save: ResMut<EditorSaveCoordinator>,
+    tools: Res<EditorToolRegistry>,
 ) {
-    if capture.wants_keyboard || gizmo.active || objects.saving() {
+    let object_tool_active = tools
+        .active(EditorWorkspace::World)
+        .is_some_and(|tool| tool.id == OBJECT_TOOL.id);
+    if capture.wants_keyboard
+        || (object_tool_active && gizmo.active)
+        || objects.saving()
+        || dense_domains.saving()
+        || regions.saving()
+        || ground_cover_catalog.saving()
+        || save.active()
+    {
         return;
     }
 
-    if keys.just_pressed(KeyCode::Digit1) {
+    if object_tool_active && keys.just_pressed(KeyCode::Digit1) {
         gizmo_settings.mode = TransformGizmoMode::Translate;
-    } else if keys.just_pressed(KeyCode::Digit2) {
+    } else if object_tool_active && keys.just_pressed(KeyCode::Digit2) {
         gizmo_settings.mode = TransformGizmoMode::Rotate;
-    } else if keys.just_pressed(KeyCode::Digit3) {
+    } else if object_tool_active && keys.just_pressed(KeyCode::Digit3) {
         gizmo_settings.mode = TransformGizmoMode::Scale;
     }
 
     if command_pressed(&keys) && keys.just_pressed(KeyCode::KeyZ) {
         if shift_pressed(&keys) {
-            history.redo(&mut objects);
+            history.redo_with_catalog(
+                &mut objects,
+                &mut dense_domains,
+                &mut regions,
+                &mut ground_cover_catalog,
+            );
         } else {
-            history.undo(&mut objects);
+            history.undo_with_catalog(
+                &mut objects,
+                &mut dense_domains,
+                &mut regions,
+                &mut ground_cover_catalog,
+            );
         }
     } else if control_pressed(&keys) && keys.just_pressed(KeyCode::KeyY) {
-        history.redo(&mut objects);
-    } else if command_pressed(&keys) && keys.just_pressed(KeyCode::KeyS) {
-        objects.queue_save(&mut project);
+        history.redo_with_catalog(
+            &mut objects,
+            &mut dense_domains,
+            &mut regions,
+            &mut ground_cover_catalog,
+        );
+    } else if command_pressed(&keys) && keys.just_pressed(KeyCode::KeyS) && !publication.active() {
+        if ground_cover_catalog.dirty_count()
+            + regions.dirty_count()
+            + objects.dirty_count()
+            + dense_domains.dirty_count()
+            > 0
+        {
+            save.request_save();
+        }
     } else if (keys.just_pressed(KeyCode::Delete) || keys.just_pressed(KeyCode::Backspace))
+        && object_tool_active
         && !selection.selected_ids().is_empty()
         && history.delete_many(&mut objects, selection.selected_ids())
     {

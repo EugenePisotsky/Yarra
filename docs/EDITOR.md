@@ -227,9 +227,9 @@ and carries the smallest reversible data:
 - transaction groups for one user gesture.
 
 Long strokes may be chunked internally but remain one user-visible transaction. History has byte and
-entry budgets and may checkpoint committed history. Saving writes only dirty records in a database
-transaction. It does not serialize a full world or require all affected presentation pages to be
-resident.
+entry budgets and may checkpoint committed history. Saving writes only dirty records through bounded
+database transactions. It does not serialize a full world or require all affected presentation pages
+to be resident.
 
 The object editor implements this through a stable-ID working set with three deliberately separate
 states per touched placement:
@@ -245,12 +245,18 @@ future cook publishes a matching runtime generation. A saved deletion can be und
 a revision-advancing placement recreation, not an attempt to resurrect an ECS entity.
 
 `Cmd+Z` and `Cmd+Shift+Z` traverse the global command history (`Ctrl+Y` is also accepted for redo),
-`Delete`/`Backspace` records a deletion command, and `Cmd+S` submits dirty placement writes through
-the asynchronous authoring worker. Palette placement creates a random stable ID at the logical
-viewpoint and remains local until saved. One gizmo drag remains one command. Source revisions are
-checked inside the SQLite transaction; one conflict rolls back every write in that transaction and
-preserves the local command state for explicit resolution. Save is not cook: the broad runtime
-snapshot stays immutable and visibly stale until the later background-cooking pipeline exists.
+and `Delete`/`Backspace` records a deletion command. `Cmd+S` and the Save button create one
+user-facing save-all intent. A coordinator drains every dirty region, object, and dense cell through
+bounded domain transactions until all are clean; a failure or conflict stops the drain while
+retaining local state for explicit resolution. Save & Publish uses the same drain and starts cooking
+only after its final successful source transaction. The toolbar reports in-flight dirty records as
+saving rather than asking the user to submit them again.
+
+Palette placement creates a random stable ID at the logical viewpoint and remains local until
+saved. One gizmo drag remains one command. Source revisions are checked inside each SQLite
+transaction; one conflict rolls back every write in that transaction and preserves the local command
+state for explicit resolution. Save is not cook: the broad runtime snapshot stays immutable until
+the explicit publication stage adopts a validated generation.
 
 Derived work is revisioned and cancellable. A result is accepted only if its input revisions still
 match. Navigation, collision, thumbnails, cooked page previews, and other derived products follow the
@@ -371,7 +377,9 @@ The first slice provides:
   recreates the source placement at a newer revision;
 - a bounded 512-definition object palette exposed through the optional Assets window; placing its
   active definition at the logical viewpoint creates a UUID-backed, undoable placement command;
-- `Cmd+S` and compact-toolbar save-all-dirty behavior through the asynchronous project worker;
+- `Cmd+S` and compact-toolbar save-all-dirty behavior through one coordinator that drains typed,
+  bounded region/object/dense transactions; Save & Publish continues automatically into validated
+  runtime publication only after every source batch commits;
 - a bounded `ProjectWriter` object transaction that atomically creates, transforms, or deletes
   unique placements, compares expected source revisions, increments revisions, rolls back the whole
   transaction on conflict, and preserves local work on conflict or error; save-all chains bounded
@@ -384,16 +392,36 @@ The first slice provides:
   records, dirty/saving pinning, and an atomic mixed-domain writer capped at 64 unique records;
   every terrain/mask write compares an expected source revision and any conflict rolls back the
   complete batch;
+- a first Ground Cover tool vertical slice: the World tree selects a typed layer/region, the
+  Inspector and viewport toolbar expose Paint/Erase and a bounded radius, flat source terrain is
+  ray-projected without runtime entity ownership, and one interpolated drag produces compact
+  before/after mask rectangles in the same chronological undo/redo stack as object commands;
+- stable-ID ground-cover region creation and conservative empty-region deletion in that same
+  history; working regions overlay bounded project queries immediately, and a database-wide mask
+  check inside the region write transaction prevents unseen coverage from being cascade-deleted;
 - command history bounded by both entries and retained bytes, with checkpoint accounting; explicit
-  conflict choices can either retain local placement intent on the latest database revision or
-  accept the database version;
-- an asynchronous atomic sidecar journal that records dirty object base/current snapshots and
-  presentation metadata, validates project identity, removes itself when clean, and restores local
-  work without requiring the original query window;
+  conflict choices can either retain local object/dense intent on the latest compatible database
+  revision or accept the database version; incompatible dense shape changes are never byte-rebased;
+- an asynchronous atomic schema-4 sidecar journal that records dirty object presentation,
+  reusable ground-cover preset/visual definitions, stable-ID region catalog snapshots, and dense
+  `base`/`current`/`runtime` records, validates project identity, removes itself when every domain is
+  clean, restores work without its original query window, and remains backward-compatible with
+  schema-1 object-only, schema-2 object/dense, and schema-3 region journals;
 - a bounded derived-work coordinator plus a four-slot background executor that scopes products by
   cell or bounded region, coalesces newer input revisions, cancels obsolete work, rejects late
   results, and publishes typed object, terrain, ground-cover, collision, navigation, and overview
-  artifacts only after revision acceptance;
+  artifacts only after revision acceptance; ground-cover jobs call the same pure cell compiler as
+  runtime cooking and retain the exact runtime page, species dependencies, bounds, and diagnostics
+  rather than a source-mask summary;
+- bounded disposable ground-cover presentation: accepted source-derived pages replace only their
+  matching immutable cooked page, empty results allocate no GPU asset, origin rebases update the
+  derived asset without recompilation, and only the current 7×7 runtime-index window is presented;
+  dense records keep `base`, `current`, and `runtime` separately so saving does not make the stale
+  cooked generation appear current;
+- explicit background runtime publication through the shared whole-project cooker: only clean,
+  conflict-free source can start a cook; the complete staging SQLite database is validated and
+  atomically published, then the streamer reopens and verifies the exact generation ID before
+  resident pages and clean object/dense runtime baselines are adopted;
 - searchable cursor-paginated project Navigator and object-definition Assets queries on a dedicated
   bounded worker, including bounded back-cursor history and stale-result rejection;
 - a hysteretic Overview mode with bounded 5×5 coarse-tile demand; each tile runs one bounded 16×16
@@ -411,14 +439,14 @@ The first slice provides:
 
 Not implemented yet:
 
-- brush gestures and UI-authored terrain/ground-cover patch mutations (the bounded query, working-set,
-  revision-check, and save seams exist, but dense changes are not yet added to global undo/journal);
-- catalog mutation tools for terrain surfaces, ground-cover layers/species, object definitions, or
-  character presentation definitions;
+- terrain brush gestures and ground-cover explicit strength, Fill, and Smooth modes (the ground-cover
+  brush already has deterministic area sampling and adjustable hardness/falloff);
+- catalog mutation tools for terrain surfaces, ground-cover layers, object definitions, or
+  character presentation definitions; ground-cover presets/card visuals now support edit,
+  duplicate, dependency-checked deletion, and region reassignment;
 - shared-pivot rotation/scale and multi-object transform-field editing (the current gizmo applies
   yaw and scale deltas around each selected object's own origin, while inspector fields edit only
   the active item);
-- publishing derived editor artifacts as a newly cooked immutable runtime generation;
 - production collision/navigation data generation, physics, AI, or the complete game-system stack
   inside Gameplay preview (the current hosts establish isolated rendering and fixed-step lifecycle);
 - crouch/combat/equipment animation authoring and arbitrary clip banks beyond the currently cataloged
@@ -426,15 +454,15 @@ Not implemented yet:
 
 ## Planned increments
 
-1. Add bounded terrain and ground-cover brush gestures, compact reversible patch commands, dense
-   crash-journal entries, and explicit conflict resolution on the implemented working-set/writer seam.
-2. Publish accepted object/terrain/ground-cover derivations through an explicit cooker into a new
-   immutable runtime generation, retaining stale/failed diagnostics until generation adoption.
-3. Add explicit shared-pivot modes and batch transform-field operations when their tool semantics
+1. Continue Ground Cover Phase 3 from the implemented procedural card generator/runtime atlas to
+   direct R8 canvas painting, image import, and generated-to-painted conversion; then add terrain
+   brushes on the same bounded patch seam. Details are in
+   [`GROUND_COVER_AUTHORING_PLAN.md`](GROUND_COVER_AUTHORING_PLAN.md).
+2. Add explicit shared-pivot modes and batch transform-field operations when their tool semantics
    are defined, retaining the existing command and revision-checked transaction boundary.
-4. Replace source-summary Collision and Navigation previews with production derived data, then host
+3. Replace source-summary Collision and Navigation previews with production derived data, then host
    the intended gameplay system subset inside the existing isolated fixed-step session.
-5. Extend Animation with crouch/additional/combat banks as those catalog records are introduced,
+4. Extend Animation with crouch/additional/combat banks as those catalog records are introduced,
    without adding gender- or weapon-specific branches to the workspace shell.
 
 Each increment must be tested with a synthetic project substantially larger and denser than the

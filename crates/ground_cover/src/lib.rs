@@ -390,7 +390,7 @@ pub struct GroundCoverPageAsset {
 }
 
 /// Main-world attachment for one resident ground-cover page.
-#[derive(Component, Debug, Clone, Deref, DerefMut)]
+#[derive(Component, ExtractComponent, Debug, Clone, Deref, DerefMut)]
 pub struct GroundCoverPage3d(pub Handle<GroundCoverPageAsset>);
 
 /// Marks a camera as a view that should render ground cover and carries its resolved zoom.
@@ -450,6 +450,6 @@ mod tests {
 
     #[test]
     fn visible_instance_layout_matches_the_shader_storage_stride() {
-        assert_eq!(size_of::<renderer::VisibleInstanceGpu>(), 80);
+        assert_eq!(size_of::<renderer::VisibleInstanceGpu>(), 96);
     }
 }

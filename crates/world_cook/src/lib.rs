@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fs,
     path::Path,
     sync::OnceLock,
@@ -7,22 +7,25 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use glam::Vec2;
+use ground_cover_compile::{GroundCoverCellContext, compile_ground_cover_cell};
 use world::{
     AssetId, CellCoord, DEFAULT_CELL_SIZE, GameplayObjectInstance, GameplayObjectsPage,
-    GroundCoverCluster, GroundCoverLayerId, GroundCoverPage, GroundCoverSpecies,
-    GroundCoverSpeciesId, MAX_TERRAIN_SURFACES_PER_CELL, MAX_TERRAIN_WEIGHT_PAGES,
-    MAX_TERRAIN_WEIGHT_RESOLUTION, ObjectActivationPolicy, ObjectDefinitionId, PageCodec,
-    PageDomain, PageKey, PagePayload, RUNTIME_SCHEMA_VERSION, StableObjectId, StaticObjectInstance,
-    StaticObjectsPage, TerrainProfile, TerrainRenderPage, TerrainSurface, TerrainSurfaceId,
-    TerrainTextureLayer, TerrainTextureSet, TerrainTextureSetId, TerrainWeightPage, WorldSpaceId,
-    encode_page_payload,
+    GroundCoverLayerId, GroundCoverPresetId, GroundCoverRegionId, GroundCoverSpecies,
+    GroundCoverVisualId, MAX_GROUND_COVER_ARTWORK_ATLAS_LAYERS, MAX_TERRAIN_SURFACES_PER_CELL,
+    MAX_TERRAIN_WEIGHT_PAGES, MAX_TERRAIN_WEIGHT_RESOLUTION, ObjectActivationPolicy,
+    ObjectDefinitionId, PageCodec, PageDomain, PageKey, PagePayload, RUNTIME_SCHEMA_VERSION,
+    StableObjectId, StaticObjectInstance, StaticObjectsPage, TerrainProfile, TerrainRenderPage,
+    TerrainSurface, TerrainSurfaceId, TerrainTextureLayer, TerrainTextureSet, TerrainTextureSetId,
+    TerrainWeightPage, WorldSpaceId, encode_page_payload,
 };
 use world_db::{
     AssetVariantRecord, EncodedPage, PageDependencyRecord, PageGroundCoverSpeciesRecord,
     PageObjectDefinitionRecord, PageTerrainSurfaceRecord, ProjectDocument, RuntimeBuild,
     RuntimeCellRecord, RuntimeManifest, RuntimeObjectDefinition, SourceAssetRecord,
-    SourceAssetVariantRecord, SourceCellRecord, SourceGroundCoverCellMaskRecord,
-    SourceGroundCoverLayerRecord, SourceObjectDefinitionRecord, SourceObjectRecord,
+    SourceAssetVariantRecord, SourceCellRecord, SourceGroundCoverCardVisualRecord,
+    SourceGroundCoverCellMaskRecord, SourceGroundCoverLayerRecord, SourceGroundCoverPresetRecord,
+    SourceGroundCoverRegionRecord, SourceGroundCoverVisualDefinition,
+    SourceGroundCoverVisualRecord, SourceObjectDefinitionRecord, SourceObjectRecord,
     SourceTerrainCellSurfaceSlotRecord, SourceTerrainCellWeightPageRecord, WorldSpaceRecord,
     domain_bit, read_project_database, write_project_database, write_runtime_database,
 };
@@ -92,13 +95,13 @@ pub fn build_runtime(mut project: ProjectDocument) -> Result<RuntimeBuild> {
     project
         .terrain_cell_weight_pages
         .sort_by_key(|weights| (weights.space, weights.cell, weights.page));
-    project
-        .ground_cover_species
-        .sort_by_key(|species| species.id);
+    project.ground_cover_visuals.sort_by_key(|visual| visual.id);
+    project.ground_cover_presets.sort_by_key(|preset| preset.id);
     project.ground_cover_layers.sort_by_key(|layer| layer.id);
+    project.ground_cover_regions.sort_by_key(|region| region.id);
     project
         .ground_cover_masks
-        .sort_by_key(|mask| (mask.layer, mask.space, mask.cell));
+        .sort_by_key(|mask| (mask.region, mask.space, mask.cell));
     project.assets.sort_by_key(|asset| asset.id.0);
     project
         .asset_variants
@@ -307,16 +310,67 @@ pub fn build_runtime(mut project: ProjectDocument) -> Result<RuntimeBuild> {
         }
     }
     validate_terrain_weight_borders(&terrain_weights_by_cell)?;
-    let ground_cover_species_by_id: HashMap<_, _> = project
-        .ground_cover_species
+    let ground_cover_visuals_by_id: HashMap<_, _> = project
+        .ground_cover_visuals
         .iter()
-        .map(|species| (species.id, species))
+        .map(|visual| (visual.id, visual))
         .collect();
-    if ground_cover_species_by_id.len() != project.ground_cover_species.len() {
-        bail!("ground-cover species IDs must be unique");
+    if ground_cover_visuals_by_id.len() != project.ground_cover_visuals.len() {
+        bail!("ground-cover visual IDs must be unique");
     }
-    for species in &project.ground_cover_species {
-        validate_ground_cover_species(species)?;
+    if project
+        .ground_cover_visuals
+        .iter()
+        .map(|visual| visual.key.as_str())
+        .collect::<HashSet<_>>()
+        .len()
+        != project.ground_cover_visuals.len()
+    {
+        bail!("ground-cover visual keys must be unique");
+    }
+    let mut ground_cover_species_by_visual = HashMap::new();
+    for visual in &project.ground_cover_visuals {
+        validate_ground_cover_visual(visual)?;
+        ground_cover_species_by_visual.insert(visual.id, visual.runtime_species());
+    }
+    let artwork_layers = ground_cover_species_by_visual
+        .values()
+        .map(|species| u32::from(species.artwork.variant_count))
+        .sum::<u32>();
+    if artwork_layers > MAX_GROUND_COVER_ARTWORK_ATLAS_LAYERS {
+        bail!(
+            "ground-cover visuals require {artwork_layers} artwork layers; the bounded runtime atlas supports {}",
+            MAX_GROUND_COVER_ARTWORK_ATLAS_LAYERS
+        );
+    }
+    let ground_cover_presets_by_id: HashMap<_, _> = project
+        .ground_cover_presets
+        .iter()
+        .map(|preset| (preset.id, preset))
+        .collect();
+    if ground_cover_presets_by_id.len() != project.ground_cover_presets.len() {
+        bail!("ground-cover preset IDs must be unique");
+    }
+    if project
+        .ground_cover_presets
+        .iter()
+        .map(|preset| preset.key.as_str())
+        .collect::<HashSet<_>>()
+        .len()
+        != project.ground_cover_presets.len()
+    {
+        bail!("ground-cover preset keys must be unique");
+    }
+    for preset in &project.ground_cover_presets {
+        if preset.key.is_empty()
+            || preset.display_name.is_empty()
+            || preset.source_revision < 0
+            || !ground_cover_visuals_by_id.contains_key(&preset.visual)
+            || !preset.density_per_square_meter.is_finite()
+            || preset.density_per_square_meter <= 0.0
+        {
+            bail!("ground-cover preset {:?} is invalid", preset.id);
+        }
     }
     let ground_cover_layers_by_id: HashMap<_, _> = project
         .ground_cover_layers
@@ -327,35 +381,56 @@ pub fn build_runtime(mut project: ProjectDocument) -> Result<RuntimeBuild> {
         bail!("ground-cover layer IDs must be unique");
     }
     for layer in &project.ground_cover_layers {
-        if !spaces_by_id.contains_key(&layer.space) {
+        if layer.key.is_empty()
+            || layer.display_name.is_empty()
+            || layer.source_revision < 0
+            || !spaces_by_id.contains_key(&layer.space)
+        {
             bail!(
-                "ground-cover layer {:?} references a missing world space",
+                "ground-cover layer {:?} is invalid or references a missing world space",
                 layer.id
             );
         }
-        if !ground_cover_species_by_id.contains_key(&layer.species) {
+    }
+    let ground_cover_regions_by_id: HashMap<_, _> = project
+        .ground_cover_regions
+        .iter()
+        .map(|region| (region.id, region))
+        .collect();
+    if ground_cover_regions_by_id.len() != project.ground_cover_regions.len() {
+        bail!("ground-cover region IDs must be unique");
+    }
+    for region in &project.ground_cover_regions {
+        let Some(layer) = ground_cover_layers_by_id.get(&region.layer) else {
             bail!(
-                "ground-cover layer {:?} references a missing species",
-                layer.id
+                "ground-cover region {:?} references a missing layer",
+                region.id
             );
-        }
-        if !layer.density_per_square_meter.is_finite() || layer.density_per_square_meter <= 0.0 {
-            bail!("ground-cover layer {:?} has an invalid density", layer.id);
+        };
+        if region.display_name.is_empty()
+            || region.source_revision < 0
+            || layer.space != region.space
+            || !ground_cover_presets_by_id.contains_key(&region.preset)
+            || !region.density_multiplier.is_finite()
+            || region.density_multiplier <= 0.0
+        {
+            bail!("ground-cover region {:?} is invalid", region.id);
         }
     }
     let mut ground_cover_masks_by_cell: BTreeMap<
         (WorldSpaceId, CellCoord),
         Vec<&SourceGroundCoverCellMaskRecord>,
     > = BTreeMap::new();
+    let mut preset_resolution_by_cell = HashMap::new();
     for mask in &project.ground_cover_masks {
-        let Some(layer) = ground_cover_layers_by_id.get(&mask.layer) else {
+        let Some(region) = ground_cover_regions_by_id.get(&mask.region) else {
             bail!(
-                "ground-cover mask references missing layer {:?}",
-                mask.layer
+                "ground-cover mask references missing region {:?}",
+                mask.region
             );
         };
-        if layer.space != mask.space {
-            bail!("ground-cover mask and layer belong to different world spaces");
+        if region.space != mask.space {
+            bail!("ground-cover mask and region belong to different world spaces");
         }
         if !source_cells.contains(&(mask.space, mask.cell)) {
             bail!("ground-cover mask references missing cell {:?}", mask.cell);
@@ -364,9 +439,16 @@ pub fn build_runtime(mut project: ProjectDocument) -> Result<RuntimeBuild> {
         if resolution == 0 || mask.coverage.len() != resolution * resolution {
             bail!(
                 "ground-cover mask {:?}/{:?} has invalid resolution or payload size",
-                mask.layer,
+                mask.region,
                 mask.cell
             );
+        }
+        let resolution_key = (mask.space, mask.cell, region.preset);
+        if preset_resolution_by_cell
+            .insert(resolution_key, mask.resolution)
+            .is_some_and(|existing| existing != mask.resolution)
+        {
+            bail!("overlapping regions using one preset must use the same mask resolution");
         }
         ground_cover_masks_by_cell
             .entry((mask.space, mask.cell))
@@ -470,9 +552,15 @@ pub fn build_runtime(mut project: ProjectDocument) -> Result<RuntimeBuild> {
         content_hasher.update(&space.maximum_y.to_bits().to_le_bytes());
     }
     hash_terrain_catalog(&mut content_hasher, &project);
-    for species in &project.ground_cover_species {
+    for visual in &project.ground_cover_visuals {
+        let species = &ground_cover_species_by_visual[&visual.id];
         content_hasher.update(&species.id.0);
         content_hasher.update(species.key.as_bytes());
+        content_hasher.update(visual.display_name.as_bytes());
+        content_hasher.update(&visual.source_revision.to_le_bytes());
+        let SourceGroundCoverVisualDefinition::CardCluster(card) = &visual.definition;
+        content_hasher.update(&card.built_in_atlas_version.to_le_bytes());
+        content_hasher.update(&[u8::from(card.procedural_recipe.is_some())]);
         for color in species.bottom_color.into_iter().chain(species.top_color) {
             content_hasher.update(&color.to_bits().to_le_bytes());
         }
@@ -482,17 +570,44 @@ pub fn build_runtime(mut project: ProjectDocument) -> Result<RuntimeBuild> {
         content_hasher.update(&species.maximum_card_width.to_bits().to_le_bytes());
         content_hasher.update(&species.flattened_card_probability.to_bits().to_le_bytes());
         content_hasher.update(&species.maximum_wind_displacement.to_bits().to_le_bytes());
+        content_hasher.update(&species.artwork.resolution.to_le_bytes());
+        content_hasher.update(&[
+            species.artwork.variant_count,
+            species.artwork.mip_level_count,
+        ]);
+        content_hasher.update(&species.artwork.coverage_mips);
+    }
+    for preset in &project.ground_cover_presets {
+        content_hasher.update(&preset.id.0);
+        content_hasher.update(preset.key.as_bytes());
+        content_hasher.update(preset.display_name.as_bytes());
+        content_hasher.update(&[u8::from(preset.enabled)]);
+        content_hasher.update(&preset.visual.0);
+        content_hasher.update(&preset.density_per_square_meter.to_bits().to_le_bytes());
+        content_hasher.update(&preset.seed.to_le_bytes());
+        content_hasher.update(&preset.source_revision.to_le_bytes());
     }
     for layer in &project.ground_cover_layers {
         content_hasher.update(&layer.id.0);
         content_hasher.update(&layer.space.0.to_le_bytes());
         content_hasher.update(layer.key.as_bytes());
-        content_hasher.update(&layer.species.0);
-        content_hasher.update(&layer.density_per_square_meter.to_bits().to_le_bytes());
-        content_hasher.update(&layer.seed.to_le_bytes());
+        content_hasher.update(layer.display_name.as_bytes());
+        content_hasher.update(&[u8::from(layer.enabled)]);
+        content_hasher.update(&layer.sort_order.to_le_bytes());
+        content_hasher.update(&layer.source_revision.to_le_bytes());
+    }
+    for region in &project.ground_cover_regions {
+        content_hasher.update(&region.id.0);
+        content_hasher.update(&region.layer.0);
+        content_hasher.update(&region.space.0.to_le_bytes());
+        content_hasher.update(&region.preset.0);
+        content_hasher.update(region.display_name.as_bytes());
+        content_hasher.update(&[u8::from(region.enabled)]);
+        content_hasher.update(&region.density_multiplier.to_bits().to_le_bytes());
+        content_hasher.update(&region.source_revision.to_le_bytes());
     }
     for mask in &project.ground_cover_masks {
-        content_hasher.update(&mask.layer.0);
+        content_hasher.update(&mask.region.0);
         content_hasher.update(&mask.space.0.to_le_bytes());
         content_hasher.update(&mask.cell.x.to_le_bytes());
         content_hasher.update(&mask.cell.z.to_le_bytes());
@@ -587,63 +702,75 @@ pub fn build_runtime(mut project: ProjectDocument) -> Result<RuntimeBuild> {
         let mut maximum_ground_cover_y = source_cell.height;
         if let Some(masks) = ground_cover_masks_by_cell.get(&(source_cell.space, source_cell.cell))
         {
-            let cell_size = spaces_by_id[&source_cell.space].cell_size;
-            let mut clusters = Vec::new();
-            let mut depended_species = HashSet::new();
-            for mask in masks {
-                let layer = ground_cover_layers_by_id[&mask.layer];
-                let species = ground_cover_species_by_id[&layer.species];
-                let resolution = usize::from(mask.resolution);
-                let cluster_size = cell_size / resolution as f32;
-                for (index, coverage) in mask.coverage.iter().copied().enumerate() {
-                    if coverage == 0 {
-                        continue;
-                    }
-                    let cluster_x = index % resolution;
-                    let cluster_z = index / resolution;
-                    let coverage_half_extent = cluster_size * 0.5;
-                    let horizontal_card_reach =
-                        species.maximum_card_height + species.maximum_wind_displacement;
-                    clusters.push(GroundCoverCluster {
-                        species: species.id,
-                        local_center: [
-                            (cluster_x as f32 + 0.5) * cluster_size,
-                            source_cell.height + species.maximum_card_height * 0.5,
-                            (cluster_z as f32 + 0.5) * cluster_size,
-                        ],
-                        half_extents: [
-                            coverage_half_extent + horizontal_card_reach,
-                            species.maximum_card_height * 0.5,
-                            coverage_half_extent + horizontal_card_reach,
-                        ],
-                        coverage_half_extents: [coverage_half_extent, coverage_half_extent],
-                        density_per_square_meter: layer.density_per_square_meter
-                            * f32::from(coverage)
-                            / 255.0,
-                        seed: ground_cover_cluster_seed(layer.seed, source_cell.cell, index as u32),
-                    });
-                    depended_species.insert(species.id);
-                    maximum_ground_cover_y = maximum_ground_cover_y
-                        .max(source_cell.height + species.maximum_card_height);
-                }
-            }
-            if !clusters.is_empty() {
+            let region_ids = masks
+                .iter()
+                .map(|mask| mask.region)
+                .collect::<BTreeSet<_>>();
+            let bounded_regions = region_ids
+                .iter()
+                .map(|region| (*ground_cover_regions_by_id[region]).clone())
+                .collect::<Vec<_>>();
+            let layer_ids = bounded_regions
+                .iter()
+                .map(|region| region.layer)
+                .collect::<BTreeSet<_>>();
+            let preset_ids = bounded_regions
+                .iter()
+                .map(|region| region.preset)
+                .collect::<BTreeSet<_>>();
+            let bounded_layers = layer_ids
+                .iter()
+                .map(|layer| (*ground_cover_layers_by_id[layer]).clone())
+                .collect::<Vec<_>>();
+            let bounded_presets = preset_ids
+                .iter()
+                .map(|preset| (*ground_cover_presets_by_id[preset]).clone())
+                .collect::<Vec<_>>();
+            let visual_ids = bounded_presets
+                .iter()
+                .map(|preset| preset.visual)
+                .collect::<BTreeSet<_>>();
+            let bounded_visuals = visual_ids
+                .iter()
+                .map(|visual| (*ground_cover_visuals_by_id[visual]).clone())
+                .collect::<Vec<_>>();
+            let compiled = compile_ground_cover_cell(
+                GroundCoverCellContext {
+                    space: source_cell.space,
+                    cell: source_cell.cell,
+                    cell_size: spaces_by_id[&source_cell.space].cell_size,
+                    ground_height: source_cell.height,
+                    visuals: &bounded_visuals,
+                    presets: &bounded_presets,
+                    layers: &bounded_layers,
+                    regions: &bounded_regions,
+                },
+                masks.iter().copied(),
+            )
+            .with_context(|| {
+                format!(
+                    "failed to compile ground cover for space {:?}, cell {:?}",
+                    source_cell.space, source_cell.cell
+                )
+            })?;
+            maximum_ground_cover_y = compiled.maximum_y;
+            if !compiled.page.clusters.is_empty() {
                 let key = PageKey {
                     space: source_cell.space,
                     cell: source_cell.cell,
                     domain: PageDomain::GroundCover,
                     lod: 0,
                 };
-                let gpu_bytes_estimate = clusters.len() as u64 * 64;
+                let gpu_bytes_estimate = compiled.page.clusters.len() as u64 * 64;
                 let page = encoded_page(
                     key,
-                    PagePayload::GroundCover(GroundCoverPage { clusters }),
+                    PagePayload::GroundCover(compiled.page),
                     gpu_bytes_estimate,
                 )?;
                 hash_page(&mut content_hasher, &page);
                 pages.push(page);
                 domain_mask |= domain_bit(PageDomain::GroundCover);
-                for species in depended_species {
+                for species in compiled.depended_species {
                     ground_cover_species_dependencies
                         .push(PageGroundCoverSpeciesRecord { page: key, species });
                 }
@@ -770,7 +897,11 @@ pub fn build_runtime(mut project: ProjectDocument) -> Result<RuntimeBuild> {
             activation: definition.activation,
         })
         .collect();
-    let ground_cover_species = project.ground_cover_species.clone();
+    let ground_cover_species = project
+        .ground_cover_visuals
+        .iter()
+        .map(SourceGroundCoverVisualRecord::runtime_species)
+        .collect();
     let content_hash = *content_hasher.finalize().as_bytes();
     let generation_id = blake3::Hash::from_bytes(content_hash).to_hex()[..16].to_owned();
 
@@ -979,6 +1110,30 @@ fn hash_terrain_catalog(hasher: &mut blake3::Hasher, project: &ProjectDocument) 
     }
 }
 
+fn validate_ground_cover_visual(visual: &SourceGroundCoverVisualRecord) -> Result<()> {
+    if visual.key.is_empty() || visual.display_name.is_empty() || visual.source_revision < 0 {
+        bail!("ground-cover visual {:?} is invalid", visual.id);
+    }
+    let SourceGroundCoverVisualDefinition::CardCluster(card) = &visual.definition;
+    if card.built_in_atlas_version != 1 {
+        bail!(
+            "ground-cover visual {:?} uses unsupported built-in atlas version {}",
+            visual.id,
+            card.built_in_atlas_version
+        );
+    }
+    if card
+        .procedural_recipe
+        .is_some_and(|recipe| !recipe.is_valid())
+    {
+        bail!(
+            "ground-cover visual {:?} has an invalid procedural recipe",
+            visual.id
+        );
+    }
+    validate_ground_cover_species(&visual.runtime_species())
+}
+
 fn validate_ground_cover_species(species: &GroundCoverSpecies) -> Result<()> {
     let valid_color = |color: [f32; 3]| {
         color
@@ -1000,20 +1155,11 @@ fn validate_ground_cover_species(species: &GroundCoverSpecies) -> Result<()> {
         || !(0.0..=1.0).contains(&species.flattened_card_probability)
         || !species.maximum_wind_displacement.is_finite()
         || species.maximum_wind_displacement < 0.0
+        || !species.artwork.is_valid()
     {
         bail!("ground-cover species {:?} is invalid", species.id);
     }
     Ok(())
-}
-
-fn ground_cover_cluster_seed(seed: u32, cell: CellCoord, sample_index: u32) -> u32 {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(&seed.to_le_bytes());
-    hasher.update(&cell.x.to_le_bytes());
-    hasher.update(&cell.z.to_le_bytes());
-    hasher.update(&sample_index.to_le_bytes());
-    let bytes = hasher.finalize();
-    u32::from_le_bytes(bytes.as_bytes()[..4].try_into().expect("four seed bytes"))
 }
 
 fn encoded_page(
@@ -1090,8 +1236,18 @@ fn demo_project_document() -> ProjectDocument {
     let uncut_grass = TerrainSurfaceId(stable_id("uncut-grass-oilpt20"));
     let dried_grass = TerrainSurfaceId(stable_id("grass-dried-pjwhw0"));
     let tree_asset = AssetId(*blake3::hash(DEMO_TREE_KEY.as_bytes()).as_bytes());
-    let meadow_species = GroundCoverSpeciesId(stable_id("demo-meadow-grass"));
+    let meadow_visual = GroundCoverVisualId(stable_id("demo-meadow-grass"));
     let meadow_layer = GroundCoverLayerId(stable_id("demo-meadow-layer"));
+    let meadow_preset = GroundCoverPresetId(meadow_layer.0);
+    let meadow_region = GroundCoverRegionId(meadow_layer.0);
+    let meadow_preset_key = format!(
+        "demo-meadow/preset/{}",
+        meadow_layer
+            .0
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    );
     let tree_definition = definition_id("demo-tree");
     let proximity_marker_definition = definition_id("demo-proximity-marker");
     let mut cells = Vec::with_capacity(64 * 64 + 9 * 9);
@@ -1131,7 +1287,7 @@ fn demo_project_document() -> ProjectDocument {
             });
             if DEMO_MEADOW_CELL_RANGE.contains(&x) && DEMO_MEADOW_CELL_RANGE.contains(&z) {
                 ground_cover_masks.push(SourceGroundCoverCellMaskRecord {
-                    layer: meadow_layer,
+                    region: meadow_region,
                     space: overworld.id,
                     cell: CellCoord { x, z },
                     resolution: 16,
@@ -1268,25 +1424,43 @@ fn demo_project_document() -> ProjectDocument {
         ],
         terrain_cell_surface_slots,
         terrain_cell_weight_pages,
-        ground_cover_species: vec![GroundCoverSpecies {
-            id: meadow_species,
+        ground_cover_visuals: vec![SourceGroundCoverVisualRecord {
+            id: meadow_visual,
             key: "meadow-long-grass".into(),
-            bottom_color: [0.025, 0.055, 0.020],
-            top_color: [0.105, 0.205, 0.075],
-            minimum_card_height: 0.55,
-            maximum_card_height: 0.78,
-            minimum_card_width: 0.7,
-            maximum_card_width: 1.4,
-            flattened_card_probability: 0.2,
-            maximum_wind_displacement: 0.22,
+            display_name: "meadow-long-grass".into(),
+            source_revision: 1,
+            definition: SourceGroundCoverVisualDefinition::CardCluster(
+                SourceGroundCoverCardVisualRecord::original_meadow_v1(),
+            ),
+        }],
+        ground_cover_presets: vec![SourceGroundCoverPresetRecord {
+            id: meadow_preset,
+            key: meadow_preset_key,
+            display_name: "demo-meadow".into(),
+            enabled: true,
+            visual: meadow_visual,
+            density_per_square_meter: 5.0,
+            seed: 0x6f53_91d2,
+            source_revision: 1,
         }],
         ground_cover_layers: vec![SourceGroundCoverLayerRecord {
             id: meadow_layer,
             space: overworld_id,
             key: "demo-meadow".into(),
-            species: meadow_species,
-            density_per_square_meter: 5.0,
-            seed: 0x6f53_91d2,
+            display_name: "demo-meadow".into(),
+            enabled: true,
+            sort_order: 0,
+            source_revision: 1,
+        }],
+        ground_cover_regions: vec![SourceGroundCoverRegionRecord {
+            id: meadow_region,
+            layer: meadow_layer,
+            space: overworld_id,
+            preset: meadow_preset,
+            display_name: "Existing coverage".into(),
+            enabled: true,
+            density_multiplier: 1.0,
+            source_revision: 1,
         }],
         ground_cover_masks,
         assets: vec![SourceAssetRecord {
@@ -1559,7 +1733,12 @@ mod tests {
 
     #[test]
     fn demo_cook_is_large_logically_but_page_addressable() {
-        let build = build_runtime(demo_project_document()).unwrap();
+        let project = demo_project_document();
+        assert_eq!(project.ground_cover_visuals.len(), 1);
+        assert_eq!(project.ground_cover_presets.len(), 1);
+        assert_eq!(project.ground_cover_layers.len(), 1);
+        assert_eq!(project.ground_cover_regions.len(), 1);
+        let build = build_runtime(project).unwrap();
         assert_eq!(build.manifest.world_spaces.len(), 2);
         assert_eq!(build.manifest.default_world_space, WorldSpaceId(1));
         assert_eq!(build.cells.len(), 64 * 64 + 9 * 9);
@@ -1590,6 +1769,16 @@ mod tests {
             .filter(|page| page.key.domain == PageDomain::GroundCover)
             .collect::<Vec<_>>();
         assert_eq!(ground_cover_pages.len(), 60 * 60);
+        assert_eq!(ground_cover_pages[0].key.cell, CellCoord { x: -30, z: -30 });
+        assert_eq!(
+            ground_cover_pages[0]
+                .checksum
+                .iter()
+                .map(|byte| format!("{byte:02X}"))
+                .collect::<String>(),
+            "8057EB7845C9E4FBDA75D0D9A7E376D25C5BEB03ED5DF8B647DB15F15882294E",
+            "the source-model conversion must preserve the optimized runtime page payload"
+        );
         assert_eq!(build.ground_cover_species.len(), 1);
         assert_eq!(
             build.ground_cover_species_dependencies.len(),

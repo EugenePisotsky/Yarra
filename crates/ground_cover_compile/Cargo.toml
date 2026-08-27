@@ -1,0 +1,11 @@
+[package]
+name = "yarra-ground-cover-compile"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+blake3.workspace = true
+thiserror.workspace = true
+world.workspace = true
+world-db.workspace = true

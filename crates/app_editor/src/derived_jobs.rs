@@ -12,15 +12,24 @@ use std::{
 
 use bevy::prelude::*;
 use crossbeam_channel::{Receiver, Sender, TryRecvError, bounded};
-use world::{CellCoord, StableObjectId, WorldSpaceId};
+use ground_cover_compile::{
+    GroundCoverCellContext, GroundCoverCompileDiagnostics, compile_ground_cover_cell,
+};
+use world::{
+    CellCoord, GroundCoverPage as RuntimeGroundCoverPage, GroundCoverSpecies, StableObjectId,
+    WorldSpaceId,
+};
 use world_db::{
     DenseSourceRecord, ProjectReader, SourceCellRecord, SourceGroundCoverCellMaskRecord,
-    SourceObjectRecord, SourceTerrainCellWeightPageRecord,
+    SourceGroundCoverLayerRecord, SourceGroundCoverPresetRecord, SourceGroundCoverRegionRecord,
+    SourceGroundCoverVisualRecord, SourceObjectRecord, SourceTerrainCellWeightPageRecord,
 };
 
 use crate::{
+    catalog_editing::GroundCoverRegionWorkingSet,
     domain_editing::DenseDomainWorkingSets,
     editing::EditorObjectWorkingSet,
+    ground_cover_catalog::GroundCoverCatalogWorkingSet,
     project_store::ProjectEditorStore,
     tools::{DerivedProduct, EditorToolId, GROUND_COVER_TOOL, OBJECT_TOOL, TERRAIN_TOOL},
 };
@@ -94,9 +103,10 @@ pub(crate) enum DerivedArtifact {
         fingerprint: u64,
     },
     GroundCoverPage {
-        mask_count: usize,
-        texel_count: usize,
-        average_coverage: f32,
+        page: RuntimeGroundCoverPage,
+        species: Vec<GroundCoverSpecies>,
+        maximum_y: f32,
+        diagnostics: GroundCoverCompileDiagnostics,
         fingerprint: u64,
     },
     Collision {
@@ -134,12 +144,44 @@ impl DerivedArtifactStore {
         self.artifacts.len()
     }
 
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (DerivedJobKey, u64, &DerivedArtifact)> {
+        self.artifacts
+            .iter()
+            .map(|(key, (revision, artifact))| (*key, *revision, artifact))
+    }
+
     pub(crate) fn failure(&self, key: DerivedJobKey) -> Option<&str> {
         self.failures.get(&key).map(|(_, error)| error.as_str())
     }
 
     pub(crate) fn failed_jobs(&self) -> u64 {
         self.failed_jobs
+    }
+
+    /// A successful full cook proves the saved source is publishable, so old failure diagnostics
+    /// can be retired. Accepted artifacts remain useful: they are either valid for that checkpoint
+    /// or represent newer unsaved commands made while the cook was running.
+    pub(crate) fn clear_failures_for_generation_adoption(&mut self) {
+        self.failures.clear();
+    }
+
+    fn publish(
+        &mut self,
+        key: DerivedJobKey,
+        input_revision: u64,
+        result: Result<DerivedArtifact, String>,
+    ) {
+        match result {
+            Ok(artifact) => {
+                self.failures.remove(&key);
+                self.artifacts.insert(key, (input_revision, artifact));
+            }
+            Err(error) => {
+                self.failed_jobs = self.failed_jobs.saturating_add(1);
+                self.artifacts.remove(&key);
+                self.failures.insert(key, (input_revision, error));
+            }
+        }
     }
 }
 
@@ -317,7 +359,7 @@ impl DerivedJobScheduler {
 enum DerivedJobInput {
     Objects(Vec<SourceObjectRecord>),
     Terrain(Vec<SourceTerrainCellWeightPageRecord>),
-    GroundCover(Vec<SourceGroundCoverCellMaskRecord>),
+    GroundCover(GroundCoverCompileSnapshot),
     Spatial {
         cells: Vec<SourceCellRecord>,
         objects: Vec<SourceObjectRecord>,
@@ -327,6 +369,20 @@ enum DerivedJobInput {
         minimum: CellCoord,
         maximum: CellCoord,
     },
+    Invalid(String),
+}
+
+#[derive(Debug)]
+struct GroundCoverCompileSnapshot {
+    space: WorldSpaceId,
+    cell: CellCoord,
+    cell_size: f32,
+    ground_height: f32,
+    visuals: Vec<SourceGroundCoverVisualRecord>,
+    presets: Vec<SourceGroundCoverPresetRecord>,
+    layers: Vec<SourceGroundCoverLayerRecord>,
+    regions: Vec<SourceGroundCoverRegionRecord>,
+    masks: Vec<SourceGroundCoverCellMaskRecord>,
 }
 
 #[derive(Debug)]
@@ -414,6 +470,7 @@ fn build_artifact(
     input: DerivedJobInput,
 ) -> Result<DerivedArtifact, String> {
     match (product, input) {
+        (_, DerivedJobInput::Invalid(error)) => Err(error),
         (DerivedProduct::CookedObjectPage, DerivedJobInput::Objects(objects)) => {
             Ok(DerivedArtifact::CookedObjectPage {
                 object_count: objects.len(),
@@ -435,18 +492,40 @@ fn build_artifact(
                 fingerprint: fingerprint_terrain(&pages),
             })
         }
-        (DerivedProduct::GroundCoverPage, DerivedJobInput::GroundCover(masks)) => {
-            let texel_count = masks.iter().map(|mask| mask.coverage.len()).sum::<usize>();
-            let total = masks
+        (DerivedProduct::GroundCoverPage, DerivedJobInput::GroundCover(snapshot)) => {
+            let compiled = compile_ground_cover_cell(
+                GroundCoverCellContext {
+                    space: snapshot.space,
+                    cell: snapshot.cell,
+                    cell_size: snapshot.cell_size,
+                    ground_height: snapshot.ground_height,
+                    visuals: &snapshot.visuals,
+                    presets: &snapshot.presets,
+                    layers: &snapshot.layers,
+                    regions: &snapshot.regions,
+                },
+                snapshot.masks.iter(),
+            )
+            .map_err(|error| error.to_string())?;
+            let species = compiled
+                .depended_species
                 .iter()
-                .flat_map(|mask| mask.coverage.iter())
-                .map(|value| u64::from(*value))
-                .sum::<u64>();
+                .map(|species| {
+                    snapshot
+                        .visuals
+                        .iter()
+                        .find(|visual| visual.id.0 == species.0)
+                        .expect("the compiler only returns validated visual dependencies")
+                        .runtime_species()
+                })
+                .collect::<Vec<_>>();
+            let fingerprint = fingerprint_ground_cover_page(&compiled.page, &species);
             Ok(DerivedArtifact::GroundCoverPage {
-                mask_count: masks.len(),
-                texel_count,
-                average_coverage: normalized_average(total, texel_count),
-                fingerprint: fingerprint_ground_cover(&masks),
+                page: compiled.page,
+                species,
+                maximum_y: compiled.maximum_y,
+                diagnostics: compiled.diagnostics,
+                fingerprint,
             })
         }
         (DerivedProduct::Collision, DerivedJobInput::Spatial { cells, objects }) => {
@@ -580,12 +659,76 @@ fn fingerprint_terrain(pages: &[SourceTerrainCellWeightPageRecord]) -> u64 {
 fn fingerprint_ground_cover(masks: &[SourceGroundCoverCellMaskRecord]) -> u64 {
     masks.iter().fold(0xcbf29ce484222325, |hash, mask| {
         mask.coverage.iter().fold(
-            mask.layer
+            mask.region
                 .0
                 .iter()
                 .fold(hash, |hash, byte| fnv_byte(hash, *byte)),
             |hash, byte| fnv_byte(hash, *byte),
         )
+    })
+}
+
+fn fingerprint_ground_cover_page(
+    page: &RuntimeGroundCoverPage,
+    species: &[GroundCoverSpecies],
+) -> u64 {
+    let cluster_hash = page
+        .clusters
+        .iter()
+        .fold(0xcbf29ce484222325, |mut hash, cluster| {
+            for byte in cluster.species.0 {
+                hash = fnv_byte(hash, byte);
+            }
+            for value in cluster
+                .local_center
+                .into_iter()
+                .chain(cluster.half_extents)
+                .chain(cluster.coverage_half_extents)
+                .chain(std::iter::once(cluster.density_per_square_meter))
+            {
+                for byte in value.to_bits().to_le_bytes() {
+                    hash = fnv_byte(hash, byte);
+                }
+            }
+            for byte in cluster.seed.to_le_bytes() {
+                hash = fnv_byte(hash, byte);
+            }
+            hash
+        });
+    species.iter().fold(cluster_hash, |mut hash, species| {
+        for byte in species.id.0 {
+            hash = fnv_byte(hash, byte);
+        }
+        for byte in species.key.as_bytes() {
+            hash = fnv_byte(hash, *byte);
+        }
+        for value in species
+            .bottom_color
+            .into_iter()
+            .chain(species.top_color)
+            .chain([
+                species.minimum_card_height,
+                species.maximum_card_height,
+                species.minimum_card_width,
+                species.maximum_card_width,
+                species.flattened_card_probability,
+                species.maximum_wind_displacement,
+            ])
+        {
+            for byte in value.to_bits().to_le_bytes() {
+                hash = fnv_byte(hash, byte);
+            }
+        }
+        for byte in species.artwork.resolution.to_le_bytes() {
+            hash = fnv_byte(hash, byte);
+        }
+        hash = fnv_byte(hash, species.artwork.variant_count);
+        hash = fnv_byte(hash, species.artwork.mip_level_count);
+        species
+            .artwork
+            .coverage_mips
+            .iter()
+            .fold(hash, |hash, byte| fnv_byte(hash, *byte))
     })
 }
 
@@ -667,12 +810,19 @@ fn invalidate_object_products(
 
 fn invalidate_dense_products(
     dense: Res<DenseDomainWorkingSets>,
+    regions: Res<GroundCoverRegionWorkingSet>,
+    catalog: Res<GroundCoverCatalogWorkingSet>,
+    project: Res<ProjectEditorStore>,
     mut scheduler: ResMut<DerivedJobScheduler>,
 ) {
-    let revision = dense.edit_revision();
+    let revision = dense
+        .edit_revision()
+        .saturating_add(regions.edit_revision())
+        .saturating_add(catalog.edit_revision())
+        .saturating_add(project.source_epoch());
     let mut terrain_requests = HashMap::<DerivedJobKey, u64>::new();
     let mut ground_cover_requests = HashMap::<DerivedJobKey, u64>::new();
-    for record in dense.dirty_records() {
+    for record in dense.runtime_divergent_records() {
         let (tool, space, cell, requests) = match record {
             DenseSourceRecord::TerrainWeights(record) => (
                 TERRAIN_TOOL,
@@ -698,6 +848,24 @@ fn invalidate_dense_products(
             );
         }
     }
+    // Ground-cover definitions and regions affect every loaded cell that references coverage.
+    // Replacing the tool request set with all currently visible mask cells also keeps saved-but-
+    // unpublished authoring previews alive; the loaded source window is deliberately bounded.
+    for record in dense.current_records() {
+        let DenseSourceRecord::GroundCoverMask(record) = record else {
+            continue;
+        };
+        ground_cover_requests.insert(
+            DerivedJobKey {
+                product: DerivedProduct::GroundCoverPage,
+                scope: DerivedJobScope::Cell {
+                    space: record.space,
+                    cell: record.cell,
+                },
+            },
+            revision,
+        );
+    }
     scheduler.replace_tool_requests(TERRAIN_TOOL.id, terrain_requests);
     scheduler.replace_tool_requests(GROUND_COVER_TOOL.id, ground_cover_requests);
 }
@@ -708,12 +876,14 @@ fn dispatch_derived_jobs(
     project: Res<ProjectEditorStore>,
     objects: Res<EditorObjectWorkingSet>,
     dense: Res<DenseDomainWorkingSets>,
+    regions: Res<GroundCoverRegionWorkingSet>,
+    catalog: Res<GroundCoverCatalogWorkingSet>,
 ) {
     let Some(executor) = executor else {
         return;
     };
     while let Some(lease) = scheduler.lease_next() {
-        let input = snapshot_job_input(lease.key, &project, &objects, &dense);
+        let input = snapshot_job_input(lease.key, &project, &objects, &dense, &regions, &catalog);
         if executor
             .requests
             .try_send(DerivedExecutorRequest { lease, input })
@@ -739,21 +909,11 @@ fn receive_derived_results(
                 if completion != DerivedJobCompletion::Accepted {
                     continue;
                 }
-                match completed.result {
-                    Ok(artifact) => {
-                        artifacts.failures.remove(&completed.lease.key);
-                        artifacts.artifacts.insert(
-                            completed.lease.key,
-                            (completed.lease.input_revision, artifact),
-                        );
-                    }
-                    Err(error) => {
-                        artifacts.failed_jobs = artifacts.failed_jobs.saturating_add(1);
-                        artifacts
-                            .failures
-                            .insert(completed.lease.key, (completed.lease.input_revision, error));
-                    }
-                }
+                artifacts.publish(
+                    completed.lease.key,
+                    completed.lease.input_revision,
+                    completed.result,
+                );
             }
             Err(TryRecvError::Empty) => break,
             Err(TryRecvError::Disconnected) => {
@@ -769,6 +929,8 @@ fn snapshot_job_input(
     project: &ProjectEditorStore,
     objects: &EditorObjectWorkingSet,
     dense: &DenseDomainWorkingSets,
+    regions: &GroundCoverRegionWorkingSet,
+    catalog: &GroundCoverCatalogWorkingSet,
 ) -> DerivedJobInput {
     let object_records = source_objects(project, objects, key.scope);
     let dense_records = dense.current_records();
@@ -787,19 +949,15 @@ fn snapshot_job_input(
                 })
                 .collect(),
         ),
-        DerivedProduct::GroundCoverPage => DerivedJobInput::GroundCover(
-            dense_records
-                .into_iter()
-                .filter_map(|record| match record {
-                    DenseSourceRecord::GroundCoverMask(record)
-                        if scope_contains(key.scope, record.space, record.cell) =>
-                    {
-                        Some(record)
-                    }
-                    _ => None,
-                })
-                .collect(),
-        ),
+        DerivedProduct::GroundCoverPage => ground_cover_compile_snapshot(
+            key.scope,
+            project,
+            dense_records,
+            regions.current_records(project),
+            catalog,
+        )
+        .map(DerivedJobInput::GroundCover)
+        .unwrap_or_else(DerivedJobInput::Invalid),
         DerivedProduct::Collision | DerivedProduct::Navigation => DerivedJobInput::Spatial {
             cells: project
                 .cells()
@@ -825,6 +983,87 @@ fn snapshot_job_input(
             }
         }
     }
+}
+
+fn ground_cover_compile_snapshot(
+    scope: DerivedJobScope,
+    project: &ProjectEditorStore,
+    dense_records: Vec<DenseSourceRecord>,
+    region_records: Vec<SourceGroundCoverRegionRecord>,
+    catalog: &GroundCoverCatalogWorkingSet,
+) -> Result<GroundCoverCompileSnapshot, String> {
+    let DerivedJobScope::Cell { space, cell } = scope else {
+        return Err("ground-cover pages must be compiled for exactly one cell".into());
+    };
+    if project.ground_cover_masks_truncated() {
+        return Err("ground-cover source query was truncated; refusing a partial page".into());
+    }
+    let source_cell = project
+        .cells()
+        .iter()
+        .find(|record| record.space == space && record.cell == cell)
+        .ok_or_else(|| format!("source cell {cell:?} is not loaded"))?;
+    let cell_size = project
+        .manifest()
+        .and_then(|manifest| manifest.world_space(space))
+        .map(|world_space| world_space.cell_size)
+        .ok_or_else(|| format!("world-space metadata for {space:?} is not loaded"))?;
+    let masks = dense_records
+        .into_iter()
+        .filter_map(|record| match record {
+            DenseSourceRecord::GroundCoverMask(record)
+                if record.space == space && record.cell == cell =>
+            {
+                Some(record)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let region_ids = masks.iter().map(|mask| mask.region).collect::<HashSet<_>>();
+    let regions = region_records
+        .iter()
+        .filter(|region| region_ids.contains(&region.id))
+        .cloned()
+        .collect::<Vec<_>>();
+    let layer_ids = regions
+        .iter()
+        .map(|region| region.layer)
+        .collect::<HashSet<_>>();
+    let preset_ids = regions
+        .iter()
+        .map(|region| region.preset)
+        .collect::<HashSet<_>>();
+    let layers = project
+        .ground_cover_layers()
+        .iter()
+        .filter(|layer| layer_ids.contains(&layer.id))
+        .cloned()
+        .collect::<Vec<_>>();
+    let presets = catalog
+        .current_presets(project)
+        .into_iter()
+        .filter(|preset| preset_ids.contains(&preset.id))
+        .collect::<Vec<_>>();
+    let visual_ids = presets
+        .iter()
+        .map(|preset| preset.visual)
+        .collect::<HashSet<_>>();
+    let visuals = catalog
+        .current_visuals(project)
+        .into_iter()
+        .filter(|visual| visual_ids.contains(&visual.id))
+        .collect();
+    Ok(GroundCoverCompileSnapshot {
+        space,
+        cell,
+        cell_size,
+        ground_height: source_cell.height,
+        visuals,
+        presets,
+        layers,
+        regions,
+        masks,
+    })
 }
 
 fn source_objects(
@@ -905,6 +1144,44 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_accepted_revision_cannot_leave_an_older_artifact_presented() {
+        let key = key(1);
+        let mut artifacts = DerivedArtifactStore::default();
+        artifacts.publish(
+            key,
+            1,
+            Ok(DerivedArtifact::CookedObjectPage {
+                object_count: 1,
+                fingerprint: 41,
+            }),
+        );
+        assert!(artifacts.get(key).is_some());
+        artifacts.publish(key, 2, Err("compile failed".into()));
+        assert!(artifacts.get(key).is_none());
+        assert_eq!(artifacts.failure(key), Some("compile failed"));
+    }
+
+    #[test]
+    fn generation_adoption_retires_failures_without_dropping_valid_artifacts() {
+        let valid = key(1);
+        let failed = key(2);
+        let mut artifacts = DerivedArtifactStore::default();
+        artifacts.publish(
+            valid,
+            3,
+            Ok(DerivedArtifact::CookedObjectPage {
+                object_count: 2,
+                fingerprint: 17,
+            }),
+        );
+        artifacts.publish(failed, 3, Err("old failure".into()));
+
+        artifacts.clear_failures_for_generation_adoption();
+        assert!(artifacts.get(valid).is_some());
+        assert!(artifacts.failure(failed).is_none());
+    }
+
+    #[test]
     fn replacing_tool_demand_cancels_obsolete_cells() {
         let mut scheduler = DerivedJobScheduler::default();
         scheduler.replace_tool_requests(OBJECT_TOOL.id, [(key(1), 1), (key(2), 1)]);
@@ -958,6 +1235,68 @@ mod tests {
         assert_eq!(texel_count, 4);
         assert!(average_weight > 0.4 && average_weight < 0.5);
         assert_ne!(fingerprint, 0);
+    }
+
+    #[test]
+    fn ground_cover_executor_builds_the_exact_runtime_cell_page() {
+        let database =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../content/demo.project.sqlite");
+        let reader = ProjectReader::open_read_only(&database).unwrap();
+        let space = reader.manifest().default_world_space;
+        let cell = CellCoord { x: -30, z: -30 };
+        let source_cell = reader
+            .read_cells(space, cell, cell, 1)
+            .unwrap()
+            .records
+            .into_iter()
+            .next()
+            .unwrap();
+        let snapshot = GroundCoverCompileSnapshot {
+            space,
+            cell,
+            cell_size: reader.manifest().world_space(space).unwrap().cell_size,
+            ground_height: source_cell.height,
+            visuals: reader.read_ground_cover_visuals(16).unwrap(),
+            presets: reader.read_ground_cover_presets(16).unwrap(),
+            layers: reader.read_ground_cover_layers(space, 16).unwrap(),
+            regions: reader.read_ground_cover_regions(space, 16).unwrap(),
+            masks: reader
+                .read_ground_cover_masks_in_cells(space, cell, cell, 16)
+                .unwrap()
+                .records,
+        };
+        let artifact = build_artifact(
+            DerivedProduct::GroundCoverPage,
+            DerivedJobInput::GroundCover(snapshot),
+        )
+        .unwrap();
+        let DerivedArtifact::GroundCoverPage {
+            page,
+            species,
+            maximum_y,
+            diagnostics,
+            fingerprint,
+        } = artifact
+        else {
+            panic!("ground-cover work should publish a runtime page artifact");
+        };
+        assert_eq!(page.clusters.len(), 16 * 16);
+        assert_eq!(species.len(), 1);
+        assert!(maximum_y > source_cell.height);
+        assert_eq!(diagnostics.input_mask_count, 1);
+        assert_eq!(diagnostics.cluster_count, page.clusters.len());
+        assert_ne!(fingerprint, 0);
+        let mut visually_changed = species.clone();
+        visually_changed[0].top_color[0] = if visually_changed[0].top_color[0] < 0.5 {
+            1.0
+        } else {
+            0.0
+        };
+        assert_ne!(
+            fingerprint,
+            fingerprint_ground_cover_page(&page, &visually_changed),
+            "page identity must include species visuals even when cluster placement is unchanged"
+        );
     }
 
     #[test]

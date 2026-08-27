@@ -11,10 +11,14 @@ use engine::{WorldCatalog, WorldViewpoint};
 use world::{CellCoord, StableObjectId, WorldSpaceId};
 use world_db::{
     DenseSourceRecord, DenseSourceRecordKey, DenseSourceWrite, DenseSourceWriteTransactionResult,
-    ObjectWriteTransactionResult, ProjectManifest, ProjectReader, ProjectWriter, SourceCellRecord,
-    SourceGroundCoverCellMaskRecord, SourceGroundCoverLayerRecord, SourceObjectRecord,
-    SourceObjectViewRecord, SourceObjectWrite, SourceObjectWriteCommit,
-    SourceTerrainCellWeightPageRecord,
+    GroundCoverCatalogDependency, GroundCoverCatalogKey, GroundCoverCatalogRecord,
+    GroundCoverCatalogWrite, GroundCoverCatalogWriteCommit,
+    GroundCoverCatalogWriteTransactionResult, GroundCoverRegionWrite, GroundCoverRegionWriteCommit,
+    GroundCoverRegionWriteTransactionResult, ObjectWriteTransactionResult, ProjectManifest,
+    ProjectReader, ProjectWriter, SourceCellRecord, SourceGroundCoverCellMaskRecord,
+    SourceGroundCoverLayerRecord, SourceGroundCoverPresetRecord, SourceGroundCoverRegionRecord,
+    SourceGroundCoverVisualRecord, SourceObjectRecord, SourceObjectViewRecord, SourceObjectWrite,
+    SourceObjectWriteCommit, SourceTerrainCellWeightPageRecord,
 };
 
 use crate::preview::{EditorPreviewMode, PreviewModeState};
@@ -26,6 +30,9 @@ const MAX_SOURCE_CELLS: usize = 25;
 const MAX_SOURCE_OBJECTS: usize = 2_048;
 const MAX_SOURCE_TERRAIN_WEIGHT_PAGES: usize = MAX_SOURCE_CELLS * 2;
 const MAX_SOURCE_GROUND_COVER_LAYERS: usize = 64;
+const MAX_SOURCE_GROUND_COVER_REGIONS: usize = 512;
+const MAX_SOURCE_GROUND_COVER_PRESETS: usize = 256;
+const MAX_SOURCE_GROUND_COVER_VISUALS: usize = 256;
 const MAX_SOURCE_GROUND_COVER_MASKS: usize = 512;
 const PROJECT_REQUEST_CAPACITY: usize = 2;
 
@@ -141,6 +148,18 @@ struct PendingDenseSave {
 }
 
 #[derive(Debug, Clone)]
+struct PendingRegionSave {
+    request_id: u64,
+    writes: Vec<GroundCoverRegionWrite>,
+}
+
+#[derive(Debug, Clone)]
+struct PendingCatalogSave {
+    request_id: u64,
+    writes: Vec<GroundCoverCatalogWrite>,
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct ObjectSaveCompletion {
     pub(crate) request_id: u64,
     pub(crate) outcome: ObjectSaveOutcome,
@@ -172,6 +191,45 @@ pub(crate) enum DenseSaveOutcome {
     Failed(String),
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct RegionSaveCompletion {
+    pub(crate) request_id: u64,
+    pub(crate) outcome: RegionSaveOutcome,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum RegionSaveOutcome {
+    Committed(Vec<GroundCoverRegionWriteCommit>),
+    Conflict {
+        region: world::GroundCoverRegionId,
+        actual: Option<SourceGroundCoverRegionRecord>,
+    },
+    BlockedByCoverage {
+        region: world::GroundCoverRegionId,
+    },
+    Failed(String),
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct CatalogSaveCompletion {
+    pub(crate) request_id: u64,
+    pub(crate) outcome: CatalogSaveOutcome,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum CatalogSaveOutcome {
+    Committed(Vec<GroundCoverCatalogWriteCommit>),
+    Conflict {
+        key: GroundCoverCatalogKey,
+        actual: Option<GroundCoverCatalogRecord>,
+    },
+    BlockedByDependency {
+        key: GroundCoverCatalogKey,
+        dependency: GroundCoverCatalogDependency,
+    },
+    Failed(String),
+}
+
 #[derive(Resource, Default)]
 pub(crate) struct ProjectEditorStore {
     phase: ProjectStorePhase,
@@ -188,7 +246,10 @@ pub(crate) struct ProjectEditorStore {
     cells: Vec<SourceCellRecord>,
     objects: Vec<SourceObjectViewRecord>,
     terrain_weight_pages: Vec<SourceTerrainCellWeightPageRecord>,
+    ground_cover_visuals: Vec<SourceGroundCoverVisualRecord>,
+    ground_cover_presets: Vec<SourceGroundCoverPresetRecord>,
     ground_cover_layers: Vec<SourceGroundCoverLayerRecord>,
+    ground_cover_regions: Vec<SourceGroundCoverRegionRecord>,
     ground_cover_masks: Vec<SourceGroundCoverCellMaskRecord>,
     cells_truncated: bool,
     objects_truncated: bool,
@@ -205,6 +266,12 @@ pub(crate) struct ProjectEditorStore {
     pending_dense_save: Option<PendingDenseSave>,
     dense_save_in_flight: Option<u64>,
     dense_save_completion: Option<DenseSaveCompletion>,
+    pending_region_save: Option<PendingRegionSave>,
+    region_save_in_flight: Option<u64>,
+    region_save_completion: Option<RegionSaveCompletion>,
+    pending_catalog_save: Option<PendingCatalogSave>,
+    catalog_save_in_flight: Option<u64>,
+    catalog_save_completion: Option<CatalogSaveCompletion>,
     next_save_request_id: u64,
 }
 
@@ -259,6 +326,18 @@ impl ProjectEditorStore {
         &self.ground_cover_layers
     }
 
+    pub(crate) fn ground_cover_visuals(&self) -> &[SourceGroundCoverVisualRecord] {
+        &self.ground_cover_visuals
+    }
+
+    pub(crate) fn ground_cover_presets(&self) -> &[SourceGroundCoverPresetRecord] {
+        &self.ground_cover_presets
+    }
+
+    pub(crate) fn ground_cover_regions(&self) -> &[SourceGroundCoverRegionRecord] {
+        &self.ground_cover_regions
+    }
+
     pub(crate) fn ground_cover_masks(&self) -> &[SourceGroundCoverCellMaskRecord] {
         &self.ground_cover_masks
     }
@@ -310,6 +389,26 @@ impl ProjectEditorStore {
                     .iter()
                     .map(|record| record.source_revision),
             )
+            .chain(
+                self.ground_cover_visuals
+                    .iter()
+                    .map(|record| record.source_revision),
+            )
+            .chain(
+                self.ground_cover_presets
+                    .iter()
+                    .map(|record| record.source_revision),
+            )
+            .chain(
+                self.ground_cover_layers
+                    .iter()
+                    .map(|record| record.source_revision),
+            )
+            .chain(
+                self.ground_cover_regions
+                    .iter()
+                    .map(|record| record.source_revision),
+            )
             .max()
     }
 
@@ -318,6 +417,10 @@ impl ProjectEditorStore {
             || self.save_in_flight.is_some()
             || self.pending_dense_save.is_some()
             || self.dense_save_in_flight.is_some()
+            || self.pending_region_save.is_some()
+            || self.region_save_in_flight.is_some()
+            || self.pending_catalog_save.is_some()
+            || self.catalog_save_in_flight.is_some()
     }
 
     pub(crate) fn queue_object_transaction(
@@ -350,6 +453,40 @@ impl ProjectEditorStore {
     pub(crate) fn take_dense_save_completion(&mut self) -> Option<DenseSaveCompletion> {
         self.dense_save_completion.take()
     }
+
+    pub(crate) fn queue_region_transaction(
+        &mut self,
+        writes: Vec<GroundCoverRegionWrite>,
+    ) -> Option<u64> {
+        if writes.is_empty() || self.save_in_flight() || self.write_error.is_some() {
+            return None;
+        }
+        let request_id = self.next_save_request_id.wrapping_add(1).max(1);
+        self.next_save_request_id = request_id;
+        self.pending_region_save = Some(PendingRegionSave { request_id, writes });
+        Some(request_id)
+    }
+
+    pub(crate) fn take_region_save_completion(&mut self) -> Option<RegionSaveCompletion> {
+        self.region_save_completion.take()
+    }
+
+    pub(crate) fn queue_catalog_transaction(
+        &mut self,
+        writes: Vec<GroundCoverCatalogWrite>,
+    ) -> Option<u64> {
+        if writes.is_empty() || self.save_in_flight() || self.write_error.is_some() {
+            return None;
+        }
+        let request_id = self.next_save_request_id.wrapping_add(1).max(1);
+        self.next_save_request_id = request_id;
+        self.pending_catalog_save = Some(PendingCatalogSave { request_id, writes });
+        Some(request_id)
+    }
+
+    pub(crate) fn take_catalog_save_completion(&mut self) -> Option<CatalogSaveCompletion> {
+        self.catalog_save_completion.take()
+    }
 }
 
 #[derive(Resource)]
@@ -376,6 +513,8 @@ enum ProjectRequest {
     },
     SaveObjectTransaction(PendingObjectSave),
     SaveDenseTransaction(PendingDenseSave),
+    SaveRegionTransaction(PendingRegionSave),
+    SaveCatalogTransaction(PendingCatalogSave),
     Shutdown,
 }
 
@@ -395,6 +534,14 @@ enum ProjectResult {
         request_id: u64,
         result: Result<DenseSourceWriteTransactionResult, String>,
     },
+    SaveRegionTransaction {
+        request_id: u64,
+        result: Result<GroundCoverRegionWriteTransactionResult, String>,
+    },
+    SaveCatalogTransaction {
+        request_id: u64,
+        result: Result<GroundCoverCatalogWriteTransactionResult, String>,
+    },
 }
 
 struct ProjectOpenSnapshot {
@@ -406,7 +553,10 @@ struct ProjectWindowSnapshot {
     cells: Vec<SourceCellRecord>,
     objects: Vec<SourceObjectViewRecord>,
     terrain_weight_pages: Vec<SourceTerrainCellWeightPageRecord>,
+    ground_cover_visuals: Vec<SourceGroundCoverVisualRecord>,
+    ground_cover_presets: Vec<SourceGroundCoverPresetRecord>,
     ground_cover_layers: Vec<SourceGroundCoverLayerRecord>,
+    ground_cover_regions: Vec<SourceGroundCoverRegionRecord>,
     ground_cover_masks: Vec<SourceGroundCoverCellMaskRecord>,
     cells_truncated: bool,
     objects_truncated: bool,
@@ -500,6 +650,24 @@ fn project_worker(
                     } else {
                         Vec::new()
                     };
+                    let ground_cover_regions = if domains.ground_cover_masks {
+                        reader.read_ground_cover_regions(
+                            window.space,
+                            MAX_SOURCE_GROUND_COVER_REGIONS,
+                        )?
+                    } else {
+                        Vec::new()
+                    };
+                    let ground_cover_presets = if domains.ground_cover_masks {
+                        reader.read_ground_cover_presets(MAX_SOURCE_GROUND_COVER_PRESETS)?
+                    } else {
+                        Vec::new()
+                    };
+                    let ground_cover_visuals = if domains.ground_cover_masks {
+                        reader.read_ground_cover_visuals(MAX_SOURCE_GROUND_COVER_VISUALS)?
+                    } else {
+                        Vec::new()
+                    };
                     let ground_cover = domains
                         .ground_cover_masks
                         .then(|| {
@@ -519,7 +687,10 @@ fn project_worker(
                         terrain_weight_pages: terrain
                             .as_ref()
                             .map_or_else(Vec::new, |query| query.records.clone()),
+                        ground_cover_visuals,
+                        ground_cover_presets,
                         ground_cover_layers,
+                        ground_cover_regions,
                         ground_cover_masks: ground_cover
                             .as_ref()
                             .map_or_else(Vec::new, |query| query.records.clone()),
@@ -577,6 +748,40 @@ fn project_worker(
                     return;
                 }
             }
+            ProjectRequest::SaveRegionTransaction(request) => {
+                let result = match writer.as_mut() {
+                    Ok(writer) => writer
+                        .apply_ground_cover_region_transaction(&request.writes)
+                        .map_err(|error| error.to_string()),
+                    Err(error) => Err(error.clone()),
+                };
+                if results
+                    .send(ProjectResult::SaveRegionTransaction {
+                        request_id: request.request_id,
+                        result,
+                    })
+                    .is_err()
+                {
+                    return;
+                }
+            }
+            ProjectRequest::SaveCatalogTransaction(request) => {
+                let result = match writer.as_mut() {
+                    Ok(writer) => writer
+                        .apply_ground_cover_catalog_transaction(&request.writes)
+                        .map_err(|error| error.to_string()),
+                    Err(error) => Err(error.clone()),
+                };
+                if results
+                    .send(ProjectResult::SaveCatalogTransaction {
+                        request_id: request.request_id,
+                        result,
+                    })
+                    .is_err()
+                {
+                    return;
+                }
+            }
             ProjectRequest::Shutdown => return,
         }
     }
@@ -620,7 +825,10 @@ fn receive_project_results(
                         store.cells = snapshot.cells;
                         store.objects = snapshot.objects;
                         store.terrain_weight_pages = snapshot.terrain_weight_pages;
+                        store.ground_cover_visuals = snapshot.ground_cover_visuals;
+                        store.ground_cover_presets = snapshot.ground_cover_presets;
                         store.ground_cover_layers = snapshot.ground_cover_layers;
+                        store.ground_cover_regions = snapshot.ground_cover_regions;
                         store.ground_cover_masks = snapshot.ground_cover_masks;
                         store.cells_truncated = snapshot.cells_truncated;
                         store.objects_truncated = snapshot.objects_truncated;
@@ -680,6 +888,56 @@ fn receive_project_results(
                     Err(error) => DenseSaveOutcome::Failed(error),
                 };
                 store.dense_save_completion = Some(DenseSaveCompletion {
+                    request_id,
+                    outcome,
+                });
+            }
+            Ok(ProjectResult::SaveRegionTransaction { request_id, result }) => {
+                if store.region_save_in_flight == Some(request_id) {
+                    store.region_save_in_flight = None;
+                }
+                let outcome = match result {
+                    Ok(GroundCoverRegionWriteTransactionResult::Committed(commits)) => {
+                        store.source_epoch = store.source_epoch.wrapping_add(1).max(1);
+                        store.loaded_window = None;
+                        store.ground_cover_regions.clear();
+                        RegionSaveOutcome::Committed(commits)
+                    }
+                    Ok(GroundCoverRegionWriteTransactionResult::Conflict { region, actual }) => {
+                        RegionSaveOutcome::Conflict { region, actual }
+                    }
+                    Ok(GroundCoverRegionWriteTransactionResult::BlockedByCoverage { region }) => {
+                        RegionSaveOutcome::BlockedByCoverage { region }
+                    }
+                    Err(error) => RegionSaveOutcome::Failed(error),
+                };
+                store.region_save_completion = Some(RegionSaveCompletion {
+                    request_id,
+                    outcome,
+                });
+            }
+            Ok(ProjectResult::SaveCatalogTransaction { request_id, result }) => {
+                if store.catalog_save_in_flight == Some(request_id) {
+                    store.catalog_save_in_flight = None;
+                }
+                let outcome = match result {
+                    Ok(GroundCoverCatalogWriteTransactionResult::Committed(commits)) => {
+                        store.source_epoch = store.source_epoch.wrapping_add(1).max(1);
+                        store.loaded_window = None;
+                        store.ground_cover_visuals.clear();
+                        store.ground_cover_presets.clear();
+                        CatalogSaveOutcome::Committed(commits)
+                    }
+                    Ok(GroundCoverCatalogWriteTransactionResult::Conflict { key, actual }) => {
+                        CatalogSaveOutcome::Conflict { key, actual }
+                    }
+                    Ok(GroundCoverCatalogWriteTransactionResult::BlockedByDependency {
+                        key,
+                        dependency,
+                    }) => CatalogSaveOutcome::BlockedByDependency { key, dependency },
+                    Err(error) => CatalogSaveOutcome::Failed(error),
+                };
+                store.catalog_save_completion = Some(CatalogSaveCompletion {
                     request_id,
                     outcome,
                 });
@@ -754,7 +1012,10 @@ fn update_project_query_demand(
         store.cells.clear();
         store.objects.clear();
         store.terrain_weight_pages.clear();
+        store.ground_cover_visuals.clear();
+        store.ground_cover_presets.clear();
         store.ground_cover_layers.clear();
+        store.ground_cover_regions.clear();
         store.ground_cover_masks.clear();
         store.cells_truncated = false;
         store.objects_truncated = false;
@@ -821,12 +1082,31 @@ fn dispatch_project_save(
     if !matches!(store.phase, ProjectStorePhase::Ready)
         || store.save_in_flight.is_some()
         || store.dense_save_in_flight.is_some()
+        || store.region_save_in_flight.is_some()
+        || store.catalog_save_in_flight.is_some()
     {
         return;
     }
     let Some(worker) = worker else {
         return;
     };
+
+    if let Some(request) = store.pending_catalog_save.clone() {
+        match worker
+            .requests
+            .try_send(ProjectRequest::SaveCatalogTransaction(request.clone()))
+        {
+            Ok(()) => {
+                store.pending_catalog_save = None;
+                store.catalog_save_in_flight = Some(request.request_id);
+            }
+            Err(TrySendError::Full(_)) => {}
+            Err(TrySendError::Disconnected(_)) => {
+                store.phase = ProjectStorePhase::Failed("project request channel closed".into());
+            }
+        }
+        return;
+    }
 
     if let Some(request) = store.pending_save.clone() {
         match worker
@@ -836,6 +1116,23 @@ fn dispatch_project_save(
             Ok(()) => {
                 store.pending_save = None;
                 store.save_in_flight = Some(request.request_id);
+            }
+            Err(TrySendError::Full(_)) => {}
+            Err(TrySendError::Disconnected(_)) => {
+                store.phase = ProjectStorePhase::Failed("project request channel closed".into());
+            }
+        }
+        return;
+    }
+
+    if let Some(request) = store.pending_region_save.clone() {
+        match worker
+            .requests
+            .try_send(ProjectRequest::SaveRegionTransaction(request.clone()))
+        {
+            Ok(()) => {
+                store.pending_region_save = None;
+                store.region_save_in_flight = Some(request.request_id);
             }
             Err(TrySendError::Full(_)) => {}
             Err(TrySendError::Disconnected(_)) => {

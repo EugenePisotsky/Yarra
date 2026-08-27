@@ -27,8 +27,8 @@ use ground_cover::{GroundCoverDebug, GroundCoverInteractor, GroundCoverPlugin, G
 use terrain_render::{TerrainMacroVariation, TerrainRenderPlugin};
 pub use world_streaming::{
     ActiveWorldSpace, GameplayObject, StreamedVisualObject, StreamingStats, WorldCatalog,
-    WorldDetailDemand, WorldOrigin, WorldSpaceInfo, WorldStreamingConfig, WorldStreamingPlugin,
-    WorldViewCamera, WorldViewpoint,
+    WorldDetailDemand, WorldGenerationReload, WorldOrigin, WorldSpaceInfo, WorldStreamingConfig,
+    WorldStreamingPlugin, WorldViewCamera, WorldViewpoint,
 };
 
 use crate::{

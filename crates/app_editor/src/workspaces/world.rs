@@ -17,18 +17,31 @@ use super::world_impl::{
     sync_cooked_visual_visibility, sync_promoted_editor_object, update_editor_camera,
 };
 use super::world_ui::{
-    ASSETS_WINDOW, DIAGNOSTICS_WINDOW, INSPECTOR_WINDOW, NAVIGATOR_WINDOW, WORLD_WINDOW,
-    WorldWorkspaceUiState, world_workspace_ui,
+    ASSETS_WINDOW, DIAGNOSTICS_WINDOW, GROUND_COVER_WINDOW, GroundCoverCatalogUiState,
+    INSPECTOR_WINDOW, NAVIGATOR_WINDOW, WORLD_WINDOW, WorldWorkspaceUiState, world_workspace_ui,
 };
 use super::{EditorWorkspace, world_workspace_active};
+use crate::catalog_editing::{
+    GroundCoverRegionWorkingSet, process_region_save_completion, reconcile_ground_cover_regions,
+};
 use crate::domain_editing::{
     DenseDomainWorkingSets, process_dense_save_completion, reconcile_dense_working_sets,
 };
 use crate::editing::{
     EditorHistory, EditorObjectWorkingSet, EditorSelection, TransformInspectorDraft,
+    process_project_save_completion,
 };
+use crate::ground_cover_catalog::{
+    GroundCoverCatalogWorkingSet, process_catalog_save_completion, reconcile_ground_cover_catalog,
+};
+use crate::ground_cover_editing::{
+    GroundCoverBrushGesture, GroundCoverToolState, cancel_ground_cover_brush,
+    draw_ground_cover_brush, reconcile_ground_cover_tool_state, update_ground_cover_brush,
+};
+use crate::ground_cover_preview::GroundCoverPreviewPlugin;
 use crate::overview::OverviewPlugin;
 use crate::preview::{PreviewModesPlugin, authoring_preview_active};
+use crate::saving::{EditorSaveCoordinator, drive_editor_save};
 use crate::shell::{EditorUiSet, EditorWindowRegistry};
 use crate::tools::{
     EditorToolRegistry, GROUND_COVER_TOOL, OBJECT_TOOL, TERRAIN_TOOL, object_tool_active,
@@ -53,6 +66,7 @@ impl Plugin for WorldWorkspacePlugin {
             ASSETS_WINDOW,
             NAVIGATOR_WINDOW,
             DIAGNOSTICS_WINDOW,
+            GROUND_COVER_WINDOW,
         ] {
             app.world_mut()
                 .resource_mut::<EditorWindowRegistry>()
@@ -65,11 +79,22 @@ impl Plugin for WorldWorkspacePlugin {
             .init_resource::<EditorHistory>()
             .init_resource::<EditorObjectPalette>()
             .init_resource::<WorldWorkspaceUiState>()
+            .init_resource::<GroundCoverCatalogUiState>()
             .init_resource::<TransformInspectorDraft>()
             .init_resource::<GizmoEditTransaction>()
             .init_resource::<DenseDomainWorkingSets>()
+            .init_resource::<GroundCoverRegionWorkingSet>()
+            .init_resource::<GroundCoverCatalogWorkingSet>()
+            .init_resource::<GroundCoverToolState>()
+            .init_resource::<GroundCoverBrushGesture>()
+            .init_resource::<EditorSaveCoordinator>()
             .init_gizmo_group::<EditorOverlayGizmos>()
-            .add_plugins((TransformGizmoPlugin, OverviewPlugin, PreviewModesPlugin))
+            .add_plugins((
+                TransformGizmoPlugin,
+                OverviewPlugin,
+                PreviewModesPlugin,
+                GroundCoverPreviewPlugin,
+            ))
             .configure_sets(
                 PostUpdate,
                 TransformGizmoSystems.run_if(editor_gizmo_enabled),
@@ -81,18 +106,46 @@ impl Plugin for WorldWorkspacePlugin {
                 reconcile_editor_selection.run_if(object_tool_active),
             )
             .add_systems(Update, update_editor_camera.run_if(world_workspace_active))
-            .add_systems(Update, process_dense_save_completion)
             .add_systems(
                 Update,
-                reconcile_dense_working_sets.run_if(world_workspace_active),
+                (
+                    process_catalog_save_completion,
+                    process_project_save_completion,
+                    process_region_save_completion,
+                    process_dense_save_completion,
+                    drive_editor_save,
+                )
+                    .chain(),
             )
             .add_systems(
                 Update,
-                (handle_editor_shortcuts, pick_source_object)
+                (
+                    reconcile_ground_cover_catalog,
+                    reconcile_ground_cover_regions,
+                    reconcile_dense_working_sets,
+                )
                     .chain()
+                    .run_if(world_workspace_active),
+            )
+            .add_systems(
+                Update,
+                handle_editor_shortcuts
+                    .run_if(world_workspace_active)
+                    .run_if(authoring_preview_active),
+            )
+            .add_systems(
+                Update,
+                pick_source_object
                     .run_if(world_workspace_active)
                     .run_if(authoring_preview_active)
                     .run_if(object_tool_active),
+            )
+            .add_systems(
+                Update,
+                (reconcile_ground_cover_tool_state, update_ground_cover_brush)
+                    .chain()
+                    .run_if(world_workspace_active)
+                    .run_if(authoring_preview_active),
             )
             .add_systems(
                 PostUpdate,
@@ -118,6 +171,13 @@ impl Plugin for WorldWorkspacePlugin {
             )
             .add_systems(
                 PostUpdate,
+                draw_ground_cover_brush
+                    .after(draw_editor_grid)
+                    .run_if(world_workspace_active)
+                    .run_if(authoring_preview_active),
+            )
+            .add_systems(
+                PostUpdate,
                 (draw_source_object_handles, draw_promoted_editor_object)
                     .chain()
                     .after(apply_promoted_gizmo)
@@ -127,7 +187,10 @@ impl Plugin for WorldWorkspacePlugin {
             )
             .add_systems(
                 OnExit(EditorWorkspace::World),
-                suspend_world_workspace_interactions,
+                (
+                    suspend_world_workspace_interactions,
+                    cancel_ground_cover_brush,
+                ),
             )
             .add_systems(
                 EguiPrimaryContextPass,

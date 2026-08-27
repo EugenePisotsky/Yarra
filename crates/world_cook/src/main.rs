@@ -28,6 +28,10 @@ fn main() -> Result<()> {
         yarra_world_cook::create_demo_project(&project_path)
             .with_context(|| format!("could not initialize {}", project_path.display()))?;
         println!("created authoring database: {}", project_path.display());
+    } else if world_db::migrate_project_database(&project_path)
+        .with_context(|| format!("could not migrate {}", project_path.display()))?
+    {
+        println!("migrated authoring database: {}", project_path.display());
     }
     let manifest = yarra_world_cook::cook_project(&project_path, &runtime_path)?;
     println!(

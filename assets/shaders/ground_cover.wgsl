@@ -5,6 +5,8 @@ struct VisibleInstance {
     motion: vec4<f32>,
     // xy: world-space tip displacement, zw: reserved
     interaction: vec4<f32>,
+    // x: first artwork texture layer, y: variant count
+    artwork: vec4<u32>,
 }
 
 struct Camera {
@@ -191,9 +193,10 @@ fn vertex(
     let base_u = quad.x * 0.5 + 0.5;
     let mirrored = fract(instance.motion.z + f32(ribbon_index) * 0.61803398875) >= 0.5;
     output.uv = vec2<f32>(select(base_u, 1.0 - base_u, mirrored), 1.0 - height_fraction);
-    output.texture_layer = min(
-        u32(floor(fract(instance.motion.w + f32(ribbon_index) * 0.277) * 4.0)),
-        3u,
+    let variant_count = max(instance.artwork.y, 1u);
+    output.texture_layer = instance.artwork.x + min(
+        u32(floor(fract(instance.motion.w + f32(ribbon_index) * 0.277) * f32(variant_count))),
+        variant_count - 1u,
     );
     output.card_visibility = 1.0;
     if ((lod == 0u && ribbon_index == 2u) || (lod == 1u && ribbon_index == 1u)) {
