@@ -33,6 +33,13 @@ struct DrawConfig {
     geometry: vec4<u32>,
 }
 
+struct GroundShadowVolume {
+    // xy: minimum world x/z, z: square extent, w: first slice world height
+    origin_extent: vec4<f32>,
+    // x: slice spacing, y: inverse spacing, z: last slice index, w: edge blend width in UV
+    height: vec4<f32>,
+}
+
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) color: vec3<f32>,
@@ -40,6 +47,8 @@ struct VertexOutput {
     @location(2) @interpolate(flat) texture_layer: u32,
     @location(3) @interpolate(flat) card_visibility: f32,
     @location(4) world_position: vec3<f32>,
+    @location(5) @interpolate(flat) procedural_blade: u32,
+    @location(6) world_normal: vec3<f32>,
 }
 
 // Group zero is Bevy's mesh-view bind group, including the directional shadow map.
@@ -48,6 +57,9 @@ struct VertexOutput {
 @group(1) @binding(2) var<uniform> config: DrawConfig;
 @group(1) @binding(3) var clump_texture: texture_2d_array<f32>;
 @group(1) @binding(4) var clump_sampler: sampler;
+@group(1) @binding(5) var ground_shadow_volume: texture_2d_array<f32>;
+@group(1) @binding(6) var ground_shadow_sampler: sampler;
+@group(1) @binding(7) var<uniform> ground_shadow: GroundShadowVolume;
 
 fn quad_vertex(vertex_in_quad: u32) -> vec2<f32> {
     switch vertex_in_quad {
@@ -60,12 +72,164 @@ fn quad_vertex(vertex_in_quad: u32) -> vec2<f32> {
     }
 }
 
+// A high blade is a native 15-vertex strip with seven cross-sections and a shared tip. The low
+// blade keeps three cross-sections and the same tip in a 7-vertex strip.
+fn blade_strip_vertex(strip_index: u32, section_count: u32) -> vec2<f32> {
+    let tip_index = section_count * 2u;
+    if (strip_index >= tip_index) {
+        return vec2<f32>(0.0, 1.0);
+    }
+    let section = strip_index / 2u;
+    let side = select(-1.0, 1.0, (strip_index & 1u) != 0u);
+    return vec2<f32>(side, f32(section) / f32(section_count));
+}
+
+fn cubic_bezier(
+    p0: vec3<f32>,
+    p1: vec3<f32>,
+    p2: vec3<f32>,
+    p3: vec3<f32>,
+    t: f32,
+) -> vec3<f32> {
+    let inverse_t = 1.0 - t;
+    return p0 * inverse_t * inverse_t * inverse_t
+        + p1 * 3.0 * inverse_t * inverse_t * t
+        + p2 * 3.0 * inverse_t * t * t
+        + p3 * t * t * t;
+}
+
+fn cubic_bezier_derivative(
+    p0: vec3<f32>,
+    p1: vec3<f32>,
+    p2: vec3<f32>,
+    p3: vec3<f32>,
+    t: f32,
+) -> vec3<f32> {
+    let inverse_t = 1.0 - t;
+    return (p1 - p0) * 3.0 * inverse_t * inverse_t
+        + (p2 - p1) * 6.0 * inverse_t * t
+        + (p3 - p2) * 3.0 * t * t;
+}
+
+fn procedural_blade(
+    instance: VisibleInstance,
+    vertex_index: u32,
+    lod: u32,
+) -> VertexOutput {
+    let low_detail = lod == 1u;
+    let section_count = select(7u, 3u, low_detail);
+    let blade_vertex_data = blade_strip_vertex(vertex_index, section_count);
+    let side = blade_vertex_data.x;
+    let height_fraction = blade_vertex_data.y;
+
+    // Each visible instance is now one blade. Clump membership only supplied the coherent
+    // resting facing and color during GPU expansion; it never moves or bunches blade roots.
+    let root = instance.position_yaw.xyz;
+    let blade_height = instance.bottom_height.w;
+    let shape_random = instance.motion.z;
+    let rest_direction = vec2<f32>(
+        cos(instance.position_yaw.w),
+        sin(instance.position_yaw.w),
+    );
+
+    // Wind was evaluated once per blade in the expansion pass. Reusing that 3D tip displacement
+    // here avoids repeating several trigonometric functions for all 7/15 strip vertices.
+    let wind_displacement = instance.interaction.zw;
+    let vertical_wind_displacement = instance.motion.x;
+    let width_axis = vec2<f32>(-rest_direction.y, rest_direction.x);
+
+    // Tilt controls the endpoint, while bend controls the two inner Bézier points. All blades
+    // are long smooth arcs; none of the ordinary shape range degenerates into upright sticks.
+    let tilt = mix(1.02, 1.28, shape_random);
+    let resting_reach = blade_height * sin(tilt);
+    let resting_tip_height = max(blade_height * cos(tilt), blade_height * 0.20);
+    let resting_tip = rest_direction * resting_reach;
+    var horizontal_tip = resting_tip + wind_displacement + instance.interaction.xy;
+    let maximum_tip_offset = blade_height * 0.98;
+    let horizontal_tip_length = length(horizontal_tip);
+    if (horizontal_tip_length > maximum_tip_offset) {
+        horizontal_tip *= maximum_tip_offset / horizontal_tip_length;
+    }
+
+    let p0 = root;
+    let p1 = root + vec3<f32>(0.0, blade_height * mix(0.24, 0.34, shape_random), 0.0);
+    let side_curve = width_axis * blade_height * (shape_random - 0.5) * 0.035;
+    let middle_displacement = wind_displacement * 0.42 + instance.interaction.xy * 0.58;
+    let p2_horizontal = resting_tip * 0.58 + middle_displacement;
+    let p2 = root + vec3<f32>(
+        p2_horizontal.x + side_curve.x,
+        resting_tip_height
+            + blade_height * mix(0.10, 0.18, 1.0 - shape_random)
+            + vertical_wind_displacement * 0.44,
+        p2_horizontal.y + side_curve.y,
+    );
+    let animated_tip_height = clamp(
+        resting_tip_height + vertical_wind_displacement,
+        blade_height * 0.05,
+        blade_height * 0.82,
+    );
+    let p3 = root + vec3<f32>(
+        horizontal_tip.x,
+        animated_tip_height,
+        horizontal_tip.y,
+    );
+    let center = cubic_bezier(p0, p1, p2, p3, height_fraction);
+    let tangent = normalize(cubic_bezier_derivative(p0, p1, p2, p3, height_fraction));
+
+    let to_camera = camera.camera_position.xz - root.xz;
+    let to_camera_length = length(to_camera);
+    var face_alignment = 1.0;
+    if (to_camera_length > 0.0001) {
+        face_alignment = abs(dot(rest_direction, to_camera / to_camera_length));
+    }
+    let edge_on = 1.0 - smoothstep(0.05, 0.32, face_alignment);
+    let half_width = instance.top_half_width.w * mix(1.0, 1.55, edge_on);
+    let taper = 1.0 - smoothstep(0.72, 1.0, height_fraction);
+    let world_position = center
+        + vec3<f32>(width_axis.x, 0.0, width_axis.y) * side * half_width * taper;
+
+    // Rotate the flat surface normal across the blade width. This rounded normal provides
+    // readable volume without adding geometry and remains deterministic at every view angle.
+    let width_axis_3d = vec3<f32>(width_axis.x, 0.0, width_axis.y);
+    let flat_normal = normalize(cross(width_axis_3d, tangent));
+    let round_amount = side * 0.55;
+    let world_normal = normalize(
+        flat_normal * sqrt(max(1.0 - round_amount * round_amount, 0.0))
+            + width_axis_3d * round_amount
+    );
+
+    var output: VertexOutput;
+    output.clip_position = camera.clip_from_world * vec4<f32>(world_position, 1.0);
+    output.world_position = world_position;
+    let clump_color = mix(0.84, 1.12, instance.motion.y);
+    let blade_color = mix(0.94, 1.06, shape_random);
+    output.color = mix(instance.bottom_height.xyz, instance.top_half_width.xyz, height_fraction)
+        * clump_color * blade_color;
+    if (camera.debug.x == 1u) {
+        output.color = select(
+            vec3<f32>(0.95, 0.12, 0.08),
+            vec3<f32>(1.0, 0.68, 0.06),
+            low_detail,
+        );
+    }
+    output.uv = vec2<f32>(side * 0.5 + 0.5, 1.0 - height_fraction);
+    output.texture_layer = instance.artwork.x;
+    output.card_visibility = 1.0;
+    output.world_normal = world_normal;
+    // Two means high-detail/direct CSM; one means low-detail/filtered shadow volume.
+    output.procedural_blade = select(2u, 1u, low_detail);
+    return output;
+}
+
 @vertex
 fn vertex(
     @builtin(vertex_index) vertex_index: u32,
     @builtin(instance_index) instance_index: u32,
 ) -> VertexOutput {
     let instance = instances[instance_index];
+    if (config.geometry.z <= 1u && camera.debug.y != 0u) {
+        return procedural_blade(instance, vertex_index, config.geometry.z);
+    }
     let vertices_per_ribbon = config.geometry.y * 6u;
     let ribbon_index = vertex_index / vertices_per_ribbon;
     let within_ribbon = vertex_index % vertices_per_ribbon;
@@ -210,6 +374,8 @@ fn vertex(
     if ((lod == 0u && ribbon_index == 2u) || (lod == 1u && ribbon_index == 1u)) {
         output.card_visibility = top_down_blend;
     }
+    output.procedural_blade = 0u;
+    output.world_normal = vec3<f32>(direction.y, 0.0, -direction.x);
     return output;
 }
 
@@ -218,6 +384,9 @@ fn interleaved_gradient_noise(pixel: vec2<f32>) -> f32 {
 }
 
 fn visible_card_coverage(input: VertexOutput) -> f32 {
+    if (input.procedural_blade != 0u) {
+        return 1.0;
+    }
     let coverage = textureSample(
         clump_texture,
         clump_sampler,
@@ -239,10 +408,7 @@ fn visible_card_coverage(input: VertexOutput) -> f32 {
     return coverage;
 }
 
-fn directional_shadow_visibility(input: VertexOutput) -> f32 {
-    if (camera.debug.x != 0u) {
-        return 1.0;
-    }
+fn exact_directional_shadow_visibility(input: VertexOutput) -> f32 {
     let light = &view_bindings::lights.directional_lights[0u];
     if (((*light).flags & DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) == 0u) {
         return 1.0;
@@ -258,10 +424,71 @@ fn directional_shadow_visibility(input: VertexOutput) -> f32 {
     return shadows::fetch_directional_shadow(
         0u,
         world_position,
+        // Receiver bias must stay terrain-facing. An animated ribbon normal can point almost
+        // horizontally and offset the sample into the terrain, producing black blades that blink
+        // as wind changes the normal even though ground cover is not a shadow caster.
         vec3<f32>(0.0, 1.0, 0.0),
         view_z,
         input.clip_position.xy,
     );
+}
+
+fn directional_shadow_visibility(input: VertexOutput) -> f32 {
+    if (camera.debug.x != 0u) {
+        return 1.0;
+    }
+    let uv = (input.world_position.xz - ground_shadow.origin_extent.xy)
+        / ground_shadow.origin_extent.z;
+    if (any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0))) {
+        return exact_directional_shadow_visibility(input);
+    }
+
+    let slice_coordinate = clamp(
+        (input.world_position.y - ground_shadow.origin_extent.w) * ground_shadow.height.y,
+        0.0,
+        ground_shadow.height.z,
+    );
+    let lower_slice = u32(floor(slice_coordinate));
+    let upper_slice = min(lower_slice + 1u, u32(ground_shadow.height.z));
+    let height_blend = fract(slice_coordinate);
+    let lower_visibility = textureSampleLevel(
+        ground_shadow_volume,
+        ground_shadow_sampler,
+        uv,
+        i32(lower_slice),
+        0.0,
+    ).r;
+    let upper_visibility = textureSampleLevel(
+        ground_shadow_volume,
+        ground_shadow_sampler,
+        uv,
+        i32(upper_slice),
+        0.0,
+    ).r;
+    let volume_visibility = mix(lower_visibility, upper_visibility, height_blend);
+
+    // Only the narrow field boundary pays for both paths. This hides a hard transition to
+    // the existing direct CSM receiver without restoring per-card shadow work in the near field.
+    let edge_distance = min(min(uv.x, uv.y), min(1.0 - uv.x, 1.0 - uv.y));
+    if (edge_distance < ground_shadow.height.w) {
+        let direct_visibility = exact_directional_shadow_visibility(input);
+        return mix(
+            direct_visibility,
+            volume_visibility,
+            smoothstep(0.0, ground_shadow.height.w, edge_distance),
+        );
+    }
+    return volume_visibility;
+}
+
+fn blade_surface_response(input: VertexOutput, coverage: f32) -> f32 {
+    if (input.procedural_blade == 0u) {
+        return mix(0.82, 1.06, coverage);
+    }
+    // Keep the first ribbon baseline temporally stable. Animated rounded-normal lighting made
+    // individual blades pulse between dark and bright; proper leaf BRDF/transmission will be
+    // reintroduced only after it has its own stable material test.
+    return 0.96;
 }
 
 // This fragment entry point performs only the shared alpha test and writes depth. The color pass
@@ -277,6 +504,7 @@ fn fragment(input: VertexOutput) -> @location(0) vec4<f32> {
     let edge_coverage = smoothstep(0.32, 0.68, coverage);
     let shadow_visibility = directional_shadow_visibility(input);
     let shadow_attenuation = mix(0.48, 1.0, shadow_visibility);
-    let shaded_color = input.color * mix(0.82, 1.06, coverage) * shadow_attenuation;
+    let surface_response = blade_surface_response(input, coverage);
+    let shaded_color = input.color * surface_response * shadow_attenuation;
     return vec4<f32>(shaded_color, edge_coverage);
 }

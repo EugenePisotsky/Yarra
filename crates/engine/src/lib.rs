@@ -560,7 +560,7 @@ fn update_performance_label(
             format!(
                 "World: {}\nPages: {} demanded | {} loading | {} resident | {} cooling | {} failed\n\
                  Visual LODs: {} | projected height: {:.0}-{:.0} px\n\
-                 Ground cover: {} resident clusters | debug: {}\n\
+                 Ground cover: {} resident clusters | debug: {} | representation: {}\n\
                  Nearby gameplay: {} objects | {} definitions cached\n\
                  Residency: {:.2} MiB decoded | {:.2} MiB estimated GPU",
                 stats.status,
@@ -574,6 +574,11 @@ fn update_performance_label(
                 stats.maximum_projected_height,
                 stats.ground_cover_clusters,
                 ground_cover_debug.mode.label(),
+                if ground_cover_debug.procedural_blades {
+                    "ribbons / far cards"
+                } else {
+                    "cards"
+                },
                 stats.gameplay_objects,
                 stats.cached_definitions,
                 stats.decoded_bytes as f64 / (1024.0 * 1024.0),
@@ -583,7 +588,7 @@ fn update_performance_label(
         .unwrap_or_else(|| "World: initializing".into());
 
     **label = Text::new(format!(
-        "Tap / left click: move | WASD / left stick: direct movement | Tab: change area | G: grass debug | V: terrain macro | U: sun motion\n\
+        "Tap / left click: move | WASD / left stick: direct movement | Tab: change area | G: grass debug | B: cards/ribbons | V: terrain macro | U: sun motion\n\
          Two-finger horizontal / right drag / right stick: orbit\n\
          Pinch / two-finger vertical / wheel: smooth zoom\n\
          Actor: {:?} {:?} | {:.2} m/s | playback {:.2}x\n\

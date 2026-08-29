@@ -296,18 +296,35 @@ The current card renderer remains the default and should serve most grass fields
 and similar dense cover. Custom coverage variants, view response, and curved segmented cards give it
 substantially more range without abandoning the existing GPU expansion path.
 
-### Individual ribbon blades — reserved, not initially implemented
+### Individual ribbon blades — experimental backend implemented
 
 An individual-blade visual still uses coverage masks, deterministic GPU reconstruction, streamed
 clusters, and indirect draws. It means that each generated primitive represents one ribbon blade
 rather than one painted clump card; it does **not** create editor records, Bevy entities, or physics
 bodies per blade.
 
-This path needs a measured reason to exist because it increases geometry and may increase visible
-instance pressure. Before implementation it must define:
+The measured backend keeps the card-density sample as a generation tile only. Near and middle
+tiers fill the complete tile with independent low-discrepancy blade roots. A continuous world-space
+unit-direction field supplies coherent clump facing and color without moving roots into visible
+bunches, exposing generation-tile boundaries, or creating an artificial angle-interpolation seam.
+Density and geometry LOD are evaluated at generated roots, with low-discrepancy retention preventing
+sparse far coverage from erasing complete authored rectangles. The far tier remains the optimized
+card representation.
+
+The first backend milestone provides:
+
+- one visible GPU instance per ribbon blade rather than multiple hidden blades per card instance;
+- native high and low cubic Bézier triangle strips with 15 and 7 vertices;
+- explicit resting facing, clump facing/color, height, width, tilt, bend, interaction, and bounded
+  wind response;
+- derivative-based rounded normals, with a temporally stable material baseline until leaf
+  transmission/BRDF behavior is validated independently;
+- stable deterministic generation from the existing streamed coverage clusters.
+
+This path still needs representative measurements because it increases visible-instance pressure:
 
 - representative near/mid/far geometry and a card fallback, if any;
-- maximum blades per clump and quality scaling;
+- maximum blades per generation tile and quality scaling;
 - overdraw versus vertex-cost measurements at the gameplay camera range;
 - stable transition behavior between geometry representations.
 
@@ -601,7 +618,18 @@ designer.
 
 ### Phase 5 — measured blade experiment
 
-- prototype individual ribbon blades behind a separate visual family;
+- implemented: prototype independent ribbon blades behind the existing debug representation switch;
+- implemented: continuous spatial clump metadata without positional root clumping;
+- implemented: identical nested root sequences in near/middle tiers with geometry-only strip LOD
+  under normal demand;
+- implemented: two-pass ribbon demand measurement and uniform per-carrier root reduction under
+  buffer pressure, rather than page-order overflow;
+- implemented: root-level perspective LOD and ranked far-density retention without rectangular
+  cluster rejection;
+- implemented: bounded three-dimensional wind deformation, evaluated once per blade, that
+  preserves rest direction and curvature while combining group coherence with stable per-blade
+  phase variation;
+- implemented: keep the optimized card backend for the far tier and A/B comparison;
 - compare image quality, vertex cost, overdraw, culling pressure, and memory against improved cards;
 - keep it only if representative small hero patches show a meaningful benefit;
 - evaluate volumetric blades separately rather than bundling them into the ribbon result.

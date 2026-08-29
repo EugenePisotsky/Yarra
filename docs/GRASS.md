@@ -94,15 +94,21 @@ cover as its own page domain; unloading a cell also releases its ground-cover as
 The CPU uploads clusters and species, not expanded grass instances. For every resident page, a
 compute dispatch processes clusters in 64-thread workgroups:
 
-1. Reject the cluster against the camera frustum using its conservative bounds.
-2. Estimate its screen-space size.
-3. Reduce density for small projected coverage and reject subpixel coverage.
-4. Reconstruct stable clump positions from the cluster seed using a jittered grid.
-5. Classify surviving clumps into near, mid, or far buffers.
-6. Draw the three buffers with indirect draws.
+1. Run a lightweight candidate pass that counts exact visible near and middle ribbon demand.
+2. Reject the cluster against the camera frustum using its conservative bounds.
+3. Estimate conservative cluster screen coverage, then correct projected size at each generated
+   root so a whole authored rectangle never changes visibility or LOD together.
+4. Reduce density for small projected coverage using a rotated low-discrepancy rank and reject only
+   deeply subpixel coverage.
+5. Reconstruct stable generation tiles from the cluster seed using a jittered grid.
+6. Classify surviving tiles into near, mid, or far buffers and expand ribbon tiers into blades.
+   When demand exceeds a tier's fixed buffer, reduce every carrier to the same nested
+   low-discrepancy subset rather than dropping later streamed pages.
+7. Draw the three buffers with indirect draws.
 
-Each LOD buffer currently has a capacity of 131,072 visible instances. Stable hashing is important:
-camera motion may change LOD or retained density, but it must not reshuffle every clump in a cluster.
+Each LOD buffer currently has a capacity of 131,072 visible instances. Stable hashing and ranked
+retention are important: camera motion may change LOD or retained density, but it must not reshuffle
+every clump or randomly erase an entire authored coverage sample.
 
 ### Procedural cards
 
@@ -110,6 +116,26 @@ One instance represents a dense clump card rather than one blade. The renderer g
 256-by-256, four-layer R8 texture array in code. Each layer contains 34 varied blade silhouettes and
 coverage-preserving mip levels. This is a placeholder authoring path that gives dense coverage
 without requiring a painted asset while the renderer is being established.
+
+### Independent ribbon blades
+
+The experimental near and middle tiers do not subdivide a rendered card into a hidden tuft. A
+card-density sample is used only as a deterministic generation tile, and low-discrepancy roots fill
+that tile independently. Each resulting visible GPU instance represents exactly one blade.
+
+A continuous world-space clump field supplies a coherent facing, color variation, and response to
+nearby roots without changing their positions or exposing generation-tile boundaries. It blends
+unit directions instead of numeric angles, avoiding artificial full-circle turns at the angle seam. The high
+ribbon is a native 15-vertex triangle strip
+with seven cross-sections plus a tip; the low ribbon is a 7-vertex strip with three cross-sections
+plus a tip. Both evaluate the same cubic Bézier definition, derive normals from its tangent, and
+round those normals across the width. The initial material keeps a stable color response rather than
+animating those normals through an unvalidated leaf-lighting approximation. Far coverage still uses
+the optimized procedural cards. `B` switches between the ribbon experiment and the all-card path
+for direct image-quality and performance comparison. Within the normal budget, near and middle
+geometry retain the same root set and differ only in strip resolution. Under exceptional load, a
+measured global tier budget keeps a smaller nested root subset in every carrier and compensates its
+width modestly. This preserves field-wide coverage without unbounded memory or draw cost.
 
 The cards are opaque with alpha testing, write depth, and use no face culling. They currently use a
 simple color gradient rather than the standard PBR material. Grass does not cast shadows, but the
@@ -129,10 +155,11 @@ The prepass performs only that cutout test and writes the nearest depth. The col
 depth writes and requires exact depth equality, so hidden overlapping cards are rejected before the
 real directional-shadow lookup. Grass remains absent from all shadow-caster passes.
 
-The color pass uses Bevy's inexpensive hardware 2-by-2 comparison filter and an upward receiver
-normal for stable bias. Consequently characters and trees retain their real silhouettes, and moving
-the authoritative directional light updates their grass shadows normally. Press `U` in the demo to
-toggle accelerated sun motion and stress both cascade stability and receiver performance.
+The color pass uses Bevy's inexpensive hardware 2-by-2 comparison filter. Cards retain an upright
+receiver normal while ribbons use their derivative-based rounded normal. Consequently characters
+and trees retain their real silhouettes, and moving the authoritative directional light updates
+their grass shadows normally. Press `U` in the demo to toggle accelerated sun motion and stress both
+cascade stability and receiver performance.
 
 This is still an experiment: it must be measured in the representative dense field at native display
 resolution. Tree wind may also require a simplified shadow-caster LOD later, but that concern is
@@ -166,11 +193,11 @@ Visibility/density and geometry detail use different projected sizes:
 - Geometry LOD uses representative average dimensions. It emphasizes projected height in
   third-person and projected width overhead.
 
-Current density retention is:
+Current density retention is evaluated per generated root rather than once at the cluster centre:
 
-- below 2 px: rejected;
-- 2–3 px: up to 12%;
-- 3–6 px: 12–45%;
+- below 0.75 px: rejected;
+- 0.75–3 px: 10–16%;
+- 3–6 px: 16–45%;
 - 6–18 px: 45–100%;
 - above 18 px: full density.
 
@@ -180,8 +207,9 @@ Current geometry transitions are:
 - far: 10–20 px;
 - between those ranges: mid.
 
-A stable per-clump selector spatially dithers the transition instead of producing one exact circular
-distance ring.
+A stable per-root selector spatially dithers the transition instead of producing one exact circular
+distance ring. Retention uses a low-discrepancy rank, so sparse far coverage remains distributed and
+cannot disappear in random rectangular blocks.
 
 The playable camera currently stops at 17.6 metres, normalized zoom 0.68 on the original 24-metre
 camera curve. Ground cover keeps its normal near, mid, and far classification throughout that range;
@@ -198,6 +226,18 @@ strength, spatial scale, speed, and elapsed time. Species limit their own maximu
 
 Wind phases are derived from world position and stable instance values, so adjacent pages participate
 in the same moving field and streaming a page out and back in does not reset its motion.
+
+Ribbon wind preserves the authored rest direction and Bézier arc as its baseline. It applies a
+bounded three-dimensional tip displacement dominated by the world wind direction, with smaller
+cross-wind and vertical components. This makes a ribbon visibly sweep forward/back, left/right,
+and up/down without freely rotating it or replacing its resting curvature. World-space group waves
+keep nearby blades coherent while each blade receives a stable phase and response variation, so a
+clump does not move as one rigid sheet.
+
+The richer field is evaluated once per visible blade during GPU expansion and packed into the
+existing visible-instance record. Every 7/15-vertex strip then reuses that displacement rather than
+repeating trigonometric work per vertex. The current demonstration profile uses a 4.2-radian phase
+speed with stronger base drive and gusts so the constrained motion is clearly visible.
 
 ## Actor interaction
 

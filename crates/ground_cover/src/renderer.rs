@@ -11,7 +11,7 @@ use bevy::{
     core_pipeline::{
         core_3d::{CORE_3D_DEPTH_FORMAT, Opaque3d, Opaque3dBatchSetKey, Opaque3dBinKey},
         prepass::{AlphaMask3dPrepass, OpaqueNoLightmap3dBatchSetKey, OpaqueNoLightmap3dBinKey},
-        schedule::camera_driver,
+        schedule::{Core3d, Core3dSystems, camera_driver},
     },
     ecs::{
         query::ROQueryItem,
@@ -22,7 +22,7 @@ use bevy::{
     },
     mesh::Mesh,
     pbr::{
-        MeshPipelineSystems, MeshPipelineViewLayoutKey, MeshPipelineViewLayouts,
+        MeshPipelineSystems, MeshPipelineViewLayoutKey, MeshPipelineViewLayouts, MeshViewBindGroup,
         SetMeshViewBindGroup, ViewKeyCache,
     },
     prelude::*,
@@ -39,21 +39,22 @@ use bevy::{
         render_resource::{
             AddressMode, BindGroup, BindGroupEntries, BindGroupLayoutDescriptor,
             BindGroupLayoutEntries, Buffer, BufferDescriptor, BufferInitDescriptor, BufferUsages,
-            CachedComputePipelineId, Canonical, ColorTargetState, ColorWrites, CompareFunction,
-            ComputePassDescriptor, ComputePipelineDescriptor, DepthStencilState, Extent3d,
-            FilterMode, FragmentState, FrontFace, MipmapFilterMode, Origin3d, PipelineCache,
-            PolygonMode, PrimitiveState, PrimitiveTopology, RenderPipeline,
+            CachedComputePipelineId, CachedRenderPipelineId, Canonical, ColorTargetState,
+            ColorWrites, CompareFunction, ComputePassDescriptor, ComputePipelineDescriptor,
+            DepthStencilState, Extent3d, FilterMode, FragmentState, FrontFace, LoadOp,
+            MipmapFilterMode, Operations, Origin3d, PipelineCache, PolygonMode, PrimitiveState,
+            PrimitiveTopology, RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline,
             RenderPipelineDescriptor, Sampler, SamplerBindingType, SamplerDescriptor, ShaderStages,
-            Specializer, SpecializerKey, TexelCopyBufferLayout, TexelCopyTextureInfo, Texture,
-            TextureAspect, TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType,
-            TextureUsages, TextureView, TextureViewDescriptor, TextureViewDimension, Variants,
-            VertexState,
+            Specializer, SpecializerKey, StoreOp, TexelCopyBufferLayout, TexelCopyTextureInfo,
+            Texture, TextureAspect, TextureDescriptor, TextureDimension, TextureFormat,
+            TextureSampleType, TextureUsages, TextureView, TextureViewDescriptor,
+            TextureViewDimension, Variants, VertexState,
             binding_types::{
                 sampler, storage_buffer_read_only_sized, storage_buffer_sized, texture_2d_array,
                 uniform_buffer_sized,
             },
         },
-        renderer::{RenderContext, RenderDevice, RenderGraph, RenderQueue},
+        renderer::{RenderContext, RenderDevice, RenderGraph, RenderQueue, ViewQuery},
         sync_world::MainEntity,
         view::ExtractedView,
     },
@@ -71,8 +72,16 @@ use crate::{
 
 const COMPUTE_SHADER_PATH: &str = "shaders/ground_cover_cull.wgsl";
 const RENDER_SHADER_PATH: &str = "shaders/ground_cover.wgsl";
+const SHADOW_VOLUME_SHADER_PATH: &str = "shaders/ground_cover_shadow_volume.wgsl";
 const MAX_VISIBLE_INSTANCES: u32 = 131_072;
 const CULL_WORKGROUP_SIZE: u32 = 64;
+const SHADOW_VOLUME_RESOLUTION: u32 = 192;
+const SHADOW_VOLUME_SLICE_COUNT: u32 = 4;
+const SHADOW_VOLUME_WORLD_EXTENT: f32 = 32.0;
+const SHADOW_VOLUME_BASE_HEIGHT: f32 = 0.0;
+const SHADOW_VOLUME_TOP_HEIGHT: f32 = 1.2;
+const SHADOW_VOLUME_FILTER_RADIUS: f32 = 0.22;
+const SHADOW_VOLUME_FORMAT: TextureFormat = TextureFormat::R8Unorm;
 static NEXT_PAGE_UPLOAD: AtomicU64 = AtomicU64::new(1);
 
 pub(crate) struct GroundCoverRenderPlugin;
@@ -89,8 +98,10 @@ impl Plugin for GroundCoverRenderPlugin {
             return;
         };
         render_app
-            .add_render_command::<Opaque3d, DrawGroundCover>()
-            .add_render_command::<AlphaMask3dPrepass, DrawGroundCoverPrepass>()
+            .add_render_command::<Opaque3d, DrawGroundCoverCards>()
+            .add_render_command::<Opaque3d, DrawGroundCoverBlades>()
+            .add_render_command::<AlphaMask3dPrepass, DrawGroundCoverCardsPrepass>()
+            .add_render_command::<AlphaMask3dPrepass, DrawGroundCoverBladesPrepass>()
             .add_systems(
                 RenderStartup,
                 init_ground_cover_resources.after(MeshPipelineSystems),
@@ -101,6 +112,12 @@ impl Plugin for GroundCoverRenderPlugin {
                     prepare_ground_cover.in_set(RenderSystems::PrepareBindGroups),
                     queue_ground_cover.in_set(RenderSystems::Queue),
                 ),
+            )
+            .add_systems(
+                Core3d,
+                render_ground_shadow_volume
+                    .after(Core3dSystems::Prepass)
+                    .before(Core3dSystems::MainPass),
             )
             .add_systems(RenderGraph, run_ground_cover_culling.before(camera_driver));
     }
@@ -296,6 +313,24 @@ struct DrawConfigGpu {
 
 #[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
+struct GroundShadowVolumeGpu {
+    // xy: minimum world x/z, z: square extent, w: first slice world height
+    origin_extent: [f32; 4],
+    // x: slice spacing, y: inverse spacing, z: last slice index, w: edge blend width in UV
+    height: [f32; 4],
+}
+
+#[derive(Clone, Copy, Pod, Zeroable)]
+#[repr(C)]
+struct GroundShadowSliceGpu {
+    // xy: minimum world x/z, z: square extent, w: this slice's world height
+    origin_extent: [f32; 4],
+    // x: world-space filter radius
+    filter: [f32; 4],
+}
+
+#[derive(Clone, Copy, Pod, Zeroable)]
+#[repr(C)]
 pub(super) struct VisibleInstanceGpu {
     position_yaw: [f32; 4],
     bottom_height: [f32; 4],
@@ -467,8 +502,16 @@ struct GroundCoverBuffers {
     near_args: Buffer,
     mid_args: Buffer,
     far_args: Buffer,
+    ribbon_candidates: Buffer,
     camera: Buffer,
     interaction: Buffer,
+    shadow_volume_uniform: Buffer,
+    _shadow_volume_texture: Texture,
+    _shadow_volume_view: TextureView,
+    _shadow_volume_sampler: Sampler,
+    shadow_slice_buffers: Vec<Buffer>,
+    shadow_slice_views: Vec<TextureView>,
+    shadow_slice_bind_groups: Vec<BindGroup>,
     _near_config: Buffer,
     _mid_config: Buffer,
     _far_config: Buffer,
@@ -485,6 +528,8 @@ impl FromWorld for GroundCoverBuffers {
         let pipeline_cache = world.resource::<PipelineCache>();
         let draw_layout = pipeline_cache.get_bind_group_layout(&pipelines.draw_layout);
         let finalize_layout = pipeline_cache.get_bind_group_layout(&pipelines.finalize_layout);
+        let shadow_slice_layout =
+            pipeline_cache.get_bind_group_layout(&pipelines.shadow_slice_layout);
         let render_device = world.resource::<RenderDevice>();
         let (artwork_view, artwork_sampler) = {
             let atlas = world.resource::<GroundCoverArtworkAtlas>();
@@ -529,6 +574,12 @@ impl FromWorld for GroundCoverBuffers {
             usage: args_usage,
             mapped_at_creation: false,
         });
+        let ribbon_candidates = render_device.create_buffer(&BufferDescriptor {
+            label: Some("ground-cover ribbon candidate counts"),
+            size: 16,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         let camera = render_device.create_buffer(&BufferDescriptor {
             label: Some("ground-cover camera"),
             size: size_of::<CameraGpu>() as u64,
@@ -541,6 +592,74 @@ impl FromWorld for GroundCoverBuffers {
             usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let shadow_volume_uniform = render_device.create_buffer(&BufferDescriptor {
+            label: Some("ground-cover shadow volume uniform"),
+            size: size_of::<GroundShadowVolumeGpu>() as u64,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let shadow_volume_texture = render_device.create_texture(&TextureDescriptor {
+            label: Some("ground-cover shadow volume"),
+            size: Extent3d {
+                width: SHADOW_VOLUME_RESOLUTION,
+                height: SHADOW_VOLUME_RESOLUTION,
+                depth_or_array_layers: SHADOW_VOLUME_SLICE_COUNT,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: SHADOW_VOLUME_FORMAT,
+            usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let shadow_volume_view = shadow_volume_texture.create_view(&TextureViewDescriptor {
+            label: Some("ground-cover shadow volume array view"),
+            dimension: Some(TextureViewDimension::D2Array),
+            base_array_layer: 0,
+            array_layer_count: Some(SHADOW_VOLUME_SLICE_COUNT),
+            ..default()
+        });
+        let shadow_slice_views = (0..SHADOW_VOLUME_SLICE_COUNT)
+            .map(|slice| {
+                shadow_volume_texture.create_view(&TextureViewDescriptor {
+                    label: Some("ground-cover shadow volume slice view"),
+                    dimension: Some(TextureViewDimension::D2),
+                    base_array_layer: slice,
+                    array_layer_count: Some(1),
+                    ..default()
+                })
+            })
+            .collect::<Vec<_>>();
+        let shadow_volume_sampler = render_device.create_sampler(&SamplerDescriptor {
+            label: Some("ground-cover shadow volume sampler"),
+            address_mode_u: AddressMode::ClampToEdge,
+            address_mode_v: AddressMode::ClampToEdge,
+            address_mode_w: AddressMode::ClampToEdge,
+            mag_filter: FilterMode::Linear,
+            min_filter: FilterMode::Linear,
+            mipmap_filter: MipmapFilterMode::Nearest,
+            ..default()
+        });
+        let shadow_slice_buffers = (0..SHADOW_VOLUME_SLICE_COUNT)
+            .map(|_slice| {
+                render_device.create_buffer(&BufferDescriptor {
+                    label: Some("ground-cover shadow volume slice uniform"),
+                    size: size_of::<GroundShadowSliceGpu>() as u64,
+                    usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                })
+            })
+            .collect::<Vec<_>>();
+        let shadow_slice_bind_groups = shadow_slice_buffers
+            .iter()
+            .map(|buffer| {
+                render_device.create_bind_group(
+                    Some("ground-cover shadow volume slice bind group"),
+                    &shadow_slice_layout,
+                    &BindGroupEntries::single(buffer.as_entire_binding()),
+                )
+            })
+            .collect::<Vec<_>>();
         let near_config = render_device.create_buffer_with_data(&BufferInitDescriptor {
             label: Some("ground-cover near draw config"),
             contents: bytemuck::bytes_of(&DrawConfigGpu {
@@ -572,6 +691,9 @@ impl FromWorld for GroundCoverBuffers {
                 near_config.as_entire_binding(),
                 &artwork_view,
                 &artwork_sampler,
+                &shadow_volume_view,
+                &shadow_volume_sampler,
+                shadow_volume_uniform.as_entire_binding(),
             )),
         );
         let mid_draw_bind_group = render_device.create_bind_group(
@@ -583,6 +705,9 @@ impl FromWorld for GroundCoverBuffers {
                 mid_config.as_entire_binding(),
                 &artwork_view,
                 &artwork_sampler,
+                &shadow_volume_view,
+                &shadow_volume_sampler,
+                shadow_volume_uniform.as_entire_binding(),
             )),
         );
         let far_draw_bind_group = render_device.create_bind_group(
@@ -594,6 +719,9 @@ impl FromWorld for GroundCoverBuffers {
                 far_config.as_entire_binding(),
                 &artwork_view,
                 &artwork_sampler,
+                &shadow_volume_view,
+                &shadow_volume_sampler,
+                shadow_volume_uniform.as_entire_binding(),
             )),
         );
         let finalize_bind_group = render_device.create_bind_group(
@@ -614,8 +742,16 @@ impl FromWorld for GroundCoverBuffers {
             near_args,
             mid_args,
             far_args,
+            ribbon_candidates,
             camera,
             interaction,
+            shadow_volume_uniform,
+            _shadow_volume_texture: shadow_volume_texture,
+            _shadow_volume_view: shadow_volume_view,
+            _shadow_volume_sampler: shadow_volume_sampler,
+            shadow_slice_buffers,
+            shadow_slice_views,
+            shadow_slice_bind_groups,
             _near_config: near_config,
             _mid_config: mid_config,
             _far_config: far_config,
@@ -633,10 +769,16 @@ struct GroundCoverPipelines {
     cull_layout: BindGroupLayoutDescriptor,
     finalize_layout: BindGroupLayoutDescriptor,
     draw_layout: BindGroupLayoutDescriptor,
+    shadow_slice_layout: BindGroupLayoutDescriptor,
     cull_pipeline: CachedComputePipelineId,
+    count_ribbon_candidates_pipeline: CachedComputePipelineId,
     finalize_pipeline: CachedComputePipelineId,
     draw_variants: Variants<RenderPipeline, GroundCoverPipelineSpecializer>,
     prepass_variants: Variants<RenderPipeline, GroundCoverPipelineSpecializer>,
+    blade_draw_variants: Variants<RenderPipeline, GroundCoverPipelineSpecializer>,
+    blade_prepass_variants: Variants<RenderPipeline, GroundCoverPipelineSpecializer>,
+    shadow_volume_variants: Variants<RenderPipeline, GroundShadowVolumePipelineSpecializer>,
+    shadow_volume_pipelines: HashMap<Entity, CachedRenderPipelineId>,
 }
 
 impl FromWorld for GroundCoverPipelines {
@@ -646,6 +788,7 @@ impl FromWorld for GroundCoverPipelines {
         let view_layouts = world.resource::<MeshPipelineViewLayouts>().clone();
         let compute_shader = asset_server.load(COMPUTE_SHADER_PATH);
         let render_shader = asset_server.load(RENDER_SHADER_PATH);
+        let shadow_volume_shader = asset_server.load(SHADOW_VOLUME_SHADER_PATH);
 
         let cull_layout = BindGroupLayoutDescriptor::new(
             "ground-cover cull",
@@ -662,6 +805,7 @@ impl FromWorld for GroundCoverPipelines {
                     storage_buffer_sized(false, None),
                     uniform_buffer_sized(false, None),
                     uniform_buffer_sized(false, None),
+                    storage_buffer_sized(false, None),
                 ),
             ),
         );
@@ -687,7 +831,17 @@ impl FromWorld for GroundCoverPipelines {
                     uniform_buffer_sized(false, None),
                     texture_2d_array(TextureSampleType::Float { filterable: true }),
                     sampler(SamplerBindingType::Filtering),
+                    texture_2d_array(TextureSampleType::Float { filterable: true }),
+                    sampler(SamplerBindingType::Filtering),
+                    uniform_buffer_sized(false, None),
                 ),
+            ),
+        );
+        let shadow_slice_layout = BindGroupLayoutDescriptor::new(
+            "ground-cover shadow volume generation",
+            &BindGroupLayoutEntries::single(
+                ShaderStages::FRAGMENT,
+                uniform_buffer_sized(false, None),
             ),
         );
         let cull_pipeline = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
@@ -697,6 +851,14 @@ impl FromWorld for GroundCoverPipelines {
             entry_point: Some(Cow::Borrowed("cull")),
             ..default()
         });
+        let count_ribbon_candidates_pipeline =
+            pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
+                label: Some("ground-cover ribbon candidate count pipeline".into()),
+                layout: vec![cull_layout.clone()],
+                shader: compute_shader.clone(),
+                entry_point: Some(Cow::Borrowed("count_ribbon_candidates")),
+                ..default()
+            });
         let finalize_pipeline = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
             label: Some("ground-cover finalize pipeline".into()),
             layout: vec![finalize_layout.clone()],
@@ -777,12 +939,52 @@ impl FromWorld for GroundCoverPipelines {
             }),
             ..default()
         };
+        let mut blade_draw_descriptor = draw_descriptor.clone();
+        blade_draw_descriptor.label = Some("ground-cover ribbon draw pipeline".into());
+        blade_draw_descriptor.primitive.topology = PrimitiveTopology::TriangleStrip;
+        let mut blade_prepass_descriptor = prepass_descriptor.clone();
+        blade_prepass_descriptor.label = Some("ground-cover ribbon depth prepass pipeline".into());
+        blade_prepass_descriptor.primitive.topology = PrimitiveTopology::TriangleStrip;
+        let shadow_volume_descriptor = RenderPipelineDescriptor {
+            label: Some("ground-cover shadow volume pipeline".into()),
+            layout: Vec::new(),
+            vertex: VertexState {
+                shader: shadow_volume_shader.clone(),
+                entry_point: Some(Cow::Borrowed("vertex")),
+                shader_defs: vec!["SHADOW_FILTER_METHOD_HARDWARE_2X2".into()],
+                buffers: Vec::new(),
+                ..default()
+            },
+            fragment: Some(FragmentState {
+                shader: shadow_volume_shader,
+                entry_point: Some(Cow::Borrowed("fragment")),
+                shader_defs: vec!["SHADOW_FILTER_METHOD_HARDWARE_2X2".into()],
+                targets: vec![Some(ColorTargetState {
+                    format: SHADOW_VOLUME_FORMAT,
+                    blend: None,
+                    write_mask: ColorWrites::RED,
+                })],
+                ..default()
+            }),
+            primitive: PrimitiveState {
+                topology: PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: FrontFace::Ccw,
+                cull_mode: None,
+                polygon_mode: PolygonMode::Fill,
+                ..default()
+            },
+            depth_stencil: None,
+            ..default()
+        };
 
         Self {
             cull_layout,
             finalize_layout,
             draw_layout: draw_layout.clone(),
+            shadow_slice_layout: shadow_slice_layout.clone(),
             cull_pipeline,
+            count_ribbon_candidates_pipeline,
             finalize_pipeline,
             draw_variants: Variants::new(
                 GroundCoverPipelineSpecializer {
@@ -794,13 +996,65 @@ impl FromWorld for GroundCoverPipelines {
             ),
             prepass_variants: Variants::new(
                 GroundCoverPipelineSpecializer {
-                    view_layouts,
-                    draw_layout,
+                    view_layouts: view_layouts.clone(),
+                    draw_layout: draw_layout.clone(),
                     color_pass: false,
                 },
                 prepass_descriptor,
             ),
+            blade_draw_variants: Variants::new(
+                GroundCoverPipelineSpecializer {
+                    view_layouts: view_layouts.clone(),
+                    draw_layout: draw_layout.clone(),
+                    color_pass: true,
+                },
+                blade_draw_descriptor,
+            ),
+            blade_prepass_variants: Variants::new(
+                GroundCoverPipelineSpecializer {
+                    view_layouts: view_layouts.clone(),
+                    draw_layout,
+                    color_pass: false,
+                },
+                blade_prepass_descriptor,
+            ),
+            shadow_volume_variants: Variants::new(
+                GroundShadowVolumePipelineSpecializer {
+                    view_layouts,
+                    shadow_slice_layout,
+                },
+                shadow_volume_descriptor,
+            ),
+            shadow_volume_pipelines: HashMap::new(),
         }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, SpecializerKey)]
+struct GroundShadowVolumePipelineKey {
+    view_layout_bits: u32,
+}
+
+struct GroundShadowVolumePipelineSpecializer {
+    view_layouts: MeshPipelineViewLayouts,
+    shadow_slice_layout: BindGroupLayoutDescriptor,
+}
+
+impl Specializer<RenderPipeline> for GroundShadowVolumePipelineSpecializer {
+    type Key = GroundShadowVolumePipelineKey;
+
+    fn specialize(
+        &self,
+        key: Self::Key,
+        descriptor: &mut RenderPipelineDescriptor,
+    ) -> Result<Canonical<Self::Key>, BevyError> {
+        let view_layout =
+            self.view_layouts
+                .get_view_layout(MeshPipelineViewLayoutKey::from_bits_retain(
+                    key.view_layout_bits,
+                ));
+        descriptor.layout = vec![view_layout.main_layout, self.shadow_slice_layout.clone()];
+        Ok(key)
     }
 }
 
@@ -891,6 +1145,7 @@ fn prepare_ground_cover(
                 buffers.far_args.as_entire_binding(),
                 buffers.camera.as_entire_binding(),
                 buffers.interaction.as_entire_binding(),
+                buffers.ribbon_candidates.as_entire_binding(),
             )),
         );
         buffers.page_bind_groups.insert(
@@ -917,8 +1172,9 @@ fn prepare_ground_cover(
         camera_position: view.world_from_view.translation().extend(1.0).to_array(),
         view_direction: view_direction.extend(top_down_card_blend).to_array(),
         viewport: [view.viewport.z as f32, view.viewport.w as f32, 0.0, 0.0],
-        // Near detail, mid detail, output capacity, and geometry cutoff in pixels.
-        limits: [18.0, 6.0, MAX_VISIBLE_INSTANCES as f32, 2.0],
+        // Near detail, mid detail, output capacity, and geometry cutoff in pixels. Far cards are
+        // cheap enough to remain below one pixel; the lower cutoff prevents visible horizon gaps.
+        limits: [18.0, 6.0, MAX_VISIBLE_INSTANCES as f32, 0.75],
         wind: [
             wind.elapsed_seconds,
             wind.base_strength,
@@ -926,9 +1182,57 @@ fn prepare_ground_cover(
             wind.spatial_scale,
         ],
         wind_direction: [wind_direction.x, wind_direction.y, wind.speed, 0.0],
-        debug: [debug.mode.gpu_value(), 0, 0, 0],
+        debug: [
+            debug.mode.gpu_value(),
+            u32::from(debug.procedural_blades),
+            0,
+            0,
+        ],
     };
     render_queue.write_buffer(&buffers.camera, 0, bytemuck::bytes_of(&uniform));
+
+    // The near shadow field remains world-aligned and only moves in complete texels. This
+    // prevents sub-texel camera motion from changing the filtered field under stationary grass.
+    let shadow_texel_size = SHADOW_VOLUME_WORLD_EXTENT / SHADOW_VOLUME_RESOLUTION as f32;
+    let camera_position = view.world_from_view.translation();
+    let shadow_origin = Vec2::new(
+        camera_position.x - SHADOW_VOLUME_WORLD_EXTENT * 0.5,
+        camera_position.z - SHADOW_VOLUME_WORLD_EXTENT * 0.5,
+    );
+    let shadow_origin = (shadow_origin / shadow_texel_size).floor() * shadow_texel_size;
+    let slice_spacing = (SHADOW_VOLUME_TOP_HEIGHT - SHADOW_VOLUME_BASE_HEIGHT)
+        / (SHADOW_VOLUME_SLICE_COUNT - 1) as f32;
+    let shadow_volume = GroundShadowVolumeGpu {
+        origin_extent: [
+            shadow_origin.x,
+            shadow_origin.y,
+            SHADOW_VOLUME_WORLD_EXTENT,
+            SHADOW_VOLUME_BASE_HEIGHT,
+        ],
+        height: [
+            slice_spacing,
+            slice_spacing.recip(),
+            (SHADOW_VOLUME_SLICE_COUNT - 1) as f32,
+            0.045,
+        ],
+    };
+    render_queue.write_buffer(
+        &buffers.shadow_volume_uniform,
+        0,
+        bytemuck::bytes_of(&shadow_volume),
+    );
+    for (slice, buffer) in buffers.shadow_slice_buffers.iter().enumerate() {
+        let slice_uniform = GroundShadowSliceGpu {
+            origin_extent: [
+                shadow_origin.x,
+                shadow_origin.y,
+                SHADOW_VOLUME_WORLD_EXTENT,
+                SHADOW_VOLUME_BASE_HEIGHT + slice as f32 * slice_spacing,
+            ],
+            filter: [SHADOW_VOLUME_FILTER_RADIUS, 0.0, 0.0, 0.0],
+        };
+        render_queue.write_buffer(buffer, 0, bytemuck::bytes_of(&slice_uniform));
+    }
 
     let mut interaction_uniform = InteractionGpu::zeroed();
     let stamp_count = interaction
@@ -967,8 +1271,10 @@ fn run_ground_cover_culling(
     encoder.clear_buffer(&buffers.near_args, 0, None);
     encoder.clear_buffer(&buffers.mid_args, 0, None);
     encoder.clear_buffer(&buffers.far_args, 0, None);
+    encoder.clear_buffer(&buffers.ribbon_candidates, 0, None);
 
-    let (Some(cull_pipeline), Some(finalize_pipeline)) = (
+    let (Some(count_pipeline), Some(cull_pipeline), Some(finalize_pipeline)) = (
+        pipeline_cache.get_compute_pipeline(pipelines.count_ribbon_candidates_pipeline),
         pipeline_cache.get_compute_pipeline(pipelines.cull_pipeline),
         pipeline_cache.get_compute_pipeline(pipelines.finalize_pipeline),
     ) else {
@@ -979,6 +1285,14 @@ fn run_ground_cover_culling(
         label: Some("ground-cover GPU culling"),
         ..default()
     });
+    pass.set_pipeline(count_pipeline);
+    for page in buffers.page_bind_groups.values() {
+        if page.cluster_count == 0 {
+            continue;
+        }
+        pass.set_bind_group(0, &page.bind_group, &[]);
+        pass.dispatch_workgroups(page.cluster_count.div_ceil(CULL_WORKGROUP_SIZE), 1, 1);
+    }
     pass.set_pipeline(cull_pipeline);
     for page in buffers.page_bind_groups.values() {
         if page.cluster_count == 0 {
@@ -992,9 +1306,62 @@ fn run_ground_cover_culling(
     pass.dispatch_workgroups(1, 1, 1);
 }
 
+fn render_ground_shadow_volume(
+    view: ViewQuery<(&GroundCoverView, &MeshViewBindGroup)>,
+    pipeline_cache: Res<PipelineCache>,
+    pipelines: Res<GroundCoverPipelines>,
+    buffers: Res<GroundCoverBuffers>,
+    mut render_context: RenderContext,
+) {
+    let view_entity = view.entity();
+    let (_, mesh_view_bind_group) = view.into_inner();
+    let Some(pipeline_id) = pipelines.shadow_volume_pipelines.get(&view_entity) else {
+        return;
+    };
+    let Some(pipeline) = pipeline_cache.get_render_pipeline(*pipeline_id) else {
+        return;
+    };
+
+    for (slice_view, slice_bind_group) in buffers
+        .shadow_slice_views
+        .iter()
+        .zip(&buffers.shadow_slice_bind_groups)
+    {
+        let color_attachments = [Some(RenderPassColorAttachment {
+            view: slice_view,
+            depth_slice: None,
+            resolve_target: None,
+            ops: Operations {
+                load: LoadOp::Clear(Color::WHITE.to_linear().into()),
+                store: StoreOp::Store,
+            },
+        })];
+        let pass_descriptor = RenderPassDescriptor {
+            label: Some("ground-cover shadow volume slice"),
+            color_attachments: &color_attachments,
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        };
+        let mut pass = render_context
+            .command_encoder()
+            .begin_render_pass(&pass_descriptor);
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(
+            0,
+            &mesh_view_bind_group.main,
+            &mesh_view_bind_group.main_offsets,
+        );
+        pass.set_bind_group(1, slice_bind_group, &[]);
+        pass.draw(0..3, 0..1);
+    }
+}
+
 fn queue_ground_cover(
     pipeline_cache: Res<PipelineCache>,
     mut pipelines: ResMut<GroundCoverPipelines>,
+    debug: Res<GroundCoverDebug>,
     pages: Res<RenderAssets<GpuGroundCoverPage>>,
     mut opaque_phases: ResMut<ViewBinnedRenderPhases<Opaque3d>>,
     mut alpha_mask_prepass_phases: ResMut<ViewBinnedRenderPhases<AlphaMask3dPrepass>>,
@@ -1003,8 +1370,15 @@ fn queue_ground_cover(
     view_key_cache: Res<ViewKeyCache>,
     views: Query<(Entity, &MainEntity, &ExtractedView, &Msaa), With<GroundCoverView>>,
 ) {
-    let draw_function = draw_functions.read().id::<DrawGroundCover>();
-    let prepass_draw_function = prepass_draw_functions.read().id::<DrawGroundCoverPrepass>();
+    let card_draw_function = draw_functions.read().id::<DrawGroundCoverCards>();
+    let blade_draw_function = draw_functions.read().id::<DrawGroundCoverBlades>();
+    let card_prepass_draw_function = prepass_draw_functions
+        .read()
+        .id::<DrawGroundCoverCardsPrepass>();
+    let blade_prepass_draw_function = prepass_draw_functions
+        .read()
+        .id::<DrawGroundCoverBladesPrepass>();
+    pipelines.shadow_volume_pipelines.clear();
     for (entity, main_entity, view, msaa) in &views {
         let (Some(phase), Some(prepass_phase), Some(mesh_view_key)) = (
             opaque_phases.get_mut(&view.retained_view_entity),
@@ -1023,16 +1397,38 @@ fn queue_ground_cover(
             target_format: view.target_format,
             view_layout_bits: MeshPipelineViewLayoutKey::from(*mesh_view_key).bits(),
         };
-        let (Ok(pipeline), Ok(prepass_pipeline)) = (
+        let shadow_volume_key = GroundShadowVolumePipelineKey {
+            view_layout_bits: key.view_layout_bits,
+        };
+        let (
+            Ok(card_pipeline),
+            Ok(card_prepass_pipeline),
+            Ok(blade_pipeline),
+            Ok(blade_prepass_pipeline),
+            Ok(shadow_volume_pipeline),
+        ) = (
             pipelines.draw_variants.specialize(&pipeline_cache, key),
             pipelines.prepass_variants.specialize(&pipeline_cache, key),
-        ) else {
+            pipelines
+                .blade_draw_variants
+                .specialize(&pipeline_cache, key),
+            pipelines
+                .blade_prepass_variants
+                .specialize(&pipeline_cache, key),
+            pipelines
+                .shadow_volume_variants
+                .specialize(&pipeline_cache, shadow_volume_key),
+        )
+        else {
             continue;
         };
+        pipelines
+            .shadow_volume_pipelines
+            .insert(entity, shadow_volume_pipeline);
         prepass_phase.add(
             OpaqueNoLightmap3dBatchSetKey {
-                draw_function: prepass_draw_function,
-                pipeline: prepass_pipeline,
+                draw_function: card_prepass_draw_function,
+                pipeline: card_prepass_pipeline,
                 material_bind_group_index: None,
                 slabs: MeshSlabs::default(),
             },
@@ -1045,8 +1441,8 @@ fn queue_ground_cover(
         );
         phase.add(
             Opaque3dBatchSetKey {
-                draw_function,
-                pipeline,
+                draw_function: card_draw_function,
+                pipeline: card_pipeline,
                 material_bind_group_index: None,
                 lightmap_slab: None,
                 slabs: MeshSlabs::default(),
@@ -1058,23 +1454,92 @@ fn queue_ground_cover(
             InputUniformIndex::default(),
             BinnedRenderPhaseType::NonMesh,
         );
+        if debug.procedural_blades {
+            prepass_phase.add(
+                OpaqueNoLightmap3dBatchSetKey {
+                    draw_function: blade_prepass_draw_function,
+                    pipeline: blade_prepass_pipeline,
+                    material_bind_group_index: None,
+                    slabs: MeshSlabs::default(),
+                },
+                OpaqueNoLightmap3dBinKey {
+                    asset_id: AssetId::<Mesh>::invalid().untyped(),
+                },
+                (entity, *main_entity),
+                InputUniformIndex::default(),
+                BinnedRenderPhaseType::NonMesh,
+            );
+            phase.add(
+                Opaque3dBatchSetKey {
+                    draw_function: blade_draw_function,
+                    pipeline: blade_pipeline,
+                    material_bind_group_index: None,
+                    lightmap_slab: None,
+                    slabs: MeshSlabs::default(),
+                },
+                Opaque3dBinKey {
+                    asset_id: AssetId::<Mesh>::invalid().untyped(),
+                },
+                (entity, *main_entity),
+                InputUniformIndex::default(),
+                BinnedRenderPhaseType::NonMesh,
+            );
+        }
     }
 }
 
-type DrawGroundCover = (
+type DrawGroundCoverCards = (
     SetItemPipeline,
     SetMeshViewBindGroup<0>,
-    DrawGroundCoverIndirect,
+    DrawGroundCoverCardsIndirect,
 );
-type DrawGroundCoverPrepass = (
+type DrawGroundCoverCardsPrepass = (
     SetItemPipeline,
     SetMeshViewBindGroup<0>,
-    DrawGroundCoverIndirect,
+    DrawGroundCoverCardsIndirect,
+);
+type DrawGroundCoverBlades = (
+    SetItemPipeline,
+    SetMeshViewBindGroup<0>,
+    DrawGroundCoverBladesIndirect,
+);
+type DrawGroundCoverBladesPrepass = (
+    SetItemPipeline,
+    SetMeshViewBindGroup<0>,
+    DrawGroundCoverBladesIndirect,
 );
 
-struct DrawGroundCoverIndirect;
+struct DrawGroundCoverCardsIndirect;
 
-impl<P: PhaseItem> RenderCommand<P> for DrawGroundCoverIndirect {
+impl<P: PhaseItem> RenderCommand<P> for DrawGroundCoverCardsIndirect {
+    type Param = (SRes<GroundCoverBuffers>, SRes<GroundCoverDebug>);
+    type ViewQuery = ();
+    type ItemQuery = ();
+
+    fn render<'w>(
+        _item: &P,
+        _view: ROQueryItem<'w, '_, Self::ViewQuery>,
+        _entity: Option<ROQueryItem<'w, '_, Self::ItemQuery>>,
+        parameters: SystemParamItem<'w, '_, Self::Param>,
+        pass: &mut TrackedRenderPass<'w>,
+    ) -> RenderCommandResult {
+        let (buffers, debug) = parameters;
+        let buffers = buffers.into_inner();
+        if !debug.procedural_blades {
+            pass.set_bind_group(1, &buffers.near_draw_bind_group, &[]);
+            pass.draw_indirect(&buffers.near_args, 0);
+            pass.set_bind_group(1, &buffers.mid_draw_bind_group, &[]);
+            pass.draw_indirect(&buffers.mid_args, 0);
+        }
+        pass.set_bind_group(1, &buffers.far_draw_bind_group, &[]);
+        pass.draw_indirect(&buffers.far_args, 0);
+        RenderCommandResult::Success
+    }
+}
+
+struct DrawGroundCoverBladesIndirect;
+
+impl<P: PhaseItem> RenderCommand<P> for DrawGroundCoverBladesIndirect {
     type Param = SRes<GroundCoverBuffers>;
     type ViewQuery = ();
     type ItemQuery = ();
@@ -1091,16 +1556,15 @@ impl<P: PhaseItem> RenderCommand<P> for DrawGroundCoverIndirect {
         pass.draw_indirect(&buffers.near_args, 0);
         pass.set_bind_group(1, &buffers.mid_draw_bind_group, &[]);
         pass.draw_indirect(&buffers.mid_args, 0);
-        pass.set_bind_group(1, &buffers.far_draw_bind_group, &[]);
-        pass.draw_indirect(&buffers.far_args, 0);
         RenderCommandResult::Success
     }
 }
 
 #[cfg(test)]
 mod tests {
-    fn validate_shader(source: &str) {
-        let module = naga::front::wgsl::parse_str(source).expect("shader should parse as WGSL");
+    fn validate_shader(label: &str, source: &str) {
+        let module = naga::front::wgsl::parse_str(source)
+            .unwrap_or_else(|error| panic!("{label} should parse as WGSL: {error:?}"));
         naga::valid::Validator::new(
             naga::valid::ValidationFlags::all(),
             naga::valid::Capabilities::all(),
@@ -1111,9 +1575,10 @@ mod tests {
 
     #[test]
     fn ground_cover_shaders_are_valid_wgsl() {
-        validate_shader(include_str!(
-            "../../../assets/shaders/ground_cover_cull.wgsl"
-        ));
+        validate_shader(
+            "ground-cover cull shader",
+            include_str!("../../../assets/shaders/ground_cover_cull.wgsl"),
+        );
 
         // Naga alone does not understand Bevy/naga-oil `#import` directives. Validate the complete
         // ground-cover shader with only the imported shadow adapter replaced by an identity stub;
@@ -1123,17 +1588,32 @@ mod tests {
             .find("struct VisibleInstance")
             .expect("ground-cover declarations should follow imports");
         let shadow_adapter = render_shader
-            .find("fn directional_shadow_visibility")
+            .find("fn exact_directional_shadow_visibility")
             .expect("ground cover should receive directional shadows");
         let fragment_entries = render_shader
             .find("// This fragment entry point")
             .expect("ground cover should document its depth prepass");
         let sanitized = format!(
-            "{}fn directional_shadow_visibility(_input: VertexOutput) -> f32 {{ return 1.0; }}\n\n{}",
+            "{}fn directional_shadow_visibility(_input: VertexOutput) -> f32 {{ return 1.0; }}\nfn blade_surface_response(_input: VertexOutput, coverage: f32) -> f32 {{ return coverage; }}\n\n{}",
             &render_shader[declarations..shadow_adapter],
             &render_shader[fragment_entries..],
         );
-        validate_shader(&sanitized);
+        validate_shader("ground-cover render shader", &sanitized);
+
+        // The volume generator also imports Bevy's CSM adapter. Its local uniform and
+        // fullscreen-triangle interface remain independently valid WGSL.
+        let volume_shader = include_str!("../../../assets/shaders/ground_cover_shadow_volume.wgsl");
+        let volume_declarations = volume_shader
+            .find("struct GroundShadowSlice")
+            .expect("shadow-volume declarations should follow imports");
+        let volume_shadow_adapter = volume_shader
+            .find("fn exact_visibility")
+            .expect("shadow volume should sample the directional CSM");
+        let sanitized_volume = format!(
+            "{}@fragment\nfn fragment(_input: VertexOutput) -> @location(0) vec4<f32> {{ return vec4<f32>(1.0); }}",
+            &volume_shader[volume_declarations..volume_shadow_adapter],
+        );
+        validate_shader("ground-cover shadow-volume shader", &sanitized_volume);
     }
 
     #[test]
@@ -1148,7 +1628,51 @@ mod tests {
             2,
             "the prepass and color pass must share the exact alpha test",
         );
-        assert!(render_shader.contains("shadows::fetch_directional_shadow("));
+        assert!(render_shader.contains("textureSampleLevel(\n        ground_shadow_volume"));
+        assert!(
+            include_str!("../../../assets/shaders/ground_cover_shadow_volume.wgsl")
+                .contains("shadows::fetch_directional_shadow("),
+            "the filtered volume must retain exact animated caster silhouettes",
+        );
+    }
+
+    #[test]
+    fn ribbon_backend_uses_independent_spatial_blades() {
+        let cull_shader = include_str!("../../../assets/shaders/ground_cover_cull.wgsl");
+        let render_shader = include_str!("../../../assets/shaders/ground_cover.wgsl");
+        assert!(cull_shader.contains("fn sample_clump_field(root: vec2<f32>)"));
+        assert!(cull_shader.contains("let blade_visible = VisibleInstance("));
+        assert!(cull_shader.contains("let blade_count = budgeted_blade_count(near_selected)"));
+        assert!(cull_shader.contains("fn count_ribbon_candidates("));
+        assert!(cull_shader.contains("let clump = sample_clump_field(root_xz)"));
+        assert!(cull_shader.contains("let root_projection_scale = bottom_clip_w / root_clip_w"));
+        assert!(cull_shader.contains("let coverage_rank = fract("));
+        assert!(cull_shader.contains("field.xy * inverseSqrt"));
+        assert!(render_shader.contains("let section_count = select(7u, 3u, low_detail)"));
+        assert!(cull_shader.contains("15u,\n        final_camera.debug.y != 0u"));
+        assert!(cull_shader.contains("7u,\n        final_camera.debug.y != 0u"));
+        assert!(render_shader.contains("fn cubic_bezier_derivative("));
+        assert!(render_shader.contains("let root = instance.position_yaw.xyz"));
+        assert!(render_shader.contains("let resting_tip = rest_direction * resting_reach"));
+        assert!(cull_shader.contains("fn ribbon_wind_displacement("));
+        assert!(cull_shader.contains("let blade_wind = ribbon_wind_displacement("));
+        assert!(render_shader.contains("let wind_displacement = instance.interaction.zw"));
+        assert!(render_shader.contains("let vertical_wind_displacement = instance.motion.x"));
+        assert!(
+            !render_shader.contains("let group_wave = sin("),
+            "ribbon wind phases must be evaluated once per blade during GPU expansion",
+        );
+        assert!(
+            !render_shader.contains("let blade_index = vertex_index /"),
+            "one visible ribbon instance must not expand back into a hidden blade clump",
+        );
+        let renderer = include_str!("renderer.rs");
+        assert!(renderer.contains(
+            "blade_draw_descriptor.primitive.topology = PrimitiveTopology::TriangleStrip"
+        ));
+        assert!(renderer.contains(
+            "blade_prepass_descriptor.primitive.topology = PrimitiveTopology::TriangleStrip"
+        ));
     }
 
     #[test]

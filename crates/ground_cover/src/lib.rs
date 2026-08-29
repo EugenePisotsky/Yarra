@@ -308,10 +308,10 @@ impl Default for GroundCoverWind {
     fn default() -> Self {
         Self {
             direction: Vec2::new(0.88, 0.47).normalize(),
-            base_strength: 0.35,
-            gust_strength: 0.65,
-            spatial_scale: 0.12,
-            speed: 1.15,
+            base_strength: 0.9,
+            gust_strength: 1.2,
+            spatial_scale: 0.28,
+            speed: 4.2,
             elapsed_seconds: 0.0,
         }
     }
@@ -359,23 +359,44 @@ impl GroundCoverDebugMode {
     }
 }
 
-#[derive(Resource, ExtractResource, Debug, Clone, Copy, Default)]
+#[derive(Resource, ExtractResource, Debug, Clone, Copy)]
 pub struct GroundCoverDebug {
     pub mode: GroundCoverDebugMode,
+    /// Independent ribbon geometry for the near/mid LODs. The far LOD remains card based.
+    pub procedural_blades: bool,
+}
+
+impl Default for GroundCoverDebug {
+    fn default() -> Self {
+        Self {
+            mode: GroundCoverDebugMode::Normal,
+            procedural_blades: true,
+        }
+    }
 }
 
 fn cycle_ground_cover_debug(
     keys: Res<ButtonInput<KeyCode>>,
     mut ground_cover_debug: ResMut<GroundCoverDebug>,
 ) {
-    if !keys.just_pressed(KeyCode::KeyG) {
-        return;
+    if keys.just_pressed(KeyCode::KeyG) {
+        ground_cover_debug.mode = ground_cover_debug.mode.next();
+        warn!(
+            "ground-cover debug mode: {}",
+            ground_cover_debug.mode.label()
+        );
     }
-    ground_cover_debug.mode = ground_cover_debug.mode.next();
-    warn!(
-        "ground-cover debug mode: {}",
-        ground_cover_debug.mode.label()
-    );
+    if keys.just_pressed(KeyCode::KeyB) {
+        ground_cover_debug.procedural_blades = !ground_cover_debug.procedural_blades;
+        warn!(
+            "ground-cover representation: {}",
+            if ground_cover_debug.procedural_blades {
+                "independent ribbon blades / far cards"
+            } else {
+                "cards"
+            }
+        );
+    }
 }
 
 /// A resolved runtime page ready for renderer upload.
