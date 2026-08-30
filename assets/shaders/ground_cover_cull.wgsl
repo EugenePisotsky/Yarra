@@ -64,7 +64,14 @@ struct Camera {
     limits: vec4<f32>,
     wind: vec4<f32>,
     wind_direction: vec4<f32>,
-    // x: debug mode (0 normal, 1 LOD colors, 2 far only, 3 far disabled)
+    // xyz: direction to the strongest directional light, w: active
+    sun_direction: vec4<f32>,
+    // xyz: directional radiance and global ambient radiance, respectively
+    sun_radiance: vec4<f32>,
+    ambient_radiance: vec4<f32>,
+    // x: diffuse strength, y: specular strength, z: transmission, w: perceptual roughness
+    lighting: vec4<f32>,
+    // x: debug mode, y: procedural blades, z: foliage lighting enabled, w: show sun-field mask
     debug: vec4<u32>,
 }
 

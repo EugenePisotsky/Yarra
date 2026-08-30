@@ -30,11 +30,15 @@ impl Plugin for GroundCoverPlugin {
     fn build(&self, app: &mut App) {
         app.init_asset::<GroundCoverPageAsset>()
             .init_resource::<GroundCoverWind>()
+            .init_resource::<GroundCoverLighting>()
+            .init_resource::<GroundCoverSun>()
             .init_resource::<GroundCoverDebug>()
             .init_resource::<GroundCoverInteractionState>()
             .init_resource::<GroundCoverInteraction>()
             .add_plugins((
                 ExtractResourcePlugin::<GroundCoverWind>::default(),
+                ExtractResourcePlugin::<GroundCoverLighting>::default(),
+                ExtractResourcePlugin::<GroundCoverSun>::default(),
                 ExtractResourcePlugin::<GroundCoverDebug>::default(),
                 ExtractResourcePlugin::<GroundCoverInteraction>::default(),
             ))
@@ -44,7 +48,8 @@ impl Plugin for GroundCoverPlugin {
             )
             .add_systems(
                 PostUpdate,
-                update_ground_cover_interaction.after(TransformSystems::Propagate),
+                (update_ground_cover_interaction, sync_ground_cover_sun)
+                    .after(TransformSystems::Propagate),
             )
             .add_plugins(renderer::GroundCoverRenderPlugin);
     }
@@ -302,6 +307,8 @@ pub struct GroundCoverWind {
     pub spatial_scale: f32,
     pub speed: f32,
     pub elapsed_seconds: f32,
+    /// Debug isolation for temporal coverage artifacts. Frozen wind retains its current shape.
+    pub paused: bool,
 }
 
 impl Default for GroundCoverWind {
@@ -313,12 +320,90 @@ impl Default for GroundCoverWind {
             spatial_scale: 0.28,
             speed: 4.2,
             elapsed_seconds: 0.0,
+            paused: true,
         }
     }
 }
 
 fn advance_ground_cover_wind(time: Res<Time>, mut wind: ResMut<GroundCoverWind>) {
-    wind.elapsed_seconds = (wind.elapsed_seconds + time.delta_secs()) % 4096.0;
+    if !wind.paused {
+        wind.elapsed_seconds = (wind.elapsed_seconds + time.delta_secs()) % 4096.0;
+    }
+}
+
+/// Shared foliage-lighting controls for a stable body and rest-surface sun modulation.
+///
+/// The authored blade color remains the stable ambient body. These controls describe direct sun
+/// illumination over exposed portions of the curved ribbon surface.
+#[derive(Resource, ExtractResource, Debug, Clone, Copy)]
+pub struct GroundCoverLighting {
+    /// Maximum exposure-aware diffuse lift contributed by the directional sun.
+    pub diffuse_strength: f32,
+    /// Broad clump-normal GGX highlight over the upper ribbon surface.
+    pub specular_strength: f32,
+    /// Low-sun diffuse transmission when the viewer looks toward the sun.
+    pub transmission_strength: f32,
+    /// Perceptual roughness of the deliberately broad, anti-aliased foliage highlight.
+    pub perceptual_roughness: f32,
+}
+
+impl Default for GroundCoverLighting {
+    fn default() -> Self {
+        Self {
+            diffuse_strength: 0.055,
+            specular_strength: 0.34,
+            transmission_strength: 0.58,
+            perceptual_roughness: 0.58,
+        }
+    }
+}
+
+/// Render-facing copy of the strongest world directional light.
+///
+/// Bevy exposes its mesh-view light bindings to fragments only. Copying this tiny value after
+/// transform propagation lets the custom foliage fragment response follow a moving sun without
+/// leaving the indirect grass pipeline.
+#[derive(Resource, ExtractResource, Debug, Clone, Copy)]
+pub(crate) struct GroundCoverSun {
+    pub(crate) direction_to_light: Vec3,
+    pub(crate) radiance: Vec3,
+    pub(crate) ambient_radiance: Vec3,
+    pub(crate) active: bool,
+}
+
+impl Default for GroundCoverSun {
+    fn default() -> Self {
+        Self {
+            direction_to_light: Vec3::Y,
+            radiance: Vec3::ZERO,
+            ambient_radiance: Vec3::ZERO,
+            active: false,
+        }
+    }
+}
+
+fn sync_ground_cover_sun(
+    directional_lights: Query<(&DirectionalLight, &GlobalTransform)>,
+    ambient: Res<GlobalAmbientLight>,
+    mut foliage_sun: ResMut<GroundCoverSun>,
+) {
+    let ambient_color = LinearRgba::from(ambient.color);
+    foliage_sun.ambient_radiance =
+        Vec3::new(ambient_color.red, ambient_color.green, ambient_color.blue) * ambient.brightness;
+
+    let Some((light, transform)) = directional_lights
+        .iter()
+        .max_by(|(left, _), (right, _)| left.illuminance.total_cmp(&right.illuminance))
+    else {
+        foliage_sun.radiance = Vec3::ZERO;
+        foliage_sun.active = false;
+        return;
+    };
+    let light_color = LinearRgba::from(light.color);
+    foliage_sun.direction_to_light = transform.back().into();
+    foliage_sun.radiance = Vec3::new(light_color.red, light_color.green, light_color.blue)
+        * light.illuminance.max(0.0);
+    foliage_sun.active = light.illuminance > 0.0;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -364,6 +449,10 @@ pub struct GroundCoverDebug {
     pub mode: GroundCoverDebugMode,
     /// Independent ribbon geometry for the near/mid LODs. The far LOD remains card based.
     pub procedural_blades: bool,
+    /// Enables exposure-aware foliage lighting. Toggle this for a direct A/B comparison.
+    pub lighting_enabled: bool,
+    /// Replaces grass albedo with the normalized sun-field mask for lighting diagnostics.
+    pub sun_mask_visible: bool,
 }
 
 impl Default for GroundCoverDebug {
@@ -371,6 +460,8 @@ impl Default for GroundCoverDebug {
         Self {
             mode: GroundCoverDebugMode::Normal,
             procedural_blades: true,
+            lighting_enabled: true,
+            sun_mask_visible: false,
         }
     }
 }
@@ -378,6 +469,7 @@ impl Default for GroundCoverDebug {
 fn cycle_ground_cover_debug(
     keys: Res<ButtonInput<KeyCode>>,
     mut ground_cover_debug: ResMut<GroundCoverDebug>,
+    mut wind: ResMut<GroundCoverWind>,
 ) {
     if keys.just_pressed(KeyCode::KeyG) {
         ground_cover_debug.mode = ground_cover_debug.mode.next();
@@ -395,6 +487,35 @@ fn cycle_ground_cover_debug(
             } else {
                 "cards"
             }
+        );
+    }
+    if keys.just_pressed(KeyCode::KeyL) {
+        ground_cover_debug.lighting_enabled = !ground_cover_debug.lighting_enabled;
+        warn!(
+            "ground-cover lighting: {}",
+            if ground_cover_debug.lighting_enabled {
+                "foliage lit"
+            } else {
+                "legacy unlit baseline"
+            }
+        );
+    }
+    if keys.just_pressed(KeyCode::KeyH) {
+        ground_cover_debug.sun_mask_visible = !ground_cover_debug.sun_mask_visible;
+        warn!(
+            "ground-cover sun mask: {}",
+            if ground_cover_debug.sun_mask_visible {
+                "visible"
+            } else {
+                "hidden"
+            }
+        );
+    }
+    if keys.just_pressed(KeyCode::KeyF) {
+        wind.paused = !wind.paused;
+        warn!(
+            "ground-cover wind: {}",
+            if wind.paused { "frozen" } else { "animated" }
         );
     }
 }

@@ -1,4 +1,6 @@
 #import bevy_pbr::{
+    fog as bevy_fog,
+    lighting as pbr_lighting,
     mesh_view_bindings as view_bindings,
     mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT,
     shadows,
@@ -24,7 +26,14 @@ struct Camera {
     limits: vec4<f32>,
     wind: vec4<f32>,
     wind_direction: vec4<f32>,
-    // x: debug mode (0 normal, 1 LOD colors, 2 far only, 3 far disabled)
+    // xyz: direction to the strongest directional light, w: active
+    sun_direction: vec4<f32>,
+    // xyz: directional radiance and global ambient radiance, respectively
+    sun_radiance: vec4<f32>,
+    ambient_radiance: vec4<f32>,
+    // x: diffuse strength, y: specular strength, z: transmission, w: perceptual roughness
+    lighting: vec4<f32>,
+    // x: debug mode, y: procedural blades, z: foliage lighting enabled, w: show sun-field mask
     debug: vec4<u32>,
 }
 
@@ -48,6 +57,7 @@ struct VertexOutput {
     @location(3) @interpolate(flat) card_visibility: f32,
     @location(4) world_position: vec3<f32>,
     @location(5) @interpolate(flat) procedural_blade: u32,
+    // Stable rest/clump-facing normal. Wind never enters the lighting normal.
     @location(6) world_normal: vec3<f32>,
 }
 
@@ -109,6 +119,149 @@ fn cubic_bezier_derivative(
     return (p1 - p0) * 3.0 * inverse_t * inverse_t
         + (p2 - p1) * 6.0 * inverse_t * t
         + (p3 - p2) * 3.0 * t * t;
+}
+
+struct FoliageLighting {
+    diffuse: f32,
+    specular: f32,
+    transmission: f32,
+    mask: f32,
+}
+
+fn stable_surface_normal(
+    rest_normal: vec3<f32>,
+    view_direction: vec3<f32>,
+    width_coordinate: f32,
+    height_fraction: f32,
+) -> vec3<f32> {
+    let horizontal_normal = normalize(vec3<f32>(rest_normal.x, 0.0, rest_normal.z));
+    let two_sided_normal = select(
+        -horizontal_normal,
+        horizontal_normal,
+        dot(horizontal_normal, view_direction) >= 0.0,
+    );
+    let width_axis = normalize(cross(vec3<f32>(0.0, 1.0, 0.0), two_sided_normal));
+    // The rounded-width normal from the reference is reconstructed from stable rest data. Its
+    // vertical component follows the canonical ribbon curve instead of the animated wind tangent,
+    // so wind can deform silhouettes without modulating their lighting from frame to frame.
+    let round_amount = clamp((width_coordinate * 2.0 - 1.0) * 0.48, -0.48, 0.48);
+    let upper_rounding = smoothstep(0.16, 0.82, height_fraction) * 0.62;
+    return normalize(
+        two_sided_normal * sqrt(max(1.0 - round_amount * round_amount, 0.0))
+            + width_axis * round_amount
+            + vec3<f32>(0.0, upper_rounding, 0.0)
+    );
+}
+
+fn foliage_lighting(input: VertexOutput, height_fraction: f32) -> FoliageLighting {
+    if (camera.sun_direction.w <= 0.0) {
+        return FoliageLighting(0.0, 0.0, 0.0, 0.0);
+    }
+
+    let light_direction = normalize(camera.sun_direction.xyz);
+    let view_direction = normalize(camera.camera_position.xyz - input.world_position);
+    let surface_normal = stable_surface_normal(
+        input.world_normal,
+        view_direction,
+        input.uv.x,
+        height_fraction,
+    );
+    // The clump normal is deliberately dominated by world up. It is stable across wind, broad
+    // enough to survive subpixel grass, and still retains a small amount of rest-facing variation.
+    let clump_normal = normalize(vec3<f32>(
+        input.world_normal.x * 0.16,
+        1.0,
+        input.world_normal.z * 0.16,
+    ));
+    let half_vector = normalize(light_direction + view_direction);
+    let sun_elevation = clamp(light_direction.y, 0.0, 1.0);
+    let low_sun = 1.0 - smoothstep(0.28, 0.72, sun_elevation);
+    let high_sun = smoothstep(0.32, 0.82, sun_elevation);
+    let canonical_bend = canonical_bend_response(height_fraction);
+    let upper_ribbon = smoothstep(0.18, 0.78, height_fraction);
+
+    // Wrapped diffuse keeps thin two-sided foliage readable. As the sun rises the special lobe
+    // disappears and this term becomes broad, matching the natural transition to a uniformly
+    // brighter field under a high sun.
+    let wrapped_n_dot_l = clamp(
+        (dot(surface_normal, light_direction) + 0.55) / 1.55,
+        0.0,
+        1.0,
+    );
+    let high_sun_fill = mix(wrapped_n_dot_l, 1.0, high_sun * 0.68);
+    let diffuse = high_sun_fill * mix(0.30, 1.0, canonical_bend);
+
+    // This is the compact part borrowed from Bevy's StandardMaterial BRDF. A broad GGX lobe is
+    // evaluated against the clump normal rather than every animated blade normal. Screen-space
+    // normal variation only increases roughness, which is the specular-AA behavior needed for a
+    // dense field instead of temporal sparkle.
+    let n_dot_h = clamp(dot(clump_normal, half_vector), 0.0, 1.0);
+    let n_dot_v = clamp(dot(clump_normal, view_direction), 0.04, 1.0);
+    let n_dot_l = clamp(dot(clump_normal, light_direction), 0.04, 1.0);
+    var specular_lobe: f32;
+    if (input.procedural_blade != 0u) {
+        let normal_width = fwidth(clump_normal);
+        let normal_variance = clamp(dot(normal_width, normal_width), 0.0, 0.5);
+        let base_roughness = camera.lighting.w * camera.lighting.w;
+        let filtered_roughness = clamp(base_roughness + normal_variance * 0.45, 0.16, 0.86);
+        let v_dot_h = clamp(dot(view_direction, half_vector), 0.0, 1.0);
+        let one_minus_v_dot_h = 1.0 - v_dot_h;
+        let one_minus_v_dot_h_2 = one_minus_v_dot_h * one_minus_v_dot_h;
+        let fresnel = 0.04
+            + 0.96 * one_minus_v_dot_h_2 * one_minus_v_dot_h_2 * one_minus_v_dot_h;
+        let distribution = pbr_lighting::D_GGX(filtered_roughness, n_dot_h);
+        let visibility = pbr_lighting::V_SmithGGXCorrelated(
+            filtered_roughness,
+            n_dot_v,
+            n_dot_l,
+        );
+        specular_lobe = min(fresnel * distribution * visibility * n_dot_l, 1.0);
+    } else {
+        // Cards cover many real blades. A smooth broad lobe is both cheaper and more stable than
+        // evaluating a microfacet distribution for an impostor normal.
+        specular_lobe = smoothstep(0.72, 0.98, n_dot_h) * n_dot_l;
+    }
+
+    let camera_to_fragment = input.world_position.xz - camera.camera_position.xz;
+    let camera_distance_squared = dot(camera_to_fragment, camera_to_fragment);
+    let near_highlight_weight = 1.0 - smoothstep(1600.0, 6400.0, camera_distance_squared);
+    let representation_scale = mix(0.14, 1.0, near_highlight_weight);
+    let specular_elevation = mix(0.08, 1.0, low_sun);
+    let specular = specular_lobe * upper_ribbon * specular_elevation * representation_scale;
+
+    // Diffuse transmission is driven by the physical light/view relation, not a world-space cone.
+    // At low elevation dot(-V,L) stays aligned over a long ground distance; looking away from the
+    // sun or raising it toward noon naturally removes this special glow.
+    let backscatter_alignment = clamp(dot(-view_direction, light_direction), 0.0, 1.0);
+    let backscatter = smoothstep(0.14, 0.86, backscatter_alignment);
+    let transmission = backscatter * low_sun * upper_ribbon * representation_scale;
+    return FoliageLighting(
+        diffuse,
+        specular,
+        transmission,
+        max(max(specular, transmission), diffuse * high_sun * 0.35),
+    );
+}
+
+fn canonical_bend_response(height_fraction: f32) -> f32 {
+    let height_ramp = height_fraction * height_fraction * (3.0 - 2.0 * height_fraction);
+    return mix(0.08, 1.0, height_ramp);
+}
+
+fn apply_ground_cover_fog(
+    input_color: vec3<f32>,
+    world_position: vec3<f32>,
+) -> vec3<f32> {
+#ifdef DISTANCE_FOG
+    let fog_distance = distance(camera.camera_position.xyz, world_position);
+    return bevy_fog::atmospheric_fog(
+        view_bindings::fog,
+        vec4<f32>(input_color, 1.0),
+        fog_distance,
+        vec3<f32>(0.0),
+    ).rgb;
+#endif
+    return input_color;
 }
 
 fn procedural_blade(
@@ -174,8 +327,6 @@ fn procedural_blade(
         horizontal_tip.y,
     );
     let center = cubic_bezier(p0, p1, p2, p3, height_fraction);
-    let tangent = normalize(cubic_bezier_derivative(p0, p1, p2, p3, height_fraction));
-
     let to_camera = camera.camera_position.xz - root.xz;
     let to_camera_length = length(to_camera);
     var face_alignment = 1.0;
@@ -187,16 +338,6 @@ fn procedural_blade(
     let taper = 1.0 - smoothstep(0.72, 1.0, height_fraction);
     let world_position = center
         + vec3<f32>(width_axis.x, 0.0, width_axis.y) * side * half_width * taper;
-
-    // Rotate the flat surface normal across the blade width. This rounded normal provides
-    // readable volume without adding geometry and remains deterministic at every view angle.
-    let width_axis_3d = vec3<f32>(width_axis.x, 0.0, width_axis.y);
-    let flat_normal = normalize(cross(width_axis_3d, tangent));
-    let round_amount = side * 0.55;
-    let world_normal = normalize(
-        flat_normal * sqrt(max(1.0 - round_amount * round_amount, 0.0))
-            + width_axis_3d * round_amount
-    );
 
     var output: VertexOutput;
     output.clip_position = camera.clip_from_world * vec4<f32>(world_position, 1.0);
@@ -215,8 +356,11 @@ fn procedural_blade(
     output.uv = vec2<f32>(side * 0.5 + 0.5, 1.0 - height_fraction);
     output.texture_layer = instance.artwork.x;
     output.card_visibility = 1.0;
-    output.world_normal = world_normal;
-    // Two means high-detail/direct CSM; one means low-detail/filtered shadow volume.
+    // Lighting receives only the stable rest-facing normal. The fragment shader reconstructs the
+    // rounded surface analytically; animated Bézier tangents remain silhouette-only data.
+    output.world_normal = vec3<f32>(-rest_direction.x, 0.0, -rest_direction.y);
+    // Two marks the high-detail strip and one the low-detail strip. Both use the filtered
+    // receiver volume; this value only selects the surface response in the color pass.
     output.procedural_blade = select(2u, 1u, low_detail);
     return output;
 }
@@ -375,7 +519,11 @@ fn vertex(
         output.card_visibility = top_down_blend;
     }
     output.procedural_blade = 0u;
-    output.world_normal = vec3<f32>(direction.y, 0.0, -direction.x);
+    let rest_direction = vec2<f32>(
+        cos(instance.position_yaw.w),
+        sin(instance.position_yaw.w),
+    );
+    output.world_normal = vec3<f32>(-rest_direction.x, 0.0, -rest_direction.y);
     return output;
 }
 
@@ -485,9 +633,7 @@ fn blade_surface_response(input: VertexOutput, coverage: f32) -> f32 {
     if (input.procedural_blade == 0u) {
         return mix(0.82, 1.06, coverage);
     }
-    // Keep the first ribbon baseline temporally stable. Animated rounded-normal lighting made
-    // individual blades pulse between dark and bright; proper leaf BRDF/transmission will be
-    // reintroduced only after it has its own stable material test.
+    // Both the ribbon body and its upper lobe are independent of the animated normal.
     return 0.96;
 }
 
@@ -502,9 +648,58 @@ fn prepass_fragment(input: VertexOutput) {
 fn fragment(input: VertexOutput) -> @location(0) vec4<f32> {
     let coverage = visible_card_coverage(input);
     let edge_coverage = smoothstep(0.32, 0.68, coverage);
-    let shadow_visibility = directional_shadow_visibility(input);
-    let shadow_attenuation = mix(0.48, 1.0, shadow_visibility);
     let surface_response = blade_surface_response(input, coverage);
-    let shaded_color = input.color * surface_response * shadow_attenuation;
+    let height_fraction = clamp(1.0 - input.uv.y, 0.0, 1.0);
+    var foliage = FoliageLighting(0.0, 0.0, 0.0, 0.0);
+    if (camera.debug.x == 0u && (camera.debug.z != 0u || camera.debug.w != 0u)) {
+        foliage = foliage_lighting(input, height_fraction);
+    }
+    if (camera.debug.w != 0u) {
+        return vec4<f32>(vec3<f32>(foliage.mask), edge_coverage);
+    }
+    var shaded_color: vec3<f32>;
+    if (camera.debug.x != 0u || camera.debug.z == 0u) {
+        // A/B baseline: the branch's original unlit color with its shadow darkening intact.
+        let shadow_visibility = directional_shadow_visibility(input);
+        let shadow_attenuation = mix(0.48, 1.0, shadow_visibility);
+        shaded_color = input.color * surface_response * shadow_attenuation;
+    } else {
+        // Preserve the authored ambient body. Only the directional terms below are shadowed;
+        // occluded grass therefore stays green instead of collapsing into black silhouettes.
+        let body_color = input.color;
+        let exposed_sun = camera.sun_radiance.rgb * view_bindings::view.exposure;
+        let sun_color_peak = max(
+            max(exposed_sun.r, exposed_sun.g),
+            exposed_sun.b,
+        );
+        let sun_tint = exposed_sun / max(sun_color_peak, 0.0001);
+        let sun_energy = min(sun_color_peak, 1.0);
+        let shadow_visibility = directional_shadow_visibility(input);
+        let diffuse_lift = min(
+            sun_color_peak * camera.lighting.x,
+            0.55,
+        ) * foliage.diffuse * shadow_visibility;
+        let diffuse_radiance = body_color * sun_tint * diffuse_lift;
+        let specular_radiance = sun_tint
+            * foliage.specular
+            * camera.lighting.y
+            * sun_energy
+            * shadow_visibility;
+        let transmission_radiance = mix(
+            body_color * sun_tint,
+            sun_tint,
+            0.22,
+        ) * foliage.transmission
+            * camera.lighting.z
+            * sun_energy
+            * shadow_visibility;
+        shaded_color = (
+            body_color
+                + diffuse_radiance
+                + specular_radiance
+                + transmission_radiance
+        ) * surface_response;
+    }
+    shaded_color = apply_ground_cover_fog(shaded_color, input.world_position);
     return vec4<f32>(shaded_color, edge_coverage);
 }

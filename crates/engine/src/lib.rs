@@ -1,17 +1,16 @@
 mod actor;
 mod character;
 mod character_catalog;
+mod environment;
 mod world_streaming;
 
-use std::path::PathBuf;
+use std::{f32::consts::TAU, path::PathBuf};
 
 use bevy::{
-    camera::Exposure,
     core_pipeline::prepass::DepthPrepass,
     diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin},
     input::gestures::{PanGesture, PinchGesture},
     input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit},
-    light::CascadeShadowConfigBuilder,
     prelude::*,
     render::view::Msaa,
     window::{Monitor, PrimaryMonitor, PrimaryWindow, Window},
@@ -24,7 +23,10 @@ pub use character_catalog::{
     CharacterPresentationProfileSummary, CharacterPreviewClipDefinition, CharacterPreviewClipRole,
     DEFAULT_CHARACTER_PRESENTATION_ID, load_character_presentation_catalog_summary,
 };
-use ground_cover::{GroundCoverDebug, GroundCoverInteractor, GroundCoverPlugin, GroundCoverView};
+pub use environment::{WorldEnvironmentCamera, WorldEnvironmentPlugin, WorldSun};
+use ground_cover::{
+    GroundCoverDebug, GroundCoverInteractor, GroundCoverPlugin, GroundCoverView, GroundCoverWind,
+};
 use terrain_render::{TerrainMacroVariation, TerrainRenderPlugin};
 pub use world_streaming::{
     ActiveWorldSpace, GameplayObject, StreamedVisualObject, StreamingStats, WorldCatalog,
@@ -48,7 +50,7 @@ const CAMERA_MAX_DISTANCE: f32 = 17.6;
 const CAMERA_ZOOM_REFERENCE_DISTANCE: f32 = 24.0;
 const CAMERA_DEFAULT_DISTANCE: f32 = CAMERA_MAX_DISTANCE;
 const CAMERA_FOCUS_HEIGHT: f32 = 0.9;
-const CAMERA_NEAR_PITCH: f32 = 18.0_f32.to_radians();
+const CAMERA_NEAR_PITCH: f32 = 10.0_f32.to_radians();
 const CAMERA_FAR_PITCH: f32 = 55.0_f32.to_radians();
 const CAMERA_MAX_PITCH_OFFSET: f32 = 15.0_f32.to_radians();
 const CAMERA_MOUSE_ORBIT_SPEED: f32 = 0.006;
@@ -64,6 +66,9 @@ const CAMERA_ORBIT_SMOOTHING: f32 = 20.0;
 const CAMERA_ZOOM_SMOOTHING: f32 = 8.0;
 const TARGET_INDICATOR_HEIGHT: f32 = 0.025;
 const TOUCH_TAP_MAX_MOVEMENT: f32 = 18.0;
+const DEBUG_SUN_CYCLE_SECONDS: f32 = 45.0;
+const DEBUG_SUN_MIN_ELEVATION: f32 = 12.0_f32.to_radians();
+const DEBUG_SUN_MAX_ELEVATION: f32 = 55.0_f32.to_radians();
 
 /// The complete gameplay surface for the first vertical slice.
 ///
@@ -85,12 +90,14 @@ impl Plugin for MinimalGamePlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((
             FrameTimeDiagnosticsPlugin::default(),
+            WorldEnvironmentPlugin::game(),
             GroundCoverPlugin,
             TerrainRenderPlugin,
             CharacterPresentationPlugin,
             WorldStreamingPlugin::game(self.runtime_database.clone()),
         ))
         .init_resource::<TouchTapState>()
+        .init_resource::<DemoSunMotion>()
         .add_systems(Startup, setup)
         .add_systems(
             Update,
@@ -105,15 +112,15 @@ impl Plugin for MinimalGamePlugin {
             )
                 .chain(),
         )
-        .add_systems(Update, update_performance_label);
+        .add_systems(
+            Update,
+            update_performance_label.after(update_demo_sun_motion),
+        );
     }
 }
 
 #[derive(Component)]
 pub(crate) struct MainCamera;
-
-#[derive(Component)]
-struct WorldSun;
 
 #[derive(Component)]
 struct CameraRig {
@@ -136,6 +143,13 @@ struct TouchTapState {
     disqualified: bool,
 }
 
+#[derive(Resource, Default)]
+struct DemoSunMotion {
+    enabled: bool,
+    cycle: f32,
+    base_azimuth: Option<f32>,
+}
+
 type TargetIndicatorState<'w, 's> = Single<
     'w,
     's,
@@ -148,14 +162,6 @@ fn setup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    // Match the procedural meadow reference environment so authored terrain
-    // response is evaluated under its intended exposure and lighting.
-    commands.insert_resource(GlobalAmbientLight {
-        color: Color::srgb(0.72, 0.78, 0.74),
-        brightness: 270.0,
-        ..default()
-    });
-
     let start = Vec3::ZERO;
     commands.spawn((
         Transform::from_translation(start),
@@ -171,26 +177,6 @@ fn setup(
         Name::new("Player actor root"),
     ));
 
-    commands.spawn((
-        DirectionalLight {
-            color: Color::srgb(0.63, 0.65, 0.81),
-            illuminance: 8_000.0,
-            shadow_maps_enabled: true,
-            ..default()
-        },
-        CascadeShadowConfigBuilder {
-            num_cascades: 3,
-            first_cascade_far_bound: 20.0,
-            maximum_distance: 80.0,
-            ..default()
-        }
-        .build(),
-        Transform::from_translation(Vec3::new(7.878_527_6, 8.691_806, -12.131_867))
-            .looking_at(Vec3::ZERO, Vec3::Y),
-        WorldSun,
-        Name::new("Sun"),
-    ));
-
     let camera_rig = CameraRig {
         yaw: 45.0_f32.to_radians(),
         target_yaw: 45.0_f32.to_radians(),
@@ -200,7 +186,7 @@ fn setup(
     };
     commands.spawn((
         Camera3d::default(),
-        Exposure { ev100: 10.4 },
+        WorldEnvironmentCamera::default(),
         Msaa::Off,
         DepthPrepass,
         GroundCoverView {
@@ -254,18 +240,35 @@ fn setup(
 fn update_demo_sun_motion(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
-    mut enabled: Local<bool>,
+    mut motion: ResMut<DemoSunMotion>,
     mut sun: Single<&mut Transform, With<WorldSun>>,
 ) {
+    let current_direction: Vec3 = sun.back().into();
+    let base_azimuth = *motion
+        .base_azimuth
+        .get_or_insert_with(|| current_direction.x.atan2(current_direction.z));
     if keys.just_pressed(KeyCode::KeyU) {
-        *enabled = !*enabled;
+        motion.enabled = !motion.enabled;
         warn!(
-            "moving-sun grass-shadow stress test: {}",
-            if *enabled { "on" } else { "off" }
+            "bounded daytime grass-lighting stress test: {}",
+            if motion.enabled { "on" } else { "off" }
         );
     }
-    if *enabled {
-        sun.rotation = Quat::from_rotation_y(0.06 * time.delta_secs()) * sun.rotation;
+    if motion.enabled {
+        motion.cycle = (motion.cycle + time.delta_secs() / DEBUG_SUN_CYCLE_SECONDS).fract();
+        let azimuth = base_azimuth + motion.cycle * TAU;
+        let elevation_blend = 0.5 - 0.5 * (motion.cycle * TAU).cos();
+        let elevation = DEBUG_SUN_MIN_ELEVATION
+            + (DEBUG_SUN_MAX_ELEVATION - DEBUG_SUN_MIN_ELEVATION) * elevation_blend;
+        let horizontal = elevation.cos();
+        let direction_to_sun = Vec3::new(
+            azimuth.sin() * horizontal,
+            elevation.sin(),
+            azimuth.cos() * horizontal,
+        );
+        sun.rotation = Transform::from_translation(direction_to_sun)
+            .looking_at(Vec3::ZERO, Vec3::Y)
+            .rotation;
     }
 }
 
@@ -518,8 +521,11 @@ fn update_performance_label(
     diagnostics: Res<DiagnosticsStore>,
     streaming: Option<Res<StreamingStats>>,
     ground_cover_debug: Res<GroundCoverDebug>,
+    ground_cover_wind: Res<GroundCoverWind>,
     terrain_macro: Res<TerrainMacroVariation>,
+    sun_motion: Res<DemoSunMotion>,
     camera: Single<(&CameraRig, &GroundCoverView), With<MainCamera>>,
+    sun: Single<&Transform, With<WorldSun>>,
     player_motion: Single<&CharacterMotion, With<PlayerControlled>>,
     primary_monitor: Option<Single<&Monitor, With<PrimaryMonitor>>>,
     mut label: Single<&mut Text, With<PerformanceLabel>>,
@@ -544,6 +550,9 @@ fn update_performance_label(
         .and_then(|monitor| monitor.refresh_rate_millihertz)
         .map(|millihertz| format!("{:.0} Hz display max", millihertz as f32 / 1_000.0))
         .unwrap_or_else(|| "display rate unknown".into());
+    let direction_to_sun: Vec3 = sun.back().into();
+    let sun_elevation = direction_to_sun.y.clamp(-1.0, 1.0).asin().to_degrees();
+    let sun_azimuth = direction_to_sun.x.atan2(direction_to_sun.z).to_degrees();
 
     let streaming = streaming
         .map(|stats| {
@@ -560,7 +569,7 @@ fn update_performance_label(
             format!(
                 "World: {}\nPages: {} demanded | {} loading | {} resident | {} cooling | {} failed\n\
                  Visual LODs: {} | projected height: {:.0}-{:.0} px\n\
-                 Ground cover: {} resident clusters | debug: {} | representation: {}\n\
+                 Ground cover: {} resident clusters | debug: {} | representation: {} | lighting: {}\n\
                  Nearby gameplay: {} objects | {} definitions cached\n\
                  Residency: {:.2} MiB decoded | {:.2} MiB estimated GPU",
                 stats.status,
@@ -579,6 +588,11 @@ fn update_performance_label(
                 } else {
                     "cards"
                 },
+                if ground_cover_debug.lighting_enabled {
+                    "foliage lit"
+                } else {
+                    "unlit A/B"
+                },
                 stats.gameplay_objects,
                 stats.cached_definitions,
                 stats.decoded_bytes as f64 / (1024.0 * 1024.0),
@@ -588,11 +602,13 @@ fn update_performance_label(
         .unwrap_or_else(|| "World: initializing".into());
 
     **label = Text::new(format!(
-        "Tap / left click: move | WASD / left stick: direct movement | Tab: change area | G: grass debug | B: cards/ribbons | V: terrain macro | U: sun motion\n\
+        "Tap / left click: move | WASD / left stick: direct movement | Tab: change area | G: grass debug | B: cards/ribbons | L: grass lighting | H: sun mask | F: freeze wind | V: terrain macro | U: sun motion\n\
          Two-finger horizontal / right drag / right stick: orbit\n\
          Pinch / two-finger vertical / wheel: smooth zoom\n\
          Actor: {:?} {:?} | {:.2} m/s | playback {:.2}x\n\
          Camera: {distance:.2} m (target {target_distance:.2} m) | normalized zoom: {normalized_zoom:.3}\n\
+         Sun: {sun_elevation:.1} deg elevation | {sun_azimuth:.1} deg azimuth | motion: {sun_motion}\n\
+         Wind: {wind_state}\n\
          Terrain macro: {terrain_macro}\n\
          VSync baseline: {fps:.0} FPS | {frame_time:.2} ms | {display_refresh}\n\
          {streaming}",
@@ -603,6 +619,12 @@ fn update_performance_label(
         distance = camera.0.distance,
         target_distance = camera.0.target_distance,
         normalized_zoom = camera.1.normalized_zoom,
+        sun_motion = if sun_motion.enabled { "on" } else { "off" },
+        wind_state = if ground_cover_wind.paused {
+            "frozen"
+        } else {
+            "animated"
+        },
         terrain_macro = terrain_macro.label(),
     ));
 }

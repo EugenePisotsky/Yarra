@@ -138,12 +138,17 @@ Ground cover is stored as species, layers, and small per-cell coverage masks in
 the authoring database. Cooking turns non-empty mask samples into bounded
 clusters; it never creates a database row or Bevy entity per blade. The render
 crate uploads each resident page once, rejects clusters and selects density LOD
-on the GPU, then issues two bounded indirect draws. Each emitted instance is a
-small randomly rotated clump of alpha-clipped cards. Its coverage atlas and
-coverage-preserving mip chain are generated deterministically once at renderer
-startup, so the experiment requires no untracked texture asset. Wind, terrain
-conformance, and grass-shadow experiments remain later steps rather than hidden
-assumptions.
+on the GPU, then issues bounded indirect draws for independent near/middle
+ribbons and far alpha-clipped cards. The renderer includes coherent wind,
+bounded actor interaction, a shared alpha depth prepass, filtered directional
+shadow reception, and an exposure-aware two-sided foliage response. Game and
+editor use the same directional sun and low-cost distance-fog environment. The
+grass pass keeps its indirect batching and evaluates only a compact wrapped-diffuse,
+clump-GGX, and diffuse-transmission response; it does not create a Bevy material or
+entity per blade. Press
+`B` to compare ribbons/cards and `L` to compare foliage lighting with the legacy
+unlit baseline. Terrain-height conformance and grass shadow casting remain
+explicit limitations.
 
 Run the automated live traversal check with:
 

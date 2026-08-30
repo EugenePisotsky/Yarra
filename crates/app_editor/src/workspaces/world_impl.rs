@@ -3,7 +3,6 @@
 use std::{collections::HashSet, f32::consts::FRAC_PI_4};
 
 use bevy::{
-    camera::Exposure,
     camera::visibility::RenderLayers,
     core_pipeline::prepass::DepthPrepass,
     gizmos::config::GizmoConfigStore,
@@ -16,7 +15,6 @@ use bevy::{
         gestures::PinchGesture,
         mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit},
     },
-    light::CascadeShadowConfigBuilder,
     picking::mesh_picking::ray_cast::{MeshRayCast, MeshRayCastSettings},
     prelude::*,
     render::view::Msaa,
@@ -24,8 +22,8 @@ use bevy::{
     world_serialization::WorldInstance,
 };
 use engine::{
-    StreamedVisualObject, WorldCatalog, WorldOrigin, WorldStreamingConfig, WorldViewCamera,
-    WorldViewpoint,
+    StreamedVisualObject, WorldCatalog, WorldEnvironmentCamera, WorldOrigin, WorldStreamingConfig,
+    WorldViewCamera, WorldViewpoint,
 };
 use ground_cover::GroundCoverView;
 use uuid::Uuid;
@@ -135,29 +133,6 @@ type BuiltinGizmoMeshes<'world, 'state> = Query<
 pub(crate) struct EditorOverlayGizmos;
 
 pub(crate) fn setup_world_workspace(mut commands: Commands) {
-    commands.insert_resource(GlobalAmbientLight {
-        color: Color::srgb(0.72, 0.78, 0.74),
-        brightness: 270.0,
-        ..default()
-    });
-    commands.spawn((
-        DirectionalLight {
-            color: Color::srgb(0.63, 0.65, 0.81),
-            illuminance: 8_000.0,
-            shadow_maps_enabled: true,
-            ..default()
-        },
-        CascadeShadowConfigBuilder {
-            num_cascades: 3,
-            first_cascade_far_bound: 60.0,
-            maximum_distance: 300.0,
-            ..default()
-        }
-        .build(),
-        Transform::from_xyz(7.9, 8.7, -12.1).looking_at(Vec3::ZERO, Vec3::Y),
-        Name::new("Editor sun"),
-    ));
-
     let controller = EditorCamera {
         focus: None,
         distance: 48.0,
@@ -166,7 +141,7 @@ pub(crate) fn setup_world_workspace(mut commands: Commands) {
     };
     commands.spawn((
         Camera3d::default(),
-        Exposure { ev100: 10.4 },
+        WorldEnvironmentCamera::default(),
         Msaa::Off,
         DepthPrepass,
         GroundCoverView {
@@ -282,7 +257,10 @@ pub(crate) fn update_editor_camera(
     mut viewpoint: ResMut<WorldViewpoint>,
     mut drag: ResMut<EditorCameraDrag>,
     mut focus_request: ResMut<EditorCameraFocusRequest>,
-    mut camera: Single<(&mut EditorCamera, &mut Transform), With<WorldViewCamera>>,
+    mut camera: Single<
+        (&mut EditorCamera, &mut Transform, &mut GroundCoverView),
+        With<WorldViewCamera>,
+    >,
 ) {
     if let Some(requested_focus) = focus_request.0.take() {
         camera.0.focus = Some(requested_focus);

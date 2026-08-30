@@ -66,8 +66,9 @@ use world::{
 };
 
 use crate::{
-    GroundCoverDebug, GroundCoverInteraction, GroundCoverPage3d, GroundCoverPageAsset,
-    GroundCoverView, GroundCoverWind, MAX_GROUND_COVER_INTERACTION_STAMPS,
+    GroundCoverDebug, GroundCoverInteraction, GroundCoverLighting, GroundCoverPage3d,
+    GroundCoverPageAsset, GroundCoverSun, GroundCoverView, GroundCoverWind,
+    MAX_GROUND_COVER_INTERACTION_STAMPS,
 };
 
 const COMPUTE_SHADER_PATH: &str = "shaders/ground_cover_cull.wgsl";
@@ -204,6 +205,8 @@ impl RenderAsset for GpuGroundCoverPage {
             .species
             .iter()
             .map(|species| SpeciesGpu {
+                // Existing authored values were tuned as shader-linear colors by the original
+                // unlit renderer. Converting them as sRGB here crushed the grass by 4-8x.
                 bottom_min_height: [
                     species.bottom_color[0],
                     species.bottom_color[1],
@@ -302,6 +305,14 @@ struct CameraGpu {
     limits: [f32; 4],
     wind: [f32; 4],
     wind_direction: [f32; 4],
+    // xyz: direction from the surface toward the strongest directional light, w: active
+    sun_direction: [f32; 4],
+    // xyz: linear light color premultiplied by illuminance
+    sun_radiance: [f32; 4],
+    // xyz: linear global ambient color premultiplied by brightness
+    ambient_radiance: [f32; 4],
+    // x: diffuse strength, y: specular strength, z: transmission, w: perceptual roughness
+    lighting: [f32; 4],
     debug: [u32; 4],
 }
 
@@ -873,20 +884,24 @@ impl FromWorld for GroundCoverPipelines {
             vertex: VertexState {
                 shader: render_shader.clone(),
                 entry_point: Some(Cow::Borrowed("vertex")),
-                shader_defs: vec!["SHADOW_FILTER_METHOD_HARDWARE_2X2".into()],
+                shader_defs: vec![
+                    "SHADOW_FILTER_METHOD_HARDWARE_2X2".into(),
+                    "GROUND_COVER_LIGHTING".into(),
+                ],
                 buffers: Vec::new(),
-                ..default()
             },
             fragment: Some(FragmentState {
                 shader: render_shader.clone(),
                 entry_point: Some(Cow::Borrowed("fragment")),
-                shader_defs: vec!["SHADOW_FILTER_METHOD_HARDWARE_2X2".into()],
+                shader_defs: vec![
+                    "SHADOW_FILTER_METHOD_HARDWARE_2X2".into(),
+                    "GROUND_COVER_LIGHTING".into(),
+                ],
                 targets: vec![Some(ColorTargetState {
                     format: TextureFormat::Rgba16Float,
                     blend: None,
                     write_mask: ColorWrites::ALL,
                 })],
-                ..default()
             }),
             primitive: PrimitiveState {
                 topology: PrimitiveTopology::TriangleList,
@@ -953,7 +968,6 @@ impl FromWorld for GroundCoverPipelines {
                 entry_point: Some(Cow::Borrowed("vertex")),
                 shader_defs: vec!["SHADOW_FILTER_METHOD_HARDWARE_2X2".into()],
                 buffers: Vec::new(),
-                ..default()
             },
             fragment: Some(FragmentState {
                 shader: shadow_volume_shader,
@@ -964,7 +978,6 @@ impl FromWorld for GroundCoverPipelines {
                     blend: None,
                     write_mask: ColorWrites::RED,
                 })],
-                ..default()
             }),
             primitive: PrimitiveState {
                 topology: PrimitiveTopology::TriangleList,
@@ -1081,17 +1094,22 @@ impl Specializer<RenderPipeline> for GroundCoverPipelineSpecializer {
     ) -> Result<Canonical<Self::Key>, BevyError> {
         descriptor.multisample.count = key.msaa.samples();
         descriptor.multisample.alpha_to_coverage_enabled = key.msaa.samples() > 1;
-        let view_layout =
-            self.view_layouts
-                .get_view_layout(MeshPipelineViewLayoutKey::from_bits_retain(
-                    key.view_layout_bits,
-                ));
+        let view_layout_key = MeshPipelineViewLayoutKey::from_bits_retain(key.view_layout_bits);
+        let view_layout = self.view_layouts.get_view_layout(view_layout_key);
         descriptor.layout = vec![view_layout.main_layout, self.draw_layout.clone()];
         if self.color_pass {
             descriptor.fragment.as_mut().unwrap().targets[0]
                 .as_mut()
                 .unwrap()
                 .format = key.target_format;
+            if view_layout_key.contains(MeshPipelineViewLayoutKey::DISTANCE_FOG) {
+                descriptor
+                    .fragment
+                    .as_mut()
+                    .unwrap()
+                    .shader_defs
+                    .push("DISTANCE_FOG".into());
+            }
         }
         Ok(key)
     }
@@ -1107,6 +1125,8 @@ fn prepare_ground_cover(
     active_pages: Query<&GroundCoverPage3d>,
     views: Query<(&ExtractedView, &GroundCoverView)>,
     wind: Res<GroundCoverWind>,
+    lighting: Res<GroundCoverLighting>,
+    sun: Res<GroundCoverSun>,
     debug: Res<GroundCoverDebug>,
     interaction: Res<GroundCoverInteraction>,
     mut buffers: ResMut<GroundCoverBuffers>,
@@ -1182,11 +1202,23 @@ fn prepare_ground_cover(
             wind.spatial_scale,
         ],
         wind_direction: [wind_direction.x, wind_direction.y, wind.speed, 0.0],
+        sun_direction: sun
+            .direction_to_light
+            .extend(if sun.active { 1.0 } else { 0.0 })
+            .to_array(),
+        sun_radiance: sun.radiance.extend(0.0).to_array(),
+        ambient_radiance: sun.ambient_radiance.extend(0.0).to_array(),
+        lighting: [
+            lighting.diffuse_strength.max(0.0),
+            lighting.specular_strength.max(0.0),
+            lighting.transmission_strength.max(0.0),
+            lighting.perceptual_roughness.clamp(0.2, 1.0),
+        ],
         debug: [
             debug.mode.gpu_value(),
             u32::from(debug.procedural_blades),
-            0,
-            0,
+            u32::from(debug.lighting_enabled),
+            u32::from(debug.sun_mask_visible),
         ],
     };
     render_queue.write_buffer(&buffers.camera, 0, bytemuck::bytes_of(&uniform));
@@ -1358,6 +1390,7 @@ fn render_ground_shadow_volume(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // Bevy render-world system parameters are independently borrowed resources.
 fn queue_ground_cover(
     pipeline_cache: Res<PipelineCache>,
     mut pipelines: ResMut<GroundCoverPipelines>,
@@ -1562,6 +1595,36 @@ impl<P: PhaseItem> RenderCommand<P> for DrawGroundCoverBladesIndirect {
 
 #[cfg(test)]
 mod tests {
+    fn preprocess_without_shader_defs(source: &str) -> String {
+        let mut output = String::new();
+        let mut active = vec![true];
+        for line in source.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("#ifdef ") {
+                active.push(false);
+            } else if trimmed == "#else" {
+                let parent_active = active
+                    .get(active.len().saturating_sub(2))
+                    .copied()
+                    .unwrap_or(true);
+                if let Some(current) = active.last_mut() {
+                    *current = parent_active && !*current;
+                }
+            } else if trimmed == "#endif" {
+                active.pop();
+            } else if active.iter().all(|value| *value) {
+                output.push_str(line);
+                output.push('\n');
+            }
+        }
+        assert_eq!(
+            active,
+            [true],
+            "shader preprocessor blocks must be balanced"
+        );
+        output
+    }
+
     fn validate_shader(label: &str, source: &str) {
         let module = naga::front::wgsl::parse_str(source)
             .unwrap_or_else(|error| panic!("{label} should parse as WGSL: {error:?}"));
@@ -1597,6 +1660,16 @@ mod tests {
             "{}fn directional_shadow_visibility(_input: VertexOutput) -> f32 {{ return 1.0; }}\nfn blade_surface_response(_input: VertexOutput, coverage: f32) -> f32 {{ return coverage; }}\n\n{}",
             &render_shader[declarations..shadow_adapter],
             &render_shader[fragment_entries..],
+        );
+        let sanitized = preprocess_without_shader_defs(&sanitized)
+            .replace("view_bindings::view.exposure", "1.0")
+            .replace("pbr_lighting::D_GGX", "test_d_ggx")
+            .replace(
+                "pbr_lighting::V_SmithGGXCorrelated",
+                "test_v_smith_ggx_correlated",
+            );
+        let sanitized = format!(
+            "fn test_d_ggx(_roughness: f32, _n_dot_h: f32) -> f32 {{ return 1.0; }}\nfn test_v_smith_ggx_correlated(_roughness: f32, _n_dot_v: f32, _n_dot_l: f32) -> f32 {{ return 1.0; }}\n{sanitized}"
         );
         validate_shader("ground-cover render shader", &sanitized);
 
@@ -1634,6 +1707,45 @@ mod tests {
                 .contains("shadows::fetch_directional_shadow("),
             "the filtered volume must retain exact animated caster silhouettes",
         );
+    }
+
+    #[test]
+    fn foliage_lighting_uses_stable_clump_pbr_and_low_sun_transmission() {
+        let render_shader = include_str!("../../../assets/shaders/ground_cover.wgsl");
+        assert!(render_shader.contains("fn foliage_lighting("));
+        assert!(!render_shader.contains("fn world_sun_cone("));
+        assert!(!render_shader.contains("lighting_anchor"));
+        assert!(render_shader.contains("let body_color = input.color"));
+        assert!(render_shader.contains("fn canonical_bend_response("));
+        assert!(render_shader.contains("let canonical_bend = canonical_bend_response("));
+        assert!(render_shader.contains("let low_sun = 1.0 - smoothstep(0.28, 0.72"));
+        assert!(render_shader.contains("let high_sun = smoothstep(0.32, 0.82"));
+        assert!(render_shader.contains("fn stable_surface_normal("));
+        assert!(render_shader.contains("let clump_normal = normalize("));
+        assert!(render_shader.contains("let normal_width = fwidth(clump_normal)"));
+        assert!(render_shader.contains("pbr_lighting::D_GGX("));
+        assert!(render_shader.contains("pbr_lighting::V_SmithGGXCorrelated("));
+        assert!(render_shader.contains("dot(-view_direction, light_direction)"));
+        assert!(render_shader.contains("let transmission = backscatter * low_sun"));
+        assert!(render_shader.contains("let representation_scale = mix(0.14, 1.0"));
+        assert!(render_shader.contains("view_bindings::view.exposure"));
+        assert!(
+            render_shader.contains("let shadow_visibility = directional_shadow_visibility(input)")
+        );
+        assert!(render_shader.contains("+ diffuse_radiance"));
+        assert!(render_shader.contains("+ specular_radiance"));
+        assert!(render_shader.contains("+ transmission_radiance"));
+        assert!(!render_shader.contains("sun_gradient"));
+        assert!(!render_shader.contains("direct_lighting"));
+        assert!(render_shader.contains("bevy_fog::atmospheric_fog("));
+
+        let renderer = include_str!("renderer.rs");
+        assert!(renderer.contains("\"GROUND_COVER_LIGHTING\".into()"));
+        assert!(renderer.contains("MeshPipelineViewLayoutKey::DISTANCE_FOG"));
+        assert!(renderer.contains("lighting.diffuse_strength"));
+        assert!(renderer.contains("lighting.specular_strength"));
+        assert!(renderer.contains("lighting.transmission_strength"));
+        assert!(renderer.contains("lighting.perceptual_roughness"));
     }
 
     #[test]
