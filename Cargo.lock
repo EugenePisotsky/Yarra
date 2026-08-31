@@ -6362,6 +6362,8 @@ dependencies = [
  "uuid",
  "yarra-engine",
  "yarra-terrain-render",
+ "yarra-vegetation",
+ "yarra-vegetation-render",
  "yarra-world",
  "yarra-world-cook",
  "yarra-world-db",

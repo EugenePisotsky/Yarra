@@ -133,6 +133,28 @@ impl VegetationMaterialProfile {
     }
 }
 
+/// How strongly a species replaces per-blade shape randomness with a stable group signal.
+///
+/// A value of zero keeps independent blade variation. A value of one makes every blade in a
+/// group use the same random coordinate for that channel. The authored topology ranges remain the
+/// hard geometry bounds in both cases.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct VegetationGroupResponseProfile {
+    pub height_coherence: f32,
+    pub tilt_coherence: f32,
+    pub bend_coherence: f32,
+    pub lateral_curve_coherence: f32,
+}
+
+impl VegetationGroupResponseProfile {
+    fn is_valid(self) -> bool {
+        finite_range(self.height_coherence, 0.0, 1.0)
+            && finite_range(self.tilt_coherence, 0.0, 1.0)
+            && finite_range(self.bend_coherence, 0.0, 1.0)
+            && finite_range(self.lateral_curve_coherence, 0.0, 1.0)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct VegetationWindProfile {
     pub stiffness: f32,
@@ -192,6 +214,7 @@ pub struct VegetationSpecies {
     pub key: String,
     pub topology: TopologyProfile,
     pub material: VegetationMaterialProfile,
+    pub group_response: VegetationGroupResponseProfile,
     pub wind: VegetationWindProfile,
     pub bounds: VegetationBounds,
     /// Ordered from the highest-detail representation to the farthest.
@@ -203,6 +226,7 @@ impl VegetationSpecies {
         if self.key.is_empty()
             || !self.topology.is_valid()
             || !self.material.is_valid()
+            || !self.group_response.is_valid()
             || !self.wind.is_valid()
             || !self.bounds.is_valid()
             || self.representations.is_empty()
@@ -245,10 +269,6 @@ pub enum GrowthPattern {
         children_per_parent: u16,
         radius: f32,
         parent_jitter: f32,
-        radial_weight: f32,
-        tangential_weight: f32,
-        random_weight: f32,
-        flow_weight: f32,
     },
 }
 
@@ -261,21 +281,11 @@ impl GrowthPattern {
                 children_per_parent,
                 radius,
                 parent_jitter,
-                radial_weight,
-                tangential_weight,
-                random_weight,
-                flow_weight,
             } => {
                 if !finite_range(parent_spacing, 0.05, 64.0)
                     || !(1..=256).contains(&children_per_parent)
                     || !finite_range(radius, 0.0, parent_spacing * 2.0)
                     || !finite_range(parent_jitter, 0.0, 1.0)
-                    || !finite_range(radial_weight, 0.0, 4.0)
-                    || !finite_range(tangential_weight.abs(), 0.0, 4.0)
-                    || !finite_range(random_weight, 0.0, 4.0)
-                    || !finite_range(flow_weight, 0.0, 4.0)
-                    || radial_weight + tangential_weight.abs() + random_weight + flow_weight
-                        <= f32::EPSILON
                 {
                     return false;
                 }
@@ -283,6 +293,84 @@ impl GrowthPattern {
                 density_per_square_meter <= maximum_density * (1.0 + 1e-5)
             }
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct VoronoiClumpProfile {
+    /// Distance between procedural feature-point cells in world metres.
+    pub spacing: f32,
+    /// Jitter of each feature point inside its cell, from centred to the full cell.
+    pub feature_jitter: f32,
+    /// Width of the fade where the nearest two feature points are similarly distant.
+    pub boundary_softness: f32,
+    /// Fraction of the centre vector applied to candidate roots away from boundaries.
+    pub root_attraction: f32,
+    /// Candidate retention at the feature point and at the outer clump region.
+    pub center_retention: f32,
+    pub edge_retention: f32,
+    pub retention_falloff: f32,
+    /// Bounded group-to-group reduction of the retention profile.
+    pub density_variation: f32,
+}
+
+impl VoronoiClumpProfile {
+    fn is_valid(self) -> bool {
+        finite_range(self.spacing, 0.05, 64.0)
+            && finite_range(self.feature_jitter, 0.0, 1.0)
+            && finite_range(self.boundary_softness, 0.0, 1.0)
+            && finite_range(self.root_attraction, 0.0, 1.0)
+            && finite_range(self.center_retention, 0.0, 1.0)
+            && finite_range(self.edge_retention, 0.0, 1.0)
+            && finite_range(self.retention_falloff, 0.1, 8.0)
+            && finite_range(self.density_variation, 0.0, 1.0)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum VegetationGroupingProfile {
+    None,
+    /// Use the explicit parent produced by parent/child root placement.
+    Parent,
+    /// Assign continuous stratified roots to analytic world-space Voronoi groups.
+    Voronoi(VoronoiClumpProfile),
+}
+
+impl VegetationGroupingProfile {
+    fn is_valid(self, growth: GrowthPattern) -> bool {
+        match (self, growth) {
+            (Self::None, _) | (Self::Parent, GrowthPattern::ParentChild { .. }) => true,
+            (Self::Voronoi(profile), GrowthPattern::Uniform { .. }) => profile.is_valid(),
+            (Self::Parent, GrowthPattern::Uniform { .. })
+            | (Self::Voronoi(_), GrowthPattern::ParentChild { .. }) => false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct VegetationOrientationProfile {
+    pub shared_group_weight: f32,
+    pub radial_weight: f32,
+    pub tangential_weight: f32,
+    pub random_weight: f32,
+    pub flow_weight: f32,
+    pub angular_jitter_radians: f32,
+}
+
+impl VegetationOrientationProfile {
+    fn is_valid(self, grouping: VegetationGroupingProfile) -> bool {
+        let grouped_weight = self.shared_group_weight.abs()
+            + self.radial_weight.abs()
+            + self.tangential_weight.abs();
+        finite_range(self.shared_group_weight.abs(), 0.0, 4.0)
+            && finite_range(self.radial_weight.abs(), 0.0, 4.0)
+            && finite_range(self.tangential_weight.abs(), 0.0, 4.0)
+            && finite_range(self.random_weight, 0.0, 4.0)
+            && finite_range(self.flow_weight.abs(), 0.0, 4.0)
+            && finite_range(self.angular_jitter_radians, 0.0, std::f32::consts::PI)
+            && grouped_weight + self.random_weight + self.flow_weight.abs() > f32::EPSILON
+            && (!matches!(grouping, VegetationGroupingProfile::None)
+                || grouped_weight <= f32::EPSILON)
     }
 }
 
@@ -300,6 +388,8 @@ pub struct VegetationPopulation {
     pub density_per_square_meter: f32,
     pub seed: u32,
     pub growth: GrowthPattern,
+    pub grouping: VegetationGroupingProfile,
+    pub orientation: VegetationOrientationProfile,
     /// Populations sharing a nonzero group compete for local occupancy.
     pub competition_group: Option<u16>,
 }
@@ -315,6 +405,8 @@ impl VegetationPopulation {
         !self.key.is_empty()
             && finite_range(self.density_per_square_meter, 0.0001, 512.0)
             && self.growth.is_valid(self.density_per_square_meter)
+            && self.grouping.is_valid(self.growth)
+            && self.orientation.is_valid(self.grouping)
             && !self.species.is_empty()
             && unique_choice_count == self.species.len()
             && self.species.iter().all(|choice| {
@@ -754,9 +846,19 @@ impl CandidateDomain {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GroupSample {
+    pub key: u32,
+    pub center_xz: [f32; 2],
+    pub radial_direction: [f32; 2],
+    pub normalized_distance: f32,
+    pub boundary_influence: f32,
+    pub density_retention: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CandidateSample {
     pub root_xz: [f32; 2],
-    pub parent_xz: [f32; 2],
+    pub group: GroupSample,
     pub rest_direction: [f32; 2],
     pub stable_rank: f32,
     /// Nested four-way rank used by representation-density LOD.
@@ -769,7 +871,7 @@ pub fn candidate_domain(
     page: &VegetationFieldPage,
     population: &VegetationPopulation,
 ) -> CandidateDomain {
-    let (spacing, radius, candidates_per_cell) = match population.growth {
+    let (spacing, placement_radius, candidates_per_cell) = match population.growth {
         GrowthPattern::Uniform { .. } => {
             (population.density_per_square_meter.sqrt().recip(), 0.0, 1)
         }
@@ -780,6 +882,13 @@ pub fn candidate_domain(
             ..
         } => (parent_spacing, radius, u32::from(children_per_parent)),
     };
+    let grouping_radius = match population.grouping {
+        VegetationGroupingProfile::Voronoi(profile) => {
+            profile.spacing * std::f32::consts::SQRT_2 * profile.root_attraction
+        }
+        VegetationGroupingProfile::None | VegetationGroupingProfile::Parent => 0.0,
+    };
+    let radius = placement_radius.max(grouping_radius);
     let minimum = [
         ((page.origin_xz[0] - radius) / spacing).floor() as i32,
         ((page.origin_xz[1] - radius) / spacing).floor() as i32,
@@ -814,7 +923,7 @@ pub fn sample_candidate(
     let cell_z = domain.cell_min[1] + (cell_index / domain.cell_count[0]) as i32;
     let cell_seed = hash_cell(population.seed, cell_x, cell_z, 0x6d2b_79f5);
 
-    let (parent, root, radial, weights) = match population.growth {
+    let (parent, initial_root) = match population.growth {
         GrowthPattern::Uniform { jitter } => {
             let offset = [
                 0.5 + (random01(cell_seed ^ 0xa511_e9b3) - 0.5) * jitter,
@@ -824,14 +933,10 @@ pub fn sample_candidate(
                 (cell_x as f32 + offset[0]) * domain.spacing,
                 (cell_z as f32 + offset[1]) * domain.spacing,
             ];
-            (root, root, [0.0, 0.0], [0.0, 0.0, 1.0, 0.0])
+            (root, root)
         }
         GrowthPattern::ParentChild {
             parent_jitter,
-            radial_weight,
-            tangential_weight,
-            random_weight,
-            flow_weight,
             radius,
             ..
         } => {
@@ -851,16 +956,20 @@ pub fn sample_candidate(
                 parent[0] + radial[0] * distance,
                 parent[1] + radial[1] * distance,
             ];
-            (
-                parent,
-                root,
-                radial,
-                [radial_weight, tangential_weight, random_weight, flow_weight],
-            )
+            (parent, root)
         }
     };
 
     let seed = hash32(cell_seed ^ child_index.wrapping_mul(0x85eb_ca6b));
+    let group = sample_group(population, initial_root, parent, cell_seed, seed);
+    let mut root = initial_root;
+    if let VegetationGroupingProfile::Voronoi(profile) = population.grouping {
+        let attraction = profile.root_attraction * group.boundary_influence;
+        root = [
+            root[0] + (group.center_xz[0] - root[0]) * attraction,
+            root[1] + (group.center_xz[1] - root[1]) * attraction,
+        ];
+    }
     let lod_lane = match population.growth {
         GrowthPattern::Uniform { .. } => {
             let block_x = cell_x.div_euclid(2);
@@ -882,28 +991,143 @@ pub fn sample_candidate(
     };
     let random_angle = random01(seed ^ 0x1656_67b1) * std::f32::consts::TAU;
     let random_direction = [random_angle.cos(), random_angle.sin()];
+    let shared_angle = random01(group.key ^ 0x68e3_1da4) * std::f32::consts::TAU;
+    let shared_direction = [shared_angle.cos(), shared_angle.sin()];
+    let radial = group.radial_direction;
     let tangent = [-radial[1], radial[0]];
     let flow = normalize_or(flow_direction, [1.0, 0.0]);
+    let orientation = population.orientation;
+    let group_influence = group.boundary_influence;
     let mixed = [
-        radial[0] * weights[0]
-            + tangent[0] * weights[1]
-            + random_direction[0] * weights[2]
-            + flow[0] * weights[3],
-        radial[1] * weights[0]
-            + tangent[1] * weights[1]
-            + random_direction[1] * weights[2]
-            + flow[1] * weights[3],
+        shared_direction[0] * orientation.shared_group_weight * group_influence
+            + radial[0] * orientation.radial_weight * group_influence
+            + tangent[0] * orientation.tangential_weight * group_influence
+            + random_direction[0] * orientation.random_weight
+            + flow[0] * orientation.flow_weight,
+        shared_direction[1] * orientation.shared_group_weight * group_influence
+            + radial[1] * orientation.radial_weight * group_influence
+            + tangent[1] * orientation.tangential_weight * group_influence
+            + random_direction[1] * orientation.random_weight
+            + flow[1] * orientation.flow_weight,
     ];
-
+    let direction = normalize_or(mixed, random_direction);
+    let angular_jitter =
+        (random01(seed ^ 0x7f4a_7c15) * 2.0 - 1.0) * orientation.angular_jitter_radians;
+    let rest_direction = [
+        direction[0] * angular_jitter.cos() - direction[1] * angular_jitter.sin(),
+        direction[0] * angular_jitter.sin() + direction[1] * angular_jitter.cos(),
+    ];
     Some(CandidateSample {
         root_xz: root,
-        parent_xz: parent,
-        rest_direction: normalize_or(mixed, random_direction),
+        group,
+        rest_direction,
         stable_rank: random01(seed ^ 0x94d0_49bb),
         lod_rank: (lod_lane as f32 + random01(seed ^ 0x91e1_0da5)) * 0.25,
-        clump_variant: random01(cell_seed ^ 0x3c6e_f372),
+        clump_variant: random01(group.key ^ 0x3c6e_f372),
         seed,
     })
+}
+
+fn sample_group(
+    population: &VegetationPopulation,
+    root: [f32; 2],
+    parent: [f32; 2],
+    parent_key: u32,
+    candidate_seed: u32,
+) -> GroupSample {
+    match population.grouping {
+        VegetationGroupingProfile::None => GroupSample {
+            key: candidate_seed,
+            center_xz: root,
+            radial_direction: [0.0, 0.0],
+            normalized_distance: 0.0,
+            boundary_influence: 0.0,
+            density_retention: 1.0,
+        },
+        VegetationGroupingProfile::Parent => {
+            let delta = [root[0] - parent[0], root[1] - parent[1]];
+            let distance = (delta[0] * delta[0] + delta[1] * delta[1]).sqrt();
+            let radius = match population.growth {
+                GrowthPattern::ParentChild { radius, .. } => radius,
+                GrowthPattern::Uniform { .. } => 0.0,
+            };
+            GroupSample {
+                key: parent_key,
+                center_xz: parent,
+                radial_direction: normalize_or(delta, [1.0, 0.0]),
+                normalized_distance: if radius <= f32::EPSILON {
+                    0.0
+                } else {
+                    (distance / radius).clamp(0.0, 1.0)
+                },
+                boundary_influence: 1.0,
+                density_retention: 1.0,
+            }
+        }
+        VegetationGroupingProfile::Voronoi(profile) => {
+            sample_voronoi_group(population.seed, root, profile)
+        }
+    }
+}
+
+fn sample_voronoi_group(seed: u32, root: [f32; 2], profile: VoronoiClumpProfile) -> GroupSample {
+    let base_x = (root[0] / profile.spacing).floor() as i32;
+    let base_z = (root[1] / profile.spacing).floor() as i32;
+    let mut nearest_distance_squared = f32::INFINITY;
+    let mut second_distance_squared = f32::INFINITY;
+    let mut nearest_center = root;
+    let mut nearest_key = seed;
+
+    for dz in -1..=1 {
+        for dx in -1..=1 {
+            let cell_x = base_x + dx;
+            let cell_z = base_z + dz;
+            let key = hash_cell(seed, cell_x, cell_z, 0x4f1b_cdc9);
+            let offset = [
+                0.5 + (random01(key ^ 0x9e37_79b9) - 0.5) * profile.feature_jitter,
+                0.5 + (random01(key ^ 0x85eb_ca6b) - 0.5) * profile.feature_jitter,
+            ];
+            let center = [
+                (cell_x as f32 + offset[0]) * profile.spacing,
+                (cell_z as f32 + offset[1]) * profile.spacing,
+            ];
+            let delta = [root[0] - center[0], root[1] - center[1]];
+            let distance_squared = delta[0] * delta[0] + delta[1] * delta[1];
+            if distance_squared < nearest_distance_squared {
+                second_distance_squared = nearest_distance_squared;
+                nearest_distance_squared = distance_squared;
+                nearest_center = center;
+                nearest_key = key;
+            } else if distance_squared < second_distance_squared {
+                second_distance_squared = distance_squared;
+            }
+        }
+    }
+
+    let distance = nearest_distance_squared.sqrt();
+    let second_distance = second_distance_squared.sqrt();
+    let softness_width = profile.spacing * profile.boundary_softness;
+    let boundary_influence = if softness_width <= f32::EPSILON {
+        1.0
+    } else {
+        smoothstep01((second_distance - distance) / softness_width)
+    };
+    let normalized_distance =
+        (distance / (profile.spacing * std::f32::consts::SQRT_2)).clamp(0.0, 1.0);
+    let distance_profile = normalized_distance.powf(profile.retention_falloff);
+    let spatial_retention = profile.center_retention
+        + (profile.edge_retention - profile.center_retention) * distance_profile;
+    let group_retention = 1.0 - profile.density_variation * random01(nearest_key ^ 0xd1b5_4a35);
+    let delta = [root[0] - nearest_center[0], root[1] - nearest_center[1]];
+
+    GroupSample {
+        key: nearest_key,
+        center_xz: nearest_center,
+        radial_direction: normalize_or(delta, [1.0, 0.0]),
+        normalized_distance,
+        boundary_influence,
+        density_retention: (spatial_retention * group_retention).clamp(0.0, 1.0),
+    }
 }
 
 pub fn candidate_density_retention(population: &VegetationPopulation) -> f32 {
@@ -988,6 +1212,11 @@ fn finite_range(value: f32, minimum: f32, maximum: f32) -> bool {
     value.is_finite() && (minimum..=maximum).contains(&value)
 }
 
+fn smoothstep01(value: f32) -> f32 {
+    let value = value.clamp(0.0, 1.0);
+    value * value * (3.0 - 2.0 * value)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1024,6 +1253,56 @@ mod tests {
         assert!(
             (first.rest_direction[0].powi(2) + first.rest_direction[1].powi(2) - 1.0).abs() < 1e-5
         );
+    }
+
+    #[test]
+    fn siblings_share_the_explicit_parent_group() {
+        let scene = fixtures::reference_scene();
+        let population = scene
+            .catalog
+            .population(fixtures::DRY_TUFT_POPULATION_ID)
+            .unwrap();
+        let domain = candidate_domain(&scene.pages[0], population);
+        let first = sample_candidate(population, domain, 0, [0.0, 1.0]).unwrap();
+        let sibling = sample_candidate(population, domain, 1, [0.0, 1.0]).unwrap();
+        assert_eq!(first.group.key, sibling.group.key);
+        assert_eq!(first.group.center_xz, sibling.group.center_xz);
+        assert_eq!(first.clump_variant, sibling.clump_variant);
+        assert_eq!(first.group.boundary_influence, 1.0);
+    }
+
+    #[test]
+    fn voronoi_group_sampling_is_stable_and_bounded() {
+        let scene = fixtures::reference_scene();
+        let population = scene
+            .catalog
+            .population(fixtures::SHORT_FILL_POPULATION_ID)
+            .unwrap();
+        let VegetationGroupingProfile::Voronoi(profile) = population.grouping else {
+            panic!("short fill fixture must exercise analytic grouping");
+        };
+        let first = sample_voronoi_group(population.seed, [7.25, -3.75], profile);
+        let second = sample_voronoi_group(population.seed, [7.25, -3.75], profile);
+        assert_eq!(first, second);
+        assert!((0.0..=1.0).contains(&first.normalized_distance));
+        assert!((0.0..=1.0).contains(&first.boundary_influence));
+        assert!((0.0..=1.0).contains(&first.density_retention));
+    }
+
+    #[test]
+    fn grouping_source_must_match_the_root_placement_contract() {
+        let mut scene = fixtures::reference_scene();
+        let population = scene
+            .catalog
+            .populations
+            .iter_mut()
+            .find(|population| population.id == fixtures::SHORT_FILL_POPULATION_ID)
+            .unwrap();
+        population.grouping = VegetationGroupingProfile::Parent;
+        assert!(matches!(
+            scene.catalog.validate(),
+            Err(CatalogValidationError::InvalidPopulation(_))
+        ));
     }
 
     #[test]

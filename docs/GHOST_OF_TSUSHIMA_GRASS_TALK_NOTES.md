@@ -17,7 +17,34 @@ Conventions:
 - Interpretations and Yarra-specific decisions belong in
   [`GRASS_IMPROVEMENT_PLAN.md`](GRASS_IMPROVEMENT_PLAN.md), not in this source notebook.
 
-Notes currently cover slides 22-38, 40, and 45-46. More can be appended as the talk is reviewed.
+Notes currently cover slide 16, slides 22-38, slide 40, and slides 45-46. More can be appended as the
+talk is reviewed.
+
+## Slide 16: Voronoi clumps and structured variation
+
+The team first tried varying grass parameters independently per blade. Although this removed obvious
+repetition, the result did not resemble a natural field; it looked like unrelated random blades.
+They therefore organized blades into procedural clumps and used clump membership as a shared source
+of variation.
+
+For any two-dimensional sample position, they evaluate the jittered feature point belonging to each
+cell in the surrounding 3x3 grid. Each feature point is displaced within its cell by a deterministic
+hash. The nearest of those nine candidates becomes the sample's Voronoi clump centre. This gives a
+stable clump identity and the sample's distance/direction relative to that centre without storing
+explicit clump objects.
+
+Clump identity and relative position can then influence several grass properties coherently:
+
+- vary blade height by clump or by distance from its centre;
+- give the blades in a clump a related facing direction;
+- pull blade roots toward the clump centre;
+- orient blades radially away from the centre;
+- combine attraction, radial facing, shared facing, and smaller per-blade variation.
+
+The important result is not merely Voronoi-shaped placement. It is that variation happens at more
+than one spatial scale: a clump supplies recognizable shared structure, while individual blades
+retain limited variation inside it. This avoids both a uniform football-field pattern and
+structureless per-blade noise.
 
 ## Slides 22-23: GPU work submission and bounded scratch memory
 

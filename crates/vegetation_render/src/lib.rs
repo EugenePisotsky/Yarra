@@ -130,6 +130,8 @@ pub enum VegetationDebugMode {
     ParentLinks = 2,
     /// All page-owned candidates, colored by their acceptance or rejection reason.
     CandidateOutcomes = 3,
+    /// Accepted roots linked to their common parent or analytic Voronoi centre.
+    GroupStructure = 4,
 }
 
 impl VegetationDebugMode {
@@ -139,6 +141,7 @@ impl VegetationDebugMode {
             Self::AcceptedSpecies => "accepted species",
             Self::ParentLinks => "parent links",
             Self::CandidateOutcomes => "candidate outcomes",
+            Self::GroupStructure => "group structure",
         }
     }
 
@@ -147,7 +150,8 @@ impl VegetationDebugMode {
             Self::ProceduralGeometry => Self::AcceptedSpecies,
             Self::AcceptedSpecies => Self::ParentLinks,
             Self::ParentLinks => Self::CandidateOutcomes,
-            Self::CandidateOutcomes => Self::ProceduralGeometry,
+            Self::CandidateOutcomes => Self::GroupStructure,
+            Self::GroupStructure => Self::ProceduralGeometry,
         }
     }
 }

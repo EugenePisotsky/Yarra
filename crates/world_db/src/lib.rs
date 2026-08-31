@@ -18,6 +18,7 @@ use world::{
 
 pub const MAX_OBJECT_WRITES_PER_TRANSACTION: usize = 256;
 pub const MAX_DENSE_DOMAIN_WRITES_PER_TRANSACTION: usize = 64;
+const VEGETATION_CATALOG_FORMAT_VERSION: i64 = 2;
 
 #[derive(Debug, Clone)]
 pub struct ProjectDocument {
@@ -572,19 +573,23 @@ fn write_vegetation_catalog(
     let Some(catalog) = catalog else {
         return Ok(());
     };
+    let payload = encode_vegetation_catalog(catalog)?;
+    transaction.execute(
+        "INSERT INTO vegetation_catalog(singleton, format_version, payload) \
+         VALUES (1, ?1, ?2)",
+        params![VEGETATION_CATALOG_FORMAT_VERSION, payload],
+    )?;
+    Ok(())
+}
+
+fn encode_vegetation_catalog(catalog: &VegetationCatalog) -> Result<Vec<u8>, WorldDbError> {
     catalog.validate()?;
-    let payload = bincode::serde::encode_to_vec(
+    Ok(bincode::serde::encode_to_vec(
         catalog,
         bincode::config::standard()
             .with_little_endian()
             .with_fixed_int_encoding(),
-    )?;
-    transaction.execute(
-        "INSERT INTO vegetation_catalog(singleton, format_version, payload) \
-         VALUES (1, 1, ?1)",
-        [payload],
-    )?;
-    Ok(())
+    )?)
 }
 
 fn read_vegetation_catalog(
@@ -592,12 +597,18 @@ fn read_vegetation_catalog(
 ) -> Result<Option<VegetationCatalog>, WorldDbError> {
     connection
         .query_row(
-            "SELECT payload FROM vegetation_catalog WHERE singleton = 1 AND format_version = 1",
+            "SELECT format_version, payload FROM vegetation_catalog WHERE singleton = 1",
             [],
-            |row| row.get::<_, Vec<u8>>(0),
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
         )
         .optional()?
-        .map(|payload| {
+        .map(|(format_version, payload)| {
+            if format_version != VEGETATION_CATALOG_FORMAT_VERSION {
+                return Err(WorldDbError::VegetationCatalogFormatVersion {
+                    expected: VEGETATION_CATALOG_FORMAT_VERSION,
+                    actual: format_version,
+                });
+            }
             let (catalog, consumed): (VegetationCatalog, usize) =
                 bincode::serde::decode_from_slice(
                     &payload,
@@ -1193,6 +1204,12 @@ impl ProjectReader {
         &self.manifest
     }
 
+    /// Reads the generation-global vegetation source catalog without constructing the spatial
+    /// project document. Editors keep this small global domain separate from bounded cell queries.
+    pub fn read_vegetation_catalog(&self) -> Result<Option<VegetationCatalog>, WorldDbError> {
+        read_vegetation_catalog(&self.connection)
+    }
+
     pub fn read_cells(
         &self,
         space: WorldSpaceId,
@@ -1567,6 +1584,27 @@ impl ProjectWriter {
         connection.execute_batch("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 1000;")?;
         ensure_schema_version(&connection, PROJECT_SCHEMA_VERSION, "project")?;
         Ok(Self { connection })
+    }
+
+    /// Replaces the generation-global vegetation catalog in one transaction.
+    ///
+    /// This is intentionally separate from spatial field-page writes: profile authoring changes a
+    /// small global source domain, while painting and placement tools mutate bounded page domains.
+    pub fn replace_vegetation_catalog(
+        &mut self,
+        catalog: &VegetationCatalog,
+    ) -> Result<(), WorldDbError> {
+        let payload = encode_vegetation_catalog(catalog)?;
+        let transaction = self.connection.transaction()?;
+        transaction.execute(
+            "INSERT INTO vegetation_catalog(singleton, format_version, payload) \
+             VALUES (1, ?1, ?2) \
+             ON CONFLICT(singleton) DO UPDATE SET \
+                 format_version = excluded.format_version, payload = excluded.payload",
+            params![VEGETATION_CATALOG_FORMAT_VERSION, payload],
+        )?;
+        transaction.commit()?;
+        Ok(())
     }
 
     pub fn update_object_transform(
@@ -2644,6 +2682,8 @@ pub enum WorldDbError {
     VegetationDecode(#[from] bincode::error::DecodeError),
     #[error("vegetation catalog contains trailing bytes: decoded {consumed} of {total}")]
     VegetationCatalogTrailingBytes { consumed: usize, total: usize },
+    #[error("vegetation catalog format version is {actual}, expected {expected}")]
+    VegetationCatalogFormatVersion { expected: i64, actual: i64 },
     #[error("vegetation field page contains trailing bytes: decoded {consumed} of {total}")]
     VegetationFieldPageTrailingBytes { consumed: usize, total: usize },
     #[error("vegetation field pages require a vegetation catalog")]
@@ -2705,10 +2745,11 @@ mod tests {
             minimum_y: -8.0,
             maximum_y: 16.0,
         };
+        let vegetation_catalog = vegetation::fixtures::reference_catalog();
         let project = ProjectDocument {
             default_world_space: space.id,
             world_spaces: vec![space.clone()],
-            vegetation_catalog: None,
+            vegetation_catalog: Some(vegetation_catalog.clone()),
             cells: vec![SourceCellRecord {
                 space: space.id,
                 cell: CellCoord::ZERO,
@@ -2732,6 +2773,27 @@ mod tests {
         let read_project = read_project_database(&project_path).unwrap();
         assert_eq!(read_project.default_world_space, space.id);
         assert_eq!(read_project.cells.len(), 1);
+        assert_eq!(
+            read_project
+                .vegetation_catalog
+                .as_ref()
+                .map(|catalog| catalog.populations.len()),
+            Some(vegetation_catalog.populations.len())
+        );
+
+        let mut replacement_catalog = vegetation_catalog.clone();
+        replacement_catalog.populations[0].density_per_square_meter = 5.5;
+        ProjectWriter::open(&project_path)
+            .unwrap()
+            .replace_vegetation_catalog(&replacement_catalog)
+            .unwrap();
+        assert_eq!(
+            ProjectReader::open_read_only(&project_path)
+                .unwrap()
+                .read_vegetation_catalog()
+                .unwrap(),
+            Some(replacement_catalog)
+        );
 
         let runtime = RuntimeBuild {
             manifest: RuntimeManifest {
@@ -2740,7 +2802,7 @@ mod tests {
                 content_hash: [7; 32],
                 default_world_space: space.id,
                 world_spaces: vec![space],
-                vegetation_catalog: None,
+                vegetation_catalog: Some(vegetation_catalog.clone()),
             },
             cells: Vec::new(),
             pages: Vec::new(),
@@ -2757,6 +2819,14 @@ mod tests {
         write_runtime_database(&runtime_path, &runtime).unwrap();
         let reader = RuntimeReader::open_immutable(&runtime_path).unwrap();
         assert_eq!(reader.manifest().generation_id, "test-generation");
+        assert_eq!(
+            reader
+                .manifest()
+                .vegetation_catalog
+                .as_ref()
+                .map(|catalog| catalog.populations.len()),
+            Some(vegetation_catalog.populations.len())
+        );
         fs::remove_dir_all(directory).unwrap();
     }
 

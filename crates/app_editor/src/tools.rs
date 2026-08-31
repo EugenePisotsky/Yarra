@@ -25,6 +25,8 @@ pub(crate) enum EditorSourceDomain {
     ObjectPlacements,
     ObjectDefinitions,
     TerrainWeights,
+    VegetationCatalog,
+    VegetationFields,
     Navigation,
     Collision,
 }
@@ -43,6 +45,7 @@ pub(crate) enum SpatialQueryPolicy {
 pub(crate) enum PinningPolicy {
     SelectedDirtyAndActiveCommand,
     ActivePatchAndDirtyCells,
+    CatalogDraftAndResidentFields,
     None,
 }
 
@@ -52,6 +55,7 @@ pub(crate) enum EditorCommandKind {
     TransformPlacement,
     DeletePlacement,
     PatchTerrain,
+    EditVegetationProfile,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -60,6 +64,8 @@ pub(crate) enum EditorPreviewOverlay {
     SelectionBounds,
     TransformGizmo,
     CellPatch,
+    ProceduralVegetation,
+    VegetationGroups,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -260,10 +266,47 @@ pub(crate) const TERRAIN_TOOL: EditorToolDescriptor = EditorToolDescriptor {
     },
 };
 
+pub(crate) const VEGETATION_TOOL: EditorToolDescriptor = EditorToolDescriptor {
+    id: EditorToolId("world.vegetation"),
+    label: "Vegetation",
+    workspace: EditorWorkspace::World,
+    source_domains: &[
+        EditorSourceDomain::CellDescriptors,
+        EditorSourceDomain::VegetationCatalog,
+        EditorSourceDomain::VegetationFields,
+    ],
+    spatial_query: SpatialQueryPolicy::ViewpointWindow {
+        radius_cells: 3,
+        maximum_records: 100,
+    },
+    pinning: PinningPolicy::CatalogDraftAndResidentFields,
+    commands: &[EditorCommandKind::EditVegetationProfile],
+    overlays: &[
+        EditorPreviewOverlay::ProceduralVegetation,
+        EditorPreviewOverlay::VegetationGroups,
+    ],
+    // The session draft is preview-only. The persisted catalog command will declare its concrete
+    // catalog/page cook products when that source pipeline lands; claiming them here would route
+    // work that the derived executor cannot yet snapshot faithfully.
+    invalidates: &[],
+    failure_policy: EditorToolFailurePolicy {
+        loading: LoadingPolicy::KeepCameraResponsiveWithProxies,
+        conflict: ConflictPolicy::PreserveLocalCommandForResolution,
+        cancellation: CancellationPolicy::CancelObsoleteQueriesAndDerivedJobs,
+        failure: FailurePolicy::KeepToolAndCameraUsable,
+    },
+};
+
 pub(crate) fn object_tool_active(registry: Res<EditorToolRegistry>) -> bool {
     registry
         .active(EditorWorkspace::World)
         .is_some_and(|tool| tool.id == OBJECT_TOOL.id)
+}
+
+pub(crate) fn vegetation_tool_active(registry: Res<EditorToolRegistry>) -> bool {
+    registry
+        .active(EditorWorkspace::World)
+        .is_some_and(|tool| tool.id == VEGETATION_TOOL.id)
 }
 
 #[cfg(test)]
@@ -306,6 +349,7 @@ mod tests {
         let mut registry = EditorToolRegistry::default();
         registry.register(OBJECT_TOOL, true);
         registry.register(TERRAIN_TOOL, false);
+        registry.register(VEGETATION_TOOL, false);
         assert!(registry.active_requires(
             EditorWorkspace::World,
             EditorSourceDomain::ObjectDefinitions
@@ -321,6 +365,22 @@ mod tests {
         assert!(
             !registry.active_requires(EditorWorkspace::World, EditorSourceDomain::ObjectPlacements)
         );
-        assert_eq!(registry.tools_for(EditorWorkspace::World).count(), 2);
+        assert_eq!(registry.tools_for(EditorWorkspace::World).count(), 3);
+    }
+
+    #[test]
+    fn vegetation_tool_declares_catalog_and_resident_field_boundaries() {
+        assert!(VEGETATION_TOOL.requires(EditorSourceDomain::VegetationCatalog));
+        assert!(VEGETATION_TOOL.requires(EditorSourceDomain::VegetationFields));
+        assert_eq!(
+            VEGETATION_TOOL.pinning,
+            PinningPolicy::CatalogDraftAndResidentFields
+        );
+        assert!(
+            VEGETATION_TOOL
+                .commands
+                .contains(&EditorCommandKind::EditVegetationProfile)
+        );
+        assert!(VEGETATION_TOOL.invalidates.is_empty());
     }
 }

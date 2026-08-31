@@ -32,7 +32,9 @@ use crate::overview::OverviewPlugin;
 use crate::preview::{PreviewModesPlugin, authoring_preview_active};
 use crate::saving::{EditorSaveCoordinator, drive_editor_save};
 use crate::shell::{EditorUiSet, EditorWindowRegistry};
+use crate::tools::VEGETATION_TOOL;
 use crate::tools::{EditorToolRegistry, OBJECT_TOOL, TERRAIN_TOOL, object_tool_active};
+use crate::vegetation_authoring::{VEGETATION_WINDOW, VegetationAuthoringPlugin};
 
 pub(crate) struct WorldWorkspacePlugin;
 
@@ -44,12 +46,16 @@ impl Plugin for WorldWorkspacePlugin {
         app.world_mut()
             .resource_mut::<EditorToolRegistry>()
             .register(TERRAIN_TOOL, false);
+        app.world_mut()
+            .resource_mut::<EditorToolRegistry>()
+            .register(VEGETATION_TOOL, false);
         for window in [
             WORLD_WINDOW,
             INSPECTOR_WINDOW,
             ASSETS_WINDOW,
             NAVIGATOR_WINDOW,
             DIAGNOSTICS_WINDOW,
+            VEGETATION_WINDOW,
         ] {
             app.world_mut()
                 .resource_mut::<EditorWindowRegistry>()
@@ -67,7 +73,12 @@ impl Plugin for WorldWorkspacePlugin {
             .init_resource::<DenseDomainWorkingSets>()
             .init_resource::<EditorSaveCoordinator>()
             .init_gizmo_group::<EditorOverlayGizmos>()
-            .add_plugins((TransformGizmoPlugin, OverviewPlugin, PreviewModesPlugin))
+            .add_plugins((
+                TransformGizmoPlugin,
+                OverviewPlugin,
+                PreviewModesPlugin,
+                VegetationAuthoringPlugin,
+            ))
             .configure_sets(
                 PostUpdate,
                 TransformGizmoSystems.run_if(editor_gizmo_enabled),

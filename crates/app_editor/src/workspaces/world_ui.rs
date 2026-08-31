@@ -38,7 +38,8 @@ use crate::{
     publication::RuntimePublicationState,
     saving::EditorSaveCoordinator,
     shell::{EditorUiFrame, EditorWindowDescriptor, EditorWindowId, EditorWindowRegistry},
-    tools::{EditorToolRegistry, OBJECT_TOOL, TERRAIN_TOOL},
+    tools::{EditorToolRegistry, OBJECT_TOOL, TERRAIN_TOOL, VEGETATION_TOOL},
+    vegetation_authoring::VEGETATION_WINDOW,
 };
 
 pub(crate) const WORLD_WINDOW: EditorWindowDescriptor = EditorWindowDescriptor {
@@ -327,6 +328,7 @@ pub(crate) fn world_workspace_ui(
                     &mut active_space,
                     &mut tools,
                     &mut ui_state,
+                    &mut windows,
                 );
             });
         windows.set_open(WORLD_WINDOW.id, open);
@@ -468,6 +470,7 @@ fn draw_world_hierarchy(
     active_space: &mut ActiveWorldSpace,
     tools: &mut EditorToolRegistry,
     ui_state: &mut WorldWorkspaceUiState,
+    windows: &mut EditorWindowRegistry,
 ) {
     let current_space = active_space.current();
     let current_space_name = current_space
@@ -500,6 +503,16 @@ fn draw_world_hierarchy(
         .clicked()
     {
         tools.set_active(EditorWorkspace::World, TERRAIN_TOOL.id);
+    }
+    if ui
+        .selectable_label(
+            active_tool.is_some_and(|tool| tool.id == VEGETATION_TOOL.id),
+            "Vegetation",
+        )
+        .clicked()
+    {
+        tools.set_active(EditorWorkspace::World, VEGETATION_TOOL.id);
+        windows.set_open(VEGETATION_WINDOW.id, true);
     }
     let mut visible_assets = visible_asset_records(project, objects);
     let visible_count = visible_assets.len();
@@ -645,6 +658,15 @@ fn draw_context_inspector(
         draw_dense_domain_inspector(ui, viewpoint, dense_domains, project);
         ui.separator();
         ui.weak("Terrain brush controls will use the existing bounded patch command seam.");
+        return;
+    }
+
+    if active_tool.id == VEGETATION_TOOL.id {
+        ui.heading("Vegetation");
+        ui.label("Edit the active vegetation catalog in the Vegetation window.");
+        ui.weak(
+            "This first slice keeps a validated session draft and drives the production GPU renderer. Persistence, undo, and field painting will extend the same authoring boundary.",
+        );
         return;
     }
 
@@ -1362,15 +1384,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn world_registers_two_primary_and_three_optional_windows() {
+    fn world_registers_two_primary_and_four_optional_windows() {
         let descriptors = [
             WORLD_WINDOW,
             INSPECTOR_WINDOW,
             ASSETS_WINDOW,
             NAVIGATOR_WINDOW,
             DIAGNOSTICS_WINDOW,
+            VEGETATION_WINDOW,
         ];
-        assert_eq!(descriptors.len(), 5);
+        assert_eq!(descriptors.len(), 6);
         assert_eq!(
             descriptors
                 .iter()

@@ -112,7 +112,10 @@ pub enum CompileError {
 pub struct DebugPlacement {
     pub root: [f32; 3],
     pub surface_normal: [f32; 3],
-    pub parent_xz: [f32; 2],
+    pub group_center_xz: [f32; 2],
+    pub group_key: u32,
+    pub group_distance: f32,
+    pub group_influence: f32,
     pub rest_direction: [f32; 2],
     pub species: VegetationSpeciesId,
     pub population: VegetationPopulationId,
@@ -162,7 +165,8 @@ pub fn generate_page_debug_placements(
                 continue;
             }
 
-            let occupancy = local_occupancy(catalog, page, field, &sample);
+            let occupancy =
+                local_occupancy(catalog, page, field, &sample) * sample.group.density_retention;
             if random01(sample.seed ^ 0x4cf5_ad43) >= occupancy {
                 continue;
             }
@@ -170,7 +174,10 @@ pub fn generate_page_debug_placements(
             placements.push(DebugPlacement {
                 root: [sample.root_xz[0], surface.height, sample.root_xz[1]],
                 surface_normal: surface.normal,
-                parent_xz: sample.parent_xz,
+                group_center_xz: sample.group.center_xz,
+                group_key: sample.group.key,
+                group_distance: sample.group.normalized_distance,
+                group_influence: sample.group.boundary_influence,
                 rest_direction: sample.rest_direction,
                 species: choose_species(population, random01(sample.seed ^ 0xd1b5_4a35)),
                 population: population.id,
@@ -289,26 +296,29 @@ mod tests {
     #[test]
     fn split_pages_match_one_combined_world_lattice() {
         let catalog = fixtures::reference_catalog();
-        let left = fixtures::full_coverage_page([0.0, 0.0], 16.0, fixtures::DRY_TUFT_POPULATION_ID);
-        let right =
-            fixtures::full_coverage_page([16.0, 0.0], 16.0, fixtures::DRY_TUFT_POPULATION_ID);
-        let combined =
-            fixtures::full_coverage_page([0.0, 0.0], 32.0, fixtures::DRY_TUFT_POPULATION_ID);
+        for population in [
+            fixtures::DRY_TUFT_POPULATION_ID,
+            fixtures::SHORT_FILL_POPULATION_ID,
+        ] {
+            let left = fixtures::full_coverage_page([0.0, 0.0], 16.0, population);
+            let right = fixtures::full_coverage_page([16.0, 0.0], 16.0, population);
+            let combined = fixtures::full_coverage_page([0.0, 0.0], 32.0, population);
 
-        let split_seeds = generate_page_debug_placements(&catalog, &left)
-            .unwrap()
-            .into_iter()
-            .chain(generate_page_debug_placements(&catalog, &right).unwrap())
-            .map(|placement| placement.seed)
-            .collect::<HashSet<_>>();
-        let combined_seeds = generate_page_debug_placements(&catalog, &combined)
-            .unwrap()
-            .into_iter()
-            .filter(|placement| placement.root[2] < 16.0)
-            .map(|placement| placement.seed)
-            .collect::<HashSet<_>>();
+            let split_seeds = generate_page_debug_placements(&catalog, &left)
+                .unwrap()
+                .into_iter()
+                .chain(generate_page_debug_placements(&catalog, &right).unwrap())
+                .map(|placement| placement.seed)
+                .collect::<HashSet<_>>();
+            let combined_seeds = generate_page_debug_placements(&catalog, &combined)
+                .unwrap()
+                .into_iter()
+                .filter(|placement| placement.root[2] < 16.0)
+                .map(|placement| placement.seed)
+                .collect::<HashSet<_>>();
 
-        assert_eq!(split_seeds, combined_seeds);
+            assert_eq!(split_seeds, combined_seeds, "population {population:?}");
+        }
     }
 
     #[test]

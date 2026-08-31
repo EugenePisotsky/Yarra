@@ -3,7 +3,8 @@
 ## Status
 
 This document defines the clean replacement architecture for Yarra's grass and dense decorative
-vegetation. Its persisted placement slice and first procedural-topology slice are now implemented.
+vegetation. Its persisted placement slice, procedural-topology slice, and first live authoring slice
+are now implemented.
 The former card/ribbon renderer, compiler, authoring UI, database tables, runtime types, and shaders
 have been deleted; there is no compatibility or conversion layer.
 
@@ -174,8 +175,8 @@ and the diagnostic assembles a resident page only when its terrain page is also 
 
 The next missing layers are delta-updated GPU page slots, a species-derived far/horizon
 representation, a real broad-leaf-cluster topology, wind, interaction, distance-aware material
-filtering, the new shadow design, and V2 editor tools. Cards are not a V2 requirement and will return
-only if a measured species-derived far representation justifies them.
+filtering, the new shadow design, and persistent V2 field authoring. Cards are not a V2 requirement
+and will return only if a measured species-derived far representation justifies them.
 
 ## Content requirements derived from the references
 
@@ -231,6 +232,33 @@ the broader plant.
 
 ## Conceptual authoring model
 
+### Implemented minimal editor foundation
+
+The World workspace now registers a dedicated `world.vegetation` tool and Vegetation window. This
+is the first real authoring slice, not a second debug renderer:
+
+- it reads the validated vegetation catalog through the mutable project-database worker into a
+  separate session working copy, rather than editing the immutable runtime catalog;
+- parameter edits validate the complete catalog before replacing that working copy;
+- the preview joins the existing resident vegetation fields with the authoritative streamed terrain
+  surface and drives the same `yarra-vegetation-render` compute/indirect path used by the game;
+- changing the floating origin, resident page set, active world space, or draft revision rebuilds
+  the preview scene deterministically;
+- the window exposes population density, root placement, grouping source, Voronoi clump controls,
+  rest-orientation weights, species envelope, ribbon/broad-leaf shape, group coherence, renderer
+  diagnostic mode, workload isolation mode, and the fixed-budget counters needed to judge a preset;
+- switching grouping families produces a compatible root-placement family and preserves catalog
+  invariants rather than leaving an invalid half-converted preset;
+- window state remains presentation state, while the declarative tool descriptor owns source-domain,
+  pinning, command, overlay, and failure-policy contracts.
+
+The working copy is deliberately session-local in this slice and is labelled as such in the UI.
+It does not claim a derived-cook route that does not yet exist. The next editor layer must put the
+same catalog draft behind typed undoable source commands, optimistic source revisions, bounded save,
+and publish/adopt. Field/assemblage painting then extends this module with bounded resident-cell
+working sets; it must not move parameter state into the generic World UI or create per-blade editor
+entities.
+
 ### Species: what is rendered
 
 `VegetationSpecies` is a globally reusable, immutable visual definition. It contains:
@@ -284,16 +312,30 @@ explicit bounded distant strategy, not preservation of the deleted card implemen
 
 ### Population: how it grows
 
-`VegetationPopulation` references one species or a small weighted species palette and contains the
-placement behavior:
+`VegetationPopulation` references one species or a small weighted species palette. Its growth
+contract is deliberately split into independent layers. A preset may expose them together in the
+editor, but the runtime model must not collapse them into one overloaded "clump" mode:
+
+1. **Root placement** determines the bounded candidate lattice: stratified roots or explicit
+   parent/child roots.
+2. **Grouping source** assigns every accepted candidate a common `GroupSample`: none, its explicit
+   parent, or an analytic Voronoi feature point.
+3. **Rest orientation** combines group-shared, radial, tangential, independent random, and field
+   flow directions, followed by bounded per-root angular jitter.
+4. **Species response** determines how strongly the shared group signal replaces per-blade
+   randomness for height, tilt, bend, and lateral curve. Material color and future wind phase use
+   the same stable group identity through their own independent response controls.
+
+The population contains:
 
 - target density and deterministic seed;
-- independent scatter or parent/child clumping;
+- stratified scatter or parent/child root placement;
+- a `None`, `Parent`, or procedural `Voronoi` grouping source;
 - parent density and spacing;
 - child-count distribution and clump radius;
 - radial falloff and background scatter fraction;
 - scale, age, height, and color-variant distributions;
-- a rest-direction rule;
+- a rest-direction rule with independent signed source weights and angular jitter;
 - optional exclusive competition group;
 - optional local density and direction-field channels.
 
@@ -309,8 +351,43 @@ The initial rest-direction rule is a weighted blend of compact sources:
 Growth orientation and wind direction are separate. Wind deforms the authored rest shape; it does
 not define where the plant originally grew.
 
-Uniform grass is the simple case of this model: one child per implicit parent, zero clump radius,
-random rest direction, and no competition group.
+Every grouping source resolves to this renderer-independent sample:
+
+- stable 32-bit group key;
+- world-space centre;
+- normalized centre distance and centre-to-root direction;
+- a boundary influence that fades group forces near ambiguous Voronoi borders;
+- a bounded local density-retention multiplier.
+
+Voronoi membership is an analytic population signal, not a persistent object or a render unit. For
+each candidate root, a deterministic world-space 3x3 neighborhood search selects the nearest and
+second-nearest jittered cell feature points. The nearest point supplies group identity and centre;
+the nearest/second-nearest distance gap supplies a boundary influence. Authored spacing, feature
+jitter, boundary softness, root attraction, centre/edge retention, falloff, and group-to-group
+density variation control placement without allocating clump records. Root attraction fades at
+soft boundaries so roots do not visibly snap across the procedural cell border.
+
+The expected number of stratified roots associated with a Voronoi clump is approximately
+`maximum density * clump spacing^2`; it is a derived cost, not an independently generated child
+count. Content that requires an exact bounded number of leaves around a visible centre uses
+parent/child placement instead.
+
+Independent orientation controls consume the sample: signed shared, radial, tangential, and field
+weights; non-negative residual random weight; and a bounded angular jitter. Independently authored
+species response values consume the same stable group key for height, tilt, bend, lateral curve,
+material, and later motion. One overloaded scalar must not control all of those channels implicitly.
+
+Explicit parent/child growth remains useful for botanical tufts with a bounded child count and a
+visible parent centre. Its parent is simply another implementation of `GroupSample`; all downstream
+orientation, shape, material, motion, and diagnostics remain shared with Voronoi groups. Voronoi
+clumps instead organize an otherwise continuous root population without storing or serially
+expanding a list of children. Both models are deterministic in world space and must remain seamless
+across streamed page boundaries.
+
+Ungrouped grass is the simplest case: one root per stratified cell, zero group influence, an
+authored blend of random and field-aligned rest direction, and optional competition. Large and small
+grass use the same grouping interface. Size is a species/topology property, not a reason to fork the
+placement architecture.
 
 ### Assemblage: which populations coexist
 
@@ -462,20 +539,25 @@ streaming boundaries.
 
 One compute lane owns one prospective render unit. It:
 
-1. derives its parent and child location from the population's stable sequence;
-2. samples spatial coverage and competition weights;
-3. selects a species from the population palette;
-4. samples terrain height, normal, and surface tags;
-5. rejects invalid or incompatible positions;
-6. performs exact visibility and projected-size classification;
-7. calculates nested density/LOD membership and transition weight;
-8. atomically reserves one slot in its selected bin and writes one compact render instance.
+1. derives a root from the population's stable placement sequence;
+2. resolves its `GroupSample`, applies bounded group density retention, and constructs its rest
+   orientation;
+3. samples spatial coverage and competition weights;
+4. selects a species from the population palette;
+5. samples terrain height, normal, and surface tags;
+6. rejects invalid or incompatible positions;
+7. performs exact visibility and projected-size classification;
+8. calculates nested density/LOD membership and transition weight;
+9. atomically reserves one slot in its selected bin and writes one compact render instance.
 
-There is no second count/fill traversal and no transient candidate record. This matches the current
-workload: content density and stable nested LOD thinning keep ordinary demand below the declared
-arenas. Exact eligible, emitted, and dropped counts verify that contract. If a future content profile
-cannot maintain zero drops without an unreasonable arena, the scheduler must gain a deterministic
-pre-evaluation budget or rank-resolve stage; silently accepting atomic overflow is forbidden.
+There is no second count/fill traversal and no transient candidate record. Expensive high topology
+is admitted inside a deterministic camera-local radius derived from the worst overlapping authored
+root density, the fixed topology-bin capacity, and safety headroom. A stable outer annulus morphs to
+the exact low topology, and farther roots enter the low bin rather than being discarded. This bounds
+the current high bins without making atomic append order an admission policy. Exact eligible,
+emitted, and dropped counts verify the contract. If a future content profile cannot maintain zero
+low-bin drops without an unreasonable arena, the scheduler must gain deterministic pre-evaluation
+or rank resolution; silently accepting atomic overflow is forbidden.
 
 Wind and interaction are evaluated once per emitted procedural unit and packed into the instance
 when that saves repeated per-vertex work. Shape distributions remain in the indexed species/topology
@@ -552,7 +634,9 @@ LOD is driven by projected error/size with hysteresis and stable dithering, not 
 Projected size is the conservative screen-space envelope of authored height and horizontal reach,
 not only a surface-normal-aligned root-to-tip segment. The latter collapses in overhead views even
 when bent and tilted blades retain a large visible footprint. Work scheduling, candidate
-classification, and draw-side morphing use the same envelope contract.
+classification, and draw-side morphing use the same envelope contract. Runtime reach is clamped to
+the cubic-Bezier control hull plus root offset, grazing-angle width expansion, and maximum wind
+displacement, so an undersized authored culling bound cannot make pages vanish at view edges.
 Each transition handles three independent signals:
 
 1. **Shape:** high topology morphs toward the exact surviving low topology.
@@ -887,8 +971,9 @@ on one extreme global density value.
 ### Slice E - authored assets and V2 editor
 
 - Add authored mesh/impostor representation and bounded static GPU streams.
-- Extend assemblage/population editing and mask previews.
-- Add native V2 species, population, assemblage, and field authoring.
+- Extend the implemented live species/population profile editor with typed undo, persistence,
+  assemblage editing, and mask previews.
+- Add native V2 field authoring through bounded resident-cell working sets.
 - Publish V2 pages through the existing content-addressed world pipeline.
 
 ## Prototype gates and unresolved choices

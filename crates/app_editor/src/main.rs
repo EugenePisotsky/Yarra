@@ -12,6 +12,7 @@ mod publication;
 mod saving;
 mod shell;
 mod tools;
+mod vegetation_authoring;
 mod workspaces;
 
 fn main() {

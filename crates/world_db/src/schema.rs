@@ -9,7 +9,7 @@ CREATE TABLE project_metadata (
 
 CREATE TABLE vegetation_catalog (
     singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
-    format_version INTEGER NOT NULL CHECK(format_version = 1),
+    format_version INTEGER NOT NULL CHECK(format_version = 2),
     payload BLOB NOT NULL
 ) STRICT;
 
@@ -211,7 +211,7 @@ CREATE TABLE runtime_metadata (
 
 CREATE TABLE vegetation_catalog (
     singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
-    format_version INTEGER NOT NULL CHECK(format_version = 1),
+    format_version INTEGER NOT NULL CHECK(format_version = 2),
     payload BLOB NOT NULL
 ) STRICT;
 

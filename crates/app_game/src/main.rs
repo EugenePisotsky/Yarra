@@ -33,21 +33,21 @@ fn main() {
                     ..default()
                 }),
         )
-        .add_plugins(MinimalGamePlugin::new(runtime_database));
+        .add_plugins(MinimalGamePlugin::new(runtime_database))
+        .add_plugins(VegetationRenderPlugin)
+        .insert_resource(
+            VegetationDebugScene::new(VegetationScene {
+                catalog: vegetation::fixtures::reference_catalog(),
+                pages: Vec::new(),
+            })
+            .expect("empty vegetation runtime scene is valid"),
+        )
+        .add_systems(Update, conform_vegetation_debug_to_streamed_terrain);
     if vegetation_v2_debug {
-        app.add_plugins(VegetationRenderPlugin)
-            .insert_resource(
-                VegetationDebugScene::new(VegetationScene {
-                    catalog: vegetation::fixtures::reference_catalog(),
-                    pages: Vec::new(),
-                })
-                .expect("empty vegetation diagnostic scene is valid"),
-            )
-            .add_systems(Startup, setup_vegetation_debug_legend)
+        app.add_systems(Startup, setup_vegetation_debug_legend)
             .add_systems(
                 Update,
                 (
-                    conform_vegetation_debug_to_streamed_terrain,
                     draw_streamed_terrain_page_diagnostics,
                     update_vegetation_debug_legend,
                 ),
@@ -142,6 +142,9 @@ fn vegetation_debug_legend(
         }
         VegetationDebugMode::CandidateOutcomes => {
             "V2: all page-owned candidates (more than emitted grass)\nGreen: accepted | Blue: density-thinned | Orange: coverage/competition rejected | Magenta: invalid surface | X: next"
+        }
+        VegetationDebugMode::GroupStructure => {
+            "V2: unified group samples\nAccepted roots link to explicit parent or analytic Voronoi centre; color is stable group identity | X: next"
         }
     };
     let eligible = diagnostics.eligible_instances;

@@ -8,6 +8,7 @@ use std::{
 use bevy::prelude::*;
 use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded};
 use engine::{WorldCatalog, WorldViewpoint};
+use vegetation::VegetationCatalog;
 use world::{CellCoord, StableObjectId, WorldSpaceId};
 use world_db::{
     DenseSourceRecord, DenseSourceRecordKey, DenseSourceWrite, DenseSourceWriteTransactionResult,
@@ -171,6 +172,7 @@ pub(crate) enum DenseSaveOutcome {
 pub(crate) struct ProjectEditorStore {
     phase: ProjectStorePhase,
     manifest: Option<ProjectManifest>,
+    vegetation_catalog: Option<VegetationCatalog>,
     write_error: Option<String>,
     catalog_compatible: Option<bool>,
     desired_window: Option<ProjectQueryWindow>,
@@ -217,6 +219,10 @@ impl ProjectEditorStore {
 
     pub(crate) fn manifest(&self) -> Option<&ProjectManifest> {
         self.manifest.as_ref()
+    }
+
+    pub(crate) fn vegetation_catalog(&self) -> Option<&VegetationCatalog> {
+        self.vegetation_catalog.as_ref()
     }
 
     pub(crate) fn write_error(&self) -> Option<&str> {
@@ -374,6 +380,7 @@ enum ProjectResult {
 
 struct ProjectOpenSnapshot {
     manifest: ProjectManifest,
+    vegetation_catalog: Option<VegetationCatalog>,
     write_error: Option<String>,
 }
 
@@ -418,9 +425,19 @@ fn project_worker(
     };
     let mut writer = ProjectWriter::open(&path)
         .map_err(|error| format!("could not open {} for authoring: {error}", path.display()));
+    let vegetation_catalog = match reader.read_vegetation_catalog() {
+        Ok(catalog) => catalog,
+        Err(error) => {
+            let _ = results.send(ProjectResult::Opened(Err(format!(
+                "could not read the project vegetation catalog: {error}"
+            ))));
+            return;
+        }
+    };
     if results
         .send(ProjectResult::Opened(Ok(ProjectOpenSnapshot {
             manifest: reader.manifest().clone(),
+            vegetation_catalog,
             write_error: writer.as_ref().err().cloned(),
         })))
         .is_err()
@@ -541,6 +558,7 @@ fn receive_project_results(
             Ok(ProjectResult::Opened(result)) => match result {
                 Ok(opened) => {
                     store.manifest = Some(opened.manifest);
+                    store.vegetation_catalog = opened.vegetation_catalog;
                     store.write_error = opened.write_error;
                     store.phase = ProjectStorePhase::Ready;
                     store.source_epoch = store.source_epoch.max(1);
@@ -880,6 +898,7 @@ mod tests {
             panic!("project worker did not open the checked-in authoring database");
         };
         let manifest = opened.manifest;
+        assert!(opened.vegetation_catalog.is_some());
         assert_eq!(manifest.world_spaces.len(), 2);
         let window = ProjectQueryWindow::around(manifest.default_world_space, CellCoord::ZERO);
         request_sender

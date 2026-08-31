@@ -7,9 +7,10 @@ use crate::{
     BroadLeafTopologyProfile, GrowthPattern, RepresentationKind, RepresentationLevel,
     RibbonTopologyProfile, TopologyFamily, TopologyProfile, VegetationAssemblage,
     VegetationAssemblageId, VegetationBounds, VegetationCatalog, VegetationFieldPage,
-    VegetationMaterialProfile, VegetationPopulation, VegetationPopulationField,
+    VegetationGroupResponseProfile, VegetationGroupingProfile, VegetationMaterialProfile,
+    VegetationOrientationProfile, VegetationPopulation, VegetationPopulationField,
     VegetationPopulationId, VegetationScene, VegetationSpecies, VegetationSpeciesId,
-    VegetationSurfaceField, VegetationWindProfile,
+    VegetationSurfaceField, VegetationWindProfile, VoronoiClumpProfile,
 };
 
 pub const DRY_FINE_SPECIES_ID: VegetationSpeciesId = VegetationSpeciesId([1; 16]);
@@ -51,11 +52,9 @@ pub fn reference_catalog() -> VegetationCatalog {
                     children_per_parent: 64,
                     radius: 2.35,
                     parent_jitter: 0.72,
-                    radial_weight: 0.2,
-                    tangential_weight: 1.0,
-                    random_weight: 0.25,
-                    flow_weight: 0.3,
                 },
+                grouping: VegetationGroupingProfile::Parent,
+                orientation: orientation(0.34, 0.2, 1.0, 0.25, 0.3, 0.12),
                 competition_group: None,
             },
             VegetationPopulation {
@@ -72,11 +71,9 @@ pub fn reference_catalog() -> VegetationCatalog {
                     children_per_parent: 24,
                     radius: 1.45,
                     parent_jitter: 0.6,
-                    radial_weight: 0.3,
-                    tangential_weight: 0.55,
-                    random_weight: 0.35,
-                    flow_weight: 0.75,
                 },
+                grouping: VegetationGroupingProfile::Parent,
+                orientation: orientation(0.42, 0.3, 0.55, 0.35, 0.75, 0.16),
                 competition_group: Some(1),
             },
             VegetationPopulation {
@@ -93,11 +90,9 @@ pub fn reference_catalog() -> VegetationCatalog {
                     children_per_parent: 2,
                     radius: 0.65,
                     parent_jitter: 0.8,
-                    radial_weight: 0.7,
-                    tangential_weight: -0.15,
-                    random_weight: 0.45,
-                    flow_weight: 0.15,
                 },
+                grouping: VegetationGroupingProfile::Parent,
+                orientation: orientation(0.3, 0.7, -0.15, 0.45, 0.15, 0.22),
                 competition_group: Some(1),
             },
             VegetationPopulation {
@@ -110,6 +105,17 @@ pub fn reference_catalog() -> VegetationCatalog {
                 density_per_square_meter: 18.0,
                 seed: 0x5a37_c19d,
                 growth: GrowthPattern::Uniform { jitter: 0.92 },
+                grouping: VegetationGroupingProfile::Voronoi(VoronoiClumpProfile {
+                    spacing: 1.75,
+                    feature_jitter: 0.86,
+                    boundary_softness: 0.18,
+                    root_attraction: 0.2,
+                    center_retention: 1.0,
+                    edge_retention: 0.82,
+                    retention_falloff: 1.25,
+                    density_variation: 0.12,
+                }),
+                orientation: orientation(0.6, 0.82, 0.12, 0.34, 0.45, 0.2),
                 competition_group: None,
             },
         ],
@@ -224,6 +230,7 @@ fn dry_fine_species() -> VegetationSpecies {
         key: "dry_fine_ribbon".into(),
         topology: TopologyProfile::Ribbon(topology),
         material: material([0.11, 0.035, 0.01], [0.72, 0.28, 0.04], 0.18, 0.72),
+        group_response: group_response(0.76, 0.66, 0.68, 0.48),
         wind: wind(0.28, 0.95, 0.42),
         bounds: bounds(0.48, 1.25, 0.006, 0.022, 0.8),
         representations: ribbon_representations(TopologyFamily::Ribbon),
@@ -242,6 +249,7 @@ fn green_fine_species() -> VegetationSpecies {
         key: "green_fine_ribbon".into(),
         topology: TopologyProfile::Ribbon(topology),
         material: material([0.015, 0.06, 0.01], [0.12, 0.52, 0.08], 0.1, 0.78),
+        group_response: group_response(0.74, 0.72, 0.7, 0.56),
         wind: wind(0.38, 0.8, 0.34),
         bounds: bounds(0.42, 1.05, 0.008, 0.026, 0.62),
         representations: ribbon_representations(TopologyFamily::Ribbon),
@@ -261,6 +269,7 @@ fn short_fill_species() -> VegetationSpecies {
         key: "short_split_fill_ribbon".into(),
         topology: TopologyProfile::Ribbon(topology),
         material: material([0.018, 0.035, 0.008], [0.24, 0.34, 0.07], 0.12, 0.88),
+        group_response: group_response(0.58, 0.46, 0.6, 0.4),
         wind: wind(0.72, 1.15, 0.12),
         bounds: bounds(0.14, 0.38, 0.014, 0.042, 0.4),
         representations: ribbon_representations(TopologyFamily::Ribbon),
@@ -282,6 +291,7 @@ fn broad_leaf_species() -> VegetationSpecies {
             maximum_camber: 0.32,
         }),
         material: material([0.008, 0.045, 0.006], [0.17, 0.58, 0.09], 0.07, 0.82),
+        group_response: group_response(0.68, 0.54, 0.62, 0.44),
         wind: wind(0.62, 1.4, 0.2),
         bounds: bounds(0.16, 0.52, 0.025, 0.09, 0.5),
         representations: vec![
@@ -339,6 +349,38 @@ fn material(
         root_ao: 0.42,
         tip_ao: 0.92,
         normal_rounding: 0.32,
+    }
+}
+
+fn group_response(
+    height_coherence: f32,
+    tilt_coherence: f32,
+    bend_coherence: f32,
+    lateral_curve_coherence: f32,
+) -> VegetationGroupResponseProfile {
+    VegetationGroupResponseProfile {
+        height_coherence,
+        tilt_coherence,
+        bend_coherence,
+        lateral_curve_coherence,
+    }
+}
+
+fn orientation(
+    shared_group_weight: f32,
+    radial_weight: f32,
+    tangential_weight: f32,
+    random_weight: f32,
+    flow_weight: f32,
+    angular_jitter_radians: f32,
+) -> VegetationOrientationProfile {
+    VegetationOrientationProfile {
+        shared_group_weight,
+        radial_weight,
+        tangential_weight,
+        random_weight,
+        flow_weight,
+        angular_jitter_radians,
     }
 }
 

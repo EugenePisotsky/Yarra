@@ -39,7 +39,7 @@ use bevy::{
 };
 use bytemuck::{Pod, Zeroable};
 use vegetation::{
-    GrowthPattern, RepresentationKind, TopologyFamily, TopologyProfile,
+    GrowthPattern, RepresentationKind, TopologyFamily, TopologyProfile, VegetationGroupingProfile,
     candidate_density_retention, candidate_domain, decode_octahedral_normal,
 };
 
@@ -59,6 +59,11 @@ const SPLIT_HIGH_CAPACITY: u32 = 32_768;
 const SPLIT_LOW_CAPACITY: u32 = 131_072;
 const PROCEDURAL_INSTANCE_CAPACITY: u32 =
     SINGLE_HIGH_CAPACITY + SINGLE_LOW_CAPACITY + SPLIT_HIGH_CAPACITY + SPLIT_LOW_CAPACITY;
+// Keep the expensive high-topology population below the arena's hard guard even for a top-down
+// view of a fully covered field. The remaining headroom absorbs stochastic placement variance,
+// clump attraction, page boundaries, and the smooth high/low transition annulus.
+const HIGH_DETAIL_BUDGET_UTILIZATION: f32 = 0.5;
+const MAX_HIGH_DETAIL_RADIUS: f32 = 96.0;
 const MAX_DIAGNOSTIC_INSTANCES: u32 = 65_536;
 const TOPOLOGY_BIN_COUNT: u32 = 4;
 const WORKGROUP_SIZE: u32 = 64;
@@ -160,7 +165,14 @@ struct WorkItemGpu {
     direction_weights: [f32; 4],
     // xy: world flow direction, z: requested density, w: unused
     flow_density: [f32; 4],
-    // x: first work item on page, y: work-item count on page, z: pattern (0 uniform, 1 parent)
+    // x: clump spacing, y: feature jitter, z: boundary softness, w: root attraction
+    grouping: [f32; 4],
+    // x: center retention, y: edge retention, z: falloff, w: group density variation
+    group_density: [f32; 4],
+    // x: shared group direction weight, y: per-root angular jitter
+    orientation: [f32; 4],
+    // x: first work item on page, y: work-item count on page, z: placement pattern,
+    // w: grouping source (0 none, 1 parent, 2 Voronoi)
     peers: [u32; 4],
     // x: surface sample offset, y: surface resolution
     surface: [u32; 4],
@@ -176,7 +188,8 @@ struct SpeciesChoiceGpu {
     metadata: [u32; 4],
     // x: normalized cumulative threshold
     threshold: [f32; 4],
-    // x: high density, y: low density, z: far density, w: unused
+    // x: high density, y: low density, z: far density,
+    // w: density-budgeted high-topology radius
     density: [f32; 4],
 }
 
@@ -197,8 +210,11 @@ struct SpeciesGpu {
     shape_secondary: [f32; 4],
     // x: clump color variation, y: roughness, z: transmission, w: normal rounding
     material: [f32; 4],
-    // x: root AO, y: tip AO, z: high-LOD threshold, w: unused
+    // x: root AO, y: tip AO, z: high-LOD threshold,
+    // w: density-budgeted high-topology radius
     shading: [f32; 4],
+    // xyzw: group coherence for height, tilt, bend, and lateral curve
+    group_response: [f32; 4],
 }
 
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -228,7 +244,7 @@ struct DebugInstanceGpu {
     direction_species: [f32; 4],
     // xyz: parent position, w: candidate outcome code
     parent_status: [f32; 4],
-    // x: local occupancy, y: stable rank, z: growth pattern, w: candidate seed bits
+    // x: local occupancy, y: stable rank, z: group distance, w: group influence
     diagnostics: [f32; 4],
 }
 
@@ -1021,7 +1037,91 @@ struct PackedScene {
     maximum_candidate_count: u32,
 }
 
+fn high_detail_radii(scene: &vegetation::VegetationScene) -> [f32; 2] {
+    let mut maximum_density = [0.0_f32; 2];
+    for page in &scene.pages {
+        let mut page_density = [0.0_f32; 2];
+        for field in &page.fields {
+            let population = scene
+                .catalog
+                .population(field.population)
+                .expect("validated scene population");
+            // A mixed population may choose either topology. Charge its full root density to each
+            // possible high bin: this is deliberately conservative and keeps the hard arena guard
+            // independent of species-choice noise.
+            let mut topology_present = [false; 2];
+            for choice in &population.species {
+                let species = scene
+                    .catalog
+                    .species(choice.species)
+                    .expect("validated species choice");
+                topology_present[topology_bin(species.topology) as usize] = true;
+            }
+            for (density, present) in page_density.iter_mut().zip(topology_present) {
+                if present {
+                    *density += population.density_per_square_meter;
+                }
+            }
+        }
+        for (maximum, density) in maximum_density.iter_mut().zip(page_density) {
+            *maximum = maximum.max(density);
+        }
+    }
+
+    let radius_for = |capacity: u32, density: f32| {
+        if density <= f32::EPSILON {
+            return MAX_HIGH_DETAIL_RADIUS;
+        }
+        ((capacity as f32 * HIGH_DETAIL_BUDGET_UTILIZATION) / (std::f32::consts::PI * density))
+            .sqrt()
+            .min(MAX_HIGH_DETAIL_RADIUS)
+    };
+    [
+        radius_for(SINGLE_HIGH_CAPACITY, maximum_density[0]),
+        radius_for(SPLIT_HIGH_CAPACITY, maximum_density[1]),
+    ]
+}
+
+fn effective_horizontal_reach(species: &vegetation::VegetationSpecies) -> f32 {
+    let height = species.bounds.maximum_height;
+    let width = species.bounds.maximum_half_width * 1.24;
+    let (maximum_tilt, maximum_bend, maximum_lateral, root_offset) = match species.topology {
+        TopologyProfile::Ribbon(profile) => (
+            profile.maximum_tilt_radians,
+            profile.maximum_bend,
+            profile.maximum_lateral_curve,
+            if profile.blades_per_render_unit > 1 {
+                species.bounds.maximum_half_width * 0.75
+            } else {
+                0.0
+            },
+        ),
+        TopologyProfile::BroadLeafCluster(profile) => (
+            0.52 + profile.maximum_droop * 0.45,
+            profile.maximum_droop,
+            profile.maximum_camber,
+            profile.crown_radius * 0.35,
+        ),
+    };
+    // A cubic Bezier stays inside the convex hull of its control points. Bound the same p1/p2/p3
+    // construction used by the vertex shader in its orthonormal blade frame, then include the
+    // root offset, grazing-angle width expansion, and maximum wind displacement. This prevents an
+    // artist-entered reach that is too small from making whole pages disappear at view edges.
+    let p1_radius = height * (0.34_f32.powi(2) + (maximum_bend * 0.05).powi(2)).sqrt();
+    let p2_normal = maximum_tilt.cos() * 0.68 + maximum_bend * 0.16;
+    let p2_forward = maximum_tilt.sin() * 0.68 + maximum_bend * 0.22;
+    let p2_side = maximum_lateral * 0.22;
+    let p2_radius = height * (p2_normal.powi(2) + p2_forward.powi(2) + p2_side.powi(2)).sqrt();
+    species.bounds.maximum_horizontal_reach.max(
+        height.max(p1_radius).max(p2_radius)
+            + root_offset
+            + width
+            + species.wind.maximum_tip_displacement,
+    )
+}
+
 fn pack_scene(scene: &vegetation::VegetationScene) -> PackedScene {
+    let high_detail_radii = high_detail_radii(scene);
     let species_indices = scene
         .catalog
         .species
@@ -1033,7 +1133,12 @@ fn pack_scene(scene: &vegetation::VegetationScene) -> PackedScene {
         .catalog
         .species
         .iter()
-        .map(pack_species)
+        .map(|species| {
+            pack_species(
+                species,
+                high_detail_radii[topology_bin(species.topology) as usize],
+            )
+        })
         .collect::<Vec<_>>();
 
     let mut work_items = Vec::new();
@@ -1091,9 +1196,9 @@ fn pack_scene(scene: &vegetation::VegetationScene) -> PackedScene {
                     .species(choice.species)
                     .expect("validated species choice");
                 let lod = procedural_lod_profile(species_definition);
+                let horizontal_reach = effective_horizontal_reach(species_definition);
                 maximum_height = maximum_height.max(species_definition.bounds.maximum_height);
-                maximum_horizontal_reach = maximum_horizontal_reach
-                    .max(species_definition.bounds.maximum_horizontal_reach);
+                maximum_horizontal_reach = maximum_horizontal_reach.max(horizontal_reach);
                 minimum_high_threshold = minimum_high_threshold.min(lod.high_minimum_pixels);
                 minimum_low_threshold = minimum_low_threshold.min(lod.low_minimum_pixels);
                 maximum_low_density = maximum_low_density.max(lod.low_density_fraction);
@@ -1101,7 +1206,7 @@ fn pack_scene(scene: &vegetation::VegetationScene) -> PackedScene {
                     metadata: [
                         species_indices[&choice.species],
                         topology_bin(species_definition.topology),
-                        species_definition.bounds.maximum_horizontal_reach.to_bits(),
+                        horizontal_reach.to_bits(),
                         species_definition.bounds.maximum_height.to_bits(),
                     ],
                     threshold: [
@@ -1110,27 +1215,43 @@ fn pack_scene(scene: &vegetation::VegetationScene) -> PackedScene {
                         lod.low_minimum_pixels,
                         lod.far_minimum_pixels,
                     ],
-                    density: [1.0, lod.low_density_fraction, lod.far_density_fraction, 0.0],
+                    density: [
+                        1.0,
+                        lod.low_density_fraction,
+                        lod.far_density_fraction,
+                        high_detail_radii[topology_bin(species_definition.topology) as usize],
+                    ],
                 });
             }
 
-            let (radius, jitter, weights, pattern) = match population.growth {
-                GrowthPattern::Uniform { jitter } => (0.0, jitter, [0.0, 0.0, 1.0, 0.0], 0),
+            let (radius, jitter, pattern) = match population.growth {
+                GrowthPattern::Uniform { jitter } => (0.0, jitter, 0),
                 GrowthPattern::ParentChild {
                     radius,
                     parent_jitter,
-                    radial_weight,
-                    tangential_weight,
-                    random_weight,
-                    flow_weight,
                     ..
-                } => (
-                    radius,
-                    parent_jitter,
-                    [radial_weight, tangential_weight, random_weight, flow_weight],
-                    1,
+                } => (radius, parent_jitter, 1),
+            };
+            let (grouping, group_density, grouping_source) = match population.grouping {
+                VegetationGroupingProfile::None => ([0.0; 4], [1.0, 1.0, 1.0, 0.0], 0),
+                VegetationGroupingProfile::Parent => ([0.0; 4], [1.0, 1.0, 1.0, 0.0], 1),
+                VegetationGroupingProfile::Voronoi(profile) => (
+                    [
+                        profile.spacing,
+                        profile.feature_jitter,
+                        profile.boundary_softness,
+                        profile.root_attraction,
+                    ],
+                    [
+                        profile.center_retention,
+                        profile.edge_retention,
+                        profile.retention_falloff,
+                        profile.density_variation,
+                    ],
+                    2,
                 ),
             };
+            let orientation = population.orientation;
             work_items.push(WorkItemGpu {
                 page: [
                     page.origin_xz[0],
@@ -1164,14 +1285,27 @@ fn pack_scene(scene: &vegetation::VegetationScene) -> PackedScene {
                     jitter,
                     candidate_density_retention(population),
                 ],
-                direction_weights: weights,
+                direction_weights: [
+                    orientation.radial_weight,
+                    orientation.tangential_weight,
+                    orientation.random_weight,
+                    orientation.flow_weight,
+                ],
                 flow_density: [
                     field.flow_direction[0],
                     field.flow_direction[1],
                     population.density_per_square_meter,
                     0.0,
                 ],
-                peers: [page_work_start, page_work_count, pattern, 0],
+                grouping,
+                group_density,
+                orientation: [
+                    orientation.shared_group_weight,
+                    orientation.angular_jitter_radians,
+                    0.0,
+                    0.0,
+                ],
+                peers: [page_work_start, page_work_count, pattern, grouping_source],
                 surface: [
                     surface_offset,
                     u32::from(page.surface.resolution),
@@ -1246,8 +1380,9 @@ fn procedural_lod_profile(species: &vegetation::VegetationSpecies) -> Procedural
     }
 }
 
-fn pack_species(species: &vegetation::VegetationSpecies) -> SpeciesGpu {
+fn pack_species(species: &vegetation::VegetationSpecies, high_detail_radius: f32) -> SpeciesGpu {
     let lod = procedural_lod_profile(species);
+    let horizontal_reach = effective_horizontal_reach(species);
     let (topology, shape, shape_secondary) = match species.topology {
         TopologyProfile::Ribbon(profile) => (
             [
@@ -1266,7 +1401,7 @@ fn pack_species(species: &vegetation::VegetationSpecies) -> SpeciesGpu {
                 profile.maximum_lateral_curve,
                 profile.pair_spread_radians,
                 0.0,
-                species.bounds.maximum_horizontal_reach,
+                horizontal_reach,
             ],
         ),
         TopologyProfile::BroadLeafCluster(profile) => (
@@ -1286,7 +1421,7 @@ fn pack_species(species: &vegetation::VegetationSpecies) -> SpeciesGpu {
                 profile.maximum_camber,
                 2.2,
                 profile.crown_radius,
-                species.bounds.maximum_horizontal_reach,
+                horizontal_reach,
             ],
         ),
     };
@@ -1322,7 +1457,13 @@ fn pack_species(species: &vegetation::VegetationSpecies) -> SpeciesGpu {
             species.material.root_ao,
             species.material.tip_ao,
             lod.high_minimum_pixels,
-            0.0,
+            high_detail_radius,
+        ],
+        group_response: [
+            species.group_response.height_coherence,
+            species.group_response.tilt_coherence,
+            species.group_response.bend_coherence,
+            species.group_response.lateral_curve_coherence,
         ],
     }
 }
@@ -1514,9 +1655,9 @@ mod tests {
 
     #[test]
     fn gpu_contracts_have_expected_alignment() {
-        assert_eq!(size_of::<WorkItemGpu>(), 160);
+        assert_eq!(size_of::<WorkItemGpu>(), 208);
         assert_eq!(size_of::<SpeciesChoiceGpu>(), 48);
-        assert_eq!(size_of::<SpeciesGpu>(), 128);
+        assert_eq!(size_of::<SpeciesGpu>(), 144);
         assert_eq!(size_of::<SurfaceSampleGpu>(), 32);
         assert_eq!(size_of::<ProceduralInstanceGpu>(), 32);
         assert_eq!(size_of::<DebugInstanceGpu>(), 64);
@@ -1531,6 +1672,7 @@ mod tests {
     fn reference_fixture_packs_all_fields() {
         let scene = vegetation::fixtures::reference_scene();
         let packed = pack_scene(&scene);
+        let high_detail_radii = high_detail_radii(&scene);
         assert_eq!(packed.work_items.len(), 8);
         assert_eq!(packed.species.len(), 4);
         assert!(packed.choices.iter().any(|choice| choice.metadata[1] == 0));
@@ -1539,6 +1681,31 @@ mod tests {
         assert!(packed.maximum_candidate_count > 0);
         assert!(packed.coverage.len() > scene.pages.len());
         assert_eq!(packed.surfaces.len(), scene.pages.len() * 4);
+        assert!(
+            packed.choices.iter().all(|choice| {
+                choice.density[3] == high_detail_radii[choice.metadata[1] as usize]
+            })
+        );
+        let expected_single_radius = ((SINGLE_HIGH_CAPACITY as f32
+            * HIGH_DETAIL_BUDGET_UTILIZATION)
+            / (std::f32::consts::PI * 5.0))
+            .sqrt();
+        let expected_split_radius = ((SPLIT_HIGH_CAPACITY as f32 * HIGH_DETAIL_BUDGET_UTILIZATION)
+            / (std::f32::consts::PI * 25.0))
+            .sqrt();
+        assert!((high_detail_radii[0] - expected_single_radius).abs() < 1e-4);
+        assert!((high_detail_radii[1] - expected_split_radius).abs() < 1e-4);
+        let short_species = scene
+            .catalog
+            .species
+            .iter()
+            .find(|species| species.key == "short_split_fill_ribbon")
+            .unwrap();
+        assert!(effective_horizontal_reach(short_species) >= short_species.bounds.maximum_height);
+        assert!(
+            effective_horizontal_reach(short_species)
+                > short_species.bounds.maximum_horizontal_reach
+        );
         assert!(scene.catalog.species.iter().all(|species| {
             let lod = procedural_lod_profile(species);
             lod.low_density_fraction <= 0.32 && lod.far_density_fraction <= 0.32
@@ -1606,9 +1773,13 @@ mod tests {
 
         assert!(schedule.contains("fn maximum_projected_extent("));
         assert!(compute.contains("fn projected_blade_extent_pixels("));
+        assert!(compute.contains("fn budgeted_projected_blade_extent_pixels("));
         assert!(draw.contains("fn projected_blade_extent_pixels("));
+        assert!(draw.contains("fn budgeted_projected_blade_extent_pixels("));
         assert!(compute.contains("let maximum_reach = bitcast<f32>(choice.metadata.z);"));
         assert!(draw.contains("let reach = profile.shape_secondary.w;"));
+        assert!(compute.contains("let high_radius = max(choice.density.w, 1e-3);"));
+        assert!(draw.contains("let high_radius = max(profile.shading.w, 1e-3);"));
         assert!(schedule.contains("fn maximum_projected_population_spacing("));
         assert!(compute.contains("fn projected_population_spacing_pixels("));
         assert!(compute.contains("fn population_lod_density("));

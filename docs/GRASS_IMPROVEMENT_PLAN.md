@@ -192,13 +192,16 @@ population. Tests enforce the nested one-of-four rank. We still need moving-came
 shape, density, color, and perceived volume cross the boundary without popping. Fragment cost may
 remain high even after reducing vertex and root counts.
 
-### 4. Capacity is observable but not recoverable
+### 4. Capacity is observable and high-topology admission is bounded
 
 Every bin exposes eligible, emitted, and dropped counts; any drop is labeled `Budget: VIOLATION`.
-Within the supported profiles the arena must never overflow. If it does, atomic append order is not a
-fair admission policy, so the frame is invalid rather than an acceptable degraded image. We should
-either reject an over-budget view/content profile before drawing or add a deterministic bounded
-admission stage only when a real workload requires it.
+Within the supported profiles the arena must never overflow. Atomic append order is not a fair
+admission policy: it produced page-like holes when the tall split population exceeded its high bin.
+V2 now derives a camera-local high-detail radius from the worst overlapping authored root density,
+the topology-bin capacity, and explicit safety headroom. The outer annulus uses the existing exact
+high-to-low morph; roots outside it enter low topology rather than disappearing. The radius is
+world-space stable under zoom and shared by classification and draw reconstruction. Low-bin drops
+remain invalid and require either profile rejection or a similarly deterministic budget design.
 
 ### 5. The topology families are not yet a finished species renderer
 
@@ -296,6 +299,9 @@ These are provisional design positions. Change them when an experiment provides 
 - Fixed memory, demanded/emitted counts, and overflow must be visible in diagnostics.
 - Mixed cover should be a composition of typed visual families, not a pile of indistinguishable card
   presets.
+- Dense continuous grass should support stable analytic Voronoi clumps. Clump identity and
+  centre-relative coordinates may coherently affect placement, height, facing, material, and later
+  motion, while each channel retains an independent artist-controlled weight.
 - Non-interactive authored field assets should use a compact, deterministic GPU instance stream;
   heavyweight game objects remain appropriate only when gameplay identity is required.
 - Default grass casting should combine a broad field-density proxy with optional short-range detail,
@@ -310,6 +316,9 @@ These are provisional design positions. Change them when an experiment provides 
 - Derivative/animated near normals followed by distance blending versus stable normals everywhere.
 - Alternative split topology budgets only if the implemented two-leaf unit fails visually.
 - Texture profiles versus analytic curves/LUTs for vein, gloss, translucency, AO, and clump color.
+- Voronoi clump spacing, feature-point jitter, root attraction, centre falloff, shared direction,
+  radial/tangential direction, and residual per-blade variation. Compare against both independent
+  random blades and explicit parent/child tufts rather than assuming one clump model fits all grass.
 - Terrain-proxy topology, density encoding, world-stable dithering, and filtering for broad grass
   shadows.
 - Screen-space shadow tracing as the local-detail layer over the broad proxy.
@@ -370,6 +379,15 @@ repeatable visual captures, GPU timing, instance counts, overflow, and memory.
 - Keep high geometry converging on exact low-section samples.
 - Keep the stable nested density transition and direct quarter-lattice scheduling for fully low work.
 - Keep the two-leaf topology species-controlled and within the single topology's unique-input budget.
+- Preserve the implemented page-seam-safe analytic Voronoi clump option for continuous populations.
+  It computes the nearest and second-nearest jittered feature points from a world-space 3x3
+  neighborhood per candidate and stores no entities, clump records, or page-local identities.
+- Preserve the implemented separation between root distribution and rest-orientation control.
+  Uniform/stratified roots can blend group-shared, radial, tangential, field-flow, and residual
+  random directions with independent angular jitter.
+- Tune clump spacing, density retention, attraction, orientation, and per-species shape coherence
+  against fixed overhead and grazing reference captures. Keep the derived roots-per-clump cost visible
+  while tuning; do not add a second independent count control to analytic Voronoi populations.
 - Validate the implemented transitions visually at fixed boundaries; add a different distant
   representation only after this procedural baseline is measured.
 
@@ -389,8 +407,8 @@ or motion pop in the representative scenes.
   ring only with pass timings. Do not add another classification pass.
 - Keep a global-list version as the baseline. A tiled double buffer wins only if its lower memory or
   overlap offsets extra dispatches, synchronization, and draw calls on the actual target hardware.
-- Reject any profile that can exceed a bin budget; add deterministic admission only if rejection is
-  too restrictive for a demonstrated workload.
+- Preserve density-derived deterministic high-topology admission and reject profiles that can still
+  exceed a low-bin budget; do not accept atomic overflow as a quality mode.
 
 Exit criterion: the selected design has measured wins in representative scenes, bounded worst-case
 memory, and no new spatial bias or temporal instability.
@@ -601,3 +619,20 @@ Add dated entries here when experiments turn provisional positions into decision
 - **2026-08-31:** Decouple topology LOD from population LOD. Use projected blade envelope for shape
   complexity and projected authored root-cell area for stable density retention; low-poly blades do
   not imply that visibly separated roots may be removed.
+- **2026-08-31:** Add Ghost's slide-16 Voronoi clumping to the evidence and V2 direction. Independent
+  per-blade randomness is not a natural-field model. Continuous populations need deterministic
+  world-space clump identity and centre-relative influence, distinct from explicit parent/child
+  tufts and configurable independently for placement, height, facing, material, and later motion.
+- **2026-08-31:** Use one grouping interface for short grass, tall grass, broad leaves, and later
+  flowers. Root placement, grouping source, rest orientation, and species response are separate
+  contracts. `None`, explicit `Parent`, and analytic `Voronoi` all produce the same stable group key,
+  centre, distance, direction, boundary influence, and density-retention sample. Exact child counts
+  belong only to parent/child placement; expected Voronoi membership is derived from maximum root
+  density and clump spacing. Preserve the 32-byte emitted instance by carrying a compact group
+  variant rather than storing per-clump runtime records.
+- **2026-08-31:** Fix tall split-grass budget instability without enlarging the arena. Derive each
+  expensive topology's high-detail radius from maximum overlapping authored density and fixed bin
+  capacity, reserve stochastic headroom, morph through a stable outer annulus, and route all farther
+  roots to low topology. Atomic invocation order must never choose the visible survivors. Clamp
+  runtime culling reach to the actual cubic-Bezier control hull plus width and wind displacement so
+  an undersized editor bound cannot cause view-edge page loss.

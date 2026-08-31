@@ -13,6 +13,9 @@ struct WorkItem {
     growth: vec4<f32>,
     direction_weights: vec4<f32>,
     flow_density: vec4<f32>,
+    grouping: vec4<f32>,
+    group_density: vec4<f32>,
+    orientation: vec4<f32>,
     peers: vec4<u32>,
     surface: vec4<u32>,
     bounds: vec4<f32>,
@@ -40,7 +43,7 @@ struct DebugInstance {
 }
 
 struct DebugConfig {
-    // 0: geometry, 1: accepted species, 2: parent links, 3: candidate outcomes
+    // 0: geometry, 1: accepted species, 2: parent links, 3: outcomes, 4: group structure
     values: vec4<u32>,
 }
 
@@ -72,12 +75,24 @@ struct DrawIndexedIndirectArgs {
 
 struct Candidate {
     root: vec2<f32>,
-    parent: vec2<f32>,
+    group_center: vec2<f32>,
     direction: vec2<f32>,
     stable_rank: f32,
     lod_rank: f32,
     clump_variant: f32,
+    group_distance: f32,
+    group_influence: f32,
+    group_density: f32,
     seed: u32,
+}
+
+struct GroupSample {
+    center: vec2<f32>,
+    radial: vec2<f32>,
+    normalized_distance: f32,
+    boundary_influence: f32,
+    density_retention: f32,
+    key: u32,
 }
 
 struct CandidateEvaluation {
@@ -274,6 +289,61 @@ fn sample_surface(item: WorkItem, world_xz: vec2<f32>) -> SurfaceResult {
     return SurfaceResult(height, normal, validity);
 }
 
+fn sample_voronoi_group(item: WorkItem, root: vec2<f32>) -> GroupSample {
+    let spacing = item.grouping.x;
+    let base_cell = vec2<i32>(floor(root / spacing));
+    var nearest_distance_squared = 1e30;
+    var second_distance_squared = 1e30;
+    var nearest_center = root;
+    var nearest_key = item.population.z;
+    for (var dz = -1; dz <= 1; dz += 1) {
+        for (var dx = -1; dx <= 1; dx += 1) {
+            let cell = base_cell + vec2<i32>(dx, dz);
+            let key = hash_cell(item.population.z, cell, 0x4f1bcdc9u);
+            let offset = vec2<f32>(
+                0.5 + (random01(key ^ 0x9e3779b9u) - 0.5) * item.grouping.y,
+                0.5 + (random01(key ^ 0x85ebca6bu) - 0.5) * item.grouping.y,
+            );
+            let center = (vec2<f32>(cell) + offset) * spacing;
+            let delta = root - center;
+            let distance_squared = dot(delta, delta);
+            if (distance_squared < nearest_distance_squared) {
+                second_distance_squared = nearest_distance_squared;
+                nearest_distance_squared = distance_squared;
+                nearest_center = center;
+                nearest_key = key;
+            } else if (distance_squared < second_distance_squared) {
+                second_distance_squared = distance_squared;
+            }
+        }
+    }
+
+    let nearest_distance = sqrt(nearest_distance_squared);
+    let second_distance = sqrt(second_distance_squared);
+    let softness_width = spacing * item.grouping.z;
+    var boundary_influence = 1.0;
+    if (softness_width > 1e-7) {
+        boundary_influence = smoothstep(
+            0.0,
+            softness_width,
+            second_distance - nearest_distance,
+        );
+    }
+    let normalized_distance = clamp(nearest_distance / (spacing * 1.41421356237), 0.0, 1.0);
+    let distance_profile = pow(normalized_distance, item.group_density.z);
+    let spatial_retention = mix(item.group_density.x, item.group_density.y, distance_profile);
+    let group_retention = 1.0
+        - item.group_density.w * random01(nearest_key ^ 0xd1b54a35u);
+    return GroupSample(
+        nearest_center,
+        normalize_or(root - nearest_center, vec2<f32>(1.0, 0.0)),
+        normalized_distance,
+        boundary_influence,
+        clamp(spatial_retention * group_retention, 0.0, 1.0),
+        nearest_key,
+    );
+}
+
 fn sample_candidate(item: WorkItem, candidate_index: u32) -> Candidate {
     let cell_index = candidate_index / item.candidate_layout.x;
     let child_index = candidate_index % item.candidate_layout.x;
@@ -286,7 +356,6 @@ fn sample_candidate(item: WorkItem, candidate_index: u32) -> Candidate {
 
     var root: vec2<f32>;
     var parent: vec2<f32>;
-    var radial = vec2<f32>(0.0);
     if (item.peers.z == 0u) {
         let offset = vec2<f32>(
             0.5 + (random01(cell_seed ^ 0xa511e9b3u) - 0.5) * item.growth.z,
@@ -303,11 +372,38 @@ fn sample_candidate(item: WorkItem, candidate_index: u32) -> Candidate {
         let child_seed = hash32(cell_seed ^ child_index * 0x9e3779b9u);
         let angle = random01(child_seed ^ 0xc2b2ae35u) * PI_2;
         let distance = sqrt(random01(child_seed ^ 0x27d4eb2fu)) * item.growth.y;
-        radial = vec2<f32>(cos(angle), sin(angle));
-        root = parent + radial * distance;
+        let placement_radial = vec2<f32>(cos(angle), sin(angle));
+        root = parent + placement_radial * distance;
     }
 
     let seed = hash32(cell_seed ^ child_index * 0x85ebca6bu);
+    var group = GroupSample(
+        root,
+        vec2<f32>(0.0),
+        0.0,
+        0.0,
+        1.0,
+        seed,
+    );
+    if (item.peers.w == 1u) {
+        let delta = root - parent;
+        let distance = length(delta);
+        var normalized_distance = 0.0;
+        if (item.growth.y > 1e-7) {
+            normalized_distance = clamp(distance / item.growth.y, 0.0, 1.0);
+        }
+        group = GroupSample(
+            parent,
+            normalize_or(delta, vec2<f32>(1.0, 0.0)),
+            normalized_distance,
+            1.0,
+            1.0,
+            cell_seed,
+        );
+    } else if (item.peers.w == 2u) {
+        group = sample_voronoi_group(item, root);
+        root = mix(root, group.center, item.grouping.w * group.boundary_influence);
+    }
     var lod_lane = 0u;
     if (item.peers.z == 0u) {
         let block = vec2<i32>(floor_div_two(cell.x), floor_div_two(cell.y));
@@ -325,19 +421,34 @@ fn sample_candidate(item: WorkItem, candidate_index: u32) -> Candidate {
     }
     let random_angle = random01(seed ^ 0x165667b1u) * PI_2;
     let random_direction = vec2<f32>(cos(random_angle), sin(random_angle));
-    let tangent = vec2<f32>(-radial.y, radial.x);
+    let shared_angle = random01(group.key ^ 0x68e31da4u) * PI_2;
+    let shared_direction = vec2<f32>(cos(shared_angle), sin(shared_angle));
+    let tangent = vec2<f32>(-group.radial.y, group.radial.x);
     let flow = normalize_or(item.flow_density.xy, vec2<f32>(1.0, 0.0));
-    let mixed = radial * item.direction_weights.x
+    let mixed = shared_direction * item.orientation.x * group.boundary_influence
+        + group.radial * item.direction_weights.x * group.boundary_influence
         + tangent * item.direction_weights.y
+            * group.boundary_influence
         + random_direction * item.direction_weights.z
         + flow * item.direction_weights.w;
+    let base_direction = normalize_or(mixed, random_direction);
+    let angular_jitter = (random01(seed ^ 0x7f4a7c15u) * 2.0 - 1.0) * item.orientation.y;
+    let sine = sin(angular_jitter);
+    let cosine = cos(angular_jitter);
+    let direction = vec2<f32>(
+        base_direction.x * cosine - base_direction.y * sine,
+        base_direction.x * sine + base_direction.y * cosine,
+    );
     return Candidate(
         root,
-        parent,
-        normalize_or(mixed, random_direction),
+        group.center,
+        direction,
         random01(seed ^ 0x94d049bbu),
         (f32(lod_lane) + random01(seed ^ 0x91e10da5u)) * 0.25,
-        random01(cell_seed ^ 0x3c6ef372u),
+        random01(group.key ^ 0x3c6ef372u),
+        group.normalized_distance,
+        group.boundary_influence,
+        group.density_retention,
         seed,
     );
 }
@@ -446,6 +557,23 @@ fn projected_blade_extent_pixels(
     return maximum_pixels;
 }
 
+fn budgeted_projected_blade_extent_pixels(
+    candidate: Candidate,
+    surface: SurfaceResult,
+    choice: SpeciesChoice,
+) -> f32 {
+    let projected_extent = projected_blade_extent_pixels(candidate, surface, choice);
+    let high_threshold = choice.threshold.y;
+    let high_radius = max(choice.density.w, 1e-3);
+    let distance = length(candidate.root - camera.camera_position.xz);
+    let high_weight = 1.0 - smoothstep(high_radius * 0.8, high_radius, distance);
+    // High topology is admitted through a stable world-space disk sized from the authored root
+    // density and the device-profile bin capacity. The annulus uses the existing high-to-low
+    // geometry morph. It never relies on atomic append order to decide which roots survive.
+    let budget_extent = high_threshold * mix(0.999, 1.45, high_weight);
+    return min(projected_extent, budget_extent);
+}
+
 fn projected_population_spacing_pixels(
     item: WorkItem,
     candidate: Candidate,
@@ -492,7 +620,7 @@ fn population_lod_density(choice: SpeciesChoice, projected_spacing: f32) -> f32 
 fn evaluate_candidate(item: WorkItem, candidate_index: u32) -> CandidateEvaluation {
     let candidate = sample_candidate(item, candidate_index);
     let surface = sample_surface(item, candidate.root);
-    let occupancy = local_occupancy(item, candidate.root);
+    let occupancy = local_occupancy(item, candidate.root) * candidate.group_density;
     var outcome = 0u;
     if (candidate.stable_rank >= item.growth.w) {
         outcome = 1u;
@@ -503,7 +631,7 @@ fn evaluate_candidate(item: WorkItem, candidate_index: u32) -> CandidateEvaluati
     }
 
     let choice = choose_species_choice(item, random01(candidate.seed ^ 0xd1b54a35u));
-    let projected_extent = projected_blade_extent_pixels(candidate, surface, choice);
+    let projected_extent = budgeted_projected_blade_extent_pixels(candidate, surface, choice);
     let population_density = population_lod_density(
         choice,
         projected_population_spacing_pixels(item, candidate, surface),
@@ -526,7 +654,9 @@ fn evaluate_candidate(item: WorkItem, candidate_index: u32) -> CandidateEvaluati
         eligible = 0u;
     } else if (outcome != 0u && debug_config.values.x != 3u) {
         eligible = 0u;
-    } else if (debug_config.values.x == 2u && item.peers.z == 0u) {
+    } else if (debug_config.values.x == 2u && item.peers.w != 1u) {
+        eligible = 0u;
+    } else if (debug_config.values.x == 4u && item.peers.w == 0u) {
         eligible = 0u;
     }
     return CandidateEvaluation(
@@ -618,7 +748,7 @@ fn generate(@builtin(global_invocation_id) invocation: vec3<u32>) {
         return;
     }
 
-    let parent_surface = sample_surface(item, evaluation.candidate.parent);
+    let parent_surface = sample_surface(item, evaluation.candidate.group_center);
     let parent_height = select(
         evaluation.surface.height,
         parent_surface.height,
@@ -637,16 +767,16 @@ fn generate(@builtin(global_invocation_id) invocation: vec3<u32>) {
         bitcast<f32>(pack2x16snorm(evaluation.surface.normal.xz)),
     );
     diagnostic_instances[local_slot].parent_status = vec4<f32>(
-        evaluation.candidate.parent.x,
+        evaluation.candidate.group_center.x,
         parent_height,
-        evaluation.candidate.parent.y,
+        evaluation.candidate.group_center.y,
         f32(evaluation.outcome),
     );
     diagnostic_instances[local_slot].diagnostics = vec4<f32>(
         evaluation.occupancy,
         evaluation.candidate.stable_rank,
-        f32(item.peers.z),
-        bitcast<f32>(evaluation.candidate.seed),
+        evaluation.candidate.group_distance,
+        evaluation.candidate.group_influence,
     );
 }
 

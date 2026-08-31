@@ -34,8 +34,11 @@ struct Species {
     shape_secondary: vec4<f32>,
     // x: clump color variation, y: roughness, z: transmission, w: normal rounding
     material: vec4<f32>,
-    // x: root AO, y: tip AO, z: high-LOD threshold, w: unused
+    // x: root AO, y: tip AO, z: high-LOD threshold,
+    // w: density-budgeted high-topology radius
     shading: vec4<f32>,
+    // xyzw: group coherence for height, tilt, bend, and lateral curve
+    group_response: vec4<f32>,
 }
 
 struct Camera {
@@ -46,7 +49,7 @@ struct Camera {
 }
 
 struct DebugConfig {
-    // 0: geometry, 1: accepted species, 2: parent links, 3: candidate outcomes
+    // 0: geometry, 1: accepted species, 2: parent links, 3: outcomes, 4: group structure
     values: vec4<u32>,
 }
 
@@ -179,6 +182,19 @@ fn projected_blade_extent_pixels(
     return maximum_pixels;
 }
 
+fn budgeted_projected_blade_extent_pixels(
+    root: vec3<f32>,
+    surface_normal: vec3<f32>,
+    profile: Species,
+) -> f32 {
+    let projected_extent = projected_blade_extent_pixels(root, surface_normal, profile);
+    let high_radius = max(profile.shading.w, 1e-3);
+    let distance = length(root.xz - camera.camera_position.xz);
+    let high_weight = 1.0 - smoothstep(high_radius * 0.8, high_radius, distance);
+    let budget_extent = profile.shading.z * mix(0.999, 1.45, high_weight);
+    return min(projected_extent, budget_extent);
+}
+
 fn geometry_vertex(vertex_index: u32, instance_index: u32) -> VertexOutput {
     let instance = procedural_instances[instance_index];
     let low_lod = (instance.geometry.y >> 31u) != 0u;
@@ -187,6 +203,7 @@ fn geometry_vertex(vertex_index: u32, instance_index: u32) -> VertexOutput {
     let root = instance.root_clump.xyz;
     let variants = unpack2x16unorm(bitcast<u32>(instance.root_clump.w));
     let clump_variant = variants.x;
+    let group_key = u32(round(clump_variant * 65535.0));
     let lod_rank = variants.y;
     let normal_xz = unpack2x16snorm(instance.geometry.z);
     let surface_normal = normalize3_or(
@@ -199,7 +216,7 @@ fn geometry_vertex(vertex_index: u32, instance_index: u32) -> VertexOutput {
     );
     let rest_direction = unpack2x16snorm(instance.geometry.x);
 
-    let projected_extent = projected_blade_extent_pixels(root, surface_normal, profile);
+    let projected_extent = budgeted_projected_blade_extent_pixels(root, surface_normal, profile);
     // At the high/low boundary, high sections converge on the exact low-section samples. Stable
     // candidates outside the nested low-density subset also collapse to their root before leaving.
     let lod_morph = select(
@@ -241,19 +258,39 @@ fn geometry_vertex(vertex_index: u32, instance_index: u32) -> VertexOutput {
     let blade_side = normalize3_or(cross(surface_normal, blade_forward), base_side);
 
     let density_scale = select(lod_morph, 1.0, lod_rank < population_density || low_lod);
+    let height_coordinate = mix(
+        random01(blade_seed ^ 0xa511e9b3u),
+        random01(group_key ^ 0x52dce729u),
+        profile.group_response.x,
+    );
+    let tilt_coordinate = mix(
+        random01(blade_seed ^ 0xc2b2ae35u),
+        random01(group_key ^ 0x38495ab5u),
+        profile.group_response.y,
+    );
+    let bend_coordinate = mix(
+        random01(blade_seed ^ 0x27d4eb2fu),
+        random01(group_key ^ 0x7b7d159cu),
+        profile.group_response.z,
+    );
+    let lateral_coordinate = mix(
+        random01(blade_seed ^ 0x165667b1u),
+        random01(group_key ^ 0x94d049bbu),
+        profile.group_response.w,
+    );
     let height = density_scale * mix(
         profile.bounds.x,
         profile.bounds.y,
-        random01(blade_seed ^ 0xa511e9b3u),
+        height_coordinate,
     );
     let half_width = density_scale * mix(
         profile.bounds.z,
         profile.bounds.w,
         random01(blade_seed ^ 0x63d83595u),
     );
-    let tilt = mix(profile.shape.x, profile.shape.y, random01(blade_seed ^ 0xc2b2ae35u));
-    let bend = mix(profile.shape.z, profile.shape.w, random01(blade_seed ^ 0x27d4eb2fu));
-    let lateral = (random01(blade_seed ^ 0x165667b1u) * 2.0 - 1.0)
+    let tilt = mix(profile.shape.x, profile.shape.y, tilt_coordinate);
+    let bend = mix(profile.shape.z, profile.shape.w, bend_coordinate);
+    let lateral = (lateral_coordinate * 2.0 - 1.0)
         * profile.shape_secondary.x;
 
     var curve_root = root;
@@ -354,6 +391,18 @@ fn diagnostic_vertex(vertex_index: u32, instance_index: u32) -> VertexOutput {
         start_color = vec3<f32>(1.0, 0.92, 0.15);
         end_color = vec3<f32>(0.15, 0.85, 1.0);
         width_scale = 0.7;
+    } else if (debug_config.values.x == 4u) {
+        start = instance.parent_status.xyz + vec3<f32>(0.0, 0.035, 0.0);
+        end = root + surface_normal * 0.04;
+        let group_key = u32(round(instance.direction_species.y * 65535.0));
+        let group_color = vec3<f32>(
+            mix(0.18, 1.0, random01(group_key ^ 0xa511e9b3u)),
+            mix(0.18, 1.0, random01(group_key ^ 0x63d83595u)),
+            mix(0.18, 1.0, random01(group_key ^ 0xc2b2ae35u)),
+        );
+        start_color = min(group_color * 1.28, vec3<f32>(1.0));
+        end_color = group_color;
+        width_scale = mix(0.45, 0.9, instance.diagnostics.w);
     } else if (debug_config.values.x == 3u) {
         start = root + surface_normal * 0.025;
         end = start + surface_normal * 0.18;

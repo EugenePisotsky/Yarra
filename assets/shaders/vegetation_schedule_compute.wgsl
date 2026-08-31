@@ -12,6 +12,9 @@ struct WorkItem {
     growth: vec4<f32>,
     direction_weights: vec4<f32>,
     flow_density: vec4<f32>,
+    grouping: vec4<f32>,
+    group_density: vec4<f32>,
+    orientation: vec4<f32>,
     peers: vec4<u32>,
     // xy: surface offset/resolution, zw: minimum/maximum page height as f32 bits
     surface: vec4<u32>,
