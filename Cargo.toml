@@ -3,9 +3,10 @@ members = [
     "crates/app_editor",
     "crates/app_game",
     "crates/engine",
-    "crates/ground_cover",
-    "crates/ground_cover_compile",
     "crates/terrain_render",
+    "crates/vegetation",
+    "crates/vegetation_compile",
+    "crates/vegetation_render",
     "crates/world",
     "crates/world_cook",
     "crates/world_db",
@@ -27,9 +28,10 @@ bytemuck = { version = "1", features = ["derive"] }
 crossbeam-channel = "0.5"
 engine = { package = "yarra-engine", path = "crates/engine" }
 glam = "0.32"
-ground-cover = { package = "yarra-ground-cover", path = "crates/ground_cover" }
-ground-cover-compile = { package = "yarra-ground-cover-compile", path = "crates/ground_cover_compile" }
 terrain-render = { package = "yarra-terrain-render", path = "crates/terrain_render" }
+vegetation = { package = "yarra-vegetation", path = "crates/vegetation" }
+vegetation-compile = { package = "yarra-vegetation-compile", path = "crates/vegetation_compile" }
+vegetation-render = { package = "yarra-vegetation-render", path = "crates/vegetation_render" }
 world = { package = "yarra-world", path = "crates/world" }
 log = { version = "0.4", features = ["max_level_debug", "release_max_level_warn"] }
 naga = { version = "29", features = ["wgsl-in"] }

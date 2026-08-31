@@ -16,7 +16,6 @@ use bevy_egui::{
     EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPrimaryContextPass, PrimaryEguiContext, egui,
 };
 use engine::{WorldEnvironmentPlugin, WorldStreamingPlugin, WorldViewCamera};
-use ground_cover::GroundCoverPlugin;
 use terrain_render::TerrainRenderPlugin;
 
 use crate::{
@@ -69,7 +68,6 @@ pub(crate) fn run() {
         .add_plugins((
             FrameTimeDiagnosticsPlugin::default(),
             WorldEnvironmentPlugin::editor(),
-            GroundCoverPlugin,
             TerrainRenderPlugin,
             EguiPlugin::default(),
             DerivedJobsPlugin::new(project_database.clone()),

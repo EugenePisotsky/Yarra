@@ -36,7 +36,7 @@ intent source (input, follower steering, or AI)
                  -> character animation presentation
                  -> camera follow       [only with CameraTarget]
                  -> world preload       [only with WorldStreamFocus]
-                 -> ground interaction  [only with GroundCoverInteractor]
+                 -> vegetation interaction stamps [planned V2 consumer]
 ```
 
 `PlayerControlled`, `CameraTarget`, and `WorldStreamFocus` are independent roles. The current main

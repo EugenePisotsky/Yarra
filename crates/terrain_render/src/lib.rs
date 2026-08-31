@@ -1,3 +1,4 @@
+use bevy::mesh::Indices;
 use bevy::{
     asset::RenderAssetUsages,
     image::{
@@ -7,10 +8,15 @@ use bevy::{
     pbr::{Material, MaterialPlugin},
     prelude::*,
     reflect::TypePath,
-    render::render_resource::{AsBindGroup, Extent3d, ShaderType, TextureDimension, TextureFormat},
+    render::render_resource::{
+        AsBindGroup, Extent3d, PrimitiveTopology, ShaderType, TextureDimension, TextureFormat,
+    },
     shader::ShaderRef,
 };
-use world::{CellCoord, TerrainProfile, TerrainRenderPage, TerrainSurface, TerrainTextureSet};
+use world::{
+    CellCoord, TerrainHeightfield, TerrainProfile, TerrainSurface, TerrainSurfaceId,
+    TerrainTextureSet, TerrainWeightPage,
+};
 
 const TERRAIN_SHADER: &str = "shaders/terrain_material.wgsl";
 
@@ -147,10 +153,11 @@ pub struct PrepareTerrainMaterialContext<'a> {
     /// The logical cell represented by render-space origin.
     pub origin_cell: CellCoord,
     pub cell_size: f32,
-    pub page: &'a TerrainRenderPage,
+    pub page_surfaces: &'a [TerrainSurfaceId],
+    pub weight_pages: &'a [TerrainWeightPage],
     pub profile: &'a TerrainProfile,
     pub texture_set: &'a TerrainTextureSet,
-    /// Must be in the exact slot order stored by `page.surfaces`.
+    /// Must be in the exact order stored by `page_surfaces`.
     pub surfaces: &'a [TerrainSurfaceLayer],
     pub macro_variation: TerrainMacroVariation,
 }
@@ -159,7 +166,7 @@ pub fn prepare_terrain_material(
     context: PrepareTerrainMaterialContext<'_>,
 ) -> Result<PreparedTerrainMaterial, String> {
     if !(1..=2).contains(&context.surfaces.len())
-        || context.page.surfaces.len() != context.surfaces.len()
+        || context.page_surfaces.len() != context.surfaces.len()
     {
         return Err(format!(
             "the initial terrain renderer supports one or two surfaces, got {}",
@@ -170,7 +177,10 @@ pub fn prepare_terrain_material(
         return Err("terrain cell size must be finite and positive".into());
     }
 
-    let weight_image = context.images.add(make_weight_image(context.page)?);
+    let weight_image = context.images.add(make_weight_image(
+        context.page_surfaces,
+        context.weight_pages,
+    )?);
     let (base_color_uri, normal_material_uri, macro_variation_uri) =
         context.texture_set.runtime_uris();
     let base_color_array = load_repeat_image(context.asset_server, base_color_uri, true);
@@ -231,11 +241,14 @@ pub fn prepare_terrain_material(
     })
 }
 
-fn make_weight_image(page: &TerrainRenderPage) -> Result<Image, String> {
-    let (resolution, rgba) = if page.surfaces.len() == 1 {
+fn make_weight_image(
+    surfaces: &[TerrainSurfaceId],
+    weight_pages: &[TerrainWeightPage],
+) -> Result<Image, String> {
+    let (resolution, rgba) = if surfaces.len() == 1 {
         (1_u32, vec![255, 0, 0, 0])
     } else {
-        let Some(weights) = page.weight_pages.first() else {
+        let Some(weights) = weight_pages.first() else {
             return Err("blended terrain page has no weight map".into());
         };
         let expected = usize::from(weights.resolution).pow(2) * 4;
@@ -266,6 +279,69 @@ fn make_weight_image(page: &TerrainRenderPage) -> Result<Image, String> {
     Ok(image)
 }
 
+/// Builds the page-local raster mesh from the same height samples used by CPU surface queries.
+///
+/// X/Z positions are centred around the page entity. Heights remain absolute world-space Y so the
+/// entity only needs render-origin translation in X/Z.
+pub fn build_heightfield_mesh(
+    heightfield: &TerrainHeightfield,
+    cell_size: f32,
+) -> Result<Mesh, String> {
+    heightfield.validate().map_err(|error| error.to_string())?;
+    if !cell_size.is_finite() || cell_size <= 0.0 {
+        return Err("terrain cell size must be finite and positive".into());
+    }
+
+    let resolution = usize::from(heightfield.resolution);
+    let intervals = (resolution - 1) as f32;
+    let mut positions = Vec::with_capacity(resolution * resolution);
+    let mut normals = Vec::with_capacity(resolution * resolution);
+    let mut uvs = Vec::with_capacity(resolution * resolution);
+    for z in 0..resolution {
+        for x in 0..resolution {
+            let u = x as f32 / intervals;
+            let v = z as f32 / intervals;
+            positions.push([
+                u * cell_size - cell_size * 0.5,
+                heightfield.height_at(x, z),
+                v * cell_size - cell_size * 0.5,
+            ]);
+            normals.push(heightfield.normal_at(x, z));
+            uvs.push([u, v]);
+        }
+    }
+
+    let mut indices = Vec::with_capacity((resolution - 1) * (resolution - 1) * 6);
+    for z in 0..resolution - 1 {
+        for x in 0..resolution - 1 {
+            let lower_left = (z * resolution + x) as u32;
+            let lower_right = lower_left + 1;
+            let upper_left = lower_left + resolution as u32;
+            let upper_right = upper_left + 1;
+            indices.extend_from_slice(&[
+                lower_left,
+                upper_left,
+                upper_right,
+                lower_left,
+                upper_right,
+                lower_right,
+            ]);
+        }
+    }
+
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    );
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    mesh.insert_indices(Indices::U32(indices));
+    mesh.generate_tangents()
+        .map_err(|error| format!("could not generate terrain tangents: {error}"))?;
+    Ok(mesh)
+}
+
 fn load_repeat_image(asset_server: &AssetServer, uri: &str, is_srgb: bool) -> Handle<Image> {
     asset_server
         .load_builder()
@@ -282,4 +358,26 @@ fn load_repeat_image(asset_server: &AssetServer, uri: &str, is_srgb: bool) -> Ha
             });
         })
         .load(uri.to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn heightfield_mesh_has_expected_topology_and_tangents() {
+        let heightfield = TerrainHeightfield::from_heights(
+            3,
+            &[0.0, 0.5, 1.0, 0.0, 0.5, 1.0, 0.0, 0.5, 1.0],
+            0.0,
+            1.0,
+            8.0,
+        )
+        .unwrap();
+        let mesh = build_heightfield_mesh(&heightfield, 8.0).unwrap();
+
+        assert_eq!(mesh.count_vertices(), 9);
+        assert_eq!(mesh.indices().unwrap().len(), 24);
+        assert!(mesh.attribute(Mesh::ATTRIBUTE_TANGENT).is_some());
+    }
 }

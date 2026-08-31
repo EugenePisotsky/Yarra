@@ -12,9 +12,6 @@ use world_db::{
     SourceObjectViewRecord, SourceObjectWrite, SourceObjectWriteCommit,
 };
 
-use crate::catalog_editing::GroundCoverRegionWorkingSet;
-use crate::domain_editing::{DenseDomainWorkingSets, GroundCoverMaskPatch};
-use crate::ground_cover_catalog::GroundCoverCatalogWorkingSet;
 use crate::project_store::{ObjectSaveOutcome, ProjectEditorStore};
 use crate::saving::EditorSaveCoordinator;
 
@@ -722,42 +719,9 @@ struct ObjectTransformChange {
 
 #[derive(Debug, Clone, PartialEq)]
 enum EditorCommand {
-    Create {
-        object: SourceObjectRecord,
-    },
-    Transform {
-        changes: Vec<ObjectTransformChange>,
-    },
-    Delete {
-        objects: Vec<SourceObjectRecord>,
-    },
-    GroundCover {
-        patches: Vec<GroundCoverMaskPatch>,
-    },
-    CreateRegion {
-        region: world_db::SourceGroundCoverRegionRecord,
-    },
-    DeleteRegion {
-        region: world_db::SourceGroundCoverRegionRecord,
-    },
-    UpdateRegion {
-        before: world_db::SourceGroundCoverRegionRecord,
-        after: world_db::SourceGroundCoverRegionRecord,
-    },
-    UpdateGroundCoverPreset {
-        before: world_db::SourceGroundCoverPresetRecord,
-        after: world_db::SourceGroundCoverPresetRecord,
-    },
-    UpdateGroundCoverVisual {
-        before: world_db::SourceGroundCoverVisualRecord,
-        after: world_db::SourceGroundCoverVisualRecord,
-    },
-    CreateGroundCoverDefinition {
-        record: world_db::GroundCoverCatalogRecord,
-    },
-    DeleteGroundCoverDefinition {
-        record: world_db::GroundCoverCatalogRecord,
-    },
+    Create { object: SourceObjectRecord },
+    Transform { changes: Vec<ObjectTransformChange> },
+    Delete { objects: Vec<SourceObjectRecord> },
 }
 
 impl EditorCommand {
@@ -771,44 +735,10 @@ impl EditorCommand {
                 Self::Delete { objects } => {
                     objects.len() * std::mem::size_of::<SourceObjectRecord>()
                 }
-                Self::GroundCover { patches } => patches
-                    .iter()
-                    .map(GroundCoverMaskPatch::estimated_bytes)
-                    .sum(),
-                Self::CreateRegion { .. } | Self::DeleteRegion { .. } => {
-                    std::mem::size_of::<world_db::SourceGroundCoverRegionRecord>()
-                }
-                Self::UpdateRegion { .. } => {
-                    2 * std::mem::size_of::<world_db::SourceGroundCoverRegionRecord>()
-                }
-                Self::UpdateGroundCoverPreset { before, after } => {
-                    2 * std::mem::size_of::<world_db::SourceGroundCoverPresetRecord>()
-                        + before.key.len()
-                        + before.display_name.len()
-                        + after.key.len()
-                        + after.display_name.len()
-                }
-                Self::UpdateGroundCoverVisual { before, after } => {
-                    2 * std::mem::size_of::<world_db::SourceGroundCoverVisualRecord>()
-                        + before.key.len()
-                        + before.display_name.len()
-                        + after.key.len()
-                        + after.display_name.len()
-                }
-                Self::CreateGroundCoverDefinition { record }
-                | Self::DeleteGroundCoverDefinition { record } => {
-                    ground_cover_catalog_record_bytes(record)
-                }
             }
     }
 
-    fn apply(
-        &self,
-        objects: &mut EditorObjectWorkingSet,
-        dense_domains: &mut DenseDomainWorkingSets,
-        regions: &mut GroundCoverRegionWorkingSet,
-        catalog: &mut GroundCoverCatalogWorkingSet,
-    ) -> bool {
+    fn apply(&self, objects: &mut EditorObjectWorkingSet) -> bool {
         match self {
             Self::Create { object } => objects.restore_object(object.clone()),
             Self::Transform { changes } => objects.set_transforms(
@@ -820,26 +750,10 @@ impl EditorCommand {
             Self::Delete { objects: deleted } => objects
                 .delete_objects(&deleted.iter().map(|object| object.id).collect::<Vec<_>>())
                 .is_some(),
-            Self::GroundCover { patches } => {
-                dense_domains.apply_ground_cover_patches(patches, true)
-            }
-            Self::CreateRegion { region } => regions.restore(region.clone()),
-            Self::DeleteRegion { region } => regions.delete(region.id).is_some(),
-            Self::UpdateRegion { after, .. } => regions.replace(after.clone()),
-            Self::UpdateGroundCoverPreset { after, .. } => catalog.replace_preset(after.clone()),
-            Self::UpdateGroundCoverVisual { after, .. } => catalog.replace_visual(after.clone()),
-            Self::CreateGroundCoverDefinition { record } => catalog.restore(record.clone()),
-            Self::DeleteGroundCoverDefinition { record } => catalog.delete(record.key()).is_some(),
         }
     }
 
-    fn revert(
-        &self,
-        objects: &mut EditorObjectWorkingSet,
-        dense_domains: &mut DenseDomainWorkingSets,
-        regions: &mut GroundCoverRegionWorkingSet,
-        catalog: &mut GroundCoverCatalogWorkingSet,
-    ) -> bool {
+    fn revert(&self, objects: &mut EditorObjectWorkingSet) -> bool {
         match self {
             Self::Create { object } => objects.delete_object(object.id).is_some(),
             Self::Transform { changes } => objects.set_transforms(
@@ -849,31 +763,6 @@ impl EditorCommand {
                     .collect::<Vec<_>>(),
             ),
             Self::Delete { objects: deleted } => objects.restore_objects(deleted),
-            Self::GroundCover { patches } => {
-                dense_domains.apply_ground_cover_patches(patches, false)
-            }
-            Self::CreateRegion { region } => regions.delete(region.id).is_some(),
-            Self::DeleteRegion { region } => regions.restore(region.clone()),
-            Self::UpdateRegion { before, .. } => regions.replace(before.clone()),
-            Self::UpdateGroundCoverPreset { before, .. } => catalog.replace_preset(before.clone()),
-            Self::UpdateGroundCoverVisual { before, .. } => catalog.replace_visual(before.clone()),
-            Self::CreateGroundCoverDefinition { record } => catalog.delete(record.key()).is_some(),
-            Self::DeleteGroundCoverDefinition { record } => catalog.restore(record.clone()),
-        }
-    }
-}
-
-fn ground_cover_catalog_record_bytes(record: &world_db::GroundCoverCatalogRecord) -> usize {
-    match record {
-        world_db::GroundCoverCatalogRecord::Preset(record) => {
-            std::mem::size_of::<world_db::SourceGroundCoverPresetRecord>()
-                + record.key.len()
-                + record.display_name.len()
-        }
-        world_db::GroundCoverCatalogRecord::Visual(record) => {
-            std::mem::size_of::<world_db::SourceGroundCoverVisualRecord>()
-                + record.key.len()
-                + record.display_name.len()
         }
     }
 }
@@ -1035,140 +924,11 @@ impl EditorHistory {
         true
     }
 
-    /// Records a brush gesture whose live preview bytes have already been applied.
-    pub(crate) fn record_ground_cover_previews(
-        &mut self,
-        patches: Vec<GroundCoverMaskPatch>,
-    ) -> bool {
-        if patches.is_empty() {
-            return false;
-        }
-        self.record(EditorCommand::GroundCover { patches });
-        true
-    }
-
-    pub(crate) fn create_region(
-        &mut self,
-        regions: &mut GroundCoverRegionWorkingSet,
-        region: world_db::SourceGroundCoverRegionRecord,
-    ) -> bool {
-        if !regions.create(region.clone()) {
-            return false;
-        }
-        self.record(EditorCommand::CreateRegion { region });
-        true
-    }
-
-    pub(crate) fn delete_region(
-        &mut self,
-        regions: &mut GroundCoverRegionWorkingSet,
-        region: world_db::SourceGroundCoverRegionRecord,
-    ) -> bool {
-        regions.pin_source(region.clone());
-        if regions.delete(region.id).is_none() {
-            return false;
-        }
-        self.record(EditorCommand::DeleteRegion { region });
-        true
-    }
-
-    pub(crate) fn update_region(
-        &mut self,
-        regions: &mut GroundCoverRegionWorkingSet,
-        before: world_db::SourceGroundCoverRegionRecord,
-        after: world_db::SourceGroundCoverRegionRecord,
-    ) -> bool {
-        if before == after || before.id != after.id {
-            return false;
-        }
-        regions.pin_source(before.clone());
-        if !regions.replace(after.clone()) {
-            return false;
-        }
-        self.record(EditorCommand::UpdateRegion { before, after });
-        true
-    }
-
-    pub(crate) fn update_ground_cover_preset(
-        &mut self,
-        catalog: &mut GroundCoverCatalogWorkingSet,
-        before: world_db::SourceGroundCoverPresetRecord,
-        after: world_db::SourceGroundCoverPresetRecord,
-    ) -> bool {
-        if before == after || before.id != after.id || !catalog.replace_preset(after.clone()) {
-            return false;
-        }
-        self.record(EditorCommand::UpdateGroundCoverPreset { before, after });
-        true
-    }
-
-    pub(crate) fn update_ground_cover_visual(
-        &mut self,
-        catalog: &mut GroundCoverCatalogWorkingSet,
-        before: world_db::SourceGroundCoverVisualRecord,
-        after: world_db::SourceGroundCoverVisualRecord,
-    ) -> bool {
-        if before == after || before.id != after.id || !catalog.replace_visual(after.clone()) {
-            return false;
-        }
-        self.record(EditorCommand::UpdateGroundCoverVisual { before, after });
-        true
-    }
-
-    pub(crate) fn create_ground_cover_preset(
-        &mut self,
-        catalog: &mut GroundCoverCatalogWorkingSet,
-        record: world_db::SourceGroundCoverPresetRecord,
-    ) -> bool {
-        if !catalog.create_preset(record.clone()) {
-            return false;
-        }
-        self.record(EditorCommand::CreateGroundCoverDefinition {
-            record: world_db::GroundCoverCatalogRecord::Preset(record),
-        });
-        true
-    }
-
-    pub(crate) fn create_ground_cover_visual(
-        &mut self,
-        catalog: &mut GroundCoverCatalogWorkingSet,
-        record: world_db::SourceGroundCoverVisualRecord,
-    ) -> bool {
-        if !catalog.create_visual(record.clone()) {
-            return false;
-        }
-        self.record(EditorCommand::CreateGroundCoverDefinition {
-            record: world_db::GroundCoverCatalogRecord::Visual(record),
-        });
-        true
-    }
-
-    pub(crate) fn delete_ground_cover_definition(
-        &mut self,
-        catalog: &mut GroundCoverCatalogWorkingSet,
-        record: world_db::GroundCoverCatalogRecord,
-    ) -> bool {
-        if catalog.delete(record.key()).is_none() {
-            return false;
-        }
-        self.record(EditorCommand::DeleteGroundCoverDefinition { record });
-        true
-    }
-
-    pub(crate) fn undo_with_catalog(
-        &mut self,
-        objects: &mut EditorObjectWorkingSet,
-        dense_domains: &mut DenseDomainWorkingSets,
-        regions: &mut GroundCoverRegionWorkingSet,
-        catalog: &mut GroundCoverCatalogWorkingSet,
-    ) -> bool {
+    pub(crate) fn undo(&mut self, objects: &mut EditorObjectWorkingSet) -> bool {
         let Some(entry) = self.undo.pop_back() else {
             return false;
         };
-        if !entry
-            .command
-            .revert(objects, dense_domains, regions, catalog)
-        {
+        if !entry.command.revert(objects) {
             self.undo.push_back(entry);
             return false;
         }
@@ -1176,55 +936,16 @@ impl EditorHistory {
         true
     }
 
-    pub(crate) fn redo_with_catalog(
-        &mut self,
-        objects: &mut EditorObjectWorkingSet,
-        dense_domains: &mut DenseDomainWorkingSets,
-        regions: &mut GroundCoverRegionWorkingSet,
-        catalog: &mut GroundCoverCatalogWorkingSet,
-    ) -> bool {
+    pub(crate) fn redo(&mut self, objects: &mut EditorObjectWorkingSet) -> bool {
         let Some(entry) = self.redo.pop_back() else {
             return false;
         };
-        if !entry
-            .command
-            .apply(objects, dense_domains, regions, catalog)
-        {
+        if !entry.command.apply(objects) {
             self.redo.push_back(entry);
             return false;
         }
         self.undo.push_back(entry);
         true
-    }
-
-    #[cfg(test)]
-    pub(crate) fn undo(
-        &mut self,
-        objects: &mut EditorObjectWorkingSet,
-        dense_domains: &mut DenseDomainWorkingSets,
-        regions: &mut GroundCoverRegionWorkingSet,
-    ) -> bool {
-        self.undo_with_catalog(
-            objects,
-            dense_domains,
-            regions,
-            &mut GroundCoverCatalogWorkingSet::default(),
-        )
-    }
-
-    #[cfg(test)]
-    pub(crate) fn redo(
-        &mut self,
-        objects: &mut EditorObjectWorkingSet,
-        dense_domains: &mut DenseDomainWorkingSets,
-        regions: &mut GroundCoverRegionWorkingSet,
-    ) -> bool {
-        self.redo_with_catalog(
-            objects,
-            dense_domains,
-            regions,
-            &mut GroundCoverCatalogWorkingSet::default(),
-        )
     }
 
     pub(crate) fn undo_len(&self) -> usize {
@@ -1319,432 +1040,4 @@ pub(crate) fn process_project_save_completion(
     let committed = matches!(&completion.outcome, ObjectSaveOutcome::Committed(_));
     objects.finish_save(completion.request_id, completion.outcome);
     coordinator.transaction_finished(committed);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use world::{
-        CellCoord, GroundCoverLayerId, GroundCoverPresetId, GroundCoverRegionId,
-        GroundCoverVisualId, ObjectActivationPolicy, ObjectDefinitionId, WorldSpaceId,
-    };
-    use world_db::SourceObjectDefinitionRecord;
-
-    fn object_view(id: u8) -> SourceObjectViewRecord {
-        let definition = ObjectDefinitionId([2; 16]);
-        SourceObjectViewRecord {
-            object: SourceObjectRecord {
-                id: StableObjectId([id; 16]),
-                space: WorldSpaceId(7),
-                owner_cell: Default::default(),
-                definition,
-                local_translation: [1.0, 0.0, 2.0],
-                yaw: 0.0,
-                scale: 1.0,
-                source_revision: 3,
-            },
-            definition: SourceObjectDefinitionRecord {
-                id: definition,
-                key: "test".into(),
-                display_name: "Test".into(),
-                visual_asset: None,
-                activation: ObjectActivationPolicy::RenderOnly,
-            },
-            visual_uri: Some("local/runtime/test.gltf".into()),
-            visual_bounds: Some([2.0, 8.0, 2.0]),
-        }
-    }
-
-    #[test]
-    fn history_targets_stable_ids_across_selection_changes() {
-        let mut selection = EditorSelection::default();
-        let mut objects = EditorObjectWorkingSet::default();
-        let mut history = EditorHistory::default();
-        assert!(selection.select(object_view(1), &mut objects));
-        let first = selection.selected_id().unwrap();
-        let mut moved = SourceObjectTransform::from(&objects.current_view(first).unwrap().object);
-        moved.local_translation[0] = 9.0;
-        moved.yaw = 1.25;
-        moved.scale = 2.5;
-        assert!(history.apply_transform(&mut objects, first, moved));
-        assert!(selection.select(object_view(3), &mut objects));
-        assert!(history.undo(
-            &mut objects,
-            &mut DenseDomainWorkingSets::default(),
-            &mut GroundCoverRegionWorkingSet::default(),
-        ));
-        assert!(!objects.dirty(first));
-        assert_eq!(selection.selected_id(), Some(StableObjectId([3; 16])));
-        assert!(history.redo(
-            &mut objects,
-            &mut DenseDomainWorkingSets::default(),
-            &mut GroundCoverRegionWorkingSet::default(),
-        ));
-        assert!(objects.dirty(first));
-        let redone = objects.current_view(first).unwrap();
-        assert_eq!(redone.object.yaw, 1.25);
-        assert_eq!(redone.object.scale, 2.5);
-    }
-
-    #[test]
-    fn delete_is_a_reversible_tombstone() {
-        let mut objects = EditorObjectWorkingSet::default();
-        let mut history = EditorHistory::default();
-        let id = StableObjectId([5; 16]);
-        objects.pin(object_view(5));
-        assert!(history.delete_many(&mut objects, &[id]));
-        assert!(objects.is_deleted(id));
-        assert!(history.undo(
-            &mut objects,
-            &mut DenseDomainWorkingSets::default(),
-            &mut GroundCoverRegionWorkingSet::default(),
-        ));
-        assert!(!objects.is_deleted(id));
-        assert!(!objects.dirty(id));
-    }
-
-    #[test]
-    fn creation_is_a_reversible_dirty_command() {
-        let mut objects = EditorObjectWorkingSet::default();
-        let mut history = EditorHistory::default();
-        let record = object_view(8);
-        let id = record.object.id;
-        assert!(history.create(&mut objects, record));
-        assert!(objects.dirty(id));
-        assert!(history.undo(
-            &mut objects,
-            &mut DenseDomainWorkingSets::default(),
-            &mut GroundCoverRegionWorkingSet::default(),
-        ));
-        assert!(!objects.dirty(id));
-        assert!(history.redo(
-            &mut objects,
-            &mut DenseDomainWorkingSets::default(),
-            &mut GroundCoverRegionWorkingSet::default(),
-        ));
-        assert!(objects.dirty(id));
-    }
-
-    #[test]
-    fn history_checkpoints_oldest_commands_to_stay_within_both_budgets() {
-        let mut objects = EditorObjectWorkingSet::default();
-        let mut history = EditorHistory {
-            maximum_entries: 2,
-            maximum_bytes: 2 * EditorCommand::Delete {
-                objects: vec![object_view(1).object],
-            }
-            .estimated_bytes(),
-            ..default()
-        };
-        for id in 1..=3 {
-            let record = object_view(id);
-            let object = record.object.id;
-            objects.pin(record);
-            assert!(history.delete_many(&mut objects, &[object]));
-        }
-        assert_eq!(history.undo_len(), 2);
-        assert_eq!(history.checkpointed_commands(), 1);
-        assert!(history.retained_bytes() <= history.maximum_bytes);
-    }
-
-    #[test]
-    fn multi_selection_tracks_an_active_item_and_toggles_membership() {
-        let mut selection = EditorSelection::default();
-        let mut objects = EditorObjectWorkingSet::default();
-        assert!(selection.select(object_view(1), &mut objects));
-        assert!(selection.toggle(object_view(2), &mut objects));
-        assert_eq!(selection.selected_ids().len(), 2);
-        assert_eq!(selection.selected_id(), Some(StableObjectId([2; 16])));
-        assert!(selection.toggle(object_view(2), &mut objects));
-        assert_eq!(selection.selected_ids(), &[StableObjectId([1; 16])]);
-        assert_eq!(selection.selected_id(), Some(StableObjectId([1; 16])));
-    }
-
-    #[test]
-    fn grouped_deletion_is_one_reversible_command() {
-        let mut objects = EditorObjectWorkingSet::default();
-        let mut history = EditorHistory::default();
-        let ids = [StableObjectId([1; 16]), StableObjectId([2; 16])];
-        objects.pin(object_view(1));
-        objects.pin(object_view(2));
-        assert!(history.delete_many(&mut objects, &ids));
-        assert_eq!(history.undo_len(), 1);
-        assert!(ids.iter().all(|id| objects.is_deleted(*id)));
-        assert!(history.undo(
-            &mut objects,
-            &mut DenseDomainWorkingSets::default(),
-            &mut GroundCoverRegionWorkingSet::default(),
-        ));
-        assert!(ids.iter().all(|id| !objects.is_deleted(*id)));
-    }
-
-    #[test]
-    fn grouped_transform_is_one_reversible_command() {
-        let mut objects = EditorObjectWorkingSet::default();
-        let mut history = EditorHistory::default();
-        let first = StableObjectId([1; 16]);
-        let second = StableObjectId([2; 16]);
-        objects.pin(object_view(1));
-        objects.pin(object_view(2));
-
-        let before = [
-            (
-                first,
-                SourceObjectTransform::from(&objects.current_view(first).unwrap().object),
-            ),
-            (
-                second,
-                SourceObjectTransform::from(&objects.current_view(second).unwrap().object),
-            ),
-        ];
-        let mut first_after =
-            SourceObjectTransform::from(&objects.current_view(first).unwrap().object);
-        first_after.local_translation[0] = 7.0;
-        let mut second_after =
-            SourceObjectTransform::from(&objects.current_view(second).unwrap().object);
-        second_after.local_translation[0] = 11.0;
-        assert!(objects.set_transforms(&[(first, first_after), (second, second_after)]));
-        assert!(history.record_previews(&objects, &before));
-        assert_eq!(history.undo_len(), 1);
-        assert!(objects.dirty(first));
-        assert!(objects.dirty(second));
-
-        assert!(history.undo(
-            &mut objects,
-            &mut DenseDomainWorkingSets::default(),
-            &mut GroundCoverRegionWorkingSet::default(),
-        ));
-        assert!(!objects.dirty(first));
-        assert!(!objects.dirty(second));
-        assert!(history.redo(
-            &mut objects,
-            &mut DenseDomainWorkingSets::default(),
-            &mut GroundCoverRegionWorkingSet::default(),
-        ));
-        assert_eq!(
-            objects
-                .current_view(first)
-                .unwrap()
-                .object
-                .local_translation[0],
-            7.0
-        );
-        assert_eq!(
-            objects
-                .current_view(second)
-                .unwrap()
-                .object
-                .local_translation[0],
-            11.0
-        );
-    }
-
-    #[test]
-    fn undoing_a_saved_deletion_can_be_saved_as_recreation() {
-        let mut objects = EditorObjectWorkingSet::default();
-        let mut history = EditorHistory::default();
-        let id = StableObjectId([6; 16]);
-        objects.pin(object_view(6));
-        assert!(history.delete_many(&mut objects, &[id]));
-        objects.active_save = Some(ActiveObjectSave {
-            request_id: 9,
-            objects: vec![id],
-        });
-        objects.finish_save(
-            9,
-            ObjectSaveOutcome::Committed(vec![SourceObjectWriteCommit::Deleted(id)]),
-        );
-        assert!(!objects.dirty(id));
-        assert!(history.undo(
-            &mut objects,
-            &mut DenseDomainWorkingSets::default(),
-            &mut GroundCoverRegionWorkingSet::default(),
-        ));
-        assert!(objects.dirty(id));
-
-        let mut project = ProjectEditorStore::default();
-        assert!(objects.queue_save(&mut project));
-    }
-
-    #[test]
-    fn generation_adoption_advances_the_object_runtime_checkpoint() {
-        let mut objects = EditorObjectWorkingSet::default();
-        let id = StableObjectId([10; 16]);
-        objects.pin(object_view(10));
-        let mut transform = SourceObjectTransform::from(&objects.current_view(id).unwrap().object);
-        transform.local_translation[0] = 15.0;
-        assert!(objects.set_transforms(&[(id, transform)]));
-
-        objects.active_save = Some(ActiveObjectSave {
-            request_id: 12,
-            objects: vec![id],
-        });
-        let mut committed = objects.current_view(id).unwrap().object;
-        committed.source_revision = 4;
-        objects.finish_save(
-            12,
-            ObjectSaveOutcome::Committed(vec![SourceObjectWriteCommit::Updated(committed)]),
-        );
-        assert_eq!(objects.desired_proxy_views(&[]).len(), 1);
-        assert_eq!(objects.adopt_runtime_generation(), 1);
-        assert!(objects.desired_proxy_views(&[]).is_empty());
-    }
-
-    #[test]
-    fn ground_cover_gesture_uses_the_shared_history_and_recreates_sparse_rows_on_redo() {
-        let mut objects = EditorObjectWorkingSet::default();
-        let mut dense = DenseDomainWorkingSets::default();
-        let mut history = EditorHistory::default();
-        let region = GroundCoverRegionId([9; 16]);
-        let space = WorldSpaceId(3);
-        let cell = CellCoord { x: 2, z: -4 };
-        assert!(dense.set_ground_cover_coverage(region, space, cell, 2, vec![255, 0, 0, 0]));
-        let after = dense.ground_cover_mask(region, space, cell).unwrap();
-        let patch = GroundCoverMaskPatch::between(None, &after).unwrap();
-        assert!(history.record_ground_cover_previews(vec![patch]));
-
-        assert!(history.undo(
-            &mut objects,
-            &mut dense,
-            &mut GroundCoverRegionWorkingSet::default(),
-        ));
-        assert!(dense.ground_cover_mask(region, space, cell).is_none());
-        assert!(history.redo(
-            &mut objects,
-            &mut dense,
-            &mut GroundCoverRegionWorkingSet::default(),
-        ));
-        assert_eq!(
-            dense
-                .ground_cover_mask(region, space, cell)
-                .unwrap()
-                .coverage,
-            vec![255, 0, 0, 0]
-        );
-    }
-
-    #[test]
-    fn region_catalog_commands_share_the_editor_history() {
-        let mut objects = EditorObjectWorkingSet::default();
-        let mut dense = DenseDomainWorkingSets::default();
-        let mut regions = GroundCoverRegionWorkingSet::default();
-        let mut history = EditorHistory::default();
-        let region = world_db::SourceGroundCoverRegionRecord {
-            id: GroundCoverRegionId([7; 16]),
-            layer: GroundCoverLayerId([2; 16]),
-            space: WorldSpaceId(3),
-            preset: GroundCoverPresetId([4; 16]),
-            display_name: "New region".into(),
-            enabled: true,
-            density_multiplier: 1.0,
-            source_revision: 0,
-        };
-
-        assert!(history.create_region(&mut regions, region.clone()));
-        assert_eq!(
-            regions.current(&ProjectEditorStore::default(), region.id),
-            Some(region.clone())
-        );
-        assert!(history.undo(&mut objects, &mut dense, &mut regions));
-        assert!(
-            regions
-                .current(&ProjectEditorStore::default(), region.id)
-                .is_none()
-        );
-        assert!(history.redo(&mut objects, &mut dense, &mut regions));
-        assert_eq!(
-            regions.current(&ProjectEditorStore::default(), region.id),
-            Some(region)
-        );
-    }
-
-    #[test]
-    fn reusable_catalog_create_and_delete_share_the_editor_history() {
-        let mut objects = EditorObjectWorkingSet::default();
-        let mut dense = DenseDomainWorkingSets::default();
-        let mut regions = GroundCoverRegionWorkingSet::default();
-        let mut catalog = GroundCoverCatalogWorkingSet::default();
-        let mut history = EditorHistory::default();
-        let preset = world_db::SourceGroundCoverPresetRecord {
-            id: GroundCoverPresetId([8; 16]),
-            key: "new-preset".into(),
-            display_name: "New preset".into(),
-            enabled: true,
-            visual: GroundCoverVisualId([9; 16]),
-            density_per_square_meter: 4.0,
-            seed: 21,
-            source_revision: 0,
-        };
-
-        assert!(history.create_ground_cover_preset(&mut catalog, preset.clone()));
-        assert_eq!(
-            catalog.current_preset(&ProjectEditorStore::default(), preset.id),
-            Some(preset.clone())
-        );
-        assert!(history.undo_with_catalog(&mut objects, &mut dense, &mut regions, &mut catalog,));
-        assert!(
-            catalog
-                .current_preset(&ProjectEditorStore::default(), preset.id)
-                .is_none()
-        );
-        assert!(history.redo_with_catalog(&mut objects, &mut dense, &mut regions, &mut catalog,));
-        assert!(history.delete_ground_cover_definition(
-            &mut catalog,
-            world_db::GroundCoverCatalogRecord::Preset(preset.clone()),
-        ));
-        assert!(history.undo_with_catalog(&mut objects, &mut dense, &mut regions, &mut catalog,));
-        assert_eq!(
-            catalog.current_preset(&ProjectEditorStore::default(), preset.id),
-            Some(preset)
-        );
-    }
-
-    #[test]
-    fn conflict_can_rebase_local_intent_onto_the_latest_database_revision() {
-        let mut objects = EditorObjectWorkingSet::default();
-        let mut history = EditorHistory::default();
-        let id = StableObjectId([4; 16]);
-        objects.pin(object_view(4));
-        let mut local = SourceObjectTransform::from(&objects.current_view(id).unwrap().object);
-        local.local_translation[0] = 12.0;
-        assert!(history.apply_transform(&mut objects, id, local));
-
-        let mut actual = object_view(4).object;
-        actual.source_revision = 8;
-        actual.local_translation[0] = 20.0;
-        objects.active_save = Some(ActiveObjectSave {
-            request_id: 11,
-            objects: vec![id],
-        });
-        objects.finish_save(
-            11,
-            ObjectSaveOutcome::Conflict {
-                object: id,
-                actual: Some(actual),
-            },
-        );
-
-        assert!(objects.rebase_conflict(id, &mut history));
-        assert!(!objects.has_conflict(id));
-        assert!(objects.dirty(id));
-        assert_eq!(
-            objects.current_view(id).unwrap().object.local_translation[0],
-            12.0
-        );
-        assert_eq!(
-            objects.entries[&id].base.as_ref().unwrap().source_revision,
-            8
-        );
-        assert_eq!(history.undo_len(), 0);
-    }
-
-    #[test]
-    fn normalization_carries_local_coordinates_across_cells() {
-        let mut transform = SourceObjectTransform::from(&object_view(1).object);
-        transform.local_translation = [65.0, 2.0, -1.0];
-        let normalized = normalize_transform(transform, 64.0).unwrap();
-        assert_eq!(normalized.owner_cell.x, 1);
-        assert_eq!(normalized.owner_cell.z, -1);
-        assert_eq!(normalized.local_translation, [1.0, 2.0, 63.0]);
-    }
 }

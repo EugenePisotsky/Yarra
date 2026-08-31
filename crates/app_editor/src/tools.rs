@@ -25,7 +25,6 @@ pub(crate) enum EditorSourceDomain {
     ObjectPlacements,
     ObjectDefinitions,
     TerrainWeights,
-    GroundCoverMask,
     Navigation,
     Collision,
 }
@@ -53,7 +52,6 @@ pub(crate) enum EditorCommandKind {
     TransformPlacement,
     DeletePlacement,
     PatchTerrain,
-    PatchGroundCover,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -68,7 +66,6 @@ pub(crate) enum EditorPreviewOverlay {
 pub(crate) enum DerivedProduct {
     CookedObjectPage,
     TerrainPage,
-    GroundCoverPage,
     Navigation,
     Collision,
     Overview,
@@ -251,36 +248,6 @@ pub(crate) const TERRAIN_TOOL: EditorToolDescriptor = EditorToolDescriptor {
     overlays: &[EditorPreviewOverlay::CellPatch],
     invalidates: &[
         DerivedProduct::TerrainPage,
-        DerivedProduct::GroundCoverPage,
-        DerivedProduct::Navigation,
-        DerivedProduct::Collision,
-        DerivedProduct::Overview,
-    ],
-    failure_policy: EditorToolFailurePolicy {
-        loading: LoadingPolicy::DisableGestureUntilLoaded,
-        conflict: ConflictPolicy::PreserveLocalCommandForResolution,
-        cancellation: CancellationPolicy::CancelObsoleteQueriesAndDerivedJobs,
-        failure: FailurePolicy::KeepToolAndCameraUsable,
-    },
-};
-
-pub(crate) const GROUND_COVER_TOOL: EditorToolDescriptor = EditorToolDescriptor {
-    id: EditorToolId("world.ground_cover"),
-    label: "Ground cover",
-    workspace: EditorWorkspace::World,
-    source_domains: &[
-        EditorSourceDomain::CellDescriptors,
-        EditorSourceDomain::GroundCoverMask,
-    ],
-    spatial_query: SpatialQueryPolicy::ViewpointWindow {
-        radius_cells: 2,
-        maximum_records: 512,
-    },
-    pinning: PinningPolicy::ActivePatchAndDirtyCells,
-    commands: &[EditorCommandKind::PatchGroundCover],
-    overlays: &[EditorPreviewOverlay::CellPatch],
-    invalidates: &[
-        DerivedProduct::GroundCoverPage,
         DerivedProduct::Navigation,
         DerivedProduct::Collision,
         DerivedProduct::Overview,
@@ -339,7 +306,6 @@ mod tests {
         let mut registry = EditorToolRegistry::default();
         registry.register(OBJECT_TOOL, true);
         registry.register(TERRAIN_TOOL, false);
-        registry.register(GROUND_COVER_TOOL, false);
         assert!(registry.active_requires(
             EditorWorkspace::World,
             EditorSourceDomain::ObjectDefinitions
@@ -355,6 +321,6 @@ mod tests {
         assert!(
             !registry.active_requires(EditorWorkspace::World, EditorSourceDomain::ObjectPlacements)
         );
-        assert_eq!(registry.tools_for(EditorWorkspace::World).count(), 3);
+        assert_eq!(registry.tools_for(EditorWorkspace::World).count(), 2);
     }
 }

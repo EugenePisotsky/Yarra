@@ -24,20 +24,18 @@ pub use character_catalog::{
     DEFAULT_CHARACTER_PRESENTATION_ID, load_character_presentation_catalog_summary,
 };
 pub use environment::{WorldEnvironmentCamera, WorldEnvironmentPlugin, WorldSun};
-use ground_cover::{
-    GroundCoverDebug, GroundCoverInteractor, GroundCoverPlugin, GroundCoverView, GroundCoverWind,
-};
 use terrain_render::{TerrainMacroVariation, TerrainRenderPlugin};
 pub use world_streaming::{
-    ActiveWorldSpace, GameplayObject, StreamedVisualObject, StreamingStats, WorldCatalog,
-    WorldDetailDemand, WorldGenerationReload, WorldOrigin, WorldSpaceInfo, WorldStreamingConfig,
-    WorldStreamingPlugin, WorldViewCamera, WorldViewpoint,
+    ActiveWorldSpace, GameplayObject, StreamedTerrainSurface, StreamedVegetationFieldPage,
+    StreamedVisualObject, StreamingStats, WorldCatalog, WorldDetailDemand, WorldGenerationReload,
+    WorldOrigin, WorldSpaceInfo, WorldStreamingConfig, WorldStreamingPlugin, WorldViewCamera,
+    WorldViewpoint, sample_resident_terrain_surface,
 };
 
 use crate::{
     actor::{
         CameraTarget, CharacterGait, CharacterMotion, CharacterMotor, MoveIntent, PlayerControlled,
-        WorldStreamFocus, advance_character_motors,
+        TerrainGrounded, WorldStreamFocus, advance_character_motors,
     },
     character::{
         CharacterPresentationPlugin, CharacterPresentationRef, CharacterPresentationResolveSet,
@@ -91,7 +89,6 @@ impl Plugin for MinimalGamePlugin {
         app.add_plugins((
             FrameTimeDiagnosticsPlugin::default(),
             WorldEnvironmentPlugin::game(),
-            GroundCoverPlugin,
             TerrainRenderPlugin,
             CharacterPresentationPlugin,
             WorldStreamingPlugin::game(self.runtime_database.clone()),
@@ -106,6 +103,7 @@ impl Plugin for MinimalGamePlugin {
                 set_target_from_pointer,
                 update_player_move_intent,
                 advance_character_motors.after(CharacterPresentationResolveSet),
+                ground_characters_to_streamed_terrain,
                 update_target_indicator,
                 update_camera_transform,
                 update_demo_sun_motion,
@@ -171,9 +169,9 @@ fn setup(
         CharacterMotion::default(),
         CharacterPresentationRef::new(DEFAULT_CHARACTER_PRESENTATION_ID),
         PlayerControlled,
+        TerrainGrounded,
         CameraTarget,
         WorldStreamFocus,
-        GroundCoverInteractor::character(),
         Name::new("Player actor root"),
     ));
 
@@ -189,9 +187,6 @@ fn setup(
         WorldEnvironmentCamera::default(),
         Msaa::Off,
         DepthPrepass,
-        GroundCoverView {
-            normalized_zoom: normalized_camera_zoom(camera_rig.distance),
-        },
         camera_transform(start, &camera_rig),
         camera_rig,
         MainCamera,
@@ -278,6 +273,8 @@ fn set_target_from_pointer(
     mut touch_tap: ResMut<TouchTapState>,
     window: Single<&Window, With<PrimaryWindow>>,
     camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
+    origin: Res<WorldOrigin>,
+    terrain_pages: Query<&StreamedTerrainSurface>,
     mut player: Single<(&Transform, &mut MoveIntent), With<PlayerControlled>>,
 ) {
     let pointer_position = if mouse.just_pressed(MouseButton::Left) {
@@ -292,20 +289,72 @@ fn set_target_from_pointer(
         return;
     };
     let direction = *ray.direction;
-    if direction.y.abs() < 1.0e-5 {
-        return;
+    let point =
+        raycast_streamed_terrain(ray.origin, direction, &origin, &terrain_pages).or_else(|| {
+            if direction.y.abs() < 1.0e-5 {
+                return None;
+            }
+            let distance = (player.0.translation.y - ray.origin.y) / direction.y;
+            (distance >= 0.0).then(|| ray.origin + direction * distance)
+        });
+    if let Some(point) = point {
+        player.1.set_destination(point, CharacterGait::Walk);
     }
-    let distance = (player.0.translation.y - ray.origin.y) / direction.y;
-    if distance < 0.0 {
-        return;
-    }
+}
 
-    let point = ray.origin + direction * distance;
-    let ground_height = player.0.translation.y;
-    player.1.set_destination(
-        Vec3::new(point.x, ground_height, point.z),
-        CharacterGait::Walk,
-    );
+fn raycast_streamed_terrain(
+    ray_origin: Vec3,
+    ray_direction: Vec3,
+    origin: &WorldOrigin,
+    terrain_pages: &Query<&StreamedTerrainSurface>,
+) -> Option<Vec3> {
+    const STEP_METERS: f32 = 0.75;
+    const MAXIMUM_DISTANCE: f32 = 256.0;
+    const REFINEMENT_STEPS: usize = 12;
+
+    let mut previous: Option<(f32, f32)> = None;
+    let step_count = (MAXIMUM_DISTANCE / STEP_METERS) as usize;
+    for step in 0..=step_count {
+        let distance = step as f32 * STEP_METERS;
+        let point = ray_origin + ray_direction * distance;
+        let Some(surface) =
+            sample_resident_terrain_surface(origin, terrain_pages.iter(), [point.x, point.z])
+        else {
+            previous = None;
+            continue;
+        };
+        let clearance = point.y - surface.height;
+        let Some((previous_distance, previous_clearance)) = previous else {
+            previous = Some((distance, clearance));
+            continue;
+        };
+        if previous_clearance >= 0.0 && clearance <= 0.0 {
+            let mut above = previous_distance;
+            let mut below = distance;
+            for _ in 0..REFINEMENT_STEPS {
+                let middle = (above + below) * 0.5;
+                let middle_point = ray_origin + ray_direction * middle;
+                let Some(middle_surface) = sample_resident_terrain_surface(
+                    origin,
+                    terrain_pages.iter(),
+                    [middle_point.x, middle_point.z],
+                ) else {
+                    break;
+                };
+                if middle_point.y >= middle_surface.height {
+                    above = middle;
+                } else {
+                    below = middle;
+                }
+            }
+            let hit = ray_origin + ray_direction * ((above + below) * 0.5);
+            let surface =
+                sample_resident_terrain_surface(origin, terrain_pages.iter(), [hit.x, hit.z])?;
+            return Some(Vec3::new(hit.x, surface.height, hit.z));
+        }
+        previous = Some((distance, clearance));
+    }
+    None
 }
 
 fn touch_tap_position(touches: &Touches, state: &mut TouchTapState) -> Option<Vec2> {
@@ -364,12 +413,34 @@ fn update_player_move_intent(
     }
 }
 
+fn ground_characters_to_streamed_terrain(
+    origin: Res<WorldOrigin>,
+    terrain_pages: Query<&StreamedTerrainSurface>,
+    mut actors: Query<&mut Transform, With<TerrainGrounded>>,
+) {
+    for mut transform in &mut actors {
+        if let Some(surface) = sample_resident_terrain_surface(
+            &origin,
+            terrain_pages.iter(),
+            [transform.translation.x, transform.translation.z],
+        ) {
+            transform.translation.y = surface.height;
+        }
+    }
+}
+
 fn update_target_indicator(
     intent: Single<&MoveIntent, With<PlayerControlled>>,
+    origin: Res<WorldOrigin>,
+    terrain_pages: Query<&StreamedTerrainSurface>,
     mut indicator: TargetIndicatorState,
 ) {
     if let Some(target) = intent.destination() {
-        indicator.0.translation = Vec3::new(target.x, TARGET_INDICATOR_HEIGHT, target.z);
+        let ground_height =
+            sample_resident_terrain_surface(&origin, terrain_pages.iter(), [target.x, target.z])
+                .map_or(target.y, |surface| surface.height);
+        indicator.0.translation =
+            Vec3::new(target.x, ground_height + TARGET_INDICATOR_HEIGHT, target.z);
         *indicator.1 = Visibility::Visible;
     } else {
         *indicator.1 = Visibility::Hidden;
@@ -490,10 +561,9 @@ fn update_camera_controls(
 
 fn update_camera_transform(
     object: Single<&Transform, (With<CameraTarget>, Without<MainCamera>)>,
-    mut camera: Single<(&mut Transform, &CameraRig, &mut GroundCoverView), With<MainCamera>>,
+    mut camera: Single<(&mut Transform, &CameraRig), With<MainCamera>>,
 ) {
     *camera.0 = camera_transform(object.translation, camera.1);
-    camera.2.normalized_zoom = normalized_camera_zoom(camera.1.distance);
 }
 
 fn normalized_camera_zoom(distance: f32) -> f32 {
@@ -520,11 +590,9 @@ fn camera_transform(object_position: Vec3, rig: &CameraRig) -> Transform {
 fn update_performance_label(
     diagnostics: Res<DiagnosticsStore>,
     streaming: Option<Res<StreamingStats>>,
-    ground_cover_debug: Res<GroundCoverDebug>,
-    ground_cover_wind: Res<GroundCoverWind>,
     terrain_macro: Res<TerrainMacroVariation>,
     sun_motion: Res<DemoSunMotion>,
-    camera: Single<(&CameraRig, &GroundCoverView), With<MainCamera>>,
+    camera: Single<&CameraRig, With<MainCamera>>,
     sun: Single<&Transform, With<WorldSun>>,
     player_motion: Single<&CharacterMotion, With<PlayerControlled>>,
     primary_monitor: Option<Single<&Monitor, With<PrimaryMonitor>>>,
@@ -569,7 +637,7 @@ fn update_performance_label(
             format!(
                 "World: {}\nPages: {} demanded | {} loading | {} resident | {} cooling | {} failed\n\
                  Visual LODs: {} | projected height: {:.0}-{:.0} px\n\
-                 Ground cover: {} resident clusters | debug: {} | representation: {} | lighting: {}\n\
+                 Vegetation V2: {} resident field pages\n\
                  Nearby gameplay: {} objects | {} definitions cached\n\
                  Residency: {:.2} MiB decoded | {:.2} MiB estimated GPU",
                 stats.status,
@@ -581,18 +649,7 @@ fn update_performance_label(
                 lods,
                 stats.minimum_projected_height,
                 stats.maximum_projected_height,
-                stats.ground_cover_clusters,
-                ground_cover_debug.mode.label(),
-                if ground_cover_debug.procedural_blades {
-                    "ribbons / far cards"
-                } else {
-                    "cards"
-                },
-                if ground_cover_debug.lighting_enabled {
-                    "foliage lit"
-                } else {
-                    "unlit A/B"
-                },
+                stats.vegetation_pages,
                 stats.gameplay_objects,
                 stats.cached_definitions,
                 stats.decoded_bytes as f64 / (1024.0 * 1024.0),
@@ -602,13 +659,12 @@ fn update_performance_label(
         .unwrap_or_else(|| "World: initializing".into());
 
     **label = Text::new(format!(
-        "Tap / left click: move | WASD / left stick: direct movement | Tab: change area | G: grass debug | B: cards/ribbons | L: grass lighting | H: sun mask | F: freeze wind | V: terrain macro | U: sun motion\n\
+        "Tap / left click: move | WASD / left stick: direct movement | Tab: change area | V: terrain macro | U: sun motion\n\
          Two-finger horizontal / right drag / right stick: orbit\n\
          Pinch / two-finger vertical / wheel: smooth zoom\n\
          Actor: {:?} {:?} | {:.2} m/s | playback {:.2}x\n\
          Camera: {distance:.2} m (target {target_distance:.2} m) | normalized zoom: {normalized_zoom:.3}\n\
          Sun: {sun_elevation:.1} deg elevation | {sun_azimuth:.1} deg azimuth | motion: {sun_motion}\n\
-         Wind: {wind_state}\n\
          Terrain macro: {terrain_macro}\n\
          VSync baseline: {fps:.0} FPS | {frame_time:.2} ms | {display_refresh}\n\
          {streaming}",
@@ -616,15 +672,10 @@ fn update_performance_label(
         player_motion.phase,
         player_motion.speed_mps,
         player_motion.playback_rate,
-        distance = camera.0.distance,
-        target_distance = camera.0.target_distance,
-        normalized_zoom = camera.1.normalized_zoom,
+        distance = camera.distance,
+        target_distance = camera.target_distance,
+        normalized_zoom = normalized_camera_zoom(camera.distance),
         sun_motion = if sun_motion.enabled { "on" } else { "off" },
-        wind_state = if ground_cover_wind.paused {
-            "frozen"
-        } else {
-            "animated"
-        },
         terrain_macro = terrain_macro.label(),
     ));
 }

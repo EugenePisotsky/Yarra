@@ -8,3 +8,4 @@ publish.workspace = true
 bincode.workspace = true
 serde.workspace = true
 thiserror.workspace = true
+vegetation.workspace = true

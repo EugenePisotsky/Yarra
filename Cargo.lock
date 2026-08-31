@@ -6361,8 +6361,6 @@ dependencies = [
  "serde",
  "uuid",
  "yarra-engine",
- "yarra-ground-cover",
- "yarra-ground-cover-compile",
  "yarra-terrain-render",
  "yarra-world",
  "yarra-world-cook",
@@ -6375,6 +6373,8 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "yarra-engine",
+ "yarra-vegetation",
+ "yarra-vegetation-render",
 ]
 
 [[package]]
@@ -6386,28 +6386,8 @@ dependencies = [
  "log",
  "ron",
  "serde",
- "yarra-ground-cover",
  "yarra-terrain-render",
- "yarra-world",
- "yarra-world-db",
-]
-
-[[package]]
-name = "yarra-ground-cover"
-version = "0.1.0"
-dependencies = [
- "bevy",
- "bytemuck",
- "naga",
- "yarra-world",
-]
-
-[[package]]
-name = "yarra-ground-cover-compile"
-version = "0.1.0"
-dependencies = [
- "blake3",
- "thiserror 2.0.20",
+ "yarra-vegetation",
  "yarra-world",
  "yarra-world-db",
 ]
@@ -6421,12 +6401,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "yarra-vegetation"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "yarra-vegetation-compile"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.20",
+ "yarra-vegetation",
+]
+
+[[package]]
+name = "yarra-vegetation-render"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "bytemuck",
+ "naga",
+ "yarra-vegetation",
+]
+
+[[package]]
 name = "yarra-world"
 version = "0.1.0"
 dependencies = [
  "bincode",
  "serde",
  "thiserror 2.0.20",
+ "yarra-vegetation",
 ]
 
 [[package]]
@@ -6434,9 +6441,10 @@ name = "yarra-world-cook"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bincode",
  "blake3",
  "glam",
- "yarra-ground-cover-compile",
+ "yarra-vegetation",
  "yarra-world",
  "yarra-world-db",
  "zstd",
@@ -6446,9 +6454,11 @@ dependencies = [
 name = "yarra-world-db"
 version = "0.1.0"
 dependencies = [
+ "bincode",
  "blake3",
  "rusqlite",
  "thiserror 2.0.20",
+ "yarra-vegetation",
  "yarra-world",
  "zstd",
 ]

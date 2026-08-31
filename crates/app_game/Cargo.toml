@@ -7,3 +7,5 @@ publish.workspace = true
 [dependencies]
 bevy.workspace = true
 engine.workspace = true
+vegetation.workspace = true
+vegetation-render.workspace = true

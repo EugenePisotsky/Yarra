@@ -439,11 +439,9 @@ The first slice provides:
 
 Not implemented yet:
 
-- terrain brush gestures and ground-cover explicit strength, Fill, and Smooth modes (the ground-cover
-  brush already has deterministic area sampling and adjustable hardness/falloff);
-- catalog mutation tools for terrain surfaces, ground-cover layers, object definitions, or
-  character presentation definitions; ground-cover presets/card visuals now support edit,
-  duplicate, dependency-checked deletion, and region reassignment;
+- terrain brush gestures and native V2 vegetation field/species/population/assemblage tools;
+- catalog mutation tools for terrain surfaces, V2 vegetation, object definitions, or character
+  presentation definitions;
 - shared-pivot rotation/scale and multi-object transform-field editing (the current gizmo applies
   yaw and scale deltas around each selected object's own origin, while inspector fields edit only
   the active item);
@@ -454,10 +452,9 @@ Not implemented yet:
 
 ## Planned increments
 
-1. Continue Ground Cover Phase 3 from the implemented procedural card generator/runtime atlas to
-   direct R8 canvas painting, image import, and generated-to-painted conversion; then add terrain
-   brushes on the same bounded patch seam. Details are in
-   [`GROUND_COVER_AUTHORING_PLAN.md`](GROUND_COVER_AUTHORING_PLAN.md).
+1. Add native V2 vegetation authoring for species, populations, assemblages, and spatial fields,
+   then add terrain brushes on the same bounded working-set/transaction seam. The architecture is
+   defined in [`GROUND_COVER_ARCHITECTURE.md`](GROUND_COVER_ARCHITECTURE.md).
 2. Add explicit shared-pivot modes and batch transform-field operations when their tool semantics
    are defined, retaining the existing command and revision-checked transaction boundary.
 3. Replace source-summary Collision and Navigation previews with production derived data, then host

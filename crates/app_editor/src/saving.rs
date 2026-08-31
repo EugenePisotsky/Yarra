@@ -1,17 +1,14 @@
 //! One user-facing save intent over bounded, domain-specific source transactions.
 //!
 //! The database writers remain deliberately bounded and typed, but the user should not have to
-//! submit each batch or source domain manually. This coordinator drains reusable catalog records,
-//! regions, objects, and dense cell records in dependency-safe order and can continue directly
-//! into publication.
+//! submit each batch or source domain manually. This coordinator drains objects and dense terrain
+//! records in dependency-safe order and can continue directly into publication.
 
 use bevy::prelude::*;
 
-use crate::ground_cover_catalog::{CatalogSavePhase, GroundCoverCatalogWorkingSet};
 use crate::{
-    catalog_editing::GroundCoverRegionWorkingSet, domain_editing::DenseDomainWorkingSets,
-    editing::EditorObjectWorkingSet, project_store::ProjectEditorStore,
-    publication::RuntimePublicationState,
+    domain_editing::DenseDomainWorkingSets, editing::EditorObjectWorkingSet,
+    project_store::ProjectEditorStore, publication::RuntimePublicationState,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -83,27 +80,12 @@ impl EditorSaveCoordinator {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SaveDomain {
-    CatalogUpserts,
-    Regions,
-    CatalogDeletions,
     Objects,
     Dense,
 }
 
-fn next_save_domain(
-    catalog_upsert_count: usize,
-    region_count: usize,
-    catalog_deletion_count: usize,
-    object_count: usize,
-    dense_count: usize,
-) -> Option<SaveDomain> {
-    if catalog_upsert_count > 0 {
-        Some(SaveDomain::CatalogUpserts)
-    } else if region_count > 0 {
-        Some(SaveDomain::Regions)
-    } else if catalog_deletion_count > 0 {
-        Some(SaveDomain::CatalogDeletions)
-    } else if object_count > 0 {
+fn next_save_domain(object_count: usize, dense_count: usize) -> Option<SaveDomain> {
+    if object_count > 0 {
         Some(SaveDomain::Objects)
     } else if dense_count > 0 {
         Some(SaveDomain::Dense)
@@ -115,8 +97,6 @@ fn next_save_domain(
 pub(crate) fn drive_editor_save(
     mut coordinator: ResMut<EditorSaveCoordinator>,
     mut project: ResMut<ProjectEditorStore>,
-    mut catalog: ResMut<GroundCoverCatalogWorkingSet>,
-    mut regions: ResMut<GroundCoverRegionWorkingSet>,
     mut objects: ResMut<EditorObjectWorkingSet>,
     mut dense: ResMut<DenseDomainWorkingSets>,
     mut publication: ResMut<RuntimePublicationState>,
@@ -124,17 +104,10 @@ pub(crate) fn drive_editor_save(
     if !coordinator.active() {
         return;
     }
-    if project.save_in_flight()
-        || catalog.saving()
-        || regions.saving()
-        || objects.saving()
-        || dense.saving()
-    {
+    if project.save_in_flight() || objects.saving() || dense.saving() {
         return;
     }
     if project.write_error().is_some()
-        || regions.has_any_conflict()
-        || catalog.has_any_conflict()
         || objects.has_any_conflict()
         || dense.has_any_conflict()
         || publication.active()
@@ -143,22 +116,7 @@ pub(crate) fn drive_editor_save(
         return;
     }
 
-    match next_save_domain(
-        catalog.dirty_upsert_count(),
-        regions.dirty_count(),
-        catalog.dirty_deletion_count(),
-        objects.dirty_count(),
-        dense.dirty_count(),
-    ) {
-        Some(SaveDomain::CatalogUpserts) => {
-            catalog.queue_save_phase(&mut project, CatalogSavePhase::Upserts);
-        }
-        Some(SaveDomain::Regions) => {
-            regions.queue_save(&mut project);
-        }
-        Some(SaveDomain::CatalogDeletions) => {
-            catalog.queue_save_phase(&mut project, CatalogSavePhase::Deletions);
-        }
+    match next_save_domain(objects.dirty_count(), dense.dirty_count()) {
         Some(SaveDomain::Objects) => {
             objects.queue_save(&mut project);
         }
@@ -200,18 +158,9 @@ mod tests {
     }
 
     #[test]
-    fn domain_order_respects_catalog_and_region_dependencies() {
-        assert_eq!(
-            next_save_domain(1, 2, 3, 4, 5),
-            Some(SaveDomain::CatalogUpserts)
-        );
-        assert_eq!(next_save_domain(0, 2, 3, 4, 5), Some(SaveDomain::Regions));
-        assert_eq!(
-            next_save_domain(0, 0, 3, 4, 5),
-            Some(SaveDomain::CatalogDeletions)
-        );
-        assert_eq!(next_save_domain(0, 0, 0, 4, 5), Some(SaveDomain::Objects));
-        assert_eq!(next_save_domain(0, 0, 0, 0, 5), Some(SaveDomain::Dense));
-        assert_eq!(next_save_domain(0, 0, 0, 0, 0), None);
+    fn domain_order_saves_objects_before_dense_records() {
+        assert_eq!(next_save_domain(4, 5), Some(SaveDomain::Objects));
+        assert_eq!(next_save_domain(0, 5), Some(SaveDomain::Dense));
+        assert_eq!(next_save_domain(0, 0), None);
     }
 }

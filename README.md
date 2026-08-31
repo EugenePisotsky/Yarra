@@ -7,7 +7,9 @@ crates/
   app_editor/ Separate bounded world-editor viewport and shell
   app_game/   Executable and platform composition
   engine/     Bevy gameplay, rendering, and bounded page streaming
-  ground_cover/ Dedicated GPU-driven grass and decorative field rendering
+  vegetation/ Renderer-neutral V2 species, population, and field contracts
+  vegetation_compile/ Deterministic field compilation and CPU placement reference
+  vegetation_render/ GPU placement diagnostics and indirect-draw integration
   world/      Bevy-free coordinates, IDs, page domains, and payload ABI
   world_db/   Strict authoring/runtime SQLite schemas and readers
   world_cook/ Authoring database to immutable runtime generation
@@ -97,8 +99,8 @@ performance measurements; see [`ios/README.md`](ios/README.md).
 
 The current scene contains:
 
-- SQLite-streamed flat terrain cells;
-- authored meadow coverage rendered as procedural ground cover;
+- SQLite-streamed relief terrain pages with shared height/normal sampling;
+- streamed V2 vegetation fields rendered through GPU candidate generation and procedural topology;
 - sparse streamed instances of the local evaluation tree with four mesh LODs;
 - one catalog-selected animated character with controller-owned Idle/Walk/Jog locomotion;
 - a following camera and bounded cascaded directional shadows;
@@ -134,21 +136,24 @@ correctly. The current thresholds are LOD0 at 320 px, LOD1 at 160 px, LOD2 at
 80 px, and LOD3 below that, with 12% hysteresis. The HUD shows active LOD counts
 and the projected-size range of resident trees.
 
-Ground cover is stored as species, layers, and small per-cell coverage masks in
-the authoring database. Cooking turns non-empty mask samples into bounded
-clusters; it never creates a database row or Bevy entity per blade. The render
-crate uploads each resident page once, rejects clusters and selects density LOD
-on the GPU, then issues bounded indirect draws for independent near/middle
-ribbons and far alpha-clipped cards. The renderer includes coherent wind,
-bounded actor interaction, a shared alpha depth prepass, filtered directional
-shadow reception, and an exposure-aware two-sided foliage response. Game and
-editor use the same directional sun and low-cost distance-fog environment. The
-grass pass keeps its indirect batching and evaluates only a compact wrapped-diffuse,
-clump-GGX, and diffuse-transmission response; it does not create a Bevy material or
-entity per blade. Press
-`B` to compare ribbons/cards and `L` to compare foliage lighting with the legacy
-unlit baseline. Terrain-height conformance and grass shadow casting remain
-explicit limitations.
+Vegetation V2 stores one generation-level species/population catalog plus compact,
+terrain-independent field pages. The runtime joins each resident field page with the
+matching streamed terrain surface, generates candidates on the GPU, finalizes an indirect draw,
+and renders species-driven cubic ribbons without creating one database row, vertex stream, or Bevy
+entity per blade. A GPU view scheduler compacts visible page-field work and writes the indirect
+candidate dispatch; four draw bins cross single/split topology with high/low geometry selected from
+species-authored projected-pixel thresholds. Run with `--vegetation-v2-debug` and press `X` to switch
+from geometry to accepted-instance, parent/child, and candidate-outcome diagnostics. Press `P` to
+cycle full, frozen-draw, compute-only, and scheduler-only profiling workloads; frozen draw is intended
+for a fixed camera immediately after the full mode. Procedural
+instances are 32 bytes, capacity pressure uses distance-prioritized stable seed buckets, and a dense
+short split-blade population fills beneath the taller curved ribbons. High geometry converges onto
+low samples and uses a stable nested density transition. Compact vegetation fields and their terrain
+relief stay in a rotation-invariant three-cell source shell while GPU work remains view-culled.
+Persistent GPU page slots, a measured far
+representation, a full broad-leaf family, wind, interaction, material filtering, and shadows are the
+next renderer milestones; the former card/ribbon pipeline and its editor/database schema have been
+removed completely.
 
 Run the automated live traversal check with:
 

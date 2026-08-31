@@ -25,17 +25,14 @@ use engine::{
     StreamedVisualObject, WorldCatalog, WorldEnvironmentCamera, WorldOrigin, WorldStreamingConfig,
     WorldViewCamera, WorldViewpoint,
 };
-use ground_cover::GroundCoverView;
 use uuid::Uuid;
 use world::{CellCoord, ObjectDefinitionId, StableObjectId, WorldPosition};
 use world_db::{
     SourceObjectPaletteRecord, SourceObjectRecord, SourceObjectTransform, SourceObjectViewRecord,
 };
 
-use crate::catalog_editing::GroundCoverRegionWorkingSet;
 use crate::domain_editing::DenseDomainWorkingSets;
 use crate::editing::{EditorHistory, EditorObjectWorkingSet, EditorSelection};
-use crate::ground_cover_catalog::GroundCoverCatalogWorkingSet;
 use crate::preview::{EditorPreviewMode, PreviewModeState};
 use crate::project_store::ProjectEditorStore;
 use crate::publication::RuntimePublicationState;
@@ -144,9 +141,6 @@ pub(crate) fn setup_world_workspace(mut commands: Commands) {
         WorldEnvironmentCamera::default(),
         Msaa::Off,
         DepthPrepass,
-        GroundCoverView {
-            normalized_zoom: 1.0,
-        },
         Transform::from_xyz(24.0, 26.0, 24.0).looking_at(Vec3::ZERO, Vec3::Y),
         controller,
         WorldViewCamera,
@@ -257,10 +251,7 @@ pub(crate) fn update_editor_camera(
     mut viewpoint: ResMut<WorldViewpoint>,
     mut drag: ResMut<EditorCameraDrag>,
     mut focus_request: ResMut<EditorCameraFocusRequest>,
-    mut camera: Single<
-        (&mut EditorCamera, &mut Transform, &mut GroundCoverView),
-        With<WorldViewCamera>,
-    >,
+    mut camera: Single<(&mut EditorCamera, &mut Transform), With<WorldViewCamera>>,
 ) {
     if let Some(requested_focus) = focus_request.0.take() {
         camera.0.focus = Some(requested_focus);
@@ -442,9 +433,7 @@ pub(crate) fn handle_editor_shortcuts(
     mut gizmo_settings: ResMut<TransformGizmoSettings>,
     mut selection: ResMut<EditorSelection>,
     mut objects: ResMut<EditorObjectWorkingSet>,
-    mut dense_domains: ResMut<DenseDomainWorkingSets>,
-    mut regions: ResMut<GroundCoverRegionWorkingSet>,
-    mut ground_cover_catalog: ResMut<GroundCoverCatalogWorkingSet>,
+    dense_domains: Res<DenseDomainWorkingSets>,
     mut history: ResMut<EditorHistory>,
     publication: Res<RuntimePublicationState>,
     mut save: ResMut<EditorSaveCoordinator>,
@@ -457,8 +446,6 @@ pub(crate) fn handle_editor_shortcuts(
         || (object_tool_active && gizmo.active)
         || objects.saving()
         || dense_domains.saving()
-        || regions.saving()
-        || ground_cover_catalog.saving()
         || save.active()
     {
         return;
@@ -474,34 +461,14 @@ pub(crate) fn handle_editor_shortcuts(
 
     if command_pressed(&keys) && keys.just_pressed(KeyCode::KeyZ) {
         if shift_pressed(&keys) {
-            history.redo_with_catalog(
-                &mut objects,
-                &mut dense_domains,
-                &mut regions,
-                &mut ground_cover_catalog,
-            );
+            history.redo(&mut objects);
         } else {
-            history.undo_with_catalog(
-                &mut objects,
-                &mut dense_domains,
-                &mut regions,
-                &mut ground_cover_catalog,
-            );
+            history.undo(&mut objects);
         }
     } else if control_pressed(&keys) && keys.just_pressed(KeyCode::KeyY) {
-        history.redo_with_catalog(
-            &mut objects,
-            &mut dense_domains,
-            &mut regions,
-            &mut ground_cover_catalog,
-        );
+        history.redo(&mut objects);
     } else if command_pressed(&keys) && keys.just_pressed(KeyCode::KeyS) && !publication.active() {
-        if ground_cover_catalog.dirty_count()
-            + regions.dirty_count()
-            + objects.dirty_count()
-            + dense_domains.dirty_count()
-            > 0
-        {
+        if objects.dirty_count() + dense_domains.dirty_count() > 0 {
             save.request_save();
         }
     } else if (keys.just_pressed(KeyCode::Delete) || keys.just_pressed(KeyCode::Backspace))

@@ -1,18 +1,17 @@
 use std::{error::Error, fmt};
 
 use serde::{Deserialize, Serialize};
+use vegetation::VegetationFieldPageData;
 
 pub const DEFAULT_CELL_SIZE: f32 = 32.0;
 pub const MAX_DECODED_PAGE_BYTES: u64 = 64 * 1024 * 1024;
-pub const PROJECT_SCHEMA_VERSION: i64 = 9;
-pub const RUNTIME_SCHEMA_VERSION: i64 = 8;
-pub const PAGE_PAYLOAD_VERSION: u16 = 5;
+pub const PROJECT_SCHEMA_VERSION: i64 = 12;
+pub const RUNTIME_SCHEMA_VERSION: i64 = 10;
+pub const PAGE_PAYLOAD_VERSION: u16 = 7;
 pub const MAX_TERRAIN_SURFACES_PER_CELL: usize = 8;
 pub const MAX_TERRAIN_WEIGHT_PAGES: usize = 2;
 pub const MAX_TERRAIN_WEIGHT_RESOLUTION: u16 = 257;
-pub const GROUND_COVER_ARTWORK_RESOLUTION: u16 = 256;
-pub const MAX_GROUND_COVER_ARTWORK_VARIANTS: u8 = 8;
-pub const MAX_GROUND_COVER_ARTWORK_ATLAS_LAYERS: u32 = 256;
+pub const MAX_TERRAIN_HEIGHTFIELD_RESOLUTION: u16 = 257;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct WorldSpaceId(pub i64);
@@ -125,24 +124,6 @@ pub struct StableObjectId(pub [u8; 16]);
 pub struct ObjectDefinitionId(pub [u8; 16]);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct GroundCoverSpeciesId(pub [u8; 16]);
-
-/// Stable authoring identity for one reusable ground-cover visual definition.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct GroundCoverVisualId(pub [u8; 16]);
-
-/// Stable authoring identity for one reusable ground-cover population preset.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct GroundCoverPresetId(pub [u8; 16]);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct GroundCoverLayerId(pub [u8; 16]);
-
-/// Stable authoring identity for one named painted ground-cover region.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct GroundCoverRegionId(pub [u8; 16]);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct TerrainSurfaceId(pub [u8; 16]);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -157,11 +138,11 @@ pub enum PageDomain {
     TerrainRender = 1,
     StaticObjects = 2,
     Foliage = 3,
-    GroundCover = 4,
     Collision = 5,
     Navigation = 6,
     ShadowCasters = 7,
     GameplayObjects = 8,
+    Vegetation = 9,
 }
 
 impl TryFrom<i64> for PageDomain {
@@ -172,11 +153,11 @@ impl TryFrom<i64> for PageDomain {
             1 => Ok(Self::TerrainRender),
             2 => Ok(Self::StaticObjects),
             3 => Ok(Self::Foliage),
-            4 => Ok(Self::GroundCover),
             5 => Ok(Self::Collision),
             6 => Ok(Self::Navigation),
             7 => Ok(Self::ShadowCasters),
             8 => Ok(Self::GameplayObjects),
+            9 => Ok(Self::Vegetation),
             _ => Err(UnknownPageDomain(value)),
         }
     }
@@ -320,262 +301,266 @@ pub struct TerrainRenderPage {
     pub weight_pages: Vec<TerrainWeightPage>,
 }
 
-/// Deterministic source recipe for the silhouettes painted into one set of card variants.
+/// Endpoint-inclusive terrain samples for one streamed cell.
 ///
-/// Every dimension is normalized to the artwork canvas. Physical card dimensions remain separate
-/// species properties, so changing a silhouette does not silently change world-space bounds.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct GroundCoverBladeRecipe {
-    pub variant_count: u8,
-    pub blade_count: u16,
-    pub seed: u32,
-    pub minimum_blade_height: f32,
-    pub maximum_blade_height: f32,
-    pub base_jitter: f32,
-    pub minimum_blade_half_width: f32,
-    pub maximum_blade_half_width: f32,
-    pub maximum_lean: f32,
-    pub maximum_curve: f32,
-    pub maximum_s_curve: f32,
-}
-
-impl GroundCoverBladeRecipe {
-    /// Frozen recipe used by the original optimized meadow renderer.
-    pub const fn built_in_v1() -> Self {
-        Self {
-            variant_count: 4,
-            blade_count: 34,
-            seed: 0x6f53_91d2,
-            minimum_blade_height: 0.48,
-            maximum_blade_height: 1.0,
-            base_jitter: 0.7,
-            minimum_blade_half_width: 0.004,
-            maximum_blade_half_width: 0.008,
-            maximum_lean: 0.18,
-            maximum_curve: 0.10,
-            maximum_s_curve: 0.045,
-        }
-    }
-
-    pub fn is_valid(self) -> bool {
-        (1..=MAX_GROUND_COVER_ARTWORK_VARIANTS).contains(&self.variant_count)
-            && (1..=128).contains(&self.blade_count)
-            && self.minimum_blade_height.is_finite()
-            && (0.05..=1.0).contains(&self.minimum_blade_height)
-            && self.maximum_blade_height.is_finite()
-            && (self.minimum_blade_height..=1.0).contains(&self.maximum_blade_height)
-            && self.base_jitter.is_finite()
-            && (0.0..=1.0).contains(&self.base_jitter)
-            && self.minimum_blade_half_width.is_finite()
-            && (0.001..=0.1).contains(&self.minimum_blade_half_width)
-            && self.maximum_blade_half_width.is_finite()
-            && (self.minimum_blade_half_width..=0.1).contains(&self.maximum_blade_half_width)
-            && self.maximum_lean.is_finite()
-            && (0.0..=0.5).contains(&self.maximum_lean)
-            && self.maximum_curve.is_finite()
-            && (0.0..=0.5).contains(&self.maximum_curve)
-            && self.maximum_s_curve.is_finite()
-            && (0.0..=0.25).contains(&self.maximum_s_curve)
-    }
-}
-
-/// Cooked R8 card variants, including the complete coverage-preserving mip chain per layer.
+/// `minimum_height` and `height_scale` are shared quantization parameters. Cookers should use the
+/// containing world space's height range for every page so a world-space height always maps to the
+/// same integer code. That makes independently cooked page edges bit-identical.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct GroundCoverCardArtwork {
+pub struct TerrainHeightfield {
     pub resolution: u16,
-    pub variant_count: u8,
-    pub mip_level_count: u8,
-    pub coverage_mips: Vec<u8>,
+    pub minimum_height: f32,
+    pub height_scale: f32,
+    pub heights: Vec<u16>,
+    pub normals_oct: Vec<[i16; 2]>,
 }
 
-impl GroundCoverCardArtwork {
-    pub fn expected_byte_len(&self) -> Option<usize> {
-        let mut side = usize::from(self.resolution);
-        let mut per_variant = 0_usize;
-        for _ in 0..self.mip_level_count {
-            per_variant = per_variant.checked_add(side.checked_mul(side)?)?;
-            side = (side / 2).max(1);
-        }
-        per_variant.checked_mul(usize::from(self.variant_count))
-    }
-
-    pub fn is_valid(&self) -> bool {
-        self.resolution == GROUND_COVER_ARTWORK_RESOLUTION
-            && (1..=MAX_GROUND_COVER_ARTWORK_VARIANTS).contains(&self.variant_count)
-            && self.mip_level_count == self.resolution.ilog2() as u8 + 1
-            && self.expected_byte_len() == Some(self.coverage_mips.len())
-    }
-
-    pub fn base_variant(&self, variant: u8) -> Option<&[u8]> {
-        if variant >= self.variant_count || !self.is_valid() {
-            return None;
-        }
-        let per_variant = self.coverage_mips.len() / usize::from(self.variant_count);
-        let start = usize::from(variant) * per_variant;
-        let base_len = usize::from(self.resolution).pow(2);
-        Some(&self.coverage_mips[start..start + base_len])
-    }
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TerrainSurfaceSample {
+    pub height: f32,
+    pub normal: [f32; 3],
 }
 
-/// Expands a bounded recipe into deterministic R8 variants and coverage-preserving mips.
-pub fn generate_ground_cover_card_artwork(
-    recipe: GroundCoverBladeRecipe,
-) -> GroundCoverCardArtwork {
-    assert!(recipe.is_valid(), "invalid ground-cover blade recipe");
-
-    #[derive(Clone, Copy)]
-    struct Blade {
-        base: f32,
-        height: f32,
-        lean: f32,
-        curve: f32,
-        s_curve: f32,
-        half_width: f32,
+impl TerrainHeightfield {
+    pub fn from_heights(
+        resolution: u16,
+        heights: &[f32],
+        minimum_height: f32,
+        maximum_height: f32,
+        cell_size: f32,
+    ) -> Result<Self, TerrainHeightfieldError> {
+        if !cell_size.is_finite() || cell_size <= 0.0 {
+            return Err(TerrainHeightfieldError::InvalidDimensionsOrRange);
+        }
+        let resolution_usize = usize::from(resolution);
+        let spacing = cell_size / (resolution_usize.saturating_sub(1)) as f32;
+        let mut normals = Vec::with_capacity(heights.len());
+        if resolution_usize >= 2 && heights.len() == resolution_usize * resolution_usize {
+            for z in 0..resolution_usize {
+                for x in 0..resolution_usize {
+                    let left = x.saturating_sub(1);
+                    let right = (x + 1).min(resolution_usize - 1);
+                    let down = z.saturating_sub(1);
+                    let up = (z + 1).min(resolution_usize - 1);
+                    let height_dx = (heights[z * resolution_usize + right]
+                        - heights[z * resolution_usize + left])
+                        / ((right - left) as f32 * spacing);
+                    let height_dz = (heights[up * resolution_usize + x]
+                        - heights[down * resolution_usize + x])
+                        / ((up - down) as f32 * spacing);
+                    normals.push(normalize3([-height_dx, 1.0, -height_dz]));
+                }
+            }
+        }
+        Self::from_heights_and_normals(
+            resolution,
+            heights,
+            &normals,
+            minimum_height,
+            maximum_height,
+        )
     }
 
-    let size = usize::from(GROUND_COVER_ARTWORK_RESOLUTION);
-    let texel = 1.0 / f32::from(GROUND_COVER_ARTWORK_RESOLUTION);
-    let mut pixels = Vec::new();
-    let mut mip_level_count = 0;
-    for layer in 0..u32::from(recipe.variant_count) {
-        let layer_seed = hash_ground_cover_u32(recipe.seed ^ layer.wrapping_mul(0x85eb_ca6b));
-        let blades: Vec<_> = (0..u32::from(recipe.blade_count))
-            .map(|index| {
-                let seed = hash_ground_cover_u32(
-                    index.wrapping_mul(0x9e37_79b9) ^ layer_seed ^ layer.wrapping_mul(0xc2b2_ae35),
-                );
-                let centered = (index as f32 + 0.5) / f32::from(recipe.blade_count);
-                Blade {
-                    base: (centered
-                        + (ground_cover_unit_float(seed) - 0.5)
-                            * (recipe.base_jitter / f32::from(recipe.blade_count)))
-                    .clamp(0.015, 0.985),
-                    height: recipe.minimum_blade_height
-                        + ground_cover_unit_float(seed ^ 0xa511_e9b3)
-                            * (recipe.maximum_blade_height - recipe.minimum_blade_height),
-                    lean: (ground_cover_unit_float(seed ^ 0x63d8_3595) * 2.0 - 1.0)
-                        * recipe.maximum_lean,
-                    curve: (ground_cover_unit_float(seed ^ 0xc2b2_ae35) * 2.0 - 1.0)
-                        * recipe.maximum_curve,
-                    s_curve: (ground_cover_unit_float(seed ^ 0x1656_67b1) * 2.0 - 1.0)
-                        * recipe.maximum_s_curve,
-                    half_width: recipe.minimum_blade_half_width
-                        + ground_cover_unit_float(seed ^ 0x27d4_eb2f)
-                            * (recipe.maximum_blade_half_width - recipe.minimum_blade_half_width),
+    pub fn from_heights_and_normals(
+        resolution: u16,
+        heights: &[f32],
+        normals: &[[f32; 3]],
+        minimum_height: f32,
+        maximum_height: f32,
+    ) -> Result<Self, TerrainHeightfieldError> {
+        let resolution_usize = usize::from(resolution);
+        if !(2..=usize::from(MAX_TERRAIN_HEIGHTFIELD_RESOLUTION)).contains(&resolution_usize)
+            || heights.len() != resolution_usize * resolution_usize
+            || normals.len() != heights.len()
+            || !minimum_height.is_finite()
+            || !maximum_height.is_finite()
+            || maximum_height < minimum_height
+            || !heights.iter().all(|height| height.is_finite())
+            || !normals
+                .iter()
+                .flatten()
+                .all(|component| component.is_finite())
+        {
+            return Err(TerrainHeightfieldError::InvalidDimensionsOrRange);
+        }
+        if heights
+            .iter()
+            .any(|height| *height < minimum_height || *height > maximum_height)
+        {
+            return Err(TerrainHeightfieldError::HeightOutsideRange);
+        }
+
+        let extent = maximum_height - minimum_height;
+        let height_scale = if extent <= f32::EPSILON {
+            0.0
+        } else {
+            extent / f32::from(u16::MAX)
+        };
+        let heights = heights
+            .iter()
+            .map(|height| {
+                if height_scale == 0.0 {
+                    0
+                } else {
+                    ((*height - minimum_height) / height_scale)
+                        .round()
+                        .clamp(0.0, f32::from(u16::MAX)) as u16
                 }
             })
             .collect();
-
-        let mut level = vec![0_u8; size * size];
-        for y in 0..size {
-            let vertical = 1.0 - y as f32 / (size - 1) as f32;
-            for x in 0..size {
-                let horizontal = x as f32 / (size - 1) as f32;
-                let mut alpha = 0.0_f32;
-                for blade in &blades {
-                    if vertical > blade.height {
-                        continue;
-                    }
-                    let along = vertical / blade.height;
-                    let center = blade.base
-                        + blade.lean * along.powf(1.35)
-                        + blade.curve * (std::f32::consts::PI * along).sin()
-                        + blade.s_curve * (std::f32::consts::TAU * along).sin();
-                    let half_width = blade.half_width * (1.0 - along).powf(0.72) + texel * 0.45;
-                    let edge_distance = (horizontal - center).abs() - half_width;
-                    let coverage = (0.5 - edge_distance / (texel * 1.5)).clamp(0.0, 1.0);
-                    alpha = alpha.max(coverage);
-                }
-                level[y * size + x] = (alpha * 255.0).round() as u8;
-            }
-        }
-
-        pixels.extend_from_slice(&level);
-        let mut current_size = size;
-        let mut layer_mip_count = 1;
-        while current_size > 1 {
-            let next_size = (current_size / 2).max(1);
-            let mut next = vec![0_u8; next_size * next_size];
-            for y in 0..next_size {
-                for x in 0..next_size {
-                    let samples = [
-                        level[(y * 2) * current_size + x * 2],
-                        level[(y * 2) * current_size + (x * 2 + 1).min(current_size - 1)],
-                        level[((y * 2 + 1).min(current_size - 1)) * current_size + x * 2],
-                        level[((y * 2 + 1).min(current_size - 1)) * current_size
-                            + (x * 2 + 1).min(current_size - 1)],
-                    ];
-                    let maximum = f32::from(*samples.iter().max().unwrap());
-                    let average =
-                        samples.iter().map(|sample| f32::from(*sample)).sum::<f32>() * 0.25;
-                    next[y * next_size + x] = maximum.max(average * 1.35).min(255.0) as u8;
-                }
-            }
-            pixels.extend_from_slice(&next);
-            level = next;
-            current_size = next_size;
-            layer_mip_count += 1;
-        }
-        mip_level_count = layer_mip_count;
+        let heightfield = Self {
+            resolution,
+            minimum_height,
+            height_scale,
+            heights,
+            normals_oct: normals
+                .iter()
+                .copied()
+                .map(encode_octahedral_normal)
+                .collect(),
+        };
+        heightfield.validate()?;
+        Ok(heightfield)
     }
 
-    GroundCoverCardArtwork {
-        resolution: GROUND_COVER_ARTWORK_RESOLUTION,
-        variant_count: recipe.variant_count,
-        mip_level_count,
-        coverage_mips: pixels,
+    pub fn validate(&self) -> Result<(), TerrainHeightfieldError> {
+        let resolution = usize::from(self.resolution);
+        if !(2..=usize::from(MAX_TERRAIN_HEIGHTFIELD_RESOLUTION)).contains(&resolution)
+            || self.heights.len() != resolution * resolution
+            || self.normals_oct.len() != resolution * resolution
+            || !self.minimum_height.is_finite()
+            || !self.height_scale.is_finite()
+            || self.height_scale < 0.0
+        {
+            return Err(TerrainHeightfieldError::InvalidDimensionsOrRange);
+        }
+        Ok(())
+    }
+
+    pub fn height_at(&self, x: usize, z: usize) -> f32 {
+        let resolution = usize::from(self.resolution);
+        debug_assert!(x < resolution && z < resolution);
+        self.minimum_height + f32::from(self.heights[z * resolution + x]) * self.height_scale
+    }
+
+    pub fn height_bounds(&self) -> [f32; 2] {
+        let Some((&minimum, &maximum)) = self.heights.iter().min().zip(self.heights.iter().max())
+        else {
+            return [self.minimum_height; 2];
+        };
+        [
+            self.minimum_height + f32::from(minimum) * self.height_scale,
+            self.minimum_height + f32::from(maximum) * self.height_scale,
+        ]
+    }
+
+    /// Samples local cell coordinates in metres. Inputs are clamped to the page edges.
+    pub fn sample(&self, local_xz: [f32; 2], cell_size: f32) -> TerrainSurfaceSample {
+        debug_assert!(self.validate().is_ok());
+        debug_assert!(cell_size.is_finite() && cell_size > 0.0);
+        let resolution = usize::from(self.resolution);
+        let maximum_index = (resolution - 1) as f32;
+        let grid_x = (local_xz[0] / cell_size).clamp(0.0, 1.0) * maximum_index;
+        let grid_z = (local_xz[1] / cell_size).clamp(0.0, 1.0) * maximum_index;
+        let x0 = grid_x.floor() as usize;
+        let z0 = grid_z.floor() as usize;
+        let x1 = (x0 + 1).min(resolution - 1);
+        let z1 = (z0 + 1).min(resolution - 1);
+        let tx = grid_x - x0 as f32;
+        let tz = grid_z - z0 as f32;
+        let corners = [(x0, z0), (x1, z0), (x0, z1), (x1, z1)];
+        let weights = [
+            (1.0 - tx) * (1.0 - tz),
+            tx * (1.0 - tz),
+            (1.0 - tx) * tz,
+            tx * tz,
+        ];
+        let mut height = 0.0;
+        let mut normal = [0.0_f32; 3];
+        for ((x, z), weight) in corners.into_iter().zip(weights) {
+            height += self.height_at(x, z) * weight;
+            let vertex_normal = self.normal_at(x, z);
+            normal[0] += vertex_normal[0] * weight;
+            normal[1] += vertex_normal[1] * weight;
+            normal[2] += vertex_normal[2] * weight;
+        }
+        TerrainSurfaceSample {
+            height,
+            normal: normalize3(normal),
+        }
+    }
+
+    pub fn normal_at(&self, x: usize, z: usize) -> [f32; 3] {
+        let resolution = usize::from(self.resolution);
+        debug_assert!(x < resolution && z < resolution);
+        decode_octahedral_normal(self.normals_oct[z * resolution + x])
     }
 }
 
-fn hash_ground_cover_u32(mut value: u32) -> u32 {
-    value ^= value >> 16;
-    value = value.wrapping_mul(0x7feb_352d);
-    value ^= value >> 15;
-    value = value.wrapping_mul(0x846c_a68b);
-    value ^ (value >> 16)
+fn encode_octahedral_normal(normal: [f32; 3]) -> [i16; 2] {
+    let normal = normalize3(normal);
+    let inverse_l1 = (normal[0].abs() + normal[1].abs() + normal[2].abs()).recip();
+    let mut encoded = [normal[0] * inverse_l1, normal[2] * inverse_l1];
+    if normal[1] < 0.0 {
+        encoded = [
+            (1.0 - encoded[1].abs()).copysign(encoded[0]),
+            (1.0 - encoded[0].abs()).copysign(encoded[1]),
+        ];
+    }
+    [
+        (encoded[0].clamp(-1.0, 1.0) * f32::from(i16::MAX)).round() as i16,
+        (encoded[1].clamp(-1.0, 1.0) * f32::from(i16::MAX)).round() as i16,
+    ]
 }
 
-fn ground_cover_unit_float(value: u32) -> f32 {
-    hash_ground_cover_u32(value) as f32 / u32::MAX as f32
+fn decode_octahedral_normal(encoded: [i16; 2]) -> [f32; 3] {
+    let encoded = [
+        f32::from(encoded[0]) / f32::from(i16::MAX),
+        f32::from(encoded[1]) / f32::from(i16::MAX),
+    ];
+    let mut normal = [
+        encoded[0],
+        1.0 - encoded[0].abs() - encoded[1].abs(),
+        encoded[1],
+    ];
+    if normal[1] < 0.0 {
+        normal = [
+            (1.0 - encoded[1].abs()).copysign(encoded[0]),
+            normal[1],
+            (1.0 - encoded[0].abs()).copysign(encoded[1]),
+        ];
+    }
+    normalize3(normal)
 }
 
-/// One globally defined decorative ground-cover species.
-///
-/// Ground cover has no stable identity per plant. A species describes its
-/// visual response while [`GroundCoverCluster`] describes authored coverage.
+fn normalize3(value: [f32; 3]) -> [f32; 3] {
+    let length_squared = value[0] * value[0] + value[1] * value[1] + value[2] * value[2];
+    if length_squared <= f32::EPSILON || !length_squared.is_finite() {
+        return [0.0, 1.0, 0.0];
+    }
+    let inverse_length = length_squared.sqrt().recip();
+    [
+        value[0] * inverse_length,
+        value[1] * inverse_length,
+        value[2] * inverse_length,
+    ]
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum TerrainHeightfieldError {
+    #[error("terrain heightfield dimensions or quantization range are invalid")]
+    InvalidDimensionsOrRange,
+    #[error("terrain height sample lies outside the quantization range")]
+    HeightOutsideRange,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct GroundCoverSpecies {
-    pub id: GroundCoverSpeciesId,
-    pub key: String,
-    pub bottom_color: [f32; 3],
-    pub top_color: [f32; 3],
-    pub minimum_card_height: f32,
-    pub maximum_card_height: f32,
-    pub minimum_card_width: f32,
-    pub maximum_card_width: f32,
-    pub flattened_card_probability: f32,
-    pub maximum_wind_displacement: f32,
-    pub artwork: GroundCoverCardArtwork,
-}
-
-/// A renderer-sized unit of authored ground-cover coverage.
-///
-/// Coordinates are local to the owning world cell. `coverage_half_extents`
-/// describe the authored patch used for density, while `half_extents` are
-/// conservative animated/card bounds used only for visibility tests.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct GroundCoverCluster {
-    pub species: GroundCoverSpeciesId,
-    pub local_center: [f32; 3],
-    pub half_extents: [f32; 3],
-    pub coverage_half_extents: [f32; 2],
-    pub density_per_square_meter: f32,
-    pub seed: u32,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct GroundCoverPage {
-    pub clusters: Vec<GroundCoverCluster>,
+pub struct TerrainHeightfieldPage {
+    pub heightfield: TerrainHeightfield,
+    /// Local material slots. Their order maps directly to RGBA channels in
+    /// `weight_pages`, four surfaces per page.
+    pub surfaces: Vec<TerrainSurfaceId>,
+    pub weight_pages: Vec<TerrainWeightPage>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -640,9 +625,12 @@ pub struct GameplayObjectsPage {
 pub enum PagePayload {
     TerrainRender(TerrainRenderPage),
     StaticObjects(StaticObjectsPage),
-    GroundCover(GroundCoverPage),
     ShadowCasters(StaticObjectsPage),
     GameplayObjects(GameplayObjectsPage),
+    /// Appended to preserve the serialized discriminants of all legacy variants.
+    TerrainHeightfield(TerrainHeightfieldPage),
+    /// Terrain-independent V2 coverage fields, joined to the resident terrain page at runtime.
+    Vegetation(VegetationFieldPageData),
 }
 
 impl PagePayload {
@@ -650,9 +638,10 @@ impl PagePayload {
         match self {
             Self::TerrainRender(_) => PageDomain::TerrainRender,
             Self::StaticObjects(_) => PageDomain::StaticObjects,
-            Self::GroundCover(_) => PageDomain::GroundCover,
             Self::ShadowCasters(_) => PageDomain::ShadowCasters,
             Self::GameplayObjects(_) => PageDomain::GameplayObjects,
+            Self::TerrainHeightfield(_) => PageDomain::TerrainRender,
+            Self::Vegetation(_) => PageDomain::Vegetation,
         }
     }
 }
@@ -773,6 +762,45 @@ mod tests {
     }
 
     #[test]
+    fn heightfield_payload_round_trips_and_samples_relief() {
+        let heightfield = TerrainHeightfield::from_heights(
+            3,
+            &[0.0, 1.0, 2.0, 1.0, 2.0, 3.0, 2.0, 3.0, 4.0],
+            0.0,
+            4.0,
+            4.0,
+        )
+        .unwrap();
+        let payload = PagePayload::TerrainHeightfield(TerrainHeightfieldPage {
+            heightfield: heightfield.clone(),
+            surfaces: vec![TerrainSurfaceId([4; 16])],
+            weight_pages: Vec::new(),
+        });
+
+        let bytes = encode_page_payload(&payload).unwrap();
+        assert_eq!(decode_page_payload(&bytes).unwrap(), payload);
+        assert_eq!(payload.domain(), PageDomain::TerrainRender);
+
+        let center = heightfield.sample([2.0, 2.0], 4.0);
+        assert!((center.height - 2.0).abs() < 0.001);
+        assert!(center.normal[0] < -0.4 && center.normal[2] < -0.4);
+        assert!(center.normal[1] > 0.5);
+    }
+
+    #[test]
+    fn shared_quantization_keeps_adjacent_edges_identical() {
+        let left =
+            TerrainHeightfield::from_heights(2, &[0.0, 1.25, 0.5, 1.75], -8.0, 8.0, 32.0).unwrap();
+        let right =
+            TerrainHeightfield::from_heights(2, &[1.25, 2.0, 1.75, 2.5], -8.0, 8.0, 32.0).unwrap();
+
+        assert_eq!(left.heights[1], right.heights[0]);
+        assert_eq!(left.heights[3], right.heights[2]);
+        assert_eq!(left.height_at(1, 0), right.height_at(0, 0));
+        assert_eq!(left.height_at(1, 1), right.height_at(0, 1));
+    }
+
+    #[test]
     fn gameplay_page_keeps_definition_identity() {
         let definition = ObjectDefinitionId([3; 16]);
         let payload = PagePayload::GameplayObjects(GameplayObjectsPage {
@@ -790,21 +818,13 @@ mod tests {
     }
 
     #[test]
-    fn ground_cover_page_round_trips_without_expanding_tufts() {
-        let species = GroundCoverSpeciesId([11; 16]);
-        let payload = PagePayload::GroundCover(GroundCoverPage {
-            clusters: vec![GroundCoverCluster {
-                species,
-                local_center: [4.0, 0.0, 6.0],
-                half_extents: [1.25, 0.5, 1.25],
-                coverage_half_extents: [1.0, 1.0],
-                density_per_square_meter: 8.0,
-                seed: 42,
-            }],
-        });
+    fn vegetation_page_round_trips_without_duplicating_terrain_relief() {
+        let data = vegetation::fixtures::reference_page([0.0, 0.0]).data();
+        let payload = PagePayload::Vegetation(data.clone());
 
         let bytes = encode_page_payload(&payload).unwrap();
         assert_eq!(decode_page_payload(&bytes).unwrap(), payload);
-        assert_eq!(payload.domain(), PageDomain::GroundCover);
+        assert_eq!(payload.domain(), PageDomain::Vegetation);
+        assert_eq!(data.fields.len(), 4);
     }
 }

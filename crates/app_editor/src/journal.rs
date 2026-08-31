@@ -1,4 +1,4 @@
-//! Crash-recoverable journal for dirty object, catalog, region, and dense-source working sets.
+//! Crash-recoverable journal for dirty object and dense terrain working sets.
 
 use std::{
     fs::{self, File},
@@ -11,26 +11,20 @@ use bevy::prelude::*;
 use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded};
 use serde::{Deserialize, Serialize};
 use world::{
-    AssetId, CellCoord, GroundCoverBladeRecipe, GroundCoverLayerId, GroundCoverPresetId,
-    GroundCoverRegionId, GroundCoverVisualId, ObjectActivationPolicy, ObjectDefinitionId,
-    StableObjectId, WorldSpaceId,
+    AssetId, CellCoord, ObjectActivationPolicy, ObjectDefinitionId, StableObjectId, WorldSpaceId,
 };
 use world_db::{
-    DenseSourceRecord, GroundCoverCatalogRecord, SourceGroundCoverCardVisualRecord,
-    SourceGroundCoverCellMaskRecord, SourceGroundCoverPresetRecord, SourceGroundCoverRegionRecord,
-    SourceGroundCoverVisualDefinition, SourceGroundCoverVisualRecord, SourceObjectDefinitionRecord,
-    SourceObjectRecord, SourceObjectViewRecord, SourceTerrainCellWeightPageRecord,
+    DenseSourceRecord, SourceObjectDefinitionRecord, SourceObjectRecord, SourceObjectViewRecord,
+    SourceTerrainCellWeightPageRecord,
 };
 
 use crate::{
-    catalog_editing::{DirtyRegionSnapshot, GroundCoverRegionWorkingSet},
     domain_editing::{DenseDomainWorkingSets, DirtyDenseSnapshot},
     editing::{DirtyObjectSnapshot, EditorHistory, EditorObjectWorkingSet},
-    ground_cover_catalog::{DirtyCatalogSnapshot, GroundCoverCatalogWorkingSet},
 };
 
-const JOURNAL_SCHEMA_VERSION: u32 = 4;
-const OLDEST_SUPPORTED_JOURNAL_SCHEMA_VERSION: u32 = 1;
+const JOURNAL_SCHEMA_VERSION: u32 = 5;
+const OLDEST_SUPPORTED_JOURNAL_SCHEMA_VERSION: u32 = 5;
 const JOURNAL_CHANNEL_CAPACITY: usize = 1;
 
 pub(crate) struct EditorJournalPlugin {
@@ -84,16 +78,12 @@ pub(crate) struct EditorJournalStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct JournalRevision {
     objects: u64,
-    catalog: u64,
-    regions: u64,
     dense: u64,
 }
 
 #[derive(Debug)]
 struct JournalRecovery {
     objects: Vec<JournalEntry>,
-    catalog: Vec<JournalCatalogEntry>,
-    regions: Vec<JournalRegionEntry>,
     dense: Vec<JournalDenseEntry>,
 }
 
@@ -152,66 +142,7 @@ struct JournalFile {
     project_database: PathBuf,
     entries: Vec<JournalEntry>,
     #[serde(default)]
-    catalog_entries: Vec<JournalCatalogEntry>,
-    #[serde(default)]
-    region_entries: Vec<JournalRegionEntry>,
-    #[serde(default)]
     dense_entries: Vec<JournalDenseEntry>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct JournalCatalogEntry {
-    base: Option<JournalCatalogRecord>,
-    current: Option<JournalCatalogRecord>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-enum JournalCatalogRecord {
-    Preset {
-        id: GroundCoverPresetId,
-        key: String,
-        display_name: String,
-        enabled: bool,
-        visual: GroundCoverVisualId,
-        density_per_square_meter: f32,
-        seed: u32,
-        source_revision: i64,
-    },
-    CardVisual {
-        id: GroundCoverVisualId,
-        key: String,
-        display_name: String,
-        source_revision: i64,
-        built_in_atlas_version: u32,
-        #[serde(default)]
-        procedural_recipe: Option<GroundCoverBladeRecipe>,
-        bottom_color: [f32; 3],
-        top_color: [f32; 3],
-        minimum_card_height: f32,
-        maximum_card_height: f32,
-        minimum_card_width: f32,
-        maximum_card_width: f32,
-        flattened_card_probability: f32,
-        maximum_wind_displacement: f32,
-    },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct JournalRegionEntry {
-    base: Option<JournalRegion>,
-    current: Option<JournalRegion>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct JournalRegion {
-    id: GroundCoverRegionId,
-    layer: GroundCoverLayerId,
-    space: WorldSpaceId,
-    preset: GroundCoverPresetId,
-    display_name: String,
-    enabled: bool,
-    density_multiplier: f32,
-    source_revision: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -259,14 +190,6 @@ enum JournalDenseRecord {
         page: u8,
         resolution: u16,
         rgba: Vec<u8>,
-        source_revision: i64,
-    },
-    GroundCoverMask {
-        region: GroundCoverRegionId,
-        space: WorldSpaceId,
-        cell: CellCoord,
-        resolution: u8,
-        coverage: Vec<u8>,
         source_revision: i64,
     },
 }
@@ -343,25 +266,17 @@ impl From<JournalEntry> for DirtyObjectSnapshot {
     }
 }
 
-impl From<&DenseSourceRecord> for JournalDenseRecord {
-    fn from(record: &DenseSourceRecord) -> Self {
+impl JournalDenseRecord {
+    fn from_source(record: &DenseSourceRecord) -> Option<Self> {
         match record {
-            DenseSourceRecord::TerrainWeights(record) => Self::TerrainWeights {
+            DenseSourceRecord::TerrainWeights(record) => Some(Self::TerrainWeights {
                 space: record.space,
                 cell: record.cell,
                 page: record.page,
                 resolution: record.resolution,
                 rgba: record.rgba.clone(),
                 source_revision: record.source_revision,
-            },
-            DenseSourceRecord::GroundCoverMask(record) => Self::GroundCoverMask {
-                region: record.region,
-                space: record.space,
-                cell: record.cell,
-                resolution: record.resolution,
-                coverage: record.coverage.clone(),
-                source_revision: record.source_revision,
-            },
+            }),
         }
     }
 }
@@ -384,32 +299,23 @@ impl From<JournalDenseRecord> for DenseSourceRecord {
                 rgba,
                 source_revision,
             }),
-            JournalDenseRecord::GroundCoverMask {
-                region,
-                space,
-                cell,
-                resolution,
-                coverage,
-                source_revision,
-            } => Self::GroundCoverMask(SourceGroundCoverCellMaskRecord {
-                region,
-                space,
-                cell,
-                resolution,
-                coverage,
-                source_revision,
-            }),
         }
     }
 }
 
-impl From<DirtyDenseSnapshot> for JournalDenseEntry {
-    fn from(snapshot: DirtyDenseSnapshot) -> Self {
-        Self {
-            base: snapshot.base.as_ref().map(JournalDenseRecord::from),
-            current: JournalDenseRecord::from(&snapshot.current),
-            runtime: snapshot.runtime.as_ref().map(JournalDenseRecord::from),
-        }
+impl JournalDenseEntry {
+    fn from_snapshot(snapshot: DirtyDenseSnapshot) -> Option<Self> {
+        Some(Self {
+            base: snapshot
+                .base
+                .as_ref()
+                .and_then(JournalDenseRecord::from_source),
+            current: JournalDenseRecord::from_source(&snapshot.current)?,
+            runtime: snapshot
+                .runtime
+                .as_ref()
+                .and_then(JournalDenseRecord::from_source),
+        })
     }
 }
 
@@ -419,169 +325,6 @@ impl From<JournalDenseEntry> for DirtyDenseSnapshot {
             base: entry.base.map(DenseSourceRecord::from),
             current: DenseSourceRecord::from(entry.current),
             runtime: entry.runtime.map(DenseSourceRecord::from),
-        }
-    }
-}
-
-impl From<&SourceGroundCoverRegionRecord> for JournalRegion {
-    fn from(region: &SourceGroundCoverRegionRecord) -> Self {
-        Self {
-            id: region.id,
-            layer: region.layer,
-            space: region.space,
-            preset: region.preset,
-            display_name: region.display_name.clone(),
-            enabled: region.enabled,
-            density_multiplier: region.density_multiplier,
-            source_revision: region.source_revision,
-        }
-    }
-}
-
-impl From<JournalRegion> for SourceGroundCoverRegionRecord {
-    fn from(region: JournalRegion) -> Self {
-        Self {
-            id: region.id,
-            layer: region.layer,
-            space: region.space,
-            preset: region.preset,
-            display_name: region.display_name,
-            enabled: region.enabled,
-            density_multiplier: region.density_multiplier,
-            source_revision: region.source_revision,
-        }
-    }
-}
-
-impl From<DirtyRegionSnapshot> for JournalRegionEntry {
-    fn from(snapshot: DirtyRegionSnapshot) -> Self {
-        Self {
-            base: snapshot.base.as_ref().map(JournalRegion::from),
-            current: snapshot.current.as_ref().map(JournalRegion::from),
-        }
-    }
-}
-
-impl From<JournalRegionEntry> for DirtyRegionSnapshot {
-    fn from(entry: JournalRegionEntry) -> Self {
-        Self {
-            base: entry.base.map(SourceGroundCoverRegionRecord::from),
-            current: entry.current.map(SourceGroundCoverRegionRecord::from),
-        }
-    }
-}
-
-impl From<&GroundCoverCatalogRecord> for JournalCatalogRecord {
-    fn from(record: &GroundCoverCatalogRecord) -> Self {
-        match record {
-            GroundCoverCatalogRecord::Preset(record) => Self::Preset {
-                id: record.id,
-                key: record.key.clone(),
-                display_name: record.display_name.clone(),
-                enabled: record.enabled,
-                visual: record.visual,
-                density_per_square_meter: record.density_per_square_meter,
-                seed: record.seed,
-                source_revision: record.source_revision,
-            },
-            GroundCoverCatalogRecord::Visual(record) => {
-                let SourceGroundCoverVisualDefinition::CardCluster(card) = &record.definition;
-                Self::CardVisual {
-                    id: record.id,
-                    key: record.key.clone(),
-                    display_name: record.display_name.clone(),
-                    source_revision: record.source_revision,
-                    built_in_atlas_version: card.built_in_atlas_version,
-                    procedural_recipe: card.procedural_recipe,
-                    bottom_color: card.bottom_color,
-                    top_color: card.top_color,
-                    minimum_card_height: card.minimum_card_height,
-                    maximum_card_height: card.maximum_card_height,
-                    minimum_card_width: card.minimum_card_width,
-                    maximum_card_width: card.maximum_card_width,
-                    flattened_card_probability: card.flattened_card_probability,
-                    maximum_wind_displacement: card.maximum_wind_displacement,
-                }
-            }
-        }
-    }
-}
-
-impl From<JournalCatalogRecord> for GroundCoverCatalogRecord {
-    fn from(record: JournalCatalogRecord) -> Self {
-        match record {
-            JournalCatalogRecord::Preset {
-                id,
-                key,
-                display_name,
-                enabled,
-                visual,
-                density_per_square_meter,
-                seed,
-                source_revision,
-            } => Self::Preset(SourceGroundCoverPresetRecord {
-                id,
-                key,
-                display_name,
-                enabled,
-                visual,
-                density_per_square_meter,
-                seed,
-                source_revision,
-            }),
-            JournalCatalogRecord::CardVisual {
-                id,
-                key,
-                display_name,
-                source_revision,
-                built_in_atlas_version,
-                procedural_recipe,
-                bottom_color,
-                top_color,
-                minimum_card_height,
-                maximum_card_height,
-                minimum_card_width,
-                maximum_card_width,
-                flattened_card_probability,
-                maximum_wind_displacement,
-            } => Self::Visual(SourceGroundCoverVisualRecord {
-                id,
-                key,
-                display_name,
-                source_revision,
-                definition: SourceGroundCoverVisualDefinition::CardCluster(
-                    SourceGroundCoverCardVisualRecord {
-                        built_in_atlas_version,
-                        procedural_recipe,
-                        bottom_color,
-                        top_color,
-                        minimum_card_height,
-                        maximum_card_height,
-                        minimum_card_width,
-                        maximum_card_width,
-                        flattened_card_probability,
-                        maximum_wind_displacement,
-                    },
-                ),
-            }),
-        }
-    }
-}
-
-impl From<DirtyCatalogSnapshot> for JournalCatalogEntry {
-    fn from(snapshot: DirtyCatalogSnapshot) -> Self {
-        Self {
-            base: snapshot.base.as_ref().map(JournalCatalogRecord::from),
-            current: snapshot.current.as_ref().map(JournalCatalogRecord::from),
-        }
-    }
-}
-
-impl From<JournalCatalogEntry> for DirtyCatalogSnapshot {
-    fn from(entry: JournalCatalogEntry) -> Self {
-        Self {
-            base: entry.base.map(GroundCoverCatalogRecord::from),
-            current: entry.current.map(GroundCoverCatalogRecord::from),
         }
     }
 }
@@ -692,17 +435,13 @@ fn receive_journal_results(
         match worker.results.try_recv() {
             Ok(JournalResult::Loaded(Ok(Some(file)))) => {
                 let object_count = file.entries.len();
-                let catalog_count = file.catalog_entries.len();
-                let region_count = file.region_entries.len();
                 let dense_count = file.dense_entries.len();
                 status.pending_restore = Some(JournalRecovery {
                     objects: file.entries,
-                    catalog: file.catalog_entries,
-                    regions: file.region_entries,
                     dense: file.dense_entries,
                 });
                 status.message = format!(
-                    "recovering {object_count} object(s), {catalog_count} definition(s), {region_count} region(s), and {dense_count} dense record(s)"
+                    "recovering {object_count} object(s) and {dense_count} dense terrain record(s)"
                 );
             }
             Ok(JournalResult::Loaded(Ok(None))) => {
@@ -739,8 +478,6 @@ fn receive_journal_results(
 fn restore_loaded_journal(
     mut status: ResMut<EditorJournalStatus>,
     mut objects: ResMut<EditorObjectWorkingSet>,
-    mut catalog: ResMut<GroundCoverCatalogWorkingSet>,
-    mut regions: ResMut<GroundCoverRegionWorkingSet>,
     mut dense_domains: ResMut<DenseDomainWorkingSets>,
     mut history: ResMut<EditorHistory>,
 ) {
@@ -751,25 +488,17 @@ fn restore_loaded_journal(
     for entry in recovery.objects {
         recovered_objects += usize::from(objects.restore_dirty_snapshot(entry.into()));
     }
-    let mut recovered_regions = 0;
-    for entry in recovery.regions {
-        recovered_regions += usize::from(regions.restore_dirty_snapshot(entry.into()));
-    }
-    let mut recovered_catalog = 0;
-    for entry in recovery.catalog {
-        recovered_catalog += usize::from(catalog.restore_dirty_snapshot(entry.into()));
-    }
     let mut recovered_dense = 0;
     for entry in recovery.dense {
         recovered_dense += usize::from(dense_domains.restore_dirty_snapshot(entry.into()));
     }
-    let recovered = recovered_objects + recovered_catalog + recovered_regions + recovered_dense;
+    let recovered = recovered_objects + recovered_dense;
     if recovered != 0 {
         history.clear();
     }
     status.recovered_entries = recovered;
     status.message = format!(
-        "recovered {recovered_objects} object(s), {recovered_catalog} definition(s), {recovered_regions} region(s), and {recovered_dense} dense record(s)"
+        "recovered {recovered_objects} object(s) and {recovered_dense} dense terrain record(s)"
     );
 }
 
@@ -777,8 +506,6 @@ fn dispatch_dirty_journal(
     worker: Option<Res<JournalWorker>>,
     config: Res<EditorJournalConfig>,
     objects: Res<EditorObjectWorkingSet>,
-    catalog: Res<GroundCoverCatalogWorkingSet>,
-    regions: Res<GroundCoverRegionWorkingSet>,
     dense_domains: Res<DenseDomainWorkingSets>,
     mut status: ResMut<EditorJournalStatus>,
 ) {
@@ -787,8 +514,6 @@ fn dispatch_dirty_journal(
     };
     let revision = JournalRevision {
         objects: objects.edit_revision(),
-        catalog: catalog.edit_revision(),
-        regions: regions.edit_revision(),
         dense: dense_domains.edit_revision(),
     };
     if status.pending_restore.is_some() || status.last_dispatched_revision == Some(revision) {
@@ -802,23 +527,9 @@ fn dispatch_dirty_journal(
     let dense_entries = dense_domains
         .dirty_snapshots()
         .into_iter()
-        .map(JournalDenseEntry::from)
+        .filter_map(JournalDenseEntry::from_snapshot)
         .collect::<Vec<_>>();
-    let catalog_entries = catalog
-        .dirty_snapshots()
-        .into_iter()
-        .map(JournalCatalogEntry::from)
-        .collect::<Vec<_>>();
-    let region_entries = regions
-        .dirty_snapshots()
-        .into_iter()
-        .map(JournalRegionEntry::from)
-        .collect::<Vec<_>>();
-    let request = if entries.is_empty()
-        && catalog_entries.is_empty()
-        && region_entries.is_empty()
-        && dense_entries.is_empty()
-    {
+    let request = if entries.is_empty() && dense_entries.is_empty() {
         JournalRequest::Clear { revision }
     } else {
         JournalRequest::Write {
@@ -827,8 +538,6 @@ fn dispatch_dirty_journal(
                 schema_version: JOURNAL_SCHEMA_VERSION,
                 project_database: config.project_database.clone(),
                 entries,
-                catalog_entries,
-                region_entries,
                 dense_entries,
             },
         }
@@ -839,289 +548,5 @@ fn dispatch_dirty_journal(
         Err(TrySendError::Disconnected(_)) => {
             status.message = "journal worker stopped".into();
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use world::ObjectActivationPolicy;
-
-    fn journal_file(project: &Path) -> JournalFile {
-        let object = JournalObject {
-            id: StableObjectId([1; 16]),
-            space: WorldSpaceId(2),
-            owner_cell: CellCoord { x: -4, z: 7 },
-            definition: ObjectDefinitionId([3; 16]),
-            local_translation: [1.0, 2.0, 3.0],
-            yaw: 0.5,
-            scale: 1.25,
-            source_revision: 9,
-        };
-        JournalFile {
-            schema_version: JOURNAL_SCHEMA_VERSION,
-            project_database: project.to_path_buf(),
-            entries: vec![JournalEntry {
-                presentation: JournalPresentation {
-                    object: object.clone(),
-                    definition_key: "tree".into(),
-                    definition_display_name: "Tree".into(),
-                    definition_visual_asset: None,
-                    definition_activation: ObjectActivationPolicy::RenderOnly,
-                    visual_uri: Some("tree.gltf".into()),
-                    visual_bounds: Some([2.0, 8.0, 2.0]),
-                },
-                base: Some(object.clone()),
-                current: Some(JournalObject {
-                    local_translation: [9.0, 2.0, 3.0],
-                    ..object
-                }),
-            }],
-            catalog_entries: vec![JournalCatalogEntry {
-                base: Some(JournalCatalogRecord::Preset {
-                    id: GroundCoverPresetId([5; 16]),
-                    key: "meadow".into(),
-                    display_name: "Meadow".into(),
-                    enabled: true,
-                    visual: GroundCoverVisualId([6; 16]),
-                    density_per_square_meter: 5.0,
-                    seed: 17,
-                    source_revision: 2,
-                }),
-                current: Some(JournalCatalogRecord::Preset {
-                    id: GroundCoverPresetId([5; 16]),
-                    key: "meadow".into(),
-                    display_name: "Meadow".into(),
-                    enabled: true,
-                    visual: GroundCoverVisualId([6; 16]),
-                    density_per_square_meter: 7.5,
-                    seed: 17,
-                    source_revision: 2,
-                }),
-            }],
-            region_entries: vec![JournalRegionEntry {
-                base: None,
-                current: Some(JournalRegion {
-                    id: GroundCoverRegionId([8; 16]),
-                    layer: GroundCoverLayerId([4; 16]),
-                    space: WorldSpaceId(2),
-                    preset: GroundCoverPresetId([5; 16]),
-                    display_name: "Recovered meadow".into(),
-                    enabled: true,
-                    density_multiplier: 0.75,
-                    source_revision: 0,
-                }),
-            }],
-            dense_entries: vec![JournalDenseEntry {
-                base: Some(JournalDenseRecord::GroundCoverMask {
-                    region: GroundCoverRegionId([8; 16]),
-                    space: WorldSpaceId(2),
-                    cell: CellCoord { x: -4, z: 7 },
-                    resolution: 2,
-                    coverage: vec![0; 4],
-                    source_revision: 4,
-                }),
-                current: JournalDenseRecord::GroundCoverMask {
-                    region: GroundCoverRegionId([8; 16]),
-                    space: WorldSpaceId(2),
-                    cell: CellCoord { x: -4, z: 7 },
-                    resolution: 2,
-                    coverage: vec![255, 0, 0, 0],
-                    source_revision: 4,
-                },
-                runtime: Some(JournalDenseRecord::GroundCoverMask {
-                    region: GroundCoverRegionId([8; 16]),
-                    space: WorldSpaceId(2),
-                    cell: CellCoord { x: -4, z: 7 },
-                    resolution: 2,
-                    coverage: vec![0; 4],
-                    source_revision: 4,
-                }),
-            }],
-        }
-    }
-
-    #[test]
-    fn journal_round_trips_atomically_and_validates_project_identity() {
-        let directory = std::env::temp_dir().join(format!(
-            "yarra-editor-journal-test-{}",
-            uuid::Uuid::new_v4()
-        ));
-        fs::create_dir_all(&directory).unwrap();
-        let project = directory.join("project.sqlite");
-        let other_project = directory.join("other.sqlite");
-        let path = directory.join("project.editor-journal.ron");
-        let file = journal_file(&project);
-
-        write_journal_atomically(&path, &file).unwrap();
-        let loaded = load_journal(&path, &project).unwrap().unwrap();
-        assert_eq!(loaded.entries.len(), 1);
-        assert_eq!(loaded.catalog_entries.len(), 1);
-        assert_eq!(loaded.region_entries.len(), 1);
-        assert_eq!(loaded.dense_entries.len(), 1);
-        assert!(load_journal(&path, &other_project).is_err());
-        clear_journal(&path).unwrap();
-        assert!(load_journal(&path, &project).unwrap().is_none());
-        fs::remove_dir_all(directory).unwrap();
-    }
-
-    #[test]
-    fn version_one_object_only_journal_remains_readable() {
-        #[derive(Serialize)]
-        struct VersionOneJournalFile {
-            schema_version: u32,
-            project_database: PathBuf,
-            entries: Vec<JournalEntry>,
-        }
-
-        let directory = std::env::temp_dir().join(format!(
-            "yarra-editor-journal-v1-test-{}",
-            uuid::Uuid::new_v4()
-        ));
-        fs::create_dir_all(&directory).unwrap();
-        let project = directory.join("project.sqlite");
-        let path = directory.join("project.editor-journal.ron");
-        let current = journal_file(&project);
-        let legacy = VersionOneJournalFile {
-            schema_version: 1,
-            project_database: project.clone(),
-            entries: current.entries,
-        };
-        let source =
-            ron::ser::to_string_pretty(&legacy, ron::ser::PrettyConfig::default()).unwrap();
-        fs::write(&path, source).unwrap();
-
-        let loaded = load_journal(&path, &project).unwrap().unwrap();
-        assert_eq!(loaded.entries.len(), 1);
-        assert!(loaded.region_entries.is_empty());
-        assert!(loaded.dense_entries.is_empty());
-        assert!(loaded.catalog_entries.is_empty());
-        fs::remove_dir_all(directory).unwrap();
-    }
-
-    #[test]
-    fn version_two_object_and_dense_journal_remains_readable() {
-        #[derive(Serialize)]
-        struct VersionTwoJournalFile {
-            schema_version: u32,
-            project_database: PathBuf,
-            entries: Vec<JournalEntry>,
-            dense_entries: Vec<JournalDenseEntry>,
-        }
-
-        let directory = std::env::temp_dir().join(format!(
-            "yarra-editor-journal-v2-test-{}",
-            uuid::Uuid::new_v4()
-        ));
-        fs::create_dir_all(&directory).unwrap();
-        let project = directory.join("project.sqlite");
-        let path = directory.join("project.editor-journal.ron");
-        let current = journal_file(&project);
-        let legacy = VersionTwoJournalFile {
-            schema_version: 2,
-            project_database: project.clone(),
-            entries: current.entries,
-            dense_entries: current.dense_entries,
-        };
-        let source =
-            ron::ser::to_string_pretty(&legacy, ron::ser::PrettyConfig::default()).unwrap();
-        fs::write(&path, source).unwrap();
-
-        let loaded = load_journal(&path, &project).unwrap().unwrap();
-        assert_eq!(loaded.entries.len(), 1);
-        assert!(loaded.region_entries.is_empty());
-        assert_eq!(loaded.dense_entries.len(), 1);
-        assert!(loaded.catalog_entries.is_empty());
-        fs::remove_dir_all(directory).unwrap();
-    }
-
-    #[test]
-    fn version_three_region_journal_remains_readable() {
-        #[derive(Serialize)]
-        struct VersionThreeJournalFile {
-            schema_version: u32,
-            project_database: PathBuf,
-            entries: Vec<JournalEntry>,
-            region_entries: Vec<JournalRegionEntry>,
-            dense_entries: Vec<JournalDenseEntry>,
-        }
-
-        let directory = std::env::temp_dir().join(format!(
-            "yarra-editor-journal-v3-test-{}",
-            uuid::Uuid::new_v4()
-        ));
-        fs::create_dir_all(&directory).unwrap();
-        let project = directory.join("project.sqlite");
-        let path = directory.join("project.editor-journal.ron");
-        let current = journal_file(&project);
-        let legacy = VersionThreeJournalFile {
-            schema_version: 3,
-            project_database: project.clone(),
-            entries: current.entries,
-            region_entries: current.region_entries,
-            dense_entries: current.dense_entries,
-        };
-        let source =
-            ron::ser::to_string_pretty(&legacy, ron::ser::PrettyConfig::default()).unwrap();
-        fs::write(&path, source).unwrap();
-
-        let loaded = load_journal(&path, &project).unwrap().unwrap();
-        assert_eq!(loaded.entries.len(), 1);
-        assert_eq!(loaded.region_entries.len(), 1);
-        assert_eq!(loaded.dense_entries.len(), 1);
-        assert!(loaded.catalog_entries.is_empty());
-        fs::remove_dir_all(directory).unwrap();
-    }
-
-    #[test]
-    fn journal_entry_restores_local_and_base_snapshots() {
-        let project = Path::new("project.sqlite");
-        let entry = journal_file(project).entries.pop().unwrap();
-        let snapshot = DirtyObjectSnapshot::from(entry);
-        assert_eq!(snapshot.base.as_ref().unwrap().source_revision, 9);
-        assert_eq!(snapshot.current.unwrap().local_translation[0], 9.0);
-        assert_eq!(snapshot.presentation.definition.display_name, "Tree");
-    }
-
-    #[test]
-    fn dense_journal_entry_restores_base_current_and_runtime_snapshots() {
-        let project = Path::new("project.sqlite");
-        let entry = journal_file(project).dense_entries.pop().unwrap();
-        let snapshot = DirtyDenseSnapshot::from(entry);
-        let DenseSourceRecord::GroundCoverMask(base) = snapshot.base.unwrap() else {
-            panic!("expected a ground-cover base")
-        };
-        let DenseSourceRecord::GroundCoverMask(current) = snapshot.current else {
-            panic!("expected ground-cover current intent")
-        };
-        let DenseSourceRecord::GroundCoverMask(runtime) = snapshot.runtime.unwrap() else {
-            panic!("expected a ground-cover runtime baseline")
-        };
-        assert_eq!(base.coverage, vec![0; 4]);
-        assert_eq!(current.coverage, vec![255, 0, 0, 0]);
-        assert_eq!(runtime.source_revision, 4);
-    }
-
-    #[test]
-    fn region_journal_entry_restores_an_unsaved_creation() {
-        let project = Path::new("project.sqlite");
-        let entry = journal_file(project).region_entries.pop().unwrap();
-        let snapshot = DirtyRegionSnapshot::from(entry);
-        assert!(snapshot.base.is_none());
-        let current = snapshot.current.unwrap();
-        assert_eq!(current.display_name, "Recovered meadow");
-        assert_eq!(current.density_multiplier, 0.75);
-    }
-
-    #[test]
-    fn catalog_journal_entry_restores_an_unsaved_preset_update() {
-        let project = Path::new("project.sqlite");
-        let entry = journal_file(project).catalog_entries.pop().unwrap();
-        let snapshot = DirtyCatalogSnapshot::from(entry);
-        let Some(GroundCoverCatalogRecord::Preset(current)) = snapshot.current else {
-            panic!("expected a preset")
-        };
-        assert_eq!(current.density_per_square_meter, 7.5);
-        assert_eq!(snapshot.base.unwrap().source_revision(), 2);
     }
 }

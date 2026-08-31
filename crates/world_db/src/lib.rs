@@ -8,24 +8,22 @@ use std::{
 };
 
 use rusqlite::{Connection, OpenFlags, OptionalExtension, Transaction, params};
+use vegetation::{VegetationCatalog, VegetationFieldPageData};
 use world::{
-    AssetId, CellCoord, GroundCoverBladeRecipe, GroundCoverLayerId, GroundCoverPresetId,
-    GroundCoverRegionId, GroundCoverSpecies, GroundCoverSpeciesId, GroundCoverVisualId,
-    MAX_DECODED_PAGE_BYTES, ObjectActivationPolicy, ObjectDefinitionId, PROJECT_SCHEMA_VERSION,
-    PageCodec, PageDomain, PageKey, PagePayload, RUNTIME_SCHEMA_VERSION, StableObjectId,
-    TerrainProfile, TerrainSurface, TerrainSurfaceId, TerrainTextureLayer, TerrainTextureSet,
-    TerrainTextureSetId, WorldSpaceId, decode_page_payload, generate_ground_cover_card_artwork,
+    AssetId, CellCoord, MAX_DECODED_PAGE_BYTES, ObjectActivationPolicy, ObjectDefinitionId,
+    PROJECT_SCHEMA_VERSION, PageCodec, PageDomain, PageKey, PagePayload, RUNTIME_SCHEMA_VERSION,
+    StableObjectId, TerrainProfile, TerrainSurface, TerrainSurfaceId, TerrainTextureLayer,
+    TerrainTextureSet, TerrainTextureSetId, WorldSpaceId, decode_page_payload,
 };
 
 pub const MAX_OBJECT_WRITES_PER_TRANSACTION: usize = 256;
 pub const MAX_DENSE_DOMAIN_WRITES_PER_TRANSACTION: usize = 64;
-pub const MAX_GROUND_COVER_REGION_WRITES_PER_TRANSACTION: usize = 64;
-pub const MAX_GROUND_COVER_CATALOG_WRITES_PER_TRANSACTION: usize = 64;
 
 #[derive(Debug, Clone)]
 pub struct ProjectDocument {
     pub default_world_space: WorldSpaceId,
     pub world_spaces: Vec<WorldSpaceRecord>,
+    pub vegetation_catalog: Option<VegetationCatalog>,
     pub cells: Vec<SourceCellRecord>,
     pub terrain_surfaces: Vec<TerrainSurface>,
     pub terrain_texture_sets: Vec<TerrainTextureSet>,
@@ -33,11 +31,8 @@ pub struct ProjectDocument {
     pub terrain_profiles: Vec<TerrainProfile>,
     pub terrain_cell_surface_slots: Vec<SourceTerrainCellSurfaceSlotRecord>,
     pub terrain_cell_weight_pages: Vec<SourceTerrainCellWeightPageRecord>,
-    pub ground_cover_visuals: Vec<SourceGroundCoverVisualRecord>,
-    pub ground_cover_presets: Vec<SourceGroundCoverPresetRecord>,
-    pub ground_cover_layers: Vec<SourceGroundCoverLayerRecord>,
-    pub ground_cover_regions: Vec<SourceGroundCoverRegionRecord>,
-    pub ground_cover_masks: Vec<SourceGroundCoverCellMaskRecord>,
+    pub terrain_cell_heightfields: Vec<SourceTerrainCellHeightfieldRecord>,
+    pub vegetation_field_pages: Vec<SourceVegetationFieldPageRecord>,
     pub assets: Vec<SourceAssetRecord>,
     pub asset_variants: Vec<SourceAssetVariantRecord>,
     pub definitions: Vec<SourceObjectDefinitionRecord>,
@@ -123,6 +118,14 @@ pub struct SourceCellRecord {
     pub source_revision: i64,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct SourceVegetationFieldPageRecord {
+    pub space: WorldSpaceId,
+    pub cell: CellCoord,
+    pub data: VegetationFieldPageData,
+    pub source_revision: i64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceTerrainCellSurfaceSlotRecord {
     pub space: WorldSpaceId,
@@ -141,156 +144,22 @@ pub struct SourceTerrainCellWeightPageRecord {
     pub source_revision: i64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(i64)]
-pub enum SourceGroundCoverVisualFamily {
-    CardCluster = 0,
-}
-
-impl TryFrom<i64> for SourceGroundCoverVisualFamily {
-    type Error = UnknownGroundCoverVisualFamily;
-
-    fn try_from(value: i64) -> Result<Self, Self::Error> {
-        match value {
-            0 => Ok(Self::CardCluster),
-            _ => Err(UnknownGroundCoverVisualFamily(value)),
-        }
-    }
-}
-
+/// Editable endpoint-inclusive terrain relief for one source cell.
+///
+/// Authoring keeps f32 samples. Cooking performs the world-space quantization used by runtime
+/// pages, which lets the editor evolve without tying its precision to the renderer.
 #[derive(Debug, Clone, PartialEq)]
-pub struct SourceGroundCoverCardVisualRecord {
-    pub built_in_atlas_version: u32,
-    /// `None` preserves the frozen built-in-v1 recipe. `Some` is an independently editable copy.
-    pub procedural_recipe: Option<GroundCoverBladeRecipe>,
-    pub bottom_color: [f32; 3],
-    pub top_color: [f32; 3],
-    pub minimum_card_height: f32,
-    pub maximum_card_height: f32,
-    pub minimum_card_width: f32,
-    pub maximum_card_width: f32,
-    pub flattened_card_probability: f32,
-    pub maximum_wind_displacement: f32,
-}
-
-impl SourceGroundCoverCardVisualRecord {
-    /// Complete visual values used by the original demo meadow, not just its frozen artwork mask.
-    /// This is a named starter template rather than an implicit default for every new species.
-    pub const fn original_meadow_v1() -> Self {
-        Self {
-            built_in_atlas_version: 1,
-            procedural_recipe: None,
-            bottom_color: [0.025, 0.055, 0.020],
-            top_color: [0.105, 0.205, 0.075],
-            minimum_card_height: 0.55,
-            maximum_card_height: 0.78,
-            minimum_card_width: 0.7,
-            maximum_card_width: 1.4,
-            flattened_card_probability: 0.2,
-            maximum_wind_displacement: 0.22,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum SourceGroundCoverVisualDefinition {
-    CardCluster(SourceGroundCoverCardVisualRecord),
-}
-
-impl SourceGroundCoverVisualDefinition {
-    pub const fn family(&self) -> SourceGroundCoverVisualFamily {
-        match self {
-            Self::CardCluster(_) => SourceGroundCoverVisualFamily::CardCluster,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct SourceGroundCoverVisualRecord {
-    pub id: GroundCoverVisualId,
-    pub key: String,
-    pub display_name: String,
-    pub source_revision: i64,
-    pub definition: SourceGroundCoverVisualDefinition,
-}
-
-impl SourceGroundCoverVisualRecord {
-    /// Compatibility projection consumed by the existing optimized runtime renderer.
-    pub fn runtime_species(&self) -> GroundCoverSpecies {
-        let SourceGroundCoverVisualDefinition::CardCluster(card) = &self.definition;
-        GroundCoverSpecies {
-            id: GroundCoverSpeciesId(self.id.0),
-            key: self.key.clone(),
-            bottom_color: card.bottom_color,
-            top_color: card.top_color,
-            minimum_card_height: card.minimum_card_height,
-            maximum_card_height: card.maximum_card_height,
-            minimum_card_width: card.minimum_card_width,
-            maximum_card_width: card.maximum_card_width,
-            flattened_card_probability: card.flattened_card_probability,
-            maximum_wind_displacement: card.maximum_wind_displacement,
-            artwork: generate_ground_cover_card_artwork(
-                card.procedural_recipe
-                    .unwrap_or_else(GroundCoverBladeRecipe::built_in_v1),
-            ),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct SourceGroundCoverPresetRecord {
-    pub id: GroundCoverPresetId,
-    pub key: String,
-    pub display_name: String,
-    pub enabled: bool,
-    pub visual: GroundCoverVisualId,
-    pub density_per_square_meter: f32,
-    pub seed: u32,
-    pub source_revision: i64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SourceGroundCoverLayerRecord {
-    pub id: GroundCoverLayerId,
-    pub space: WorldSpaceId,
-    pub key: String,
-    pub display_name: String,
-    pub enabled: bool,
-    pub sort_order: i32,
-    pub source_revision: i64,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct SourceGroundCoverRegionRecord {
-    pub id: GroundCoverRegionId,
-    pub layer: GroundCoverLayerId,
-    pub space: WorldSpaceId,
-    pub preset: GroundCoverPresetId,
-    pub display_name: String,
-    pub enabled: bool,
-    pub density_multiplier: f32,
-    pub source_revision: i64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SourceGroundCoverCellMaskRecord {
-    pub region: GroundCoverRegionId,
+pub struct SourceTerrainCellHeightfieldRecord {
     pub space: WorldSpaceId,
     pub cell: CellCoord,
-    pub resolution: u8,
-    pub coverage: Vec<u8>,
+    pub resolution: u16,
+    pub heights: Vec<f32>,
     pub source_revision: i64,
 }
 
 #[derive(Debug, Clone)]
 pub struct SourceTerrainCellWeightPageQuery {
     pub records: Vec<SourceTerrainCellWeightPageRecord>,
-    pub truncated: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct SourceGroundCoverCellMaskQuery {
-    pub records: Vec<SourceGroundCoverCellMaskRecord>,
     pub truncated: bool,
 }
 
@@ -301,11 +170,6 @@ pub enum DenseSourceRecordKey {
         cell: CellCoord,
         page: u8,
     },
-    GroundCoverMask {
-        region: GroundCoverRegionId,
-        space: WorldSpaceId,
-        cell: CellCoord,
-    },
 }
 
 #[derive(Debug, Clone)]
@@ -313,10 +177,6 @@ pub enum DenseSourceWrite {
     TerrainWeights {
         expected_source_revision: Option<i64>,
         record: SourceTerrainCellWeightPageRecord,
-    },
-    GroundCoverMask {
-        expected_source_revision: Option<i64>,
-        record: SourceGroundCoverCellMaskRecord,
     },
 }
 
@@ -328,11 +188,6 @@ impl DenseSourceWrite {
                 cell: record.cell,
                 page: record.page,
             },
-            Self::GroundCoverMask { record, .. } => DenseSourceRecordKey::GroundCoverMask {
-                region: record.region,
-                space: record.space,
-                cell: record.cell,
-            },
         }
     }
 }
@@ -340,7 +195,6 @@ impl DenseSourceWrite {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DenseSourceRecord {
     TerrainWeights(SourceTerrainCellWeightPageRecord),
-    GroundCoverMask(SourceGroundCoverCellMaskRecord),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -349,154 +203,6 @@ pub enum DenseSourceWriteTransactionResult {
     Conflict {
         key: DenseSourceRecordKey,
         actual: Option<DenseSourceRecord>,
-    },
-}
-
-#[derive(Debug, Clone)]
-pub enum GroundCoverRegionWrite {
-    Create {
-        record: SourceGroundCoverRegionRecord,
-    },
-    Update {
-        expected_source_revision: i64,
-        record: SourceGroundCoverRegionRecord,
-    },
-    DeleteEmpty {
-        region: GroundCoverRegionId,
-        expected_source_revision: i64,
-    },
-}
-
-impl GroundCoverRegionWrite {
-    pub const fn region(&self) -> GroundCoverRegionId {
-        match self {
-            Self::Create { record } => record.id,
-            Self::Update { record, .. } => record.id,
-            Self::DeleteEmpty { region, .. } => *region,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum GroundCoverRegionWriteCommit {
-    Created(SourceGroundCoverRegionRecord),
-    Updated(SourceGroundCoverRegionRecord),
-    Deleted(GroundCoverRegionId),
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum GroundCoverRegionWriteTransactionResult {
-    Committed(Vec<GroundCoverRegionWriteCommit>),
-    Conflict {
-        region: GroundCoverRegionId,
-        actual: Option<SourceGroundCoverRegionRecord>,
-    },
-    BlockedByCoverage {
-        region: GroundCoverRegionId,
-    },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum GroundCoverCatalogKey {
-    Visual(GroundCoverVisualId),
-    Preset(GroundCoverPresetId),
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum GroundCoverCatalogRecord {
-    Visual(SourceGroundCoverVisualRecord),
-    Preset(SourceGroundCoverPresetRecord),
-}
-
-impl GroundCoverCatalogRecord {
-    pub const fn key(&self) -> GroundCoverCatalogKey {
-        match self {
-            Self::Visual(record) => GroundCoverCatalogKey::Visual(record.id),
-            Self::Preset(record) => GroundCoverCatalogKey::Preset(record.id),
-        }
-    }
-
-    pub const fn source_revision(&self) -> i64 {
-        match self {
-            Self::Visual(record) => record.source_revision,
-            Self::Preset(record) => record.source_revision,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum GroundCoverCatalogWrite {
-    CreateVisual {
-        record: SourceGroundCoverVisualRecord,
-    },
-    UpdateVisual {
-        expected_source_revision: i64,
-        record: SourceGroundCoverVisualRecord,
-    },
-    DeleteVisual {
-        visual: GroundCoverVisualId,
-        expected_source_revision: i64,
-    },
-    CreatePreset {
-        record: SourceGroundCoverPresetRecord,
-    },
-    UpdatePreset {
-        expected_source_revision: i64,
-        record: SourceGroundCoverPresetRecord,
-    },
-    DeletePreset {
-        preset: GroundCoverPresetId,
-        expected_source_revision: i64,
-    },
-}
-
-impl GroundCoverCatalogWrite {
-    pub const fn key(&self) -> GroundCoverCatalogKey {
-        match self {
-            Self::CreateVisual { record } | Self::UpdateVisual { record, .. } => {
-                GroundCoverCatalogKey::Visual(record.id)
-            }
-            Self::DeleteVisual { visual, .. } => GroundCoverCatalogKey::Visual(*visual),
-            Self::CreatePreset { record } | Self::UpdatePreset { record, .. } => {
-                GroundCoverCatalogKey::Preset(record.id)
-            }
-            Self::DeletePreset { preset, .. } => GroundCoverCatalogKey::Preset(*preset),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum GroundCoverCatalogWriteCommit {
-    Created(GroundCoverCatalogRecord),
-    Updated(GroundCoverCatalogRecord),
-    Deleted(GroundCoverCatalogKey),
-}
-
-impl GroundCoverCatalogWriteCommit {
-    pub const fn source_revision(&self) -> Option<i64> {
-        match self {
-            Self::Created(record) | Self::Updated(record) => Some(record.source_revision()),
-            Self::Deleted(_) => None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GroundCoverCatalogDependency {
-    PresetRegions,
-    VisualPresets,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum GroundCoverCatalogWriteTransactionResult {
-    Committed(Vec<GroundCoverCatalogWriteCommit>),
-    Conflict {
-        key: GroundCoverCatalogKey,
-        actual: Option<GroundCoverCatalogRecord>,
-    },
-    BlockedByDependency {
-        key: GroundCoverCatalogKey,
-        dependency: GroundCoverCatalogDependency,
     },
 }
 
@@ -640,10 +346,8 @@ pub struct RuntimeBuild {
     pub terrain_profiles: Vec<TerrainProfile>,
     pub assets: Vec<AssetVariantRecord>,
     pub definitions: Vec<RuntimeObjectDefinition>,
-    pub ground_cover_species: Vec<GroundCoverSpecies>,
     pub dependencies: Vec<PageDependencyRecord>,
     pub definition_dependencies: Vec<PageObjectDefinitionRecord>,
-    pub ground_cover_species_dependencies: Vec<PageGroundCoverSpeciesRecord>,
     pub terrain_surface_dependencies: Vec<PageTerrainSurfaceRecord>,
 }
 
@@ -654,6 +358,7 @@ pub struct RuntimeManifest {
     pub content_hash: [u8; 32],
     pub default_world_space: WorldSpaceId,
     pub world_spaces: Vec<WorldSpaceRecord>,
+    pub vegetation_catalog: Option<VegetationCatalog>,
 }
 
 impl RuntimeManifest {
@@ -798,12 +503,6 @@ pub struct PageObjectDefinitionRecord {
 }
 
 #[derive(Debug, Clone)]
-pub struct PageGroundCoverSpeciesRecord {
-    pub page: PageKey,
-    pub species: GroundCoverSpeciesId,
-}
-
-#[derive(Debug, Clone)]
 pub struct PageTerrainSurfaceRecord {
     pub page: PageKey,
     pub surface: TerrainSurfaceId,
@@ -853,35 +552,96 @@ pub fn write_project_database(path: &Path, document: &ProjectDocument) -> Result
 ///
 /// Runtime databases are immutable publication artifacts and are never migrated in place.
 pub fn migrate_project_database(path: &Path) -> Result<bool, WorldDbError> {
-    let mut connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+    let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
     connection.execute_batch("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 1000;")?;
     let actual: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     if actual == PROJECT_SCHEMA_VERSION {
         return Ok(false);
     }
-    if !(7..PROJECT_SCHEMA_VERSION).contains(&actual) {
-        return Err(WorldDbError::SchemaVersion {
-            database: "project",
-            expected: PROJECT_SCHEMA_VERSION,
-            actual,
+    Err(WorldDbError::SchemaVersion {
+        database: "project",
+        expected: PROJECT_SCHEMA_VERSION,
+        actual,
+    })
+}
+
+fn write_vegetation_catalog(
+    transaction: &Transaction<'_>,
+    catalog: Option<&VegetationCatalog>,
+) -> Result<(), WorldDbError> {
+    let Some(catalog) = catalog else {
+        return Ok(());
+    };
+    catalog.validate()?;
+    let payload = bincode::serde::encode_to_vec(
+        catalog,
+        bincode::config::standard()
+            .with_little_endian()
+            .with_fixed_int_encoding(),
+    )?;
+    transaction.execute(
+        "INSERT INTO vegetation_catalog(singleton, format_version, payload) \
+         VALUES (1, 1, ?1)",
+        [payload],
+    )?;
+    Ok(())
+}
+
+fn read_vegetation_catalog(
+    connection: &Connection,
+) -> Result<Option<VegetationCatalog>, WorldDbError> {
+    connection
+        .query_row(
+            "SELECT payload FROM vegetation_catalog WHERE singleton = 1 AND format_version = 1",
+            [],
+            |row| row.get::<_, Vec<u8>>(0),
+        )
+        .optional()?
+        .map(|payload| {
+            let (catalog, consumed): (VegetationCatalog, usize) =
+                bincode::serde::decode_from_slice(
+                    &payload,
+                    bincode::config::standard()
+                        .with_little_endian()
+                        .with_fixed_int_encoding()
+                        .with_limit::<{ MAX_DECODED_PAGE_BYTES as usize }>(),
+                )?;
+            if consumed != payload.len() {
+                return Err(WorldDbError::VegetationCatalogTrailingBytes {
+                    consumed,
+                    total: payload.len(),
+                });
+            }
+            catalog.validate()?;
+            Ok(catalog)
+        })
+        .transpose()
+}
+
+fn encode_vegetation_field_page(data: &VegetationFieldPageData) -> Result<Vec<u8>, WorldDbError> {
+    Ok(bincode::serde::encode_to_vec(
+        data,
+        bincode::config::standard()
+            .with_little_endian()
+            .with_fixed_int_encoding(),
+    )?)
+}
+
+fn decode_vegetation_field_page(payload: &[u8]) -> Result<VegetationFieldPageData, WorldDbError> {
+    let (data, consumed): (VegetationFieldPageData, usize) = bincode::serde::decode_from_slice(
+        payload,
+        bincode::config::standard()
+            .with_little_endian()
+            .with_fixed_int_encoding()
+            .with_limit::<{ MAX_DECODED_PAGE_BYTES as usize }>(),
+    )?;
+    if consumed != payload.len() {
+        return Err(WorldDbError::VegetationFieldPageTrailingBytes {
+            consumed,
+            total: payload.len(),
         });
     }
-
-    let transaction = connection.transaction()?;
-    if actual == 7 {
-        transaction.execute_batch(schema::PROJECT_MIGRATION_7_TO_8)?;
-    }
-    transaction.execute_batch(schema::PROJECT_MIGRATION_8_TO_9)?;
-    let violation_count: i64 =
-        transaction.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
-            row.get(0)
-        })?;
-    if violation_count != 0 {
-        return Err(WorldDbError::MigrationForeignKeyViolations(violation_count));
-    }
-    transaction.commit()?;
-    ensure_schema_version(&connection, PROJECT_SCHEMA_VERSION, "project")?;
-    Ok(true)
+    Ok(data)
 }
 
 fn write_project_document(
@@ -909,6 +669,7 @@ fn write_project_document(
         "INSERT INTO project_settings(singleton, default_world_space_id) VALUES (1, ?1)",
         [document.default_world_space.0],
     )?;
+    write_vegetation_catalog(transaction, document.vegetation_catalog.as_ref())?;
     for cell in &document.cells {
         transaction.execute(
             "INSERT INTO source_cells(world_space_id, cell_x, cell_z, height, source_revision) \
@@ -959,59 +720,37 @@ fn write_project_document(
             ],
         )?;
     }
-    write_source_ground_cover_catalog(
-        transaction,
-        &document.ground_cover_visuals,
-        &document.ground_cover_presets,
-    )?;
-    for layer in &document.ground_cover_layers {
+    for heightfield in &document.terrain_cell_heightfields {
         transaction.execute(
-            "INSERT INTO ground_cover_layers( \
-                layer_id, world_space_id, layer_key, display_name, enabled, sort_order, \
-                source_revision \
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO terrain_cell_heightfields( \
+                world_space_id, cell_x, cell_z, resolution, heights, source_revision \
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
-                layer.id.0.as_slice(),
-                layer.space.0,
-                layer.key,
-                layer.display_name,
-                layer.enabled,
-                layer.sort_order,
-                layer.source_revision,
+                heightfield.space.0,
+                heightfield.cell.x,
+                heightfield.cell.z,
+                i64::from(heightfield.resolution),
+                encode_f32_blob(&heightfield.heights),
+                heightfield.source_revision,
             ],
         )?;
     }
-    for region in &document.ground_cover_regions {
+    for page in &document.vegetation_field_pages {
+        let catalog = document
+            .vegetation_catalog
+            .as_ref()
+            .ok_or(WorldDbError::MissingVegetationCatalog)?;
+        page.data.validate(catalog)?;
         transaction.execute(
-            "INSERT INTO ground_cover_regions( \
-                region_id, layer_id, world_space_id, preset_id, display_name, enabled, \
-                density_multiplier, source_revision \
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO vegetation_field_pages( \
+                world_space_id, cell_x, cell_z, format_version, payload, source_revision \
+             ) VALUES (?1, ?2, ?3, 1, ?4, ?5)",
             params![
-                region.id.0.as_slice(),
-                region.layer.0.as_slice(),
-                region.space.0,
-                region.preset.0.as_slice(),
-                region.display_name,
-                region.enabled,
-                region.density_multiplier,
-                region.source_revision,
-            ],
-        )?;
-    }
-    for mask in &document.ground_cover_masks {
-        transaction.execute(
-            "INSERT INTO ground_cover_region_cell_masks( \
-                region_id, world_space_id, cell_x, cell_z, resolution, coverage, source_revision \
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![
-                mask.region.0.as_slice(),
-                mask.space.0,
-                mask.cell.x,
-                mask.cell.z,
-                i64::from(mask.resolution),
-                mask.coverage,
-                mask.source_revision,
+                page.space.0,
+                page.cell.x,
+                page.cell.z,
+                encode_vegetation_field_page(&page.data)?,
+                page.source_revision,
             ],
         )?;
     }
@@ -1083,135 +822,6 @@ fn write_project_document(
         )?;
     }
     Ok(())
-}
-
-fn write_source_ground_cover_catalog(
-    transaction: &Transaction<'_>,
-    visuals: &[SourceGroundCoverVisualRecord],
-    presets: &[SourceGroundCoverPresetRecord],
-) -> Result<(), WorldDbError> {
-    for visual in visuals {
-        transaction.execute(
-            "INSERT INTO ground_cover_visuals( \
-                visual_id, visual_key, display_name, visual_family, source_revision \
-             ) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![
-                visual.id.0.as_slice(),
-                visual.key,
-                visual.display_name,
-                visual.definition.family() as i64,
-                visual.source_revision,
-            ],
-        )?;
-        let SourceGroundCoverVisualDefinition::CardCluster(card) = &visual.definition;
-        let recipe = RecipeSqlValues::from(card.procedural_recipe);
-        transaction.execute(
-            "INSERT INTO ground_cover_card_visuals( \
-                visual_id, built_in_atlas_version, recipe_variant_count, recipe_blade_count, \
-                recipe_seed, recipe_minimum_blade_height, recipe_maximum_blade_height, \
-                recipe_base_jitter, recipe_minimum_blade_half_width, \
-                recipe_maximum_blade_half_width, recipe_maximum_lean, recipe_maximum_curve, \
-                recipe_maximum_s_curve, bottom_color_r, bottom_color_g, \
-                bottom_color_b, top_color_r, top_color_g, top_color_b, minimum_card_height, \
-                maximum_card_height, minimum_card_width, maximum_card_width, \
-                flattened_card_probability, maximum_wind_displacement \
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, \
-                       ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
-            params![
-                visual.id.0.as_slice(),
-                i64::from(card.built_in_atlas_version),
-                recipe.variant_count,
-                recipe.blade_count,
-                recipe.seed,
-                recipe.minimum_blade_height,
-                recipe.maximum_blade_height,
-                recipe.base_jitter,
-                recipe.minimum_blade_half_width,
-                recipe.maximum_blade_half_width,
-                recipe.maximum_lean,
-                recipe.maximum_curve,
-                recipe.maximum_s_curve,
-                card.bottom_color[0],
-                card.bottom_color[1],
-                card.bottom_color[2],
-                card.top_color[0],
-                card.top_color[1],
-                card.top_color[2],
-                card.minimum_card_height,
-                card.maximum_card_height,
-                card.minimum_card_width,
-                card.maximum_card_width,
-                card.flattened_card_probability,
-                card.maximum_wind_displacement,
-            ],
-        )?;
-    }
-    for preset in presets {
-        transaction.execute(
-            "INSERT INTO ground_cover_presets( \
-                preset_id, preset_key, display_name, enabled, visual_id, \
-                density_per_square_meter, seed, source_revision \
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![
-                preset.id.0.as_slice(),
-                preset.key,
-                preset.display_name,
-                preset.enabled,
-                preset.visual.0.as_slice(),
-                preset.density_per_square_meter,
-                i64::from(preset.seed),
-                preset.source_revision,
-            ],
-        )?;
-    }
-    Ok(())
-}
-
-struct RecipeSqlValues {
-    variant_count: Option<i64>,
-    blade_count: Option<i64>,
-    seed: Option<i64>,
-    minimum_blade_height: Option<f32>,
-    maximum_blade_height: Option<f32>,
-    base_jitter: Option<f32>,
-    minimum_blade_half_width: Option<f32>,
-    maximum_blade_half_width: Option<f32>,
-    maximum_lean: Option<f32>,
-    maximum_curve: Option<f32>,
-    maximum_s_curve: Option<f32>,
-}
-
-impl From<Option<GroundCoverBladeRecipe>> for RecipeSqlValues {
-    fn from(recipe: Option<GroundCoverBladeRecipe>) -> Self {
-        let Some(recipe) = recipe else {
-            return Self {
-                variant_count: None,
-                blade_count: None,
-                seed: None,
-                minimum_blade_height: None,
-                maximum_blade_height: None,
-                base_jitter: None,
-                minimum_blade_half_width: None,
-                maximum_blade_half_width: None,
-                maximum_lean: None,
-                maximum_curve: None,
-                maximum_s_curve: None,
-            };
-        };
-        Self {
-            variant_count: Some(i64::from(recipe.variant_count)),
-            blade_count: Some(i64::from(recipe.blade_count)),
-            seed: Some(i64::from(recipe.seed)),
-            minimum_blade_height: Some(recipe.minimum_blade_height),
-            maximum_blade_height: Some(recipe.maximum_blade_height),
-            base_jitter: Some(recipe.base_jitter),
-            minimum_blade_half_width: Some(recipe.minimum_blade_half_width),
-            maximum_blade_half_width: Some(recipe.maximum_blade_half_width),
-            maximum_lean: Some(recipe.maximum_lean),
-            maximum_curve: Some(recipe.maximum_curve),
-            maximum_s_curve: Some(recipe.maximum_s_curve),
-        }
-    }
 }
 
 fn write_terrain_catalog(
@@ -1296,45 +906,6 @@ fn write_terrain_catalog(
     Ok(())
 }
 
-fn write_ground_cover_species(
-    transaction: &Transaction<'_>,
-    species: &[GroundCoverSpecies],
-) -> Result<(), WorldDbError> {
-    for species in species {
-        transaction.execute(
-            "INSERT INTO ground_cover_species( \
-                species_id, species_key, bottom_color_r, bottom_color_g, bottom_color_b, \
-                top_color_r, top_color_g, top_color_b, minimum_card_height, \
-                maximum_card_height, minimum_card_width, maximum_card_width, \
-                flattened_card_probability, maximum_wind_displacement, artwork_resolution, \
-                artwork_variant_count, artwork_mip_level_count, artwork_coverage_mips \
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, \
-                       ?15, ?16, ?17, ?18)",
-            params![
-                species.id.0.as_slice(),
-                species.key,
-                species.bottom_color[0],
-                species.bottom_color[1],
-                species.bottom_color[2],
-                species.top_color[0],
-                species.top_color[1],
-                species.top_color[2],
-                species.minimum_card_height,
-                species.maximum_card_height,
-                species.minimum_card_width,
-                species.maximum_card_width,
-                species.flattened_card_probability,
-                species.maximum_wind_displacement,
-                i64::from(species.artwork.resolution),
-                i64::from(species.artwork.variant_count),
-                i64::from(species.artwork.mip_level_count),
-                species.artwork.coverage_mips,
-            ],
-        )?;
-    }
-    Ok(())
-}
-
 pub fn read_project_database(path: &Path) -> Result<ProjectDocument, WorldDbError> {
     let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     ensure_schema_version(&connection, PROJECT_SCHEMA_VERSION, "project")?;
@@ -1345,6 +916,7 @@ pub fn read_project_database(path: &Path) -> Result<ProjectDocument, WorldDbErro
         [],
         |row| Ok(WorldSpaceId(row.get(0)?)),
     )?;
+    let vegetation_catalog = read_vegetation_catalog(&connection)?;
     let mut statement = connection.prepare(
         "SELECT world_space_id, cell_x, cell_z, height, source_revision \
          FROM source_cells ORDER BY world_space_id, cell_x, cell_z",
@@ -1405,55 +977,62 @@ pub fn read_project_database(path: &Path) -> Result<ProjectDocument, WorldDbErro
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
-
-    let ground_cover_visuals = query_all_source_ground_cover_visuals(&connection)?;
-    let ground_cover_presets = query_all_source_ground_cover_presets(&connection)?;
     let mut statement = connection.prepare(
-        "SELECT layer_id, world_space_id, layer_key, display_name, enabled, sort_order, \
-                source_revision \
-         FROM ground_cover_layers ORDER BY layer_id",
+        "SELECT world_space_id, cell_x, cell_z, resolution, heights, source_revision \
+         FROM terrain_cell_heightfields \
+         ORDER BY world_space_id, cell_x, cell_z",
     )?;
-    let ground_cover_layers = statement
+    let terrain_cell_heightfields = statement
         .query_map([], |row| {
-            Ok(SourceGroundCoverLayerRecord {
-                id: GroundCoverLayerId(blob_array(row.get_ref(0)?.as_blob()?, "layer_id")?),
-                space: WorldSpaceId(row.get(1)?),
-                key: row.get(2)?,
-                display_name: row.get(3)?,
-                enabled: row.get(4)?,
-                sort_order: row.get(5)?,
-                source_revision: row.get(6)?,
-            })
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-    let mut statement = connection.prepare(
-        "SELECT region_id, layer_id, world_space_id, preset_id, display_name, enabled, \
-                density_multiplier, source_revision \
-         FROM ground_cover_regions ORDER BY region_id",
-    )?;
-    let ground_cover_regions = statement
-        .query_map([], source_ground_cover_region_from_row)?
-        .collect::<Result<Vec<_>, _>>()?;
-    let mut statement = connection.prepare(
-        "SELECT region_id, world_space_id, cell_x, cell_z, resolution, coverage, source_revision \
-         FROM ground_cover_region_cell_masks \
-         ORDER BY region_id, world_space_id, cell_x, cell_z",
-    )?;
-    let ground_cover_masks = statement
-        .query_map([], |row| {
-            Ok(SourceGroundCoverCellMaskRecord {
-                region: GroundCoverRegionId(blob_array(row.get_ref(0)?.as_blob()?, "region_id")?),
-                space: WorldSpaceId(row.get(1)?),
+            Ok(SourceTerrainCellHeightfieldRecord {
+                space: WorldSpaceId(row.get(0)?),
                 cell: CellCoord {
-                    x: row.get(2)?,
-                    z: row.get(3)?,
+                    x: row.get(1)?,
+                    z: row.get(2)?,
                 },
-                resolution: row.get::<_, i64>(4)? as u8,
-                coverage: row.get(5)?,
-                source_revision: row.get(6)?,
+                resolution: row.get::<_, i64>(3)? as u16,
+                heights: decode_f32_blob(row.get_ref(4)?.as_blob()?, "terrain heights")?,
+                source_revision: row.get(5)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
+    let mut statement = connection.prepare(
+        "SELECT world_space_id, cell_x, cell_z, payload, source_revision \
+         FROM vegetation_field_pages WHERE format_version = 1 \
+         ORDER BY world_space_id, cell_x, cell_z",
+    )?;
+    let vegetation_field_pages = statement
+        .query_map([], |row| {
+            let payload = row.get::<_, Vec<u8>>(3)?;
+            Ok((
+                WorldSpaceId(row.get(0)?),
+                CellCoord {
+                    x: row.get(1)?,
+                    z: row.get(2)?,
+                },
+                payload,
+                row.get(4)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .map(|(space, cell, payload, source_revision)| {
+            Ok(SourceVegetationFieldPageRecord {
+                space,
+                cell,
+                data: decode_vegetation_field_page(&payload)?,
+                source_revision,
+            })
+        })
+        .collect::<Result<Vec<_>, WorldDbError>>()?;
+    if !vegetation_field_pages.is_empty() {
+        let catalog = vegetation_catalog
+            .as_ref()
+            .ok_or(WorldDbError::MissingVegetationCatalog)?;
+        for page in &vegetation_field_pages {
+            page.data.validate(catalog)?;
+        }
+    }
 
     let mut statement = connection.prepare(
         "SELECT asset_id, asset_key, kind, source_uri FROM source_assets ORDER BY asset_id",
@@ -1545,6 +1124,7 @@ pub fn read_project_database(path: &Path) -> Result<ProjectDocument, WorldDbErro
     Ok(ProjectDocument {
         default_world_space,
         world_spaces,
+        vegetation_catalog,
         cells,
         terrain_surfaces,
         terrain_texture_sets,
@@ -1552,11 +1132,8 @@ pub fn read_project_database(path: &Path) -> Result<ProjectDocument, WorldDbErro
         terrain_profiles,
         terrain_cell_surface_slots,
         terrain_cell_weight_pages,
-        ground_cover_visuals,
-        ground_cover_presets,
-        ground_cover_layers,
-        ground_cover_regions,
-        ground_cover_masks,
+        terrain_cell_heightfields,
+        vegetation_field_pages,
         assets,
         asset_variants,
         definitions,
@@ -1676,142 +1253,6 @@ impl ProjectReader {
         let truncated = records.len() > maximum_records;
         records.truncate(maximum_records);
         Ok(SourceTerrainCellWeightPageQuery { records, truncated })
-    }
-
-    pub fn read_ground_cover_masks_in_cells(
-        &self,
-        space: WorldSpaceId,
-        minimum: CellCoord,
-        maximum: CellCoord,
-        maximum_records: usize,
-    ) -> Result<SourceGroundCoverCellMaskQuery, WorldDbError> {
-        validate_spatial_query(minimum, maximum, maximum_records)?;
-        let sql_limit = query_sql_limit(maximum_records)?;
-        let mut statement = self.connection.prepare_cached(
-            "SELECT region_id, world_space_id, cell_x, cell_z, resolution, coverage, \
-                    source_revision \
-             FROM ground_cover_region_cell_masks \
-             WHERE world_space_id = ?1 \
-               AND cell_x BETWEEN ?2 AND ?3 \
-               AND cell_z BETWEEN ?4 AND ?5 \
-             ORDER BY cell_x, cell_z, region_id \
-             LIMIT ?6",
-        )?;
-        let mut records = statement
-            .query_map(
-                params![
-                    space.0, minimum.x, maximum.x, minimum.z, maximum.z, sql_limit
-                ],
-                source_ground_cover_mask_from_row,
-            )?
-            .collect::<Result<Vec<_>, _>>()?;
-        let truncated = records.len() > maximum_records;
-        records.truncate(maximum_records);
-        Ok(SourceGroundCoverCellMaskQuery { records, truncated })
-    }
-
-    pub fn read_ground_cover_layers(
-        &self,
-        space: WorldSpaceId,
-        maximum_records: usize,
-    ) -> Result<Vec<SourceGroundCoverLayerRecord>, WorldDbError> {
-        if maximum_records == 0 {
-            return Err(WorldDbError::InvalidQueryLimit);
-        }
-        let sql_limit = query_sql_limit(maximum_records)?;
-        let mut statement = self.connection.prepare_cached(
-            "SELECT layer_id, world_space_id, layer_key, display_name, enabled, sort_order, \
-                    source_revision \
-             FROM ground_cover_layers \
-             WHERE world_space_id = ?1 \
-             ORDER BY sort_order, layer_key, layer_id \
-             LIMIT ?2",
-        )?;
-        statement
-            .query_map(
-                params![space.0, sql_limit],
-                source_ground_cover_layer_from_row,
-            )?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(Into::into)
-    }
-
-    pub fn read_ground_cover_regions(
-        &self,
-        space: WorldSpaceId,
-        maximum_records: usize,
-    ) -> Result<Vec<SourceGroundCoverRegionRecord>, WorldDbError> {
-        if maximum_records == 0 {
-            return Err(WorldDbError::InvalidQueryLimit);
-        }
-        let sql_limit = query_sql_limit(maximum_records)?;
-        let mut statement = self.connection.prepare_cached(
-            "SELECT region_id, layer_id, world_space_id, preset_id, display_name, enabled, \
-                    density_multiplier, source_revision \
-             FROM ground_cover_regions \
-             WHERE world_space_id = ?1 \
-             ORDER BY layer_id, display_name, region_id \
-             LIMIT ?2",
-        )?;
-        statement
-            .query_map(
-                params![space.0, sql_limit],
-                source_ground_cover_region_from_row,
-            )?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(Into::into)
-    }
-
-    pub fn read_ground_cover_presets(
-        &self,
-        maximum_records: usize,
-    ) -> Result<Vec<SourceGroundCoverPresetRecord>, WorldDbError> {
-        if maximum_records == 0 {
-            return Err(WorldDbError::InvalidQueryLimit);
-        }
-        let sql_limit = query_sql_limit(maximum_records)?;
-        let mut statement = self.connection.prepare_cached(
-            "SELECT preset_id, preset_key, display_name, enabled, visual_id, \
-                    density_per_square_meter, seed, source_revision \
-             FROM ground_cover_presets \
-             ORDER BY preset_key, preset_id \
-             LIMIT ?1",
-        )?;
-        statement
-            .query_map([sql_limit], source_ground_cover_preset_from_row)?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(Into::into)
-    }
-
-    pub fn read_ground_cover_visuals(
-        &self,
-        maximum_records: usize,
-    ) -> Result<Vec<SourceGroundCoverVisualRecord>, WorldDbError> {
-        if maximum_records == 0 {
-            return Err(WorldDbError::InvalidQueryLimit);
-        }
-        let sql_limit = query_sql_limit(maximum_records)?;
-        let mut statement = self.connection.prepare_cached(
-            "SELECT v.visual_id, v.visual_key, v.display_name, v.visual_family, \
-                    v.source_revision, c.built_in_atlas_version, c.recipe_variant_count, \
-                    c.recipe_blade_count, c.recipe_seed, c.recipe_minimum_blade_height, \
-                    c.recipe_maximum_blade_height, c.recipe_base_jitter, \
-                    c.recipe_minimum_blade_half_width, c.recipe_maximum_blade_half_width, \
-                    c.recipe_maximum_lean, c.recipe_maximum_curve, c.recipe_maximum_s_curve, \
-                    c.bottom_color_r, \
-                    c.bottom_color_g, c.bottom_color_b, c.top_color_r, c.top_color_g, \
-                    c.top_color_b, c.minimum_card_height, c.maximum_card_height, \
-                    c.minimum_card_width, c.maximum_card_width, \
-                    c.flattened_card_probability, c.maximum_wind_displacement \
-             FROM ground_cover_visuals v \
-             JOIN ground_cover_card_visuals c ON c.visual_id = v.visual_id \
-             ORDER BY v.visual_key, v.visual_id \
-             LIMIT ?1",
-        )?;
-        statement
-            .query_map([sql_limit], source_ground_cover_visual_from_row)?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(Into::into)
     }
 
     pub fn read_objects_in_cells(
@@ -2288,462 +1729,6 @@ impl ProjectWriter {
         Ok(ObjectWriteTransactionResult::Committed(commits))
     }
 
-    /// Creates regions and deletes only regions whose coverage is empty. The emptiness check and
-    /// delete share the same SQLite transaction, so a bounded editor query can never accidentally
-    /// cascade masks that were outside its loaded window.
-    pub fn apply_ground_cover_region_transaction(
-        &mut self,
-        writes: &[GroundCoverRegionWrite],
-    ) -> Result<GroundCoverRegionWriteTransactionResult, WorldDbError> {
-        if writes.is_empty() || writes.len() > MAX_GROUND_COVER_REGION_WRITES_PER_TRANSACTION {
-            return Err(WorldDbError::InvalidGroundCoverRegionTransaction);
-        }
-        let mut regions = HashSet::with_capacity(writes.len());
-        if writes.iter().any(|write| !regions.insert(write.region())) {
-            return Err(WorldDbError::InvalidGroundCoverRegionTransaction);
-        }
-        for write in writes {
-            validate_ground_cover_region_write(write)?;
-        }
-
-        let transaction = self.connection.transaction()?;
-        let mut commits = Vec::with_capacity(writes.len());
-        for write in writes {
-            match write {
-                GroundCoverRegionWrite::Create { record } => {
-                    let actual = read_ground_cover_region(&transaction, record.id)?;
-                    if actual.is_some() {
-                        transaction.rollback()?;
-                        return Ok(GroundCoverRegionWriteTransactionResult::Conflict {
-                            region: record.id,
-                            actual,
-                        });
-                    }
-                    let valid_references: bool = transaction.query_row(
-                        "SELECT EXISTS( \
-                            SELECT 1 FROM ground_cover_layers \
-                            WHERE layer_id = ?1 AND world_space_id = ?2 \
-                         ) AND EXISTS( \
-                            SELECT 1 FROM ground_cover_presets WHERE preset_id = ?3 \
-                         )",
-                        params![
-                            record.layer.0.as_slice(),
-                            record.space.0,
-                            record.preset.0.as_slice(),
-                        ],
-                        |row| row.get(0),
-                    )?;
-                    if !valid_references {
-                        transaction.rollback()?;
-                        return Err(WorldDbError::InvalidGroundCoverRegionRecord);
-                    }
-                    let source_revision = record.source_revision.saturating_add(1);
-                    transaction.execute(
-                        "INSERT INTO ground_cover_regions( \
-                            region_id, layer_id, world_space_id, preset_id, display_name, enabled, \
-                            density_multiplier, source_revision \
-                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                        params![
-                            record.id.0.as_slice(),
-                            record.layer.0.as_slice(),
-                            record.space.0,
-                            record.preset.0.as_slice(),
-                            record.display_name,
-                            record.enabled,
-                            record.density_multiplier,
-                            source_revision,
-                        ],
-                    )?;
-                    let mut committed = record.clone();
-                    committed.source_revision = source_revision;
-                    commits.push(GroundCoverRegionWriteCommit::Created(committed));
-                }
-                GroundCoverRegionWrite::Update {
-                    expected_source_revision,
-                    record,
-                } => {
-                    let actual = read_ground_cover_region(&transaction, record.id)?;
-                    if actual.as_ref().map(|record| record.source_revision)
-                        != Some(*expected_source_revision)
-                    {
-                        transaction.rollback()?;
-                        return Ok(GroundCoverRegionWriteTransactionResult::Conflict {
-                            region: record.id,
-                            actual,
-                        });
-                    }
-                    let actual = actual.expect("a matching revision has an existing region");
-                    if actual.layer != record.layer || actual.space != record.space {
-                        transaction.rollback()?;
-                        return Err(WorldDbError::InvalidGroundCoverRegionRecord);
-                    }
-                    let preset_exists: bool = transaction.query_row(
-                        "SELECT EXISTS( \
-                            SELECT 1 FROM ground_cover_presets WHERE preset_id = ?1 \
-                         )",
-                        params![record.preset.0.as_slice()],
-                        |row| row.get(0),
-                    )?;
-                    if !preset_exists {
-                        transaction.rollback()?;
-                        return Err(WorldDbError::InvalidGroundCoverRegionRecord);
-                    }
-                    let updated = transaction.execute(
-                        "UPDATE ground_cover_regions \
-                         SET preset_id = ?1, display_name = ?2, enabled = ?3, \
-                             density_multiplier = ?4, source_revision = source_revision + 1 \
-                         WHERE region_id = ?5 AND source_revision = ?6",
-                        params![
-                            record.preset.0.as_slice(),
-                            record.display_name,
-                            record.enabled,
-                            record.density_multiplier,
-                            record.id.0.as_slice(),
-                            expected_source_revision,
-                        ],
-                    )?;
-                    debug_assert_eq!(updated, 1);
-                    let committed = read_ground_cover_region(&transaction, record.id)?
-                        .expect("an updated region remains present");
-                    commits.push(GroundCoverRegionWriteCommit::Updated(committed));
-                }
-                GroundCoverRegionWrite::DeleteEmpty {
-                    region,
-                    expected_source_revision,
-                } => {
-                    let actual = read_ground_cover_region(&transaction, *region)?;
-                    if actual.as_ref().map(|record| record.source_revision)
-                        != Some(*expected_source_revision)
-                    {
-                        transaction.rollback()?;
-                        return Ok(GroundCoverRegionWriteTransactionResult::Conflict {
-                            region: *region,
-                            actual,
-                        });
-                    }
-                    let has_coverage: bool = transaction.query_row(
-                        "SELECT EXISTS( \
-                            SELECT 1 FROM ground_cover_region_cell_masks \
-                            WHERE region_id = ?1 LIMIT 1 \
-                         )",
-                        params![region.0.as_slice()],
-                        |row| row.get(0),
-                    )?;
-                    if has_coverage {
-                        transaction.rollback()?;
-                        return Ok(GroundCoverRegionWriteTransactionResult::BlockedByCoverage {
-                            region: *region,
-                        });
-                    }
-                    let deleted = transaction.execute(
-                        "DELETE FROM ground_cover_regions \
-                         WHERE region_id = ?1 AND source_revision = ?2",
-                        params![region.0.as_slice(), expected_source_revision],
-                    )?;
-                    if deleted != 1 {
-                        let actual = read_ground_cover_region(&transaction, *region)?;
-                        transaction.rollback()?;
-                        return Ok(GroundCoverRegionWriteTransactionResult::Conflict {
-                            region: *region,
-                            actual,
-                        });
-                    }
-                    commits.push(GroundCoverRegionWriteCommit::Deleted(*region));
-                }
-            }
-        }
-        transaction.commit()?;
-        Ok(GroundCoverRegionWriteTransactionResult::Committed(commits))
-    }
-
-    /// Atomically creates, updates, or deletes bounded reusable ground-cover definitions.
-    ///
-    /// Callers order upserts visual-before-preset and deletions preset-before-visual. Every write
-    /// checks identity/revision before mutation; database-wide dependencies block deletion without
-    /// partially committing the batch.
-    pub fn apply_ground_cover_catalog_transaction(
-        &mut self,
-        writes: &[GroundCoverCatalogWrite],
-    ) -> Result<GroundCoverCatalogWriteTransactionResult, WorldDbError> {
-        if writes.is_empty() || writes.len() > MAX_GROUND_COVER_CATALOG_WRITES_PER_TRANSACTION {
-            return Err(WorldDbError::InvalidGroundCoverCatalogTransaction);
-        }
-        let mut keys = HashSet::with_capacity(writes.len());
-        if writes.iter().any(|write| !keys.insert(write.key())) {
-            return Err(WorldDbError::InvalidGroundCoverCatalogTransaction);
-        }
-        for write in writes {
-            validate_ground_cover_catalog_write(write)?;
-        }
-
-        let transaction = self.connection.transaction()?;
-        let mut commits = Vec::with_capacity(writes.len());
-        for write in writes {
-            let key = write.key();
-            let (expected_source_revision, actual) = match write {
-                GroundCoverCatalogWrite::CreateVisual { record } => (
-                    None,
-                    read_ground_cover_visual(&transaction, record.id)?
-                        .map(GroundCoverCatalogRecord::Visual),
-                ),
-                GroundCoverCatalogWrite::UpdateVisual {
-                    expected_source_revision,
-                    record,
-                } => (
-                    Some(*expected_source_revision),
-                    read_ground_cover_visual(&transaction, record.id)?
-                        .map(GroundCoverCatalogRecord::Visual),
-                ),
-                GroundCoverCatalogWrite::DeleteVisual {
-                    visual,
-                    expected_source_revision,
-                } => (
-                    Some(*expected_source_revision),
-                    read_ground_cover_visual(&transaction, *visual)?
-                        .map(GroundCoverCatalogRecord::Visual),
-                ),
-                GroundCoverCatalogWrite::CreatePreset { record } => (
-                    None,
-                    read_ground_cover_preset(&transaction, record.id)?
-                        .map(GroundCoverCatalogRecord::Preset),
-                ),
-                GroundCoverCatalogWrite::UpdatePreset {
-                    expected_source_revision,
-                    record,
-                } => (
-                    Some(*expected_source_revision),
-                    read_ground_cover_preset(&transaction, record.id)?
-                        .map(GroundCoverCatalogRecord::Preset),
-                ),
-                GroundCoverCatalogWrite::DeletePreset {
-                    preset,
-                    expected_source_revision,
-                } => (
-                    Some(*expected_source_revision),
-                    read_ground_cover_preset(&transaction, *preset)?
-                        .map(GroundCoverCatalogRecord::Preset),
-                ),
-            };
-            if actual
-                .as_ref()
-                .map(GroundCoverCatalogRecord::source_revision)
-                != expected_source_revision
-            {
-                transaction.rollback()?;
-                return Ok(GroundCoverCatalogWriteTransactionResult::Conflict { key, actual });
-            }
-
-            let commit = match write {
-                GroundCoverCatalogWrite::CreateVisual { record } => {
-                    let source_revision = record.source_revision.saturating_add(1);
-                    transaction.execute(
-                        "INSERT INTO ground_cover_visuals( \
-                            visual_id, visual_key, display_name, visual_family, source_revision \
-                         ) VALUES (?1, ?2, ?3, 0, ?4)",
-                        params![
-                            record.id.0.as_slice(),
-                            record.key,
-                            record.display_name,
-                            source_revision,
-                        ],
-                    )?;
-                    insert_ground_cover_card_visual(&transaction, record)?;
-                    let mut committed = record.clone();
-                    committed.source_revision = source_revision;
-                    GroundCoverCatalogWriteCommit::Created(GroundCoverCatalogRecord::Visual(
-                        committed,
-                    ))
-                }
-                GroundCoverCatalogWrite::UpdateVisual {
-                    expected_source_revision,
-                    record,
-                } => {
-                    let source_revision = expected_source_revision.saturating_add(1);
-                    let updated = transaction.execute(
-                        "UPDATE ground_cover_visuals \
-                         SET visual_key = ?1, display_name = ?2, \
-                             source_revision = ?3 \
-                         WHERE visual_id = ?4 AND source_revision = ?5",
-                        params![
-                            record.key,
-                            record.display_name,
-                            source_revision,
-                            record.id.0.as_slice(),
-                            expected_source_revision,
-                        ],
-                    )?;
-                    debug_assert_eq!(updated, 1);
-                    let SourceGroundCoverVisualDefinition::CardCluster(card) = &record.definition;
-                    let recipe = RecipeSqlValues::from(card.procedural_recipe);
-                    let updated = transaction.execute(
-                        "UPDATE ground_cover_card_visuals \
-                         SET built_in_atlas_version = ?1, \
-                             recipe_variant_count = ?2, recipe_blade_count = ?3, \
-                             recipe_seed = ?4, recipe_minimum_blade_height = ?5, \
-                             recipe_maximum_blade_height = ?6, recipe_base_jitter = ?7, \
-                             recipe_minimum_blade_half_width = ?8, \
-                             recipe_maximum_blade_half_width = ?9, recipe_maximum_lean = ?10, \
-                             recipe_maximum_curve = ?11, recipe_maximum_s_curve = ?12, \
-                             bottom_color_r = ?13, bottom_color_g = ?14, bottom_color_b = ?15, \
-                             top_color_r = ?16, top_color_g = ?17, top_color_b = ?18, \
-                             minimum_card_height = ?19, maximum_card_height = ?20, \
-                             minimum_card_width = ?21, maximum_card_width = ?22, \
-                             flattened_card_probability = ?23, \
-                             maximum_wind_displacement = ?24 \
-                         WHERE visual_id = ?25",
-                        params![
-                            i64::from(card.built_in_atlas_version),
-                            recipe.variant_count,
-                            recipe.blade_count,
-                            recipe.seed,
-                            recipe.minimum_blade_height,
-                            recipe.maximum_blade_height,
-                            recipe.base_jitter,
-                            recipe.minimum_blade_half_width,
-                            recipe.maximum_blade_half_width,
-                            recipe.maximum_lean,
-                            recipe.maximum_curve,
-                            recipe.maximum_s_curve,
-                            card.bottom_color[0],
-                            card.bottom_color[1],
-                            card.bottom_color[2],
-                            card.top_color[0],
-                            card.top_color[1],
-                            card.top_color[2],
-                            card.minimum_card_height,
-                            card.maximum_card_height,
-                            card.minimum_card_width,
-                            card.maximum_card_width,
-                            card.flattened_card_probability,
-                            card.maximum_wind_displacement,
-                            record.id.0.as_slice(),
-                        ],
-                    )?;
-                    debug_assert_eq!(updated, 1);
-                    let mut committed = record.clone();
-                    committed.source_revision = source_revision;
-                    GroundCoverCatalogWriteCommit::Updated(GroundCoverCatalogRecord::Visual(
-                        committed,
-                    ))
-                }
-                GroundCoverCatalogWrite::DeleteVisual { visual, .. } => {
-                    let has_presets: bool = transaction.query_row(
-                        "SELECT EXISTS( \
-                            SELECT 1 FROM ground_cover_presets WHERE visual_id = ?1 LIMIT 1 \
-                         )",
-                        params![visual.0.as_slice()],
-                        |row| row.get(0),
-                    )?;
-                    if has_presets {
-                        transaction.rollback()?;
-                        return Ok(
-                            GroundCoverCatalogWriteTransactionResult::BlockedByDependency {
-                                key,
-                                dependency: GroundCoverCatalogDependency::VisualPresets,
-                            },
-                        );
-                    }
-                    transaction.execute(
-                        "DELETE FROM ground_cover_visuals WHERE visual_id = ?1",
-                        params![visual.0.as_slice()],
-                    )?;
-                    GroundCoverCatalogWriteCommit::Deleted(key)
-                }
-                GroundCoverCatalogWrite::CreatePreset { record } => {
-                    if read_ground_cover_visual(&transaction, record.visual)?.is_none() {
-                        transaction.rollback()?;
-                        return Err(WorldDbError::InvalidGroundCoverCatalogRecord);
-                    }
-                    let source_revision = record.source_revision.saturating_add(1);
-                    transaction.execute(
-                        "INSERT INTO ground_cover_presets( \
-                            preset_id, preset_key, display_name, enabled, visual_id, \
-                            density_per_square_meter, seed, source_revision \
-                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                        params![
-                            record.id.0.as_slice(),
-                            record.key,
-                            record.display_name,
-                            record.enabled,
-                            record.visual.0.as_slice(),
-                            record.density_per_square_meter,
-                            i64::from(record.seed),
-                            source_revision,
-                        ],
-                    )?;
-                    let mut committed = record.clone();
-                    committed.source_revision = source_revision;
-                    GroundCoverCatalogWriteCommit::Created(GroundCoverCatalogRecord::Preset(
-                        committed,
-                    ))
-                }
-                GroundCoverCatalogWrite::UpdatePreset {
-                    expected_source_revision,
-                    record,
-                } => {
-                    if read_ground_cover_visual(&transaction, record.visual)?.is_none() {
-                        transaction.rollback()?;
-                        return Err(WorldDbError::InvalidGroundCoverCatalogRecord);
-                    }
-                    let source_revision = expected_source_revision.saturating_add(1);
-                    let updated = transaction.execute(
-                        "UPDATE ground_cover_presets \
-                         SET preset_key = ?1, display_name = ?2, enabled = ?3, visual_id = ?4, \
-                             density_per_square_meter = ?5, seed = ?6, source_revision = ?7 \
-                         WHERE preset_id = ?8 AND source_revision = ?9",
-                        params![
-                            record.key,
-                            record.display_name,
-                            record.enabled,
-                            record.visual.0.as_slice(),
-                            record.density_per_square_meter,
-                            i64::from(record.seed),
-                            source_revision,
-                            record.id.0.as_slice(),
-                            expected_source_revision,
-                        ],
-                    )?;
-                    debug_assert_eq!(updated, 1);
-                    let mut committed = record.clone();
-                    committed.source_revision = source_revision;
-                    GroundCoverCatalogWriteCommit::Updated(GroundCoverCatalogRecord::Preset(
-                        committed,
-                    ))
-                }
-                GroundCoverCatalogWrite::DeletePreset { preset, .. } => {
-                    let has_regions: bool = transaction.query_row(
-                        "SELECT EXISTS( \
-                            SELECT 1 FROM ground_cover_regions WHERE preset_id = ?1 LIMIT 1 \
-                         )",
-                        params![preset.0.as_slice()],
-                        |row| row.get(0),
-                    )?;
-                    if has_regions {
-                        transaction.rollback()?;
-                        return Ok(
-                            GroundCoverCatalogWriteTransactionResult::BlockedByDependency {
-                                key,
-                                dependency: GroundCoverCatalogDependency::PresetRegions,
-                            },
-                        );
-                    }
-                    transaction.execute(
-                        "DELETE FROM ground_cover_presets WHERE preset_id = ?1",
-                        params![preset.0.as_slice()],
-                    )?;
-                    GroundCoverCatalogWriteCommit::Deleted(key)
-                }
-            };
-            commits.push(commit);
-        }
-        transaction.commit()?;
-        Ok(GroundCoverCatalogWriteTransactionResult::Committed(commits))
-    }
-
-    /// Atomically writes bounded terrain-weight and ground-cover-mask records.
-    ///
-    /// `expected_source_revision = None` means the caller expects the key not to exist. Every
-    /// mismatch returns the current record and rolls back all earlier writes in the batch.
     pub fn apply_dense_source_transaction(
         &mut self,
         writes: &[DenseSourceWrite],
@@ -2771,14 +1756,6 @@ impl ProjectWriter {
                     *expected_source_revision,
                     read_terrain_weights(&transaction, record.space, record.cell, record.page)?
                         .map(DenseSourceRecord::TerrainWeights),
-                ),
-                DenseSourceWrite::GroundCoverMask {
-                    expected_source_revision,
-                    record,
-                } => (
-                    *expected_source_revision,
-                    read_ground_cover_mask(&transaction, record.region, record.space, record.cell)?
-                        .map(DenseSourceRecord::GroundCoverMask),
                 ),
             };
             let actual_revision = actual.as_ref().map(dense_source_revision);
@@ -2812,29 +1789,6 @@ impl ProjectWriter {
                     committed.source_revision = source_revision;
                     DenseSourceRecord::TerrainWeights(committed)
                 }
-                DenseSourceWrite::GroundCoverMask { record, .. } => {
-                    transaction.execute(
-                        "INSERT INTO ground_cover_region_cell_masks( \
-                            region_id, world_space_id, cell_x, cell_z, resolution, coverage, \
-                            source_revision \
-                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
-                         ON CONFLICT(region_id, world_space_id, cell_x, cell_z) DO UPDATE SET \
-                            resolution = excluded.resolution, coverage = excluded.coverage, \
-                            source_revision = excluded.source_revision",
-                        params![
-                            record.region.0.as_slice(),
-                            record.space.0,
-                            record.cell.x,
-                            record.cell.z,
-                            i64::from(record.resolution),
-                            record.coverage.as_slice(),
-                            source_revision,
-                        ],
-                    )?;
-                    let mut committed = record.clone();
-                    committed.source_revision = source_revision;
-                    DenseSourceRecord::GroundCoverMask(committed)
-                }
             };
             commits.push(commit);
         }
@@ -2846,7 +1800,6 @@ impl ProjectWriter {
 fn dense_source_revision(record: &DenseSourceRecord) -> i64 {
     match record {
         DenseSourceRecord::TerrainWeights(record) => record.source_revision,
-        DenseSourceRecord::GroundCoverMask(record) => record.source_revision,
     }
 }
 
@@ -2868,256 +1821,6 @@ fn read_terrain_weights(
         .map_err(Into::into)
 }
 
-fn read_ground_cover_mask(
-    transaction: &Transaction<'_>,
-    region: GroundCoverRegionId,
-    space: WorldSpaceId,
-    cell: CellCoord,
-) -> Result<Option<SourceGroundCoverCellMaskRecord>, WorldDbError> {
-    transaction
-        .query_row(
-            "SELECT region_id, world_space_id, cell_x, cell_z, resolution, coverage, \
-                    source_revision \
-             FROM ground_cover_region_cell_masks \
-             WHERE region_id = ?1 AND world_space_id = ?2 AND cell_x = ?3 AND cell_z = ?4",
-            params![region.0.as_slice(), space.0, cell.x, cell.z],
-            source_ground_cover_mask_from_row,
-        )
-        .optional()
-        .map_err(Into::into)
-}
-
-fn read_ground_cover_region(
-    transaction: &Transaction<'_>,
-    region: GroundCoverRegionId,
-) -> Result<Option<SourceGroundCoverRegionRecord>, WorldDbError> {
-    transaction
-        .query_row(
-            "SELECT region_id, layer_id, world_space_id, preset_id, display_name, enabled, \
-                    density_multiplier, source_revision \
-             FROM ground_cover_regions WHERE region_id = ?1",
-            params![region.0.as_slice()],
-            source_ground_cover_region_from_row,
-        )
-        .optional()
-        .map_err(Into::into)
-}
-
-fn read_ground_cover_preset(
-    transaction: &Transaction<'_>,
-    preset: GroundCoverPresetId,
-) -> Result<Option<SourceGroundCoverPresetRecord>, WorldDbError> {
-    transaction
-        .query_row(
-            "SELECT preset_id, preset_key, display_name, enabled, visual_id, \
-                    density_per_square_meter, seed, source_revision \
-             FROM ground_cover_presets WHERE preset_id = ?1",
-            params![preset.0.as_slice()],
-            source_ground_cover_preset_from_row,
-        )
-        .optional()
-        .map_err(Into::into)
-}
-
-fn read_ground_cover_visual(
-    transaction: &Transaction<'_>,
-    visual: GroundCoverVisualId,
-) -> Result<Option<SourceGroundCoverVisualRecord>, WorldDbError> {
-    transaction
-        .query_row(
-            "SELECT v.visual_id, v.visual_key, v.display_name, v.visual_family, \
-                    v.source_revision, c.built_in_atlas_version, c.recipe_variant_count, \
-                    c.recipe_blade_count, c.recipe_seed, c.recipe_minimum_blade_height, \
-                    c.recipe_maximum_blade_height, c.recipe_base_jitter, \
-                    c.recipe_minimum_blade_half_width, c.recipe_maximum_blade_half_width, \
-                    c.recipe_maximum_lean, c.recipe_maximum_curve, c.recipe_maximum_s_curve, \
-                    c.bottom_color_r, \
-                    c.bottom_color_g, c.bottom_color_b, c.top_color_r, c.top_color_g, \
-                    c.top_color_b, c.minimum_card_height, c.maximum_card_height, \
-                    c.minimum_card_width, c.maximum_card_width, \
-                    c.flattened_card_probability, c.maximum_wind_displacement \
-             FROM ground_cover_visuals v \
-             JOIN ground_cover_card_visuals c ON c.visual_id = v.visual_id \
-             WHERE v.visual_id = ?1",
-            params![visual.0.as_slice()],
-            source_ground_cover_visual_from_row,
-        )
-        .optional()
-        .map_err(Into::into)
-}
-
-fn insert_ground_cover_card_visual(
-    transaction: &Transaction<'_>,
-    record: &SourceGroundCoverVisualRecord,
-) -> Result<(), WorldDbError> {
-    let SourceGroundCoverVisualDefinition::CardCluster(card) = &record.definition;
-    let recipe = RecipeSqlValues::from(card.procedural_recipe);
-    transaction.execute(
-        "INSERT INTO ground_cover_card_visuals( \
-            visual_id, built_in_atlas_version, recipe_variant_count, recipe_blade_count, \
-            recipe_seed, recipe_minimum_blade_height, recipe_maximum_blade_height, \
-            recipe_base_jitter, recipe_minimum_blade_half_width, \
-            recipe_maximum_blade_half_width, recipe_maximum_lean, recipe_maximum_curve, \
-            recipe_maximum_s_curve, bottom_color_r, bottom_color_g, bottom_color_b, \
-            top_color_r, top_color_g, top_color_b, minimum_card_height, maximum_card_height, \
-            minimum_card_width, maximum_card_width, flattened_card_probability, \
-            maximum_wind_displacement \
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, \
-                   ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
-        params![
-            record.id.0.as_slice(),
-            i64::from(card.built_in_atlas_version),
-            recipe.variant_count,
-            recipe.blade_count,
-            recipe.seed,
-            recipe.minimum_blade_height,
-            recipe.maximum_blade_height,
-            recipe.base_jitter,
-            recipe.minimum_blade_half_width,
-            recipe.maximum_blade_half_width,
-            recipe.maximum_lean,
-            recipe.maximum_curve,
-            recipe.maximum_s_curve,
-            card.bottom_color[0],
-            card.bottom_color[1],
-            card.bottom_color[2],
-            card.top_color[0],
-            card.top_color[1],
-            card.top_color[2],
-            card.minimum_card_height,
-            card.maximum_card_height,
-            card.minimum_card_width,
-            card.maximum_card_width,
-            card.flattened_card_probability,
-            card.maximum_wind_displacement,
-        ],
-    )?;
-    Ok(())
-}
-
-fn validate_ground_cover_region_write(write: &GroundCoverRegionWrite) -> Result<(), WorldDbError> {
-    match write {
-        GroundCoverRegionWrite::Create { record } => {
-            if record.display_name.trim().is_empty()
-                || !record.density_multiplier.is_finite()
-                || record.density_multiplier <= 0.0
-                || record.source_revision < 0
-            {
-                return Err(WorldDbError::InvalidGroundCoverRegionRecord);
-            }
-        }
-        GroundCoverRegionWrite::Update {
-            expected_source_revision,
-            record,
-        } => {
-            if *expected_source_revision != record.source_revision
-                || record.display_name.trim().is_empty()
-                || !record.density_multiplier.is_finite()
-                || record.density_multiplier <= 0.0
-                || record.source_revision < 0
-            {
-                return Err(WorldDbError::InvalidGroundCoverRegionRecord);
-            }
-        }
-        GroundCoverRegionWrite::DeleteEmpty {
-            expected_source_revision,
-            ..
-        } if *expected_source_revision < 0 => {
-            return Err(WorldDbError::InvalidGroundCoverRegionRecord);
-        }
-        GroundCoverRegionWrite::DeleteEmpty { .. } => {}
-    }
-    Ok(())
-}
-
-fn validate_ground_cover_catalog_write(
-    write: &GroundCoverCatalogWrite,
-) -> Result<(), WorldDbError> {
-    match write {
-        GroundCoverCatalogWrite::CreatePreset { record } => validate_ground_cover_preset(record)?,
-        GroundCoverCatalogWrite::UpdatePreset {
-            expected_source_revision,
-            record,
-        } => {
-            if *expected_source_revision != record.source_revision {
-                return Err(WorldDbError::InvalidGroundCoverCatalogRecord);
-            }
-            validate_ground_cover_preset(record)?;
-        }
-        GroundCoverCatalogWrite::DeletePreset {
-            expected_source_revision,
-            ..
-        }
-        | GroundCoverCatalogWrite::DeleteVisual {
-            expected_source_revision,
-            ..
-        } if *expected_source_revision < 0 => {
-            return Err(WorldDbError::InvalidGroundCoverCatalogRecord);
-        }
-        GroundCoverCatalogWrite::DeletePreset { .. }
-        | GroundCoverCatalogWrite::DeleteVisual { .. } => {}
-        GroundCoverCatalogWrite::CreateVisual { record } => validate_ground_cover_visual(record)?,
-        GroundCoverCatalogWrite::UpdateVisual {
-            expected_source_revision,
-            record,
-        } => {
-            if *expected_source_revision != record.source_revision {
-                return Err(WorldDbError::InvalidGroundCoverCatalogRecord);
-            }
-            validate_ground_cover_visual(record)?;
-        }
-    }
-    Ok(())
-}
-
-fn validate_ground_cover_preset(
-    record: &SourceGroundCoverPresetRecord,
-) -> Result<(), WorldDbError> {
-    if record.source_revision < 0
-        || record.key.trim().is_empty()
-        || record.display_name.trim().is_empty()
-        || !record.density_per_square_meter.is_finite()
-        || record.density_per_square_meter <= 0.0
-    {
-        return Err(WorldDbError::InvalidGroundCoverCatalogRecord);
-    }
-    Ok(())
-}
-
-fn validate_ground_cover_visual(
-    record: &SourceGroundCoverVisualRecord,
-) -> Result<(), WorldDbError> {
-    let SourceGroundCoverVisualDefinition::CardCluster(card) = &record.definition;
-    if record.source_revision < 0
-        || record.key.trim().is_empty()
-        || record.display_name.trim().is_empty()
-        || card.built_in_atlas_version != 1
-        || card
-            .procedural_recipe
-            .is_some_and(|recipe| !recipe.is_valid())
-        || !card
-            .bottom_color
-            .into_iter()
-            .chain(card.top_color)
-            .all(|component| component.is_finite() && (0.0..=1.0).contains(&component))
-        || !card.minimum_card_height.is_finite()
-        || card.minimum_card_height <= 0.0
-        || !card.maximum_card_height.is_finite()
-        || card.maximum_card_height < card.minimum_card_height
-        || !card.minimum_card_width.is_finite()
-        || card.minimum_card_width <= 0.0
-        || !card.maximum_card_width.is_finite()
-        || card.maximum_card_width < card.minimum_card_width
-        || !card.flattened_card_probability.is_finite()
-        || !(0.0..=1.0).contains(&card.flattened_card_probability)
-        || !card.maximum_wind_displacement.is_finite()
-        || card.maximum_wind_displacement < 0.0
-    {
-        return Err(WorldDbError::InvalidGroundCoverCatalogRecord);
-    }
-    Ok(())
-}
-
 fn validate_dense_source_write(write: &DenseSourceWrite) -> Result<(), WorldDbError> {
     let expected_revision = match write {
         DenseSourceWrite::TerrainWeights {
@@ -3130,20 +1833,6 @@ fn validate_dense_source_write(write: &DenseSourceWrite) -> Result<(), WorldDbEr
             if record.page > 1
                 || !(2..=257).contains(&record.resolution)
                 || record.rgba.len() != expected_length
-                || record.source_revision < 0
-            {
-                return Err(WorldDbError::InvalidDenseSourceRecord);
-            }
-            *expected_source_revision
-        }
-        DenseSourceWrite::GroundCoverMask {
-            expected_source_revision,
-            record,
-        } => {
-            let expected_length =
-                usize::from(record.resolution).saturating_mul(usize::from(record.resolution));
-            if !(1..=64).contains(&record.resolution)
-                || record.coverage.len() != expected_length
                 || record.source_revision < 0
             {
                 return Err(WorldDbError::InvalidDenseSourceRecord);
@@ -3181,51 +1870,6 @@ fn source_terrain_weights_from_row(
         page: row.get::<_, i64>(3)? as u8,
         resolution: row.get::<_, i64>(4)? as u16,
         rgba: row.get(5)?,
-        source_revision: row.get(6)?,
-    })
-}
-
-fn source_ground_cover_layer_from_row(
-    row: &rusqlite::Row<'_>,
-) -> rusqlite::Result<SourceGroundCoverLayerRecord> {
-    Ok(SourceGroundCoverLayerRecord {
-        id: GroundCoverLayerId(blob_array(row.get_ref(0)?.as_blob()?, "layer_id")?),
-        space: WorldSpaceId(row.get(1)?),
-        key: row.get(2)?,
-        display_name: row.get(3)?,
-        enabled: row.get(4)?,
-        sort_order: row.get(5)?,
-        source_revision: row.get(6)?,
-    })
-}
-
-fn source_ground_cover_region_from_row(
-    row: &rusqlite::Row<'_>,
-) -> rusqlite::Result<SourceGroundCoverRegionRecord> {
-    Ok(SourceGroundCoverRegionRecord {
-        id: GroundCoverRegionId(blob_array(row.get_ref(0)?.as_blob()?, "region_id")?),
-        layer: GroundCoverLayerId(blob_array(row.get_ref(1)?.as_blob()?, "layer_id")?),
-        space: WorldSpaceId(row.get(2)?),
-        preset: GroundCoverPresetId(blob_array(row.get_ref(3)?.as_blob()?, "preset_id")?),
-        display_name: row.get(4)?,
-        enabled: row.get(5)?,
-        density_multiplier: row.get(6)?,
-        source_revision: row.get(7)?,
-    })
-}
-
-fn source_ground_cover_mask_from_row(
-    row: &rusqlite::Row<'_>,
-) -> rusqlite::Result<SourceGroundCoverCellMaskRecord> {
-    Ok(SourceGroundCoverCellMaskRecord {
-        region: GroundCoverRegionId(blob_array(row.get_ref(0)?.as_blob()?, "region_id")?),
-        space: WorldSpaceId(row.get(1)?),
-        cell: CellCoord {
-            x: row.get(2)?,
-            z: row.get(3)?,
-        },
-        resolution: row.get::<_, i64>(4)? as u8,
-        coverage: row.get(5)?,
         source_revision: row.get(6)?,
     })
 }
@@ -3384,6 +2028,7 @@ fn write_runtime_build(
             manifest.default_world_space.0
         ],
     )?;
+    write_vegetation_catalog(transaction, manifest.vegetation_catalog.as_ref())?;
     write_terrain_catalog(
         transaction,
         &build.terrain_surfaces,
@@ -3442,7 +2087,6 @@ fn write_runtime_build(
             ],
         )?;
     }
-    write_ground_cover_species(transaction, &build.ground_cover_species)?;
     for page in &build.pages {
         transaction.execute(
             "INSERT INTO cell_pages( \
@@ -3493,21 +2137,6 @@ fn write_runtime_build(
                 dependency.page.domain as i64,
                 i64::from(dependency.page.lod),
                 dependency.definition.0.as_slice(),
-            ],
-        )?;
-    }
-    for dependency in &build.ground_cover_species_dependencies {
-        transaction.execute(
-            "INSERT INTO page_ground_cover_species( \
-                world_space_id, cell_x, cell_z, domain, lod, species_id \
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![
-                dependency.page.space.0,
-                dependency.page.cell.x,
-                dependency.page.cell.z,
-                dependency.page.domain as i64,
-                i64::from(dependency.page.lod),
-                dependency.species.0.as_slice(),
             ],
         )?;
     }
@@ -3719,40 +2348,6 @@ impl RuntimeReader {
             .map_err(Into::into)
     }
 
-    pub fn read_ground_cover_species(
-        &self,
-        key: PageKey,
-    ) -> Result<Vec<GroundCoverSpecies>, WorldDbError> {
-        let mut statement = self.connection.prepare_cached(
-            "SELECT s.species_id, s.species_key, \
-                    s.bottom_color_r, s.bottom_color_g, s.bottom_color_b, \
-                    s.top_color_r, s.top_color_g, s.top_color_b, \
-                    s.minimum_card_height, s.maximum_card_height, \
-                    s.minimum_card_width, s.maximum_card_width, \
-                    s.flattened_card_probability, s.maximum_wind_displacement, \
-                    s.artwork_resolution, s.artwork_variant_count, \
-                    s.artwork_mip_level_count, s.artwork_coverage_mips \
-             FROM page_ground_cover_species p \
-             JOIN ground_cover_species s ON s.species_id = p.species_id \
-             WHERE p.world_space_id = ?1 AND p.cell_x = ?2 AND p.cell_z = ?3 \
-               AND p.domain = ?4 AND p.lod = ?5 \
-             ORDER BY s.species_id",
-        )?;
-        statement
-            .query_map(
-                params![
-                    key.space.0,
-                    key.cell.x,
-                    key.cell.z,
-                    key.domain as i64,
-                    i64::from(key.lod),
-                ],
-                ground_cover_species_from_row,
-            )?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(Into::into)
-    }
-
     pub fn read_terrain_resources(
         &self,
         key: PageKey,
@@ -3808,131 +2403,6 @@ impl RuntimeReader {
             surfaces,
         })
     }
-}
-
-fn query_all_source_ground_cover_visuals(
-    connection: &Connection,
-) -> Result<Vec<SourceGroundCoverVisualRecord>, WorldDbError> {
-    let mut statement = connection.prepare(
-        "SELECT v.visual_id, v.visual_key, v.display_name, v.visual_family, v.source_revision, \
-                c.built_in_atlas_version, c.recipe_variant_count, c.recipe_blade_count, \
-                c.recipe_seed, c.recipe_minimum_blade_height, c.recipe_maximum_blade_height, \
-                c.recipe_base_jitter, c.recipe_minimum_blade_half_width, \
-                c.recipe_maximum_blade_half_width, c.recipe_maximum_lean, \
-                c.recipe_maximum_curve, c.recipe_maximum_s_curve, \
-                c.bottom_color_r, c.bottom_color_g, c.bottom_color_b, \
-                c.top_color_r, c.top_color_g, c.top_color_b, c.minimum_card_height, \
-                c.maximum_card_height, c.minimum_card_width, c.maximum_card_width, \
-                c.flattened_card_probability, c.maximum_wind_displacement \
-         FROM ground_cover_visuals v \
-         JOIN ground_cover_card_visuals c ON c.visual_id = v.visual_id \
-         ORDER BY v.visual_id",
-    )?;
-    Ok(statement
-        .query_map([], source_ground_cover_visual_from_row)?
-        .collect::<Result<Vec<_>, _>>()?)
-}
-
-fn source_ground_cover_visual_from_row(
-    row: &rusqlite::Row<'_>,
-) -> rusqlite::Result<SourceGroundCoverVisualRecord> {
-    let family =
-        SourceGroundCoverVisualFamily::try_from(row.get::<_, i64>(3)?).map_err(|error| {
-            rusqlite::Error::FromSqlConversionFailure(
-                3,
-                rusqlite::types::Type::Integer,
-                Box::new(error),
-            )
-        })?;
-    let definition = match family {
-        SourceGroundCoverVisualFamily::CardCluster => {
-            let procedural_recipe = if let Some(variant_count) = row.get::<_, Option<i64>>(6)? {
-                Some(GroundCoverBladeRecipe {
-                    variant_count: variant_count as u8,
-                    blade_count: row.get::<_, i64>(7)? as u16,
-                    seed: row.get::<_, i64>(8)? as u32,
-                    minimum_blade_height: row.get(9)?,
-                    maximum_blade_height: row.get(10)?,
-                    base_jitter: row.get(11)?,
-                    minimum_blade_half_width: row.get(12)?,
-                    maximum_blade_half_width: row.get(13)?,
-                    maximum_lean: row.get(14)?,
-                    maximum_curve: row.get(15)?,
-                    maximum_s_curve: row.get(16)?,
-                })
-            } else {
-                None
-            };
-            SourceGroundCoverVisualDefinition::CardCluster(SourceGroundCoverCardVisualRecord {
-                built_in_atlas_version: row.get::<_, i64>(5)? as u32,
-                procedural_recipe,
-                bottom_color: [row.get(17)?, row.get(18)?, row.get(19)?],
-                top_color: [row.get(20)?, row.get(21)?, row.get(22)?],
-                minimum_card_height: row.get(23)?,
-                maximum_card_height: row.get(24)?,
-                minimum_card_width: row.get(25)?,
-                maximum_card_width: row.get(26)?,
-                flattened_card_probability: row.get(27)?,
-                maximum_wind_displacement: row.get(28)?,
-            })
-        }
-    };
-    Ok(SourceGroundCoverVisualRecord {
-        id: GroundCoverVisualId(blob_array(row.get_ref(0)?.as_blob()?, "visual_id")?),
-        key: row.get(1)?,
-        display_name: row.get(2)?,
-        source_revision: row.get(4)?,
-        definition,
-    })
-}
-
-fn query_all_source_ground_cover_presets(
-    connection: &Connection,
-) -> Result<Vec<SourceGroundCoverPresetRecord>, WorldDbError> {
-    let mut statement = connection.prepare(
-        "SELECT preset_id, preset_key, display_name, enabled, visual_id, \
-                density_per_square_meter, seed, source_revision \
-         FROM ground_cover_presets ORDER BY preset_id",
-    )?;
-    Ok(statement
-        .query_map([], source_ground_cover_preset_from_row)?
-        .collect::<Result<Vec<_>, _>>()?)
-}
-
-fn source_ground_cover_preset_from_row(
-    row: &rusqlite::Row<'_>,
-) -> rusqlite::Result<SourceGroundCoverPresetRecord> {
-    Ok(SourceGroundCoverPresetRecord {
-        id: GroundCoverPresetId(blob_array(row.get_ref(0)?.as_blob()?, "preset_id")?),
-        key: row.get(1)?,
-        display_name: row.get(2)?,
-        enabled: row.get(3)?,
-        visual: GroundCoverVisualId(blob_array(row.get_ref(4)?.as_blob()?, "visual_id")?),
-        density_per_square_meter: row.get(5)?,
-        seed: row.get::<_, i64>(6)? as u32,
-        source_revision: row.get(7)?,
-    })
-}
-
-fn ground_cover_species_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<GroundCoverSpecies> {
-    Ok(GroundCoverSpecies {
-        id: GroundCoverSpeciesId(blob_array(row.get_ref(0)?.as_blob()?, "species_id")?),
-        key: row.get(1)?,
-        bottom_color: [row.get(2)?, row.get(3)?, row.get(4)?],
-        top_color: [row.get(5)?, row.get(6)?, row.get(7)?],
-        minimum_card_height: row.get(8)?,
-        maximum_card_height: row.get(9)?,
-        minimum_card_width: row.get(10)?,
-        maximum_card_width: row.get(11)?,
-        flattened_card_probability: row.get(12)?,
-        maximum_wind_displacement: row.get(13)?,
-        artwork: world::GroundCoverCardArtwork {
-            resolution: row.get::<_, i64>(14)? as u16,
-            variant_count: row.get::<_, i64>(15)? as u8,
-            mip_level_count: row.get::<_, i64>(16)? as u8,
-            coverage_mips: row.get(17)?,
-        },
-    })
 }
 
 fn query_all_terrain_surfaces(
@@ -4056,6 +2526,7 @@ fn query_world_spaces(connection: &Connection) -> Result<Vec<WorldSpaceRecord>, 
 
 fn read_runtime_manifest(connection: &Connection) -> Result<RuntimeManifest, WorldDbError> {
     let world_spaces = query_world_spaces(connection)?;
+    let vegetation_catalog = read_vegetation_catalog(connection)?;
     let manifest = connection.query_row(
         "SELECT schema_version, generation_id, content_hash, default_world_space_id \
          FROM runtime_metadata WHERE singleton = 1",
@@ -4067,6 +2538,7 @@ fn read_runtime_manifest(connection: &Connection) -> Result<RuntimeManifest, Wor
                 content_hash: blob_array(row.get_ref(2)?.as_blob()?, "content_hash")?,
                 default_world_space: WorldSpaceId(row.get(3)?),
                 world_spaces,
+                vegetation_catalog,
             })
         },
     )?;
@@ -4128,9 +2600,31 @@ fn blob_array<const N: usize>(bytes: &[u8], field: &'static str) -> rusqlite::Re
     })
 }
 
-#[derive(Debug, thiserror::Error)]
-#[error("unknown ground-cover visual family {0}")]
-pub struct UnknownGroundCoverVisualFamily(pub i64);
+fn encode_f32_blob(values: &[f32]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(std::mem::size_of_val(values));
+    for value in values {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    bytes
+}
+
+fn decode_f32_blob(bytes: &[u8], field: &'static str) -> rusqlite::Result<Vec<f32>> {
+    if !bytes.len().is_multiple_of(size_of::<f32>()) {
+        return Err(rusqlite::Error::FromSqlConversionFailure(
+            0,
+            rusqlite::types::Type::Blob,
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("{field} byte length must be divisible by four"),
+            )
+            .into(),
+        ));
+    }
+    Ok(bytes
+        .chunks_exact(size_of::<f32>())
+        .map(|bytes| f32::from_le_bytes(bytes.try_into().expect("four-byte chunk")))
+        .collect())
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum WorldDbError {
@@ -4140,10 +2634,22 @@ pub enum WorldDbError {
     Io(#[from] std::io::Error),
     #[error("page payload is invalid: {0}")]
     Payload(#[from] world::PagePayloadDecodeError),
+    #[error("vegetation catalog is invalid: {0}")]
+    VegetationCatalog(#[from] vegetation::CatalogValidationError),
+    #[error("vegetation field page is invalid: {0}")]
+    VegetationFieldPage(#[from] vegetation::PageValidationError),
+    #[error("vegetation data encoding failed: {0}")]
+    VegetationEncode(#[from] bincode::error::EncodeError),
+    #[error("vegetation data decoding failed: {0}")]
+    VegetationDecode(#[from] bincode::error::DecodeError),
+    #[error("vegetation catalog contains trailing bytes: decoded {consumed} of {total}")]
+    VegetationCatalogTrailingBytes { consumed: usize, total: usize },
+    #[error("vegetation field page contains trailing bytes: decoded {consumed} of {total}")]
+    VegetationFieldPageTrailingBytes { consumed: usize, total: usize },
+    #[error("vegetation field pages require a vegetation catalog")]
+    MissingVegetationCatalog,
     #[error("database already exists: {0}")]
     AlreadyExists(PathBuf),
-    #[error("project migration left {0} foreign-key violations")]
-    MigrationForeignKeyViolations(i64),
     #[error("{database} schema version is {actual}, expected {expected}")]
     SchemaVersion {
         database: &'static str,
@@ -4176,182 +2682,15 @@ pub enum WorldDbError {
     InvalidObjectTransform,
     #[error("object transaction must contain 1 to 256 unique object writes")]
     InvalidObjectTransaction,
-    #[error("dense source transaction must contain 1 to 64 unique terrain/mask writes")]
+    #[error("dense source transaction must contain 1 to 64 unique terrain writes")]
     InvalidDenseSourceTransaction,
     #[error("dense source record has an invalid page, resolution, payload length, or revision")]
     InvalidDenseSourceRecord,
-    #[error("ground-cover region transaction must contain 1 to 64 unique region writes")]
-    InvalidGroundCoverRegionTransaction,
-    #[error("ground-cover region record has an invalid name, density, or revision")]
-    InvalidGroundCoverRegionRecord,
-    #[error("ground-cover catalog transaction must contain 1 to 64 unique visual/preset writes")]
-    InvalidGroundCoverCatalogTransaction,
-    #[error("ground-cover visual or preset record has invalid editable values or revision")]
-    InvalidGroundCoverCatalogRecord,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use world::{
-        GameplayObjectInstance, GameplayObjectsPage, GroundCoverCluster, GroundCoverLayerId,
-        GroundCoverPage, GroundCoverPresetId, GroundCoverRegionId, GroundCoverSpecies,
-        GroundCoverSpeciesId, GroundCoverVisualId, TerrainRenderPage, encode_page_payload,
-    };
-
-    #[test]
-    fn project_schema_seven_migrates_ground_cover_without_touching_other_data() {
-        let directory = unique_test_directory();
-        fs::create_dir_all(&directory).unwrap();
-        let project_path = directory.join("project-v7.sqlite");
-        let connection = Connection::open(&project_path).unwrap();
-        connection
-            .execute_batch(
-                r#"
-                PRAGMA foreign_keys = ON;
-                CREATE TABLE world_spaces (
-                    id INTEGER PRIMARY KEY,
-                    name TEXT NOT NULL UNIQUE,
-                    cell_size REAL NOT NULL,
-                    minimum_y REAL NOT NULL,
-                    maximum_y REAL NOT NULL
-                ) STRICT;
-                CREATE TABLE source_cells (
-                    world_space_id INTEGER NOT NULL REFERENCES world_spaces(id),
-                    cell_x INTEGER NOT NULL,
-                    cell_z INTEGER NOT NULL,
-                    height REAL NOT NULL,
-                    source_revision INTEGER NOT NULL,
-                    PRIMARY KEY(world_space_id, cell_x, cell_z)
-                ) STRICT, WITHOUT ROWID;
-                CREATE TABLE ground_cover_species (
-                    species_id BLOB PRIMARY KEY,
-                    species_key TEXT NOT NULL UNIQUE,
-                    bottom_color_r REAL NOT NULL,
-                    bottom_color_g REAL NOT NULL,
-                    bottom_color_b REAL NOT NULL,
-                    top_color_r REAL NOT NULL,
-                    top_color_g REAL NOT NULL,
-                    top_color_b REAL NOT NULL,
-                    minimum_card_height REAL NOT NULL,
-                    maximum_card_height REAL NOT NULL,
-                    minimum_card_width REAL NOT NULL,
-                    maximum_card_width REAL NOT NULL,
-                    flattened_card_probability REAL NOT NULL,
-                    maximum_wind_displacement REAL NOT NULL
-                ) STRICT;
-                CREATE TABLE ground_cover_layers (
-                    layer_id BLOB PRIMARY KEY,
-                    world_space_id INTEGER NOT NULL REFERENCES world_spaces(id),
-                    layer_key TEXT NOT NULL,
-                    species_id BLOB NOT NULL REFERENCES ground_cover_species(species_id),
-                    density_per_square_meter REAL NOT NULL,
-                    seed INTEGER NOT NULL,
-                    UNIQUE(world_space_id, layer_key),
-                    UNIQUE(layer_id, world_space_id)
-                ) STRICT;
-                CREATE TABLE ground_cover_cell_masks (
-                    layer_id BLOB NOT NULL,
-                    world_space_id INTEGER NOT NULL,
-                    cell_x INTEGER NOT NULL,
-                    cell_z INTEGER NOT NULL,
-                    resolution INTEGER NOT NULL,
-                    coverage BLOB NOT NULL,
-                    source_revision INTEGER NOT NULL,
-                    PRIMARY KEY(layer_id, world_space_id, cell_x, cell_z),
-                    FOREIGN KEY(layer_id, world_space_id)
-                        REFERENCES ground_cover_layers(layer_id, world_space_id),
-                    FOREIGN KEY(world_space_id, cell_x, cell_z)
-                        REFERENCES source_cells(world_space_id, cell_x, cell_z)
-                ) STRICT, WITHOUT ROWID;
-                CREATE TABLE preserved_editor_data(value TEXT NOT NULL) STRICT;
-                PRAGMA user_version = 7;
-                "#,
-            )
-            .unwrap();
-        let species = [11_u8; 16];
-        let layer = [12_u8; 16];
-        connection
-            .execute(
-                "INSERT INTO world_spaces VALUES (1, 'test', 32.0, 0.0, 0.0)",
-                [],
-            )
-            .unwrap();
-        connection
-            .execute("INSERT INTO source_cells VALUES (1, 0, 0, 0.0, 4)", [])
-            .unwrap();
-        connection
-            .execute(
-                "INSERT INTO ground_cover_species VALUES ( \
-                    ?1, 'meadow', 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, \
-                    0.55, 0.78, 0.7, 1.4, 0.2, 0.22 \
-                 )",
-                [species.as_slice()],
-            )
-            .unwrap();
-        connection
-            .execute(
-                "INSERT INTO ground_cover_layers VALUES (?1, 1, 'meadow-layer', ?2, 5.0, 91)",
-                params![layer.as_slice(), species.as_slice()],
-            )
-            .unwrap();
-        connection
-            .execute(
-                "INSERT INTO ground_cover_cell_masks VALUES (?1, 1, 0, 0, 2, ?2, 7)",
-                params![layer.as_slice(), vec![255_u8, 128, 0, 64]],
-            )
-            .unwrap();
-        connection
-            .execute("INSERT INTO preserved_editor_data VALUES ('keep me')", [])
-            .unwrap();
-        drop(connection);
-
-        assert!(migrate_project_database(&project_path).unwrap());
-        assert!(!migrate_project_database(&project_path).unwrap());
-
-        let connection = Connection::open(&project_path).unwrap();
-        let schema_version: i64 = connection
-            .query_row("PRAGMA user_version", [], |row| row.get(0))
-            .unwrap();
-        assert_eq!(schema_version, PROJECT_SCHEMA_VERSION);
-        let preserved: String = connection
-            .query_row("SELECT value FROM preserved_editor_data", [], |row| {
-                row.get(0)
-            })
-            .unwrap();
-        assert_eq!(preserved, "keep me");
-        let visual_id: Vec<u8> = connection
-            .query_row("SELECT visual_id FROM ground_cover_visuals", [], |row| {
-                row.get(0)
-            })
-            .unwrap();
-        assert_eq!(visual_id, species);
-        let (preset_id, density, seed): (Vec<u8>, f32, i64) = connection
-            .query_row(
-                "SELECT preset_id, density_per_square_meter, seed FROM ground_cover_presets",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .unwrap();
-        assert_eq!(preset_id, layer);
-        assert_eq!(density, 5.0);
-        assert_eq!(seed, 91);
-        let (region_id, coverage): (Vec<u8>, Vec<u8>) = connection
-            .query_row(
-                "SELECT region_id, coverage FROM ground_cover_region_cell_masks",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .unwrap();
-        assert_eq!(region_id, layer);
-        assert_eq!(coverage, vec![255, 128, 0, 64]);
-        let violations: i64 = connection
-            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
-                row.get(0)
-            })
-            .unwrap();
-        assert_eq!(violations, 0);
-    }
 
     #[test]
     fn project_and_runtime_databases_are_distinct_and_readable() {
@@ -4363,1083 +2702,61 @@ mod tests {
             id: WorldSpaceId(1),
             name: "test".into(),
             cell_size: 32.0,
-            minimum_y: 0.0,
-            maximum_y: 0.0,
+            minimum_y: -8.0,
+            maximum_y: 16.0,
         };
-        let second_space = WorldSpaceRecord {
-            id: WorldSpaceId(2),
-            name: "second-test-space".into(),
-            cell_size: 16.0,
-            minimum_y: -4.0,
-            maximum_y: 8.0,
+        let project = ProjectDocument {
+            default_world_space: space.id,
+            world_spaces: vec![space.clone()],
+            vegetation_catalog: None,
+            cells: vec![SourceCellRecord {
+                space: space.id,
+                cell: CellCoord::ZERO,
+                height: 1.5,
+                source_revision: 1,
+            }],
+            terrain_surfaces: Vec::new(),
+            terrain_texture_sets: Vec::new(),
+            terrain_texture_layers: Vec::new(),
+            terrain_profiles: Vec::new(),
+            terrain_cell_surface_slots: Vec::new(),
+            terrain_cell_weight_pages: Vec::new(),
+            terrain_cell_heightfields: Vec::new(),
+            vegetation_field_pages: Vec::new(),
+            assets: Vec::new(),
+            asset_variants: Vec::new(),
+            definitions: Vec::new(),
+            objects: Vec::new(),
         };
-        let definition_id = ObjectDefinitionId([3; 16]);
-        let object_id = StableObjectId([5; 16]);
-        let second_object_id = StableObjectId([6; 16]);
-        let asset_id = AssetId([9; 32]);
-        let ground_cover_species_id = GroundCoverSpeciesId([11; 16]);
-        let ground_cover_visual_id = GroundCoverVisualId(ground_cover_species_id.0);
-        let ground_cover_preset_id = GroundCoverPresetId([15; 16]);
-        let ground_cover_layer_id = GroundCoverLayerId([12; 16]);
-        let ground_cover_region_id = GroundCoverRegionId([16; 16]);
-        let terrain_surface_id = TerrainSurfaceId([13; 16]);
-        let terrain_texture_set_id = TerrainTextureSetId([14; 16]);
-        let terrain_surface = TerrainSurface {
-            id: terrain_surface_id,
-            key: "test-grass".into(),
-            display_name: "Test grass".into(),
-            tile_size: 2.0,
-            anti_tiling: true,
-            normal_y_sign: 1.0,
-            normal_strength: 0.5,
-            roughness_min: 0.8,
-            roughness_max: 1.0,
-        };
-        let terrain_texture_set = TerrainTextureSet {
-            id: terrain_texture_set_id,
-            key: "test-terrain".into(),
-            base_color_universal_uri: "base-universal.ktx2".into(),
-            normal_material_universal_uri: "normal-universal.ktx2".into(),
-            macro_variation_universal_uri: "macro-universal.ktx2".into(),
-            base_color_astc_uri: "base-astc.ktx2".into(),
-            normal_material_astc_uri: "normal-astc.ktx2".into(),
-            macro_variation_astc_uri: "macro-astc.ktx2".into(),
-            universal_gpu_bytes: 1200,
-            astc_gpu_bytes: 600,
-        };
-        let ground_cover_species = GroundCoverSpecies {
-            id: ground_cover_species_id,
-            key: "test/meadow-grass".into(),
-            bottom_color: [0.04, 0.11, 0.03],
-            top_color: [0.18, 0.32, 0.10],
-            minimum_card_height: 0.55,
-            maximum_card_height: 0.78,
-            minimum_card_width: 0.7,
-            maximum_card_width: 1.4,
-            flattened_card_probability: 0.2,
-            maximum_wind_displacement: 0.2,
-            artwork: generate_ground_cover_card_artwork(GroundCoverBladeRecipe::built_in_v1()),
-        };
-        let ground_cover_visual = SourceGroundCoverVisualRecord {
-            id: ground_cover_visual_id,
-            key: ground_cover_species.key.clone(),
-            display_name: "Test meadow grass".into(),
-            source_revision: 1,
-            definition: SourceGroundCoverVisualDefinition::CardCluster(
-                SourceGroundCoverCardVisualRecord {
-                    built_in_atlas_version: 1,
-                    procedural_recipe: None,
-                    bottom_color: ground_cover_species.bottom_color,
-                    top_color: ground_cover_species.top_color,
-                    minimum_card_height: ground_cover_species.minimum_card_height,
-                    maximum_card_height: ground_cover_species.maximum_card_height,
-                    minimum_card_width: ground_cover_species.minimum_card_width,
-                    maximum_card_width: ground_cover_species.maximum_card_width,
-                    flattened_card_probability: ground_cover_species.flattened_card_probability,
-                    maximum_wind_displacement: ground_cover_species.maximum_wind_displacement,
-                },
-            ),
-        };
-        write_project_database(
-            &project_path,
-            &ProjectDocument {
+        write_project_database(&project_path, &project).unwrap();
+        let read_project = read_project_database(&project_path).unwrap();
+        assert_eq!(read_project.default_world_space, space.id);
+        assert_eq!(read_project.cells.len(), 1);
+
+        let runtime = RuntimeBuild {
+            manifest: RuntimeManifest {
+                schema_version: RUNTIME_SCHEMA_VERSION,
+                generation_id: "test-generation".into(),
+                content_hash: [7; 32],
                 default_world_space: space.id,
-                world_spaces: vec![space.clone(), second_space.clone()],
-                cells: vec![
-                    SourceCellRecord {
-                        space: space.id,
-                        cell: CellCoord::ZERO,
-                        height: 0.0,
-                        source_revision: 1,
-                    },
-                    SourceCellRecord {
-                        space: second_space.id,
-                        cell: CellCoord::ZERO,
-                        height: 2.0,
-                        source_revision: 1,
-                    },
-                ],
-                terrain_surfaces: vec![terrain_surface.clone()],
-                terrain_texture_sets: vec![terrain_texture_set.clone()],
-                terrain_texture_layers: vec![TerrainTextureLayer {
-                    texture_set: terrain_texture_set_id,
-                    surface: terrain_surface_id,
-                    layer: 0,
-                }],
-                terrain_profiles: vec![
-                    TerrainProfile {
-                        space: space.id,
-                        texture_set: terrain_texture_set_id,
-                        weight_resolution: 2,
-                        macro_scales: [8.0, 32.0, 128.0],
-                        macro_contrast: 1.25,
-                        macro_albedo_strength: 0.12,
-                    },
-                    TerrainProfile {
-                        space: second_space.id,
-                        texture_set: terrain_texture_set_id,
-                        weight_resolution: 2,
-                        macro_scales: [8.0, 32.0, 128.0],
-                        macro_contrast: 1.25,
-                        macro_albedo_strength: 0.12,
-                    },
-                ],
-                terrain_cell_surface_slots: vec![
-                    SourceTerrainCellSurfaceSlotRecord {
-                        space: space.id,
-                        cell: CellCoord::ZERO,
-                        slot: 0,
-                        surface: terrain_surface_id,
-                    },
-                    SourceTerrainCellSurfaceSlotRecord {
-                        space: second_space.id,
-                        cell: CellCoord::ZERO,
-                        slot: 0,
-                        surface: terrain_surface_id,
-                    },
-                ],
-                terrain_cell_weight_pages: Vec::new(),
-                ground_cover_visuals: vec![ground_cover_visual.clone()],
-                ground_cover_presets: vec![SourceGroundCoverPresetRecord {
-                    id: ground_cover_preset_id,
-                    key: "test/meadow-preset".into(),
-                    display_name: "Test meadow".into(),
-                    enabled: true,
-                    visual: ground_cover_visual_id,
-                    density_per_square_meter: 7.0,
-                    seed: 91,
-                    source_revision: 1,
-                }],
-                ground_cover_layers: vec![SourceGroundCoverLayerRecord {
-                    id: ground_cover_layer_id,
-                    space: space.id,
-                    key: "test/meadow".into(),
-                    display_name: "Test meadow layer".into(),
-                    enabled: true,
-                    sort_order: 0,
-                    source_revision: 1,
-                }],
-                ground_cover_regions: vec![SourceGroundCoverRegionRecord {
-                    id: ground_cover_region_id,
-                    layer: ground_cover_layer_id,
-                    space: space.id,
-                    preset: ground_cover_preset_id,
-                    display_name: "Test region".into(),
-                    enabled: true,
-                    density_multiplier: 1.0,
-                    source_revision: 1,
-                }],
-                ground_cover_masks: vec![SourceGroundCoverCellMaskRecord {
-                    region: ground_cover_region_id,
-                    space: space.id,
-                    cell: CellCoord::ZERO,
-                    resolution: 2,
-                    coverage: vec![255, 128, 0, 255],
-                    source_revision: 2,
-                }],
-                assets: vec![SourceAssetRecord {
-                    id: asset_id,
-                    key: "test/tree".into(),
-                    kind: "gltf-scene".into(),
-                    source_uri: "local/source/tree.fbx".into(),
-                }],
-                asset_variants: vec![SourceAssetVariantRecord {
-                    asset: asset_id,
-                    lod: 0,
-                    uri: "local/runtime/tree_lod0.gltf".into(),
-                    bounds: [2.0, 8.0, 2.0],
-                    gpu_bytes_estimate: 4096,
-                    shadow_policy: 1,
-                    minimum_screen_height: 0.0,
-                }],
-                definitions: vec![SourceObjectDefinitionRecord {
-                    id: definition_id,
-                    key: "test-door".into(),
-                    display_name: "Test door".into(),
-                    visual_asset: Some(asset_id),
-                    activation: ObjectActivationPolicy::Proximity,
-                }],
-                objects: vec![
-                    SourceObjectRecord {
-                        id: object_id,
-                        space: space.id,
-                        owner_cell: CellCoord::ZERO,
-                        definition: definition_id,
-                        local_translation: [1.0, 0.0, 2.0],
-                        yaw: 0.0,
-                        scale: 1.0,
-                        source_revision: 1,
-                    },
-                    SourceObjectRecord {
-                        id: second_object_id,
-                        space: second_space.id,
-                        owner_cell: CellCoord::ZERO,
-                        definition: definition_id,
-                        local_translation: [2.0, 0.0, 1.0],
-                        yaw: 0.0,
-                        scale: 1.0,
-                        source_revision: 1,
-                    },
-                ],
+                world_spaces: vec![space],
+                vegetation_catalog: None,
             },
-        )
-        .unwrap();
-        let project = read_project_database(&project_path).unwrap();
-        assert_eq!(project.default_world_space, space.id);
-        assert_eq!(project.world_spaces.len(), 2);
-        assert_eq!(project.cells.len(), 2);
-        assert_eq!(project.terrain_surfaces, vec![terrain_surface.clone()]);
-        assert_eq!(
-            project.terrain_texture_sets,
-            vec![terrain_texture_set.clone()]
-        );
-        assert_eq!(project.terrain_cell_surface_slots.len(), 2);
-        assert_eq!(project.assets[0].key, "test/tree");
-        assert_eq!(project.asset_variants[0].minimum_screen_height, 0.0);
-        assert_eq!(project.definitions.len(), 1);
-        assert_eq!(project.objects[0].definition, definition_id);
-        assert_eq!(
-            project.ground_cover_visuals,
-            vec![ground_cover_visual.clone()]
-        );
-        assert_eq!(project.ground_cover_presets.len(), 1);
-        assert_eq!(project.ground_cover_layers.len(), 1);
-        assert_eq!(project.ground_cover_regions.len(), 1);
-        assert_eq!(
-            project.ground_cover_masks[0].coverage,
-            vec![255, 128, 0, 255]
-        );
-
-        let connection = Connection::open(&project_path).unwrap();
-        connection
-            .execute(
-                "INSERT INTO object_cell_overlaps( \
-                    object_id, world_space_id, cell_x, cell_z \
-                 ) VALUES (?1, ?2, ?3, ?4)",
-                params![object_id.0.as_slice(), space.id.0, 4, -3],
-            )
-            .unwrap();
-        drop(connection);
-
-        let project_reader = ProjectReader::open_read_only(&project_path).unwrap();
-        assert!(project_reader.has_spatial_object_overlap_index);
-        assert_eq!(project_reader.manifest().default_world_space, space.id);
-        assert_eq!(project_reader.manifest().world_spaces.len(), 2);
-        assert_eq!(
-            project_reader.read_ground_cover_visuals(8).unwrap().len(),
-            1
-        );
-        assert_eq!(
-            project_reader.read_ground_cover_presets(8).unwrap().len(),
-            1
-        );
-        assert_eq!(
-            project_reader
-                .read_ground_cover_layers(space.id, 8)
-                .unwrap()
-                .len(),
-            1
-        );
-        assert_eq!(
-            project_reader
-                .read_ground_cover_regions(space.id, 8)
-                .unwrap()
-                .len(),
-            1
-        );
-        let cells = project_reader
-            .read_cells(space.id, CellCoord::ZERO, CellCoord::ZERO, 4)
-            .unwrap();
-        assert_eq!(cells.records.len(), 1);
-        assert_eq!(cells.records[0].source_revision, 1);
-        assert!(!cells.truncated);
-        assert!(
-            project_reader
-                .read_cells(
-                    space.id,
-                    CellCoord { x: 10, z: 10 },
-                    CellCoord { x: 11, z: 11 },
-                    4,
-                )
-                .unwrap()
-                .records
-                .is_empty()
-        );
-        let owner_objects = project_reader
-            .read_objects_in_cells(space.id, CellCoord::ZERO, CellCoord::ZERO, 4)
-            .unwrap();
-        assert_eq!(owner_objects.records.len(), 1);
-        let overlap_objects = project_reader
-            .read_objects_in_cells(
-                space.id,
-                CellCoord { x: 4, z: -3 },
-                CellCoord { x: 4, z: -3 },
-                4,
-            )
-            .unwrap();
-        assert_eq!(overlap_objects.records[0].id, object_id);
-        assert_eq!(
-            project_reader.read_object(object_id).unwrap().unwrap().id,
-            object_id
-        );
-        let object_views = project_reader
-            .read_object_views_in_cells(space.id, CellCoord::ZERO, CellCoord::ZERO, 4)
-            .unwrap();
-        assert_eq!(object_views.records.len(), 1);
-        assert_eq!(object_views.records[0].object.id, object_id);
-        assert_eq!(object_views.records[0].definition.display_name, "Test door");
-        assert_eq!(
-            object_views.records[0].visual_uri.as_deref(),
-            Some("local/runtime/tree_lod0.gltf")
-        );
-        assert_eq!(object_views.records[0].visual_bounds, Some([2.0, 8.0, 2.0]));
-        assert_eq!(
-            project_reader
-                .read_object_view(object_id)
-                .unwrap()
-                .unwrap()
-                .definition
-                .key,
-            "test-door"
-        );
-        let palette = project_reader.read_object_palette(8).unwrap();
-        assert_eq!(palette.records.len(), 1);
-        assert!(!palette.truncated);
-        assert_eq!(palette.records[0].definition.id, definition_id);
-        assert_eq!(
-            palette.records[0].visual_uri.as_deref(),
-            Some("local/runtime/tree_lod0.gltf")
-        );
-        let outliner_page = project_reader
-            .read_object_outliner_page(space.id, "door", None, 1)
-            .unwrap();
-        assert_eq!(outliner_page.records[0].object.id, object_id);
-        assert!(outliner_page.next_cursor.is_none());
-        assert!(
-            project_reader
-                .read_object_outliner_page(space.id, "missing", None, 1)
-                .unwrap()
-                .records
-                .is_empty()
-        );
-        let palette_page = project_reader
-            .read_object_palette_page("door", None, 1)
-            .unwrap();
-        assert_eq!(palette_page.records[0].definition.id, definition_id);
-        assert!(palette_page.next_cursor.is_none());
-        assert!(matches!(
-            project_reader.read_cells(space.id, CellCoord::ZERO, CellCoord::ZERO, 0),
-            Err(WorldDbError::InvalidQueryLimit)
-        ));
-        assert!(matches!(
-            project_reader.read_object_palette(0),
-            Err(WorldDbError::InvalidQueryLimit)
-        ));
-        assert!(matches!(
-            project_reader.read_object_palette_page("", None, 0),
-            Err(WorldDbError::InvalidQueryLimit)
-        ));
-        let masks = project_reader
-            .read_ground_cover_masks_in_cells(space.id, CellCoord::ZERO, CellCoord::ZERO, 4)
-            .unwrap();
-        assert_eq!(masks.records.len(), 1);
-        assert_eq!(masks.records[0].source_revision, 2);
-        assert!(!masks.truncated);
-        assert_eq!(
-            project_reader
-                .read_ground_cover_layers(space.id, 4)
-                .unwrap()[0]
-                .id,
-            ground_cover_layer_id
-        );
-        assert!(
-            project_reader
-                .read_terrain_weight_pages_in_cells(space.id, CellCoord::ZERO, CellCoord::ZERO, 4,)
-                .unwrap()
-                .records
-                .is_empty()
-        );
-
-        let mut project_writer = ProjectWriter::open(&project_path).unwrap();
-        let transform = SourceObjectTransform {
-            space: space.id,
-            owner_cell: CellCoord::ZERO,
-            local_translation: [3.0, 0.5, 4.0],
-            yaw: 0.25,
-            scale: 1.5,
+            cells: Vec::new(),
+            pages: Vec::new(),
+            terrain_surfaces: Vec::new(),
+            terrain_texture_sets: Vec::new(),
+            terrain_texture_layers: Vec::new(),
+            terrain_profiles: Vec::new(),
+            assets: Vec::new(),
+            definitions: Vec::new(),
+            dependencies: Vec::new(),
+            definition_dependencies: Vec::new(),
+            terrain_surface_dependencies: Vec::new(),
         };
-        let ObjectTransformWriteResult::Updated(updated) = project_writer
-            .update_object_transform(object_id, 1, transform)
-            .unwrap()
-        else {
-            panic!("matching source revision should update the object");
-        };
-        assert_eq!(updated.source_revision, 2);
-        assert_eq!(SourceObjectTransform::from(&updated), transform);
-        let ObjectTransformWriteResult::Conflict {
-            actual: Some(actual),
-        } = project_writer
-            .update_object_transform(object_id, 1, transform)
-            .unwrap()
-        else {
-            panic!("stale source revision should report a conflict");
-        };
-        assert_eq!(actual.source_revision, 2);
-        let overlap_count: i64 = Connection::open(&project_path)
-            .unwrap()
-            .query_row(
-                "SELECT COUNT(*) FROM object_cell_overlaps WHERE object_id = ?1",
-                params![object_id.0.as_slice()],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(overlap_count, 0);
-
-        let mut rolled_back_transform = transform;
-        rolled_back_transform.local_translation[0] = 12.0;
-        let ObjectWriteTransactionResult::Conflict {
-            object: conflict_object,
-            actual: Some(actual),
-        } = project_writer
-            .apply_object_transaction(&[
-                SourceObjectWrite::UpdateTransform {
-                    object: object_id,
-                    expected_source_revision: 2,
-                    transform: rolled_back_transform,
-                },
-                SourceObjectWrite::Delete {
-                    object: second_object_id,
-                    expected_source_revision: 99,
-                },
-            ])
-            .unwrap()
-        else {
-            panic!("a stale write should roll back the complete object transaction");
-        };
-        assert_eq!(conflict_object, second_object_id);
-        assert_eq!(actual.source_revision, 1);
-        let unchanged = project_reader.read_object(object_id).unwrap().unwrap();
-        assert_eq!(unchanged.source_revision, 2);
-        assert_eq!(SourceObjectTransform::from(&unchanged), transform);
-
-        assert_eq!(
-            project_writer
-                .apply_object_transaction(&[SourceObjectWrite::Delete {
-                    object: second_object_id,
-                    expected_source_revision: 1,
-                }])
-                .unwrap(),
-            ObjectWriteTransactionResult::Committed(vec![SourceObjectWriteCommit::Deleted(
-                second_object_id
-            )])
-        );
-        assert!(
-            project_reader
-                .read_object(second_object_id)
-                .unwrap()
-                .is_none()
-        );
-        let restored_object = SourceObjectRecord {
-            id: second_object_id,
-            space: second_space.id,
-            owner_cell: CellCoord::ZERO,
-            definition: definition_id,
-            local_translation: [2.0, 0.0, 1.0],
-            yaw: 0.0,
-            scale: 1.0,
-            source_revision: 1,
-        };
-        let ObjectWriteTransactionResult::Committed(restored) = project_writer
-            .apply_object_transaction(&[SourceObjectWrite::Create {
-                object: restored_object,
-            }])
-            .unwrap()
-        else {
-            panic!("undoing a saved deletion should recreate the source placement");
-        };
-        let [SourceObjectWriteCommit::Updated(restored)] = restored.as_slice() else {
-            panic!("placement recreation should return its new source checkpoint");
-        };
-        assert_eq!(restored.id, second_object_id);
-        assert_eq!(restored.source_revision, 2);
-
-        let terrain_weights = SourceTerrainCellWeightPageRecord {
-            space: space.id,
-            cell: CellCoord::ZERO,
-            page: 0,
-            resolution: 2,
-            rgba: vec![255; 16],
-            source_revision: 0,
-        };
-        let ground_cover_mask = SourceGroundCoverCellMaskRecord {
-            region: ground_cover_region_id,
-            space: space.id,
-            cell: CellCoord::ZERO,
-            resolution: 2,
-            coverage: vec![64, 96, 128, 255],
-            source_revision: 2,
-        };
-        let DenseSourceWriteTransactionResult::Committed(dense_commits) = project_writer
-            .apply_dense_source_transaction(&[
-                DenseSourceWrite::TerrainWeights {
-                    expected_source_revision: None,
-                    record: terrain_weights,
-                },
-                DenseSourceWrite::GroundCoverMask {
-                    expected_source_revision: Some(2),
-                    record: ground_cover_mask,
-                },
-            ])
-            .unwrap()
-        else {
-            panic!("matching dense revisions should commit atomically");
-        };
-        assert_eq!(dense_commits.len(), 2);
-        assert_eq!(
-            project_reader
-                .read_terrain_weight_pages_in_cells(space.id, CellCoord::ZERO, CellCoord::ZERO, 4,)
-                .unwrap()
-                .records[0]
-                .source_revision,
-            1
-        );
-        assert_eq!(
-            project_reader
-                .read_ground_cover_masks_in_cells(space.id, CellCoord::ZERO, CellCoord::ZERO, 4,)
-                .unwrap()
-                .records[0]
-                .source_revision,
-            3
-        );
-
-        let DenseSourceWriteTransactionResult::Conflict { key, actual } = project_writer
-            .apply_dense_source_transaction(&[
-                DenseSourceWrite::TerrainWeights {
-                    expected_source_revision: Some(1),
-                    record: SourceTerrainCellWeightPageRecord {
-                        space: space.id,
-                        cell: CellCoord::ZERO,
-                        page: 0,
-                        resolution: 2,
-                        rgba: vec![0; 16],
-                        source_revision: 1,
-                    },
-                },
-                DenseSourceWrite::GroundCoverMask {
-                    expected_source_revision: Some(2),
-                    record: SourceGroundCoverCellMaskRecord {
-                        region: ground_cover_region_id,
-                        space: space.id,
-                        cell: CellCoord::ZERO,
-                        resolution: 2,
-                        coverage: vec![0; 4],
-                        source_revision: 3,
-                    },
-                },
-            ])
-            .unwrap()
-        else {
-            panic!("a stale dense write should roll back the complete batch");
-        };
-        assert_eq!(
-            key,
-            DenseSourceRecordKey::GroundCoverMask {
-                region: ground_cover_region_id,
-                space: space.id,
-                cell: CellCoord::ZERO,
-            }
-        );
-        assert!(matches!(
-            actual,
-            Some(DenseSourceRecord::GroundCoverMask(record)) if record.source_revision == 3
-        ));
-        assert_eq!(
-            project_reader
-                .read_terrain_weight_pages_in_cells(space.id, CellCoord::ZERO, CellCoord::ZERO, 4,)
-                .unwrap()
-                .records[0]
-                .rgba,
-            vec![255; 16],
-            "the earlier terrain update must roll back with the stale mask"
-        );
-
-        let mut edited_visual = ground_cover_visual.clone();
-        edited_visual.display_name = "Edited meadow cards".into();
-        let SourceGroundCoverVisualDefinition::CardCluster(edited_card) =
-            &mut edited_visual.definition;
-        edited_card.top_color = [0.25, 0.45, 0.12];
-        let edited_preset = SourceGroundCoverPresetRecord {
-            id: ground_cover_preset_id,
-            key: "test/meadow-preset".into(),
-            display_name: "Edited meadow".into(),
-            enabled: true,
-            visual: ground_cover_visual_id,
-            density_per_square_meter: 8.5,
-            seed: 123,
-            source_revision: 1,
-        };
-        let GroundCoverCatalogWriteTransactionResult::Committed(catalog_commits) = project_writer
-            .apply_ground_cover_catalog_transaction(&[
-                GroundCoverCatalogWrite::UpdateVisual {
-                    expected_source_revision: 1,
-                    record: edited_visual.clone(),
-                },
-                GroundCoverCatalogWrite::UpdatePreset {
-                    expected_source_revision: 1,
-                    record: edited_preset,
-                },
-            ])
-            .unwrap()
-        else {
-            panic!("matching visual and preset revisions should commit together");
-        };
-        assert_eq!(catalog_commits.len(), 2);
-        assert!(
-            catalog_commits
-                .iter()
-                .all(|commit| commit.source_revision() == Some(2))
-        );
-        assert_eq!(
-            project_reader.read_ground_cover_presets(8).unwrap()[0].density_per_square_meter,
-            8.5
-        );
-        assert_eq!(
-            project_reader.read_ground_cover_visuals(8).unwrap()[0].display_name,
-            "Edited meadow cards"
-        );
-
-        let mut rolled_back_visual = edited_visual;
-        rolled_back_visual.source_revision = 2;
-        rolled_back_visual.display_name = "Must roll back".into();
-        let GroundCoverCatalogWriteTransactionResult::Conflict {
-            key: GroundCoverCatalogKey::Preset(conflict_preset),
-            actual: Some(GroundCoverCatalogRecord::Preset(actual_preset)),
-        } = project_writer
-            .apply_ground_cover_catalog_transaction(&[
-                GroundCoverCatalogWrite::UpdateVisual {
-                    expected_source_revision: 2,
-                    record: rolled_back_visual,
-                },
-                GroundCoverCatalogWrite::UpdatePreset {
-                    expected_source_revision: 1,
-                    record: SourceGroundCoverPresetRecord {
-                        source_revision: 1,
-                        density_per_square_meter: 9.0,
-                        ..project_reader.read_ground_cover_presets(8).unwrap()[0].clone()
-                    },
-                },
-            ])
-            .unwrap()
-        else {
-            panic!("a stale preset should roll back the earlier visual update");
-        };
-        assert_eq!(conflict_preset, ground_cover_preset_id);
-        assert_eq!(actual_preset.source_revision, 2);
-        assert_eq!(
-            project_reader.read_ground_cover_visuals(8).unwrap()[0].display_name,
-            "Edited meadow cards"
-        );
-
-        let GroundCoverRegionWriteTransactionResult::Committed(region_updates) = project_writer
-            .apply_ground_cover_region_transaction(&[GroundCoverRegionWrite::Update {
-                expected_source_revision: 1,
-                record: SourceGroundCoverRegionRecord {
-                    display_name: "Edited test region".into(),
-                    density_multiplier: 0.8,
-                    ..project
-                        .ground_cover_regions
-                        .iter()
-                        .find(|region| region.id == ground_cover_region_id)
-                        .unwrap()
-                        .clone()
-                },
-            }])
-            .unwrap()
-        else {
-            panic!("a matching region update should commit");
-        };
-        let [GroundCoverRegionWriteCommit::Updated(updated_region)] = region_updates.as_slice()
-        else {
-            panic!("region update should return its new checkpoint");
-        };
-        assert_eq!(updated_region.source_revision, 2);
-        assert_eq!(updated_region.density_multiplier, 0.8);
-
-        let empty_region_id = GroundCoverRegionId([21; 16]);
-        let empty_region = SourceGroundCoverRegionRecord {
-            id: empty_region_id,
-            layer: ground_cover_layer_id,
-            space: space.id,
-            preset: ground_cover_preset_id,
-            display_name: "Empty test region".into(),
-            enabled: true,
-            density_multiplier: 1.0,
-            source_revision: 0,
-        };
-        let GroundCoverRegionWriteTransactionResult::Committed(created) = project_writer
-            .apply_ground_cover_region_transaction(&[GroundCoverRegionWrite::Create {
-                record: empty_region,
-            }])
-            .unwrap()
-        else {
-            panic!("an empty region should be created")
-        };
-        let [GroundCoverRegionWriteCommit::Created(created)] = created.as_slice() else {
-            panic!("region creation should return a checkpoint")
-        };
-        assert_eq!(created.source_revision, 1);
-        assert_eq!(
-            project_writer
-                .apply_ground_cover_region_transaction(&[GroundCoverRegionWrite::DeleteEmpty {
-                    region: empty_region_id,
-                    expected_source_revision: 1,
-                },])
-                .unwrap(),
-            GroundCoverRegionWriteTransactionResult::Committed(vec![
-                GroundCoverRegionWriteCommit::Deleted(empty_region_id),
-            ])
-        );
-        assert_eq!(
-            project_writer
-                .apply_ground_cover_region_transaction(&[GroundCoverRegionWrite::DeleteEmpty {
-                    region: ground_cover_region_id,
-                    expected_source_revision: 2,
-                },])
-                .unwrap(),
-            GroundCoverRegionWriteTransactionResult::BlockedByCoverage {
-                region: ground_cover_region_id,
-            }
-        );
-
-        let duplicate_visual_id = GroundCoverVisualId([31; 16]);
-        let duplicate_preset_id = GroundCoverPresetId([32; 16]);
-        let mut duplicate_visual = project_reader.read_ground_cover_visuals(8).unwrap()[0].clone();
-        duplicate_visual.id = duplicate_visual_id;
-        duplicate_visual.key = "test/duplicate-visual".into();
-        duplicate_visual.display_name = "Duplicate visual".into();
-        duplicate_visual.source_revision = 0;
-        let mut custom_recipe = GroundCoverBladeRecipe::built_in_v1();
-        custom_recipe.blade_count = 18;
-        let SourceGroundCoverVisualDefinition::CardCluster(duplicate_card) =
-            &mut duplicate_visual.definition;
-        duplicate_card.procedural_recipe = Some(custom_recipe);
-        let duplicate_preset = SourceGroundCoverPresetRecord {
-            id: duplicate_preset_id,
-            key: "test/duplicate-preset".into(),
-            display_name: "Duplicate preset".into(),
-            enabled: true,
-            visual: duplicate_visual_id,
-            density_per_square_meter: 3.0,
-            seed: 99,
-            source_revision: 0,
-        };
-        let GroundCoverCatalogWriteTransactionResult::Committed(created_catalog) = project_writer
-            .apply_ground_cover_catalog_transaction(&[
-                GroundCoverCatalogWrite::CreateVisual {
-                    record: duplicate_visual,
-                },
-                GroundCoverCatalogWrite::CreatePreset {
-                    record: duplicate_preset,
-                },
-            ])
-            .unwrap()
-        else {
-            panic!("visual-before-preset creation should commit atomically");
-        };
-        assert_eq!(created_catalog.len(), 2);
-        assert!(created_catalog.iter().all(|commit| matches!(
-            commit,
-            GroundCoverCatalogWriteCommit::Created(_)
-        ) && commit.source_revision() == Some(1)));
-        let persisted_duplicate = project_reader
-            .read_ground_cover_visuals(8)
-            .unwrap()
-            .into_iter()
-            .find(|visual| visual.id == duplicate_visual_id)
-            .unwrap();
-        let SourceGroundCoverVisualDefinition::CardCluster(persisted_card) =
-            persisted_duplicate.definition;
-        assert_eq!(persisted_card.procedural_recipe, Some(custom_recipe));
-        assert_eq!(
-            project_writer
-                .apply_ground_cover_catalog_transaction(&[GroundCoverCatalogWrite::DeleteVisual {
-                    visual: duplicate_visual_id,
-                    expected_source_revision: 1,
-                },])
-                .unwrap(),
-            GroundCoverCatalogWriteTransactionResult::BlockedByDependency {
-                key: GroundCoverCatalogKey::Visual(duplicate_visual_id),
-                dependency: GroundCoverCatalogDependency::VisualPresets,
-            }
-        );
-        assert_eq!(
-            project_writer
-                .apply_ground_cover_catalog_transaction(&[
-                    GroundCoverCatalogWrite::DeletePreset {
-                        preset: duplicate_preset_id,
-                        expected_source_revision: 1,
-                    },
-                    GroundCoverCatalogWrite::DeleteVisual {
-                        visual: ground_cover_visual_id,
-                        expected_source_revision: 2,
-                    },
-                ])
-                .unwrap(),
-            GroundCoverCatalogWriteTransactionResult::BlockedByDependency {
-                key: GroundCoverCatalogKey::Visual(ground_cover_visual_id),
-                dependency: GroundCoverCatalogDependency::VisualPresets,
-            }
-        );
-        assert!(
-            project_reader
-                .read_ground_cover_presets(8)
-                .unwrap()
-                .iter()
-                .any(|preset| preset.id == duplicate_preset_id),
-            "a blocked later deletion must roll back the earlier preset deletion"
-        );
-        assert_eq!(
-            project_writer
-                .apply_ground_cover_catalog_transaction(&[
-                    GroundCoverCatalogWrite::DeletePreset {
-                        preset: duplicate_preset_id,
-                        expected_source_revision: 1,
-                    },
-                    GroundCoverCatalogWrite::DeleteVisual {
-                        visual: duplicate_visual_id,
-                        expected_source_revision: 1,
-                    },
-                ])
-                .unwrap(),
-            GroundCoverCatalogWriteTransactionResult::Committed(vec![
-                GroundCoverCatalogWriteCommit::Deleted(GroundCoverCatalogKey::Preset(
-                    duplicate_preset_id,
-                )),
-                GroundCoverCatalogWriteCommit::Deleted(GroundCoverCatalogKey::Visual(
-                    duplicate_visual_id,
-                )),
-            ])
-        );
-        assert_eq!(
-            project_writer
-                .apply_ground_cover_catalog_transaction(&[GroundCoverCatalogWrite::DeletePreset {
-                    preset: ground_cover_preset_id,
-                    expected_source_revision: 2,
-                },])
-                .unwrap(),
-            GroundCoverCatalogWriteTransactionResult::BlockedByDependency {
-                key: GroundCoverCatalogKey::Preset(ground_cover_preset_id),
-                dependency: GroundCoverCatalogDependency::PresetRegions,
-            }
-        );
-
-        let rolled_back_region_id = GroundCoverRegionId([22; 16]);
-        let rolled_back_region = SourceGroundCoverRegionRecord {
-            id: rolled_back_region_id,
-            layer: ground_cover_layer_id,
-            space: space.id,
-            preset: ground_cover_preset_id,
-            display_name: "Rolled back test region".into(),
-            enabled: true,
-            density_multiplier: 1.0,
-            source_revision: 0,
-        };
-        assert_eq!(
-            project_writer
-                .apply_ground_cover_region_transaction(&[
-                    GroundCoverRegionWrite::Create {
-                        record: rolled_back_region,
-                    },
-                    GroundCoverRegionWrite::DeleteEmpty {
-                        region: ground_cover_region_id,
-                        expected_source_revision: 2,
-                    },
-                ])
-                .unwrap(),
-            GroundCoverRegionWriteTransactionResult::BlockedByCoverage {
-                region: ground_cover_region_id,
-            }
-        );
-        assert!(
-            project_reader
-                .read_ground_cover_regions(space.id, 32)
-                .unwrap()
-                .iter()
-                .all(|region| region.id != rolled_back_region_id),
-            "an earlier create must roll back when a later delete is blocked"
-        );
-
-        let payload = PagePayload::TerrainRender(TerrainRenderPage {
-            height: 0.0,
-            surfaces: vec![terrain_surface_id],
-            weight_pages: Vec::new(),
-        });
-        let decoded = encode_page_payload(&payload).unwrap();
-        let page = EncodedPage {
-            key: PageKey {
-                space: space.id,
-                cell: CellCoord::ZERO,
-                domain: PageDomain::TerrainRender,
-                lod: 0,
-            },
-            codec: PageCodec::Raw,
-            decoded_bytes: decoded.len() as u64,
-            gpu_bytes_estimate: 128,
-            checksum: *blake3::hash(&decoded).as_bytes(),
-            payload: decoded,
-        };
-        let gameplay_payload = PagePayload::GameplayObjects(GameplayObjectsPage {
-            instances: vec![GameplayObjectInstance {
-                id: object_id,
-                definition: definition_id,
-                translation: [1.0, 0.0, 2.0],
-                yaw: 0.0,
-                scale: 1.0,
-            }],
-        });
-        let gameplay_decoded = encode_page_payload(&gameplay_payload).unwrap();
-        let gameplay_page = EncodedPage {
-            key: PageKey {
-                space: space.id,
-                cell: CellCoord::ZERO,
-                domain: PageDomain::GameplayObjects,
-                lod: 0,
-            },
-            codec: PageCodec::Raw,
-            decoded_bytes: gameplay_decoded.len() as u64,
-            gpu_bytes_estimate: 0,
-            checksum: *blake3::hash(&gameplay_decoded).as_bytes(),
-            payload: gameplay_decoded,
-        };
-        let ground_cover_payload = PagePayload::GroundCover(GroundCoverPage {
-            clusters: vec![GroundCoverCluster {
-                species: ground_cover_species_id,
-                local_center: [8.0, 0.35, 8.0],
-                half_extents: [8.2, 0.35, 8.2],
-                coverage_half_extents: [8.0, 8.0],
-                density_per_square_meter: 7.0,
-                seed: 91,
-            }],
-        });
-        let ground_cover_decoded = encode_page_payload(&ground_cover_payload).unwrap();
-        let ground_cover_page = EncodedPage {
-            key: PageKey {
-                space: space.id,
-                cell: CellCoord::ZERO,
-                domain: PageDomain::GroundCover,
-                lod: 0,
-            },
-            codec: PageCodec::Raw,
-            decoded_bytes: ground_cover_decoded.len() as u64,
-            gpu_bytes_estimate: 64,
-            checksum: *blake3::hash(&ground_cover_decoded).as_bytes(),
-            payload: ground_cover_decoded,
-        };
-        write_runtime_database(
-            &runtime_path,
-            &RuntimeBuild {
-                manifest: RuntimeManifest {
-                    schema_version: RUNTIME_SCHEMA_VERSION,
-                    generation_id: "test-generation".into(),
-                    content_hash: [7; 32],
-                    default_world_space: space.id,
-                    world_spaces: vec![space.clone(), second_space.clone()],
-                },
-                cells: vec![RuntimeCellRecord {
-                    space: space.id,
-                    cell: CellCoord::ZERO,
-                    minimum_y: 0.0,
-                    maximum_y: 0.0,
-                    domain_mask: domain_bit(PageDomain::TerrainRender)
-                        | domain_bit(PageDomain::GameplayObjects)
-                        | domain_bit(PageDomain::GroundCover),
-                    source_revision: 1,
-                }],
-                pages: vec![
-                    page.clone(),
-                    gameplay_page.clone(),
-                    ground_cover_page.clone(),
-                ],
-                terrain_surfaces: vec![terrain_surface.clone()],
-                terrain_texture_sets: vec![terrain_texture_set.clone()],
-                terrain_texture_layers: vec![TerrainTextureLayer {
-                    texture_set: terrain_texture_set_id,
-                    surface: terrain_surface_id,
-                    layer: 0,
-                }],
-                terrain_profiles: vec![TerrainProfile {
-                    space: space.id,
-                    texture_set: terrain_texture_set_id,
-                    weight_resolution: 2,
-                    macro_scales: [8.0, 32.0, 128.0],
-                    macro_contrast: 1.25,
-                    macro_albedo_strength: 0.12,
-                }],
-                assets: Vec::new(),
-                definitions: vec![RuntimeObjectDefinition {
-                    id: definition_id,
-                    key: "test-door".into(),
-                    display_name: "Test door".into(),
-                    visual_asset: None,
-                    activation: ObjectActivationPolicy::Proximity,
-                }],
-                ground_cover_species: vec![ground_cover_species.clone()],
-                dependencies: Vec::new(),
-                definition_dependencies: vec![PageObjectDefinitionRecord {
-                    page: gameplay_page.key,
-                    definition: definition_id,
-                }],
-                ground_cover_species_dependencies: vec![PageGroundCoverSpeciesRecord {
-                    page: ground_cover_page.key,
-                    species: ground_cover_species_id,
-                }],
-                terrain_surface_dependencies: vec![PageTerrainSurfaceRecord {
-                    page: page.key,
-                    surface: terrain_surface_id,
-                }],
-            },
-        )
-        .unwrap();
-
+        write_runtime_database(&runtime_path, &runtime).unwrap();
         let reader = RuntimeReader::open_immutable(&runtime_path).unwrap();
         assert_eq!(reader.manifest().generation_id, "test-generation");
-        assert_eq!(reader.manifest().world_spaces.len(), 2);
-        assert_eq!(reader.manifest().default_world_space, space.id);
-        assert_eq!(
-            reader
-                .read_page(page.key)
-                .unwrap()
-                .unwrap()
-                .decode()
-                .unwrap()
-                .payload,
-            payload
-        );
-        let terrain = reader.read_terrain_resources(page.key).unwrap();
-        assert_eq!(terrain.profile.space, space.id);
-        assert_eq!(terrain.texture_set, terrain_texture_set);
-        assert_eq!(terrain.surfaces[0].surface, terrain_surface);
-        assert_eq!(terrain.surfaces[0].layer, 0);
-        let definitions = reader.read_object_definitions(gameplay_page.key).unwrap();
-        assert_eq!(definitions.len(), 1);
-        assert_eq!(definitions[0].id, definition_id);
-        assert_eq!(definitions[0].key, "test-door");
-        assert_eq!(
-            reader
-                .read_page(ground_cover_page.key)
-                .unwrap()
-                .unwrap()
-                .decode()
-                .unwrap()
-                .payload,
-            ground_cover_payload
-        );
-        assert_eq!(
-            reader
-                .read_ground_cover_species(ground_cover_page.key)
-                .unwrap(),
-            vec![ground_cover_species]
-        );
         fs::remove_dir_all(directory).unwrap();
     }
 

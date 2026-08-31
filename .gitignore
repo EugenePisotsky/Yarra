@@ -1,6 +1,8 @@
 /target
+/tmp/
 /assets/local/
 /assets/generated/
+/content/*.project.sqlite
 *.sqlite-wal
 *.sqlite-shm
 *.sqlite-journal

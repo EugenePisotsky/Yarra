@@ -6,9 +6,10 @@ publish.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+bincode.workspace = true
 blake3.workspace = true
 glam.workspace = true
-ground-cover-compile.workspace = true
+vegetation.workspace = true
 world.workspace = true
 world-db.workspace = true
 zstd.workspace = true

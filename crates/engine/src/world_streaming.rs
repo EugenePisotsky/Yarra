@@ -13,14 +13,15 @@ use bevy::{
     transform::TransformSystems,
 };
 use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded};
-use ground_cover::{GroundCoverPage3d, GroundCoverPageAsset};
 use terrain_render::{
     PrepareTerrainMaterialContext, TerrainMacroVariation, TerrainMaterial, TerrainSurfaceLayer,
-    prepare_terrain_material,
+    build_heightfield_mesh, prepare_terrain_material,
 };
+use vegetation::{VegetationCatalog, VegetationFieldPageData};
 use world::{
-    AssetId, CellCoord, GroundCoverSpecies, ObjectActivationPolicy, ObjectDefinitionId, PageDomain,
-    PageKey, PagePayload, StableObjectId, TerrainTextureSetId, WorldPosition, WorldSpaceId,
+    AssetId, CellCoord, ObjectActivationPolicy, ObjectDefinitionId, PageDomain, PageKey,
+    PagePayload, StableObjectId, TerrainHeightfield, TerrainTextureSetId, WorldPosition,
+    WorldSpaceId,
 };
 use world_db::{
     CellDescriptor, DecodedPage, EncodedPage, PageDependency, RuntimeManifest,
@@ -33,7 +34,12 @@ use crate::{
 };
 
 const INDEX_RADIUS_CELLS: i32 = 3;
-const PLAYER_PRELOAD_RADIUS_CELLS: u32 = 1;
+// Terrain relief and vegetation fields are compact source residency, not emitted geometry. Keep
+// the complete procedural range resident independent of camera rotation; the render-world GPU
+// scheduler decides which of these pages produce work. With the current 32 m demo cells this 7x7
+// shell matches the vegetation renderer's 96 m range.
+const VISUAL_SOURCE_RESIDENCY_RADIUS_CELLS: u32 = 3;
+const GAMEPLAY_PRELOAD_RADIUS_CELLS: u32 = 1;
 const COOLING_SECONDS: f32 = 2.0;
 const MAX_DATABASE_REQUESTS_IN_FLIGHT: usize = 16;
 const MAX_ATTACHMENTS_PER_FRAME: usize = 2;
@@ -211,6 +217,7 @@ pub struct WorldCatalog {
     generation_id: String,
     default_world_space: Option<WorldSpaceId>,
     world_spaces: Vec<WorldSpaceInfo>,
+    vegetation: Option<VegetationCatalog>,
 }
 
 /// Explicit handshake for replacing the streamer's immutable SQLite snapshot.
@@ -263,6 +270,10 @@ impl WorldCatalog {
 
     pub fn world_space(&self, id: WorldSpaceId) -> Option<&WorldSpaceInfo> {
         self.world_spaces.iter().find(|space| space.id == id)
+    }
+
+    pub fn vegetation(&self) -> Option<&VegetationCatalog> {
+        self.vegetation.as_ref()
     }
 }
 
@@ -353,7 +364,6 @@ struct FetchedPage {
     encoded: EncodedPage,
     dependencies: Vec<PageDependency>,
     definitions: Vec<RuntimeObjectDefinition>,
-    ground_cover_species: Vec<GroundCoverSpecies>,
     terrain: Option<TerrainRenderResources>,
 }
 
@@ -453,11 +463,6 @@ fn database_worker(
                             } else {
                                 Vec::new()
                             };
-                            let ground_cover_species = if key.domain == PageDomain::GroundCover {
-                                reader.read_ground_cover_species(key)?
-                            } else {
-                                Vec::new()
-                            };
                             let terrain = if key.domain == PageDomain::TerrainRender {
                                 Some(reader.read_terrain_resources(key)?)
                             } else {
@@ -467,7 +472,6 @@ fn database_worker(
                                 encoded: page,
                                 dependencies,
                                 definitions,
-                                ground_cover_species,
                                 terrain,
                             })
                         })
@@ -533,7 +537,6 @@ struct PreparedPage {
     decoded: DecodedPage,
     dependencies: Vec<PageDependency>,
     definitions: Vec<RuntimeObjectDefinition>,
-    ground_cover_species: Vec<GroundCoverSpecies>,
     terrain: Option<TerrainRenderResources>,
 }
 
@@ -545,14 +548,91 @@ struct DecodeTask {
 
 struct PageAttachment {
     entities: Vec<Entity>,
+    owned_terrain_meshes: Vec<Handle<Mesh>>,
     owned_terrain_materials: Vec<Handle<TerrainMaterial>>,
     owned_terrain_images: Vec<Handle<Image>>,
-    owned_ground_cover_pages: Vec<Handle<GroundCoverPageAsset>>,
     decoded_bytes: u64,
     gpu_bytes_estimate: u64,
     gameplay_objects: usize,
-    ground_cover_clusters: usize,
+    vegetation_pages: usize,
     terrain_texture_set: Option<(TerrainTextureSetId, u64)>,
+}
+
+/// CPU-readable relief carried by a resident streamed terrain entity.
+///
+/// This is the bridge for vegetation, character grounding, interactions, and later shadow proxies:
+/// every consumer samples the same quantized page that produced the visible terrain mesh.
+#[derive(Component, Debug, Clone)]
+pub struct StreamedTerrainSurface {
+    pub key: PageKey,
+    pub cell_size: f32,
+    pub heightfield: TerrainHeightfield,
+}
+
+/// Terrain-independent V2 fields attached for one resident streamed cell.
+///
+/// Consumers join this component with the matching [`StreamedTerrainSurface`] by page key. No
+/// height or normal samples are duplicated in the vegetation payload.
+#[derive(Component, Debug, Clone)]
+pub struct StreamedVegetationFieldPage {
+    pub key: PageKey,
+    pub cell_size: f32,
+    pub data: VegetationFieldPageData,
+}
+
+impl StreamedTerrainSurface {
+    pub fn sample_world(&self, world_xz: [f32; 2]) -> world::TerrainSurfaceSample {
+        let origin = self.key.cell.origin(self.cell_size);
+        self.heightfield.sample(
+            [
+                world_xz[0] - origin[0] as f32,
+                world_xz[1] - origin[1] as f32,
+            ],
+            self.cell_size,
+        )
+    }
+
+    pub fn contains_world(&self, world_xz: [f32; 2]) -> bool {
+        let origin = self.key.cell.origin(self.cell_size);
+        world_xz[0] >= origin[0] as f32
+            && world_xz[1] >= origin[1] as f32
+            && world_xz[0] <= origin[0] as f32 + self.cell_size
+            && world_xz[1] <= origin[1] as f32 + self.cell_size
+    }
+}
+
+/// Samples resident terrain from render-space X/Z coordinates.
+///
+/// The conversion through [`WorldOrigin`] keeps gameplay consumers correct after a floating-origin
+/// rebase. At a shared page edge the lowest stable page key wins; cooked edge samples are exact, so
+/// either page produces the same height and normal.
+pub fn sample_resident_terrain_surface<'a>(
+    origin: &WorldOrigin,
+    surfaces: impl IntoIterator<Item = &'a StreamedTerrainSurface>,
+    render_xz: [f32; 2],
+) -> Option<world::TerrainSurfaceSample> {
+    let active_space = origin.space()?;
+    let mut selected: Option<(&StreamedTerrainSurface, [f32; 2])> = None;
+    for surface in surfaces {
+        if surface.key.space != active_space {
+            continue;
+        }
+        let render_origin = origin.cell.origin(surface.cell_size);
+        let world_xz = [
+            render_xz[0] + render_origin[0] as f32,
+            render_xz[1] + render_origin[1] as f32,
+        ];
+        if !surface.contains_world(world_xz) {
+            continue;
+        }
+        if selected
+            .as_ref()
+            .is_none_or(|(current, _)| surface.key < current.key)
+        {
+            selected = Some((surface, world_xz));
+        }
+    }
+    selected.map(|(surface, world_xz)| surface.sample_world(world_xz))
 }
 
 #[derive(Component)]
@@ -621,6 +701,7 @@ fn receive_database_results(
                             maximum_y: space.maximum_y,
                         })
                         .collect();
+                    catalog.vegetation = manifest.vegetation_catalog.clone();
                     if viewpoint.position.is_none() {
                         viewpoint.position = Some(WorldPosition {
                             space: manifest.default_world_space,
@@ -719,7 +800,6 @@ fn receive_database_results(
                                     decoded,
                                     dependencies: fetched.dependencies,
                                     definitions: fetched.definitions,
-                                    ground_cover_species: fetched.ground_cover_species,
                                     terrain: fetched.terrain,
                                 })
                                 .map_err(|error| error.to_string())
@@ -756,9 +836,9 @@ fn receive_database_results(
 fn request_generation_reload(
     worker: Option<Res<WorldDatabaseWorker>>,
     mut commands: Commands,
+    mut terrain_meshes: ResMut<Assets<Mesh>>,
     mut terrain_materials: ResMut<Assets<TerrainMaterial>>,
     mut terrain_images: ResMut<Assets<Image>>,
-    mut ground_cover_pages: ResMut<Assets<GroundCoverPageAsset>>,
     mut stream: ResMut<WorldStream>,
     mut reload: ResMut<WorldGenerationReload>,
 ) {
@@ -780,9 +860,9 @@ fn request_generation_reload(
         Ok(()) => {
             clear_streamed_pages(
                 &mut commands,
+                &mut terrain_meshes,
                 &mut terrain_materials,
                 &mut terrain_images,
-                &mut ground_cover_pages,
                 &mut stream,
             );
             stream.definition_cache.clear();
@@ -827,6 +907,7 @@ fn adopt_runtime_manifest(
             maximum_y: space.maximum_y,
         })
         .collect();
+    catalog.vegetation = manifest.vegetation_catalog.clone();
     if viewpoint
         .position
         .is_none_or(|position| position.space != active)
@@ -878,9 +959,9 @@ fn request_world_space_from_keyboard(
 
 fn apply_world_space_transition(
     mut commands: Commands,
+    mut terrain_meshes: ResMut<Assets<Mesh>>,
     mut terrain_materials: ResMut<Assets<TerrainMaterial>>,
     mut terrain_images: ResMut<Assets<Image>>,
-    mut ground_cover_pages: ResMut<Assets<GroundCoverPageAsset>>,
     mut active_space: ResMut<ActiveWorldSpace>,
     config: Res<WorldStreamingConfig>,
     mut viewpoint: ResMut<WorldViewpoint>,
@@ -916,9 +997,9 @@ fn apply_world_space_transition(
     if changed_space {
         clear_streamed_pages(
             &mut commands,
+            &mut terrain_meshes,
             &mut terrain_materials,
             &mut terrain_images,
-            &mut ground_cover_pages,
             &mut stream,
         );
     }
@@ -992,9 +1073,9 @@ fn update_world_origin(
     config: Res<WorldStreamingConfig>,
     viewpoint: Res<WorldViewpoint>,
     mut origin: ResMut<WorldOrigin>,
+    mut terrain_meshes: ResMut<Assets<Mesh>>,
     mut terrain_materials: ResMut<Assets<TerrainMaterial>>,
     mut terrain_images: ResMut<Assets<Image>>,
-    mut ground_cover_pages: ResMut<Assets<GroundCoverPageAsset>>,
     mut stream: ResMut<WorldStream>,
 ) {
     let Some(position) = viewpoint.position else {
@@ -1010,9 +1091,9 @@ fn update_world_origin(
     origin.cell = desired_cell;
     clear_streamed_pages(
         &mut commands,
+        &mut terrain_meshes,
         &mut terrain_materials,
         &mut terrain_images,
-        &mut ground_cover_pages,
         &mut stream,
     );
     info!(
@@ -1040,9 +1121,9 @@ fn desired_origin_cell(
 
 fn clear_streamed_pages(
     commands: &mut Commands,
+    terrain_meshes: &mut Assets<Mesh>,
     terrain_materials: &mut Assets<TerrainMaterial>,
     terrain_images: &mut Assets<Image>,
-    ground_cover_pages: &mut Assets<GroundCoverPageAsset>,
     stream: &mut WorldStream,
 ) {
     for (_, state) in stream.pages.drain() {
@@ -1050,9 +1131,9 @@ fn clear_streamed_pages(
             PageState::Resident(attachment) | PageState::Cooling { attachment, .. } => {
                 despawn_attachment(
                     commands,
+                    terrain_meshes,
                     terrain_materials,
                     terrain_images,
-                    ground_cover_pages,
                     attachment,
                 );
             }
@@ -1161,12 +1242,14 @@ fn calculate_page_demand(
     for descriptor in &stream.descriptors {
         let visible = detail_demand.enabled()
             && cell_intersects_frustum(&camera, descriptor, origin.cell, cell_size);
-        let preloaded =
-            descriptor.cell.chebyshev_distance(viewpoint_cell) <= PLAYER_PRELOAD_RADIUS_CELLS;
-        if !visible && !preloaded {
+        let visual_source_resident = descriptor.cell.chebyshev_distance(viewpoint_cell)
+            <= VISUAL_SOURCE_RESIDENCY_RADIUS_CELLS;
+        let gameplay_preloaded =
+            descriptor.cell.chebyshev_distance(viewpoint_cell) <= GAMEPLAY_PRELOAD_RADIUS_CELLS;
+        if !visible && !visual_source_resident && !gameplay_preloaded {
             continue;
         }
-        if descriptor.has_domain(PageDomain::TerrainRender) {
+        if (visible || visual_source_resident) && descriptor.has_domain(PageDomain::TerrainRender) {
             desired.insert(PageKey {
                 space: space_id,
                 cell: descriptor.cell,
@@ -1182,20 +1265,22 @@ fn calculate_page_demand(
                 lod: 0,
             });
         }
-        if config.gameplay_pages && preloaded && descriptor.has_domain(PageDomain::GameplayObjects)
+        if (visible || visual_source_resident) && descriptor.has_domain(PageDomain::Vegetation) {
+            desired.insert(PageKey {
+                space: space_id,
+                cell: descriptor.cell,
+                domain: PageDomain::Vegetation,
+                lod: 0,
+            });
+        }
+        if config.gameplay_pages
+            && gameplay_preloaded
+            && descriptor.has_domain(PageDomain::GameplayObjects)
         {
             desired.insert(PageKey {
                 space: space_id,
                 cell: descriptor.cell,
                 domain: PageDomain::GameplayObjects,
-                lod: 0,
-            });
-        }
-        if (visible || preloaded) && descriptor.has_domain(PageDomain::GroundCover) {
-            desired.insert(PageKey {
-                space: space_id,
-                cell: descriptor.cell,
-                domain: PageDomain::GroundCover,
                 lod: 0,
             });
         }
@@ -1295,16 +1380,20 @@ fn attach_prepared_pages(
     asset_server: Res<AssetServer>,
     render_assets: Option<Res<WorldRenderAssets>>,
     stats: Res<StreamingStats>,
+    mut terrain_meshes: ResMut<Assets<Mesh>>,
     mut terrain_materials: ResMut<Assets<TerrainMaterial>>,
     mut terrain_images: ResMut<Assets<Image>>,
     macro_variation: Res<TerrainMacroVariation>,
-    mut ground_cover_pages: ResMut<Assets<GroundCoverPageAsset>>,
     origin: Res<WorldOrigin>,
     mut stream: ResMut<WorldStream>,
 ) {
     let Some(render_assets) = render_assets else {
         return;
     };
+    let vegetation_catalog = stream
+        .manifest
+        .as_ref()
+        .and_then(|manifest| manifest.vegetation_catalog.clone());
     let mut keys: Vec<_> = stream
         .pages
         .iter()
@@ -1371,9 +1460,10 @@ fn attach_prepared_pages(
             &mut commands,
             &asset_server,
             &render_assets,
+            vegetation_catalog.as_ref(),
+            &mut terrain_meshes,
             &mut terrain_materials,
             &mut terrain_images,
-            &mut ground_cover_pages,
             *macro_variation,
             origin.cell,
             cell_size,
@@ -1402,9 +1492,10 @@ fn attach_page(
     commands: &mut Commands,
     asset_server: &AssetServer,
     render_assets: &WorldRenderAssets,
+    vegetation_catalog: Option<&VegetationCatalog>,
+    terrain_meshes: &mut Assets<Mesh>,
     terrain_materials: &mut Assets<TerrainMaterial>,
     terrain_images: &mut Assets<Image>,
-    ground_cover_pages: &mut Assets<GroundCoverPageAsset>,
     macro_variation: TerrainMacroVariation,
     origin_cell: CellCoord,
     cell_size: f32,
@@ -1412,11 +1503,11 @@ fn attach_page(
 ) -> Result<PageAttachment, String> {
     let key = prepared.decoded.key;
     let mut entities = Vec::new();
+    let mut owned_terrain_meshes = Vec::new();
     let mut owned_terrain_materials = Vec::new();
     let mut owned_terrain_images = Vec::new();
-    let mut owned_ground_cover_pages = Vec::new();
     let mut gameplay_objects = 0;
-    let mut ground_cover_clusters = 0;
+    let mut vegetation_pages = 0;
     let mut terrain_texture_set = None;
     match prepared.decoded.payload {
         PagePayload::TerrainRender(terrain) => {
@@ -1464,7 +1555,8 @@ fn attach_page(
                 cell: key.cell,
                 origin_cell,
                 cell_size,
-                page: &terrain,
+                page_surfaces: &terrain.surfaces,
+                weight_pages: &terrain.weight_pages,
                 profile: &resources.profile,
                 texture_set: &resources.texture_set,
                 surfaces: &surface_layers,
@@ -1481,6 +1573,85 @@ fn attach_page(
                 ))
                 .id();
             entities.push(entity);
+            owned_terrain_materials.push(prepared_material.material);
+            owned_terrain_images.push(prepared_material.weight_image);
+        }
+        PagePayload::TerrainHeightfield(terrain) => {
+            terrain
+                .heightfield
+                .validate()
+                .map_err(|error| error.to_string())?;
+            let resources = prepared
+                .terrain
+                .as_ref()
+                .ok_or_else(|| "terrain page has no fetched render resources".to_owned())?;
+            if resources.profile.space != key.space
+                || resources.profile.texture_set != resources.texture_set.id
+            {
+                return Err("terrain page render resources are inconsistent".into());
+            }
+            terrain_texture_set = Some((
+                resources.texture_set.id,
+                resources.texture_set.runtime_gpu_bytes(),
+            ));
+            let surface_lookup: HashMap<_, _> = resources
+                .surfaces
+                .iter()
+                .map(|runtime| (runtime.surface.id, runtime))
+                .collect();
+            let surface_layers = terrain
+                .surfaces
+                .iter()
+                .map(|surface| {
+                    let runtime = surface_lookup.get(surface).ok_or_else(|| {
+                        format!("terrain page has unresolved surface {:?}", surface)
+                    })?;
+                    Ok(TerrainSurfaceLayer {
+                        surface: runtime.surface.clone(),
+                        layer: runtime.layer,
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            let center = [
+                (i64::from(key.cell.x) - i64::from(origin_cell.x)) as f32 * cell_size
+                    + cell_size * 0.5,
+                (i64::from(key.cell.z) - i64::from(origin_cell.z)) as f32 * cell_size
+                    + cell_size * 0.5,
+            ];
+            let prepared_material = prepare_terrain_material(PrepareTerrainMaterialContext {
+                asset_server,
+                images: terrain_images,
+                materials: terrain_materials,
+                cell: key.cell,
+                origin_cell,
+                cell_size,
+                page_surfaces: &terrain.surfaces,
+                weight_pages: &terrain.weight_pages,
+                profile: &resources.profile,
+                texture_set: &resources.texture_set,
+                surfaces: &surface_layers,
+                macro_variation,
+            })?;
+            let mesh = terrain_meshes.add(build_heightfield_mesh(&terrain.heightfield, cell_size)?);
+            let entity = commands
+                .spawn((
+                    Mesh3d(mesh.clone()),
+                    MeshMaterial3d(prepared_material.material.clone()),
+                    Transform::from_xyz(center[0], 0.0, center[1]),
+                    StreamedTerrainSurface {
+                        key,
+                        cell_size,
+                        heightfield: terrain.heightfield,
+                    },
+                    StreamedPageEntity(key),
+                    Name::new(format!(
+                        "Relief terrain cell {}, {}",
+                        key.cell.x, key.cell.z
+                    )),
+                ))
+                .id();
+            entities.push(entity);
+            owned_terrain_meshes.push(mesh);
             owned_terrain_materials.push(prepared_material.material);
             owned_terrain_images.push(prepared_material.weight_image);
         }
@@ -1561,37 +1732,23 @@ fn attach_page(
                 entities.push(entity);
             }
         }
-        PagePayload::GroundCover(page) => {
-            let species: HashMap<_, _> = prepared
-                .ground_cover_species
-                .iter()
-                .map(|species| (species.id, species))
-                .collect();
-            for cluster in &page.clusters {
-                if !species.contains_key(&cluster.species) {
-                    return Err(format!(
-                        "ground-cover cluster references unresolved species {:?}",
-                        cluster.species
-                    ));
-                }
-            }
-            ground_cover_clusters = page.clusters.len();
-            let asset = ground_cover_pages.add(GroundCoverPageAsset {
-                key,
-                origin_cell,
-                cell_size,
-                page,
-                species: prepared.ground_cover_species,
-            });
+        PagePayload::Vegetation(data) => {
+            let catalog = vegetation_catalog
+                .ok_or_else(|| "vegetation page has no generation catalog".to_owned())?;
+            data.validate(catalog).map_err(|error| error.to_string())?;
             let entity = commands
                 .spawn((
-                    GroundCoverPage3d(asset.clone()),
+                    StreamedVegetationFieldPage {
+                        key,
+                        cell_size,
+                        data,
+                    },
                     StreamedPageEntity(key),
-                    Name::new(format!("Ground cover cell {}, {}", key.cell.x, key.cell.z)),
+                    Name::new(format!("Vegetation fields {}, {}", key.cell.x, key.cell.z)),
                 ))
                 .id();
             entities.push(entity);
-            owned_ground_cover_pages.push(asset);
+            vegetation_pages = 1;
         }
         PagePayload::ShadowCasters(_) => {
             return Err("shadow-caster page attachment is not enabled in the first slice".into());
@@ -1645,9 +1802,9 @@ fn attach_page(
 
     Ok(PageAttachment {
         entities,
+        owned_terrain_meshes,
         owned_terrain_materials,
         owned_terrain_images,
-        owned_ground_cover_pages,
         decoded_bytes: prepared.decoded.decoded_bytes,
         gpu_bytes_estimate: prepared.decoded.gpu_bytes_estimate
             + prepared
@@ -1656,7 +1813,7 @@ fn attach_page(
                 .map(|dependency| dependency.gpu_bytes_estimate)
                 .sum::<u64>(),
         gameplay_objects,
-        ground_cover_clusters,
+        vegetation_pages,
         terrain_texture_set,
     })
 }
@@ -1748,13 +1905,16 @@ struct StreamedPageEntity(PageKey);
 
 fn despawn_attachment(
     commands: &mut Commands,
+    terrain_meshes: &mut Assets<Mesh>,
     terrain_materials: &mut Assets<TerrainMaterial>,
     terrain_images: &mut Assets<Image>,
-    ground_cover_pages: &mut Assets<GroundCoverPageAsset>,
     attachment: PageAttachment,
 ) {
     for entity in attachment.entities {
         commands.entity(entity).despawn();
+    }
+    for mesh in attachment.owned_terrain_meshes {
+        terrain_meshes.remove(mesh.id());
     }
     for material in attachment.owned_terrain_materials {
         terrain_materials.remove(material.id());
@@ -1762,17 +1922,14 @@ fn despawn_attachment(
     for image in attachment.owned_terrain_images {
         terrain_images.remove(image.id());
     }
-    for page in attachment.owned_ground_cover_pages {
-        ground_cover_pages.remove(page.id());
-    }
 }
 
 fn cool_and_remove_pages(
     mut commands: Commands,
     time: Res<Time>,
+    mut terrain_meshes: ResMut<Assets<Mesh>>,
     mut terrain_materials: ResMut<Assets<TerrainMaterial>>,
     mut terrain_images: ResMut<Assets<Image>>,
-    mut ground_cover_pages: ResMut<Assets<GroundCoverPageAsset>>,
     mut stream: ResMut<WorldStream>,
 ) {
     let now = time.elapsed();
@@ -1801,9 +1958,9 @@ fn cool_and_remove_pages(
             } if now >= remove_at => {
                 despawn_attachment(
                     &mut commands,
+                    &mut terrain_meshes,
                     &mut terrain_materials,
                     &mut terrain_images,
-                    &mut ground_cover_pages,
                     attachment,
                 );
             }
@@ -1829,7 +1986,7 @@ pub struct StreamingStats {
     pub gpu_bytes_estimate: u64,
     pub cached_definitions: usize,
     pub gameplay_objects: usize,
-    pub ground_cover_clusters: usize,
+    pub vegetation_pages: usize,
     pub lod_counts: BTreeMap<u8, usize>,
     pub minimum_projected_height: f32,
     pub maximum_projected_height: f32,
@@ -1868,7 +2025,7 @@ fn update_streaming_stats(
     stats.gpu_bytes_estimate = 0;
     stats.cached_definitions = stream.definition_cache.len();
     stats.gameplay_objects = 0;
-    stats.ground_cover_clusters = 0;
+    stats.vegetation_pages = 0;
     stats.terrain_texture_sets.clear();
     stats.lod_counts.clear();
     stats.minimum_projected_height = f32::INFINITY;
@@ -1894,7 +2051,7 @@ fn update_streaming_stats(
                 stats.decoded_bytes += attachment.decoded_bytes;
                 stats.gpu_bytes_estimate += attachment.gpu_bytes_estimate;
                 stats.gameplay_objects += attachment.gameplay_objects;
-                stats.ground_cover_clusters += attachment.ground_cover_clusters;
+                stats.vegetation_pages += attachment.vegetation_pages;
                 account_terrain_texture_set(&mut stats, attachment);
             }
             PageState::Cooling { attachment, .. } => {
@@ -1903,7 +2060,7 @@ fn update_streaming_stats(
                 stats.decoded_bytes += attachment.decoded_bytes;
                 stats.gpu_bytes_estimate += attachment.gpu_bytes_estimate;
                 stats.gameplay_objects += attachment.gameplay_objects;
-                stats.ground_cover_clusters += attachment.ground_cover_clusters;
+                stats.vegetation_pages += attachment.vegetation_pages;
                 account_terrain_texture_set(&mut stats, attachment);
             }
             PageState::Failed(error) => {
@@ -1970,19 +2127,14 @@ fn report_streaming_smoke(
             stats.cached_definitions, 0,
             "the distant interior definition was fetched before entering its proximity set"
         );
-        assert!(
-            stats.ground_cover_clusters > 0,
-            "the overworld did not stream any ground-cover clusters"
-        );
         println!(
             "YARRA_STREAMING_SMOKE initial status={:?} demanded={} resident={} failed={} \
-             owned_entities={} ground_cover_clusters={} decoded_bytes={} gpu_bytes_estimate={} lods={:?}",
+             owned_entities={} decoded_bytes={} gpu_bytes_estimate={} lods={:?}",
             stats.status,
             stats.demanded,
             stats.resident,
             stats.failed,
             stats.owned_entities,
-            stats.ground_cover_clusters,
             stats.decoded_bytes,
             stats.gpu_bytes_estimate,
             stats.lod_counts,
@@ -2126,6 +2278,32 @@ fn assert_streaming_is_healthy(stats: &StreamingStats) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resident_terrain_sampling_converts_from_rebased_render_space() {
+        let space = WorldSpaceId(7);
+        let cell = CellCoord { x: 10, z: -4 };
+        let origin = WorldOrigin {
+            space: Some(space),
+            cell,
+        };
+        let heightfield =
+            TerrainHeightfield::from_heights(2, &[2.5, 2.5, 2.5, 2.5], 2.5, 2.5, 32.0).unwrap();
+        let surface = StreamedTerrainSurface {
+            key: PageKey {
+                space,
+                cell,
+                domain: PageDomain::TerrainRender,
+                lod: 0,
+            },
+            cell_size: 32.0,
+            heightfield,
+        };
+
+        let sample = sample_resident_terrain_surface(&origin, [&surface], [16.0, 16.0]).unwrap();
+        assert_eq!(sample.height, 2.5);
+        assert_eq!(sample.normal, [0.0, 1.0, 0.0]);
+    }
 
     #[test]
     fn editor_origin_rebases_only_after_its_threshold() {

@@ -10,9 +10,8 @@ use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded};
 use engine::WorldGenerationReload;
 
 use crate::{
-    catalog_editing::GroundCoverRegionWorkingSet, derived_jobs::DerivedArtifactStore,
-    domain_editing::DenseDomainWorkingSets, editing::EditorObjectWorkingSet,
-    ground_cover_catalog::GroundCoverCatalogWorkingSet, project_store::ProjectEditorStore,
+    derived_jobs::DerivedArtifactStore, domain_editing::DenseDomainWorkingSets,
+    editing::EditorObjectWorkingSet, project_store::ProjectEditorStore,
 };
 
 const PUBLICATION_CHANNEL_CAPACITY: usize = 1;
@@ -271,8 +270,6 @@ fn receive_publication_result(
     mut state: ResMut<RuntimePublicationState>,
     mut objects: ResMut<EditorObjectWorkingSet>,
     mut dense: ResMut<DenseDomainWorkingSets>,
-    mut regions: ResMut<GroundCoverRegionWorkingSet>,
-    mut ground_cover_catalog: ResMut<GroundCoverCatalogWorkingSet>,
     mut artifacts: ResMut<DerivedArtifactStore>,
 ) {
     if let Some(worker) = worker {
@@ -349,8 +346,6 @@ fn receive_publication_result(
         Ok(adopted) if adopted == generation => {
             objects.adopt_runtime_generation();
             dense.adopt_runtime_generation();
-            regions.adopt_runtime_generation();
-            ground_cover_catalog.adopt_runtime_generation();
             artifacts.clear_failures_for_generation_adoption();
             state.phase = PublicationPhase::Published {
                 generation: adopted,

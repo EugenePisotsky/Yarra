@@ -1,0 +1,13 @@
+[package]
+name = "yarra-vegetation-render"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+bevy.workspace = true
+bytemuck.workspace = true
+vegetation.workspace = true
+
+[dev-dependencies]
+naga.workspace = true

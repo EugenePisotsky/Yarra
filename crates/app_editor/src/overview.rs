@@ -308,7 +308,6 @@ fn draw_overview_tile_proxies(
         }
         let Some(DerivedArtifact::Overview {
             coarse_heights,
-            density_cells,
             object_icons,
             cell_status: _,
             fingerprint: _,
@@ -329,15 +328,6 @@ fn draw_overview_tile_proxies(
                 center - Vec3::Z * 2.0,
                 center + Vec3::Z * 2.0,
                 Color::srgba(0.42, 0.68, 0.95, 0.7),
-            );
-        }
-        for (cell, density) in density_cells.iter().filter(|(_, density)| *density > 0) {
-            let center = overview_cell_center(*cell, 0.2, space.cell_size, origin.cell());
-            let height = 1.0 + f32::from(*density) / 255.0 * 5.0;
-            gizmos.line(
-                center,
-                center + Vec3::Y * height,
-                Color::srgba(0.22, 0.9, 0.38, 0.75),
             );
         }
         for (_, cell) in object_icons.iter().take(MAX_DRAWN_OBJECT_ICONS_PER_TILE) {
