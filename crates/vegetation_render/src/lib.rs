@@ -308,15 +308,44 @@ impl VegetationDensityMode {
     }
 }
 
+/// Selects the foliage-lighting response without changing authored material data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(u32)]
+pub enum VegetationLightingMode {
+    /// Exposure-aware rounded blade highlights blended into a stable clump response.
+    #[default]
+    RoundedGloss = 0,
+    /// The previous empirical response, retained only for runtime visual comparison.
+    Legacy = 1,
+}
+
+impl VegetationLightingMode {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::RoundedGloss => "rounded + clump gloss",
+            Self::Legacy => "legacy",
+        }
+    }
+
+    fn next(self) -> Self {
+        match self {
+            Self::RoundedGloss => Self::Legacy,
+            Self::Legacy => Self::RoundedGloss,
+        }
+    }
+}
+
 /// Runtime controls for the V2 placement and profiling diagnostics.
 ///
 /// Press `X` to cycle the visual explanation, `P` to isolate render workloads, and `O` to cycle
-/// balanced production, full-reference, and authored population density.
+/// balanced production, full-reference, and authored population density. Press `L` to compare the
+/// production foliage lighting with the former empirical response.
 #[derive(Resource, ExtractResource, Debug, Clone, Copy, Default)]
 pub struct VegetationDebugSettings {
     pub mode: VegetationDebugMode,
     pub profile_mode: VegetationProfileMode,
     pub density_mode: VegetationDensityMode,
+    pub lighting_mode: VegetationLightingMode,
 }
 
 fn cycle_debug_mode(
@@ -340,6 +369,10 @@ fn cycle_debug_mode(
             "vegetation-v2 LOD density: {}",
             settings.density_mode.label()
         );
+    }
+    if keys.just_pressed(KeyCode::KeyL) {
+        settings.lighting_mode = settings.lighting_mode.next();
+        warn!("vegetation-v2 lighting: {}", settings.lighting_mode.label());
     }
 }
 
@@ -443,5 +476,13 @@ mod tests {
         assert_eq!(balanced, VegetationDensityMode::Balanced);
         assert_eq!(full, VegetationDensityMode::FullReference);
         assert_eq!(full.next(), authored);
+    }
+
+    #[test]
+    fn rounded_gloss_is_the_default_and_cycles_to_the_legacy_reference() {
+        let rounded = VegetationLightingMode::default();
+        assert_eq!(rounded, VegetationLightingMode::RoundedGloss);
+        assert_eq!(rounded.next(), VegetationLightingMode::Legacy);
+        assert_eq!(rounded.next().next(), rounded);
     }
 }

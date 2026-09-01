@@ -711,10 +711,17 @@ reference an optional detail texture-array slice when a LUT cannot express their
 
 ### Lighting stability
 
-- Procedural families generate analytic rounded normals.
-- Useful near-field curve/tangent detail may be retained.
-- Normal detail blends toward a stable species/clump normal as projected size shrinks.
-- Roughness increases as normal/coverage variance becomes subpixel.
+- Procedural families provide a physical flat normal and width axis. Nearby fragments reconstruct an
+  analytic cylindrical cross-section from those axes and the interpolated width coordinate. A narrow
+  waxy lobe over the broad material response lets the highlight move from one blade edge to the other
+  as the light/view relation changes; it is not a static width-gradient mask.
+- The production foliage experiment blends local rounded GGX into a shallow, group-stable normal as
+  distance makes individual blades unresolved. That clump normal remains tied to terrain relief.
+- Screen-space normal variance increases GGX roughness, and far gloss retains a restrained energy
+  floor rather than becoming either glitter or a completely matte horizon.
+- Directional light energy is camera-exposure-aware. Low-sun gloss and transmission concentrate on
+  the upper blade while diffuse illumination broadens as the sun rises. The prior empirical response
+  remains available only as an `L` diagnostic comparison until the new response passes visual review.
 - Ribbon width axes are transported perpendicular to the local Bezier tangent. The shader may
   rotate that unoriented width line toward the camera-facing line by a small, species-bounded maximum
   angle. The response is zero when already face-on and grows continuously toward edge-on views; the

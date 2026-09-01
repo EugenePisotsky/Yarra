@@ -156,9 +156,11 @@ fn vegetation_debug_legend(
         "VIOLATION"
     };
     let density_mode = settings.density_mode.label();
+    let lighting_mode = settings.lighting_mode.label();
     format!(
         "{description}\n\
          LOD density: {density_mode} | O: balanced/full/authored\n\
+         Lighting: {lighting_mode} | L: rounded/legacy\n\
          Profile: {} | P: full/draw-frozen/compute/schedule\n\
          Source: {} pages | {} work items | repacks {} | reallocs {} | upload/reserved {:.2}/{:.2} MiB | revision {}\n\
          GPU: {}/{} scheduled | {} lanes / {} candidate evaluations | sample {}\n\

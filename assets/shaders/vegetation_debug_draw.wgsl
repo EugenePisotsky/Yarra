@@ -1,4 +1,5 @@
 #import bevy_pbr::{
+    lighting as pbr_lighting,
     mesh_view_bindings as view_bindings,
     mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT,
     shadows,
@@ -69,6 +70,7 @@ struct Camera {
 struct DebugConfig {
     // x: 0 geometry, 1 accepted species, 2 parent links, 3 outcomes, 4 group structure
     // y: 0 authored density, 1 balanced production density, 2 full-density reference
+    // z: 0 rounded/clump gloss, 1 legacy empirical lighting
     values: vec4<u32>,
 }
 
@@ -80,6 +82,11 @@ struct VertexOutput {
     @location(3) blade_t: f32,
     // x: roughness, y: transmission, z: AO, w: geometry/diagnostic flag
     @location(4) material: vec4<f32>,
+    @location(5) blade_u: f32,
+    // xyz: terrain surface normal, w: stable clump variant
+    @location(6) surface_normal_clump: vec4<f32>,
+    // xyz: physical width axis before view opening, w: authored normal-rounding strength
+    @location(7) ribbon_side_rounding: vec4<f32>,
 }
 
 // Group zero is Bevy's mesh-view bind group, including directional shadow cascades.
@@ -94,6 +101,7 @@ const MAX_SECTIONS: u32 = 8u;
 const MAX_LOW_SECTIONS: u32 = 3u;
 const DENSITY_MODE_BALANCED: u32 = 1u;
 const BALANCED_DENSITY_FADE_BAND: f32 = 0.10;
+const LIGHTING_MODE_LEGACY: u32 = 1u;
 
 fn hash32(value: u32) -> u32 {
     var x = value;
@@ -446,19 +454,15 @@ fn geometry_vertex(vertex_index: u32, instance_index: u32) -> VertexOutput {
         + rendered_ribbon_side * side_sign * half_width * taper;
 
     // View opening is a silhouette correction, not a material deformation. Preserve the physical
-    // blade normal so changing the opening does not rotate every blade's lighting away from the
-    // sun and darken the field. The fragment shader treats this physical frame as two-sided.
-    let rounded_normal = normalize3_or(
-        physical_normal + local_ribbon_side * side_sign * profile.material.w,
-        physical_normal,
-    );
+    // blade frame so changing the opening does not rotate every blade's lighting away from the sun
+    // and darken the field. The fragment shader reconstructs the rounded cross-section per pixel.
     let variation = (clump_variant * 2.0 - 1.0) * profile.material.x;
     let color = mix(profile.root_color.xyz, profile.tip_color_height.xyz, t) * (1.0 + variation);
 
     var output: VertexOutput;
     output.clip_position = camera.clip_from_world * vec4<f32>(world_position, 1.0);
     output.color = color;
-    output.world_normal = rounded_normal;
+    output.world_normal = physical_normal;
     output.world_position = world_position;
     output.blade_t = t;
     output.material = vec4<f32>(
@@ -467,6 +471,9 @@ fn geometry_vertex(vertex_index: u32, instance_index: u32) -> VertexOutput {
         mix(profile.shading.x, profile.shading.y, t),
         1.0,
     );
+    output.blade_u = side_sign * 0.5 + 0.5;
+    output.surface_normal_clump = vec4<f32>(surface_normal, clump_variant);
+    output.ribbon_side_rounding = vec4<f32>(local_ribbon_side, profile.material.w);
     return output;
 }
 
@@ -556,6 +563,9 @@ fn diagnostic_vertex(vertex_index: u32, instance_index: u32) -> VertexOutput {
     output.world_position = world_position;
     output.blade_t = strip.x;
     output.material = vec4<f32>(1.0, 0.0, 1.0, 0.0);
+    output.blade_u = strip.y * 0.5 + 0.5;
+    output.surface_normal_clump = vec4<f32>(surface_normal, instance.direction_species.y);
+    output.ribbon_side_rounding = vec4<f32>(side, 0.0);
     return output;
 }
 
@@ -605,6 +615,70 @@ fn radiance_tint(radiance: vec3<f32>, fallback: vec3<f32>) -> vec3<f32> {
     return radiance / peak;
 }
 
+fn stable_clump_normal(surface_normal: vec3<f32>, clump_variant: f32) -> vec3<f32> {
+    let tangent = normalize3_or(
+        cross(vec3<f32>(0.0, 1.0, 0.0), surface_normal),
+        vec3<f32>(1.0, 0.0, 0.0),
+    );
+    let bitangent = normalize3_or(
+        cross(surface_normal, tangent),
+        vec3<f32>(0.0, 0.0, 1.0),
+    );
+    let angle = clump_variant * 2.0 * PI;
+    let tilt_direction = tangent * cos(angle) + bitangent * sin(angle);
+    // A shallow, group-stable tilt makes neighboring blades enter and leave the broad highlight
+    // together. The surface normal keeps the response attached to terrain relief.
+    return normalize3_or(surface_normal + tilt_direction * 0.11, surface_normal);
+}
+
+fn analytic_rounded_normal(
+    flat_normal: vec3<f32>,
+    ribbon_side: vec3<f32>,
+    blade_u: f32,
+    authored_rounding: f32,
+) -> vec3<f32> {
+    let orthogonal_side = normalize3_or(
+        ribbon_side - flat_normal * dot(ribbon_side, flat_normal),
+        vec3<f32>(1.0, 0.0, 0.0),
+    );
+    // A projected cylinder has x = sin(theta). Reconstructing cos(theta) here gives every covered
+    // pixel a genuine curved cross-section instead of merely interpolating two slightly tilted edge
+    // normals. Most authored values predate this shader and occupy the lower 0..0.4 range, so that
+    // range deliberately spans flat to nearly cylindrical while retaining zero as exactly flat.
+    let signed_width = clamp(blade_u * 2.0 - 1.0, -0.995, 0.995);
+    let cylinder_height = sqrt(max(1.0 - signed_width * signed_width, 0.0));
+    let cylinder_normal = normalize3_or(
+        flat_normal * cylinder_height + orthogonal_side * signed_width,
+        flat_normal,
+    );
+    let rounding = smoothstep(0.0, 0.42, authored_rounding);
+    return normalize3_or(mix(flat_normal, cylinder_normal, rounding), flat_normal);
+}
+
+fn ggx_foliage_specular(
+    normal: vec3<f32>,
+    view_direction: vec3<f32>,
+    light_direction: vec3<f32>,
+    half_direction: vec3<f32>,
+    alpha_roughness: f32,
+) -> f32 {
+    let n_dot_l = max(dot(normal, light_direction), 0.0);
+    let n_dot_v = max(dot(normal, view_direction), 0.04);
+    let n_dot_h = max(dot(normal, half_direction), 0.0);
+    let v_dot_h = clamp(dot(view_direction, half_direction), 0.0, 1.0);
+    let one_minus_v_dot_h = 1.0 - v_dot_h;
+    let one_minus_v_dot_h_2 = one_minus_v_dot_h * one_minus_v_dot_h;
+    let fresnel = 0.04
+        + 0.96 * one_minus_v_dot_h_2 * one_minus_v_dot_h_2 * one_minus_v_dot_h;
+    let distribution = pbr_lighting::D_GGX(alpha_roughness, n_dot_h);
+    let visibility = pbr_lighting::V_SmithGGXCorrelated(
+        alpha_roughness,
+        n_dot_v,
+        max(n_dot_l, 0.04),
+    );
+    return min(fresnel * distribution * visibility * n_dot_l, 1.5);
+}
+
 @fragment
 fn fragment(
     input: VertexOutput,
@@ -617,13 +691,19 @@ fn fragment(
         camera.camera_position.xyz - input.world_position,
         vec3<f32>(0.0, 1.0, 0.0),
     );
-    // Vegetation ribbons are two-sided. Face the interpolated authored/opened normal toward the
-    // viewer instead of deriving its sign from triangle winding: adjacent transported width axes
-    // can twist a highly curved strip without meaning that its lighting side should invert.
+    // Vegetation ribbons are two-sided. Face the physical blade plane toward the viewer instead of
+    // deriving its sign from triangle winding: adjacent transported width axes can twist a highly
+    // curved strip without meaning that its lighting side should invert.
     let face_sign = select(-1.0, 1.0, dot(input.world_normal, view_direction) >= 0.0);
-    let blade_normal = normalize3_or(
+    let flat_blade_normal = normalize3_or(
         input.world_normal * face_sign,
         vec3<f32>(0.0, 1.0, 0.0),
+    );
+    let blade_normal = analytic_rounded_normal(
+        flat_blade_normal,
+        input.ribbon_side_rounding.xyz,
+        input.blade_u,
+        input.ribbon_side_rounding.w,
     );
     let light_direction = normalize3_or(camera.sun_direction.xyz, vec3<f32>(0.0, 1.0, 0.0));
     let camera_distance = distance(camera.camera_position.xyz, input.world_position);
@@ -640,14 +720,6 @@ fn fragment(
         field_normal,
     );
     let half_direction = normalize3_or(light_direction + view_direction, normal);
-    let wrapped_diffuse = clamp((dot(normal, light_direction) + 0.48) / 1.48, 0.0, 1.0);
-    let back_light = pow(max(dot(-normal, light_direction), 0.0), 1.5)
-        * input.material.y;
-    let roughness = clamp(input.material.x, 0.04, 1.0);
-    let specular_power = mix(96.0, 4.0, roughness);
-    let specular = pow(max(dot(normal, half_direction), 0.0), specular_power)
-        * mix(0.24, 0.035, roughness)
-        * (1.0 - distance_stability);
     let ambient_occlusion = clamp(input.material.z, 0.0, 1.0);
     let shadow_visibility = directional_shadow_visibility(input);
     // The old receiver cache could only darken direct light and therefore became almost invisible
@@ -666,22 +738,142 @@ fn fragment(
         * ambient_tint
         * mix(0.22, 0.42, ambient_occlusion)
         * received_shadow;
-    let diffuse = input.color
-        * sun_tint
-        * wrapped_diffuse
-        * camera.lighting.x
-        * shadow_visibility
-        * sun_active;
-    let transmission = input.color
-        * sun_tint
-        * back_light
-        * camera.lighting.z
-        * shadow_visibility
-        * sun_active;
-    let highlight = sun_tint
-        * specular
+
+    if (debug_config.values.z == LIGHTING_MODE_LEGACY) {
+        let wrapped_diffuse = clamp((dot(normal, light_direction) + 0.48) / 1.48, 0.0, 1.0);
+        let back_light = pow(max(dot(-normal, light_direction), 0.0), 1.5)
+            * input.material.y;
+        let roughness = clamp(input.material.x, 0.04, 1.0);
+        let specular_power = mix(96.0, 4.0, roughness);
+        let specular = pow(max(dot(normal, half_direction), 0.0), specular_power)
+            * mix(0.24, 0.035, roughness)
+            * (1.0 - distance_stability);
+        let diffuse = input.color
+            * sun_tint
+            * wrapped_diffuse
+            * camera.lighting.x
+            * shadow_visibility
+            * sun_active;
+        let transmission = input.color
+            * sun_tint
+            * back_light
+            * camera.lighting.z
+            * shadow_visibility
+            * sun_active;
+        let highlight = sun_tint
+            * specular
+            * camera.lighting.y
+            * shadow_visibility
+            * sun_active;
+        return vec4<f32>(ambient + diffuse + transmission + highlight, 1.0);
+    }
+
+    // Direct-light energy must use the same camera exposure as Bevy's PBR path. Normalizing the
+    // directional radiance to a tint made a 100,000-lux sun indistinguishable from a dim light.
+    let exposed_sun = camera.sun_radiance.xyz * view_bindings::view.exposure;
+    let exposed_sun_peak = max(max(exposed_sun.r, exposed_sun.g), exposed_sun.b);
+    let exposed_sun_tint = radiance_tint(exposed_sun, sun_tint);
+    let sun_elevation = clamp(light_direction.y, 0.0, 1.0);
+    let low_sun = 1.0 - smoothstep(0.28, 0.72, sun_elevation);
+    let high_sun = smoothstep(0.32, 0.82, sun_elevation);
+
+    // Rounded local normals move the highlight from one side of a nearby ribbon to the other.
+    // The stable clump normal takes over only as individual blades become unresolved.
+    let surface_normal = normalize3_or(
+        input.surface_normal_clump.xyz,
+        vec3<f32>(0.0, 1.0, 0.0),
+    );
+    let clump_normal = stable_clump_normal(surface_normal, input.surface_normal_clump.w);
+    let perceptual_roughness = clamp(input.material.x, 0.08, 1.0);
+    let base_alpha_roughness = perceptual_roughness * perceptual_roughness;
+    let normal_width = fwidth(blade_normal);
+    let normal_variance = clamp(dot(normal_width, normal_width), 0.0, 0.5);
+    let local_alpha_roughness = clamp(
+        base_alpha_roughness + normal_variance * 0.36,
+        0.035,
+        0.95,
+    );
+    let clump_alpha_roughness = clamp(
+        base_alpha_roughness + distance_stability * 0.12,
+        0.045,
+        0.95,
+    );
+    let local_broad_specular = ggx_foliage_specular(
+        blade_normal,
+        view_direction,
+        light_direction,
+        half_direction,
+        local_alpha_roughness,
+    );
+    // Leaves have a narrow waxy sheen sitting over the broad material response. Keeping this lobe
+    // distinct is what makes the half-vector select one side of the analytic cylinder; a single
+    // high-roughness lobe only reads as a field-wide brightness gradient.
+    let sheen_alpha_roughness = clamp(
+        mix(0.10, 0.22, perceptual_roughness) + normal_variance * 0.24,
+        0.08,
+        0.48,
+    );
+    let local_sheen_specular = ggx_foliage_specular(
+        blade_normal,
+        view_direction,
+        light_direction,
+        half_direction,
+        sheen_alpha_roughness,
+    );
+    let local_specular = local_broad_specular * 0.16 + local_sheen_specular;
+    let clump_specular = ggx_foliage_specular(
+        clump_normal,
+        view_direction,
+        light_direction,
+        half_direction,
+        clump_alpha_roughness,
+    );
+    let specular_lobe = mix(local_specular, clump_specular * 0.34, distance_stability);
+
+    let upper_ribbon = smoothstep(0.14, 0.78, input.blade_t);
+    let far_highlight_weight = mix(
+        1.0,
+        0.14,
+        smoothstep(40.0, 88.0, camera_distance),
+    );
+    let specular_elevation = mix(0.22, 1.0, low_sun);
+    let specular_energy = min(exposed_sun_peak, 8.0);
+    let highlight = exposed_sun_tint
+        * specular_lobe
+        * upper_ribbon
+        * specular_elevation
+        * far_highlight_weight
+        * specular_energy
         * camera.lighting.y
         * shadow_visibility
         * sun_active;
+
+    let wrapped_diffuse = clamp((dot(blade_normal, light_direction) + 0.28) / 1.28, 0.0, 1.0);
+    let broad_diffuse = mix(wrapped_diffuse, 0.82, high_sun * 0.24);
+    let diffuse_energy = min(exposed_sun_peak * camera.lighting.x, 0.54);
+    let diffuse = input.color
+        * exposed_sun_tint
+        * broad_diffuse
+        * diffuse_energy
+        * shadow_visibility
+        * sun_active;
+
+    let backscatter_alignment = clamp(dot(-view_direction, light_direction), 0.0, 1.0);
+    let backscatter = smoothstep(0.14, 0.86, backscatter_alignment);
+    let transmission_energy = min(exposed_sun_peak, 3.0);
+    let transmission = mix(
+        input.color * exposed_sun_tint,
+        exposed_sun_tint,
+        0.22,
+    ) * backscatter
+        * low_sun
+        * upper_ribbon
+        * input.material.y
+        * far_highlight_weight
+        * transmission_energy
+        * camera.lighting.z
+        * shadow_visibility
+        * sun_active;
+
     return vec4<f32>(ambient + diffuse + transmission + highlight, 1.0);
 }

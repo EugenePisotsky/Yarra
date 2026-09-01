@@ -48,6 +48,17 @@ the material merely because its silhouette opens. Broad leaves bypass the openin
 neither instances, topology, draw calls, nor per-blade storage and removes the extra clip-space
 projection work from the rejected path.
 
+Lighting experiment checkpoint, 2026-09-01: V2 now defaults to an exposure-aware two-scale foliage
+response and retains the former empirical response behind the `L` comparison toggle. Nearby ribbons
+reconstruct an analytic cylindrical cross-section from their physical normal, width axis, and
+interpolated width coordinate. A separate narrow waxy sheen lets the sun/view half-vector select one
+side of that cross-section instead of presenting a static central brightness mask. Unresolved blades
+blend to a shallow, group-stable normal tied to terrain relief. GGX roughness grows with screen-space
+normal variance, direct energy follows the camera's physical exposure, and the special
+gloss/transmission response is concentrated toward the upper blade and low sun. Far gloss retains a
+restrained floor instead of disappearing completely. This is an experiment pending fixed-camera,
+moving-sun, and animated temporal acceptance rather than a finished material decision.
+
 Overhead-LOD correction, 2026-08-31: the first projected-size metric measured only the segment from
 the root to `root + surface_normal * maximum_height`. That segment collapses toward zero in an
 overhead view even though a bent or tilted blade still has a large horizontal footprint. This

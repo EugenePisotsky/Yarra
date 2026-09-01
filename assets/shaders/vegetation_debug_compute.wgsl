@@ -45,6 +45,7 @@ struct DebugInstance {
 struct DebugConfig {
     // x: 0 geometry, 1 accepted species, 2 parent links, 3 outcomes, 4 group structure
     // y: 0 authored density, 1 balanced production density, 2 full-density reference
+    // z: 0 rounded/clump gloss, 1 legacy empirical lighting
     values: vec4<u32>,
 }
 

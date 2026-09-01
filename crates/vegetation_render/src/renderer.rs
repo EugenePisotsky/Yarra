@@ -272,7 +272,7 @@ struct CameraGpu {
 #[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
 struct DebugConfigGpu {
-    // x: VegetationDebugMode; y: VegetationDensityMode; zw: reserved.
+    // x: VegetationDebugMode; y: VegetationDensityMode; z: VegetationLightingMode; w: reserved.
     // Mirrors WGSL `vec4<u32>` exactly.
     values: [u32; 4],
 }
@@ -1009,7 +1009,12 @@ fn prepare(
         &buffers.debug_config,
         0,
         bytemuck::bytes_of(&DebugConfigGpu {
-            values: [settings.mode as u32, settings.density_mode as u32, 0, 0],
+            values: [
+                settings.mode as u32,
+                settings.density_mode as u32,
+                settings.lighting_mode as u32,
+                0,
+            ],
         }),
     );
     buffers.active = buffers.work_item_count > 0 && buffers.maximum_candidate_count > 0;
@@ -1860,6 +1865,17 @@ mod tests {
             "{}fn directional_shadow_visibility(_input: VertexOutput) -> f32 {{ return 1.0; }}\n{}",
             &draw[declarations..shadow_adapter],
             &draw[post_adapter..],
+        )
+        .replace("pbr_lighting::D_GGX", "test_d_ggx")
+        .replace(
+            "pbr_lighting::V_SmithGGXCorrelated",
+            "test_v_smith_ggx_correlated",
+        )
+        .replace("view_bindings::view.exposure", "1.0");
+        let sanitized = format!(
+            "fn test_d_ggx(_roughness: f32, _n_dot_h: f32) -> f32 {{ return 1.0; }}\n\
+             fn test_v_smith_ggx_correlated(_roughness: f32, _n_dot_v: f32, _n_dot_l: f32) -> f32 {{ return 1.0; }}\n\
+             {sanitized}"
         );
         let module = naga::front::wgsl::parse_str(&sanitized).unwrap();
         naga::valid::Validator::new(
@@ -1914,7 +1930,8 @@ mod tests {
         assert!(draw.contains("let opening_tangent = min("));
         assert!(draw.contains("var rendered_ribbon_side = local_ribbon_side;"));
         assert!(draw.contains("rendered_ribbon_side = normalize3_or("));
-        assert!(draw.contains("physical_normal + local_ribbon_side * side_sign"));
+        assert!(draw.contains("output.world_normal = physical_normal;"));
+        assert!(draw.contains("output.ribbon_side_rounding = vec4<f32>("));
         assert!(!draw.contains("let view_opening_weight = smoothstep("));
         assert!(!draw.contains("cross(rendered_ribbon_side, curve_tangent)"));
         assert!(draw.contains("dot(input.world_normal, view_direction) >= 0.0"));
@@ -1926,12 +1943,29 @@ mod tests {
     }
 
     #[test]
-    fn production_draw_uses_world_sun_and_directional_shadow_reception() {
+    fn production_draw_uses_exposure_aware_rounded_gloss_and_shadow_reception() {
         let draw = include_str!("../../../assets/shaders/vegetation_debug_draw.wgsl");
         assert!(draw.contains("shadows::fetch_directional_shadow("));
         assert!(draw.contains("camera.sun_direction.xyz"));
         assert!(draw.contains("let received_shadow = mix("));
         assert!(draw.contains("let shadow_floor = mix(0.16, 0.42, ambient_occlusion);"));
+        assert!(draw.contains("lighting as pbr_lighting"));
+        assert!(draw.contains("view_bindings::view.exposure"));
+        assert!(draw.contains("fn stable_clump_normal("));
+        assert!(draw.contains("fn analytic_rounded_normal("));
+        assert!(draw.contains("fn ggx_foliage_specular("));
+        assert!(draw.contains("let local_broad_specular = ggx_foliage_specular("));
+        assert!(draw.contains("let local_sheen_specular = ggx_foliage_specular("));
+        assert!(
+            draw.contains(
+                "let local_specular = local_broad_specular * 0.16 + local_sheen_specular;"
+            )
+        );
+        assert!(draw.contains("let clump_specular = ggx_foliage_specular("));
+        assert!(draw.contains("mix(local_specular, clump_specular * 0.34, distance_stability)"));
+        assert!(draw.contains("let upper_ribbon = smoothstep("));
+        assert!(draw.contains("let far_highlight_weight = mix("));
+        assert!(draw.contains("debug_config.values.z == LIGHTING_MODE_LEGACY"));
     }
 
     #[test]

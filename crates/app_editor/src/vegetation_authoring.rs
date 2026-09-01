@@ -13,7 +13,8 @@ use vegetation::{
 };
 use vegetation_render::{
     VegetationDebugMode, VegetationDebugScene, VegetationDebugSettings, VegetationDensityMode,
-    VegetationDiagnostics, VegetationLighting, VegetationProfileMode, VegetationRenderPlugin,
+    VegetationDiagnostics, VegetationLighting, VegetationLightingMode, VegetationProfileMode,
+    VegetationRenderPlugin,
 };
 
 use crate::{
@@ -1124,7 +1125,7 @@ fn draw_species_editor(
                 0.0..=1.0,
             );
             ui.weak(
-                "Tilts the two edge normals outward to suggest a rounded blade without adding geometry. It changes lighting, not silhouette.",
+                "Controls the analytic cross-section used for lighting without adding geometry. Zero is flat; existing values around 0.4 are already nearly cylindrical. It changes lighting, not silhouette.",
             );
         });
     changed
@@ -1447,6 +1448,19 @@ fn draw_preview_controls(
     egui::CollapsingHeader::new("Environment lighting preview")
         .default_open(false)
         .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("Lighting model");
+                egui::ComboBox::from_id_salt("vegetation_lighting_mode")
+                    .selected_text(settings.lighting_mode.label())
+                    .show_ui(ui, |ui| {
+                        for mode in [
+                            VegetationLightingMode::RoundedGloss,
+                            VegetationLightingMode::Legacy,
+                        ] {
+                            ui.selectable_value(&mut settings.lighting_mode, mode, mode.label());
+                        }
+                    });
+            });
             let _ = drag_f32(
                 ui,
                 "Diffuse strength",

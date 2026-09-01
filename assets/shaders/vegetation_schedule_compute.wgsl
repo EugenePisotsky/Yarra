@@ -47,6 +47,7 @@ struct Telemetry {
 }
 
 struct DebugConfig {
+    // x: diagnostic mode, y: density mode, z: lighting mode, w: reserved
     values: vec4<u32>,
 }
 
