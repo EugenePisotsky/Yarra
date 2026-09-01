@@ -56,8 +56,9 @@ The replacement renderer has these implemented hard properties:
 - work items wholly below the high-LOD transition dispatch that nested quarter-lattice directly
   when their population supports it. Transition/boundary items retain the full lattice, so distant
   compute does not evaluate four roots merely to discard three;
-- the four arenas contain 212,992 records, or 6.50 MiB total. Any capacity drop is a budget
-  violation reported in the HUD, not a normal visual LOD;
+- the four arenas contain 344,064 records, or 10.50 MiB total. The split-low bin was expanded after
+  the measured full-density reference overflowed its former 131,072-record allocation; any remaining
+  capacity drop is a budget violation reported in the HUD, not a normal visual LOD;
 - resident source buffers grow geometrically and are updated in place. Page-set changes no longer
   recreate buffers and bind groups after the warm-up high-water mark;
 - low-frequency readback reports candidate evaluations, eligible/emitted counts, capacity drops,
@@ -587,7 +588,7 @@ The current storage contract is:
 
 - no transient candidate arena;
 - 32 bytes for an ordinary procedural instance;
-- 6.50 MiB for the four current topology/LOD arenas.
+- 10.50 MiB for the four current topology/LOD arenas.
 
 The 32-byte record is not a license to duplicate work into more instances. Species distributions and
 material data remain indexed catalog data rather than repeated values.
@@ -805,7 +806,7 @@ decorative coverage locally.
 - compact procedural instance arena;
 - indirect arguments and diagnostics.
 
-The current four-bin arena is an explicit 6.50 MiB device/content-profile budget with exact counters.
+The current four-bin arena is an explicit 10.50 MiB device/content-profile budget with exact counters.
 Pages do not own worst-case visible-instance memory. A transient candidate/rank arena is deliberately
 absent from the classify-once path; it may be introduced only if a demonstrated workload cannot
 maintain zero drops through bounded residency and stable population LOD.
@@ -940,10 +941,14 @@ fixed topology/LOD bins, 32-byte procedural records, species-driven cubic ribbon
 units, GPU-authored visible work/dispatch, and indexed indirect draw finalization are implemented.
 The rejected count/plan/emit prototype has been replaced by one classify-and-emit invocation per
 candidate followed by a one-invocation finalize pass. Split topology consumes no more unique vertex
-inputs than single topology, the reference low/far populations are stable quarter-density subsets,
-and the instance arena fell from 18 MiB to 6.50 MiB. High geometry converges onto low-section samples
-and high-only density members collapse at the boundary. Zero capacity drops are required; the HUD
-labels a nonzero value as a budget violation. Source buffers now grow geometrically and update in
+inputs than single topology, and the reference low/far populations are stable quarter-density
+subsets. The first corrected arena fell from 18 MiB to 6.50 MiB; a measured full-density diagnostic
+then exposed 22,078 split-low drops in a reference view, so that bin was doubled and the current
+arena is 10.50 MiB. High geometry converges onto low-section samples and high-only density members
+collapse at the boundary. The balanced production policy keeps full density through six-pixel
+projected root spacing, then tapers to 55% at two pixels and 30% at 0.75 pixels. Runtime diagnostics
+can compare it with authored thinning and a 100% reference. Zero capacity drops are required;
+the HUD labels a nonzero value as a budget violation. Source buffers now grow geometrically and update in
 place, so ordinary residency revisions do not recreate resources after warm-up. Delta-updated page
 slots, a dedicated broad-leaf cluster family, and controlled target-hardware measurements remain.
 The debug HUD supplies low-frequency exact work, topology, memory, upload, and allocation counts;

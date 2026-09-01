@@ -12,8 +12,8 @@ use vegetation::{
     VegetationGroupingProfile, VegetationScene, VegetationSurfaceField, VoronoiClumpProfile,
 };
 use vegetation_render::{
-    VegetationDebugMode, VegetationDebugScene, VegetationDebugSettings, VegetationDiagnostics,
-    VegetationLighting, VegetationProfileMode, VegetationRenderPlugin,
+    VegetationDebugMode, VegetationDebugScene, VegetationDebugSettings, VegetationDensityMode,
+    VegetationDiagnostics, VegetationLighting, VegetationProfileMode, VegetationRenderPlugin,
 };
 
 use crate::{
@@ -1427,6 +1427,19 @@ fn draw_preview_controls(
                         VegetationProfileMode::ScheduleOnly,
                     ] {
                         ui.selectable_value(&mut settings.profile_mode, mode, mode.label());
+                    }
+                });
+            ui.end_row();
+            ui.label("LOD density");
+            egui::ComboBox::from_id_salt("vegetation_density_mode")
+                .selected_text(settings.density_mode.label())
+                .show_ui(ui, |ui| {
+                    for mode in [
+                        VegetationDensityMode::Balanced,
+                        VegetationDensityMode::FullReference,
+                        VegetationDensityMode::Authored,
+                    ] {
+                        ui.selectable_value(&mut settings.density_mode, mode, mode.label());
                     }
                 });
             ui.end_row();

@@ -73,9 +73,10 @@ classified candidates twice, rendered non-indexed triangle lists, doubled geomet
 grass, retained excessive low-LOD population, and reserved 18 MiB of instances. The replacement
 classifies and emits once, finalizes indexed indirect arguments in one invocation, keeps paired
 topology within the single topology's unique-input budget, uses stable quarter-density low/far
-subsets in the ribbon fixture, and reserves 6.50 MiB. Source buffers grow and update in place instead
-of being recreated on each residency revision. No compatibility requirement preserves the rejected
-prototype.
+subsets in the ribbon fixture, and initially reserved 6.50 MiB. A later measured full-density
+reference overflowed only the split-low bin, which was doubled for a current 10.50 MiB arena. Source
+buffers grow and update in place instead of being recreated on each residency revision. No
+compatibility requirement preserves the rejected prototype.
 
 Fully low-LOD work items now dispatch the nested quarter-lattice itself when supported. Uniform
 growth selects one world-aligned member per deterministic 2x2 block; divisible parent/child growth
@@ -181,7 +182,7 @@ These properties are worth preserving unless measurements prove otherwise:
   conservative animated render bound.
 - **Shared streamed terrain surface.** Terrain rendering, vegetation placement, and character
   grounding consume the same floating-origin-aware height/normal data.
-- **Observable fixed budgets.** The HUD distinguishes retained source capacity, the fixed 6.50 MiB
+- **Observable fixed budgets.** The HUD distinguishes retained source capacity, the fixed 10.50 MiB
   instance arena, submitted topology, and capacity violations from streamed world residency.
 
 ## Current problems and risks
@@ -676,6 +677,14 @@ Add dated entries here when experiments turn provisional positions into decision
 - **2026-08-31:** Treat every capacity drop as a profile/budget violation. Atomic overflow is not a
   production admission policy; accepted profiles must fit or gain a deterministic bounded admission
   design justified by measurements.
+- **2026-09-01:** Use the full-density LOD mode as a visual and cost ceiling, not a production
+  admission policy. A measured reference emitted 131,072 split-low instances and dropped another
+  22,078, producing camera-dependent empty roads. Double only that bin to 262,144 entries (10.50 MiB
+  total arena), retain the exact capacity telemetry, and compare authored, balanced, and full modes
+  with zero drops. The selected balanced production curve is now the default. It keeps 100% density
+  through six-pixel projected root spacing,
+  tapers to 55% at two pixels and 30% at 0.75 pixels, and contracts retiring blade width
+  through a stable rank band without changing height.
 - **2026-08-31:** Do not preserve the removed cards or their editor workflow. A distant
   representation remains required, but cards, reduced procedural roots, a field proxy, or another
   representation must compete on measured continuity and cost within the V2 species contract.

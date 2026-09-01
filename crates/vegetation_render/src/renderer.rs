@@ -57,7 +57,7 @@ const DRAW_SHADER_PATH: &str = "shaders/vegetation_debug_draw.wgsl";
 const SINGLE_HIGH_CAPACITY: u32 = 16_384;
 const SINGLE_LOW_CAPACITY: u32 = 32_768;
 const SPLIT_HIGH_CAPACITY: u32 = 32_768;
-const SPLIT_LOW_CAPACITY: u32 = 131_072;
+const SPLIT_LOW_CAPACITY: u32 = 262_144;
 const PROCEDURAL_INSTANCE_CAPACITY: u32 =
     SINGLE_HIGH_CAPACITY + SINGLE_LOW_CAPACITY + SPLIT_HIGH_CAPACITY + SPLIT_LOW_CAPACITY;
 // Keep the expensive high-topology population below the arena's hard guard even for a top-down
@@ -272,7 +272,8 @@ struct CameraGpu {
 #[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
 struct DebugConfigGpu {
-    // x: VegetationDebugMode; yzw: reserved. Mirrors WGSL `vec4<u32>` exactly.
+    // x: VegetationDebugMode; y: VegetationDensityMode; zw: reserved.
+    // Mirrors WGSL `vec4<u32>` exactly.
     values: [u32; 4],
 }
 
@@ -1008,7 +1009,7 @@ fn prepare(
         &buffers.debug_config,
         0,
         bytemuck::bytes_of(&DebugConfigGpu {
-            values: [settings.mode as u32, 0, 0, 0],
+            values: [settings.mode as u32, settings.density_mode as u32, 0, 0],
         }),
     );
     buffers.active = buffers.work_item_count > 0 && buffers.maximum_candidate_count > 0;
@@ -1830,7 +1831,7 @@ mod tests {
         assert!(SPLIT_LOW_INDEX_COUNT <= SINGLE_LOW_INDEX_COUNT);
         assert!(
             u64::from(PROCEDURAL_INSTANCE_CAPACITY) * size_of::<ProceduralInstanceGpu>() as u64
-                <= 7 * 1024 * 1024
+                <= 11 * 1024 * 1024
         );
     }
 
@@ -1898,8 +1899,13 @@ mod tests {
         assert!(schedule.contains("fn maximum_projected_population_spacing("));
         assert!(compute.contains("fn projected_population_spacing_pixels("));
         assert!(compute.contains("fn population_lod_density("));
+        assert!(compute.contains("fn balanced_population_lod_density("));
+        assert!(compute.contains("fn population_lod_retention_limit("));
+        assert!(compute.contains("debug_config.values.y == DENSITY_MODE_BALANCED"));
+        assert!(schedule.contains("debug_config.values.y != 0u"));
         assert!(draw.contains("let population_density = f32(instance.geometry.w >> 24u) / 255.0;"));
         assert!(draw.contains("let density_width = select("));
+        assert!(draw.contains("let half_band = BALANCED_DENSITY_FADE_BAND * 0.5;"));
         assert!(!draw.contains("let density_scale = select("));
         assert!(compute.contains("let staggered_high_radius = high_radius * mix("));
         assert!(draw.contains("let staggered_high_radius = high_radius * mix("));

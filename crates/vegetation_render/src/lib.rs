@@ -277,13 +277,46 @@ impl VegetationProfileMode {
     }
 }
 
+/// Selects the population-density policy independently from procedural geometry LOD.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(u32)]
+pub enum VegetationDensityMode {
+    /// Use the density fractions and projected thresholds authored on each representation.
+    Authored = 0,
+    /// Production policy: preserve density while roots are clearly visible, then taper near subpixel spacing.
+    #[default]
+    Balanced = 1,
+    /// Keep every otherwise eligible candidate as a diagnostic visual and cost ceiling.
+    FullReference = 2,
+}
+
+impl VegetationDensityMode {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Authored => "authored thinning",
+            Self::Balanced => "balanced production",
+            Self::FullReference => "100% reference",
+        }
+    }
+
+    fn next(self) -> Self {
+        match self {
+            Self::Authored => Self::Balanced,
+            Self::Balanced => Self::FullReference,
+            Self::FullReference => Self::Authored,
+        }
+    }
+}
+
 /// Runtime controls for the V2 placement and profiling diagnostics.
 ///
-/// Press `X` to cycle the visual explanation and `P` to isolate render workloads.
+/// Press `X` to cycle the visual explanation, `P` to isolate render workloads, and `O` to cycle
+/// balanced production, full-reference, and authored population density.
 #[derive(Resource, ExtractResource, Debug, Clone, Copy, Default)]
 pub struct VegetationDebugSettings {
     pub mode: VegetationDebugMode,
     pub profile_mode: VegetationProfileMode,
+    pub density_mode: VegetationDensityMode,
 }
 
 fn cycle_debug_mode(
@@ -299,6 +332,13 @@ fn cycle_debug_mode(
         warn!(
             "vegetation-v2 profile workload: {}",
             settings.profile_mode.label()
+        );
+    }
+    if keys.just_pressed(KeyCode::KeyO) {
+        settings.density_mode = settings.density_mode.next();
+        warn!(
+            "vegetation-v2 LOD density: {}",
+            settings.density_mode.label()
         );
     }
 }
@@ -389,5 +429,19 @@ mod tests {
         assert_eq!(compute, VegetationProfileMode::ComputeOnly);
         assert_eq!(schedule, VegetationProfileMode::ScheduleOnly);
         assert_eq!(schedule.next(), full);
+    }
+
+    #[test]
+    fn density_cycle_keeps_balanced_between_authored_and_full_reference() {
+        assert_eq!(
+            VegetationDensityMode::default(),
+            VegetationDensityMode::Balanced
+        );
+        let authored = VegetationDensityMode::Authored;
+        let balanced = authored.next();
+        let full = balanced.next();
+        assert_eq!(balanced, VegetationDensityMode::Balanced);
+        assert_eq!(full, VegetationDensityMode::FullReference);
+        assert_eq!(full.next(), authored);
     }
 }

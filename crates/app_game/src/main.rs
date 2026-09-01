@@ -132,7 +132,7 @@ fn vegetation_debug_legend(
 ) -> String {
     let description = match settings.mode {
         VegetationDebugMode::ProceduralGeometry => {
-            "V2: classify-once indexed procedural LOD\nFixed-budget single/split topology + stable quarter-density low population | X: diagnostics"
+            "V2: classify-once indexed procedural LOD\nFixed-budget single/split topology + stable population LOD | X: diagnostics"
         }
         VegetationDebugMode::AcceptedSpecies => {
             "V2: accepted roots by species\nOnly candidates emitted by placement are shown | X: next"
@@ -155,8 +155,10 @@ fn vegetation_debug_legend(
     } else {
         "VIOLATION"
     };
+    let density_mode = settings.density_mode.label();
     format!(
         "{description}\n\
+         LOD density: {density_mode} | O: balanced/full/authored\n\
          Profile: {} | P: full/draw-frozen/compute/schedule\n\
          Source: {} pages | {} work items | repacks {} | reallocs {} | upload/reserved {:.2}/{:.2} MiB | revision {}\n\
          GPU: {}/{} scheduled | {} lanes / {} candidate evaluations | sample {}\n\

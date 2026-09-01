@@ -67,7 +67,8 @@ struct Camera {
 }
 
 struct DebugConfig {
-    // 0: geometry, 1: accepted species, 2: parent links, 3: outcomes, 4: group structure
+    // x: 0 geometry, 1 accepted species, 2 parent links, 3 outcomes, 4 group structure
+    // y: 0 authored density, 1 balanced production density, 2 full-density reference
     values: vec4<u32>,
 }
 
@@ -91,6 +92,8 @@ struct VertexOutput {
 const PI: f32 = 3.141592653589793;
 const MAX_SECTIONS: u32 = 8u;
 const MAX_LOW_SECTIONS: u32 = 3u;
+const DENSITY_MODE_BALANCED: u32 = 1u;
+const BALANCED_DENSITY_FADE_BAND: f32 = 0.10;
 
 fn hash32(value: u32) -> u32 {
     var x = value;
@@ -288,9 +291,27 @@ fn geometry_vertex(vertex_index: u32, instance_index: u32) -> VertexOutput {
     let blade_side = normalize3_or(cross(surface_normal, blade_forward), base_side);
 
     // Density LOD is a coverage transition, not a growth animation. Keeping the complete
-    // centreline prevents the rejected three-of-four subset from visibly rising out of the ground;
-    // only ribbon width contracts as those stable candidates leave the high-detail population.
-    let density_width = select(lod_morph, 1.0, lod_rank < population_density || low_lod);
+    // centreline prevents a rejected subset from visibly rising out of the ground. High-only
+    // candidates contract into the low geometry boundary; balanced mode additionally keeps a narrow
+    // stable-rank band of low blades and contracts their width before compute stops emitting them.
+    let high_transition_width = select(
+        lod_morph,
+        1.0,
+        lod_rank < population_density || low_lod,
+    );
+    var balanced_low_width = 1.0;
+    if (
+        debug_config.values.y == DENSITY_MODE_BALANCED
+        && population_density < 0.999
+    ) {
+        let half_band = BALANCED_DENSITY_FADE_BAND * 0.5;
+        balanced_low_width = 1.0 - smoothstep(
+            max(population_density - half_band, 0.0),
+            min(population_density + half_band, 1.0),
+            lod_rank,
+        );
+    }
+    let density_width = select(high_transition_width, balanced_low_width, low_lod);
     let height_coordinate = mix(
         random01(blade_seed ^ 0xa511e9b3u),
         random01(group_key ^ 0x52dce729u),

@@ -168,7 +168,13 @@ fn maximum_projected_population_spacing(item: WorkItem) -> f32 {
 }
 
 fn can_schedule_quarter_lod(item: WorkItem) -> bool {
-    if (debug_config.values.x != 0u || item.bounds.w > 0.2501) {
+    // The balanced and full-reference modes must schedule the complete candidate lattice; a quarter
+    // dispatch cannot recover roots omitted before generation.
+    if (
+        debug_config.values.x != 0u
+        || debug_config.values.y != 0u
+        || item.bounds.w > 0.2501
+    ) {
         return false;
     }
     if (item.peers.z != 0u && item.candidate_layout.x % 4u != 0u) {

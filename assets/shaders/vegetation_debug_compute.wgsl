@@ -43,7 +43,8 @@ struct DebugInstance {
 }
 
 struct DebugConfig {
-    // 0: geometry, 1: accepted species, 2: parent links, 3: outcomes, 4: group structure
+    // x: 0 geometry, 1 accepted species, 2 parent links, 3 outcomes, 4 group structure
+    // y: 0 authored density, 1 balanced production density, 2 full-density reference
     values: vec4<u32>,
 }
 
@@ -135,7 +136,7 @@ const PI_2: f32 = 6.283185307179586;
 const SINGLE_HIGH_CAPACITY: u32 = 16384u;
 const SINGLE_LOW_CAPACITY: u32 = 32768u;
 const SPLIT_HIGH_CAPACITY: u32 = 32768u;
-const SPLIT_LOW_CAPACITY: u32 = 131072u;
+const SPLIT_LOW_CAPACITY: u32 = 262144u;
 const MAX_DIAGNOSTIC_INSTANCES: u32 = 65536u;
 const MAX_PROCEDURAL_DISTANCE: f32 = 96.0;
 const QUARTER_LOD_FLAG: u32 = 0x80000000u;
@@ -150,6 +151,14 @@ const SINGLE_HIGH_FIRST_INDEX: u32 = 6u;
 const SINGLE_LOW_FIRST_INDEX: u32 = 54u;
 const SPLIT_HIGH_FIRST_INDEX: u32 = 72u;
 const SPLIT_LOW_FIRST_INDEX: u32 = 114u;
+const DENSITY_MODE_BALANCED: u32 = 1u;
+const DENSITY_MODE_FULL_REFERENCE: u32 = 2u;
+const BALANCED_DENSITY_FULL_SPACING_PIXELS: f32 = 6.0;
+const BALANCED_DENSITY_MIDDLE_SPACING_PIXELS: f32 = 2.0;
+const BALANCED_DENSITY_FAR_SPACING_PIXELS: f32 = 0.75;
+const BALANCED_DENSITY_MIDDLE_FRACTION: f32 = 0.55;
+const BALANCED_DENSITY_FAR_FRACTION: f32 = 0.30;
+const BALANCED_DENSITY_FADE_BAND: f32 = 0.10;
 
 fn hash32(value: u32) -> u32 {
     var x = value;
@@ -633,6 +642,50 @@ fn population_lod_density(choice: SpeciesChoice, projected_spacing: f32) -> f32 
     );
 }
 
+fn balanced_population_lod_density(projected_spacing: f32) -> f32 {
+    // Preserve separately visible roots, then spend density only as their projected cells become
+    // difficult to resolve. The final 30% plateau is an interim ribbon-only horizon policy; a
+    // future coverage representation can eventually replace it below this range.
+    if (projected_spacing >= BALANCED_DENSITY_FULL_SPACING_PIXELS) {
+        return 1.0;
+    }
+    if (projected_spacing >= BALANCED_DENSITY_MIDDLE_SPACING_PIXELS) {
+        return mix(
+            BALANCED_DENSITY_MIDDLE_FRACTION,
+            1.0,
+            smoothstep(
+                BALANCED_DENSITY_MIDDLE_SPACING_PIXELS,
+                BALANCED_DENSITY_FULL_SPACING_PIXELS,
+                projected_spacing,
+            ),
+        );
+    }
+    if (projected_spacing <= BALANCED_DENSITY_FAR_SPACING_PIXELS) {
+        return BALANCED_DENSITY_FAR_FRACTION;
+    }
+    return mix(
+        BALANCED_DENSITY_FAR_FRACTION,
+        BALANCED_DENSITY_MIDDLE_FRACTION,
+        smoothstep(
+            BALANCED_DENSITY_FAR_SPACING_PIXELS,
+            BALANCED_DENSITY_MIDDLE_SPACING_PIXELS,
+            projected_spacing,
+        ),
+    );
+}
+
+fn population_lod_retention_limit(population_density: f32) -> f32 {
+    // Balanced mode keeps a narrow, stable rank band alive so the draw shader can contract retiring
+    // blades laterally. Centering that band on the target approximately preserves integrated width.
+    if (
+        debug_config.values.y == DENSITY_MODE_BALANCED
+        && population_density < 0.999
+    ) {
+        return min(population_density + BALANCED_DENSITY_FADE_BAND * 0.5, 1.0);
+    }
+    return population_density;
+}
+
 fn evaluate_candidate(item: WorkItem, candidate_index: u32) -> CandidateEvaluation {
     let candidate = sample_candidate(item, candidate_index);
     let surface = sample_surface(item, candidate.root);
@@ -648,10 +701,14 @@ fn evaluate_candidate(item: WorkItem, candidate_index: u32) -> CandidateEvaluati
 
     let choice = choose_species_choice(item, random01(candidate.seed ^ 0xd1b54a35u));
     let projected_extent = budgeted_projected_blade_extent_pixels(candidate, surface, choice);
-    let population_density = population_lod_density(
-        choice,
-        projected_population_spacing_pixels(item, candidate, surface),
-    );
+    let projected_spacing = projected_population_spacing_pixels(item, candidate, surface);
+    let authored_population_density = population_lod_density(choice, projected_spacing);
+    var population_density = authored_population_density;
+    if (debug_config.values.y == DENSITY_MODE_BALANCED) {
+        population_density = balanced_population_lod_density(projected_spacing);
+    } else if (debug_config.values.y == DENSITY_MODE_FULL_REFERENCE) {
+        population_density = 1.0;
+    }
     var lod = 0u;
     if (projected_extent < choice.threshold.y) {
         lod = 1u;
@@ -665,7 +722,8 @@ fn evaluate_candidate(item: WorkItem, candidate_index: u32) -> CandidateEvaluati
     } else if (
         debug_config.values.x == 0u
         && (projected_extent < choice.threshold.w
-            || (lod == 1u && candidate.lod_rank >= population_density))
+            || (lod == 1u
+                && candidate.lod_rank >= population_lod_retention_limit(population_density)))
     ) {
         eligible = 0u;
     } else if (outcome != 0u && debug_config.values.x != 3u) {
