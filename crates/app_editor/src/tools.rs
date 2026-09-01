@@ -285,9 +285,9 @@ pub(crate) const VEGETATION_TOOL: EditorToolDescriptor = EditorToolDescriptor {
         EditorPreviewOverlay::ProceduralVegetation,
         EditorPreviewOverlay::VegetationGroups,
     ],
-    // The session draft is preview-only. The persisted catalog command will declare its concrete
-    // catalog/page cook products when that source pipeline lands; claiming them here would route
-    // work that the derived executor cannot yet snapshot faithfully.
+    // The global catalog now persists through the project save coordinator and is consumed by the
+    // runtime cook. Spatial field painting will declare its concrete bounded invalidations when
+    // that source command lands; claiming page products here would be premature.
     invalidates: &[],
     failure_policy: EditorToolFailurePolicy {
         loading: LoadingPolicy::KeepCameraResponsiveWithProxies,

@@ -39,7 +39,7 @@ use crate::{
     saving::EditorSaveCoordinator,
     shell::{EditorUiFrame, EditorWindowDescriptor, EditorWindowId, EditorWindowRegistry},
     tools::{EditorToolRegistry, OBJECT_TOOL, TERRAIN_TOOL, VEGETATION_TOOL},
-    vegetation_authoring::VEGETATION_WINDOW,
+    vegetation_authoring::{VEGETATION_WINDOW, VegetationAuthoringState},
 };
 
 pub(crate) const WORLD_WINDOW: EditorWindowDescriptor = EditorWindowDescriptor {
@@ -87,6 +87,7 @@ pub(crate) struct WorldWorkspaceUiResources<'w> {
     derived_jobs: Res<'w, DerivedJobScheduler>,
     derived_artifacts: Res<'w, DerivedArtifactStore>,
     dense_domains: ResMut<'w, DenseDomainWorkingSets>,
+    vegetation: ResMut<'w, VegetationAuthoringState>,
     journal: Res<'w, EditorJournalStatus>,
     navigation: ResMut<'w, ProjectNavigationStore>,
     overview: Res<'w, OverviewState>,
@@ -121,6 +122,7 @@ pub(crate) fn world_workspace_ui(
         derived_jobs,
         derived_artifacts,
         mut dense_domains,
+        vegetation,
         journal,
         mut navigation,
         overview,
@@ -147,14 +149,18 @@ pub(crate) fn world_workspace_ui(
 
     egui::Panel::top("editor_world_toolbar").show(viewport_ui, |ui| {
         ui.horizontal(|ui| {
-            let remaining_changes = objects.dirty_count() + dense_domains.dirty_count();
+            let remaining_changes = objects.dirty_count()
+                + dense_domains.dirty_count()
+                + vegetation.dirty_count();
             let has_dirty_source = remaining_changes > 0;
             let source_action_available = !save.active()
                 && !project.save_in_flight()
                 && !objects.saving()
                 && !dense_domains.saving()
+                && !vegetation.saving()
                 && !objects.has_any_conflict()
                 && !dense_domains.has_any_conflict()
+                && !vegetation.has_conflict()
                 && !publication.active()
                 && project.write_error().is_none();
             let can_save = has_dirty_source && source_action_available;
@@ -189,8 +195,10 @@ pub(crate) fn world_workspace_ui(
                         && !save.active()
                         && !objects.saving()
                         && !dense_domains.saving()
+                        && !vegetation.saving()
                         && !objects.has_any_conflict()
-                        && !dense_domains.has_any_conflict(),
+                        && !dense_domains.has_any_conflict()
+                        && !vegetation.has_conflict(),
                     egui::Button::new("Undo"),
                 )
                 .on_hover_text("Undo the last command (Cmd+Z)")
@@ -205,8 +213,10 @@ pub(crate) fn world_workspace_ui(
                         && !save.active()
                         && !objects.saving()
                         && !dense_domains.saving()
+                        && !vegetation.saving()
                         && !objects.has_any_conflict()
-                        && !dense_domains.has_any_conflict(),
+                        && !dense_domains.has_any_conflict()
+                        && !vegetation.has_conflict(),
                     egui::Button::new("Redo"),
                 )
                 .on_hover_text("Redo the last command (Cmd+Shift+Z)")
@@ -256,6 +266,7 @@ pub(crate) fn world_workspace_ui(
                 || project.save_in_flight()
                 || objects.saving()
                 || dense_domains.saving()
+                || vegetation.saving()
             {
                 ui.separator();
                 ui.spinner();
@@ -283,8 +294,14 @@ pub(crate) fn world_workspace_ui(
                     egui::Color32::YELLOW,
                     format!("{} terrain cell(s) unsaved", dense_domains.dirty_count()),
                 );
+            } else if vegetation.dirty_count() > 0 {
+                ui.separator();
+                ui.colored_label(egui::Color32::YELLOW, "Vegetation catalog unsaved");
             }
-            if objects.has_any_conflict() || dense_domains.has_any_conflict() {
+            if objects.has_any_conflict()
+                || dense_domains.has_any_conflict()
+                || vegetation.has_conflict()
+            {
                 ui.separator();
                 ui.colored_label(egui::Color32::LIGHT_RED, "Source conflict");
             }
@@ -665,7 +682,7 @@ fn draw_context_inspector(
         ui.heading("Vegetation");
         ui.label("Edit the active vegetation catalog in the Vegetation window.");
         ui.weak(
-            "This first slice keeps a validated session draft and drives the production GPU renderer. Persistence, undo, and field painting will extend the same authoring boundary.",
+            "The validated draft drives the production GPU renderer. Save persists it to the project; Save & Publish also rebuilds the runtime database loaded by the game.",
         );
         return;
     }

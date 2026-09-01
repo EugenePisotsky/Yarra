@@ -25,9 +25,28 @@ queue, writes indirect candidate-dispatch dimensions, and emits accepted candida
 bounded bins: single-high, single-low, split-high, and split-low. The split family temporarily
 approximates broad leaves with two leaves. Species parameters drive high/low sections, authored
 projected-size thresholds, stable nested low-LOD density, longitudinal redistribution, height/width distributions,
-tilt, bend, lateral curve/camber, pair spread, taper, rounded normals, clump-level color variation,
+complete cubic silhouette variants, lateral curve/camber, pair spread, taper, rounded normals, clump-level color variation,
 roughness, transmission, and root-to-tip AO. Geometry now uses a separate 32-byte record; parent and
 outcome data remain in a 64-byte diagnostic-only buffer.
+
+Curve-authoring checkpoint, 2026-09-01: the previous independent tilt and handle sliders could
+produce combinations that neither endpoint preview represented. Each ribbon variant now owns its
+normalized tip plus both cubic handles, and one stable silhouette coordinate interpolates the whole
+curve. The editor exposes two direct-manipulation charts for those minimum/maximum endpoints and
+draws the real high-LOD sample positions after longitudinal redistribution. Handle vectors are
+prepacked per species; this adds no vertices, instances, per-blade data, or draw calls and removes
+one independent random interpolation path from the vertex shader.
+
+Edge-on-fullness checkpoint, 2026-09-01: both the fixed 1.24 world-width multiplier and the later
+minimum projected-pixel-width correction were rejected. The former could not recover a ribbon whose
+side vector projected to almost zero; the latter produced uniformly thin screen-space filaments on
+close, curved grass. Ribbons now transport their width axis along the local Bezier tangent and author
+a bounded maximum view-opening angle. The unoriented width line follows the camera-facing width line
+until it reaches that bound: the correction is zero for a face-on ribbon and grows continuously
+toward edge-on views. Lighting retains the physical rounded normal, so the correction cannot darken
+the material merely because its silhouette opens. Broad leaves bypass the opening. This changes
+neither instances, topology, draw calls, nor per-blade storage and removes the extra clip-space
+projection work from the rejected path.
 
 Overhead-LOD correction, 2026-08-31: the first projected-size metric measured only the segment from
 the root to `root + surface_normal * maximum_height`. That segment collapses toward zero in an
@@ -127,9 +146,11 @@ fixed allocation. V2 now reports its fixed instance arena and retained source ca
 
 ### Current shadow status
 
-The removed grass renderer had a prefiltered directional receiver-visibility volume. V2 has not
-carried that system forward: its current material pass has no production shadow reception or casting.
-This is intentional while the core workload is being measured, not a claim that shadows are solved.
+The removed grass renderer had a prefiltered directional receiver-visibility volume. V2 now follows
+the strongest world directional light and receives its ordinary CSM shadows through Bevy's mesh-view
+bindings. The authored AO profile also controls how much ambient body survives in shadow, so dense
+roots darken more strongly than exposed tips. The old cached receiver volume has not been carried
+forward, and V2 still does not cast grass shadows into the world.
 
 Future work must keep three costs distinct: receiving ordinary opaque-object shadows on grass,
 casting the field's broad density shadow, and adding short-range blade detail. Ghost's raised-terrain
@@ -188,11 +209,48 @@ streaming boundary. Its win must be measured separately from frame-local candida
 ### 3. Geometry LOD needs visual acceptance, not only structural invariants
 
 High geometry converges onto exact low-section samples, and low population is a stable subset of high
-population. Tests enforce the nested one-of-four rank. We still need moving-camera evidence that
-shape, density, color, and perceived volume cross the boundary without popping. Fragment cost may
-remain high even after reducing vertex and root counts.
+population. Tests enforce the nested one-of-four rank. The density transition no longer scales blade
+height: rejected high-detail candidates keep their complete centreline and contract only in width,
+which removes the literal camera-following growth wave. The capacity-driven topology radius is also
+staggered by the existing stable LOD rank, spreading the remaining curve simplification instead of
+forming one coherent ring. We still need moving-camera evidence that shape, density, color, and
+perceived volume cross the boundary without popping. Fragment cost may remain high even after
+reducing vertex and root counts.
 
-### 4. Capacity is observable and high-topology admission is bounded
+The visible transition sphere is not itself evidence that a radial/projected-size policy is wrong;
+the reference games can expose a similar boundary. The acceptance failure is that Yarra currently
+loses too much perceived coverage outside it, especially overhead. Low geometry, low population,
+projected width, and material response must be tuned as one coverage contract so that the boundary
+does not read as a bald ring even when its location can still be found in a diagnostic view.
+
+The current single-ribbon topology also submits 18 unique high inputs and eight low inputs, versus
+the talk's 15/7. This comes from an eight-section maximum and separate left/right inputs at the
+zero-width tip. It is a conservative implementation choice, not a Bezier requirement. It is not an
+accepted reason to spend more vertices: the next topology pass must benchmark a shared-tip 15/7
+layout, and the folded short-grass layout must remain within that same budget, before any section
+count is increased.
+
+### 4. Ribbon curve authoring now preserves the two independent handles
+
+The renderer evaluates a cubic Bezier with root, two interior controls, and tip. The earlier
+prototype drove both controls from one `bend` sample and then coupled their lengths through a
+provisional tilt-smoothness value. That contract has been replaced by two complete authored curve
+variants. Each variant owns a root tangent, tip tangent, root handle length, and tip handle length;
+one stable per-blade coordinate interpolates the complete variants.
+
+This is visible in dense long grass: the target is not one uniformly bowed silhouette with random
+tilt. A field needs a controlled distribution of broad arches, nearly straight blades, curvature
+concentrated near the root or tip, and tips that flatten or continue downward. Independent random
+blades will not repair a curve family that cannot express those silhouettes.
+
+The 15/7 mesh vertices from the Ghost talk remain topology samples, not independent bend points.
+Yarra preserves its fixed indexed topology and Bezier/derivative evaluation. Source angles and
+normalized handle lengths are packed into root/tip handle vectors once per species, avoiding new
+per-vertex trigonometry. High/low samples and the artist-controlled longitudinal remap approximate
+the same curve. The remaining work is visual acceptance and tuning of curve families, not adding
+instances, sections, buffers per blade, or draw calls.
+
+### 5. Capacity is observable and high-topology admission is bounded
 
 Every bin exposes eligible, emitted, and dropped counts; any drop is labeled `Budget: VIOLATION`.
 Within the supported profiles the arena must never overflow. Atomic append order is not a fair
@@ -203,7 +261,7 @@ high-to-low morph; roots outside it enter low topology rather than disappearing.
 world-space stable under zoom and shared by classification and draw reconstruction. Low-bin drops
 remain invalid and require either profile rejection or a similarly deterministic budget design.
 
-### 5. The topology families are not yet a finished species renderer
+### 6. The topology families are not yet a finished species renderer
 
 Species data controls current ribbon and two-leaf procedural shapes, but broad leaves are deliberately
 restricted to the exact two-leaf topology the shader can honor. Flowers, stems/heads, sparse authored
@@ -211,21 +269,21 @@ meshes, and any eventual distant representation remain separate families to desi
 preserves the removed card system; a far representation must win on continuity, cost, and authoring
 clarity before it is adopted.
 
-### 6. Wind and interaction are not implemented in V2
+### 7. Wind and interaction are not implemented in V2
 
 The current V2 image is static. The legacy sine/hash motion was removed with the old renderer, so it
 must not be treated as a working baseline. A shared CPU/GPU wind field, per-root phase variation,
 longitudinal response, interaction displacement, and conservative animated bounds remain explicit
 future work and require isolation diagnostics.
 
-### 7. Visibility integration is view-bounded but still incomplete
+### 8. Visibility integration is view-bounded but still incomplete
 
 The CPU keeps a conservative three-cell residency shell and the GPU performs a conservative
 eight-corner frustum test before scheduling. This fixed the rotation-dependent holes. Occlusion,
 shadow views, reflections, and other view families are not yet represented, and adding them must not
 multiply full candidate generation blindly.
 
-### 8. Verification has counters and named spans but lacks a repeatable capture protocol
+### 9. Verification has counters and named spans but lacks a repeatable capture protocol
 
 Existing tests successfully validate compilation, shader parsing, and several static invariants, but
 we lack automated or repeatable evidence for:
@@ -238,17 +296,28 @@ we lack automated or repeatable evidence for:
 - repeatable pass-level GPU timings and overdraw;
 - long-traversal traces that correlate thermal state, residency revisions, uploads, and workload.
 
-### 9. Production shadow integration is missing
+### 10. Grass shadow casting is missing
 
-V2 currently neither receives ordinary scene shadows nor enters directional shadow-caster passes. It
-does not generate a terrain/canopy proxy and has no screen-space blade-shadow detail. Reception,
-broad field casting, and fine local detail therefore all remain explicit work rather than an implicit
+V2 receives ordinary directional scene shadows, but it does not enter directional shadow-caster
+passes. It does not generate a terrain/canopy proxy and has no screen-space blade-shadow detail.
+Broad field casting and fine local detail therefore remain explicit work rather than an implicit
 inheritance from the deleted renderer.
 
 The straightforward reference - rerun culling/generation plus grass geometry for the sun shadow
 cascades - is likely too expensive and would become worse with additional lights. We need a
 controlled full-geometry reference for quality comparison, then a default approximation whose cost
 depends mainly on proxy resolution and screen size rather than total visible blade count.
+
+The raised-terrain impostor should not use renderer LOD density as its darkness control: that value
+changes with the camera and would make a world shadow breathe. Its stable optical coverage should be
+derived from the authored population density, painted coverage, species width/height envelope, and
+an eventual per-species shadow-density multiplier. A useful first model is exponential transmittance
+(`visibility = exp(-optical_density)`), because overlapping populations then compose without a hard
+clamp. Proxy height should use a coverage-weighted species height statistic rather than always taking
+the tallest rare species. A world-anchored dither converts that continuous visibility into shadow-map
+depth coverage for ordinary PCF to integrate; neither screen pixels nor camera distance may seed it.
+The editor needs separate proxy-height and optical-density diagnostics before this can be accepted as
+working. This is distinct from the received-shadow strength control in the current vegetation preview.
 
 ## What the Ghost talk contributes
 
@@ -257,16 +326,16 @@ depends mainly on proxy resolution and screen size rather than total visible bla
 | Generate instances, accumulate count, then finalize indirect args | Present; one classify-and-emit pass traverses a GPU-compacted visible work queue, then one invocation finalizes indexed arguments | Preserve; do not reintroduce duplicate classification |
 | Eight-tile scratch buffer, four-tile compute/graphics overlap | Not copied literally; Yarra now has bounded topology/LOD arenas and GPU indirect work scheduling | Finish persistent page slots, then benchmark ring/ping-pong only if global bins still lose |
 | No vertex streams; derive topology from IDs | Present | Preserve |
-| 15-/7-vertex high/low blades | Not copied literally; current single topology uses 18/8 unique vertex inputs and 48/18 submitted indices | Keep fixed topology budgets explicit and tune from captures |
+| 15-/7-vertex high/low blades | Current single topology uses 18/8 unique inputs because it has an eight-section ceiling and duplicates the zero-width tip | Benchmark and prefer a shared-tip 15/7 layout; do not spend extra vertices without measured visual value |
 | Artist-controlled redistribution of vertices along the curve | Present as a per-species longitudinal exponent | Tune against representative curvature rather than adding vertices first |
-| High LOD morphs toward low LOD | Implemented by converging high vertices onto exact low-section samples | Tune transition width from moving-camera captures |
+| High LOD morphs toward low LOD | Implemented by converging high vertices onto exact low-section samples; the budget boundary is stable-rank staggered | Tune transition width from moving-camera captures |
 | High LOD fades three of four blades before larger low tiles | Implemented as species-authored stable nested density; physical tile-size coupling is unnecessary | Tune density fractions per species rather than hard-coding three of four |
 | Fold one strip into two short blades | Implemented as an explicit split-render-unit topology used by short grass | Keep it species-controlled; evaluate asymmetric tip topology only if needed |
-| Cubic Bezier shape and derivative normal | Cubic position and derivative normals are present | Retain stable distant lighting; test further normal filtering by footprint |
+| Cubic Bezier shape and derivative normal | Cubic position and derivative normals use two complete variants with independent root/tip tangents and handle lengths | Preserve the fixed evaluation and topology; tune the curve family and sampling distribution against reference captures |
 | Unified CPU/GPU 2D wind field | Missing | Desirable for coherent cross-system wind, subject to cost and API design |
 | Per-blade phase variation | Not yet implemented in V2 | Add with group-only/root-only/combined isolation modes |
 | Rounded normals | Present as an analytic/stable approximation | Preserve and make species-adjustable |
-| Edge-on view-space thickening | Present as a world-space width multiplier approximation | Compare with the literal view-space technique and apply a pixel-aware clamp |
+| Edge-on view-space thickening | Implemented as local tangent-frame transport plus a bounded, species-authored view-opening angle | Tune from grazing captures; reject visible billboarding, highlight rotation, or an excessive fragment increase |
 | Distance blend toward a clump normal | Yarra mostly uses a stable up-dominated clump normal at all distances | Recover useful near detail, then explicitly blend to the stable field with distance |
 | Reduce distant gloss as normal variance becomes subpixel | Partly approximated through roughness logic | Add a controlled distance/footprint response and verify temporal stability |
 | Blade/clump material profiles and textures | Current bottom/top color and analytic shading are simpler | Add compact per-species curves/LUTs only after geometry/species unification |
@@ -274,7 +343,7 @@ depends mainly on proxy resolution and screen size rather than total visible bla
 | Artist-authored field assets through a minimal GPU instance stream | Missing as a distinct family; current V2 supports procedural ribbons/two-leaf units only | Add a sparse decorative-asset family sharing deterministic coverage sampling, streaming, culling, and indirect drawing |
 | Keep only a 3x3 neighborhood of generated authored assets | No equivalent authored-asset cache yet | Preserve the bounded-residency principle; derive Yarra's actual neighborhood from cell size, asset bounds, and view range rather than copying 3x3 literally |
 | Full grass pipeline in shadow maps for rare cases | Grass is absent from all caster passes | Build only as a reference/optional exceptional mode if budgets allow, not as the default |
-| Raised-terrain, dithered-depth grass shadow impostor | Missing; the old unrelated receiver cache was removed with the legacy renderer | High-priority shadow experiment using coverage, species height, stable dithering, and the existing terrain representation |
+| Raised-terrain, dithered-depth grass shadow impostor | Missing; V2 now receives CSM shadows, while the old unrelated receiver cache remains removed | High-priority shadow experiment using coverage, species height, stable dithering, and the existing terrain representation |
 | Short-range screen-space blade shadows | Missing | Investigate as the fine-detail complement to a broad proxy, with explicit off-screen and disocclusion limits |
 
 ## Working decisions
@@ -312,7 +381,7 @@ These are provisional design positions. Change them when an experiment provides 
 - Compact global lists versus bounded compute/graphics ping-pong batches.
 - Count-scan-fill versus atomics/reservation with one classification pass.
 - Per-carrier versus per-blade compute workgroup layout on Apple GPUs.
-- Literal view-space thickening versus the current world-space approximation.
+- Maximum view-opening angles and continuous angular response for the local tangent-frame correction.
 - Derivative/animated near normals followed by distance blending versus stable normals everywhere.
 - Alternative split topology budgets only if the implemented two-leaf unit fails visually.
 - Texture profiles versus analytic curves/LUTs for vein, gloss, translucency, AO, and clump color.
@@ -374,7 +443,7 @@ repeatable visual captures, GPU timing, instance counts, overflow, and memory.
 ### Phase 1 - unify species and make LOD continuous (structurally implemented)
 
 - Preserve the implemented runtime geometry profiles for height/width ranges, facing distribution,
-  tilt, cubic Bezier control parameters, longitudinal remap, topology family, normal rounding,
+  complete cubic Bezier silhouettes, longitudinal remap, topology family, normal rounding,
   material response, and conservative bounds. Add wind fields only with the wind implementation.
 - Keep high geometry converging on exact low-section samples.
 - Keep the stable nested density transition and direct quarter-lattice scheduling for fully low work.
@@ -447,8 +516,8 @@ below rendering the full grass pipeline into every relevant shadow view.
   sampling API for CPU and GPU consumers. Layered scrolling noise is a candidate, not a requirement.
 - Use Phase 0 diagnostics to decide whether current motion needs wider per-blade phase, less group
   dominance, longitudinal phase, or more orientation variation.
-- Compare current edge-on width scaling with view-space thickening. Clamp the result by projected
-  pixel width so it improves coverage without turning close blades into billboards.
+- Tune the implemented local-frame view opening from fixed grazing captures so it improves coverage
+  without making silhouettes or highlights follow the camera or materially increasing fragment cost.
 - Test animated/derivative normals in the near field, then blend toward a species/clump normal as the
   blade becomes unresolved.
 - Increase roughness/reduce gloss based on distance or projected footprint and validate under motion,
@@ -574,7 +643,7 @@ Add dated entries here when experiments turn provisional positions into decision
 - **2026-08-31:** Implement the first topology checkpoint with one single-ribbon and one two-blade
   indirect bin. Generate cubic Bezier positions and derivative normals without vertex streams, use
   species-controlled longitudinal redistribution, taper, pair separation, rounded normals, and
-  modest edge-on fullness, and keep all placement diagnostics available behind `X`.
+  modest bounded edge-on opening, and keep all placement diagnostics available behind `X`.
 - **2026-08-31:** Treat the reported frame-to-frame disappearing grass as capacity instability, not
   LOD or intentional variation. Replace atomic-race overflow with deterministic bucketed seed-rank
   admission, split the 64-byte diagnostic record from a 32-byte procedural record, and bias the fixed

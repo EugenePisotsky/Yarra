@@ -14,7 +14,7 @@ use world_db::{
     DenseSourceRecord, DenseSourceRecordKey, DenseSourceWrite, DenseSourceWriteTransactionResult,
     ObjectWriteTransactionResult, ProjectManifest, ProjectReader, ProjectWriter, SourceCellRecord,
     SourceObjectRecord, SourceObjectViewRecord, SourceObjectWrite, SourceObjectWriteCommit,
-    SourceTerrainCellWeightPageRecord,
+    SourceTerrainCellWeightPageRecord, VegetationCatalogWriteResult,
 };
 
 use crate::preview::{EditorPreviewMode, PreviewModeState};
@@ -137,6 +137,13 @@ struct PendingDenseSave {
 }
 
 #[derive(Debug, Clone)]
+struct PendingVegetationSave {
+    request_id: u64,
+    expected: Option<VegetationCatalog>,
+    replacement: VegetationCatalog,
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct ObjectSaveCompletion {
     pub(crate) request_id: u64,
     pub(crate) outcome: ObjectSaveOutcome,
@@ -165,6 +172,19 @@ pub(crate) enum DenseSaveOutcome {
         key: DenseSourceRecordKey,
         actual: Option<DenseSourceRecord>,
     },
+    Failed(String),
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct VegetationSaveCompletion {
+    pub(crate) request_id: u64,
+    pub(crate) outcome: VegetationSaveOutcome,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum VegetationSaveOutcome {
+    Committed(VegetationCatalog),
+    Conflict { actual: Option<VegetationCatalog> },
     Failed(String),
 }
 
@@ -199,6 +219,9 @@ pub(crate) struct ProjectEditorStore {
     pending_dense_save: Option<PendingDenseSave>,
     dense_save_in_flight: Option<u64>,
     dense_save_completion: Option<DenseSaveCompletion>,
+    pending_vegetation_save: Option<PendingVegetationSave>,
+    vegetation_save_in_flight: Option<u64>,
+    vegetation_save_completion: Option<VegetationSaveCompletion>,
     next_save_request_id: u64,
 }
 
@@ -299,6 +322,8 @@ impl ProjectEditorStore {
             || self.save_in_flight.is_some()
             || self.pending_dense_save.is_some()
             || self.dense_save_in_flight.is_some()
+            || self.pending_vegetation_save.is_some()
+            || self.vegetation_save_in_flight.is_some()
     }
 
     pub(crate) fn queue_object_transaction(
@@ -331,6 +356,28 @@ impl ProjectEditorStore {
     pub(crate) fn take_dense_save_completion(&mut self) -> Option<DenseSaveCompletion> {
         self.dense_save_completion.take()
     }
+
+    pub(crate) fn queue_vegetation_catalog(
+        &mut self,
+        expected: Option<VegetationCatalog>,
+        replacement: VegetationCatalog,
+    ) -> Option<u64> {
+        if self.save_in_flight() || self.write_error.is_some() || replacement.validate().is_err() {
+            return None;
+        }
+        let request_id = self.next_save_request_id.wrapping_add(1).max(1);
+        self.next_save_request_id = request_id;
+        self.pending_vegetation_save = Some(PendingVegetationSave {
+            request_id,
+            expected,
+            replacement,
+        });
+        Some(request_id)
+    }
+
+    pub(crate) fn take_vegetation_save_completion(&mut self) -> Option<VegetationSaveCompletion> {
+        self.vegetation_save_completion.take()
+    }
 }
 
 #[derive(Resource)]
@@ -357,6 +404,7 @@ enum ProjectRequest {
     },
     SaveObjectTransaction(PendingObjectSave),
     SaveDenseTransaction(PendingDenseSave),
+    SaveVegetationCatalog(PendingVegetationSave),
     Shutdown,
 }
 
@@ -375,6 +423,11 @@ enum ProjectResult {
     SaveDenseTransaction {
         request_id: u64,
         result: Result<DenseSourceWriteTransactionResult, String>,
+    },
+    SaveVegetationCatalog {
+        request_id: u64,
+        replacement: VegetationCatalog,
+        result: Result<VegetationCatalogWriteResult, String>,
     },
 }
 
@@ -541,6 +594,27 @@ fn project_worker(
                     return;
                 }
             }
+            ProjectRequest::SaveVegetationCatalog(request) => {
+                let result = match writer.as_mut() {
+                    Ok(writer) => writer
+                        .replace_vegetation_catalog_if_matches(
+                            request.expected.as_ref(),
+                            &request.replacement,
+                        )
+                        .map_err(|error| error.to_string()),
+                    Err(error) => Err(error.clone()),
+                };
+                if results
+                    .send(ProjectResult::SaveVegetationCatalog {
+                        request_id: request.request_id,
+                        replacement: request.replacement,
+                        result,
+                    })
+                    .is_err()
+                {
+                    return;
+                }
+            }
             ProjectRequest::Shutdown => return,
         }
     }
@@ -641,6 +715,31 @@ fn receive_project_results(
                     Err(error) => DenseSaveOutcome::Failed(error),
                 };
                 store.dense_save_completion = Some(DenseSaveCompletion {
+                    request_id,
+                    outcome,
+                });
+            }
+            Ok(ProjectResult::SaveVegetationCatalog {
+                request_id,
+                replacement,
+                result,
+            }) => {
+                if store.vegetation_save_in_flight == Some(request_id) {
+                    store.vegetation_save_in_flight = None;
+                }
+                let outcome = match result {
+                    Ok(VegetationCatalogWriteResult::Committed) => {
+                        store.source_epoch = store.source_epoch.wrapping_add(1).max(1);
+                        store.vegetation_catalog = Some(replacement.clone());
+                        VegetationSaveOutcome::Committed(replacement)
+                    }
+                    Ok(VegetationCatalogWriteResult::Conflict { actual }) => {
+                        store.vegetation_catalog = actual.clone();
+                        VegetationSaveOutcome::Conflict { actual }
+                    }
+                    Err(error) => VegetationSaveOutcome::Failed(error),
+                };
+                store.vegetation_save_completion = Some(VegetationSaveCompletion {
                     request_id,
                     outcome,
                 });
@@ -779,6 +878,7 @@ fn dispatch_project_save(
     if !matches!(store.phase, ProjectStorePhase::Ready)
         || store.save_in_flight.is_some()
         || store.dense_save_in_flight.is_some()
+        || store.vegetation_save_in_flight.is_some()
     {
         return;
     }
@@ -811,6 +911,23 @@ fn dispatch_project_save(
             Ok(()) => {
                 store.pending_dense_save = None;
                 store.dense_save_in_flight = Some(request.request_id);
+            }
+            Err(TrySendError::Full(_)) => {}
+            Err(TrySendError::Disconnected(_)) => {
+                store.phase = ProjectStorePhase::Failed("project request channel closed".into());
+            }
+        }
+        return;
+    }
+
+    if let Some(request) = store.pending_vegetation_save.clone() {
+        match worker
+            .requests
+            .try_send(ProjectRequest::SaveVegetationCatalog(request.clone()))
+        {
+            Ok(()) => {
+                store.pending_vegetation_save = None;
+                store.vegetation_save_in_flight = Some(request.request_id);
             }
             Err(TrySendError::Full(_)) => {}
             Err(TrySendError::Disconnected(_)) => {

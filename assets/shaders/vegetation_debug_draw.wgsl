@@ -1,3 +1,9 @@
+#import bevy_pbr::{
+    mesh_view_bindings as view_bindings,
+    mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT,
+    shadows,
+}
+
 // Vegetation V2 procedural topology and placement diagnostics.
 //
 // The geometry path has no vertex streams. A fixed procedural vertex budget is decoded from
@@ -27,17 +33,22 @@ struct Species {
     bounds: vec4<f32>,
     // x: high sections, y: low sections, z: blades/render unit, w: longitudinal power
     topology: vec4<f32>,
-    // xy: tilt range, zw: bend range
+    // xy: tilt range; zw: broad-leaf droop range
     shape: vec4<f32>,
-    // x: lateral curve/camber, y: pair spread, z: crown radius,
+    // x: lateral curve/camber, y: pair spread,
+    // z: tangent of maximum ribbon view-opening angle / broad crown radius,
     // w: maximum horizontal reach
     shape_secondary: vec4<f32>,
+    // xy: normalized-height root-handle forward/normal vector,
+    // zw: normalized-height tip-handle forward/normal vector
+    curve_variant_a: vec4<f32>,
+    curve_variant_b: vec4<f32>,
     // x: clump color variation, y: roughness, z: transmission, w: normal rounding
     material: vec4<f32>,
     // x: root AO, y: tip AO, z: high-LOD threshold,
     // w: density-budgeted high-topology radius
     shading: vec4<f32>,
-    // xyzw: group coherence for height, tilt, bend, and lateral curve
+    // xyz: group coherence for height, complete silhouette, and lateral curve
     group_response: vec4<f32>,
 }
 
@@ -46,6 +57,13 @@ struct Camera {
     camera_position: vec4<f32>,
     // x: vertical focal length in pixels, y: viewport width, z: viewport height
     projection: vec4<f32>,
+    // xyz: direction from the surface toward the strongest directional light, w: active
+    sun_direction: vec4<f32>,
+    // xyz: strongest directional-light color and global ambient-light color
+    sun_radiance: vec4<f32>,
+    ambient_radiance: vec4<f32>,
+    // x: diffuse, y: specular, z: transmission, w: received-shadow strength
+    lighting: vec4<f32>,
 }
 
 struct DebugConfig {
@@ -63,11 +81,12 @@ struct VertexOutput {
     @location(4) material: vec4<f32>,
 }
 
-@group(0) @binding(0) var<storage, read> procedural_instances: array<ProceduralInstance>;
-@group(0) @binding(1) var<storage, read> diagnostic_instances: array<DebugInstance>;
-@group(0) @binding(2) var<storage, read> species: array<Species>;
-@group(0) @binding(3) var<uniform> camera: Camera;
-@group(0) @binding(4) var<uniform> debug_config: DebugConfig;
+// Group zero is Bevy's mesh-view bind group, including directional shadow cascades.
+@group(1) @binding(0) var<storage, read> procedural_instances: array<ProceduralInstance>;
+@group(1) @binding(1) var<storage, read> diagnostic_instances: array<DebugInstance>;
+@group(1) @binding(2) var<storage, read> species: array<Species>;
+@group(1) @binding(3) var<uniform> camera: Camera;
+@group(1) @binding(4) var<uniform> debug_config: DebugConfig;
 
 const PI: f32 = 3.141592653589793;
 const MAX_SECTIONS: u32 = 8u;
@@ -186,11 +205,17 @@ fn budgeted_projected_blade_extent_pixels(
     root: vec3<f32>,
     surface_normal: vec3<f32>,
     profile: Species,
+    lod_rank: f32,
 ) -> f32 {
     let projected_extent = projected_blade_extent_pixels(root, surface_normal, profile);
     let high_radius = max(profile.shading.w, 1e-3);
+    let staggered_high_radius = high_radius * mix(0.84, 1.12, lod_rank);
     let distance = length(root.xz - camera.camera_position.xz);
-    let high_weight = 1.0 - smoothstep(high_radius * 0.8, high_radius, distance);
+    let high_weight = 1.0 - smoothstep(
+        staggered_high_radius * 0.68,
+        staggered_high_radius,
+        distance,
+    );
     let budget_extent = profile.shading.z * mix(0.999, 1.45, high_weight);
     return min(projected_extent, budget_extent);
 }
@@ -216,9 +241,14 @@ fn geometry_vertex(vertex_index: u32, instance_index: u32) -> VertexOutput {
     );
     let rest_direction = unpack2x16snorm(instance.geometry.x);
 
-    let projected_extent = budgeted_projected_blade_extent_pixels(root, surface_normal, profile);
+    let projected_extent = budgeted_projected_blade_extent_pixels(
+        root,
+        surface_normal,
+        profile,
+        lod_rank,
+    );
     // At the high/low boundary, high sections converge on the exact low-section samples. Stable
-    // candidates outside the nested low-density subset also collapse to their root before leaving.
+    // candidates outside the nested low-density subset contract laterally before leaving.
     let lod_morph = select(
         smoothstep(profile.shading.z, profile.shading.z * 1.45, projected_extent),
         0.0,
@@ -257,39 +287,37 @@ fn geometry_vertex(vertex_index: u32, instance_index: u32) -> VertexOutput {
     );
     let blade_side = normalize3_or(cross(surface_normal, blade_forward), base_side);
 
-    let density_scale = select(lod_morph, 1.0, lod_rank < population_density || low_lod);
+    // Density LOD is a coverage transition, not a growth animation. Keeping the complete
+    // centreline prevents the rejected three-of-four subset from visibly rising out of the ground;
+    // only ribbon width contracts as those stable candidates leave the high-detail population.
+    let density_width = select(lod_morph, 1.0, lod_rank < population_density || low_lod);
     let height_coordinate = mix(
         random01(blade_seed ^ 0xa511e9b3u),
         random01(group_key ^ 0x52dce729u),
         profile.group_response.x,
     );
-    let tilt_coordinate = mix(
-        random01(blade_seed ^ 0xc2b2ae35u),
-        random01(group_key ^ 0x38495ab5u),
-        profile.group_response.y,
-    );
-    let bend_coordinate = mix(
+    let silhouette_coordinate = mix(
         random01(blade_seed ^ 0x27d4eb2fu),
         random01(group_key ^ 0x7b7d159cu),
-        profile.group_response.z,
+        profile.group_response.y,
     );
     let lateral_coordinate = mix(
         random01(blade_seed ^ 0x165667b1u),
         random01(group_key ^ 0x94d049bbu),
-        profile.group_response.w,
+        profile.group_response.z,
     );
-    let height = density_scale * mix(
+    let height = mix(
         profile.bounds.x,
         profile.bounds.y,
         height_coordinate,
     );
-    let half_width = density_scale * mix(
+    let half_width = density_width * mix(
         profile.bounds.z,
         profile.bounds.w,
         random01(blade_seed ^ 0x63d83595u),
     );
-    let tilt = mix(profile.shape.x, profile.shape.y, tilt_coordinate);
-    let bend = mix(profile.shape.z, profile.shape.w, bend_coordinate);
+    let tilt = mix(profile.shape.x, profile.shape.y, silhouette_coordinate);
+    let broad_leaf_bend = mix(profile.shape.z, profile.shape.w, silhouette_coordinate);
     let lateral = (lateral_coordinate * 2.0 - 1.0)
         * profile.shape_secondary.x;
 
@@ -300,16 +328,31 @@ fn geometry_vertex(vertex_index: u32, instance_index: u32) -> VertexOutput {
         curve_root += base_side * paired_side * half_width * 0.75;
     }
 
-    let tip_forward = height * sin(tilt);
+    let tilt_sine = sin(tilt);
+    let tilt_cosine = cos(tilt);
+    let tip_forward = height * tilt_sine;
     let p0 = curve_root;
-    let p3 = curve_root + surface_normal * height * cos(tilt) + blade_forward * tip_forward;
-    let p1 = curve_root
-        + surface_normal * height * 0.34
-        + blade_forward * height * bend * 0.05;
-    let p2 = mix(curve_root, p3, 0.68)
-        + surface_normal * height * bend * 0.16
-        + blade_forward * height * bend * 0.22
-        + blade_side * height * lateral * 0.22;
+    let p3 = curve_root + surface_normal * height * tilt_cosine + blade_forward * tip_forward;
+    var p1: vec3<f32>;
+    var p2: vec3<f32>;
+    if (is_broad_leaf) {
+        p1 = curve_root
+            + surface_normal * height * 0.34
+            + blade_forward * height * broad_leaf_bend * 0.05;
+        p2 = mix(curve_root, p3, 0.68)
+            + surface_normal * height * broad_leaf_bend * 0.16
+            + blade_forward * height * broad_leaf_bend * 0.22
+            + blade_side * height * lateral * 0.22;
+    } else {
+        // One stable coordinate interpolates complete curve variants, keeping the two handles
+        // correlated. Their independent directions and lengths provide root stiffness, broad
+        // arches, late curvature, flat tips, and downward follow-through with no extra vertices.
+        let curve = mix(profile.curve_variant_a, profile.curve_variant_b, silhouette_coordinate);
+        p1 = curve_root + (blade_forward * curve.x + surface_normal * curve.y) * height;
+        p2 = p3
+            - (blade_forward * curve.z + surface_normal * curve.w) * height
+            + blade_side * height * lateral * 0.22;
+    }
 
     // Sections above the species budget collapse at the tip. This lets all species in a topology
     // bin share one indirect command while retaining artist-controlled longitudinal distribution.
@@ -336,16 +379,57 @@ fn geometry_vertex(vertex_index: u32, instance_index: u32) -> VertexOutput {
     let ribbon_taper = pow(max(1.0 - t, 0.0), 0.72);
     let broad_taper = pow(max(sin(PI * t), 0.0), 0.58);
     let taper = select(ribbon_taper, broad_taper, is_broad_leaf);
-    let plane_normal = normalize3_or(cross(blade_side, curve_tangent), surface_normal);
-    let to_camera = normalize3_or(camera.camera_position.xyz - curve_position, plane_normal);
-    let grazing = 1.0 - abs(dot(plane_normal, to_camera));
-    let view_fullness = mix(1.0, 1.24, grazing * grazing);
+    // Transport the authored root-side axis onto the plane perpendicular to the local Bezier
+    // tangent. A constant root frame makes strongly curved ribbons kink and exposes their edge at
+    // the wrong angle; the transported frame follows the curve without adding vertices.
+    let local_ribbon_side = normalize3_or(
+        blade_side - curve_tangent * dot(blade_side, curve_tangent),
+        blade_side,
+    );
+    let physical_normal = normalize3_or(
+        cross(local_ribbon_side, curve_tangent),
+        surface_normal,
+    );
+    let to_camera = normalize3_or(camera.camera_position.xyz - curve_position, physical_normal);
+    // Rotate the ribbon's *width line* toward the camera-facing width line by no more than the
+    // authored angle. A width line is unoriented (S and -S describe the same two edge positions),
+    // so align the camera line to the nearest hemisphere before finding the angular remainder.
+    // The previous grazing-only response did almost nothing until the blade was within a few
+    // degrees of perfectly edge-on, and its unnormalised remainder made the slider response hard
+    // to observe. shape_secondary.z stores tan(maximum angle), allowing an exact bounded rotation
+    // without trigonometry in the vertex shader.
+    var rendered_ribbon_side = local_ribbon_side;
+    if (!is_broad_leaf && profile.shape_secondary.z > 0.0) {
+        let unaligned_camera_side = normalize3_or(
+            cross(curve_tangent, to_camera),
+            local_ribbon_side,
+        );
+        let signed_alignment = dot(unaligned_camera_side, local_ribbon_side);
+        let camera_ribbon_side = select(
+            -unaligned_camera_side,
+            unaligned_camera_side,
+            signed_alignment >= 0.0,
+        );
+        let alignment = abs(signed_alignment);
+        let opening_remainder = camera_ribbon_side - local_ribbon_side * alignment;
+        let remainder_length = length(opening_remainder);
+        let requested_tangent = remainder_length / max(alignment, 1e-4);
+        let opening_tangent = min(profile.shape_secondary.z, requested_tangent);
+        let opening_direction = opening_remainder / max(remainder_length, 1e-4);
+        rendered_ribbon_side = normalize3_or(
+            local_ribbon_side + opening_direction * opening_tangent,
+            local_ribbon_side,
+        );
+    }
     let world_position = curve_position
-        + blade_side * side_sign * half_width * taper * view_fullness;
+        + rendered_ribbon_side * side_sign * half_width * taper;
 
+    // View opening is a silhouette correction, not a material deformation. Preserve the physical
+    // blade normal so changing the opening does not rotate every blade's lighting away from the
+    // sun and darken the field. The fragment shader treats this physical frame as two-sided.
     let rounded_normal = normalize3_or(
-        plane_normal + blade_side * side_sign * profile.material.w,
-        plane_normal,
+        physical_normal + local_ribbon_side * side_sign * profile.material.w,
+        physical_normal,
     );
     let variation = (clump_variant * 2.0 - 1.0) * profile.material.x;
     let color = mix(profile.root_color.xyz, profile.tip_color_height.xyz, t) * (1.0 + variation);
@@ -465,28 +549,118 @@ fn vertex(
     return diagnostic_vertex(vertex_index, instance_index);
 }
 
+fn directional_shadow_visibility(input: VertexOutput) -> f32 {
+    if (camera.sun_direction.w <= 0.0) {
+        return 1.0;
+    }
+    let light = &view_bindings::lights.directional_lights[0u];
+    if (((*light).flags & DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) == 0u) {
+        return 1.0;
+    }
+
+    let world_position = vec4<f32>(input.world_position, 1.0);
+    let view_z = dot(vec4<f32>(
+        view_bindings::view.view_from_world[0].z,
+        view_bindings::view.view_from_world[1].z,
+        view_bindings::view.view_from_world[2].z,
+        view_bindings::view.view_from_world[3].z,
+    ), world_position);
+    return shadows::fetch_directional_shadow(
+        0u,
+        world_position,
+        // Terrain-facing receiver bias is stable for thin two-sided ribbons. Using the rounded
+        // blade normal here can offset samples below terrain and make shadows blink by facing.
+        vec3<f32>(0.0, 1.0, 0.0),
+        view_z,
+        input.clip_position.xy,
+    );
+}
+
+fn radiance_tint(radiance: vec3<f32>, fallback: vec3<f32>) -> vec3<f32> {
+    let peak = max(max(radiance.r, radiance.g), radiance.b);
+    if (peak <= 1e-6) {
+        return fallback;
+    }
+    return radiance / peak;
+}
+
 @fragment
 fn fragment(
     input: VertexOutput,
-    @builtin(front_facing) front_facing: bool,
 ) -> @location(0) vec4<f32> {
     if (input.material.w < 0.5) {
         return vec4<f32>(input.color, 1.0);
     }
 
-    let face_sign = select(-1.0, 1.0, front_facing);
-    let normal = normalize3_or(input.world_normal * face_sign, vec3<f32>(0.0, 1.0, 0.0));
-    let light_direction = normalize(vec3<f32>(0.48, 0.78, 0.39));
-    let view_direction = normalize3_or(camera.camera_position.xyz - input.world_position, normal);
+    let view_direction = normalize3_or(
+        camera.camera_position.xyz - input.world_position,
+        vec3<f32>(0.0, 1.0, 0.0),
+    );
+    // Vegetation ribbons are two-sided. Face the interpolated authored/opened normal toward the
+    // viewer instead of deriving its sign from triangle winding: adjacent transported width axes
+    // can twist a highly curved strip without meaning that its lighting side should invert.
+    let face_sign = select(-1.0, 1.0, dot(input.world_normal, view_direction) >= 0.0);
+    let blade_normal = normalize3_or(
+        input.world_normal * face_sign,
+        vec3<f32>(0.0, 1.0, 0.0),
+    );
+    let light_direction = normalize3_or(camera.sun_direction.xyz, vec3<f32>(0.0, 1.0, 0.0));
+    let camera_distance = distance(camera.camera_position.xyz, input.world_position);
+    // Blend unresolved middle/far blades toward a stable up-dominated field normal. This preserves
+    // broad lighting direction while preventing animated or densely alternating ribbon normals from
+    // turning into specular glitter.
+    let field_normal = normalize3_or(
+        vec3<f32>(blade_normal.x * 0.16, 1.0, blade_normal.z * 0.16),
+        vec3<f32>(0.0, 1.0, 0.0),
+    );
+    let distance_stability = smoothstep(20.0, 72.0, camera_distance);
+    let normal = normalize3_or(
+        mix(blade_normal, field_normal, distance_stability),
+        field_normal,
+    );
     let half_direction = normalize3_or(light_direction + view_direction, normal);
-    let wrapped_diffuse = clamp((dot(normal, light_direction) + 0.42) / 1.42, 0.0, 1.0);
-    let back_light = pow(max(dot(-normal, light_direction), 0.0), 1.5) * input.material.y;
+    let wrapped_diffuse = clamp((dot(normal, light_direction) + 0.48) / 1.48, 0.0, 1.0);
+    let back_light = pow(max(dot(-normal, light_direction), 0.0), 1.5)
+        * input.material.y;
     let roughness = clamp(input.material.x, 0.04, 1.0);
     let specular_power = mix(96.0, 4.0, roughness);
     let specular = pow(max(dot(normal, half_direction), 0.0), specular_power)
-        * mix(0.24, 0.035, roughness);
+        * mix(0.24, 0.035, roughness)
+        * (1.0 - distance_stability);
     let ambient_occlusion = clamp(input.material.z, 0.0, 1.0);
-    let ambient = 0.18 * ambient_occlusion;
-    let lighting = ambient + wrapped_diffuse * 0.82 + back_light * 0.28;
-    return vec4<f32>(input.color * lighting + vec3<f32>(specular), 1.0);
+    let shadow_visibility = directional_shadow_visibility(input);
+    // The old receiver cache could only darken direct light and therefore became almost invisible
+    // under the stable authored body color. Let dense/AO-heavy blade regions lose part of that body
+    // as well, while retaining enough ambient fill to avoid black cutout silhouettes.
+    let shadow_floor = mix(0.16, 0.42, ambient_occlusion);
+    let received_shadow = mix(
+        1.0,
+        mix(shadow_floor, 1.0, shadow_visibility),
+        camera.lighting.w,
+    );
+    let sun_tint = radiance_tint(camera.sun_radiance.xyz, vec3<f32>(1.0));
+    let ambient_tint = radiance_tint(camera.ambient_radiance.xyz, vec3<f32>(1.0));
+    let sun_active = camera.sun_direction.w;
+    let ambient = input.color
+        * ambient_tint
+        * mix(0.22, 0.42, ambient_occlusion)
+        * received_shadow;
+    let diffuse = input.color
+        * sun_tint
+        * wrapped_diffuse
+        * camera.lighting.x
+        * shadow_visibility
+        * sun_active;
+    let transmission = input.color
+        * sun_tint
+        * back_light
+        * camera.lighting.z
+        * shadow_visibility
+        * sun_active;
+    let highlight = sun_tint
+        * specular
+        * camera.lighting.y
+        * shadow_visibility
+        * sun_active;
+    return vec4<f32>(ambient + diffuse + transmission + highlight, 1.0);
 }

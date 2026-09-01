@@ -18,7 +18,8 @@ use world::{
 
 pub const MAX_OBJECT_WRITES_PER_TRANSACTION: usize = 256;
 pub const MAX_DENSE_DOMAIN_WRITES_PER_TRANSACTION: usize = 64;
-const VEGETATION_CATALOG_FORMAT_VERSION: i64 = 2;
+const VEGETATION_CATALOG_FORMAT_VERSION: i64 = 6;
+const MIGRATABLE_PROJECT_SCHEMA_VERSIONS: [i64; 4] = [12, 13, 14, 15];
 
 #[derive(Debug, Clone)]
 pub struct ProjectDocument {
@@ -553,11 +554,30 @@ pub fn write_project_database(path: &Path, document: &ProjectDocument) -> Result
 ///
 /// Runtime databases are immutable publication artifacts and are never migrated in place.
 pub fn migrate_project_database(path: &Path) -> Result<bool, WorldDbError> {
-    let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+    let mut connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
     connection.execute_batch("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 1000;")?;
     let actual: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     if actual == PROJECT_SCHEMA_VERSION {
         return Ok(false);
+    }
+    if MIGRATABLE_PROJECT_SCHEMA_VERSIONS.contains(&actual) && PROJECT_SCHEMA_VERSION == 16 {
+        // Catalog format 6 adds an authored projected-width floor for ribbon species. Vegetation
+        // catalog payloads are bincode sequences and therefore cannot safely default a newly
+        // appended field. Discard only that incompatible legacy payload while preserving every
+        // other authored domain. A current project or an explicit reference-fixture reset supplies
+        // the new-format catalog; normal saves and publications never replace it implicitly.
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "DROP TABLE vegetation_catalog;
+             CREATE TABLE vegetation_catalog (
+                 singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+                 format_version INTEGER NOT NULL CHECK(format_version = 6),
+                 payload BLOB NOT NULL
+             ) STRICT;",
+        )?;
+        transaction.pragma_update(None, "user_version", PROJECT_SCHEMA_VERSION)?;
+        transaction.commit()?;
+        return Ok(true);
     }
     Err(WorldDbError::SchemaVersion {
         database: "project",
@@ -1578,6 +1598,12 @@ pub struct ProjectWriter {
     connection: Connection,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum VegetationCatalogWriteResult {
+    Committed,
+    Conflict { actual: Option<VegetationCatalog> },
+}
+
 impl ProjectWriter {
     pub fn open(path: &Path) -> Result<Self, WorldDbError> {
         let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
@@ -1605,6 +1631,34 @@ impl ProjectWriter {
         )?;
         transaction.commit()?;
         Ok(())
+    }
+
+    /// Replaces the global vegetation catalog only when the persisted catalog still matches the
+    /// editor baseline. This gives the singleton source domain the same optimistic-concurrency
+    /// behavior as spatial object and dense-page transactions without coupling it to their
+    /// per-record revision columns.
+    pub fn replace_vegetation_catalog_if_matches(
+        &mut self,
+        expected: Option<&VegetationCatalog>,
+        replacement: &VegetationCatalog,
+    ) -> Result<VegetationCatalogWriteResult, WorldDbError> {
+        replacement.validate()?;
+        let transaction = self.connection.transaction()?;
+        let actual = read_vegetation_catalog(&transaction)?;
+        if actual.as_ref() != expected {
+            return Ok(VegetationCatalogWriteResult::Conflict { actual });
+        }
+
+        let payload = encode_vegetation_catalog(replacement)?;
+        transaction.execute(
+            "INSERT INTO vegetation_catalog(singleton, format_version, payload) \
+             VALUES (1, ?1, ?2) \
+             ON CONFLICT(singleton) DO UPDATE SET \
+                 format_version = excluded.format_version, payload = excluded.payload",
+            params![VEGETATION_CATALOG_FORMAT_VERSION, payload],
+        )?;
+        transaction.commit()?;
+        Ok(VegetationCatalogWriteResult::Committed)
     }
 
     pub fn update_object_transform(
@@ -2733,6 +2787,65 @@ mod tests {
     use super::*;
 
     #[test]
+    fn project_schema_migration_replaces_only_the_incompatible_catalog_table() {
+        for (schema_version, catalog_format) in [(12, 2), (13, 3), (14, 4), (15, 5)] {
+            verify_project_catalog_migration(schema_version, catalog_format);
+        }
+    }
+
+    fn verify_project_catalog_migration(schema_version: i64, catalog_format: i64) {
+        let directory = unique_test_directory();
+        fs::create_dir_all(&directory).unwrap();
+        let project_path = directory.join("migration.sqlite");
+        let connection = Connection::open(&project_path).unwrap();
+        connection
+            .execute_batch(&format!(
+                "CREATE TABLE vegetation_catalog (
+                     singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+                     format_version INTEGER NOT NULL CHECK(format_version = {catalog_format}),
+                     payload BLOB NOT NULL
+                 ) STRICT;
+                 CREATE TABLE preserved_authored_data(value TEXT NOT NULL) STRICT;
+                 INSERT INTO vegetation_catalog(singleton, format_version, payload)
+                     VALUES (1, {catalog_format}, X'0102');
+                 INSERT INTO preserved_authored_data(value) VALUES ('kept');
+                 PRAGMA user_version = {schema_version};"
+            ))
+            .unwrap();
+        drop(connection);
+
+        assert!(migrate_project_database(&project_path).unwrap());
+        assert!(!migrate_project_database(&project_path).unwrap());
+
+        let connection = Connection::open(&project_path).unwrap();
+        let schema_version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        let catalog_rows: i64 = connection
+            .query_row("SELECT COUNT(*) FROM vegetation_catalog", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        let preserved: String = connection
+            .query_row("SELECT value FROM preserved_authored_data", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(schema_version, PROJECT_SCHEMA_VERSION);
+        assert_eq!(catalog_rows, 0);
+        assert_eq!(preserved, "kept");
+        connection
+            .execute(
+                "INSERT INTO vegetation_catalog(singleton, format_version, payload)
+                 VALUES (1, 6, X'')",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn project_and_runtime_databases_are_distinct_and_readable() {
         let directory = unique_test_directory();
         fs::create_dir_all(&directory).unwrap();
@@ -2792,7 +2905,38 @@ mod tests {
                 .unwrap()
                 .read_vegetation_catalog()
                 .unwrap(),
-            Some(replacement_catalog)
+            Some(replacement_catalog.clone())
+        );
+
+        let mut authored_catalog = replacement_catalog.clone();
+        authored_catalog.populations[0].density_per_square_meter = 6.25;
+        let mut writer = ProjectWriter::open(&project_path).unwrap();
+        assert_eq!(
+            writer
+                .replace_vegetation_catalog_if_matches(
+                    Some(&replacement_catalog),
+                    &authored_catalog,
+                )
+                .unwrap(),
+            VegetationCatalogWriteResult::Committed
+        );
+
+        let mut stale_catalog = replacement_catalog.clone();
+        stale_catalog.populations[0].density_per_square_meter = 7.0;
+        assert_eq!(
+            writer
+                .replace_vegetation_catalog_if_matches(Some(&replacement_catalog), &stale_catalog,)
+                .unwrap(),
+            VegetationCatalogWriteResult::Conflict {
+                actual: Some(authored_catalog.clone()),
+            }
+        );
+        assert_eq!(
+            ProjectReader::open_read_only(&project_path)
+                .unwrap()
+                .read_vegetation_catalog()
+                .unwrap(),
+            Some(authored_catalog)
         );
 
         let runtime = RuntimeBuild {

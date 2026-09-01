@@ -11,6 +11,7 @@ use bevy::{
         system::{SystemParamItem, lifetimeless::SRes},
     },
     mesh::Mesh,
+    pbr::{MeshPipelineViewLayoutKey, MeshPipelineViewLayouts, SetMeshViewBindGroup, ViewKeyCache},
     prelude::*,
     render::{
         ExtractSchedule, Render, RenderSystems,
@@ -45,7 +46,7 @@ use vegetation::{
 
 use crate::{
     VegetationDebugDraw, VegetationDebugScene, VegetationDebugSettings, VegetationDebugView,
-    VegetationDiagnostics, VegetationProfileMode,
+    VegetationDiagnostics, VegetationLighting, VegetationProfileMode, VegetationSun,
 };
 
 const COMPUTE_SHADER_PATH: &str = "shaders/vegetation_debug_compute.wgsl";
@@ -203,17 +204,22 @@ struct SpeciesGpu {
     bounds: [f32; 4],
     // x: high sections, y: low sections, z: blades/render unit, w: longitudinal power
     topology: [f32; 4],
-    // xy: tilt range, zw: bend range
+    // xy: tilt range; zw: broad-leaf droop range
     shape: [f32; 4],
-    // x: lateral curve/camber, y: pair spread, z: crown radius,
+    // x: lateral curve/camber, y: pair spread,
+    // z: tangent of maximum ribbon view-opening angle / broad crown radius,
     // w: maximum horizontal reach
     shape_secondary: [f32; 4],
+    // xy: normalized-height root-handle forward/normal vector,
+    // zw: normalized-height tip-handle forward/normal vector
+    curve_variant_a: [f32; 4],
+    curve_variant_b: [f32; 4],
     // x: clump color variation, y: roughness, z: transmission, w: normal rounding
     material: [f32; 4],
     // x: root AO, y: tip AO, z: high-LOD threshold,
     // w: density-budgeted high-topology radius
     shading: [f32; 4],
-    // xyzw: group coherence for height, tilt, bend, and lateral curve
+    // xyz: group coherence for height, complete silhouette, and lateral curve
     group_response: [f32; 4],
 }
 
@@ -255,6 +261,12 @@ struct CameraGpu {
     camera_position: [f32; 4],
     // x: vertical focal length in pixels, y: viewport width, z: viewport height
     projection: [f32; 4],
+    // xyz: direction from the surface toward the strongest directional light, w: active
+    sun_direction: [f32; 4],
+    sun_radiance: [f32; 4],
+    ambient_radiance: [f32; 4],
+    // x: diffuse, y: specular, z: transmission, w: received-shadow strength
+    lighting: [f32; 4],
 }
 
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -282,6 +294,7 @@ impl FromWorld for VegetationPipelines {
         let schedule_shader = asset_server.load(SCHEDULE_SHADER_PATH);
         let draw_shader = asset_server.load(DRAW_SHADER_PATH);
         let pipeline_cache = world.resource::<PipelineCache>();
+        let view_layouts = world.resource::<MeshPipelineViewLayouts>().clone();
         let schedule_layout = BindGroupLayoutDescriptor::new(
             "vegetation-v2 visible work scheduling",
             &BindGroupLayoutEntries::sequential(
@@ -351,16 +364,19 @@ impl FromWorld for VegetationPipelines {
         });
         let draw_descriptor = RenderPipelineDescriptor {
             label: Some("vegetation-v2 placement debug".into()),
-            layout: vec![draw_layout.clone()],
+            // The exact mesh-view layout is selected per camera by the pipeline specializer.
+            layout: Vec::new(),
             vertex: VertexState {
                 shader: draw_shader.clone(),
                 entry_point: Some(Cow::Borrowed("vertex")),
+                shader_defs: vec!["SHADOW_FILTER_METHOD_HARDWARE_2X2".into()],
                 buffers: Vec::new(),
                 ..default()
             },
             fragment: Some(FragmentState {
                 shader: draw_shader,
                 entry_point: Some(Cow::Borrowed("fragment")),
+                shader_defs: vec!["SHADOW_FILTER_METHOD_HARDWARE_2X2".into()],
                 targets: vec![Some(ColorTargetState {
                     format: TextureFormat::Rgba16Float,
                     blend: None,
@@ -393,7 +409,10 @@ impl FromWorld for VegetationPipelines {
             generate,
             finalize,
             draw_variants: Variants::new(
-                VegetationPipelineSpecializer { draw_layout },
+                VegetationPipelineSpecializer {
+                    view_layouts,
+                    draw_layout,
+                },
                 draw_descriptor,
             ),
         }
@@ -404,9 +423,11 @@ impl FromWorld for VegetationPipelines {
 struct VegetationPipelineKey {
     msaa: Msaa,
     target_format: TextureFormat,
+    view_layout_bits: u32,
 }
 
 struct VegetationPipelineSpecializer {
+    view_layouts: MeshPipelineViewLayouts,
     draw_layout: BindGroupLayoutDescriptor,
 }
 
@@ -418,7 +439,12 @@ impl Specializer<RenderPipeline> for VegetationPipelineSpecializer {
         key: Self::Key,
         descriptor: &mut RenderPipelineDescriptor,
     ) -> Result<Canonical<Self::Key>, BevyError> {
-        descriptor.layout = vec![self.draw_layout.clone()];
+        let view_layout =
+            self.view_layouts
+                .get_view_layout(MeshPipelineViewLayoutKey::from_bits_retain(
+                    key.view_layout_bits,
+                ));
+        descriptor.layout = vec![view_layout.main_layout, self.draw_layout.clone()];
         descriptor.multisample.count = key.msaa.samples();
         descriptor.fragment.as_mut().unwrap().targets[0]
             .as_mut()
@@ -774,6 +800,8 @@ fn begin_telemetry_readback(
 fn prepare(
     scene: Option<Res<VegetationDebugScene>>,
     settings: Res<VegetationDebugSettings>,
+    lighting: Res<VegetationLighting>,
+    sun: Res<VegetationSun>,
     render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
     pipeline_cache: Res<PipelineCache>,
@@ -962,6 +990,18 @@ fn prepare(
                 view.viewport.w.max(1) as f32,
                 0.0,
             ],
+            sun_direction: sun
+                .direction_to_light
+                .extend(if sun.active { 1.0 } else { 0.0 })
+                .to_array(),
+            sun_radiance: sun.radiance.extend(0.0).to_array(),
+            ambient_radiance: sun.ambient_radiance.extend(0.0).to_array(),
+            lighting: [
+                lighting.diffuse_strength.max(0.0),
+                lighting.specular_strength.max(0.0),
+                lighting.transmission_strength.max(0.0),
+                lighting.received_shadow_strength.clamp(0.0, 1.0),
+            ],
         }),
     );
     render_queue.write_buffer(
@@ -1085,33 +1125,46 @@ fn high_detail_radii(scene: &vegetation::VegetationScene) -> [f32; 2] {
 fn effective_horizontal_reach(species: &vegetation::VegetationSpecies) -> f32 {
     let height = species.bounds.maximum_height;
     let width = species.bounds.maximum_half_width * 1.24;
-    let (maximum_tilt, maximum_bend, maximum_lateral, root_offset) = match species.topology {
-        TopologyProfile::Ribbon(profile) => (
-            profile.maximum_tilt_radians,
-            profile.maximum_bend,
-            profile.maximum_lateral_curve,
-            if profile.blades_per_render_unit > 1 {
-                species.bounds.maximum_half_width * 0.75
-            } else {
-                0.0
-            },
-        ),
-        TopologyProfile::BroadLeafCluster(profile) => (
-            0.52 + profile.maximum_droop * 0.45,
-            profile.maximum_droop,
-            profile.maximum_camber,
-            profile.crown_radius * 0.35,
-        ),
-    };
     // A cubic Bezier stays inside the convex hull of its control points. Bound the same p1/p2/p3
     // construction used by the vertex shader in its orthonormal blade frame, then include the
     // root offset, grazing-angle width expansion, and maximum wind displacement. This prevents an
     // artist-entered reach that is too small from making whole pages disappear at view edges.
-    let p1_radius = height * (0.34_f32.powi(2) + (maximum_bend * 0.05).powi(2)).sqrt();
-    let p2_normal = maximum_tilt.cos() * 0.68 + maximum_bend * 0.16;
-    let p2_forward = maximum_tilt.sin() * 0.68 + maximum_bend * 0.22;
-    let p2_side = maximum_lateral * 0.22;
-    let p2_radius = height * (p2_normal.powi(2) + p2_forward.powi(2) + p2_side.powi(2)).sqrt();
+    let (p1_radius, p2_radius, root_offset) = match species.topology {
+        TopologyProfile::Ribbon(profile) => {
+            let maximum_root_handle = profile
+                .curve_variant_a
+                .root_handle_length
+                .max(profile.curve_variant_b.root_handle_length);
+            let maximum_tip_handle = profile
+                .curve_variant_a
+                .tip_handle_length
+                .max(profile.curve_variant_b.tip_handle_length);
+            // P2 is the tip endpoint minus its tangent handle plus lateral camber. The triangle
+            // inequality is deliberately conservative for every independent tilt/curve sample.
+            let p2_radius =
+                height * (1.0 + maximum_tip_handle + profile.maximum_lateral_curve * 0.22);
+            (
+                height * maximum_root_handle,
+                p2_radius,
+                if profile.blades_per_render_unit > 1 {
+                    species.bounds.maximum_half_width * 0.75
+                } else {
+                    0.0
+                },
+            )
+        }
+        TopologyProfile::BroadLeafCluster(profile) => {
+            let maximum_tilt = 0.52 + profile.maximum_droop * 0.45;
+            let maximum_bend = profile.maximum_droop;
+            let p1_radius = height * (0.34_f32.powi(2) + (maximum_bend * 0.05).powi(2)).sqrt();
+            let p2_normal = maximum_tilt.cos() * 0.68 + maximum_bend * 0.16;
+            let p2_forward = maximum_tilt.sin() * 0.68 + maximum_bend * 0.22;
+            let p2_side = profile.maximum_camber * 0.22;
+            let p2_radius =
+                height * (p2_normal.powi(2) + p2_forward.powi(2) + p2_side.powi(2)).sqrt();
+            (p1_radius, p2_radius, profile.crown_radius * 0.35)
+        }
+    };
     species.bounds.maximum_horizontal_reach.max(
         height.max(p1_radius).max(p2_radius)
             + root_offset
@@ -1383,48 +1436,53 @@ fn procedural_lod_profile(species: &vegetation::VegetationSpecies) -> Procedural
 fn pack_species(species: &vegetation::VegetationSpecies, high_detail_radius: f32) -> SpeciesGpu {
     let lod = procedural_lod_profile(species);
     let horizontal_reach = effective_horizontal_reach(species);
-    let (topology, shape, shape_secondary) = match species.topology {
-        TopologyProfile::Ribbon(profile) => (
-            [
-                f32::from(profile.high_section_count.min(MAX_RENDER_SECTIONS)),
-                f32::from(profile.low_section_count.min(MAX_LOW_RENDER_SECTIONS)),
-                f32::from(profile.blades_per_render_unit.min(2)),
-                profile.longitudinal_power,
-            ],
-            [
-                profile.minimum_tilt_radians,
-                profile.maximum_tilt_radians,
-                profile.minimum_bend,
-                profile.maximum_bend,
-            ],
-            [
-                profile.maximum_lateral_curve,
-                profile.pair_spread_radians,
-                0.0,
-                horizontal_reach,
-            ],
-        ),
-        TopologyProfile::BroadLeafCluster(profile) => (
-            [
-                f32::from(profile.high_section_count.min(MAX_RENDER_SECTIONS)),
-                f32::from(profile.low_section_count.min(MAX_LOW_RENDER_SECTIONS)),
-                2.0,
-                0.72,
-            ],
-            [
-                0.14 + profile.minimum_droop * 0.2,
-                0.52 + profile.maximum_droop * 0.45,
-                profile.minimum_droop,
-                profile.maximum_droop,
-            ],
-            [
-                profile.maximum_camber,
-                2.2,
-                profile.crown_radius,
-                horizontal_reach,
-            ],
-        ),
-    };
+    let (topology, shape, shape_secondary, curve_variant_a, curve_variant_b) =
+        match species.topology {
+            TopologyProfile::Ribbon(profile) => (
+                [
+                    f32::from(profile.high_section_count.min(MAX_RENDER_SECTIONS)),
+                    f32::from(profile.low_section_count.min(MAX_LOW_RENDER_SECTIONS)),
+                    f32::from(profile.blades_per_render_unit.min(2)),
+                    profile.longitudinal_power,
+                ],
+                [
+                    profile.curve_variant_a.tip_tilt_radians,
+                    profile.curve_variant_b.tip_tilt_radians,
+                    0.0,
+                    0.0,
+                ],
+                [
+                    profile.maximum_lateral_curve,
+                    profile.pair_spread_radians,
+                    profile.maximum_view_opening_radians.tan(),
+                    horizontal_reach,
+                ],
+                pack_ribbon_curve(profile.curve_variant_a),
+                pack_ribbon_curve(profile.curve_variant_b),
+            ),
+            TopologyProfile::BroadLeafCluster(profile) => (
+                [
+                    f32::from(profile.high_section_count.min(MAX_RENDER_SECTIONS)),
+                    f32::from(profile.low_section_count.min(MAX_LOW_RENDER_SECTIONS)),
+                    2.0,
+                    0.72,
+                ],
+                [
+                    0.14 + profile.minimum_droop * 0.2,
+                    0.52 + profile.maximum_droop * 0.45,
+                    profile.minimum_droop,
+                    profile.maximum_droop,
+                ],
+                [
+                    profile.maximum_camber,
+                    2.2,
+                    profile.crown_radius,
+                    horizontal_reach,
+                ],
+                [0.0; 4],
+                [0.0; 4],
+            ),
+        };
     SpeciesGpu {
         root_color: [
             species.material.root_color[0],
@@ -1447,6 +1505,8 @@ fn pack_species(species: &vegetation::VegetationSpecies, high_detail_radius: f32
         topology,
         shape,
         shape_secondary,
+        curve_variant_a,
+        curve_variant_b,
         material: [
             species.material.clump_color_variation,
             species.material.perceptual_roughness,
@@ -1461,11 +1521,20 @@ fn pack_species(species: &vegetation::VegetationSpecies, high_detail_radius: f32
         ],
         group_response: [
             species.group_response.height_coherence,
-            species.group_response.tilt_coherence,
-            species.group_response.bend_coherence,
+            species.group_response.silhouette_coherence,
             species.group_response.lateral_curve_coherence,
+            0.0,
         ],
     }
+}
+
+fn pack_ribbon_curve(profile: vegetation::RibbonCurveProfile) -> [f32; 4] {
+    [
+        profile.root_tangent_radians.sin() * profile.root_handle_length,
+        profile.root_tangent_radians.cos() * profile.root_handle_length,
+        profile.tip_tangent_radians.sin() * profile.tip_handle_length,
+        profile.tip_tangent_radians.cos() * profile.tip_handle_length,
+    ]
 }
 
 fn generate(
@@ -1571,6 +1640,7 @@ fn queue(
     settings: Res<VegetationDebugSettings>,
     mut opaque_phases: ResMut<ViewBinnedRenderPhases<Opaque3d>>,
     draw_functions: Res<DrawFunctions<Opaque3d>>,
+    view_key_cache: Res<ViewKeyCache>,
     views: Query<(Entity, &ExtractedView, &Msaa), With<VegetationDebugView>>,
     draw_entity: Query<(Entity, &MainEntity), With<VegetationDebugDraw>>,
 ) {
@@ -1579,7 +1649,10 @@ fn queue(
     };
     let draw_function = draw_functions.read().id::<DrawVegetationDebug>();
     for (_view_entity, view, msaa) in &views {
-        let Some(phase) = opaque_phases.get_mut(&view.retained_view_entity) else {
+        let (Some(phase), Some(mesh_view_key)) = (
+            opaque_phases.get_mut(&view.retained_view_entity),
+            view_key_cache.get(&view.retained_view_entity),
+        ) else {
             continue;
         };
         phase.remove(*draw_main_entity);
@@ -1596,6 +1669,7 @@ fn queue(
             VegetationPipelineKey {
                 msaa: *msaa,
                 target_format: view.target_format,
+                view_layout_bits: MeshPipelineViewLayoutKey::from(*mesh_view_key).bits(),
             },
         ) else {
             continue;
@@ -1618,7 +1692,11 @@ fn queue(
     }
 }
 
-type DrawVegetationDebug = (SetItemPipeline, DrawVegetationDebugIndirect);
+type DrawVegetationDebug = (
+    SetItemPipeline,
+    SetMeshViewBindGroup<0>,
+    DrawVegetationDebugIndirect,
+);
 
 struct DrawVegetationDebugIndirect;
 
@@ -1636,7 +1714,7 @@ impl<P: PhaseItem> RenderCommand<P> for DrawVegetationDebugIndirect {
     ) -> RenderCommandResult {
         let buffers = buffers.into_inner();
         let draw_span = diagnostics.pass_span(pass, "vegetation_v2_draw");
-        pass.set_bind_group(0, &buffers.draw_bind_group, &[]);
+        pass.set_bind_group(1, &buffers.draw_bind_group, &[]);
         pass.set_index_buffer(buffers.topology_indices.slice(..), IndexFormat::Uint16);
         pass.draw_indexed_indirect(&buffers.args, 0);
         pass.draw_indexed_indirect(&buffers.args, 20);
@@ -1657,11 +1735,11 @@ mod tests {
     fn gpu_contracts_have_expected_alignment() {
         assert_eq!(size_of::<WorkItemGpu>(), 208);
         assert_eq!(size_of::<SpeciesChoiceGpu>(), 48);
-        assert_eq!(size_of::<SpeciesGpu>(), 144);
+        assert_eq!(size_of::<SpeciesGpu>(), 176);
         assert_eq!(size_of::<SurfaceSampleGpu>(), 32);
         assert_eq!(size_of::<ProceduralInstanceGpu>(), 32);
         assert_eq!(size_of::<DebugInstanceGpu>(), 64);
-        assert_eq!(size_of::<CameraGpu>(), 96);
+        assert_eq!(size_of::<CameraGpu>(), 160);
         assert_eq!(size_of::<DebugConfigGpu>(), 16);
         assert_eq!(GPU_TELEMETRY_SIZE, 64);
         assert_eq!(DRAW_ARGS_SIZE, 80);
@@ -1695,12 +1773,31 @@ mod tests {
             .sqrt();
         assert!((high_detail_radii[0] - expected_single_radius).abs() < 1e-4);
         assert!((high_detail_radii[1] - expected_split_radius).abs() < 1e-4);
-        let short_species = scene
+        let short_species_index = scene
             .catalog
             .species
             .iter()
-            .find(|species| species.key == "short_split_fill_ribbon")
+            .position(|species| species.key == "short_split_fill_ribbon")
             .unwrap();
+        let short_species = &scene.catalog.species[short_species_index];
+        let TopologyProfile::Ribbon(short_topology) = short_species.topology else {
+            unreachable!();
+        };
+        assert_eq!(
+            packed.species[short_species_index].curve_variant_a,
+            pack_ribbon_curve(short_topology.curve_variant_a)
+        );
+        assert_eq!(
+            packed.species[short_species_index].shape[..2],
+            [
+                short_topology.curve_variant_a.tip_tilt_radians,
+                short_topology.curve_variant_b.tip_tilt_radians,
+            ]
+        );
+        assert_eq!(
+            packed.species[short_species_index].shape_secondary[2],
+            short_topology.maximum_view_opening_radians.tan()
+        );
         assert!(effective_horizontal_reach(short_species) >= short_species.bounds.maximum_height);
         assert!(
             effective_horizontal_reach(short_species)
@@ -1742,7 +1839,6 @@ mod tests {
         for source in [
             include_str!("../../../assets/shaders/vegetation_schedule_compute.wgsl"),
             include_str!("../../../assets/shaders/vegetation_debug_compute.wgsl"),
-            include_str!("../../../assets/shaders/vegetation_debug_draw.wgsl"),
         ] {
             let module = naga::front::wgsl::parse_str(source).unwrap();
             naga::valid::Validator::new(
@@ -1752,6 +1848,25 @@ mod tests {
             .validate(&module)
             .unwrap();
         }
+
+        // Naga's standalone WGSL parser does not run Bevy's #import preprocessor. Validate the
+        // complete draw shader with only the imported CSM adapter replaced by an identity stub.
+        let draw = include_str!("../../../assets/shaders/vegetation_debug_draw.wgsl");
+        let declarations = draw.find("struct ProceduralInstance").unwrap();
+        let shadow_adapter = draw.find("fn directional_shadow_visibility").unwrap();
+        let post_adapter = draw.find("fn radiance_tint").unwrap();
+        let sanitized = format!(
+            "{}fn directional_shadow_visibility(_input: VertexOutput) -> f32 {{ return 1.0; }}\n{}",
+            &draw[declarations..shadow_adapter],
+            &draw[post_adapter..],
+        );
+        let module = naga::front::wgsl::parse_str(&sanitized).unwrap();
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .unwrap();
     }
 
     #[test]
@@ -1784,8 +1899,33 @@ mod tests {
         assert!(compute.contains("fn projected_population_spacing_pixels("));
         assert!(compute.contains("fn population_lod_density("));
         assert!(draw.contains("let population_density = f32(instance.geometry.w >> 24u) / 255.0;"));
+        assert!(draw.contains("let density_width = select("));
+        assert!(!draw.contains("let density_scale = select("));
+        assert!(compute.contains("let staggered_high_radius = high_radius * mix("));
+        assert!(draw.contains("let staggered_high_radius = high_radius * mix("));
+        assert!(draw.contains("let local_ribbon_side = normalize3_or("));
+        assert!(draw.contains("let signed_alignment = dot("));
+        assert!(draw.contains("let opening_tangent = min("));
+        assert!(draw.contains("var rendered_ribbon_side = local_ribbon_side;"));
+        assert!(draw.contains("rendered_ribbon_side = normalize3_or("));
+        assert!(draw.contains("physical_normal + local_ribbon_side * side_sign"));
+        assert!(!draw.contains("let view_opening_weight = smoothstep("));
+        assert!(!draw.contains("cross(rendered_ribbon_side, curve_tangent)"));
+        assert!(draw.contains("dot(input.world_normal, view_direction) >= 0.0"));
+        assert!(!draw.contains("@builtin(front_facing)"));
+        assert!(!draw.contains("fn apply_edge_on_fullness("));
+        assert!(!draw.contains("let view_fullness = mix(1.0, 1.24"));
         assert!(!compute.contains("fn projected_height_pixels("));
         assert!(!schedule.contains("fn maximum_projected_height("));
+    }
+
+    #[test]
+    fn production_draw_uses_world_sun_and_directional_shadow_reception() {
+        let draw = include_str!("../../../assets/shaders/vegetation_debug_draw.wgsl");
+        assert!(draw.contains("shadows::fetch_directional_shadow("));
+        assert!(draw.contains("camera.sun_direction.xyz"));
+        assert!(draw.contains("let received_shadow = mix("));
+        assert!(draw.contains("let shadow_floor = mix(0.16, 0.42, ambient_occlusion);"));
     }
 
     #[test]

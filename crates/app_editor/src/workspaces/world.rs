@@ -34,7 +34,9 @@ use crate::saving::{EditorSaveCoordinator, drive_editor_save};
 use crate::shell::{EditorUiSet, EditorWindowRegistry};
 use crate::tools::VEGETATION_TOOL;
 use crate::tools::{EditorToolRegistry, OBJECT_TOOL, TERRAIN_TOOL, object_tool_active};
-use crate::vegetation_authoring::{VEGETATION_WINDOW, VegetationAuthoringPlugin};
+use crate::vegetation_authoring::{
+    VEGETATION_WINDOW, VegetationAuthoringPlugin, process_vegetation_save_completion,
+};
 
 pub(crate) struct WorldWorkspacePlugin;
 
@@ -95,6 +97,7 @@ impl Plugin for WorldWorkspacePlugin {
                 (
                     process_project_save_completion,
                     process_dense_save_completion,
+                    process_vegetation_save_completion,
                     drive_editor_save,
                 )
                     .chain(),

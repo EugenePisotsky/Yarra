@@ -1,16 +1,16 @@
 //! Small, deterministic fixtures shared by contract, compiler, and renderer tests.
 //!
-//! These are deliberately code-authored. They exercise the V2 model before an editor or database
-//! schema is allowed to depend on it.
+//! These are deliberately code-authored reference and initial-project presets. They exercise the
+//! V2 model without making the fixture the authority after a project catalog has been saved.
 
 use crate::{
     BroadLeafTopologyProfile, GrowthPattern, RepresentationKind, RepresentationLevel,
-    RibbonTopologyProfile, TopologyFamily, TopologyProfile, VegetationAssemblage,
-    VegetationAssemblageId, VegetationBounds, VegetationCatalog, VegetationFieldPage,
-    VegetationGroupResponseProfile, VegetationGroupingProfile, VegetationMaterialProfile,
-    VegetationOrientationProfile, VegetationPopulation, VegetationPopulationField,
-    VegetationPopulationId, VegetationScene, VegetationSpecies, VegetationSpeciesId,
-    VegetationSurfaceField, VegetationWindProfile, VoronoiClumpProfile,
+    RibbonCurveProfile, RibbonTopologyProfile, TopologyFamily, TopologyProfile,
+    VegetationAssemblage, VegetationAssemblageId, VegetationBounds, VegetationCatalog,
+    VegetationFieldPage, VegetationGroupResponseProfile, VegetationGroupingProfile,
+    VegetationMaterialProfile, VegetationOrientationProfile, VegetationPopulation,
+    VegetationPopulationField, VegetationPopulationId, VegetationScene, VegetationSpecies,
+    VegetationSpeciesId, VegetationSurfaceField, VegetationWindProfile, VoronoiClumpProfile,
 };
 
 pub const DRY_FINE_SPECIES_ID: VegetationSpeciesId = VegetationSpeciesId([1; 16]);
@@ -219,18 +219,17 @@ pub fn full_coverage_page(
 
 fn dry_fine_species() -> VegetationSpecies {
     let mut topology = ribbon_topology(7, 3, 2, 0.72);
-    topology.minimum_tilt_radians = 0.42;
-    topology.maximum_tilt_radians = 1.32;
-    topology.minimum_bend = 0.28;
-    topology.maximum_bend = 1.2;
+    topology.curve_variant_a = ribbon_curve(0.42, 0.05, 0.92, 0.34, 0.24);
+    topology.curve_variant_b = ribbon_curve(1.32, 0.30, 2.02, 0.52, 0.34);
     topology.maximum_lateral_curve = 0.38;
     topology.pair_spread_radians = 0.62;
+    topology.maximum_view_opening_radians = 18.0_f32.to_radians();
     VegetationSpecies {
         id: DRY_FINE_SPECIES_ID,
         key: "dry_fine_ribbon".into(),
         topology: TopologyProfile::Ribbon(topology),
         material: material([0.11, 0.035, 0.01], [0.72, 0.28, 0.04], 0.18, 0.72),
-        group_response: group_response(0.76, 0.66, 0.68, 0.48),
+        group_response: group_response(0.76, 0.67, 0.48),
         wind: wind(0.28, 0.95, 0.42),
         bounds: bounds(0.48, 1.25, 0.006, 0.022, 0.8),
         representations: ribbon_representations(TopologyFamily::Ribbon),
@@ -239,17 +238,16 @@ fn dry_fine_species() -> VegetationSpecies {
 
 fn green_fine_species() -> VegetationSpecies {
     let mut topology = ribbon_topology(8, 3, 1, 0.68);
-    topology.minimum_tilt_radians = 0.24;
-    topology.maximum_tilt_radians = 1.16;
-    topology.minimum_bend = 0.18;
-    topology.maximum_bend = 1.0;
+    topology.curve_variant_a = ribbon_curve(0.24, 0.03, 0.78, 0.32, 0.22);
+    topology.curve_variant_b = ribbon_curve(1.16, 0.25, 1.82, 0.48, 0.32);
     topology.maximum_lateral_curve = 0.32;
+    topology.maximum_view_opening_radians = 18.0_f32.to_radians();
     VegetationSpecies {
         id: GREEN_FINE_SPECIES_ID,
         key: "green_fine_ribbon".into(),
         topology: TopologyProfile::Ribbon(topology),
         material: material([0.015, 0.06, 0.01], [0.12, 0.52, 0.08], 0.1, 0.78),
-        group_response: group_response(0.74, 0.72, 0.7, 0.56),
+        group_response: group_response(0.74, 0.71, 0.56),
         wind: wind(0.38, 0.8, 0.34),
         bounds: bounds(0.42, 1.05, 0.008, 0.026, 0.62),
         representations: ribbon_representations(TopologyFamily::Ribbon),
@@ -258,18 +256,17 @@ fn green_fine_species() -> VegetationSpecies {
 
 fn short_fill_species() -> VegetationSpecies {
     let mut topology = ribbon_topology(5, 2, 2, 0.78);
-    topology.minimum_tilt_radians = 0.52;
-    topology.maximum_tilt_radians = 1.34;
-    topology.minimum_bend = 0.18;
-    topology.maximum_bend = 0.78;
+    topology.curve_variant_a = ribbon_curve(0.52, 0.04, 0.62, 0.26, 0.20);
+    topology.curve_variant_b = ribbon_curve(1.34, 0.28, 1.48, 0.40, 0.28);
     topology.maximum_lateral_curve = 0.22;
     topology.pair_spread_radians = 1.18;
+    topology.maximum_view_opening_radians = 15.0_f32.to_radians();
     VegetationSpecies {
         id: SHORT_FILL_SPECIES_ID,
         key: "short_split_fill_ribbon".into(),
         topology: TopologyProfile::Ribbon(topology),
         material: material([0.018, 0.035, 0.008], [0.24, 0.34, 0.07], 0.12, 0.88),
-        group_response: group_response(0.58, 0.46, 0.6, 0.4),
+        group_response: group_response(0.58, 0.53, 0.4),
         wind: wind(0.72, 1.15, 0.12),
         bounds: bounds(0.14, 0.38, 0.014, 0.042, 0.4),
         representations: ribbon_representations(TopologyFamily::Ribbon),
@@ -291,7 +288,7 @@ fn broad_leaf_species() -> VegetationSpecies {
             maximum_camber: 0.32,
         }),
         material: material([0.008, 0.045, 0.006], [0.17, 0.58, 0.09], 0.07, 0.82),
-        group_response: group_response(0.68, 0.54, 0.62, 0.44),
+        group_response: group_response(0.68, 0.58, 0.44),
         wind: wind(0.62, 1.4, 0.2),
         bounds: bounds(0.16, 0.52, 0.025, 0.09, 0.5),
         representations: vec![
@@ -325,12 +322,27 @@ fn ribbon_topology(
         low_section_count,
         blades_per_render_unit,
         longitudinal_power,
-        minimum_tilt_radians: 0.08,
-        maximum_tilt_radians: 1.1,
-        minimum_bend: 0.08,
-        maximum_bend: 0.85,
+        curve_variant_a: ribbon_curve(0.08, 0.02, 0.68, 0.30, 0.20),
+        curve_variant_b: ribbon_curve(1.1, 0.24, 1.62, 0.46, 0.30),
         maximum_lateral_curve: 0.26,
         pair_spread_radians: 0.46,
+        maximum_view_opening_radians: 17.0_f32.to_radians(),
+    }
+}
+
+fn ribbon_curve(
+    tip_tilt_radians: f32,
+    root_tangent_radians: f32,
+    tip_tangent_radians: f32,
+    root_handle_length: f32,
+    tip_handle_length: f32,
+) -> RibbonCurveProfile {
+    RibbonCurveProfile {
+        tip_tilt_radians,
+        root_tangent_radians,
+        tip_tangent_radians,
+        root_handle_length,
+        tip_handle_length,
     }
 }
 
@@ -354,14 +366,12 @@ fn material(
 
 fn group_response(
     height_coherence: f32,
-    tilt_coherence: f32,
-    bend_coherence: f32,
+    silhouette_coherence: f32,
     lateral_curve_coherence: f32,
 ) -> VegetationGroupResponseProfile {
     VegetationGroupResponseProfile {
         height_coherence,
-        tilt_coherence,
-        bend_coherence,
+        silhouette_coherence,
         lateral_curve_coherence,
     }
 }

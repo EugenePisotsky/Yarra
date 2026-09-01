@@ -9,7 +9,7 @@ CREATE TABLE project_metadata (
 
 CREATE TABLE vegetation_catalog (
     singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
-    format_version INTEGER NOT NULL CHECK(format_version = 2),
+    format_version INTEGER NOT NULL CHECK(format_version = 6),
     payload BLOB NOT NULL
 ) STRICT;
 
@@ -186,7 +186,7 @@ CREATE TABLE object_cell_overlaps (
 CREATE INDEX object_cell_overlaps_cells
 ON object_cell_overlaps(world_space_id, cell_x, cell_z, object_id);
 
-PRAGMA user_version = 12;
+PRAGMA user_version = 16;
 "#;
 
 pub const RUNTIME_SCHEMA: &str = r#"
@@ -211,7 +211,7 @@ CREATE TABLE runtime_metadata (
 
 CREATE TABLE vegetation_catalog (
     singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
-    format_version INTEGER NOT NULL CHECK(format_version = 2),
+    format_version INTEGER NOT NULL CHECK(format_version = 6),
     payload BLOB NOT NULL
 ) STRICT;
 
@@ -356,5 +356,5 @@ CREATE TABLE page_terrain_surfaces (
         REFERENCES cell_pages(world_space_id, cell_x, cell_z, domain, lod)
 ) STRICT, WITHOUT ROWID;
 
-PRAGMA user_version = 10;
+PRAGMA user_version = 14;
 "#;

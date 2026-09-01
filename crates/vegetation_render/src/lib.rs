@@ -2,8 +2,9 @@
 //!
 //! The renderer schedules resident population fields on the GPU, classifies each candidate once,
 //! emits compact instances into bounded topology/LOD bins, finalizes indexed indirect arguments,
-//! and exposes non-blocking workload diagnostics. Wind, shadows, and additional representation
-//! families build on these contracts without depending on the deleted ground-cover renderer.
+//! and exposes non-blocking workload diagnostics. Environment lighting and directional-shadow
+//! reception use Bevy's view data; wind, grass casting, and additional representation families
+//! build on these contracts without depending on the deleted ground-cover renderer.
 
 use std::sync::{
     Arc, RwLock,
@@ -11,6 +12,8 @@ use std::sync::{
 };
 
 use bevy::{
+    color::LinearRgba,
+    pbr::MeshPipelineSystems,
     prelude::*,
     render::{
         RenderApp, RenderStartup,
@@ -18,6 +21,7 @@ use bevy::{
         extract_component::{ExtractComponent, ExtractComponentPlugin},
         extract_resource::{ExtractResource, ExtractResourcePlugin},
     },
+    transform::TransformSystems,
 };
 use vegetation::{SceneValidationError, VegetationScene};
 
@@ -40,11 +44,19 @@ impl Plugin for VegetationRenderPlugin {
             RenderDiagnosticsPlugin,
             ExtractResourcePlugin::<VegetationDebugScene>::default(),
             ExtractResourcePlugin::<VegetationDebugSettings>::default(),
+            ExtractResourcePlugin::<VegetationLighting>::default(),
+            ExtractResourcePlugin::<VegetationSun>::default(),
             ExtractComponentPlugin::<VegetationDebugView>::default(),
             ExtractComponentPlugin::<VegetationDebugDraw>::default(),
         ))
         .init_resource::<VegetationDebugSettings>()
+        .init_resource::<VegetationLighting>()
+        .init_resource::<VegetationSun>()
         .add_systems(Update, cycle_debug_mode)
+        .add_systems(
+            PostUpdate,
+            sync_vegetation_sun.after(TransformSystems::Propagate),
+        )
         .add_systems(
             PostUpdate,
             (attach_default_debug_views, maintain_debug_draw_entity),
@@ -54,9 +66,84 @@ impl Plugin for VegetationRenderPlugin {
             return;
         };
         render_app.insert_resource(diagnostics);
-        render_app.add_systems(RenderStartup, renderer::initialize);
+        render_app.add_systems(
+            RenderStartup,
+            renderer::initialize.after(MeshPipelineSystems),
+        );
         renderer::install(render_app);
     }
+}
+
+/// Global environment response shared by every vegetation species.
+///
+/// Species keep their own colors, roughness, transmission, and AO. These values tune how strongly
+/// the renderer applies the world's directional light and its received shadows to that authored
+/// material response.
+#[derive(Resource, ExtractResource, Debug, Clone, Copy)]
+pub struct VegetationLighting {
+    pub diffuse_strength: f32,
+    pub specular_strength: f32,
+    pub transmission_strength: f32,
+    pub received_shadow_strength: f32,
+}
+
+impl Default for VegetationLighting {
+    fn default() -> Self {
+        Self {
+            diffuse_strength: 0.82,
+            specular_strength: 0.28,
+            transmission_strength: 0.34,
+            received_shadow_strength: 0.78,
+        }
+    }
+}
+
+/// Render-facing snapshot of the strongest directional light and the global ambient fill.
+#[derive(Resource, ExtractResource, Debug, Clone, Copy)]
+pub(crate) struct VegetationSun {
+    direction_to_light: Vec3,
+    radiance: Vec3,
+    ambient_radiance: Vec3,
+    active: bool,
+}
+
+impl Default for VegetationSun {
+    fn default() -> Self {
+        Self {
+            direction_to_light: Vec3::Y,
+            radiance: Vec3::ONE,
+            ambient_radiance: Vec3::ONE,
+            active: false,
+        }
+    }
+}
+
+fn sync_vegetation_sun(
+    directional_lights: Query<(&DirectionalLight, &GlobalTransform)>,
+    ambient: Option<Res<GlobalAmbientLight>>,
+    mut vegetation_sun: ResMut<VegetationSun>,
+) {
+    if let Some(ambient) = ambient {
+        let color = LinearRgba::from(ambient.color);
+        vegetation_sun.ambient_radiance =
+            Vec3::new(color.red, color.green, color.blue) * ambient.brightness.max(0.0);
+    } else {
+        vegetation_sun.ambient_radiance = Vec3::ONE;
+    }
+
+    let Some((light, transform)) = directional_lights
+        .iter()
+        .filter(|(light, _)| light.illuminance.is_finite())
+        .max_by(|(left, _), (right, _)| left.illuminance.total_cmp(&right.illuminance))
+    else {
+        vegetation_sun.active = false;
+        return;
+    };
+    let color = LinearRgba::from(light.color);
+    vegetation_sun.direction_to_light = transform.back().into();
+    vegetation_sun.radiance =
+        Vec3::new(color.red, color.green, color.blue) * light.illuminance.max(0.0);
+    vegetation_sun.active = light.illuminance > 0.0;
 }
 
 /// A low-frequency snapshot of V2 source lifetime and GPU placement work.

@@ -20,6 +20,11 @@ fn main() -> Result<()> {
             yarra_world_cook::create_demo_project(&project_path)
                 .with_context(|| format!("could not initialize {}", project_path.display()))?;
         } else {
+            if world_db::migrate_project_database(&project_path)
+                .with_context(|| format!("could not migrate {}", project_path.display()))?
+            {
+                println!("migrated authoring database: {}", project_path.display());
+            }
             let mut writer = world_db::ProjectWriter::open(&project_path)
                 .with_context(|| format!("could not open {}", project_path.display()))?;
             writer
@@ -32,7 +37,7 @@ fn main() -> Result<()> {
                 })?;
         }
         println!(
-            "synchronized code-authored vegetation catalog: {}",
+            "reset project vegetation catalog to the reference fixture: {}",
             project_path.display()
         );
         return Ok(());

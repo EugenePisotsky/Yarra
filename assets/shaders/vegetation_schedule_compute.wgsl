@@ -29,6 +29,11 @@ struct Camera {
     camera_position: vec4<f32>,
     // x: vertical focal length in pixels, y: viewport width, z: viewport height
     projection: vec4<f32>,
+    // Draw-only environment values keep one camera layout across all vegetation passes.
+    sun_direction: vec4<f32>,
+    sun_radiance: vec4<f32>,
+    ambient_radiance: vec4<f32>,
+    lighting: vec4<f32>,
 }
 
 struct DispatchIndirectArgs {

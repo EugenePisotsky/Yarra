@@ -52,6 +52,13 @@ struct Camera {
     camera_position: vec4<f32>,
     // x: vertical focal length in pixels, y: viewport width, z: viewport height
     projection: vec4<f32>,
+    // xyz: direction from the surface toward the strongest directional light, w: active
+    sun_direction: vec4<f32>,
+    // xyz: strongest directional-light color and global ambient-light color
+    sun_radiance: vec4<f32>,
+    ambient_radiance: vec4<f32>,
+    // x: diffuse, y: specular, z: transmission, w: received-shadow strength
+    lighting: vec4<f32>,
 }
 
 struct SurfaceSample {
@@ -565,8 +572,17 @@ fn budgeted_projected_blade_extent_pixels(
     let projected_extent = projected_blade_extent_pixels(candidate, surface, choice);
     let high_threshold = choice.threshold.y;
     let high_radius = max(choice.density.w, 1e-3);
+    // A single camera-centred radius made the whole field cross the topology boundary as a ring.
+    // Reuse the stable nested LOD rank to spread that boundary without increasing its expected
+    // area (E[r^2] remains below the authored budget radius). Classification and draw
+    // reconstruction use this identical radius, so the transition remains deterministic.
+    let staggered_high_radius = high_radius * mix(0.84, 1.12, candidate.lod_rank);
     let distance = length(candidate.root - camera.camera_position.xz);
-    let high_weight = 1.0 - smoothstep(high_radius * 0.8, high_radius, distance);
+    let high_weight = 1.0 - smoothstep(
+        staggered_high_radius * 0.68,
+        staggered_high_radius,
+        distance,
+    );
     // High topology is admitted through a stable world-space disk sized from the authored root
     // density and the device-profile bin capacity. The annulus uses the existing high-to-low
     // geometry morph. It never relies on atomic append order to decide which roots survive.

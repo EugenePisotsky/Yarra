@@ -1,24 +1,24 @@
 //! Live vegetation catalog authoring for the World workspace.
 //!
-//! This first slice deliberately owns a session draft rather than mutating the immutable runtime
-//! catalog. The resource and tool boundaries are permanent: command history, project persistence,
-//! field painting, and assemblage editing can be added without moving the live preview or parameter
-//! model back into the World UI module.
+//! The editor owns a validated working catalog and persists it as a small global project-source
+//! domain. Runtime publication remains explicit: Save updates the mutable project database, while
+//! Save & Publish cooks and atomically adopts the immutable database read by the game.
 
 use bevy::prelude::*;
 use bevy_egui::{EguiPrimaryContextPass, egui};
 use engine::{StreamedTerrainSurface, StreamedVegetationFieldPage, WorldOrigin};
 use vegetation::{
-    GrowthPattern, TopologyProfile, VegetationCatalog, VegetationFieldPage,
+    GrowthPattern, RibbonCurveProfile, TopologyProfile, VegetationCatalog, VegetationFieldPage,
     VegetationGroupingProfile, VegetationScene, VegetationSurfaceField, VoronoiClumpProfile,
 };
 use vegetation_render::{
     VegetationDebugMode, VegetationDebugScene, VegetationDebugSettings, VegetationDiagnostics,
-    VegetationProfileMode, VegetationRenderPlugin,
+    VegetationLighting, VegetationProfileMode, VegetationRenderPlugin,
 };
 
 use crate::{
-    project_store::ProjectEditorStore,
+    project_store::{ProjectEditorStore, VegetationSaveOutcome},
+    saving::EditorSaveCoordinator,
     shell::{
         EditorUiFrame, EditorUiSet, EditorWindowDescriptor, EditorWindowId, EditorWindowRegistry,
     },
@@ -65,8 +65,12 @@ pub(crate) struct VegetationAuthoringState {
     revision: u64,
     dirty: bool,
     preview_enabled: bool,
+    curve_editor_scale: f32,
     validation_error: Option<String>,
     preview_error: Option<String>,
+    save_request: Option<u64>,
+    save_error: Option<String>,
+    conflict_actual: Option<Option<VegetationCatalog>>,
 }
 
 impl Default for VegetationAuthoringState {
@@ -79,8 +83,12 @@ impl Default for VegetationAuthoringState {
             revision: 1,
             dirty: false,
             preview_enabled: true,
+            curve_editor_scale: 1.35,
             validation_error: None,
             preview_error: None,
+            save_request: None,
+            save_error: None,
+            conflict_actual: None,
         }
     }
 }
@@ -110,6 +118,9 @@ impl VegetationAuthoringState {
         self.dirty = false;
         self.validation_error = None;
         self.preview_error = None;
+        self.save_request = None;
+        self.save_error = None;
+        self.conflict_actual = None;
         self.bump_revision();
     }
 
@@ -131,13 +142,104 @@ impl VegetationAuthoringState {
             self.dirty = false;
             self.validation_error = None;
             self.preview_error = None;
+            self.save_error = None;
+            self.conflict_actual = None;
             self.bump_revision();
         }
+    }
+
+    pub(crate) const fn dirty_count(&self) -> usize {
+        self.dirty as usize
+    }
+
+    pub(crate) const fn saving(&self) -> bool {
+        self.save_request.is_some()
+    }
+
+    pub(crate) const fn has_conflict(&self) -> bool {
+        self.conflict_actual.is_some()
+    }
+
+    pub(crate) fn queue_save(&mut self, project: &mut ProjectEditorStore) -> bool {
+        if !self.dirty || self.saving() || self.has_conflict() {
+            return false;
+        }
+        let Some(replacement) = self.working.clone() else {
+            return false;
+        };
+        let Some(request_id) = project.queue_vegetation_catalog(self.baseline.clone(), replacement)
+        else {
+            return false;
+        };
+        self.save_request = Some(request_id);
+        self.save_error = None;
+        true
+    }
+
+    fn finish_save(&mut self, request_id: u64, outcome: VegetationSaveOutcome) {
+        if self.save_request != Some(request_id) {
+            return;
+        }
+        self.save_request = None;
+        match outcome {
+            VegetationSaveOutcome::Committed(saved) => {
+                self.baseline = Some(saved);
+                self.dirty = self.working != self.baseline;
+                self.save_error = None;
+                self.conflict_actual = None;
+            }
+            VegetationSaveOutcome::Conflict { actual } => {
+                self.save_error = Some(
+                    "The project vegetation catalog changed after this draft was opened.".into(),
+                );
+                self.conflict_actual = Some(actual);
+            }
+            VegetationSaveOutcome::Failed(error) => {
+                self.save_error = Some(format!("Vegetation save failed: {error}"));
+            }
+        }
+    }
+
+    fn reload_conflict(&mut self) {
+        let Some(actual) = self.conflict_actual.take() else {
+            return;
+        };
+        self.save_error = None;
+        if let Some(actual) = actual {
+            self.install(actual);
+        } else {
+            self.baseline = None;
+            self.working = None;
+            self.dirty = false;
+            self.bump_revision();
+        }
+    }
+
+    fn keep_draft_after_conflict(&mut self) {
+        let Some(actual) = self.conflict_actual.take() else {
+            return;
+        };
+        self.baseline = actual;
+        self.dirty = self.working != self.baseline;
+        self.save_error = None;
     }
 
     fn bump_revision(&mut self) {
         self.revision = self.revision.wrapping_add(1).max(1);
     }
+}
+
+pub(crate) fn process_vegetation_save_completion(
+    mut project: ResMut<ProjectEditorStore>,
+    mut state: ResMut<VegetationAuthoringState>,
+    mut coordinator: ResMut<EditorSaveCoordinator>,
+) {
+    let Some(completion) = project.take_vegetation_save_completion() else {
+        return;
+    };
+    let committed = matches!(&completion.outcome, VegetationSaveOutcome::Committed(_));
+    state.finish_save(completion.request_id, completion.outcome);
+    coordinator.transaction_finished(committed);
 }
 
 fn adopt_project_catalog(
@@ -288,6 +390,9 @@ fn vegetation_authoring_ui(
     mut state: ResMut<VegetationAuthoringState>,
     diagnostics: Res<VegetationDiagnostics>,
     mut settings: ResMut<VegetationDebugSettings>,
+    mut lighting: ResMut<VegetationLighting>,
+    mut save: ResMut<EditorSaveCoordinator>,
+    mut project: ResMut<ProjectEditorStore>,
 ) -> Result {
     if !windows.is_open(VEGETATION_WINDOW.id) {
         return Ok(());
@@ -313,6 +418,9 @@ fn vegetation_authoring_ui(
                 &mut state,
                 diagnostics.snapshot(),
                 &mut settings,
+                &mut lighting,
+                &mut save,
+                &mut project,
             );
         });
     windows.set_open(VEGETATION_WINDOW.id, open);
@@ -325,6 +433,9 @@ fn draw_vegetation_authoring(
     state: &mut VegetationAuthoringState,
     diagnostics: vegetation_render::VegetationDiagnosticsSnapshot,
     settings: &mut VegetationDebugSettings,
+    lighting: &mut VegetationLighting,
+    save: &mut EditorSaveCoordinator,
+    project: &mut ProjectEditorStore,
 ) {
     let active = tools
         .active(EditorWorkspace::World)
@@ -335,15 +446,49 @@ fn draw_vegetation_authoring(
         }
         ui.checkbox(&mut state.preview_enabled, "Live preview");
         if ui
-            .add_enabled(state.dirty, egui::Button::new("Reset session draft"))
+            .add_enabled(state.dirty, egui::Button::new("Revert draft"))
+            .on_hover_text("Discard unsaved edits and restore the project catalog")
             .clicked()
         {
             state.reset();
         }
+        let can_save = state.dirty
+            && !state.saving()
+            && !state.has_conflict()
+            && !save.active()
+            && !project.save_in_flight()
+            && project.write_error().is_none();
+        if ui
+            .add_enabled(can_save, egui::Button::new("Save"))
+            .on_hover_text("Persist this catalog in the project database")
+            .clicked()
+        {
+            save.request_save();
+        }
+        let can_publish = !state.saving()
+            && !state.has_conflict()
+            && !save.active()
+            && !project.save_in_flight()
+            && project.write_error().is_none()
+            && (state.dirty || project.source_epoch() > 0);
+        let publish_label = if state.dirty {
+            "Save & Publish"
+        } else {
+            "Publish"
+        };
+        if ui
+            .add_enabled(can_publish, egui::Button::new(publish_label))
+            .on_hover_text(
+                "Persist pending edits, cook, and adopt the runtime database used by the game",
+            )
+            .clicked()
+        {
+            save.request_publish();
+        }
     });
-    ui.small("Edits update the production V2 renderer immediately. Persistence and undo are the next source-command layer; this draft is session-local.");
+    ui.small("Edits preview immediately. Save writes the project catalog; Save & Publish also rebuilds the runtime database that the game loads automatically.");
     if state.dirty {
-        ui.colored_label(egui::Color32::YELLOW, "Modified session draft");
+        ui.colored_label(egui::Color32::YELLOW, "Modified working draft");
     } else {
         ui.weak("Project catalog baseline");
     }
@@ -352,6 +497,25 @@ fn draw_vegetation_authoring(
     }
     if let Some(error) = &state.preview_error {
         ui.colored_label(egui::Color32::LIGHT_RED, error);
+    }
+    if state.saving() {
+        ui.horizontal(|ui| {
+            ui.spinner();
+            ui.weak("Saving vegetation catalog…");
+        });
+    }
+    if let Some(error) = &state.save_error {
+        ui.colored_label(egui::Color32::LIGHT_RED, error);
+    }
+    if state.has_conflict() {
+        ui.horizontal(|ui| {
+            if ui.button("Reload project version").clicked() {
+                state.reload_conflict();
+            }
+            if ui.button("Keep draft and retry").clicked() {
+                state.keep_draft_after_conflict();
+            }
+        });
     }
 
     let Some(mut candidate) = state.working.clone() else {
@@ -369,7 +533,7 @@ fn draw_vegetation_authoring(
     }
 
     ui.separator();
-    draw_preview_controls(ui, settings);
+    draw_preview_controls(ui, settings, lighting);
     draw_diagnostics(ui, diagnostics);
 }
 
@@ -779,43 +943,59 @@ fn draw_species_editor(
                 ui.label("Cubic Bezier ribbon");
                 changed |= drag_f32(
                     ui,
-                    "Longitudinal power",
+                    "Vertex distribution",
                     &mut profile.longitudinal_power,
                     0.02,
                     0.2..=4.0,
                 );
-                changed |= drag_angle_degrees(
+                ui.weak("1 is even; values above 1 spend more rows near the root.");
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.label("View scale");
+                    ui.add(
+                        egui::Slider::new(&mut state.curve_editor_scale, 1.0..=3.0)
+                            .show_value(true),
+                    );
+                });
+                ui.weak("Lower values zoom in for precise control-point placement. Curve coordinates are normalized by blade height; Envelope controls real-world scale.");
+                let maximum_tip_tilt = profile.curve_variant_b.tip_tilt_radians;
+                changed |= draw_ribbon_curve_editor(
                     ui,
-                    "Minimum tilt",
-                    &mut profile.minimum_tilt_radians,
-                    0.0..=profile.maximum_tilt_radians.to_degrees(),
+                    "Minimum silhouette",
+                    "minimum",
+                    &mut profile.curve_variant_a,
+                    0.0..=maximum_tip_tilt,
+                    profile.high_section_count,
+                    profile.longitudinal_power,
+                    state.curve_editor_scale,
                 );
-                changed |= drag_angle_degrees(
+                let minimum_tip_tilt = profile.curve_variant_a.tip_tilt_radians;
+                changed |= draw_ribbon_curve_editor(
                     ui,
-                    "Maximum tilt",
-                    &mut profile.maximum_tilt_radians,
-                    profile.minimum_tilt_radians.to_degrees()..=88.8,
+                    "Maximum silhouette",
+                    "maximum",
+                    &mut profile.curve_variant_b,
+                    minimum_tip_tilt..=1.55,
+                    profile.high_section_count,
+                    profile.longitudinal_power,
+                    state.curve_editor_scale,
                 );
-                changed |= drag_f32(
-                    ui,
-                    "Minimum bend",
-                    &mut profile.minimum_bend,
-                    0.01,
-                    0.0..=profile.maximum_bend,
-                );
-                changed |= drag_f32(
-                    ui,
-                    "Maximum bend",
-                    &mut profile.maximum_bend,
-                    0.01,
-                    profile.minimum_bend..=2.0,
-                );
+                ui.weak("Drag 1 and 2 to shape the two handles. Drag T along the unit arc to place the tip. Each blade interpolates one complete minimum/maximum silhouette.");
                 changed |= drag_f32(
                     ui,
                     "Lateral curve",
                     &mut profile.maximum_lateral_curve,
                     0.01,
                     0.0..=1.0,
+                );
+                changed |= drag_angle_degrees(
+                    ui,
+                    "Maximum view opening",
+                    &mut profile.maximum_view_opening_radians,
+                    0.0..=45.0,
+                );
+                ui.weak(
+                    "Maximum tangent-axis silhouette opening toward the camera. It is zero for an already face-on ribbon and grows continuously toward edge-on views; 0 disables it. Start around 15-20 degrees.",
                 );
                 if profile.blades_per_render_unit == 2 {
                     changed |= drag_angle_degrees(
@@ -866,15 +1046,8 @@ fn draw_species_editor(
             );
             changed |= drag_f32(
                 ui,
-                "Tilt coherence",
-                &mut response.tilt_coherence,
-                0.01,
-                0.0..=1.0,
-            );
-            changed |= drag_f32(
-                ui,
-                "Bend coherence",
-                &mut response.bend_coherence,
+                "Silhouette coherence",
+                &mut response.silhouette_coherence,
                 0.01,
                 0.0..=1.0,
             );
@@ -886,10 +1059,344 @@ fn draw_species_editor(
                 0.0..=1.0,
             );
         });
+
+    egui::CollapsingHeader::new("Material & lighting")
+        .default_open(true)
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("Root color");
+                changed |= ui
+                    .color_edit_button_rgb(&mut species.material.root_color)
+                    .changed();
+            });
+            ui.horizontal(|ui| {
+                ui.label("Tip color");
+                changed |= ui
+                    .color_edit_button_rgb(&mut species.material.tip_color)
+                    .changed();
+            });
+            ui.weak(
+                "Colors are authored per species and interpolated from the crowded root to the tip.",
+            );
+            changed |= drag_f32(
+                ui,
+                "Clump color variation",
+                &mut species.material.clump_color_variation,
+                0.01,
+                0.0..=1.0,
+            );
+            changed |= drag_f32(
+                ui,
+                "Perceptual roughness",
+                &mut species.material.perceptual_roughness,
+                0.01,
+                0.0..=1.0,
+            );
+            changed |= drag_f32(
+                ui,
+                "Transmission",
+                &mut species.material.transmission,
+                0.01,
+                0.0..=1.0,
+            );
+            changed |= drag_f32(
+                ui,
+                "Root AO",
+                &mut species.material.root_ao,
+                0.01,
+                0.0..=1.0,
+            );
+            changed |= drag_f32(
+                ui,
+                "Tip AO",
+                &mut species.material.tip_ao,
+                0.01,
+                0.0..=1.0,
+            );
+            ui.weak(
+                "AO also shapes the minimum ambient level under received shadows, so dense roots remain darker than exposed tips.",
+            );
+            changed |= drag_f32(
+                ui,
+                "Normal rounding",
+                &mut species.material.normal_rounding,
+                0.01,
+                0.0..=1.0,
+            );
+            ui.weak(
+                "Tilts the two edge normals outward to suggest a rounded blade without adding geometry. It changes lighting, not silhouette.",
+            );
+        });
     changed
 }
 
-fn draw_preview_controls(ui: &mut egui::Ui, settings: &mut VegetationDebugSettings) {
+fn draw_ribbon_curve_editor(
+    ui: &mut egui::Ui,
+    label: &str,
+    id_salt: &'static str,
+    curve: &mut RibbonCurveProfile,
+    tip_tilt_range: std::ops::RangeInclusive<f32>,
+    high_section_count: u8,
+    longitudinal_power: f32,
+    chart_extent: f32,
+) -> bool {
+    const EDITOR_HEIGHT: f32 = 230.0;
+    const CURVE_SAMPLES: usize = 64;
+
+    let mut changed = false;
+    ui.label(label);
+    let desired_size = egui::vec2(ui.available_width().max(180.0), EDITOR_HEIGHT);
+    let (rect, _) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
+    let canvas = CurveCanvas::new(rect.shrink(10.0), chart_extent.clamp(0.6, 3.0));
+    let original_controls = ribbon_preview_controls(*curve);
+
+    for control_index in 1..=3 {
+        let point = canvas.to_screen(original_controls[control_index]);
+        let control_name = match control_index {
+            1 => "Root handle",
+            2 => "Tip handle",
+            _ => "Tip",
+        };
+        let response = ui
+            .interact(
+                egui::Rect::from_center_size(point, egui::vec2(22.0, 22.0)),
+                ui.id()
+                    .with(("ribbon_curve_control", id_salt, control_index)),
+                egui::Sense::drag(),
+            )
+            .on_hover_cursor(egui::CursorIcon::Grab)
+            .on_hover_text(control_name);
+        if response.dragged()
+            && let Some(pointer) = response.interact_pointer_pos()
+        {
+            update_ribbon_curve_control(
+                curve,
+                control_index,
+                canvas.from_screen(pointer),
+                &tip_tilt_range,
+            );
+            changed = true;
+        }
+    }
+
+    let controls = ribbon_preview_controls(*curve);
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 4.0, egui::Color32::from_black_alpha(52));
+    draw_curve_grid(&painter, canvas);
+
+    let unit_arc: Vec<_> = (0..=32)
+        .map(|index| {
+            let angle = 1.55 * index as f32 / 32.0;
+            canvas.to_screen([angle.sin(), angle.cos()])
+        })
+        .collect();
+    painter.add(egui::Shape::line(
+        unit_arc,
+        egui::Stroke::new(1.0, egui::Color32::from_gray(64)),
+    ));
+    painter.line_segment(
+        [canvas.to_screen(controls[0]), canvas.to_screen(controls[1])],
+        egui::Stroke::new(1.0, egui::Color32::from_rgb(76, 156, 176)),
+    );
+    painter.line_segment(
+        [canvas.to_screen(controls[2]), canvas.to_screen(controls[3])],
+        egui::Stroke::new(1.0, egui::Color32::from_rgb(188, 145, 58)),
+    );
+
+    let mut sampled = Vec::with_capacity(CURVE_SAMPLES + 1);
+    for index in 0..=CURVE_SAMPLES {
+        let t = index as f32 / CURVE_SAMPLES as f32;
+        sampled.push(cubic_preview_point(controls, t));
+    }
+    painter.add(egui::Shape::line(
+        sampled
+            .iter()
+            .copied()
+            .map(|point| canvas.to_screen(point))
+            .collect(),
+        egui::Stroke::new(2.5, egui::Color32::from_rgb(116, 210, 126)),
+    ));
+
+    let sections = u32::from(high_section_count.max(1));
+    for row in 0..=sections {
+        let linear_t = row as f32 / sections as f32;
+        let t = linear_t.powf(longitudinal_power.max(0.2));
+        painter.circle_filled(
+            canvas.to_screen(cubic_preview_point(controls, t)),
+            2.5,
+            egui::Color32::WHITE,
+        );
+    }
+
+    let point_colors = [
+        egui::Color32::from_gray(110),
+        egui::Color32::from_rgb(94, 200, 228),
+        egui::Color32::from_rgb(238, 190, 78),
+        egui::Color32::WHITE,
+    ];
+    let point_labels = ["R", "1", "2", "T"];
+    for index in 0..4 {
+        let screen = canvas.to_screen(controls[index]);
+        painter.circle_filled(screen, 6.0, point_colors[index]);
+        painter.text(
+            screen + egui::vec2(8.0, -8.0),
+            egui::Align2::LEFT_BOTTOM,
+            point_labels[index],
+            egui::FontId::monospace(10.0),
+            point_colors[index],
+        );
+    }
+    ui.small(format!(
+        "1 ({:.3}, {:.3})   2 ({:.3}, {:.3})   T ({:.3}, {:.3})   tip {:.1}°",
+        controls[1][0],
+        controls[1][1],
+        controls[2][0],
+        controls[2][1],
+        controls[3][0],
+        controls[3][1],
+        curve.tip_tilt_radians.to_degrees(),
+    ));
+    changed
+}
+
+#[derive(Clone, Copy)]
+struct CurveCanvas {
+    origin: egui::Pos2,
+    pixels_per_unit: f32,
+    rect: egui::Rect,
+}
+
+impl CurveCanvas {
+    fn new(rect: egui::Rect, extent: f32) -> Self {
+        let pixels_per_unit = (rect.width() / (extent * 2.0))
+            .min(rect.height() / (extent * 1.5))
+            .max(1.0);
+        let view_height = extent * 1.5 * pixels_per_unit;
+        let top = rect.center().y - view_height * 0.5;
+        Self {
+            origin: egui::pos2(rect.center().x, top + extent * 1.25 * pixels_per_unit),
+            pixels_per_unit,
+            rect,
+        }
+    }
+
+    fn to_screen(self, point: [f32; 2]) -> egui::Pos2 {
+        egui::pos2(
+            self.origin.x + point[0] * self.pixels_per_unit,
+            self.origin.y - point[1] * self.pixels_per_unit,
+        )
+    }
+
+    fn from_screen(self, point: egui::Pos2) -> [f32; 2] {
+        [
+            (point.x - self.origin.x) / self.pixels_per_unit,
+            (self.origin.y - point.y) / self.pixels_per_unit,
+        ]
+    }
+}
+
+fn draw_curve_grid(painter: &egui::Painter, canvas: CurveCanvas) {
+    let ground_y = canvas.to_screen([0.0, 0.0]).y;
+    painter.line_segment(
+        [
+            egui::pos2(canvas.rect.left(), ground_y),
+            egui::pos2(canvas.rect.right(), ground_y),
+        ],
+        egui::Stroke::new(1.0, egui::Color32::from_gray(72)),
+    );
+    painter.line_segment(
+        [
+            egui::pos2(canvas.origin.x, canvas.rect.top()),
+            egui::pos2(canvas.origin.x, canvas.rect.bottom()),
+        ],
+        egui::Stroke::new(1.0, egui::Color32::from_gray(52)),
+    );
+}
+
+fn update_ribbon_curve_control(
+    curve: &mut RibbonCurveProfile,
+    control_index: usize,
+    point: [f32; 2],
+    tip_tilt_range: &std::ops::RangeInclusive<f32>,
+) {
+    match control_index {
+        1 => update_polar_handle(
+            point,
+            -1.55..=1.55,
+            &mut curve.root_tangent_radians,
+            &mut curve.root_handle_length,
+        ),
+        2 => {
+            let controls = ribbon_preview_controls(*curve);
+            update_polar_handle(
+                [controls[3][0] - point[0], controls[3][1] - point[1]],
+                -1.55..=3.05,
+                &mut curve.tip_tangent_radians,
+                &mut curve.tip_handle_length,
+            );
+        }
+        3 => {
+            if point[0].hypot(point[1]) > 1e-4 {
+                curve.tip_tilt_radians = point[0]
+                    .atan2(point[1])
+                    .clamp(*tip_tilt_range.start(), *tip_tilt_range.end());
+            }
+        }
+        _ => {}
+    }
+}
+
+fn update_polar_handle(
+    vector: [f32; 2],
+    angle_range: std::ops::RangeInclusive<f32>,
+    angle: &mut f32,
+    length: &mut f32,
+) {
+    let requested_length = vector[0].hypot(vector[1]);
+    if requested_length > 1e-4 {
+        *angle = vector[0]
+            .atan2(vector[1])
+            .clamp(*angle_range.start(), *angle_range.end());
+    }
+    *length = requested_length.clamp(0.02, 1.5);
+}
+
+fn ribbon_preview_controls(curve: RibbonCurveProfile) -> [[f32; 2]; 4] {
+    let p0 = [0.0, 0.0];
+    let p3 = [curve.tip_tilt_radians.sin(), curve.tip_tilt_radians.cos()];
+    let p1 = [
+        curve.root_tangent_radians.sin() * curve.root_handle_length,
+        curve.root_tangent_radians.cos() * curve.root_handle_length,
+    ];
+    let p2 = [
+        p3[0] - curve.tip_tangent_radians.sin() * curve.tip_handle_length,
+        p3[1] - curve.tip_tangent_radians.cos() * curve.tip_handle_length,
+    ];
+    [p0, p1, p2, p3]
+}
+
+fn cubic_preview_point(points: [[f32; 2]; 4], t: f32) -> [f32; 2] {
+    let u = 1.0 - t;
+    let weights = [u * u * u, 3.0 * u * u * t, 3.0 * u * t * t, t * t * t];
+    [
+        points
+            .iter()
+            .zip(weights)
+            .map(|(point, weight)| point[0] * weight)
+            .sum(),
+        points
+            .iter()
+            .zip(weights)
+            .map(|(point, weight)| point[1] * weight)
+            .sum(),
+    ]
+}
+
+fn draw_preview_controls(
+    ui: &mut egui::Ui,
+    settings: &mut VegetationDebugSettings,
+    lighting: &mut VegetationLighting,
+) {
     ui.heading("Preview");
     egui::Grid::new("vegetation_preview_controls")
         .num_columns(2)
@@ -923,6 +1430,41 @@ fn draw_preview_controls(ui: &mut egui::Ui, settings: &mut VegetationDebugSettin
                     }
                 });
             ui.end_row();
+        });
+    egui::CollapsingHeader::new("Environment lighting preview")
+        .default_open(false)
+        .show(ui, |ui| {
+            let _ = drag_f32(
+                ui,
+                "Diffuse strength",
+                &mut lighting.diffuse_strength,
+                0.01,
+                0.0..=2.0,
+            );
+            let _ = drag_f32(
+                ui,
+                "Specular strength",
+                &mut lighting.specular_strength,
+                0.01,
+                0.0..=2.0,
+            );
+            let _ = drag_f32(
+                ui,
+                "Transmission strength",
+                &mut lighting.transmission_strength,
+                0.01,
+                0.0..=2.0,
+            );
+            let _ = drag_f32(
+                ui,
+                "Received shadow strength",
+                &mut lighting.received_shadow_strength,
+                0.01,
+                0.0..=1.0,
+            );
+            ui.weak(
+                "These are live renderer preview controls. Species colors and material values above are saved with the catalog.",
+            );
         });
 }
 
@@ -1054,5 +1596,39 @@ mod tests {
         state.reset();
         assert_eq!(state.working, Some(catalog));
         assert!(!state.dirty);
+    }
+
+    #[test]
+    fn curve_editor_updates_root_and_tip_handles_in_normalized_space() {
+        let mut curve = RibbonCurveProfile {
+            tip_tilt_radians: 0.6,
+            root_tangent_radians: 0.0,
+            tip_tangent_radians: 0.0,
+            root_handle_length: 0.3,
+            tip_handle_length: 0.2,
+        };
+        update_ribbon_curve_control(&mut curve, 1, [0.3, 0.4], &(0.0..=1.55));
+        assert!((curve.root_handle_length - 0.5).abs() < 1e-5);
+        assert!((curve.root_tangent_radians - 0.3_f32.atan2(0.4)).abs() < 1e-5);
+
+        let tip = ribbon_preview_controls(curve)[3];
+        update_ribbon_curve_control(&mut curve, 2, [tip[0] - 0.4, tip[1] - 0.3], &(0.0..=1.55));
+        assert!((curve.tip_handle_length - 0.5).abs() < 1e-5);
+        assert!((curve.tip_tangent_radians - 0.4_f32.atan2(0.3)).abs() < 1e-5);
+    }
+
+    #[test]
+    fn curve_editor_constrains_tip_to_the_authored_variant_range() {
+        let mut curve = RibbonCurveProfile {
+            tip_tilt_radians: 0.6,
+            root_tangent_radians: 0.0,
+            tip_tangent_radians: 0.0,
+            root_handle_length: 0.3,
+            tip_handle_length: 0.2,
+        };
+        update_ribbon_curve_control(&mut curve, 3, [1.0, 0.0], &(0.2..=0.9));
+        assert!((curve.tip_tilt_radians - 0.9).abs() < 1e-5);
+        let controls = ribbon_preview_controls(curve);
+        assert!((controls[3][0].hypot(controls[3][1]) - 1.0).abs() < 1e-5);
     }
 }

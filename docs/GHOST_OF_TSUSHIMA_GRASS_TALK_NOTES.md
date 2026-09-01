@@ -93,6 +93,13 @@ An even distribution of vertices along the blade is not always a good distributi
 blade may have concentrated curvature. An artist parameter remaps the longitudinal 0-to-1 values so
 more of the available vertices can be placed where the blade shape needs them.
 
+The 15 high-LOD vertices and seven low-LOD vertices drawn on this slide are **ribbon mesh vertices**,
+not 15 or seven independently movable bend/control points. In the illustrated topology, paired
+left/right vertices sample the blade centre curve at several longitudinal rows, followed by a shared
+tip. More rows make the evaluated curve look smoother; they do not add new degrees of freedom to the
+underlying curve. The longitudinal remap is therefore important: it spends the fixed samples where
+the curve bends most instead of wasting them on nearly straight portions.
+
 ### Slides 25-26 - geometry and density transitions
 
 The high LOD blends its shape toward the low LOD as it approaches the LOD boundary. This avoids a
@@ -135,13 +142,35 @@ this convenient:
 - its derivative is easy to calculate and can be used to form a normal;
 - moving the control points provides a useful basis for both animation and per-blade variation.
 
+A cubic Bezier has four mathematical points: the root endpoint, two interior control points, and the
+tip endpoint. Only the root and tip lie on the curve in general; the two interior points control the
+root tangent, tip tangent, and distribution of curvature between them. This is distinct from the
+15/7 ribbon vertices on slide 24, which are samples of the resulting curve.
+
+This division is what makes the representation economical: a small fixed set of curve controls can
+produce many smooth silhouettes, while high and low topology merely choose how accurately to sample
+the selected silhouette. Evaluating the cubic and its derivative remains a fixed, inexpensive
+vertex-shader operation.
+
 ### Slide 29 - construct the control points
 
 The tip position is selected relative to the base using the blade's facing and tilt parameters. The
-middle control region is governed by bend:
+slide then labels a `midpoint` controlled by bend:
 
 - with bend equal to zero, it lies on the line between base and tip;
 - increasing bend pushes it upward and away from that line.
+
+The deck identifies the representation as cubic and refers to movable control points in the plural,
+but this slide visualizes only one derived `midpoint`. The slide and current live retelling do not
+fully specify whether that midpoint is reused for both interior controls or how two interior controls
+are derived from it. We should not infer that every ribbon row from slide 24 is an independent bend
+point, nor should we invent an exact control-point formula that the talk did not provide.
+
+What is explicit is the design intent: tilt chooses the tip relative to the base, bend moves the
+interior control region away from the direct root-to-tip line, and moving the controls changes the
+blade silhouette cheaply. A suitable implementation can preserve that intent while exposing enough
+independent root- and tip-side control to produce upright blades, broad arches, late tip droop, and
+other smooth curvature distributions without adding mesh vertices.
 
 For the split short-grass form, the two blades keep the same general shape and facing but their
 control points are pushed apart. This improves coverage without making the pair look unrelated.
@@ -158,6 +187,28 @@ The vertex shader builds a vertex as follows:
    compute and a longitudinal taper so the blade narrows toward its tip.
 4. Evaluate the Bezier derivative at the same longitudinal position.
 5. Cross the curve derivative with the width direction to obtain the geometric vertex normal.
+
+### Yarra adoption: keep curve shape and vertex placement independent
+
+Yarra keeps the same fixed-budget distinction exposed by these slides. A ribbon has one cubic
+centreline with independent root- and tip-side tangent handles. Each of the two authored variants
+owns a complete silhouette: normalized tip position plus both control handles. A blade interpolates
+between those complete curves with one stable value instead of independently randomizing tilt and
+the handles into combinations the artist never saw. The source angles and handle lengths are
+converted to normalized-height handle vectors once per species, so the vertex shader does not
+perform extra trigonometry for this authoring freedom.
+
+The authoring view presents those endpoints as interactive minimum and maximum Bezier charts. The
+root is fixed; the two interior controls and the tip are dragged directly. Markers on the curve show
+the actual high-LOD row samples after the longitudinal remap, so silhouette shape and allocation of
+the fixed vertex budget can be judged together. This is a Yarra tool decision, not evidence that the
+talk used the same UI.
+
+The longitudinal vertex-distribution control is separate. It remaps each fixed topology row before
+the cubic evaluation: `1` is even spacing, values above `1` concentrate rows near the root, and
+values below `1` concentrate them near the tip. High and low LOD continue to sample the same cubic
+and use the same remap, so neither curve authoring nor non-uniform sampling adds vertices, instances,
+per-blade storage, or draw calls.
 
 ## Slides 31-32: unified wind and constrained animation
 
@@ -201,6 +252,21 @@ orthogonal to the view vector - the orientation in which a thin ribbon would alm
 The adjustment subtly widens an edge-on blade from the viewer's perspective. It makes the field look
 fuller and avoids spending rasterization work on extremely thin triangles. Slides 34 and 35 show the
 direct before/after field comparison.
+
+Yarra adoption: the first attempt imposed a minimum projected pixel width. Although it preserved the
+centreline and added no topology, close curved blades became uniformly thin screen-space filaments
+and the field read as a spider web. That result is rejected.
+
+The revised approach first transports the ribbon's width axis onto the plane perpendicular to the
+local Bezier tangent at every existing row. It then rotates that unoriented width line toward the
+camera-facing width line by no more than a small, species-bounded angle around the tangent. The
+response is naturally zero when the ribbon already faces the camera and grows continuously as its
+projected width approaches edge-on. The authored
+centreline, world-space width, taper, vertex count, instance data, and draw structure remain intact;
+broad leaves bypass the view-opening response. Lighting continues to use the physical ribbon normal,
+with the separate authored outward normal tilt from slide 33, so highlights do not billboard with the
+silhouette. Fixed-camera grazing captures must reject obvious camera-following motion or excess
+fragment coverage.
 
 ## Slides 36-38: distant material stability and G-buffer output
 

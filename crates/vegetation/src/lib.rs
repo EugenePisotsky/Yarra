@@ -34,17 +34,48 @@ pub enum TopologyFamily {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct RibbonCurveProfile {
+    /// Tip position on the normalized blade-height arc, measured from the terrain normal toward
+    /// the blade facing direction.
+    pub tip_tilt_radians: f32,
+    /// Root tangent angle measured from the terrain normal toward the blade facing direction.
+    pub root_tangent_radians: f32,
+    /// Tip tangent angle measured from the terrain normal toward the blade facing direction.
+    /// Values above 90 degrees let the curve arrive at the tip while travelling downward.
+    pub tip_tangent_radians: f32,
+    /// Root-side cubic handle length as a fraction of the blade height.
+    pub root_handle_length: f32,
+    /// Tip-side cubic handle length as a fraction of the blade height.
+    pub tip_handle_length: f32,
+}
+
+impl RibbonCurveProfile {
+    fn is_valid(self) -> bool {
+        finite_range(self.tip_tilt_radians, 0.0, 1.55)
+            && finite_range(self.root_tangent_radians, -1.55, 1.55)
+            && finite_range(self.tip_tangent_radians, -1.55, 3.05)
+            && finite_range(self.root_handle_length, 0.02, 1.5)
+            && finite_range(self.tip_handle_length, 0.02, 1.5)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct RibbonTopologyProfile {
     pub high_section_count: u8,
     pub low_section_count: u8,
     pub blades_per_render_unit: u8,
     pub longitudinal_power: f32,
-    pub minimum_tilt_radians: f32,
-    pub maximum_tilt_radians: f32,
-    pub minimum_bend: f32,
-    pub maximum_bend: f32,
+    /// Endpoints of one correlated, per-blade silhouette axis. Each variant owns the tip plus both
+    /// cubic handles so the editor and renderer interpolate complete curves.
+    pub curve_variant_a: RibbonCurveProfile,
+    pub curve_variant_b: RibbonCurveProfile,
     pub maximum_lateral_curve: f32,
     pub pair_spread_radians: f32,
+    /// Maximum angle through which the renderer may rotate the ribbon width line toward the
+    /// camera-facing width line around the local curve tangent. The response is zero when the
+    /// physical ribbon already faces the camera and grows continuously toward edge-on views; zero
+    /// disables it.
+    pub maximum_view_opening_radians: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -83,16 +114,17 @@ impl TopologyProfile {
                     && (1..profile.high_section_count).contains(&profile.low_section_count)
                     && (1..=2).contains(&profile.blades_per_render_unit)
                     && finite_range(profile.longitudinal_power, 0.2, 4.0)
-                    && finite_range(profile.minimum_tilt_radians, 0.0, 1.55)
-                    && finite_range(
-                        profile.maximum_tilt_radians,
-                        profile.minimum_tilt_radians,
-                        1.55,
-                    )
-                    && finite_range(profile.minimum_bend, 0.0, 2.0)
-                    && finite_range(profile.maximum_bend, profile.minimum_bend, 2.0)
+                    && profile.curve_variant_a.is_valid()
+                    && profile.curve_variant_b.is_valid()
+                    && profile.curve_variant_a.tip_tilt_radians
+                        <= profile.curve_variant_b.tip_tilt_radians
                     && finite_range(profile.maximum_lateral_curve, 0.0, 1.0)
                     && finite_range(profile.pair_spread_radians, 0.0, 3.15)
+                    && finite_range(
+                        profile.maximum_view_opening_radians,
+                        0.0,
+                        std::f32::consts::FRAC_PI_4,
+                    )
             }
             Self::BroadLeafCluster(profile) => {
                 (2..=12).contains(&profile.high_section_count)
@@ -141,16 +173,16 @@ impl VegetationMaterialProfile {
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct VegetationGroupResponseProfile {
     pub height_coherence: f32,
-    pub tilt_coherence: f32,
-    pub bend_coherence: f32,
+    /// Coherence of the complete ribbon silhouette (tip plus both handles), or the complete
+    /// broad-leaf droop shape for that topology family.
+    pub silhouette_coherence: f32,
     pub lateral_curve_coherence: f32,
 }
 
 impl VegetationGroupResponseProfile {
     fn is_valid(self) -> bool {
         finite_range(self.height_coherence, 0.0, 1.0)
-            && finite_range(self.tilt_coherence, 0.0, 1.0)
-            && finite_range(self.bend_coherence, 0.0, 1.0)
+            && finite_range(self.silhouette_coherence, 0.0, 1.0)
             && finite_range(self.lateral_curve_coherence, 0.0, 1.0)
     }
 }
@@ -1364,6 +1396,63 @@ mod tests {
             unreachable!();
         };
         profile.maximum_leaf_count = 3;
+        assert!(matches!(
+            scene.catalog.validate(),
+            Err(CatalogValidationError::InvalidSpecies(_))
+        ));
+    }
+
+    #[test]
+    fn catalog_rejects_invalid_ribbon_curve_handles() {
+        let mut scene = fixtures::reference_scene();
+        let ribbon = scene
+            .catalog
+            .species
+            .iter_mut()
+            .find(|species| matches!(species.topology, TopologyProfile::Ribbon(_)))
+            .unwrap();
+        let TopologyProfile::Ribbon(profile) = &mut ribbon.topology else {
+            unreachable!();
+        };
+        profile.curve_variant_b.tip_handle_length = 1.51;
+        assert!(matches!(
+            scene.catalog.validate(),
+            Err(CatalogValidationError::InvalidSpecies(_))
+        ));
+    }
+
+    #[test]
+    fn catalog_rejects_reversed_ribbon_silhouette_tips() {
+        let mut scene = fixtures::reference_scene();
+        let ribbon = scene
+            .catalog
+            .species
+            .iter_mut()
+            .find(|species| matches!(species.topology, TopologyProfile::Ribbon(_)))
+            .unwrap();
+        let TopologyProfile::Ribbon(profile) = &mut ribbon.topology else {
+            unreachable!();
+        };
+        profile.curve_variant_a.tip_tilt_radians = profile.curve_variant_b.tip_tilt_radians + 0.01;
+        assert!(matches!(
+            scene.catalog.validate(),
+            Err(CatalogValidationError::InvalidSpecies(_))
+        ));
+    }
+
+    #[test]
+    fn catalog_rejects_unbounded_view_opening() {
+        let mut scene = fixtures::reference_scene();
+        let ribbon = scene
+            .catalog
+            .species
+            .iter_mut()
+            .find(|species| matches!(species.topology, TopologyProfile::Ribbon(_)))
+            .unwrap();
+        let TopologyProfile::Ribbon(profile) = &mut ribbon.topology else {
+            unreachable!();
+        };
+        profile.maximum_view_opening_radians = std::f32::consts::FRAC_PI_4 + 0.01;
         assert!(matches!(
             scene.catalog.validate(),
             Err(CatalogValidationError::InvalidSpecies(_))

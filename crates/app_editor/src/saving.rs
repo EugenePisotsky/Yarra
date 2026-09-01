@@ -9,6 +9,7 @@ use bevy::prelude::*;
 use crate::{
     domain_editing::DenseDomainWorkingSets, editing::EditorObjectWorkingSet,
     project_store::ProjectEditorStore, publication::RuntimePublicationState,
+    vegetation_authoring::VegetationAuthoringState,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -82,13 +83,20 @@ impl EditorSaveCoordinator {
 enum SaveDomain {
     Objects,
     Dense,
+    Vegetation,
 }
 
-fn next_save_domain(object_count: usize, dense_count: usize) -> Option<SaveDomain> {
+fn next_save_domain(
+    object_count: usize,
+    dense_count: usize,
+    vegetation_count: usize,
+) -> Option<SaveDomain> {
     if object_count > 0 {
         Some(SaveDomain::Objects)
     } else if dense_count > 0 {
         Some(SaveDomain::Dense)
+    } else if vegetation_count > 0 {
+        Some(SaveDomain::Vegetation)
     } else {
         None
     }
@@ -99,29 +107,38 @@ pub(crate) fn drive_editor_save(
     mut project: ResMut<ProjectEditorStore>,
     mut objects: ResMut<EditorObjectWorkingSet>,
     mut dense: ResMut<DenseDomainWorkingSets>,
+    mut vegetation: ResMut<VegetationAuthoringState>,
     mut publication: ResMut<RuntimePublicationState>,
 ) {
     if !coordinator.active() {
         return;
     }
-    if project.save_in_flight() || objects.saving() || dense.saving() {
+    if project.save_in_flight() || objects.saving() || dense.saving() || vegetation.saving() {
         return;
     }
     if project.write_error().is_some()
         || objects.has_any_conflict()
         || dense.has_any_conflict()
+        || vegetation.has_conflict()
         || publication.active()
     {
         coordinator.finish();
         return;
     }
 
-    match next_save_domain(objects.dirty_count(), dense.dirty_count()) {
+    match next_save_domain(
+        objects.dirty_count(),
+        dense.dirty_count(),
+        vegetation.dirty_count(),
+    ) {
         Some(SaveDomain::Objects) => {
             objects.queue_save(&mut project);
         }
         Some(SaveDomain::Dense) => {
             dense.queue_save(&mut project);
+        }
+        Some(SaveDomain::Vegetation) => {
+            vegetation.queue_save(&mut project);
         }
         None => {
             if coordinator.publishes_after_save() {
@@ -159,8 +176,9 @@ mod tests {
 
     #[test]
     fn domain_order_saves_objects_before_dense_records() {
-        assert_eq!(next_save_domain(4, 5), Some(SaveDomain::Objects));
-        assert_eq!(next_save_domain(0, 5), Some(SaveDomain::Dense));
-        assert_eq!(next_save_domain(0, 0), None);
+        assert_eq!(next_save_domain(4, 5, 1), Some(SaveDomain::Objects));
+        assert_eq!(next_save_domain(0, 5, 1), Some(SaveDomain::Dense));
+        assert_eq!(next_save_domain(0, 0, 1), Some(SaveDomain::Vegetation));
+        assert_eq!(next_save_domain(0, 0, 0), None);
     }
 }

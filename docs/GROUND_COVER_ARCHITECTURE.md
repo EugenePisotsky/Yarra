@@ -74,6 +74,12 @@ The replacement renderer has these implemented hard properties:
 These are budgets to profile, not permanent artistic constants. The crucial invariant is that a
 coverage-oriented paired unit does not silently cost twice as much as a single unit.
 
+The current 18/8 single-ribbon counts are not a target. They are produced by an eight-section
+maximum plus separate left/right inputs at the tapered zero-width tip. The Ghost talk's shared-tip
+15/7 budget is the next topology benchmark; both the single and folded short-grass forms must fit
+the selected fixed budget before density is raised. Cubic Bezier evaluation and non-uniform sample
+placement do not require the extra inputs.
+
 The first V2 vertical slice exists in three new crates:
 
 - `yarra-vegetation` contains renderer-neutral species, topology, material, wind, representation,
@@ -102,10 +108,12 @@ cargo run -p yarra-app-game -- --vegetation-v2-debug
 The legacy renderer crate and its shaders have been removed. The default V2 view now renders
 species-driven cubic Bezier ribbons through four indirect bins: single/split topology crossed with
 high/low geometry. The split bins also provide an intentionally limited two-leaf approximation for
-the initial broad-leaf fixture; it is not the final broad-leaf-cluster topology. Each species controls height,
-width, tilt, bend, lateral curve/camber, longitudinal vertex distribution, pair spread, taper,
-rounded normals, clump color variation, roughness, transmission, and root-to-tip AO. All geometry is
-derived from vertex and instance IDs with no vertex streams. High geometry supports up to eight
+the initial broad-leaf fixture; it is not the final broad-leaf-cluster topology. Each ribbon species
+controls height, width, two complete tip-and-handle silhouette variants, lateral curve,
+longitudinal vertex distribution, pair spread, taper, rounded normals, clump color variation,
+roughness, transmission, and root-to-tip AO. All geometry is derived from vertex and instance IDs
+with no vertex streams.
+High geometry supports up to eight
 sections per blade and low geometry up to three. Species-authored projected-pixel thresholds select
 the bins. High vertices converge onto the exact low sample positions near the boundary, while a
 stable nested rank collapses instances omitted by the low-density subset before the transition.
@@ -166,7 +174,7 @@ not a production terrain-generation algorithm or editor sculpting tool. CPU heig
 explicit narrow resolver, not a replacement for a later character controller or general physics
 engine; it avoids making a physics dependency a prerequisite for validating streamed relief.
 
-Persistence is now connected end to end. Project schema 12 and runtime schema 10 store one validated
+Persistence is now connected end to end. Project schema 16 and runtime schema 14 store one validated
 generation-level `VegetationCatalog`; project cells store versioned `VegetationFieldPageData`; and
 runtime page domain 9 streams the same terrain-independent fields. The regenerated demo contains
 3,600 V2 field pages and zero legacy ground-cover definitions, masks, or runtime pages. A vegetation
@@ -245,19 +253,25 @@ is the first real authoring slice, not a second debug renderer:
 - changing the floating origin, resident page set, active world space, or draft revision rebuilds
   the preview scene deterministically;
 - the window exposes population density, root placement, grouping source, Voronoi clump controls,
-  rest-orientation weights, species envelope, ribbon/broad-leaf shape, group coherence, renderer
-  diagnostic mode, workload isolation mode, and the fixed-budget counters needed to judge a preset;
+  rest-orientation weights, species envelope, ribbon/broad-leaf shape, group coherence, renderer diagnostic mode,
+  workload isolation mode, and the fixed-budget counters needed to judge a preset;
+- ribbon shape is edited through separate interactive minimum/maximum cubic charts. The two
+  interior controls and constrained tip are draggable, the view scale provides placement precision,
+  and markers show the actual high-LOD samples after longitudinal vertex redistribution;
 - switching grouping families produces a compatible root-placement family and preserves catalog
   invariants rather than leaving an invalid half-converted preset;
+- the draft participates in the editor-wide Save and Save & Publish coordinator. Save performs an
+  optimistic replacement of the singleton catalog in the mutable project SQLite database; a
+  concurrent change becomes an explicit reload-or-keep-draft conflict instead of silent loss;
+- Save & Publish continues through the normal world cook and atomically replaces the immutable
+  runtime SQLite database. The game reads that published catalog on its next launch; the regular
+  cook no longer overwrites authored vegetation with the reference fixture;
 - window state remains presentation state, while the declarative tool descriptor owns source-domain,
   pinning, command, overlay, and failure-policy contracts.
 
-The working copy is deliberately session-local in this slice and is labelled as such in the UI.
-It does not claim a derived-cook route that does not yet exist. The next editor layer must put the
-same catalog draft behind typed undoable source commands, optimistic source revisions, bounded save,
-and publish/adopt. Field/assemblage painting then extends this module with bounded resident-cell
-working sets; it must not move parameter state into the generic World UI or create per-blade editor
-entities.
+The remaining editor layer must put individual catalog edits behind typed undoable source commands.
+Field/assemblage painting then extends the same persistence model with bounded resident-cell working
+sets; it must not move parameter state into the generic World UI or create per-blade editor entities.
 
 ### Species: what is rendered
 
@@ -277,9 +291,15 @@ One species can use several representations, but they must describe the same pla
 is selected, it is an LOD artifact of the species rather than an unrelated visual record.
 
 Topology profiles are family-specific rather than one untyped bag of numbers. A ribbon profile can
-author longitudinal vertex redistribution, high/low section counts, base/tip/control-point
-distributions, width and taper curves, tilt, bend, lateral curve, twist, pair separation, and tip
-style. A broad-leaf profile can author leaf count, crown radius, attachment angles, width/camber,
+author longitudinal vertex redistribution, high/low section counts, root/tip controls, width and
+taper curves, lateral curve, twist, pair separation, and tip style. Its cubic shape model preserves
+independent root- and tip-side control through two complete curve variants. Each variant has its own
+normalized tip position, root tangent, tip tangent, and normalized-height root/tip handle lengths.
+One stable silhouette coordinate interpolates complete variants, so per-blade variation stays
+coherent instead of randomizing four controls independently. Source controls are packed into handle
+vectors once per species; these values only change the existing cubic evaluation and add no
+sections, instances, per-blade buffers, or draw calls. A broad-leaf profile can author leaf count, crown radius,
+attachment angles, width/camber,
 droop, and per-leaf scale. Families share curve helpers where useful but validate their own data.
 
 ### Representation stack: how a species changes with scale
@@ -323,7 +343,7 @@ editor, but the runtime model must not collapse them into one overloaded "clump"
 3. **Rest orientation** combines group-shared, radial, tangential, independent random, and field
    flow directions, followed by bounded per-root angular jitter.
 4. **Species response** determines how strongly the shared group signal replaces per-blade
-   randomness for height, tilt, bend, and lateral curve. Material color and future wind phase use
+   randomness for height, complete silhouette, and lateral curve. Material color and future wind phase use
    the same stable group identity through their own independent response controls.
 
 The population contains:
@@ -374,7 +394,7 @@ parent/child placement instead.
 
 Independent orientation controls consume the sample: signed shared, radial, tangential, and field
 weights; non-negative residual random weight; and a bounded angular jitter. Independently authored
-species response values consume the same stable group key for height, tilt, bend, lateral curve,
+species response values consume the same stable group key for height, complete silhouette, lateral curve,
 material, and later motion. One overloaded scalar must not control all of those channels implicitly.
 
 Explicit parent/child growth remains useful for botanical tufts with a bounded child count and a
@@ -694,7 +714,11 @@ reference an optional detail texture-array slice when a LUT cannot express their
 - Useful near-field curve/tangent detail may be retained.
 - Normal detail blends toward a stable species/clump normal as projected size shrinks.
 - Roughness increases as normal/coverage variance becomes subpixel.
-- Edge-on thickening is limited by projected pixel width and authored per species.
+- Ribbon width axes are transported perpendicular to the local Bezier tangent. The shader may
+  rotate that unoriented width line toward the camera-facing line by a small, species-bounded maximum
+  angle. The response is zero when already face-on and grows continuously toward edge-on views; the
+  centreline, authored world width, taper, topology, and physical lighting normal are unchanged.
+  Broad leaves bypass the view-opening response.
 - Root-to-tip AO remains stable and non-temporal.
 
 ## Wind and interaction
@@ -971,8 +995,9 @@ on one extreme global density value.
 ### Slice E - authored assets and V2 editor
 
 - Add authored mesh/impostor representation and bounded static GPU streams.
-- Extend the implemented live species/population profile editor with typed undo, persistence,
-  assemblage editing, and mask previews.
+- Extend the persisted live species/population profile editor with typed per-edit undo, assemblage
+  editing, and mask previews. Save already updates project SQLite; Save & Publish already cooks the
+  immutable runtime database loaded by the game.
 - Add native V2 field authoring through bounded resident-cell working sets.
 - Publish V2 pages through the existing content-addressed world pipeline.
 

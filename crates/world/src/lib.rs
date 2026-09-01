@@ -5,8 +5,8 @@ use vegetation::VegetationFieldPageData;
 
 pub const DEFAULT_CELL_SIZE: f32 = 32.0;
 pub const MAX_DECODED_PAGE_BYTES: u64 = 64 * 1024 * 1024;
-pub const PROJECT_SCHEMA_VERSION: i64 = 12;
-pub const RUNTIME_SCHEMA_VERSION: i64 = 10;
+pub const PROJECT_SCHEMA_VERSION: i64 = 16;
+pub const RUNTIME_SCHEMA_VERSION: i64 = 14;
 pub const PAGE_PAYLOAD_VERSION: u16 = 7;
 pub const MAX_TERRAIN_SURFACES_PER_CELL: usize = 8;
 pub const MAX_TERRAIN_WEIGHT_PAGES: usize = 2;
