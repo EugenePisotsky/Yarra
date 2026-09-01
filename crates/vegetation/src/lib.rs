@@ -225,6 +225,39 @@ impl VegetationBounds {
     }
 }
 
+/// Stable per-species height distribution and short-grass topology policy.
+///
+/// Height remains a physical, camera-independent property. Ribbon roots at or below
+/// `pair_below_height` spend their fixed topology budget on two short blades; taller roots spend the
+/// same budget on one better-sampled curved blade. A zero threshold disables short-grass pairing.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct VegetationHeightProfile {
+    /// Bias of the generated height distribution: -1 favors short blades, 0 is neutral, and +1
+    /// favors tall blades without changing the authored minimum/maximum envelope.
+    pub distribution_bias: f32,
+    /// Maximum generated world-space height eligible for the two-blade ribbon topology. Zero keeps
+    /// every ribbon root on the single-blade topology.
+    pub pair_below_height: f32,
+}
+
+impl VegetationHeightProfile {
+    fn is_valid(self, bounds: VegetationBounds) -> bool {
+        finite_range(self.distribution_bias, -1.0, 1.0)
+            && (self.pair_below_height == 0.0
+                || finite_range(
+                    self.pair_below_height,
+                    bounds.minimum_height,
+                    bounds.maximum_height,
+                ))
+    }
+
+    /// Remaps a stable uniform coordinate while preserving the authored height envelope.
+    pub fn remap_coordinate(self, coordinate: f32) -> f32 {
+        let exponent = 2.0_f32.powf(-2.0 * self.distribution_bias);
+        coordinate.clamp(0.0, 1.0).powf(exponent)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum RepresentationKind {
     Procedural(TopologyFamily),
@@ -249,6 +282,7 @@ pub struct VegetationSpecies {
     pub group_response: VegetationGroupResponseProfile,
     pub wind: VegetationWindProfile,
     pub bounds: VegetationBounds,
+    pub height: VegetationHeightProfile,
     /// Ordered from the highest-detail representation to the farthest.
     pub representations: Vec<RepresentationLevel>,
 }
@@ -261,9 +295,23 @@ impl VegetationSpecies {
             || !self.group_response.is_valid()
             || !self.wind.is_valid()
             || !self.bounds.is_valid()
+            || !self.height.is_valid(self.bounds)
             || self.representations.is_empty()
         {
             return false;
+        }
+
+        match self.topology {
+            TopologyProfile::Ribbon(profile) => {
+                if (self.height.pair_below_height > 0.0) != (profile.blades_per_render_unit == 2) {
+                    return false;
+                }
+            }
+            TopologyProfile::BroadLeafCluster(_) => {
+                if self.height.pair_below_height != 0.0 {
+                    return false;
+                }
+            }
         }
 
         let topology_family = self.topology.family();
@@ -288,6 +336,51 @@ impl VegetationSpecies {
             previous_density = level.density_fraction;
         }
         true
+    }
+
+    /// Expected fraction of roots routed through the split-topology bins.
+    ///
+    /// The value is exact for the renderer's marginal distribution: independent and group height
+    /// coordinates are uniform, then linearly mixed by height coherence before the authored bias.
+    pub fn expected_split_topology_fraction(&self) -> f32 {
+        match self.topology {
+            TopologyProfile::BroadLeafCluster(_) => 1.0,
+            TopologyProfile::Ribbon(profile)
+                if profile.blades_per_render_unit == 2 && self.height.pair_below_height > 0.0 =>
+            {
+                let span = self.bounds.maximum_height - self.bounds.minimum_height;
+                if span <= f32::EPSILON {
+                    return if self.bounds.maximum_height <= self.height.pair_below_height {
+                        1.0
+                    } else {
+                        0.0
+                    };
+                }
+                let biased_limit = ((self.height.pair_below_height - self.bounds.minimum_height)
+                    / span)
+                    .clamp(0.0, 1.0);
+                let exponent = 2.0_f32.powf(-2.0 * self.height.distribution_bias);
+                let source_limit = biased_limit.powf(1.0 / exponent);
+                mixed_uniform_cdf(source_limit, self.group_response.height_coherence)
+            }
+            TopologyProfile::Ribbon(_) => 0.0,
+        }
+    }
+}
+
+fn mixed_uniform_cdf(value: f32, mix_weight: f32) -> f32 {
+    let value = value.clamp(0.0, 1.0);
+    let a = mix_weight.min(1.0 - mix_weight);
+    let b = mix_weight.max(1.0 - mix_weight);
+    if a <= f32::EPSILON {
+        return value;
+    }
+    if value < a {
+        value * value / (2.0 * a * b)
+    } else if value < b {
+        (value - a * 0.5) / b
+    } else {
+        1.0 - (1.0 - value).powi(2) / (2.0 * a * b)
     }
 }
 
@@ -1457,6 +1550,74 @@ mod tests {
             scene.catalog.validate(),
             Err(CatalogValidationError::InvalidSpecies(_))
         ));
+    }
+
+    #[test]
+    fn height_pairing_requires_a_split_capable_ribbon_and_valid_threshold() {
+        let mut scene = fixtures::reference_scene();
+        let ribbon = scene
+            .catalog
+            .species
+            .iter_mut()
+            .find(|species| matches!(species.topology, TopologyProfile::Ribbon(_)))
+            .unwrap();
+        let TopologyProfile::Ribbon(profile) = &mut ribbon.topology else {
+            unreachable!();
+        };
+        profile.blades_per_render_unit = 1;
+        assert!(ribbon.height.pair_below_height > 0.0);
+        assert!(matches!(
+            scene.catalog.validate(),
+            Err(CatalogValidationError::InvalidSpecies(_))
+        ));
+
+        let mut scene = fixtures::reference_scene();
+        let ribbon = scene
+            .catalog
+            .species
+            .iter_mut()
+            .find(|species| matches!(species.topology, TopologyProfile::Ribbon(_)))
+            .unwrap();
+        ribbon.height.pair_below_height = ribbon.bounds.maximum_height + 0.01;
+        assert!(matches!(
+            scene.catalog.validate(),
+            Err(CatalogValidationError::InvalidSpecies(_))
+        ));
+    }
+
+    #[test]
+    fn height_bias_and_pairing_fraction_are_bounded_and_directional() {
+        let neutral = VegetationHeightProfile {
+            distribution_bias: 0.0,
+            pair_below_height: 0.5,
+        };
+        let short_biased = VegetationHeightProfile {
+            distribution_bias: -1.0,
+            ..neutral
+        };
+        let tall_biased = VegetationHeightProfile {
+            distribution_bias: 1.0,
+            ..neutral
+        };
+        assert!(short_biased.remap_coordinate(0.5) < neutral.remap_coordinate(0.5));
+        assert!(neutral.remap_coordinate(0.5) < tall_biased.remap_coordinate(0.5));
+
+        let scene = fixtures::reference_scene();
+        let green = scene
+            .catalog
+            .species(fixtures::GREEN_FINE_SPECIES_ID)
+            .unwrap();
+        let short = scene
+            .catalog
+            .species(fixtures::SHORT_FILL_SPECIES_ID)
+            .unwrap();
+        let broad = scene
+            .catalog
+            .species(fixtures::BROAD_LEAF_SPECIES_ID)
+            .unwrap();
+        assert!((0.0..1.0).contains(&green.expected_split_topology_fraction()));
+        assert!((short.expected_split_topology_fraction() - 1.0).abs() < 1e-6);
+        assert!((broad.expected_split_topology_fraction() - 1.0).abs() < 1e-6);
     }
 
     #[test]

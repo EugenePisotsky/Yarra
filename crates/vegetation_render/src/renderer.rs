@@ -47,6 +47,7 @@ use vegetation::{
 use crate::{
     VegetationDebugDraw, VegetationDebugScene, VegetationDebugSettings, VegetationDebugView,
     VegetationDiagnostics, VegetationLighting, VegetationProfileMode, VegetationSun,
+    VegetationWind,
 };
 
 const COMPUTE_SHADER_PATH: &str = "shaders/vegetation_debug_compute.wgsl";
@@ -54,12 +55,12 @@ const SCHEDULE_SHADER_PATH: &str = "shaders/vegetation_schedule_compute.wgsl";
 const DRAW_SHADER_PATH: &str = "shaders/vegetation_debug_draw.wgsl";
 // Hard device-profile budgets, not density targets. A nonzero capacity-drop counter is a rejected
 // configuration: normal population LOD must fit before the emergency guard is reached.
-const SINGLE_HIGH_CAPACITY: u32 = 16_384;
-const SINGLE_LOW_CAPACITY: u32 = 32_768;
+const SINGLE_HIGH_CAPACITY: u32 = 32_768;
 const SPLIT_HIGH_CAPACITY: u32 = 32_768;
-const SPLIT_LOW_CAPACITY: u32 = 262_144;
+const LOW_DETAIL_CAPACITY: u32 = 278_528;
+const LOW_DETAIL_MINIMUM_PARTITION: u32 = 32_768;
 const PROCEDURAL_INSTANCE_CAPACITY: u32 =
-    SINGLE_HIGH_CAPACITY + SINGLE_LOW_CAPACITY + SPLIT_HIGH_CAPACITY + SPLIT_LOW_CAPACITY;
+    SINGLE_HIGH_CAPACITY + SPLIT_HIGH_CAPACITY + LOW_DETAIL_CAPACITY;
 // Keep the expensive high-topology population below the arena's hard guard even for a top-down
 // view of a fully covered field. The remaining headroom absorbs stochastic placement variance,
 // clump attraction, page boundaries, and the smooth high/low transition annulus.
@@ -185,13 +186,16 @@ struct WorkItemGpu {
 #[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
 struct SpeciesChoiceGpu {
-    // x: species index
+    // x: species index, y: fallback topology bin (single ribbon or split broad-leaf cluster)
     metadata: [u32; 4],
     // x: normalized cumulative threshold
     threshold: [f32; 4],
-    // x: high density, y: low density, z: far density,
-    // w: density-budgeted high-topology radius
+    // x: high density, y: low density, z: far density, w: reserved
     density: [f32; 4],
+    // xy: minimum/maximum height, z: short/tall bias, w: group height coherence
+    height: [f32; 4],
+    // x: pair-below height (zero disables), yz: single/split high-topology radii
+    packing: [f32; 4],
 }
 
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -216,11 +220,12 @@ struct SpeciesGpu {
     curve_variant_b: [f32; 4],
     // x: clump color variation, y: roughness, z: transmission, w: normal rounding
     material: [f32; 4],
-    // x: root AO, y: tip AO, z: high-LOD threshold,
-    // w: density-budgeted high-topology radius
+    // x: root AO, y: tip AO, z: high-LOD threshold, w: reserved
     shading: [f32; 4],
     // xyz: group coherence for height, complete silhouette, and lateral curve
     group_response: [f32; 4],
+    // x: short/tall height bias, y: pair-below height, zw: single/split high-topology radii
+    height_packing: [f32; 4],
 }
 
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -267,12 +272,17 @@ struct CameraGpu {
     ambient_radiance: [f32; 4],
     // x: diffuse, y: specular, z: transmission, w: received-shadow strength
     lighting: [f32; 4],
+    // xy: normalized world-XZ direction, z: tip displacement / blade height, w: phase seconds
+    wind: [f32; 4],
+    // x: spatial frequency, y: speed, z: gustiness, w: hashed blade flutter
+    wind_shape: [f32; 4],
 }
 
 #[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
 struct DebugConfigGpu {
-    // x: VegetationDebugMode; y: VegetationDensityMode; z: VegetationLightingMode; w: reserved.
+    // x: VegetationDebugMode; y: VegetationDensityMode; z: VegetationLightingMode;
+    // w: scene-adaptive single-low arena capacity.
     // Mirrors WGSL `vec4<u32>` exactly.
     values: [u32; 4],
 }
@@ -483,6 +493,7 @@ struct VegetationBuffers {
     uploaded_revision: u64,
     work_item_count: u32,
     maximum_candidate_count: u32,
+    low_detail_capacities: [u32; 2],
     active: bool,
 }
 
@@ -615,6 +626,7 @@ impl FromWorld for VegetationBuffers {
             uploaded_revision: 0,
             work_item_count: 0,
             maximum_candidate_count: 0,
+            low_detail_capacities: [LOW_DETAIL_CAPACITY / 2; 2],
             active: false,
         }
     }
@@ -802,6 +814,7 @@ fn prepare(
     scene: Option<Res<VegetationDebugScene>>,
     settings: Res<VegetationDebugSettings>,
     lighting: Res<VegetationLighting>,
+    wind: Res<VegetationWind>,
     sun: Res<VegetationSun>,
     render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
@@ -948,6 +961,7 @@ fn prepare(
         }
         buffers.work_item_count = packed.work_items.len() as u32;
         buffers.maximum_candidate_count = packed.maximum_candidate_count;
+        buffers.low_detail_capacities = packed.low_detail_capacities;
         buffers.uploaded_revision = scene.revision();
         diagnostics.update(|snapshot| {
             snapshot.scene_revision = scene.revision();
@@ -965,6 +979,12 @@ fn prepare(
             snapshot.source_pages = scene.scene().pages.len() as u32;
             snapshot.source_work_items = buffers.work_item_count;
             snapshot.maximum_candidates_per_item = buffers.maximum_candidate_count;
+            snapshot.topology_instance_capacities = [
+                SINGLE_HIGH_CAPACITY,
+                buffers.low_detail_capacities[0],
+                SPLIT_HIGH_CAPACITY,
+                buffers.low_detail_capacities[1],
+            ];
         });
     }
 
@@ -1003,6 +1023,25 @@ fn prepare(
                 lighting.transmission_strength.max(0.0),
                 lighting.received_shadow_strength.clamp(0.0, 1.0),
             ],
+            wind: {
+                let direction = wind.direction.try_normalize().unwrap_or(Vec2::X);
+                [
+                    direction.x,
+                    direction.y,
+                    if wind.enabled {
+                        wind.strength.max(0.0)
+                    } else {
+                        0.0
+                    },
+                    wind.phase_seconds(),
+                ]
+            },
+            wind_shape: [
+                wind.spatial_frequency.max(0.001),
+                wind.speed.max(0.0),
+                wind.gustiness.clamp(0.0, 1.0),
+                wind.flutter.max(0.0),
+            ],
         }),
     );
     render_queue.write_buffer(
@@ -1013,7 +1052,7 @@ fn prepare(
                 settings.mode as u32,
                 settings.density_mode as u32,
                 settings.lighting_mode as u32,
-                0,
+                buffers.low_detail_capacities[0],
             ],
         }),
     );
@@ -1081,9 +1120,10 @@ struct PackedScene {
     surfaces: Vec<SurfaceSampleGpu>,
     species: Vec<SpeciesGpu>,
     maximum_candidate_count: u32,
+    low_detail_capacities: [u32; 2],
 }
 
-fn high_detail_radii(scene: &vegetation::VegetationScene) -> [f32; 2] {
+fn maximum_topology_densities(scene: &vegetation::VegetationScene) -> [f32; 2] {
     let mut maximum_density = [0.0_f32; 2];
     for page in &scene.pages {
         let mut page_density = [0.0_f32; 2];
@@ -1092,21 +1132,22 @@ fn high_detail_radii(scene: &vegetation::VegetationScene) -> [f32; 2] {
                 .catalog
                 .population(field.population)
                 .expect("validated scene population");
-            // A mixed population may choose either topology. Charge its full root density to each
-            // possible high bin: this is deliberately conservative and keeps the hard arena guard
-            // independent of species-choice noise.
-            let mut topology_present = [false; 2];
+            let total_weight = population
+                .species
+                .iter()
+                .map(|choice| choice.weight)
+                .sum::<f32>();
             for choice in &population.species {
                 let species = scene
                     .catalog
                     .species(choice.species)
                     .expect("validated species choice");
-                topology_present[topology_bin(species.topology) as usize] = true;
-            }
-            for (density, present) in page_density.iter_mut().zip(topology_present) {
-                if present {
-                    *density += population.density_per_square_meter;
-                }
+                let species_share = choice.weight / total_weight;
+                let split_fraction = species.expected_split_topology_fraction();
+                page_density[0] +=
+                    population.density_per_square_meter * species_share * (1.0 - split_fraction);
+                page_density[1] +=
+                    population.density_per_square_meter * species_share * split_fraction;
             }
         }
         for (maximum, density) in maximum_density.iter_mut().zip(page_density) {
@@ -1114,6 +1155,11 @@ fn high_detail_radii(scene: &vegetation::VegetationScene) -> [f32; 2] {
         }
     }
 
+    maximum_density
+}
+
+fn high_detail_radii(scene: &vegetation::VegetationScene) -> [f32; 2] {
+    let maximum_density = maximum_topology_densities(scene);
     let radius_for = |capacity: u32, density: f32| {
         if density <= f32::EPSILON {
             return MAX_HIGH_DETAIL_RADIUS;
@@ -1126,6 +1172,29 @@ fn high_detail_radii(scene: &vegetation::VegetationScene) -> [f32; 2] {
         radius_for(SINGLE_HIGH_CAPACITY, maximum_density[0]),
         radius_for(SPLIT_HIGH_CAPACITY, maximum_density[1]),
     ]
+}
+
+fn low_detail_capacities(scene: &vegetation::VegetationScene) -> [u32; 2] {
+    const PARTITION_ALIGNMENT: u32 = 256;
+
+    let densities = maximum_topology_densities(scene);
+    let total_density = densities[0] + densities[1];
+    let single_share = if total_density <= f32::EPSILON {
+        0.5
+    } else {
+        densities[0] / total_density
+    };
+    let flexible_capacity = LOW_DETAIL_CAPACITY - LOW_DETAIL_MINIMUM_PARTITION * 2;
+    let unaligned_single =
+        LOW_DETAIL_MINIMUM_PARTITION + (flexible_capacity as f32 * single_share).round() as u32;
+    let single = unaligned_single
+        .div_ceil(PARTITION_ALIGNMENT)
+        .saturating_mul(PARTITION_ALIGNMENT)
+        .clamp(
+            LOW_DETAIL_MINIMUM_PARTITION,
+            LOW_DETAIL_CAPACITY - LOW_DETAIL_MINIMUM_PARTITION,
+        );
+    [single, LOW_DETAIL_CAPACITY - single]
 }
 
 fn effective_horizontal_reach(species: &vegetation::VegetationSpecies) -> f32 {
@@ -1181,6 +1250,7 @@ fn effective_horizontal_reach(species: &vegetation::VegetationSpecies) -> f32 {
 
 fn pack_scene(scene: &vegetation::VegetationScene) -> PackedScene {
     let high_detail_radii = high_detail_radii(scene);
+    let low_detail_capacities = low_detail_capacities(scene);
     let species_indices = scene
         .catalog
         .species
@@ -1192,12 +1262,7 @@ fn pack_scene(scene: &vegetation::VegetationScene) -> PackedScene {
         .catalog
         .species
         .iter()
-        .map(|species| {
-            pack_species(
-                species,
-                high_detail_radii[topology_bin(species.topology) as usize],
-            )
-        })
+        .map(|species| pack_species(species, high_detail_radii))
         .collect::<Vec<_>>();
 
     let mut work_items = Vec::new();
@@ -1264,7 +1329,7 @@ fn pack_scene(scene: &vegetation::VegetationScene) -> PackedScene {
                 choices.push(SpeciesChoiceGpu {
                     metadata: [
                         species_indices[&choice.species],
-                        topology_bin(species_definition.topology),
+                        fallback_topology_bin(species_definition.topology),
                         horizontal_reach.to_bits(),
                         species_definition.bounds.maximum_height.to_bits(),
                     ],
@@ -1274,11 +1339,18 @@ fn pack_scene(scene: &vegetation::VegetationScene) -> PackedScene {
                         lod.low_minimum_pixels,
                         lod.far_minimum_pixels,
                     ],
-                    density: [
-                        1.0,
-                        lod.low_density_fraction,
-                        lod.far_density_fraction,
-                        high_detail_radii[topology_bin(species_definition.topology) as usize],
+                    density: [1.0, lod.low_density_fraction, lod.far_density_fraction, 0.0],
+                    height: [
+                        species_definition.bounds.minimum_height,
+                        species_definition.bounds.maximum_height,
+                        species_definition.height.distribution_bias,
+                        species_definition.group_response.height_coherence,
+                    ],
+                    packing: [
+                        species_definition.height.pair_below_height,
+                        high_detail_radii[0],
+                        high_detail_radii[1],
+                        0.0,
                     ],
                 });
             }
@@ -1388,6 +1460,7 @@ fn pack_scene(scene: &vegetation::VegetationScene) -> PackedScene {
         surfaces,
         species,
         maximum_candidate_count,
+        low_detail_capacities,
     }
 }
 
@@ -1402,10 +1475,10 @@ fn topology_code(family: TopologyFamily) -> f32 {
     }
 }
 
-fn topology_bin(topology: TopologyProfile) -> u32 {
+fn fallback_topology_bin(topology: TopologyProfile) -> u32 {
     match topology {
-        TopologyProfile::Ribbon(profile) if profile.blades_per_render_unit == 1 => 0,
-        TopologyProfile::Ribbon(_) | TopologyProfile::BroadLeafCluster(_) => 1,
+        TopologyProfile::Ribbon(_) => 0,
+        TopologyProfile::BroadLeafCluster(_) => 1,
     }
 }
 
@@ -1439,7 +1512,10 @@ fn procedural_lod_profile(species: &vegetation::VegetationSpecies) -> Procedural
     }
 }
 
-fn pack_species(species: &vegetation::VegetationSpecies, high_detail_radius: f32) -> SpeciesGpu {
+fn pack_species(
+    species: &vegetation::VegetationSpecies,
+    high_detail_radii: [f32; 2],
+) -> SpeciesGpu {
     let lod = procedural_lod_profile(species);
     let horizontal_reach = effective_horizontal_reach(species);
     let (topology, shape, shape_secondary, curve_variant_a, curve_variant_b) =
@@ -1523,13 +1599,19 @@ fn pack_species(species: &vegetation::VegetationSpecies, high_detail_radius: f32
             species.material.root_ao,
             species.material.tip_ao,
             lod.high_minimum_pixels,
-            high_detail_radius,
+            0.0,
         ],
         group_response: [
             species.group_response.height_coherence,
             species.group_response.silhouette_coherence,
             species.group_response.lateral_curve_coherence,
             0.0,
+        ],
+        height_packing: [
+            species.height.distribution_bias,
+            species.height.pair_below_height,
+            high_detail_radii[0],
+            high_detail_radii[1],
         ],
     }
 }
@@ -1740,12 +1822,12 @@ mod tests {
     #[test]
     fn gpu_contracts_have_expected_alignment() {
         assert_eq!(size_of::<WorkItemGpu>(), 208);
-        assert_eq!(size_of::<SpeciesChoiceGpu>(), 48);
-        assert_eq!(size_of::<SpeciesGpu>(), 176);
+        assert_eq!(size_of::<SpeciesChoiceGpu>(), 80);
+        assert_eq!(size_of::<SpeciesGpu>(), 192);
         assert_eq!(size_of::<SurfaceSampleGpu>(), 32);
         assert_eq!(size_of::<ProceduralInstanceGpu>(), 32);
         assert_eq!(size_of::<DebugInstanceGpu>(), 64);
-        assert_eq!(size_of::<CameraGpu>(), 160);
+        assert_eq!(size_of::<CameraGpu>(), 192);
         assert_eq!(size_of::<DebugConfigGpu>(), 16);
         assert_eq!(GPU_TELEMETRY_SIZE, 64);
         assert_eq!(DRAW_ARGS_SIZE, 80);
@@ -1765,20 +1847,39 @@ mod tests {
         assert!(packed.maximum_candidate_count > 0);
         assert!(packed.coverage.len() > scene.pages.len());
         assert_eq!(packed.surfaces.len(), scene.pages.len() * 4);
-        assert!(
-            packed.choices.iter().all(|choice| {
-                choice.density[3] == high_detail_radii[choice.metadata[1] as usize]
-            })
+        assert_eq!(
+            packed.low_detail_capacities.iter().sum::<u32>(),
+            LOW_DETAIL_CAPACITY
         );
+        assert!(
+            packed
+                .low_detail_capacities
+                .iter()
+                .all(|capacity| *capacity >= LOW_DETAIL_MINIMUM_PARTITION)
+        );
+        assert!(packed.choices.iter().all(|choice| {
+            choice.packing[1] == high_detail_radii[0]
+                && choice.packing[2] == high_detail_radii[1]
+                && choice.height[0] <= choice.height[1]
+                && (-1.0..=1.0).contains(&choice.height[2])
+        }));
+        let maximum_density = maximum_topology_densities(&scene);
         let expected_single_radius = ((SINGLE_HIGH_CAPACITY as f32
             * HIGH_DETAIL_BUDGET_UTILIZATION)
-            / (std::f32::consts::PI * 5.0))
-            .sqrt();
+            / (std::f32::consts::PI * maximum_density[0]))
+            .sqrt()
+            .min(MAX_HIGH_DETAIL_RADIUS);
         let expected_split_radius = ((SPLIT_HIGH_CAPACITY as f32 * HIGH_DETAIL_BUDGET_UTILIZATION)
-            / (std::f32::consts::PI * 25.0))
-            .sqrt();
+            / (std::f32::consts::PI * maximum_density[1]))
+            .sqrt()
+            .min(MAX_HIGH_DETAIL_RADIUS);
         assert!((high_detail_radii[0] - expected_single_radius).abs() < 1e-4);
         assert!((high_detail_radii[1] - expected_split_radius).abs() < 1e-4);
+        assert!(
+            high_detail_radii[0] >= 22.0,
+            "the reference tall-grass high-geometry boundary moved too close: {} m",
+            high_detail_radii[0]
+        );
         let short_species_index = scene
             .catalog
             .species
@@ -1813,6 +1914,31 @@ mod tests {
             let lod = procedural_lod_profile(species);
             lod.low_density_fraction <= 0.32 && lod.far_density_fraction <= 0.32
         }));
+    }
+
+    #[test]
+    fn low_arena_partition_tracks_the_authored_height_mix() {
+        let mut mostly_single = vegetation::fixtures::reference_scene();
+        for species in &mut mostly_single.catalog.species {
+            if let TopologyProfile::Ribbon(profile) = &mut species.topology {
+                profile.blades_per_render_unit = 1;
+                species.height.pair_below_height = 0.0;
+            }
+        }
+        let single_capacities = low_detail_capacities(&mostly_single);
+
+        let mut mostly_split = vegetation::fixtures::reference_scene();
+        for species in &mut mostly_split.catalog.species {
+            if let TopologyProfile::Ribbon(profile) = &mut species.topology {
+                profile.blades_per_render_unit = 2;
+                species.height.pair_below_height = species.bounds.maximum_height;
+            }
+        }
+        let split_capacities = low_detail_capacities(&mostly_split);
+
+        assert!(single_capacities[0] > split_capacities[0]);
+        assert_eq!(single_capacities.iter().sum::<u32>(), LOW_DETAIL_CAPACITY);
+        assert_eq!(split_capacities.iter().sum::<u32>(), LOW_DETAIL_CAPACITY);
     }
 
     #[test]
@@ -1908,10 +2034,19 @@ mod tests {
         assert!(compute.contains("fn budgeted_projected_blade_extent_pixels("));
         assert!(draw.contains("fn projected_blade_extent_pixels("));
         assert!(draw.contains("fn budgeted_projected_blade_extent_pixels("));
-        assert!(compute.contains("let maximum_reach = bitcast<f32>(choice.metadata.z);"));
+        assert!(compute.contains("let maximum_reach = bitcast<f32>(choice.metadata.z)"));
+        assert!(compute.contains("maximum_height * camera.wind.z * 1.65"));
         assert!(draw.contains("let reach = profile.shape_secondary.w;"));
-        assert!(compute.contains("let high_radius = max(choice.density.w, 1e-3);"));
-        assert!(draw.contains("let high_radius = max(profile.shading.w, 1e-3);"));
+        assert!(compute.contains("fn generated_candidate_height("));
+        assert!(compute.contains("fn candidate_topology_class("));
+        assert!(compute.contains("candidate.seed & 0x00ffffffu"));
+        assert!(compute.contains("choice.packing.y, choice.packing.z"));
+        assert!(compute.contains("topology_class * 2u + lod"));
+        assert!(draw.contains("let seed = instance.geometry.w & 0x00ffffffu;"));
+        assert!(draw.contains("let source_height_coordinate = mix("));
+        assert!(draw.contains("let height_exponent = exp2(-2.0 * profile.height_packing.x);"));
+        assert!(draw.contains("blade_count = select(1u, 2u, height <= profile.height_packing.y);"));
+        assert!(draw.contains("let high_radius = select("));
         assert!(schedule.contains("fn maximum_projected_population_spacing("));
         assert!(compute.contains("fn projected_population_spacing_pixels("));
         assert!(compute.contains("fn population_lod_density("));
@@ -1923,8 +2058,8 @@ mod tests {
         assert!(draw.contains("let density_width = select("));
         assert!(draw.contains("let half_band = BALANCED_DENSITY_FADE_BAND * 0.5;"));
         assert!(!draw.contains("let density_scale = select("));
-        assert!(compute.contains("let staggered_high_radius = high_radius * mix("));
-        assert!(draw.contains("let staggered_high_radius = high_radius * mix("));
+        assert!(compute.contains("let staggered_high_radius = bounded_high_radius * mix("));
+        assert!(draw.contains("let staggered_high_radius = bounded_high_radius * mix("));
         assert!(draw.contains("let local_ribbon_side = normalize3_or("));
         assert!(draw.contains("let signed_alignment = dot("));
         assert!(draw.contains("let opening_tangent = min("));
@@ -1954,18 +2089,36 @@ mod tests {
         assert!(draw.contains("fn stable_clump_normal("));
         assert!(draw.contains("fn analytic_rounded_normal("));
         assert!(draw.contains("fn ggx_foliage_specular("));
-        assert!(draw.contains("let local_broad_specular = ggx_foliage_specular("));
+        assert!(draw.contains("let shading_normal = normalize3_or("));
+        assert!(draw.contains("mix(blade_normal, clump_normal, distance_stability)"));
+        assert!(draw.contains("let filtered_alpha_roughness = clamp("));
+        assert!(draw.contains("let filtered_broad_specular = ggx_foliage_specular("));
         assert!(draw.contains("let local_sheen_specular = ggx_foliage_specular("));
-        assert!(
-            draw.contains(
-                "let local_specular = local_broad_specular * 0.16 + local_sheen_specular;"
-            )
-        );
-        assert!(draw.contains("let clump_specular = ggx_foliage_specular("));
-        assert!(draw.contains("mix(local_specular, clump_specular * 0.34, distance_stability)"));
+        assert!(draw.contains("let local_sheen_weight = 1.0 - smoothstep("));
+        assert!(draw.contains("let broad_specular_weight = mix(0.16, 0.26, distance_stability);"));
+        assert!(draw.contains("local_sheen_specular * local_sheen_weight"));
+        assert!(draw.contains("dot(shading_normal, light_direction)"));
         assert!(draw.contains("let upper_ribbon = smoothstep("));
         assert!(draw.contains("let far_highlight_weight = mix("));
         assert!(draw.contains("debug_config.values.z == LIGHTING_MODE_LEGACY"));
+    }
+
+    #[test]
+    fn strong_wind_deforms_one_shared_curve_and_expands_visibility_bounds() {
+        let schedule = include_str!("../../../assets/shaders/vegetation_schedule_compute.wgsl");
+        let compute = include_str!("../../../assets/shaders/vegetation_debug_compute.wgsl");
+        let draw = include_str!("../../../assets/shaders/vegetation_debug_draw.wgsl");
+
+        assert!(schedule.contains("item.bounds.x * camera.wind.z * 1.65"));
+        assert!(compute.contains("maximum_height * camera.wind.z * 1.65"));
+        assert!(draw.contains("let broad_wave = sin("));
+        assert!(draw.contains("let gust_wave = sin("));
+        assert!(draw.contains("1.0 - smoothstep(24.0, 72.0, camera_distance)"));
+        assert!(draw.contains("let mixed_phase = mix(clump_phase, blade_phase, 0.72);"));
+        assert!(draw.contains("let forward_phase = blade_wind_phase + t * 3.20;"));
+        assert!(draw.contains("p1 += coherent_push * 0.08;"));
+        assert!(draw.contains("p2 += coherent_push * 0.50"));
+        assert!(draw.contains("p3 += coherent_push * 0.90"));
     }
 
     #[test]

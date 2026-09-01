@@ -59,6 +59,14 @@ gloss/transmission response is concentrated toward the upper blade and low sun. 
 restrained floor instead of disappearing completely. This is an experiment pending fixed-camera,
 moving-sun, and animated temporal acceptance rather than a finished material decision.
 
+Height-driven topology checkpoint, 2026-09-01: ribbon topology allocation is now a stable physical
+species property rather than a species-wide or camera-driven choice. Each root generates one height
+from its retained seed and group coherence. Roots at or below an authored world-space threshold fold
+the fixed strip budget into two short blades; taller roots spend the same budget on one more finely
+sampled cubic curve. Geometry LOD remains an independent high/low choice, so a distant tall blade can
+still retain the single curved form. The editor exposes the height-distribution bias, pairing toggle,
+threshold, and expected single/paired mix. No vertices, instances, or per-root bytes were added.
+
 Overhead-LOD correction, 2026-08-31: the first projected-size metric measured only the segment from
 the root to `root + surface_normal * maximum_height`. That segment collapses toward zero in an
 overhead view even though a bent or tilted blade still has a large horizontal footprint. This
@@ -85,7 +93,8 @@ grass, retained excessive low-LOD population, and reserved 18 MiB of instances. 
 classifies and emits once, finalizes indexed indirect arguments in one invocation, keeps paired
 topology within the single topology's unique-input budget, uses stable quarter-density low/far
 subsets in the ribbon fixture, and initially reserved 6.50 MiB. A later measured full-density
-reference overflowed only the split-low bin, which was doubled for a current 10.50 MiB arena. Source
+reference required a 10.50 MiB arena. Height-driven allocation now rebalances its unchanged total
+low capacity between single and split bins according to the expected authored height mix. Source
 buffers grow and update in place instead of being recreated on each residency revision. No
 compatibility requirement preserves the rejected prototype.
 
@@ -281,12 +290,15 @@ meshes, and any eventual distant representation remain separate families to desi
 preserves the removed card system; a far representation must win on continuity, cost, and authoring
 clarity before it is adopted.
 
-### 7. Wind and interaction are not implemented in V2
+### 7. Strong coherent wind is implemented; interaction remains missing
 
-The current V2 image is static. The legacy sine/hash motion was removed with the old renderer, so it
-must not be treated as a working baseline. A shared CPU/GPU wind field, per-root phase variation,
-longitudinal response, interaction displacement, and conservative animated bounds remain explicit
-future work and require isolation diagnostics.
+V2 now deforms every procedural topology from one CPU/GPU-sampleable travelling-wave field. Shaped
+gust pulses move the field coherently, while a substantial hashed sine offsets phase by blade and by
+position along its length. Independent amplitude reduces with distance but keeps a small floor to
+avoid lockstep clumps. The cubic and longitudinal detail are evaluated consistently across topology
+LODs, and visibility/LOD bounds include maximum wind reach. Species-specific stiffness, interaction
+displacement, floating-origin-stable field coordinates, and the full isolation views remain future
+work.
 
 ### 8. Visibility integration is view-bounded but still incomplete
 
@@ -342,10 +354,10 @@ working. This is distinct from the received-shadow strength control in the curre
 | Artist-controlled redistribution of vertices along the curve | Present as a per-species longitudinal exponent | Tune against representative curvature rather than adding vertices first |
 | High LOD morphs toward low LOD | Implemented by converging high vertices onto exact low-section samples; the budget boundary is stable-rank staggered | Tune transition width from moving-camera captures |
 | High LOD fades three of four blades before larger low tiles | Implemented as species-authored stable nested density; physical tile-size coupling is unnecessary | Tune density fractions per species rather than hard-coding three of four |
-| Fold one strip into two short blades | Implemented as an explicit split-render-unit topology used by short grass | Keep it species-controlled; evaluate asymmetric tip topology only if needed |
+| Fold one strip into two short blades | Implemented per stable root height: short roots use the split unit while tall roots of the same species keep the full single curve | Tune the authored height bias/threshold; evaluate asymmetric tip topology only if needed |
 | Cubic Bezier shape and derivative normal | Cubic position and derivative normals use two complete variants with independent root/tip tangents and handle lengths | Preserve the fixed evaluation and topology; tune the curve family and sampling distribution against reference captures |
-| Unified CPU/GPU 2D wind field | Missing | Desirable for coherent cross-system wind, subject to cost and API design |
-| Per-blade phase variation | Not yet implemented in V2 | Add with group-only/root-only/combined isolation modes |
+| Unified CPU/GPU 2D wind field | Implemented as a shared analytic broad-wave/gust function with a public CPU sample and matching GPU evaluation | Keep the mathematical definition synchronized; move sampling to absolute field coordinates before large-world rebasing is finalized |
+| Per-blade phase variation | Implemented as substantial blade-identity and longitudinal phase variation over coherent gusts, with a restrained far-distance amplitude floor | Add group-only/root-only/combined isolation views and species stiffness controls |
 | Rounded normals | Present as an analytic/stable approximation | Preserve and make species-adjustable |
 | Edge-on view-space thickening | Implemented as local tangent-frame transport plus a bounded, species-authored view-opening angle | Tune from grazing captures; reject visible billboarding, highlight rotation, or an excessive fragment increase |
 | Distance blend toward a clump normal | Yarra mostly uses a stable up-dominated clump normal at all distances | Recover useful near detail, then explicitly blend to the stable field with distance |
@@ -524,8 +536,8 @@ below rendering the full grass pipeline into every relevant shadow view.
 
 ### Phase 4 - improve wind, fullness, and material filtering
 
-- Design a simple two-dimensional wind scalar field with a shared mathematical definition and
-  sampling API for CPU and GPU consumers. Layered scrolling noise is a candidate, not a requirement.
+- Tune the implemented two-dimensional travelling-wave/gust field through its shared CPU/GPU
+  mathematical definition. Layered scrolling noise remains optional rather than required.
 - Use Phase 0 diagnostics to decide whether current motion needs wider per-blade phase, less group
   dominance, longitudinal phase, or more orientation variation.
 - Tune the implemented local-frame view opening from fixed grazing captures so it improves coverage
@@ -690,8 +702,11 @@ Add dated entries here when experiments turn provisional positions into decision
   design justified by measurements.
 - **2026-09-01:** Use the full-density LOD mode as a visual and cost ceiling, not a production
   admission policy. A measured reference emitted 131,072 split-low instances and dropped another
-  22,078, producing camera-dependent empty roads. Double only that bin to 262,144 entries (10.50 MiB
-  total arena), retain the exact capacity telemetry, and compare authored, balanced, and full modes
+  22,078, producing camera-dependent empty roads. Preserve the resulting 10.50 MiB total arena and
+  exact capacity telemetry; height-driven topology allocation now restores 32,768 high entries for
+  both topology classes and partitions one 278,528-entry low arena from the authored single/split
+  height mix, with a 32,768-entry minimum for either class. This avoids page-shaped loss when an
+  editor threshold moves demand between bins without increasing memory. Compare authored, balanced, and full modes
   with zero drops. The selected balanced production curve is now the default. It keeps 100% density
   through six-pixel projected root spacing,
   tapers to 55% at two pixels and 30% at 0.75 pixels, and contracts retiring blade width

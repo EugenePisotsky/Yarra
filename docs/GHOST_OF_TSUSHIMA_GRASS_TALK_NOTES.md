@@ -235,6 +235,15 @@ The talk also notes that cubic Bezier arc length is not easy to calculate or hol
 control points animate. Blade length therefore varies somewhat during motion. They accept this
 because the motion is constrained enough that the length change is not noticeable.
 
+Yarra adoption: vegetation now receives a shared analytic travelling-wave field that is sampleable
+on CPU and GPU without a texture dependency. Its strong default combines a broad directional wave
+with a slower gust layer. Grass deforms the cubic control points before either topology LOD samples
+the curve, so high and low geometry share the same moving silhouette and tangent. A substantial
+per-blade sine offsets phase by stable blade identity and longitudinal position, matching the two
+grass-specific offsets described by the talk. Its amplitude reduces with distance but retains a
+small floor so clumps never become perfectly lockstep. Culling and projected-size bounds include the
+maximum wind reach. `I` toggles wind at runtime for fixed-view shimmer and workload comparisons.
+
 ## Slides 33-35: normals and apparent fullness
 
 ### Slide 33 - rounded lighting without more geometry

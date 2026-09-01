@@ -56,9 +56,12 @@ The replacement renderer has these implemented hard properties:
 - work items wholly below the high-LOD transition dispatch that nested quarter-lattice directly
   when their population supports it. Transition/boundary items retain the full lattice, so distant
   compute does not evaluate four roots merely to discard three;
-- the four arenas contain 344,064 records, or 10.50 MiB total. The split-low bin was expanded after
-  the measured full-density reference overflowed its former 131,072-record allocation; any remaining
-  capacity drop is a budget violation reported in the HUD, not a normal visual LOD;
+- the four arenas contain 344,064 records, or 10.50 MiB total. Both high topology classes receive
+  32,768 records. One 278,528-record low pool is partitioned from the scene's authored height mix,
+  retaining at least 32,768 records for either topology. This restores the tall single-blade
+  transition distance and lets editor height thresholds move low demand between topology classes
+  without growing memory; any capacity drop is a budget violation reported in the HUD, not a normal
+  visual LOD;
 - resident source buffers grow geometrically and are updated in place. Page-set changes no longer
   recreate buffers and bind groups after the warm-up high-water mark;
 - low-frequency readback reports candidate evaluations, eligible/emitted counts, capacity drops,
@@ -74,6 +77,14 @@ The replacement renderer has these implemented hard properties:
 
 These are budgets to profile, not permanent artistic constants. The crucial invariant is that a
 coverage-oriented paired unit does not silently cost twice as much as a single unit.
+
+Ribbon roots choose between those topology classes from one stable generated physical height. An
+authored per-species threshold routes short roots through the two-blade split bins and taller roots
+through the more finely sampled single-blade bins. High/low geometry LOD is then selected
+independently inside that class. Compute classification and vertex reconstruction use the same
+retained seed and group key, so camera motion cannot change height or topology membership. The
+height distribution and expected bin shares are known on the CPU, allowing capacity radii to account
+for the authored mix without growing the 32-byte instance record or total arena.
 
 The current 18/8 single-ribbon counts are not a target. They are produced by an eight-section
 maximum plus separate left/right inputs at the tapered zero-width tip. The Ghost talk's shared-tip
@@ -175,17 +186,23 @@ not a production terrain-generation algorithm or editor sculpting tool. CPU heig
 explicit narrow resolver, not a replacement for a later character controller or general physics
 engine; it avoids making a physics dependency a prerequisite for validating streamed relief.
 
-Persistence is now connected end to end. Project schema 16 and runtime schema 14 store one validated
+Persistence is now connected end to end. Project schema 17 and runtime schema 15 store one validated
 generation-level `VegetationCatalog`; project cells store versioned `VegetationFieldPageData`; and
 runtime page domain 9 streams the same terrain-independent fields. The regenerated demo contains
 3,600 V2 field pages and zero legacy ground-cover definitions, masks, or runtime pages. A vegetation
 payload never duplicates height or normal samples: the streamer attaches `StreamedVegetationFieldPage`
 and the diagnostic assembles a resident page only when its terrain page is also present.
 
+Catalog format 7 adds the height-distribution bias and short-blade pairing threshold. The schema-16
+migration decodes format 6 explicitly and preserves its visual policy: formerly paired ribbons map
+to an all-paired threshold and formerly single ribbons remain single. Artists can then opt into a
+mixed threshold in the editor without losing the rest of the authored catalog.
+
 The next missing layers are delta-updated GPU page slots, a species-derived far/horizon
-representation, a real broad-leaf-cluster topology, wind, interaction, distance-aware material
-filtering, the new shadow design, and persistent V2 field authoring. Cards are not a V2 requirement
-and will return only if a measured species-derived far representation justifies them.
+representation, a real broad-leaf-cluster topology, species-authored wind stiffness, interaction,
+the new shadow design, and persistent V2 field authoring. The initial shared wind field and distant
+material filtering are active. Cards are not a V2 requirement and will return only if a measured
+species-derived far representation justifies them.
 
 ## Content requirements derived from the references
 
@@ -254,8 +271,9 @@ is the first real authoring slice, not a second debug renderer:
 - changing the floating origin, resident page set, active world space, or draft revision rebuilds
   the preview scene deterministically;
 - the window exposes population density, root placement, grouping source, Voronoi clump controls,
-  rest-orientation weights, species envelope, ribbon/broad-leaf shape, group coherence, renderer diagnostic mode,
-  workload isolation mode, and the fixed-budget counters needed to judge a preset;
+  rest-orientation weights, species envelope, height-distribution bias, short-blade pairing
+  threshold and predicted topology mix, ribbon/broad-leaf shape, group coherence, renderer
+  diagnostic mode, workload isolation mode, and the fixed-budget counters needed to judge a preset;
 - ribbon shape is edited through separate interactive minimum/maximum cubic charts. The two
   interior controls and constrained tip are draggable, the view scale provides placement precision,
   and markers show the actual high-LOD samples after longitudinal vertex redistribution;
@@ -281,7 +299,7 @@ sets; it must not move parameter state into the generic World UI or create per-b
 - a stable ID and editor identity;
 - a representation stack for near, middle, far, and optional horizon use;
 - topology parameters for each procedural representation;
-- dimensional distributions and conservative bounds;
+- dimensional distributions, stable height/topology allocation, and conservative bounds;
 - a material profile and texture/LUT references;
 - wind stiffness, drag, phase, and recovery parameters;
 - interaction response;

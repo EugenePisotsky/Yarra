@@ -25,6 +25,10 @@ struct SpeciesChoice {
     metadata: vec4<u32>,
     threshold: vec4<f32>,
     density: vec4<f32>,
+    // xy: minimum/maximum height, z: short/tall bias, w: group height coherence
+    height: vec4<f32>,
+    // x: pair-below height (zero disables), yz: single/split high-topology radii
+    packing: vec4<f32>,
 }
 
 struct ProceduralInstance {
@@ -46,6 +50,7 @@ struct DebugConfig {
     // x: 0 geometry, 1 accepted species, 2 parent links, 3 outcomes, 4 group structure
     // y: 0 authored density, 1 balanced production density, 2 full-density reference
     // z: 0 rounded/clump gloss, 1 legacy empirical lighting
+    // w: scene-adaptive single-low arena capacity
     values: vec4<u32>,
 }
 
@@ -61,6 +66,10 @@ struct Camera {
     ambient_radiance: vec4<f32>,
     // x: diffuse, y: specular, z: transmission, w: received-shadow strength
     lighting: vec4<f32>,
+    // xy: world-XZ direction, z: maximum tip displacement / height, w: phase seconds
+    wind: vec4<f32>,
+    // x: spatial frequency, y: speed, z: gustiness, w: hashed blade flutter
+    wind_shape: vec4<f32>,
 }
 
 struct SurfaceSample {
@@ -134,10 +143,12 @@ struct Telemetry {
 @group(0) @binding(10) var<storage, read_write> telemetry: Telemetry;
 
 const PI_2: f32 = 6.283185307179586;
-const SINGLE_HIGH_CAPACITY: u32 = 16384u;
-const SINGLE_LOW_CAPACITY: u32 = 32768u;
+const SINGLE_HIGH_CAPACITY: u32 = 32768u;
 const SPLIT_HIGH_CAPACITY: u32 = 32768u;
-const SPLIT_LOW_CAPACITY: u32 = 262144u;
+const LOW_DETAIL_CAPACITY: u32 = 278528u;
+const LOW_DETAIL_MINIMUM_PARTITION: u32 = 32768u;
+const SPLIT_HIGH_OFFSET: u32 = SINGLE_HIGH_CAPACITY;
+const LOW_DETAIL_OFFSET: u32 = SINGLE_HIGH_CAPACITY + SPLIT_HIGH_CAPACITY;
 const MAX_DIAGNOSTIC_INSTANCES: u32 = 65536u;
 const MAX_PROCEDURAL_DISTANCE: f32 = 96.0;
 const QUARTER_LOD_FLAG: u32 = 0x80000000u;
@@ -507,7 +518,8 @@ fn candidate_is_visible(
     surface: SurfaceResult,
     choice: SpeciesChoice,
 ) -> bool {
-    let maximum_reach = bitcast<f32>(choice.metadata.z);
+    let maximum_reach = bitcast<f32>(choice.metadata.z)
+        + bitcast<f32>(choice.metadata.w) * camera.wind.z * 1.65;
     let maximum_height = bitcast<f32>(choice.metadata.w);
     let camera_delta = candidate.root - camera.camera_position.xz;
     let distance = length(camera_delta);
@@ -548,7 +560,8 @@ fn projected_blade_extent_pixels(
     choice: SpeciesChoice,
 ) -> f32 {
     let maximum_height = bitcast<f32>(choice.metadata.w);
-    let maximum_reach = bitcast<f32>(choice.metadata.z);
+    let maximum_reach = bitcast<f32>(choice.metadata.z)
+        + maximum_height * camera.wind.z * 1.65;
     let root = vec3<f32>(candidate.root.x, surface.height, candidate.root.y);
     let tip = root + surface.normal * maximum_height;
     var maximum_pixels = projected_distance_pixels(root, tip);
@@ -578,15 +591,16 @@ fn budgeted_projected_blade_extent_pixels(
     candidate: Candidate,
     surface: SurfaceResult,
     choice: SpeciesChoice,
+    high_radius: f32,
 ) -> f32 {
     let projected_extent = projected_blade_extent_pixels(candidate, surface, choice);
     let high_threshold = choice.threshold.y;
-    let high_radius = max(choice.density.w, 1e-3);
+    let bounded_high_radius = max(high_radius, 1e-3);
     // A single camera-centred radius made the whole field cross the topology boundary as a ring.
     // Reuse the stable nested LOD rank to spread that boundary without increasing its expected
     // area (E[r^2] remains below the authored budget radius). Classification and draw
     // reconstruction use this identical radius, so the transition remains deterministic.
-    let staggered_high_radius = high_radius * mix(0.84, 1.12, candidate.lod_rank);
+    let staggered_high_radius = bounded_high_radius * mix(0.84, 1.12, candidate.lod_rank);
     let distance = length(candidate.root - camera.camera_position.xz);
     let high_weight = 1.0 - smoothstep(
         staggered_high_radius * 0.68,
@@ -598,6 +612,31 @@ fn budgeted_projected_blade_extent_pixels(
     // geometry morph. It never relies on atomic append order to decide which roots survive.
     let budget_extent = high_threshold * mix(0.999, 1.45, high_weight);
     return min(projected_extent, budget_extent);
+}
+
+fn generated_candidate_height(choice: SpeciesChoice, candidate: Candidate) -> f32 {
+    let group_key = u32(round(candidate.clump_variant * 65535.0));
+    // Procedural instances retain the low 24 seed bits; classify from that exact persisted value so
+    // the draw shader reconstructs the same height and therefore the same topology class.
+    let unit_seed = hash32(candidate.seed & 0x00ffffffu);
+    let source_coordinate = mix(
+        random01(unit_seed ^ 0xa511e9b3u),
+        random01(group_key ^ 0x52dce729u),
+        choice.height.w,
+    );
+    let height_exponent = exp2(-2.0 * choice.height.z);
+    let height_coordinate = pow(clamp(source_coordinate, 0.0, 1.0), height_exponent);
+    return mix(choice.height.x, choice.height.y, height_coordinate);
+}
+
+fn candidate_topology_class(
+    choice: SpeciesChoice,
+    generated_height: f32,
+) -> u32 {
+    if (choice.packing.x > 0.0) {
+        return select(0u, 1u, generated_height <= choice.packing.x);
+    }
+    return min(choice.metadata.y, 1u);
 }
 
 fn projected_population_spacing_pixels(
@@ -701,7 +740,15 @@ fn evaluate_candidate(item: WorkItem, candidate_index: u32) -> CandidateEvaluati
     }
 
     let choice = choose_species_choice(item, random01(candidate.seed ^ 0xd1b54a35u));
-    let projected_extent = budgeted_projected_blade_extent_pixels(candidate, surface, choice);
+    let generated_height = generated_candidate_height(choice, candidate);
+    let topology_class = candidate_topology_class(choice, generated_height);
+    let high_radius = select(choice.packing.y, choice.packing.z, topology_class != 0u);
+    let projected_extent = budgeted_projected_blade_extent_pixels(
+        candidate,
+        surface,
+        choice,
+        high_radius,
+    );
     let projected_spacing = projected_population_spacing_pixels(item, candidate, surface);
     let authored_population_density = population_lod_density(choice, projected_spacing);
     var population_density = authored_population_density;
@@ -714,7 +761,7 @@ fn evaluate_candidate(item: WorkItem, candidate_index: u32) -> CandidateEvaluati
     if (projected_extent < choice.threshold.y) {
         lod = 1u;
     }
-    let bin = select(0u, min(choice.metadata.y, 1u) * 2u + lod, debug_config.values.x == 0u);
+    let bin = select(0u, topology_class * 2u + lod, debug_config.values.x == 0u);
     var eligible = 1u;
     if (!owns(item, candidate.root)) {
         eligible = 0u;
@@ -752,19 +799,31 @@ fn active_capacity(bin: u32) -> u32 {
     }
     switch bin {
         case 0u: { return SINGLE_HIGH_CAPACITY; }
-        case 1u: { return SINGLE_LOW_CAPACITY; }
+        case 1u: {
+            return clamp(
+                debug_config.values.w,
+                LOW_DETAIL_MINIMUM_PARTITION,
+                LOW_DETAIL_CAPACITY - LOW_DETAIL_MINIMUM_PARTITION,
+            );
+        }
         case 2u: { return SPLIT_HIGH_CAPACITY; }
-        default: { return SPLIT_LOW_CAPACITY; }
+        default: {
+            return LOW_DETAIL_CAPACITY - clamp(
+                debug_config.values.w,
+                LOW_DETAIL_MINIMUM_PARTITION,
+                LOW_DETAIL_CAPACITY - LOW_DETAIL_MINIMUM_PARTITION,
+            );
+        }
     }
 }
 
 fn instance_offset(bin: u32) -> u32 {
     switch bin {
         case 0u: { return 0u; }
-        case 1u: { return SINGLE_HIGH_CAPACITY; }
-        case 2u: { return SINGLE_HIGH_CAPACITY + SINGLE_LOW_CAPACITY; }
+        case 1u: { return LOW_DETAIL_OFFSET; }
+        case 2u: { return SPLIT_HIGH_OFFSET; }
         default: {
-            return SINGLE_HIGH_CAPACITY + SINGLE_LOW_CAPACITY + SPLIT_HIGH_CAPACITY;
+            return LOW_DETAIL_OFFSET + active_capacity(1u);
         }
     }
 }
@@ -879,20 +938,20 @@ fn finalize() {
     atomicStore(&draw_args[1].first_index, SINGLE_LOW_FIRST_INDEX);
     atomicStore(
         &draw_args[1].first_instance,
-        SINGLE_HIGH_CAPACITY,
+        LOW_DETAIL_OFFSET,
     );
 
     atomicStore(&draw_args[2].index_count, SPLIT_HIGH_INDEX_COUNT);
     atomicStore(&draw_args[2].first_index, SPLIT_HIGH_FIRST_INDEX);
     atomicStore(
         &draw_args[2].first_instance,
-        SINGLE_HIGH_CAPACITY + SINGLE_LOW_CAPACITY,
+        SPLIT_HIGH_OFFSET,
     );
 
     atomicStore(&draw_args[3].index_count, SPLIT_LOW_INDEX_COUNT);
     atomicStore(&draw_args[3].first_index, SPLIT_LOW_FIRST_INDEX);
     atomicStore(
         &draw_args[3].first_instance,
-        SINGLE_HIGH_CAPACITY + SINGLE_LOW_CAPACITY + SPLIT_HIGH_CAPACITY,
+        LOW_DETAIL_OFFSET + active_capacity(1u),
     );
 }

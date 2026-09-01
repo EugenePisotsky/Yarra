@@ -34,6 +34,10 @@ struct Camera {
     sun_radiance: vec4<f32>,
     ambient_radiance: vec4<f32>,
     lighting: vec4<f32>,
+    // xy: world-XZ direction, z: maximum tip displacement / height, w: phase seconds
+    wind: vec4<f32>,
+    // x: spatial frequency, y: speed, z: gustiness, w: hashed blade flutter
+    wind_shape: vec4<f32>,
 }
 
 struct DispatchIndirectArgs {
@@ -47,7 +51,8 @@ struct Telemetry {
 }
 
 struct DebugConfig {
-    // x: diagnostic mode, y: density mode, z: lighting mode, w: reserved
+    // x: diagnostic mode, y: density mode, z: lighting mode,
+    // w: scene-adaptive single-low arena capacity
     values: vec4<u32>,
 }
 
@@ -99,7 +104,7 @@ fn maximum_projected_extent(item: WorkItem) -> f32 {
     let minimum_height = bitcast<f32>(item.surface.z);
     let maximum_height = bitcast<f32>(item.surface.w);
     let blade_height = item.bounds.x;
-    let blade_reach = item.bounds.y;
+    let blade_reach = item.bounds.y + blade_height * camera.wind.z * 1.65;
     var maximum_pixels = 0.0;
     for (var elevation = 0u; elevation < 2u; elevation += 1u) {
         let root_height = select(minimum_height, maximum_height, elevation != 0u);
@@ -195,7 +200,9 @@ fn item_is_visible(item: WorkItem) -> bool {
     let center_xz = item.page.xy + vec2<f32>(half_size);
     let minimum_height = bitcast<f32>(item.surface.z);
     let maximum_height = bitcast<f32>(item.surface.w);
-    let horizontal_radius = half_size * 1.41421356 + item.bounds.y;
+    let wind_reach = item.bounds.x * camera.wind.z * 1.65;
+    let blade_reach = item.bounds.y + wind_reach;
+    let horizontal_radius = half_size * 1.41421356 + blade_reach;
 
     let camera_delta = center_xz - camera.camera_position.xz;
     let horizontal_distance = length(camera_delta);
@@ -212,14 +219,14 @@ fn item_is_visible(item: WorkItem) -> bool {
     // the camera: its centre can leave the view while a corner still occupies much of the screen.
     // The upper bound includes procedural vegetation height/bend beyond terrain relief.
     let minimum = vec3<f32>(
-        item.page.x - item.bounds.y,
-        minimum_height - item.bounds.y - 0.25,
-        item.page.y - item.bounds.y,
+        item.page.x - blade_reach,
+        minimum_height - blade_reach - 0.25,
+        item.page.y - blade_reach,
     );
     let maximum = vec3<f32>(
-        item.page.x + item.page.z + item.bounds.y,
-        maximum_height + item.bounds.x + item.bounds.y,
-        item.page.y + item.page.z + item.bounds.y,
+        item.page.x + item.page.z + blade_reach,
+        maximum_height + item.bounds.x + blade_reach,
+        item.page.y + item.page.z + blade_reach,
     );
     var outside_left = true;
     var outside_right = true;

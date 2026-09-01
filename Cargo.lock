@@ -6459,6 +6459,7 @@ dependencies = [
  "bincode",
  "blake3",
  "rusqlite",
+ "serde",
  "thiserror 2.0.20",
  "yarra-vegetation",
  "yarra-world",

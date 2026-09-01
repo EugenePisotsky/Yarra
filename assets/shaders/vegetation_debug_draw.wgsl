@@ -46,11 +46,12 @@ struct Species {
     curve_variant_b: vec4<f32>,
     // x: clump color variation, y: roughness, z: transmission, w: normal rounding
     material: vec4<f32>,
-    // x: root AO, y: tip AO, z: high-LOD threshold,
-    // w: density-budgeted high-topology radius
+    // x: root AO, y: tip AO, z: high-LOD threshold, w: reserved
     shading: vec4<f32>,
     // xyz: group coherence for height, complete silhouette, and lateral curve
     group_response: vec4<f32>,
+    // x: short/tall height bias, y: pair-below height, zw: single/split high-topology radii
+    height_packing: vec4<f32>,
 }
 
 struct Camera {
@@ -65,12 +66,17 @@ struct Camera {
     ambient_radiance: vec4<f32>,
     // x: diffuse, y: specular, z: transmission, w: received-shadow strength
     lighting: vec4<f32>,
+    // xy: world-XZ direction, z: maximum tip displacement / height, w: phase seconds
+    wind: vec4<f32>,
+    // x: spatial frequency, y: speed, z: gustiness, w: hashed blade flutter
+    wind_shape: vec4<f32>,
 }
 
 struct DebugConfig {
     // x: 0 geometry, 1 accepted species, 2 parent links, 3 outcomes, 4 group structure
     // y: 0 authored density, 1 balanced production density, 2 full-density reference
     // z: 0 rounded/clump gloss, 1 legacy empirical lighting
+    // w: scene-adaptive single-low arena capacity (draw uses it only through indirect offsets)
     values: vec4<u32>,
 }
 
@@ -217,10 +223,11 @@ fn budgeted_projected_blade_extent_pixels(
     surface_normal: vec3<f32>,
     profile: Species,
     lod_rank: f32,
+    high_radius: f32,
 ) -> f32 {
     let projected_extent = projected_blade_extent_pixels(root, surface_normal, profile);
-    let high_radius = max(profile.shading.w, 1e-3);
-    let staggered_high_radius = high_radius * mix(0.84, 1.12, lod_rank);
+    let bounded_high_radius = max(high_radius, 1e-3);
+    let staggered_high_radius = bounded_high_radius * mix(0.84, 1.12, lod_rank);
     let distance = length(root.xz - camera.camera_position.xz);
     let high_weight = 1.0 - smoothstep(
         staggered_high_radius * 0.68,
@@ -251,12 +258,37 @@ fn geometry_vertex(vertex_index: u32, instance_index: u32) -> VertexOutput {
         vec3<f32>(0.0, 1.0, 0.0),
     );
     let rest_direction = unpack2x16snorm(instance.geometry.x);
+    let seed = instance.geometry.w & 0x00ffffffu;
+    let population_density = f32(instance.geometry.w >> 24u) / 255.0;
+    let unit_seed = hash32(seed);
+    let source_height_coordinate = mix(
+        random01(unit_seed ^ 0xa511e9b3u),
+        random01(group_key ^ 0x52dce729u),
+        profile.group_response.x,
+    );
+    let height_exponent = exp2(-2.0 * profile.height_packing.x);
+    let height_coordinate = pow(
+        clamp(source_height_coordinate, 0.0, 1.0),
+        height_exponent,
+    );
+    let height = mix(profile.bounds.x, profile.bounds.y, height_coordinate);
+    let is_broad_leaf = profile.root_color.w >= 1.5;
+    var blade_count = clamp(u32(profile.topology.z + 0.5), 1u, 2u);
+    if (!is_broad_leaf && profile.height_packing.y > 0.0) {
+        blade_count = select(1u, 2u, height <= profile.height_packing.y);
+    }
+    let high_radius = select(
+        profile.height_packing.z,
+        profile.height_packing.w,
+        blade_count > 1u,
+    );
 
     let projected_extent = budgeted_projected_blade_extent_pixels(
         root,
         surface_normal,
         profile,
         lod_rank,
+        high_radius,
     );
     // At the high/low boundary, high sections converge on the exact low-section samples. Stable
     // candidates outside the nested low-density subset contract laterally before leaving.
@@ -277,18 +309,14 @@ fn geometry_vertex(vertex_index: u32, instance_index: u32) -> VertexOutput {
     let topology_row = (vertex_index >> 1u) & 15u;
     let side_sign = select(-1.0, 1.0, (vertex_index & 1u) != 0u);
     let authored_section_count = select(profile.topology.x, profile.topology.y, low_lod);
-    let blade_count = clamp(u32(profile.topology.z + 0.5), 1u, 2u);
     var maximum_sections = select(MAX_SECTIONS, MAX_LOW_SECTIONS, low_lod);
     if (blade_count > 1u) {
         maximum_sections = select(select(4u, 3u, blade_index != 0u), 1u, low_lod);
     }
     let section_count = clamp(u32(authored_section_count + 0.5), 1u, maximum_sections);
 
-    let seed = instance.geometry.w & 0x00ffffffu;
-    let population_density = f32(instance.geometry.w >> 24u) / 255.0;
     let blade_seed = hash32(seed ^ blade_index * 0x9e3779b9u);
     let paired_side = select(-1.0, 1.0, blade_index != 0u);
-    let is_broad_leaf = profile.root_color.w >= 1.5;
     let facing_jitter = (random01(blade_seed ^ 0x68e31da4u) - 0.5)
         * select(0.7, 0.34, is_broad_leaf);
     let spread_angle = paired_side * profile.shape_secondary.y * 0.5 + facing_jitter;
@@ -320,11 +348,6 @@ fn geometry_vertex(vertex_index: u32, instance_index: u32) -> VertexOutput {
         );
     }
     let density_width = select(high_transition_width, balanced_low_width, low_lod);
-    let height_coordinate = mix(
-        random01(blade_seed ^ 0xa511e9b3u),
-        random01(group_key ^ 0x52dce729u),
-        profile.group_response.x,
-    );
     let silhouette_coordinate = mix(
         random01(blade_seed ^ 0x27d4eb2fu),
         random01(group_key ^ 0x7b7d159cu),
@@ -334,11 +357,6 @@ fn geometry_vertex(vertex_index: u32, instance_index: u32) -> VertexOutput {
         random01(blade_seed ^ 0x165667b1u),
         random01(group_key ^ 0x94d049bbu),
         profile.group_response.z,
-    );
-    let height = mix(
-        profile.bounds.x,
-        profile.bounds.y,
-        height_coordinate,
     );
     let half_width = density_width * mix(
         profile.bounds.z,
@@ -361,7 +379,7 @@ fn geometry_vertex(vertex_index: u32, instance_index: u32) -> VertexOutput {
     let tilt_cosine = cos(tilt);
     let tip_forward = height * tilt_sine;
     let p0 = curve_root;
-    let p3 = curve_root + surface_normal * height * tilt_cosine + blade_forward * tip_forward;
+    var p3 = curve_root + surface_normal * height * tilt_cosine + blade_forward * tip_forward;
     var p1: vec3<f32>;
     var p2: vec3<f32>;
     if (is_broad_leaf) {
@@ -383,6 +401,83 @@ fn geometry_vertex(vertex_index: u32, instance_index: u32) -> VertexOutput {
             + blade_side * height * lateral * 0.22;
     }
 
+    // The shared field supplies the dominant push, while a hashed phase keeps blades inside one
+    // clump from moving in lockstep. Both topology LODs still sample the same deformed cubic.
+    var animated_wind_forward = blade_forward;
+    var blade_wind_phase = 0.0;
+    var blade_wind_amplitude = 0.0;
+    if (camera.wind.z > 1e-5) {
+        let horizontal_wind = normalize3_or(
+            vec3<f32>(camera.wind.x, 0.0, camera.wind.y),
+            blade_forward,
+        );
+        let wind_forward = normalize3_or(
+            horizontal_wind - surface_normal * dot(horizontal_wind, surface_normal),
+            blade_forward,
+        );
+        let wind_direction = normalize(camera.wind.xy);
+        let cross_direction = vec2<f32>(-wind_direction.y, wind_direction.x);
+        let frequency = camera.wind_shape.x;
+        let wind_speed = camera.wind_shape.y;
+        let broad_phase = dot(root.xz, wind_direction) * frequency
+            - camera.wind.w * wind_speed;
+        let cross_phase = dot(root.xz, cross_direction) * frequency * 0.71
+            + camera.wind.w * wind_speed * 0.37;
+        let broad_wave = sin(broad_phase + sin(cross_phase) * 0.85);
+        let gust_wave = sin(broad_phase * 0.43 - cross_phase * 0.61);
+        let broad_amount = broad_wave * 0.5 + 0.5;
+        let gust_coordinate = clamp(gust_wave * 0.5 + 0.5, 0.0, 1.0);
+        let gust_rise = clamp((gust_coordinate - 0.28) / 0.72, 0.0, 1.0);
+        let gust_pulse = gust_rise * gust_rise * (3.0 - 2.0 * gust_rise);
+        let wind_force = camera.wind.z * clamp(
+            0.25 + broad_amount * 0.18 + gust_pulse * camera.wind_shape.z * 0.90,
+            0.12,
+            1.30,
+        );
+
+        let camera_distance = distance(camera.camera_position.xyz, root);
+        let detail_weight = mix(
+            0.28,
+            1.0,
+            1.0 - smoothstep(24.0, 72.0, camera_distance),
+        );
+        let clump_phase = clump_variant * 2.0 * PI;
+        let blade_phase = random01(blade_seed ^ 0x3c6ef372u) * 2.0 * PI;
+        let mixed_phase = mix(clump_phase, blade_phase, 0.72);
+        let bob = sin(
+            camera.wind.w * wind_speed * 2.15
+                + cross_phase * 1.31
+                + mixed_phase,
+        );
+        let flutter = sin(
+            camera.wind.w * wind_speed * 4.10
+                + broad_phase * 2.13
+                + blade_phase,
+        );
+        let species_response = select(1.0, 0.72, is_broad_leaf);
+        let coherent_push = wind_forward * height * wind_force * species_response;
+        let bob_offset = surface_normal * height * camera.wind.z * bob * 0.028;
+        let flutter_offset = blade_side
+            * height
+            * camera.wind.z
+            * camera.wind_shape.w
+            * detail_weight
+            * flutter;
+        p1 += coherent_push * 0.08;
+        p2 += coherent_push * 0.50 + bob_offset * 0.45 + flutter_offset * 0.35;
+        p3 += coherent_push * 0.90 + bob_offset + flutter_offset;
+
+        animated_wind_forward = wind_forward;
+        blade_wind_phase = camera.wind.w * wind_speed * 3.25
+            + broad_phase * 1.71
+            + blade_phase;
+        blade_wind_amplitude = height
+            * camera.wind.z
+            * camera.wind_shape.w
+            * detail_weight
+            * species_response;
+    }
+
     // Sections above the species budget collapse at the tip. This lets all species in a topology
     // bin share one indirect command while retaining artist-controlled longitudinal distribution.
     let authored_linear_t = f32(min(topology_row, section_count)) / f32(section_count);
@@ -399,11 +494,27 @@ fn geometry_vertex(vertex_index: u32, instance_index: u32) -> VertexOutput {
         low_lod,
     );
     let t = pow(linear_t, max(profile.topology.w, 0.2));
-    let curve_position = cubic_bezier(p0, p1, p2, p3, t);
-    let curve_tangent = normalize3_or(
-        cubic_bezier_derivative(p0, p1, p2, p3, t),
-        surface_normal,
-    );
+    var curve_position = cubic_bezier(p0, p1, p2, p3, t);
+    var curve_derivative = cubic_bezier_derivative(p0, p1, p2, p3, t);
+    if (blade_wind_amplitude > 1e-5) {
+        // Ghost's grass bob offsets phase by both blade identity and position along the blade. The
+        // analytic derivative keeps transported ribbon frames and rounded lighting attached to the
+        // animated silhouette instead of shading the rest curve.
+        let envelope = t * t;
+        let envelope_derivative = 2.0 * t;
+        let forward_phase = blade_wind_phase + t * 3.20;
+        let side_phase = blade_wind_phase * 1.37 + 1.20 - t * 2.35;
+        let detail_direction = animated_wind_forward * sin(forward_phase) * 0.62
+            + blade_side * sin(side_phase) * 0.58
+            + surface_normal * sin(forward_phase + 1.57) * 0.10;
+        let detail_derivative = animated_wind_forward * cos(forward_phase) * 3.20 * 0.62
+            - blade_side * cos(side_phase) * 2.35 * 0.58
+            + surface_normal * cos(forward_phase + 1.57) * 3.20 * 0.10;
+        curve_position += blade_wind_amplitude * envelope * detail_direction;
+        curve_derivative += blade_wind_amplitude
+            * (envelope_derivative * detail_direction + envelope * detail_derivative);
+    }
+    let curve_tangent = normalize3_or(curve_derivative, surface_normal);
 
     let ribbon_taper = pow(max(1.0 - t, 0.0), 0.72);
     let broad_taper = pow(max(sin(PI * t), 0.0), 0.58);
@@ -778,32 +889,36 @@ fn fragment(
     let high_sun = smoothstep(0.32, 0.82, sun_elevation);
 
     // Rounded local normals move the highlight from one side of a nearby ribbon to the other.
-    // The stable clump normal takes over only as individual blades become unresolved.
+    // Once that variation becomes unresolved, converge every lighting term on the same stable clump
+    // normal instead of merely dimming thousands of independently flashing blade normals.
     let surface_normal = normalize3_or(
         input.surface_normal_clump.xyz,
         vec3<f32>(0.0, 1.0, 0.0),
     );
     let clump_normal = stable_clump_normal(surface_normal, input.surface_normal_clump.w);
+    let shading_normal = normalize3_or(
+        mix(blade_normal, clump_normal, distance_stability),
+        clump_normal,
+    );
     let perceptual_roughness = clamp(input.material.x, 0.08, 1.0);
     let base_alpha_roughness = perceptual_roughness * perceptual_roughness;
     let normal_width = fwidth(blade_normal);
     let normal_variance = clamp(dot(normal_width, normal_width), 0.0, 0.5);
-    let local_alpha_roughness = clamp(
-        base_alpha_roughness + normal_variance * 0.36,
+    // Treat screen-space normal variance as unresolved microgeometry. Distance roughening remains
+    // necessary for narrow far ribbons whose derivatives can be deceptively uniform per triangle.
+    let filtered_alpha_roughness = clamp(
+        base_alpha_roughness
+            + normal_variance * 0.72
+            + distance_stability * 0.34,
         0.035,
         0.95,
     );
-    let clump_alpha_roughness = clamp(
-        base_alpha_roughness + distance_stability * 0.12,
-        0.045,
-        0.95,
-    );
-    let local_broad_specular = ggx_foliage_specular(
-        blade_normal,
+    let filtered_broad_specular = ggx_foliage_specular(
+        shading_normal,
         view_direction,
         light_direction,
         half_direction,
-        local_alpha_roughness,
+        filtered_alpha_roughness,
     );
     // Leaves have a narrow waxy sheen sitting over the broad material response. Keeping this lobe
     // distinct is what makes the half-vector select one side of the analytic cylinder; a single
@@ -820,21 +935,19 @@ fn fragment(
         half_direction,
         sheen_alpha_roughness,
     );
-    let local_specular = local_broad_specular * 0.16 + local_sheen_specular;
-    let clump_specular = ggx_foliage_specular(
-        clump_normal,
-        view_direction,
-        light_direction,
-        half_direction,
-        clump_alpha_roughness,
-    );
-    let specular_lobe = mix(local_specular, clump_specular * 0.34, distance_stability);
+    // The narrow waxy lobe is useful while a blade has a resolvable width, but becomes glitter once
+    // it is a subpixel line. A broad clump lobe survives so sunrise still sweeps coherently across
+    // the field instead of flattening to diffuse-only shading.
+    let local_sheen_weight = 1.0 - smoothstep(22.0, 48.0, camera_distance);
+    let broad_specular_weight = mix(0.16, 0.26, distance_stability);
+    let specular_lobe = filtered_broad_specular * broad_specular_weight
+        + local_sheen_specular * local_sheen_weight;
 
     let upper_ribbon = smoothstep(0.14, 0.78, input.blade_t);
     let far_highlight_weight = mix(
         1.0,
-        0.14,
-        smoothstep(40.0, 88.0, camera_distance),
+        0.08,
+        smoothstep(38.0, 84.0, camera_distance),
     );
     let specular_elevation = mix(0.22, 1.0, low_sun);
     let specular_energy = min(exposed_sun_peak, 8.0);
@@ -848,7 +961,7 @@ fn fragment(
         * shadow_visibility
         * sun_active;
 
-    let wrapped_diffuse = clamp((dot(blade_normal, light_direction) + 0.28) / 1.28, 0.0, 1.0);
+    let wrapped_diffuse = clamp((dot(shading_normal, light_direction) + 0.28) / 1.28, 0.0, 1.0);
     let broad_diffuse = mix(wrapped_diffuse, 0.82, high_sun * 0.24);
     let diffuse_energy = min(exposed_sun_peak * camera.lighting.x, 0.54);
     let diffuse = input.color

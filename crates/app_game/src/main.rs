@@ -13,7 +13,7 @@ use engine::{
 use vegetation::{VegetationFieldPage, VegetationScene, VegetationSurfaceField};
 use vegetation_render::{
     VegetationDebugMode, VegetationDebugScene, VegetationDebugSettings, VegetationDiagnostics,
-    VegetationDiagnosticsSnapshot, VegetationRenderPlugin,
+    VegetationDiagnosticsSnapshot, VegetationRenderPlugin, VegetationWind,
 };
 
 fn main() {
@@ -79,11 +79,13 @@ const VEGETATION_DRAW_CPU: DiagnosticPath =
 fn setup_vegetation_debug_legend(
     mut commands: Commands,
     diagnostics: Res<VegetationDiagnostics>,
+    wind: Res<VegetationWind>,
     render_diagnostics: Res<DiagnosticsStore>,
 ) {
     commands.spawn((
         Text::new(vegetation_debug_legend(
             VegetationDebugSettings::default(),
+            wind.enabled,
             diagnostics.snapshot(),
             &vegetation_pass_timing_line(&render_diagnostics),
         )),
@@ -107,6 +109,7 @@ fn setup_vegetation_debug_legend(
 
 fn update_vegetation_debug_legend(
     settings: Res<VegetationDebugSettings>,
+    wind: Res<VegetationWind>,
     diagnostics: Res<VegetationDiagnostics>,
     render_diagnostics: Res<DiagnosticsStore>,
     mut legend: Single<&mut Text, With<VegetationDebugLegend>>,
@@ -120,6 +123,7 @@ fn update_vegetation_debug_legend(
     *elapsed = 0.0;
     **legend = Text::new(vegetation_debug_legend(
         *settings,
+        wind.enabled,
         diagnostics.snapshot(),
         &vegetation_pass_timing_line(&render_diagnostics),
     ));
@@ -127,6 +131,7 @@ fn update_vegetation_debug_legend(
 
 fn vegetation_debug_legend(
     settings: VegetationDebugSettings,
+    wind_enabled: bool,
     diagnostics: VegetationDiagnosticsSnapshot,
     pass_timing_line: &str,
 ) -> String {
@@ -157,15 +162,18 @@ fn vegetation_debug_legend(
     };
     let density_mode = settings.density_mode.label();
     let lighting_mode = settings.lighting_mode.label();
+    let wind_mode = if wind_enabled { "strong" } else { "off" };
     format!(
         "{description}\n\
          LOD density: {density_mode} | O: balanced/full/authored\n\
          Lighting: {lighting_mode} | L: rounded/legacy\n\
+         Wind: {wind_mode} | I: toggle\n\
          Profile: {} | P: full/draw-frozen/compute/schedule\n\
          Source: {} pages | {} work items | repacks {} | reallocs {} | upload/reserved {:.2}/{:.2} MiB | revision {}\n\
          GPU: {}/{} scheduled | {} lanes / {} candidate evaluations | sample {}\n\
          {pass_timing_line}\n\
          Draw: {} indices | {} topology vertex inputs | {:.2} MiB instance arena\n\
+         Capacity S-H/S-L/P-H/P-L: {}/{}/{}/{}\n\
          Budget: {budget_status} | eligible S-H/S-L/P-H/P-L: {}/{}/{}/{} | emitted: {}/{}/{}/{} | capacity drop: {}/{}/{}/{}",
         settings.profile_mode.label(),
         diagnostics.source_pages,
@@ -183,6 +191,10 @@ fn vegetation_debug_legend(
         diagnostics.submitted_indices,
         diagnostics.topology_vertex_inputs,
         diagnostics.procedural_instance_bytes as f64 / (1024.0 * 1024.0),
+        diagnostics.topology_instance_capacities[0],
+        diagnostics.topology_instance_capacities[1],
+        diagnostics.topology_instance_capacities[2],
+        diagnostics.topology_instance_capacities[3],
         eligible[0],
         eligible[1],
         eligible[2],

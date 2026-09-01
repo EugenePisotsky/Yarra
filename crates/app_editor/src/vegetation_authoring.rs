@@ -900,20 +900,29 @@ fn draw_species_editor(
     egui::CollapsingHeader::new("Envelope")
         .default_open(true)
         .show(ui, |ui| {
-            changed |= drag_f32(
+            let minimum_height_changed = drag_f32(
                 ui,
                 "Minimum height",
                 &mut species.bounds.minimum_height,
                 0.01,
                 0.01..=species.bounds.maximum_height,
             );
-            changed |= drag_f32(
+            let maximum_height_changed = drag_f32(
                 ui,
                 "Maximum height",
                 &mut species.bounds.maximum_height,
                 0.01,
                 species.bounds.minimum_height..=16.0,
             );
+            changed |= minimum_height_changed | maximum_height_changed;
+            if (minimum_height_changed || maximum_height_changed)
+                && species.height.pair_below_height > 0.0
+            {
+                species.height.pair_below_height = species
+                    .height
+                    .pair_below_height
+                    .clamp(species.bounds.minimum_height, species.bounds.maximum_height);
+            }
             changed |= drag_f32(
                 ui,
                 "Minimum half-width",
@@ -935,6 +944,64 @@ fn draw_species_editor(
                 0.01,
                 0.0..=16.0,
             );
+        });
+
+    egui::CollapsingHeader::new("Height & topology allocation")
+        .default_open(true)
+        .show(ui, |ui| {
+            changed |= drag_f32(
+                ui,
+                "Height distribution bias",
+                &mut species.height.distribution_bias,
+                0.01,
+                -1.0..=1.0,
+            );
+            ui.weak("-1 favors short blades, 0 is neutral, and +1 favors tall blades without changing the envelope.");
+
+            match &mut species.topology {
+                TopologyProfile::Ribbon(profile) => {
+                    let mut pairing_enabled = species.height.pair_below_height > 0.0;
+                    if ui
+                        .checkbox(&mut pairing_enabled, "Pair short blades")
+                        .changed()
+                    {
+                        changed = true;
+                        if pairing_enabled {
+                            species.height.pair_below_height =
+                                (species.bounds.minimum_height + species.bounds.maximum_height)
+                                    * 0.5;
+                            profile.blades_per_render_unit = 2;
+                        } else {
+                            species.height.pair_below_height = 0.0;
+                            profile.blades_per_render_unit = 1;
+                        }
+                    }
+                    if pairing_enabled {
+                        changed |= drag_f32(
+                            ui,
+                            "Pair below height",
+                            &mut species.height.pair_below_height,
+                            0.01,
+                            species.bounds.minimum_height..=species.bounds.maximum_height,
+                        );
+                        profile.blades_per_render_unit = 2;
+                        ui.weak("Roots at or below this stable world-space height divide the fixed vertex budget between two blades. Taller roots spend it on one better-sampled curve.");
+                    }
+                }
+                TopologyProfile::BroadLeafCluster(_) => {
+                    ui.weak("Broad-leaf clusters keep their authored two-leaf topology; short-grass ribbon pairing does not apply.");
+                }
+            }
+
+            if matches!(species.topology, TopologyProfile::Ribbon(_)) {
+                let split_fraction = species.expected_split_topology_fraction();
+                ui.monospace(format!(
+                    "Estimated topology mix: {:.0}% single / {:.0}% paired · {:.2} blades/root",
+                    (1.0 - split_fraction) * 100.0,
+                    split_fraction * 100.0,
+                    1.0 + split_fraction,
+                ));
+            }
         });
 
     egui::CollapsingHeader::new("Shape")
@@ -1515,6 +1582,15 @@ fn draw_diagnostics(
             );
             diagnostic_row(ui, "Emitted units", emitted);
             diagnostic_row(ui, "Capacity drops", dropped);
+            ui.label("Bin capacities");
+            ui.monospace(format!(
+                "{}/{}/{}/{}",
+                diagnostics.topology_instance_capacities[0],
+                diagnostics.topology_instance_capacities[1],
+                diagnostics.topology_instance_capacities[2],
+                diagnostics.topology_instance_capacities[3],
+            ));
+            ui.end_row();
             ui.label("Submitted indices");
             ui.monospace(diagnostics.submitted_indices.to_string());
             ui.end_row();

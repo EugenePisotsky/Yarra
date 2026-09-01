@@ -3,8 +3,9 @@
 //! The renderer schedules resident population fields on the GPU, classifies each candidate once,
 //! emits compact instances into bounded topology/LOD bins, finalizes indexed indirect arguments,
 //! and exposes non-blocking workload diagnostics. Environment lighting and directional-shadow
-//! reception use Bevy's view data; wind, grass casting, and additional representation families
-//! build on these contracts without depending on the deleted ground-cover renderer.
+//! reception use Bevy's view data. A shared analytic wind field deforms the procedural curves;
+//! grass casting and additional representation families build on these contracts without depending
+//! on the deleted ground-cover renderer.
 
 use std::sync::{
     Arc, RwLock,
@@ -45,14 +46,16 @@ impl Plugin for VegetationRenderPlugin {
             ExtractResourcePlugin::<VegetationDebugScene>::default(),
             ExtractResourcePlugin::<VegetationDebugSettings>::default(),
             ExtractResourcePlugin::<VegetationLighting>::default(),
+            ExtractResourcePlugin::<VegetationWind>::default(),
             ExtractResourcePlugin::<VegetationSun>::default(),
             ExtractComponentPlugin::<VegetationDebugView>::default(),
             ExtractComponentPlugin::<VegetationDebugDraw>::default(),
         ))
         .init_resource::<VegetationDebugSettings>()
         .init_resource::<VegetationLighting>()
+        .init_resource::<VegetationWind>()
         .init_resource::<VegetationSun>()
-        .add_systems(Update, cycle_debug_mode)
+        .add_systems(Update, (cycle_debug_mode, advance_vegetation_wind).chain())
         .add_systems(
             PostUpdate,
             sync_vegetation_sun.after(TransformSystems::Propagate),
@@ -96,6 +99,78 @@ impl Default for VegetationLighting {
             received_shadow_strength: 0.78,
         }
     }
+}
+
+/// Shared low-frequency wind field used by procedural vegetation.
+///
+/// The field is intentionally analytic so CPU gameplay and GPU rendering can sample the same
+/// travelling wave without a texture dependency. Grass adds its hashed longitudinal bob in the
+/// vertex shader, while this resource remains the coherent world-scale force.
+#[derive(Resource, ExtractResource, Debug, Clone, Copy)]
+pub struct VegetationWind {
+    pub enabled: bool,
+    /// Horizontal direction in world XZ coordinates.
+    pub direction: Vec2,
+    /// Maximum horizontal tip displacement as a fraction of blade height.
+    pub strength: f32,
+    /// Broad-wave spatial frequency in radians per world unit.
+    pub spatial_frequency: f32,
+    /// Travelling-wave angular speed in radians per second.
+    pub speed: f32,
+    /// Relative strength of the slower gust layer.
+    pub gustiness: f32,
+    /// Grass-only hashed flutter amplitude as a fraction of blade height.
+    pub flutter: f32,
+    phase_seconds: f32,
+}
+
+impl Default for VegetationWind {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            direction: Vec2::new(0.92, 0.38).normalize(),
+            strength: 0.62,
+            spatial_frequency: 0.12,
+            speed: 2.1,
+            gustiness: 0.82,
+            flutter: 0.18,
+            phase_seconds: 0.0,
+        }
+    }
+}
+
+impl VegetationWind {
+    /// Samples the coherent scalar push used by non-rendering systems.
+    pub fn sample_force(&self, world_xz: Vec2) -> f32 {
+        if !self.enabled {
+            return 0.0;
+        }
+        let direction = self.direction.try_normalize().unwrap_or(Vec2::X);
+        let cross_direction = Vec2::new(-direction.y, direction.x);
+        let frequency = self.spatial_frequency.max(0.001);
+        let speed = self.speed.max(0.0);
+        let broad_phase = world_xz.dot(direction) * frequency - self.phase_seconds * speed;
+        let cross_phase =
+            world_xz.dot(cross_direction) * frequency * 0.71 + self.phase_seconds * speed * 0.37;
+        let broad_wave = (broad_phase + cross_phase.sin() * 0.85).sin();
+        let gust_wave = (broad_phase * 0.43 - cross_phase * 0.61).sin();
+        let broad_amount = broad_wave * 0.5 + 0.5;
+        let gust_coordinate = (gust_wave * 0.5 + 0.5).clamp(0.0, 1.0);
+        let gust_rise = ((gust_coordinate - 0.28) / 0.72).clamp(0.0, 1.0);
+        let gust_pulse = gust_rise * gust_rise * (3.0 - 2.0 * gust_rise);
+        self.strength.max(0.0)
+            * (0.25 + broad_amount * 0.18 + gust_pulse * self.gustiness.clamp(0.0, 1.0) * 0.90)
+                .clamp(0.12, 1.30)
+    }
+
+    pub(crate) fn phase_seconds(self) -> f32 {
+        self.phase_seconds
+    }
+}
+
+fn advance_vegetation_wind(time: Res<Time>, mut wind: ResMut<VegetationWind>) {
+    // Bound hitch recovery so a paused debugger does not produce a single violent deformation.
+    wind.phase_seconds = (wind.phase_seconds + time.delta_secs().min(0.1)).rem_euclid(4096.0);
 }
 
 /// Render-facing snapshot of the strongest directional light and the global ambient fill.
@@ -177,6 +252,8 @@ pub struct VegetationDiagnosticsSnapshot {
     pub topology_vertex_inputs: u64,
     /// Fixed number of compact procedural instance records in the active device profile.
     pub procedural_instance_capacity: u32,
+    /// Current scene-adaptive capacities for single-high/single-low/split-high/split-low.
+    pub topology_instance_capacities: [u32; 4],
     pub procedural_instance_bytes: u64,
     pub gpu_samples: u64,
 }
@@ -351,6 +428,7 @@ pub struct VegetationDebugSettings {
 fn cycle_debug_mode(
     keys: Res<ButtonInput<KeyCode>>,
     mut settings: ResMut<VegetationDebugSettings>,
+    mut wind: ResMut<VegetationWind>,
 ) {
     if keys.just_pressed(KeyCode::KeyX) {
         settings.mode = settings.mode.next();
@@ -373,6 +451,13 @@ fn cycle_debug_mode(
     if keys.just_pressed(KeyCode::KeyL) {
         settings.lighting_mode = settings.lighting_mode.next();
         warn!("vegetation-v2 lighting: {}", settings.lighting_mode.label());
+    }
+    if keys.just_pressed(KeyCode::KeyI) {
+        wind.enabled = !wind.enabled;
+        warn!(
+            "vegetation-v2 wind: {}",
+            if wind.enabled { "strong" } else { "off" }
+        );
     }
 }
 
@@ -484,5 +569,18 @@ mod tests {
         assert_eq!(rounded, VegetationLightingMode::RoundedGloss);
         assert_eq!(rounded.next(), VegetationLightingMode::Legacy);
         assert_eq!(rounded.next().next(), rounded);
+    }
+
+    #[test]
+    fn default_wind_is_strong_coherent_and_cpu_sampleable() {
+        let wind = VegetationWind::default();
+        assert!(wind.enabled);
+        assert!(wind.strength >= 0.6);
+        assert!((wind.direction.length() - 1.0).abs() < 1e-5);
+        assert!(wind.sample_force(Vec2::new(12.0, -8.0)).is_finite());
+
+        let mut disabled = wind;
+        disabled.enabled = false;
+        assert_eq!(disabled.sample_force(Vec2::ZERO), 0.0);
     }
 }

@@ -8,9 +8,10 @@ use crate::{
     RibbonCurveProfile, RibbonTopologyProfile, TopologyFamily, TopologyProfile,
     VegetationAssemblage, VegetationAssemblageId, VegetationBounds, VegetationCatalog,
     VegetationFieldPage, VegetationGroupResponseProfile, VegetationGroupingProfile,
-    VegetationMaterialProfile, VegetationOrientationProfile, VegetationPopulation,
-    VegetationPopulationField, VegetationPopulationId, VegetationScene, VegetationSpecies,
-    VegetationSpeciesId, VegetationSurfaceField, VegetationWindProfile, VoronoiClumpProfile,
+    VegetationHeightProfile, VegetationMaterialProfile, VegetationOrientationProfile,
+    VegetationPopulation, VegetationPopulationField, VegetationPopulationId, VegetationScene,
+    VegetationSpecies, VegetationSpeciesId, VegetationSurfaceField, VegetationWindProfile,
+    VoronoiClumpProfile,
 };
 
 pub const DRY_FINE_SPECIES_ID: VegetationSpeciesId = VegetationSpeciesId([1; 16]);
@@ -232,12 +233,13 @@ fn dry_fine_species() -> VegetationSpecies {
         group_response: group_response(0.76, 0.67, 0.48),
         wind: wind(0.28, 0.95, 0.42),
         bounds: bounds(0.48, 1.25, 0.006, 0.022, 0.8),
+        height: height_profile(0.0, 0.66),
         representations: ribbon_representations(TopologyFamily::Ribbon),
     }
 }
 
 fn green_fine_species() -> VegetationSpecies {
-    let mut topology = ribbon_topology(8, 3, 1, 0.68);
+    let mut topology = ribbon_topology(8, 3, 2, 0.68);
     topology.curve_variant_a = ribbon_curve(0.24, 0.03, 0.78, 0.32, 0.22);
     topology.curve_variant_b = ribbon_curve(1.16, 0.25, 1.82, 0.48, 0.32);
     topology.maximum_lateral_curve = 0.32;
@@ -250,6 +252,7 @@ fn green_fine_species() -> VegetationSpecies {
         group_response: group_response(0.74, 0.71, 0.56),
         wind: wind(0.38, 0.8, 0.34),
         bounds: bounds(0.42, 1.05, 0.008, 0.026, 0.62),
+        height: height_profile(0.0, 0.58),
         representations: ribbon_representations(TopologyFamily::Ribbon),
     }
 }
@@ -269,6 +272,7 @@ fn short_fill_species() -> VegetationSpecies {
         group_response: group_response(0.58, 0.53, 0.4),
         wind: wind(0.72, 1.15, 0.12),
         bounds: bounds(0.14, 0.38, 0.014, 0.042, 0.4),
+        height: height_profile(-0.2, 0.38),
         representations: ribbon_representations(TopologyFamily::Ribbon),
     }
 }
@@ -291,6 +295,7 @@ fn broad_leaf_species() -> VegetationSpecies {
         group_response: group_response(0.68, 0.58, 0.44),
         wind: wind(0.62, 1.4, 0.2),
         bounds: bounds(0.16, 0.52, 0.025, 0.09, 0.5),
+        height: height_profile(0.0, 0.0),
         representations: vec![
             RepresentationLevel {
                 minimum_projected_size: 36.0,
@@ -417,6 +422,13 @@ fn bounds(
         minimum_half_width,
         maximum_half_width,
         maximum_horizontal_reach,
+    }
+}
+
+fn height_profile(distribution_bias: f32, pair_below_height: f32) -> VegetationHeightProfile {
+    VegetationHeightProfile {
+        distribution_bias,
+        pair_below_height,
     }
 }
 

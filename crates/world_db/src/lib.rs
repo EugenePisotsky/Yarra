@@ -8,7 +8,13 @@ use std::{
 };
 
 use rusqlite::{Connection, OpenFlags, OptionalExtension, Transaction, params};
-use vegetation::{VegetationCatalog, VegetationFieldPageData};
+use serde::{Deserialize, Serialize};
+use vegetation::{
+    TopologyProfile, VegetationAssemblage, VegetationBounds, VegetationCatalog,
+    VegetationFieldPageData, VegetationGroupResponseProfile, VegetationHeightProfile,
+    VegetationMaterialProfile, VegetationPopulation, VegetationSpecies, VegetationSpeciesId,
+    VegetationWindProfile,
+};
 use world::{
     AssetId, CellCoord, MAX_DECODED_PAGE_BYTES, ObjectActivationPolicy, ObjectDefinitionId,
     PROJECT_SCHEMA_VERSION, PageCodec, PageDomain, PageKey, PagePayload, RUNTIME_SCHEMA_VERSION,
@@ -18,8 +24,9 @@ use world::{
 
 pub const MAX_OBJECT_WRITES_PER_TRANSACTION: usize = 256;
 pub const MAX_DENSE_DOMAIN_WRITES_PER_TRANSACTION: usize = 64;
-const VEGETATION_CATALOG_FORMAT_VERSION: i64 = 6;
-const MIGRATABLE_PROJECT_SCHEMA_VERSIONS: [i64; 4] = [12, 13, 14, 15];
+const VEGETATION_CATALOG_FORMAT_VERSION: i64 = 7;
+const LEGACY_VEGETATION_CATALOG_FORMAT_VERSION: i64 = 6;
+const MIGRATABLE_PROJECT_SCHEMA_VERSIONS: [i64; 5] = [12, 13, 14, 15, 16];
 
 #[derive(Debug, Clone)]
 pub struct ProjectDocument {
@@ -560,18 +567,38 @@ pub fn migrate_project_database(path: &Path) -> Result<bool, WorldDbError> {
     if actual == PROJECT_SCHEMA_VERSION {
         return Ok(false);
     }
-    if MIGRATABLE_PROJECT_SCHEMA_VERSIONS.contains(&actual) && PROJECT_SCHEMA_VERSION == 16 {
-        // Catalog format 6 adds an authored projected-width floor for ribbon species. Vegetation
-        // catalog payloads are bincode sequences and therefore cannot safely default a newly
-        // appended field. Discard only that incompatible legacy payload while preserving every
-        // other authored domain. A current project or an explicit reference-fixture reset supplies
-        // the new-format catalog; normal saves and publications never replace it implicitly.
+    if actual == 16 && PROJECT_SCHEMA_VERSION == 17 {
+        // Catalog format 7 adds the physical height-distribution and short-grass pairing profile.
+        // Bincode structs cannot safely default appended fields, so decode the exact format-6
+        // contract and upgrade it explicitly. Formerly single ribbons remain single; formerly
+        // paired ribbons remain paired at every authored height until the artist opts into an
+        // adaptive threshold.
+        let upgraded_catalog =
+            read_legacy_vegetation_catalog_v6(&connection)?.map(upgrade_vegetation_catalog_v6);
         let transaction = connection.transaction()?;
         transaction.execute_batch(
             "DROP TABLE vegetation_catalog;
              CREATE TABLE vegetation_catalog (
                  singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
-                 format_version INTEGER NOT NULL CHECK(format_version = 6),
+                 format_version INTEGER NOT NULL CHECK(format_version = 7),
+                 payload BLOB NOT NULL
+             ) STRICT;",
+        )?;
+        write_vegetation_catalog(&transaction, upgraded_catalog.as_ref())?;
+        transaction.pragma_update(None, "user_version", PROJECT_SCHEMA_VERSION)?;
+        transaction.commit()?;
+        return Ok(true);
+    }
+    if MIGRATABLE_PROJECT_SCHEMA_VERSIONS.contains(&actual) && PROJECT_SCHEMA_VERSION == 17 {
+        // Formats before 6 predate the current ribbon silhouette contract and cannot be upgraded
+        // without inventing authored values. Preserve every other domain and discard only that
+        // incompatible catalog, matching the previous targeted migration policy.
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "DROP TABLE vegetation_catalog;
+             CREATE TABLE vegetation_catalog (
+                 singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+                 format_version INTEGER NOT NULL CHECK(format_version = 7),
                  payload BLOB NOT NULL
              ) STRICT;",
         )?;
@@ -584,6 +611,94 @@ pub fn migrate_project_database(path: &Path) -> Result<bool, WorldDbError> {
         expected: PROJECT_SCHEMA_VERSION,
         actual,
     })
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct VegetationCatalogV6 {
+    species: Vec<VegetationSpeciesV6>,
+    populations: Vec<VegetationPopulation>,
+    assemblages: Vec<VegetationAssemblage>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct VegetationSpeciesV6 {
+    id: VegetationSpeciesId,
+    key: String,
+    topology: TopologyProfile,
+    material: VegetationMaterialProfile,
+    group_response: VegetationGroupResponseProfile,
+    wind: VegetationWindProfile,
+    bounds: VegetationBounds,
+    representations: Vec<vegetation::RepresentationLevel>,
+}
+
+fn read_legacy_vegetation_catalog_v6(
+    connection: &Connection,
+) -> Result<Option<VegetationCatalogV6>, WorldDbError> {
+    connection
+        .query_row(
+            "SELECT format_version, payload FROM vegetation_catalog WHERE singleton = 1",
+            [],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
+        )
+        .optional()?
+        .map(|(format_version, payload)| {
+            if format_version != LEGACY_VEGETATION_CATALOG_FORMAT_VERSION {
+                return Err(WorldDbError::VegetationCatalogFormatVersion {
+                    expected: LEGACY_VEGETATION_CATALOG_FORMAT_VERSION,
+                    actual: format_version,
+                });
+            }
+            let (catalog, consumed): (VegetationCatalogV6, usize) =
+                bincode::serde::decode_from_slice(
+                    &payload,
+                    bincode::config::standard()
+                        .with_little_endian()
+                        .with_fixed_int_encoding()
+                        .with_limit::<{ MAX_DECODED_PAGE_BYTES as usize }>(),
+                )?;
+            if consumed != payload.len() {
+                return Err(WorldDbError::VegetationCatalogTrailingBytes {
+                    consumed,
+                    total: payload.len(),
+                });
+            }
+            Ok(catalog)
+        })
+        .transpose()
+}
+
+fn upgrade_vegetation_catalog_v6(catalog: VegetationCatalogV6) -> VegetationCatalog {
+    VegetationCatalog {
+        species: catalog
+            .species
+            .into_iter()
+            .map(|species| {
+                let pair_below_height = match species.topology {
+                    TopologyProfile::Ribbon(profile) if profile.blades_per_render_unit == 2 => {
+                        species.bounds.maximum_height
+                    }
+                    _ => 0.0,
+                };
+                VegetationSpecies {
+                    id: species.id,
+                    key: species.key,
+                    topology: species.topology,
+                    material: species.material,
+                    group_response: species.group_response,
+                    wind: species.wind,
+                    bounds: species.bounds,
+                    height: VegetationHeightProfile {
+                        distribution_bias: 0.0,
+                        pair_below_height,
+                    },
+                    representations: species.representations,
+                }
+            })
+            .collect(),
+        populations: catalog.populations,
+        assemblages: catalog.assemblages,
+    }
 }
 
 fn write_vegetation_catalog(
@@ -2793,6 +2908,91 @@ mod tests {
         }
     }
 
+    #[test]
+    fn project_schema_16_migration_preserves_and_upgrades_the_catalog() {
+        let directory = unique_test_directory();
+        fs::create_dir_all(&directory).unwrap();
+        let project_path = directory.join("migration-v16.sqlite");
+        let current = vegetation::fixtures::reference_catalog();
+        let legacy = VegetationCatalogV6 {
+            species: current
+                .species
+                .iter()
+                .map(|species| VegetationSpeciesV6 {
+                    id: species.id,
+                    key: species.key.clone(),
+                    topology: species.topology,
+                    material: species.material,
+                    group_response: species.group_response,
+                    wind: species.wind,
+                    bounds: species.bounds,
+                    representations: species.representations.clone(),
+                })
+                .collect(),
+            populations: current.populations.clone(),
+            assemblages: current.assemblages.clone(),
+        };
+        let payload = bincode::serde::encode_to_vec(
+            &legacy,
+            bincode::config::standard()
+                .with_little_endian()
+                .with_fixed_int_encoding(),
+        )
+        .unwrap();
+        let connection = Connection::open(&project_path).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE vegetation_catalog (
+                     singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+                     format_version INTEGER NOT NULL CHECK(format_version = 6),
+                     payload BLOB NOT NULL
+                 ) STRICT;
+                 CREATE TABLE preserved_authored_data(value TEXT NOT NULL) STRICT;
+                 INSERT INTO preserved_authored_data(value) VALUES ('kept');
+                 PRAGMA user_version = 16;",
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO vegetation_catalog(singleton, format_version, payload) VALUES (1, 6, ?1)",
+                params![payload],
+            )
+            .unwrap();
+        drop(connection);
+
+        assert!(migrate_project_database(&project_path).unwrap());
+        let connection = Connection::open(&project_path).unwrap();
+        let format: i64 = connection
+            .query_row(
+                "SELECT format_version FROM vegetation_catalog WHERE singleton = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let upgraded = read_vegetation_catalog(&connection).unwrap().unwrap();
+        let preserved: String = connection
+            .query_row("SELECT value FROM preserved_authored_data", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(format, VEGETATION_CATALOG_FORMAT_VERSION);
+        assert_eq!(preserved, "kept");
+        assert_eq!(upgraded.populations, current.populations);
+        assert_eq!(upgraded.assemblages, current.assemblages);
+        for species in &upgraded.species {
+            let expected_threshold = match species.topology {
+                TopologyProfile::Ribbon(profile) if profile.blades_per_render_unit == 2 => {
+                    species.bounds.maximum_height
+                }
+                _ => 0.0,
+            };
+            assert_eq!(species.height.distribution_bias, 0.0);
+            assert_eq!(species.height.pair_below_height, expected_threshold);
+        }
+        drop(connection);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
     fn verify_project_catalog_migration(schema_version: i64, catalog_format: i64) {
         let directory = unique_test_directory();
         fs::create_dir_all(&directory).unwrap();
@@ -2837,7 +3037,7 @@ mod tests {
         connection
             .execute(
                 "INSERT INTO vegetation_catalog(singleton, format_version, payload)
-                 VALUES (1, 6, X'')",
+                 VALUES (1, 7, X'')",
                 [],
             )
             .unwrap();
