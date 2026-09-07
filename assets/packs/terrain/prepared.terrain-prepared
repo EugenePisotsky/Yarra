@@ -1,0 +1,4 @@
+(version: 1, entries: [
+        (source: "local/terrain/temperate_meadow/runtime/universal/base_color_array.ktx2", image: "local/terrain/temperate_meadow/runtime/universal/prepared_albedo_array.ktx2", period: 4.0),
+        (source: "local/terrain/temperate_meadow/runtime/astc/base_color_array.ktx2", image: "local/terrain/temperate_meadow/runtime/astc/prepared_albedo_array.ktx2", period: 4.0),
+])

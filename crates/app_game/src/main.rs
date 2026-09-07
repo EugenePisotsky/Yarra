@@ -3,6 +3,7 @@ use bevy::window::{MonitorSelection, ScreenEdge, WindowMode};
 use bevy::{
     asset::AssetPlugin,
     diagnostic::{DiagnosticPath, DiagnosticsStore},
+    log::LogPlugin,
     prelude::*,
     window::{PresentMode, WindowResolution},
 };
@@ -16,6 +17,10 @@ use vegetation_render::{
     VegetationDiagnosticsSnapshot, VegetationRenderPlugin, VegetationWind,
 };
 
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+mod metal_capture;
+mod render_audit;
+
 fn main() {
     let asset_root = resolve_asset_root();
     let runtime_database = runtime_database_path(&asset_root);
@@ -24,6 +29,7 @@ fn main() {
     app.insert_resource(ClearColor(Color::srgb(0.055, 0.065, 0.075)))
         .add_plugins(
             DefaultPlugins
+                .set(game_log_plugin())
                 .set(AssetPlugin {
                     file_path: asset_root.to_string_lossy().into_owned(),
                     ..default()
@@ -33,8 +39,9 @@ fn main() {
                     ..default()
                 }),
         )
-        .add_plugins(MinimalGamePlugin::new(runtime_database))
-        .add_plugins(VegetationRenderPlugin)
+        .add_plugins(MinimalGamePlugin::new(runtime_database));
+
+    app.add_plugins(VegetationRenderPlugin)
         .insert_resource(
             VegetationDebugScene::new(VegetationScene {
                 catalog: vegetation::fixtures::reference_catalog(),
@@ -43,7 +50,13 @@ fn main() {
             .expect("empty vegetation runtime scene is valid"),
         )
         .add_systems(Update, conform_vegetation_debug_to_streamed_terrain);
-    if vegetation_v2_debug {
+
+    #[cfg(target_os = "ios")]
+    warn!(
+        "iOS ground + grass baseline: flat terrain rendering and production vegetation LOD enabled"
+    );
+
+    if vegetation_v2_debug && !cfg!(target_os = "ios") {
         app.add_systems(Startup, setup_vegetation_debug_legend)
             .add_systems(
                 Update,
@@ -53,11 +66,59 @@ fn main() {
                 ),
             );
     }
+    if std::env::args_os().any(|argument| argument == "--grass-vertex-reference") {
+        app.world_mut()
+            .resource_mut::<vegetation_render::VegetationBladePreparation>()
+            .enabled = false;
+    }
+    if std::env::args_os().any(|argument| argument == "--grass-candidate-reference") {
+        app.world_mut().resource_mut::<VegetationDebugSettings>().candidate_cache_enabled = false;
+    }
+    if std::env::args_os().any(|argument| argument == "--grass-placement-reference") {
+        app.world_mut()
+            .resource_mut::<VegetationDebugSettings>()
+            .early_rejection = false;
+    }
+    if std::env::args_os().any(|argument| argument == "--terrain-prepared") {
+        app.world_mut().resource_mut::<terrain_render::TerrainPreparedSettings>().enabled = true;
+    }
+    if std::env::args_os().any(|argument| argument == "--terrain-procedural") {
+        app.world_mut()
+            .resource_mut::<terrain_render::TerrainCacheSettings>()
+            .enabled = false;
+    }
+    if std::env::args_os().any(|argument| argument == "--render-audit" || argument == "--render-repro") {
+        app.add_plugins(render_audit::RenderAuditPlugin);
+    }
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    metal_capture::install(&mut app);
     app.run();
 }
 
 #[derive(Component)]
 struct VegetationDebugLegend;
+
+fn game_log_plugin() -> LogPlugin {
+    let mut plugin = LogPlugin::default();
+    if cfg!(target_os = "ios") {
+        plugin
+            .filter
+            .push_str(",winit::platform_impl::ios::app_state=error");
+    }
+    #[cfg(target_os = "ios")]
+    if std::env::args_os().any(|arg| arg == "--render-console" || arg == "--render-repro") {
+        // Bevy's iOS OSLog layer is visible in Xcode but not devicectl --console.
+        // Opt-in stderr output keeps audit settings and thermal transitions with HUD packets.
+        plugin.custom_layer = |_| {
+            Some(Box::new(
+                bevy::log::tracing_subscriber::fmt::layer()
+                    .with_ansi(false)
+                    .with_writer(std::io::stderr),
+            ))
+        };
+    }
+    plugin
+}
 
 const VEGETATION_SCHEDULE_GPU: DiagnosticPath =
     DiagnosticPath::const_new("render/vegetation_v2_schedule/elapsed_gpu");
@@ -162,11 +223,17 @@ fn vegetation_debug_legend(
     };
     let density_mode = settings.density_mode.label();
     let lighting_mode = settings.lighting_mode.label();
+    let far_width_mode = if settings.far_width_compensation {
+        "LOD + subpixel"
+    } else {
+        "authored"
+    };
     let wind_mode = if wind_enabled { "strong" } else { "off" };
     format!(
         "{description}\n\
          LOD density: {density_mode} | O: balanced/full/authored\n\
-         Lighting: {lighting_mode} | L: rounded/legacy\n\
+         Far coverage: {far_width_mode} | K: toggle\n\
+         Lighting: {lighting_mode} | L: rounded/legacy/unlit/minimal-vertex\n\
          Wind: {wind_mode} | I: toggle\n\
          Profile: {} | P: full/draw-frozen/compute/schedule\n\
          Source: {} pages | {} work items | repacks {} | reallocs {} | upload/reserved {:.2}/{:.2} MiB | revision {}\n\

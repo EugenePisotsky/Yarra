@@ -1,22 +1,33 @@
-use bevy::mesh::Indices;
+use bevy::mesh::{Indices, MeshVertexBufferLayoutRef};
 use bevy::{
     asset::RenderAssetUsages,
     image::{
         ImageAddressMode, ImageFilterMode, ImageLoaderSettings, ImageSampler,
         ImageSamplerDescriptor,
     },
-    pbr::{Material, MaterialPlugin},
+    pbr::{Material, MaterialPipeline, MaterialPipelineKey, MaterialPlugin},
     prelude::*,
     reflect::TypePath,
     render::render_resource::{
-        AsBindGroup, Extent3d, PrimitiveTopology, ShaderType, TextureDimension, TextureFormat,
+        AsBindGroup, Extent3d, PrimitiveTopology, RenderPipelineDescriptor, ShaderType,
+        SpecializedMeshPipelineError, TextureDimension, TextureFormat,
     },
+    render::storage::ShaderBuffer,
     shader::ShaderRef,
 };
 use world::{
     CellCoord, TerrainHeightfield, TerrainProfile, TerrainSurface, TerrainSurfaceId,
     TerrainTextureSet, TerrainWeightPage,
 };
+
+mod stochastic_cache;
+pub use stochastic_cache::{TerrainCacheSettings, TerrainCacheStats};
+mod prepared;
+pub use prepared::{TerrainPreparedSettings, TerrainPreparedStats};
+
+/// Schedule terrain material edits before this set to prepare their current inputs.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TerrainMaterialPreparation;
 
 const TERRAIN_SHADER: &str = "shaders/terrain_material.wgsl";
 
@@ -30,6 +41,8 @@ pub struct TerrainRenderPlugin;
 
 impl Plugin for TerrainRenderPlugin {
     fn build(&self, app: &mut App) {
+        stochastic_cache::install(app);
+        prepared::install(app);
         app.init_resource::<TerrainMacroVariation>()
             .add_plugins(MaterialPlugin::<TerrainMaterial>::default())
             .add_systems(
@@ -93,11 +106,11 @@ impl TerrainMacroVariation {
     }
 }
 
-#[derive(Clone, Copy, Debug, ShaderType)]
+#[derive(Clone, Copy, Debug, PartialEq, ShaderType)]
 pub struct TerrainMaterialUniform {
     chunk_minimum: Vec2,
     chunk_extent: Vec2,
-    /// Array layers for slots 0 and 1, followed by surface count and padding.
+    /// Array layers for slots 0 and 1, surface count, then prepared albedo period.
     surface_layers: Vec4,
     /// Metres per texture repetition for slots 0 and 1.
     tile_sizes: Vec4,
@@ -109,10 +122,40 @@ pub struct TerrainMaterialUniform {
     macro_scales: Vec4,
     /// Contrast, macro enabled, then anti-tiling flags for slots 0 and 1.
     macro_settings: Vec4,
+    /// Integer lattice origins for the two anti-tiling lookup layers.
+    cache_origins: Vec4,
+    cache_size: UVec4,
+}
+
+/// Separate compiled fragment variants for measuring terrain costs without changing geometry.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum TerrainShadingMode {
+    #[default]
+    Production,
+    SurfaceUnlit,
+    SingleTexture,
+    Flat,
+}
+
+impl TerrainShadingMode {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Production => "production",
+            Self::SurfaceUnlit => "surface unlit",
+            Self::SingleTexture => "one texture",
+            Self::Flat => "flat unlit",
+        }
+    }
 }
 
 #[derive(Asset, AsBindGroup, TypePath, Debug, Clone)]
+#[bind_group_data(TerrainMaterialKey)]
 pub struct TerrainMaterial {
+    pub shading_mode: TerrainShadingMode,
+    stochastic_cached: bool,
+    prepared: bool,
+    source_weights: Handle<Image>,
+    source_base_color_array: Handle<Image>,
     #[uniform(0)]
     settings: TerrainMaterialUniform,
     #[texture(1)]
@@ -125,11 +168,59 @@ pub struct TerrainMaterial {
     normal_material_array: Handle<Image>,
     #[texture(6)]
     macro_variation: Handle<Image>,
+    #[storage(7, read_only)]
+    stochastic_cache: Handle<ShaderBuffer>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct TerrainMaterialKey {
+    shading: TerrainShadingMode,
+    stochastic_cached: bool,
+    prepared: bool,
+}
+
+impl From<&TerrainMaterial> for TerrainMaterialKey {
+    fn from(material: &TerrainMaterial) -> Self {
+        Self {
+            shading: material.shading_mode,
+            stochastic_cached: material.stochastic_cached,
+            prepared: material.prepared,
+        }
+    }
 }
 
 impl Material for TerrainMaterial {
     fn fragment_shader() -> ShaderRef {
         TERRAIN_SHADER.into()
+    }
+
+    fn specialize(
+        _pipeline: &MaterialPipeline,
+        descriptor: &mut RenderPipelineDescriptor,
+        _layout: &MeshVertexBufferLayoutRef,
+        key: MaterialPipelineKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        if key.bind_group_data.prepared {
+            if let Some(fragment) = descriptor.fragment.as_mut() {
+                fragment.shader_defs.push("TERRAIN_PREPARED".into());
+            }
+        } else if key.bind_group_data.stochastic_cached
+            && let Some(fragment) = descriptor.fragment.as_mut()
+        {
+            fragment
+                .shader_defs
+                .push("TERRAIN_STOCHASTIC_CACHED".into());
+        }
+        let define = match key.bind_group_data.shading {
+            TerrainShadingMode::Production => None,
+            TerrainShadingMode::SurfaceUnlit => Some("TERRAIN_SURFACE_UNLIT"),
+            TerrainShadingMode::SingleTexture => Some("TERRAIN_SINGLE_TEXTURE"),
+            TerrainShadingMode::Flat => Some("TERRAIN_FLAT"),
+        };
+        if let (Some(fragment), Some(define)) = (descriptor.fragment.as_mut(), define) {
+            fragment.shader_defs.push(define.into());
+        }
+        Ok(())
     }
 }
 
@@ -190,7 +281,15 @@ pub fn prepare_terrain_material(
     let first = &context.surfaces[0];
     let second = context.surfaces.get(1).unwrap_or(first);
     let material = context.materials.add(TerrainMaterial {
+        shading_mode: TerrainShadingMode::Production,
+        stochastic_cached: false,
+        prepared: false,
+        source_weights: weight_image.clone(),
+        source_base_color_array: base_color_array.clone(),
+        stochastic_cache: Handle::default(),
         settings: TerrainMaterialUniform {
+            cache_origins: Vec4::ZERO,
+            cache_size: UVec4::ZERO,
             chunk_minimum: Vec2::new(
                 (i64::from(context.cell.x) - i64::from(context.origin_cell.x)) as f32
                     * context.cell_size,
@@ -359,6 +458,9 @@ fn load_repeat_image(asset_server: &AssetServer, uri: &str, is_srgb: bool) -> Ha
         })
         .load(uri.to_owned())
 }
+
+#[cfg(test)]
+mod gpu_tests;
 
 #[cfg(test)]
 mod tests {

@@ -7,5 +7,11 @@ publish.workspace = true
 [dependencies]
 bevy.workspace = true
 engine.workspace = true
+terrain-render.workspace = true
 vegetation.workspace = true
 vegetation-render.workspace = true
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSObject", "NSProcessInfo", "NSString", "NSURL", "NSPathUtilities"] }
+objc2-metal = { version = "0.3.2", default-features = false, features = ["std", "MTLCaptureManager", "MTLDevice"] }
+wgpu = { version = "29.0.4", default-features = false, features = ["metal"] }

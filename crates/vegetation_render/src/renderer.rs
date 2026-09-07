@@ -1,5 +1,7 @@
 use std::{borrow::Cow, collections::HashMap, mem::size_of};
 
+#[cfg(not(target_os = "ios"))]
+use bevy::render::{ExtractSchedule, render_resource::MapMode};
 use bevy::{
     asset::AssetId,
     core_pipeline::{
@@ -14,7 +16,7 @@ use bevy::{
     pbr::{MeshPipelineViewLayoutKey, MeshPipelineViewLayouts, SetMeshViewBindGroup, ViewKeyCache},
     prelude::*,
     render::{
-        ExtractSchedule, Render, RenderSystems,
+        Render, RenderSystems,
         diagnostic::{DiagnosticsRecorder, RecordDiagnostics},
         render_phase::{
             AddRenderCommand, BinnedRenderPhaseType, DrawFunctions, InputUniformIndex, PhaseItem,
@@ -25,8 +27,8 @@ use bevy::{
             BindGroup, BindGroupEntries, BindGroupLayout, BindGroupLayoutDescriptor,
             BindGroupLayoutEntries, Buffer, BufferDescriptor, BufferInitDescriptor, BufferUsages,
             CachedComputePipelineId, Canonical, ColorTargetState, ColorWrites, CompareFunction,
-            ComputePassDescriptor, ComputePipelineDescriptor, DepthStencilState, FragmentState,
-            FrontFace, IndexFormat, MapMode, PipelineCache, PolygonMode, PrimitiveState,
+            ComputePassDescriptor, ComputePipelineDescriptor, ComputePipelineId, DepthStencilState,
+            FragmentState, FrontFace, IndexFormat, PipelineCache, PolygonMode, PrimitiveState,
             PrimitiveTopology, RenderPipeline, RenderPipelineDescriptor, ShaderStages, Specializer,
             SpecializerKey, TextureFormat, Variants, VertexState,
             binding_types::{
@@ -49,6 +51,9 @@ use crate::{
     VegetationDiagnostics, VegetationLighting, VegetationProfileMode, VegetationSun,
     VegetationWind,
 };
+
+mod blade_preparation;
+mod candidate_cache;
 
 const COMPUTE_SHADER_PATH: &str = "shaders/vegetation_debug_compute.wgsl";
 const SCHEDULE_SHADER_PATH: &str = "shaders/vegetation_schedule_compute.wgsl";
@@ -74,7 +79,9 @@ const GPU_TELEMETRY_SIZE: u64 = GPU_TELEMETRY_WORD_COUNT * size_of::<u32>() as u
 const DRAW_INDEXED_ARGS_WORD_COUNT: u64 = 5;
 const DRAW_ARGS_SIZE: u64 =
     TOPOLOGY_BIN_COUNT as u64 * DRAW_INDEXED_ARGS_WORD_COUNT * size_of::<u32>() as u64;
+#[cfg(not(target_os = "ios"))]
 const TELEMETRY_READBACK_SIZE: u64 = GPU_TELEMETRY_SIZE + DRAW_ARGS_SIZE;
+#[cfg(not(target_os = "ios"))]
 const TELEMETRY_CAPTURE_INTERVAL_FRAMES: u32 = 30;
 const MAX_RENDER_SECTIONS: u8 = 8;
 const MAX_LOW_RENDER_SECTIONS: u8 = 3;
@@ -132,20 +139,36 @@ fn build_topology_indices() -> Vec<u16> {
 pub(crate) fn install(render_app: &mut SubApp) {
     render_app
         .add_render_command::<Opaque3d, DrawVegetationDebug>()
-        .add_systems(ExtractSchedule, begin_telemetry_readback)
         .add_systems(
             Render,
             (
-                prepare_telemetry_staging.in_set(RenderSystems::PrepareResourcesFlush),
                 prepare.in_set(RenderSystems::PrepareBindGroups),
                 queue.in_set(RenderSystems::Queue),
             ),
         )
-        .add_systems(RenderGraph, generate.before(camera_driver));
+        .add_systems(
+            RenderGraph,
+            (candidate_cache::build, generate, blade_preparation::run, finish_telemetry)
+                .chain()
+                .before(camera_driver),
+        );
+
+    // Mapping a GPU buffer immediately after submitting vegetation work is intentionally excluded
+    // from iOS while the Metal corruption is isolated. The staging resource remains initialized,
+    // so `finish_telemetry` simply skips its copy when no staging buffer has been prepared.
+    #[cfg(not(target_os = "ios"))]
+    render_app
+        .add_systems(ExtractSchedule, begin_telemetry_readback)
+        .add_systems(
+            Render,
+            prepare_telemetry_staging.in_set(RenderSystems::PrepareResourcesFlush),
+        );
 }
 
 pub(crate) fn initialize(world: &mut World) {
     world.init_resource::<VegetationPipelines>();
+    world.init_resource::<blade_preparation::BladePreparation>();
+    world.init_resource::<candidate_cache::CandidateCache>();
     world.init_resource::<VegetationBuffers>();
     world.init_resource::<VegetationTelemetryStaging>();
 }
@@ -241,7 +264,8 @@ struct SurfaceSampleGpu {
 struct ProceduralInstanceGpu {
     // xyz: root, w: packed clump variant and nested LOD rank
     root_clump: [f32; 4],
-    // x: packed rest direction, y: species index, z: packed surface normal xz,
+    // x: packed rest direction, y: species index + LOD morph + low flag,
+    // z: packed surface normal xz,
     // w: low 24 bits seed + high 8 bits population-density target
     geometry: [u32; 4],
 }
@@ -259,12 +283,13 @@ struct DebugInstanceGpu {
     diagnostics: [f32; 4],
 }
 
-#[derive(Clone, Copy, Pod, Zeroable)]
+#[derive(Clone, Copy, PartialEq, Pod, Zeroable)]
 #[repr(C)]
 struct CameraGpu {
     clip_from_world: [f32; 16],
     camera_position: [f32; 4],
-    // x: vertical focal length in pixels, y: viewport width, z: viewport height
+    // x: vertical focal length in pixels, y: viewport width, z: viewport height,
+    // w: far-ribbon screen-space width compensation enabled
     projection: [f32; 4],
     // xyz: direction from the surface toward the strongest directional light, w: active
     sun_direction: [f32; 4],
@@ -278,13 +303,44 @@ struct CameraGpu {
     wind_shape: [f32; 4],
 }
 
-#[derive(Clone, Copy, Pod, Zeroable)]
+#[derive(Clone, Copy, PartialEq, Pod, Zeroable)]
 #[repr(C)]
 struct DebugConfigGpu {
     // x: VegetationDebugMode; y: VegetationDensityMode; z: VegetationLightingMode;
     // w: scene-adaptive single-low arena capacity.
-    // Mirrors WGSL `vec4<u32>` exactly.
+    // Mirrors the two WGSL `vec4<u32>` fields exactly.
     values: [u32; 4],
+    // x: live work-item count, y: diagnostic atomics, z: prepared blade data available,
+    // w: bit 0 early production rejection, bit 1 stable candidate acceptance cache.
+    workload: [u32; 4],
+}
+
+#[derive(Clone, Copy, PartialEq)]
+struct GenerationInputs {
+    source_revision: u64,
+    camera: CameraGpu,
+    config: DebugConfigGpu,
+}
+
+impl GenerationInputs {
+    fn new(source_revision: u64, mut camera: CameraGpu, config: DebugConfigGpu) -> Self {
+        // Placement uses wind strength for conservative bounds, but wind phase is evaluated
+        // only by blade preparation/drawing. Animate existing blades without rebuilding them.
+        camera.wind[3] = 0.0;
+        Self {
+            source_revision,
+            camera,
+            config,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+struct GenerationKey {
+    cache_serial: u64,
+    inputs: GenerationInputs,
+    // A hot-reloaded compute shader must regenerate even if its inputs did not change.
+    pipelines: [ComputePipelineId; 3],
 }
 
 #[derive(Resource)]
@@ -295,6 +351,8 @@ struct VegetationPipelines {
     schedule: CachedComputePipelineId,
     generate: CachedComputePipelineId,
     finalize: CachedComputePipelineId,
+    cache_build: CachedComputePipelineId,
+    cache_finish: CachedComputePipelineId,
     draw_variants: Variants<RenderPipeline, VegetationPipelineSpecializer>,
 }
 
@@ -336,6 +394,9 @@ impl FromWorld for VegetationPipelines {
                     uniform_buffer_sized(false, None),
                     uniform_buffer_sized(false, None),
                     storage_buffer_sized(false, None),
+                    storage_buffer_sized(false, None),
+                    storage_buffer_sized(false, None),
+                    storage_buffer_read_only_sized(false, None),
                 ),
             ),
         );
@@ -349,6 +410,7 @@ impl FromWorld for VegetationPipelines {
                     storage_buffer_read_only_sized(false, None),
                     uniform_buffer_sized(false, None),
                     uniform_buffer_sized(false, None),
+                    storage_buffer_read_only_sized(false, None),
                 ),
             ),
         );
@@ -369,10 +431,19 @@ impl FromWorld for VegetationPipelines {
         let finalize = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
             label: Some("vegetation-v2 debug finalize".into()),
             layout: vec![compute_layout.clone()],
-            shader: compute_shader,
+            shader: compute_shader.clone(),
             entry_point: Some(Cow::Borrowed("finalize")),
             ..default()
         });
+        let cache_pipeline = |entry: &'static str| pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
+            label: Some(format!("vegetation candidate {entry}").into()),
+            layout: vec![compute_layout.clone()],
+            shader: compute_shader.clone(),
+            entry_point: Some(entry.into()),
+            ..default()
+        });
+        let cache_build = cache_pipeline("build_candidate_cache");
+        let cache_finish = cache_pipeline("finish_candidate_cache");
         let draw_descriptor = RenderPipelineDescriptor {
             label: Some("vegetation-v2 placement debug".into()),
             // The exact mesh-view layout is selected per camera by the pipeline specializer.
@@ -419,6 +490,8 @@ impl FromWorld for VegetationPipelines {
             schedule,
             generate,
             finalize,
+            cache_build,
+            cache_finish,
             draw_variants: Variants::new(
                 VegetationPipelineSpecializer {
                     view_layouts,
@@ -491,6 +564,11 @@ struct VegetationBuffers {
     compute_bind_group: BindGroup,
     draw_bind_group: BindGroup,
     uploaded_revision: u64,
+    generation_inputs: Option<GenerationInputs>,
+    last_generation: Option<GenerationKey>,
+    generation_serial: u64,
+    preparation_enabled: bool,
+    preparation_camera: Option<CameraGpu>,
     work_item_count: u32,
     maximum_candidate_count: u32,
     low_detail_capacities: [u32; 2],
@@ -505,6 +583,7 @@ impl FromWorld for VegetationBuffers {
         let compute_layout = pipeline_cache.get_bind_group_layout(&pipelines.compute_layout);
         let draw_layout = pipeline_cache.get_bind_group_layout(&pipelines.draw_layout);
         let render_device = world.resource::<RenderDevice>();
+        let candidate_cache = world.resource::<candidate_cache::CandidateCache>();
         let work_items = dummy_storage(render_device, "vegetation-v2 empty work items");
         let visible_work_items =
             dummy_storage(render_device, "vegetation-v2 empty visible work queue");
@@ -522,7 +601,7 @@ impl FromWorld for VegetationBuffers {
             label: Some("vegetation-v2 compact topology-bin instances"),
             size: u64::from(PROCEDURAL_INSTANCE_CAPACITY)
                 * size_of::<ProceduralInstanceGpu>() as u64,
-            usage: BufferUsages::STORAGE,
+            usage: BufferUsages::STORAGE | if cfg!(test) { BufferUsages::COPY_SRC } else { BufferUsages::empty() },
             mapped_at_creation: false,
         });
         let diagnostic_instances = render_device.create_buffer(&BufferDescriptor {
@@ -588,6 +667,9 @@ impl FromWorld for VegetationBuffers {
                 &debug_config,
                 &camera,
                 &gpu_telemetry,
+                &candidate_cache.entries,
+                &candidate_cache.acceptance_bits,
+                &candidate_cache.build_items,
             ],
         );
         let draw_bind_group = create_draw_bind_group(
@@ -598,6 +680,9 @@ impl FromWorld for VegetationBuffers {
             &species,
             &camera,
             &debug_config,
+            &world
+                .resource::<blade_preparation::BladePreparation>()
+                .arena,
         );
         Self {
             work_items,
@@ -624,6 +709,11 @@ impl FromWorld for VegetationBuffers {
             compute_bind_group,
             draw_bind_group,
             uploaded_revision: 0,
+            generation_inputs: None,
+            last_generation: None,
+            generation_serial: 0,
+            preparation_enabled: false,
+            preparation_camera: None,
             work_item_count: 0,
             maximum_candidate_count: 0,
             low_detail_capacities: [LOW_DETAIL_CAPACITY / 2; 2],
@@ -667,7 +757,7 @@ fn dummy_storage(render_device: &RenderDevice, label: &'static str) -> Buffer {
 fn create_compute_bind_group(
     render_device: &RenderDevice,
     layout: &BindGroupLayout,
-    buffers: [&Buffer; 11],
+    buffers: [&Buffer; 14],
 ) -> BindGroup {
     render_device.create_bind_group(
         Some("vegetation-v2 debug generation"),
@@ -684,10 +774,14 @@ fn create_compute_bind_group(
             buffers[8].as_entire_binding(),
             buffers[9].as_entire_binding(),
             buffers[10].as_entire_binding(),
+            buffers[11].as_entire_binding(),
+            buffers[12].as_entire_binding(),
+            buffers[13].as_entire_binding(),
         )),
     )
 }
 
+#[allow(clippy::too_many_arguments)] // One named buffer per shader binding.
 fn create_draw_bind_group(
     render_device: &RenderDevice,
     layout: &BindGroupLayout,
@@ -696,6 +790,7 @@ fn create_draw_bind_group(
     species: &Buffer,
     camera: &Buffer,
     debug_config: &Buffer,
+    prepared_arena: &Buffer,
 ) -> BindGroup {
     render_device.create_bind_group(
         Some("vegetation-v2 debug draw"),
@@ -706,6 +801,7 @@ fn create_draw_bind_group(
             species.as_entire_binding(),
             camera.as_entire_binding(),
             debug_config.as_entire_binding(),
+            prepared_arena.as_entire_binding(),
         )),
     )
 }
@@ -713,6 +809,7 @@ fn create_draw_bind_group(
 #[derive(Resource)]
 struct VegetationTelemetryStaging {
     buffer: Option<Buffer>,
+    #[cfg(not(target_os = "ios"))]
     frames_until_capture: u32,
 }
 
@@ -720,11 +817,13 @@ impl Default for VegetationTelemetryStaging {
     fn default() -> Self {
         Self {
             buffer: None,
+            #[cfg(not(target_os = "ios"))]
             frames_until_capture: 0,
         }
     }
 }
 
+#[cfg(not(target_os = "ios"))]
 fn prepare_telemetry_staging(
     render_device: Res<RenderDevice>,
     mut staging: ResMut<VegetationTelemetryStaging>,
@@ -745,6 +844,7 @@ fn prepare_telemetry_staging(
     staging.frames_until_capture = TELEMETRY_CAPTURE_INTERVAL_FRAMES;
 }
 
+#[cfg(not(target_os = "ios"))]
 fn begin_telemetry_readback(
     mut staging: ResMut<VegetationTelemetryStaging>,
     diagnostics: Res<VegetationDiagnostics>,
@@ -772,6 +872,8 @@ fn begin_telemetry_readback(
                         words[args_offset + bin * DRAW_INDEXED_ARGS_WORD_COUNT as usize + 1]
                     });
                     diagnostics.update(|snapshot| {
+                        snapshot.prepared_blades = words[11];
+                        snapshot.preparation_fallback_blades = words[12];
                         snapshot.scheduled_work_items = words[0];
                         snapshot.dispatched_candidate_lanes = words[10]
                             .saturating_mul(WORKGROUP_SIZE)
@@ -797,10 +899,6 @@ fn begin_telemetry_readback(
                             .zip([18_u32, 8, 18, 6])
                             .map(|(instances, vertices)| u64::from(instances) * u64::from(vertices))
                             .sum();
-                        snapshot.procedural_instance_capacity = PROCEDURAL_INSTANCE_CAPACITY;
-                        snapshot.procedural_instance_bytes =
-                            u64::from(PROCEDURAL_INSTANCE_CAPACITY)
-                                * size_of::<ProceduralInstanceGpu>() as u64;
                         snapshot.gpu_samples = snapshot.gpu_samples.saturating_add(1);
                     });
                 }
@@ -813,6 +911,8 @@ fn begin_telemetry_readback(
 fn prepare(
     scene: Option<Res<VegetationDebugScene>>,
     settings: Res<VegetationDebugSettings>,
+    blade_settings: Res<crate::VegetationBladePreparation>,
+    blade_preparation: Res<blade_preparation::BladePreparation>,
     lighting: Res<VegetationLighting>,
     wind: Res<VegetationWind>,
     sun: Res<VegetationSun>,
@@ -823,6 +923,7 @@ fn prepare(
     diagnostics: Res<VegetationDiagnostics>,
     views: Query<&ExtractedView, With<VegetationDebugView>>,
     mut buffers: ResMut<VegetationBuffers>,
+    mut candidate_cache: ResMut<candidate_cache::CandidateCache>,
 ) {
     let Some(scene) = scene else {
         buffers.active = false;
@@ -833,7 +934,9 @@ fn prepare(
         let schedule_layout = pipeline_cache.get_bind_group_layout(&pipelines.schedule_layout);
         let compute_layout = pipeline_cache.get_bind_group_layout(&pipelines.compute_layout);
         let draw_layout = pipeline_cache.get_bind_group_layout(&pipelines.draw_layout);
-        let mut replaced_buffers = 0_u64;
+        let position = views.iter().next().map_or(Vec3::ZERO, |view| view.world_from_view.translation());
+        let cache_replaced = candidate_cache.prepare(&render_device, &render_queue, &packed.work_items, position);
+        let mut replaced_buffers = u64::from(cache_replaced);
         let mut uploaded_bytes = 0_u64;
 
         let work_items = bytemuck::cast_slice(&packed.work_items);
@@ -947,6 +1050,9 @@ fn prepare(
                     &buffers.debug_config,
                     &buffers.camera,
                     &buffers.gpu_telemetry,
+                    &candidate_cache.entries,
+                    &candidate_cache.acceptance_bits,
+                    &candidate_cache.build_items,
                 ],
             );
             buffers.draw_bind_group = create_draw_bind_group(
@@ -957,6 +1063,7 @@ fn prepare(
                 &buffers.species,
                 &buffers.camera,
                 &buffers.debug_config,
+                &blade_preparation.arena,
             );
         }
         buffers.work_item_count = packed.work_items.len() as u32;
@@ -977,6 +1084,10 @@ fn prepare(
                 + buffers.surfaces_capacity
                 + buffers.species_capacity;
             snapshot.source_pages = scene.scene().pages.len() as u32;
+            // CPU allocation metadata is available even when iOS GPU readback is disabled.
+            snapshot.procedural_instance_capacity = PROCEDURAL_INSTANCE_CAPACITY;
+            snapshot.procedural_instance_bytes =
+                u64::from(PROCEDURAL_INSTANCE_CAPACITY) * size_of::<ProceduralInstanceGpu>() as u64;
             snapshot.source_work_items = buffers.work_item_count;
             snapshot.maximum_candidates_per_item = buffers.maximum_candidate_count;
             snapshot.topology_instance_capacities = [
@@ -995,67 +1106,85 @@ fn prepare(
     let clip_from_world = view
         .clip_from_world
         .unwrap_or_else(|| view.clip_from_view * view.world_from_view.to_matrix().inverse());
-    render_queue.write_buffer(
-        &buffers.camera,
-        0,
-        bytemuck::bytes_of(&CameraGpu {
-            clip_from_world: clip_from_world.to_cols_array(),
-            camera_position: view
-                .world_from_view
-                .translation()
-                .extend(view.viewport.w.max(1) as f32)
-                .to_array(),
-            projection: [
-                view.clip_from_view.y_axis.y.abs() * view.viewport.w.max(1) as f32 * 0.5,
-                view.viewport.z.max(1) as f32,
-                view.viewport.w.max(1) as f32,
-                0.0,
-            ],
-            sun_direction: sun
-                .direction_to_light
-                .extend(if sun.active { 1.0 } else { 0.0 })
-                .to_array(),
-            sun_radiance: sun.radiance.extend(0.0).to_array(),
-            ambient_radiance: sun.ambient_radiance.extend(0.0).to_array(),
-            lighting: [
-                lighting.diffuse_strength.max(0.0),
-                lighting.specular_strength.max(0.0),
-                lighting.transmission_strength.max(0.0),
-                lighting.received_shadow_strength.clamp(0.0, 1.0),
-            ],
-            wind: {
-                let direction = wind.direction.try_normalize().unwrap_or(Vec2::X);
-                [
-                    direction.x,
-                    direction.y,
-                    if wind.enabled {
-                        wind.strength.max(0.0)
-                    } else {
-                        0.0
-                    },
-                    wind.phase_seconds(),
-                ]
+    let camera_gpu = CameraGpu {
+        clip_from_world: clip_from_world.to_cols_array(),
+        camera_position: view
+            .world_from_view
+            .translation()
+            .extend(view.viewport.w.max(1) as f32)
+            .to_array(),
+        projection: [
+            view.clip_from_view.y_axis.y.abs() * view.viewport.w.max(1) as f32 * 0.5,
+            view.viewport.z.max(1) as f32,
+            view.viewport.w.max(1) as f32,
+            if settings.far_width_compensation {
+                1.0
+            } else {
+                0.0
             },
-            wind_shape: [
-                wind.spatial_frequency.max(0.001),
-                wind.speed.max(0.0),
-                wind.gustiness.clamp(0.0, 1.0),
-                wind.flutter.max(0.0),
-            ],
-        }),
-    );
-    render_queue.write_buffer(
-        &buffers.debug_config,
-        0,
-        bytemuck::bytes_of(&DebugConfigGpu {
-            values: [
-                settings.mode as u32,
-                settings.density_mode as u32,
-                settings.lighting_mode as u32,
-                buffers.low_detail_capacities[0],
-            ],
-        }),
-    );
+        ],
+        sun_direction: sun
+            .direction_to_light
+            .extend(if sun.active { 1.0 } else { 0.0 })
+            .to_array(),
+        sun_radiance: sun.radiance.extend(0.0).to_array(),
+        ambient_radiance: sun.ambient_radiance.extend(0.0).to_array(),
+        lighting: [
+            lighting.diffuse_strength.max(0.0),
+            lighting.specular_strength.max(0.0),
+            lighting.transmission_strength.max(0.0),
+            lighting.received_shadow_strength.clamp(0.0, 1.0),
+        ],
+        wind: {
+            let direction = wind.direction.try_normalize().unwrap_or(Vec2::X);
+            [
+                direction.x,
+                direction.y,
+                if wind.enabled {
+                    wind.strength.max(0.0)
+                } else {
+                    0.0
+                },
+                wind.phase_seconds(),
+            ]
+        },
+        wind_shape: [
+            wind.spatial_frequency.max(0.001),
+            wind.speed.max(0.0),
+            wind.gustiness.clamp(0.0, 1.0),
+            wind.flutter.max(0.0),
+        ],
+    };
+    buffers.preparation_enabled = blade_settings.enabled
+        && settings.mode as u32 == 0
+        && settings.lighting_mode as u32 != 3
+        && matches!(
+            settings.profile_mode,
+            VegetationProfileMode::Full | VegetationProfileMode::DrawFrozen
+        )
+        && blade_preparation.available(&pipeline_cache);
+    buffers.preparation_camera = Some(camera_gpu);
+    let config_gpu = DebugConfigGpu {
+        values: [
+            settings.mode as u32,
+            settings.density_mode as u32,
+            settings.lighting_mode as u32,
+            buffers.low_detail_capacities[0],
+        ],
+        workload: [
+            buffers.work_item_count,
+            u32::from(settings.gpu_counters_enabled),
+            u32::from(buffers.preparation_enabled),
+            u32::from(settings.early_rejection) | (u32::from(settings.candidate_cache_enabled) << 1),
+        ],
+    };
+    render_queue.write_buffer(&buffers.camera, 0, bytemuck::bytes_of(&camera_gpu));
+    render_queue.write_buffer(&buffers.debug_config, 0, bytemuck::bytes_of(&config_gpu));
+    buffers.generation_inputs = Some(GenerationInputs::new(
+        scene.revision(),
+        camera_gpu,
+        config_gpu,
+    ));
     buffers.active = buffers.work_item_count > 0 && buffers.maximum_candidate_count > 0;
 }
 
@@ -1122,6 +1251,9 @@ struct PackedScene {
     maximum_candidate_count: u32,
     low_detail_capacities: [u32; 2],
 }
+
+#[cfg(test)]
+mod placement_gpu_tests;
 
 fn maximum_topology_densities(scene: &vegetation::VegetationScene) -> [f32; 2] {
     let mut maximum_density = [0.0_f32; 2];
@@ -1629,14 +1761,46 @@ fn generate(
     mut render_context: RenderContext,
     pipeline_cache: Res<PipelineCache>,
     pipelines: Res<VegetationPipelines>,
-    buffers: Res<VegetationBuffers>,
-    telemetry_staging: Res<VegetationTelemetryStaging>,
+    mut buffers: ResMut<VegetationBuffers>,
     settings: Res<VegetationDebugSettings>,
+    candidate_cache: Res<candidate_cache::CandidateCache>,
+    vegetation_diagnostics: Res<VegetationDiagnostics>,
 ) {
-    if settings.profile_mode == VegetationProfileMode::DrawFrozen {
-        copy_telemetry_to_staging(&mut render_context, &buffers, &telemetry_staging);
+    // Isolation modes deliberately keep executing their selected workload. Returning to full
+    // rendering must also rebuild after ScheduleOnly cleared the draw arguments.
+    if settings.profile_mode != VegetationProfileMode::Full {
+        buffers.last_generation = None;
+    }
+    if settings.profile_mode == VegetationProfileMode::Disabled {
         return;
     }
+    if settings.profile_mode == VegetationProfileMode::DrawFrozen {
+        return;
+    }
+    let ready_pipelines = (
+        pipeline_cache.get_compute_pipeline(pipelines.schedule),
+        pipeline_cache.get_compute_pipeline(pipelines.generate),
+        pipeline_cache.get_compute_pipeline(pipelines.finalize),
+    );
+    let generation_key = match ready_pipelines {
+        (Some(schedule), Some(generate), Some(finalize)) if buffers.active => {
+            buffers.generation_inputs.map(|inputs| GenerationKey {
+                inputs,
+                cache_serial: candidate_cache.serial,
+                pipelines: [schedule.id(), generate.id(), finalize.id()],
+            })
+        }
+        _ => None,
+    };
+    if settings.profile_mode == VegetationProfileMode::Full
+        && generation_key.is_some()
+        && buffers.last_generation == generation_key
+    {
+        vegetation_diagnostics.update(|snapshot| snapshot.generation_reuses += 1);
+        return;
+    }
+    buffers.last_generation = None;
+    buffers.generation_serial = buffers.generation_serial.wrapping_add(1);
     render_context
         .command_encoder()
         .clear_buffer(&buffers.args, 0, None);
@@ -1647,15 +1811,11 @@ fn generate(
         .command_encoder()
         .clear_buffer(&buffers.gpu_telemetry, 0, None);
     if !buffers.active {
-        copy_telemetry_to_staging(&mut render_context, &buffers, &telemetry_staging);
         return;
     }
-    let (Some(schedule_pipeline), Some(generate_pipeline), Some(finalize_pipeline)) = (
-        pipeline_cache.get_compute_pipeline(pipelines.schedule),
-        pipeline_cache.get_compute_pipeline(pipelines.generate),
-        pipeline_cache.get_compute_pipeline(pipelines.finalize),
-    ) else {
-        copy_telemetry_to_staging(&mut render_context, &buffers, &telemetry_staging);
+    let (Some(schedule_pipeline), Some(generate_pipeline), Some(finalize_pipeline)) =
+        ready_pipelines
+    else {
         return;
     };
     let diagnostics = render_context.diagnostic_recorder();
@@ -1674,7 +1834,6 @@ fn generate(
     schedule_span.end(&mut schedule_pass);
     drop(schedule_pass);
     if settings.profile_mode == VegetationProfileMode::ScheduleOnly {
-        copy_telemetry_to_staging(&mut render_context, &buffers, &telemetry_staging);
         return;
     }
 
@@ -1694,7 +1853,18 @@ fn generate(
     pass.dispatch_workgroups(1, 1, 1);
     finalize_span.end(&mut pass);
     drop(pass);
-    copy_telemetry_to_staging(&mut render_context, &buffers, &telemetry_staging);
+    vegetation_diagnostics.update(|snapshot| snapshot.generation_dispatches += 1);
+    if settings.profile_mode == VegetationProfileMode::Full {
+        buffers.last_generation = generation_key;
+    }
+}
+
+fn finish_telemetry(
+    mut context: RenderContext,
+    buffers: Res<VegetationBuffers>,
+    staging: Res<VegetationTelemetryStaging>,
+) {
+    copy_telemetry_to_staging(&mut context, &buffers, &staging);
 }
 
 fn copy_telemetry_to_staging(
@@ -1747,7 +1917,9 @@ fn queue(
         if !buffers.active
             || matches!(
                 settings.profile_mode,
-                VegetationProfileMode::ComputeOnly | VegetationProfileMode::ScheduleOnly
+                VegetationProfileMode::ComputeOnly
+                    | VegetationProfileMode::ScheduleOnly
+                    | VegetationProfileMode::Disabled
             )
         {
             continue;
@@ -1789,7 +1961,7 @@ type DrawVegetationDebug = (
 struct DrawVegetationDebugIndirect;
 
 impl<P: PhaseItem> RenderCommand<P> for DrawVegetationDebugIndirect {
-    type Param = (SRes<VegetationBuffers>, SRes<DiagnosticsRecorder>);
+    type Param = (SRes<VegetationBuffers>, Option<SRes<DiagnosticsRecorder>>);
     type ViewQuery = ();
     type ItemQuery = ();
 
@@ -1801,6 +1973,7 @@ impl<P: PhaseItem> RenderCommand<P> for DrawVegetationDebugIndirect {
         pass: &mut TrackedRenderPass<'w>,
     ) -> RenderCommandResult {
         let buffers = buffers.into_inner();
+        let diagnostics = diagnostics.as_deref();
         let draw_span = diagnostics.pass_span(pass, "vegetation_v2_draw");
         pass.set_bind_group(1, &buffers.draw_bind_group, &[]);
         pass.set_index_buffer(buffers.topology_indices.slice(..), IndexFormat::Uint16);
@@ -1820,6 +1993,172 @@ mod tests {
     use super::*;
 
     #[test]
+    fn placement_cache_ignores_animation_phase_but_tracks_generation_inputs() {
+        let camera = CameraGpu::zeroed();
+        let config = DebugConfigGpu::zeroed();
+        let baseline = GenerationInputs::new(1, camera, config);
+        let mut animated = camera;
+        animated.wind[3] = 12.5;
+        assert!(baseline == GenerationInputs::new(1, animated, config));
+
+        let mut moved = camera;
+        moved.clip_from_world[12] = 0.01;
+        assert!(baseline != GenerationInputs::new(1, moved, config));
+        moved = camera;
+        moved.camera_position[0] = 0.01;
+        assert!(baseline != GenerationInputs::new(1, moved, config));
+        let mut resized = camera;
+        resized.projection[0] = 720.0;
+        assert!(baseline != GenerationInputs::new(1, resized, config));
+        let mut stronger_wind = camera;
+        stronger_wind.wind[2] = 0.5;
+        assert!(baseline != GenerationInputs::new(1, stronger_wind, config));
+        assert!(baseline != GenerationInputs::new(2, camera, config));
+        let mut changed_config = config;
+        changed_config.values[1] = 1;
+        assert!(baseline != GenerationInputs::new(1, camera, changed_config));
+        changed_config = config;
+        changed_config.workload[1] = 1;
+        assert!(baseline != GenerationInputs::new(1, camera, changed_config));
+
+        let key = GenerationKey {
+            cache_serial: 0,
+            inputs: baseline,
+            pipelines: [
+                ComputePipelineId::new(),
+                ComputePipelineId::new(),
+                ComputePipelineId::new(),
+            ],
+        };
+        let mut recompiled = key;
+        recompiled.pipelines[1] = ComputePipelineId::new();
+        assert!(key != recompiled);
+    }
+
+    /// Exercises the real scheduler against a retained allocation full of valid, visible old
+    /// records. The old arrayLength guard schedules all 64 records after the live set shrinks.
+    #[test]
+    #[ignore = "requires a native GPU; run explicitly when changing scheduler bounds"]
+    fn gpu_scheduler_ignores_retired_records_and_keeps_dispatch_without_telemetry() {
+        use bevy::render::{
+            render_resource::{
+                BindGroupDescriptor, BindGroupEntry, CommandEncoderDescriptor, MapMode, PollType,
+                RawComputePipelineDescriptor, ShaderModuleDescriptor, ShaderSource,
+            },
+            renderer::initialize_renderer,
+            settings::{Backends, WgpuSettings},
+        };
+        let resources = bevy::tasks::block_on(initialize_renderer(
+            Backends::PRIMARY,
+            None,
+            &WgpuSettings::default(),
+        ));
+        let device = resources.0.wgpu_device();
+        let queue = &resources.1;
+        let shader = device.create_shader_module(ShaderModuleDescriptor {
+            label: Some("scheduler regression"),
+            source: ShaderSource::Wgsl(
+                include_str!("../../../assets/shaders/vegetation_schedule_compute.wgsl").into(),
+            ),
+        });
+        let pipeline = device.create_compute_pipeline(&RawComputePipelineDescriptor {
+            label: None,
+            layout: None,
+            module: &shader,
+            entry_point: Some("schedule"),
+            compilation_options: default(),
+            cache: None,
+        });
+        let layout = pipeline.get_bind_group_layout(0);
+        let mut item = pack_scene(&vegetation::fixtures::reference_scene()).work_items[0];
+        item.page = [-2.0, -2.0, 4.0, 1.0];
+        item.layout[1] = 64;
+        let records = [item; 64];
+        let work = resources.0.create_buffer_with_data(&BufferInitDescriptor {
+            label: None,
+            contents: bytemuck::cast_slice(&records),
+            usage: BufferUsages::STORAGE,
+        });
+        let camera = resources.0.create_buffer_with_data(&BufferInitDescriptor {
+            label: None,
+            contents: bytemuck::bytes_of(&CameraGpu::zeroed()),
+            usage: BufferUsages::UNIFORM,
+        });
+        for (live_count, counters) in [(64u32, 1u32), (5, 1), (5, 0), (0, 1)] {
+            let config = resources.0.create_buffer_with_data(&BufferInitDescriptor {
+                label: None,
+                contents: bytemuck::bytes_of(&DebugConfigGpu {
+                    values: [0, 1, 0, 0],
+                    workload: [live_count, counters, 0, 0],
+                }),
+                usage: BufferUsages::UNIFORM,
+            });
+            let storage = |size| {
+                resources.0.create_buffer(&BufferDescriptor {
+                    label: None,
+                    size,
+                    usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
+                    mapped_at_creation: false,
+                })
+            };
+            let visible = storage(64 * 4);
+            let dispatch = storage(12);
+            let telemetry = storage(GPU_TELEMETRY_SIZE);
+            let buffers = [&work, &visible, &dispatch, &camera, &telemetry, &config];
+            let entries = buffers
+                .iter()
+                .enumerate()
+                .map(|(binding, buffer)| BindGroupEntry {
+                    binding: binding as u32,
+                    resource: buffer.as_entire_binding(),
+                })
+                .collect::<Vec<_>>();
+            let bind_group = device.create_bind_group(&BindGroupDescriptor {
+                label: None,
+                layout: &layout,
+                entries: &entries,
+            });
+            let readback = resources.0.create_buffer(&BufferDescriptor {
+                label: None,
+                size: 12 + GPU_TELEMETRY_SIZE,
+                usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor::default());
+            {
+                let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+                pass.set_pipeline(&pipeline);
+                pass.set_bind_group(0, &bind_group, &[]);
+                pass.dispatch_workgroups(1, 1, 1);
+            }
+            encoder.copy_buffer_to_buffer(&dispatch, 0, &readback, 0, 12);
+            encoder.copy_buffer_to_buffer(&telemetry, 0, &readback, 12, GPU_TELEMETRY_SIZE);
+            queue.submit([encoder.finish()]);
+            let (sender, receiver) = std::sync::mpsc::channel();
+            readback
+                .slice(..)
+                .map_async(MapMode::Read, move |result| sender.send(result).unwrap());
+            device.poll(PollType::wait_indefinitely()).unwrap();
+            receiver.recv().unwrap().unwrap();
+            {
+                let data = readback.slice(..).get_mapped_range();
+                let words: &[u32] = bytemuck::cast_slice(&data);
+                assert_eq!(
+                    words[1], live_count,
+                    "retired work must not enter the indirect dispatch"
+                );
+                assert_eq!(
+                    words[3],
+                    live_count * counters,
+                    "diagnostic atomics must be optional"
+                );
+                assert_eq!(words[0], u32::from(live_count > 0));
+            }
+            readback.unmap();
+        }
+    }
+
+    #[test]
     fn gpu_contracts_have_expected_alignment() {
         assert_eq!(size_of::<WorkItemGpu>(), 208);
         assert_eq!(size_of::<SpeciesChoiceGpu>(), 80);
@@ -1828,7 +2167,7 @@ mod tests {
         assert_eq!(size_of::<ProceduralInstanceGpu>(), 32);
         assert_eq!(size_of::<DebugInstanceGpu>(), 64);
         assert_eq!(size_of::<CameraGpu>(), 192);
-        assert_eq!(size_of::<DebugConfigGpu>(), 16);
+        assert_eq!(size_of::<DebugConfigGpu>(), 32);
         assert_eq!(GPU_TELEMETRY_SIZE, 64);
         assert_eq!(DRAW_ARGS_SIZE, 80);
         assert_eq!(TELEMETRY_READBACK_SIZE, 144);
@@ -1981,14 +2320,29 @@ mod tests {
             .unwrap();
         }
 
+        let preparation = include_str!("../../../assets/shaders/vegetation_prepare_blades.wgsl");
+        let preparation = format!(
+            "{}\n{}",
+            include_str!("../../../assets/shaders/vegetation_blade.wgsl"),
+            &preparation[preparation.find("struct DrawArgs").unwrap()..]
+        );
+        let module = naga::front::wgsl::parse_str(&preparation).unwrap();
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .unwrap();
+
         // Naga's standalone WGSL parser does not run Bevy's #import preprocessor. Validate the
         // complete draw shader with only the imported CSM adapter replaced by an identity stub.
         let draw = include_str!("../../../assets/shaders/vegetation_debug_draw.wgsl");
-        let declarations = draw.find("struct ProceduralInstance").unwrap();
+        let declarations = draw.find("struct VertexOutput").unwrap();
         let shadow_adapter = draw.find("fn directional_shadow_visibility").unwrap();
         let post_adapter = draw.find("fn radiance_tint").unwrap();
         let sanitized = format!(
-            "{}fn directional_shadow_visibility(_input: VertexOutput) -> f32 {{ return 1.0; }}\n{}",
+            "{}\n{}fn directional_shadow_visibility(_input: VertexOutput) -> f32 {{ return 1.0; }}\n{}",
+            include_str!("../../../assets/shaders/vegetation_blade.wgsl"),
             &draw[declarations..shadow_adapter],
             &draw[post_adapter..],
         )
@@ -2027,16 +2381,20 @@ mod tests {
     fn lod_uses_the_full_authored_blade_envelope() {
         let schedule = include_str!("../../../assets/shaders/vegetation_schedule_compute.wgsl");
         let compute = include_str!("../../../assets/shaders/vegetation_debug_compute.wgsl");
-        let draw = include_str!("../../../assets/shaders/vegetation_debug_draw.wgsl");
+        let draw = concat!(
+            include_str!("../../../assets/shaders/vegetation_debug_draw.wgsl"),
+            include_str!("../../../assets/shaders/vegetation_blade.wgsl")
+        );
 
         assert!(schedule.contains("fn maximum_projected_extent("));
         assert!(compute.contains("fn projected_blade_extent_pixels("));
         assert!(compute.contains("fn budgeted_projected_blade_extent_pixels("));
-        assert!(draw.contains("fn projected_blade_extent_pixels("));
-        assert!(draw.contains("fn budgeted_projected_blade_extent_pixels("));
+        assert!(!draw.contains("fn projected_blade_extent_pixels("));
+        assert!(!draw.contains("fn budgeted_projected_blade_extent_pixels("));
+        assert!(compute.contains("evaluation.lod_morph"));
+        assert!(draw.contains("let lod_morph = f32((instance.geometry.y"));
         assert!(compute.contains("let maximum_reach = bitcast<f32>(choice.metadata.z)"));
         assert!(compute.contains("maximum_height * camera.wind.z * 1.65"));
-        assert!(draw.contains("let reach = profile.shape_secondary.w;"));
         assert!(compute.contains("fn generated_candidate_height("));
         assert!(compute.contains("fn candidate_topology_class("));
         assert!(compute.contains("candidate.seed & 0x00ffffffu"));
@@ -2046,20 +2404,29 @@ mod tests {
         assert!(draw.contains("let source_height_coordinate = mix("));
         assert!(draw.contains("let height_exponent = exp2(-2.0 * profile.height_packing.x);"));
         assert!(draw.contains("blade_count = select(1u, 2u, height <= profile.height_packing.y);"));
-        assert!(draw.contains("let high_radius = select("));
         assert!(schedule.contains("fn maximum_projected_population_spacing("));
         assert!(compute.contains("fn projected_population_spacing_pixels("));
         assert!(compute.contains("fn population_lod_density("));
         assert!(compute.contains("fn balanced_population_lod_density("));
+        assert!(compute.contains("fn mobile_population_lod_density("));
+        assert!(compute.contains("MOBILE_POPULATION_LOD_BIT"));
+        assert!(compute.contains("FORCE_LOW_TOPOLOGY_BIT"));
         assert!(compute.contains("fn population_lod_retention_limit("));
         assert!(compute.contains("debug_config.values.y == DENSITY_MODE_BALANCED"));
         assert!(schedule.contains("debug_config.values.y != 0u"));
         assert!(draw.contains("let population_density = f32(instance.geometry.w >> 24u) / 255.0;"));
         assert!(draw.contains("let density_width = select("));
+        assert!(draw.contains("let authored_half_width = mix("));
+        assert!(draw.contains("let projected_authored_half_width = authored_half_width"));
+        assert!(draw.contains("FAR_WIDTH_TARGET_HALF_PIXELS"));
+        assert!(draw.contains("FAR_WIDTH_MAXIMUM_SCALE"));
+        assert!(draw.contains("LOW_LOD_COVERAGE_WIDTH_EXPONENT"));
+        assert!(draw.contains("let low_lod_coverage_scale = blade.topology.z;"));
+        assert!(draw.contains("half_width * far_width_scale * taper"));
         assert!(draw.contains("let half_band = BALANCED_DENSITY_FADE_BAND * 0.5;"));
         assert!(!draw.contains("let density_scale = select("));
         assert!(compute.contains("let staggered_high_radius = bounded_high_radius * mix("));
-        assert!(draw.contains("let staggered_high_radius = bounded_high_radius * mix("));
+        assert!(!draw.contains("let staggered_high_radius = bounded_high_radius * mix("));
         assert!(draw.contains("let local_ribbon_side = normalize3_or("));
         assert!(draw.contains("let signed_alignment = dot("));
         assert!(draw.contains("let opening_tangent = min("));
@@ -2101,13 +2468,18 @@ mod tests {
         assert!(draw.contains("let upper_ribbon = smoothstep("));
         assert!(draw.contains("let far_highlight_weight = mix("));
         assert!(draw.contains("debug_config.values.z == LIGHTING_MODE_LEGACY"));
+        assert!(draw.contains("debug_config.values.z == LIGHTING_MODE_UNLIT_DIAGNOSTIC"));
+        assert!(draw.contains("debug_config.values.z == LIGHTING_MODE_VERTEX_ONLY_DIAGNOSTIC"));
     }
 
     #[test]
     fn strong_wind_deforms_one_shared_curve_and_expands_visibility_bounds() {
         let schedule = include_str!("../../../assets/shaders/vegetation_schedule_compute.wgsl");
         let compute = include_str!("../../../assets/shaders/vegetation_debug_compute.wgsl");
-        let draw = include_str!("../../../assets/shaders/vegetation_debug_draw.wgsl");
+        let draw = concat!(
+            include_str!("../../../assets/shaders/vegetation_debug_draw.wgsl"),
+            include_str!("../../../assets/shaders/vegetation_blade.wgsl")
+        );
 
         assert!(schedule.contains("item.bounds.x * camera.wind.z * 1.65"));
         assert!(compute.contains("maximum_height * camera.wind.z * 1.65"));
@@ -2116,9 +2488,11 @@ mod tests {
         assert!(draw.contains("1.0 - smoothstep(24.0, 72.0, camera_distance)"));
         assert!(draw.contains("let mixed_phase = mix(clump_phase, blade_phase, 0.72);"));
         assert!(draw.contains("let forward_phase = blade_wind_phase + t * 3.20;"));
-        assert!(draw.contains("p1 += coherent_push * 0.08;"));
-        assert!(draw.contains("p2 += coherent_push * 0.50"));
-        assert!(draw.contains("p3 += coherent_push * 0.90"));
+        assert!(draw.contains("p1 += coherent_push * 0.06;"));
+        assert!(draw.contains("p2 += coherent_push * 0.58"));
+        assert!(draw.contains("p3 += coherent_push + bob_offset"));
+        assert!(draw.contains("bob * 0.072"));
+        assert!(draw.contains("sin(side_phase) * 0.76"));
     }
 
     #[test]

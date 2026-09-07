@@ -1511,6 +1511,15 @@ fn draw_preview_controls(
                     }
                 });
             ui.end_row();
+            ui.label("Far grass coverage");
+            ui.checkbox(
+                &mut settings.far_width_compensation,
+                "Width compensation",
+            )
+            .on_hover_text(
+                "Widens retained low-LOD and distant subpixel ribbons; authored taper and LOD fade-outs remain intact",
+            );
+            ui.end_row();
         });
     egui::CollapsingHeader::new("Environment lighting preview")
         .default_open(false)
@@ -1523,6 +1532,8 @@ fn draw_preview_controls(
                         for mode in [
                             VegetationLightingMode::RoundedGloss,
                             VegetationLightingMode::Legacy,
+                            VegetationLightingMode::UnlitDiagnostic,
+                            VegetationLightingMode::VertexOnlyDiagnostic,
                         ] {
                             ui.selectable_value(&mut settings.lighting_mode, mode, mode.label());
                         }

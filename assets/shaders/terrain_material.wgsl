@@ -1,3 +1,7 @@
+#import "shaders/terrain_stochastic.wgsl"::{
+    quarter_turn, stochastic_vertex_turn, stochastic_vertex_offset,
+}
+
 #import bevy_pbr::{
     decal::clustered::apply_decals,
     forward_io::{FragmentOutput, VertexOutput},
@@ -19,6 +23,8 @@ struct TerrainMaterialSettings {
     roughness_ranges: vec4<f32>,
     macro_scales: vec4<f32>,
     macro_settings: vec4<f32>,
+    cache_origins: vec4<f32>,
+    cache_size: vec4<u32>,
 }
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> settings: TerrainMaterialSettings;
@@ -28,12 +34,7 @@ struct TerrainMaterialSettings {
 @group(#{MATERIAL_BIND_GROUP}) @binding(4) var surface_sampler: sampler;
 @group(#{MATERIAL_BIND_GROUP}) @binding(5) var normal_material_array: texture_2d_array<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(6) var macro_variation_texture: texture_2d<f32>;
-
-fn hash_2d(point: vec2<f32>) -> f32 {
-    var value = fract(vec3(point.x, point.y, point.x) * 0.1031);
-    value += dot(value, value.yzx + vec3(33.33));
-    return fract((value.x + value.y) * value.z);
-}
+@group(#{MATERIAL_BIND_GROUP}) @binding(7) var<storage, read> stochastic_cache: array<vec4<f32>>;
 
 struct StochasticUvPlan {
     uv_0: vec2<f32>,
@@ -48,36 +49,20 @@ struct StochasticUvPlan {
     weights: vec3<f32>,
 }
 
-fn quarter_turn(value: vec2<f32>, turn: f32) -> vec2<f32> {
-    if turn < 0.5 {
-        return value;
-    }
-    if turn < 1.5 {
-        return vec2(-value.y, value.x);
-    }
-    if turn < 2.5 {
-        return -value;
-    }
-    return vec2(value.y, -value.x);
-}
-
-fn stochastic_vertex_turn(vertex: vec2<f32>, material_layer: i32) -> f32 {
-    let layer_seed = f32(material_layer) * 19.19;
-    return floor(hash_2d(vertex + vec2(layer_seed, layer_seed * 0.37)) * 4.0);
-}
-
-fn stochastic_vertex_offset(vertex: vec2<f32>, material_layer: i32) -> vec2<f32> {
-    let layer_seed = f32(material_layer) * 23.71;
-    let seeded = vertex + vec2(layer_seed, -layer_seed * 0.41);
-    return vec2(
-        hash_2d(seeded + vec2(17.0, 3.0)),
-        hash_2d(seeded + vec2(5.0, 29.0)),
-    ) * 31.0;
+fn stochastic_transform(vertex: vec2<f32>, layer: i32, slot: i32) -> vec3<f32> {
+#ifdef TERRAIN_STOCHASTIC_CACHED
+    let origin = select(settings.cache_origins.xy, settings.cache_origins.zw, slot == 1);
+    let index = vec2<u32>(vertex - origin);
+    return stochastic_cache[index.x + settings.cache_size.x * (index.y + u32(slot) * settings.cache_size.y)].xyz;
+#else
+    return vec3(stochastic_vertex_offset(vertex, layer), stochastic_vertex_turn(vertex, layer));
+#endif
 }
 
 fn make_stochastic_uv_plan(
     uv: vec2<f32>,
     material_layer: i32,
+    slot: i32,
     uv_dx: vec2<f32>,
     uv_dy: vec2<f32>,
 ) -> StochasticUvPlan {
@@ -105,13 +90,16 @@ fn make_stochastic_uv_plan(
     let squared = max(raw_weights * raw_weights, vec3(0.0));
     let shaped = squared * squared;
     let weights = shaped / max(shaped.x + shaped.y + shaped.z, 0.000001);
-    let turn_0 = stochastic_vertex_turn(vertex_0, material_layer);
-    let turn_1 = stochastic_vertex_turn(vertex_1, material_layer);
-    let turn_2 = stochastic_vertex_turn(vertex_2, material_layer);
+    let transform_0 = stochastic_transform(vertex_0, material_layer, slot);
+    let turn_0 = transform_0.z;
+    let transform_1 = stochastic_transform(vertex_1, material_layer, slot);
+    let turn_1 = transform_1.z;
+    let transform_2 = stochastic_transform(vertex_2, material_layer, slot);
+    let turn_2 = transform_2.z;
     var plan: StochasticUvPlan;
-    plan.uv_0 = quarter_turn(uv, turn_0) + stochastic_vertex_offset(vertex_0, material_layer);
-    plan.uv_1 = quarter_turn(uv, turn_1) + stochastic_vertex_offset(vertex_1, material_layer);
-    plan.uv_2 = quarter_turn(uv, turn_2) + stochastic_vertex_offset(vertex_2, material_layer);
+    plan.uv_0 = quarter_turn(uv, turn_0) + transform_0.xy;
+    plan.uv_1 = quarter_turn(uv, turn_1) + transform_1.xy;
+    plan.uv_2 = quarter_turn(uv, turn_2) + transform_2.xy;
     plan.dx_0 = quarter_turn(uv_dx, turn_0);
     plan.dx_1 = quarter_turn(uv_dx, turn_1);
     plan.dx_2 = quarter_turn(uv_dx, turn_2);
@@ -172,6 +160,7 @@ fn sample_surface(
     world_xz: vec2<f32>,
     tile_size: f32,
     layer: i32,
+    slot: i32,
     normal_y_sign: f32,
     normal_strength: f32,
     roughness_min: f32,
@@ -181,13 +170,23 @@ fn sample_surface(
     let uv = world_xz / max(tile_size, 0.001);
     let uv_dx = dpdx(uv);
     let uv_dy = dpdy(uv);
+#ifdef TERRAIN_PREPARED
+    // Offline bake uses a periodic triangular lattice, including its wrap edges.
+    let period = settings.surface_layers.w;
+    let prepared_uv = vec2(uv.x + uv.y * 0.5773502692, uv.y * 1.1547005384) / period;
+    let base = sample_base_color_plain(prepared_uv, layer, dpdx(prepared_uv), dpdy(prepared_uv));
+#else
     var base = sample_base_color_plain(uv, layer, uv_dx, uv_dy);
     if anti_tiling {
         base = sample_base_color_stochastic(
-            make_stochastic_uv_plan(uv, layer, uv_dx, uv_dy),
+            make_stochastic_uv_plan(uv, layer, slot, uv_dx, uv_dy),
             layer,
         );
     }
+#endif
+    var result: SurfaceSample;
+    result.base_color = base;
+#ifndef TERRAIN_SURFACE_UNLIT
     let packed = textureSampleGrad(
         normal_material_array,
         surface_sampler,
@@ -197,8 +196,6 @@ fn sample_surface(
         uv_dy,
     );
     let decoded = decode_octahedral_normal(packed.rg, normal_y_sign);
-    var result: SurfaceSample;
-    result.base_color = base;
     result.tangent_normal = normalize(vec3(
         decoded.xy * clamp(normal_strength, 0.0, 1.0),
         max(decoded.z, 0.001),
@@ -209,6 +206,7 @@ fn sample_surface(
         clamp(roughness_max, roughness_min, 1.0),
         packed.a,
     );
+#endif
     return result;
 }
 
@@ -251,8 +249,28 @@ fn fragment(
     in: VertexOutput,
     @builtin(front_facing) is_front: bool,
 ) -> FragmentOutput {
+    var out: FragmentOutput;
+#ifdef TERRAIN_FLAT
+    out.color = vec4(0.05, 0.12, 0.025, 1.0);
+#else ifdef TERRAIN_SINGLE_TEXTURE
+    // Same mesh, texture array, mip chain and sampler; one layer, no material blending.
+    let uv = in.world_position.xz / max(settings.tile_sizes.x, 0.001);
+    out.color = vec4(sample_base_color_plain(
+        uv, i32(settings.surface_layers.x + 0.5), dpdx(uv), dpdy(uv),
+    ).rgb, 1.0);
+#else
+#ifndef TERRAIN_SURFACE_UNLIT
     var pbr_input = pbr_input_from_vertex_output(in, is_front, false);
+#endif
     var blend = vec2(1.0, 0.0);
+#ifdef TERRAIN_PREPARED
+    let control_uv = clamp((in.world_position.xz - settings.chunk_minimum) / settings.chunk_extent, vec2(0.0), vec2(1.0));
+    let control = textureSample(weight_map, weight_sampler, (control_uv * 256.0 + 8.0) / 272.0);
+    if settings.surface_layers.z > 1.5 {
+        blend = max(control.rg, vec2(0.0));
+        blend /= max(blend.x + blend.y, 0.000001);
+    }
+#else
     if settings.surface_layers.z > 1.5 {
         let control_uv = clamp(
             (in.world_position.xz - settings.chunk_minimum) / settings.chunk_extent,
@@ -264,11 +282,13 @@ fn fragment(
         blend = max(textureSample(weight_map, weight_sampler, weight_uv).rg, vec2(0.0));
         blend /= max(blend.x + blend.y, 0.000001);
     }
+#endif
 
     let first = sample_surface(
         in.world_position.xz,
         settings.tile_sizes.x,
         i32(settings.surface_layers.x + 0.5),
+        0,
         settings.normal_settings.x,
         settings.normal_settings.y,
         settings.roughness_ranges.x,
@@ -284,6 +304,7 @@ fn fragment(
             in.world_position.xz,
             settings.tile_sizes.y,
             i32(settings.surface_layers.y + 0.5),
+            1,
             settings.normal_settings.z,
             settings.normal_settings.w,
             settings.roughness_ranges.z,
@@ -299,8 +320,13 @@ fn fragment(
         roughness = first.roughness * blend.x + second.roughness * blend.y;
     }
 
+#ifdef TERRAIN_PREPARED
+    let signal = select(0.0, dot(control.ba, vec2(256.0 / 257.0, 1.0 / 257.0)) * 2.0 - 1.0, settings.macro_settings.y >= 0.5);
+#else
+    let signal = macro_signal(in.world_position.xz);
+#endif
     let variation = clamp(
-        macro_signal(in.world_position.xz) * settings.macro_settings.x,
+        signal * settings.macro_settings.x,
         -1.0,
         1.0,
     );
@@ -309,6 +335,10 @@ fn fragment(
         clamp(base.rgb * exp2(macro_response), vec3(0.0), vec3(1.0)),
         1.0,
     );
+#ifdef TERRAIN_SURFACE_UNLIT
+    // Retain the production albedo blend, stochastic tiling and macro variation.
+    out.color = base;
+#else
     let geometry_normal = normalize(in.world_normal);
     let tbn = calculate_tbn_mikktspace(geometry_normal, in.world_tangent);
     pbr_input.N = normalize(tbn * tangent_normal);
@@ -322,8 +352,9 @@ fn fragment(
     pbr_input.material.flags = pbr_types::STANDARD_MATERIAL_FLAGS_FOG_ENABLED_BIT;
     apply_decals(&pbr_input);
 
-    var out: FragmentOutput;
     out.color = apply_pbr_lighting(pbr_input);
     out.color = main_pass_post_lighting_processing(pbr_input, out.color);
+#endif
+#endif
     return out;
 }

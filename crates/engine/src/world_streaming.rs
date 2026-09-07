@@ -13,9 +13,11 @@ use bevy::{
     transform::TransformSystems,
 };
 use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded};
+#[cfg(not(target_os = "ios"))]
+use terrain_render::build_heightfield_mesh;
 use terrain_render::{
     PrepareTerrainMaterialContext, TerrainMacroVariation, TerrainMaterial, TerrainSurfaceLayer,
-    build_heightfield_mesh, prepare_terrain_material,
+    prepare_terrain_material,
 };
 use vegetation::{VegetationCatalog, VegetationFieldPageData};
 use world::{
@@ -1493,7 +1495,7 @@ fn attach_page(
     asset_server: &AssetServer,
     render_assets: &WorldRenderAssets,
     vegetation_catalog: Option<&VegetationCatalog>,
-    terrain_meshes: &mut Assets<Mesh>,
+    _terrain_meshes: &mut Assets<Mesh>,
     terrain_materials: &mut Assets<TerrainMaterial>,
     terrain_images: &mut Assets<Image>,
     macro_variation: TerrainMacroVariation,
@@ -1503,6 +1505,9 @@ fn attach_page(
 ) -> Result<PageAttachment, String> {
     let key = prepared.decoded.key;
     let mut entities = Vec::new();
+    #[cfg(target_os = "ios")]
+    let owned_terrain_meshes: Vec<Handle<Mesh>> = Vec::new();
+    #[cfg(not(target_os = "ios"))]
     let mut owned_terrain_meshes = Vec::new();
     let mut owned_terrain_materials = Vec::new();
     let mut owned_terrain_images = Vec::new();
@@ -1632,25 +1637,45 @@ fn attach_page(
                 surfaces: &surface_layers,
                 macro_variation,
             })?;
-            let mesh = terrain_meshes.add(build_heightfield_mesh(&terrain.heightfield, cell_size)?);
+            #[cfg(target_os = "ios")]
+            let (mesh, transform, terrain_name) = (
+                render_assets.unit_plane.clone(),
+                Transform::from_xyz(center[0], 0.0, center[1])
+                    .with_scale(Vec3::new(cell_size, 1.0, cell_size)),
+                format!("Flat terrain cell {}, {}", key.cell.x, key.cell.z),
+            );
+            #[cfg(not(target_os = "ios"))]
+            let (mesh, transform, terrain_name) = {
+                let mesh =
+                    _terrain_meshes.add(build_heightfield_mesh(&terrain.heightfield, cell_size)?);
+                (
+                    mesh,
+                    Transform::from_xyz(center[0], 0.0, center[1]),
+                    format!("Relief terrain cell {}, {}", key.cell.x, key.cell.z),
+                )
+            };
+            #[cfg(target_os = "ios")]
+            let streamed_heightfield =
+                TerrainHeightfield::from_heights(2, &[0.0; 4], 0.0, 0.0, cell_size)
+                    .map_err(|error| error.to_string())?;
+            #[cfg(not(target_os = "ios"))]
+            let streamed_heightfield = terrain.heightfield;
             let entity = commands
                 .spawn((
                     Mesh3d(mesh.clone()),
                     MeshMaterial3d(prepared_material.material.clone()),
-                    Transform::from_xyz(center[0], 0.0, center[1]),
+                    transform,
                     StreamedTerrainSurface {
                         key,
                         cell_size,
-                        heightfield: terrain.heightfield,
+                        heightfield: streamed_heightfield,
                     },
                     StreamedPageEntity(key),
-                    Name::new(format!(
-                        "Relief terrain cell {}, {}",
-                        key.cell.x, key.cell.z
-                    )),
+                    Name::new(terrain_name),
                 ))
                 .id();
             entities.push(entity);
+            #[cfg(not(target_os = "ios"))]
             owned_terrain_meshes.push(mesh);
             owned_terrain_materials.push(prepared_material.material);
             owned_terrain_images.push(prepared_material.weight_image);

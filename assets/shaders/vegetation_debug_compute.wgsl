@@ -34,7 +34,8 @@ struct SpeciesChoice {
 struct ProceduralInstance {
     // xyz: root, w: clump variant
     root_clump: vec4<f32>,
-    // x: packed rest direction, y: species index, z: packed surface normal xz,
+    // x: packed rest direction, y: species index + LOD morph + low flag,
+    // z: packed surface normal xz,
     // w: low 24 bits seed + high 8 bits population-density target
     geometry: vec4<u32>,
 }
@@ -52,6 +53,8 @@ struct DebugConfig {
     // z: 0 rounded/clump gloss, 1 legacy empirical lighting
     // w: scene-adaptive single-low arena capacity
     values: vec4<u32>,
+    // x: live work items, y: diagnostic counters enabled
+    workload: vec4<u32>,
 }
 
 struct Camera {
@@ -120,6 +123,7 @@ struct CandidateEvaluation {
     outcome: u32,
     species_index: u32,
     bin: u32,
+    lod_morph: f32,
     population_density: f32,
     eligible: u32,
 }
@@ -142,6 +146,64 @@ struct Telemetry {
 @group(0) @binding(9) var<uniform> camera: Camera;
 @group(0) @binding(10) var<storage, read_write> telemetry: Telemetry;
 
+
+// One source-stable acceptance bit per original candidate, preserving lattice dispatch order.
+// Ready is published only after every word is written. Zero capacity means reference fallback.
+struct CandidateCacheEntry {
+    base: u32,
+    capacity: u32,
+    reserved: u32,
+    ready: atomic<u32>,
+}
+
+@group(0) @binding(11) var<storage, read_write> candidate_cache_entries: array<CandidateCacheEntry>;
+@group(0) @binding(12) var<storage, read_write> candidate_acceptance_bits: array<u32>;
+@group(0) @binding(13) var<storage, read> cache_build_items: array<u32>;
+
+fn use_candidate_cache(index: u32, quarter_lod: bool) -> bool {
+    return !quarter_lod && debug_config.values.x == 0u && (debug_config.workload.w & 2u) != 0u
+        && atomicLoad(&candidate_cache_entries[index].ready) != 0u;
+}
+
+// Deliberately excludes all camera, wind, projected size and population LOD inputs.
+fn stable_candidate_is_present(item: WorkItem, index: u32) -> bool {
+    let candidate = sample_candidate(item, index);
+    if (!owns(item, candidate.root) || candidate.stable_rank >= item.growth.w) { return false; }
+    let surface = sample_surface(item, candidate.root);
+    if (surface.validity < 0.5) { return false; }
+    let occupancy = local_occupancy(item, candidate.root) * candidate.group_density;
+    return random01(candidate.seed ^ 0x4cf5ad43u) < occupancy;
+}
+
+var<workgroup> acceptance: array<u32, 64>;
+
+@compute @workgroup_size(64)
+fn build_candidate_cache(
+    @builtin(global_invocation_id) id: vec3<u32>,
+    @builtin(local_invocation_index) lane: u32,
+) {
+    let index = cache_build_items[id.y];
+    var present = false;
+    if (id.x < candidate_cache_entries[index].capacity) {
+        present = stable_candidate_is_present(work_items[index], id.x);
+    }
+    acceptance[lane] = select(0u, 1u, present);
+    workgroupBarrier();
+    if ((lane & 31u) == 0u && id.x < candidate_cache_entries[index].capacity) {
+        var mask = 0u;
+        for (var bit = 0u; bit < 32u; bit += 1u) {
+            mask |= acceptance[lane + bit] << bit;
+        }
+        candidate_acceptance_bits[candidate_cache_entries[index].base + id.x / 32u] = mask;
+    }
+}
+
+@compute @workgroup_size(4)
+fn finish_candidate_cache(@builtin(global_invocation_id) id: vec3<u32>) {
+    let index = cache_build_items[id.x];
+    if (index != 0xffffffffu) { atomicStore(&candidate_cache_entries[index].ready, 1u); }
+}
+
 const PI_2: f32 = 6.283185307179586;
 const SINGLE_HIGH_CAPACITY: u32 = 32768u;
 const SPLIT_HIGH_CAPACITY: u32 = 32768u;
@@ -163,14 +225,25 @@ const SINGLE_HIGH_FIRST_INDEX: u32 = 6u;
 const SINGLE_LOW_FIRST_INDEX: u32 = 54u;
 const SPLIT_HIGH_FIRST_INDEX: u32 = 72u;
 const SPLIT_LOW_FIRST_INDEX: u32 = 114u;
+// Packed above the lighting mode in DebugConfig.values.z. This preserves the accepted population
+// while measuring the existing low topology across the complete field.
+const FORCE_LOW_TOPOLOGY_BIT: u32 = 0x00000100u;
+const MOBILE_POPULATION_LOD_BIT: u32 = 0x00000200u;
 const DENSITY_MODE_BALANCED: u32 = 1u;
 const DENSITY_MODE_FULL_REFERENCE: u32 = 2u;
+const SPECIES_INDEX_MASK: u32 = 0x0000ffffu;
+const LOD_MORPH_MASK: u32 = 0x00007fffu;
+const LOD_MORPH_SHIFT: u32 = 16u;
 const BALANCED_DENSITY_FULL_SPACING_PIXELS: f32 = 6.0;
 const BALANCED_DENSITY_MIDDLE_SPACING_PIXELS: f32 = 2.0;
 const BALANCED_DENSITY_FAR_SPACING_PIXELS: f32 = 0.75;
 const BALANCED_DENSITY_MIDDLE_FRACTION: f32 = 0.55;
 const BALANCED_DENSITY_FAR_FRACTION: f32 = 0.30;
 const BALANCED_DENSITY_FADE_BAND: f32 = 0.10;
+// Deliberately aggressive calibration point for mobile. If one quarter of the roots on the
+// cheapest topology cannot materially change frame rate, a gentler ribbon LOD cannot reach the
+// target and the far field needs a different representation.
+const MOBILE_DIAGNOSTIC_DENSITY_FRACTION: f32 = 0.25;
 
 fn hash32(value: u32) -> u32 {
     var x = value;
@@ -714,9 +787,16 @@ fn balanced_population_lod_density(projected_spacing: f32) -> f32 {
     );
 }
 
+fn mobile_population_lod_density() -> f32 {
+    return MOBILE_DIAGNOSTIC_DENSITY_FRACTION;
+}
+
 fn population_lod_retention_limit(population_density: f32) -> f32 {
     // Balanced mode keeps a narrow, stable rank band alive so the draw shader can contract retiring
     // blades laterally. Centering that band on the target approximately preserves integrated width.
+    if ((debug_config.values.z & MOBILE_POPULATION_LOD_BIT) != 0u) {
+        return population_density;
+    }
     if (
         debug_config.values.y == DENSITY_MODE_BALANCED
         && population_density < 0.999
@@ -726,9 +806,19 @@ fn population_lod_retention_limit(population_density: f32) -> f32 {
     return population_density;
 }
 
-fn evaluate_candidate(item: WorkItem, candidate_index: u32) -> CandidateEvaluation {
+fn evaluate_candidate(item: WorkItem, candidate_index: u32, early_rejection: bool) -> CandidateEvaluation {
+    // Rejected production candidates never reach emission. Avoid height, projection, and LOD
+    // calculations for them; retain the full evaluation for visual diagnostic modes.
+    var rejected: CandidateEvaluation;
+    let reject_early = early_rejection && debug_config.values.x == 0u;
     let candidate = sample_candidate(item, candidate_index);
+    if (reject_early && (!owns(item, candidate.root) || candidate.stable_rank >= item.growth.w)) {
+        return rejected;
+    }
     let surface = sample_surface(item, candidate.root);
+    if (reject_early && surface.validity < 0.5) {
+        return rejected;
+    }
     let occupancy = local_occupancy(item, candidate.root) * candidate.group_density;
     var outcome = 0u;
     if (candidate.stable_rank >= item.growth.w) {
@@ -738,8 +828,14 @@ fn evaluate_candidate(item: WorkItem, candidate_index: u32) -> CandidateEvaluati
     } else if (random01(candidate.seed ^ 0x4cf5ad43u) >= occupancy) {
         outcome = 3u;
     }
+    if (reject_early && outcome != 0u) {
+        return rejected;
+    }
 
     let choice = choose_species_choice(item, random01(candidate.seed ^ 0xd1b54a35u));
+    if (reject_early && !candidate_is_visible(candidate, surface, choice)) {
+        return rejected;
+    }
     let generated_height = generated_candidate_height(choice, candidate);
     let topology_class = candidate_topology_class(choice, generated_height);
     let high_radius = select(choice.packing.y, choice.packing.z, topology_class != 0u);
@@ -753,14 +849,26 @@ fn evaluate_candidate(item: WorkItem, candidate_index: u32) -> CandidateEvaluati
     let authored_population_density = population_lod_density(choice, projected_spacing);
     var population_density = authored_population_density;
     if (debug_config.values.y == DENSITY_MODE_BALANCED) {
-        population_density = balanced_population_lod_density(projected_spacing);
+        population_density = select(
+            balanced_population_lod_density(projected_spacing),
+            mobile_population_lod_density(),
+            (debug_config.values.z & MOBILE_POPULATION_LOD_BIT) != 0u,
+        );
     } else if (debug_config.values.y == DENSITY_MODE_FULL_REFERENCE) {
         population_density = 1.0;
     }
     var lod = 0u;
-    if (projected_extent < choice.threshold.y) {
+    if (
+        projected_extent < choice.threshold.y
+        || (debug_config.values.z & FORCE_LOW_TOPOLOGY_BIT) != 0u
+    ) {
         lod = 1u;
     }
+    let lod_morph = select(
+        smoothstep(choice.threshold.y, choice.threshold.y * 1.45, projected_extent),
+        0.0,
+        lod != 0u,
+    );
     let bin = select(0u, topology_class * 2u + lod, debug_config.values.x == 0u);
     var eligible = 1u;
     if (!owns(item, candidate.root)) {
@@ -788,6 +896,7 @@ fn evaluate_candidate(item: WorkItem, candidate_index: u32) -> CandidateEvaluati
         outcome,
         choice.metadata.x,
         bin,
+        lod_morph,
         population_density,
         eligible,
     );
@@ -832,33 +941,41 @@ fn instance_offset(bin: u32) -> u32 {
 fn generate(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let encoded_work_item = visible_work_items[invocation.y];
     let quarter_lod = (encoded_work_item & QUARTER_LOD_FLAG) != 0u;
-    let item = work_items[encoded_work_item & WORK_ITEM_INDEX_MASK];
-    let candidate_count = select(
-        item.candidate_layout.y,
-        quarter_candidate_count(item),
-        quarter_lod,
-    );
-    if (invocation.x >= candidate_count) {
-        return;
+    let work_item_index = encoded_work_item & WORK_ITEM_INDEX_MASK;
+    let item = work_items[work_item_index];
+    let cached = use_candidate_cache(work_item_index, quarter_lod);
+    var candidate_count = item.candidate_layout.y;
+    if (quarter_lod) {
+        candidate_count = quarter_candidate_count(item);
     }
-    let candidate_index = select(
-        invocation.x,
-        remap_quarter_candidate(item, invocation.x),
-        quarter_lod,
-    );
+    if (invocation.x >= candidate_count) { return; }
+    var candidate_index = invocation.x;
+    if (quarter_lod) {
+        candidate_index = remap_quarter_candidate(item, invocation.x);
+    }
     if (candidate_index == 0xffffffffu) {
         return;
     }
-    atomicAdd(&telemetry.values[1], 1u);
-    let evaluation = evaluate_candidate(item, candidate_index);
+    if (cached) {
+        let mask = candidate_acceptance_bits[candidate_cache_entries[work_item_index].base + candidate_index / 32u];
+        if ((mask & (1u << (candidate_index & 31u))) == 0u) { return; }
+    }
+    if (debug_config.workload.y != 0u) {
+        atomicAdd(&telemetry.values[1], 1u);
+    }
+    let evaluation = evaluate_candidate(item, candidate_index, (debug_config.workload.w & 1u) != 0u);
     if (evaluation.eligible == 0u) {
         return;
     }
-    atomicAdd(&telemetry.values[2u + evaluation.bin], 1u);
+    if (debug_config.workload.y != 0u) {
+        atomicAdd(&telemetry.values[2u + evaluation.bin], 1u);
+    }
 
     let local_slot = atomicAdd(&draw_args[evaluation.bin].instance_count, 1u);
     if (local_slot >= active_capacity(evaluation.bin)) {
-        atomicAdd(&telemetry.values[6u + evaluation.bin], 1u);
+        if (debug_config.workload.y != 0u) {
+            atomicAdd(&telemetry.values[6u + evaluation.bin], 1u);
+        }
         return;
     }
     if (debug_config.values.x == 0u) {
@@ -874,7 +991,10 @@ fn generate(@builtin(global_invocation_id) invocation: vec3<u32>) {
         );
         procedural_instances[slot].geometry = vec4<u32>(
             pack2x16snorm(evaluation.candidate.direction),
-            evaluation.species_index | ((evaluation.bin & 1u) << 31u),
+            (evaluation.species_index & SPECIES_INDEX_MASK)
+                | (u32(round(clamp(evaluation.lod_morph, 0.0, 1.0) * f32(LOD_MORPH_MASK)))
+                    << LOD_MORPH_SHIFT)
+                | ((evaluation.bin & 1u) << 31u),
             pack2x16snorm(evaluation.surface.normal.xz),
             (evaluation.candidate.seed & 0x00ffffffu)
                 | (u32(round(clamp(evaluation.population_density, 0.0, 1.0) * 255.0)) << 24u),

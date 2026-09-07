@@ -68,6 +68,11 @@ const DEBUG_SUN_CYCLE_SECONDS: f32 = 45.0;
 const DEBUG_SUN_MIN_ELEVATION: f32 = 12.0_f32.to_radians();
 const DEBUG_SUN_MAX_ELEVATION: f32 = 55.0_f32.to_radians();
 
+/// The current mobile scene has no effects that consume prepass depth. In Bevy
+/// 0.19 the pass also copies the full-resolution depth texture every frame.
+/// Keep the audit baseline aligned with the normal game camera.
+pub const GAME_DEPTH_PREPASS_ENABLED: bool = !cfg!(target_os = "ios");
+
 /// The complete gameplay surface for the first vertical slice.
 ///
 /// The application crate owns the executable and platform window. This plugin
@@ -94,6 +99,8 @@ impl Plugin for MinimalGamePlugin {
             WorldStreamingPlugin::game(self.runtime_database.clone()),
         ))
         .init_resource::<TouchTapState>()
+        .init_resource::<GameInputEnabled>()
+        .init_resource::<GamePointerInputBlocked>()
         .init_resource::<DemoSunMotion>()
         .add_systems(Startup, setup)
         .add_systems(
@@ -101,14 +108,17 @@ impl Plugin for MinimalGamePlugin {
             (
                 update_camera_controls,
                 set_target_from_pointer,
-                update_player_move_intent,
-                advance_character_motors.after(CharacterPresentationResolveSet),
+                update_player_move_intent.run_if(resource_equals(GameInputEnabled(true))),
+                advance_character_motors
+                    .after(CharacterPresentationResolveSet)
+                    .run_if(resource_equals(GameInputEnabled(true))),
                 ground_characters_to_streamed_terrain,
                 update_target_indicator,
                 update_camera_transform,
                 update_demo_sun_motion,
             )
-                .chain(),
+                .chain()
+                .in_set(GameInputSystems),
         )
         .add_systems(
             Update,
@@ -116,6 +126,24 @@ impl Plugin for MinimalGamePlugin {
         );
     }
 }
+
+/// Enables gameplay controls and actor movement. Profiling tools may explicitly freeze them.
+#[derive(Resource, Clone, Copy, PartialEq, Eq)]
+pub struct GameInputEnabled(pub bool);
+
+impl Default for GameInputEnabled {
+    fn default() -> Self {
+        Self(true)
+    }
+}
+
+/// UI pointer capture does not suppress keyboard or gamepad input.
+#[derive(Resource, Default)]
+pub struct GamePointerInputBlocked(pub bool);
+
+/// UI input routing must run before gameplay reads input.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct GameInputSystems;
 
 #[derive(Component)]
 pub(crate) struct MainCamera;
@@ -182,17 +210,19 @@ fn setup(
         target_distance: CAMERA_DEFAULT_DISTANCE,
         pitch_offset: 0.0,
     };
-    commands.spawn((
+    let mut camera = commands.spawn((
         Camera3d::default(),
         WorldEnvironmentCamera::default(),
-        Msaa::Off,
-        DepthPrepass,
+        Msaa::Sample4,
         camera_transform(start, &camera_rig),
         camera_rig,
         MainCamera,
         WorldViewCamera,
         Name::new("Main camera"),
     ));
+    if GAME_DEPTH_PREPASS_ENABLED {
+        camera.insert(DepthPrepass);
+    }
 
     commands.spawn((
         Mesh3d(
@@ -268,6 +298,8 @@ fn update_demo_sun_motion(
 }
 
 fn set_target_from_pointer(
+    enabled: Res<GameInputEnabled>,
+    pointer_blocked: Res<GamePointerInputBlocked>,
     mouse: Res<ButtonInput<MouseButton>>,
     touches: Res<Touches>,
     mut touch_tap: ResMut<TouchTapState>,
@@ -277,6 +309,10 @@ fn set_target_from_pointer(
     terrain_pages: Query<&StreamedTerrainSurface>,
     mut player: Single<(&Transform, &mut MoveIntent), With<PlayerControlled>>,
 ) {
+    if !enabled.0 || pointer_blocked.0 {
+        *touch_tap = TouchTapState::default();
+        return;
+    }
     let pointer_position = if mouse.just_pressed(MouseButton::Left) {
         window.cursor_position()
     } else {
@@ -488,6 +524,8 @@ fn apply_stick_dead_zone(stick: Vec2) -> Vec2 {
 }
 
 fn update_camera_controls(
+    enabled: Res<GameInputEnabled>,
+    pointer_blocked: Res<GamePointerInputBlocked>,
     time: Res<Time>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     mouse_motion: Res<AccumulatedMouseMotion>,
@@ -497,7 +535,14 @@ fn update_camera_controls(
     gamepads: Query<&Gamepad>,
     mut rig: Single<&mut CameraRig, With<MainCamera>>,
 ) {
-    if mouse_buttons.pressed(MouseButton::Right) {
+    // Always consume native gestures, including while locked/captured, so unlocking cannot
+    // replay a pending pan or pinch. Keyboard and gamepad remain usable over the HUD.
+    let touch_pan: Vec2 = pan_gestures.read().map(|gesture| gesture.0).sum();
+    let touch_pinch: f32 = pinch_gestures.read().map(|gesture| gesture.0).sum();
+    if !enabled.0 {
+        return;
+    }
+    if !pointer_blocked.0 && mouse_buttons.pressed(MouseButton::Right) {
         rig.yaw -= mouse_motion.delta.x * CAMERA_MOUSE_ORBIT_SPEED;
         rig.target_yaw = rig.yaw;
         rig.pitch_offset = (rig.pitch_offset + mouse_motion.delta.y * CAMERA_MOUSE_ORBIT_SPEED)
@@ -524,7 +569,7 @@ fn update_camera_controls(
         + right_stick.y * CAMERA_GAMEPAD_ORBIT_SPEED * time.delta_secs())
     .clamp(-CAMERA_MAX_PITCH_OFFSET, CAMERA_MAX_PITCH_OFFSET);
 
-    if time.elapsed_secs() > 0.5 {
+    if !pointer_blocked.0 && time.elapsed_secs() > 0.5 {
         let (orbit_delta, zoom_delta) = match mouse_scroll.unit {
             MouseScrollUnit::Line => (
                 mouse_scroll.delta.x.clamp(-3.0, 3.0) * CAMERA_WHEEL_ORBIT_SPEED,
@@ -540,15 +585,13 @@ fn update_camera_controls(
             (rig.target_distance - zoom_delta).clamp(CAMERA_MIN_DISTANCE, CAMERA_MAX_DISTANCE);
     }
 
-    let touch_pan: Vec2 = pan_gestures.read().map(|gesture| gesture.0).sum();
-    if touch_pan != Vec2::ZERO {
+    if !pointer_blocked.0 && touch_pan != Vec2::ZERO {
         rig.target_yaw -= touch_pan.x * CAMERA_TOUCH_ORBIT_SPEED;
         rig.target_distance = (rig.target_distance + touch_pan.y * CAMERA_TOUCH_PAN_ZOOM_SPEED)
             .clamp(CAMERA_MIN_DISTANCE, CAMERA_MAX_DISTANCE);
     }
 
-    let touch_pinch: f32 = pinch_gestures.read().map(|gesture| gesture.0).sum();
-    if touch_pinch != 0.0 {
+    if !pointer_blocked.0 && touch_pinch != 0.0 {
         rig.target_distance = (rig.target_distance - touch_pinch * CAMERA_TOUCH_PINCH_ZOOM_SPEED)
             .clamp(CAMERA_MIN_DISTANCE, CAMERA_MAX_DISTANCE);
     }
@@ -678,4 +721,60 @@ fn update_performance_label(
         sun_motion = if sun_motion.enabled { "on" } else { "off" },
         terrain_macro = terrain_macro.label(),
     ));
+}
+
+#[cfg(test)]
+mod input_tests {
+    use super::*;
+
+    #[test]
+    fn camera_gestures_work_and_are_not_replayed_after_ui_capture_or_unlock() {
+        let mut app = App::new();
+        app.add_plugins(bevy::input::InputPlugin)
+            .init_resource::<Time>()
+            .init_resource::<GameInputEnabled>()
+            .init_resource::<GamePointerInputBlocked>()
+            .add_systems(Update, update_camera_controls);
+        let camera = app
+            .world_mut()
+            .spawn((
+                MainCamera,
+                CameraRig {
+                    yaw: 0.0,
+                    target_yaw: 0.0,
+                    distance: CAMERA_DEFAULT_DISTANCE,
+                    target_distance: CAMERA_DEFAULT_DISTANCE,
+                    pitch_offset: 0.0,
+                },
+            ))
+            .id();
+        let gesture = |app: &mut App| {
+            app.world_mut()
+                .write_message(PanGesture(Vec2::new(20.0, 0.0)));
+            app.world_mut().write_message(PinchGesture(0.1));
+            app.update();
+        };
+        app.world_mut().resource_mut::<GameInputEnabled>().0 = false;
+        gesture(&mut app);
+        app.world_mut().resource_mut::<GameInputEnabled>().0 = true;
+        app.update();
+        assert_eq!(
+            app.world().get::<CameraRig>(camera).unwrap().target_yaw,
+            0.0
+        );
+        app.world_mut().resource_mut::<GamePointerInputBlocked>().0 = true;
+        gesture(&mut app);
+        app.world_mut().resource_mut::<GamePointerInputBlocked>().0 = false;
+        app.update();
+        let rig = app.world().get::<CameraRig>(camera).unwrap();
+        assert_eq!(rig.target_yaw, 0.0);
+        assert_eq!(rig.target_distance, CAMERA_DEFAULT_DISTANCE);
+        gesture(&mut app);
+        let rig = app.world().get::<CameraRig>(camera).unwrap();
+        assert!(rig.target_yaw < 0.0, "uncaptured pan must orbit");
+        assert!(
+            rig.target_distance < CAMERA_DEFAULT_DISTANCE,
+            "uncaptured pinch must zoom"
+        );
+    }
 }

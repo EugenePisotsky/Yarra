@@ -54,6 +54,8 @@ struct DebugConfig {
     // x: diagnostic mode, y: density mode, z: lighting mode,
     // w: scene-adaptive single-low arena capacity
     values: vec4<u32>,
+    // x: live work items, y: diagnostic counters enabled
+    workload: vec4<u32>,
 }
 
 @group(0) @binding(0) var<storage, read> work_items: array<WorkItem>;
@@ -62,6 +64,7 @@ struct DebugConfig {
 @group(0) @binding(3) var<uniform> camera: Camera;
 @group(0) @binding(4) var<storage, read_write> telemetry: Telemetry;
 @group(0) @binding(5) var<uniform> debug_config: DebugConfig;
+
 
 const WORKGROUP_SIZE: u32 = 64u;
 const MAX_PROCEDURAL_DISTANCE: f32 = 96.0;
@@ -252,7 +255,8 @@ fn schedule(@builtin(global_invocation_id) invocation: vec3<u32>) {
     if (invocation.x == 0u) {
         atomicStore(&candidate_dispatch.workgroup_count_z, 1u);
     }
-    if (invocation.x >= arrayLength(&work_items)) {
+    // The grow-only buffer may contain retired page records after a scene shrinks.
+    if (invocation.x >= debug_config.workload.x) {
         return;
     }
 
@@ -268,11 +272,15 @@ fn schedule(@builtin(global_invocation_id) invocation: vec3<u32>) {
     );
     let visible_slot = atomicAdd(&candidate_dispatch.workgroup_count_y, 1u);
     visible_work_items[visible_slot] = invocation.x | select(0u, QUARTER_LOD_FLAG, quarter_lod);
-    atomicAdd(&telemetry.values[0], 1u);
+    if (debug_config.workload.y != 0u) {
+        atomicAdd(&telemetry.values[0], 1u);
+    }
     let workgroup_count = (candidate_count + WORKGROUP_SIZE - 1u) / WORKGROUP_SIZE;
     atomicMax(
         &candidate_dispatch.workgroup_count_x,
         workgroup_count,
     );
-    atomicMax(&telemetry.values[10], workgroup_count);
+    if (debug_config.workload.y != 0u) {
+        atomicMax(&telemetry.values[10], workgroup_count);
+    }
 }

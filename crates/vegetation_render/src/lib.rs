@@ -12,13 +12,14 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
+#[cfg(not(target_os = "ios"))]
+use bevy::render::diagnostic::RenderDiagnosticsPlugin;
 use bevy::{
     color::LinearRgba,
     pbr::MeshPipelineSystems,
     prelude::*,
     render::{
         RenderApp, RenderStartup,
-        diagnostic::RenderDiagnosticsPlugin,
         extract_component::{ExtractComponent, ExtractComponentPlugin},
         extract_resource::{ExtractResource, ExtractResourcePlugin},
     },
@@ -41,12 +42,14 @@ impl Plugin for VegetationRenderPlugin {
     fn build(&self, app: &mut App) {
         let diagnostics = VegetationDiagnostics::default();
         app.insert_resource(diagnostics.clone());
+        #[cfg(not(target_os = "ios"))]
+        app.add_plugins(RenderDiagnosticsPlugin);
         app.add_plugins((
-            RenderDiagnosticsPlugin,
             ExtractResourcePlugin::<VegetationDebugScene>::default(),
             ExtractResourcePlugin::<VegetationDebugSettings>::default(),
             ExtractResourcePlugin::<VegetationLighting>::default(),
             ExtractResourcePlugin::<VegetationWind>::default(),
+            ExtractResourcePlugin::<VegetationBladePreparation>::default(),
             ExtractResourcePlugin::<VegetationSun>::default(),
             ExtractComponentPlugin::<VegetationDebugView>::default(),
             ExtractComponentPlugin::<VegetationDebugDraw>::default(),
@@ -54,6 +57,7 @@ impl Plugin for VegetationRenderPlugin {
         .init_resource::<VegetationDebugSettings>()
         .init_resource::<VegetationLighting>()
         .init_resource::<VegetationWind>()
+        .init_resource::<VegetationBladePreparation>()
         .init_resource::<VegetationSun>()
         .add_systems(Update, (cycle_debug_mode, advance_vegetation_wind).chain())
         .add_systems(
@@ -74,6 +78,17 @@ impl Plugin for VegetationRenderPlugin {
             renderer::initialize.after(MeshPipelineSystems),
         );
         renderer::install(render_app);
+    }
+}
+
+/// Prepare shared curve and wind values once per blade, with a bounded GPU cache.
+#[derive(Resource, ExtractResource, Clone, Copy, Debug)]
+pub struct VegetationBladePreparation {
+    pub enabled: bool,
+}
+impl Default for VegetationBladePreparation {
+    fn default() -> Self {
+        Self { enabled: true }
     }
 }
 
@@ -129,17 +144,23 @@ impl Default for VegetationWind {
         Self {
             enabled: true,
             direction: Vec2::new(0.92, 0.38).normalize(),
-            strength: 0.62,
+            strength: 0.82,
             spatial_frequency: 0.12,
-            speed: 2.1,
-            gustiness: 0.82,
-            flutter: 0.18,
+            speed: 2.4,
+            gustiness: 0.95,
+            flutter: 0.28,
             phase_seconds: 0.0,
         }
     }
 }
 
 impl VegetationWind {
+    /// Synchronize procedural wind for a deterministic replay or shared weather clock.
+    pub fn set_phase_seconds(&mut self, seconds: f32) {
+        assert!(seconds.is_finite(), "wind phase must be finite");
+        self.phase_seconds = seconds.rem_euclid(4096.0);
+    }
+
     /// Samples the coherent scalar push used by non-rendering systems.
     pub fn sample_force(&self, world_xz: Vec2) -> f32 {
         if !self.enabled {
@@ -163,7 +184,8 @@ impl VegetationWind {
                 .clamp(0.12, 1.30)
     }
 
-    pub(crate) fn phase_seconds(self) -> f32 {
+    /// Current procedural wind phase, in seconds.
+    pub fn phase_seconds(self) -> f32 {
         self.phase_seconds
     }
 }
@@ -228,7 +250,21 @@ fn sync_vegetation_sun(
 /// not perturb the timings they are meant to explain.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct VegetationDiagnosticsSnapshot {
+    pub blade_preparation_enabled: bool,
+    pub blade_preparation_bytes: u64,
+    pub blade_preparation_dispatches: u64,
+    pub blade_preparation_reuses: u64,
+    pub prepared_blades: u32,
+    pub preparation_fallback_blades: u32,
     pub scene_revision: u64,
+    /// Cumulative completed placement dispatches and frames that reused their results.
+    pub generation_dispatches: u64,
+    pub generation_reuses: u64,
+    pub candidate_cache_enabled: bool,
+    pub candidate_cache_bytes: u64,
+    pub candidate_cache_builds: u64,
+    pub candidate_cache_ready_items: u32,
+    pub candidate_cache_planned_items: u32,
     pub source_repacks: u64,
     /// Cumulative backing-buffer growth events. This should stop after warm-up traversal.
     pub source_buffer_reallocations: u64,
@@ -324,6 +360,8 @@ impl VegetationDebugMode {
 ///
 /// `DrawFrozen` intentionally retains the instances and indirect arguments produced by the last
 /// full/compute frame. It is meaningful only with a fixed camera and stable residency.
+/// `Full` automatically reuses placement when its inputs are unchanged; `ComputeOnly` and
+/// `ScheduleOnly` always execute so their isolated workload remains measurable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u32)]
 pub enum VegetationProfileMode {
@@ -332,6 +370,8 @@ pub enum VegetationProfileMode {
     DrawFrozen = 1,
     ComputeOnly = 2,
     ScheduleOnly = 3,
+    /// Skip all vegetation GPU work, including scheduling and draws.
+    Disabled = 4,
 }
 
 impl VegetationProfileMode {
@@ -341,6 +381,7 @@ impl VegetationProfileMode {
             Self::DrawFrozen => "draw frozen (fixed camera)",
             Self::ComputeOnly => "compute only",
             Self::ScheduleOnly => "schedule only",
+            Self::Disabled => "disabled",
         }
     }
 
@@ -350,6 +391,7 @@ impl VegetationProfileMode {
             Self::DrawFrozen => Self::ComputeOnly,
             Self::ComputeOnly => Self::ScheduleOnly,
             Self::ScheduleOnly => Self::Full,
+            Self::Disabled => Self::Full,
         }
     }
 }
@@ -394,6 +436,10 @@ pub enum VegetationLightingMode {
     RoundedGloss = 0,
     /// The previous empirical response, retained only for runtime visual comparison.
     Legacy = 1,
+    /// Minimal fragment path used to separate geometry/coverage cost from foliage lighting.
+    UnlitDiagnostic = 2,
+    /// Keeps all vertex invocations but skips procedural instance reads and deformation.
+    VertexOnlyDiagnostic = 3,
 }
 
 impl VegetationLightingMode {
@@ -401,13 +447,17 @@ impl VegetationLightingMode {
         match self {
             Self::RoundedGloss => "rounded + clump gloss",
             Self::Legacy => "legacy",
+            Self::UnlitDiagnostic => "unlit diagnostic",
+            Self::VertexOnlyDiagnostic => "minimal vertex diagnostic",
         }
     }
 
     fn next(self) -> Self {
         match self {
             Self::RoundedGloss => Self::Legacy,
-            Self::Legacy => Self::RoundedGloss,
+            Self::Legacy => Self::UnlitDiagnostic,
+            Self::UnlitDiagnostic => Self::VertexOnlyDiagnostic,
+            Self::VertexOnlyDiagnostic => Self::RoundedGloss,
         }
     }
 }
@@ -416,13 +466,36 @@ impl VegetationLightingMode {
 ///
 /// Press `X` to cycle the visual explanation, `P` to isolate render workloads, and `O` to cycle
 /// balanced production, full-reference, and authored population density. Press `L` to compare the
-/// production foliage lighting with the former empirical response.
-#[derive(Resource, ExtractResource, Debug, Clone, Copy, Default)]
+/// production foliage lighting with the former empirical response, and `K` to compare bounded
+/// far-ribbon width compensation with authored widths.
+#[derive(Resource, ExtractResource, Debug, Clone, Copy)]
 pub struct VegetationDebugSettings {
     pub mode: VegetationDebugMode,
     pub profile_mode: VegetationProfileMode,
     pub density_mode: VegetationDensityMode,
     pub lighting_mode: VegetationLightingMode,
+    pub far_width_compensation: bool,
+    /// Optional GPU statistics atomics, independent of placement's required draw counters.
+    pub gpu_counters_enabled: bool,
+    /// Skip production-only LOD work once a candidate is known to be rejected.
+    pub early_rejection: bool,
+    /// Cache stable candidate acceptance across camera movement, with a bounded reference fallback.
+    pub candidate_cache_enabled: bool,
+}
+
+impl Default for VegetationDebugSettings {
+    fn default() -> Self {
+        Self {
+            mode: default(),
+            profile_mode: default(),
+            density_mode: default(),
+            lighting_mode: default(),
+            far_width_compensation: true,
+            gpu_counters_enabled: !cfg!(target_os = "ios"),
+            early_rejection: true,
+            candidate_cache_enabled: true,
+        }
+    }
 }
 
 fn cycle_debug_mode(
@@ -451,6 +524,17 @@ fn cycle_debug_mode(
     if keys.just_pressed(KeyCode::KeyL) {
         settings.lighting_mode = settings.lighting_mode.next();
         warn!("vegetation-v2 lighting: {}", settings.lighting_mode.label());
+    }
+    if keys.just_pressed(KeyCode::KeyK) {
+        settings.far_width_compensation = !settings.far_width_compensation;
+        warn!(
+            "vegetation-v2 far width compensation: {}",
+            if settings.far_width_compensation {
+                "on"
+            } else {
+                "off"
+            }
+        );
     }
     if keys.just_pressed(KeyCode::KeyI) {
         wind.enabled = !wind.enabled;
@@ -564,18 +648,28 @@ mod tests {
     }
 
     #[test]
-    fn rounded_gloss_is_the_default_and_cycles_to_the_legacy_reference() {
+    fn rounded_gloss_is_the_default_and_cycles_through_diagnostic_lighting() {
         let rounded = VegetationLightingMode::default();
         assert_eq!(rounded, VegetationLightingMode::RoundedGloss);
         assert_eq!(rounded.next(), VegetationLightingMode::Legacy);
-        assert_eq!(rounded.next().next(), rounded);
+        assert_eq!(
+            rounded.next().next(),
+            VegetationLightingMode::UnlitDiagnostic
+        );
+        assert_eq!(
+            rounded.next().next().next(),
+            VegetationLightingMode::VertexOnlyDiagnostic
+        );
+        assert_eq!(rounded.next().next().next().next(), rounded);
     }
 
     #[test]
     fn default_wind_is_strong_coherent_and_cpu_sampleable() {
         let wind = VegetationWind::default();
         assert!(wind.enabled);
-        assert!(wind.strength >= 0.6);
+        assert!(wind.strength >= 0.8);
+        assert!(wind.gustiness >= 0.9);
+        assert!(wind.flutter >= 0.25);
         assert!((wind.direction.length() - 1.0).abs() < 1e-5);
         assert!(wind.sample_force(Vec2::new(12.0, -8.0)).is_finite());
 

@@ -7,3 +7,6 @@ publish.workspace = true
 [dependencies]
 bevy.workspace = true
 world.workspace = true
+ron.workspace = true
+serde.workspace = true
+thiserror.workspace = true
