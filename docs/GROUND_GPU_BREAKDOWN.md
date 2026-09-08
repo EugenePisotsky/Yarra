@@ -5,9 +5,10 @@ on nearly unchanged live Metal HUD duration was premature. Keep this optimizatio
 as the ground-material direction; do not restart the renderer or replace AA on
 the strength of those HUD numbers.
 
-The candidate remains opt-in (`--terrain-prepared`). This investigation changes
-the evidence and evaluation workflow, not the default rendering policy. Memory,
-visible streaming transitions and shimmer in motion still need acceptance.
+The candidate was opt-in during this investigation. The later
+[prepared-ground integration](PREPARED_GROUND.md) makes it the game default after
+reducing memory and separating shared albedo from page-control activation. Use
+`--terrain-reference` for current comparisons with the original material.
 
 ## Matched current-branch captures
 
@@ -70,33 +71,36 @@ not automatically executing four times per covered pixel because MSAA is 4×.
 It still pays for multisample coverage, depth/color storage and resolving.
 
 Xcode reports **Stored pre-resolve MSAA** for the main opaque color attachment
-(57.25 MiB resource). The current Bevy opaque pass calls
+(57.25 MiB resource). The stock Bevy opaque pass used in these captures calls
 `ViewTarget::get_color_attachment()` and stores multisample color even though
 this ground frame has no subsequent color consumer before resolve output is
 used. It also stores depth. Total main-pass device writes are about 55 MB
 overhead / 46 MB low in both materials, including color and depth; the Xcode
 resource size must not be added to those traffic counters.
 
-A later change should resolve color and discard its multisample storage **when
-there are no later consumers**, preserving 4× MSAA. This follows Apple's
+The follow-up [MSAA color storage change](MSAA_COLOR_STORAGE.md) resolves color
+and discards its multisample storage **when there are no later consumers**,
+preserving 4× MSAA. This follows Apple's
 [load/store guidance](https://developer.apple.com/documentation/metal/setting-load-and-store-actions).
-Do not globally change opaque store actions: Bevy's later transparent pass
-loads color/depth, and future effects may also consume them. A safe implementation
-needs an explicit attachment lifetime policy or a combined final scene pass,
-plus transparency/effect validation. No saving from that change is claimed yet.
+It uses a per-camera policy with conservative fallback because Bevy's later
+transparent pass loads color/depth and other effects may also consume them.
+The measurements above predate that change; its separate validation and
+measurements are documented in the linked note.
 
 ## Next implementation priorities
 
-1. Keep the prepared material and evaluate movement, streamed-page fallback
-   transitions and finite pattern repetition. The previous still comparisons
-   are close, but they do not settle these motion questions.
-2. Reduce the candidate's memory overhead without losing texel density. The
-   previous live HUD reported +73.31 MB for the 4K candidate. The smaller 2K bake
-   was only timed with the HUD; its real pass timing and detail tradeoff remain
-   unverified. Do not promote it based on the old 1–3% HUD differences.
-3. Address unused MSAA storage with consumer-aware render passes. Keep 4× as the
-   visual reference; introducing several new AA techniques is not required to
-   make progress on the measured material cost.
+1. Prepared ground is now integrated into normal gameplay. Shared albedo remains
+   consistent when streamed-page controls build or fall back; broader motion,
+   finite pattern repetition and sustained thermal acceptance still matter.
+2. The [2026-09-08 memory update](PREPARED_GROUND.md) saves 32 MiB on M2 Max by
+   selecting the existing native ASTC 8×8 bake, preserving 4K texel density.
+   Unused shared albedos are now reclaimed as well. The previous +73.31 MB HUD
+   overhead predates this change. The smaller 2K bake was only timed with the
+   HUD; its real pass timing and detail tradeoff remain unverified. Do not
+   promote it based on the old 1–3% HUD differences.
+3. The unused MSAA color store is now addressed by the follow-up policy linked
+   above. Keep 4× as the visual reference; introducing several new AA techniques
+   is not required to make progress on the measured material cost.
 
 The stock Bevy `RenderDiagnosticsPlugin` uses timestamp writes inside passes.
 Its implementation only records pass GPU timestamps when the device exposes
@@ -108,8 +112,8 @@ no misleading CPU-as-GPU timing fallback was added.
 ## Reproduce and inspect
 
 Capture from the release app with `MTL_CAPTURE_ENABLED=1`, the desired
-`--render-repro` and `--metal-capture /absolute/new/name.gputrace`. Repeat with
-`--terrain-prepared`. The capture automatically saves frame 600 and exits.
+`--render-repro`, `--terrain-reference` and
+`--metal-capture /absolute/new/name.gputrace`. Repeat without `--terrain-reference`. The capture automatically saves frame 600 and exits.
 In Xcode, replay with profiling, then Performance → Counters → Share →
 Export Encoder Counters. Stop replay before collecting another live capture.
 

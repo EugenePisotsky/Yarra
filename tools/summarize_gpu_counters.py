@@ -47,16 +47,19 @@ def read_counters(path):
     return result
 
 
-def summarize(path):
+def summarize(path, aliases=None):
     rows = read_counters(path)
+    aliases = aliases or {}
     passes = defaultdict(float)
     for row in rows:
         duration = float(row["GPU Time"])
         if not math.isfinite(duration) or duration < 0:
             raise ValueError(f"{path}: missing/invalid GPU time for {row['Encoder Label']}")
-        passes[row["Encoder Label"]] += duration / 1_000_000
+        label = row["Encoder Label"]
+        passes[aliases.get(label, label)] += duration / 1_000_000
     return {
         "source": str(path),
+        "label_aliases": aliases,
         "encoder_count": len(rows),
         "summed_encoder_ms": sum(passes.values()),
         "passes_ms": dict(sorted(passes.items(), key=lambda item: -item[1])),
@@ -70,8 +73,16 @@ def main():
     parser.add_argument("reference", type=Path)
     parser.add_argument("candidate", type=Path)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--label-alias", action="append", default=[], metavar="ACTUAL=COMPARISON",
+                        help="match a renamed pass; raw encoder labels remain in the JSON")
     args = parser.parse_args()
-    reference, candidate = summarize(args.reference), summarize(args.candidate)
+    aliases = {}
+    for alias in args.label_alias:
+        actual, separator, comparison = alias.partition("=")
+        if not separator or not actual or not comparison:
+            parser.error("--label-alias requires ACTUAL=COMPARISON")
+        aliases[actual] = comparison
+    reference, candidate = summarize(args.reference, aliases), summarize(args.candidate, aliases)
     print("Xcode replay encoder time; not live frame latency. Match GPU performance state.")
     print("| Pass | Reference ms | Candidate ms | Change |")
     print("| --- | ---: | ---: | ---: |")

@@ -1,6 +1,6 @@
 //! Reproducible low-camera movement from log9, opt-in and separate from the UI baseline.
 use bevy::{diagnostic::FrameCount, prelude::*};
-use engine::{GameInputSystems, WorldViewCamera};
+use engine::{ActiveWorldSpace, GameInputSystems, WorldViewCamera};
 
 use super::{AuditRenderPath, AuditSettings};
 
@@ -13,9 +13,9 @@ pub(super) fn install(app: &mut App) {
     assert!(
         matches!(
             name.as_str(),
-            "low-walk" | "ground-low" | "ground-overhead" | "ground-walk"
+            "low-walk" | "ground-low" | "ground-overhead" | "ground-walk" | "ground-stream"
         ),
-        "expected --render-repro low-walk, ground-low, ground-overhead or ground-walk"
+        "expected --render-repro low-walk, ground-low, ground-overhead, ground-walk or ground-stream"
     );
     let ground = name.starts_with("ground-");
     // Same 75%/4x/no-prepass setup as log9. Leave both optimization switches independent.
@@ -41,8 +41,9 @@ pub(super) fn install(app: &mut App) {
     app.insert_resource(ReproView(name.clone()));
     app.add_systems(Update, move_camera.after(GameInputSystems))
         .add_systems(PostUpdate, synchronize_wind);
+    let path_frames = if name == "ground-stream" { 6000 } else { 600 };
     warn!(
-        "RENDER_REPRO name={name} version=4 warmup_frames=300 path_frames=600 msaa=4 prepass=false; ground scenes use native resolution, no UI, no grass; low-walk retains 75% composite"
+        "RENDER_REPRO name={name} version=5 warmup_frames=300 path_frames={path_frames} msaa=4 prepass=false; ground scenes use native resolution, no UI, no grass; low-walk retains 75% composite"
     );
     let value = |flag: &str| {
         let mut args = std::env::args();
@@ -53,13 +54,35 @@ pub(super) fn install(app: &mut App) {
             .expect("--render-frames requires an integer")
     });
     let screenshot = value("--render-snapshot");
+    let screenshot_frames = value("--render-snapshot-frames")
+        .map(|value| {
+            value
+                .split(',')
+                .map(|frame| {
+                    frame
+                        .parse::<u32>()
+                        .expect("--render-snapshot-frames requires comma-separated frame numbers")
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_else(|| vec![600]);
+    assert!(
+        screenshot_frames
+            .iter()
+            .all(|&frame| frame >= 300 && frames.is_none_or(|end| frame < end)),
+        "snapshot frames must follow warmup and precede the exit frame"
+    );
     if frames.is_some() || screenshot.is_some() {
         assert!(
             frames.is_none_or(|v| v >= 900),
             "allow at least 900 frames for warmup/screenshot"
         );
-        app.insert_resource(ReproOutput { frames, screenshot })
-            .add_systems(Update, output);
+        app.insert_resource(ReproOutput {
+            frames,
+            screenshot,
+            screenshot_frames,
+        })
+        .add_systems(Update, output);
     }
 }
 
@@ -69,6 +92,7 @@ struct ReproView(String);
 struct ReproOutput {
     frames: Option<u32>,
     screenshot: Option<String>,
+    screenshot_frames: Vec<u32>,
 }
 
 fn output(
@@ -77,13 +101,24 @@ fn output(
     config: Res<ReproOutput>,
     mut exit: MessageWriter<AppExit>,
 ) {
-    if frame.0 == 600
+    if config.screenshot_frames.contains(&frame.0)
         && let Some(path) = &config.screenshot
     {
         use bevy::render::view::screenshot::{Screenshot, save_to_disk};
+        let path = if config.screenshot_frames.len() > 1 {
+            let path = std::path::Path::new(path);
+            path.with_file_name(format!(
+                "{}-{:06}.{}",
+                path.file_stem().unwrap().to_string_lossy(),
+                frame.0,
+                path.extension().unwrap_or_default().to_string_lossy()
+            ))
+        } else {
+            std::path::PathBuf::from(path)
+        };
         commands
             .spawn(Screenshot::primary_window())
-            .observe(save_to_disk(path.clone()));
+            .observe(save_to_disk(path));
     }
     if config.frames.is_some_and(|end| frame.0 >= end) {
         exit.write(AppExit::Success);
@@ -105,12 +140,30 @@ fn move_camera(
     frame: Res<FrameCount>,
     view: Res<ReproView>,
     mut camera: Single<&mut Transform, With<WorldViewCamera>>,
+    mut active_space: ResMut<ActiveWorldSpace>,
 ) {
     **camera = match view.0.as_str() {
         "ground-low" => pose(0),
         "ground-overhead" => Transform::from_xyz(-12.0, 18.0, 16.0).looking_at(Vec3::ZERO, Vec3::Y),
+        "ground-stream" => stream_pose(frame.0),
         _ => pose(frame.0),
     };
+    if view.0 == "ground-stream"
+        && let Some(space) = active_space.current()
+    {
+        // Drive the actual residency focus too. Camera-only ground-walk stays in
+        // the original preload ring and cannot validate page streaming.
+        let position = camera.translation;
+        active_space.request(space, [position.x, 0.0, position.z]);
+    }
+}
+
+fn stream_pose(frame: u32) -> Transform {
+    let phase = frame.saturating_sub(300).min(6000) as f32 / 3000.0;
+    let progress = if phase <= 1.0 { phase } else { 2.0 - phase };
+    let mut camera = pose(0);
+    camera.translation += Vec3::new(5.389, 0.0, -8.279).normalize() * (128.0 * progress);
+    camera
 }
 
 #[cfg(test)]
@@ -126,6 +179,28 @@ mod tests {
             assert!((pose(frame).translation - pose(frame - 1).translation).length() < 0.034);
             assert_eq!(pose(frame).translation.y, 1.730);
             assert!(pose(frame).rotation.is_normalized());
+        }
+    }
+
+    #[test]
+    fn stream_route_crosses_pages_and_returns_without_jumps() {
+        assert_eq!(stream_pose(0), stream_pose(300));
+        assert_eq!(stream_pose(300), stream_pose(6300));
+        assert!(
+            (stream_pose(3300)
+                .translation
+                .distance(stream_pose(300).translation)
+                - 128.0)
+                .abs()
+                < 0.0001
+        );
+        for frame in 301..=6600 {
+            assert!(
+                stream_pose(frame)
+                    .translation
+                    .distance(stream_pose(frame - 1).translation)
+                    < 0.044
+            );
         }
     }
 }

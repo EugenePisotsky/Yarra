@@ -1,5 +1,6 @@
 //! Optional shared albedo bakes plus bounded, page-local weight/macro textures.
-//! The reference material remains available until both resources are usable.
+//! Shared albedo selection is independent of the page control cache, so streaming
+//! and control-budget fallback do not replace the surface pattern.
 use std::{
     collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
@@ -7,9 +8,12 @@ use std::{
 
 use super::{TerrainMaterial, TerrainShadingMode, load_repeat_image};
 use bevy::{
-    asset::{AssetId, AssetLoader, LoadContext, RenderAssetUsages, io::Reader},
+    asset::{AssetId, AssetLoader, LoadContext, LoadState, RenderAssetUsages, io::Reader},
     core_pipeline::schedule::camera_driver,
-    image::{ImageFilterMode, ImageSampler, ImageSamplerDescriptor},
+    image::{
+        CompressedImageFormatSupport, CompressedImageFormats, ImageFilterMode, ImageSampler,
+        ImageSamplerDescriptor,
+    },
     prelude::*,
     render::{
         RenderApp, RenderStartup,
@@ -31,6 +35,9 @@ const BUILDS_PER_FRAME: usize = 2;
 #[derive(Resource, Clone, Debug)]
 pub struct TerrainPreparedSettings {
     pub enabled: bool,
+    /// Prefer the optional native ASTC bake when the rendering device supports it.
+    /// Disable to retain the manifest's primary image (the desktop universal bake).
+    pub prefer_native_astc: bool,
     /// Page texture payload only; shared albedo arrays and driver overhead are additional.
     pub max_bytes: u64,
 }
@@ -38,6 +45,7 @@ impl Default for TerrainPreparedSettings {
     fn default() -> Self {
         Self {
             enabled: false,
+            prefer_native_astc: true,
             max_bytes: 24 * 1024 * 1024,
         }
     }
@@ -47,12 +55,19 @@ pub struct TerrainPreparedSnapshot {
     pub enabled: bool,
     pub pages: usize,
     pub active: usize,
+    /// Pages using the shared albedo, including pages with uncached controls.
+    pub albedo_active: usize,
     pub bytes: u64,
     pub builds: u64,
+    /// Shared albedo payload observed on the GPU, separate from page control bytes.
+    pub albedo_bytes: u64,
+    pub albedo_images: usize,
+    pub astc_8x8_images: usize,
 }
 #[derive(Default)]
 struct Shared {
-    ready: HashSet<AssetId<Image>>,
+    ready: HashSet<(AssetId<Image>, AssetId<Image>)>,
+    ready_albedos: HashSet<AssetId<Image>>,
     snapshot: TerrainPreparedSnapshot,
 }
 #[derive(Resource, Clone, Default)]
@@ -72,7 +87,18 @@ struct PreparedManifest {
 struct ManifestEntry {
     source: String,
     image: String,
+    #[serde(default)]
+    astc_image: Option<String>,
     period: f32,
+}
+impl ManifestEntry {
+    fn preferred_image(&self, native_astc: bool) -> &str {
+        if native_astc {
+            self.astc_image.as_deref().unwrap_or(&self.image)
+        } else {
+            &self.image
+        }
+    }
 }
 #[derive(Default, TypePath)]
 struct ManifestLoader;
@@ -103,6 +129,8 @@ impl AssetLoader for ManifestLoader {
             || manifest.entries.iter().any(|e| {
                 !e.period.is_finite()
                     || !(2.0..=16.0).contains(&e.period)
+                    || e.image.is_empty()
+                    || e.astc_image.as_ref().is_some_and(String::is_empty)
                     || !sources.insert(&e.source)
             })
         {
@@ -135,6 +163,7 @@ mod tests {
             shading_mode: TerrainShadingMode::Production,
             stochastic_cached: false,
             prepared: false,
+            prepared_albedo: false,
             source_weights: Handle::default(),
             source_base_color_array: Handle::default(),
             weights: Handle::default(),
@@ -187,11 +216,16 @@ struct Entry {
     inputs: Inputs,
     image: Handle<Image>,
 }
+struct AlbedoEntry {
+    image: Handle<Image>,
+    period: f32,
+    preferred_path: String,
+}
 #[derive(Resource, Default)]
 struct Entries {
     pages: HashMap<AssetId<TerrainMaterial>, Entry>,
     manifest: Option<Handle<PreparedManifest>>,
-    albedos: HashMap<String, (Handle<Image>, f32)>,
+    albedos: HashMap<String, AlbedoEntry>,
 }
 #[derive(Clone)]
 struct Request {
@@ -200,7 +234,10 @@ struct Request {
     albedo: AssetId<Image>,
 }
 #[derive(Resource, Default, Clone, ExtractResource)]
-struct Requests(Vec<Request>);
+struct Requests {
+    controls: Vec<Request>,
+    albedos: HashSet<AssetId<Image>>,
+}
 
 pub(super) fn install(app: &mut App) {
     let stats = TerrainPreparedStats::default();
@@ -246,6 +283,7 @@ fn control_image() -> Image {
 #[allow(clippy::too_many_arguments)]
 fn maintain(
     config: Res<TerrainPreparedSettings>,
+    formats: Option<Res<CompressedImageFormatSupport>>,
     stats: Res<TerrainPreparedStats>,
     server: Res<AssetServer>,
     manifests: Res<Assets<PreparedManifest>>,
@@ -262,21 +300,54 @@ fn maintain(
     if manifests.is_changed() {
         entries.albedos.clear();
     }
-    if let Some(manifest) = manifest {
-        for (_, material) in materials.iter() {
-            let Some(path) = material.source_base_color_array.path() else {
+    let sources: HashSet<_> = materials
+        .iter()
+        .filter(|(_, material)| eligible(material))
+        .filter_map(|(_, material)| {
+            material
+                .source_base_color_array
+                .path()
+                .map(ToString::to_string)
+        })
+        .collect();
+    // Shared bakes must leave residency too, rather than accumulating across biomes.
+    entries.albedos.retain(|source, _| sources.contains(source));
+    let native_astc = config.prefer_native_astc
+        && formats.is_some_and(|formats| formats.0.contains(CompressedImageFormats::ASTC_LDR));
+    if config.enabled
+        && let Some(manifest) = manifest
+    {
+        for source in sources {
+            let Some(entry) = manifest.entries.iter().find(|e| e.source == source) else {
                 continue;
             };
-            let source = path.to_string();
-            if !entries.albedos.contains_key(&source)
-                && let Some(entry) = manifest.entries.iter().find(|e| e.source == source)
+            let preferred = entry.preferred_image(native_astc);
+            let albedo = entries
+                .albedos
+                .entry(source)
+                .or_insert_with(|| AlbedoEntry {
+                    image: load_repeat_image(&server, preferred, true),
+                    period: entry.period,
+                    preferred_path: preferred.to_owned(),
+                });
+            if albedo.preferred_path != preferred {
+                albedo.image = load_repeat_image(&server, preferred, true);
+                albedo.preferred_path = preferred.to_owned();
+            }
+            // Load only one variant normally. A missing optional bake falls back
+            // once to the manifest's original image without retrying every frame.
+            if preferred != entry.image
+                && matches!(server.load_state(albedo.image.id()), LoadState::Failed(_))
+                && albedo
+                    .image
+                    .path()
+                    .is_some_and(|path| path.to_string() == preferred)
             {
-                // Resolve only the format used by resident materials. Loading every
-                // manifest entry would allocate both desktop and iOS albedo arrays.
-                entries.albedos.insert(
-                    source,
-                    (load_repeat_image(&server, &entry.image, true), entry.period),
+                warn!(
+                    "prepared terrain ASTC unavailable; falling back to {}",
+                    entry.image
                 );
+                albedo.image = load_repeat_image(&server, &entry.image, true);
             }
         }
     }
@@ -291,23 +362,17 @@ fn maintain(
     if !entries.albedos.is_empty() {
         for (id, m) in materials.iter() {
             // These bakes replace stochastic albedo, not deliberately plain surfaces.
-            if m.settings.macro_settings.z < 0.5
-                || (m.settings.surface_layers.z > 1.5 && m.settings.macro_settings.w < 0.5)
-                || !matches!(
-                    m.shading_mode,
-                    TerrainShadingMode::Production | TerrainShadingMode::SurfaceUnlit
-                )
-            {
+            if !eligible(m) {
                 continue;
             }
             let Some(path) = m.source_base_color_array.path() else {
                 continue;
             };
-            let Some((albedo, period)) = entries.albedos.get(&path.to_string()) else {
+            let Some(albedo) = entries.albedos.get(&path.to_string()) else {
                 continue;
             };
             if let Some(inputs) = Inputs::from_material(m) {
-                wanted.insert(id, (inputs, albedo.clone(), *period));
+                wanted.insert(id, (inputs, albedo.image.clone(), albedo.period));
             }
         }
     }
@@ -349,43 +414,47 @@ fn maintain(
     let mut shared = stats.0.lock().unwrap();
     let mut changes = Vec::new();
     let mut active = 0;
+    let mut albedo_active = 0;
     for (id, m) in materials.iter() {
-        let candidate =
-            entries
-                .pages
-                .get(&id)
-                .zip(wanted.get(&id))
-                .filter(|(e, (_, albedo, _))| {
-                    config.enabled
-                        && shared.ready.contains(&e.image.id())
-                        && server.is_loaded_with_dependencies(albedo.id())
-                });
-        let (prepared, weights, albedo, period) = match candidate {
-            Some((e, (_, albedo, period))) => (true, e.image.clone(), albedo.clone(), *period),
-            None => (
-                false,
-                m.source_weights.clone(),
-                m.source_base_color_array.clone(),
-                0.0,
-            ),
-        };
+        let albedo = wanted.get(&id).filter(|(_, albedo, _)| {
+            config.enabled
+                && shared.ready_albedos.contains(&albedo.id())
+                && server.is_loaded_with_dependencies(albedo.id())
+        });
+        // Keep the same albedo while page controls load, rebuild, or exceed the budget.
+        // The temporary shader evaluates only weights/macro from their original inputs.
+        let control = entries.pages.get(&id).filter(|entry| {
+            albedo.is_some_and(|(_, albedo, _)| {
+                shared.ready.contains(&(entry.image.id(), albedo.id()))
+            })
+        });
+        let prepared = control.is_some();
+        let prepared_albedo = albedo.is_some();
+        let weights = control.map_or_else(|| m.source_weights.clone(), |e| e.image.clone());
+        let (albedo, period) = albedo.map_or_else(
+            || (m.source_base_color_array.clone(), 0.0),
+            |(_, albedo, period)| (albedo.clone(), *period),
+        );
         active += usize::from(prepared);
+        albedo_active += usize::from(prepared_albedo);
         if m.prepared != prepared
+            || m.prepared_albedo != prepared_albedo
             || m.weights != weights
             || m.base_color_array != albedo
             || m.settings.surface_layers.w != period
         {
-            changes.push((id, prepared, weights, albedo, period));
+            changes.push((id, prepared, prepared_albedo, weights, albedo, period));
         }
     }
-    for (id, prepared, weights, albedo, period) in changes {
+    for (id, prepared, prepared_albedo, weights, albedo, period) in changes {
         let mut m = materials.get_mut(id).unwrap();
         m.prepared = prepared;
+        m.prepared_albedo = prepared_albedo;
         m.weights = weights;
         m.base_color_array = albedo;
         m.settings.surface_layers.w = period;
     }
-    requests.0 = entries
+    requests.controls = entries
         .pages
         .iter()
         .map(|(id, e)| Request {
@@ -394,10 +463,42 @@ fn maintain(
             albedo: wanted[id].1.id(),
         })
         .collect();
+    requests.albedos = entries
+        .albedos
+        .values()
+        .map(|albedo| albedo.image.id())
+        .collect();
     shared.snapshot.enabled = config.enabled;
     shared.snapshot.pages = entries.pages.len();
     shared.snapshot.active = active;
+    shared.snapshot.albedo_active = albedo_active;
     shared.snapshot.bytes = bytes;
+}
+
+fn eligible(material: &TerrainMaterial) -> bool {
+    material.settings.macro_settings.z >= 0.5
+        && (material.settings.surface_layers.z <= 1.5 || material.settings.macro_settings.w >= 0.5)
+        && matches!(
+            material.shading_mode,
+            TerrainShadingMode::Production | TerrainShadingMode::SurfaceUnlit
+        )
+}
+
+fn albedo_payload_bytes(descriptor: &TextureDescriptor<'_>) -> u64 {
+    let (block_width, block_height) = descriptor.format.block_dimensions();
+    let block_bytes = u64::from(descriptor.format.block_copy_size(None).unwrap_or(0));
+    (0..descriptor.mip_level_count)
+        .map(|mip| {
+            u64::from((descriptor.size.width >> mip).max(1).div_ceil(block_width))
+                * u64::from(
+                    (descriptor.size.height >> mip)
+                        .max(1)
+                        .div_ceil(block_height),
+                )
+                * u64::from(descriptor.size.depth_or_array_layers)
+                * block_bytes
+        })
+        .sum()
 }
 
 #[derive(Clone, ShaderType)]
@@ -453,26 +554,53 @@ fn build_controls(
     mut built: ResMut<Built>,
 ) {
     let mut shared = stats.0.lock().unwrap();
-    let requested: HashSet<_> = requests.0.iter().map(|r| r.output).collect();
-    built.0.retain(|id, _| requested.contains(id));
-    shared.ready.retain(|id| requested.contains(id));
+    let requested: HashMap<_, _> = requests
+        .controls
+        .iter()
+        .map(|r| (r.output, r.albedo))
+        .collect();
+    built.0.retain(|id, _| requested.contains_key(id));
+    shared
+        .ready
+        .retain(|(output, albedo)| requested.get(output) == Some(albedo));
+    shared.ready_albedos = requests
+        .albedos
+        .iter()
+        .copied()
+        .filter(|id| images.get(*id).is_some())
+        .collect();
+    shared.snapshot.albedo_bytes = 0;
+    shared.snapshot.albedo_images = 0;
+    shared.snapshot.astc_8x8_images = 0;
+    for image in requests.albedos.iter().filter_map(|id| images.get(*id)) {
+        shared.snapshot.albedo_bytes += albedo_payload_bytes(&image.texture_descriptor);
+        shared.snapshot.albedo_images += 1;
+        shared.snapshot.astc_8x8_images += usize::from(matches!(
+            image.texture_descriptor.format,
+            TextureFormat::Astc {
+                block: AstcBlock::B8x8,
+                ..
+            }
+        ));
+    }
     let Some(compute) = cache.get_compute_pipeline(pipeline.pipeline) else {
         shared.ready.clear();
         built.0.clear();
         return;
     };
     let mut count = 0;
-    for request in &requests.0 {
+    for request in &requests.controls {
+        let ready_key = (request.output, request.albedo);
         let albedo_ready = images.get(request.albedo).is_some();
         if !albedo_ready {
-            shared.ready.remove(&request.output);
+            shared.ready.remove(&ready_key);
         }
         let (Some(weights), Some(macro_image), Some(output)) = (
             images.get(request.inputs.weights),
             images.get(request.inputs.macro_image),
             images.get(request.output),
         ) else {
-            shared.ready.remove(&request.output);
+            shared.ready.remove(&ready_key);
             built.0.remove(&request.output);
             continue;
         };
@@ -484,11 +612,11 @@ fn build_controls(
         );
         if built.0.get(&request.output) == Some(&key) {
             if albedo_ready {
-                shared.ready.insert(request.output);
+                shared.ready.insert(ready_key);
             }
             continue;
         }
-        shared.ready.remove(&request.output);
+        shared.ready.remove(&ready_key);
         if count >= BUILDS_PER_FRAME {
             continue;
         }
@@ -530,7 +658,7 @@ fn build_controls(
         // This graph work executes before camera draws; main-world activation is next frame.
         built.0.insert(request.output, key);
         if albedo_ready {
-            shared.ready.insert(request.output);
+            shared.ready.insert(ready_key);
         }
         shared.snapshot.builds += 1;
         count += 1;

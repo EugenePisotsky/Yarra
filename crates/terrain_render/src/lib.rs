@@ -154,6 +154,7 @@ pub struct TerrainMaterial {
     pub shading_mode: TerrainShadingMode,
     stochastic_cached: bool,
     prepared: bool,
+    prepared_albedo: bool,
     source_weights: Handle<Image>,
     source_base_color_array: Handle<Image>,
     #[uniform(0)]
@@ -177,6 +178,7 @@ pub struct TerrainMaterialKey {
     shading: TerrainShadingMode,
     stochastic_cached: bool,
     prepared: bool,
+    prepared_albedo: bool,
 }
 
 impl From<&TerrainMaterial> for TerrainMaterialKey {
@@ -185,6 +187,7 @@ impl From<&TerrainMaterial> for TerrainMaterialKey {
             shading: material.shading_mode,
             stochastic_cached: material.stochastic_cached,
             prepared: material.prepared,
+            prepared_albedo: material.prepared_albedo,
         }
     }
 }
@@ -203,6 +206,11 @@ impl Material for TerrainMaterial {
         if key.bind_group_data.prepared {
             if let Some(fragment) = descriptor.fragment.as_mut() {
                 fragment.shader_defs.push("TERRAIN_PREPARED".into());
+            }
+        }
+        if key.bind_group_data.prepared_albedo {
+            if let Some(fragment) = descriptor.fragment.as_mut() {
+                fragment.shader_defs.push("TERRAIN_PREPARED_ALBEDO".into());
             }
         } else if key.bind_group_data.stochastic_cached
             && let Some(fragment) = descriptor.fragment.as_mut()
@@ -284,6 +292,7 @@ pub fn prepare_terrain_material(
         shading_mode: TerrainShadingMode::Production,
         stochastic_cached: false,
         prepared: false,
+        prepared_albedo: false,
         source_weights: weight_image.clone(),
         source_base_color_array: base_color_array.clone(),
         stochastic_cache: Handle::default(),

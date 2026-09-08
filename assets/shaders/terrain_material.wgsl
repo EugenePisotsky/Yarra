@@ -170,7 +170,7 @@ fn sample_surface(
     let uv = world_xz / max(tile_size, 0.001);
     let uv_dx = dpdx(uv);
     let uv_dy = dpdy(uv);
-#ifdef TERRAIN_PREPARED
+#ifdef TERRAIN_PREPARED_ALBEDO
     // Offline bake uses a periodic triangular lattice, including its wrap edges.
     let period = settings.surface_layers.w;
     let prepared_uv = vec2(uv.x + uv.y * 0.5773502692, uv.y * 1.1547005384) / period;

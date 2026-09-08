@@ -826,8 +826,13 @@ impl Default for VegetationTelemetryStaging {
 #[cfg(not(target_os = "ios"))]
 fn prepare_telemetry_staging(
     render_device: Res<RenderDevice>,
+    settings: Res<VegetationDebugSettings>,
     mut staging: ResMut<VegetationTelemetryStaging>,
 ) {
+    if !settings.gpu_counters_enabled {
+        staging.frames_until_capture = 0;
+        return;
+    }
     if staging.buffer.is_some() {
         return;
     }

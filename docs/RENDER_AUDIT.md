@@ -664,7 +664,7 @@ eight app frames over 7.405 seconds, separately from these screenshot events.
 
 ### Applied correction
 
-Audit startup/Reset now default to **Render: direct at 100%**. Composite remains
+At this stage, audit startup/Reset defaulted to **Render: direct at 100%**. Composite remains
 available explicitly and is selected automatically for 75%/50% rendering. A
 1×1 placeholder avoids allocating a full-size unused audit image until Composite
 is requested. The baseline sequence still explicitly tests both paths, then
@@ -673,6 +673,12 @@ the audit already used the direct path; this change bypasses the extra audit
 rendering path in future native-resolution measurements. It does not guarantee
 a fixed reduction in frame duration or energy use. It is not a new production-renderer
 optimization, and the debug UI still has a measurable cost while visible.
+
+**Update, 2026-09-08:** normal game startup and audit Reset now share **75% world
+resolution / 4× MSAA** defaults. The scaled world target and native-resolution UI
+live in `game_render.rs`, independently of the audit plugin. Audit controls can
+still select Direct at 100%; scripted ground comparisons explicitly retain their
+native-resolution settings.
 
 Artifacts: [comparison chart](../tmp/metal-analysis5/comparison.png),
 [full summary and screenshot alignment](../tmp/metal-analysis5/summary.json),

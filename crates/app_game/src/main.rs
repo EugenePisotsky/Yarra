@@ -17,6 +17,7 @@ use vegetation_render::{
     VegetationDiagnosticsSnapshot, VegetationRenderPlugin, VegetationWind,
 };
 
+mod game_render;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 mod metal_capture;
 mod render_audit;
@@ -39,7 +40,8 @@ fn main() {
                     ..default()
                 }),
         )
-        .add_plugins(MinimalGamePlugin::new(runtime_database));
+        .add_plugins(MinimalGamePlugin::new(runtime_database))
+        .add_plugins(game_render::GameRenderPlugin);
 
     app.add_plugins(VegetationRenderPlugin)
         .insert_resource(
@@ -79,8 +81,25 @@ fn main() {
             .resource_mut::<VegetationDebugSettings>()
             .early_rejection = false;
     }
-    if std::env::args_os().any(|argument| argument == "--terrain-prepared") {
-        app.world_mut().resource_mut::<terrain_render::TerrainPreparedSettings>().enabled = true;
+    app.world_mut().resource_mut::<terrain_render::TerrainPreparedSettings>().enabled = terrain_prepared_enabled();
+    app.world_mut().resource_mut::<VegetationDebugSettings>().gpu_counters_enabled =
+        std::env::args_os().any(|arg| arg == "--grass-counters");
+    if std::env::args_os().any(|argument| argument == "--terrain-prepared-universal") {
+        app.world_mut()
+            .resource_mut::<terrain_render::TerrainPreparedSettings>()
+            .prefer_native_astc = false;
+    }
+    if std::env::args_os().any(|argument| argument == "--msaa-store-reference") {
+        app.add_systems(
+            PostStartup,
+            |mut commands: Commands, cameras: Query<Entity, With<engine::WorldViewCamera>>| {
+                for camera in &cameras {
+                    commands
+                        .entity(camera)
+                        .insert(engine::MsaaColorStorePolicy::Preserve);
+                }
+            },
+        );
     }
     if std::env::args_os().any(|argument| argument == "--terrain-procedural") {
         app.world_mut()
@@ -93,6 +112,11 @@ fn main() {
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     metal_capture::install(&mut app);
     app.run();
+}
+
+// --terrain-prepared remains accepted for existing capture commands; prepared is now normal.
+fn terrain_prepared_enabled() -> bool {
+    !std::env::args_os().any(|arg| arg == "--terrain-reference")
 }
 
 #[derive(Component)]

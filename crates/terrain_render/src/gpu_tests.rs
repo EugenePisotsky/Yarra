@@ -192,7 +192,66 @@ fn exercise_prepared_material(app: &mut App) {
     let before = app.world().resource::<TerrainPreparedStats>().snapshot();
     assert_eq!(before.pages, 2);
     assert_eq!(before.builds, 2);
-    let (material, control) = app
+    assert_eq!(before.albedo_images, 1, "one shared albedo allocation");
+    let supports_astc = app
+        .world()
+        .resource::<bevy::image::CompressedImageFormatSupport>()
+        .0
+        .contains(bevy::image::CompressedImageFormats::ASTC_LDR);
+    let initial_albedo = app
+        .world()
+        .resource::<Assets<TerrainMaterial>>()
+        .iter()
+        .find(|(_, m)| m.prepared)
+        .unwrap()
+        .1
+        .base_color_array
+        .id();
+    if supports_astc {
+        assert_eq!(before.astc_8x8_images, 1);
+        assert!(before.albedo_bytes < 12 * 1024 * 1024);
+    }
+    app.world_mut()
+        .resource_mut::<TerrainPreparedSettings>()
+        .prefer_native_astc = false;
+    settle_prepared(app, 2);
+    let universal = app.world().resource::<TerrainPreparedStats>().snapshot();
+    assert_eq!(universal.albedo_images, 1);
+    assert_eq!(universal.astc_8x8_images, 0);
+    assert_eq!(
+        universal.builds, before.builds,
+        "compression switch must reuse controls"
+    );
+    let universal_albedo = app
+        .world()
+        .resource::<Assets<TerrainMaterial>>()
+        .iter()
+        .find(|(_, m)| m.prepared)
+        .unwrap()
+        .1
+        .base_color_array
+        .id();
+    if supports_astc {
+        assert!(universal.albedo_bytes > before.albedo_bytes * 3);
+        assert!(app.sub_app(RenderApp).world().resource::<bevy::render::render_asset::RenderAssets<bevy::render::texture::GpuImage>>()
+            .get(initial_albedo).is_none(), "old ASTC asset must leave GPU residency");
+    }
+    app.world_mut()
+        .resource_mut::<TerrainPreparedSettings>()
+        .prefer_native_astc = true;
+    settle_prepared(app, 2);
+    let restored = app.world().resource::<TerrainPreparedStats>().snapshot();
+    assert_eq!(restored.albedo_bytes, before.albedo_bytes);
+    assert_eq!(restored.builds, before.builds);
+    if supports_astc {
+        assert!(app.sub_app(RenderApp).world().resource::<bevy::render::render_asset::RenderAssets<bevy::render::texture::GpuImage>>()
+            .get(universal_albedo).is_none(), "universal comparison asset must leave GPU residency");
+    }
+    eprintln!(
+        "prepared albedo: native ASTC supported={supports_astc}, universal={} bytes, preferred={} bytes; controls reused",
+        universal.albedo_bytes, before.albedo_bytes
+    );
+    let (mut material, control) = app
         .world()
         .resource::<Assets<TerrainMaterial>>()
         .iter()
@@ -291,6 +350,112 @@ fn exercise_prepared_material(app: &mut App) {
             .is_none(),
         "stale control must be reclaimed"
     );
+    // Losing page controls must preserve the shared surface pattern, including for
+    // a newly streamed material. This exercises both lit and unlit fallback at 4x MSAA.
+    let prepared_pixels = app.world().resource::<Pixels>().0.lock().unwrap().clone();
+    let albedo_id = app
+        .world()
+        .resource::<Assets<TerrainMaterial>>()
+        .get(material)
+        .unwrap()
+        .base_color_array
+        .id();
+    app.world_mut()
+        .resource_mut::<TerrainPreparedSettings>()
+        .max_bytes = 0;
+    settle_prepared(app, 0);
+    let fallback = app.world().resource::<TerrainPreparedStats>().snapshot();
+    assert_eq!(fallback.pages, 0);
+    assert_eq!(fallback.bytes, 0);
+    assert_eq!(
+        fallback.albedo_active, 2,
+        "control budget must not change albedo selection"
+    );
+    for (_, m) in app
+        .world()
+        .resource::<Assets<TerrainMaterial>>()
+        .iter()
+        .filter(|(_, m)| m.prepared_albedo)
+    {
+        assert_eq!(m.base_color_array.id(), albedo_id);
+        assert_eq!(m.weights, m.source_weights);
+    }
+    let fallback_pixels = app.world().resource::<Pixels>().0.lock().unwrap().clone();
+    assert_eq!(prepared_pixels.len(), fallback_pixels.len());
+    let differences: Vec<_> = prepared_pixels
+        .iter()
+        .zip(&fallback_pixels)
+        .map(|(a, b)| a.abs_diff(*b))
+        .collect();
+    let maximum = differences.iter().copied().max().unwrap();
+    let mean = differences
+        .iter()
+        .map(|&value| f64::from(value))
+        .sum::<f64>()
+        / differences.len() as f64;
+    eprintln!(
+        "prepared controls / uncached controls at 4x MSAA: max byte error={maximum}, mean={mean:.6}"
+    );
+    assert!(
+        maximum <= 3 && mean < 0.1,
+        "control fallback changed the surface pattern"
+    );
+    let mut incoming = app
+        .world()
+        .resource::<Assets<TerrainMaterial>>()
+        .get(material)
+        .unwrap()
+        .clone();
+    incoming.prepared = false;
+    incoming.prepared_albedo = false;
+    incoming.base_color_array = incoming.source_base_color_array.clone();
+    incoming.weights = incoming.source_weights.clone();
+    incoming.settings.surface_layers.w = 0.0;
+    let incoming_id = app
+        .world_mut()
+        .resource_mut::<Assets<TerrainMaterial>>()
+        .add(incoming);
+    let world = app.world_mut();
+    for mut mesh in world
+        .query::<&mut MeshMaterial3d<TerrainMaterial>>()
+        .iter_mut(world)
+    {
+        if mesh.0.id() == material {
+            mesh.0 = incoming_id.clone();
+        }
+    }
+    world
+        .resource_mut::<Assets<TerrainMaterial>>()
+        .remove(material);
+    material = incoming_id.id();
+    app.update();
+    let incoming = app
+        .world()
+        .resource::<Assets<TerrainMaterial>>()
+        .get(material)
+        .unwrap();
+    assert!(
+        incoming.prepared_albedo && !incoming.prepared,
+        "new page must select the resident albedo immediately"
+    );
+    assert_eq!(incoming.base_color_array.id(), albedo_id);
+    settle_prepared(app, 0);
+    assert_eq!(
+        fallback_pixels,
+        *app.world().resource::<Pixels>().0.lock().unwrap(),
+        "streamed material must retain exactly the same fallback image"
+    );
+    app.world_mut()
+        .resource_mut::<TerrainPreparedSettings>()
+        .max_bytes = 24 * 1024 * 1024;
+    settle_prepared(app, 2);
+    assert_eq!(
+        app.world()
+            .resource::<TerrainPreparedStats>()
+            .snapshot()
+            .albedo_active,
+        2
+    );
     app.world_mut()
         .resource_mut::<Assets<TerrainMaterial>>()
         .remove(material);
@@ -313,6 +478,22 @@ fn exercise_prepared_material(app: &mut App) {
             .bytes,
         0
     );
+    // All pages leaving a texture set must release its shared albedo as well.
+    let remaining: Vec<_> = app
+        .world()
+        .resource::<Assets<TerrainMaterial>>()
+        .iter()
+        .map(|(id, _)| id)
+        .collect();
+    for id in remaining {
+        app.world_mut()
+            .resource_mut::<Assets<TerrainMaterial>>()
+            .remove(id);
+    }
+    settle_prepared(app, 0);
+    let empty = app.world().resource::<TerrainPreparedStats>().snapshot();
+    assert_eq!(empty.albedo_images, 0);
+    assert_eq!(empty.albedo_bytes, 0);
     eprintln!(
         "prepared terrain: lit/unlit 4x MSAA, packed macro, reuse, toggle, source edit, eviction and budget passed"
     );
@@ -462,6 +643,7 @@ fn setup(
             shading_mode: mode,
             stochastic_cached: false,
             prepared: false,
+            prepared_albedo: false,
             source_weights: weights.clone(),
             source_base_color_array: array.clone(),
             stochastic_cache: Handle::default(),

@@ -115,7 +115,9 @@ def main():
         target = root / 'runtime' / family / 'prepared_albedo_array.ktx2'
         records.append(compile_image(ktx, outputs, target, family, 'color', args.size))
         prefix = f'local/terrain/temperate_meadow/runtime/{family}'
-        entries.append(f'        (source: "{prefix}/base_color_array.ktx2", image: "{prefix}/prepared_albedo_array.ktx2", period: {float(args.period)}),')
+        native = (' astc_image: Some("local/terrain/temperate_meadow/runtime/astc/prepared_albedo_array.ktx2"),'
+                  if family == 'universal' else '')
+        entries.append(f'        (source: "{prefix}/base_color_array.ktx2", image: "{prefix}/prepared_albedo_array.ktx2",{native} period: {float(args.period)}),')
     manifest = repository / 'assets/packs/terrain/prepared.terrain-prepared'
     manifest.write_text('(version: 1, entries: [\n' + '\n'.join(entries) + '\n])\n')
     report = dict(version=1, size=args.size, period=args.period,

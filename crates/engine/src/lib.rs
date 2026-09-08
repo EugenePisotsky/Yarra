@@ -2,6 +2,7 @@ mod actor;
 mod character;
 mod character_catalog;
 mod environment;
+mod msaa_store;
 mod world_streaming;
 
 use std::{f32::consts::TAU, path::PathBuf};
@@ -24,6 +25,7 @@ pub use character_catalog::{
     DEFAULT_CHARACTER_PRESENTATION_ID, load_character_presentation_catalog_summary,
 };
 pub use environment::{WorldEnvironmentCamera, WorldEnvironmentPlugin, WorldSun};
+pub use msaa_store::{MsaaColorStorePlugin, MsaaColorStorePolicy};
 use terrain_render::{TerrainMacroVariation, TerrainRenderPlugin};
 pub use world_streaming::{
     ActiveWorldSpace, GameplayObject, StreamedTerrainSurface, StreamedVegetationFieldPage,
@@ -93,6 +95,7 @@ impl Plugin for MinimalGamePlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((
             FrameTimeDiagnosticsPlugin::default(),
+            MsaaColorStorePlugin,
             WorldEnvironmentPlugin::game(),
             TerrainRenderPlugin,
             CharacterPresentationPlugin,
@@ -214,6 +217,7 @@ fn setup(
         Camera3d::default(),
         WorldEnvironmentCamera::default(),
         Msaa::Sample4,
+        MsaaColorStorePolicy::Automatic,
         camera_transform(start, &camera_rig),
         camera_rig,
         MainCamera,

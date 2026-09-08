@@ -4,13 +4,10 @@ mod logging;
 mod repro;
 
 use bevy::{
-    camera::{ImageRenderTarget, RenderTarget},
     core_pipeline::prepass::DepthPrepass,
     diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin},
-    image::ImageSampler,
     light::ShadowFilteringMethod,
     prelude::*,
-    render::render_resource::{Extent3d, TextureFormat},
     window::PrimaryWindow,
 };
 use engine::{
@@ -22,13 +19,21 @@ use vegetation_render::{
     VegetationDebugSettings, VegetationLightingMode, VegetationProfileMode, VegetationWind,
 };
 
+use crate::game_render::{
+    GameRenderAssets as AuditAssets, GameRenderSettings, GameRenderSetup, GameRenderSystems,
+    RenderPath as AuditRenderPath,
+};
+
 pub struct RenderAuditPlugin;
 
 impl Plugin for RenderAuditPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<AuditSettings>()
             .init_resource::<baseline::BaselineRun>()
-            .add_systems(PostStartup, setup)
+            .add_systems(
+                PostStartup,
+                (sync_render_settings.before(GameRenderSetup), setup),
+            )
             .add_systems(
                 Update,
                 (
@@ -36,11 +41,12 @@ impl Plugin for RenderAuditPlugin {
                     baseline::advance,
                     update_labels,
                     route_input,
-                    apply_render_path,
+                    sync_render_settings,
                     apply_settings,
                     status,
                 )
                     .chain()
+                    .before(GameRenderSystems)
                     .before(GameInputSystems),
             )
             .add_systems(
@@ -66,22 +72,6 @@ enum Scene {
     Grass,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum AuditRenderPath {
-    Composite,
-    #[default]
-    Direct,
-}
-
-impl AuditRenderPath {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Composite => "composite",
-            Self::Direct => "direct",
-        }
-    }
-}
-
 #[derive(Resource, Clone)]
 struct AuditSettings {
     scene: Scene,
@@ -104,23 +94,26 @@ struct AuditSettings {
 
 impl Default for AuditSettings {
     fn default() -> Self {
+        let render = GameRenderSettings::default();
         Self {
             scene: Scene::Current,
             grass: VegetationProfileMode::Full,
             unlit: false,
             ground_shading: TerrainShadingMode::Production,
-            terrain_prepared: std::env::args_os().any(|arg| arg == "--terrain-prepared"),
+            terrain_prepared: crate::terrain_prepared_enabled(),
             shadows: 0,
             prepass: GAME_DEPTH_PREPASS_ENABLED,
-            scale_index: 0,
-            msaa: Msaa::Sample4,
-            // iOS cannot currently read these statistics back. Do not pay a global atomic
-            // for every candidate during normal device runs; Metal HUD is independent.
-            counters: !cfg!(target_os = "ios"),
+            scale_index: [1.0, 0.75, 0.5]
+                .iter()
+                .position(|&scale| scale == render.resolution_scale)
+                .expect("game scale is available in audit controls"),
+            msaa: render.msaa,
+            // Statistics atomics are explicit on every platform, including audit startup.
+            counters: std::env::args_os().any(|arg| arg == "--grass-counters"),
             wind: true,
             controls_locked: false,
-            render_path: AuditRenderPath::Direct,
-            show_ui: true,
+            render_path: render.render_path,
+            show_ui: render.show_ui,
             baseline_phase: None,
             changed_at: 0.0,
         }
@@ -224,83 +217,12 @@ struct AuditStatus;
 struct AuditPanel;
 
 #[derive(Component)]
-struct AuditUiCamera;
-
-#[derive(Component)]
-struct AuditComposite;
-
-#[derive(Component)]
-struct SavedAuditUiVisibility(Visibility);
-
-#[derive(Component)]
 struct AuditMesh {
     original_visibility: Visibility,
     terrain: Option<Handle<TerrainMaterial>>,
 }
 
-#[derive(Resource)]
-struct AuditAssets {
-    target: Handle<Image>,
-    original_target: RenderTarget,
-    original_camera_order: isize,
-}
-
-fn setup(
-    mut commands: Commands,
-    mut images: ResMut<Assets<Image>>,
-    window: Single<&Window, With<PrimaryWindow>>,
-    mut camera: Single<(Entity, &mut Camera, &RenderTarget), With<WorldViewCamera>>,
-    settings: Res<AuditSettings>,
-) {
-    // Composite preserves native UI when scaling 3D. Direct can bypass this extra path at
-    // 100% so the audit's own rendering overhead can be measured.
-    // Direct does not need a native-sized offscreen allocation. The composite path resizes
-    // this placeholder on demand before drawing into it.
-    let initial_size = if settings.render_path == AuditRenderPath::Composite {
-        window.physical_size().max(UVec2::ONE)
-    } else {
-        UVec2::ONE
-    };
-    let mut image = Image::new_target_texture(
-        initial_size.x,
-        initial_size.y,
-        TextureFormat::Bgra8UnormSrgb,
-        None,
-    );
-    image.sampler = ImageSampler::linear();
-    let target = images.add(image);
-    let original_target = camera.2.clone();
-    let original_camera_order = camera.1.order;
-    camera.1.order = -1;
-    commands
-        .entity(camera.0)
-        .insert(RenderTarget::Image(ImageRenderTarget {
-            handle: target.clone(),
-            scale_factor: window.scale_factor(),
-        }));
-    commands.spawn((
-        Camera2d,
-        Msaa::Off,
-        IsDefaultUiCamera,
-        AuditUiCamera,
-        Name::new("Render audit UI camera"),
-    ));
-    commands.spawn((
-        ImageNode::new(target.clone()),
-        Node {
-            position_type: PositionType::Absolute,
-            width: percent(100),
-            height: percent(100),
-            ..default()
-        },
-        GlobalZIndex(-100),
-        AuditComposite,
-    ));
-    commands.insert_resource(AuditAssets {
-        target,
-        original_target,
-        original_camera_order,
-    });
+fn setup(mut commands: Commands, settings: Res<AuditSettings>) {
     commands
         .spawn((
             Node {
@@ -508,89 +430,14 @@ fn route_input(
     }
 }
 
-#[allow(clippy::type_complexity)] // Disjoint camera/UI queries and saved root visibility.
-fn apply_render_path(
-    mut commands: Commands,
-    s: Res<AuditSettings>,
-    assets: Res<AuditAssets>,
-    mut images: ResMut<Assets<Image>>,
-    window: Single<&Window, With<PrimaryWindow>>,
-    mut camera: Single<(Entity, &mut Camera, &RenderTarget), With<WorldViewCamera>>,
-    mut ui_camera: Single<(Entity, &mut Camera), (With<AuditUiCamera>, Without<WorldViewCamera>)>,
-    mut composite: Single<&mut Visibility, With<AuditComposite>>,
-    mut ui_roots: Query<
-        (Entity, &mut Visibility, Option<&SavedAuditUiVisibility>),
-        (With<Node>, Without<ChildOf>, Without<AuditComposite>),
-    >,
-) {
-    let scale = s.scale();
-    let size = (window.physical_size().as_vec2() * scale)
-        .as_uvec2()
-        .max(UVec2::ONE);
-    let target_scale = window.scale_factor() * scale;
-    let composite_path = s.render_path == AuditRenderPath::Composite;
-    let needs_image_target = !matches!(camera.2, RenderTarget::Image(target)
-        if target.handle == assets.target && target.scale_factor == target_scale);
-    if composite_path && needs_image_target {
-        // Preserve logical viewport dimensions (and tree LOD) while varying physical pixels.
-        commands
-            .entity(camera.0)
-            .insert(RenderTarget::Image(ImageRenderTarget {
-                handle: assets.target.clone(),
-                scale_factor: target_scale,
-            }));
-    }
-    if composite_path
-        && images
-            .get(&assets.target)
-            .expect("audit render target")
-            .size()
-            != size
-    {
-        let mut image = images.get_mut(&assets.target).expect("audit render target");
-        image.resize(Extent3d {
-            width: size.x,
-            height: size.y,
-            depth_or_array_layers: 1,
+fn sync_render_settings(s: Res<AuditSettings>, mut render: ResMut<GameRenderSettings>) {
+    if s.is_changed() {
+        render.set_if_neq(GameRenderSettings {
+            resolution_scale: s.scale(),
+            msaa: s.msaa,
+            render_path: s.render_path,
+            show_ui: s.show_ui,
         });
-    }
-    if !s.is_changed() {
-        return;
-    }
-    camera.1.order = if composite_path {
-        -1
-    } else {
-        assets.original_camera_order
-    };
-    ui_camera.1.is_active = composite_path;
-    if composite_path {
-        commands.entity(camera.0).remove::<IsDefaultUiCamera>();
-        commands.entity(ui_camera.0).insert(IsDefaultUiCamera);
-    } else {
-        commands
-            .entity(camera.0)
-            .insert((assets.original_target.clone(), IsDefaultUiCamera));
-        commands.entity(ui_camera.0).remove::<IsDefaultUiCamera>();
-    }
-    **composite = if composite_path {
-        Visibility::Inherited
-    } else {
-        Visibility::Hidden
-    };
-    for (entity, mut visibility, saved) in &mut ui_roots {
-        if s.show_ui {
-            if let Some(saved) = saved {
-                *visibility = saved.0;
-                commands.entity(entity).remove::<SavedAuditUiVisibility>();
-            }
-        } else {
-            if saved.is_none() {
-                commands
-                    .entity(entity)
-                    .insert(SavedAuditUiVisibility(*visibility));
-            }
-            *visibility = Visibility::Hidden;
-        }
     }
 }
 
@@ -616,7 +463,6 @@ fn apply_settings(
     wind.enabled = s.wind;
     prepared.enabled = s.terrain_prepared;
     sun.shadow_maps_enabled = s.shadows != 2;
-    commands.entity(*camera).insert(s.msaa);
     commands.entity(*camera).insert(if s.shadows == 1 {
         ShadowFilteringMethod::Hardware2x2
     } else {
@@ -722,120 +568,6 @@ mod tests {
         },
         window::WindowResolution,
     };
-
-    #[test]
-    fn direct_rendering_bypasses_the_audit_camera_and_restores_ui_and_scaled_target() {
-        let mut app = App::new();
-        app.insert_resource(AuditSettings {
-            render_path: AuditRenderPath::Composite,
-            ..default()
-        })
-        .init_resource::<Assets<Image>>()
-        .add_systems(Update, apply_render_path);
-        app.world_mut().spawn((
-            Window {
-                resolution: WindowResolution::new(1200, 900).with_scale_factor_override(3.0),
-                ..default()
-            },
-            PrimaryWindow,
-        ));
-        let target =
-            app.world_mut()
-                .resource_mut::<Assets<Image>>()
-                .add(Image::new_target_texture(
-                    1200,
-                    900,
-                    TextureFormat::Bgra8UnormSrgb,
-                    None,
-                ));
-        app.insert_resource(AuditAssets {
-            target: target.clone(),
-            original_target: RenderTarget::default(),
-            original_camera_order: 0,
-        });
-        let main = app
-            .world_mut()
-            .spawn((Camera3d::default(), WorldViewCamera))
-            .id();
-        let ui = app
-            .world_mut()
-            .spawn((Camera2d, AuditUiCamera, IsDefaultUiCamera))
-            .id();
-        let composite = app
-            .world_mut()
-            .spawn((Node::default(), AuditComposite))
-            .id();
-        let label = app.world_mut().spawn(Node::default()).id();
-        let hidden_label = app
-            .world_mut()
-            .spawn((Node::default(), Visibility::Hidden))
-            .id();
-        app.update();
-        assert_eq!(
-            app.world().get::<RenderTarget>(main).unwrap().as_image(),
-            Some(&target)
-        );
-        assert!(app.world().get::<Camera>(ui).unwrap().is_active);
-
-        {
-            let mut settings = app.world_mut().resource_mut::<AuditSettings>();
-            settings.render_path = AuditRenderPath::Direct;
-            settings.show_ui = false;
-        }
-        app.update();
-        assert!(matches!(
-            app.world().get::<RenderTarget>(main),
-            Some(RenderTarget::Window(_))
-        ));
-        assert_eq!(app.world().get::<Camera>(main).unwrap().order, 0);
-        assert!(!app.world().get::<Camera>(ui).unwrap().is_active);
-        assert!(app.world().get::<IsDefaultUiCamera>(main).is_some());
-        assert!(app.world().get::<IsDefaultUiCamera>(ui).is_none());
-        assert_eq!(
-            app.world().get::<Visibility>(composite),
-            Some(&Visibility::Hidden)
-        );
-        assert_eq!(
-            app.world().get::<Visibility>(label),
-            Some(&Visibility::Hidden)
-        );
-
-        {
-            let mut settings = app.world_mut().resource_mut::<AuditSettings>();
-            settings.render_path = AuditRenderPath::Composite;
-            settings.scale_index = 2;
-            settings.show_ui = true;
-        }
-        app.update();
-        assert!(app.world().get::<Camera>(ui).unwrap().is_active);
-        assert_eq!(app.world().get::<Camera>(main).unwrap().order, -1);
-        assert!(app.world().get::<IsDefaultUiCamera>(main).is_none());
-        assert!(app.world().get::<IsDefaultUiCamera>(ui).is_some());
-        assert_eq!(
-            app.world().get::<Visibility>(label),
-            Some(&Visibility::Inherited)
-        );
-        assert_eq!(
-            app.world().get::<Visibility>(hidden_label),
-            Some(&Visibility::Hidden)
-        );
-        assert_eq!(
-            app.world().get::<Visibility>(composite),
-            Some(&Visibility::Inherited)
-        );
-        let RenderTarget::Image(image) = app.world().get::<RenderTarget>(main).unwrap() else {
-            panic!("scaled image target must be restored");
-        };
-        assert_eq!(image.scale_factor, 1.5);
-        assert_eq!(
-            app.world()
-                .resource::<Assets<Image>>()
-                .get(&target)
-                .unwrap()
-                .size(),
-            UVec2::new(600, 450)
-        );
-    }
 
     #[test]
     fn hud_captures_touch_through_release_but_leaves_world_input_enabled() {

@@ -48,6 +48,11 @@ Run the game:
 cargo run --release -p yarra-app-game
 ```
 
+Normal game launches use **75% world render resolution and 4× MSAA**, with UI
+rendered at native resolution. Prepared ground is enabled and optional GPU statistics
+are off. No audit or profiling arguments are needed. `--terrain-reference` selects
+the original ground material; `--grass-counters` enables GPU statistics.
+
 Run the editor foundation:
 
 ```bash

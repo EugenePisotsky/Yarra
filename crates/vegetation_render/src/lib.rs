@@ -491,7 +491,7 @@ impl Default for VegetationDebugSettings {
             density_mode: default(),
             lighting_mode: default(),
             far_width_compensation: true,
-            gpu_counters_enabled: !cfg!(target_os = "ios"),
+            gpu_counters_enabled: false,
             early_rejection: true,
             candidate_cache_enabled: true,
         }
