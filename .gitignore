@@ -1,5 +1,6 @@
 /target
 /tmp/
+/.editor/
 /assets/local/
 /assets/generated/
 /content/*.project.sqlite

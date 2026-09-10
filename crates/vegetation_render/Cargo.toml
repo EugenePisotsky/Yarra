@@ -8,6 +8,7 @@ publish.workspace = true
 bevy.workspace = true
 bytemuck.workspace = true
 vegetation.workspace = true
+serde.workspace = true
 
 [dev-dependencies]
 naga.workspace = true

@@ -3285,6 +3285,8 @@ dependencies = [
  "num-traits",
  "png",
  "tiff",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]
@@ -6357,6 +6359,7 @@ dependencies = [
  "bevy",
  "bevy_egui",
  "crossbeam-channel",
+ "image",
  "ron",
  "serde",
  "uuid",
@@ -6432,6 +6435,7 @@ dependencies = [
  "bevy",
  "bytemuck",
  "naga",
+ "serde",
  "yarra-vegetation",
 ]
 

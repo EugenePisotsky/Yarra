@@ -27,7 +27,8 @@ use crate::{
     tools::EditorToolsPlugin,
     workspaces::{
         AnimationWorkspaceCamera, AnimationWorkspacePlugin, EditorFramePacing, EditorWorkspace,
-        EditorWorkspacesPlugin, WorldWorkspacePlugin,
+        EditorWorkspacesPlugin, VegetationWorkspaceCamera, VegetationWorkspacePlugin,
+        WorldWorkspacePlugin,
     },
 };
 
@@ -75,6 +76,9 @@ pub(crate) fn run() {
             EditorWorkspacesPlugin,
             WorldWorkspacePlugin,
             AnimationWorkspacePlugin,
+            VegetationWorkspacePlugin {
+                runtime_database: runtime_database.clone(),
+            },
             WorldStreamingPlugin::editor(runtime_database.clone()),
             ProjectEditorStorePlugin::new(project_database.clone()),
             ProjectNavigationPlugin::new(project_database.clone()),
@@ -209,11 +213,27 @@ pub(crate) fn sync_workspace_cameras(
     workspace: Res<State<EditorWorkspace>>,
     mut world_cameras: Query<
         &mut Camera,
-        (With<WorldViewCamera>, Without<AnimationWorkspaceCamera>),
+        (
+            With<WorldViewCamera>,
+            Without<AnimationWorkspaceCamera>,
+            Without<VegetationWorkspaceCamera>,
+        ),
     >,
     mut animation_cameras: Query<
         &mut Camera,
-        (With<AnimationWorkspaceCamera>, Without<WorldViewCamera>),
+        (
+            With<AnimationWorkspaceCamera>,
+            Without<WorldViewCamera>,
+            Without<VegetationWorkspaceCamera>,
+        ),
+    >,
+    mut vegetation_cameras: Query<
+        &mut Camera,
+        (
+            With<VegetationWorkspaceCamera>,
+            Without<WorldViewCamera>,
+            Without<AnimationWorkspaceCamera>,
+        ),
     >,
 ) {
     let world_active = *workspace.get() == EditorWorkspace::World;
@@ -221,7 +241,10 @@ pub(crate) fn sync_workspace_cameras(
         camera.is_active = world_active;
     }
     for mut camera in &mut animation_cameras {
-        camera.is_active = !world_active;
+        camera.is_active = *workspace.get() == EditorWorkspace::Animation;
+    }
+    for mut camera in &mut vegetation_cameras {
+        camera.is_active = *workspace.get() == EditorWorkspace::Vegetation;
     }
 }
 

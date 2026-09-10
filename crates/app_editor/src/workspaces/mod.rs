@@ -6,6 +6,7 @@
 //! user visits another workspace.
 
 mod animation;
+mod vegetation;
 mod world;
 pub(crate) mod world_impl;
 mod world_ui;
@@ -15,6 +16,7 @@ use std::collections::HashSet;
 use bevy::prelude::*;
 
 pub(crate) use animation::{AnimationWorkspaceCamera, AnimationWorkspacePlugin};
+pub(crate) use vegetation::{VegetationWorkspaceCamera, VegetationWorkspacePlugin};
 pub(crate) use world::WorldWorkspacePlugin;
 
 #[derive(States, Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
@@ -22,15 +24,17 @@ pub(crate) enum EditorWorkspace {
     #[default]
     World,
     Animation,
+    Vegetation,
 }
 
 impl EditorWorkspace {
-    pub(crate) const ALL: [Self; 2] = [Self::World, Self::Animation];
+    pub(crate) const ALL: [Self; 3] = [Self::World, Self::Animation, Self::Vegetation];
 
     pub(crate) const fn label(self) -> &'static str {
         match self {
             Self::World => "World",
             Self::Animation => "Animation",
+            Self::Vegetation => "Vegetation",
         }
     }
 }
@@ -56,6 +60,7 @@ impl Plugin for EditorWorkspacesPlugin {
 pub(crate) enum FramePacingOwner {
     AnimationWorkspace,
     WorldGameplayPreview,
+    VegetationWorkspace,
 }
 
 #[derive(Resource, Default)]
@@ -102,7 +107,7 @@ mod tests {
         assert_eq!(EditorWorkspace::default(), EditorWorkspace::World);
         assert_eq!(
             EditorWorkspace::ALL.map(EditorWorkspace::label),
-            ["World", "Animation"]
+            ["World", "Animation", "Vegetation"]
         );
     }
 

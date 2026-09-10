@@ -57,6 +57,7 @@ pub(crate) fn setup_animation_workspace(mut commands: Commands) {
         },
         Transform::from_xyz(0.0, 1.4, 4.0).looking_at(Vec3::Y, Vec3::Y),
         AnimationWorkspaceCamera,
+        vegetation_render::VegetationViewDisabled,
         Name::new("Animation workspace camera"),
     ));
     commands.spawn((

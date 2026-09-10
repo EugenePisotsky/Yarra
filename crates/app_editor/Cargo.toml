@@ -8,6 +8,7 @@ publish.workspace = true
 bevy.workspace = true
 bevy_egui.workspace = true
 crossbeam-channel.workspace = true
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 engine.workspace = true
 ron.workspace = true
 serde.workspace = true

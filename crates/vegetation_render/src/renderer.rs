@@ -809,6 +809,7 @@ fn create_draw_bind_group(
 #[derive(Resource)]
 struct VegetationTelemetryStaging {
     buffer: Option<Buffer>,
+    scene_revision: u64,
     #[cfg(not(target_os = "ios"))]
     frames_until_capture: u32,
 }
@@ -817,6 +818,7 @@ impl Default for VegetationTelemetryStaging {
     fn default() -> Self {
         Self {
             buffer: None,
+            scene_revision: 0,
             #[cfg(not(target_os = "ios"))]
             frames_until_capture: 0,
         }
@@ -827,6 +829,7 @@ impl Default for VegetationTelemetryStaging {
 fn prepare_telemetry_staging(
     render_device: Res<RenderDevice>,
     settings: Res<VegetationDebugSettings>,
+    scene: Option<Res<VegetationDebugScene>>,
     mut staging: ResMut<VegetationTelemetryStaging>,
 ) {
     if !settings.gpu_counters_enabled {
@@ -846,6 +849,7 @@ fn prepare_telemetry_staging(
         usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
         mapped_at_creation: false,
     }));
+    staging.scene_revision = scene.as_ref().map_or(0, |s| s.revision());
     staging.frames_until_capture = TELEMETRY_CAPTURE_INTERVAL_FRAMES;
 }
 
@@ -858,6 +862,7 @@ fn begin_telemetry_readback(
         return;
     };
     let map_buffer = buffer.clone();
+    let scene_revision = staging.scene_revision;
     let diagnostics = diagnostics.clone();
     map_buffer
         .slice(..)
@@ -905,6 +910,7 @@ fn begin_telemetry_readback(
                             .map(|(instances, vertices)| u64::from(instances) * u64::from(vertices))
                             .sum();
                         snapshot.gpu_samples = snapshot.gpu_samples.saturating_add(1);
+                        snapshot.gpu_scene_revision = scene_revision;
                     });
                 }
             }
