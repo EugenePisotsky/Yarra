@@ -28,7 +28,12 @@ pub(super) fn setup(
     mut materials: ResMut<Assets<TerrainMaterial>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut assets: ResMut<StudyGroundAssets>,
+    mut treatment: ResMut<ground_treatment::TreatmentAssets>,
+    mut study_materials: ResMut<Assets<ground_treatment::StudyMaterial>>,
 ) {
+    if let Err(error) = treatment.initialize(&mut images) {
+        treatment.error = Some(error);
+    }
     let prepare = || -> Result<_, String> {
         let reader =
             world_db::RuntimeReader::open_immutable(&database.0).map_err(|e| e.to_string())?;
@@ -92,6 +97,38 @@ pub(super) fn setup(
                         return;
                     }
                 };
+                if mode == GroundMode::Meadow && treatment.error.is_none() {
+                    // All comparisons share production preparation and lighting. Later
+                    // preparation updates are mirrored into every treatment together.
+                    let base = materials.get(&prepared.material).unwrap().clone();
+                    for test in [
+                        GroundMode::OriginalStudy,
+                        GroundMode::DarkenedStudy,
+                        GroundMode::UnderstoryStudy,
+                        GroundMode::CoverageStudy,
+                    ] {
+                        let material = study_materials.add(ground_treatment::StudyMaterial {
+                            base: base.clone(),
+                            extension: treatment.extension(test),
+                        });
+                        treatment
+                            .links
+                            .push((prepared.material.clone(), material.clone()));
+                        commands.spawn((
+                            Mesh3d(mesh.clone()),
+                            MeshMaterial3d(material),
+                            Transform::from_xyz(
+                                x as f32 * 256.0 + 128.0,
+                                -0.005,
+                                z as f32 * 256.0 + 128.0,
+                            ),
+                            Visibility::Hidden,
+                            RenderLayers::layer(LAYER),
+                            TexturedGround(test),
+                            Name::new(test.label()),
+                        ));
+                    }
+                }
                 commands.spawn((
                     Mesh3d(mesh.clone()),
                     MeshMaterial3d(prepared.material),
@@ -115,11 +152,17 @@ pub(super) fn sync(
     mut state: ResMut<StudyState>,
     server: Res<AssetServer>,
     mut assets: ResMut<StudyGroundAssets>,
+    treatment: Res<ground_treatment::TreatmentAssets>,
     mut ground: Query<
         (&mut Visibility, &mut Transform, Option<&TexturedGround>),
         Or<(With<StudyGround>, With<TexturedGround>)>,
     >,
 ) {
+    if state.ground.treatment().is_some()
+        && let Some(error) = &treatment.error
+    {
+        state.error = Some(error.clone());
+    }
     let ready = assets.error.is_none()
         && assets.textures.len() == 3
         && assets

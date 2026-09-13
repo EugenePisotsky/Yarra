@@ -133,6 +133,18 @@ with fewer vertices deliberately has no conventional tip because its very low-po
 noticeable even at a distance. The slide illustrates both a 15-vertex high LOD and a 7-vertex low
 LOD folded into two blade silhouettes.
 
+Reading the wireframe closely matters: the two halves meet at a full-width shared base edge.
+The low main blade still has an intermediate width row; the companion ends in an edge rather
+than a pointed tip. A reconstruction of that drawing uses nine main inputs plus eight companion
+inputs minus two shared roots at high detail (15), and five plus four minus two at low detail (7).
+In our initial indexed triangle-list reconstruction this submitted 13 and five triangles respectively;
+the high companion's zero-width tip leaves a degenerate triangle. These index counts describe
+Yarra's reconstruction, not a published Ghost index buffer. Pointing both roots is not required
+to meet the illustrated budget. See [the implementation study](GRASS_FOLDED_PAIR_STUDY.md).
+Yarra's subsequent [single far ribbon](GRASS_FAR_CANOPY_STUDY.md) failed visual review. The current
+[far-LOD restoration](GRASS_FAR_LOD_RESTORE.md) uses Yarra's earlier bent main blade and companion
+triangle at the previous density. That adaptation is not attributed to the Ghost talk.
+
 ### Slide 28 - each blade is a cubic Bezier curve
 
 Each grass blade is represented as a cubic Bezier curve. The slide calls out the properties that make

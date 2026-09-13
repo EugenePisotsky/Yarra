@@ -1,6 +1,21 @@
 # Rendering performance investigation — handoff, 2026-09-06
 
 **Start here before continuing performance work. The iPhone frame-rate/heat problem is unresolved.**
+Planning update, 2026-09-08: the user reiterated sustained performance as the central constraint
+for grass and shadow work, with iPhone as a longer-term target. The user then clarified that current
+iPhone performance is already unacceptable: defer phone tests and broader grass optimization. The
+immediate shadow task must add only small measured cost on Mac, without making the existing renderer
+materially worse. Neither phone acceptance nor fixing the baseline blocks this bounded experiment. The
+[grass performance priority](GRASS_IMPROVEMENT_PLAN.md#performance-priority---2026-09-08) records the
+bounded shadow experiment and Mac comparison requirements. Newer prepared-ground and MSAA-storage
+results are linked there. **Restart, 2026-09-09:** both the raised sheet and clump-mask shadow
+experiments were rejected visually and removed. Their small reported timing differences are
+historical evidence, not acceptance. [The restart plan](GRASS_SHADOW_RESTART.md) now requires
+small-patch visual validation from above and in motion before selecting and integrating a new
+representation. Neither failed experiment established low power consumption or iPhone viability.
+The historical measurements and session scope below remain dated evidence,
+not a current-build baseline or a prohibition on newly requested planning work.
+
 We found real costs, fixed a correctness bug, and reduced several GPU work counters.
 We have **not demonstrated a meaningful sustained iPhone performance or thermal improvement**.
 The user's assessment is that the game still feels unacceptably heavy and the time spent

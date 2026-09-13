@@ -507,6 +507,44 @@ impl VegetationShapeInspection {
     }
 }
 
+/// Opt-in material experiment. Off specializes out all band arithmetic and varyings.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
+)]
+pub enum VegetationBladeBands {
+    #[default]
+    Off,
+    Subtle,
+    Medium,
+    Mask,
+    /// Hold geometry at wind time zero to inspect marks moving over fixed blades.
+    MotionMask,
+}
+
+impl VegetationBladeBands {
+    pub const ALL: [Self; 5] = [
+        Self::Off,
+        Self::Subtle,
+        Self::Medium,
+        Self::Mask,
+        Self::MotionMask,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::Subtle => "Subtle",
+            Self::Medium => "Medium",
+            Self::Mask => "Band mask",
+            Self::MotionMask => "Motion mask (fixed blades)",
+        }
+    }
+}
+
+fn default_band_density() -> f32 {
+    1.0
+}
+
 /// Runtime controls for the V2 placement and profiling diagnostics.
 ///
 /// Press `X` to cycle the visual explanation, `P` to isolate render workloads, and `O` to cycle
@@ -531,6 +569,11 @@ pub struct VegetationDebugSettings {
     /// Isolate view opening in a shape study without editing the species catalog.
     #[serde(default)]
     pub inspection_disable_opening: bool,
+    #[serde(default)]
+    pub blade_bands: VegetationBladeBands,
+    /// Authored source density relative to the study's 44 roots/m² baseline, never LOD retention.
+    #[serde(default = "default_band_density")]
+    pub blade_band_density: f32,
 }
 
 impl Default for VegetationDebugSettings {
@@ -546,6 +589,8 @@ impl Default for VegetationDebugSettings {
             candidate_cache_enabled: true,
             shape_inspection: default(),
             inspection_disable_opening: false,
+            blade_bands: default(),
+            blade_band_density: default_band_density(),
         }
     }
 }

@@ -72,8 +72,8 @@ The replacement renderer has these implemented hard properties:
 | --- | ---: | ---: |
 | single high | 18 | 48 |
 | single low | 8 | 18 |
-| split high | 18 | 42 |
-| split low | 6 | 6 |
+| split high | 15 | 39 |
+| split low | 7 | 9 |
 
 These are budgets to profile, not permanent artistic constants. The crucial invariant is that a
 coverage-oriented paired unit does not silently cost twice as much as a single unit.
@@ -87,10 +87,22 @@ height distribution and expected bin shares are known on the CPU, allowing capac
 for the authored mix without growing the 32-byte instance record or total arena.
 
 The current 18/8 single-ribbon counts are not a target. They are produced by an eight-section
-maximum plus separate left/right inputs at the tapered zero-width tip. The Ghost talk's shared-tip
-15/7 budget is the next topology benchmark; both the single and folded short-grass forms must fit
-the selected fixed budget before density is raised. Cubic Bezier evaluation and non-uniform sample
-placement do not require the extra inputs.
+maximum plus separate left/right inputs at the tapered zero-width tip. The experimental folded
+short-grass form reconstructs slide 27's high strip with an indexed shared base edge. Its main
+blade has four high sections and the companion has three. The initial seven-input/five-triangle
+low pair required a density cut that failed visual review. A subsequent single far ribbon also
+failed visual review. Production low restores the earlier seven-input/three-triangle shape:
+a bent main blade with a curve-aligned shoulder and drooping tip, plus a companion triangle.
+Its retention multiplier is again 0.65. Both split bins prepare two blade records. Near shared
+roots collapse to the main's pointed root through the existing morph; the companion's first
+width row becomes its low triangle base. The provisional broad-leaf fixture also shares these
+bins; dedicated broad-leaf LOD remains separate work.
+See [the far-LOD restoration](GRASS_FAR_LOD_RESTORE.md) for current scope and validation, and
+[the folded-pair study](GRASS_FOLDED_PAIR_STUDY.md) for the original experiment.
+
+Subsequent width tuning separates density normalization from width compensation: split low
+retains 0.65 of the density target but widens by 1.30 rather than its full inverse. The main low
+shoulder keeps its additional 4/3 factor. See [width tuning](GRASS_LOD_WIDTH_TUNING.md).
 
 The first V2 vertical slice exists in three new crates:
 
@@ -533,14 +545,14 @@ derivative with defined error bounds. Flat per-cell height is not an acceptable 
 Surface tags can later exclude rock, water, paths, or incompatible soil without making the grass
 renderer depend on gameplay objects.
 
-### Canopy shadow field
+### Shadow source representation — open after restart
 
-Dense procedural populations compile into a small fixed number of height bands. Each band stores
-coverage/density and representative/top height relative to terrain. This field drives broad grass
-shadow casting without expanding blades.
-
-Tall sparse authored assets do not need to contaminate the dense canopy height. They use simplified
-ordinary mesh shadows or a separate sparse band.
+Both the raised-sheet and independent clump-mask casters were rejected and removed. A canopy field
+with representative height/coverage is a possible coarse description, not an accepted requirement
+or sufficient representation of inter-blade occlusion. Reconsider its necessity and contents using
+[the small-patch restart](GRASS_SHADOW_RESTART.md). Any shared occlusion data must correspond to the
+same source geometry and grouping as visible grass. Tall sparse authored assets may use affordable
+ordinary simplified shadows rather than contaminating a dense-field statistic.
 
 ## GPU frame architecture
 
@@ -772,30 +784,30 @@ turn decorative instances into gameplay entities.
 
 ## Shadows
 
-The architecture separates three problems:
+**Restart, 2026-09-09:** the user rejected both grass shadow experiments and requested that the work
+be rethought. Their code and controls have been removed. The earlier requirements to start with a
+single canopy band, a raised grid and stochastic depth are superseded by
+[GRASS_SHADOW_RESTART.md](GRASS_SHADOW_RESTART.md). There is no replacement grass caster yet.
 
-1. **Receiving external shadows on vegetation.** Establish a measurable V2 receiver path. The
-   deleted filtered receiver cache is prior evidence, not an implementation requirement.
-2. **Casting broad grass density.** Render a coarse canopy/terrain proxy into directional shadow
-   views. Sample compiled canopy height bands, displace the proxy, and use world-stable stochastic
-   depth/alpha so shadow filtering integrates average density.
-3. **Casting fine local blade detail.** Optionally derive a short-range screen-space shadow mask from
-   separate opaque and vegetation depth information.
+Preserve the existing ordinary directional-shadow receiver and root color/AO. Treat blade detail
+and grass-to-ground casting as separate requirements. A shading illusion may address the first but
+must not be presented as completing the second. Derive any approximation from the actual grass or
+prove its plausibility across views; independent random shadow stamps are rejected.
 
-The proxy resolution is independent of terrain tessellation unless experiments prove that reusing
-terrain vertices is sufficient. This avoids making coarse terrain topology the permanent quality
-limit for grass shadows.
+The next comparison is a small deterministic patch inspected from gameplay overhead, vertical
+above, grazing and near views, then through orbit/zoom/light/wind changes. A bounded offline
+geometry-derived reference may answer which information a cheaper representation must retain.
+It does not authorize a production full-field duplicate blade pass.
 
-The proxy may sample the shared low-frequency wind field to move the broad shadow mass, but it does
-not reproduce per-blade phase. Fine animated silhouettes belong to the optional screen-space layer.
+Optimization remains central. Keep current AA and MSAA storage behavior. Do not conceal artifacts
+by adding density, larger maps, more cascades or more samples. Material-local work is worth studying
+first for blade detail but still incurs cost across all shaded grass fragments. A new prepass,
+screen-space tracing, temporal history or world volume requires a separate justification; it is not
+the automatic next stage. iPhone tests and broader renderer optimization remain deferred.
 
-A full procedural-blade shadow pass is useful as a quality reference and perhaps for rare hero
-lights. It is not the default architecture. Sparse authored assets use ordinary simplified shadow
-LODs where affordable.
-
-Screen-space detail is optional because integration cost may be substantial. A viable design likely
-needs opaque receiver depth preserved separately from alpha-tested vegetation depth; otherwise the
-frontmost grass replaces the ground surface needed by the shadow trace.
+Only a visually useful candidate proceeds to short matched Mac timing and source-lifetime checks.
+Passing an integration test or observing no resolved slowdown does not establish visual acceptance.
+See [the retired experiment record](GRASS_SHADOW_PROXY.md) for evidence and archive locations.
 
 ## Authored field assets
 
@@ -856,14 +868,22 @@ properties:
 - Accepted profiles produce zero capacity drops. Overflow is an observable budget failure rather
   than a supported, order-dependent quality reduction.
 - Near/middle/far transitions preserve roots and do not expose rings or population steps.
-- Shadow cost is primarily proxy resolution plus screen size, not full blade count times light count.
+- Any shadow work needs explicit bounds and measured cost; the rejected grid does not define the
+  replacement representation. Account for cascade fill/depth writes as well as triangle counts; a coarse proxy is
+  not automatically cheap.
+- This shadow increment must add only small measured cost against the current Mac scene.
+  Reducing shader arithmetic while increasing bandwidth is a tradeoff to measure, not a performance
+  result. Mac frame-rate caps, profiler replays and correctness tests do not establish iPhone power
+  or thermal behavior.
 - HUD/debug tooling reports resident catalog/field bytes, transient arena bytes, theoretical
   candidates, classified candidates, emitted instances, bin budgets, rejected ranks, draw counts,
   and platform GPU timings. Exact vegetation pass timestamps are required where the backend exposes
   timestamp queries; Metal captures use Xcode/Metal tooling plus exact submitted-work counters.
 
-Exact millisecond and memory budgets require the target device and scene definition. They should be
-set during the first vertical slice rather than invented in the data model.
+The longer-term device target is sustained 60 FPS on iPhone 15 Pro Max / A17 Pro, with room for the
+rest of the game. Current phone performance is already unacceptable; phone testing and broader
+optimization are deferred. The shadow experiment's Mac comparison requirements live in the linked
+performance priority. Accepting this bounded increment does not establish future iPhone viability.
 
 ## How the reference fields map onto the design
 
@@ -1014,13 +1034,13 @@ on one extreme global density value.
 - Add shared wind sampling, per-species response, per-instance phase, and interaction.
 - Validate close, overhead, grazing, and moving-camera views.
 
-### Slice D - scalable shadows
+### Slice D - scalable shadows, restarted
 
-- Produce a full-blade directional reference.
-- Implement canopy bands and a separate proxy grid.
-- Tune stable dither/filter behavior across cascades and low sun.
-- Prototype separate vegetation depth and screen-space fine shadows.
-- Retain only the pieces that win quality/performance comparisons.
+- Follow the actual-grass small-patch comparison in [the restart](GRASS_SHADOW_RESTART.md).
+- Separate root AO, inter-blade visibility and grass-to-ground casting.
+- Reject failures from above or during camera/light/wind motion before field-wide integration.
+- Declare and measure the total work of a promising candidate; do not inherit a fixed proxy grid.
+- Preserve existing rendering/AA quality; defer phone testing and broader optimization.
 
 ### Slice E - authored assets and V2 editor
 
@@ -1039,7 +1059,7 @@ These require evidence without changing the conceptual model:
 - whether a future heavy content profile needs a deterministic pre-budget/rank stage despite its
   candidate-memory and extra-dispatch cost;
 - one multi-family instance arena versus a few family-specific arenas;
-- separate proxy grid versus raised terrain vertices for broad shadows;
+- the source/visibility representation for grass shadows after both proxy failures;
 - feasibility and total cost of separate vegetation depth plus screen-space shadows in Bevy 0.19;
 - generated multi-angle impostors versus simpler card clusters per family;
 - whether authored-asset streams should become an engine-wide growth/foliage service.

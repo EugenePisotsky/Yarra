@@ -220,13 +220,13 @@ const WORK_ITEM_INDEX_MASK: u32 = 0x7fffffffu;
 const DIAGNOSTIC_INDEX_COUNT: u32 = 6u;
 const SINGLE_HIGH_INDEX_COUNT: u32 = 48u;
 const SINGLE_LOW_INDEX_COUNT: u32 = 18u;
-const SPLIT_HIGH_INDEX_COUNT: u32 = 42u;
+const SPLIT_HIGH_INDEX_COUNT: u32 = 39u;
 const SPLIT_LOW_INDEX_COUNT: u32 = 9u;
 const DIAGNOSTIC_FIRST_INDEX: u32 = 0u;
 const SINGLE_HIGH_FIRST_INDEX: u32 = 6u;
 const SINGLE_LOW_FIRST_INDEX: u32 = 54u;
 const SPLIT_HIGH_FIRST_INDEX: u32 = 72u;
-const SPLIT_LOW_FIRST_INDEX: u32 = 114u;
+const SPLIT_LOW_FIRST_INDEX: u32 = 111u;
 // Packed above the lighting mode in DebugConfig.values.z. This preserves the accepted population
 // while measuring the existing low topology across the complete field.
 const FORCE_LOW_TOPOLOGY_BIT: u32 = 0x00000100u;
@@ -242,6 +242,7 @@ const BALANCED_DENSITY_FAR_SPACING_PIXELS: f32 = 0.75;
 const BALANCED_DENSITY_MIDDLE_FRACTION: f32 = 0.55;
 const BALANCED_DENSITY_FAR_FRACTION: f32 = 0.30;
 const BALANCED_DENSITY_FADE_BAND: f32 = 0.10;
+// Retain the established distant population with the original three-triangle low pair.
 const SPLIT_LOW_DENSITY_BUDGET_SCALE: f32 = 0.65;
 // Deliberately aggressive calibration point for mobile. If one quarter of the roots on the
 // cheapest topology cannot materially change frame rate, a gentler ribbon LOD cannot reach the
@@ -867,8 +868,7 @@ fn evaluate_candidate(item: WorkItem, candidate_index: u32, early_rejection: boo
     } else if (debug_config.values.y == DENSITY_MODE_FULL_REFERENCE) {
         population_density = 1.0;
     }
-    // Three low triangles replace the old pair of straight triangles. Spend fewer low instances
-    // so production index/vertex work falls instead of quietly increasing the geometry budget.
+    // Restore the established distant population and its original three-triangle pair.
     if (topology_class != 0u && debug_config.values.y != DENSITY_MODE_FULL_REFERENCE) {
         population_density *= SPLIT_LOW_DENSITY_BUDGET_SCALE;
     }

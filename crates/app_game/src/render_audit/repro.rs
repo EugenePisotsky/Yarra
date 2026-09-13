@@ -18,12 +18,13 @@ pub(super) fn install(app: &mut App) {
                 | "grass-zoom"
                 | "grass-top-down"
                 | "grass-overhead"
+                | "grass-stream"
                 | "ground-low"
                 | "ground-overhead"
                 | "ground-walk"
                 | "ground-stream"
         ),
-        "expected --render-repro low-walk, grass-close, grass-zoom, grass-top-down, grass-overhead, ground-low, ground-overhead, ground-walk or ground-stream"
+        "expected --render-repro low-walk, grass-close, grass-zoom, grass-top-down, grass-overhead, grass-stream, ground-low, ground-overhead, ground-walk or ground-stream"
     );
     let ground = name.starts_with("ground-");
     // Same 75%/4x/no-prepass setup as log9. Leave both optimization switches independent.
@@ -49,7 +50,7 @@ pub(super) fn install(app: &mut App) {
     app.insert_resource(ReproView(name.clone()));
     app.add_systems(Update, move_camera.after(GameInputSystems))
         .add_systems(PostUpdate, synchronize_wind);
-    let path_frames = if name == "ground-stream" {
+    let path_frames = if name.ends_with("-stream") {
         6000
     } else if name == "grass-zoom" {
         1200
@@ -171,10 +172,10 @@ fn move_camera(
         "ground-overhead" | "grass-overhead" => {
             Transform::from_xyz(-12.0, 18.0, 16.0).looking_at(Vec3::ZERO, Vec3::Y)
         }
-        "ground-stream" => stream_pose(frame.0),
+        "ground-stream" | "grass-stream" => stream_pose(frame.0),
         _ => pose(frame.0),
     };
-    if view.0 == "ground-stream"
+    if view.0.ends_with("-stream")
         && let Some(space) = active_space.current()
     {
         // Drive the actual residency focus too. Camera-only ground-walk stays in

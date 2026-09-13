@@ -39,7 +39,7 @@ impl PreparationKey {
         config: DebugConfigGpu,
         pipelines: [ComputePipelineId; 2],
     ) -> Self {
-        if camera.wind[2] <= 1e-5 {
+        if camera.wind[2] <= 1e-5 || config.workload[3] & (1 << 9) != 0 {
             camera.wind[3] = 0.0;
         }
         Self {
@@ -236,6 +236,22 @@ pub(super) fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn motion_mask_reuses_fixed_geometry_but_switching_back_restores_live_wind() {
+        let mut camera = CameraGpu::zeroed();
+        camera.wind[2] = 0.82;
+        let live = DebugConfigGpu::zeroed();
+        let mut fixed = live;
+        fixed.workload[3] |= 1 << 9;
+        let pipelines = [ComputePipelineId::new(), ComputePipelineId::new()];
+        let fixed_key = PreparationKey::new(1, 1, camera, fixed, pipelines);
+        let live_key = PreparationKey::new(1, 1, camera, live, pipelines);
+        camera.wind[3] = 0.5;
+        assert!(fixed_key == PreparationKey::new(1, 1, camera, fixed, pipelines));
+        assert!(live_key != PreparationKey::new(1, 1, camera, live, pipelines));
+        assert!(fixed_key != PreparationKey::new(1, 1, camera, live, pipelines));
+    }
 
     #[test]
     fn idle_wind_reuses_but_animation_movement_generation_and_reloads_invalidate() {

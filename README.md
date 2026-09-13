@@ -53,6 +53,12 @@ rendered at native resolution. Prepared ground is enabled and optional GPU stati
 are off. No audit or profiling arguments are needed. `--terrain-reference` selects
 the original ground material; `--grass-counters` enables GPU statistics.
 
+The grass-shadow playtest starts at **Medium** on desktop.
+Press **B** to cycle Off / Subtle / Medium; `--grass-bands off` starts without it.
+The editor's Grass study → **Colors…** provides live root/tip color and clump-variation
+controls. Save study keeps a local experiment; Inspector → Save & Publish applies
+catalog colors to the runtime used by the game.
+
 Run the editor foundation:
 
 ```bash

@@ -43,6 +43,10 @@ pub(super) enum GroundMode {
     Neutral,
     Meadow,
     Dried,
+    OriginalStudy,
+    DarkenedStudy,
+    UnderstoryStudy,
+    CoverageStudy,
 }
 
 impl GroundMode {
@@ -51,6 +55,20 @@ impl GroundMode {
             Self::Neutral => "Neutral",
             Self::Meadow => "Uncut grass",
             Self::Dried => "Dried grass",
+            Self::OriginalStudy => "Ground test: original",
+            Self::DarkenedStudy => "Ground test: darken only",
+            Self::UnderstoryStudy => "Ground test: understory",
+            Self::CoverageStudy => "Ground test: coverage",
+        }
+    }
+
+    pub fn treatment(self) -> Option<u32> {
+        match self {
+            Self::OriginalStudy => Some(0),
+            Self::DarkenedStudy => Some(1),
+            Self::UnderstoryStudy => Some(2),
+            Self::CoverageStudy => Some(3),
+            _ => None,
         }
     }
 }

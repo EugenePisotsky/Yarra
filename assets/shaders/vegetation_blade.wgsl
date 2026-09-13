@@ -81,7 +81,11 @@ const SPECIES_INDEX_MASK: u32 = 0x0000ffffu;
 const LOD_MORPH_MASK: u32 = 0x00007fffu;
 const LOD_MORPH_SHIFT: u32 = 16u;
 const BALANCED_DENSITY_FADE_BAND: f32 = 0.10;
+// Retain the established distant population with the original three-triangle low pair.
 const SPLIT_LOW_DENSITY_BUDGET_SCALE: f32 = 0.65;
+// Artistic width compensation is separate from the retained population. Full inverse-density
+// compensation (1 / 0.65) made the first lower-detail blades too broad at their shoulder.
+const SPLIT_LOW_COVERAGE_WIDTH_SCALE: f32 = 1.30;
 const LIGHTING_MODE_LEGACY: u32 = 1u;
 const LIGHTING_MODE_UNLIT_DIAGNOSTIC: u32 = 2u;
 const LIGHTING_MODE_VERTEX_ONLY_DIAGNOSTIC: u32 = 3u;
@@ -119,15 +123,16 @@ fn rotate_by_quaternion(value: vec3<f32>, rotation: vec4<f32>) -> vec3<f32> {
 struct PreparedBlade {
     p0_width: vec4<f32>,
     p1_authored_width: vec4<f32>,
-    // xyz: p2, w: broad-leaf flutter phase / paired ribbon first high-row parameter.
+    // xyz: p2, w: broad-leaf flutter phase / companion last full-width row parameter.
     p2_phase: vec4<f32>,
+    // w: broad-leaf motion amplitude; negative shared height for folded-ribbon band sizing.
     p3_amplitude: vec4<f32>,
     side: vec4<f32>,
     wind_forward: vec4<f32>,
     surface_clump: vec4<f32>,
     // x: section count, y: low section count (negative for paired ribbons), z: coverage scale.
-    // Paired main blades store low shoulder xyz in side.w / wind_forward.w / topology.w;
-    // wind_forward.xyz stores the opened low width vector (shoulder for main, root for companion).
+    // Paired ribbons store the low shoulder in side.w / wind_forward.w / topology.w;
+    // wind_forward.xyz stores its low-LOD width vector.
     // Arena size stays 128 bytes. These values are needed only while morphing or at low LOD.
     topology: vec4<f32>,
 }
@@ -156,14 +161,15 @@ fn inspected_opening(profile: Species, config: DebugConfig) -> f32 {
         shape_inspection_mode(config) != 0u && (config.workload.w & 256u) != 0u);
 }
 
-// Spend the fixed rows where the authored arches change direction. The main shoulder remains
-// exactly at 0.5 before the authored power, preserving the existing low-kite anchor.
+// Spend fixed samples around the authored bend. These schedules retain the authoring power
+// control; the companion schedule avoids wasting a third of its budget on the straight stem.
 fn paired_ribbon_linear_t(row: u32, sections: u32, main: bool) -> f32 {
-    if (main && sections == 5u) {
-        return array<f32, 6>(0.0, 0.128, 0.292, 0.5, 0.768, 1.0)[min(row, 5u)];
+    if (sections == 1u) { return f32(min(row, 1u)); }
+    if (main && sections == 4u) {
+        return array<f32, 5>(0.0, 0.215, 0.5, 0.70, 1.0)[min(row, 4u)];
     }
-    if (!main && sections == 4u) {
-        return array<f32, 5>(0.0, 0.183, 0.423, 0.723, 1.0)[min(row, 4u)];
+    if (!main && sections == 3u) {
+        return array<f32, 4>(0.0, 0.25, 0.61, 1.0)[min(row, 3u)];
     }
     if (main) {
         let middle = max((sections + 1u) / 2u, 1u);
@@ -178,6 +184,8 @@ fn prepare_blade(
     instance: ProceduralInstance, profile: Species, camera: Camera,
     debug_config: DebugConfig, blade_index: u32,
 ) -> PreparedBlade {
+    // Motion-mask diagnostic freezes geometry while the draw shader keeps its live clock.
+    let shape_wind_time = select(camera.wind.w, 0.0, (debug_config.workload.w & 512u) != 0u);
     let production_low_lod = (instance.geometry.y >> 31u) != 0u;
     let low_lod = production_low_lod && shape_inspection_mode(debug_config) == 0u;
     let lod_morph = f32((instance.geometry.y >> LOD_MORPH_SHIFT) & LOD_MORPH_MASK)
@@ -219,6 +227,7 @@ fn prepare_blade(
     }
     let paired_main = !is_broad_leaf && blade_count > 1u && blade_index == 0u;
     let paired_companion = !is_broad_leaf && blade_count > 1u && blade_index != 0u;
+    let pair_height = height;
     if (paired_companion) {
         height *= 0.80;
     }
@@ -231,26 +240,29 @@ fn prepare_blade(
     let base_side = normalize3_or(cross(surface_normal, forward), vec3<f32>(0.0, 0.0, 1.0));
 
     // Static u16 indices encode side in bit 0, row in bits 1..4, and blade in bit 5. A paired
-    // render unit gives five sections to the long blade and four to its shorter companion.
-    // Shared pointed roots and tips keep the original 18-input / 14-triangle high budget.
+    // render unit folds four main sections and three companion sections around one shared base.
+    // The actual index templates reference 15 high vertices and seven on the original low pair.
     let authored_section_count = select(profile.topology.x, profile.topology.y, low_lod);
     var maximum_sections = select(MAX_SECTIONS, MAX_LOW_SECTIONS, low_lod);
     if (blade_count > 1u) {
-        maximum_sections = select(select(5u, 4u, blade_index != 0u), select(2u, 1u, blade_index != 0u), low_lod);
+        maximum_sections = select(select(4u, 3u, blade_index != 0u), select(2u, 1u, blade_index != 0u), low_lod);
     }
     if (is_broad_leaf) {
         maximum_sections = select(select(4u, 3u, blade_index != 0u), 1u, low_lod);
     }
     var section_count = clamp(u32(authored_section_count + 0.5), 1u, maximum_sections);
-    if (paired_main) {
+    if (paired_main && !low_lod) {
         section_count = max(section_count, 2u);
     }
 
     let blade_seed = hash32(seed ^ blade_index * 0x9e3779b9u);
     let paired_side = select(-1.0, 1.0, blade_index != 0u);
-    let facing_jitter = (random01(blade_seed ^ 0x68e31da4u) - 0.5)
+    // A pair is one folded plant: common facing, width and curve variant. Blade identity
+    // remains independent for wind detail and shadow marks.
+    let shape_seed = select(blade_seed, hash32(seed), paired_main || paired_companion);
+    let facing_jitter = (random01(shape_seed ^ 0x68e31da4u) - 0.5)
         * select(0.7, 0.34, is_broad_leaf);
-    let spread_angle = paired_side * profile.shape_secondary.y * 0.5 + facing_jitter;
+    let spread_angle = select(paired_side * profile.shape_secondary.y * 0.5, 0.0, paired_main || paired_companion) + facing_jitter;
     let blade_forward = normalize3_or(
         forward * cos(spread_angle) + base_side * sin(spread_angle),
         forward,
@@ -277,19 +289,19 @@ fn prepare_blade(
     let high_transition_width = mix(balanced_low_width, 1.0, lod_morph);
     let density_width = select(high_transition_width, balanced_low_width, production_low_lod);
     let silhouette_coordinate = mix(
-        random01(blade_seed ^ 0x27d4eb2fu),
+        random01(shape_seed ^ 0x27d4eb2fu),
         random01(group_key ^ 0x7b7d159cu),
         profile.group_response.y,
     );
     let lateral_coordinate = mix(
-        random01(blade_seed ^ 0x165667b1u),
+        random01(shape_seed ^ 0x165667b1u),
         random01(group_key ^ 0x94d049bbu),
         profile.group_response.z,
     );
     let authored_half_width = mix(
         profile.bounds.z,
         profile.bounds.w,
-        random01(blade_seed ^ 0x63d83595u),
+        random01(shape_seed ^ 0x63d83595u),
     );
     let half_width = density_width * authored_half_width;
     let tilt = mix(profile.shape.x, profile.shape.y, silhouette_coordinate);
@@ -300,8 +312,6 @@ fn prepare_blade(
     var curve_root = root;
     if (is_broad_leaf) {
         curve_root += blade_forward * profile.shape_secondary.z * 0.35;
-    } else if (blade_count > 1u) {
-        curve_root += base_side * paired_side * half_width * 0.75;
     }
 
     let tilt_sine = sin(tilt);
@@ -335,6 +345,15 @@ fn prepare_blade(
         }
     }
 
+    let root_side = blade_side;
+    if (paired_main || paired_companion) {
+        // Spread the control points, not the roots or their width axes. The first handle
+        // remains on the common facing; the pair opens gradually into two related blades.
+        let spread = root_side * paired_side * height * sin(profile.shape_secondary.y * 0.5);
+        p2 += spread * 0.65;
+        p3 += spread;
+    }
+
     // The shared field supplies the dominant push, while a hashed phase keeps blades inside one
     // clump from moving in lockstep. Both topology LODs still sample the same deformed cubic.
     var animated_wind_forward = blade_forward;
@@ -354,9 +373,9 @@ fn prepare_blade(
         let frequency = camera.wind_shape.x;
         let wind_speed = camera.wind_shape.y;
         let broad_phase = dot(root.xz, wind_direction) * frequency
-            - camera.wind.w * wind_speed;
+            - shape_wind_time * wind_speed;
         let cross_phase = dot(root.xz, cross_direction) * frequency * 0.71
-            + camera.wind.w * wind_speed * 0.37;
+            + shape_wind_time * wind_speed * 0.37;
         let broad_wave = sin(broad_phase + sin(cross_phase) * 0.85);
         let gust_wave = sin(broad_phase * 0.43 - cross_phase * 0.61);
         let broad_amount = broad_wave * 0.5 + 0.5;
@@ -379,12 +398,12 @@ fn prepare_blade(
         let blade_phase = random01(blade_seed ^ 0x3c6ef372u) * 2.0 * PI;
         let mixed_phase = mix(clump_phase, blade_phase, 0.72);
         let bob = sin(
-            camera.wind.w * wind_speed * 2.15
+            shape_wind_time * wind_speed * 2.15
                 + cross_phase * 1.31
                 + mixed_phase,
         );
         let flutter = sin(
-            camera.wind.w * wind_speed * 4.10
+            shape_wind_time * wind_speed * 4.10
                 + broad_phase * 2.13
                 + blade_phase,
         );
@@ -425,7 +444,7 @@ fn prepare_blade(
             p3 += coherent_push + bob_offset + flutter_offset * 1.08;
 
             animated_wind_forward = wind_forward;
-            blade_wind_phase = camera.wind.w * wind_speed * 3.25
+            blade_wind_phase = shape_wind_time * wind_speed * 3.25
                 + broad_phase * 1.71
                 + blade_phase;
             blade_wind_amplitude = height
@@ -451,16 +470,18 @@ fn prepare_blade(
         select(2u, 1u, blade_index != 0u || is_broad_leaf),
         blade_count > 1u,
     );
-    let budget_coverage = select(1.0, 1.0 / SPLIT_LOW_DENSITY_BUDGET_SCALE,
+    let retention_normalization = select(1.0, 1.0 / SPLIT_LOW_DENSITY_BUDGET_SCALE,
         blade_count > 1u && debug_config.values.y != DENSITY_MODE_FULL_REFERENCE);
-    let coverage_density = min(population_density * budget_coverage, 1.0);
+    let budget_width_scale = select(1.0, SPLIT_LOW_COVERAGE_WIDTH_SCALE,
+        blade_count > 1u && debug_config.values.y != DENSITY_MODE_FULL_REFERENCE);
+    let coverage_density = min(population_density * retention_normalization, 1.0);
     var coverage_scale = 1.0;
     if (camera.projection.w > 0.5 && !is_broad_leaf) {
         let low_coverage_scale = clamp(pow(1.0 / max(coverage_density, 0.125),
             LOW_LOD_COVERAGE_WIDTH_EXPONENT), 1.0, FAR_WIDTH_MAXIMUM_SCALE);
         // Fade toward the exact low-bin coverage before switching topology. Applying this only
         // after the switch made a visible width step around the high-detail disk.
-        coverage_scale = mix(low_coverage_scale * budget_coverage, 1.0, lod_morph);
+        coverage_scale = mix(low_coverage_scale * budget_width_scale, 1.0, lod_morph);
     }
     var low_shoulder = vec3<f32>(0.0);
     if ((paired_main || paired_companion) && geometry_morph < 1.0) {
@@ -489,25 +510,51 @@ fn prepare_blade(
             let required = clamp(FAR_WIDTH_TARGET_HALF_PIXELS / max(projected_width, 1e-4), 1.0, FAR_WIDTH_MAXIMUM_SCALE);
             let subpixel = mix(1.0, required, smoothstep(FAR_WIDTH_FADE_START_METERS, FAR_WIDTH_FADE_END_METERS, camera_distance));
             let density_scale = clamp(pow(1.0 / max(coverage_density, 0.125), LOW_LOD_COVERAGE_WIDTH_EXPONENT), 1.0, FAR_WIDTH_MAXIMUM_SCALE);
-            width_scale = max(subpixel, density_scale * budget_coverage);
+            width_scale = max(subpixel, density_scale * budget_width_scale);
         }
         // Fixed low shoulder, independent of high-LOD row or morph position.
-        // Preserve the existing low silhouette: its 4/3 shoulder factor was derived from
-        // the former quadratic width integral (2/3). The pointed high mesh now uses a
-        // cubic width profile to recover the area removed at its root; do not inflate LOD.
+        // Restore the previous low silhouette's 4/3 shoulder factor, derived from its
+        // quadratic width integral (2/3). The shared high root does not redefine this width.
         animated_wind_forward = side * authored_half_width * select(1.0, 4.0 / 3.0, paired_main) * width_scale;
     }
     if (paired_companion && !low_lod && geometry_morph < 1.0) {
         // Ribbons have no per-vertex flutter; reuse that phase word for the first high row.
-        // The low triangle expands from that row while the pointed root becomes degenerate.
-        let high_sections = clamp(u32(profile.topology.x + 0.5), 2u, 4u);
+        // The low triangle expands from that row while the shared root collapses to a point.
+        let high_sections = clamp(u32(profile.topology.x + 0.5), 2u, 3u);
         blade_wind_phase = pow(paired_ribbon_linear_t(1u, high_sections, false), max(profile.topology.w, 0.2));
     }
     return PreparedBlade(
         vec4(p0, half_width), vec4(p1, authored_half_width),
-        vec4(p2, blade_wind_phase), vec4(p3, blade_wind_amplitude),
+        vec4(p2, blade_wind_phase), vec4(p3, select(blade_wind_amplitude, -pair_height, paired_main || paired_companion)),
         vec4(blade_side, low_shoulder.x), vec4(animated_wind_forward, low_shoulder.y),
         vec4(surface_normal, clump_variant),
         vec4(f32(section_count), select(f32(low_section_count), -f32(low_section_count), paired_main || paired_companion), coverage_scale, low_shoulder.z),
     );
+}
+
+// The high strip shares an unanimated base edge. Reconstruct its frame only for the two
+// indexed root vertices, leaving the prepared spare vectors for the original far silhouette.
+fn paired_base_width(blade: PreparedBlade, instance: ProceduralInstance, camera: Camera) -> vec3<f32> {
+    let surface_normal = blade.surface_clump.xyz;
+    let rest = unpack2x16snorm(instance.geometry.x);
+    var forward = vec3(rest.x, 0.0, rest.y);
+    forward -= surface_normal * dot(forward, surface_normal);
+    forward = normalize3_or(forward, vec3(1.0, 0.0, 0.0));
+    let side = normalize3_or(cross(surface_normal, forward), vec3(0.0, 0.0, 1.0));
+    let seed = hash32(instance.geometry.w & 0x00ffffffu);
+    let jitter = (random01(seed ^ 0x68e31da4u) - 0.5) * 0.7;
+    let root_side = normalize3_or(cross(surface_normal, forward * cos(jitter) + side * sin(jitter)), side);
+    let authored_width = blade.p1_authored_width.w;
+    var width_scale = blade.topology.z;
+    if (camera.projection.w > 0.5) {
+        let root = blade.p0_width.xyz;
+        let to_camera = normalize3_or(camera.camera_position.xyz - root, surface_normal);
+        let alignment = clamp(dot(root_side, to_camera), -1.0, 1.0);
+        let projected = authored_width * camera.projection.x * sqrt(max(1.0 - alignment * alignment, 0.0))
+            / max(distance(camera.camera_position.xyz, root), 0.05);
+        let required = clamp(FAR_WIDTH_TARGET_HALF_PIXELS / max(projected, 1e-4), 1.0, FAR_WIDTH_MAXIMUM_SCALE);
+        width_scale = max(width_scale, mix(1.0, required, smoothstep(FAR_WIDTH_FADE_START_METERS,
+            FAR_WIDTH_FADE_END_METERS, distance(camera.camera_position.xyz, root))));
+    }
+    return root_side * authored_width * width_scale;
 }

@@ -198,6 +198,11 @@ impl StudyDocument {
         {
             return Err("Shape comparison requires a 4 m or 16 m field; it uses high topology for every retained root.".into());
         }
+        if !self.settings.blade_band_density.is_finite()
+            || !(0.0..=1.0).contains(&self.settings.blade_band_density)
+        {
+            return Err("Blade-band density must be finite and between 0 and 1".into());
+        }
         self.camera.validate()?;
         self.character.validate()?;
         super::stage::validate_field_size(self.patch_size)?;
@@ -374,6 +379,7 @@ pub(super) struct StudyLaunch {
     pub select_reference: Option<String>,
     pub zoom: Option<f32>,
     pub show_inspector: bool,
+    pub show_colors: bool,
     pub show_picker: bool,
     pub field_size: Option<f32>,
     pub ground: Option<super::stage::GroundMode>,
@@ -384,6 +390,8 @@ pub(super) struct StudyLaunch {
     pub shape: Option<VegetationShapeInspection>,
     pub no_opening: bool,
     pub no_wind: bool,
+    pub blade_bands: Option<vegetation_render::VegetationBladeBands>,
+    pub profile: bool,
 }
 
 impl StudyLaunch {
@@ -402,7 +410,19 @@ impl StudyLaunch {
                 "--study-ruler" => options.ruler = true,
                 "--study-play" => options.play = true,
                 "--study-no-wind" => options.no_wind = true,
+                "--study-profile" => options.profile = true,
                 "--study-no-opening" => options.no_opening = true,
+                "--study-blade-bands" => {
+                    use vegetation_render::VegetationBladeBands;
+                    options.blade_bands = Some(match value()?.as_str() {
+                        "off" => VegetationBladeBands::Off,
+                        "subtle" => VegetationBladeBands::Subtle,
+                        "medium" => VegetationBladeBands::Medium,
+                        "mask" => VegetationBladeBands::Mask,
+                        "motion-mask" => VegetationBladeBands::MotionMask,
+                        _ => return Err("--study-blade-bands must be off, subtle, medium, mask, or motion-mask".into()),
+                    });
+                }
                 "--study-shape" => {
                     options.shape = Some(match value()?.as_str() {
                         "production" => VegetationShapeInspection::Off,
@@ -429,11 +449,16 @@ impl StudyLaunch {
                         "neutral" => super::stage::GroundMode::Neutral,
                         "meadow" => super::stage::GroundMode::Meadow,
                         "dried" => super::stage::GroundMode::Dried,
-                        _ => return Err("--study-ground must be neutral, meadow, or dried".into()),
+                        "original" => super::stage::GroundMode::OriginalStudy,
+                        "darkened" => super::stage::GroundMode::DarkenedStudy,
+                        "understory" => super::stage::GroundMode::UnderstoryStudy,
+                        "coverage" => super::stage::GroundMode::CoverageStudy,
+                        _ => return Err("--study-ground must be neutral, meadow, dried, original, darkened, understory, or coverage".into()),
                     })
                 }
                 "--study-select-reference" => options.select_reference = Some(value()?),
                 "--study-inspector" => options.show_inspector = true,
+                "--study-colors" => options.show_colors = true,
                 "--study-picker" => options.show_picker = true,
                 "--study-zoom" => {
                     let zoom: f32 = value()?.parse().map_err(|_| "Invalid --study-zoom")?;
@@ -479,7 +504,13 @@ mod tests {
     fn portable_grass_checkpoint_loads_as_a_valid_study() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../content/vegetation/distance-01.ron");
-        StudyDocument::read(&path).expect("tracked grass checkpoint must remain replayable");
+        let doc =
+            StudyDocument::read(&path).expect("tracked grass checkpoint must remain replayable");
+        assert_eq!(
+            doc.settings.blade_bands,
+            vegetation_render::VegetationBladeBands::Off
+        );
+        assert_eq!(doc.settings.blade_band_density, 1.0);
     }
 
     #[test]
@@ -516,6 +547,7 @@ mod tests {
             ["--study-camera", "bogus"],
             ["--study-field", "32"],
             ["--study-ground", "missing"],
+            ["--study-blade-bands", "missing"],
         ] {
             assert!(StudyLaunch::parse(args.into_iter().map(str::to_owned)).is_err());
         }

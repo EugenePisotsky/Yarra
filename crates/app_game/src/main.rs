@@ -18,6 +18,7 @@ use vegetation_render::{
 };
 
 mod game_render;
+mod grass_bands;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 mod metal_capture;
 mod render_audit;
@@ -53,6 +54,8 @@ fn main() {
         )
         .add_systems(Update, conform_vegetation_debug_to_streamed_terrain);
 
+    grass_bands::install(&mut app);
+
     #[cfg(target_os = "ios")]
     warn!(
         "iOS ground + grass baseline: flat terrain rendering and production vegetation LOD enabled"
@@ -74,16 +77,21 @@ fn main() {
             .enabled = false;
     }
     if std::env::args_os().any(|argument| argument == "--grass-candidate-reference") {
-        app.world_mut().resource_mut::<VegetationDebugSettings>().candidate_cache_enabled = false;
+        app.world_mut()
+            .resource_mut::<VegetationDebugSettings>()
+            .candidate_cache_enabled = false;
     }
     if std::env::args_os().any(|argument| argument == "--grass-placement-reference") {
         app.world_mut()
             .resource_mut::<VegetationDebugSettings>()
             .early_rejection = false;
     }
-    app.world_mut().resource_mut::<terrain_render::TerrainPreparedSettings>().enabled = terrain_prepared_enabled();
-    app.world_mut().resource_mut::<VegetationDebugSettings>().gpu_counters_enabled =
-        std::env::args_os().any(|arg| arg == "--grass-counters");
+    app.world_mut()
+        .resource_mut::<terrain_render::TerrainPreparedSettings>()
+        .enabled = terrain_prepared_enabled();
+    app.world_mut()
+        .resource_mut::<VegetationDebugSettings>()
+        .gpu_counters_enabled = std::env::args_os().any(|arg| arg == "--grass-counters");
     if std::env::args_os().any(|argument| argument == "--terrain-prepared-universal") {
         app.world_mut()
             .resource_mut::<terrain_render::TerrainPreparedSettings>()
@@ -106,7 +114,9 @@ fn main() {
             .resource_mut::<terrain_render::TerrainCacheSettings>()
             .enabled = false;
     }
-    if std::env::args_os().any(|argument| argument == "--render-audit" || argument == "--render-repro") {
+    if std::env::args_os()
+        .any(|argument| argument == "--render-audit" || argument == "--render-repro")
+    {
         app.add_plugins(render_audit::RenderAuditPlugin);
     }
     #[cfg(any(target_os = "macos", target_os = "ios"))]

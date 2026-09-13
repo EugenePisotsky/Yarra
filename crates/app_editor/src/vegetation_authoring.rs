@@ -896,6 +896,62 @@ fn apply_grouping_kind(population: &mut vegetation::VegetationPopulation, kind: 
     }
 }
 
+/// Focused palette view over the same validated draft used by the full inspector.
+pub(crate) fn draw_population_colors(ui: &mut egui::Ui, state: &mut VegetationAuthoringState) {
+    let Some(mut candidate) = state.working.clone() else {
+        ui.weak("Waiting for the vegetation catalog…");
+        return;
+    };
+    let Some(population) = candidate.populations.get(state.selected_population) else {
+        ui.weak("Select a grass population in the inspector.");
+        return;
+    };
+    ui.strong(&population.key);
+    ui.small("Each species blends from its root color to its tip color. Clump variation changes the tint between groups.");
+    let mut changed = false;
+    for (index, species) in candidate.species.iter_mut().enumerate() {
+        if !population
+            .species
+            .iter()
+            .any(|choice| choice.species == species.id && choice.weight > 0.0)
+        {
+            continue;
+        }
+        ui.push_id(index, |ui| {
+            ui.group(|ui| {
+                ui.label(&species.key);
+                changed |= draw_species_colors(ui, &mut species.material);
+            });
+        });
+    }
+    if changed {
+        state.apply(candidate);
+    }
+    if let Some(error) = &state.validation_error {
+        ui.colored_label(egui::Color32::LIGHT_RED, error);
+    }
+}
+
+fn draw_species_colors(
+    ui: &mut egui::Ui,
+    material: &mut vegetation::VegetationMaterialProfile,
+) -> bool {
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        ui.label("Root color");
+        changed |= ui.color_edit_button_rgb(&mut material.root_color).changed();
+        ui.label("Tip color");
+        changed |= ui.color_edit_button_rgb(&mut material.tip_color).changed();
+    });
+    changed |= ui
+        .add(
+            egui::Slider::new(&mut material.clump_color_variation, 0.0..=1.0)
+                .text("Clump variation"),
+        )
+        .changed();
+    changed
+}
+
 fn draw_species_editor(
     ui: &mut egui::Ui,
     state: &mut VegetationAuthoringState,
@@ -1059,12 +1115,12 @@ fn draw_species_editor(
                 let may_pair = species.height.pair_below_height > 0.0
                     || profile.blades_per_render_unit > 1;
                 let preview_sections = if may_pair {
-                    profile.high_section_count.clamp(2, 5)
+                    profile.high_section_count.clamp(2, 4)
                 } else {
                     profile.high_section_count
                 };
                 if may_pair {
-                    ui.weak("Markers show the paired main blade. Its companion is 80% as long with a gentler, four-section curve. Both roots taper to a point.");
+                    ui.weak("Markers show the paired main blade. Its companion is 80% as long with a gentler, three-section curve. Both share a full-width base and a facing direction.");
                 }
                 let maximum_tip_tilt = profile.curve_variant_b.tip_tilt_radians;
                 changed |= draw_ribbon_curve_editor(
@@ -1173,27 +1229,9 @@ fn draw_species_editor(
     egui::CollapsingHeader::new("Material & lighting")
         .default_open(true)
         .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label("Root color");
-                changed |= ui
-                    .color_edit_button_rgb(&mut species.material.root_color)
-                    .changed();
-            });
-            ui.horizontal(|ui| {
-                ui.label("Tip color");
-                changed |= ui
-                    .color_edit_button_rgb(&mut species.material.tip_color)
-                    .changed();
-            });
+            changed |= draw_species_colors(ui, &mut species.material);
             ui.weak(
                 "Colors are authored per species and interpolated from the crowded root to the tip.",
-            );
-            changed |= drag_f32(
-                ui,
-                "Clump color variation",
-                &mut species.material.clump_color_variation,
-                0.01,
-                0.0..=1.0,
             );
             changed |= drag_f32(
                 ui,
@@ -1330,8 +1368,8 @@ fn draw_ribbon_curve_editor(
 
     let sections = u32::from(high_section_count.max(1));
     for row in 0..=sections {
-        let linear_t = if paired_main && sections == 5 {
-            [0.0_f32, 0.128, 0.292, 0.5, 0.768, 1.0][row as usize]
+        let linear_t = if paired_main && sections == 4 {
+            [0.0_f32, 0.215, 0.5, 0.70, 1.0][row as usize]
         } else if paired_main {
             let middle = sections.div_ceil(2).max(1);
             if row <= middle {

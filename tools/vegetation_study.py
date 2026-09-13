@@ -19,16 +19,19 @@ def main():
     parser.add_argument("--select-reference", help="Select a loaded reference by name (e.g. edge_1) and restore its camera and stage")
     parser.add_argument("--zoom", type=float, help="Shared image magnification, 1 to 6")
     parser.add_argument("--inspector", action="store_true", help="Open the floating inspector")
+    parser.add_argument("--colors", action="store_true", help="Open root/tip colors for the selected population")
     parser.add_argument("--picker", action="store_true", help="Open the floating reference picker")
     parser.add_argument("--character", action="store_true", help="Show the real game character (default for new studies)")
     parser.add_argument("--no-character", action="store_true", help="Hide the scale character")
     parser.add_argument("--ruler", action="store_true", help="Show the separate 2 m ruler")
     parser.add_argument("--field", type=int, choices=[4, 16, 64, 128], help="Field width in metres; overrides reference preset")
-    parser.add_argument("--ground", choices=["neutral", "meadow", "dried"], help="Study ground material")
+    parser.add_argument("--ground", choices=["neutral", "meadow", "dried", "original", "darkened", "understory", "coverage"], help="Study ground material; last four are editor-only ground experiments")
     edge = parser.add_mutually_exclusive_group()
     edge.add_argument("--edge", dest="edge", action="store_const", const=True, default=None, help="Show a grass boundary with clear foreground")
     edge.add_argument("--no-edge", dest="edge", action="store_const", const=False, help="Fill the complete field")
     parser.add_argument("--shape", choices=["production", "current", "full", "low", "morph", "cause"], help="Shape-only comparison; same retained roots, high topology, maximum 16 m field")
+    parser.add_argument("--blade-bands", choices=["off", "subtle", "medium", "mask", "motion-mask"], help="Optional moving blade-shadow marks; motion-mask holds blade geometry fixed")
+    parser.add_argument("--profile", action="store_true", help="Collect supported render timings after 360 ready frames")
     parser.add_argument("--no-opening", action="store_true", help="Disable view opening in shape inspection")
     parser.add_argument("--no-wind", action="store_true", help="Show the resting shape")
     parser.add_argument("--time", type=float, help="Exact frozen wind phase in seconds")
@@ -64,6 +67,10 @@ def main():
     command = [str(binary), "--vegetation-study"]
     if args.shape:
         command += ["--study-shape", args.shape]
+    if args.blade_bands:
+        command += ["--study-blade-bands", args.blade_bands]
+    if args.profile:
+        command += ["--study-profile"]
     if args.no_opening:
         command += ["--study-no-opening"]
     if args.no_wind:
@@ -90,6 +97,8 @@ def main():
         command += ["--study-zoom", str(args.zoom)]
     if args.inspector:
         command += ["--study-inspector"]
+    if args.colors:
+        command += ["--study-colors"]
     if args.picker:
         command += ["--study-picker"]
     if args.time is not None:

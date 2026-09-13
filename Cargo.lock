@@ -6435,6 +6435,7 @@ dependencies = [
  "bevy",
  "bytemuck",
  "naga",
+ "ron",
  "serde",
  "yarra-vegetation",
 ]

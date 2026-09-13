@@ -17,6 +17,8 @@ fn compare_lod(@builtin(global_invocation_id) invocation: vec3<u32>) {
     profile.height_packing = vec4(0.0, 0.65, 12.0, 12.0);
     var camera: Camera;
     camera.projection.w = 1.0;
+    camera.wind = vec4(0.924, 0.382, 0.82, f32(index) * 0.11);
+    camera.wind_shape = vec4(0.12, 2.4, 0.95, 0.28);
     var config: DebugConfig;
     config.values.y = DENSITY_MODE_BALANCED;
     var instance: ProceduralInstance;
@@ -33,6 +35,13 @@ fn compare_lod(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let high_shoulder = vec3(high.side.w, high.wind_forward.w, high.topology.w);
     let low_shoulder = vec3(low.side.w, low.wind_forward.w, low.topology.w);
     endpoint_error = max(endpoint_error, length(high_shoulder - low_shoulder));
+    endpoint_error = max(endpoint_error, length(high.wind_forward.xyz - low.wind_forward.xyz));
+    // Two independently shaded ribbons must retain exactly the same planted base edge.
+    let other = prepare_blade(instance, profile, camera, config, 1u - (index & 1u));
+    let other_base = paired_base_width(other, instance, camera);
+    let full_base = paired_base_width(full, instance, camera);
+    endpoint_error = max(endpoint_error, length(other.p0_width.xyz - full.p0_width.xyz));
+    endpoint_error = max(endpoint_error, length(other_base - full_base));
     comparison[index] = vec4(high.p0_width.w * high.topology.z,
         low.p0_width.w * low.topology.z, full.p0_width.w, endpoint_error);
 }

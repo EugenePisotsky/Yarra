@@ -1,6 +1,7 @@
 //! A single, bounded production grass view with an independent editor camera and transport.
 mod comparison;
 mod ground;
+mod ground_treatment;
 mod references;
 mod stage;
 mod study;
@@ -28,8 +29,8 @@ use std::{path::PathBuf, time::Instant};
 use study::*;
 use ui::ui;
 use vegetation_render::{
-    VegetationDebugScene, VegetationDebugSettings, VegetationDiagnostics, VegetationLighting,
-    VegetationProfileMode, VegetationShapeInspection, VegetationWind,
+    VegetationBladeBands, VegetationDebugScene, VegetationDebugSettings, VegetationDiagnostics,
+    VegetationLighting, VegetationProfileMode, VegetationShapeInspection, VegetationWind,
 };
 
 const LAYER: usize = 31;
@@ -49,6 +50,7 @@ pub(crate) struct VegetationWorkspacePlugin {
 }
 impl Plugin for VegetationWorkspacePlugin {
     fn build(&self, app: &mut App) {
+        ground_treatment::register(app);
         let launch = StudyLaunch::parse(std::env::args().skip(1)).unwrap_or_else(|e| {
             eprintln!("Vegetation study: {e}");
             std::process::exit(2);
@@ -138,6 +140,7 @@ struct StudyState {
     started: Instant,
     show_reference: bool,
     show_inspector: bool,
+    show_colors: bool,
     show_picker: bool,
     save_study: bool,
     show_character: bool,
@@ -198,6 +201,7 @@ impl StudyState {
             .as_ref()
             .map_or([WIDTH, HEIGHT], |d| d.render_size);
         let show_inspector = launch.show_inspector;
+        let show_colors = launch.show_colors;
         let show_picker = launch.show_picker;
         let playing = launch.play;
         let camera_label = if launch.load.is_some() {
@@ -234,6 +238,7 @@ impl StudyState {
             started: Instant::now(),
             show_reference: true,
             show_inspector,
+            show_colors,
             show_picker,
             save_study: false,
             show_character,
@@ -748,6 +753,9 @@ fn enter(
     if let Some(shape) = state.launch.shape {
         settings.shape_inspection = shape;
     }
+    if let Some(bands) = state.launch.blade_bands {
+        settings.blade_bands = bands;
+    }
     if settings.shape_inspection != VegetationShapeInspection::Off {
         state.field_size = state.field_size.min(16.0);
         settings.mode = vegetation_render::VegetationDebugMode::ProceduralGeometry;
@@ -806,6 +814,7 @@ fn sync(
     mut authoring: ResMut<VegetationAuthoringState>,
     mut scene: ResMut<VegetationDebugScene>,
     mut wind: ResMut<VegetationWind>,
+    mut settings: ResMut<VegetationDebugSettings>,
     mut cameras: Query<(&mut Transform, &mut Projection), With<VegetationWorkspaceCamera>>,
 ) {
     if authoring.study_source().is_none() {
@@ -827,6 +836,13 @@ fn sync(
         }
     }
     let (catalog, selected, revision) = authoring.study_source().unwrap();
+    let band_density = catalog
+        .populations
+        .get(selected)
+        .map_or(0.0, |p| (p.density_per_square_meter / 44.0).clamp(0.0, 1.0));
+    if settings.blade_band_density != band_density {
+        settings.blade_band_density = band_density;
+    }
     let signature = state.scene_signature(revision, selected);
     if state.signature != Some(signature) {
         match bounded_field_with_edge(catalog, selected, state.seed, state.field_size, state.edge) {
@@ -926,8 +942,11 @@ fn capture(
     mut settings: ResMut<VegetationDebugSettings>,
     lighting: Res<VegetationLighting>,
     diagnostics: Res<VegetationDiagnostics>,
+    render_diagnostics: Res<bevy::diagnostic::DiagnosticsStore>,
+    render_device: Option<Res<bevy::render::renderer::RenderDevice>>,
     authoring: Res<VegetationAuthoringState>,
     ground: Res<ground::StudyGroundAssets>,
+    treatment: Res<ground_treatment::TreatmentAssets>,
     sun: Single<(&Transform, &DirectionalLight), With<WorldSun>>,
     ambient: Res<GlobalAmbientLight>,
     mut exit: MessageWriter<AppExit>,
@@ -982,13 +1001,43 @@ fn capture(
     }
     let stats = diagnostics.snapshot();
     if state.capture_dir.is_none()
-        || state.ready_frames < 65
+        || state.ready_frames < if state.launch.profile { 360 } else { 65 }
         || stats.gpu_scene_revision != scene.revision()
         || stats.gpu_samples < 2
     {
         return;
     }
     let folder = state.capture_dir.take().unwrap();
+    if state.launch.profile {
+        let mut lines = vec![format!("Device features: {:?}", render_device.as_ref().map(|d| d.features())),
+            "Recent render samples after 360 ready frames. elapsed_gpu is GPU ms; elapsed_cpu is CPU submission time. Missing GPU entries mean unsupported, not zero cost.".into()];
+        for diagnostic in render_diagnostics.iter() {
+            if diagnostic.path().as_str().starts_with("render/") {
+                lines.push(format!(
+                    "{}\t{}\t{:?}",
+                    diagnostic.path(),
+                    diagnostic.suffix,
+                    diagnostic.values().copied().collect::<Vec<_>>()
+                ));
+            }
+        }
+        if let Err(error) = std::fs::create_dir_all(&folder)
+            .and_then(|()| std::fs::write(folder.join("render-timings.txt"), lines.join("\n")))
+        {
+            state.message = error.to_string();
+            state.capture_finished = true;
+            state.capture_failed = true;
+            return;
+        }
+    }
+    if state.ground.treatment().is_some()
+        && let Err(error) = treatment.write_diagnostics(&folder)
+    {
+        state.message = error;
+        state.capture_finished = true;
+        state.capture_failed = true;
+        return;
+    }
     if let Err(error) = doc.write(&folder.join("study.ron")) {
         state.message = error;
         state.capture_finished = true;
@@ -998,7 +1047,7 @@ fn capture(
     if let Err(error) = std::fs::write(
         folder.join("diagnostics.txt"),
         format!(
-            "{stats:#?}\nShape inspection: {:?} (active comparisons use high topology; not a performance measurement)\nView opening disabled: {}\nField: {} x {} m\nGround: {}\nGrass edge: {:?}\nCandidate budget: {} / {}\nGPU timings: unavailable (editor FPS is not a vegetation timing).\n",
+            "{stats:#?}\nShape inspection: {:?} (active comparisons use high topology; not a performance measurement)\nView opening disabled: {}\nField: {} x {} m\nGround: {}\nGrass edge: {:?}\nCandidate budget: {} / {}\nBlade bands: {:?}; source density factor: {:.3}\nGPU timings: see render-timings.txt when --profile is active; editor FPS is not a vegetation timing.\n",
             settings.shape_inspection,
             settings.inspection_disable_opening,
             state.field_size,
@@ -1010,7 +1059,9 @@ fn capture(
                 MAX_CANDIDATES
             } else {
                 MAX_FIELD_CANDIDATES
-            }
+            },
+            settings.blade_bands,
+            settings.blade_band_density
         ),
     ) {
         state.message = error.to_string();

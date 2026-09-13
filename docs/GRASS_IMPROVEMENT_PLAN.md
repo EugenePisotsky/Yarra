@@ -16,6 +16,82 @@ This document is not a claim that every idea below should be implemented, and it
 The fixed-buffer measurements below are a 2026-08-30 historical snapshot of the deleted renderer,
 not current V2 performance data.
 
+## Performance priority - 2026-09-08
+
+The user's central requirement is low added cost, with iPhone as a longer-term target.
+The minimal current scene is already too expensive and heats the Mac despite a field that appears
+less dense than the Yotei reference. Shadow work must fit an affordable renderer; visual completion
+alone does not justify shipping more GPU work. **iPhone testing is explicitly deferred:** the current
+grass renderer is already unacceptably slow there, and another phone test would not help this task.
+Broader grass optimization is later work, not a prerequisite for the shadow prototype. The immediate
+goal is useful shadow approximation with small measured overhead on the current Mac renderer, without
+multiplying its already excessive workload. Sustained 60 FPS on iPhone 15 Pro Max / A17 Pro remains
+a longer-term goal after broader optimization, with room for the rest of the game.
+Mac validation retains display VSync; reaching that limit is not evidence of low power consumption.
+
+Read [PERFORMANCE_HANDOFF.md](PERFORMANCE_HANDOFF.md), then the newer
+[ground measurements](GROUND_GPU_BREAKDOWN.md), [prepared-ground updates](PREPARED_GROUND.md), and
+[MSAA storage results](MSAA_COLOR_STORAGE.md). Historical iPhone captures attributed about 68% of
+one low-camera frame to grass. Curve preparation reduced arithmetic but increased memory traffic
+without establishing sustained thermal improvement. Later ground/storage changes mean those timings
+are not a current-build baseline. Do not repeat rejected cache experiments or claim that either
+grass or the thermal problem is solved.
+
+### Restart and implementation constraints — 2026-09-09
+
+Both shadow implementations failed visual review and were removed. The user explicitly requested a
+restart. [GRASS_SHADOW_RESTART.md](GRASS_SHADOW_RESTART.md) supersedes the earlier prescribed canopy
+band/grid/dither architecture and the assumption that broad darkening alone is a useful endpoint.
+No replacement representation is selected. [The retired report](GRASS_SHADOW_PROXY.md) records the
+failed work without treating its timings or tests as visual acceptance.
+
+- Establish the required blade detail and ground occlusion separately on a small patch of actual
+  grass, including sparse boundaries. Inspect gameplay overhead and vertical top-down first, then
+  near, grazing, orbit, zoom and wind. Independent stamps and blurred field noise are rejected.
+- Preserve ordinary object-shadow reception and existing authored root color/AO during the reset.
+  Diagnose along-blade AO versus actual height before choosing an additional occlusion model.
+- Prefer work within existing draws when it produces the required signal, but count per-fragment
+  cost over real grass overdraw. A material-only effect does not fulfil ground-shadow casting.
+- Do not add a full-field blade caster, larger maps, more cascades, more receiver samples, higher
+  grass density, a depth prepass, temporal resources or screen-space tracing to rescue quality.
+- A bounded offline patch reference is permitted to answer what geometric/visibility information
+  a useful approximation must retain. It is not a production full-field shadow path.
+- Validate appearance before integrating another cache, field-wide caster or controls. Then measure
+  a short matched Mac comparison; extend testing only for a promising candidate.
+- Keep the existing AA quality, render settings, source lifetime and MSAA storage policy. iPhone
+  tests and broader grass optimization remain deferred.
+
+### Cost and acceptance gates
+
+Evaluate incremental cost on Mac for this task. The previously proposed A17 timing gate is withdrawn;
+there is no phone benchmark or full-renderer optimization prerequisite. Declare justified resource and
+work bounds for the chosen prototype before implementation, including any page/cascade draws,
+maximum update work, buffers, metadata, scratch resources and peak memory. Use the Mac baseline to
+set a small overhead allowance and report both absolute and relative cost. Arbitrary unmeasured
+millisecond limits are not evidence that an architecture is affordable.
+
+Compare enabled/disabled using the same build, population, camera path, wind, actual render
+dimensions, AA, receiver settings, and content. Inspect total affected GPU work: proxy rasterization,
+shadow-map writes, main-pass reception, and any changed attachment load/store behavior. A coarse mesh
+can still fill large portions of every cascade; low triangle count does not establish low cost.
+Measure CPU submission and streaming spikes as well. Preserve the current MSAA storage saving.
+
+Use repeated matched Mac measurements and settled live comparisons, including moving/streaming
+workloads. Record
+frame-time distribution, missed deadlines, thermal state and, when available, energy/power data;
+coarse thermal labels and profiler replay timings alone are insufficient. A noisy or unavailable
+measurement leaves the cost conclusion open. Reject configurations that materially increase total
+frame cost, bandwidth, or streaming spikes; a several-fold slowdown is categorically unacceptable.
+
+Keep the prototype switchable for the comparison. Accept the shadow increment on useful visuals and
+small measured overhead relative to the current Mac baseline; do not require the already-poor base
+renderer to meet its future iPhone target first. If the increment is expensive, simplify or reject
+the shadow approach rather than expanding this task into a renderer overhaul. Mac results establish
+only that comparison, not future iPhone performance. Revisit phone validation during the later broader
+optimization effort. Passing the proxy visual test must not automatically schedule screen-space detail.
+
+## Implementation history
+
 Direction update, 2026-08-31: the phases and experiments below remain useful workstreams, but all
 implementation follows the V2 contracts in [`GROUND_COVER_ARCHITECTURE.md`](GROUND_COVER_ARCHITECTURE.md).
 The old cluster/ribbon runtime, compiler, authoring UI, and schemas have been removed.
@@ -171,11 +247,10 @@ The removed grass renderer had a prefiltered directional receiver-visibility vol
 the strongest world directional light and receives its ordinary CSM shadows through Bevy's mesh-view
 bindings. The authored AO profile also controls how much ambient body survives in shadow, so dense
 roots darken more strongly than exposed tips. The old cached receiver volume has not been carried
-forward, and V2 still does not cast grass shadows into the world.
-
-Future work must keep three costs distinct: receiving ordinary opaque-object shadows on grass,
-casting the field's broad density shadow, and adding short-range blade detail. Ghost's raised-terrain
-impostor addresses the second problem; the deleted Yarra receiver volume addressed only the first.
+forward. Both [shadow proxy experiments](GRASS_SHADOW_PROXY.md) were rejected and removed.
+There is currently no grass caster. [The restart](GRASS_SHADOW_RESTART.md) separates existing root
+shading, fine inter-blade occlusion, grass-to-ground casting and ordinary object-shadow reception.
+The representation must be re-evaluated without requiring reuse of the failed source reduction.
 
 ## What already works well
 
@@ -320,28 +395,13 @@ we lack automated or repeatable evidence for:
 - repeatable pass-level GPU timings and overdraw;
 - long-traversal traces that correlate thermal state, residency revisions, uploads, and workload.
 
-### 10. Grass shadow casting is missing
+### 10. Grass shadow casting: restart after two rejected experiments
 
-V2 receives ordinary directional scene shadows, but it does not enter directional shadow-caster
-passes. It does not generate a terrain/canopy proxy and has no screen-space blade-shadow detail.
-Broad field casting and fine local detail therefore remain explicit work rather than an implicit
-inheritance from the deleted renderer.
-
-The straightforward reference - rerun culling/generation plus grass geometry for the sun shadow
-cascades - is likely too expensive and would become worse with additional lights. We need a
-controlled full-geometry reference for quality comparison, then a default approximation whose cost
-depends mainly on proxy resolution and screen size rather than total visible blade count.
-
-The raised-terrain impostor should not use renderer LOD density as its darkness control: that value
-changes with the camera and would make a world shadow breathe. Its stable optical coverage should be
-derived from the authored population density, painted coverage, species width/height envelope, and
-an eventual per-species shadow-density multiplier. A useful first model is exponential transmittance
-(`visibility = exp(-optical_density)`), because overlapping populations then compose without a hard
-clamp. Proxy height should use a coverage-weighted species height statistic rather than always taking
-the tallest rare species. A world-anchored dither converts that continuous visibility into shadow-map
-depth coverage for ordinary PCF to integrate; neither screen pixels nor camera distance may seed it.
-The editor needs separate proxy-height and optical-density diagnostics before this can be accepted as
-working. This is distinct from the received-shadow strength control in the current vegetation preview.
+Both the raised dithered-depth sheet and the clump-mask caster failed visual review. The latter's
+small measured Mac difference and passing bias regression did not establish a convincing result
+from above. Both have been removed. Follow [the restart plan](GRASS_SHADOW_RESTART.md), beginning
+with a small actual-grass patch and separate inspection of AO, sun visibility and final shading.
+Do not continue tuning either implementation or interpret the historical measurements as acceptance.
 
 ## What the Ghost talk contributes
 
@@ -366,8 +426,8 @@ working. This is distinct from the received-shadow strength control in the curre
 | Authored blade AO instead of temporal SSAO | Root-to-tip AO is authored analytically; V2 does not write grass velocity | Preserve unless a measured need justifies velocity and temporal cost |
 | Artist-authored field assets through a minimal GPU instance stream | Missing as a distinct family; current V2 supports procedural ribbons/two-leaf units only | Add a sparse decorative-asset family sharing deterministic coverage sampling, streaming, culling, and indirect drawing |
 | Keep only a 3x3 neighborhood of generated authored assets | No equivalent authored-asset cache yet | Preserve the bounded-residency principle; derive Yarra's actual neighborhood from cell size, asset bounds, and view range rather than copying 3x3 literally |
-| Full grass pipeline in shadow maps for rare cases | Grass is absent from all caster passes | Build only as a reference/optional exceptional mode if budgets allow, not as the default |
-| Raised-terrain, dithered-depth grass shadow impostor | Missing; V2 now receives CSM shadows, while the old unrelated receiver cache remains removed | High-priority shadow experiment using coverage, species height, stable dithering, and the existing terrain representation |
+| Full grass pipeline in shadow maps for rare cases | Visible blades remain absent from caster passes; the opt-in canopy is separate | Build only as a reference/optional exceptional mode if budgets allow, not as the default |
+| Grass shadow impostor | Both experiments rejected and removed; see [restart](GRASS_SHADOW_RESTART.md) | Establish correspondence and view consistency on a small actual-grass patch before selecting a replacement |
 | Short-range screen-space blade shadows | Missing | Investigate as the fine-detail complement to a broad proxy, with explicit off-screen and disocclusion limits |
 
 ## Working decisions
@@ -427,10 +487,10 @@ These are provisional design positions. Change them when an experiment provides 
 
 ## Proposed work plan
 
-The phase numbers express major dependencies, not a requirement to finish every earlier phase before
-starting the next. After Phase 0 establishes a reference scene and timings, the grass-shadow proxy can
-be prototyped in parallel with LOD and compute work. Its final data model should still use the
-per-species height/density information introduced by Phase 1.
+The phase numbers express broad dependencies. The 2026-09-09 [shadow restart](GRASS_SHADOW_RESTART.md)
+supersedes the earlier sequence of field-wide proxy implementation followed by visual tuning.
+Establish a convincing small-patch signal across views, declare a candidate's complete cost, then
+measure it in the current scene. Broader grass optimization and iPhone testing are later work.
 
 ### Phase 0 - establish evidence (in progress)
 
@@ -506,33 +566,22 @@ or motion pop in the representative scenes.
 Exit criterion: the selected design has measured wins in representative scenes, bounded worst-case
 memory, and no new spatial bias or temporal instability.
 
-### Phase 3 - build a scalable grass-shadow solution
+### Phase 3 - rethink grass shadows after the rejected implementations
 
-Treat shadow reception, broad grass casting, and fine contact detail as separate layers:
+1. Preserve ordinary shadow reception and root shading; keep the retired casters out of the build.
+2. Establish reference behavior on a small actual-grass patch. Separate AO, inter-blade sun visibility
+   and grass-to-ground casting; include sparse gaps and bent blades.
+3. Compare candidate representations from gameplay overhead, vertical top-down, near and grazing
+   views, then in camera/light/wind motion. An inexpensive but visually wrong result fails.
+4. Investigate a material-local illusion first for blade detail, while explicitly leaving ground
+   casting unsolved. Any geometry/data approximation must share the visible grass's source definition
+   or demonstrate plausible correspondence. Do not reintroduce independent masks as a solution.
+5. For a promising candidate, count complete work and run a short matched current-scene Mac cost
+   check before adding field-wide integration or controls. Preserve existing AA and render quality.
 
-1. Re-establish an independently measurable receiver path for shadows cast *onto* grass by opaque
-   objects. The removed visibility volume is evidence, not code that V2 must revive unchanged.
-2. Create a deliberately expensive full-blade directional-shadow reference for one light if the
-   engine integration permits it. This is a quality oracle and rare-mode experiment, not the default
-   target.
-3. Prototype a terrain/canopy proxy for shadows cast *by* the grass field. Derive proxy height and
-   density from streamed coverage plus the authored species bounds; do not expand visible blades.
-4. Evaluate raising existing terrain shadow vertices versus drawing a separate coarse proxy grid.
-   The latter may avoid coupling terrain topology and grass-shadow resolution.
-5. Write stable stochastic/dithered proxy depth and rely on shadow-map filtering to integrate it into
-   average field density. The pattern must be world-anchored and tested across cascades, camera motion,
-   low sun, and shadow-map resolution changes.
-6. Measure hard boundary/facet artifacts caused by proxy resolution. Use coverage mips, conservative
-   height filtering, skirts/overlap, or a finer adaptive grid only when evidence justifies them.
-7. Investigate short-range screen-space shadows for visible blade detail. Bound ray distance and cost,
-   document missing off-screen casters, and test depth discontinuities and temporal stability.
-8. Compose the result intentionally: low-frequency density from the proxy, high-frequency local
-   detail from screen space, and ordinary simplified mesh shadows for sparse authored assets where
-   affordable.
-
-Exit criterion: grass casts a stable broad shadow on terrain and nearby objects, local detail appears
-where it matters, field edges do not reveal unacceptable proxy facets, and the default cost is far
-below rendering the full grass pipeline into every relevant shadow view.
+Exit criterion: a visually useful and view-consistent approximation with small demonstrated added
+cost. No replacement is selected yet. The reference and candidate criteria are detailed in
+[GRASS_SHADOW_RESTART.md](GRASS_SHADOW_RESTART.md). iPhone testing remains deferred.
 
 ### Phase 4 - improve wind, fullness, and material filtering
 
@@ -588,13 +637,15 @@ their own shape, material, density, LOD, and motion behavior.
 | 32-byte instance follow-up | Further packing may reduce bandwidth, but reconstruction already has a cost | Memory bandwidth/timing and visual parity | Reconstruction costs more than bandwidth saved or packing artifacts appear |
 | Reduced candidate lattices | Entirely low-detail fields should schedule retained roots directly | Candidate lanes/evaluations and identical-root debug capture | Transition roots change or remapping/edge handling costs erase the win |
 | Bounded batch ring | Overlap and smaller buffers can beat global allocation | GPU timeline, peak memory, draw/dispatch cost | Serialization remains or extra submissions cost more than memory saved |
-| Dithered terrain/proxy grass shadow | A height/density proxy can reproduce the field's broad shadow at nearly blade-independent cost | Full-blade reference comparison, GPU timing, long-shadow motion captures | Mesh facets, field-edge blocks, cascade shimmer, or incorrect density dominate |
+| Dithered terrain/proxy grass shadow | First implementation rejected and removed | Historical tests/timings do not establish visual acceptance | Blurry depth-noise pattern and moving boundary failed the reference |
 | Screen-space shadow detail | Short rays can restore visible blade contact shadows over the broad proxy | Slide-45/46-style boundary scene, motion, disocclusion, and off-screen tests | Halos, depth leaks, unstable noise, or missing off-screen detail are more distracting than the benefit |
 | GPU-authored asset stream | Sparse flowers/pampas can enrich fields without entities or full blade density | Instance memory, tile load cost, cull/draw timing, and streaming churn | Asset records dominate residency, pop at cell boundaries, or need gameplay state |
 
 ## Open questions
 
-- What are the intended minimum target GPU, resolution, field size, and frame budget?
+- A17 Pro sustained 60 FPS is the established device target; what whole-game CPU/GPU headroom and
+  content envelope must remain after ground and vegetation? Declare these before production
+  acceptance; 16.67 ms is the whole frame deadline, not the grass budget.
 - Does the target WGPU/Metal scheduling actually overlap these compute and graphics passes in one
   command stream, or would Ghost's double-buffer cadence require different submission boundaries?
 - Should a mixed preset choose one species per deterministic root, layer independent sparse
@@ -615,15 +666,27 @@ their own shape, material, density, LOD, and motion behavior.
   the grass compute pipeline, and can the same representation cover all cascades consistently?
 - Should proxy height/density come directly from coverage/species metadata, a coarse generated height
   field, or terrain vertices? This determines both quality and coupling to terrain tessellation.
-- Is a suitable screen-space shadow facility already available in the renderer, or would its total
-  implementation and temporal-stability cost exceed the value of the fine-detail layer?
+- Bevy 0.19.1 has contact shadows; is there ever sufficient measured headroom to justify integrating
+  custom grass depth and sampling? This is deferred, not a prerequisite for the proxy.
 - On slide 38, does the talk say translucency increases toward the tip? The physical explanation and
   the live wording should be reconciled before copying the profile.
 
 ## Decision log
 
+- **2026-09-09 restart:** Both grass casters failed visual review and are removed. Reconsider the
+  representation on a small actual-grass patch, with gameplay overhead and vertical views first.
+  Earlier canopy-grid, dither and broad-only endpoint decisions are superseded. No new caster is
+  selected; optimization and the deferral of iPhone testing remain binding.
+
+
 Add dated entries here when experiments turn provisional positions into decisions.
 
+- **2026-09-08, clarified:** Current iPhone grass performance is already unacceptable; defer phone
+  tests and broader optimization. The immediate task is a bounded sun-only canopy experiment with
+  small added cost measured on Mac. Withdraw the proposed A17 timing gate and unmeasured numerical
+  allowances. Do not make solving baseline performance a prerequisite for shadow work. Retain
+  existing shadow resources and defer full-blade/screen-space shadows; reject any approach that
+  materially worsens the current renderer. iPhone remains a longer-term target.
 - **2026-08-30:** Treat the Ghost talk as evidence and a source of experiments, not a target
   architecture.
 - **2026-08-30:** Preserve anonymous deterministic coverage and GPU-driven indirect rendering.

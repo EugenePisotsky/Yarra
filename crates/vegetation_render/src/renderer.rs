@@ -2,6 +2,7 @@ use std::{borrow::Cow, collections::HashMap, mem::size_of};
 
 #[cfg(not(target_os = "ios"))]
 use bevy::render::{ExtractSchedule, render_resource::MapMode};
+use bevy::shader::ShaderDefVal;
 use bevy::{
     asset::AssetId,
     core_pipeline::{
@@ -47,13 +48,15 @@ use vegetation::{
 };
 
 use crate::{
-    VegetationDebugDraw, VegetationDebugScene, VegetationDebugSettings, VegetationDebugView,
-    VegetationDiagnostics, VegetationLighting, VegetationProfileMode, VegetationSun,
-    VegetationWind,
+    VegetationBladeBands, VegetationDebugDraw, VegetationDebugScene, VegetationDebugSettings,
+    VegetationDebugView, VegetationDiagnostics, VegetationLighting, VegetationProfileMode,
+    VegetationSun, VegetationWind,
 };
 
 mod blade_preparation;
 mod candidate_cache;
+#[cfg(test)]
+mod shadow_study;
 
 const COMPUTE_SHADER_PATH: &str = "shaders/vegetation_debug_compute.wgsl";
 const SCHEDULE_SHADER_PATH: &str = "shaders/vegetation_schedule_compute.wgsl";
@@ -88,7 +91,7 @@ const MAX_LOW_RENDER_SECTIONS: u8 = 3;
 const DIAGNOSTIC_INDEX_COUNT: u32 = 6;
 const SINGLE_HIGH_INDEX_COUNT: u32 = 48;
 const SINGLE_LOW_INDEX_COUNT: u32 = 18;
-const SPLIT_HIGH_INDEX_COUNT: u32 = 42;
+const SPLIT_HIGH_INDEX_COUNT: u32 = 39;
 const SPLIT_LOW_INDEX_COUNT: u32 = 9;
 const DIAGNOSTIC_FIRST_INDEX: u32 = 0;
 const SINGLE_HIGH_FIRST_INDEX: u32 = DIAGNOSTIC_FIRST_INDEX + DIAGNOSTIC_INDEX_COUNT;
@@ -116,28 +119,33 @@ fn build_topology_indices() -> Vec<u16> {
     append_strip_indices(&mut indices, 0, u16::from(MAX_RENDER_SECTIONS));
     append_strip_indices(&mut indices, 0, u16::from(MAX_LOW_RENDER_SECTIONS));
 
-    // Pointed roots and tips spend ten inputs on the five-section main blade and eight on
-    // its four-section companion. The fixed pair budget remains 18 inputs / 14 triangles.
-    for (blade, sections) in [(0, 5), (1, 4)] {
-        indices.extend_from_slice(&[
-            topology_vertex(blade, 0, false),
-            topology_vertex(blade, 1, true),
-            topology_vertex(blade, 1, false),
-        ]);
-        for section in 1..sections - 1 {
-            let left = topology_vertex(blade, section, false);
-            let right = topology_vertex(blade, section, true);
-            let next_left = topology_vertex(blade, section + 1, false);
-            let next_right = topology_vertex(blade, section + 1, true);
-            indices.extend_from_slice(&[left, right, next_right, left, next_right, next_left]);
+    // Reconstruct the talk's folded strip: both halves reuse the same base edge.
+    // Main: four sections and a shared tip. Companion: three paired rows after the base;
+    // its high tip pair coincides. The far template retains the previous bent main plus companion triangle.
+    let folded_vertex =
+        |blade, row, right| topology_vertex(if row == 0 { 0 } else { blade }, row, right);
+    {
+        let main_sections = 4;
+        for section in 0..main_sections - 1 {
+            let a = folded_vertex(0, section, false);
+            let b = folded_vertex(0, section, true);
+            let c = folded_vertex(0, section + 1, false);
+            let d = folded_vertex(0, section + 1, true);
+            indices.extend_from_slice(&[a, b, d, a, d, c]);
         }
         indices.extend_from_slice(&[
-            topology_vertex(blade, sections - 1, false),
-            topology_vertex(blade, sections - 1, true),
-            topology_vertex(blade, sections, false),
+            folded_vertex(0, main_sections - 1, false),
+            folded_vertex(0, main_sections - 1, true),
+            folded_vertex(0, main_sections, false),
         ]);
+        for section in 0..3 {
+            let a = folded_vertex(1, section, false);
+            let b = folded_vertex(1, section, true);
+            let c = folded_vertex(1, section + 1, false);
+            let d = folded_vertex(1, section + 1, true);
+            indices.extend_from_slice(&[a, b, d, a, d, c]);
+        }
     }
-
     // A bent main blade (root, two shoulder edges, tip) plus the short companion triangle.
     // Production retention pays for the third triangle before emission; no arena grows.
     indices.extend_from_slice(&[
@@ -338,7 +346,8 @@ struct DebugConfigGpu {
     // Mirrors the two WGSL `vec4<u32>` fields exactly.
     values: [u32; 4],
     // x: live work-item count, y: diagnostic atomics, z: prepared blade data available,
-    // w: bit 0 early production rejection, bit 1 stable candidate acceptance cache.
+    // w: bit 0 early rejection, bit 1 candidate cache, bits 4..7 shape mode, bit 8 opening;
+    // bits 16..23 source density for the optional blade-band material (not placement).
     workload: [u32; 4],
 }
 
@@ -350,10 +359,11 @@ struct GenerationInputs {
 }
 
 impl GenerationInputs {
-    fn new(source_revision: u64, mut camera: CameraGpu, config: DebugConfigGpu) -> Self {
+    fn new(source_revision: u64, mut camera: CameraGpu, mut config: DebugConfigGpu) -> Self {
         // Placement uses wind strength for conservative bounds, but wind phase is evaluated
         // only by blade preparation/drawing. Animate existing blades without rebuilding them.
         camera.wind[3] = 0.0;
+        config.workload[3] &= !(255 << 16);
         Self {
             source_revision,
             camera,
@@ -537,6 +547,7 @@ struct VegetationPipelineKey {
     msaa: Msaa,
     target_format: TextureFormat,
     view_layout_bits: u32,
+    blade_bands: VegetationBladeBands,
 }
 
 struct VegetationPipelineSpecializer {
@@ -559,6 +570,32 @@ impl Specializer<RenderPipeline> for VegetationPipelineSpecializer {
                 ));
         descriptor.layout = vec![view_layout.main_layout, self.draw_layout.clone()];
         descriptor.multisample.count = key.msaa.samples();
+        if key.blade_bands != VegetationBladeBands::Off {
+            let mut defs = vec![
+                ShaderDefVal::Bool("BLADE_BAND_STUDY".into(), true),
+                ShaderDefVal::UInt(
+                    "BLADE_BAND_STRENGTH".into(),
+                    if key.blade_bands == VegetationBladeBands::Subtle {
+                        54
+                    } else {
+                        82
+                    },
+                ),
+            ];
+            if matches!(
+                key.blade_bands,
+                VegetationBladeBands::Mask | VegetationBladeBands::MotionMask
+            ) {
+                defs.push(ShaderDefVal::Bool("BLADE_BAND_MASK".into(), true));
+            }
+            descriptor.vertex.shader_defs.extend(defs.clone());
+            descriptor
+                .fragment
+                .as_mut()
+                .unwrap()
+                .shader_defs
+                .extend(defs);
+        }
         descriptor.fragment.as_mut().unwrap().targets[0]
             .as_mut()
             .unwrap()
@@ -940,7 +977,7 @@ fn begin_telemetry_readback(
                             .sum();
                         snapshot.topology_vertex_inputs = emitted_instances
                             .into_iter()
-                            .zip([18_u32, 8, 18, 7])
+                            .zip([18_u32, 8, 15, 7])
                             .map(|(instances, vertices)| u64::from(instances) * u64::from(vertices))
                             .sum();
                         snapshot.gpu_samples = snapshot.gpu_samples.saturating_add(1);
@@ -1227,7 +1264,9 @@ fn prepare(
             u32::from(settings.early_rejection)
                 | (u32::from(settings.candidate_cache_enabled) << 1)
                 | ((settings.shape_inspection as u32) << 4)
-                | (u32::from(settings.inspection_disable_opening) << 8),
+                | (u32::from(settings.inspection_disable_opening) << 8)
+                | (u32::from(settings.blade_bands == VegetationBladeBands::MotionMask) << 9)
+                | (((settings.blade_band_density.clamp(0.0, 1.0) * 255.0).round() as u32) << 16),
         ],
     };
     render_queue.write_buffer(&buffers.camera, 0, bytemuck::bytes_of(&camera_gpu));
@@ -1982,6 +2021,7 @@ fn queue(
                 msaa: *msaa,
                 target_format: view.target_format,
                 view_layout_bits: MeshPipelineViewLayoutKey::from(*mesh_view_key).bits(),
+                blade_bands: settings.blade_bands,
             },
         ) else {
             continue;
@@ -2052,6 +2092,10 @@ mod tests {
         let mut animated = camera;
         animated.wind[3] = 12.5;
         assert!(baseline == GenerationInputs::new(1, animated, config));
+
+        let mut material_only = config;
+        material_only.workload[3] |= 173 << 16;
+        assert!(baseline == GenerationInputs::new(1, camera, material_only));
 
         let mut moved = camera;
         moved.clip_from_world[12] = 0.01;
@@ -2339,7 +2383,7 @@ mod tests {
             (DIAGNOSTIC_FIRST_INDEX, DIAGNOSTIC_INDEX_COUNT, 4_usize),
             (SINGLE_HIGH_FIRST_INDEX, SINGLE_HIGH_INDEX_COUNT, 18),
             (SINGLE_LOW_FIRST_INDEX, SINGLE_LOW_INDEX_COUNT, 8),
-            (SPLIT_HIGH_FIRST_INDEX, SPLIT_HIGH_INDEX_COUNT, 18),
+            (SPLIT_HIGH_FIRST_INDEX, SPLIT_HIGH_INDEX_COUNT, 15),
             (SPLIT_LOW_FIRST_INDEX, SPLIT_LOW_INDEX_COUNT, 7),
         ];
         for (first, count, expected_unique) in ranges {
@@ -2358,59 +2402,85 @@ mod tests {
     }
 
     #[test]
-    fn pointed_pair_template_preserves_broad_leaf_triangles() {
-        let new = build_topology_indices();
-        let new = &new[SPLIT_HIGH_FIRST_INDEX as usize..SPLIT_LOW_FIRST_INDEX as usize];
-        let mut old = Vec::new();
-        for (blade, sections) in [(0, 5), (1, 3)] {
-            append_strip_indices(&mut old, blade, sections - 1);
-            old.extend_from_slice(&[
-                topology_vertex(blade, sections - 1, false),
-                topology_vertex(blade, sections - 1, true),
-                topology_vertex(blade, sections, false),
-            ]);
+    fn folded_pair_cpu_gpu_index_ranges_and_triangle_budget_agree() {
+        let compute = include_str!("../../../assets/shaders/vegetation_debug_compute.wgsl");
+        for (name, value) in [
+            ("SPLIT_HIGH_INDEX_COUNT", SPLIT_HIGH_INDEX_COUNT),
+            ("SPLIT_LOW_INDEX_COUNT", SPLIT_LOW_INDEX_COUNT),
+            ("SPLIT_HIGH_FIRST_INDEX", SPLIT_HIGH_FIRST_INDEX),
+            ("SPLIT_LOW_FIRST_INDEX", SPLIT_LOW_FIRST_INDEX),
+        ] {
+            assert!(compute.contains(&format!("const {name}: u32 = {value}u;")));
         }
-        for authored in 2..=12 {
-            let triangles = |indices: &[u16], remap: bool| {
-                let mut result = Vec::new();
-                for triangle in indices.chunks_exact(3) {
-                    let mut vertices = triangle
-                        .iter()
-                        .map(|&v| {
-                            let blade = v >> 5;
-                            let mut row = (v >> 1) & 15;
-                            let mut side = v & 1;
-                            if remap {
-                                row -= row.min(side);
-                                side = 1 - side;
-                                if blade != 0 && authored >= 3 && row >= 3 {
-                                    side = 0;
-                                }
-                            }
-                            let sections = authored.min(if blade == 0 { 4 } else { 3 });
-                            (blade, row.min(sections), side, sections)
-                        })
-                        .collect::<Vec<_>>();
-                    // Width is zero at the tip. Exclude the intentionally degenerate triangles
-                    // while retaining the tip's side attribute for rounded lighting comparison.
-                    let positions = vertices
-                        .iter()
-                        .map(|&(b, r, s, n)| (b, r, if r == n { 0 } else { s }))
-                        .collect::<HashSet<_>>();
-                    if positions.len() == 3 {
-                        vertices.sort_unstable();
-                        result.push(vertices);
-                    }
+        let retention = |source: &str| -> f32 {
+            source
+                .split("const SPLIT_LOW_DENSITY_BUDGET_SCALE: f32 = ")
+                .nth(1)
+                .unwrap()
+                .split(';')
+                .next()
+                .unwrap()
+                .parse()
+                .unwrap()
+        };
+        let density = retention(compute);
+        assert_eq!(
+            density,
+            retention(include_str!(
+                "../../../assets/shaders/vegetation_blade.wgsl"
+            ))
+        );
+        assert!(density * SPLIT_LOW_INDEX_COUNT as f32 <= 0.65 * 9.0 + 1e-6);
+    }
+
+    #[test]
+    fn folded_near_base_and_original_far_topology_are_preserved() {
+        let indices = build_topology_indices();
+        let high = &indices[SPLIT_HIGH_FIRST_INDEX as usize..SPLIT_LOW_FIRST_INDEX as usize];
+        assert!(
+            high.chunks_exact(3)
+                .any(|triangle| triangle.contains(&0) && triangle.contains(&1))
+        );
+        assert!(!high.contains(&topology_vertex(1, 0, false)));
+        assert!(!high.contains(&topology_vertex(1, 0, true)));
+        let low = &indices[SPLIT_LOW_FIRST_INDEX as usize..];
+        assert_eq!(low, &[0, 2, 3, 2, 4, 3, 32, 33, 34]);
+    }
+
+    // Standalone fixtures do not run Bevy's import/define preprocessor.
+    pub(super) fn preprocess_band_study(source: &str, mode: VegetationBladeBands) -> String {
+        let mut enabled = vec![true];
+        let mut output = String::new();
+        for line in source.lines() {
+            match line {
+                "#ifdef BLADE_BAND_STUDY" => enabled.push(mode != VegetationBladeBands::Off),
+                "#ifdef BLADE_BAND_MASK" => enabled.push(matches!(
+                    mode,
+                    VegetationBladeBands::Mask | VegetationBladeBands::MotionMask
+                )),
+                "#else" => {
+                    let last = enabled.last_mut().unwrap();
+                    *last = !*last;
                 }
-                result.sort_unstable();
-                result
-            };
-            assert_eq!(
-                triangles(new, true),
-                triangles(&old, false),
-                "authored sections {authored}"
-            );
+                "#endif" => {
+                    enabled.pop();
+                }
+                _ if enabled.iter().all(|v| *v) => {
+                    output.push_str(line);
+                    output.push('\n');
+                }
+                _ => {}
+            }
         }
+        assert_eq!(enabled, vec![true]);
+        output.replace(
+            "#{BLADE_BAND_STRENGTH}",
+            if mode == VegetationBladeBands::Subtle {
+                "54"
+            } else {
+                "82"
+            },
+        )
     }
 
     #[test]
@@ -2465,13 +2535,16 @@ mod tests {
              fn test_v_smith_ggx_correlated(_roughness: f32, _n_dot_v: f32, _n_dot_l: f32) -> f32 {{ return 1.0; }}\n\
              {sanitized}"
         );
-        let module = naga::front::wgsl::parse_str(&sanitized).unwrap();
-        naga::valid::Validator::new(
-            naga::valid::ValidationFlags::all(),
-            naga::valid::Capabilities::all(),
-        )
-        .validate(&module)
-        .unwrap();
+        for mode in VegetationBladeBands::ALL {
+            let variant = preprocess_band_study(&sanitized, mode);
+            let module = naga::front::wgsl::parse_str(&variant).unwrap();
+            naga::valid::Validator::new(
+                naga::valid::ValidationFlags::all(),
+                naga::valid::Capabilities::all(),
+            )
+            .validate(&module)
+            .unwrap();
+        }
     }
 
     #[test]

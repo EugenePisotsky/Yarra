@@ -1,7 +1,10 @@
 use super::*;
 use crate::{
-    project_store::ProjectEditorStore, saving::EditorSaveCoordinator, shell::EditorUiFrame,
-    tools::EditorToolRegistry, vegetation_authoring::draw_vegetation_authoring,
+    project_store::ProjectEditorStore,
+    saving::EditorSaveCoordinator,
+    shell::EditorUiFrame,
+    tools::EditorToolRegistry,
+    vegetation_authoring::{draw_population_colors, draw_vegetation_authoring},
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -48,7 +51,9 @@ pub(super) fn ui(
                 }
             });
             egui::ComboBox::from_id_salt("study-ground").selected_text(state.ground.label()).show_ui(ui, |ui| {
-                for mode in [GroundMode::Meadow, GroundMode::Dried, GroundMode::Neutral] {
+                for mode in [GroundMode::Meadow, GroundMode::Dried, GroundMode::Neutral,
+                    GroundMode::OriginalStudy, GroundMode::DarkenedStudy,
+                    GroundMode::UnderstoryStudy, GroundMode::CoverageStudy] {
                     ui.selectable_value(&mut state.ground, mode, mode.label());
                 }
             });
@@ -60,7 +65,8 @@ pub(super) fn ui(
             ui.separator();
             ui.toggle_value(&mut state.show_picker, "References…");
             ui.toggle_value(&mut state.show_inspector, "Inspector…");
-            if ui.button("Hide windows").clicked() { state.show_picker = false; state.show_inspector = false; }
+            ui.toggle_value(&mut state.show_colors, "Colors…");
+            if ui.button("Hide windows").clicked() { state.show_picker = false; state.show_inspector = false; state.show_colors = false; }
             ui.checkbox(&mut state.show_reference, "Compare");
             ui.checkbox(&mut state.show_character, "Character");
             ui.checkbox(&mut state.show_ruler, "2 m ruler");
@@ -84,6 +90,17 @@ pub(super) fn ui(
     });
     egui::Panel::top("study-shape-inspection").show(root, |ui| {
         ui.horizontal_wrapped(|ui| {
+            ui.label("Blade bands");
+            let previous_bands = settings.blade_bands;
+            egui::ComboBox::from_id_salt("study-blade-bands")
+                .selected_text(previous_bands.label())
+                .show_ui(ui, |ui| {
+                    for mode in VegetationBladeBands::ALL {
+                        ui.selectable_value(&mut settings.blade_bands, mode, mode.label());
+                    }
+                }).response.on_hover_text("Experimental moving shadow marks. Approximate height/density gating; no real occluder test. Ground is unchanged.");
+            if previous_bands != settings.blade_bands { state.ready_frames = 0; }
+            ui.separator();
             ui.label("Shape diagnosis");
             let previous = settings.shape_inspection;
             egui::ComboBox::from_id_salt("shape-inspection")
@@ -324,6 +341,25 @@ pub(super) fn ui(
         state.match_reference(index);
         state.show_picker = false;
     }
+
+    let mut colors_open = state.show_colors;
+    egui::Window::new("Grass colors")
+        .id(egui::Id::new("study-floating-colors"))
+        .open(&mut colors_open)
+        .default_pos(egui::pos2(workspace.right() - 400.0, workspace.top() + 110.0))
+        .default_width(380.0)
+        .max_height((workspace.height() - 170.0).max(200.0))
+        .constrain_to(workspace)
+        .vscroll(true)
+        .show(&context, |ui| {
+            ui.add_enabled_ui(enabled, |ui| {
+                draw_population_colors(ui, &mut authoring);
+                ui.separator();
+                ui.small("Colors preview live. Save study keeps this experiment locally. Inspector → Save & Publish applies catalog edits to the game.");
+                if ui.button("Save study").clicked() { state.save_study = true; }
+            });
+        });
+    state.show_colors = colors_open;
 
     let mut inspector_open = state.show_inspector;
     egui::Window::new("Vegetation inspector")
