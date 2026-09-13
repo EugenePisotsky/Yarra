@@ -6,7 +6,9 @@ use serde::{Deserialize, Serialize};
 use vegetation::{
     VegetationCatalog, VegetationScene, candidate_domain, fixtures::full_coverage_page,
 };
-use vegetation_render::{VegetationDebugSettings, VegetationLighting, VegetationWind};
+use vegetation_render::{
+    VegetationDebugSettings, VegetationLighting, VegetationShapeInspection, VegetationWind,
+};
 
 pub(super) const WIDTH: u32 = 1280;
 pub(super) const HEIGHT: u32 = 720;
@@ -40,9 +42,10 @@ impl StudyCamera {
             "overhead" => (58.0, 3.5),
             "top" => (89.0, 4.7),
             "scale" => (22.0, 4.4),
+            "game-close" => (10.0, 4.0),
             _ => {
                 return Err(format!(
-                    "Unknown camera {name}; use low, overhead, top, or scale"
+                    "Unknown camera {name}; use low, overhead, top, scale, or game-close"
                 ));
             }
         };
@@ -50,8 +53,16 @@ impl StudyCamera {
             yaw: 0.0,
             pitch,
             distance,
-            target: [0.0, if name == "scale" { 0.6 } else { 0.18 }, 0.0],
-            fov: 50.0,
+            target: [
+                0.0,
+                match name {
+                    "scale" => 0.6,
+                    "game-close" => 0.9,
+                    _ => 0.18,
+                },
+                0.0,
+            ],
+            fov: if name == "game-close" { 45.0 } else { 50.0 },
         })
     }
 
@@ -181,6 +192,11 @@ impl StudyDocument {
                 || self.edge.is_some())
         {
             return Err("Version 1 studies require the original fixed stage".into());
+        }
+        if self.settings.shape_inspection != VegetationShapeInspection::Off
+            && self.patch_size > 16.0
+        {
+            return Err("Shape comparison requires a 4 m or 16 m field; it uses high topology for every retained root.".into());
         }
         self.camera.validate()?;
         self.character.validate()?;
@@ -364,6 +380,10 @@ pub(super) struct StudyLaunch {
     pub hide_character: bool,
     pub edge: Option<bool>,
     pub ruler: bool,
+    pub play: bool,
+    pub shape: Option<VegetationShapeInspection>,
+    pub no_opening: bool,
+    pub no_wind: bool,
 }
 
 impl StudyLaunch {
@@ -380,6 +400,23 @@ impl StudyLaunch {
                 "--study-character" => options.character = true,
                 "--study-no-character" => options.hide_character = true,
                 "--study-ruler" => options.ruler = true,
+                "--study-play" => options.play = true,
+                "--study-no-wind" => options.no_wind = true,
+                "--study-no-opening" => options.no_opening = true,
+                "--study-shape" => {
+                    options.shape = Some(match value()?.as_str() {
+                        "production" => VegetationShapeInspection::Off,
+                        "current" => VegetationShapeInspection::Current,
+                        "full" => VegetationShapeInspection::Full,
+                        "low" => VegetationShapeInspection::Low,
+                        "morph" => VegetationShapeInspection::Morph,
+                        "cause" => VegetationShapeInspection::Cause,
+                        _ => return Err(
+                            "--study-shape must be production, current, full, low, morph, or cause"
+                                .into(),
+                        ),
+                    })
+                }
                 "--study-edge" => options.edge = Some(true),
                 "--study-no-edge" => options.edge = Some(false),
                 "--study-field" => {
@@ -437,6 +474,14 @@ impl StudyLaunch {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn portable_grass_checkpoint_loads_as_a_valid_study() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../content/vegetation/distance-01.ron");
+        StudyDocument::read(&path).expect("tracked grass checkpoint must remain replayable");
+    }
+
     #[test]
     fn patch_replay_is_deterministic_and_does_not_mutate_catalog() {
         let catalog = vegetation::fixtures::reference_catalog();

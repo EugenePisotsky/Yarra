@@ -119,8 +119,8 @@ impl Default for VegetationLighting {
 /// Shared low-frequency wind field used by procedural vegetation.
 ///
 /// The field is intentionally analytic so CPU gameplay and GPU rendering can sample the same
-/// travelling wave without a texture dependency. Grass adds its hashed longitudinal bob in the
-/// vertex shader, while this resource remains the coherent world-scale force.
+/// travelling wave without a texture dependency. Ribbons use bounded rotations of their resting
+/// curves; broad leaves retain longitudinal detail. This resource supplies the shared field.
 #[derive(Resource, ExtractResource, Debug, Clone, Copy)]
 pub struct VegetationWind {
     /// External study/replay transport owns phase and disables diagnostic keyboard shortcuts.
@@ -471,6 +471,42 @@ impl VegetationLightingMode {
     }
 }
 
+/// Shape-only comparison for a bounded study. Every active mode uses high topology but retains
+/// production candidate acceptance, density fade, and width compensation. It is not a cost preset.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[repr(u32)]
+pub enum VegetationShapeInspection {
+    #[default]
+    Off = 0,
+    Current = 1,
+    Full = 2,
+    Low = 3,
+    Morph = 4,
+    Cause = 5,
+}
+
+impl VegetationShapeInspection {
+    pub const ALL: [Self; 6] = [
+        Self::Off,
+        Self::Current,
+        Self::Full,
+        Self::Low,
+        Self::Morph,
+        Self::Cause,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Off => "Production",
+            Self::Current => "Current shape",
+            Self::Full => "Full shape",
+            Self::Low => "Low shape",
+            Self::Morph => "Morph weight",
+            Self::Cause => "Simplification cause",
+        }
+    }
+}
+
 /// Runtime controls for the V2 placement and profiling diagnostics.
 ///
 /// Press `X` to cycle the visual explanation, `P` to isolate render workloads, and `O` to cycle
@@ -490,6 +526,11 @@ pub struct VegetationDebugSettings {
     pub early_rejection: bool,
     /// Cache stable candidate acceptance across camera movement, with a bounded reference fallback.
     pub candidate_cache_enabled: bool,
+    #[serde(default)]
+    pub shape_inspection: VegetationShapeInspection,
+    /// Isolate view opening in a shape study without editing the species catalog.
+    #[serde(default)]
+    pub inspection_disable_opening: bool,
 }
 
 impl Default for VegetationDebugSettings {
@@ -503,6 +544,8 @@ impl Default for VegetationDebugSettings {
             gpu_counters_enabled: false,
             early_rejection: true,
             candidate_cache_enabled: true,
+            shape_inspection: default(),
+            inspection_disable_opening: false,
         }
     }
 }

@@ -76,6 +76,7 @@ For quick agent or developer inspection, from the repository root:
 
 ```sh
 python3 tools/vegetation_study.py open
+python3 tools/vegetation_study.py open --load content/vegetation/distance-01.ron
 python3 tools/vegetation_study.py capture --camera overhead --time 0
 python3 tools/vegetation_study.py capture --camera low --character --time 2.5
 python3 tools/vegetation_study.py open --camera scale
@@ -83,6 +84,7 @@ python3 tools/vegetation_study.py open --select-reference edge_2
 python3 tools/vegetation_study.py capture --select-reference top_down_close --zoom 2
 python3 tools/vegetation_study.py open --inspector --picker
 python3 tools/vegetation_study.py open --select-reference bottom_straight
+python3 tools/vegetation_study.py open --load .editor/vegetation/study.ron --play
 python3 tools/vegetation_study.py capture --select-reference lod --field 128 --ground meadow
 python3 tools/vegetation_study.py capture --field 4 --ground neutral --no-character
 python3 tools/vegetation_study.py open --ruler
@@ -101,6 +103,12 @@ directory. Native GPU/window access is
 required on macOS. A capture waits for warm-up and matching GPU telemetry, waits for both actual
 screenshot callbacks, rejects error/panic messages in the native log, reports failures, and exits. It has an internal 60 s deadline and an external
 90 s helper timeout. The helper terminates only the process it started.
+
+`--play` starts the saved wind transport when opening a study (wind must also be enabled in that
+study). Automated captures stay frozen at their requested phase even with `--play`.
+
+The local density experiments, shader snapshots, coverage measurements and matched performance
+checks are described in [GRASS_DENSITY_EXPERIMENTS.md](GRASS_DENSITY_EXPERIMENTS.md).
 
 Replay imports the captured catalog **as an unsaved draft**, preserving the project's existing save
 baseline. The stage seed override stays separate from the authored population seed. Metadata stores
@@ -304,3 +312,29 @@ Visual validation must check the actual editor on Mac. Focused tests should cove
 deterministic replay, save/draft preservation, and resource/work bounds. Existing shader-string
 checks alone cannot establish rendering quality. Do not change production grass behavior as an
 unlabeled side effect of creating the workspace.
+
+### Shape diagnosis
+
+Use **Shape diagnosis** in the study toolbar to compare current/full/low geometry while retaining
+production roots and density fades. Morph weight and simplification cause have on-screen color
+legends. **Disable view opening** isolates that silhouette correction. Selecting an inspection
+mode pauses wind playback and bounds the field to 16 m; choosing a larger field returns to
+production LOD. **Game close camera** places the scale character at the camera's ground target
+and restores the default 4 m / 10° / 45° setup. The normal game has inspection disabled.
+
+`--shape current|full|low|morph|cause|production`, `--no-opening`, `--no-wind` and
+`--camera game-close` are available through `tools/vegetation_study.py`.
+Saved studies preserve the inspection setting. Existing studies default to production.
+
+For a reproducible set of seven images and a linked-zoom HTML comparison:
+
+```sh
+python3 tools/grass_shape_comparison.py --load PATH/TO/study.ron --output .editor/vegetation/shape-comparison --camera game-close
+```
+
+Use `--camera top` or `overhead` for a second view. All captures use the same 16 m field,
+resting wind state and saved catalog; nothing is published. `--report-only` rebuilds the report
+from existing captures. The report rejects unequal saved inputs, differing population counts
+or capacity drops. It opens as a local HTML file with synchronized zoom and pan; each view links
+to its replay. Inspection uses high topology even for low shape, so its counts are not the
+production workload. Native GPU identity tests verify the packed roots and density independently.

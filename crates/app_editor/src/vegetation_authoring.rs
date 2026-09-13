@@ -1046,7 +1046,7 @@ fn draw_species_editor(
                     0.02,
                     0.2..=4.0,
                 );
-                ui.weak("1 is even; values above 1 spend more rows near the root.");
+                ui.weak("Higher values move samples toward the root; paired blades use a bend-focused sample pattern.");
                 ui.separator();
                 ui.horizontal(|ui| {
                     ui.label("View scale");
@@ -1056,6 +1056,16 @@ fn draw_species_editor(
                     );
                 });
                 ui.weak("Lower values zoom in for precise control-point placement. Curve coordinates are normalized by blade height; Envelope controls real-world scale.");
+                let may_pair = species.height.pair_below_height > 0.0
+                    || profile.blades_per_render_unit > 1;
+                let preview_sections = if may_pair {
+                    profile.high_section_count.clamp(2, 5)
+                } else {
+                    profile.high_section_count
+                };
+                if may_pair {
+                    ui.weak("Markers show the paired main blade. Its companion is 80% as long with a gentler, four-section curve. Both roots taper to a point.");
+                }
                 let maximum_tip_tilt = profile.curve_variant_b.tip_tilt_radians;
                 changed |= draw_ribbon_curve_editor(
                     ui,
@@ -1063,7 +1073,8 @@ fn draw_species_editor(
                     "minimum",
                     &mut profile.curve_variant_a,
                     0.0..=maximum_tip_tilt,
-                    profile.high_section_count,
+                    preview_sections,
+                    may_pair,
                     profile.longitudinal_power,
                     state.curve_editor_scale,
                 );
@@ -1074,7 +1085,8 @@ fn draw_species_editor(
                     "maximum",
                     &mut profile.curve_variant_b,
                     minimum_tip_tilt..=1.55,
-                    profile.high_section_count,
+                    preview_sections,
+                    may_pair,
                     profile.longitudinal_power,
                     state.curve_editor_scale,
                 );
@@ -1235,6 +1247,7 @@ fn draw_ribbon_curve_editor(
     curve: &mut RibbonCurveProfile,
     tip_tilt_range: std::ops::RangeInclusive<f32>,
     high_section_count: u8,
+    paired_main: bool,
     longitudinal_power: f32,
     chart_extent: f32,
 ) -> bool {
@@ -1317,7 +1330,18 @@ fn draw_ribbon_curve_editor(
 
     let sections = u32::from(high_section_count.max(1));
     for row in 0..=sections {
-        let linear_t = row as f32 / sections as f32;
+        let linear_t = if paired_main && sections == 5 {
+            [0.0_f32, 0.128, 0.292, 0.5, 0.768, 1.0][row as usize]
+        } else if paired_main {
+            let middle = sections.div_ceil(2).max(1);
+            if row <= middle {
+                0.5 * row as f32 / middle as f32
+            } else {
+                0.5 + 0.5 * (row - middle) as f32 / (sections - middle) as f32
+            }
+        } else {
+            row as f32 / sections as f32
+        };
         let t = linear_t.powf(longitudinal_power.max(0.2));
         painter.circle_filled(
             canvas.to_screen(cubic_preview_point(controls, t)),

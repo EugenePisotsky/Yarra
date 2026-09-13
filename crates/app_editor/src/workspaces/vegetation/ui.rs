@@ -82,6 +82,63 @@ pub(super) fn ui(
             ui.weak("Scroll either image to zoom both · drag reference / Shift-drag to pan both");
         });
     });
+    egui::Panel::top("study-shape-inspection").show(root, |ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Shape diagnosis");
+            let previous = settings.shape_inspection;
+            egui::ComboBox::from_id_salt("shape-inspection")
+                .selected_text(previous.label())
+                .show_ui(ui, |ui| {
+                    for mode in VegetationShapeInspection::ALL {
+                        ui.selectable_value(&mut settings.shape_inspection, mode, mode.label());
+                    }
+                });
+            if settings.shape_inspection != previous {
+                state.playing = false;
+                state.ready_frames = 0;
+                if settings.shape_inspection != VegetationShapeInspection::Off {
+                    state.field_size = state.field_size.min(16.0);
+                    settings.mode = vegetation_render::VegetationDebugMode::ProceduralGeometry;
+                }
+            }
+            if ui.button("Game close camera").clicked() {
+                state.camera = StudyCamera::preset("game-close").unwrap();
+                state.camera_label = "Game close · default pose".into();
+                state.character = CharacterPlacement {
+                    xz: [0.0, 0.0],
+                    yaw: 0.0,
+                };
+                state.show_character = true;
+                state.playing = false;
+                state.ready_frames = 0;
+            }
+            if settings.shape_inspection != VegetationShapeInspection::Off {
+                ui.checkbox(
+                    &mut settings.inspection_disable_opening,
+                    "Disable view opening",
+                );
+                ui.weak(
+                    "Same retained roots · high topology in all comparison views · 16 m maximum",
+                );
+            }
+        });
+        match settings.shape_inspection {
+            VegetationShapeInspection::Morph => {
+                ui.label("Green = full shape · yellow = intermediate · red = low shape");
+            }
+            VegetationShapeInspection::Cause => {
+                ui.label(
+                    "Green = full shape · orange = budget limited · blue = screen-size limited",
+                );
+            }
+            _ => {}
+        }
+    });
+    // A reference selection or field change can leave the bounded inspection domain.
+    if state.field_size > 16.0 && settings.shape_inspection != VegetationShapeInspection::Off {
+        settings.shape_inspection = VegetationShapeInspection::Off;
+        state.message = "Returned to production LOD for the larger field".into();
+    }
     egui::Panel::bottom("study-transport").show(root, |ui| {
         ui.horizontal_wrapped(|ui| {
             ui.strong("Wind");
@@ -115,8 +172,10 @@ pub(super) fn ui(
         let dropped: u32 = stats.capacity_dropped_instances.iter().sum();
         ui.horizontal_wrapped(|ui| {
             ui.small(format!(
-                "{} × {} · MSAA off · automatic geometry LOD",
-                state.render_size[0], state.render_size[1]
+                "{} × {} · MSAA off · {}",
+                state.render_size[0],
+                state.render_size[1],
+                settings.shape_inspection.label()
             ));
             if state.ready_frames >= 65 && stats.gpu_samples > 1 {
                 ui.small(format!(

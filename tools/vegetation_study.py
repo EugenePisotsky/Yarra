@@ -15,7 +15,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=["open", "capture", "inspect"])
     parser.add_argument("--reference", action="append", type=Path, default=[], help="Import local PNG/JPEG, retaining the full-resolution source; repeat for multiple references")
-    parser.add_argument("--camera", choices=["low", "overhead", "top", "scale"])
+    parser.add_argument("--camera", choices=["low", "overhead", "top", "scale", "game-close"])
     parser.add_argument("--select-reference", help="Select a loaded reference by name (e.g. edge_1) and restore its camera and stage")
     parser.add_argument("--zoom", type=float, help="Shared image magnification, 1 to 6")
     parser.add_argument("--inspector", action="store_true", help="Open the floating inspector")
@@ -28,7 +28,11 @@ def main():
     edge = parser.add_mutually_exclusive_group()
     edge.add_argument("--edge", dest="edge", action="store_const", const=True, default=None, help="Show a grass boundary with clear foreground")
     edge.add_argument("--no-edge", dest="edge", action="store_const", const=False, help="Fill the complete field")
+    parser.add_argument("--shape", choices=["production", "current", "full", "low", "morph", "cause"], help="Shape-only comparison; same retained roots, high topology, maximum 16 m field")
+    parser.add_argument("--no-opening", action="store_true", help="Disable view opening in shape inspection")
+    parser.add_argument("--no-wind", action="store_true", help="Show the resting shape")
     parser.add_argument("--time", type=float, help="Exact frozen wind phase in seconds")
+    parser.add_argument("--play", action="store_true", help="Start wind playback when opening a study; captures remain frozen")
     parser.add_argument("--load", type=Path, help="Replay study.ron as an unsaved catalog draft")
     parser.add_argument("--output", type=Path, help="New capture directory, or existing directory to inspect")
     parser.add_argument("--no-build", action="store_true", help="Use the existing debug binary")
@@ -45,6 +49,8 @@ def main():
         if diagnostic.exists():
             print(diagnostic.read_text())
         return 0
+    if args.shape not in (None, "production") and args.field and args.field > 16:
+        parser.error("Shape comparisons require a 4 m or 16 m field")
     binary = ROOT / "target" / "debug" / "yarra-app-editor"
     if not args.no_build:
         subprocess.run(["cargo", "build", "-p", "yarra-app-editor"], cwd=ROOT, check=True)
@@ -56,6 +62,12 @@ def main():
         parser.error(f"Capture directory is not empty: {output}")
     output.mkdir(parents=True, exist_ok=True)
     command = [str(binary), "--vegetation-study"]
+    if args.shape:
+        command += ["--study-shape", args.shape]
+    if args.no_opening:
+        command += ["--study-no-opening"]
+    if args.no_wind:
+        command += ["--study-no-wind"]
     if args.character:
         command += ["--study-character"]
     if args.no_character:
@@ -82,6 +94,8 @@ def main():
         command += ["--study-picker"]
     if args.time is not None:
         command += ["--study-time", str(args.time)]
+    if args.play:
+        command += ["--study-play"]
     if args.load:
         command += ["--study-load", str(args.load.resolve(strict=True))]
     if args.action == "capture":

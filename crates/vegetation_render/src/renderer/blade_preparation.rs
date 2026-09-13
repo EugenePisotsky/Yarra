@@ -273,3 +273,6 @@ mod tests {
 
 #[cfg(test)]
 mod gpu_tests;
+
+#[cfg(test)]
+mod lod_gpu_tests;

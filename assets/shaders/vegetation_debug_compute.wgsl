@@ -126,6 +126,8 @@ struct CandidateEvaluation {
     lod_morph: f32,
     population_density: f32,
     eligible: u32,
+    // Projected and budget extents, expressed as multiples of the high threshold.
+    shape_extents: vec2<f32>,
 }
 
 struct Telemetry {
@@ -219,7 +221,7 @@ const DIAGNOSTIC_INDEX_COUNT: u32 = 6u;
 const SINGLE_HIGH_INDEX_COUNT: u32 = 48u;
 const SINGLE_LOW_INDEX_COUNT: u32 = 18u;
 const SPLIT_HIGH_INDEX_COUNT: u32 = 42u;
-const SPLIT_LOW_INDEX_COUNT: u32 = 6u;
+const SPLIT_LOW_INDEX_COUNT: u32 = 9u;
 const DIAGNOSTIC_FIRST_INDEX: u32 = 0u;
 const SINGLE_HIGH_FIRST_INDEX: u32 = 6u;
 const SINGLE_LOW_FIRST_INDEX: u32 = 54u;
@@ -240,6 +242,7 @@ const BALANCED_DENSITY_FAR_SPACING_PIXELS: f32 = 0.75;
 const BALANCED_DENSITY_MIDDLE_FRACTION: f32 = 0.55;
 const BALANCED_DENSITY_FAR_FRACTION: f32 = 0.30;
 const BALANCED_DENSITY_FADE_BAND: f32 = 0.10;
+const SPLIT_LOW_DENSITY_BUDGET_SCALE: f32 = 0.65;
 // Deliberately aggressive calibration point for mobile. If one quarter of the roots on the
 // cheapest topology cannot materially change frame rate, a gentler ribbon LOD cannot reach the
 // target and the far field needs a different representation.
@@ -660,23 +663,28 @@ fn projected_blade_extent_pixels(
     return maximum_pixels;
 }
 
-fn budgeted_projected_blade_extent_pixels(
+fn blade_extent_limits_pixels(
     candidate: Candidate,
     surface: SurfaceResult,
     choice: SpeciesChoice,
     high_radius: f32,
-) -> f32 {
+) -> vec2<f32> {
     let projected_extent = projected_blade_extent_pixels(candidate, surface, choice);
     let high_threshold = choice.threshold.y;
     let bounded_high_radius = max(high_radius, 1e-3);
     // A single camera-centred radius made the whole field cross the topology boundary as a ring.
-    // Reuse the stable nested LOD rank to spread that boundary without increasing its expected
-    // area (E[r^2] remains below the authored budget radius). Classification and draw
-    // reconstruction use this identical radius, so the transition remains deterministic.
-    let staggered_high_radius = bounded_high_radius * mix(0.84, 1.12, candidate.lod_rank);
+    // Stagger the boundary without sacrificing the near field. The former 0.50..1.20 radius
+    // and 0.68 morph start began collapsing the 44 roots/m2 study at only 3.7 m. Start at
+    // 0.99 of the budget radius instead (~10.8 m); individual low boundaries are ~12..14.2 m.
+    // With the CPU's 50% budget utilization, the outermost full disk consumes at most
+    // 0.5 * 1.3^2 = 84.5% of the high bin before placement variance. No arena grows.
+    // The stable seed remains independent of density retirement.
+    let staggered_high_radius = bounded_high_radius * mix(
+        1.10, 1.30, random01(candidate.seed ^ 0x6a09e667u),
+    );
     let distance = length(candidate.root - camera.camera_position.xz);
     let high_weight = 1.0 - smoothstep(
-        staggered_high_radius * 0.68,
+        staggered_high_radius * 0.90,
         staggered_high_radius,
         distance,
     );
@@ -684,7 +692,7 @@ fn budgeted_projected_blade_extent_pixels(
     // density and the device-profile bin capacity. The annulus uses the existing high-to-low
     // geometry morph. It never relies on atomic append order to decide which roots survive.
     let budget_extent = high_threshold * mix(0.999, 1.45, high_weight);
-    return min(projected_extent, budget_extent);
+    return vec2(projected_extent, budget_extent);
 }
 
 fn generated_candidate_height(choice: SpeciesChoice, candidate: Candidate) -> f32 {
@@ -791,7 +799,7 @@ fn mobile_population_lod_density() -> f32 {
     return MOBILE_DIAGNOSTIC_DENSITY_FRACTION;
 }
 
-fn population_lod_retention_limit(population_density: f32) -> f32 {
+fn population_lod_retention_limit(population_density: f32, topology_class: u32) -> f32 {
     // Balanced mode keeps a narrow, stable rank band alive so the draw shader can contract retiring
     // blades laterally. Centering that band on the target approximately preserves integrated width.
     if ((debug_config.values.z & MOBILE_POPULATION_LOD_BIT) != 0u) {
@@ -801,7 +809,8 @@ fn population_lod_retention_limit(population_density: f32) -> f32 {
         debug_config.values.y == DENSITY_MODE_BALANCED
         && population_density < 0.999
     ) {
-        return min(population_density + BALANCED_DENSITY_FADE_BAND * 0.5, 1.0);
+        let budget_scale = select(1.0, SPLIT_LOW_DENSITY_BUDGET_SCALE, topology_class != 0u);
+        return min(population_density + BALANCED_DENSITY_FADE_BAND * budget_scale * 0.5, 1.0);
     }
     return population_density;
 }
@@ -839,12 +848,13 @@ fn evaluate_candidate(item: WorkItem, candidate_index: u32, early_rejection: boo
     let generated_height = generated_candidate_height(choice, candidate);
     let topology_class = candidate_topology_class(choice, generated_height);
     let high_radius = select(choice.packing.y, choice.packing.z, topology_class != 0u);
-    let projected_extent = budgeted_projected_blade_extent_pixels(
+    let extent_limits = blade_extent_limits_pixels(
         candidate,
         surface,
         choice,
         high_radius,
     );
+    let projected_extent = min(extent_limits.x, extent_limits.y);
     let projected_spacing = projected_population_spacing_pixels(item, candidate, surface);
     let authored_population_density = population_lod_density(choice, projected_spacing);
     var population_density = authored_population_density;
@@ -856,6 +866,11 @@ fn evaluate_candidate(item: WorkItem, candidate_index: u32, early_rejection: boo
         );
     } else if (debug_config.values.y == DENSITY_MODE_FULL_REFERENCE) {
         population_density = 1.0;
+    }
+    // Three low triangles replace the old pair of straight triangles. Spend fewer low instances
+    // so production index/vertex work falls instead of quietly increasing the geometry budget.
+    if (topology_class != 0u && debug_config.values.y != DENSITY_MODE_FULL_REFERENCE) {
+        population_density *= SPLIT_LOW_DENSITY_BUDGET_SCALE;
     }
     var lod = 0u;
     if (
@@ -879,7 +894,7 @@ fn evaluate_candidate(item: WorkItem, candidate_index: u32, early_rejection: boo
         debug_config.values.x == 0u
         && (projected_extent < choice.threshold.w
             || (lod == 1u
-                && candidate.lod_rank >= population_lod_retention_limit(population_density)))
+                && candidate.lod_rank >= population_lod_retention_limit(population_density, topology_class)))
     ) {
         eligible = 0u;
     } else if (outcome != 0u && debug_config.values.x != 3u) {
@@ -888,6 +903,10 @@ fn evaluate_candidate(item: WorkItem, candidate_index: u32, early_rejection: boo
         eligible = 0u;
     } else if (debug_config.values.x == 4u && item.peers.w == 0u) {
         eligible = 0u;
+    }
+    var inspection_extents = vec2<f32>(0.0);
+    if (debug_config.values.x == 0u && ((debug_config.workload.w >> 4u) & 15u) != 0u) {
+        inspection_extents = extent_limits / max(choice.threshold.y, 1e-5);
     }
     return CandidateEvaluation(
         candidate,
@@ -899,6 +918,7 @@ fn evaluate_candidate(item: WorkItem, candidate_index: u32, early_rejection: boo
         lod_morph,
         population_density,
         eligible,
+        inspection_extents,
     );
 }
 
@@ -967,19 +987,23 @@ fn generate(@builtin(global_invocation_id) invocation: vec3<u32>) {
     if (evaluation.eligible == 0u) {
         return;
     }
+    // Promote topology only after production culling/retention. All inspection modes retain the
+    // exact same root identities and original packed morph/density. Limited high arenas still apply.
+    let inspection = debug_config.values.x == 0u && ((debug_config.workload.w >> 4u) & 15u) != 0u;
+    let draw_bin = select(evaluation.bin, evaluation.bin & ~1u, inspection);
     if (debug_config.workload.y != 0u) {
-        atomicAdd(&telemetry.values[2u + evaluation.bin], 1u);
+        atomicAdd(&telemetry.values[2u + draw_bin], 1u);
     }
 
-    let local_slot = atomicAdd(&draw_args[evaluation.bin].instance_count, 1u);
-    if (local_slot >= active_capacity(evaluation.bin)) {
+    let local_slot = atomicAdd(&draw_args[draw_bin].instance_count, 1u);
+    if (local_slot >= active_capacity(draw_bin)) {
         if (debug_config.workload.y != 0u) {
-            atomicAdd(&telemetry.values[6u + evaluation.bin], 1u);
+            atomicAdd(&telemetry.values[6u + draw_bin], 1u);
         }
         return;
     }
     if (debug_config.values.x == 0u) {
-        let slot = instance_offset(evaluation.bin) + local_slot;
+        let slot = instance_offset(draw_bin) + local_slot;
         procedural_instances[slot].root_clump = vec4<f32>(
             evaluation.candidate.root.x,
             evaluation.surface.height,
@@ -989,6 +1013,13 @@ fn generate(@builtin(global_invocation_id) invocation: vec3<u32>) {
                 evaluation.candidate.lod_rank,
             ))),
         );
+        if (inspection) {
+            // High bins together fit the existing 65,536-record diagnostic buffer.
+            // No extra allocation or production writes; retain the full seed for native inspection.
+            diagnostic_instances[slot].root_direction = procedural_instances[slot].root_clump;
+            diagnostic_instances[slot].direction_species = vec4<f32>(bitcast<f32>(evaluation.candidate.seed), f32(evaluation.species_index), f32(evaluation.bin), evaluation.lod_morph);
+            diagnostic_instances[slot].diagnostics = vec4<f32>(evaluation.shape_extents, evaluation.population_density, evaluation.candidate.lod_rank);
+        }
         procedural_instances[slot].geometry = vec4<u32>(
             pack2x16snorm(evaluation.candidate.direction),
             (evaluation.species_index & SPECIES_INDEX_MASK)

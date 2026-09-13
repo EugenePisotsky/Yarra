@@ -4,7 +4,7 @@
     LIGHTING_MODE_UNLIT_DIAGNOSTIC, LIGHTING_MODE_VERTEX_ONLY_DIAGNOSTIC,
     FAR_WIDTH_TARGET_HALF_PIXELS, FAR_WIDTH_MAXIMUM_SCALE,
     FAR_WIDTH_FADE_START_METERS, FAR_WIDTH_FADE_END_METERS,
-    random01, normalize3_or, prepare_blade,
+    random01, normalize3_or, prepare_blade, paired_ribbon_linear_t, shape_inspection_mode, inspected_shape_morph, inspected_opening,
 }
 
 #import bevy_pbr::{
@@ -109,14 +109,32 @@ fn geometry_vertex(vertex_index: u32, instance_index: u32) -> VertexOutput {
     }
 
     let instance = procedural_instances[instance_index];
-    let low_lod = (instance.geometry.y >> 31u) != 0u;
+    let inspection = shape_inspection_mode(debug_config);
+    let low_lod = (instance.geometry.y >> 31u) != 0u && inspection == 0u;
     let profile = species[instance.geometry.y & SPECIES_INDEX_MASK];
-    let lod_morph = f32((instance.geometry.y >> LOD_MORPH_SHIFT) & LOD_MORPH_MASK)
+    let production_morph = f32((instance.geometry.y >> LOD_MORPH_SHIFT) & LOD_MORPH_MASK)
         / f32(LOD_MORPH_MASK);
+    let lod_morph = inspected_shape_morph(production_morph, debug_config);
     let is_broad_leaf = profile.root_color.w >= 1.5;
     let blade_index = (vertex_index >> 5u) & 1u;
-    let topology_row = (vertex_index >> 1u) & 15u;
-    let side_sign = select(-1.0, 1.0, (vertex_index & 1u) != 0u);
+    var topology_row = (vertex_index >> 1u) & 15u;
+    var side_sign = select(-1.0, 1.0, (vertex_index & 1u) != 0u);
+    if (is_broad_leaf && low_lod && blade_index == 0u) {
+        // Broad leaves retain their existing triangle; the extra kite triangle degenerates.
+        let root_right = topology_row == 1u && (vertex_index & 1u) == 0u;
+        topology_row = select(1u, 0u, topology_row == 0u || root_right);
+        side_sign = select(-1.0, 1.0, root_right);
+    }
+    if (is_broad_leaf && !low_lod) {
+        // Reinterpret the pointed-root index strip as the previous wide-root broad-leaf strip.
+        // Each half retains its original 4/3 sections; one final triangle degenerates.
+        let right = vertex_index & 1u;
+        topology_row -= min(topology_row, right);
+        side_sign = select(1.0, -1.0, right != 0u);
+        if (blade_index != 0u && profile.topology.x >= 3.0 && topology_row >= 3u) {
+            side_sign = -1.0; // The former companion's shared tip used the left-edge attributes.
+        }
+    }
     var blade: PreparedBlade;
     var prepared_index = 0u;
     if (debug_config.workload.z != 0u) {
@@ -140,17 +158,24 @@ fn geometry_vertex(vertex_index: u32, instance_index: u32) -> VertexOutput {
     let surface_normal = blade.surface_clump.xyz;
     let clump_variant = blade.surface_clump.w;
     let section_count = u32(blade.topology.x);
-    let low_section_count = u32(blade.topology.y);
+    let paired_ribbon = blade.topology.y < 0.0;
+    let paired_main = paired_ribbon && blade_index == 0u;
+    let paired_companion = paired_ribbon && blade_index != 0u;
+    let low_section_count = u32(abs(blade.topology.y));
 
     // Sections above the species budget collapse at the tip. This lets all species in a topology
     // bin share one indirect command while retaining artist-controlled longitudinal distribution.
-    let authored_linear_t = f32(min(topology_row, section_count)) / f32(section_count);
+    var authored_linear_t = f32(min(topology_row, section_count)) / f32(section_count);
+    if (paired_ribbon) {
+        authored_linear_t = paired_ribbon_linear_t(topology_row, section_count, paired_main);
+        if (!low_lod && topology_row == 0u) { side_sign = 0.0; }
+    }
     let low_linear_t = round(authored_linear_t * f32(low_section_count))
         / f32(low_section_count);
     let linear_t = select(
         mix(low_linear_t, authored_linear_t, lod_morph),
         authored_linear_t,
-        low_lod,
+        low_lod || paired_ribbon,
     );
     let t = pow(linear_t, max(profile.topology.w, 0.2));
     var curve_position = cubic_bezier(p0, p1, p2, p3, t);
@@ -175,17 +200,20 @@ fn geometry_vertex(vertex_index: u32, instance_index: u32) -> VertexOutput {
     }
     let curve_tangent = normalize3_or(curve_derivative, surface_normal);
 
-    let ribbon_taper = pow(max(1.0 - t, 0.0), 0.72);
+    // Pointed pair roots spend their saved vertices on curvature. Retain width farther through
+    // their body to recover the lost root area, without exceeding the authored maximum width.
+    // Single ribbons retain the quadratic profile; neither path needs a fractional power.
+    let ribbon_taper = max(1.0 - t * t * select(1.0, t, paired_ribbon), 0.0);
     let broad_taper = pow(max(sin(PI * t), 0.0), 0.58);
     let taper = select(ribbon_taper, broad_taper, is_broad_leaf);
     // Transport the authored root-side axis onto the plane perpendicular to the local Bezier
     // tangent. A constant root frame makes strongly curved ribbons kink and exposes their edge at
     // the wrong angle; the transported frame follows the curve without adding vertices.
-    let local_ribbon_side = normalize3_or(
+    var local_ribbon_side = normalize3_or(
         blade_side - curve_tangent * dot(blade_side, curve_tangent),
         blade_side,
     );
-    let physical_normal = normalize3_or(
+    var physical_normal = normalize3_or(
         cross(local_ribbon_side, curve_tangent),
         surface_normal,
     );
@@ -198,7 +226,7 @@ fn geometry_vertex(vertex_index: u32, instance_index: u32) -> VertexOutput {
     // to observe. shape_secondary.z stores tan(maximum angle), allowing an exact bounded rotation
     // without trigonometry in the vertex shader.
     var rendered_ribbon_side = local_ribbon_side;
-    if (!is_broad_leaf && profile.shape_secondary.z > 0.0) {
+    if (!is_broad_leaf && inspected_opening(profile, debug_config) > 0.0) {
         let unaligned_camera_side = normalize3_or(
             cross(curve_tangent, to_camera),
             local_ribbon_side,
@@ -213,7 +241,7 @@ fn geometry_vertex(vertex_index: u32, instance_index: u32) -> VertexOutput {
         let opening_remainder = camera_ribbon_side - local_ribbon_side * alignment;
         let remainder_length = length(opening_remainder);
         let requested_tangent = remainder_length / max(alignment, 1e-4);
-        let opening_tangent = min(profile.shape_secondary.z, requested_tangent);
+        let opening_tangent = min(inspected_opening(profile, debug_config), requested_tangent);
         let opening_direction = opening_remainder / max(remainder_length, 1e-4);
         rendered_ribbon_side = normalize3_or(
             local_ribbon_side + opening_direction * opening_tangent,
@@ -251,30 +279,92 @@ fn geometry_vertex(vertex_index: u32, instance_index: u32) -> VertexOutput {
         let subpixel_width_scale = mix(1.0, required_scale, distance_weight);
         far_width_scale = max(low_lod_coverage_scale, subpixel_width_scale);
     }
-    let world_position = curve_position
+    var world_position = curve_position
         + rendered_ribbon_side * side_sign * half_width * far_width_scale * taper;
+    var shading_side = side_sign;
+    if (paired_main && lod_morph < 1.0) {
+        // Morph positions onto the actual low mesh, rather than moving samples along the cubic.
+        // The latter bunches rows and makes the high blade visibly kink before its bin changes.
+        let shoulder = vec3(blade.side.w, blade.wind_forward.w, blade.topology.w);
+        let shoulder_t = pow(0.5, max(profile.topology.w, 0.2));
+        let upper_segment = t > shoulder_t;
+        let segment_weight = select(t / shoulder_t, (t - shoulder_t) / (1.0 - shoulder_t), upper_segment);
+        let low_center = mix(select(p0, shoulder, upper_segment), select(shoulder, p3, upper_segment), segment_weight);
+        let shoulder_weight = select(segment_weight, 1.0 - segment_weight, upper_segment);
+        shading_side *= mix(shoulder_weight, 1.0, lod_morph);
+        let low_position = low_center + side_sign * (half_width / max(authored_half_width, 1e-6))
+            * shoulder_weight * blade.wind_forward.xyz;
+        world_position = mix(low_position, world_position, lod_morph);
+
+        let shoulder_derivative = cubic_bezier_derivative(p0, p1, p2, p3, shoulder_t);
+        let derivative_a = select(p1 - p0, shoulder_derivative, upper_segment);
+        let derivative_b = select(shoulder_derivative, p3 - p2, upper_segment);
+        let normal_a = normalize3_or(cross(blade_side, derivative_a), surface_normal);
+        let normal_b = normalize3_or(cross(blade_side, derivative_b), surface_normal);
+        let low_normal = mix(normal_a, normal_b, segment_weight);
+        physical_normal = mix(low_normal, physical_normal, lod_morph);
+        let tangent_a = normalize3_or(derivative_a, surface_normal);
+        let tangent_b = normalize3_or(derivative_b, surface_normal);
+        let side_a = normalize3_or(blade_side - tangent_a * dot(blade_side, tangent_a), blade_side);
+        let side_b = normalize3_or(blade_side - tangent_b * dot(blade_side, tangent_b), blade_side);
+        local_ribbon_side = mix(mix(side_a, side_b, segment_weight), local_ribbon_side, lod_morph);
+    }
+
+    var shading_t = t;
+    if (paired_companion && lod_morph < 1.0) {
+        // The high root is a point. Its first width row becomes the low triangle's base,
+        // so the initial triangle collapses instead of cutting the low triangle's base off.
+        var low_t = t;
+        if (!low_lod) {
+            low_t = clamp((t - blade_wind_phase) / max(1.0 - blade_wind_phase, 1e-5), 0.0, 1.0);
+        }
+        let low_position = mix(p0, p3, low_t) + side_sign * (half_width / max(authored_half_width, 1e-6))
+            * (1.0 - low_t) * blade.wind_forward.xyz;
+        world_position = mix(low_position, world_position, lod_morph);
+        let tangent_a = normalize3_or(p1 - p0, surface_normal);
+        let tangent_b = normalize3_or(p3 - p2, surface_normal);
+        let normal_a = normalize3_or(cross(blade_side, tangent_a), surface_normal);
+        let normal_b = normalize3_or(cross(blade_side, tangent_b), surface_normal);
+        physical_normal = mix(mix(normal_a, normal_b, low_t), physical_normal, lod_morph);
+        let side_a = normalize3_or(blade_side - tangent_a * dot(blade_side, tangent_a), blade_side);
+        let side_b = normalize3_or(blade_side - tangent_b * dot(blade_side, tangent_b), blade_side);
+        local_ribbon_side = mix(mix(side_a, side_b, low_t), local_ribbon_side, lod_morph);
+        shading_side *= mix(1.0 - low_t, 1.0, lod_morph);
+        shading_t = mix(low_t, t, lod_morph);
+    }
 
     // View opening is a silhouette correction, not a material deformation. Preserve the physical
     // blade frame so changing the opening does not rotate every blade's lighting away from the sun
     // and darken the field. The fragment shader reconstructs the rounded cross-section per pixel.
     let variation = (clump_variant * 2.0 - 1.0) * profile.material.x;
-    let color = mix(profile.root_color.xyz, profile.tip_color_height.xyz, t) * (1.0 + variation);
+    let color = mix(profile.root_color.xyz, profile.tip_color_height.xyz, shading_t) * (1.0 + variation);
 
     var output: VertexOutput;
     output.clip_position = camera.clip_from_world * vec4<f32>(world_position, 1.0);
     output.color = color;
     output.world_normal = physical_normal;
     output.world_position = world_position;
-    output.blade_t = t;
+    output.blade_t = shading_t;
     output.material = vec4<f32>(
         profile.material.y,
         profile.material.z,
-        mix(profile.shading.x, profile.shading.y, t),
+        mix(profile.shading.x, profile.shading.y, shading_t),
         1.0,
     );
-    output.blade_u = side_sign * 0.5 + 0.5;
+    output.blade_u = shading_side * 0.5 + 0.5;
     output.surface_normal_clump = vec4<f32>(surface_normal, clump_variant);
     output.ribbon_side_rounding = vec4<f32>(local_ribbon_side, profile.material.w);
+    if (inspection == 4u || inspection == 5u) {
+        // Green: full shape. Red: low endpoint. Orange: budget, blue: projected extent.
+        output.color = mix(vec3(0.95, 0.04, 0.08), vec3(0.05, 0.90, 0.15), production_morph);
+        if (inspection == 5u) {
+            let decision = diagnostic_instances[instance_index].diagnostics;
+            let limiting_color = select(vec3(0.05, 0.35, 1.0), vec3(1.0, 0.35, 0.03), decision.y < decision.x);
+            output.color = select(limiting_color, vec3(0.05, 0.90, 0.15), production_morph >= 0.999);
+        }
+        output.material.w = 0.0;
+    }
+
     return output;
 }
 

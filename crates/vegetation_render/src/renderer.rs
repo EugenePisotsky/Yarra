@@ -89,7 +89,7 @@ const DIAGNOSTIC_INDEX_COUNT: u32 = 6;
 const SINGLE_HIGH_INDEX_COUNT: u32 = 48;
 const SINGLE_LOW_INDEX_COUNT: u32 = 18;
 const SPLIT_HIGH_INDEX_COUNT: u32 = 42;
-const SPLIT_LOW_INDEX_COUNT: u32 = 6;
+const SPLIT_LOW_INDEX_COUNT: u32 = 9;
 const DIAGNOSTIC_FIRST_INDEX: u32 = 0;
 const SINGLE_HIGH_FIRST_INDEX: u32 = DIAGNOSTIC_FIRST_INDEX + DIAGNOSTIC_INDEX_COUNT;
 const SINGLE_LOW_FIRST_INDEX: u32 = SINGLE_HIGH_FIRST_INDEX + SINGLE_HIGH_INDEX_COUNT;
@@ -116,19 +116,41 @@ fn build_topology_indices() -> Vec<u16> {
     append_strip_indices(&mut indices, 0, u16::from(MAX_RENDER_SECTIONS));
     append_strip_indices(&mut indices, 0, u16::from(MAX_LOW_RENDER_SECTIONS));
 
-    // Two short blades divide the single-high vertex budget rather than duplicating it.
-    append_strip_indices(&mut indices, 0, 4);
-    append_strip_indices(&mut indices, 1, 3);
-
-    // At low LOD each short blade is one tapered triangle. Its six unique inputs fit below the
-    // single-low topology's eight-input budget.
-    for blade in 0..2 {
+    // Pointed roots and tips spend ten inputs on the five-section main blade and eight on
+    // its four-section companion. The fixed pair budget remains 18 inputs / 14 triangles.
+    for (blade, sections) in [(0, 5), (1, 4)] {
         indices.extend_from_slice(&[
             topology_vertex(blade, 0, false),
-            topology_vertex(blade, 0, true),
+            topology_vertex(blade, 1, true),
             topology_vertex(blade, 1, false),
         ]);
+        for section in 1..sections - 1 {
+            let left = topology_vertex(blade, section, false);
+            let right = topology_vertex(blade, section, true);
+            let next_left = topology_vertex(blade, section + 1, false);
+            let next_right = topology_vertex(blade, section + 1, true);
+            indices.extend_from_slice(&[left, right, next_right, left, next_right, next_left]);
+        }
+        indices.extend_from_slice(&[
+            topology_vertex(blade, sections - 1, false),
+            topology_vertex(blade, sections - 1, true),
+            topology_vertex(blade, sections, false),
+        ]);
     }
+
+    // A bent main blade (root, two shoulder edges, tip) plus the short companion triangle.
+    // Production retention pays for the third triangle before emission; no arena grows.
+    indices.extend_from_slice(&[
+        topology_vertex(0, 0, false),
+        topology_vertex(0, 1, false),
+        topology_vertex(0, 1, true),
+        topology_vertex(0, 1, false),
+        topology_vertex(0, 2, false),
+        topology_vertex(0, 1, true),
+        topology_vertex(1, 0, false),
+        topology_vertex(1, 0, true),
+        topology_vertex(1, 1, false),
+    ]);
     debug_assert_eq!(
         indices.len(),
         (SPLIT_LOW_FIRST_INDEX + SPLIT_LOW_INDEX_COUNT) as usize
@@ -148,7 +170,12 @@ pub(crate) fn install(render_app: &mut SubApp) {
         )
         .add_systems(
             RenderGraph,
-            (candidate_cache::build, generate, blade_preparation::run, finish_telemetry)
+            (
+                candidate_cache::build,
+                generate,
+                blade_preparation::run,
+                finish_telemetry,
+            )
                 .chain()
                 .before(camera_driver),
         );
@@ -435,13 +462,15 @@ impl FromWorld for VegetationPipelines {
             entry_point: Some(Cow::Borrowed("finalize")),
             ..default()
         });
-        let cache_pipeline = |entry: &'static str| pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
-            label: Some(format!("vegetation candidate {entry}").into()),
-            layout: vec![compute_layout.clone()],
-            shader: compute_shader.clone(),
-            entry_point: Some(entry.into()),
-            ..default()
-        });
+        let cache_pipeline = |entry: &'static str| {
+            pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
+                label: Some(format!("vegetation candidate {entry}").into()),
+                layout: vec![compute_layout.clone()],
+                shader: compute_shader.clone(),
+                entry_point: Some(entry.into()),
+                ..default()
+            })
+        };
         let cache_build = cache_pipeline("build_candidate_cache");
         let cache_finish = cache_pipeline("finish_candidate_cache");
         let draw_descriptor = RenderPipelineDescriptor {
@@ -601,7 +630,12 @@ impl FromWorld for VegetationBuffers {
             label: Some("vegetation-v2 compact topology-bin instances"),
             size: u64::from(PROCEDURAL_INSTANCE_CAPACITY)
                 * size_of::<ProceduralInstanceGpu>() as u64,
-            usage: BufferUsages::STORAGE | if cfg!(test) { BufferUsages::COPY_SRC } else { BufferUsages::empty() },
+            usage: BufferUsages::STORAGE
+                | if cfg!(test) {
+                    BufferUsages::COPY_SRC | BufferUsages::COPY_DST
+                } else {
+                    BufferUsages::empty()
+                },
             mapped_at_creation: false,
         });
         let diagnostic_instances = render_device.create_buffer(&BufferDescriptor {
@@ -906,7 +940,7 @@ fn begin_telemetry_readback(
                             .sum();
                         snapshot.topology_vertex_inputs = emitted_instances
                             .into_iter()
-                            .zip([18_u32, 8, 18, 6])
+                            .zip([18_u32, 8, 18, 7])
                             .map(|(instances, vertices)| u64::from(instances) * u64::from(vertices))
                             .sum();
                         snapshot.gpu_samples = snapshot.gpu_samples.saturating_add(1);
@@ -945,8 +979,12 @@ fn prepare(
         let schedule_layout = pipeline_cache.get_bind_group_layout(&pipelines.schedule_layout);
         let compute_layout = pipeline_cache.get_bind_group_layout(&pipelines.compute_layout);
         let draw_layout = pipeline_cache.get_bind_group_layout(&pipelines.draw_layout);
-        let position = views.iter().next().map_or(Vec3::ZERO, |view| view.world_from_view.translation());
-        let cache_replaced = candidate_cache.prepare(&render_device, &render_queue, &packed.work_items, position);
+        let position = views
+            .iter()
+            .next()
+            .map_or(Vec3::ZERO, |view| view.world_from_view.translation());
+        let cache_replaced =
+            candidate_cache.prepare(&render_device, &render_queue, &packed.work_items, position);
         let mut replaced_buffers = u64::from(cache_replaced);
         let mut uploaded_bytes = 0_u64;
 
@@ -1186,7 +1224,10 @@ fn prepare(
             buffers.work_item_count,
             u32::from(settings.gpu_counters_enabled),
             u32::from(buffers.preparation_enabled),
-            u32::from(settings.early_rejection) | (u32::from(settings.candidate_cache_enabled) << 1),
+            u32::from(settings.early_rejection)
+                | (u32::from(settings.candidate_cache_enabled) << 1)
+                | ((settings.shape_inspection as u32) << 4)
+                | (u32::from(settings.inspection_disable_opening) << 8),
         ],
     };
     render_queue.write_buffer(&buffers.camera, 0, bytemuck::bytes_of(&camera_gpu));
@@ -2299,7 +2340,7 @@ mod tests {
             (SINGLE_HIGH_FIRST_INDEX, SINGLE_HIGH_INDEX_COUNT, 18),
             (SINGLE_LOW_FIRST_INDEX, SINGLE_LOW_INDEX_COUNT, 8),
             (SPLIT_HIGH_FIRST_INDEX, SPLIT_HIGH_INDEX_COUNT, 18),
-            (SPLIT_LOW_FIRST_INDEX, SPLIT_LOW_INDEX_COUNT, 6),
+            (SPLIT_LOW_FIRST_INDEX, SPLIT_LOW_INDEX_COUNT, 7),
         ];
         for (first, count, expected_unique) in ranges {
             let range = first as usize..(first + count) as usize;
@@ -2314,6 +2355,62 @@ mod tests {
             u64::from(PROCEDURAL_INSTANCE_CAPACITY) * size_of::<ProceduralInstanceGpu>() as u64
                 <= 11 * 1024 * 1024
         );
+    }
+
+    #[test]
+    fn pointed_pair_template_preserves_broad_leaf_triangles() {
+        let new = build_topology_indices();
+        let new = &new[SPLIT_HIGH_FIRST_INDEX as usize..SPLIT_LOW_FIRST_INDEX as usize];
+        let mut old = Vec::new();
+        for (blade, sections) in [(0, 5), (1, 3)] {
+            append_strip_indices(&mut old, blade, sections - 1);
+            old.extend_from_slice(&[
+                topology_vertex(blade, sections - 1, false),
+                topology_vertex(blade, sections - 1, true),
+                topology_vertex(blade, sections, false),
+            ]);
+        }
+        for authored in 2..=12 {
+            let triangles = |indices: &[u16], remap: bool| {
+                let mut result = Vec::new();
+                for triangle in indices.chunks_exact(3) {
+                    let mut vertices = triangle
+                        .iter()
+                        .map(|&v| {
+                            let blade = v >> 5;
+                            let mut row = (v >> 1) & 15;
+                            let mut side = v & 1;
+                            if remap {
+                                row -= row.min(side);
+                                side = 1 - side;
+                                if blade != 0 && authored >= 3 && row >= 3 {
+                                    side = 0;
+                                }
+                            }
+                            let sections = authored.min(if blade == 0 { 4 } else { 3 });
+                            (blade, row.min(sections), side, sections)
+                        })
+                        .collect::<Vec<_>>();
+                    // Width is zero at the tip. Exclude the intentionally degenerate triangles
+                    // while retaining the tip's side attribute for rounded lighting comparison.
+                    let positions = vertices
+                        .iter()
+                        .map(|&(b, r, s, n)| (b, r, if r == n { 0 } else { s }))
+                        .collect::<HashSet<_>>();
+                    if positions.len() == 3 {
+                        vertices.sort_unstable();
+                        result.push(vertices);
+                    }
+                }
+                result.sort_unstable();
+                result
+            };
+            assert_eq!(
+                triangles(new, true),
+                triangles(&old, false),
+                "authored sections {authored}"
+            );
+        }
     }
 
     #[test]
@@ -2399,9 +2496,9 @@ mod tests {
 
         assert!(schedule.contains("fn maximum_projected_extent("));
         assert!(compute.contains("fn projected_blade_extent_pixels("));
-        assert!(compute.contains("fn budgeted_projected_blade_extent_pixels("));
+        assert!(compute.contains("fn blade_extent_limits_pixels("));
         assert!(!draw.contains("fn projected_blade_extent_pixels("));
-        assert!(!draw.contains("fn budgeted_projected_blade_extent_pixels("));
+        assert!(!draw.contains("fn blade_extent_limits_pixels("));
         assert!(compute.contains("evaluation.lod_morph"));
         assert!(draw.contains("let lod_morph = f32((instance.geometry.y"));
         assert!(compute.contains("let maximum_reach = bitcast<f32>(choice.metadata.z)"));
@@ -2438,7 +2535,7 @@ mod tests {
         assert!(!draw.contains("let density_scale = select("));
         assert!(compute.contains("let staggered_high_radius = bounded_high_radius * mix("));
         assert!(!draw.contains("let staggered_high_radius = bounded_high_radius * mix("));
-        assert!(draw.contains("let local_ribbon_side = normalize3_or("));
+        assert!(draw.contains("var local_ribbon_side = normalize3_or("));
         assert!(draw.contains("let signed_alignment = dot("));
         assert!(draw.contains("let opening_tangent = min("));
         assert!(draw.contains("var rendered_ribbon_side = local_ribbon_side;"));

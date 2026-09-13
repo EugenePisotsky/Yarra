@@ -29,7 +29,7 @@ use study::*;
 use ui::ui;
 use vegetation_render::{
     VegetationDebugScene, VegetationDebugSettings, VegetationDiagnostics, VegetationLighting,
-    VegetationProfileMode, VegetationWind,
+    VegetationProfileMode, VegetationShapeInspection, VegetationWind,
 };
 
 const LAYER: usize = 31;
@@ -199,6 +199,7 @@ impl StudyState {
             .map_or([WIDTH, HEIGHT], |d| d.render_size);
         let show_inspector = launch.show_inspector;
         let show_picker = launch.show_picker;
+        let playing = launch.play;
         let camera_label = if launch.load.is_some() {
             "Study replay"
         } else {
@@ -214,7 +215,7 @@ impl StudyState {
             render_size,
             seed,
             wind,
-            playing: false,
+            playing,
             playback_speed: 1.0,
             restore: None,
             own_settings: None,
@@ -337,6 +338,13 @@ fn setup(
     }
     if let Some(ground) = state.launch.ground {
         state.ground = ground;
+    }
+    if state.launch.camera == StudyCamera::preset("game-close").ok() {
+        state.character = CharacterPlacement {
+            xz: [0.0, 0.0],
+            yaw: 0.0,
+        };
+        state.show_character = true;
     }
     if state.launch.hide_character {
         state.show_character = false;
@@ -737,6 +745,19 @@ fn enter(
             *ambient = a.clone();
         }
     }
+    if let Some(shape) = state.launch.shape {
+        settings.shape_inspection = shape;
+    }
+    if settings.shape_inspection != VegetationShapeInspection::Off {
+        state.field_size = state.field_size.min(16.0);
+        settings.mode = vegetation_render::VegetationDebugMode::ProceduralGeometry;
+    }
+    if state.launch.no_opening {
+        settings.inspection_disable_opening = true;
+    }
+    if state.launch.no_wind {
+        state.wind.enabled = false;
+    }
     settings.profile_mode = VegetationProfileMode::Full;
     settings.gpu_counters_enabled = true;
     state.wind.apply(&mut wind);
@@ -977,7 +998,9 @@ fn capture(
     if let Err(error) = std::fs::write(
         folder.join("diagnostics.txt"),
         format!(
-            "{stats:#?}\nField: {} x {} m\nGround: {}\nGrass edge: {:?}\nCandidate budget: {} / {}\nGPU timings: unavailable (editor FPS is not a vegetation timing).\n",
+            "{stats:#?}\nShape inspection: {:?} (active comparisons use high topology; not a performance measurement)\nView opening disabled: {}\nField: {} x {} m\nGround: {}\nGrass edge: {:?}\nCandidate budget: {} / {}\nGPU timings: unavailable (editor FPS is not a vegetation timing).\n",
+            settings.shape_inspection,
+            settings.inspection_disable_opening,
             state.field_size,
             state.field_size,
             state.ground.label(),

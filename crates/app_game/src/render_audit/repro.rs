@@ -13,9 +13,17 @@ pub(super) fn install(app: &mut App) {
     assert!(
         matches!(
             name.as_str(),
-            "low-walk" | "ground-low" | "ground-overhead" | "ground-walk" | "ground-stream"
+            "low-walk"
+                | "grass-close"
+                | "grass-zoom"
+                | "grass-top-down"
+                | "grass-overhead"
+                | "ground-low"
+                | "ground-overhead"
+                | "ground-walk"
+                | "ground-stream"
         ),
-        "expected --render-repro low-walk, ground-low, ground-overhead, ground-walk or ground-stream"
+        "expected --render-repro low-walk, grass-close, grass-zoom, grass-top-down, grass-overhead, ground-low, ground-overhead, ground-walk or ground-stream"
     );
     let ground = name.starts_with("ground-");
     // Same 75%/4x/no-prepass setup as log9. Leave both optimization switches independent.
@@ -41,9 +49,15 @@ pub(super) fn install(app: &mut App) {
     app.insert_resource(ReproView(name.clone()));
     app.add_systems(Update, move_camera.after(GameInputSystems))
         .add_systems(PostUpdate, synchronize_wind);
-    let path_frames = if name == "ground-stream" { 6000 } else { 600 };
+    let path_frames = if name == "ground-stream" {
+        6000
+    } else if name == "grass-zoom" {
+        1200
+    } else {
+        600
+    };
     warn!(
-        "RENDER_REPRO name={name} version=5 warmup_frames=300 path_frames={path_frames} msaa=4 prepass=false; ground scenes use native resolution, no UI, no grass; low-walk retains 75% composite"
+        "RENDER_REPRO name={name} version=8 warmup_frames=300 path_frames={path_frames} msaa=4 prepass=false; ground scenes use native resolution, no UI, no grass; low-walk retains 75% composite"
     );
     let value = |flag: &str| {
         let mut args = std::env::args();
@@ -144,7 +158,19 @@ fn move_camera(
 ) {
     **camera = match view.0.as_str() {
         "ground-low" => pose(0),
-        "ground-overhead" => Transform::from_xyz(-12.0, 18.0, 16.0).looking_at(Vec3::ZERO, Vec3::Y),
+        "grass-close" => {
+            // Match the minimum-distance third-person rig, including its elevated focus.
+            let pitch = 10.0_f32.to_radians();
+            Transform::from_xyz(0.0, 0.9 + 4.0 * pitch.sin(), 4.0 * pitch.cos())
+                .looking_at(Vec3::new(0.0, 0.9, 0.0), Vec3::Y)
+        }
+        "grass-zoom" => zoom_pose(frame.0),
+        // Separate vertical inspection from the oblique gameplay/overhead views. NEG_Z
+        // avoids a collinear look/up basis while preserving +X toward screen right.
+        "grass-top-down" => Transform::from_xyz(0.0, 18.0, 0.0).looking_at(Vec3::ZERO, Vec3::NEG_Z),
+        "ground-overhead" | "grass-overhead" => {
+            Transform::from_xyz(-12.0, 18.0, 16.0).looking_at(Vec3::ZERO, Vec3::Y)
+        }
         "ground-stream" => stream_pose(frame.0),
         _ => pose(frame.0),
     };
@@ -156,6 +182,27 @@ fn move_camera(
         let position = camera.translation;
         active_space.request(space, [position.x, 0.0, position.z]);
     }
+}
+
+fn zoom_pose(frame: u32) -> Transform {
+    // Same distance/pitch relationship as the gameplay rig; a fixed focus separates zoom
+    // artifacts from streaming. Return to exactly the initial pose after one cycle.
+    let phase = (frame.saturating_sub(300) % 1200) as f32 / 600.0;
+    let t = if phase <= 1.0 { phase } else { 2.0 - phase };
+    let distance = 17.6 + (7.76 - 17.6) * t;
+    let zoom = (distance - 4.0) / 20.0;
+    let pitch = (10.0 + 45.0 * zoom).to_radians();
+    let yaw = 45.0_f32.to_radians();
+    let focus = Vec3::new(0.0, 0.9, 0.0);
+    Transform::from_translation(
+        focus
+            + Vec3::new(
+                yaw.sin() * distance * pitch.cos(),
+                distance * pitch.sin(),
+                yaw.cos() * distance * pitch.cos(),
+            ),
+    )
+    .looking_at(focus, Vec3::Y)
 }
 
 fn stream_pose(frame: u32) -> Transform {
@@ -205,7 +252,15 @@ mod tests {
     }
 }
 
-fn synchronize_wind(frame: Res<FrameCount>, mut wind: ResMut<vegetation_render::VegetationWind>) {
+fn synchronize_wind(
+    frame: Res<FrameCount>,
+    view: Res<ReproView>,
+    mut wind: ResMut<vegetation_render::VegetationWind>,
+) {
+    if matches!(view.0.as_str(), "grass-zoom" | "grass-top-down") {
+        wind.set_phase_seconds(0.0);
+        return;
+    }
     // Run after Update's normal wind advance. Capture frame 600 now has identical wind
     // geometry even when startup compilation takes a different amount of wall-clock time.
     wind.set_phase_seconds(frame.0 as f32 / if cfg!(target_os = "ios") { 60.0 } else { 120.0 });
