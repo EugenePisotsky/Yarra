@@ -18,12 +18,20 @@ const DETAIL_SOURCE: &str =
 // Calibrated against the accepted 44 roots/m² specimen, not against its render LOD.
 const ROOTS_FOR_FULL_COVERAGE: f32 = 44.0;
 const SMOOTH_RADIUS_METRES: f32 = 0.22;
+// Artistic canopy footprint for this field trial. It spans the spaces under blade
+// overhang, unlike the small root-density filter. This is not traced visibility.
+const CANOPY_RADIUS_METRES: f32 = 0.65;
+const CANOPY_AREA_PER_ROOT: f32 = 0.075;
 pub(super) type StudyMaterial = ExtendedMaterial<TerrainMaterial, GroundTreatment>;
 
 #[derive(Clone, Copy, Debug, ShaderType)]
 pub(super) struct TreatmentSettings {
     bounds: Vec4,
     controls: Vec4,
+    canopy_appearance: Vec4,
+    canopy_shape: Vec4,
+    canopy_distance: Vec4,
+    canopy_origin: Vec4,
 }
 
 #[derive(Asset, AsBindGroup, TypePath, Debug, Clone)]
@@ -36,6 +44,9 @@ pub(super) struct GroundTreatment {
     #[texture(103)]
     #[sampler(104)]
     detail: Handle<Image>,
+    #[texture(105)]
+    #[sampler(106)]
+    canopy: Handle<Image>,
 }
 
 impl MaterialExtension for GroundTreatment {
@@ -48,14 +59,15 @@ impl MaterialExtension for GroundTreatment {
 pub(super) struct TreatmentAssets {
     pub links: Vec<(Handle<TerrainMaterial>, Handle<StudyMaterial>)>,
     coverage: Handle<Image>,
+    canopy: Handle<Image>,
     detail: Handle<Image>,
     mean: f32,
     revision: Option<u64>,
+    shading: Option<[[f32; 4]; 4]>,
     pub error: Option<String>,
     pub stats: String,
     mask: Option<CoverageBake>,
     rebuilds: u32,
-    texture_bytes: usize,
 }
 
 fn shader_source() -> String {
@@ -68,7 +80,7 @@ fn shader_source() -> String {
     let source = TERRAIN.replace(
         hook,
         r#"
-    if study_ground.controls.x > 0.5 {
+    if study_ground.controls.x > 0.5 && study_ground.controls.x < 3.5 {
         let coverage = study_ground_coverage(in.world_position.xz);
         if study_ground.controls.x > 2.5 {
             out.color = vec4(vec3(coverage), 1.0);
@@ -78,6 +90,15 @@ fn shader_source() -> String {
     }
 #ifdef TERRAIN_SURFACE_UNLIT
     // Retain the production albedo blend"#,
+    );
+    // Attenuate shaded ground radiance, including its highlights, before tonemapping.
+    // Old trials retain their albedo treatment for an honest before/after comparison.
+    let source = source.replace(
+        "out.color = apply_pbr_lighting(pbr_input);",
+        "out.color = apply_pbr_lighting(pbr_input);\n    out.color = vec4(out.color.rgb * study_canopy_visibility(in.world_position.xyz), out.color.a);",
+    ).replace(
+        "out.color = base;",
+        "out.color = vec4(base.rgb * study_canopy_visibility(in.world_position.xyz), base.a);",
     );
     format!("{source}\n{}", include_str!("ground_treatment.wgsl"))
 }
@@ -101,7 +122,7 @@ pub(super) fn register(app: &mut App) {
 }
 
 // The terrain plugin fills in its prepared textures and storage-buffer binding after
-// startup. Mirror those changes into all four treatments together; cloning only at
+// startup. Mirror those changes into all treatments together; cloning only at
 // creation would leave extensions waiting forever for an unbound terrain cache.
 fn sync_base_materials(
     mut events: MessageReader<AssetEvent<TerrainMaterial>>,
@@ -145,9 +166,9 @@ impl TreatmentAssets {
         self.mean =
             values.iter().map(|&v| v as f64).sum::<f64>() as f32 / (values.len() as f32 * 255.0);
         let detail = scalar_image(source.width(), values, true, true);
-        self.texture_bytes = detail.data.as_ref().map_or(0, Vec::len);
         self.detail = images.add(detail);
         self.coverage = images.add(scalar_image(1, vec![0], false, false));
+        self.canopy = images.add(scalar_image(1, vec![0], false, false));
         Ok(())
     }
 
@@ -156,13 +177,19 @@ impl TreatmentAssets {
             settings: TreatmentSettings {
                 bounds: Vec4::ZERO,
                 controls: Vec4::new(mode.treatment().unwrap() as f32, self.mean, 0.5, 0.0),
+                canopy_appearance: Vec4::ZERO,
+                canopy_shape: Vec4::ZERO,
+                canopy_distance: Vec4::ZERO,
+                canopy_origin: Vec4::ZERO,
             },
             coverage: self.coverage.clone(),
             detail: self.detail.clone(),
+            canopy: self.canopy.clone(),
         }
     }
 
     pub fn write_diagnostics(&self, directory: &std::path::Path) -> Result<(), String> {
+        std::fs::create_dir_all(directory).map_err(|e| e.to_string())?;
         std::fs::write(directory.join("ground-treatment.txt"), &self.stats)
             .map_err(|e| e.to_string())?;
         if let Some(mask) = &self.mask {
@@ -174,9 +201,27 @@ impl TreatmentAssets {
                 image::ColorType::L8,
             )
             .map_err(|e| e.to_string())?;
+            image::save_buffer(
+                directory.join("ground-canopy-coverage.png"),
+                &mask.canopy_values,
+                mask.size,
+                mask.size,
+                image::ColorType::L8,
+            )
+            .map_err(|e| e.to_string())?;
         }
         Ok(())
     }
+}
+
+fn canopy_image(mask: &CoverageBake) -> Image {
+    let data = mask.canopy_values.iter().zip(&mask.canopy_depth).flat_map(|(&cover, &depth)| [cover, depth]).collect();
+    let mut image = Image::new(Extent3d { width: mask.size, height: mask.size, depth_or_array_layers: 1 },
+        TextureDimension::D2, data, TextureFormat::Rg8Unorm, RenderAssetUsages::default());
+    image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+        min_filter: ImageFilterMode::Linear, mag_filter: ImageFilterMode::Linear, ..default()
+    });
+    image
 }
 
 fn scalar_image(size: u32, values: Vec<u8>, repeat: bool, mips: bool) -> Image {
@@ -240,6 +285,8 @@ struct CoverageBake {
     size: u32,
     bounds: Vec4,
     values: Vec<u8>,
+    canopy_values: Vec<u8>,
+    canopy_depth: Vec<u8>,
     roots: u32,
 }
 
@@ -304,10 +351,24 @@ fn bake_coverage(scene: &vegetation::VegetationScene) -> Result<CoverageBake, St
         .round()
         .max(1.0) as usize;
     let values = density_mask(&counts, size as usize, radius, pixel_area);
+    let canopy_radius = (CANOPY_RADIUS_METRES * size as f32 / extent.max_element())
+        .round()
+        .max(1.0) as usize;
+    let boundary = vegetation_render::canopy_coverage::BoundaryField::for_scene(&scene.catalog, &scene.pages);
+    let canopy_depth = (0..size * size).map(|i| {
+        let p = min + (Vec2::new((i % size) as f32, (i / size) as f32) + Vec2::splat(0.5)) * extent / size as f32;
+        (boundary.sample(p) / vegetation_render::canopy_coverage::MAX_DEPTH * 255.0).round() as u8
+    }).collect();
+    let canopy_values = filtered_density(&counts, size as usize, canopy_radius, pixel_area)
+        .into_iter()
+        .map(|density| ((1.0 - (-density * CANOPY_AREA_PER_ROOT).exp()) * 255.0).round() as u8)
+        .collect();
     Ok(CoverageBake {
         size,
         bounds: Vec4::new(min.x, min.y, extent.x.recip(), extent.y.recip()),
         values,
+        canopy_values,
+        canopy_depth,
         roots,
     })
 }
@@ -315,6 +376,16 @@ fn bake_coverage(scene: &vegetation::VegetationScene) -> Result<CoverageBake, St
 // Summed-area box filter: fixed world-space footprint, zero outside the specimen,
 // independent of page boundaries. A smooth transfer avoids a threshold outline.
 fn density_mask(counts: &[f32], size: usize, radius: usize, pixel_area: f32) -> Vec<u8> {
+    filtered_density(counts, size, radius, pixel_area)
+        .into_iter()
+        .map(|density| {
+            let t = (density / ROOTS_FOR_FULL_COVERAGE).clamp(0.0, 1.0);
+            (t * t * (3.0 - 2.0 * t) * 255.0).round() as u8
+        })
+        .collect()
+}
+
+fn filtered_density(counts: &[f32], size: usize, radius: usize, pixel_area: f32) -> Vec<f32> {
     let pitch = size + 1;
     let mut integral = vec![0.0; pitch * pitch];
     for y in 0..size {
@@ -335,20 +406,33 @@ fn density_mask(counts: &[f32], size: usize, radius: usize, pixel_area: f32) -> 
             let count =
                 integral[y1 * pitch + x1] - integral[y0 * pitch + x1] - integral[y1 * pitch + x0]
                     + integral[y0 * pitch + x0];
-            let t = (count / area / ROOTS_FOR_FULL_COVERAGE).clamp(0.0, 1.0);
-            values.push((t * t * (3.0 - 2.0 * t) * 255.0).round() as u8);
+            values.push((count / area).max(0.0));
         }
     }
     values
 }
 
 fn sync(
+    lighting: Res<VegetationLighting>,
     mut assets: ResMut<TreatmentAssets>,
     scene: Res<VegetationDebugScene>,
     mut state: ResMut<StudyState>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<StudyMaterial>>,
 ) {
+    let packed = lighting.canopy.packed([0.0; 2]);
+    if assets.shading != Some(packed) {
+        for (_, material) in materials.iter_mut() {
+            let s = &mut material.extension.settings;
+            [
+                s.canopy_appearance,
+                s.canopy_shape,
+                s.canopy_distance,
+                s.canopy_origin,
+            ] = packed.map(Vec4::from_array);
+        }
+        assets.shading = Some(packed);
+    }
     if state.ground.treatment().is_none()
         || state.signature.is_none()
         || scene.scene().pages.is_empty()
@@ -357,30 +441,33 @@ fn sync(
     {
         return;
     }
-    let started = Instant::now();
     match bake_coverage(scene.scene()) {
         Ok(mask) => {
             let hash = mask.values.iter().fold(0xcbf29ce484222325u64, |h, &v| {
                 (h ^ v as u64).wrapping_mul(0x100000001b3)
             });
             let image = scalar_image(mask.size, mask.values.clone(), false, true);
-            let bytes = assets.texture_bytes + image.data.as_ref().map_or(0, Vec::len);
             images
                 .insert(assets.coverage.id(), image)
                 .expect("study coverage handle");
+            images
+                .insert(
+                    assets.canopy.id(),
+                    canopy_image(&mask),
+                )
+                .expect("study canopy coverage handle");
             for (_, material) in materials.iter_mut() {
                 material.extension.settings.bounds = mask.bounds;
             }
             assets.rebuilds += 1;
             assets.stats = format!(
-                "Editor-only static ground material experiment\nSource revision: {}\nCoverage hash FNV1a: {hash:016x}\nSource retained roots: {}\nMask: {} x {}\nBounds: {:?}\nFull coverage: {ROOTS_FOR_FULL_COVERAGE} roots/m2\nSmoothing radius: {SMOOTH_RADIUS_METRES} m\nDetail mean: {:.6}\nAdditional texture bytes including mips: {bytes}\nCPU bake: {:.3} ms (debug build, on source edit only)\nRebuilds this session: {}\nAdded fragment reads: original 0; darkened 1; understory 2 (coverage + detail)\nNo additional grass vertices or visible ground draws; GPU timing not measured.\n",
+                "Editor-only static ground material experiment\nSource revision: {}\nCoverage hash FNV1a: {hash:016x}\nSource retained roots: {}\nMask: {} x {}\nBounds: {:?}\nFull root coverage: {ROOTS_FOR_FULL_COVERAGE} roots/m2\nRoot smoothing radius: {SMOOTH_RADIUS_METRES} m\nCanopy radius: {CANOPY_RADIUS_METRES} m\nCanopy area per root: {CANOPY_AREA_PER_ROOT} m2 (artistic proxy)\nDetail mean: {:.6}\nRebuilds this session: {}\nNo performance measurements.\n",
                 scene.revision(),
                 mask.roots,
                 mask.size,
                 mask.size,
                 mask.bounds,
                 assets.mean,
-                started.elapsed().as_secs_f64() * 1000.0,
                 assets.rebuilds
             );
             info!("{}", assets.stats);
@@ -418,6 +505,22 @@ mod tests {
         let (data, levels) = mip_chain(2, vec![0, 255, 0, 255]);
         assert_eq!(levels, 2);
         assert_eq!(data, [0, 255, 0, 255, 128]);
+    }
+    #[test]
+    fn canopy_footprint_bridges_small_root_gaps_but_preserves_open_ground() {
+        // 10 cm texels: a 30 cm root-free strip inside grass is under blade overhang;
+        // the separate, metre-wide opening on the left must still stay exposed.
+        let size = 40;
+        let mut roots = vec![0.0; size * size];
+        for row in roots.chunks_mut(size) {
+            row[14..].fill(0.44);
+            row[24..27].fill(0.0);
+        }
+        let local = filtered_density(&roots, size, 1, 0.01);
+        let canopy = filtered_density(&roots, size, 6, 0.01);
+        assert_eq!(local[20 * size + 25], 0.0);
+        assert!(canopy[20 * size + 25] > 30.0);
+        assert_eq!(canopy[20 * size + 5], 0.0);
     }
     #[test]
     fn production_shader_hook_is_unique() {

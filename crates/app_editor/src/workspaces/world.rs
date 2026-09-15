@@ -58,6 +58,7 @@ impl Plugin for WorldWorkspacePlugin {
             NAVIGATOR_WINDOW,
             DIAGNOSTICS_WINDOW,
             VEGETATION_WINDOW,
+            crate::canopy::CANOPY_WINDOW,
         ] {
             app.world_mut()
                 .resource_mut::<EditorWindowRegistry>()
@@ -80,6 +81,7 @@ impl Plugin for WorldWorkspacePlugin {
                 OverviewPlugin,
                 PreviewModesPlugin,
                 VegetationAuthoringPlugin,
+                crate::canopy::EditorCanopyPlugin,
             ))
             .configure_sets(
                 PostUpdate,

@@ -1,3 +1,5 @@
+#import "shaders/grass_canopy.wgsl"::{canopy_visibility_at}
+
 #import "shaders/vegetation_blade.wgsl"::{
     ProceduralInstance, DebugInstance, Species, Camera, DebugConfig, PreparedBlade, PreparedArena,
     PI, SPECIES_INDEX_MASK, LOD_MORPH_MASK, LOD_MORPH_SHIFT, LIGHTING_MODE_LEGACY,
@@ -32,6 +34,8 @@ struct VertexOutput {
     @location(6) surface_normal_clump: vec4<f32>,
     // xyz: physical width axis before view opening, w: authored normal-rounding strength
     @location(7) ribbon_side_rounding: vec4<f32>,
+    // Height above root plane, camera distance, grass-boundary depth, horizontal camera distance.
+    @location(10) canopy_coordinates: vec4<f32>,
 #ifdef BLADE_BAND_STUDY
     // Physical curve t, relative height, authored width / length, bounded wind drift.
     @location(8) band_coordinates: vec4<f32>,
@@ -46,6 +50,22 @@ struct VertexOutput {
 @group(1) @binding(3) var<uniform> camera: Camera;
 @group(1) @binding(4) var<uniform> debug_config: DebugConfig;
 @group(1) @binding(5) var<storage, read> prepared_arena: PreparedArena;
+// Independently uploaded, asynchronous canopy boundary; never part of placement coverage.
+@group(1) @binding(6) var<storage, read> canopy_field: array<f32>;
+fn canopy_edge_depth(root: vec2<f32>) -> f32 {
+    if camera.canopy_appearance.x <= 0.0 { return 4.0; }
+    if arrayLength(&canopy_field) < 9u { return 0.0; }
+    let size = vec2<u32>(u32(canopy_field[3]), u32(canopy_field[4]));
+    if size.x == 0u || size.y == 0u { return 0.0; }
+    let grid = clamp((root - vec2(canopy_field[0], canopy_field[1])) / canopy_field[2] - vec2(0.5),
+        vec2(0.0), vec2<f32>(size - vec2(1u)));
+    let lo = vec2<u32>(floor(grid));
+    let hi = min(lo + vec2(1u), size - vec2(1u));
+    let t = fract(grid);
+    return mix(mix(canopy_field[8u + lo.y * size.x + lo.x], canopy_field[8u + lo.y * size.x + hi.x], t.x),
+        mix(canopy_field[8u + hi.y * size.x + lo.x], canopy_field[8u + hi.y * size.x + hi.x], t.x), t.y);
+}
+
 
 fn surface_normal_from_debug_instance(instance: DebugInstance) -> vec3<f32> {
     let normal_xz = unpack2x16snorm(bitcast<u32>(instance.direction_species.w));
@@ -335,6 +355,9 @@ fn geometry_vertex(vertex_index: u32, instance_index: u32) -> VertexOutput {
     output.color = color;
     output.world_normal = physical_normal;
     output.world_position = world_position;
+    output.canopy_coordinates = vec4(max(0.0, dot(world_position - p0, surface_normal)),
+        distance(camera.camera_position.xyz, p0), canopy_edge_depth(p0.xz),
+        distance(camera.camera_position.xz, p0.xz));
     output.blade_t = shading_t;
     output.material = vec4<f32>(
         profile.material.y,
@@ -683,6 +706,10 @@ fn fragment(
     );
     let half_direction = normalize3_or(light_direction + view_direction, normal);
     let ambient_occlusion = clamp(input.material.z, 0.0, 1.0);
+    let canopy_visibility = canopy_visibility_at(input.world_position.xz,
+        input.canopy_coordinates.x, input.canopy_coordinates.y,
+        camera.canopy_appearance, camera.canopy_shape, camera.canopy_distance,
+        camera.canopy_origin, camera.canopy_appearance.z, input.canopy_coordinates.z, input.canopy_coordinates.w);
     let shadow_visibility = directional_shadow_visibility(input);
     // The old receiver cache could only darken direct light and therefore became almost invisible
     // under the stable authored body color. Let dense/AO-heavy blade regions lose part of that body
@@ -694,17 +721,15 @@ fn fragment(
         camera.lighting.w,
     );
     let sun_tint = radiance_tint(camera.sun_radiance.xyz, vec3<f32>(1.0));
-    let ambient_tint = radiance_tint(camera.ambient_radiance.xyz, vec3<f32>(1.0));
     let sun_active = camera.sun_direction.w;
-    let ambient = input.color
-        * ambient_tint
-        * mix(0.22, 0.42, ambient_occlusion)
-        * received_shadow
-        // A restrained local body reduction makes the approximation visible under ambient fill.
-        // It is confined to the marks; the existing root AO and ground remain unchanged.
-        * mix(1.0, band_visibility, 0.65);
 
     if (debug_config.values.z == LIGHTING_MODE_LEGACY) {
+        let ambient_tint = radiance_tint(camera.ambient_radiance.xyz, vec3<f32>(1.0));
+        let ambient = input.color
+            * ambient_tint
+            * mix(0.22, 0.42, ambient_occlusion)
+            * received_shadow
+            * mix(1.0, band_visibility, 0.65);
         let wrapped_diffuse = clamp((dot(normal, light_direction) + 0.48) / 1.48, 0.0, 1.0);
         let back_light = pow(max(dot(-normal, light_direction), 0.0), 1.5)
             * input.material.y;
@@ -730,7 +755,7 @@ fn fragment(
             * camera.lighting.y
             * shadow_visibility * band_visibility
             * sun_active;
-        return vec4<f32>(ambient + diffuse + transmission + highlight, 1.0);
+        return vec4<f32>((ambient + diffuse + transmission + highlight) * canopy_visibility, 1.0);
     }
 
     // Direct-light energy must use the same camera exposure as Bevy's PBR path. Normalizing the
@@ -740,11 +765,11 @@ fn fragment(
     let exposed_sun_tint = radiance_tint(exposed_sun, sun_tint);
     let sun_elevation = clamp(light_direction.y, 0.0, 1.0);
     let low_sun = 1.0 - smoothstep(0.28, 0.72, sun_elevation);
-    let high_sun = smoothstep(0.32, 0.82, sun_elevation);
 
     // Rounded local normals move the highlight from one side of a nearby ribbon to the other.
-    // Once that variation becomes unresolved, converge every lighting term on the same stable clump
-    // normal instead of merely dimming thousands of independently flashing blade normals.
+    // Once that variation becomes unresolved, converge the broad specular response on a stable
+    // clump normal. Diffuse lighting below retains each blade's direction: sharing this normal
+    // with diffuse made the field uniformly lit when viewed away from the sun.
     let surface_normal = normalize3_or(
         input.surface_normal_clump.xyz,
         vec3<f32>(0.0, 1.0, 0.0),
@@ -777,22 +802,27 @@ fn fragment(
     // Leaves have a narrow waxy sheen sitting over the broad material response. Keeping this lobe
     // distinct is what makes the half-vector select one side of the analytic cylinder; a single
     // high-roughness lobe only reads as a field-wide brightness gradient.
-    let sheen_alpha_roughness = clamp(
-        mix(0.10, 0.22, perceptual_roughness) + normal_variance * 0.24,
-        0.08,
-        0.48,
-    );
-    let local_sheen_specular = ggx_foliage_specular(
-        blade_normal,
-        view_direction,
-        light_direction,
-        half_direction,
-        sheen_alpha_roughness,
-    );
+    let local_sheen_weight = 1.0 - smoothstep(22.0, 48.0, camera_distance);
+    var local_sheen_specular = 0.0;
+    // Once the narrow lobe has faded out, avoid evaluating a second GGX response.
+    // Normal derivatives remain above this branch so filtering stays quad-consistent.
+    if local_sheen_weight > 0.0 {
+        let sheen_alpha_roughness = clamp(
+            mix(0.10, 0.22, perceptual_roughness) + normal_variance * 0.24,
+            0.08,
+            0.48,
+        );
+        local_sheen_specular = ggx_foliage_specular(
+            blade_normal,
+            view_direction,
+            light_direction,
+            half_direction,
+            sheen_alpha_roughness,
+        );
+    }
     // The narrow waxy lobe is useful while a blade has a resolvable width, but becomes glitter once
     // it is a subpixel line. A broad clump lobe survives so sunrise still sweeps coherently across
     // the field instead of flattening to diffuse-only shading.
-    let local_sheen_weight = 1.0 - smoothstep(22.0, 48.0, camera_distance);
     let broad_specular_weight = mix(0.16, 0.26, distance_stability);
     let specular_lobe = filtered_broad_specular * broad_specular_weight
         + local_sheen_specular * local_sheen_weight;
@@ -815,12 +845,25 @@ fn fragment(
         * shadow_visibility * band_visibility
         * sun_active;
 
-    let wrapped_diffuse = clamp((dot(shading_normal, light_direction) + 0.28) / 1.28, 0.0, 1.0);
-    let broad_diffuse = mix(wrapped_diffuse, 0.82, high_sun * 0.24);
-    let diffuse_energy = min(exposed_sun_peak * camera.lighting.x, 0.54);
+    // A leaf's body is a thin sheet. The strongly rounded normal above shapes its waxy gloss;
+    // using that same cylinder for diffuse rolls exposed margins out of the sun and paints dark
+    // longitudinal stripes onto a lit face. Retain only a shallow fold for body illumination.
+    let diffuse_normal = normalize3_or(
+        mix(flat_blade_normal, blade_normal, 0.18 * (1.0 - distance_stability)),
+        flat_blade_normal,
+    );
+    let leaf_n_dot_l = dot(diffuse_normal, light_direction);
+    let directional_diffuse = clamp((leaf_n_dot_l + 0.18) / 1.18, 0.0, 1.0);
+    let canopy_diffuse = clamp((dot(clump_normal, light_direction) + 0.18) / 1.18, 0.0, 1.0);
+    // Average part of the unresolved illumination, retaining 35% of the blade response.
+    // Leaving its full contrast on subpixel ribbons produces a stippled horizon; replacing it
+    // completely with a common normal removes the directional variation we need to preserve.
+    let diffuse_filter = distance_stability * 0.65;
+    let wrapped_diffuse = mix(directional_diffuse, canopy_diffuse, diffuse_filter);
+    let diffuse_energy = min(exposed_sun_peak * camera.lighting.x, 1.20);
     let diffuse = input.color
         * exposed_sun_tint
-        * broad_diffuse
+        * wrapped_diffuse
         * diffuse_energy
         * shadow_visibility * band_visibility
         * sun_active;
@@ -842,5 +885,22 @@ fn fragment(
         * shadow_visibility * band_visibility
         * sun_active;
 
-    return vec4<f32>(ambient + diffuse + transmission + highlight, 1.0);
+    // A broad upper-hemisphere fill keeps sky-facing surfaces readable between sun highlights.
+    // Use scene intensity and exposure rather than a normalized tint plus fixed body brightness.
+    // This is directional ambient illumination, not visibility of neighboring blades.
+    let exposed_ambient = camera.ambient_radiance.xyz * view_bindings::view.exposure;
+    let ambient_peak = max(max(exposed_ambient.r, exposed_ambient.g), exposed_ambient.b);
+    let bounded_ambient = exposed_ambient / max(1.0, ambient_peak / 0.60);
+    // Both sides of a thin leaf receive sky fill; viewer-facing normal flips must not blacken
+    // the underside of an otherwise exposed leaf. Directional contrast comes from the sun term.
+    let sky_facing = mix(abs(flat_blade_normal.y), clump_normal.y, diffuse_filter);
+    let sky_fill = mix(0.75, 1.0, clamp(sky_facing, 0.0, 1.0));
+    let foliage_ambient = input.color
+        * bounded_ambient
+        * mix(0.40, 0.85, ambient_occlusion)
+        * sky_fill
+        * received_shadow
+        * mix(1.0, band_visibility, 0.65);
+
+    return vec4<f32>((foliage_ambient + diffuse + transmission + highlight) * canopy_visibility, 1.0);
 }

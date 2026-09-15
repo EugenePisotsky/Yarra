@@ -22,7 +22,7 @@ def main():
     parser.add_argument('--shaders', required=True, type=Path)
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('--binary', type=Path, default=ROOT / 'target/release/yarra-app-game')
-    parser.add_argument('--view', choices=['low-walk', 'grass-close', 'grass-zoom', 'grass-overhead', 'grass-top-down'], default='low-walk')
+    parser.add_argument('--view', choices=['low-walk', 'grass-close', 'grass-away', 'grass-zoom', 'grass-overhead', 'grass-top-down'], default='low-walk')
     parser.add_argument('--frames', type=int, default=3600)
     parser.add_argument('--counters', action='store_true')
     args = parser.parse_args()

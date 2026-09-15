@@ -60,6 +60,27 @@ struct Camera {
     wind: vec4<f32>,
     // x: spatial frequency, y: speed, z: gustiness, w: hashed blade flutter
     wind_shape: vec4<f32>,
+    lod_focus: vec4<f32>,
+    canopy_appearance: vec4<f32>,
+    canopy_shape: vec4<f32>,
+    canopy_distance: vec4<f32>,
+    canopy_origin: vec4<f32>,
+}
+
+// Equal-area ellipse: spend the same high-topology budget along the view direction.
+// The gameplay centre follows the subject; clients without a focus retain the camera disk.
+fn detail_distance(root: vec2<f32>, camera: Camera) -> f32 {
+    let delta = root - camera.lod_focus.xy;
+    let forward = camera.lod_focus.zw;
+    if (dot(forward, forward) < 0.5) { return length(root - camera.camera_position.xz); }
+    let along = dot(delta, forward) / 1.5;
+    let across = dot(delta, vec2(-forward.y, forward.x)) * 1.5;
+    return length(vec2(along, across));
+}
+
+fn near_field_coverage(root: vec2<f32>, camera: Camera) -> f32 {
+    if (dot(camera.lod_focus.zw, camera.lod_focus.zw) < 0.5) { return 0.0; }
+    return 1.0 - smoothstep(12.0, 26.0, detail_distance(root, camera));
 }
 
 struct DebugConfig {
@@ -139,7 +160,7 @@ struct PreparedBlade {
 
 struct PreparedArena {
     // Zero means fallback to the original calculation; otherwise first blade index + 1.
-    indices: array<u32, 344064>,
+    indices: array<u32, 851968>,
     blades: array<PreparedBlade>,
 }
 
@@ -279,7 +300,7 @@ fn prepare_blade(
         && population_density < 0.999
     ) {
         let half_band = BALANCED_DENSITY_FADE_BAND * 0.5;
-        let budget_band = half_band * select(1.0, SPLIT_LOW_DENSITY_BUDGET_SCALE, blade_count > 1u);
+        let budget_band = half_band;
         balanced_low_width = 1.0 - smoothstep(
             max(population_density - budget_band, 0.0),
             min(population_density + budget_band, 1.0),
@@ -470,9 +491,12 @@ fn prepare_blade(
         select(2u, 1u, blade_index != 0u || is_broad_leaf),
         blade_count > 1u,
     );
-    let retention_normalization = select(1.0, 1.0 / SPLIT_LOW_DENSITY_BUDGET_SCALE,
+    let near_coverage = select(0.0, near_field_coverage(root.xz, camera),
+        debug_config.values.y == DENSITY_MODE_BALANCED);
+    let paired_retention = mix(SPLIT_LOW_DENSITY_BUDGET_SCALE, 1.0, near_coverage);
+    let retention_normalization = select(1.0, 1.0 / paired_retention,
         blade_count > 1u && debug_config.values.y != DENSITY_MODE_FULL_REFERENCE);
-    let budget_width_scale = select(1.0, SPLIT_LOW_COVERAGE_WIDTH_SCALE,
+    let budget_width_scale = select(1.0, mix(SPLIT_LOW_COVERAGE_WIDTH_SCALE, 1.0, near_coverage),
         blade_count > 1u && debug_config.values.y != DENSITY_MODE_FULL_REFERENCE);
     let coverage_density = min(population_density * retention_normalization, 1.0);
     var coverage_scale = 1.0;

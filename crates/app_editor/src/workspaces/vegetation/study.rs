@@ -177,8 +177,8 @@ impl StudyDocument {
             return Err("Study replay requires the Full render workload. Select Full before saving or capturing.".into());
         }
         if ![1, 2].contains(&self.version)
-            || ![[WIDTH, HEIGHT], [1280, 960]].contains(&self.render_size)
-            || self.msaa_samples != 1
+            || ![[WIDTH, HEIGHT], [1280, 960], [1920, 1080]].contains(&self.render_size)
+            || ![1, 4].contains(&self.msaa_samples)
             || self.exposure_ev100 != 13.0
             || self.ground_color != super::GROUND_COLOR
             || self.character_profile != engine::DEFAULT_CHARACTER_PRESENTATION_ID
@@ -380,6 +380,7 @@ pub(super) struct StudyLaunch {
     pub zoom: Option<f32>,
     pub show_inspector: bool,
     pub show_colors: bool,
+    pub show_canopy: bool,
     pub show_picker: bool,
     pub field_size: Option<f32>,
     pub ground: Option<super::stage::GroundMode>,
@@ -453,12 +454,14 @@ impl StudyLaunch {
                         "darkened" => super::stage::GroundMode::DarkenedStudy,
                         "understory" => super::stage::GroundMode::UnderstoryStudy,
                         "coverage" => super::stage::GroundMode::CoverageStudy,
+                        "canopy-ground" => super::stage::GroundMode::CanopyGroundStudy,
                         _ => return Err("--study-ground must be neutral, meadow, dried, original, darkened, understory, or coverage".into()),
                     })
                 }
                 "--study-select-reference" => options.select_reference = Some(value()?),
                 "--study-inspector" => options.show_inspector = true,
                 "--study-colors" => options.show_colors = true,
+                "--study-canopy" => options.show_canopy = true,
                 "--study-picker" => options.show_picker = true,
                 "--study-zoom" => {
                     let zoom: f32 = value()?.parse().map_err(|_| "Invalid --study-zoom")?;
@@ -511,6 +514,43 @@ mod tests {
             vegetation_render::VegetationBladeBands::Off
         );
         assert_eq!(doc.settings.blade_band_density, 1.0);
+    }
+
+    #[test]
+    fn canopy_look_survives_study_save_and_old_studies_default_to_off() {
+        let root =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content/vegetation");
+        let doc = StudyDocument::read(&root.join("studies/shared-canopy.ron")).unwrap();
+        assert!(doc.lighting.canopy.enabled);
+        assert_eq!(doc.patch_size, 64.0);
+        let encoded = ron::ser::to_string(&doc).unwrap();
+        let round_trip: StudyDocument = ron::from_str(&encoded).unwrap();
+        assert_eq!(round_trip.lighting.canopy, doc.lighting.canopy);
+        assert_eq!(round_trip.catalog, doc.catalog);
+        assert!(
+            !StudyDocument::read(&root.join("distance-01.ron"))
+                .unwrap()
+                .lighting
+                .canopy
+                .enabled
+        );
+    }
+
+    #[test]
+    fn canopy_gradient_study_preserves_distance_controls_and_full_density() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../content/vegetation/studies/canopy-gradient.ron");
+        let doc = StudyDocument::read(&path).unwrap();
+        let look = doc.lighting.canopy;
+        assert_eq!(look.near_strength, 0.0);
+        assert_eq!(look.distance_start, 3.0);
+        assert_eq!(look.distance_end, 20.0);
+        assert!(look.patch_growth > 0.0 && look.edge_width > 0.0);
+        assert_eq!(doc.settings.density_mode, vegetation_render::VegetationDensityMode::FullReference);
+        let encoded = ron::ser::to_string(&doc).unwrap();
+        let decoded: StudyDocument = ron::from_str(&encoded).unwrap();
+        assert_eq!(decoded.lighting.canopy, look);
+        assert_eq!(decoded.catalog, doc.catalog);
     }
 
     #[test]

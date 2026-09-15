@@ -647,6 +647,9 @@ fn setup(
             source_weights: weights.clone(),
             source_base_color_array: array.clone(),
             stochastic_cache: Handle::default(),
+            canopy_bounds: Vec4::ZERO,
+            canopy_shading: Default::default(),
+            canopy_coverage: None,
             settings: TerrainMaterialUniform {
                 cache_origins: Vec4::ZERO,
                 cache_size: UVec4::ZERO,

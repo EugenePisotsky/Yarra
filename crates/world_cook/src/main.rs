@@ -8,6 +8,34 @@ fn main() -> Result<()> {
         .next()
         .and_then(|argument| argument.into_string().ok())
         .unwrap_or_else(|| "demo".into());
+    if command == "import-vegetation" {
+        let source = PathBuf::from(arguments.next().context("expected catalog.ron")?);
+        let project = arguments
+            .next()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("content/demo.project.sqlite"));
+        let runtime = arguments
+            .next()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("assets/generated/demo.runtime.sqlite"));
+        if arguments.next().is_some() {
+            bail!(
+                "usage: yarra-world-cook import-vegetation CATALOG_RON [PROJECT_DB] [RUNTIME_DB]"
+            );
+        }
+        let catalog: vegetation::VegetationCatalog =
+            ron::from_str(&std::fs::read_to_string(&source)?)?;
+        catalog.validate()?;
+        world_db::migrate_project_database(&project)?;
+        world_db::ProjectWriter::open(&project)?.replace_vegetation_catalog(&catalog)?;
+        let manifest = yarra_world_cook::cook_project(&project, &runtime)?;
+        println!(
+            "imported {} and published runtime generation {}",
+            source.display(),
+            manifest.generation_id
+        );
+        return Ok(());
+    }
     if command == "sync-demo-vegetation" {
         let project_path = arguments
             .next()
@@ -43,7 +71,9 @@ fn main() -> Result<()> {
         return Ok(());
     }
     if command != "demo" {
-        bail!("unknown command {command:?}; expected `demo` or `sync-demo-vegetation`");
+        bail!(
+            "unknown command {command:?}; expected `demo`, `import-vegetation` or `sync-demo-vegetation`"
+        );
     }
 
     let project_path = arguments

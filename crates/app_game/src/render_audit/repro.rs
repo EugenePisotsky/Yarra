@@ -15,6 +15,9 @@ pub(super) fn install(app: &mut App) {
             name.as_str(),
             "low-walk"
                 | "grass-close"
+                | "grass-away"
+                | "grass-follow"
+                | "grass-follow-far"
                 | "grass-zoom"
                 | "grass-top-down"
                 | "grass-overhead"
@@ -24,7 +27,7 @@ pub(super) fn install(app: &mut App) {
                 | "ground-walk"
                 | "ground-stream"
         ),
-        "expected --render-repro low-walk, grass-close, grass-zoom, grass-top-down, grass-overhead, grass-stream, ground-low, ground-overhead, ground-walk or ground-stream"
+        "expected --render-repro low-walk, grass-close, grass-away, grass-zoom, grass-top-down, grass-overhead, grass-stream, ground-low, ground-overhead, ground-walk or ground-stream"
     );
     let ground = name.starts_with("ground-");
     // Same 75%/4x/no-prepass setup as log9. Leave both optimization switches independent.
@@ -159,11 +162,20 @@ fn move_camera(
 ) {
     **camera = match view.0.as_str() {
         "ground-low" => pose(0),
-        "grass-close" => {
+        "grass-close" | "grass-away" => {
             // Match the minimum-distance third-person rig, including its elevated focus.
+            // The opposite orbit exposes body lighting without the strong sun reflection.
             let pitch = 10.0_f32.to_radians();
-            Transform::from_xyz(0.0, 0.9 + 4.0 * pitch.sin(), 4.0 * pitch.cos())
+            let facing = if view.0 == "grass-away" { -1.0 } else { 1.0 };
+            Transform::from_xyz(0.0, 0.9 + 4.0 * pitch.sin(), facing * 4.0 * pitch.cos())
                 .looking_at(Vec3::new(0.0, 0.9, 0.0), Vec3::Y)
+        }
+        "grass-follow" | "grass-follow-far" => {
+            let distance = if view.0 == "grass-follow" { 9.7 } else { 17.6 };
+            let pitch = (10.0_f32 + 45.0 * ((distance - 4.0) / 20.0)).to_radians();
+            let focus = Vec3::new(0.0, 0.9, 0.0);
+            Transform::from_xyz(0.0, 0.9 + distance * pitch.sin(), distance * pitch.cos())
+                .looking_at(focus, Vec3::Y)
         }
         "grass-zoom" => zoom_pose(frame.0),
         // Separate vertical inspection from the oblique gameplay/overhead views. NEG_Z
@@ -258,7 +270,10 @@ fn synchronize_wind(
     view: Res<ReproView>,
     mut wind: ResMut<vegetation_render::VegetationWind>,
 ) {
-    if matches!(view.0.as_str(), "grass-zoom" | "grass-top-down") {
+    if matches!(
+        view.0.as_str(),
+        "grass-zoom" | "grass-top-down" | "grass-follow" | "grass-follow-far"
+    ) {
         wind.set_phase_seconds(0.0);
         return;
     }

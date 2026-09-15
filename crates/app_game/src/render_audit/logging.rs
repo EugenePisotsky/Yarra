@@ -84,7 +84,7 @@ fn gpu_readback_fields(snapshot: VegetationDiagnosticsSnapshot) -> String {
     }
     // A sampled snapshot can lag the switch and represents retained buffers in frozen mode.
     format!(
-        "gpu_readback=sampled gpu_samples={} sampled_scheduled_items={} sampled_candidate_lanes={} sampled_instances={} sampled_indices={}",
+        "gpu_readback=sampled gpu_samples={} sampled_scheduled_items={} sampled_candidate_lanes={} sampled_instances={} sampled_indices={} sampled_capacity_drops={:?} sampled_bins={:?}",
         snapshot.gpu_samples,
         snapshot.scheduled_work_items,
         snapshot.dispatched_candidate_lanes,
@@ -94,6 +94,8 @@ fn gpu_readback_fields(snapshot: VegetationDiagnosticsSnapshot) -> String {
             .map(|&n| u64::from(n))
             .sum::<u64>(),
         snapshot.submitted_indices,
+        snapshot.capacity_dropped_instances,
+        snapshot.emitted_instances,
     )
 }
 

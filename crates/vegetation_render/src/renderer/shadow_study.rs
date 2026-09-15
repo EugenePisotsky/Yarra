@@ -11,7 +11,10 @@ use std::{fs, path::PathBuf};
 const WIDTH: u32 = 1280;
 const HEIGHT: u32 = 720;
 const DRAW: &str = include_str!("../../../../assets/shaders/vegetation_debug_draw.wgsl");
+const CANOPY: &str = include_str!("../../../../assets/shaders/grass_canopy.wgsl");
 const BLADE: &str = include_str!("../../../../assets/shaders/vegetation_blade.wgsl");
+
+mod ambient;
 
 // Assemble the actual geometry and material functions. Only the Bevy view/shadow bindings
 // are replaced: the fixture has no world objects/CSM. New visibility attenuates direct
@@ -57,7 +60,7 @@ fn source() -> String {
         draw = draw.replace(from, to);
     }
     format!(
-        "{BLADE}\n{draw}\n{}\n{}",
+        "{CANOPY}\n{BLADE}\n{draw}\n{}\n{}",
         include_str!("shadow_study/fixture.wgsl"),
         include_str!("shadow_study/pixel_trace.wgsl")
     )
@@ -261,7 +264,7 @@ fn capture_shadow_study() {
     // Fallback vertex evaluation is the production path; prepared indices are all zero.
     let prepared = buffer(
         "unused prepared arena",
-        &vec![0u8; 344064 * 4 + 128],
+        &vec![0u8; 851968 * 4 + 128],
         BufferUsages::STORAGE,
     );
     let parameters = buffer("fixture controls", &[0u8; 64], BufferUsages::UNIFORM);
@@ -480,6 +483,8 @@ fn capture_shadow_study() {
             for (phase_index, &phase) in phases.iter().enumerate() {
                 let stem = format!("{name}-{light_name}-{phase_index}");
                 let c = CameraGpu {
+                    lod_focus: [0.0; 4],
+                    canopy: study.lighting.canopy.packed([0.0; 2]),
                     clip_from_world: (projection * transform.to_matrix().inverse()).to_cols_array(),
                     camera_position: position.extend(1.0).to_array(),
                     projection: [

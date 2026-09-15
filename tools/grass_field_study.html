@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>Yarra — full grass field comparison</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#141817;color:#e3e9e5;font:15px system-ui}main{max-width:1600px;margin:auto;padding:24px}
+h1{font-size:26px;margin:0 0 8px}p{color:#aebcb2;line-height:1.5;margin:8px 0 18px}nav{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin:16px 0}
+label{display:flex;gap:8px;align-items:center}select,button{background:#27322c;color:inherit;border:1px solid #526657;border-radius:5px;padding:8px;font:inherit}button{cursor:pointer}
+#stage{position:relative;aspect-ratio:16/9;overflow:hidden;background:#000;touch-action:none;cursor:ew-resize;border:1px solid #49594e}.layer{position:absolute;inset:0}.layer img{display:block;width:100%;height:100%;object-fit:contain}
+#leftLayer{clip-path:inset(0 50% 0 0)}#line{position:absolute;inset:0 auto 0 50%;border-left:2px solid white;pointer-events:none}.tag{position:absolute;top:12px;background:#121914e8;padding:8px 12px;border-radius:4px;pointer-events:none}.a{left:12px}.b{right:12px}
+#split{width:100%;accent-color:#b7d9bf;margin:14px 0}#notes{display:grid;grid-template-columns:1fr 1fr;gap:24px}#notes p{font-size:14px}details{border-top:1px solid #405047;padding:16px 0}summary{cursor:pointer}#reference{display:block;max-width:100%;max-height:80vh;margin:20px auto}
+small{color:#95a79b;line-height:1.6}a{color:#c0dfc6}@media(max-width:700px){main{padding:12px}.tag{font-size:12px;padding:5px}#notes{grid-template-columns:1fr;gap:0}nav{gap:10px}}
+</style>
+<main><h1>64 m grass field</h1>
+<p>Density, blade detail and color · Native renderer · 1080p · 4× MSAA</p>
+<nav><label>Camera <select id="view"><option value="overhead">Across the field</option><option value="away">Away from the sun</option><option value="toward">Toward the sun</option><option value="top-close">Above — close</option><option value="top-far">Above — farther</option></select></label>
+<label>Wind <select id="wind"><option value="rest">Stopped</option><option value="0">Pose at 0 s</option><option value="1">Pose at 1 s</option></select></label>
+<button id="before">Show left</button><button id="after">Show right</button></nav>
+<nav><label>Left <select id="left"></select></label><label>Right <select id="right"></select></label></nav>
+<div id="stage"><div class="layer"><img id="rightImage" alt="Right grass field comparison"></div><div class="layer" id="leftLayer"><img id="leftImage" alt="Left grass field comparison"></div><div id="line"></div><span class="tag a" id="leftTag"></span><span class="tag b" id="rightTag"></span></div>
+<input id="split" type="range" min="0" max="100" value="50" aria-label="Comparison divider">
+<div id="notes"><p id="leftNote"></p><p id="rightNote"></p></div>
+<details id="referencePanel"><summary>Yōtei references supplied by you</summary><nav id="referenceChoices"></nav><img id="reference" alt="User-supplied Yōtei field reference"><p>Appearance reference; its camera, weather and exposure are not matched to this test.</p></details>
+<small>Compare the current field with retained density, fuller blade shapes, 72 roots/m², and a quieter grass palette. Each step is available separately. The dark-ground shading rule and scene lighting are unchanged.<br>
+All views render the 64 m field. Density and palette comparisons use the overhead cameras. No performance measurements or changes to the live editor draft.</small>
+</main><script>
+const $=id=>document.getElementById(id);
+const labels={baseline:'Saved field',structure:'Previous clumps',canopy:'Previous clumps + root shading',understory:'Previous trial',overlap:'Overlap — original ground',joined:'Overlap + shaded ground'};
+Object.assign(labels,{joined:'Previous field · 44 roots/m²',unthinned:'All 44 roots · current blade LOD',fullshape:'All 44 roots · full blade shapes',filled:'72 roots · full blade shapes',palette:'72 roots · revised grass color'});
+const notes={baseline:'Saved grass catalog and meadow ground. Procedural blade-shadow marks are off in every version.',structure:'Previous larger clumps with stronger root attraction.',canopy:'Previous layout with additional shading on lower blade sections.',understory:'The rejected trial: isolated clumps, extra dark roots, and a ground mask that leaves bright gaps.',overlap:'Smaller groups and much less root attraction keep blades distributed through the gaps. No added root shading. Original meadow ground.',joined:'Exactly the same blades as the overlap version, with continuous ground shading across their broader footprint. This is an artistic coverage approximation, fixed in world space; it does not reconstruct Yōtei’s shader.'};
+Object.assign(notes,{joined:'The previous 44-root field with production density and blade LOD. The dark ground is retained for this comparison.',unthinned:'Retains all eligible source roots at 44 roots/m². Blade simplification still applies, so this isolates the effect of density LOD.',fullshape:'Retains all eligible 44 roots/m² and their full blade shapes. Color, placement and ground treatment are unchanged.',filled:'Raises source density to 72 roots/m² with full blade shapes. No width increase or new root-darkening effect. The ground uses the same coverage-based shading rule.',palette:'Exactly the 72-root geometry and ground, with less bright blade tips and a smaller root-to-tip color difference. Sun, exposure, gloss and ground brightness are unchanged.'});
+let frames=[];
+function divider(v){$('split').value=v;$('leftLayer').style.clipPath=`inset(0 ${100-v}% 0 0)`;$('line').style.left=v+'%'}
+function update(){const view=$('view').value;
+ const poses=frames.filter(f=>f.view===view).map(f=>f.wind===null?'rest':String(f.wind));
+ for(const o of $('view').options)o.disabled=!frames.some(f=>f.view===o.value);
+ for(const o of $('wind').options)o.disabled=!poses.includes(o.value);
+ if(!poses.includes($('wind').value))$('wind').value='rest';
+ const wind=$('wind').value==='rest'?null:Number($('wind').value);
+ for(const side of ['left','right']){const select=$(side);const available=frames.filter(f=>f.view===view&&f.wind===wind).map(f=>f.variant);
+  for(const o of select.options)o.disabled=!available.includes(o.value);
+  if(!available.includes(select.value))select.value=side==='left'?available[0]:available.at(-1);
+  const f=frames.find(f=>f.view===view&&f.wind===wind&&f.variant===select.value);
+  if(f)$(side+'Image').src=f.image;$(side+'Tag').textContent=labels[select.value];$(side+'Note').textContent=notes[select.value];}
+}
+for(const side of ['left','right'])$(side).onchange=update;
+$('view').onchange=update;$('wind').onchange=update;
+$('split').oninput=e=>divider(e.target.value);$('before').onclick=()=>divider(100);$('after').onclick=()=>divider(0);
+function drag(e){const r=$('stage').getBoundingClientRect();divider(Math.max(0,Math.min(100,(e.clientX-r.left)/r.width*100)))}
+$('stage').onpointerdown=e=>{e.currentTarget.setPointerCapture(e.pointerId);drag(e)};$('stage').onpointermove=e=>{if(e.buttons)drag(e)};
+fetch('comparison.json').then(r=>r.json()).then(data=>{frames=data.frames;
+ for(const side of ['left','right'])for(const [key,label] of Object.entries(labels)){if(!frames.some(f=>f.variant===key))continue;const o=document.createElement('option');o.value=key;o.textContent=label;$(side).append(o)}
+ const hasPalette=frames.some(f=>f.variant==='palette');$('view').value=hasPalette?'top-far':'overhead';$('left').value=hasPalette?'joined':'baseline';$('right').value=hasPalette?'palette':'joined';
+ const refs=data.references||(data.reference?[data.reference]:[]);refs.forEach((src,i)=>{const b=document.createElement('button');b.textContent=i===0?'Closer reference':'Farther reference';b.onclick=()=>{$('reference').src=src};$('referenceChoices').append(b)});if(refs.length)$('reference').src=refs[0];else $('referencePanel').hidden=true;update()}).catch(e=>{$('leftNote').textContent='Could not load comparison: '+e.message});
+</script></html>

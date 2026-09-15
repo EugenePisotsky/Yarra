@@ -36,6 +36,9 @@ pub(crate) const VEGETATION_WINDOW: EditorWindowDescriptor = EditorWindowDescrip
 
 pub(crate) struct VegetationAuthoringPlugin;
 
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct VegetationPreviewSync;
+
 impl Plugin for VegetationAuthoringPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(VegetationRenderPlugin)
@@ -47,7 +50,7 @@ impl Plugin for VegetationAuthoringPlugin {
                 })
                 .expect("the empty vegetation authoring scene is valid"),
             )
-            .add_systems(Update, (adopt_project_catalog, sync_live_preview).chain())
+            .add_systems(Update, (adopt_project_catalog, sync_live_preview).chain().in_set(VegetationPreviewSync))
             .add_systems(
                 EguiPrimaryContextPass,
                 vegetation_authoring_ui
@@ -439,6 +442,9 @@ fn vegetation_authoring_ui(
         .resizable(true)
         .vscroll(true)
         .show(&context, |ui| {
+            if ui.button("Canopy…").clicked() {
+                windows.set_open(crate::canopy::CANOPY_WINDOW.id, true);
+            }
             draw_vegetation_authoring(
                 ui,
                 &mut tools,

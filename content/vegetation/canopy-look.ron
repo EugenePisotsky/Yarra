@@ -1,0 +1,16 @@
+(
+    enabled: true,
+    strength: 0.85,
+    ground_amount: 1.0,
+    blade_amount: 1.0,
+    height_metres: 0.24,
+    softness: 0.8,
+    patch_metres: 1.85,
+    patchiness: 1.0,
+    openings: 0.3,
+    near_strength: 0.0,
+    patch_growth: 0.65,
+    edge_width: 1.25,
+    distance_start: 15.8,
+    distance_end: 20.0,
+)

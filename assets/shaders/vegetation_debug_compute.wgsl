@@ -47,6 +47,22 @@ struct DebugInstance {
     diagnostics: vec4<f32>,
 }
 
+// Equal-area ellipse: spend the same high-topology budget along the view direction.
+// The gameplay centre follows the subject; clients without a focus retain the camera disk.
+fn detail_distance(root: vec2<f32>) -> f32 {
+    let delta = root - camera.lod_focus.xy;
+    let forward = camera.lod_focus.zw;
+    if (dot(forward, forward) < 0.5) { return length(root - camera.camera_position.xz); }
+    let along = dot(delta, forward) / 1.5;
+    let across = dot(delta, vec2(-forward.y, forward.x)) * 1.5;
+    return length(vec2(along, across));
+}
+
+fn near_field_coverage(root: vec2<f32>) -> f32 {
+    if (dot(camera.lod_focus.zw, camera.lod_focus.zw) < 0.5) { return 0.0; }
+    return 1.0 - smoothstep(12.0, 26.0, detail_distance(root));
+}
+
 struct DebugConfig {
     // x: 0 geometry, 1 accepted species, 2 parent links, 3 outcomes, 4 group structure
     // y: 0 authored density, 1 balanced production density, 2 full-density reference
@@ -73,6 +89,11 @@ struct Camera {
     wind: vec4<f32>,
     // x: spatial frequency, y: speed, z: gustiness, w: hashed blade flutter
     wind_shape: vec4<f32>,
+    lod_focus: vec4<f32>,
+    canopy_appearance: vec4<f32>,
+    canopy_shape: vec4<f32>,
+    canopy_distance: vec4<f32>,
+    canopy_origin: vec4<f32>,
 }
 
 struct SurfaceSample {
@@ -209,12 +230,15 @@ fn finish_candidate_cache(@builtin(global_invocation_id) id: vec3<u32>) {
 const PI_2: f32 = 6.283185307179586;
 const SINGLE_HIGH_CAPACITY: u32 = 32768u;
 const SPLIT_HIGH_CAPACITY: u32 = 32768u;
-const LOW_DETAIL_CAPACITY: u32 = 278528u;
+const LOW_DETAIL_CAPACITY: u32 = 786432u;
 const LOW_DETAIL_MINIMUM_PARTITION: u32 = 32768u;
 const SPLIT_HIGH_OFFSET: u32 = SINGLE_HIGH_CAPACITY;
 const LOW_DETAIL_OFFSET: u32 = SINGLE_HIGH_CAPACITY + SPLIT_HIGH_CAPACITY;
 const MAX_DIAGNOSTIC_INSTANCES: u32 = 65536u;
 const MAX_PROCEDURAL_DISTANCE: f32 = 96.0;
+// Geometry quality control, separate from the near-field density footprint.
+// 1.0 restores the previous range; 0.65 switches to the low mesh 35% sooner.
+const HIGH_TOPOLOGY_DISTANCE_SCALE: f32 = 0.65;
 const QUARTER_LOD_FLAG: u32 = 0x80000000u;
 const WORK_ITEM_INDEX_MASK: u32 = 0x7fffffffu;
 const DIAGNOSTIC_INDEX_COUNT: u32 = 6u;
@@ -672,24 +696,19 @@ fn blade_extent_limits_pixels(
 ) -> vec2<f32> {
     let projected_extent = projected_blade_extent_pixels(candidate, surface, choice);
     let high_threshold = choice.threshold.y;
-    let bounded_high_radius = max(high_radius, 1e-3);
-    // A single camera-centred radius made the whole field cross the topology boundary as a ring.
-    // Stagger the boundary without sacrificing the near field. The former 0.50..1.20 radius
-    // and 0.68 morph start began collapsing the 44 roots/m2 study at only 3.7 m. Start at
-    // 0.99 of the budget radius instead (~10.8 m); individual low boundaries are ~12..14.2 m.
-    // With the CPU's 50% budget utilization, the outermost full disk consumes at most
-    // 0.5 * 1.3^2 = 84.5% of the high bin before placement variance. No arena grows.
-    // The stable seed remains independent of density retirement.
+    let bounded_high_radius = max(high_radius * HIGH_TOPOLOGY_DISTANCE_SCALE, 1e-3);
+    // Stable per-root staggering softens the topology transition. The focus ellipse
+    // preserves the disk area used by the CPU budget (0.5 * 1.3² = 84.5% maximum).
     let staggered_high_radius = bounded_high_radius * mix(
         1.10, 1.30, random01(candidate.seed ^ 0x6a09e667u),
     );
-    let distance = length(candidate.root - camera.camera_position.xz);
+    let distance = detail_distance(candidate.root);
     let high_weight = 1.0 - smoothstep(
         staggered_high_radius * 0.90,
         staggered_high_radius,
         distance,
     );
-    // High topology is admitted through a stable world-space disk sized from the authored root
+    // High topology is admitted through a stable world-space footprint sized from the authored root
     // density and the device-profile bin capacity. The annulus uses the existing high-to-low
     // geometry morph. It never relies on atomic append order to decide which roots survive.
     let budget_extent = high_threshold * mix(0.999, 1.45, high_weight);
@@ -810,7 +829,7 @@ fn population_lod_retention_limit(population_density: f32, topology_class: u32) 
         debug_config.values.y == DENSITY_MODE_BALANCED
         && population_density < 0.999
     ) {
-        let budget_scale = select(1.0, SPLIT_LOW_DENSITY_BUDGET_SCALE, topology_class != 0u);
+        let budget_scale = 1.0;
         return min(population_density + BALANCED_DENSITY_FADE_BAND * budget_scale * 0.5, 1.0);
     }
     return population_density;
@@ -868,9 +887,15 @@ fn evaluate_candidate(item: WorkItem, candidate_index: u32, early_rejection: boo
     } else if (debug_config.values.y == DENSITY_MODE_FULL_REFERENCE) {
         population_density = 1.0;
     }
-    // Restore the established distant population and its original three-triangle pair.
+    let near_coverage = near_field_coverage(candidate.root);
+    if (debug_config.values.y == DENSITY_MODE_BALANCED) {
+        population_density = max(population_density, near_coverage);
+    }
+    // Remove the paired-root reduction gradually inside the gameplay focus region.
+    // Far grass still uses the existing low-density, three-triangle representation.
     if (topology_class != 0u && debug_config.values.y != DENSITY_MODE_FULL_REFERENCE) {
-        population_density *= SPLIT_LOW_DENSITY_BUDGET_SCALE;
+        let near_scale = select(0.0, near_coverage, debug_config.values.y == DENSITY_MODE_BALANCED);
+        population_density *= mix(SPLIT_LOW_DENSITY_BUDGET_SCALE, 1.0, near_scale);
     }
     var lod = 0u;
     if (

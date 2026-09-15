@@ -53,7 +53,8 @@ pub(super) fn ui(
             egui::ComboBox::from_id_salt("study-ground").selected_text(state.ground.label()).show_ui(ui, |ui| {
                 for mode in [GroundMode::Meadow, GroundMode::Dried, GroundMode::Neutral,
                     GroundMode::OriginalStudy, GroundMode::DarkenedStudy,
-                    GroundMode::UnderstoryStudy, GroundMode::CoverageStudy] {
+                    GroundMode::UnderstoryStudy, GroundMode::CoverageStudy,
+                    GroundMode::CanopyGroundStudy] {
                     ui.selectable_value(&mut state.ground, mode, mode.label());
                 }
             });
@@ -66,7 +67,8 @@ pub(super) fn ui(
             ui.toggle_value(&mut state.show_picker, "References…");
             ui.toggle_value(&mut state.show_inspector, "Inspector…");
             ui.toggle_value(&mut state.show_colors, "Colors…");
-            if ui.button("Hide windows").clicked() { state.show_picker = false; state.show_inspector = false; state.show_colors = false; }
+            if ui.toggle_value(&mut state.show_canopy, "Canopy…").clicked() && state.show_canopy { state.ground = GroundMode::CanopyGroundStudy; }
+            if ui.button("Hide windows").clicked() { state.show_picker = false; state.show_inspector = false; state.show_colors = false; state.show_canopy = false; }
             ui.checkbox(&mut state.show_reference, "Compare");
             ui.checkbox(&mut state.show_character, "Character");
             ui.checkbox(&mut state.show_ruler, "2 m ruler");
@@ -189,9 +191,10 @@ pub(super) fn ui(
         let dropped: u32 = stats.capacity_dropped_instances.iter().sum();
         ui.horizontal_wrapped(|ui| {
             ui.small(format!(
-                "{} × {} · MSAA off · {}",
+                "{} × {} · MSAA {}× · {}",
                 state.render_size[0],
                 state.render_size[1],
+                state.msaa_samples,
                 settings.shape_inspection.label()
             ));
             if state.ready_frames >= 65 && stats.gpu_samples > 1 {
@@ -437,4 +440,27 @@ pub(super) fn ui(
             });
         });
     state.show_inspector = inspector_open;
+    canopy_window(&context, &mut state, &mut lighting, &mut settings);
+}
+
+fn canopy_window(
+    context: &egui::Context,
+    state: &mut StudyState,
+    lighting: &mut VegetationLighting,
+    settings: &mut VegetationDebugSettings,
+) {
+    let mut open = state.show_canopy;
+    egui::Window::new("Canopy · ground and grass").id(egui::Id::new("canopy-look"))
+        .open(&mut open).default_width(335.0).default_pos(egui::pos2(1040.0, 150.0))
+        .vscroll(true).show(context, |ui| {
+            ui.label("Shared shade under the grass, fading upward. An artistic approximation, not real shadows.");
+            if state.ground != GroundMode::CanopyGroundStudy {
+                if ui.button("Use canopy ground").clicked() { state.ground = GroundMode::CanopyGroundStudy; }
+            }
+            crate::canopy::draw_controls(ui, &mut lighting.canopy, &mut state.canopy_message);
+            crate::canopy::density_controls(ui, settings);
+            ui.label("Save study also keeps these controls with the camera and catalog. Colors are in Colors…");
+            if let Some(message) = &state.canopy_message { ui.label(message); }
+        });
+    state.show_canopy = open;
 }

@@ -171,10 +171,47 @@ pub struct TerrainMaterial {
     macro_variation: Handle<Image>,
     #[storage(7, read_only)]
     stochastic_cache: Handle<ShaderBuffer>,
+    #[uniform(11)]
+    canopy_shading: TerrainCanopyShading,
+    #[uniform(8)]
+    canopy_bounds: Vec4,
+    #[texture(9)]
+    #[sampler(10)]
+    canopy_coverage: Option<Handle<Image>>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, ShaderType)]
+pub struct TerrainCanopyShading {
+    appearance: Vec4,
+    shape: Vec4,
+    distance: Vec4,
+    origin: Vec4,
+}
+impl From<[[f32; 4]; 4]> for TerrainCanopyShading {
+    fn from(v: [[f32; 4]; 4]) -> Self {
+        Self {
+            appearance: v[0].into(),
+            shape: v[1].into(),
+            distance: v[2].into(),
+            origin: v[3].into(),
+        }
+    }
+}
+impl TerrainMaterial {
+    pub fn set_canopy_shading(&mut self, packed: [[f32; 4]; 4]) {
+        self.canopy_shading = packed.into();
+    }
+
+    /// Static grass cover in render-space XZ; visibility is independent of render LOD/wind.
+    pub fn set_canopy_coverage(&mut self, coverage: Option<Handle<Image>>, bounds: Vec4) {
+        self.canopy_coverage = coverage;
+        self.canopy_bounds = bounds;
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TerrainMaterialKey {
+    canopy: bool,
     shading: TerrainShadingMode,
     stochastic_cached: bool,
     prepared: bool,
@@ -185,6 +222,7 @@ impl From<&TerrainMaterial> for TerrainMaterialKey {
     fn from(material: &TerrainMaterial) -> Self {
         Self {
             shading: material.shading_mode,
+            canopy: material.canopy_coverage.is_some(),
             stochastic_cached: material.stochastic_cached,
             prepared: material.prepared,
             prepared_albedo: material.prepared_albedo,
@@ -203,6 +241,11 @@ impl Material for TerrainMaterial {
         _layout: &MeshVertexBufferLayoutRef,
         key: MaterialPipelineKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
+        if key.bind_group_data.canopy
+            && let Some(fragment) = descriptor.fragment.as_mut()
+        {
+            fragment.shader_defs.push("TERRAIN_CANOPY".into());
+        }
         if key.bind_group_data.prepared {
             if let Some(fragment) = descriptor.fragment.as_mut() {
                 fragment.shader_defs.push("TERRAIN_PREPARED".into());
@@ -296,6 +339,9 @@ pub fn prepare_terrain_material(
         source_weights: weight_image.clone(),
         source_base_color_array: base_color_array.clone(),
         stochastic_cache: Handle::default(),
+        canopy_bounds: Vec4::ZERO,
+        canopy_shading: Default::default(),
+        canopy_coverage: None,
         settings: TerrainMaterialUniform {
             cache_origins: Vec4::ZERO,
             cache_size: UVec4::ZERO,

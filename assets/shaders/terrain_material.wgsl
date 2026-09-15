@@ -1,3 +1,6 @@
+#import bevy_pbr::mesh_view_bindings as canopy_view
+#import "shaders/grass_canopy.wgsl"::{canopy_visibility_at}
+
 #import "shaders/terrain_stochastic.wgsl"::{
     quarter_turn, stochastic_vertex_turn, stochastic_vertex_offset,
 }
@@ -35,6 +38,26 @@ struct TerrainMaterialSettings {
 @group(#{MATERIAL_BIND_GROUP}) @binding(5) var normal_material_array: texture_2d_array<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(6) var macro_variation_texture: texture_2d<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(7) var<storage, read> stochastic_cache: array<vec4<f32>>;
+
+#ifdef TERRAIN_CANOPY
+struct TerrainCanopyShading {
+    appearance: vec4<f32>, shape: vec4<f32>, distance_settings: vec4<f32>, origin: vec4<f32>,
+};
+@group(#{MATERIAL_BIND_GROUP}) @binding(11) var<uniform> terrain_canopy: TerrainCanopyShading;
+@group(#{MATERIAL_BIND_GROUP}) @binding(8) var<uniform> canopy_bounds: vec4<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(9) var canopy_coverage: texture_2d<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(10) var canopy_sampler: sampler;
+
+fn canopy_visibility(world_xz: vec2<f32>, camera_distance: f32) -> f32 {
+    let uv = (world_xz - canopy_bounds.xy) * canopy_bounds.zw;
+    let cover = textureSample(canopy_coverage, canopy_sampler, uv).rg;
+    let visibility = canopy_visibility_at(world_xz, 0.0, camera_distance,
+        terrain_canopy.appearance, terrain_canopy.shape, terrain_canopy.distance_settings,
+        terrain_canopy.origin, terrain_canopy.appearance.y, cover.g * 4.0,
+        distance(canopy_view::view.world_position.xz, world_xz));
+    return mix(1.0, visibility, cover.r);
+}
+#endif
 
 struct StochasticUvPlan {
     uv_0: vec2<f32>,
@@ -353,6 +376,9 @@ fn fragment(
     apply_decals(&pbr_input);
 
     out.color = apply_pbr_lighting(pbr_input);
+#ifdef TERRAIN_CANOPY
+    out.color = vec4(out.color.rgb * canopy_visibility(in.world_position.xz, distance(canopy_view::view.world_position, in.world_position.xyz)), out.color.a);
+#endif
     out.color = main_pass_post_lighting_processing(pbr_input, out.color);
 #endif
 #endif

@@ -38,6 +38,11 @@ struct Camera {
     wind: vec4<f32>,
     // x: spatial frequency, y: speed, z: gustiness, w: hashed blade flutter
     wind_shape: vec4<f32>,
+    lod_focus: vec4<f32>,
+    canopy_appearance: vec4<f32>,
+    canopy_shape: vec4<f32>,
+    canopy_distance: vec4<f32>,
+    canopy_origin: vec4<f32>,
 }
 
 struct DispatchIndirectArgs {

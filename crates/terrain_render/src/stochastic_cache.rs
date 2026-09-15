@@ -490,6 +490,9 @@ mod tests {
                         normal_material_array: Handle::default(),
                         macro_variation: Handle::default(),
                         stochastic_cache: Handle::default(),
+                        canopy_bounds: Vec4::ZERO,
+                        canopy_shading: Default::default(),
+                        canopy_coverage: None,
                     }),
             );
         }
@@ -568,6 +571,9 @@ mod tests {
                 normal_material_array: Handle::default(),
                 macro_variation: Handle::default(),
                 stochastic_cache: Handle::default(),
+                canopy_bounds: Vec4::ZERO,
+                canopy_shading: Default::default(),
+                canopy_coverage: None,
             });
         app.update();
         let old = app.world().resource::<CacheEntries>().0[&material.id()]

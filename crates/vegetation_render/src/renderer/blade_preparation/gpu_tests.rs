@@ -19,6 +19,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[path = "shading_gpu_tests.rs"]
+mod shading;
+
 #[derive(Resource, Default, Clone)]
 struct Pixels(Arc<Mutex<Vec<u8>>>);
 
@@ -229,6 +232,7 @@ fn replace_arena(app: &mut App, blades: u64) {
                 &buffers.camera,
                 &buffers.debug_config,
                 &preparation.arena,
+                &buffers.canopy_boundary.buffer,
             );
             world.resource_mut::<VegetationBuffers>().draw_bind_group = group;
         },

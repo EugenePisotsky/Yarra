@@ -27,6 +27,7 @@ use bevy::{
 };
 use vegetation::{SceneValidationError, VegetationScene};
 
+pub mod canopy_coverage;
 mod renderer;
 
 static NEXT_SCENE_REVISION: AtomicU64 = AtomicU64::new(1);
@@ -49,6 +50,7 @@ impl Plugin for VegetationRenderPlugin {
             ExtractResourcePlugin::<VegetationDebugSettings>::default(),
             ExtractResourcePlugin::<VegetationLighting>::default(),
             ExtractResourcePlugin::<VegetationWind>::default(),
+            ExtractResourcePlugin::<VegetationLodFocus>::default(),
             ExtractResourcePlugin::<VegetationBladePreparation>::default(),
             ExtractResourcePlugin::<VegetationSun>::default(),
             ExtractComponentPlugin::<VegetationDebugView>::default(),
@@ -57,6 +59,7 @@ impl Plugin for VegetationRenderPlugin {
         .init_resource::<VegetationDebugSettings>()
         .init_resource::<VegetationLighting>()
         .init_resource::<VegetationWind>()
+        .init_resource::<VegetationLodFocus>()
         .init_resource::<VegetationBladePreparation>()
         .init_resource::<VegetationSun>()
         .add_systems(Update, (cycle_debug_mode, advance_vegetation_wind).chain())
@@ -81,6 +84,13 @@ impl Plugin for VegetationRenderPlugin {
     }
 }
 
+/// Optional render-space focus for gameplay grass detail. A free editor camera can leave
+/// this unset; an orbit camera supplies its subject so zoom never moves detail behind it.
+#[derive(Resource, ExtractResource, Clone, Copy, Debug, Default)]
+pub struct VegetationLodFocus {
+    pub position: Option<Vec3>,
+}
+
 /// Prepare shared curve and wind values once per blade, with a bounded GPU cache.
 #[derive(Resource, ExtractResource, Clone, Copy, Debug)]
 pub struct VegetationBladePreparation {
@@ -103,6 +113,10 @@ pub struct VegetationLighting {
     pub specular_strength: f32,
     pub transmission_strength: f32,
     pub received_shadow_strength: f32,
+    #[serde(default)]
+    pub canopy: vegetation::CanopyShading,
+    #[serde(skip)]
+    pub canopy_origin: [f32; 2],
 }
 
 impl Default for VegetationLighting {
@@ -112,6 +126,8 @@ impl Default for VegetationLighting {
             specular_strength: 0.28,
             transmission_strength: 0.34,
             received_shadow_strength: 0.78,
+            canopy: Default::default(),
+            canopy_origin: [0.0; 2],
         }
     }
 }

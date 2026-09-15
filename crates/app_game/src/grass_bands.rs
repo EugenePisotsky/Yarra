@@ -11,10 +11,8 @@ pub(super) fn install(app: &mut App) {
             Some("medium") => VegetationBladeBands::Medium,
             _ => panic!("--grass-bands requires off, subtle, or medium"),
         }
-    } else if cfg!(target_os = "ios") {
-        VegetationBladeBands::Off
     } else {
-        VegetationBladeBands::Medium
+        VegetationBladeBands::Off
     };
     app.world_mut()
         .resource_mut::<VegetationDebugSettings>()

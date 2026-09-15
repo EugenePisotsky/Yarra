@@ -19,6 +19,7 @@ use vegetation_render::{
 
 mod game_render;
 mod grass_bands;
+mod grass_field;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 mod metal_capture;
 mod render_audit;
@@ -55,6 +56,7 @@ fn main() {
         .add_systems(Update, conform_vegetation_debug_to_streamed_terrain);
 
     grass_bands::install(&mut app);
+    grass_field::install(&mut app);
 
     #[cfg(target_os = "ios")]
     warn!(
@@ -417,91 +419,94 @@ fn draw_streamed_terrain_page_diagnostics(
 fn conform_vegetation_debug_to_streamed_terrain(
     origin: Res<WorldOrigin>,
     catalog: Res<WorldCatalog>,
+    field_trial: Res<grass_field::GrassFieldTrial>,
     terrain_pages: Query<(Entity, &StreamedTerrainSurface)>,
     field_pages: Query<(Entity, &StreamedVegetationFieldPage)>,
     mut vegetation_scene: ResMut<VegetationDebugScene>,
-    mut previous_pages: Local<Option<Vec<(Entity, i64, i32, i32, u8)>>>,
+    mut previous_pages: Local<Option<Vec<(Entity, Entity)>>>,
+    mut previous_origin: Local<Option<(i64, i32, i32)>>,
 ) {
     let Some(active_space) = origin.space() else {
         return;
     };
-    let Some(catalog) = catalog.vegetation().cloned() else {
-        return;
-    };
-    let mut fields = field_pages
-        .iter()
-        .filter(|(_, page)| page.key.space == active_space)
-        .collect::<Vec<_>>();
-    fields.sort_by_key(|(entity, page)| (page.key, *entity));
-    let mut signature = fields
-        .iter()
-        .map(|(entity, page)| {
-            (
-                *entity,
-                page.key.space.0,
-                page.key.cell.x,
-                page.key.cell.z,
-                page.key.lod,
-            )
-        })
-        .collect::<Vec<_>>();
-    signature.extend(terrain_pages.iter().map(|(entity, page)| {
-        (
-            entity,
-            page.key.space.0,
-            page.key.cell.x,
-            page.key.cell.z,
-            page.key.lod | 0x80,
-        )
-    }));
-    signature.sort();
-    if previous_pages.as_ref() == Some(&signature) {
+    let terrain: std::collections::HashMap<_, _> = terrain_pages.iter()
+        .filter(|(_, p)| p.key.space == active_space)
+        .map(|(entity, p)| ((p.key.space.0, p.key.cell.x, p.key.cell.z, p.key.lod), entity))
+        .collect();
+    let signature = paired_vegetation_pages(
+        field_pages.iter().filter(|(_, p)| p.key.space == active_space)
+            .map(|(entity, p)| (entity, (p.key.space.0, p.key.cell.x, p.key.cell.z, p.key.lod))),
+        &terrain,
+    );
+    let frame = (active_space.0, origin.cell().x, origin.cell().z);
+    if previous_pages.as_ref() == Some(&signature) && *previous_origin == Some(frame)
+        && !field_trial.is_changed() && !catalog.is_changed() {
         return;
     }
-    *previous_pages = Some(signature);
+    let Some(mut catalog) = catalog.vegetation().cloned() else { return; };
+    if !field_trial.enabled { catalog = field_trial.baseline.clone(); }
 
-    let pages = fields
-        .into_iter()
-        .filter_map(|(_, fields)| {
-            let terrain = terrain_pages
-                .iter()
-                .map(|(_, terrain)| terrain)
-                .find(|terrain| {
-                    terrain.key.space == fields.key.space
-                        && terrain.key.cell == fields.key.cell
-                        && terrain.key.lod == fields.key.lod
-                })?;
-            let cell_origin = fields.key.cell.origin(fields.cell_size);
-            let render_origin = origin.cell().origin(fields.cell_size);
-            let resolution = terrain.heightfield.resolution;
-            let sample_count = usize::from(resolution).pow(2);
-            Some(VegetationFieldPage::from_data(
-                [
-                    (cell_origin[0] - render_origin[0]) as f32,
-                    (cell_origin[1] - render_origin[1]) as f32,
-                ],
-                fields.cell_size,
-                VegetationSurfaceField {
-                    resolution,
-                    heights: (0..sample_count)
-                        .map(|index| {
-                            terrain.heightfield.height_at(
-                                index % usize::from(resolution),
-                                index / usize::from(resolution),
-                            )
-                        })
-                        .collect(),
-                    normals_oct: terrain.heightfield.normals_oct.clone(),
-                    validity: vec![u8::MAX; sample_count],
-                },
-                fields.data.clone(),
-            ))
-        })
-        .collect();
+    let pages = signature.iter().map(|&(field_entity, terrain_entity)| {
+        let (_, fields) = field_pages.get(field_entity).unwrap();
+        let (_, terrain) = terrain_pages.get(terrain_entity).unwrap();
+        let cell_origin = fields.key.cell.origin(fields.cell_size);
+        let render_origin = origin.cell().origin(fields.cell_size);
+        let resolution = terrain.heightfield.resolution;
+        let sample_count = usize::from(resolution).pow(2);
+        VegetationFieldPage::from_data(
+            [(cell_origin[0] - render_origin[0]) as f32, (cell_origin[1] - render_origin[1]) as f32],
+            fields.cell_size,
+            VegetationSurfaceField {
+                resolution,
+                heights: (0..sample_count).map(|index| terrain.heightfield.height_at(
+                    index % usize::from(resolution), index / usize::from(resolution),
+                )).collect(),
+                normals_oct: terrain.heightfield.normals_oct.clone(),
+                validity: vec![u8::MAX; sample_count],
+            }, fields.data.clone(),
+        )
+    }).collect();
+    *previous_pages = Some(signature);
+    *previous_origin = Some(frame);
     let scene = VegetationScene { catalog, pages };
     vegetation_scene
         .replace(scene)
         .expect("resident vegetation and terrain pages form a valid diagnostic scene");
+}
+
+// Only terrain actually joined to a vegetation page can invalidate the grass scene.
+// Far terrain streaming must not flush placement caches for every resident grass field.
+fn paired_vegetation_pages(
+    fields: impl Iterator<Item = (Entity, (i64, i32, i32, u8))>,
+    terrain: &std::collections::HashMap<(i64, i32, i32, u8), Entity>,
+) -> Vec<(Entity, Entity)> {
+    let mut paired: Vec<_> = fields.filter_map(|(entity, key)|
+        terrain.get(&key).map(|&surface| (key, entity, surface))).collect();
+    paired.sort_by_key(|&(key, entity, _)| (key, entity));
+    paired.into_iter().map(|(_, field, surface)| (field, surface)).collect()
+}
+
+#[cfg(test)]
+mod grass_scene_tests {
+    use super::*;
+    #[test]
+    fn unrelated_terrain_does_not_invalidate_grass_but_joined_terrain_does() {
+        let mut world = World::new();
+        let field = world.spawn_empty().id();
+        let surface = world.spawn_empty().id();
+        let unrelated = world.spawn_empty().id();
+        let replacement = world.spawn_empty().id();
+        let key = (1, 0, 0, 0);
+        let mut terrain = std::collections::HashMap::from([(key, surface)]);
+        let signature = |terrain: &_| paired_vegetation_pages([(field, key)].into_iter(), terrain);
+        let original = signature(&terrain);
+        terrain.insert((1, 8, 0, 2), unrelated);
+        assert_eq!(signature(&terrain), original);
+        terrain.insert(key, replacement);
+        assert_ne!(signature(&terrain), original);
+        terrain.remove(&key);
+        assert!(signature(&terrain).is_empty());
+    }
 }
 
 fn vegetation_v2_debug_enabled() -> bool {

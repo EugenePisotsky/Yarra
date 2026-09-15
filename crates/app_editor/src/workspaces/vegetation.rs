@@ -119,6 +119,7 @@ struct StudyState {
     camera_label: String,
     comparison: ComparisonView,
     render_size: [u32; 2],
+    msaa_samples: u32,
     seed: u32,
     wind: WindStudy,
     playing: bool,
@@ -141,6 +142,8 @@ struct StudyState {
     show_reference: bool,
     show_inspector: bool,
     show_colors: bool,
+    show_canopy: bool,
+    canopy_message: Option<String>,
     show_picker: bool,
     save_study: bool,
     show_character: bool,
@@ -200,8 +203,10 @@ impl StudyState {
             .load
             .as_ref()
             .map_or([WIDTH, HEIGHT], |d| d.render_size);
+        let msaa_samples = launch.load.as_ref().map_or(1, |d| d.msaa_samples);
         let show_inspector = launch.show_inspector;
         let show_colors = launch.show_colors;
+        let show_canopy = launch.show_canopy;
         let show_picker = launch.show_picker;
         let playing = launch.play;
         let camera_label = if launch.load.is_some() {
@@ -217,6 +222,7 @@ impl StudyState {
             camera_label,
             comparison,
             render_size,
+            msaa_samples,
             seed,
             wind,
             playing,
@@ -236,9 +242,11 @@ impl StudyState {
             capture_finished: false,
             capture_failed: false,
             started: Instant::now(),
-            show_reference: true,
+            show_reference: !show_canopy,
             show_inspector,
             show_colors,
+            show_canopy,
+            canopy_message: None,
             show_picker,
             save_study: false,
             show_character,
@@ -380,7 +388,11 @@ fn setup(
             far: 512.0,
             ..default()
         }),
-        Msaa::Off,
+        if state.msaa_samples == 4 {
+            Msaa::Sample4
+        } else {
+            Msaa::Off
+        },
         Exposure { ev100: 13.0 },
         state.camera.transform(),
         RenderLayers::layer(LAYER),
@@ -483,11 +495,19 @@ mod tests {
             .spawn((Camera::default(), VegetationWorkspaceCamera))
             .id();
         app.update();
-        for _ in 0..3 {
+        for iteration in 0..3 {
+            let world_canopy = vegetation::CanopyShading {
+                strength: 0.5 + iteration as f32 * 0.1,
+                ..vegetation::CanopyShading::experiment()
+            };
+            app.world_mut().resource_mut::<VegetationLighting>().canopy = world_canopy;
             app.world_mut()
                 .resource_mut::<NextState<EditorWorkspace>>()
                 .set(EditorWorkspace::Vegetation);
             app.update();
+            assert_eq!(app.world().resource::<VegetationLighting>().canopy, world_canopy);
+            let study_canopy = vegetation::CanopyShading { height_metres: 0.23, ..world_canopy };
+            app.world_mut().resource_mut::<VegetationLighting>().canopy = study_canopy;
             assert!(app.world().get::<Camera>(study_camera).unwrap().is_active);
             assert!(!app.world().get::<Camera>(world_camera).unwrap().is_active);
             assert!(
@@ -517,6 +537,7 @@ mod tests {
                 .resource_mut::<NextState<EditorWorkspace>>()
                 .set(EditorWorkspace::World);
             app.update();
+            assert_eq!(app.world().resource::<VegetationLighting>().canopy, study_canopy);
             assert!(app.world().get::<Camera>(world_camera).unwrap().is_active);
             assert!(!app.world().get::<Camera>(study_camera).unwrap().is_active);
             assert_eq!(
@@ -721,6 +742,7 @@ fn enter(
     >,
     mut ambient: ResMut<GlobalAmbientLight>,
 ) {
+    let shared_canopy = lighting.canopy;
     let (entity, transform, light, layers) = &mut *sun;
     state.restore = Some(RestoredWorld {
         scene: scene.clone(),
@@ -743,6 +765,7 @@ fn enter(
         if let Some((s, l)) = state.own_settings {
             *settings = s;
             *lighting = l;
+            lighting.canopy = shared_canopy;
         }
         if let Some((t, l, a)) = &state.own_environment {
             **transform = *t;
@@ -750,6 +773,7 @@ fn enter(
             *ambient = a.clone();
         }
     }
+    lighting.canopy_origin = [0.0; 2];
     if let Some(shape) = state.launch.shape {
         settings.shape_inspection = shape;
     }
@@ -787,12 +811,14 @@ fn leave(
     mut ambient: ResMut<GlobalAmbientLight>,
     sun: Single<(&Transform, &DirectionalLight), With<WorldSun>>,
 ) {
+    let shared_canopy = lighting.canopy;
     state.own_settings = Some((*settings, *lighting));
     state.own_environment = Some((*sun.0, sun.1.clone(), (*ambient).clone()));
     if let Some(saved) = state.restore.take() {
         *scene = saved.scene;
         *settings = saved.settings;
         *lighting = saved.lighting;
+        lighting.canopy = shared_canopy;
         *wind = saved.wind;
         *ambient = saved.ambient;
         let (entity, transform, light, layers) = saved.sun;
@@ -911,7 +937,7 @@ fn document(
         comparison: state.comparison.clone(),
         render_size: state.render_size,
         patch_size: state.field_size,
-        msaa_samples: 1,
+        msaa_samples: state.msaa_samples,
         exposure_ev100: 13.0,
         sun_rotation: sun.0.rotation.to_array(),
         sun_color: sun.1.color.to_srgba().to_f32_array(),

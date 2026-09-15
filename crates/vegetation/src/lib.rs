@@ -8,7 +8,9 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+mod canopy;
 pub mod fixtures;
+pub use canopy::CanopyShading;
 
 macro_rules! id_type {
     ($name:ident) => {

@@ -171,6 +171,9 @@ mod tests {
             normal_material_array: Handle::default(),
             macro_variation: Handle::default(),
             stochastic_cache: Handle::default(),
+            canopy_bounds: Vec4::ZERO,
+            canopy_shading: Default::default(),
+            canopy_coverage: None,
             settings: TerrainMaterialUniform {
                 chunk_minimum: Vec2::new(-32.0, 64.0),
                 chunk_extent: Vec2::splat(32.0),

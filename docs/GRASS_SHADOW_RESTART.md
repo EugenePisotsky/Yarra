@@ -1,5 +1,9 @@
 # Grass shadow restart — 2026-09-09
 
+**September 14 update:** The user rejected isolated clumps as an appearance gate and explicitly
+requested full-field comparisons. See `GRASS_FIELD_APPEARANCE_TRIAL.md`; its field-scale workflow
+supersedes the small-patch-only and timing gates below. Performance measurements remain deferred.
+
 Both the raised depth-noise sheet and the clump-mask caster failed visual review. The user rejected
 continuing either approach, especially from above. Both implementations and their controls have been
 removed. There is no replacement caster selected or implemented. This supersedes the earlier plan

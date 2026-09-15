@@ -39,6 +39,7 @@ impl PreparationKey {
         config: DebugConfigGpu,
         pipelines: [ComputePipelineId; 2],
     ) -> Self {
+        camera.canopy = [[0.0; 4]; 4]; // material-only controls
         if camera.wind[2] <= 1e-5 || config.workload[3] & (1 << 9) != 0 {
             camera.wind[3] = 0.0;
         }
@@ -259,6 +260,9 @@ mod tests {
         let config = DebugConfigGpu::zeroed();
         let pipelines = [ComputePipelineId::new(), ComputePipelineId::new()];
         let key = PreparationKey::new(1, 1, camera, config, pipelines);
+        let mut shaded = camera;
+        shaded.canopy = vegetation::CanopyShading::experiment().packed([32.0, -64.0]);
+        assert!(key == PreparationKey::new(1, 1, shaded, config, pipelines));
         let mut animated = camera;
         animated.wind[3] = 2.0;
         assert!(key == PreparationKey::new(1, 1, animated, config, pipelines));
@@ -282,7 +286,8 @@ mod tests {
         density.values[1] = 1;
         assert!(key != PreparationKey::new(1, 1, camera, density, pipelines));
         const {
-            assert!(ARENA_BYTES + 12 <= 18 * 1024 * 1024);
+            // Includes the expanded full-reference instance-to-blade index table.
+            assert!(ARENA_BYTES + 12 <= 20 * 1024 * 1024);
         }
     }
 }

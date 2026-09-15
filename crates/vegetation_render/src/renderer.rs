@@ -55,6 +55,7 @@ use crate::{
 
 mod blade_preparation;
 mod candidate_cache;
+mod canopy_boundary;
 #[cfg(test)]
 mod shadow_study;
 
@@ -65,7 +66,9 @@ const DRAW_SHADER_PATH: &str = "shaders/vegetation_debug_draw.wgsl";
 // configuration: normal population LOD must fit before the emergency guard is reached.
 const SINGLE_HIGH_CAPACITY: u32 = 32_768;
 const SPLIT_HIGH_CAPACITY: u32 = 32_768;
-const LOW_DETAIL_CAPACITY: u32 = 278_528;
+// Full-reference density at the 72-root field's normal third-person view exceeds
+// the former 278,528-record low arena. Reserve room without increasing Balanced emissions.
+const LOW_DETAIL_CAPACITY: u32 = 786_432;
 const LOW_DETAIL_MINIMUM_PARTITION: u32 = 32_768;
 const PROCEDURAL_INSTANCE_CAPACITY: u32 =
     SINGLE_HIGH_CAPACITY + SPLIT_HIGH_CAPACITY + LOW_DETAIL_CAPACITY;
@@ -336,6 +339,9 @@ struct CameraGpu {
     wind: [f32; 4],
     // x: spatial frequency, y: speed, z: gustiness, w: hashed blade flutter
     wind_shape: [f32; 4],
+    // xy: detail centre, zw: normalized forward XZ (zero selects the camera disk).
+    lod_focus: [f32; 4],
+    canopy: [[f32; 4]; 4],
 }
 
 #[derive(Clone, Copy, PartialEq, Pod, Zeroable)]
@@ -363,6 +369,7 @@ impl GenerationInputs {
         // Placement uses wind strength for conservative bounds, but wind phase is evaluated
         // only by blade preparation/drawing. Animate existing blades without rebuilding them.
         camera.wind[3] = 0.0;
+        camera.canopy = [[0.0; 4]; 4]; // shading sliders never invalidate placement
         config.workload[3] &= !(255 << 16);
         Self {
             source_revision,
@@ -447,6 +454,7 @@ impl FromWorld for VegetationPipelines {
                     storage_buffer_read_only_sized(false, None),
                     uniform_buffer_sized(false, None),
                     uniform_buffer_sized(false, None),
+                    storage_buffer_read_only_sized(false, None),
                     storage_buffer_read_only_sized(false, None),
                 ),
             ),
@@ -615,6 +623,7 @@ struct VegetationBuffers {
     choices_capacity: u64,
     coverage: Buffer,
     coverage_capacity: u64,
+    canopy_boundary: canopy_boundary::CanopyBoundary,
     surfaces: Buffer,
     surfaces_capacity: u64,
     species: Buffer,
@@ -743,6 +752,7 @@ impl FromWorld for VegetationBuffers {
                 &candidate_cache.build_items,
             ],
         );
+        let canopy_boundary = canopy_boundary::CanopyBoundary::new(render_device);
         let draw_bind_group = create_draw_bind_group(
             render_device,
             &draw_layout,
@@ -754,6 +764,7 @@ impl FromWorld for VegetationBuffers {
             &world
                 .resource::<blade_preparation::BladePreparation>()
                 .arena,
+            &canopy_boundary.buffer,
         );
         Self {
             work_items,
@@ -765,6 +776,7 @@ impl FromWorld for VegetationBuffers {
             choices_capacity: 16,
             coverage,
             coverage_capacity: 16,
+            canopy_boundary,
             surfaces,
             surfaces_capacity: 16,
             species,
@@ -862,6 +874,7 @@ fn create_draw_bind_group(
     camera: &Buffer,
     debug_config: &Buffer,
     prepared_arena: &Buffer,
+    canopy_boundary: &Buffer,
 ) -> BindGroup {
     render_device.create_bind_group(
         Some("vegetation-v2 debug draw"),
@@ -873,6 +886,7 @@ fn create_draw_bind_group(
             camera.as_entire_binding(),
             debug_config.as_entire_binding(),
             prepared_arena.as_entire_binding(),
+            canopy_boundary.as_entire_binding(),
         )),
     )
 }
@@ -998,6 +1012,7 @@ fn prepare(
     lighting: Res<VegetationLighting>,
     wind: Res<VegetationWind>,
     sun: Res<VegetationSun>,
+    lod_focus: Res<crate::VegetationLodFocus>,
     render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
     pipeline_cache: Res<PipelineCache>,
@@ -1011,6 +1026,14 @@ fn prepare(
         buffers.active = false;
         return;
     };
+    if buffers.canopy_boundary.update(&scene, &lighting, &render_device, &render_queue) {
+        let layout = pipeline_cache.get_bind_group_layout(&pipelines.draw_layout);
+        buffers.draw_bind_group = create_draw_bind_group(
+            &render_device, &layout, &buffers.procedural_instances, &buffers.diagnostic_instances,
+            &buffers.species, &buffers.camera, &buffers.debug_config, &blade_preparation.arena,
+            &buffers.canopy_boundary.buffer,
+        );
+    }
     if scene.revision() != buffers.uploaded_revision {
         let packed = pack_scene(scene.scene());
         let schedule_layout = pipeline_cache.get_bind_group_layout(&pipelines.schedule_layout);
@@ -1150,6 +1173,7 @@ fn prepare(
                 &buffers.camera,
                 &buffers.debug_config,
                 &blade_preparation.arena,
+                &buffers.canopy_boundary.buffer,
             );
         }
         buffers.work_item_count = packed.work_items.len() as u32;
@@ -1192,7 +1216,14 @@ fn prepare(
     let clip_from_world = view
         .clip_from_world
         .unwrap_or_else(|| view.clip_from_view * view.world_from_view.to_matrix().inverse());
+    let focus_gpu = pack_lod_focus(
+        lod_focus.position,
+        view.world_from_view.translation(),
+        *view.world_from_view.forward(),
+    );
     let camera_gpu = CameraGpu {
+        lod_focus: focus_gpu,
+        canopy: lighting.canopy.packed(lighting.canopy_origin),
         clip_from_world: clip_from_world.to_cols_array(),
         camera_position: view
             .world_from_view
@@ -1379,6 +1410,21 @@ fn maximum_topology_densities(scene: &vegetation::VegetationScene) -> [f32; 2] {
     }
 
     maximum_density
+}
+
+fn pack_lod_focus(focus: Option<Vec3>, camera: Vec3, forward: Vec3) -> [f32; 4] {
+    let Some(focus) = focus.filter(|v| v.is_finite()) else {
+        return [camera.x, camera.z, 0.0, 0.0];
+    };
+    // A vertical view has no preferred ground direction and keeps a circular footprint.
+    let horizontal = forward.xz();
+    let direction = if horizontal.length_squared() > 1e-4 {
+        horizontal.normalize()
+    } else {
+        Vec2::ZERO
+    };
+    let center = focus.xz() + direction * 2.0;
+    [center.x, center.y, direction.x, direction.y]
 }
 
 fn high_detail_radii(scene: &vegetation::VegetationScene) -> [f32; 2] {
@@ -2089,6 +2135,9 @@ mod tests {
         let camera = CameraGpu::zeroed();
         let config = DebugConfigGpu::zeroed();
         let baseline = GenerationInputs::new(1, camera, config);
+        let mut shaded = camera;
+        shaded.canopy = vegetation::CanopyShading::experiment().packed([32.0, -64.0]);
+        assert!(baseline == GenerationInputs::new(1, shaded, config));
         let mut animated = camera;
         animated.wind[3] = 12.5;
         assert!(baseline == GenerationInputs::new(1, animated, config));
@@ -2262,11 +2311,70 @@ mod tests {
         assert_eq!(size_of::<SurfaceSampleGpu>(), 32);
         assert_eq!(size_of::<ProceduralInstanceGpu>(), 32);
         assert_eq!(size_of::<DebugInstanceGpu>(), 64);
-        assert_eq!(size_of::<CameraGpu>(), 192);
+        assert_eq!(size_of::<CameraGpu>(), 272);
         assert_eq!(size_of::<DebugConfigGpu>(), 32);
         assert_eq!(GPU_TELEMETRY_SIZE, 64);
         assert_eq!(DRAW_ARGS_SIZE, 80);
         assert_eq!(TELEMETRY_READBACK_SIZE, 144);
+    }
+
+    #[test]
+    fn gameplay_detail_centre_tracks_subject_instead_of_orbit_distance() {
+        let subject = Vec3::new(32.0, 4.0, -64.0);
+        let near = pack_lod_focus(
+            Some(subject),
+            subject + Vec3::new(0.0, 1.6, 4.0),
+            Vec3::new(0.0, -0.2, -1.0),
+        );
+        let far = pack_lod_focus(
+            Some(subject),
+            subject + Vec3::new(0.0, 12.0, 18.0),
+            Vec3::new(0.0, -0.7, -0.7),
+        );
+        assert_eq!(near, far);
+        assert_eq!(near, [32.0, -66.0, 0.0, -1.0]);
+        assert_eq!(
+            pack_lod_focus(None, Vec3::new(5.0, 8.0, 9.0), Vec3::NEG_Z),
+            [5.0, 9.0, 0.0, 0.0]
+        );
+        assert_eq!(
+            pack_lod_focus(
+                Some(subject),
+                subject + Vec3::Y * 20.0,
+                Vec3::new(0.0, -1.0, -1e-7)
+            ),
+            [32.0, -64.0, 0.0, 0.0]
+        );
+    }
+
+    #[test]
+    fn streamed_scene_upload_excludes_canopy_raster() {
+        let catalog: vegetation::VegetationCatalog = ron::from_str(include_str!(
+            "../../../content/vegetation/field-current.ron"
+        )).unwrap();
+        let population = catalog.populations.iter().find(|p| p.key == "short_split_fill").unwrap().id;
+        let pages = (-3..=3).flat_map(|z| (-3..=3).map(move |x| (x, z)))
+            .map(|(x, z)| vegetation::VegetationFieldPage {
+                origin_xz: [x as f32 * 32.0, z as f32 * 32.0], size: 32.0,
+                surface: vegetation::VegetationSurfaceField::flat(33, 0.0, [0.0, 1.0, 0.0]),
+                fields: vec![vegetation::VegetationPopulationField {
+                    population, resolution: 16, coverage: vec![255; 256], flow_direction: [0.0, 1.0],
+                }],
+            }).collect();
+        let scene = vegetation::VegetationScene { catalog, pages };
+        let started = std::time::Instant::now();
+        let packed = pack_scene(&scene);
+        let pack_ms = started.elapsed().as_secs_f64() * 1000.0;
+        assert_eq!(packed.coverage.len(), 49 * 256);
+        assert_eq!(packed.work_items[0].layout[2], 0);
+        // Explicit diagnostic for the removed synchronous path; no timing assertion or GPU loop.
+        if std::env::var_os("YARRA_TRACE_BOUNDARY_REBUILD").is_some() {
+            let started = std::time::Instant::now();
+            let boundary = crate::canopy_coverage::BoundaryField::for_scene(&scene.catalog, &scene.pages);
+            let values = boundary.gpu_values();
+            eprintln!("49-page scene: former synchronous canopy bake {:.2} ms / {} bytes; source pack without canopy {:.2} ms / {} coverage bytes",
+                started.elapsed().as_secs_f64() * 1000.0, values.len() * 4, pack_ms, packed.coverage.len() * 4);
+        }
     }
 
     #[test]
@@ -2397,7 +2505,7 @@ mod tests {
         assert!(SPLIT_LOW_INDEX_COUNT <= SINGLE_LOW_INDEX_COUNT);
         assert!(
             u64::from(PROCEDURAL_INSTANCE_CAPACITY) * size_of::<ProceduralInstanceGpu>() as u64
-                <= 11 * 1024 * 1024
+                <= 26 * 1024 * 1024
         );
     }
 
@@ -2521,7 +2629,7 @@ mod tests {
         let sanitized = format!(
             "{}\n{}fn directional_shadow_visibility(_input: VertexOutput) -> f32 {{ return 1.0; }}\n{}",
             include_str!("../../../assets/shaders/vegetation_blade.wgsl"),
-            &draw[declarations..shadow_adapter],
+            format!("{}\n{}", include_str!("../../../assets/shaders/grass_canopy.wgsl"), &draw[declarations..shadow_adapter]),
             &draw[post_adapter..],
         )
         .replace("pbr_lighting::D_GGX", "test_d_ggx")
@@ -2641,11 +2749,11 @@ mod tests {
         assert!(draw.contains("mix(blade_normal, clump_normal, distance_stability)"));
         assert!(draw.contains("let filtered_alpha_roughness = clamp("));
         assert!(draw.contains("let filtered_broad_specular = ggx_foliage_specular("));
-        assert!(draw.contains("let local_sheen_specular = ggx_foliage_specular("));
+        assert!(draw.contains("local_sheen_specular = ggx_foliage_specular("));
         assert!(draw.contains("let local_sheen_weight = 1.0 - smoothstep("));
         assert!(draw.contains("let broad_specular_weight = mix(0.16, 0.26, distance_stability);"));
         assert!(draw.contains("local_sheen_specular * local_sheen_weight"));
-        assert!(draw.contains("dot(shading_normal, light_direction)"));
+        assert!(draw.contains("dot(diffuse_normal, light_direction)"));
         assert!(draw.contains("let upper_ribbon = smoothstep("));
         assert!(draw.contains("let far_highlight_weight = mix("));
         assert!(draw.contains("debug_config.values.z == LIGHTING_MODE_LEGACY"));

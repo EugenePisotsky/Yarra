@@ -47,6 +47,7 @@ pub(super) enum GroundMode {
     DarkenedStudy,
     UnderstoryStudy,
     CoverageStudy,
+    CanopyGroundStudy,
 }
 
 impl GroundMode {
@@ -59,6 +60,7 @@ impl GroundMode {
             Self::DarkenedStudy => "Ground test: darken only",
             Self::UnderstoryStudy => "Ground test: understory",
             Self::CoverageStudy => "Ground test: coverage",
+            Self::CanopyGroundStudy => "Canopy integration",
         }
     }
 
@@ -68,6 +70,7 @@ impl GroundMode {
             Self::DarkenedStudy => Some(1),
             Self::UnderstoryStudy => Some(2),
             Self::CoverageStudy => Some(3),
+            Self::CanopyGroundStudy => Some(4),
             _ => None,
         }
     }

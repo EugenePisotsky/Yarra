@@ -106,6 +106,7 @@ pub(super) fn setup(
                         GroundMode::DarkenedStudy,
                         GroundMode::UnderstoryStudy,
                         GroundMode::CoverageStudy,
+                        GroundMode::CanopyGroundStudy,
                     ] {
                         let material = study_materials.add(ground_treatment::StudyMaterial {
                             base: base.clone(),
