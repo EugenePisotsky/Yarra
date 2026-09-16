@@ -1,0 +1,364 @@
+{
+  "experiment": "GP-020",
+  "scope": "One chronological enlarged/default pair; no counterbalanced repeat.",
+  "input_hash_matches": {
+    "binary_sha256": true,
+    "database_sha256": true,
+    "canopy_sha256": true,
+    "shader_sha256": true
+  },
+  "settings_difference": {
+    "prepared_blades": {
+      "enlarged": 524288,
+      "default": 131072
+    }
+  },
+  "enlarged": {
+    "session": "20260916-212946",
+    "prepared_blades": 524288,
+    "whole_run": {
+      "updates": {
+        "frames": 107640,
+        "fps": 119.59981169674093,
+        "late_updates": 366,
+        "max_interval_ms": 23.062,
+        "worst_window_p95_ms": 17.286
+      },
+      "power": {
+        "samples": 889,
+        "coverage_s": 897.88881,
+        "cpu_w": 4.613492035622986,
+        "cpu_w_coverage_s": 897.88881,
+        "gpu_w": 20.51735711030857,
+        "gpu_w_coverage_s": 897.88881,
+        "gpu_mhz": 1303.9732717907466,
+        "gpu_mhz_coverage_s": 897.88881,
+        "gpu_active_percent": 88.484381128327,
+        "gpu_active_percent_coverage_s": 897.88881,
+        "cpu_gpu_w": 25.130849145931553,
+        "thermal_states": [
+          "heavy",
+          "moderate",
+          "nominal"
+        ],
+        "energy_per_app_frame_mj": 210.12448756736933
+      },
+      "hud": {
+        "samples": 215153,
+        "gpu_mean_ms": 5.0607133063447876,
+        "gpu_p95_ms": 6.04,
+        "presentation_interval_mean_ms": 8.35794904091507,
+        "presentation_interval_p95_ms": 8.33,
+        "scope": "Correlated/overlapping HUD samples, not independent frame statistics",
+        "presentation_tail_sample_fraction": 0.0033464557779812505
+      }
+    },
+    "worst_full_app_window": {
+      "event": "sample",
+      "unix_ms": "1789584317156",
+      "elapsed_s": "896.794291",
+      "route_s": "836.794159",
+      "window_s": "1.008889",
+      "frames": "78",
+      "update_fps": "77.313",
+      "update_p95_ms": "16.815",
+      "update_p99_ms": "16.899",
+      "update_max_ms": "17.045",
+      "late_updates": "43",
+      "focused": "true"
+    },
+    "final_five_minutes": {
+      "from_s": 600,
+      "to_s": 900,
+      "fps": 119.26635878848037,
+      "update_coverage_s": 298.357394,
+      "frames": 35584,
+      "late_updates": 222,
+      "max_interval_ms": 19.167,
+      "hud_samples": 71403,
+      "hud_interval_p95_ms": 8.33,
+      "hud_interval_max_ms": 16.67,
+      "hud_gpu_mean_ms": 4.9043982745823005,
+      "hud_gpu_p95_ms": 5.15,
+      "worst_full_app_sample": {
+        "event": "sample",
+        "unix_ms": "1789584317156",
+        "elapsed_s": "896.794291",
+        "route_s": "836.794159",
+        "window_s": "1.008889",
+        "frames": "78",
+        "update_fps": "77.313",
+        "update_p95_ms": "16.815",
+        "update_p99_ms": "16.899",
+        "update_max_ms": "17.045",
+        "late_updates": "43",
+        "focused": "true"
+      },
+      "min_gpu_mhz": 942.0,
+      "power": {
+        "samples": 295,
+        "coverage_s": 297.88899,
+        "cpu_w": 4.374807669964573,
+        "cpu_w_coverage_s": 297.88899,
+        "gpu_w": 21.006129775088365,
+        "gpu_w_coverage_s": 297.88899,
+        "gpu_mhz": 1339.6029775387135,
+        "gpu_mhz_coverage_s": 297.88899,
+        "gpu_active_percent": 87.503626325028,
+        "gpu_active_percent_coverage_s": 297.88899,
+        "cpu_gpu_w": 25.38093744505294,
+        "thermal_states": [
+          "nominal"
+        ]
+      }
+    },
+    "thermal_transitions": [
+      {
+        "seconds_from_measurement_start": -90.35599994659424,
+        "sample_end_unix_s": 1789583390.0,
+        "state": "nominal"
+      },
+      {
+        "seconds_from_measurement_start": 238.64400005340576,
+        "sample_end_unix_s": 1789583719.0,
+        "state": "moderate"
+      },
+      {
+        "seconds_from_measurement_start": 240.64400005340576,
+        "sample_end_unix_s": 1789583721.0,
+        "state": "heavy"
+      },
+      {
+        "seconds_from_measurement_start": 365.64400005340576,
+        "sample_end_unix_s": 1789583846.0,
+        "state": "moderate"
+      },
+      {
+        "seconds_from_measurement_start": 424.64400005340576,
+        "sample_end_unix_s": 1789583905.0,
+        "state": "nominal"
+      }
+    ],
+    "idle": {
+      "samples": 28,
+      "coverage_s": 28.47232,
+      "cpu_w": 0.7333478975369762,
+      "cpu_w_coverage_s": 28.47232,
+      "gpu_w": 0.06179014706212912,
+      "gpu_w_coverage_s": 28.47232,
+      "gpu_mhz": 564.5785348717632,
+      "gpu_mhz_coverage_s": 28.47232,
+      "gpu_active_percent": 3.9456734716384196,
+      "gpu_active_percent_coverage_s": 28.47232,
+      "cpu_gpu_w": 0.7951380445991054,
+      "thermal_states": [
+        "nominal"
+      ]
+    },
+    "power_source_at_start": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=22478947)\t100%; charged; 0:00 remaining present: true"
+  },
+  "default": {
+    "session": "20260916-220712",
+    "prepared_blades": 131072,
+    "whole_run": {
+      "updates": {
+        "frames": 107602,
+        "fps": 119.55706880435976,
+        "late_updates": 399,
+        "max_interval_ms": 17.974,
+        "worst_window_p95_ms": 16.982,
+        "worst_window_fps": 72.995693254098,
+        "worst_window_duration_s": 1.000059,
+        "worst_window_end_s": 831.795000076294,
+        "below_95pct_target_windows": 14,
+        "below_95pct_target_window_s": 14.067268,
+        "late_update_fraction": 0.0037081095146930354
+      },
+      "power": {
+        "samples": 890,
+        "coverage_s": 898.84309,
+        "cpu_w": 4.381315021701953,
+        "cpu_w_coverage_s": 898.84309,
+        "gpu_w": 19.68346612826495,
+        "gpu_w_coverage_s": 898.84309,
+        "gpu_mhz": 1346.316108832744,
+        "gpu_mhz_coverage_s": 898.84309,
+        "gpu_active_percent": 96.76637578367544,
+        "gpu_active_percent_coverage_s": 898.84309,
+        "cpu_gpu_w": 24.0647811499669,
+        "thermal_states": [
+          "heavy",
+          "moderate",
+          "nominal"
+        ],
+        "energy_per_app_frame_mj": 201.282796497344
+      },
+      "hud": {
+        "samples": 215071,
+        "gpu_mean_ms": 6.64110893611877,
+        "gpu_p95_ms": 7.93,
+        "presentation_interval_mean_ms": 8.360867294986306,
+        "presentation_interval_p95_ms": 8.33,
+        "scope": "Correlated/overlapping HUD samples, not independent frame statistics",
+        "presentation_tail_sample_fraction": 0.003701103356565971
+      }
+    },
+    "worst_full_app_window": {
+      "event": "sample",
+      "unix_ms": "1789586558734",
+      "elapsed_s": "891.796103",
+      "route_s": "831.789174",
+      "window_s": "1.000059",
+      "frames": "73",
+      "update_fps": "72.996",
+      "update_p95_ms": "16.913",
+      "update_p99_ms": "17.146",
+      "update_max_ms": "17.194",
+      "late_updates": "47",
+      "focused": "true"
+    },
+    "final_five_minutes": {
+      "from_s": 600,
+      "to_s": 900,
+      "fps": 119.39363624377746,
+      "update_coverage_s": 298.365986,
+      "frames": 35623,
+      "late_updates": 181,
+      "max_interval_ms": 17.359,
+      "hud_samples": 71543,
+      "hud_interval_p95_ms": 8.33,
+      "hud_interval_max_ms": 16.67,
+      "hud_gpu_mean_ms": 6.443026990760801,
+      "hud_gpu_p95_ms": 6.9,
+      "worst_full_app_sample": {
+        "event": "sample",
+        "unix_ms": "1789586558734",
+        "elapsed_s": "891.796103",
+        "route_s": "831.789174",
+        "window_s": "1.000059",
+        "frames": "73",
+        "update_fps": "72.996",
+        "update_p95_ms": "16.913",
+        "update_p99_ms": "17.146",
+        "update_max_ms": "17.194",
+        "late_updates": "47",
+        "focused": "true"
+      },
+      "min_gpu_mhz": 1058.0,
+      "power": {
+        "samples": 296,
+        "coverage_s": 298.91403,
+        "cpu_w": 4.3602526439792735,
+        "cpu_w_coverage_s": 298.91403,
+        "gpu_w": 19.477981357248435,
+        "gpu_w_coverage_s": 298.91403,
+        "gpu_mhz": 1378.3438411706534,
+        "gpu_mhz_coverage_s": 298.91403,
+        "gpu_active_percent": 96.12868099165502,
+        "gpu_active_percent_coverage_s": 298.91403,
+        "cpu_gpu_w": 23.83823400122771,
+        "thermal_states": [
+          "nominal"
+        ]
+      }
+    },
+    "thermal_transitions": [
+      {
+        "seconds_from_measurement_start": -89.93899989128113,
+        "sample_end_unix_s": 1789585637.0,
+        "state": "nominal"
+      },
+      {
+        "seconds_from_measurement_start": 226.06100010871887,
+        "sample_end_unix_s": 1789585953.0,
+        "state": "moderate"
+      },
+      {
+        "seconds_from_measurement_start": 228.06100010871887,
+        "sample_end_unix_s": 1789585955.0,
+        "state": "heavy"
+      },
+      {
+        "seconds_from_measurement_start": 364.0610001087189,
+        "sample_end_unix_s": 1789586091.0,
+        "state": "moderate"
+      },
+      {
+        "seconds_from_measurement_start": 446.0610001087189,
+        "sample_end_unix_s": 1789586173.0,
+        "state": "nominal"
+      }
+    ],
+    "idle": {
+      "samples": 29,
+      "coverage_s": 29.48754,
+      "cpu_w": 0.04320310646462879,
+      "cpu_w_coverage_s": 29.48754,
+      "gpu_w": 0.017409134502233827,
+      "gpu_w_coverage_s": 29.48754,
+      "gpu_mhz": 475.4096743912853,
+      "gpu_mhz_coverage_s": 29.48754,
+      "gpu_active_percent": 1.6816283420047926,
+      "gpu_active_percent_coverage_s": 29.48754,
+      "cpu_gpu_w": 0.060612240966862616,
+      "thermal_states": [
+        "nominal"
+      ]
+    },
+    "power_source_at_start": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=22478947)\t98%; charging; (no estimate) present: true"
+  },
+  "power_deltas": {
+    "whole_run": {
+      "gpu_w": {
+        "enlarged_minus_default": 0.83389098204362,
+        "enlarged_relative_to_default_percent": 4.236504773141414
+      },
+      "cpu_w": {
+        "enlarged_minus_default": 0.2321770139210333,
+        "enlarged_relative_to_default_percent": 5.299254054341951
+      },
+      "cpu_gpu_w": {
+        "enlarged_minus_default": 1.0660679959646515,
+        "enlarged_relative_to_default_percent": 4.42999248287832
+      },
+      "gpu_mhz": {
+        "enlarged_minus_default": -42.34283704199743,
+        "enlarged_relative_to_default_percent": -3.1450887918669124
+      },
+      "gpu_active_percent": {
+        "enlarged_minus_default": -8.281994655348441,
+        "enlarged_relative_to_default_percent": -8.55875255043459
+      }
+    },
+    "final_five_minutes": {
+      "gpu_w": {
+        "enlarged_minus_default": 1.5281484178399296,
+        "enlarged_relative_to_default_percent": 7.8455174066138555
+      },
+      "cpu_w": {
+        "enlarged_minus_default": 0.014555025985299785,
+        "enlarged_relative_to_default_percent": 0.333811528224115
+      },
+      "cpu_gpu_w": {
+        "enlarged_minus_default": 1.5427034438252285,
+        "enlarged_relative_to_default_percent": 6.4715508864699345
+      },
+      "gpu_mhz": {
+        "enlarged_minus_default": -38.740863631939874,
+        "enlarged_relative_to_default_percent": -2.8106821008491267
+      },
+      "gpu_active_percent": {
+        "enlarged_minus_default": -8.625054666627022,
+        "enlarged_relative_to_default_percent": -8.972405090397285
+      }
+    }
+  },
+  "limits": [
+    "Power estimates cover CPU/GPU subsystems, not isolated game watts or wall power.",
+    "Final five-minute windows use whole intervals; short stalls remain included.",
+    "App windows and overlapping HUD packets do not provide an independent presentation 1% low.",
+    "Battery was 100% charged for enlarged, 98% charging for default; temperatures/fan RPM were not measured.",
+    "Repeated stalls and clock/power changes are correlated; direction of causality is unresolved."
+  ],
+  "decision": "Do not promote enlarged capacity as an energy/thermal optimization. Keep it opt-in; retain original production capacity. Diagnose recurring stalls before increasing density."
+}

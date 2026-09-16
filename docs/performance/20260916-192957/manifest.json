@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "experiment_ids": [
+    "GP-011"
+  ],
+  "session_id": "20260916-192957",
+  "preserved_at": "2026-09-16T19:44:20.900778+03:00",
+  "source_directory": "/Users/eugenepisotsky/Dev/Sources/Hobby/YarraProject/tmp/grass-profiles/20260916-192957",
+  "scope": "Raw measurement logs, manifests, canopy snapshots, generated reports, analyzer, parsed results and follow-up analysis. Large workload inputs remain local.",
+  "verification": {
+    "zip_crc": "passed",
+    "entry_bytes_match_sources": true,
+    "report_regenerated_from_archive_matches": true
+  },
+  "files": {
+    "report.json": {
+      "bytes": 387056,
+      "sha256": "ecd96cc570f443036eb2bddedf4024317c1d0d0207d94a3444ca97fb12926203"
+    },
+    "analysis.json": {
+      "bytes": 10713,
+      "sha256": "13403a1e49ab02f7cf84ea33043f71a84f815579fe0c36a208eb19de823775ef"
+    },
+    "evidence.zip": {
+      "bytes": 572952,
+      "sha256": "7369e4313b15fe0810ed412f8a5c64a05fdc8ebf7e26e8aef6f0a0351bae8937"
+    }
+  },
+  "archive_entries": {
+    "analysis-tools/grass_profile_report.py": {
+      "bytes": 17351,
+      "sha256": "bbfd1969e9d3159a1ea26e6bd42ce272b9dd0bb3e52ae366d34d2ca1b93380b2"
+    },
+    "inputs/grass_off/canopy.ron": {
+      "bytes": 316,
+      "sha256": "e3db7d4a488767bc50d7a6fd4ef8d539e69b90007b489a7cb49c53e93db9377a"
+    },
+    "inputs/grass_off/inputs.json": {
+      "bytes": 1767,
+      "sha256": "59200d713bb701706e5d1052053af7d8c4ce33b9e170e977920d55fa399bfaf5"
+    },
+    "inputs/grass_on/canopy.ron": {
+      "bytes": 316,
+      "sha256": "e3db7d4a488767bc50d7a6fd4ef8d539e69b90007b489a7cb49c53e93db9377a"
+    },
+    "inputs/grass_on/inputs.json": {
+      "bytes": 1767,
+      "sha256": "59200d713bb701706e5d1052053af7d8c4ce33b9e170e977920d55fa399bfaf5"
+    },
+    "power-command.json": {
+      "bytes": 189,
+      "sha256": "12dfb9ee88262b3f42dbeda20247dfc5473411fd4149c3c7d294c7acd84bedcb"
+    },
+    "power-stderr.txt": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "power.txt": {
+      "bytes": 3854639,
+      "sha256": "a87f0050dabe4b37e5091b919ed34004db6cb19efb350d9d86750f411561f780"
+    },
+    "report.html": {
+      "bytes": 283502,
+      "sha256": "c8dec799249eede628756a86ee55f387afd55d1d3878103e5ed08020f6945e0f"
+    },
+    "report.md": {
+      "bytes": 2021,
+      "sha256": "738645850970f7b68f1e17e847599abb03e12d13ffa1acc3d1adfb6ed5e49678"
+    },
+    "runs/01-grass_on/game.log": {
+      "bytes": 315344,
+      "sha256": "ea1703f93333d379ed4ba17cb2e11cb4d1e70e303f2abfc51e6c9fdcdce0cf6c"
+    },
+    "runs/01-grass_on/run.json": {
+      "bytes": 2848,
+      "sha256": "aface7289300086a265672a975a424f2c4a8a537ad193631102d1d9f3d15b1df"
+    },
+    "runs/02-grass_off/game.log": {
+      "bytes": 298598,
+      "sha256": "b9aa0620d7de740a80532b1cec761ce8bee241cbc6ce87557539fd9f23bdaa8c"
+    },
+    "runs/02-grass_off/run.json": {
+      "bytes": 2850,
+      "sha256": "964e36bcc4b92c726b18a9a30fd2309992ea126ea1677466fbb6f62cd3896d34"
+    },
+    "runs/03-grass_off/game.log": {
+      "bytes": 310716,
+      "sha256": "487d493798510e70d9516622c89380e56e4e174ebe01804cab4f6e182b8fd9da"
+    },
+    "runs/03-grass_off/run.json": {
+      "bytes": 2850,
+      "sha256": "adcc005040fe08d82acf9ed63eb7763c3578f44e90f7616f378e7b45cdbbcc22"
+    },
+    "runs/04-grass_on/game.log": {
+      "bytes": 318917,
+      "sha256": "ad9f13cb2a6c464a071cf9bf910711b8063ba28dfc33cb7c09307646a64b7150"
+    },
+    "runs/04-grass_on/run.json": {
+      "bytes": 2848,
+      "sha256": "38eacf02ba460e6f2d902c905e21c572f7efa6544bc57882b96b78bd1c3f2f40"
+    },
+    "session.json": {
+      "bytes": 1857,
+      "sha256": "c2c8bf7e64a944c45f4dd13bb961f07463ea0fa4d4649d3d33e5eda800e23083"
+    }
+  }
+}

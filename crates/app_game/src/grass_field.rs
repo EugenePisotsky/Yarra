@@ -8,8 +8,8 @@ use engine::{StreamedTerrainSurface, StreamedVegetationFieldPage, WorldCatalog, 
 use std::collections::HashMap;
 use terrain_render::{TerrainMaterial, TerrainMaterialPreparation};
 use vegetation::VegetationCatalog;
-use vegetation_render::{VegetationDebugScene, VegetationDebugSettings};
 use vegetation_render::canopy_coverage as canopy;
+use vegetation_render::{VegetationDebugScene, VegetationDebugSettings};
 
 #[derive(Resource)]
 pub(super) struct GrassFieldTrial {
@@ -125,6 +125,7 @@ fn toggle(
 }
 fn status(
     trial: Res<GrassFieldTrial>,
+    scene: Res<VegetationDebugScene>,
     tiles: Res<GroundTiles>,
     settings: Res<VegetationDebugSettings>,
     mut text: Single<&mut Text, With<FieldStatus>>,
@@ -134,13 +135,25 @@ fn status(
         .values()
         .filter(|e| e.image.is_some() && !e.needs_bake)
         .count();
+    let density = scene
+        .scene()
+        .catalog
+        .populations
+        .iter()
+        .find(|population| population.key == "short_split_fill")
+        .map(|population| population.density_per_square_meter);
+    let field = if trial.enabled {
+        "published"
+    } else {
+        "previous"
+    };
+    let field = density.map_or_else(
+        || format!("{field} field"),
+        |density| format!("{field} {density}-root field"),
+    );
     let label = format!(
         "Grass: {} | G: compare\nDensity: {} | O: cycle | Detail follows character\nGround coverage: {ready}/{} tiles ready",
-        if trial.enabled {
-            "new 72-root field"
-        } else {
-            "previous 44-root field"
-        },
+        field,
         settings.density_mode.label(),
         tiles.entries.len()
     );
@@ -187,11 +200,16 @@ fn sync_ground(
     mut materials: ResMut<Assets<TerrainMaterial>>,
 ) {
     // Disable means no canopy source traversal, new bakes or texture uploads.
-    if !trial.enabled || !lighting.canopy.enabled || lighting.canopy.strength <= 0.0
-        || lighting.canopy.ground_amount <= 0.0 {
+    if !trial.enabled
+        || !lighting.canopy.enabled
+        || lighting.canopy.strength <= 0.0
+        || lighting.canopy.ground_amount <= 0.0
+    {
         if tiles.applied_enabled != Some(false) {
             for tile in tiles.entries.values_mut() {
-                if tile.task.take().is_some() { tile.needs_bake = true; }
+                if tile.task.take().is_some() {
+                    tile.needs_bake = true;
+                }
                 if let Some(mut material) = materials.get_mut(&tile.material) {
                     material.set_canopy_coverage(None, Vec4::ZERO);
                 }
@@ -199,8 +217,12 @@ fn sync_ground(
         }
         tiles.applied_enabled = Some(false);
         tiles.entries.retain(|entity, tile| {
-            if terrain.get(*entity).is_ok() { return true; }
-            if let Some(image) = &tile.image { images.remove(image.id()); }
+            if terrain.get(*entity).is_ok() {
+                return true;
+            }
+            if let Some(image) = &tile.image {
+                images.remove(image.id());
+            }
             false
         });
         return;
@@ -262,8 +284,12 @@ fn sync_ground(
                 .enumerate()
                 .filter(|(_, page)| {
                     (0..2).all(|i| {
-                        page.origin_xz[i] < min[i] + surface.cell_size + vegetation_render::canopy_coverage::MARGIN
-                            && page.origin_xz[i] + page.size > min[i] - vegetation_render::canopy_coverage::MARGIN
+                        page.origin_xz[i]
+                            < min[i]
+                                + surface.cell_size
+                                + vegetation_render::canopy_coverage::MARGIN
+                            && page.origin_xz[i] + page.size
+                                > min[i] - vegetation_render::canopy_coverage::MARGIN
                     })
                 })
                 .collect();
@@ -361,8 +387,14 @@ fn load_canopy_look(
     mut trial: ResMut<GrassFieldTrial>,
     mut lighting: ResMut<vegetation_render::VegetationLighting>,
 ) {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../content/vegetation/canopy-look.ron");
+    let mut args = std::env::args();
+    let explicit = args.any(|a| a == "--canopy-look");
+    let path = if explicit {
+        std::path::PathBuf::from(args.next().expect("--canopy-look requires a path"))
+    } else {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../content/vegetation/canopy-look.ron")
+    };
     match std::fs::read_to_string(&path)
         .map_err(|e| e.to_string())
         .and_then(|s| ron::from_str::<vegetation::CanopyShading>(&s).map_err(|e| e.to_string()))
@@ -373,6 +405,7 @@ fn load_canopy_look(
             lighting.canopy.enabled &= trial.enabled;
             info!("Loaded canopy look; H reloads editor changes");
         }
+        Err(error) if explicit => panic!("Requested canopy look {}: {error}", path.display()),
         Err(error) => warn!("Canopy look {}: {error}", path.display()),
     }
 }

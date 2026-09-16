@@ -1,0 +1,21 @@
+{
+  "experiment": "GP-013",
+  "status": "diagnostic capture completed; grass draw attribution still open",
+  "source_session": "20260916-200703",
+  "trace_start": "2026-09-16T20:45:01.628+03:00",
+  "trace_duration_s": 3.869626,
+  "requested_trace_seconds": 3,
+  "method": "Attach after 20-second app warmup; analyze interior trace seconds 1 through 3",
+  "gpu_performance_state": "Default/adaptive, not fixed clock",
+  "shader_counter_set": "None",
+  "shader_timeline": "Disabled",
+  "surface_px": "3456x2168",
+  "render_px": "2592x1626",
+  "window": "fullscreen",
+  "msaa": 4,
+  "density": "Balanced at 72 authored roots/m\u00b2",
+  "view": "low-walk",
+  "power_collected": false,
+  "trace_local": "/Users/eugenepisotsky/Dev/Sources/Hobby/YarraProject/tmp/grass-gpu-attribution-20260916/short/fullscreen.trace",
+  "private_trace_metadata": "Native trace and toc remain local. Full toc contains process environment and is intentionally excluded from the evidence bundle."
+}

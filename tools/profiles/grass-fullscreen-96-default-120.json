@@ -1,0 +1,25 @@
+{
+  "defaults": {
+    "window": "fullscreen",
+    "size": "game",
+    "fps": 120,
+    "msaa": 4,
+    "density": "balanced",
+    "view": "low-walk",
+    "warmup": 60,
+    "seconds": 900,
+    "prepared_blades": 131072,
+    "binary": "tmp/grass-draw-density-20260916/density96-prepared/inputs/game",
+    "world_db": "tmp/grass-draw-density-20260916/density96-prepared/inputs/runtime.sqlite",
+    "canopy": "tmp/grass-draw-density-20260916/density96-prepared/inputs/canopy.ron",
+    "shaders": "tmp/grass-draw-density-20260916/density96-prepared/inputs/assets/shaders"
+  },
+  "variants": {
+    "density96-default120": {}
+  },
+  "order": [
+    "density96-default120"
+  ],
+  "idle_seconds": 30,
+  "gap_seconds": 0
+}

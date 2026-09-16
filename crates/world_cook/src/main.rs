@@ -8,6 +8,24 @@ fn main() -> Result<()> {
         .next()
         .and_then(|argument| argument.into_string().ok())
         .unwrap_or_else(|| "demo".into());
+    if command == "export-vegetation" {
+        use std::io::Write;
+        let project = PathBuf::from(arguments.next().context("expected PROJECT_DB")?);
+        let output = PathBuf::from(arguments.next().context("expected CATALOG_RON")?);
+        if arguments.next().is_some() {
+            bail!("usage: yarra-world-cook export-vegetation PROJECT_DB CATALOG_RON");
+        }
+        let catalog = world_db::ProjectReader::open_read_only(&project)?
+            .read_vegetation_catalog()?
+            .context("project has no vegetation catalog")?;
+        let text = ron::ser::to_string_pretty(&catalog, ron::ser::PrettyConfig::default())?;
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(output)?
+            .write_all(text.as_bytes())?;
+        return Ok(());
+    }
     if command == "import-vegetation" {
         let source = PathBuf::from(arguments.next().context("expected catalog.ron")?);
         let project = arguments

@@ -1,0 +1,15 @@
+{
+  "experiment": "GP-016",
+  "scope": "Brief fullscreen control verification, no power collector, not sustained acceptance",
+  "original_session": "/Users/eugenepisotsky/Dev/Sources/Hobby/YarraProject/tmp/grass-profile-fullscreen-smoke",
+  "files": {
+    "report.json": {
+      "bytes": 14656,
+      "sha256": "a61aa25a0b2539b1ba96c3b6e41e70a14a55326c1d3d878c8eca2dcf01bd8ccb"
+    },
+    "evidence.zip": {
+      "bytes": 48641,
+      "sha256": "170b19d957da36daf112d4b48496351111e50af125e0275676b91a8f0d4f15ff"
+    }
+  }
+}

@@ -1,0 +1,115 @@
+{
+  "20260916-190422": {
+    "origin": "First 120 measurement start minus configured warmup; approximately app-start elapsed-time zero",
+    "origin_unix_s": 1789574892.279,
+    "power_source_at_start": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=22478947)\t46%; charging; 1:20 remaining present: true",
+    "visits": [
+      {
+        "name": "02-fps120",
+        "measure_start_s": 30.0,
+        "measure_end_s": 150.00799989700317,
+        "mean_app_fps": 119.73344596782226,
+        "mean_gpu_mhz": 1361.1449037178581,
+        "settings": {
+          "size": "2560x1440",
+          "fps": 120,
+          "msaa": 4,
+          "warmup": 30,
+          "seconds": 120,
+          "view": "low-walk",
+          "density": "balanced",
+          "grass": "full",
+          "counters": false
+        }
+      },
+      {
+        "name": "03-fps120",
+        "measure_start_s": 195.27499985694885,
+        "measure_end_s": 315.28200006484985,
+        "mean_app_fps": 103.35167748530328,
+        "mean_gpu_mhz": 813.3598528076741,
+        "settings": {
+          "size": "2560x1440",
+          "fps": 120,
+          "msaa": 4,
+          "warmup": 30,
+          "seconds": 120,
+          "view": "low-walk",
+          "density": "balanced",
+          "grass": "full",
+          "counters": false
+        }
+      }
+    ],
+    "thermal_transitions": [
+      {
+        "seconds_from_first_120_start": -181.27900004386902,
+        "state": "nominal"
+      },
+      {
+        "seconds_from_first_120_start": 192.72099995613098,
+        "state": "moderate"
+      },
+      {
+        "seconds_from_first_120_start": 194.72099995613098,
+        "state": "heavy"
+      },
+      {
+        "seconds_from_first_120_start": 343.720999956131,
+        "state": "moderate"
+      },
+      {
+        "seconds_from_first_120_start": 379.720999956131,
+        "state": "nominal"
+      }
+    ]
+  },
+  "20260916-200703": {
+    "origin": "First 120 measurement start minus configured warmup; approximately app-start elapsed-time zero",
+    "origin_unix_s": 1789578439.592,
+    "power_source_at_start": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=22478947)\t99%; finishing charge; 0:12 remaining present: true",
+    "visits": [
+      {
+        "name": "01-fullscreen120",
+        "measure_start_s": 60.0,
+        "measure_end_s": 960.0030000209808,
+        "mean_app_fps": 119.94589541455915,
+        "mean_gpu_mhz": 1354.2045523016188,
+        "settings": {
+          "size": "game",
+          "window": "fullscreen",
+          "fps": 120,
+          "msaa": 4,
+          "warmup": 60,
+          "seconds": 900,
+          "view": "low-walk",
+          "density": "balanced",
+          "grass": "full",
+          "counters": false
+        }
+      }
+    ],
+    "thermal_transitions": [
+      {
+        "seconds_from_first_120_start": -14.592000007629395,
+        "state": "nominal"
+      },
+      {
+        "seconds_from_first_120_start": 251.4079999923706,
+        "state": "moderate"
+      },
+      {
+        "seconds_from_first_120_start": 253.4079999923706,
+        "state": "heavy"
+      },
+      {
+        "seconds_from_first_120_start": 376.4079999923706,
+        "state": "moderate"
+      },
+      {
+        "seconds_from_first_120_start": 430.4079999923706,
+        "state": "nominal"
+      }
+    ]
+  }
+}

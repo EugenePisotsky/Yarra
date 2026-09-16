@@ -1,0 +1,18 @@
+{
+  "defaults": {
+    "window": "windowed",
+    "size": "2560x1440",
+    "msaa": 4,
+    "density": "balanced",
+    "view": "low-walk",
+    "warmup": 30,
+    "seconds": 120
+  },
+  "variants": {
+    "fps60": {"fps": 60},
+    "fps120": {"fps": 120}
+  },
+  "order": ["fps60", "fps120", "fps120", "fps60"],
+  "idle_seconds": 15,
+  "gap_seconds": 15
+}

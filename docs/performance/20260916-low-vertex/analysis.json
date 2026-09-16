@@ -1,0 +1,154 @@
+{
+  "changed_shaders": [
+    "vegetation_debug_draw.wgsl"
+  ],
+  "experiment": "GP-022",
+  "inputs": {
+    "baseline": {
+      "asset_scope": "Binary, DB, shaders and canopy copied; other assets linked to workspace and must remain unchanged",
+      "binary_sha256": "6a754e6e0b4f784dc0cd67e763694d8755248c89d3a5ab7cccf7e18d0204e6e0",
+      "canopy_sha256": "e3db7d4a488767bc50d7a6fd4ef8d539e69b90007b489a7cb49c53e93db9377a",
+      "database_sha256": "fb7712f61cd0f9ce462604b0bfe2090aa2dc341e966b5e5f337e1f68670b20e2",
+      "original_sources": {
+        "binary": "/Users/eugenepisotsky/Dev/Sources/Hobby/YarraProject/tmp/grass-draw-density-20260916/density96-prepared/inputs/game",
+        "canopy": "/Users/eugenepisotsky/Dev/Sources/Hobby/YarraProject/tmp/grass-draw-density-20260916/density96-prepared/inputs/canopy.ron",
+        "database": "/Users/eugenepisotsky/Dev/Sources/Hobby/YarraProject/tmp/grass-draw-density-20260916/density96-prepared/inputs/runtime.sqlite"
+      },
+      "shader_sha256": {
+        "grass_canopy.wgsl": "9782f27f003100478db35b3fc3bb685f5b8d23448428c75f9a17ee7582f9f27b",
+        "terrain_material.wgsl": "cd52b88fe5f834bf5d55f3f04466840a215be4195dabaecffe08f02ccd60f898",
+        "terrain_prepare_control.wgsl": "2293cfd061f2ce00d0ffe48fe5496d6407a98369ad4321dfbf927a9e6716eb34",
+        "terrain_stochastic.wgsl": "67c24d0d22743f4be1963ea71a1cc4b022d533d653a12b4db51439aec9fd395c",
+        "terrain_stochastic_cache.wgsl": "02d74877933b25d5e6e50df04afc559d5850c4099102372d3272adb63f2c8817",
+        "vegetation_blade.wgsl": "d28d80d56de09935ee52b00031dcd8fc0efb8627b7861c2c867b82a270784592",
+        "vegetation_debug_compute.wgsl": "3b92dc046aa9afd06d347eb67427db72f7a1ec5395aa642e405298ac3d5aee52",
+        "vegetation_debug_draw.wgsl": "b75ff7f68aecee1eca4141a545126dbf868e0d104bd27bb783395a10882e3233",
+        "vegetation_prepare_blades.wgsl": "06344e7d2d7517f9ffe51baaeb069bea79ab5777235463f74f7eb1d52726592f",
+        "vegetation_schedule_compute.wgsl": "cbe01476358c1da99124b6179669d338e78c0ea0c7fdf3f44bece43604ded964"
+      }
+    },
+    "candidate": {
+      "asset_scope": "Binary, DB, shaders and canopy copied; other assets linked to workspace and must remain unchanged",
+      "binary_sha256": "6a754e6e0b4f784dc0cd67e763694d8755248c89d3a5ab7cccf7e18d0204e6e0",
+      "canopy_sha256": "e3db7d4a488767bc50d7a6fd4ef8d539e69b90007b489a7cb49c53e93db9377a",
+      "database_sha256": "fb7712f61cd0f9ce462604b0bfe2090aa2dc341e966b5e5f337e1f68670b20e2",
+      "original_sources": {
+        "binary": "/Users/eugenepisotsky/Dev/Sources/Hobby/YarraProject/tmp/grass-draw-density-20260916/density96-prepared/inputs/game",
+        "canopy": "/Users/eugenepisotsky/Dev/Sources/Hobby/YarraProject/tmp/grass-draw-density-20260916/density96-prepared/inputs/canopy.ron",
+        "database": "/Users/eugenepisotsky/Dev/Sources/Hobby/YarraProject/tmp/grass-draw-density-20260916/density96-prepared/inputs/runtime.sqlite"
+      },
+      "shader_sha256": {
+        "grass_canopy.wgsl": "9782f27f003100478db35b3fc3bb685f5b8d23448428c75f9a17ee7582f9f27b",
+        "terrain_material.wgsl": "cd52b88fe5f834bf5d55f3f04466840a215be4195dabaecffe08f02ccd60f898",
+        "terrain_prepare_control.wgsl": "2293cfd061f2ce00d0ffe48fe5496d6407a98369ad4321dfbf927a9e6716eb34",
+        "terrain_stochastic.wgsl": "67c24d0d22743f4be1963ea71a1cc4b022d533d653a12b4db51439aec9fd395c",
+        "terrain_stochastic_cache.wgsl": "02d74877933b25d5e6e50df04afc559d5850c4099102372d3272adb63f2c8817",
+        "vegetation_blade.wgsl": "d28d80d56de09935ee52b00031dcd8fc0efb8627b7861c2c867b82a270784592",
+        "vegetation_debug_compute.wgsl": "3b92dc046aa9afd06d347eb67427db72f7a1ec5395aa642e405298ac3d5aee52",
+        "vegetation_debug_draw.wgsl": "03f60aa20fa6c2353beecca31aa97c8fe42db3dac0ea5029822030fcc3582c05",
+        "vegetation_prepare_blades.wgsl": "06344e7d2d7517f9ffe51baaeb069bea79ab5777235463f74f7eb1d52726592f",
+        "vegetation_schedule_compute.wgsl": "cbe01476358c1da99124b6179669d338e78c0ea0c7fdf3f44bece43604ded964"
+      }
+    }
+  },
+  "limitations": [
+    "Two profiles per captured frame, order A-B-B-A, all Medium. Not four independent game runs.",
+    "Summed encoder work is replay timing, not live frame latency or power.",
+    "Main encoder includes grass and terrain; this is not a grass-only percentage.",
+    "No sustained speedup, energy or thermal improvement established.",
+    "Separate captures have nondeterministic compaction/preparation selection; frozen shader A/B is the image-equivalence evidence."
+  ],
+  "main_vs_alu_instruction_change_percent": -13.743682968866866,
+  "replays": [
+    {
+      "csv": "baseline/encoder-counters.csv",
+      "main_counters": {
+        "Bytes Read From Device Memory": "134924608",
+        "Bytes Written To Device Memory": "119404480",
+        "FS ALU Instructions": "9573281792",
+        "FS ALU Limiter": "85.79%",
+        "FS Invocations": "6318464",
+        "FS Occupancy": "29.03%",
+        "Tiled Vertex Buffer Bytes": "78938112",
+        "VS ALU Instructions": "6979851520",
+        "VS ALU Limiter": "71.56%",
+        "VS Invocations": "1115304",
+        "VS Occupancy": "15.18%",
+        "Vertices": "1480956"
+      },
+      "main_ms": 5.212817724013191,
+      "performance_state": "Medium",
+      "summed_encoder_ms": 7.0340788619036525,
+      "variant": "baseline"
+    },
+    {
+      "csv": "candidate/encoder-counters.csv",
+      "main_counters": {
+        "Bytes Read From Device Memory": "134784512",
+        "Bytes Written To Device Memory": "119428416",
+        "FS ALU Instructions": "9593641728",
+        "FS ALU Limiter": "86.08%",
+        "FS Invocations": "6324416",
+        "FS Occupancy": "29.00%",
+        "Tiled Vertex Buffer Bytes": "78938112",
+        "VS ALU Instructions": "6020581120",
+        "VS ALU Limiter": "68.38%",
+        "VS Invocations": "1115304",
+        "VS Occupancy": "15.10%",
+        "Vertices": "1480956"
+      },
+      "main_ms": 5.4961001185987985,
+      "performance_state": "Medium",
+      "summed_encoder_ms": 7.573847206573813,
+      "variant": "candidate"
+    },
+    {
+      "csv": "candidate/encoder-counters-repeat.csv",
+      "main_counters": {
+        "Bytes Read From Device Memory": "134090240",
+        "Bytes Written To Device Memory": "119475456",
+        "FS ALU Instructions": "9609572864",
+        "FS ALU Limiter": "86.24%",
+        "FS Invocations": "6330656",
+        "FS Occupancy": "29.08%",
+        "Tiled Vertex Buffer Bytes": "78872576",
+        "VS ALU Instructions": "6020561152",
+        "VS ALU Limiter": "68.40%",
+        "VS Invocations": "1115304",
+        "VS Occupancy": "15.10%",
+        "Vertices": "1480956"
+      },
+      "main_ms": 5.664197365768397,
+      "performance_state": "Medium",
+      "summed_encoder_ms": 7.531362810796111,
+      "variant": "candidate"
+    },
+    {
+      "csv": "baseline/encoder-counters-repeat.csv",
+      "main_counters": {
+        "Bytes Read From Device Memory": "135017472",
+        "Bytes Written To Device Memory": "119611072",
+        "FS ALU Instructions": "9592628736",
+        "FS ALU Limiter": "85.98%",
+        "FS Invocations": "6324000",
+        "FS Occupancy": "29.10%",
+        "Tiled Vertex Buffer Bytes": "78905344",
+        "VS ALU Instructions": "6979870720",
+        "VS ALU Limiter": "71.57%",
+        "VS Invocations": "1115304",
+        "VS Occupancy": "15.15%",
+        "Vertices": "1480956"
+      },
+      "main_ms": 5.726813353677027,
+      "performance_state": "Medium",
+      "summed_encoder_ms": 7.431532161362297,
+      "variant": "baseline"
+    }
+  ],
+  "source_sha256": {
+    "baseline/encoder-counters-repeat.csv": "ac9284d73f78eb3308bc32dce776011f30468bb4bc35d21278fa76d0d518d669",
+    "baseline/encoder-counters.csv": "441f87cf21ef9989345d4c0be51bf57bda9334e3779e09858d310ee8d92d496f",
+    "candidate/encoder-counters-repeat.csv": "4e74883f392abb2c63ffdfa4390902a8b819765247f81d98fa03b0bda60631ad",
+    "candidate/encoder-counters.csv": "6ceab78fa01b7ac9e0bf03635c86bd7a1a1aa7e04956fa2e4ca31ecfd420d8c3"
+  }
+}

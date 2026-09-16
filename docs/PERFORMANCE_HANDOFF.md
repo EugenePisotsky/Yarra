@@ -1,5 +1,11 @@
 # Rendering performance investigation — handoff, 2026-09-06
 
+**Current entry point, 2026-09-16:** use the
+[grass optimization log](GRASS_OPTIMIZATION_LOG.md) for the current 1440p60
+mainstream-PC target, Mac power results, pacing caveat and next tests. This handoff
+preserves the earlier iPhone/Mac investigation and its dated scope; its 120 fps Mac
+testing preference is historical, not a restriction on the new controlled 60/120 tests.
+
 **Start here before continuing performance work. The iPhone frame-rate/heat problem is unresolved.**
 Planning update, 2026-09-08: the user reiterated sustained performance as the central constraint
 for grass and shadow work, with iPhone as a longer-term target. The user then clarified that current

@@ -51,6 +51,22 @@ pub(super) fn install(app: &mut App) {
         ..default()
     };
     app.insert_resource(ReproView(name.clone()));
+    crate::profile::install(app);
+    if let Some(profile) = app
+        .world()
+        .get_resource::<crate::profile::ProfileSettings>()
+        .cloned()
+    {
+        let mut settings = app.world_mut().resource_mut::<AuditSettings>();
+        settings.render_path = AuditRenderPath::Composite;
+        settings.scale_index = if profile.size.is_some() { 0 } else { 1 };
+        settings.msaa = profile.msaa;
+        settings.grass = if profile.grass {
+            vegetation_render::VegetationProfileMode::Full
+        } else {
+            vegetation_render::VegetationProfileMode::Disabled
+        };
+    }
     app.add_systems(Update, move_camera.after(GameInputSystems))
         .add_systems(PostUpdate, synchronize_wind);
     let path_frames = if name.ends_with("-stream") {
@@ -156,10 +172,12 @@ fn pose(frame: u32) -> Transform {
 
 fn move_camera(
     frame: Res<FrameCount>,
+    profile: Option<Res<crate::profile::ProfileClock>>,
     view: Res<ReproView>,
     mut camera: Single<&mut Transform, With<WorldViewCamera>>,
     mut active_space: ResMut<ActiveWorldSpace>,
 ) {
+    let frame = profile.as_ref().map_or(frame.0, |p| p.reference_frame());
     **camera = match view.0.as_str() {
         "ground-low" => pose(0),
         "grass-close" | "grass-away" => {
@@ -177,15 +195,15 @@ fn move_camera(
             Transform::from_xyz(0.0, 0.9 + distance * pitch.sin(), distance * pitch.cos())
                 .looking_at(focus, Vec3::Y)
         }
-        "grass-zoom" => zoom_pose(frame.0),
+        "grass-zoom" => zoom_pose(frame),
         // Separate vertical inspection from the oblique gameplay/overhead views. NEG_Z
         // avoids a collinear look/up basis while preserving +X toward screen right.
         "grass-top-down" => Transform::from_xyz(0.0, 18.0, 0.0).looking_at(Vec3::ZERO, Vec3::NEG_Z),
         "ground-overhead" | "grass-overhead" => {
             Transform::from_xyz(-12.0, 18.0, 16.0).looking_at(Vec3::ZERO, Vec3::Y)
         }
-        "ground-stream" | "grass-stream" => stream_pose(frame.0),
-        _ => pose(frame.0),
+        "ground-stream" | "grass-stream" => stream_pose(frame),
+        _ => pose(frame),
     };
     if view.0.ends_with("-stream")
         && let Some(space) = active_space.current()
@@ -267,6 +285,7 @@ mod tests {
 
 fn synchronize_wind(
     frame: Res<FrameCount>,
+    profile: Option<Res<crate::profile::ProfileClock>>,
     view: Res<ReproView>,
     mut wind: ResMut<vegetation_render::VegetationWind>,
 ) {
@@ -279,5 +298,8 @@ fn synchronize_wind(
     }
     // Run after Update's normal wind advance. Capture frame 600 now has identical wind
     // geometry even when startup compilation takes a different amount of wall-clock time.
-    wind.set_phase_seconds(frame.0 as f32 / if cfg!(target_os = "ios") { 60.0 } else { 120.0 });
+    wind.set_phase_seconds(profile.as_ref().map_or_else(
+        || frame.0 as f32 / if cfg!(target_os = "ios") { 60.0 } else { 120.0 },
+        |p| 2.5 + p.route_seconds as f32,
+    ));
 }

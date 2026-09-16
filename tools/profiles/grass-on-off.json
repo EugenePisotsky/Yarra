@@ -1,0 +1,19 @@
+{
+  "defaults": {
+    "window": "windowed",
+    "size": "2560x1440",
+    "fps": 60,
+    "msaa": 4,
+    "density": "balanced",
+    "view": "low-walk",
+    "warmup": 30,
+    "seconds": 120
+  },
+  "variants": {
+    "grass_on": {"grass": "full"},
+    "grass_off": {"grass": "off"}
+  },
+  "order": ["grass_on", "grass_off", "grass_off", "grass_on"],
+  "idle_seconds": 15,
+  "gap_seconds": 15
+}

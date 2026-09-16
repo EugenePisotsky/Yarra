@@ -1,0 +1,104 @@
+{
+  "schema_version": 1,
+  "experiment_ids": [
+    "GP-015"
+  ],
+  "session_id": "20260916-200703",
+  "preserved_at": "2026-09-16T20:29:42.676632+03:00",
+  "source_directory": "/Users/eugenepisotsky/Dev/Sources/Hobby/YarraProject/tmp/grass-profiles/20260916-200703",
+  "scope": "Raw logs, manifests, input hashes, reports, thermal/window analysis and user fan/heat observation. Large workload inputs remain local.",
+  "verification": {
+    "zip_crc": "passed",
+    "entry_bytes_match_sources": true,
+    "report_regenerated_from_archive_matches": true,
+    "analysis_regenerated_from_archive_matches": true
+  },
+  "files": {
+    "report.json": {
+      "bytes": 621768,
+      "sha256": "cc5efa5fc73407f8671959f2824b8eb87e6e5db122abc55f676f8fc471c2b006"
+    },
+    "analysis.json": {
+      "bytes": 28744,
+      "sha256": "56c72823e8962b6f9106eb115c54889203b9dc56653fb146b12a562252c6a825"
+    },
+    "comparison-timeline.json": {
+      "bytes": 3297,
+      "sha256": "a4363ee226e18bb55f2e55b3b631bdbe9e85b44e32052fc118c3f9aa5e822f88"
+    },
+    "evidence.zip": {
+      "bytes": 828283,
+      "sha256": "dc66118ed6e6874bcece20213fcb5321a49c82fc69f92207e29f1a797b11297f"
+    }
+  },
+  "archive_entries": {
+    "analysis-tools/analyze_sustained.py": {
+      "bytes": 5088,
+      "sha256": "724509835778a8686c9c446f9ea80912b777e93182b8d4aee5c136ef99377fd1"
+    },
+    "analysis-tools/grass_profile_report.py": {
+      "bytes": 18813,
+      "sha256": "d5cba8ebb04a57bcd6f5add7fd3ecab7c08be205c7165fe4e3d8da777df02141"
+    },
+    "comparison-inputs/20260916-190422.json": {
+      "bytes": 1767,
+      "sha256": "59200d713bb701706e5d1052053af7d8c4ce33b9e170e977920d55fa399bfaf5"
+    },
+    "comparison-inputs/20260916-192957.json": {
+      "bytes": 1767,
+      "sha256": "59200d713bb701706e5d1052053af7d8c4ce33b9e170e977920d55fa399bfaf5"
+    },
+    "comparison-inputs/20260916-200334-fullscreen-smoke.json": {
+      "bytes": 1767,
+      "sha256": "c0bb5b2d26c0dbebb2872c8cc70425b12a4cae6fedf172b83dadd128fefa78b0"
+    },
+    "comparison-timeline.json": {
+      "bytes": 3297,
+      "sha256": "a4363ee226e18bb55f2e55b3b631bdbe9e85b44e32052fc118c3f9aa5e822f88"
+    },
+    "inputs/fullscreen120/canopy.ron": {
+      "bytes": 316,
+      "sha256": "e3db7d4a488767bc50d7a6fd4ef8d539e69b90007b489a7cb49c53e93db9377a"
+    },
+    "inputs/fullscreen120/inputs.json": {
+      "bytes": 1767,
+      "sha256": "c0bb5b2d26c0dbebb2872c8cc70425b12a4cae6fedf172b83dadd128fefa78b0"
+    },
+    "power-command.json": {
+      "bytes": 190,
+      "sha256": "6a8379b1104c6a8aef7dfc65ba0f4218a313e21b257532be8a36e681153920f1"
+    },
+    "power-stderr.txt": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "power.txt": {
+      "bytes": 5682336,
+      "sha256": "046df5c47f4cdc7f556becadb474a170c7ca85626b61c78e15ab8ba5f2f7889a"
+    },
+    "report.html": {
+      "bytes": 444892,
+      "sha256": "7cd06a4bf670ef12fc08edfa737434622c127d829036ecbdf5321aebfd850a94"
+    },
+    "report.md": {
+      "bytes": 1470,
+      "sha256": "3ed73ac2b835a11a8cb811a671dad9ba57f2b6e5594fa3639b7ba524f05fcd2c"
+    },
+    "runs/01-fullscreen120/game.log": {
+      "bytes": 3110948,
+      "sha256": "f00dc800659606f8a66361f658f51fd24dbb11bc153886241b8a7f27c7115d1c"
+    },
+    "runs/01-fullscreen120/run.json": {
+      "bytes": 2930,
+      "sha256": "6f1006e8eee2b166d244a27b61a9a06b9d056b0d6aeedaa1c154315cc2a2059f"
+    },
+    "session.json": {
+      "bytes": 1703,
+      "sha256": "430dd3c285ff03bb5d3c9008d9eb1516f4eea9885ce81a7fdd79e6e472deb5ed"
+    },
+    "user-observation.json": {
+      "bytes": 284,
+      "sha256": "a0aaf445813e003fb0d6ee6bb716a6d4b371c6c7aa2eda55088fc8e15dc0ba11"
+    }
+  }
+}

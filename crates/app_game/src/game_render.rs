@@ -32,6 +32,8 @@ pub(crate) struct GameRenderSystems;
 #[derive(Resource, Clone, PartialEq)]
 pub(crate) struct GameRenderSettings {
     pub(crate) resolution_scale: f32,
+    /// Explicit internal pixel dimensions for controlled profiling, independent of Retina scaling.
+    pub(crate) render_size: Option<UVec2>,
     pub(crate) msaa: Msaa,
     pub(crate) render_path: RenderPath,
     pub(crate) show_ui: bool,
@@ -41,6 +43,7 @@ impl Default for GameRenderSettings {
     fn default() -> Self {
         Self {
             resolution_scale: 0.75,
+            render_size: None,
             msaa: Msaa::Sample4,
             render_path: RenderPath::Composite,
             show_ui: true,
@@ -49,6 +52,14 @@ impl Default for GameRenderSettings {
 }
 
 impl GameRenderSettings {
+    fn target_size(&self, window: &Window) -> UVec2 {
+        self.render_size.unwrap_or_else(|| {
+            (window.physical_size().as_vec2() * self.scale())
+                .as_uvec2()
+                .max(UVec2::ONE)
+        })
+    }
+
     fn scale(&self) -> f32 {
         match self.render_path {
             RenderPath::Direct => 1.0,
@@ -99,9 +110,7 @@ fn setup(
     // Scale only the world; the composite and gameplay UI use the native window.
     // Direct rendering keeps a tiny placeholder until scaling is requested.
     let initial_size = if settings.render_path == RenderPath::Composite {
-        (window.physical_size().as_vec2() * settings.scale())
-            .as_uvec2()
-            .max(UVec2::ONE)
+        settings.target_size(&window)
     } else {
         UVec2::ONE
     };
@@ -163,10 +172,12 @@ fn apply_render_path(
     >,
 ) {
     let scale = s.scale();
-    let size = (window.physical_size().as_vec2() * scale)
-        .as_uvec2()
-        .max(UVec2::ONE);
-    let target_scale = window.scale_factor() * scale;
+    let size = s.target_size(&window);
+    let target_scale = if s.render_size.is_some() {
+        size.y as f32 / window.height().max(1.0)
+    } else {
+        window.scale_factor() * scale
+    };
     let composite_path = s.render_path == RenderPath::Composite;
     let needs_image_target = !matches!(camera.2, RenderTarget::Image(target)
         if target.handle == assets.target && target.scale_factor == target_scale);
@@ -238,6 +249,25 @@ fn apply_render_path(
 mod tests {
     use super::*;
     use bevy::window::WindowResolution;
+
+    #[test]
+    fn profile_target_uses_explicit_pixels_across_display_scales() {
+        let settings = GameRenderSettings {
+            render_size: Some(UVec2::new(2560, 1440)),
+            ..default()
+        };
+        for factor in [1.0, 2.0, 3.0] {
+            let window = Window {
+                resolution: WindowResolution::new(1280, 720).with_scale_factor_override(factor),
+                ..default()
+            };
+            assert_eq!(settings.target_size(&window), UVec2::new(2560, 1440));
+            assert_eq!(
+                GameRenderSettings::default().target_size(&window),
+                (window.physical_size().as_vec2() * 0.75).as_uvec2()
+            );
+        }
+    }
 
     #[test]
     fn normal_startup_scales_the_world_and_preserves_ui_across_render_path_changes() {

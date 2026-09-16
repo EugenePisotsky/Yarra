@@ -1,0 +1,190 @@
+{
+  "66": {
+    "samples": [
+      {
+        "main_frame": "341",
+        "sampled_instances": "113835",
+        "sampled_indices": "1196154",
+        "sampled_prepared_blades": "131071",
+        "sampled_preparation_fallback_blades": "96598",
+        "sampled_bins": "[1, 0, 5720, 108114]",
+        "sampled_capacity_drops": "[0, 0, 0, 0]",
+        "focused": "true",
+        "render_px": "2592x1626",
+        "surface_px": "3456x2168",
+        "source_pages": "49",
+        "thermal": "nominal"
+      },
+      {
+        "main_frame": "929",
+        "sampled_instances": "113962",
+        "sampled_indices": "1201707",
+        "sampled_prepared_blades": "131071",
+        "sampled_preparation_fallback_blades": "96852",
+        "sampled_bins": "[1, 0, 5867, 108094]",
+        "sampled_capacity_drops": "[0, 0, 0, 0]",
+        "focused": "true",
+        "render_px": "2592x1626",
+        "surface_px": "3456x2168",
+        "source_pages": "49",
+        "thermal": "nominal"
+      },
+      {
+        "main_frame": "1531",
+        "sampled_instances": "113697",
+        "sampled_indices": "1190352",
+        "sampled_prepared_blades": "131071",
+        "sampled_preparation_fallback_blades": "96322",
+        "sampled_bins": "[1, 0, 5568, 108128]",
+        "sampled_capacity_drops": "[0, 0, 0, 0]",
+        "focused": "true",
+        "render_px": "2592x1626",
+        "surface_px": "3456x2168",
+        "source_pages": "49",
+        "thermal": "nominal"
+      }
+    ],
+    "scaled_high_radius_m": 5.777985161220657
+  },
+  "72": {
+    "samples": [
+      {
+        "main_frame": "558",
+        "sampled_instances": "119678",
+        "sampled_indices": "1138731",
+        "sampled_prepared_blades": "131071",
+        "sampled_preparation_fallback_blades": "108284",
+        "sampled_bins": "[1, 0, 2053, 117624]",
+        "sampled_capacity_drops": "[0, 0, 0, 0]",
+        "focused": "true",
+        "render_px": "2592x1626",
+        "surface_px": "3456x2168",
+        "source_pages": "49",
+        "thermal": "nominal"
+      },
+      {
+        "main_frame": "1152",
+        "sampled_instances": "119482",
+        "sampled_indices": "1127037",
+        "sampled_prepared_blades": "131071",
+        "sampled_preparation_fallback_blades": "107892",
+        "sampled_bins": "[1, 0, 1722, 117759]",
+        "sampled_capacity_drops": "[0, 0, 0, 0]",
+        "focused": "true",
+        "render_px": "2592x1626",
+        "surface_px": "3456x2168",
+        "source_pages": "49",
+        "thermal": "nominal"
+      },
+      {
+        "main_frame": "1740",
+        "sampled_instances": "119584",
+        "sampled_indices": "1133505",
+        "sampled_prepared_blades": "131071",
+        "sampled_preparation_fallback_blades": "108096",
+        "sampled_bins": "[1, 0, 1907, 117676]",
+        "sampled_capacity_drops": "[0, 0, 0, 0]",
+        "focused": "true",
+        "render_px": "2592x1626",
+        "surface_px": "3456x2168",
+        "source_pages": "49",
+        "thermal": "nominal"
+      }
+    ],
+    "scaled_high_radius_m": 5.531999621566534
+  },
+  "96": {
+    "samples": [
+      {
+        "main_frame": "472",
+        "sampled_instances": "156127",
+        "sampled_indices": "1498032",
+        "sampled_prepared_blades": "131071",
+        "sampled_preparation_fallback_blades": "181182",
+        "sampled_bins": "[1, 0, 3095, 153031]",
+        "sampled_capacity_drops": "[0, 0, 0, 0]",
+        "focused": "true",
+        "render_px": "2592x1626",
+        "surface_px": "3456x2168",
+        "source_pages": "49",
+        "thermal": "nominal"
+      },
+      {
+        "main_frame": "1064",
+        "sampled_instances": "156341",
+        "sampled_indices": "1507218",
+        "sampled_prepared_blades": "131071",
+        "sampled_preparation_fallback_blades": "181610",
+        "sampled_bins": "[1, 0, 3337, 153003]",
+        "sampled_capacity_drops": "[0, 0, 0, 0]",
+        "focused": "true",
+        "render_px": "2592x1626",
+        "surface_px": "3456x2168",
+        "source_pages": "49",
+        "thermal": "nominal"
+      },
+      {
+        "main_frame": "1667",
+        "sampled_instances": "156589",
+        "sampled_indices": "1516470",
+        "sampled_prepared_blades": "131071",
+        "sampled_preparation_fallback_blades": "182106",
+        "sampled_bins": "[1, 0, 3571, 153017]",
+        "sampled_capacity_drops": "[0, 0, 0, 0]",
+        "focused": "true",
+        "render_px": "2592x1626",
+        "surface_px": "3456x2168",
+        "source_pages": "49",
+        "thermal": "nominal"
+      }
+    ],
+    "scaled_high_radius_m": 4.790852206002518
+  },
+  "128": {
+    "samples": [
+      {
+        "main_frame": "549",
+        "sampled_instances": "200987",
+        "sampled_indices": "1857432",
+        "sampled_prepared_blades": "131071",
+        "sampled_preparation_fallback_blades": "270902",
+        "sampled_bins": "[1, 0, 1617, 199369]",
+        "sampled_capacity_drops": "[0, 0, 0, 0]",
+        "focused": "true",
+        "render_px": "2592x1626",
+        "surface_px": "3456x2168",
+        "source_pages": "49",
+        "thermal": "nominal"
+      },
+      {
+        "main_frame": "1138",
+        "sampled_instances": "201374",
+        "sampled_indices": "1868115",
+        "sampled_prepared_blades": "131071",
+        "sampled_preparation_fallback_blades": "271676",
+        "sampled_bins": "[1, 0, 1857, 199516]",
+        "sampled_capacity_drops": "[0, 0, 0, 0]",
+        "focused": "true",
+        "render_px": "2592x1626",
+        "surface_px": "3456x2168",
+        "source_pages": "49",
+        "thermal": "nominal"
+      },
+      {
+        "main_frame": "1734",
+        "sampled_instances": "201764",
+        "sampled_indices": "1879125",
+        "sampled_prepared_blades": "131071",
+        "sampled_preparation_fallback_blades": "272456",
+        "sampled_bins": "[1, 0, 2107, 199656]",
+        "sampled_capacity_drops": "[0, 0, 0, 0]",
+        "focused": "true",
+        "render_px": "2592x1626",
+        "surface_px": "3456x2168",
+        "source_pages": "49",
+        "thermal": "nominal"
+      }
+    ],
+    "scaled_high_radius_m": 4.148999716174901
+  }
+}

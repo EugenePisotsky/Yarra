@@ -1,0 +1,8 @@
+{
+  "date": "2026-09-16",
+  "user_statement": "I usually don't run anything heavy during tests btw and game is focused of course.",
+  "scope": "User describes their normal testing practice; this is not an instrumented per-process activity record.",
+  "verification": "The session's application logs independently confirm focus throughout measurement.",
+  "interpretation": "Do not attribute run-to-run variation to competing heavy applications without evidence. Missing per-process attribution does not invalidate the measured subsystem power estimates.",
+  "archive_policy": "Follow-up context added separately; the original raw logs, report, analysis and evidence archive remain unchanged."
+}

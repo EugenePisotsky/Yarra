@@ -1,0 +1,108 @@
+{
+  "schema_version": 1,
+  "experiment_ids": [
+    "GP-009",
+    "GP-010"
+  ],
+  "session_id": "20260916-190422",
+  "preserved_at": "2026-09-16T19:28:01.422509+03:00",
+  "source_directory": "/Users/eugenepisotsky/Dev/Sources/Hobby/YarraProject/tmp/grass-profiles/20260916-190422",
+  "scope": "Raw measurement logs, run/session/input manifests, canopy snapshots, original reports, corrected analyzer and parsed results. Large workload inputs remain local.",
+  "verification": {
+    "zip_crc": "passed",
+    "entry_bytes_match_sources": true,
+    "report_regenerated_from_archive_matches": true
+  },
+  "files": {
+    "report.json": {
+      "bytes": 388658,
+      "sha256": "62c25aa7f895f05b3f079a8da38214257b3f3524f31e8f0ebcb0c879d012cf9d"
+    },
+    "evidence.zip": {
+      "bytes": 648039,
+      "sha256": "1f66749d5ed0b3ecfab3f0d2f975b320954682228133c349bd1d3b97b929d665"
+    }
+  },
+  "archive_entries": {
+    "analysis-tools/grass_profile_report.py": {
+      "bytes": 17351,
+      "sha256": "bbfd1969e9d3159a1ea26e6bd42ce272b9dd0bb3e52ae366d34d2ca1b93380b2"
+    },
+    "inputs/fps120/canopy.ron": {
+      "bytes": 316,
+      "sha256": "e3db7d4a488767bc50d7a6fd4ef8d539e69b90007b489a7cb49c53e93db9377a"
+    },
+    "inputs/fps120/inputs.json": {
+      "bytes": 1767,
+      "sha256": "59200d713bb701706e5d1052053af7d8c4ce33b9e170e977920d55fa399bfaf5"
+    },
+    "inputs/fps60/canopy.ron": {
+      "bytes": 316,
+      "sha256": "e3db7d4a488767bc50d7a6fd4ef8d539e69b90007b489a7cb49c53e93db9377a"
+    },
+    "inputs/fps60/inputs.json": {
+      "bytes": 1767,
+      "sha256": "59200d713bb701706e5d1052053af7d8c4ce33b9e170e977920d55fa399bfaf5"
+    },
+    "power-command.json": {
+      "bytes": 189,
+      "sha256": "12dfb9ee88262b3f42dbeda20247dfc5473411fd4149c3c7d294c7acd84bedcb"
+    },
+    "power-stderr.txt": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "power.txt": {
+      "bytes": 3855347,
+      "sha256": "051dfefb2d2c9ce9a91bbb7917740463eeb108658a9132cc8244659a3287efa7"
+    },
+    "report-original.html": {
+      "bytes": 284306,
+      "sha256": "de40ac7b17036ade38abf0c32349f3792105849c7601aae4051d03b7b67bff59"
+    },
+    "report-original.json": {
+      "bytes": 388046,
+      "sha256": "6ae1fec40ab9d56826a851d8d77a49e3d17101d2f96ae9705ea540874982b13b"
+    },
+    "report-original.md": {
+      "bytes": 2223,
+      "sha256": "7a63ae18ae1f558d151a49c173065122a99e4080aa356cac28edac64ca145506"
+    },
+    "runs/01-fps60/game.log": {
+      "bytes": 304426,
+      "sha256": "e9a9d836690e630b7d161df5f0d916e3e5a03a3d91cd2376eda94b48e4bccf73"
+    },
+    "runs/01-fps60/run.json": {
+      "bytes": 2836,
+      "sha256": "0c4cc1662270a76f51b510014e0d5f3a711a7a9203adfd59fffd097525584cbc"
+    },
+    "runs/02-fps120/game.log": {
+      "bytes": 477498,
+      "sha256": "e92ce667c22d63d330d20ad40614b56a736da0b6a714eff93e2e082aba4454f2"
+    },
+    "runs/02-fps120/run.json": {
+      "bytes": 2842,
+      "sha256": "170e399f3eb8130fed69ce04c6475e76466546010945a9f2caa313e3023f0602"
+    },
+    "runs/03-fps120/game.log": {
+      "bytes": 443626,
+      "sha256": "a0759e2cc61907f7b2caf3f3a736661392c60253efcecd28396d7e99fa1fd7d2"
+    },
+    "runs/03-fps120/run.json": {
+      "bytes": 2842,
+      "sha256": "ea56ed2618f11fcfed69df87980b105c265e132cbace02739a5f1fe9845a6067"
+    },
+    "runs/04-fps60/game.log": {
+      "bytes": 304280,
+      "sha256": "00c6938991f4ea3fc0502c13286a91de9813f37481a098792c04bd480b194c9c"
+    },
+    "runs/04-fps60/run.json": {
+      "bytes": 2836,
+      "sha256": "a30167860a2023b4994bf622e08757a818bac3d8186cc6ed3a774d530e619b9d"
+    },
+    "session.json": {
+      "bytes": 1677,
+      "sha256": "eb1d2494697c8bf6943de196d4f54712443acd2f677a4c1b2556cf3f56a0b800"
+    }
+  }
+}

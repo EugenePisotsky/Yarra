@@ -1,7 +1,11 @@
 //! Infrequent, self-contained records that can be correlated with batched Metal HUD output.
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use bevy::{diagnostic::FrameCount, prelude::*, window::PrimaryWindow};
+use bevy::{
+    diagnostic::FrameCount,
+    prelude::*,
+    window::{Monitor, OnMonitor, PrimaryWindow, WindowMode},
+};
 use engine::WorldViewCamera;
 use terrain_render::{TerrainCacheStats, TerrainMacroVariation};
 use vegetation_render::{
@@ -105,7 +109,8 @@ pub(super) fn log_status(
     grass: Res<VegetationDebugSettings>,
     time: Res<Time<Real>>,
     frame: Res<FrameCount>,
-    window: Single<&Window, With<PrimaryWindow>>,
+    window: Single<(&Window, Option<&OnMonitor>), With<PrimaryWindow>>,
+    monitors: Query<&Monitor>,
     camera: Single<
         (
             &GlobalTransform,
@@ -124,6 +129,7 @@ pub(super) fn log_status(
     entities: Query<Entity>,
     mut state: Local<LogState>,
 ) {
+    let (window, on_monitor) = window.into_inner();
     // Real time is unaffected by game time clamping, pausing, or profiling's control lock.
     let now = time.elapsed_secs_f64();
     let changed = settings.is_changed() || grass.is_changed() || terrain_macro.is_changed();
@@ -174,6 +180,26 @@ pub(super) fn log_status(
     let baseline_phase = settings.baseline_phase.unwrap_or("manual");
     let focused = window.focused;
     let present_mode = window.present_mode;
+    let window_mode = match window.mode {
+        WindowMode::Windowed => "windowed",
+        WindowMode::BorderlessFullscreen(_) => "fullscreen",
+        WindowMode::Fullscreen(_, _) => "exclusive_fullscreen",
+    };
+    let monitor = on_monitor.and_then(|m| monitors.get(m.0).ok());
+    let monitor_px = monitor.map_or_else(
+        || "unknown".into(),
+        |m| format!("{}x{}", m.physical_width, m.physical_height),
+    );
+    let monitor_hz = monitor.and_then(|m| m.refresh_rate_millihertz).map_or_else(
+        || "unknown".into(),
+        |hz| format!("{:.3}", hz as f64 / 1000.0),
+    );
+    let display_fields = format!(
+        "window_mode={window_mode} monitor_px={monitor_px} monitor_hz={monitor_hz} window_logical={}x{} scale_factor={}",
+        window.width(),
+        window.height(),
+        window.scale_factor()
+    );
     let cache = terrain_cache.snapshot();
     let prepared = terrain_prepared.snapshot();
     let terrain_cache_fields = format!(
@@ -215,7 +241,7 @@ pub(super) fn log_status(
     let generation_dispatches = snapshot.generation_dispatches;
     let generation_reuses = snapshot.generation_reuses;
     warn!(
-        "RENDER_AUDIT v=1 event={event} seq={} unix_ms={unix_ms} elapsed_s={now:.3} main_frame={} app_fps_window={app_fps} window_s={window_s:.3} since_change_s={:.3} thermal={} low_power={} scene={:?} grass={} unlit={} ground_shader={ground_shader} terrain_macro={macro_state} shadows={} prepass={} scale={} msaa_samples={msaa_samples} requested_msaa_samples={requested_msaa_samples} msaa_store_policy={msaa_store_policy:?} counters={} wind={} locked={} render_path={render_path} ui={ui} baseline_phase={baseline_phase} render_px={}x{} surface_px={}x{} focused={focused} present_mode={present_mode:?} camera_pos={:.3},{:.3},{:.3} camera_rot={:.4},{:.4},{:.4},{:.4} density={:?} lighting={:?} far_width_compensation={} entities={} mesh_assets={} image_assets={} source_revision={} source_pages={} source_work_items={} source_repacks={} source_reallocs={} last_source_upload_bytes={} source_capacity_bytes={} instance_capacity={} instance_capacity_bytes={} generation_dispatches={generation_dispatches} generation_reuses={generation_reuses} early_rejection={early_rejection} {candidate_cache} {terrain_cache_fields} {blade_preparation} {gpu} os={} debug_assertions={}",
+        "RENDER_AUDIT v=1 event={event} seq={} unix_ms={unix_ms} elapsed_s={now:.3} main_frame={} app_fps_window={app_fps} window_s={window_s:.3} since_change_s={:.3} thermal={} low_power={} scene={:?} grass={} unlit={} ground_shader={ground_shader} terrain_macro={macro_state} shadows={} prepass={} scale={} msaa_samples={msaa_samples} requested_msaa_samples={requested_msaa_samples} msaa_store_policy={msaa_store_policy:?} counters={} wind={} locked={} render_path={render_path} ui={ui} baseline_phase={baseline_phase} render_px={}x{} surface_px={}x{} {display_fields} focused={focused} present_mode={present_mode:?} camera_pos={:.3},{:.3},{:.3} camera_rot={:.4},{:.4},{:.4},{:.4} density={:?} lighting={:?} far_width_compensation={} entities={} mesh_assets={} image_assets={} source_revision={} source_pages={} source_work_items={} source_repacks={} source_reallocs={} last_source_upload_bytes={} source_capacity_bytes={} instance_capacity={} instance_capacity_bytes={} generation_dispatches={generation_dispatches} generation_reuses={generation_reuses} early_rejection={early_rejection} {candidate_cache} {terrain_cache_fields} {blade_preparation} {gpu} os={} debug_assertions={}",
         state.sequence,
         frame.0,
         now - state.changed_at_s,

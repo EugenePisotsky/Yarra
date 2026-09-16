@@ -1,0 +1,157 @@
+{
+  "zip_sha256": "abdbb56496fcc08db80cbe2e156084ced780929faa0d05d888ed93d60ad983f6",
+  "entries_sha256": {
+    "archive.py": "3d94c0226e319cd6d6aaa372820301be2c5af2881e0269fa843033bc168f9ae9",
+    "baseline72/command.json": "fbcc5656bb284b999d740579a35c70d431781708fc8cbdd1ebc78949007a1e3b",
+    "baseline72/draw-attribution.json": "8765566b0945aee08f1bd33926c572404185bd4d729ec3d9713a4a1c60a8d4e2",
+    "baseline72/encoder-counters.csv": "c2bd9a2ac6eedc1dcb3bbd23b24a2ffad5a4a867faec3b19c147cd3e930cd259",
+    "baseline72/encoder-counters.json": "25154e9c5a07486f6ce6fad31d68abc2014e7cf4c391da8cbcb4b17e55e7642e",
+    "baseline72/game.log": "6a18e8618510c9d85190406bb0690147f24b120c7226f927ccf66de27aeddbc7",
+    "baseline72/inputs/canopy.ron": "e3db7d4a488767bc50d7a6fd4ef8d539e69b90007b489a7cb49c53e93db9377a",
+    "baseline72/inputs/inputs.json": "cc933c3685c986801823e01b0cf75ac23e6704e1a5706667b39388c83e42155e",
+    "baseline72/result.json": "6acc9770555272384bd1086b12ee736cbb258b0394b674910408bfaa61fa533b",
+    "capture.py": "96507017e355c27bc023b6ecb1c74bdf3d74b4318406c5608c468a45ce97e283",
+    "cooked/density-128/catalog.ron": "4004d3bd8c0dfa0b4f2ea77d7425fada76286c9066cc29427e9b0ff3dbbb6531",
+    "cooked/density-128/cook.log": "2c5f4823fbea05dabe8f86057d44ed13906cce65c9bf4f71e084c057518f2b87",
+    "cooked/density-66/catalog.ron": "47c6c93b277f6f3f518dc1eeb005243cdff17a4a4c3ca2aa94510ef552ae81ff",
+    "cooked/density-66/cook.log": "7745d0d492e5ad4ff0a4cd6a63bb2722785c15a995ad44e7085d020daad007a6",
+    "cooked/density-72/catalog.ron": "bbbe00a2e78e4b7562ce2b9892c267afa1c8a0638879970cddef5dd20f651290",
+    "cooked/density-72/cook.log": "4895ba9d3187a3f6552a0068c4906839c83aced96c57e31650e35c8fa24caaff",
+    "cooked/density-96/catalog.ron": "95ad0acf98899fd763c36cb570c49d2b30408bf17d3e72ab0ff0024d7f466145",
+    "cooked/density-96/cook.log": "4b8f496e29456b539d24b236040358378ec5662ca7c92b87df9b1089b4160bfd",
+    "cooked/manifest.json": "84468810e8da3f7c4853fddb7963271a5973356a2227526b852e12c76a077e4d",
+    "cooked/source-catalog.ron": "47c6c93b277f6f3f518dc1eeb005243cdff17a4a4c3ca2aa94510ef552ae81ff",
+    "density-diagnostics.json": "6ad8b4ec026eaed05580d9ccd6dc512c3a178c8c4b08bd38b8c4c0c1820fa735",
+    "density96-default/command.json": "e6a96f7df7b57396ee5105194c2d8e15321ea06f75b3c79202bd67c2db71afac",
+    "density96-default/encoder-counters.csv": "a69c52e405ec030ffe0e883d69b652fd609b1f91bff1950c4f6f50a71fe3e944",
+    "density96-default/game.log": "ec75a8e15c0cac03bdb3eaf5098385875ed37b1efa847c581b1c572ca08fe800",
+    "density96-default/inputs/canopy.ron": "e3db7d4a488767bc50d7a6fd4ef8d539e69b90007b489a7cb49c53e93db9377a",
+    "density96-default/inputs/inputs.json": "9aa99a4183e73ec3853c339864c62ca4f528e2ad5873caa1afc6205c430e2ddb",
+    "density96-default/result.json": "6acc9770555272384bd1086b12ee736cbb258b0394b674910408bfaa61fa533b",
+    "density96-prepared/command.json": "b66f5c21f973c48feac89d0091544ea393a47c1040afa40fb37e0311a13868b9",
+    "density96-prepared/encoder-counters.csv": "339c24ffa748f40968327db1b947dd040b973ae62ed866a23a0da4c2c7cfb53d",
+    "density96-prepared/game.log": "90fd8066902eef90a65932f4b13287db411e8d79a45f0eeeb90f0a88e5b52214",
+    "density96-prepared/inputs/canopy.ron": "e3db7d4a488767bc50d7a6fd4ef8d539e69b90007b489a7cb49c53e93db9377a",
+    "density96-prepared/inputs/inputs.json": "9aa99a4183e73ec3853c339864c62ca4f528e2ad5873caa1afc6205c430e2ddb",
+    "density96-prepared/result.json": "6acc9770555272384bd1086b12ee736cbb258b0394b674910408bfaa61fa533b",
+    "diagnostic-128/command.json": "3ea9c910b741d69a2d5338b50498b9093041e938808feccbc0c4ee162ce2cb2d",
+    "diagnostic-128/game.log": "81f962f507eac24959d5fd8bb65acd3441d37c1b2b9c0dcda3984cf629b9362b",
+    "diagnostic-128/result.json": "81868a6e94ffc0178bf833deb1c9013d9fab4ee95ddb876a5e8ec4f1d26376d2",
+    "diagnostic-66/command.json": "711e53cb008ba392ccc26db33b1dae0a99c9e008196e7ab82cffc56782acb782",
+    "diagnostic-66/game.log": "4df164a8d00525ba8c486f882c9f6b40d22a20e062cf6a3782845bc2a562f989",
+    "diagnostic-66/result.json": "81868a6e94ffc0178bf833deb1c9013d9fab4ee95ddb876a5e8ec4f1d26376d2",
+    "diagnostic-72/command.json": "f72349b41f4720953751faee2ad0fd4b18c33136948a8b1cc4fe1bb9ab112ca3",
+    "diagnostic-72/game.log": "4fd908c64430440776cf617680a30a0f83430b274ea2268627484b7d33868006",
+    "diagnostic-72/result.json": "81868a6e94ffc0178bf833deb1c9013d9fab4ee95ddb876a5e8ec4f1d26376d2",
+    "diagnostic-96/command.json": "a9890a46e63aea3befb45f59c2d87fb738856e04e13b8b948b87eefa97da7101",
+    "diagnostic-96/game.log": "2770bd043f3b0074f0cdeb26f1d3e729d4d41dbd0358e8729a96fbd8cdf3a074",
+    "diagnostic-96/result.json": "81868a6e94ffc0178bf833deb1c9013d9fab4ee95ddb876a5e8ec4f1d26376d2",
+    "diagnostic-96-default-matched/command.json": "aeceb5a1840a98200980522d326eae4cb5e5e1e318911fa0b718d63f84858383",
+    "diagnostic-96-default-matched/game.log": "00cde541bfd4496b39f7631ba26a6089b3023ce4ccfecc7641ac721ad4375dab",
+    "diagnostic-96-default-matched/result.json": "81868a6e94ffc0178bf833deb1c9013d9fab4ee95ddb876a5e8ec4f1d26376d2",
+    "diagnostic-96-prepared-matched/command.json": "5c9e49f2e097641197a526e77810f3b7cfc3c869bb0d38c772ec3a4f3d6c8d5d",
+    "diagnostic-96-prepared-matched/game.log": "9640e68901afccc9cc84c7aa4c24bbfbc2a3a6b98155ca09d39f5366bc34b8d8",
+    "diagnostic-96-prepared-matched/result.json": "81868a6e94ffc0178bf833deb1c9013d9fab4ee95ddb876a5e8ec4f1d26376d2",
+    "diagnostic-96-repeat-matched/command.json": "f7aeed2ed072932c406c426de2916c9188773c83fc1233eb082c44e30267b0e3",
+    "diagnostic-96-repeat-matched/game.log": "bd4cd8485da9a494f573c702e4c01c7ecd779e5da148a0a8a033842e9a58246b",
+    "diagnostic-96-repeat-matched/result.json": "81868a6e94ffc0178bf833deb1c9013d9fab4ee95ddb876a5e8ec4f1d26376d2",
+    "diagnostics.py": "7482e3c8eb5d9c43941378bcdecfe59c4332e99866319ff40d686d0c1305af86",
+    "preparation-comparison.json": "1f79cc54d09f5cab27b8e8c625c24b462544e62092469076090fa56dc6516c63",
+    "preparation-validation.json": "6eb0fd74653417ca8de434805d6f1aa822956d84727f28e380bbf2c46fe63915",
+    "smoke/inputs/density96-prepared120/inputs.json": "35509ea6abb8b5be1d37601646801f9ad0255e16fec05e0ccec58cd0a4faf290",
+    "smoke/report.json": "18e98e98c7e4452cadcf7e0e8a39ac82d02ae62168391742f6d1073de0e4d740",
+    "smoke/report.md": "30c4dbeb67da7f24c83535f4baface4ba8e961a2ccd1b8258f35e8a13ffd446c",
+    "smoke/runs/01-density96-prepared120/game.log": "9e3853269823840690f2660501331627a712c927c7f00f034ca11065ed74e436",
+    "smoke/runs/01-density96-prepared120/run.json": "fb2361947896aaa02ac71b22ad8db49411335fcb0007b5ea3c3a007ad6f364b8",
+    "smoke/session.json": "4db80fbf8c582eb7f2a9dc38319cc752285ff552c4fcd5950d8572be216890d3",
+    "smoke.json": "da1ea8266a40850f5c473dbce1a331452b7c02ce652527aa2a3394aa033cd4c9",
+    "validate_prepared.py": "5f95c529ed1299620f30283bc083b592591ecbca4870a8bfff38c41fcf2b3778",
+    "analysis-source/tools/grass_profile.py": "6516b703e454c781af90deee5b3f1547adf9bd96edb03fbf17399eba14da35df",
+    "analysis-source/tools/grass_profile_report.py": "73424a95963d3cb29c0c4147555cc32309241183972001d59338af40d9327780",
+    "analysis-source/tools/grass_density_variants.py": "cf055291089486ca3362c59402b6be593e43d97b16776070a00e9d998f569f86",
+    "analysis-source/tools/summarize_gpu_counters.py": "36303395c56ad87bec0afa061d681da2302613020b2112abee791af22f912ede",
+    "analysis-source/tools/profiles/grass-fullscreen-96-prepared-120.json": "f050d558f766a64e3e3bfb59ef94d395f3e547a48ec488737f00e6667ff97c19",
+    "analysis-source/crates/app_game/src/profile.rs": "e267adedda2585a94caee98a94a2d5571b430a34d753774aa418cc0fa9c0011a",
+    "analysis-source/crates/vegetation_render/src/renderer/blade_preparation.rs": "dc2fa48f225e318416ae9087e876839337ddc08015a045265d039c7e33bf6384",
+    "analysis-source/crates/world_cook/src/main.rs": "f604fa95f933a1d5733a899d17040f6510dfb2c0c01157f5af12d35e3c27a1ee"
+  },
+  "local_screenshots": [
+    {
+      "path": "tmp/grass-draw-density-20260916/diagnostic-128/view-000600.png",
+      "bytes": 8707253,
+      "sha256": "e7d6ba5da382646c8b875fce8dd060941de794a6314d76bc6d16754def9672ff"
+    },
+    {
+      "path": "tmp/grass-draw-density-20260916/diagnostic-128/view-000900.png",
+      "bytes": 8525937,
+      "sha256": "5244c23c4d7fd296f21900c22b4443af73d1a6f2e137dba35ba8381f8f291b62"
+    },
+    {
+      "path": "tmp/grass-draw-density-20260916/diagnostic-66/view-000600.png",
+      "bytes": 8831058,
+      "sha256": "c0597aa911eefae14ed3f40bf9e2a91a0ef276e948e7047165721eb0b33216bf"
+    },
+    {
+      "path": "tmp/grass-draw-density-20260916/diagnostic-66/view-000900.png",
+      "bytes": 8340992,
+      "sha256": "7d27cc282db6e6a7b43da22d13b9af4f1ec54aa37865179eda9dc84e49f6428c"
+    },
+    {
+      "path": "tmp/grass-draw-density-20260916/diagnostic-72/view-000600.png",
+      "bytes": 8848446,
+      "sha256": "b54dc9e3964b17b5903025d884631dc3b11673f69d163d678ea9000af14c4147"
+    },
+    {
+      "path": "tmp/grass-draw-density-20260916/diagnostic-72/view-000900.png",
+      "bytes": 8353959,
+      "sha256": "4a9053bf69414ead6dc49bfcb936fd8862fcb8ff066a97d56b273ee15801f962"
+    },
+    {
+      "path": "tmp/grass-draw-density-20260916/diagnostic-96/view-000600.png",
+      "bytes": 8791093,
+      "sha256": "74c0c4b3d743b426f429924dcfef8f98324dfd116415eb63a927cd0bd0066ad1"
+    },
+    {
+      "path": "tmp/grass-draw-density-20260916/diagnostic-96/view-000900.png",
+      "bytes": 8459381,
+      "sha256": "f69c284dc5c43bbccebe2c287d6a05b606c934573e3e0b5946d65f7f7d55b9da"
+    },
+    {
+      "path": "tmp/grass-draw-density-20260916/diagnostic-96-default-matched/view-000600.png",
+      "bytes": 8791905,
+      "sha256": "61f84e2e29e3ae57e5b37a8a4a99807a4ede82bb560eba431d9c9b955c847c1b"
+    },
+    {
+      "path": "tmp/grass-draw-density-20260916/diagnostic-96-default-matched/view-000900.png",
+      "bytes": 8457419,
+      "sha256": "cdd050d0c32144fdbe68bdc640b7e1291f5029c467f904764f332788ce4157a5"
+    },
+    {
+      "path": "tmp/grass-draw-density-20260916/diagnostic-96-prepared-matched/view-000600.png",
+      "bytes": 8793264,
+      "sha256": "9a85980ec8d4186360e0c03b29ce9572a6cbb1348faa286453392d004bbd0744"
+    },
+    {
+      "path": "tmp/grass-draw-density-20260916/diagnostic-96-prepared-matched/view-000900.png",
+      "bytes": 8460433,
+      "sha256": "d8f2c9a4b6331aeacd2eb5e945591707654b67fe43ac19f625850c43539e3bee"
+    },
+    {
+      "path": "tmp/grass-draw-density-20260916/diagnostic-96-repeat-matched/view-000600.png",
+      "bytes": 8793927,
+      "sha256": "58e56b197e5b5fe11ac9fe7bfe7411013ff8fa99041c74ae47888ac716c5746a"
+    },
+    {
+      "path": "tmp/grass-draw-density-20260916/diagnostic-96-repeat-matched/view-000900.png",
+      "bytes": 8461203,
+      "sha256": "40f2dc442b3efc07b91f52315cd28cb32f4fec8d8df3782b2dad91f931aded1d"
+    }
+  ],
+  "local_native_traces": [
+    "tmp/grass-draw-density-20260916/density96-prepared/frame.gputrace",
+    "tmp/grass-draw-density-20260916/baseline72/frame.gputrace",
+    "tmp/grass-draw-density-20260916/density96-default/frame.gputrace"
+  ],
+  "local_inputs": "tmp/grass-draw-density-20260916/density96-prepared/inputs",
+  "notes": "Native traces, binaries, databases and PNGs remain local; original earlier evidence archives untouched."
+}

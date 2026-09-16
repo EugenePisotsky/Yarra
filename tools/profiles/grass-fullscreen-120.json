@@ -1,0 +1,18 @@
+{
+  "defaults": {
+    "window": "fullscreen",
+    "size": "game",
+    "fps": 120,
+    "msaa": 4,
+    "density": "balanced",
+    "view": "low-walk",
+    "warmup": 60,
+    "seconds": 900
+  },
+  "variants": {
+    "fullscreen120": {}
+  },
+  "order": ["fullscreen120"],
+  "idle_seconds": 15,
+  "gap_seconds": 0
+}

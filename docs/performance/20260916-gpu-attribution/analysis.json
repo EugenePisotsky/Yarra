@@ -1,0 +1,2181 @@
+{
+  "pid": 21735,
+  "trace_window_s": [
+    1,
+    3
+  ],
+  "source_table": "metal-gpu-intervals",
+  "method": "GPU execution intervals for target PID, grouped by encoder and hardware stage. Only fully contained encoders enter stage means. Segments are unioned per encoder/stage; concurrent stages are not summed into frame latency. Metal frame-number field is not used as an application-frame count.",
+  "limitations": "Short instrumented moving-scene sample, default/adaptive performance state, no simultaneous power capture, no shader counter set. Main opaque pass combines grass/terrain/objects. Does not establish fixed-clock capacity, sustained headroom, grass-only draw time or watts.",
+  "target_active_interval_union_ms": 1306.411457,
+  "stages": [
+    {
+      "stage": "Vertex",
+      "label": "main_opaque_pass_3d_resolve_only:main_opaque_pass_3d_resolve_only",
+      "encoder_count": 236,
+      "mean_stage_ms": 2.203096211864407,
+      "p95_stage_ms": 2.47375,
+      "sum_stage_ms": 519.930706
+    },
+    {
+      "stage": "Fragment",
+      "label": "main_opaque_pass_3d_resolve_only:main_opaque_pass_3d_resolve_only",
+      "encoder_count": 236,
+      "mean_stage_ms": 1.9852757966101695,
+      "p95_stage_ms": 2.239666,
+      "sum_stage_ms": 468.525088
+    },
+    {
+      "stage": "Compute",
+      "label": "vegetation-v2 deterministic visible generation:vegetation-v2 deterministic visible generation",
+      "encoder_count": 237,
+      "mean_stage_ms": 0.5163468691983122,
+      "p95_stage_ms": 0.60475,
+      "sum_stage_ms": 122.374208
+    },
+    {
+      "stage": "Fragment",
+      "label": "ui:ui",
+      "encoder_count": 237,
+      "mean_stage_ms": 0.2863584894514768,
+      "p95_stage_ms": 0.335625,
+      "sum_stage_ms": 67.866962
+    },
+    {
+      "stage": "Fragment",
+      "label": "upscaling:upscaling",
+      "encoder_count": 474,
+      "mean_stage_ms": 0.05045387552742616,
+      "p95_stage_ms": 0.061833,
+      "sum_stage_ms": 23.915137
+    },
+    {
+      "stage": "Compute",
+      "label": "(wgpu internal) Signal:Blit Command 0",
+      "encoder_count": 237,
+      "mean_stage_ms": 0.072601805907173,
+      "p95_stage_ms": 0.150667,
+      "sum_stage_ms": 17.206628
+    },
+    {
+      "stage": "Compute",
+      "label": "vegetation shared blade curves and wind:vegetation shared blade curves and wind",
+      "encoder_count": 237,
+      "mean_stage_ms": 0.07134686497890295,
+      "p95_stage_ms": 0.08275,
+      "sum_stage_ms": 16.909207000000002
+    },
+    {
+      "stage": "Vertex",
+      "label": "ui:ui",
+      "encoder_count": 237,
+      "mean_stage_ms": 0.0682100970464135,
+      "p95_stage_ms": 0.108459,
+      "sum_stage_ms": 16.165793
+    },
+    {
+      "stage": "Compute",
+      "label": "bin unpacking:bin unpacking",
+      "encoder_count": 237,
+      "mean_stage_ms": 0.065346,
+      "p95_stage_ms": 0.080041,
+      "sum_stage_ms": 15.487002
+    },
+    {
+      "stage": "Compute",
+      "label": "Command Buffer 8:Blit Command 0",
+      "encoder_count": 237,
+      "mean_stage_ms": 0.052777742616033754,
+      "p95_stage_ms": 0.093042,
+      "sum_stage_ms": 12.508325
+    },
+    {
+      "stage": "Fragment",
+      "label": "shadow_directional_light_0_cascade_1:shadow_directional_light_0_cascade_1",
+      "encoder_count": 237,
+      "mean_stage_ms": 0.036792915611814345,
+      "p95_stage_ms": 0.042375,
+      "sum_stage_ms": 8.719921
+    },
+    {
+      "stage": "Vertex",
+      "label": "upscaling:upscaling",
+      "encoder_count": 474,
+      "mean_stage_ms": 0.01832909493670886,
+      "p95_stage_ms": 0.023417,
+      "sum_stage_ms": 8.687991
+    },
+    {
+      "stage": "Compute",
+      "label": "(wgpu internal) Pre Pass:(wgpu internal) Indirect draw validation pass",
+      "encoder_count": 1422,
+      "mean_stage_ms": 0.005743115330520394,
+      "p95_stage_ms": 0.00875,
+      "sum_stage_ms": 8.16671
+    },
+    {
+      "stage": "Compute",
+      "label": "(wgpu internal) Pre Pass:Blit Command 0",
+      "encoder_count": 1422,
+      "mean_stage_ms": 0.005676347398030942,
+      "p95_stage_ms": 0.023209,
+      "sum_stage_ms": 8.071766
+    },
+    {
+      "stage": "Compute",
+      "label": "early_mesh_preprocessing:early_mesh_preprocessing",
+      "encoder_count": 237,
+      "mean_stage_ms": 0.0328949029535865,
+      "p95_stage_ms": 0.050833,
+      "sum_stage_ms": 7.796092
+    },
+    {
+      "stage": "Fragment",
+      "label": "shadow_directional_light_0_cascade_2:shadow_directional_light_0_cascade_2",
+      "encoder_count": 237,
+      "mean_stage_ms": 0.027249282700421942,
+      "p95_stage_ms": 0.029791,
+      "sum_stage_ms": 6.45808
+    },
+    {
+      "stage": "Compute",
+      "label": "(wgpu internal) Transit:Blit Command 0",
+      "encoder_count": 237,
+      "mean_stage_ms": 0.02654306329113924,
+      "p95_stage_ms": 0.0525,
+      "sum_stage_ms": 6.290706
+    },
+    {
+      "stage": "Vertex",
+      "label": "shadow_directional_light_0_cascade_1:shadow_directional_light_0_cascade_1",
+      "encoder_count": 237,
+      "mean_stage_ms": 0.021592261603375528,
+      "p95_stage_ms": 0.023334,
+      "sum_stage_ms": 5.117366
+    },
+    {
+      "stage": "Vertex",
+      "label": "shadow_directional_light_0_cascade_2:shadow_directional_light_0_cascade_2",
+      "encoder_count": 237,
+      "mean_stage_ms": 0.0197047805907173,
+      "p95_stage_ms": 0.023125,
+      "sum_stage_ms": 4.670033
+    },
+    {
+      "stage": "Fragment",
+      "label": "shadow_directional_light_0_cascade_0:shadow_directional_light_0_cascade_0",
+      "encoder_count": 237,
+      "mean_stage_ms": 0.01931384388185654,
+      "p95_stage_ms": 0.021,
+      "sum_stage_ms": 4.577381
+    },
+    {
+      "stage": "Vertex",
+      "label": "shadow_directional_light_0_cascade_0:shadow_directional_light_0_cascade_0",
+      "encoder_count": 237,
+      "mean_stage_ms": 0.01902127848101266,
+      "p95_stage_ms": 0.026209,
+      "sum_stage_ms": 4.508043
+    },
+    {
+      "stage": "Compute",
+      "label": "clustering allocation global pass:clustering allocation global pass",
+      "encoder_count": 237,
+      "mean_stage_ms": 0.017285481012658227,
+      "p95_stage_ms": 0.019,
+      "sum_stage_ms": 4.096659
+    },
+    {
+      "stage": "Compute",
+      "label": "main_indirect_parameters_building:main_indirect_parameters_building",
+      "encoder_count": 237,
+      "mean_stage_ms": 0.017082801687763712,
+      "p95_stage_ms": 0.025458,
+      "sum_stage_ms": 4.048624
+    },
+    {
+      "stage": "Compute",
+      "label": "(wgpu internal) PendingWrites:Blit Command 0",
+      "encoder_count": 237,
+      "mean_stage_ms": 0.016955194092827003,
+      "p95_stage_ms": 0.0215,
+      "sum_stage_ms": 4.018381
+    },
+    {
+      "stage": "Compute",
+      "label": "early_prepass_indirect_parameters_building:early_prepass_indirect_parameters_building",
+      "encoder_count": 237,
+      "mean_stage_ms": 0.016936025316455695,
+      "p95_stage_ms": 0.020625,
+      "sum_stage_ms": 4.013838
+    },
+    {
+      "stage": "Fragment",
+      "label": "clustering populate pass:clustering populate pass",
+      "encoder_count": 237,
+      "mean_stage_ms": 0.010463122362869198,
+      "p95_stage_ms": 0.014167,
+      "sum_stage_ms": 2.47976
+    },
+    {
+      "stage": "Compute",
+      "label": "clustering Z slicing pass:clustering Z slicing pass",
+      "encoder_count": 237,
+      "mean_stage_ms": 0.010025848101265823,
+      "p95_stage_ms": 0.010583,
+      "sum_stage_ms": 2.376126
+    },
+    {
+      "stage": "Compute",
+      "label": "vegetation-v2 visible work scheduling:vegetation-v2 visible work scheduling",
+      "encoder_count": 237,
+      "mean_stage_ms": 0.009881345991561182,
+      "p95_stage_ms": 0.011042,
+      "sum_stage_ms": 2.341879
+    },
+    {
+      "stage": "Compute",
+      "label": "clustering allocation local pass:clustering allocation local pass",
+      "encoder_count": 237,
+      "mean_stage_ms": 0.00837871729957806,
+      "p95_stage_ms": 0.009208,
+      "sum_stage_ms": 1.985756
+    },
+    {
+      "stage": "Vertex",
+      "label": "clustering count pass:clustering count pass",
+      "encoder_count": 237,
+      "mean_stage_ms": 0.0076121518987341775,
+      "p95_stage_ms": 0.008334,
+      "sum_stage_ms": 1.80408
+    },
+    {
+      "stage": "Fragment",
+      "label": "clustering count pass:clustering count pass",
+      "encoder_count": 237,
+      "mean_stage_ms": 0.0075452067510548525,
+      "p95_stage_ms": 0.0105,
+      "sum_stage_ms": 1.788214
+    },
+    {
+      "stage": "Vertex",
+      "label": "clustering populate pass:clustering populate pass",
+      "encoder_count": 237,
+      "mean_stage_ms": 0.007166122362869199,
+      "p95_stage_ms": 0.008084,
+      "sum_stage_ms": 1.698371
+    },
+    {
+      "stage": "Compute",
+      "label": "Command Buffer 1:Blit Command 0",
+      "encoder_count": 237,
+      "mean_stage_ms": 0.0027289198312236288,
+      "p95_stage_ms": 0.00325,
+      "sum_stage_ms": 0.646754
+    },
+    {
+      "stage": "Compute",
+      "label": "Command Buffer 26:Blit Command 0",
+      "encoder_count": 237,
+      "mean_stage_ms": 0.002049746835443038,
+      "p95_stage_ms": 0.002292,
+      "sum_stage_ms": 0.48579
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e8d5b",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.099042,
+      "p95_stage_ms": 0.099042,
+      "sum_stage_ms": 0.099042
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1eaa80",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.096667,
+      "p95_stage_ms": 0.096667,
+      "sum_stage_ms": 0.096667
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e85dd",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.09275,
+      "p95_stage_ms": 0.09275,
+      "sum_stage_ms": 0.09275
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e8b53",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.091917,
+      "p95_stage_ms": 0.091917,
+      "sum_stage_ms": 0.091917
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ead36",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.091667,
+      "p95_stage_ms": 0.091667,
+      "sum_stage_ms": 0.091667
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e8482",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.0915,
+      "p95_stage_ms": 0.0915,
+      "sum_stage_ms": 0.0915
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e8f64",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.09075,
+      "p95_stage_ms": 0.09075,
+      "sum_stage_ms": 0.09075
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1eef73",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.089708,
+      "p95_stage_ms": 0.089708,
+      "sum_stage_ms": 0.089708
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e89ee",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.089458,
+      "p95_stage_ms": 0.089458,
+      "sum_stage_ms": 0.089458
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e79aa",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.088625,
+      "p95_stage_ms": 0.088625,
+      "sum_stage_ms": 0.088625
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ef93d",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.088334,
+      "p95_stage_ms": 0.088334,
+      "sum_stage_ms": 0.088334
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e8327",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.088208,
+      "p95_stage_ms": 0.088208,
+      "sum_stage_ms": 0.088208
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e784f",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.088,
+      "p95_stage_ms": 0.088,
+      "sum_stage_ms": 0.088
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ea925",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.087958,
+      "p95_stage_ms": 0.087958,
+      "sum_stage_ms": 0.087958
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ee5a9",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.087833,
+      "p95_stage_ms": 0.087833,
+      "sum_stage_ms": 0.087833
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ef724",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.086833,
+      "p95_stage_ms": 0.086833,
+      "sum_stage_ms": 0.086833
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ea66f",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.085,
+      "p95_stage_ms": 0.085,
+      "sum_stage_ms": 0.085
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1eeb41",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.084791,
+      "p95_stage_ms": 0.084791,
+      "sum_stage_ms": 0.084791
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1f16cf",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.084709,
+      "p95_stage_ms": 0.084709,
+      "sum_stage_ms": 0.084709
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e8893",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.084084,
+      "p95_stage_ms": 0.084084,
+      "sum_stage_ms": 0.084084
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ef50b",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.083791,
+      "p95_stage_ms": 0.083791,
+      "sum_stage_ms": 0.083791
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ee875",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.083542,
+      "p95_stage_ms": 0.083542,
+      "sum_stage_ms": 0.083542
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1f183a",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.083208,
+      "p95_stage_ms": 0.083208,
+      "sum_stage_ms": 0.083208
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ea466",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.082709,
+      "p95_stage_ms": 0.082709,
+      "sum_stage_ms": 0.082709
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1f19a5",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.082583,
+      "p95_stage_ms": 0.082583,
+      "sum_stage_ms": 0.082583
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ea1b0",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.082125,
+      "p95_stage_ms": 0.082125,
+      "sum_stage_ms": 0.082125
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e7bb2",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.082083,
+      "p95_stage_ms": 0.082083,
+      "sum_stage_ms": 0.082083
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ea30b",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.082083,
+      "p95_stage_ms": 0.082083,
+      "sum_stage_ms": 0.082083
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1eb147",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.082083,
+      "p95_stage_ms": 0.082083,
+      "sum_stage_ms": 0.082083
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1f0cdc",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.081625,
+      "p95_stage_ms": 0.081625,
+      "sum_stage_ms": 0.081625
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1f1343",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.081625,
+      "p95_stage_ms": 0.081625,
+      "sum_stage_ms": 0.081625
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1f0739",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.080583,
+      "p95_stage_ms": 0.080583,
+      "sum_stage_ms": 0.080583
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1f0a05",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.0805,
+      "p95_stage_ms": 0.0805,
+      "sum_stage_ms": 0.0805
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e7d0d",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.080459,
+      "p95_stage_ms": 0.080459,
+      "sum_stage_ms": 0.080459
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1edd69",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.080458,
+      "p95_stage_ms": 0.080458,
+      "sum_stage_ms": 0.080458
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1efed5",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.08025,
+      "p95_stage_ms": 0.08025,
+      "sum_stage_ms": 0.08025
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ecbb5",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.079416,
+      "p95_stage_ms": 0.079416,
+      "sum_stage_ms": 0.079416
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1f03ba",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.07925,
+      "p95_stage_ms": 0.07925,
+      "sum_stage_ms": 0.07925
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e8738",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.079041,
+      "p95_stage_ms": 0.079041,
+      "sum_stage_ms": 0.079041
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1edb5c",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.078459,
+      "p95_stage_ms": 0.078459,
+      "sum_stage_ms": 0.078459
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ebac4",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.077416,
+      "p95_stage_ms": 0.077416,
+      "sum_stage_ms": 0.077416
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1eaf3e",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.076542,
+      "p95_stage_ms": 0.076542,
+      "sum_stage_ms": 0.076542
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1f01a1",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.075334,
+      "p95_stage_ms": 0.075334,
+      "sum_stage_ms": 0.075334
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e921a",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.075333,
+      "p95_stage_ms": 0.075333,
+      "sum_stage_ms": 0.075333
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ed5e4",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.075167,
+      "p95_stage_ms": 0.075167,
+      "sum_stage_ms": 0.075167
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e90bf",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.075042,
+      "p95_stage_ms": 0.075042,
+      "sum_stage_ms": 0.075042
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1eb34f",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.074958,
+      "p95_stage_ms": 0.074958,
+      "sum_stage_ms": 0.074958
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e9422",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.074875,
+      "p95_stage_ms": 0.074875,
+      "sum_stage_ms": 0.074875
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ee0d4",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.074166,
+      "p95_stage_ms": 0.074166,
+      "sum_stage_ms": 0.074166
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e9786",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.072958,
+      "p95_stage_ms": 0.072958,
+      "sum_stage_ms": 0.072958
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1f1067",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.072167,
+      "p95_stage_ms": 0.072167,
+      "sum_stage_ms": 0.072167
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ee390",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.071625,
+      "p95_stage_ms": 0.071625,
+      "sum_stage_ms": 0.071625
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1f0efc",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.071125,
+      "p95_stage_ms": 0.071125,
+      "sum_stage_ms": 0.071125
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e9b97",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.070209,
+      "p95_stage_ms": 0.070209,
+      "sum_stage_ms": 0.070209
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e9d9f",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.069,
+      "p95_stage_ms": 0.069,
+      "sum_stage_ms": 0.069
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ec4ee",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.06825,
+      "p95_stage_ms": 0.06825,
+      "sum_stage_ms": 0.06825
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ebf82",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.067583,
+      "p95_stage_ms": 0.067583,
+      "sum_stage_ms": 0.067583
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ec6f7",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.065125,
+      "p95_stage_ms": 0.065125,
+      "sum_stage_ms": 0.065125
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1eed5a",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.064042,
+      "p95_stage_ms": 0.064042,
+      "sum_stage_ms": 0.064042
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e8cae",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.063667,
+      "p95_stage_ms": 0.063667,
+      "sum_stage_ms": 0.063667
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ec238",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.0635,
+      "p95_stage_ms": 0.0635,
+      "sum_stage_ms": 0.0635
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ebe27",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.06225,
+      "p95_stage_ms": 0.06225,
+      "sum_stage_ms": 0.06225
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e7e68",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.062042,
+      "p95_stage_ms": 0.062042,
+      "sum_stage_ms": 0.062042
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ed742",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.061667,
+      "p95_stage_ms": 0.061667,
+      "sum_stage_ms": 0.061667
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ec852",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.060833,
+      "p95_stage_ms": 0.060833,
+      "sum_stage_ms": 0.060833
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1edec7",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.059833,
+      "p95_stage_ms": 0.059833,
+      "sum_stage_ms": 0.059833
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e92c7",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.059625,
+      "p95_stage_ms": 0.059625,
+      "sum_stage_ms": 0.059625
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ec649",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.058292,
+      "p95_stage_ms": 0.058292,
+      "sum_stage_ms": 0.058292
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ea877",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.058125,
+      "p95_stage_ms": 0.058125,
+      "sum_stage_ms": 0.058125
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ef2f2",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.058041,
+      "p95_stage_ms": 0.058041,
+      "sum_stage_ms": 0.058041
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1eb6b3",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.057958,
+      "p95_stage_ms": 0.057958,
+      "sum_stage_ms": 0.057958
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ed8a0",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.057625,
+      "p95_stage_ms": 0.057625,
+      "sum_stage_ms": 0.057625
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ee9db",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.057459,
+      "p95_stage_ms": 0.057459,
+      "sum_stage_ms": 0.057459
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1eac88",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.057417,
+      "p95_stage_ms": 0.057417,
+      "sum_stage_ms": 0.057417
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1eabdb",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.05725,
+      "p95_stage_ms": 0.05725,
+      "sum_stage_ms": 0.05725
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ee70f",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.056708,
+      "p95_stage_ms": 0.056708,
+      "sum_stage_ms": 0.056708
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1eb099",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.056625,
+      "p95_stage_ms": 0.056625,
+      "sum_stage_ms": 0.056625
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1f05d3",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.055584,
+      "p95_stage_ms": 0.055584,
+      "sum_stage_ms": 0.055584
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ec18b",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.055542,
+      "p95_stage_ms": 0.055542,
+      "sum_stage_ms": 0.055542
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e9efa",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.055375,
+      "p95_stage_ms": 0.055375,
+      "sum_stage_ms": 0.055375
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1eca5a",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.055167,
+      "p95_stage_ms": 0.055167,
+      "sum_stage_ms": 0.055167
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ecc63",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.055,
+      "p95_stage_ms": 0.055,
+      "sum_stage_ms": 0.055
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1efe22",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.053958,
+      "p95_stage_ms": 0.053958,
+      "sum_stage_ms": 0.053958
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1edaad",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.05375,
+      "p95_stage_ms": 0.05375,
+      "sum_stage_ms": 0.05375
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ef18c",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.05375,
+      "p95_stage_ms": 0.05375,
+      "sum_stage_ms": 0.05375
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ed7f1",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.05325,
+      "p95_stage_ms": 0.05325,
+      "sum_stage_ms": 0.05325
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1eb8bb",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.053125,
+      "p95_stage_ms": 0.053125,
+      "sum_stage_ms": 0.053125
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ed27c",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.053083,
+      "p95_stage_ms": 0.053083,
+      "sum_stage_ms": 0.053083
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e962b",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.053,
+      "p95_stage_ms": 0.053,
+      "sum_stage_ms": 0.053
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ee232",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.052875,
+      "p95_stage_ms": 0.052875,
+      "sum_stage_ms": 0.052875
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e7dbb",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.052625,
+      "p95_stage_ms": 0.052625,
+      "sum_stage_ms": 0.052625
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1eb558",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.052625,
+      "p95_stage_ms": 0.052625,
+      "sum_stage_ms": 0.052625
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e98e1",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.052166,
+      "p95_stage_ms": 0.052166,
+      "sum_stage_ms": 0.052166
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1eb3fd",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.052125,
+      "p95_stage_ms": 0.052125,
+      "sum_stage_ms": 0.052125
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ed074",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.052,
+      "p95_stage_ms": 0.052,
+      "sum_stage_ms": 0.052
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1f1619",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.051667,
+      "p95_stage_ms": 0.051667,
+      "sum_stage_ms": 0.051667
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ef9f0",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.051583,
+      "p95_stage_ms": 0.051583,
+      "sum_stage_ms": 0.051583
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ed1cf",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.051459,
+      "p95_stage_ms": 0.051459,
+      "sum_stage_ms": 0.051459
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ed485",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.050458,
+      "p95_stage_ms": 0.050458,
+      "sum_stage_ms": 0.050458
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ee2e1",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.05025,
+      "p95_stage_ms": 0.05025,
+      "sum_stage_ms": 0.05025
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e7f16",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.050208,
+      "p95_stage_ms": 0.050208,
+      "sum_stage_ms": 0.050208
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ea514",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.050125,
+      "p95_stage_ms": 0.050125,
+      "sum_stage_ms": 0.050125
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1f11d2",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.050125,
+      "p95_stage_ms": 0.050125,
+      "sum_stage_ms": 0.050125
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1efb56",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.049666,
+      "p95_stage_ms": 0.049666,
+      "sum_stage_ms": 0.049666
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ef7d7",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.049625,
+      "p95_stage_ms": 0.049625,
+      "sum_stage_ms": 0.049625
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ea055",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.0495,
+      "p95_stage_ms": 0.0495,
+      "sum_stage_ms": 0.0495
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ec59c",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.049417,
+      "p95_stage_ms": 0.049417,
+      "sum_stage_ms": 0.049417
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e7a57",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.049,
+      "p95_stage_ms": 0.049,
+      "sum_stage_ms": 0.049
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1eae91",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.048667,
+      "p95_stage_ms": 0.048667,
+      "sum_stage_ms": 0.048667
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ec030",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.048625,
+      "p95_stage_ms": 0.048625,
+      "sum_stage_ms": 0.048625
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e9c44",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.04825,
+      "p95_stage_ms": 0.04825,
+      "sum_stage_ms": 0.04825
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e8071",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.048209,
+      "p95_stage_ms": 0.048209,
+      "sum_stage_ms": 0.048209
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1f13f9",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.047875,
+      "p95_stage_ms": 0.047875,
+      "sum_stage_ms": 0.047875
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ea71c",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.047667,
+      "p95_stage_ms": 0.047667,
+      "sum_stage_ms": 0.047667
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ed121",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.0475,
+      "p95_stage_ms": 0.0475,
+      "sum_stage_ms": 0.0475
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ed32a",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.0475,
+      "p95_stage_ms": 0.0475,
+      "sum_stage_ms": 0.0475
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ecd10",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.047375,
+      "p95_stage_ms": 0.047375,
+      "sum_stage_ms": 0.047375
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1edcba",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.047375,
+      "p95_stage_ms": 0.047375,
+      "sum_stage_ms": 0.047375
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ece6b",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.047334,
+      "p95_stage_ms": 0.047334,
+      "sum_stage_ms": 0.047334
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ec393",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.047333,
+      "p95_stage_ms": 0.047333,
+      "sum_stage_ms": 0.047333
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ec0dd",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.04725,
+      "p95_stage_ms": 0.04725,
+      "sum_stage_ms": 0.04725
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ec9ad",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.04725,
+      "p95_stage_ms": 0.04725,
+      "sum_stage_ms": 0.04725
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1f111d",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.047208,
+      "p95_stage_ms": 0.047208,
+      "sum_stage_ms": 0.047208
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ed94f",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.046875,
+      "p95_stage_ms": 0.046875,
+      "sum_stage_ms": 0.046875
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1f0abc",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.046416,
+      "p95_stage_ms": 0.046416,
+      "sum_stage_ms": 0.046416
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1f046d",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.046375,
+      "p95_stage_ms": 0.046375,
+      "sum_stage_ms": 0.046375
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ed9fe",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.046333,
+      "p95_stage_ms": 0.046333,
+      "sum_stage_ms": 0.046333
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ee928",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.04625,
+      "p95_stage_ms": 0.04625,
+      "sum_stage_ms": 0.04625
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ebc1f",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.045958,
+      "p95_stage_ms": 0.045958,
+      "sum_stage_ms": 0.045958
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1edf76",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.045417,
+      "p95_stage_ms": 0.045417,
+      "sum_stage_ms": 0.045417
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1eba16",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.045167,
+      "p95_stage_ms": 0.045167,
+      "sum_stage_ms": 0.045167
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ebccc",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.045084,
+      "p95_stage_ms": 0.045084,
+      "sum_stage_ms": 0.045084
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1eb605",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.045,
+      "p95_stage_ms": 0.045,
+      "sum_stage_ms": 0.045
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1f0e47",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.044958,
+      "p95_stage_ms": 0.044958,
+      "sum_stage_ms": 0.044958
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e81cc",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.044792,
+      "p95_stage_ms": 0.044792,
+      "sum_stage_ms": 0.044792
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1f07ec",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.044792,
+      "p95_stage_ms": 0.044792,
+      "sum_stage_ms": 0.044792
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ee65c",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.044625,
+      "p95_stage_ms": 0.044625,
+      "sum_stage_ms": 0.044625
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ef23f",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.044625,
+      "p95_stage_ms": 0.044625,
+      "sum_stage_ms": 0.044625
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ea103",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.044541,
+      "p95_stage_ms": 0.044541,
+      "sum_stage_ms": 0.044541
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ef671",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.044333,
+      "p95_stage_ms": 0.044333,
+      "sum_stage_ms": 0.044333
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ed3d7",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.044167,
+      "p95_stage_ms": 0.044167,
+      "sum_stage_ms": 0.044167
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ef0d9",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.043958,
+      "p95_stage_ms": 0.043958,
+      "sum_stage_ms": 0.043958
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ec7a4",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.043834,
+      "p95_stage_ms": 0.043834,
+      "sum_stage_ms": 0.043834
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e998e",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.043417,
+      "p95_stage_ms": 0.043417,
+      "sum_stage_ms": 0.043417
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1f1288",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.043209,
+      "p95_stage_ms": 0.043209,
+      "sum_stage_ms": 0.043209
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e9fa8",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.043084,
+      "p95_stage_ms": 0.043084,
+      "sum_stage_ms": 0.043084
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1efd6f",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.043083,
+      "p95_stage_ms": 0.043083,
+      "sum_stage_ms": 0.043083
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ecf19",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.042958,
+      "p95_stage_ms": 0.042958,
+      "sum_stage_ms": 0.042958
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1f0b71",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.042916,
+      "p95_stage_ms": 0.042916,
+      "sum_stage_ms": 0.042916
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e8eb6",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.042291,
+      "p95_stage_ms": 0.042291,
+      "sum_stage_ms": 0.042291
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ebd7a",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.041666,
+      "p95_stage_ms": 0.041666,
+      "sum_stage_ms": 0.041666
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1eb80e",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.041584,
+      "p95_stage_ms": 0.041584,
+      "sum_stage_ms": 0.041584
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ee443",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.040917,
+      "p95_stage_ms": 0.040917,
+      "sum_stage_ms": 0.040917
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ec441",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.040208,
+      "p95_stage_ms": 0.040208,
+      "sum_stage_ms": 0.040208
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1eb760",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.040083,
+      "p95_stage_ms": 0.040083,
+      "sum_stage_ms": 0.040083
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1f0520",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.039416,
+      "p95_stage_ms": 0.039416,
+      "sum_stage_ms": 0.039416
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ef3a5",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.039333,
+      "p95_stage_ms": 0.039333,
+      "sum_stage_ms": 0.039333
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1eff88",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.039,
+      "p95_stage_ms": 0.039,
+      "sum_stage_ms": 0.039
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ee7c2",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.038833,
+      "p95_stage_ms": 0.038833,
+      "sum_stage_ms": 0.038833
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ebed5",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.038792,
+      "p95_stage_ms": 0.038792,
+      "sum_stage_ms": 0.038792
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1f089f",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.038708,
+      "p95_stage_ms": 0.038708,
+      "sum_stage_ms": 0.038708
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e9ae9",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.038417,
+      "p95_stage_ms": 0.038417,
+      "sum_stage_ms": 0.038417
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1eeca7",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.038084,
+      "p95_stage_ms": 0.038084,
+      "sum_stage_ms": 0.038084
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ede18",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.037583,
+      "p95_stage_ms": 0.037583,
+      "sum_stage_ms": 0.037583
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1eebf4",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.037458,
+      "p95_stage_ms": 0.037458,
+      "sum_stage_ms": 0.037458
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ed693",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.03675,
+      "p95_stage_ms": 0.03675,
+      "sum_stage_ms": 0.03675
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1eb4aa",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.035708,
+      "p95_stage_ms": 0.035708,
+      "sum_stage_ms": 0.035708
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ebb71",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.035584,
+      "p95_stage_ms": 0.035584,
+      "sum_stage_ms": 0.035584
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1f00ee",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.0355,
+      "p95_stage_ms": 0.0355,
+      "sum_stage_ms": 0.0355
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1f0952",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.034625,
+      "p95_stage_ms": 0.034625,
+      "sum_stage_ms": 0.034625
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ec8ff",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.0345,
+      "p95_stage_ms": 0.0345,
+      "sum_stage_ms": 0.0345
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ef458",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.034167,
+      "p95_stage_ms": 0.034167,
+      "sum_stage_ms": 0.034167
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e94d0",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.033875,
+      "p95_stage_ms": 0.033875,
+      "sum_stage_ms": 0.033875
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1eeec0",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.033584,
+      "p95_stage_ms": 0.033584,
+      "sum_stage_ms": 0.033584
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1efc09",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.0335,
+      "p95_stage_ms": 0.0335,
+      "sum_stage_ms": 0.0335
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1f14ae",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.033208,
+      "p95_stage_ms": 0.033208,
+      "sum_stage_ms": 0.033208
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e957d",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.033125,
+      "p95_stage_ms": 0.033125,
+      "sum_stage_ms": 0.033125
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1f0d91",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.033125,
+      "p95_stage_ms": 0.033125,
+      "sum_stage_ms": 0.033125
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1f0307",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.032833,
+      "p95_stage_ms": 0.032833,
+      "sum_stage_ms": 0.032833
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1eb2a2",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.03225,
+      "p95_stage_ms": 0.03225,
+      "sum_stage_ms": 0.03225
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e78fc",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.0175,
+      "p95_stage_ms": 0.0175,
+      "sum_stage_ms": 0.0175
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ea9d2",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.016333,
+      "p95_stage_ms": 0.016333,
+      "sum_stage_ms": 0.016333
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e8940",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.01625,
+      "p95_stage_ms": 0.01625,
+      "sum_stage_ms": 0.01625
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e8e09",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.016042,
+      "p95_stage_ms": 0.016042,
+      "sum_stage_ms": 0.016042
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e8a9b",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.015792,
+      "p95_stage_ms": 0.015792,
+      "sum_stage_ms": 0.015792
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e8c00",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.015792,
+      "p95_stage_ms": 0.015792,
+      "sum_stage_ms": 0.015792
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ea5c1",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.015667,
+      "p95_stage_ms": 0.015667,
+      "sum_stage_ms": 0.015667
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e87e5",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.01525,
+      "p95_stage_ms": 0.01525,
+      "sum_stage_ms": 0.01525
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e7b05",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.015209,
+      "p95_stage_ms": 0.015209,
+      "sum_stage_ms": 0.015209
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1eab2d",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.014959,
+      "p95_stage_ms": 0.014959,
+      "sum_stage_ms": 0.014959
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e811e",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.014917,
+      "p95_stage_ms": 0.014917,
+      "sum_stage_ms": 0.014917
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1eade3",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.014917,
+      "p95_stage_ms": 0.014917,
+      "sum_stage_ms": 0.014917
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e852f",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.014916,
+      "p95_stage_ms": 0.014916,
+      "sum_stage_ms": 0.014916
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1f003b",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.014916,
+      "p95_stage_ms": 0.014916,
+      "sum_stage_ms": 0.014916
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1f1784",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.01475,
+      "p95_stage_ms": 0.01475,
+      "sum_stage_ms": 0.01475
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ecb08",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.014708,
+      "p95_stage_ms": 0.014708,
+      "sum_stage_ms": 0.014708
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e916c",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.014625,
+      "p95_stage_ms": 0.014625,
+      "sum_stage_ms": 0.014625
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ea7ca",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.014584,
+      "p95_stage_ms": 0.014584,
+      "sum_stage_ms": 0.014584
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e868a",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.0145,
+      "p95_stage_ms": 0.0145,
+      "sum_stage_ms": 0.0145
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1f18ef",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.014417,
+      "p95_stage_ms": 0.014417,
+      "sum_stage_ms": 0.014417
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ea3b9",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.014375,
+      "p95_stage_ms": 0.014375,
+      "sum_stage_ms": 0.014375
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e9011",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.014291,
+      "p95_stage_ms": 0.014291,
+      "sum_stage_ms": 0.014291
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e7c60",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.014208,
+      "p95_stage_ms": 0.014208,
+      "sum_stage_ms": 0.014208
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e83d4",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.014208,
+      "p95_stage_ms": 0.014208,
+      "sum_stage_ms": 0.014208
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e9cf2",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.014125,
+      "p95_stage_ms": 0.014125,
+      "sum_stage_ms": 0.014125
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ea25e",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.014083,
+      "p95_stage_ms": 0.014083,
+      "sum_stage_ms": 0.014083
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1f1a5a",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.014083,
+      "p95_stage_ms": 0.014083,
+      "sum_stage_ms": 0.014083
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e9e4d",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.014042,
+      "p95_stage_ms": 0.014042,
+      "sum_stage_ms": 0.014042
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1f0254",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.014,
+      "p95_stage_ms": 0.014,
+      "sum_stage_ms": 0.014
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ed532",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.013959,
+      "p95_stage_ms": 0.013959,
+      "sum_stage_ms": 0.013959
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1f1564",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.013958,
+      "p95_stage_ms": 0.013958,
+      "sum_stage_ms": 0.013958
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e8279",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.013917,
+      "p95_stage_ms": 0.013917,
+      "sum_stage_ms": 0.013917
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e7fc3",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.013875,
+      "p95_stage_ms": 0.013875,
+      "sum_stage_ms": 0.013875
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1f0c26",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.013834,
+      "p95_stage_ms": 0.013834,
+      "sum_stage_ms": 0.013834
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ecdbe",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.013833,
+      "p95_stage_ms": 0.013833,
+      "sum_stage_ms": 0.013833
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e9375",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.013792,
+      "p95_stage_ms": 0.013792,
+      "sum_stage_ms": 0.013792
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ef5be",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.013667,
+      "p95_stage_ms": 0.013667,
+      "sum_stage_ms": 0.013667
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ef026",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.013625,
+      "p95_stage_ms": 0.013625,
+      "sum_stage_ms": 0.013625
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1eb969",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.013584,
+      "p95_stage_ms": 0.013584,
+      "sum_stage_ms": 0.013584
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1edc0b",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.013584,
+      "p95_stage_ms": 0.013584,
+      "sum_stage_ms": 0.013584
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ee025",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.013541,
+      "p95_stage_ms": 0.013541,
+      "sum_stage_ms": 0.013541
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e9833",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.013417,
+      "p95_stage_ms": 0.013417,
+      "sum_stage_ms": 0.013417
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1eafec",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.013375,
+      "p95_stage_ms": 0.013375,
+      "sum_stage_ms": 0.013375
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1eea8e",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.013375,
+      "p95_stage_ms": 0.013375,
+      "sum_stage_ms": 0.013375
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ee4f4",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.013292,
+      "p95_stage_ms": 0.013292,
+      "sum_stage_ms": 0.013292
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e96d8",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.013291,
+      "p95_stage_ms": 0.013291,
+      "sum_stage_ms": 0.013291
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1efaa3",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.013291,
+      "p95_stage_ms": 0.013291,
+      "sum_stage_ms": 0.013291
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1efcbc",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.01325,
+      "p95_stage_ms": 0.01325,
+      "sum_stage_ms": 0.01325
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1f0fb2",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.01325,
+      "p95_stage_ms": 0.01325,
+      "sum_stage_ms": 0.01325
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ee183",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.013167,
+      "p95_stage_ms": 0.013167,
+      "sum_stage_ms": 0.013167
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1e9a3c",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.013083,
+      "p95_stage_ms": 0.013083,
+      "sum_stage_ms": 0.013083
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ef88a",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.013083,
+      "p95_stage_ms": 0.013083,
+      "sum_stage_ms": 0.013083
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ecfc6",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.013041,
+      "p95_stage_ms": 0.013041,
+      "sum_stage_ms": 0.013041
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1ec2e6",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.013,
+      "p95_stage_ms": 0.013,
+      "sum_stage_ms": 0.013
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1eb1f4",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.012959,
+      "p95_stage_ms": 0.012959,
+      "sum_stage_ms": 0.012959
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1eee0d",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.012917,
+      "p95_stage_ms": 0.012917,
+      "sum_stage_ms": 0.012917
+    },
+    {
+      "stage": "Vertex",
+      "label": "main_transparent_pass_2d:main_transparent_pass_2d   (Clear)  ( game (21735) )  0xba1f0686",
+      "encoder_count": 1,
+      "mean_stage_ms": 0.012917,
+      "p95_stage_ms": 0.012917,
+      "sum_stage_ms": 0.012917
+    }
+  ]
+}

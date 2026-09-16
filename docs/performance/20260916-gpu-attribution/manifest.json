@@ -1,0 +1,69 @@
+{
+  "experiment": "GP-013",
+  "scope": "Raw GPU interval export, reproducible summary, app logs, input hashes and recorder commands. Native trace remains local; environment metadata excluded.",
+  "verification": {
+    "zip_crc": "passed",
+    "entries_match_sources": true,
+    "analysis_round_trip": "exact match"
+  },
+  "files": {
+    "analysis.json": {
+      "bytes": 72392,
+      "sha256": "3fa5a292baa3726f90389884cd893935dc1c1be32ff1a497d88361d7f943906b"
+    },
+    "metadata.json": {
+      "bytes": 974,
+      "sha256": "722cb47c6c8653f58e12a7bb0802105d1beb601035f1b5570fba638f2738aafa"
+    },
+    "evidence.zip": {
+      "bytes": 2077127,
+      "sha256": "464fa9d266a2483dc5e2fe44691956add61a99fef05ca4d4f7246adf9e7599d5"
+    }
+  },
+  "archive_entries": {
+    "analyze_intervals.py": {
+      "bytes": 4221,
+      "sha256": "166cf5792fe5782dfed123df4a55f4c2f6d1799ae198ba3eeefcf1ed181fbc1c"
+    },
+    "gpu-intervals.xml": {
+      "bytes": 21233047,
+      "sha256": "6d78018aad25ae65a3ff2e970862a5932fb91236036137c7af03aa2d60a6a9c1"
+    },
+    "game.log": {
+      "bytes": 29058,
+      "sha256": "273ddd44f56f9341428a9786846abeca926677bdfde5cb6b4564a97351f27f84"
+    },
+    "game-command.json": {
+      "bytes": 695,
+      "sha256": "667b4866cae24247d42dc630f9db476ec1b2278c53f56a2082ceaef739f641c2"
+    },
+    "trace-command.json": {
+      "bytes": 260,
+      "sha256": "82ce981522603015a686181af8a258944c86af213392c58b48806ff23eabd5e3"
+    },
+    "xctrace.log": {
+      "bytes": 264,
+      "sha256": "82892a7b6f845e2ea66a1fcde59e7b1b2e1f6e6902f738f44f9d0e26ff2970e6"
+    },
+    "result.json": {
+      "bytes": 37,
+      "sha256": "fb0cfef524ac8b6323f8497d451dc7b44b9039849e6a8e15f9a2eec49d686011"
+    },
+    "inputs.json": {
+      "bytes": 1767,
+      "sha256": "c0bb5b2d26c0dbebb2872c8cc70425b12a4cae6fedf172b83dadd128fefa78b0"
+    },
+    "failed-attempt.json": {
+      "bytes": 393,
+      "sha256": "942690e5193a70348cc6dd87b073e63b93b51405d85cd779f6b6f5ba3a4cdcda"
+    },
+    "failed-attempt.log": {
+      "bytes": 169,
+      "sha256": "e90401e5f68dac09ecdd0d788a9e70e16010ba5d1edf0f7848f6698e675c3f3a"
+    },
+    "failed-command.json": {
+      "bytes": 1105,
+      "sha256": "d907b8f0f9bdf096d46987a1b55b82913f0f3341e27d72e1baa29b59d0f73635"
+    }
+  }
+}

@@ -1,0 +1,143 @@
+{
+  "experiment": "GP-019",
+  "session": "20260916-212946",
+  "zip_sha256": "91da67d66d5563e92344b344ff860657dd8044978da950f66e32bc5fb39e9238",
+  "entries": {
+    "analysis-tools/analyze_sustained.py": {
+      "bytes": 6264,
+      "sha256": "a7d132e292faf67e2a0e746fcc93f9ac010e369b9764f634019d3fb2c1c8c37c"
+    },
+    "analysis-tools/archive.py": {
+      "bytes": 4964,
+      "sha256": "2c146b07cfafeb84f3de2d5a84b106aaf32c2163f2725b2c4f140f0d93db5716"
+    },
+    "analysis-tools/grass_profile_report.py": {
+      "bytes": 19056,
+      "sha256": "73424a95963d3cb29c0c4147555cc32309241183972001d59338af40d9327780"
+    },
+    "analysis.json": {
+      "bytes": 178809,
+      "sha256": "4c718e3c3dccf6bbc7776d6d74108123a7f651eeedfbd6ae06b9eca8c75c6187"
+    },
+    "comparison-inputs/gp015-original66.json": {
+      "bytes": 1767,
+      "sha256": "c0bb5b2d26c0dbebb2872c8cc70425b12a4cae6fedf172b83dadd128fefa78b0"
+    },
+    "comparison-inputs/gp018-frozen96-prepared.json": {
+      "bytes": 1795,
+      "sha256": "9aa99a4183e73ec3853c339864c62ca4f528e2ad5873caa1afc6205c430e2ddb"
+    },
+    "inputs/density96-prepared120/canopy.ron": {
+      "bytes": 316,
+      "sha256": "e3db7d4a488767bc50d7a6fd4ef8d539e69b90007b489a7cb49c53e93db9377a"
+    },
+    "inputs/density96-prepared120/inputs.json": {
+      "bytes": 1870,
+      "sha256": "35509ea6abb8b5be1d37601646801f9ad0255e16fec05e0ccec58cd0a4faf290"
+    },
+    "power-command.json": {
+      "bytes": 190,
+      "sha256": "212aadb97030c105b1fb0ffbc243dff1a54a34ad2e324d609d4b0cc8a5071d06"
+    },
+    "power-stderr.txt": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "power.txt": {
+      "bytes": 5770250,
+      "sha256": "88a74f0e0e80577644f9d9a90cf8d15ae50988456dcd130ac0751654361577a4"
+    },
+    "reanalysis/report.html": {
+      "bytes": 451594,
+      "sha256": "416f64e1bb7e49c4fb4fa908ddc4bd60352eb877c6e4fc0677551377ebba0732"
+    },
+    "reanalysis/report.json": {
+      "bytes": 626980,
+      "sha256": "41116cfc42ae6ffd3b0514bf13e0259b870cfd00f58a7214f163a445d8bf8d40"
+    },
+    "reanalysis/report.md": {
+      "bytes": 2309,
+      "sha256": "cc786163d9a46e9d3b7a356e7a30543250f774c8febd79c3cca1468ad755ef39"
+    },
+    "reanalysis-source/tools/grass_profile.py": {
+      "bytes": 18982,
+      "sha256": "6516b703e454c781af90deee5b3f1547adf9bd96edb03fbf17399eba14da35df"
+    },
+    "reanalysis-source/tools/grass_profile_report.py": {
+      "bytes": 22450,
+      "sha256": "501f8c779d0b93e6449dd8a60e6e7d4a66969dddab24ceed6912571702b2929c"
+    },
+    "reanalysis-source/tools/profiles/grass-fullscreen-96-default-120.json": {
+      "bytes": 710,
+      "sha256": "a751f81f326d7194e70e6afe6fd64143087621fe42e9e9d47dbe062375b8cddb"
+    },
+    "reanalysis-source/tools/profiles/grass-fullscreen-96-prepared-120.json": {
+      "bytes": 712,
+      "sha256": "f050d558f766a64e3e3bfb59ef94d395f3e547a48ec488737f00e6667ff97c19"
+    },
+    "reanalysis-source/tools/test_grass_profile.py": {
+      "bytes": 15798,
+      "sha256": "de37a91bf6f8ecf0905cbc9a1216d3d46532b880fb8bfb26739eed104064fd6d"
+    },
+    "report.html": {
+      "bytes": 449339,
+      "sha256": "492d7e042de13c881c01c5ec7fd02c6d87d156b5280cde7e6545ad0c4ec8c5c5"
+    },
+    "report.json": {
+      "bytes": 626553,
+      "sha256": "effed68e4eeece993a154a9424f2faedfa0918eec5ab4c61382afaaca7494e42"
+    },
+    "report.md": {
+      "bytes": 1846,
+      "sha256": "f4cbc90af8197dc7402d9bb2a75811715c58c9bb40f154cb5b8777a894b4eb81"
+    },
+    "runs/01-density96-prepared120/game.log": {
+      "bytes": 3086530,
+      "sha256": "15cfbc694cbe02cdd0fecb30de1daf1d2650713cba5dcf1d53879627de4835ea"
+    },
+    "runs/01-density96-prepared120/run.json": {
+      "bytes": 3490,
+      "sha256": "236f20707f236aa8c314458b264231c4bb235ca30034c0f76a7c659c904b6a69"
+    },
+    "session.json": {
+      "bytes": 2324,
+      "sha256": "64ec933fdbed54a105640929771071d4f870b28bdfce9d405d7bf89142634405"
+    },
+    "user-observation.json": {
+      "bytes": 317,
+      "sha256": "47b5061215d7b64a16cb4a681832e68360c90ae29047a882338501bdfaadc9f0"
+    }
+  },
+  "verification": {
+    "original_report_exactly_reproduced": true,
+    "follow_up_analysis_exactly_reproduced": true,
+    "updated_report_exactly_reproduced": true,
+    "next_control_frozen_input_hashes_match_completed_run": true
+  },
+  "local_inputs": "tmp/grass-profiles/20260916-212946/inputs/density96-prepared120",
+  "next_control_inputs": "tmp/grass-draw-density-20260916/density96-prepared/inputs",
+  "input_hashes": {
+    "binary_sha256": "6a754e6e0b4f784dc0cd67e763694d8755248c89d3a5ab7cccf7e18d0204e6e0",
+    "database_sha256": "fb7712f61cd0f9ce462604b0bfe2090aa2dc341e966b5e5f337e1f68670b20e2",
+    "canopy_sha256": "e3db7d4a488767bc50d7a6fd4ef8d539e69b90007b489a7cb49c53e93db9377a",
+    "shader_sha256": {
+      "grass_canopy.wgsl": "9782f27f003100478db35b3fc3bb685f5b8d23448428c75f9a17ee7582f9f27b",
+      "terrain_material.wgsl": "cd52b88fe5f834bf5d55f3f04466840a215be4195dabaecffe08f02ccd60f898",
+      "terrain_prepare_control.wgsl": "2293cfd061f2ce00d0ffe48fe5496d6407a98369ad4321dfbf927a9e6716eb34",
+      "terrain_stochastic.wgsl": "67c24d0d22743f4be1963ea71a1cc4b022d533d653a12b4db51439aec9fd395c",
+      "terrain_stochastic_cache.wgsl": "02d74877933b25d5e6e50df04afc559d5850c4099102372d3272adb63f2c8817",
+      "vegetation_blade.wgsl": "d28d80d56de09935ee52b00031dcd8fc0efb8627b7861c2c867b82a270784592",
+      "vegetation_debug_compute.wgsl": "3b92dc046aa9afd06d347eb67427db72f7a1ec5395aa642e405298ac3d5aee52",
+      "vegetation_debug_draw.wgsl": "b75ff7f68aecee1eca4141a545126dbf868e0d104bd27bb783395a10882e3233",
+      "vegetation_prepare_blades.wgsl": "06344e7d2d7517f9ffe51baaeb069bea79ab5777235463f74f7eb1d52726592f",
+      "vegetation_schedule_compute.wgsl": "cbe01476358c1da99124b6179669d338e78c0ea0c7fdf3f44bece43604ded964"
+    },
+    "original_sources": {
+      "binary": "/Users/eugenepisotsky/Dev/Sources/Hobby/YarraProject/tmp/grass-draw-density-20260916/density96-prepared/inputs/game",
+      "database": "/Users/eugenepisotsky/Dev/Sources/Hobby/YarraProject/tmp/grass-draw-density-20260916/density96-prepared/inputs/runtime.sqlite",
+      "canopy": "/Users/eugenepisotsky/Dev/Sources/Hobby/YarraProject/tmp/grass-draw-density-20260916/density96-prepared/inputs/canopy.ron"
+    },
+    "asset_scope": "Binary, DB, shaders and canopy copied; other assets linked to workspace and must remain unchanged"
+  },
+  "limits": "Raw logs and analysis are portable. Large executable/database/shader assets stay local; unrelated assets were linked, not frozen. No fan RPM/temperature series."
+}

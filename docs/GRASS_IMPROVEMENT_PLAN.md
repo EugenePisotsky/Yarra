@@ -1,5 +1,10 @@
 # Grass System Improvement Plan
 
+Performance update, 2026-09-16: measured optimization outcomes, current conclusions
+and pending tests are tracked in the [grass optimization log](GRASS_OPTIMIZATION_LOG.md).
+Use it for the current 1440p60 PC target and Mac power evidence. This document
+continues to hold the broader visual/architecture history and dated experiment plans.
+
 ## Status and purpose
 
 This is the living investigation, decision log, and work-in-progress plan for Yarra's grass and

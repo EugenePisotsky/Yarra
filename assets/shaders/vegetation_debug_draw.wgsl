@@ -186,107 +186,116 @@ fn geometry_vertex(vertex_index: u32, instance_index: u32) -> VertexOutput {
         low_lod || paired_ribbon,
     );
     let t = pow(linear_t, max(profile.topology.w, 0.2));
-    var curve_position = cubic_bezier(p0, p1, p2, p3, t);
-    var curve_derivative = cubic_bezier_derivative(p0, p1, p2, p3, t);
-    if (blade_wind_amplitude > 1e-5) {
-        // Ghost's grass bob offsets phase by both blade identity and position along the blade. The
-        // analytic derivative keeps transported ribbon frames and rounded lighting attached to the
-        // animated silhouette instead of shading the rest curve.
-        let envelope = t * t;
-        let envelope_derivative = 2.0 * t;
-        let forward_phase = blade_wind_phase + t * 3.20;
-        let side_phase = blade_wind_phase * 1.37 + 1.20 - t * 2.35;
-        let detail_direction = animated_wind_forward * sin(forward_phase) * 0.72
-            + blade_side * sin(side_phase) * 0.76
-            + surface_normal * sin(forward_phase + 1.57) * 0.18;
-        let detail_derivative = animated_wind_forward * cos(forward_phase) * 3.20 * 0.72
-            - blade_side * cos(side_phase) * 2.35 * 0.76
-            + surface_normal * cos(forward_phase + 1.57) * 3.20 * 0.18;
-        curve_position += blade_wind_amplitude * envelope * detail_direction;
-        curve_derivative += blade_wind_amplitude
-            * (envelope_derivative * detail_direction + envelope * detail_derivative);
-    }
-    let curve_tangent = normalize3_or(curve_derivative, surface_normal);
+    // Production low paired blades have morph zero: the low-mesh branches below supply
+    // their complete position and physical frame. Avoid building a cubic/view-opened ribbon
+    // that those branches immediately replace. Keep inspection and all morphing paths intact.
+    let fully_low_paired = low_lod && paired_ribbon && lod_morph == 0.0;
+    var world_position = p0;
+    var physical_normal = surface_normal;
+    var local_ribbon_side = blade_side;
+    if (!fully_low_paired) {
+        var curve_position = cubic_bezier(p0, p1, p2, p3, t);
+        var curve_derivative = cubic_bezier_derivative(p0, p1, p2, p3, t);
+        if (blade_wind_amplitude > 1e-5) {
+            // Ghost's grass bob offsets phase by both blade identity and position along the blade. The
+            // analytic derivative keeps transported ribbon frames and rounded lighting attached to the
+            // animated silhouette instead of shading the rest curve.
+            let envelope = t * t;
+            let envelope_derivative = 2.0 * t;
+            let forward_phase = blade_wind_phase + t * 3.20;
+            let side_phase = blade_wind_phase * 1.37 + 1.20 - t * 2.35;
+            let detail_direction = animated_wind_forward * sin(forward_phase) * 0.72
+                + blade_side * sin(side_phase) * 0.76
+                + surface_normal * sin(forward_phase + 1.57) * 0.18;
+            let detail_derivative = animated_wind_forward * cos(forward_phase) * 3.20 * 0.72
+                - blade_side * cos(side_phase) * 2.35 * 0.76
+                + surface_normal * cos(forward_phase + 1.57) * 3.20 * 0.18;
+            curve_position += blade_wind_amplitude * envelope * detail_direction;
+            curve_derivative += blade_wind_amplitude
+                * (envelope_derivative * detail_direction + envelope * detail_derivative);
+        }
+        let curve_tangent = normalize3_or(curve_derivative, surface_normal);
 
-    // Width is present at the root and tapers toward the tip, as in the folded-strip model.
-    let ribbon_taper = max(1.0 - t * t, 0.0);
-    let broad_taper = pow(max(sin(PI * t), 0.0), 0.58);
-    let taper = select(ribbon_taper, broad_taper, is_broad_leaf);
-    // Transport the authored root-side axis onto the plane perpendicular to the local Bezier
-    // tangent. A constant root frame makes strongly curved ribbons kink and exposes their edge at
-    // the wrong angle; the transported frame follows the curve without adding vertices.
-    var local_ribbon_side = normalize3_or(
-        blade_side - curve_tangent * dot(blade_side, curve_tangent),
-        blade_side,
-    );
-    var physical_normal = normalize3_or(
-        cross(local_ribbon_side, curve_tangent),
-        surface_normal,
-    );
-    let to_camera = normalize3_or(camera.camera_position.xyz - curve_position, physical_normal);
-    // Rotate the ribbon's *width line* toward the camera-facing width line by no more than the
-    // authored angle. A width line is unoriented (S and -S describe the same two edge positions),
-    // so align the camera line to the nearest hemisphere before finding the angular remainder.
-    // The previous grazing-only response did almost nothing until the blade was within a few
-    // degrees of perfectly edge-on, and its unnormalised remainder made the slider response hard
-    // to observe. shape_secondary.z stores tan(maximum angle), allowing an exact bounded rotation
-    // without trigonometry in the vertex shader.
-    var rendered_ribbon_side = local_ribbon_side;
-    if (!is_broad_leaf && inspected_opening(profile, debug_config) > 0.0) {
-        let unaligned_camera_side = normalize3_or(
-            cross(curve_tangent, to_camera),
-            local_ribbon_side,
+        // Width is present at the root and tapers toward the tip, as in the folded-strip model.
+        let ribbon_taper = max(1.0 - t * t, 0.0);
+        let broad_taper = pow(max(sin(PI * t), 0.0), 0.58);
+        let taper = select(ribbon_taper, broad_taper, is_broad_leaf);
+        // Transport the authored root-side axis onto the plane perpendicular to the local Bezier
+        // tangent. A constant root frame makes strongly curved ribbons kink and exposes their edge at
+        // the wrong angle; the transported frame follows the curve without adding vertices.
+        local_ribbon_side = normalize3_or(
+            blade_side - curve_tangent * dot(blade_side, curve_tangent),
+            blade_side,
         );
-        let signed_alignment = dot(unaligned_camera_side, local_ribbon_side);
-        let camera_ribbon_side = select(
-            -unaligned_camera_side,
-            unaligned_camera_side,
-            signed_alignment >= 0.0,
+        physical_normal = normalize3_or(
+            cross(local_ribbon_side, curve_tangent),
+            surface_normal,
         );
-        let alignment = abs(signed_alignment);
-        let opening_remainder = camera_ribbon_side - local_ribbon_side * alignment;
-        let remainder_length = length(opening_remainder);
-        let requested_tangent = remainder_length / max(alignment, 1e-4);
-        let opening_tangent = min(inspected_opening(profile, debug_config), requested_tangent);
-        let opening_direction = opening_remainder / max(remainder_length, 1e-4);
-        rendered_ribbon_side = normalize3_or(
-            local_ribbon_side + opening_direction * opening_tangent,
-            local_ribbon_side,
-        );
+        let to_camera = normalize3_or(camera.camera_position.xyz - curve_position, physical_normal);
+        // Rotate the ribbon's *width line* toward the camera-facing width line by no more than the
+        // authored angle. A width line is unoriented (S and -S describe the same two edge positions),
+        // so align the camera line to the nearest hemisphere before finding the angular remainder.
+        // The previous grazing-only response did almost nothing until the blade was within a few
+        // degrees of perfectly edge-on, and its unnormalised remainder made the slider response hard
+        // to observe. shape_secondary.z stores tan(maximum angle), allowing an exact bounded rotation
+        // without trigonometry in the vertex shader.
+        var rendered_ribbon_side = local_ribbon_side;
+        if (!is_broad_leaf && inspected_opening(profile, debug_config) > 0.0) {
+            let unaligned_camera_side = normalize3_or(
+                cross(curve_tangent, to_camera),
+                local_ribbon_side,
+            );
+            let signed_alignment = dot(unaligned_camera_side, local_ribbon_side);
+            let camera_ribbon_side = select(
+                -unaligned_camera_side,
+                unaligned_camera_side,
+                signed_alignment >= 0.0,
+            );
+            let alignment = abs(signed_alignment);
+            let opening_remainder = camera_ribbon_side - local_ribbon_side * alignment;
+            let remainder_length = length(opening_remainder);
+            let requested_tangent = remainder_length / max(alignment, 1e-4);
+            let opening_tangent = min(inspected_opening(profile, debug_config), requested_tangent);
+            let opening_direction = opening_remainder / max(remainder_length, 1e-4);
+            rendered_ribbon_side = normalize3_or(
+                local_ribbon_side + opening_direction * opening_tangent,
+                local_ribbon_side,
+            );
+        }
+        // Preserve coverage without turning the far field into world-space slabs. Low LOD widens the
+        // retained population sublinearly as candidates are removed; using an exponent below 0.5 keeps
+        // this visibly weaker than full area preservation. The projected estimate additionally catches
+        // very distant or edge-on subpixel ribbons. Both terms are derived independently of the
+        // density-transition width, so blades selected for removal still contract all the way to zero.
+        var far_width_scale = 1.0;
+        if (camera.projection.w > 0.5 && !is_broad_leaf) {
+            let low_lod_coverage_scale = blade.topology.z;
+            let camera_distance = max(distance(camera.camera_position.xyz, curve_position), 0.05);
+            let side_view_alignment = clamp(dot(rendered_ribbon_side, to_camera), -1.0, 1.0);
+            let projected_side_factor = sqrt(max(
+                1.0 - side_view_alignment * side_view_alignment,
+                0.0,
+            ));
+            let projected_authored_half_width = authored_half_width
+                * camera.projection.x
+                * projected_side_factor
+                / camera_distance;
+            let required_scale = clamp(
+                FAR_WIDTH_TARGET_HALF_PIXELS / max(projected_authored_half_width, 1e-4),
+                1.0,
+                FAR_WIDTH_MAXIMUM_SCALE,
+            );
+            let distance_weight = smoothstep(
+                FAR_WIDTH_FADE_START_METERS,
+                FAR_WIDTH_FADE_END_METERS,
+                camera_distance,
+            );
+            let subpixel_width_scale = mix(1.0, required_scale, distance_weight);
+            far_width_scale = max(low_lod_coverage_scale, subpixel_width_scale);
+        }
+        world_position = curve_position
+            + rendered_ribbon_side * side_sign * half_width * far_width_scale * taper;
     }
-    // Preserve coverage without turning the far field into world-space slabs. Low LOD widens the
-    // retained population sublinearly as candidates are removed; using an exponent below 0.5 keeps
-    // this visibly weaker than full area preservation. The projected estimate additionally catches
-    // very distant or edge-on subpixel ribbons. Both terms are derived independently of the
-    // density-transition width, so blades selected for removal still contract all the way to zero.
-    var far_width_scale = 1.0;
-    if (camera.projection.w > 0.5 && !is_broad_leaf) {
-        let low_lod_coverage_scale = blade.topology.z;
-        let camera_distance = max(distance(camera.camera_position.xyz, curve_position), 0.05);
-        let side_view_alignment = clamp(dot(rendered_ribbon_side, to_camera), -1.0, 1.0);
-        let projected_side_factor = sqrt(max(
-            1.0 - side_view_alignment * side_view_alignment,
-            0.0,
-        ));
-        let projected_authored_half_width = authored_half_width
-            * camera.projection.x
-            * projected_side_factor
-            / camera_distance;
-        let required_scale = clamp(
-            FAR_WIDTH_TARGET_HALF_PIXELS / max(projected_authored_half_width, 1e-4),
-            1.0,
-            FAR_WIDTH_MAXIMUM_SCALE,
-        );
-        let distance_weight = smoothstep(
-            FAR_WIDTH_FADE_START_METERS,
-            FAR_WIDTH_FADE_END_METERS,
-            camera_distance,
-        );
-        let subpixel_width_scale = mix(1.0, required_scale, distance_weight);
-        far_width_scale = max(low_lod_coverage_scale, subpixel_width_scale);
-    }
-    var world_position = curve_position
-        + rendered_ribbon_side * side_sign * half_width * far_width_scale * taper;
     var shading_side = side_sign;
     var shading_t = t;
     if (paired_ribbon && !low_lod && topology_row == 0u) {

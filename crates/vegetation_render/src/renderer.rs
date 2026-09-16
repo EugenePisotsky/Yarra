@@ -2716,7 +2716,7 @@ mod tests {
         assert!(!draw.contains("let density_scale = select("));
         assert!(compute.contains("let staggered_high_radius = bounded_high_radius * mix("));
         assert!(!draw.contains("let staggered_high_radius = bounded_high_radius * mix("));
-        assert!(draw.contains("var local_ribbon_side = normalize3_or("));
+        assert!(draw.contains("local_ribbon_side = normalize3_or("));
         assert!(draw.contains("let signed_alignment = dot("));
         assert!(draw.contains("let opening_tangent = min("));
         assert!(draw.contains("var rendered_ribbon_side = local_ribbon_side;"));

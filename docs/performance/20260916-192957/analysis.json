@@ -1,0 +1,343 @@
+{
+  "experiment_id": "GP-011",
+  "previous_session": "20260916-190422",
+  "user_context": {
+    "question": "Any intentional display/refresh, power-setting, or background-app changes between suites?",
+    "answer": "No; user replied \"nope\" in the task.",
+    "limit": "User report is not continuous monitoring of OS/compositor/background state."
+  },
+  "input_match_to_previous_session": {
+    "01-grass_on": {
+      "binary_sha256": true,
+      "database_sha256": true,
+      "canopy_sha256": true,
+      "shader_sha256": true
+    },
+    "02-grass_off": {
+      "binary_sha256": true,
+      "database_sha256": true,
+      "canopy_sha256": true,
+      "shader_sha256": true
+    },
+    "03-grass_off": {
+      "binary_sha256": true,
+      "database_sha256": true,
+      "canopy_sha256": true,
+      "shader_sha256": true
+    },
+    "04-grass_on": {
+      "binary_sha256": true,
+      "database_sha256": true,
+      "canopy_sha256": true,
+      "shader_sha256": true
+    }
+  },
+  "means_of_run_means": {
+    "grass_on": {
+      "gpu_w": 3.07586084757477,
+      "cpu_w": 1.7175917593491992,
+      "cpu_gpu_w": 4.793452606923969,
+      "gpu_mhz": 713.8523399742908,
+      "gpu_active_percent": 73.4968493895181
+    },
+    "grass_off": {
+      "gpu_w": 1.5575634337438706,
+      "cpu_w": 1.6514121321376947,
+      "cpu_gpu_w": 3.2089755658815653,
+      "gpu_mhz": 494.53065573279775,
+      "gpu_active_percent": 52.044603055205336
+    }
+  },
+  "descriptive_difference_on_minus_off_w": {
+    "gpu_w": 1.5182974138308993,
+    "cpu_w": 0.0661796272115045,
+    "cpu_gpu_w": 1.5844770410424038
+  },
+  "paired_cpu_gpu_differences_w": [
+    0.8647299246532887,
+    2.3042241574315194
+  ],
+  "interpretation": "Both grass-off visits reduce reported GPU and combined power, but their large spread prevents assigning a precise grass-only wattage or percentage. No fixed-clock pass cost was measured. All four average 60 fps with nominal pressure and 16.67 ms HUD interval p95; earlier pacing issue did not reproduce and is not proven fixed.",
+  "thirty_second_windows": {
+    "01-grass_on": [
+      {
+        "offset_seconds": 0,
+        "samples": 29,
+        "coverage_s": 29.29788,
+        "cpu_w": 1.7337281055830662,
+        "cpu_w_coverage_s": 29.29788,
+        "gpu_w": 3.106054242491266,
+        "gpu_w_coverage_s": 29.29788,
+        "gpu_mhz": 724.6871244608825,
+        "gpu_mhz_coverage_s": 29.29788,
+        "gpu_active_percent": 72.23695765359133,
+        "gpu_active_percent_coverage_s": 29.29788,
+        "cpu_gpu_w": 4.839782348074332,
+        "thermal_states": [
+          "nominal"
+        ]
+      },
+      {
+        "offset_seconds": 30,
+        "samples": 29,
+        "coverage_s": 29.29712,
+        "cpu_w": 1.6333836107439912,
+        "cpu_w_coverage_s": 29.29712,
+        "gpu_w": 2.9441726118471716,
+        "gpu_w_coverage_s": 29.29712,
+        "gpu_mhz": 710.6198872107565,
+        "gpu_mhz_coverage_s": 29.29712,
+        "gpu_active_percent": 73.56650451307159,
+        "gpu_active_percent_coverage_s": 29.29712,
+        "cpu_gpu_w": 4.577556222591163,
+        "thermal_states": [
+          "nominal"
+        ]
+      },
+      {
+        "offset_seconds": 60,
+        "samples": 28,
+        "coverage_s": 28.28633,
+        "cpu_w": 1.671419260823161,
+        "cpu_w_coverage_s": 28.28633,
+        "gpu_w": 2.9509909871658855,
+        "gpu_w_coverage_s": 28.28633,
+        "gpu_mhz": 710.6417849187222,
+        "gpu_mhz_coverage_s": 28.28633,
+        "gpu_active_percent": 75.49827199569546,
+        "gpu_active_percent_coverage_s": 28.28633,
+        "cpu_gpu_w": 4.6224102479890465,
+        "thermal_states": [
+          "nominal"
+        ]
+      },
+      {
+        "offset_seconds": 90,
+        "samples": 29,
+        "coverage_s": 29.29889,
+        "cpu_w": 1.7958880131636386,
+        "cpu_w_coverage_s": 29.29889,
+        "gpu_w": 2.8830021939397703,
+        "gpu_w_coverage_s": 29.29889,
+        "gpu_mhz": 708.7576911616788,
+        "gpu_mhz_coverage_s": 29.29889,
+        "gpu_active_percent": 73.9255881434416,
+        "gpu_active_percent_coverage_s": 29.29889,
+        "cpu_gpu_w": 4.678890207103409,
+        "thermal_states": [
+          "nominal"
+        ]
+      }
+    ],
+    "02-grass_off": [
+      {
+        "offset_seconds": 0,
+        "samples": 28,
+        "coverage_s": 28.29619,
+        "cpu_w": 1.534165015502087,
+        "cpu_w_coverage_s": 28.29619,
+        "gpu_w": 2.2156870366646535,
+        "gpu_w_coverage_s": 28.29619,
+        "gpu_mhz": 458.3572657661685,
+        "gpu_mhz_coverage_s": 28.29619,
+        "gpu_active_percent": 53.46420113096498,
+        "gpu_active_percent_coverage_s": 28.29619,
+        "cpu_gpu_w": 3.7498520521667404,
+        "thermal_states": [
+          "nominal"
+        ]
+      },
+      {
+        "offset_seconds": 30,
+        "samples": 29,
+        "coverage_s": 29.30459,
+        "cpu_w": 1.600590081280782,
+        "cpu_w_coverage_s": 29.30459,
+        "gpu_w": 2.2448286309414325,
+        "gpu_w_coverage_s": 29.30459,
+        "gpu_mhz": 461.7928198278836,
+        "gpu_mhz_coverage_s": 29.30459,
+        "gpu_active_percent": 51.34243277247694,
+        "gpu_active_percent_coverage_s": 29.30459,
+        "cpu_gpu_w": 3.845418712222215,
+        "thermal_states": [
+          "nominal"
+        ]
+      },
+      {
+        "offset_seconds": 60,
+        "samples": 29,
+        "coverage_s": 29.30844,
+        "cpu_w": 1.671799755633531,
+        "cpu_w_coverage_s": 29.30844,
+        "gpu_w": 2.1660857131938784,
+        "gpu_w_coverage_s": 29.30844,
+        "gpu_mhz": 452.62050453725954,
+        "gpu_mhz_coverage_s": 29.30844,
+        "gpu_active_percent": 57.088136035217154,
+        "gpu_active_percent_coverage_s": 29.30844,
+        "cpu_gpu_w": 3.8378854688274093,
+        "thermal_states": [
+          "nominal"
+        ]
+      },
+      {
+        "offset_seconds": 90,
+        "samples": 28,
+        "coverage_s": 28.29316,
+        "cpu_w": 1.6563145339721685,
+        "cpu_w_coverage_s": 28.29316,
+        "gpu_w": 2.1912822509044587,
+        "gpu_w_coverage_s": 28.29316,
+        "gpu_mhz": 456.642818971087,
+        "gpu_mhz_coverage_s": 28.29316,
+        "gpu_active_percent": 56.49037116391382,
+        "gpu_active_percent_coverage_s": 28.29316,
+        "cpu_gpu_w": 3.8475967848766275,
+        "thermal_states": [
+          "nominal"
+        ]
+      }
+    ],
+    "03-grass_off": [
+      {
+        "offset_seconds": 0,
+        "samples": 29,
+        "coverage_s": 29.30519,
+        "cpu_w": 1.6777347275346108,
+        "cpu_w_coverage_s": 29.30519,
+        "gpu_w": 0.8351687045878222,
+        "gpu_w_coverage_s": 29.30519,
+        "gpu_mhz": 462.4462851119546,
+        "gpu_mhz_coverage_s": 29.30519,
+        "gpu_active_percent": 52.28322430941414,
+        "gpu_active_percent_coverage_s": 29.30519,
+        "cpu_gpu_w": 2.512903432122433,
+        "thermal_states": [
+          "nominal"
+        ]
+      },
+      {
+        "offset_seconds": 30,
+        "samples": 28,
+        "coverage_s": 28.294340000000002,
+        "cpu_w": 1.7127485670278932,
+        "cpu_w_coverage_s": 28.294340000000002,
+        "gpu_w": 0.8467803214353118,
+        "gpu_w_coverage_s": 28.294340000000002,
+        "gpu_mhz": 473.60642305139476,
+        "gpu_mhz_coverage_s": 28.294340000000002,
+        "gpu_active_percent": 50.290757656831715,
+        "gpu_active_percent_coverage_s": 28.294340000000002,
+        "cpu_gpu_w": 2.559528888463205,
+        "thermal_states": [
+          "nominal"
+        ]
+      },
+      {
+        "offset_seconds": 60,
+        "samples": 29,
+        "coverage_s": 29.30729,
+        "cpu_w": 1.6324892642752025,
+        "cpu_w_coverage_s": 29.30729,
+        "gpu_w": 0.9567952062439072,
+        "gpu_w_coverage_s": 29.30729,
+        "gpu_mhz": 552.1025591243681,
+        "gpu_mhz_coverage_s": 29.30729,
+        "gpu_active_percent": 50.1663029642113,
+        "gpu_active_percent_coverage_s": 29.30729,
+        "cpu_gpu_w": 2.58928447051911,
+        "thermal_states": [
+          "nominal"
+        ]
+      },
+      {
+        "offset_seconds": 90,
+        "samples": 29,
+        "coverage_s": 29.307479999999998,
+        "cpu_w": 1.74310478451235,
+        "cpu_w_coverage_s": 29.307479999999998,
+        "gpu_w": 1.0252805983318936,
+        "gpu_w_coverage_s": 29.307479999999998,
+        "gpu_mhz": 639.4141430788318,
+        "gpu_mhz_coverage_s": 29.307479999999998,
+        "gpu_active_percent": 44.853258291057436,
+        "gpu_active_percent_coverage_s": 29.307479999999998,
+        "cpu_gpu_w": 2.7683853828442437,
+        "thermal_states": [
+          "nominal"
+        ]
+      }
+    ],
+    "04-grass_on": [
+      {
+        "offset_seconds": 0,
+        "samples": 29,
+        "coverage_s": 29.29921,
+        "cpu_w": 1.8450488719661724,
+        "cpu_w_coverage_s": 29.29921,
+        "gpu_w": 3.331665020660967,
+        "gpu_w_coverage_s": 29.29921,
+        "gpu_mhz": 703.4153156347902,
+        "gpu_mhz_coverage_s": 29.29921,
+        "gpu_active_percent": 72.57104564252757,
+        "gpu_active_percent_coverage_s": 29.29921,
+        "cpu_gpu_w": 5.17671389262714,
+        "thermal_states": [
+          "nominal"
+        ]
+      },
+      {
+        "offset_seconds": 30,
+        "samples": 28,
+        "coverage_s": 28.29033,
+        "cpu_w": 1.6809165364985137,
+        "cpu_w_coverage_s": 28.29033,
+        "gpu_w": 3.2813903202967234,
+        "gpu_w_coverage_s": 28.29033,
+        "gpu_mhz": 697.2140307306419,
+        "gpu_mhz_coverage_s": 28.29033,
+        "gpu_active_percent": 74.71680038727013,
+        "gpu_active_percent_coverage_s": 28.29033,
+        "cpu_gpu_w": 4.962306856795237,
+        "thermal_states": [
+          "nominal"
+        ]
+      },
+      {
+        "offset_seconds": 60,
+        "samples": 29,
+        "coverage_s": 29.31802,
+        "cpu_w": 1.7147990075728168,
+        "cpu_w_coverage_s": 29.31802,
+        "gpu_w": 3.070332510517422,
+        "gpu_w_coverage_s": 29.31802,
+        "gpu_mhz": 726.6588019927676,
+        "gpu_mhz_coverage_s": 29.31802,
+        "gpu_active_percent": 71.86581513349127,
+        "gpu_active_percent_coverage_s": 29.31802,
+        "cpu_gpu_w": 4.785131518090239,
+        "thermal_states": [
+          "nominal"
+        ]
+      },
+      {
+        "offset_seconds": 90,
+        "samples": 28,
+        "coverage_s": 28.31619,
+        "cpu_w": 1.6728598886361477,
+        "cpu_w_coverage_s": 28.31619,
+        "gpu_w": 3.025197247934839,
+        "gpu_w_coverage_s": 28.31619,
+        "gpu_mhz": 724.5706993066511,
+        "gpu_mhz_coverage_s": 28.31619,
+        "gpu_active_percent": 73.54542895777999,
+        "gpu_active_percent_coverage_s": 28.31619,
+        "cpu_gpu_w": 4.698057136570986,
+        "thermal_states": [
+          "nominal"
+        ]
+      }
+    ]
+  }
+}

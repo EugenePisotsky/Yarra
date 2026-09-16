@@ -430,10 +430,15 @@ fn route_input(
     }
 }
 
-fn sync_render_settings(s: Res<AuditSettings>, mut render: ResMut<GameRenderSettings>) {
+fn sync_render_settings(
+    s: Res<AuditSettings>,
+    profile: Option<Res<crate::profile::ProfileSettings>>,
+    mut render: ResMut<GameRenderSettings>,
+) {
     if s.is_changed() {
         render.set_if_neq(GameRenderSettings {
-            resolution_scale: s.scale(),
+            resolution_scale: profile.as_ref().map_or(s.scale(), |p| p.resolution_scale()),
+            render_size: profile.as_ref().and_then(|p| p.size),
             msaa: s.msaa,
             render_path: s.render_path,
             show_ui: s.show_ui,

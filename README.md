@@ -53,6 +53,15 @@ rendered at native resolution. Prepared ground is enabled and optional GPU stati
 are off. No audit or profiling arguments are needed. `--terrain-reference` selects
 the original ground material; `--grass-counters` enables GPU statistics.
 
+For fullscreen grass tests at the normal world scale, run
+`python3 tools/grass_profile.py run` in a local terminal. It records the actual
+world/surface resolutions and collects sustained power, GPU clocks and frame
+delivery with one sudo authentication for `powermetrics`; `--power off` skips privileged telemetry. See
+[`docs/GRASS_PROFILING_TOOLS.md`](docs/GRASS_PROFILING_TOOLS.md) for 60/120 fps and
+grass-on/off suites, repeatable input snapshots, and offline reports.
+Track measured results, retained/reverted experiments and next tests in
+[`docs/GRASS_OPTIMIZATION_LOG.md`](docs/GRASS_OPTIMIZATION_LOG.md).
+
 The grass-shadow playtest starts at **Medium** on desktop.
 Press **B** to cycle Off / Subtle / Medium; `--grass-bands off` starts without it.
 The editor's Grass study → **Colors…** provides live root/tip color and clump-variation

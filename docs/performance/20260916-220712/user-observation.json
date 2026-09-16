@@ -1,0 +1,6 @@
+{
+  "source": "User follow-up after the matched control",
+  "verbatim": "in the end it was mostly the same. fans I think started working faster but not sure. gpu time was also larger I think",
+  "interpretation": "End-of-run fan/heat impression mostly the same; timing of faster fans uncertain. GPU duration impression checked against HUD data.",
+  "limits": "No fan RPM or case-temperature series recorded."
+}

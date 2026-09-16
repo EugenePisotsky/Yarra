@@ -1,0 +1,286 @@
+{
+  "experiment": "GP-021",
+  "parser_sha256": "501f8c779d0b93e6449dd8a60e6e7d4a66969dddab24ceed6912571702b2929c",
+  "method": "Whole power intervals, same archived parser logic; epochs from raw game config. No new measurements. First 60 seconds are stationary camera/wind asset warmup, not full moving-workload thermal warmup.",
+  "runs": [
+    {
+      "session": "20260916-200703",
+      "roots_m2": 66,
+      "prepared_blades": 131072,
+      "report_sha256": "cc5efa5fc73407f8671959f2824b8eb87e6e5db122abc55f676f8fc471c2b006",
+      "raw_log_sha256": "f00dc800659606f8a66361f658f51fd24dbb11bc153886241b8a7f27c7115d1c",
+      "game_config_unix_s": 1789578439.588,
+      "measurement_start_after_config_s": 60.00399994850159,
+      "first_ready_audit_game_elapsed_s": 5.298,
+      "first_elevated_pressure_after_config_s": 251.4119999408722,
+      "windows": [
+        {
+          "game_elapsed_from_s": 0,
+          "game_elapsed_to_s": 60,
+          "power": {
+            "samples": 58,
+            "coverage_s": 58.54465,
+            "cpu_w": 4.7222390915309935,
+            "cpu_w_coverage_s": 58.54465,
+            "gpu_w": 17.28687218319693,
+            "gpu_w_coverage_s": 58.54465,
+            "gpu_mhz": 1358.797314699123,
+            "gpu_mhz_coverage_s": 58.54465,
+            "gpu_active_percent": 88.36389123002701,
+            "gpu_active_percent_coverage_s": 58.54465,
+            "cpu_gpu_w": 22.009111274727925,
+            "thermal_states": [
+              "nominal"
+            ]
+          }
+        },
+        {
+          "game_elapsed_from_s": 60,
+          "game_elapsed_to_s": 240,
+          "power": {
+            "samples": 178,
+            "coverage_s": 179.70344,
+            "cpu_w": 4.256232560267071,
+            "cpu_w_coverage_s": 179.70344,
+            "gpu_w": 20.045707348284484,
+            "gpu_w_coverage_s": 179.70344,
+            "gpu_mhz": 1369.196595290552,
+            "gpu_mhz_coverage_s": 179.70344,
+            "gpu_active_percent": 88.58763010602357,
+            "gpu_active_percent_coverage_s": 179.70344,
+            "cpu_gpu_w": 24.301939908551557,
+            "thermal_states": [
+              "nominal"
+            ]
+          }
+        },
+        {
+          "game_elapsed_from_s": 0,
+          "game_elapsed_to_s": 240,
+          "power": {
+            "samples": 237,
+            "coverage_s": 239.25771,
+            "cpu_w": 4.369065839550165,
+            "cpu_w_coverage_s": 239.25771,
+            "gpu_w": 19.36418505886393,
+            "gpu_w_coverage_s": 239.25771,
+            "gpu_mhz": 1366.6595757353023,
+            "gpu_mhz_coverage_s": 239.25771,
+            "gpu_active_percent": 88.53390555648133,
+            "gpu_active_percent_coverage_s": 239.25771,
+            "cpu_gpu_w": 23.7332508984141,
+            "thermal_states": [
+              "nominal"
+            ]
+          }
+        },
+        {
+          "game_elapsed_from_s": 120,
+          "game_elapsed_to_s": 240,
+          "power": {
+            "samples": 118,
+            "coverage_s": 119.13031,
+            "cpu_w": 4.282483622513868,
+            "cpu_w_coverage_s": 119.13031,
+            "gpu_w": 20.095375928006902,
+            "gpu_w_coverage_s": 119.13031,
+            "gpu_mhz": 1368.559313074901,
+            "gpu_mhz_coverage_s": 119.13031,
+            "gpu_active_percent": 88.58856041254322,
+            "gpu_active_percent_coverage_s": 119.13031,
+            "cpu_gpu_w": 24.377859550520775,
+            "thermal_states": [
+              "nominal"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "session": "20260916-212946",
+      "roots_m2": 96,
+      "prepared_blades": 524288,
+      "report_sha256": "effed68e4eeece993a154a9424f2faedfa0918eec5ab4c61382afaaca7494e42",
+      "raw_log_sha256": "15cfbc694cbe02cdd0fecb30de1daf1d2650713cba5dcf1d53879627de4835ea",
+      "game_config_unix_s": 1789583420.353,
+      "measurement_start_after_config_s": 60.003000020980835,
+      "first_ready_audit_game_elapsed_s": 11.1,
+      "first_elevated_pressure_after_config_s": 298.6470000743866,
+      "windows": [
+        {
+          "game_elapsed_from_s": 0,
+          "game_elapsed_to_s": 60,
+          "power": {
+            "samples": 59,
+            "coverage_s": 59.55098,
+            "cpu_w": 4.528989097744487,
+            "cpu_w_coverage_s": 59.55098,
+            "gpu_w": 13.957268064102388,
+            "gpu_w_coverage_s": 59.55098,
+            "gpu_mhz": 1145.648755570437,
+            "gpu_mhz_coverage_s": 59.55098,
+            "gpu_active_percent": 79.74976498959379,
+            "gpu_active_percent_coverage_s": 59.55098,
+            "cpu_gpu_w": 18.486257161846872,
+            "thermal_states": [
+              "nominal"
+            ]
+          }
+        },
+        {
+          "game_elapsed_from_s": 60,
+          "game_elapsed_to_s": 240,
+          "power": {
+            "samples": 177,
+            "coverage_s": 178.70045,
+            "cpu_w": 4.323078980439053,
+            "cpu_w_coverage_s": 178.70045,
+            "gpu_w": 22.144116011179605,
+            "gpu_w_coverage_s": 178.70045,
+            "gpu_mhz": 1352.9384109553166,
+            "gpu_mhz_coverage_s": 178.70045,
+            "gpu_active_percent": 87.37531764973173,
+            "gpu_active_percent_coverage_s": 178.70045,
+            "cpu_gpu_w": 26.467194991618662,
+            "thermal_states": [
+              "nominal"
+            ]
+          }
+        },
+        {
+          "game_elapsed_from_s": 0,
+          "game_elapsed_to_s": 240,
+          "power": {
+            "samples": 237,
+            "coverage_s": 239.26101,
+            "cpu_w": 4.373493265242005,
+            "cpu_w_coverage_s": 239.26101,
+            "gpu_w": 20.103146498253103,
+            "gpu_w_coverage_s": 239.26101,
+            "gpu_mhz": 1301.3409963871673,
+            "gpu_mhz_coverage_s": 239.26101,
+            "gpu_active_percent": 85.48585329051315,
+            "gpu_active_percent_coverage_s": 239.26101,
+            "cpu_gpu_w": 24.476639763495104,
+            "thermal_states": [
+              "nominal"
+            ]
+          }
+        },
+        {
+          "game_elapsed_from_s": 120,
+          "game_elapsed_to_s": 240,
+          "power": {
+            "samples": 118,
+            "coverage_s": 119.13635,
+            "cpu_w": 4.376247797922297,
+            "cpu_w_coverage_s": 119.13635,
+            "gpu_w": 22.380627991792597,
+            "gpu_w_coverage_s": 119.13635,
+            "gpu_mhz": 1354.2969313731705,
+            "gpu_mhz_coverage_s": 119.13635,
+            "gpu_active_percent": 87.3594781030307,
+            "gpu_active_percent_coverage_s": 119.13635,
+            "cpu_gpu_w": 26.756875789714897,
+            "thermal_states": [
+              "nominal"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "session": "20260916-220712",
+      "roots_m2": 96,
+      "prepared_blades": 131072,
+      "report_sha256": "9c08d6eed16bad60972d290511461b24115aa95683ac4d3998d0da732c8bb06e",
+      "raw_log_sha256": "e2875da3547015ea947d404f7f38293f3f7899d518eb084b7f8781aa599574b8",
+      "game_config_unix_s": 1789585666.929,
+      "measurement_start_after_config_s": 60.00999999046326,
+      "first_ready_audit_game_elapsed_s": 10.915,
+      "first_elevated_pressure_after_config_s": 286.07100009918213,
+      "windows": [
+        {
+          "game_elapsed_from_s": 0,
+          "game_elapsed_to_s": 60,
+          "power": {
+            "samples": 58,
+            "coverage_s": 58.5438,
+            "cpu_w": 4.598507558955859,
+            "cpu_w_coverage_s": 58.5438,
+            "gpu_w": 14.711099540685778,
+            "gpu_w_coverage_s": 58.5438,
+            "gpu_mhz": 1282.836922440976,
+            "gpu_mhz_coverage_s": 58.5438,
+            "gpu_active_percent": 84.51334895240828,
+            "gpu_active_percent_coverage_s": 58.5438,
+            "cpu_gpu_w": 19.30960709964164,
+            "thermal_states": [
+              "nominal"
+            ]
+          }
+        },
+        {
+          "game_elapsed_from_s": 60,
+          "game_elapsed_to_s": 240,
+          "power": {
+            "samples": 177,
+            "coverage_s": 178.69226,
+            "cpu_w": 4.333465455582687,
+            "cpu_w_coverage_s": 178.69226,
+            "gpu_w": 20.79000773855566,
+            "gpu_w_coverage_s": 178.69226,
+            "gpu_mhz": 1380.8021482295876,
+            "gpu_mhz_coverage_s": 178.69226,
+            "gpu_active_percent": 96.39144794296071,
+            "gpu_active_percent_coverage_s": 178.69226,
+            "cpu_gpu_w": 25.12347319413835,
+            "thermal_states": [
+              "nominal"
+            ]
+          }
+        },
+        {
+          "game_elapsed_from_s": 0,
+          "game_elapsed_to_s": 240,
+          "power": {
+            "samples": 236,
+            "coverage_s": 238.24558,
+            "cpu_w": 4.396918223960336,
+            "cpu_w_coverage_s": 238.24558,
+            "gpu_w": 19.28845249103887,
+            "gpu_w_coverage_s": 238.24558,
+            "gpu_mhz": 1356.734346719045,
+            "gpu_mhz_coverage_s": 238.24558,
+            "gpu_active_percent": 93.47193047778684,
+            "gpu_active_percent_coverage_s": 238.24558,
+            "cpu_gpu_w": 23.685370714999205,
+            "thermal_states": [
+              "nominal"
+            ]
+          }
+        },
+        {
+          "game_elapsed_from_s": 120,
+          "game_elapsed_to_s": 240,
+          "power": {
+            "samples": 118,
+            "coverage_s": 119.12616,
+            "cpu_w": 4.395319267153412,
+            "cpu_w_coverage_s": 119.12616,
+            "gpu_w": 21.00708074641204,
+            "gpu_w_coverage_s": 119.12616,
+            "gpu_mhz": 1380.9066844763568,
+            "gpu_mhz_coverage_s": 119.12616,
+            "gpu_active_percent": 96.37828629328773,
+            "gpu_active_percent_coverage_s": 119.12616,
+            "cpu_gpu_w": 25.40240001356545,
+            "thermal_states": [
+              "nominal"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
