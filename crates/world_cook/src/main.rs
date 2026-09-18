@@ -8,12 +8,17 @@ fn main() -> Result<()> {
         .next()
         .and_then(|argument| argument.into_string().ok())
         .unwrap_or_else(|| "cook".into());
-    if command == "create-demo" || command == "create-road-demo" {
+    if command == "create-demo"
+        || command == "create-road-demo"
+        || command == "create-mountain-fixture"
+    {
         let project = PathBuf::from(arguments.next().context("expected a new PROJECT_DB path")?);
         if arguments.next().is_some() {
             bail!("usage: yarra-world-cook {command} PROJECT_DB");
         }
-        if command == "create-road-demo" {
+        if command == "create-mountain-fixture" {
+            yarra_world_cook::create_mountain_fixture(&project)?;
+        } else if command == "create-road-demo" {
             yarra_world_cook::create_road_demo_project(&project)?;
         } else {
             yarra_world_cook::create_demo_project(&project)?;
@@ -71,7 +76,7 @@ fn main() -> Result<()> {
     }
     if command != "cook" && command != "init" {
         bail!(
-            "unknown command {command:?}; expected `init`, `cook`, `create-demo`, `create-road-demo`, `export-vegetation` or `import-vegetation`"
+            "unknown command {command:?}; expected `init`, `cook`, `create-demo`, `create-road-demo`, `create-mountain-fixture`, `export-vegetation` or `import-vegetation`"
         );
     }
 

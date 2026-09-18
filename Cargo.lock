@@ -6403,6 +6403,7 @@ dependencies = [
  "yarra-terrain-render",
  "yarra-vegetation",
  "yarra-world",
+ "yarra-world-cook",
  "yarra-world-db",
 ]
 

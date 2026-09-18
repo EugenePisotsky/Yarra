@@ -14,7 +14,9 @@ pub(super) fn cook_hierarchy(
     for space in spaces {
         // A world uses one hierarchy grid. In particular, the compiler's 2x2 flat
         // optimization must not create incompatible topology next to detailed relief.
-        let mut resolution = 2;
+        // Three samples are the minimum for stitching: the midpoint shared by two
+        // fine patches must exist on their coarse neighbour's edge, even in flat worlds.
+        let mut resolution = 3;
         visit_leaves(&store, space.id, |_, field| {
             resolution = resolution.max(field.resolution);
             Ok(())
@@ -115,6 +117,26 @@ mod tests {
     impl Drop for Output {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn flat_world_hierarchy_keeps_midpoints_required_by_stitching() {
+        let output = Output::new();
+        let build = build_runtime(demo_project_document()).unwrap();
+        publish_runtime_database(&output.path(), &build).unwrap();
+        let reader = RuntimeReader::open_immutable(&output.path()).unwrap();
+        let roots = reader.read_terrain_roots(WorldSpaceId(2)).unwrap();
+        assert!(!roots.is_empty());
+        for root in roots {
+            assert_eq!(root.resolution, Some(3));
+            let node = reader
+                .read_terrain_node(root.key)
+                .unwrap()
+                .unwrap()
+                .decode()
+                .unwrap();
+            assert_eq!(node.geometric_error, 0.0);
         }
     }
 

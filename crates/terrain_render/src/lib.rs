@@ -1,3 +1,4 @@
+pub mod lod;
 use bevy::mesh::{Indices, MeshVertexBufferLayoutRef};
 use bevy::{
     asset::RenderAssetUsages,
@@ -246,10 +247,10 @@ impl Material for TerrainMaterial {
         {
             fragment.shader_defs.push("TERRAIN_CANOPY".into());
         }
-        if key.bind_group_data.prepared {
-            if let Some(fragment) = descriptor.fragment.as_mut() {
-                fragment.shader_defs.push("TERRAIN_PREPARED".into());
-            }
+        if key.bind_group_data.prepared
+            && let Some(fragment) = descriptor.fragment.as_mut()
+        {
+            fragment.shader_defs.push("TERRAIN_PREPARED".into());
         }
         if key.bind_group_data.prepared_albedo {
             if let Some(fragment) = descriptor.fragment.as_mut() {

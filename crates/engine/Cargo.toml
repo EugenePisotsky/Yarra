@@ -14,3 +14,6 @@ terrain-render.workspace = true
 vegetation.workspace = true
 world.workspace = true
 world-db.workspace = true
+
+[dev-dependencies]
+world-cook.workspace = true

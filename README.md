@@ -123,7 +123,10 @@ The next rendering foundation is specified in
 [`docs/DISTANT_WORLD_RENDERING.md`](docs/DISTANT_WORLD_RENDERING.md): hierarchical
 terrain LOD, independent distant visibility, cheaper ground materials, and later
 cliff/forest proxies. Terrain precision, bounded production cooking and hierarchy products are implemented;
-visible terrain LOD and distant materials remain planned. Meshlets are out of scope.
+an opt-in `--terrain-lod` geometry preview now draws the hierarchy in both apps.
+Recook once before previewing older flat worlds. Smooth morphing, production
+integration and distant materials remain planned. Meshlets
+are out of scope. The spec includes a separate 2 km mountain fixture and preview commands.
 
 The first curved-road source/compiler fixture is also available:
 `cargo run --offline -p yarra-environment-compile --example cart_track > /tmp/cart-track.svg`.

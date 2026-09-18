@@ -1,8 +1,9 @@
 # Distant world and terrain rendering
 
-Status: data contracts and bounded production cooking implemented, 2026-09-18. Terrain hierarchy
-products and precision changes exist; camera-driven LOD rendering, distant materials
-and scenery proxies remain **planned**. This is not a measured performance claim.
+Status: data contracts and bounded production cooking implemented, 2026-09-18.
+An opt-in terrain geometry preview now selects and draws the hierarchy in both
+applications. Slice 2 is **in progress**: morphing and production integration remain
+open. Distant materials and scenery proxies are planned. This is not a performance claim.
 
 ## Implementation checkpoint
 
@@ -31,7 +32,8 @@ The existing 512 m fixture with mountain relief has 256 detailed cells and four
 33×33 coarse roots: **8,192 triangles / 307,392 estimated geometry bytes** in that
 cover. A separate road fixture verifies 1 cm road depth plus 5 mm track depth at
 1,500 m elevation against the final cooked leaves. These are correctness/topology
-results, not render timings; the new nodes are not drawn yet.
+results from the data checkpoint, not render timings. The geometry preview below
+now draws these products.
 
 Slice 1's data contracts and bounded production cook are now implemented. Both CLI
 cooking and editor publication use `ProjectCookSnapshot` and `RuntimeCookWriter`:
@@ -80,15 +82,15 @@ of the previous runtime after failure. A project-import ordering issue discovere
 the collection fixture was also fixed: asset metadata is stored before validating
 presets that reference it.
 
-**Next is slice 2:** active terrain cover, projected-error selection, transitions and
-the shared game/editor renderer. View distance is still unchanged. The saved normal
-authoring world is preserved; synthetic fixtures run in temporary test files.
+Slice 2 has started with the opt-in geometry preview described below. Normal
+authoring still uses the detailed nearby renderer; its view distance is unchanged.
+The saved authoring world is preserved; synthetic fixtures use separate databases.
 
 Validation: world/database/cooker/environment/vegetation tests and all 123 editor
 tests passed, along with the native Metal interpolation regression, workspace
 compilation and focused Clippy with warnings denied. SQLite query plans confirm
 primary-key range seeks for both hierarchy metadata and staged leaf iteration.
-The default runtime was recooked by the streamed path as generation `5db3ff451dffc61a`: overworld
+The bounded-cooker checkpoint recooked the runtime as generation `5db3ff451dffc61a`: overworld
 256 leaves / 340 nodes / 4 roots; interior 81 leaves / 119 nodes / 21 roots.
 SQLite integrity passed, and the source project checksum stayed unchanged. Every
 runtime product table matches the previous cooker (only generation metadata changed).
@@ -96,6 +98,100 @@ The current scene's maximum input batch was 9,801 height samples / 126,750 mask 
 1 manual object / 1 road span; peak encoded/decoded cell output was 26,389 / 46,510
 bytes. The cooker/database suite passed 53 tests plus the separate 2 km acceptance;
 all 123 editor tests passed. Core Clippy with warnings denied and workspace checks passed.
+
+### Geometry preview checkpoint
+
+`--terrain-lod` enables a shared game/editor geometry preview of the **published**
+hierarchy. Normal launches retain the existing authoring renderer. This is a
+functional validation mode with one plain lit material, not a final visual result.
+
+Implemented in this checkpoint:
+
+- Full authored coverage with projected-error refinement, 2/1 pixel hysteresis,
+  perspective/orthographic projection and three-dimensional contact distance.
+  Camera matrices and node positions use canonical f64 coordinates for selection.
+- Balanced 2:1 neighbours and all 16 edge-stitch index patterns. Selection includes
+  the parent-surface error introduced by stitching and refines the coarse neighbour
+  where a seam would exceed the pixel/contact tolerance. Balancing dependencies
+  are admitted as one group; budget pressure cannot oscillate fine/coarse ownership.
+  Sparse root forests first acquire their minimum balanced cover.
+- One owner per terrain region. The previous complete cover remains while an entire
+  replacement is built. GPU acknowledgement checks both prepared meshes and allocated
+  vertex/index buffers before swapping the group at one command boundary.
+- Root/metadata/payload requests share the existing SQLite worker. Payload decoding
+  and mesh construction run in tasks; at most four terrain requests/decodes and two
+  mesh jobs run concurrently. Responses carry monotonically increasing request IDs
+  and generation identity, and stale work is discarded on world/generation changes.
+- Separate prototype limits: 512 patches, 1,048,576 pre-stitch triangles, 4,096 cached
+  descriptors, 32 MiB decoded node bytes and 128 MiB estimated geometry (including
+  old/new overlap and mesh jobs). Selection has a one-million-work-unit cap and at
+  most 128 metadata requests per plan. Root coverage must fit the profile. These
+  limits are additional to the existing nearby-page budgets, not total process RSS.
+- Eviction retains active/staged geometry and required hierarchy metadata. A
+  render-origin change repositions the existing patches without reloading them.
+  Stationary cameras reuse their plan and entity transforms until view, quality
+  settings, hierarchy metadata or active-cover membership changes.
+  `TerrainLodStats` reports levels, triangles, error, contact/budget shortfalls,
+  pending/staged work and residency estimates; `TERRAIN_LOD` logs repeat every 2 s.
+
+Flat worlds now cook at least **3×3** hierarchy grids: a coarse edge needs a real
+midpoint shared by its two fine neighbours. Authoritative source/leaf pages are
+unchanged. Previously cooked 2×2 hierarchies require a recook before this preview;
+the reader reports this explicitly. The hierarchy encoding/schema is unchanged.
+The default runtime was recooked as `ae988818fdab712f`, with 33×33 overworld grids
+and 3×3 interior grids. SQLite integrity passed; the authoring source checksum is unchanged.
+
+Run the preview on the current published world:
+
+```sh
+cargo run -p yarra-app-editor -- --terrain-lod
+```
+
+For the explicit 2 km mountain fixture (never substituted for the normal world):
+
+```sh
+mkdir -p tmp/terrain-lod
+cargo run -p yarra-world-cook -- create-mountain-fixture tmp/terrain-lod/project.sqlite
+cargo run -p yarra-world-cook -- cook tmp/terrain-lod/project.sqlite tmp/terrain-lod/runtime.sqlite
+cargo run -p yarra-app-editor -- --terrain-lod --project-db tmp/terrain-lod/project.sqlite --world-db tmp/terrain-lod/runtime.sqlite
+```
+
+The create command requires a new output path. The game also accepts `--terrain-lod`
+and `--world-db`. Use the editor for elevated cameras in this unpopulated fixture.
+The existing 2 km acceptance fixture is now reused by the CLI and renderer tests.
+
+**Remaining before normal use:** smooth geometry/normal morphing, detailed-to-distant
+material integration, actor-driven protected contact demand, expanded authoritative
+height/grass demand, staged generation/world-entry readiness and complete game
+floating-origin integration. Generation/world changes currently clear the diagnostic
+cover and load the new one; they do not yet keep an old-world visual transition.
+Applied unsaved authoring edits are not reflected in this published-only preview.
+Nearby source pages still load for grass/gameplay, even though their ground meshes
+are hidden after the hierarchy cover is ready. No terrain or full-scene frame-time
+improvement is claimed from this preview.
+
+Validation: 123 editor tests passed; focused engine/terrain/cooker tests and the
+workspace check passed. Clippy passed with warnings denied except the existing
+engine lint categories `too_many_arguments`, `type_complexity` and
+`large_enum_variant`. The native Metal test cooks the separate 2 km fixture,
+renders to a **512×512** target, verifies pixels and complete cover ownership, then
+checks delayed uploads, a summit/downward view, a valley teleport, origin rebasing,
+and release on a world switch. The final run completed in about 15 seconds including
+its cook; that is a test duration, not a renderer benchmark. Example settled states:
+
+| Camera | Patches | Triangles before stitching | Estimated mesh bytes | Decoded node bytes | Maximum projected error |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Overview at (1800,1500,2200) m | 16 | 32,768 | 1,229,568 | 175,260 | 1.455 px |
+| Valley at (-350,160,-450) m, after rebase | 133 | 272,384 | 10,220,784 | 1,200,531 | 1.863 px |
+
+Neither settled state reported a budget/contact shortfall. These are geometry-only
+snapshots with plain lighting and shadows disabled, not 1440p scene-cost evidence.
+The pure tests separately cover all stitch patterns, sparse/unready roots, negative
+coordinates, hysteresis, orthographic projection and insufficient patch budgets.
+
+```sh
+cargo test --offline -p yarra-engine mountain_cover_uploads_draws_moves_and_rebases --lib -- --ignored --nocapture
+```
 
 The desktop target is 60 fps at 1440p on mainstream gaming GPUs. Record the actual
 internal render resolution as well as display resolution: current game defaults
@@ -481,8 +577,9 @@ window; no new broad framework is required for the first slice.
 
 ## Implementation sequence and acceptance
 
-Slice 1 is implemented and checked as recorded above. Later slices remain pending;
-implement and validate them in order.
+Slice 1 is implemented and checked as recorded above. Slice 2 has an opt-in geometry
+preview; its remaining acceptance requirements are listed above. Later slices remain
+pending; implement and validate them in order.
 
 ### 1. Data contracts, precision and bounded cooking
 

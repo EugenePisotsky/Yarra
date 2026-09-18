@@ -1,3 +1,6 @@
+mod terrain_lod;
+pub use terrain_lod::{TerrainLodPreview, TerrainLodStats};
+
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     path::PathBuf,
@@ -73,6 +76,7 @@ impl WorldStreamingPlugin {
 
 impl Plugin for WorldStreamingPlugin {
     fn build(&self, app: &mut App) {
+        terrain_lod::install(app);
         app.insert_resource(WorldDatabasePath(self.database_path.clone()))
             .insert_resource(self.config)
             .init_resource::<WorldStream>()
@@ -325,6 +329,11 @@ impl Drop for WorldDatabaseWorker {
 
 #[derive(Debug)]
 enum DatabaseRequest {
+    Terrain {
+        request_id: u64,
+        generation: String,
+        query: terrain_lod::TerrainQuery,
+    },
     Reload {
         request_id: u64,
         expected_generation: String,
@@ -344,6 +353,10 @@ enum DatabaseRequest {
 
 #[derive(Debug)]
 enum DatabaseResult {
+    Terrain {
+        request_id: u64,
+        result: Result<terrain_lod::TerrainReply, String>,
+    },
     Opened(Result<RuntimeManifest, String>),
     Reloaded {
         request_id: u64,
@@ -410,6 +423,23 @@ fn database_worker(
 
     while let Ok(request) = requests.recv() {
         match request {
+            DatabaseRequest::Terrain {
+                request_id,
+                generation,
+                query,
+            } => {
+                let result = if reader.manifest().generation_id == generation {
+                    terrain_lod::read(&reader, query)
+                } else {
+                    Err("terrain request belongs to a stale generation".into())
+                };
+                if results
+                    .send(DatabaseResult::Terrain { request_id, result })
+                    .is_err()
+                {
+                    return;
+                }
+            }
             DatabaseRequest::Reload {
                 request_id,
                 expected_generation,
@@ -666,7 +696,9 @@ fn create_world_render_assets(mut commands: Commands, mut meshes: ResMut<Assets<
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn receive_database_results(
+    mut terrain: ResMut<terrain_lod::TerrainLodStream>,
     worker: Option<Res<WorldDatabaseWorker>>,
     mut active_space: ResMut<ActiveWorldSpace>,
     mut catalog: ResMut<WorldCatalog>,
@@ -680,6 +712,9 @@ fn receive_database_results(
     };
     loop {
         match worker.results.try_recv() {
+            Ok(DatabaseResult::Terrain { request_id, result }) => {
+                terrain.receive(request_id, result)
+            }
             Ok(DatabaseResult::Opened(result)) => match result {
                 Ok(manifest) => {
                     info!(
@@ -1476,10 +1511,10 @@ fn attach_prepared_pages(
                     admitted_decoded_bytes.saturating_add(attachment.decoded_bytes);
                 admitted_gpu_bytes =
                     admitted_gpu_bytes.saturating_add(attachment.gpu_bytes_estimate);
-                if let Some((texture_set, gpu_bytes)) = attachment.terrain_texture_set {
-                    if admitted_terrain_texture_sets.insert(texture_set) {
-                        admitted_gpu_bytes = admitted_gpu_bytes.saturating_add(gpu_bytes);
-                    }
+                if let Some((texture_set, gpu_bytes)) = attachment.terrain_texture_set
+                    && admitted_terrain_texture_sets.insert(texture_set)
+                {
+                    admitted_gpu_bytes = admitted_gpu_bytes.saturating_add(gpu_bytes);
                 }
                 stream.pages.insert(key, PageState::Resident(attachment));
             }

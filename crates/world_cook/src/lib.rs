@@ -3,10 +3,12 @@ use world_db::write_runtime_database;
 mod environment_cook;
 mod streaming_cook;
 mod terrain_cook;
+mod terrain_fixture;
 use environment_cook::{
     CookedEnvironment, TerrainSlot, TerrainWeights, compile_environment, demo_environment,
 };
 pub use streaming_cook::{CookReport, CookStats, cook_project_with_report};
+pub use terrain_fixture::create_mountain_fixture;
 
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
