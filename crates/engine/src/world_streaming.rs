@@ -1766,6 +1766,12 @@ fn attach_page(
                         Name::new(format!("Streamed object {:?}", instance.id)),
                     ))
                     .id();
+                if instance.generated {
+                    commands.entity(entity).insert(GeneratedEnvironmentObject {
+                        space: key.space,
+                        cell: key.cell,
+                    });
+                }
                 entities.push(entity);
             }
         }
@@ -1924,6 +1930,49 @@ fn select_lod_index(
     } else {
         current
     }
+}
+
+/// Marks cooked generated objects so authoring can replace only the derived cell output.
+#[derive(Component)]
+pub struct GeneratedEnvironmentObject {
+    pub space: WorldSpaceId,
+    pub cell: CellCoord,
+}
+
+/// Editor world previews share the runtime object's screen-space LOD selection.
+pub fn spawn_collection_visual(
+    commands: &mut Commands,
+    server: &AssetServer,
+    transform: Transform,
+    asset: &world_db::CollectionAssetView,
+) -> Entity {
+    let variants: Vec<_> = asset
+        .variants
+        .iter()
+        .map(|v| ScreenSpaceLodVariant {
+            lod: v.lod,
+            scene: server.load(GltfAssetLabel::Scene(0).from_asset(v.uri.clone())),
+            minimum_screen_height: v.minimum_screen_height,
+        })
+        .collect();
+    let current = variants.len() - 1;
+    commands
+        .spawn((
+            WorldAssetRoot(variants[current].scene.clone()),
+            transform,
+            ScreenSpaceLod {
+                variants,
+                current,
+                bounds_height: asset
+                    .variants
+                    .iter()
+                    .map(|v| v.bounds[1])
+                    .fold(0.0_f32, f32::max),
+                projected_height: 0.0,
+            },
+            Name::new(format!("Generated {}", asset.name)),
+        ))
+        .id()
 }
 
 #[derive(Component, Debug, Clone, Copy)]

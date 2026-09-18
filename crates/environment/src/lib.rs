@@ -6,6 +6,8 @@
 pub mod brush;
 pub mod fixtures;
 mod presets;
+mod scatter;
+pub use scatter::*;
 pub mod roads;
 pub use presets::*;
 
@@ -154,6 +156,15 @@ impl EnvironmentDefinition {
                 return Err(ValidationError::Invalid("layer"));
             }
             let resolved = library.resolve(layer.preset, &layer.overrides)?;
+            if resolved
+                .collections
+                .iter()
+                .any(|c| c.road_clearance > self.cell_size)
+            {
+                return Err(ValidationError::Invalid(
+                    "collection road clearance exceeds cell size",
+                ));
+            }
             if let Some(ground) = resolved.ground {
                 for item in ground.surfaces {
                     if !surfaces.contains(&item.surface) {

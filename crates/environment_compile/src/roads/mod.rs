@@ -288,6 +288,26 @@ impl RoadPlan {
             profile,
         })
     }
+    pub(crate) fn scatter_work(&self) -> usize {
+        self.roads
+            .iter()
+            .flat_map(|r| &r.curves)
+            .map(|c| c.vertices.len())
+            .sum::<usize>()
+            + self.junctions.len()
+    }
+    pub(crate) fn blocks_scatter(&self, cell: CellCoord, uv: [f64; 2], clearance: f32) -> bool {
+        self.roads.iter().any(|road| {
+            road.curves.iter().any(|c| {
+                let closest = c.closest(cell, uv, f64::from(self.size));
+                closest.distance_squared.sqrt() < closest.width * 0.5 + f64::from(clearance)
+            })
+        }) || self
+            .junctions
+            .iter()
+            .any(|j| j.blocks_scatter(cell, uv, self.size, clearance))
+    }
+
     fn influence(
         &self,
         road: &PlannedRoad,
@@ -474,7 +494,16 @@ impl CompilePlan {
         roads: &RoadSnapshot,
         profile: RoadCompileProfile,
     ) -> Result<Vec<CompiledCell>, CompileError> {
-        let road_plan = RoadPlan::new(self, requested, roads, profile)?;
+        let queried = if self.has_collections() {
+            let mut halo = std::collections::BTreeSet::new();
+            for &cell in requested {
+                halo.extend(crate::coverage::halo(cell)?.into_iter().map(|(_, _, c)| c));
+            }
+            halo.into_iter().collect::<Vec<_>>()
+        } else {
+            requested.to_vec()
+        };
+        let road_plan = RoadPlan::new(self, &queried, roads, profile)?;
         self.compile_with_influences(requested, source, Some(&road_plan))
     }
 }

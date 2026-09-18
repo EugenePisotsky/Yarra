@@ -39,6 +39,23 @@ pub(crate) fn new_foliage(assemblage: vegetation::VegetationAssemblageId) -> Pre
         }),
     }
 }
+pub(crate) fn new_collection() -> Preset {
+    Preset {
+        id: PresetId(id()),
+        revision: 1,
+        name: "New asset collection".into(),
+        kind: PresetKind::AssetCollection(environment::AssetCollection {
+            id: OutputId(id()),
+            channel: environment::ASSET_CHANNEL,
+            assets: vec![],
+            spacing: 3.0,
+            density: 1.0,
+            seed: 0,
+            max_slope_degrees: 40.0,
+            road_clearance: 1.0,
+        }),
+    }
+}
 pub(crate) fn new_exclusion() -> Preset {
     Preset {
         id: PresetId(id()),
@@ -57,6 +74,7 @@ pub(crate) fn kind_name(kind: &PresetKind) -> &'static str {
         PresetKind::Foliage(_) => "Foliage",
         PresetKind::Exclusion(_) => "Exclusion",
         PresetKind::Composition(_) => "Composition",
+        PresetKind::AssetCollection(_) => "Asset collection",
     }
 }
 pub(crate) fn preset_selector(
@@ -129,6 +147,10 @@ pub(crate) fn quick_controls(
                             "Clearing influence",
                             QuickValue::ExclusionInfluence(e.strength),
                         )],
+                        PresetKind::AssetCollection(c) => vec![
+                            ("Density", QuickValue::CollectionDensity(c.density)),
+                            ("Seed", QuickValue::CollectionSeed(c.seed)),
+                        ],
                         PresetKind::Composition(_) => unreachable!(),
                     };
                     for (label, mut value) in values {
@@ -138,11 +160,13 @@ pub(crate) fn quick_controls(
                         ui.push_id(value.key(), |ui| {
                             ui.horizontal(|ui| {
                                 let changed = match &mut value {
-                                    QuickValue::FoliageSeed(seed) => {
+                                    QuickValue::FoliageSeed(seed)
+                                    | QuickValue::CollectionSeed(seed) => {
                                         ui.label(label);
                                         ui.add(egui::DragValue::new(seed)).changed()
                                     }
-                                    QuickValue::GroundInfluence(v)
+                                    QuickValue::CollectionDensity(v)
+                                    | QuickValue::GroundInfluence(v)
                                     | QuickValue::FoliageDensity(v)
                                     | QuickValue::FoliageInfluence(v)
                                     | QuickValue::ExclusionInfluence(v) => ui
@@ -179,6 +203,7 @@ pub(crate) fn quick_controls(
         });
     }
 }
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn preset_editor(
     ui: &mut egui::Ui,
     library: &mut PresetLibrary,
@@ -186,6 +211,8 @@ pub(crate) fn preset_editor(
     definition: &EnvironmentDefinition,
     project: &ProjectEditorStore,
     plants: Option<&vegetation::VegetationCatalog>,
+    navigation: &mut crate::navigation::ProjectNavigationStore,
+    assets: &[world_db::CollectionAssetView],
 ) {
     let snapshot = library.clone();
     let Some(preset) = library.presets.iter_mut().find(|p| p.id == *editing) else {
@@ -194,6 +221,9 @@ pub(crate) fn preset_editor(
     ui.label(kind_name(&preset.kind));
     ui.add(egui::TextEdit::singleline(&mut preset.name).char_limit(256));
     match &mut preset.kind {
+        PresetKind::AssetCollection(c) => {
+            crate::workspaces::presets::collection::editor(ui, c, navigation, assets)
+        }
         PresetKind::Ground(g) => {
             let label = |id| {
                 project
@@ -266,6 +296,34 @@ pub(crate) fn preset_editor(
             });
         }
         PresetKind::Exclusion(e) => {
+            let mut channels = std::collections::BTreeMap::new();
+            channels.insert(environment::ASSET_CHANNEL, "Asset collections".to_owned());
+            for p in &snapshot.presets {
+                match &p.kind {
+                    PresetKind::Foliage(v) => {
+                        channels
+                            .entry(v.channel)
+                            .or_insert_with(|| format!("Foliage · {}", p.name));
+                    }
+                    PresetKind::AssetCollection(c) => {
+                        channels
+                            .entry(c.channel)
+                            .or_insert_with(|| format!("Assets · {}", p.name));
+                    }
+                    _ => {}
+                }
+            }
+            egui::ComboBox::from_id_salt("exclusion_channel")
+                .selected_text(
+                    channels
+                        .get(&e.channel)
+                        .map_or("Custom channel", String::as_str),
+                )
+                .show_ui(ui, |ui| {
+                    for (id, name) in channels {
+                        ui.selectable_value(&mut e.channel, id, name);
+                    }
+                });
             ui.add(egui::Slider::new(&mut e.strength, 0.0..=1.0).text("Default influence"));
         }
         PresetKind::Composition(children) => {

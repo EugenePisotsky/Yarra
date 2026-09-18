@@ -142,7 +142,9 @@ pub(crate) fn inspector(
     ui.add(egui::TextEdit::singleline(&mut browser.search).hint_text("Find layers"));
     let nearby = browser.nearby(dense, definition.space);
     if !browser.all {
-        ui.weak(browser.status());
+        let status = browser.status();
+        ui.add(egui::Label::new(egui::RichText::new(&status).weak()).truncate())
+            .on_hover_text(status);
         if ui.small_button("Refresh nearby").clicked() {
             browser.refresh();
         }

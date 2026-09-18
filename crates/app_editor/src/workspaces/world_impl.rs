@@ -710,6 +710,7 @@ pub(crate) fn sync_promoted_editor_object(
     }
 }
 
+#[allow(clippy::type_complexity)]
 pub(crate) fn sync_cooked_visual_visibility(
     mut commands: Commands,
     objects: Res<EditorObjectWorkingSet>,
@@ -718,12 +719,15 @@ pub(crate) fn sync_cooked_visual_visibility(
         Option<&WorldAssetRoot>,
         Option<&WorldInstance>,
     )>,
-    mut cooked_visuals: Query<(
-        Entity,
-        &StreamedVisualObject,
-        &mut Visibility,
-        Option<&EditorHiddenCookedVisual>,
-    )>,
+    mut cooked_visuals: Query<
+        (
+            Entity,
+            &StreamedVisualObject,
+            &mut Visibility,
+            Option<&EditorHiddenCookedVisual>,
+        ),
+        Without<engine::GeneratedEnvironmentObject>,
+    >,
 ) {
     let ready_proxies = proxies
         .iter()

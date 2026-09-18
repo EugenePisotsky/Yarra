@@ -28,6 +28,7 @@ pub(super) struct VegetationPage {
     pub source_revision: i64,
 }
 pub(super) struct CookedEnvironment {
+    pub objects: BTreeMap<(WorldSpaceId, CellCoord), Vec<world::StaticObjectInstance>>,
     pub terrain: BTreeMap<(WorldSpaceId, CellCoord), world::TerrainHeightfield>,
     pub catalog: Option<VegetationCatalog>,
     pub slots: Vec<TerrainSlot>,
@@ -108,6 +109,7 @@ pub(super) fn compile_environment(project: &ProjectDocument) -> Result<CookedEnv
         .map(|c| ((c.space, c.cell), c))
         .collect::<BTreeMap<_, _>>();
     let mut result = CookedEnvironment {
+        objects: BTreeMap::new(),
         terrain: BTreeMap::new(),
         catalog: Some(merge_runtime_catalogs(&plans.values().collect::<Vec<_>>())?),
         slots: Vec::new(),
@@ -218,6 +220,7 @@ pub(super) fn compile_environment(project: &ProjectDocument) -> Result<CookedEnv
             result
                 .terrain
                 .insert((*space, cell), compiled.terrain.clone().unwrap());
+            result.objects.insert((*space, cell), compiled.objects);
             hash.update(&compiled.input_fingerprint);
             let source_revision = source.get(&(*space, cell)).map_or(0, |r| r.source_revision);
             result

@@ -1,4 +1,8 @@
+mod terrain_nodes;
+pub use terrain_nodes::*;
+mod collection_assets;
 mod environment_store;
+pub use collection_assets::*;
 mod road_store;
 mod schema;
 pub use environment_store::*;
@@ -1844,6 +1848,46 @@ fn write_runtime_build(
     Ok(())
 }
 
+fn read_page_connection(
+    connection: &Connection,
+    key: PageKey,
+) -> Result<Option<EncodedPage>, WorldDbError> {
+    connection
+        .query_row(
+            "SELECT codec, decoded_bytes, gpu_bytes_estimate, checksum, payload \
+                 FROM cell_pages \
+                 WHERE world_space_id = ?1 AND cell_x = ?2 AND cell_z = ?3 \
+                   AND domain = ?4 AND lod = ?5",
+            params![
+                key.space.0,
+                key.cell.x,
+                key.cell.z,
+                key.domain as i64,
+                i64::from(key.lod)
+            ],
+            |row| {
+                let decoded_bytes: i64 = row.get(1)?;
+                let gpu_bytes_estimate: i64 = row.get(2)?;
+                Ok(EncodedPage {
+                    key,
+                    codec: PageCodec::try_from(row.get::<_, i64>(0)?).map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            0,
+                            rusqlite::types::Type::Integer,
+                            Box::new(error),
+                        )
+                    })?,
+                    decoded_bytes: decoded_bytes as u64,
+                    gpu_bytes_estimate: gpu_bytes_estimate as u64,
+                    checksum: blob_array(row.get_ref(3)?.as_blob()?, "checksum")?,
+                    payload: row.get(4)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(Into::into)
+}
+
 pub struct RuntimeReader {
     connection: Connection,
     manifest: RuntimeManifest,
@@ -1911,40 +1955,7 @@ impl RuntimeReader {
     }
 
     pub fn read_page(&self, key: PageKey) -> Result<Option<EncodedPage>, WorldDbError> {
-        self.connection
-            .query_row(
-                "SELECT codec, decoded_bytes, gpu_bytes_estimate, checksum, payload \
-                 FROM cell_pages \
-                 WHERE world_space_id = ?1 AND cell_x = ?2 AND cell_z = ?3 \
-                   AND domain = ?4 AND lod = ?5",
-                params![
-                    key.space.0,
-                    key.cell.x,
-                    key.cell.z,
-                    key.domain as i64,
-                    i64::from(key.lod)
-                ],
-                |row| {
-                    let decoded_bytes: i64 = row.get(1)?;
-                    let gpu_bytes_estimate: i64 = row.get(2)?;
-                    Ok(EncodedPage {
-                        key,
-                        codec: PageCodec::try_from(row.get::<_, i64>(0)?).map_err(|error| {
-                            rusqlite::Error::FromSqlConversionFailure(
-                                0,
-                                rusqlite::types::Type::Integer,
-                                Box::new(error),
-                            )
-                        })?,
-                        decoded_bytes: decoded_bytes as u64,
-                        gpu_bytes_estimate: gpu_bytes_estimate as u64,
-                        checksum: blob_array(row.get_ref(3)?.as_blob()?, "checksum")?,
-                        payload: row.get(4)?,
-                    })
-                },
-            )
-            .optional()
-            .map_err(Into::into)
+        read_page_connection(&self.connection, key)
     }
 
     pub fn read_dependencies(&self, key: PageKey) -> Result<Vec<PageDependency>, WorldDbError> {
@@ -2314,6 +2325,8 @@ fn decode_f32_blob(bytes: &[u8], field: &'static str) -> rusqlite::Result<Vec<f3
 
 #[derive(Debug, thiserror::Error)]
 pub enum WorldDbError {
+    #[error("terrain hierarchy: {0}")]
+    TerrainHierarchy(String),
     #[error("environment source: {0}")]
     Environment(String),
     #[error(transparent)]

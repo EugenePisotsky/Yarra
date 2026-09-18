@@ -346,3 +346,6 @@ mod tests {
         assert!(merge_preset_changes(Some(&saved), &original, &edited).is_err());
     }
 }
+
+#[cfg(test)]
+mod scatter_tests;

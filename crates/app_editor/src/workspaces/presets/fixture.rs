@@ -100,6 +100,9 @@ pub(super) struct Request {
     pub underlay: Option<PresetId>,
 }
 pub(super) struct Product {
+    pub objects: Vec<world::StaticObjectInstance>,
+    pub asset_ids: Vec<world::AssetId>,
+    pub assets: Vec<world_db::CollectionAssetView>,
     pub scene: VegetationScene,
     pub ground: CompiledGround,
     pub terrain: Option<world::TerrainHeightfield>,
@@ -107,7 +110,20 @@ pub(super) struct Product {
     pub candidates: u32,
 }
 impl Request {
-    pub(super) fn compile(self) -> Result<Product, String> {
+    pub(super) fn compile(mut self) -> Result<Product, String> {
+        // Naming is validated when applying authoring changes. A temporarily empty
+        // name while typing must not turn a valid visual draft into a preview error.
+        for preset in &mut self.library.presets {
+            preset.name = "Preview preset".into();
+            if let PresetKind::Composition(children) = &mut preset.kind {
+                for child in children {
+                    child.name = "Preview use".into();
+                }
+            }
+        }
+        if let Some(road) = &mut self.road {
+            road.profile.name = "Preview road".into();
+        }
         if ![8, 16].contains(&self.size) {
             return Err("Preview patch must be 8 or 16 metres".into());
         }
@@ -276,6 +292,9 @@ impl Request {
             );
         }
         Ok(Product {
+            objects: cell.objects,
+            asset_ids: plan.collection_assets(),
+            assets: vec![],
             scene,
             ground: cell.ground,
             terrain: cell.terrain,

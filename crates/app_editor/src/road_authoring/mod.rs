@@ -55,9 +55,24 @@ pub(crate) struct RoadToolState {
     pub(super) status: Option<String>,
     pub(crate) load_error: Option<String>,
     pub(crate) ready: bool,
+    loaded_space: Option<WorldSpaceId>,
+    ready_window: Option<(WorldSpaceId, RoadCellBounds)>,
     pub(super) refresh: u64,
 }
 impl RoadToolState {
+    fn can_create_at(&self, space: WorldSpaceId, cell: CellCoord) -> bool {
+        self.ready
+            && self
+                .ready_window
+                .is_some_and(|(loaded, bounds)| loaded == space && bounds.contains(cell))
+    }
+    fn discovery_status(&self, space: WorldSpaceId) -> &'static str {
+        if self.loaded_space == Some(space) {
+            "Nearby roads · 5 × 5 cells around the editing focus"
+        } else {
+            "Loading nearby road controls…"
+        }
+    }
     fn commit(
         &mut self,
         dense: &mut DenseDomainWorkingSets,
@@ -124,9 +139,7 @@ pub(crate) fn inspector(
         ui.weak("Loading environment…");
         return;
     };
-    if !state.ready {
-        ui.weak("Loading nearby road controls…");
-    }
+    ui.add(egui::Label::new(egui::RichText::new(state.discovery_status(space)).weak()).truncate());
     let disabled = busy || dense.saving() || dense.gesture_active || dense.has_any_conflict();
     ui.collapsing("History and recovery", |ui| {
         if ui

@@ -1,4 +1,5 @@
 mod environment_cook;
+mod terrain_cook;
 use environment_cook::{
     CookedEnvironment, TerrainSlot, TerrainWeights, compile_environment, demo_environment,
 };
@@ -76,8 +77,7 @@ pub fn cook_project(project_path: &Path, runtime_path: &Path) -> Result<RuntimeM
     let project = read_project_database(project_path)
         .with_context(|| format!("failed to read project database {}", project_path.display()))?;
     let build = build_runtime(project)?;
-    publish_runtime_database(runtime_path, &build)?;
-    Ok(build.manifest)
+    publish_runtime_database(runtime_path, &build)
 }
 
 pub fn build_runtime(mut project: ProjectDocument) -> Result<RuntimeBuild> {
@@ -437,6 +437,18 @@ pub fn build_runtime(mut project: ProjectDocument) -> Result<RuntimeBuild> {
             bail!("visual asset {:?} has no runtime LOD variants", asset);
         }
     }
+    for preset in &project.presets.presets {
+        if let environment::PresetKind::AssetCollection(c) = &preset.kind {
+            for a in &c.assets {
+                let source = assets_by_id
+                    .get(&a.asset)
+                    .context("collection references missing asset")?;
+                if source.kind != "gltf-scene" || !variants_by_asset.contains_key(&a.asset) {
+                    bail!("collection assets need glTF scene LOD variants");
+                }
+            }
+        }
+    }
     for object in &project.objects {
         if !definitions_by_id.contains_key(&object.definition) {
             bail!(
@@ -462,6 +474,7 @@ pub fn build_runtime(mut project: ProjectDocument) -> Result<RuntimeBuild> {
     let mut definition_dependencies = Vec::new();
     let mut terrain_surface_dependencies = Vec::new();
     let mut content_hasher = blake3::Hasher::new();
+    content_hasher.update(&RUNTIME_SCHEMA_VERSION.to_le_bytes());
 
     content_hasher.update(&project.default_world_space.0.to_le_bytes());
     for space in &project.world_spaces {
@@ -611,7 +624,12 @@ pub fn build_runtime(mut project: ProjectDocument) -> Result<RuntimeBuild> {
             pages.push(page);
             domain_mask |= domain_bit(PageDomain::Vegetation);
         }
-        if !render_objects.is_empty() {
+        let generated = environment
+            .objects
+            .get(&(source_cell.space, source_cell.cell))
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        if !render_objects.is_empty() || !generated.is_empty() {
             domain_mask |= domain_bit(PageDomain::StaticObjects);
             let object_key = PageKey {
                 space: source_cell.space,
@@ -619,9 +637,10 @@ pub fn build_runtime(mut project: ProjectDocument) -> Result<RuntimeBuild> {
                 domain: PageDomain::StaticObjects,
                 lod: 0,
             };
-            let instances = render_objects
+            let mut instances: Vec<_> = render_objects
                 .iter()
                 .map(|(object, asset)| StaticObjectInstance {
+                    generated: false,
                     id: object.id,
                     asset: *asset,
                     translation: object.local_translation,
@@ -629,6 +648,11 @@ pub fn build_runtime(mut project: ProjectDocument) -> Result<RuntimeBuild> {
                     scale: object.scale,
                 })
                 .collect();
+            instances.extend_from_slice(generated);
+            instances.sort_by_key(|o| o.id);
+            if instances.windows(2).any(|w| w[0].id == w[1].id) {
+                bail!("generated/manual object identity collision");
+            }
             let object_page = encoded_page(
                 object_key,
                 PagePayload::StaticObjects(StaticObjectsPage { instances }),
@@ -637,7 +661,11 @@ pub fn build_runtime(mut project: ProjectDocument) -> Result<RuntimeBuild> {
             hash_page(&mut content_hasher, &object_page);
             pages.push(object_page);
             let mut depended_assets = HashSet::new();
-            for (_, asset) in &render_objects {
+            for asset in render_objects
+                .iter()
+                .map(|(_, a)| a)
+                .chain(generated.iter().map(|o| &o.asset))
+            {
                 if !depended_assets.insert(*asset) {
                     continue;
                 }
@@ -692,6 +720,11 @@ pub fn build_runtime(mut project: ProjectDocument) -> Result<RuntimeBuild> {
             minimum_y = minimum_y.min(object.local_translation[1]);
             maximum_y = maximum_y
                 .max(object.local_translation[1] + maximum_height_by_asset[asset] * object.scale);
+        }
+        for object in generated {
+            minimum_y = minimum_y.min(object.translation[1]);
+            maximum_y = maximum_y
+                .max(object.translation[1] + maximum_height_by_asset[&object.asset] * object.scale);
         }
         cells.push(RuntimeCellRecord {
             space: source_cell.space,
@@ -973,7 +1006,7 @@ fn hash_page(hasher: &mut blake3::Hasher, page: &EncodedPage) {
     hasher.update(&page.checksum);
 }
 
-fn publish_runtime_database(runtime_path: &Path, build: &RuntimeBuild) -> Result<()> {
+fn publish_runtime_database(runtime_path: &Path, build: &RuntimeBuild) -> Result<RuntimeManifest> {
     let file_name = runtime_path
         .file_name()
         .and_then(|name| name.to_str())
@@ -988,15 +1021,28 @@ fn publish_runtime_database(runtime_path: &Path, build: &RuntimeBuild) -> Result
         })?;
     }
     write_runtime_database(&temporary_path, build)?;
-    world_db::RuntimeReader::open_immutable(&temporary_path)
+    let (manifest, _) =
+        terrain_cook::cook_hierarchy(&temporary_path, &build.manifest.world_spaces)?;
+    let reader = world_db::RuntimeReader::open_immutable(&temporary_path)
         .context("cooked runtime database did not pass validation")?;
+    for space in &manifest.world_spaces {
+        // The roots are the minimum fallback cover: validate their actual payloads
+        // before replacing a previously working generation.
+        for root in reader.read_terrain_roots(space.id)? {
+            reader
+                .read_terrain_node(root.key)?
+                .context("missing cooked terrain root")?
+                .decode()?;
+        }
+    }
+    drop(reader);
     fs::rename(&temporary_path, runtime_path).with_context(|| {
         format!(
             "failed to publish runtime database {}",
             runtime_path.display()
         )
     })?;
-    Ok(())
+    Ok(manifest)
 }
 
 fn demo_project_document() -> ProjectDocument {

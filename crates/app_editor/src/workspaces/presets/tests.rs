@@ -16,6 +16,115 @@ fn request() -> fixture::Request {
     }
 }
 #[test]
+fn names_do_not_invalidate_preview_but_apply_still_validates_them() {
+    let original = request();
+    let mut renamed = original.clone();
+    renamed.library.revision += 1;
+    for preset in &mut renamed.library.presets {
+        preset.name.clear(); // A text field can be empty between Select All and typing.
+        preset.revision += 1;
+        if let environment::PresetKind::Composition(uses) = &mut preset.kind {
+            for child in uses {
+                child.name.clear();
+            }
+        }
+    }
+    assert!(visual_changes::same_library(
+        &original.library,
+        &renamed.library
+    ));
+    assert!(
+        Draft {
+            base: original.library.clone(),
+            library: renamed.library.clone()
+        }
+        .dirty()
+    );
+    let before = original.clone().compile().unwrap();
+    let after = renamed.clone().compile().unwrap();
+    assert_eq!(before.scene, after.scene);
+    assert_eq!(before.ground, after.ground);
+    assert!(
+        renamed.library.validate(&renamed.plants).is_err(),
+        "Apply still validates authoring names"
+    );
+
+    let p = renamed
+        .library
+        .presets
+        .iter_mut()
+        .find(|p| p.id == GREEN_MEADOW)
+        .unwrap();
+    let environment::PresetKind::Composition(children) = &mut p.kind else {
+        panic!()
+    };
+    children[0].overrides.push(environment::PresetOverride {
+        path: vec![],
+        value: environment::QuickValue::GroundInfluence(0.25),
+    });
+    assert!(!visual_changes::same_library(
+        &original.library,
+        &renamed.library
+    ));
+}
+
+#[test]
+fn road_style_renaming_keeps_preview_geometry_and_refreshes_the_authoring_name() {
+    let original = road_request();
+    let mut renamed = original.clone();
+    let p = &mut renamed.road.as_mut().unwrap().profile;
+    p.name.push_str(" renamed");
+    p.revision += 1;
+    assert!(visual_changes::same_road(
+        original.road.as_ref().map(|r| &r.profile),
+        Some(p)
+    ));
+    let before = original.clone().compile().unwrap();
+    let after = renamed.clone().compile().unwrap();
+    assert_eq!(before.terrain, after.terrain);
+    assert_eq!(before.ground, after.ground);
+    assert_eq!(before.scene, after.scene);
+
+    let mut unnamed = renamed.clone();
+    unnamed.road.as_mut().unwrap().profile.name.clear();
+    assert!(unnamed.road.as_ref().unwrap().profile.validate().is_err());
+    assert!(
+        unnamed.compile().is_ok(),
+        "unfinished names cannot invalidate visual previews"
+    );
+
+    let mut styles = road_styles::Styles::default();
+    let mut roads = crate::road_authoring::working::RoadWorkingSet::default();
+    let original_profile = original.road.unwrap().profile;
+    let key = world_db::RoadRecordKey::Profile(original_profile.id);
+    roads
+        .apply(&[crate::road_authoring::working::RoadChange {
+            key,
+            record: Some(world_db::RoadSourceRecord::Profile(original_profile)),
+        }])
+        .unwrap();
+    assert!(styles.refresh(&roads));
+    let renamed_profile = renamed.road.unwrap().profile;
+    roads
+        .apply(&[crate::road_authoring::working::RoadChange {
+            key,
+            record: Some(world_db::RoadSourceRecord::Profile(renamed_profile.clone())),
+        }])
+        .unwrap();
+    assert!(!styles.refresh(&roads));
+    assert_eq!(
+        styles.draft.as_ref().unwrap().value.name,
+        renamed_profile.name
+    );
+    styles.draft.as_mut().unwrap().value.name.push_str(" draft");
+    assert!(styles.dirty());
+    styles.draft.as_mut().unwrap().value.relief.road_depth += 0.1;
+    assert!(!visual_changes::same_road(
+        Some(&renamed_profile),
+        styles.draft.as_ref().map(|d| &d.value)
+    ));
+}
+#[test]
 fn production_patch_is_deterministic_and_coverage_controls_ground_and_grass() {
     let r = request();
     let a = r.clone().compile().unwrap();

@@ -3,10 +3,14 @@
 Status: compiler, source persistence, world cooking, viewport painting, typed project
 presets, dedicated preset authoring/preview and Nearby / All browsing implemented,
 2026-09-18. Preset types own code-defined quick controls and bounded composition uses.
-Curved-road source contracts, an offline cart-track compiler fixture, indexed road
-persistence and saved-road cooking are also implemented. Road editor controls,
-automatic terrain rules, asset
-collection scattering and streaming metadata for thousands of layers remain subsequent work.
+Curved roads, shared road styles, road/rut relief, explicit junctions, and the first
+asset-collection scattering workflow are implemented. Automatic terrain rules, generated
+object overrides, and streaming metadata for thousands of layers remain subsequent work.
+
+The next rendering foundation is [Distant world and terrain rendering](DISTANT_WORLD_RENDERING.md):
+hierarchical terrain, cheap distant materials and later scenery proxies. It consumes
+the authoritative terrain and environment outputs defined here; it does not change
+preset/layer ownership. Meshlets are excluded from that implementation.
 
 **Project policy:** no backwards compatibility, legacy-world import, dual source
 modes or preservation of the current demo are required. This is an early project;
@@ -180,8 +184,8 @@ system, and unchanged masks are not cloned/hashed every frame.
 
 **Save** persists applied definitions and coverage together. **Save & Publish** additionally cooks, validates and adopts
 an immutable runtime generation, using the existing save coordinator. The working
-world is not silently published while painting. Height sculpting, forest/object
-scattering and editable curved roads are not implemented yet.
+world is not silently published while painting. The later slices below add curved roads,
+road relief, junctions and asset collections. General height sculpting remains future work.
 
 A short native-editor smoke test on 2026-09-17 used disposable database copies under
 `tmp/environment-authoring/paint-smoke/`. It verified layer controls, a two-cell
@@ -317,9 +321,9 @@ quick settings can be adjusted on each use in a composition or world layer.
 | Composition | Child preset references, roles and default quick overrides for each child | Groups of the children's quick controls |
 
 This table is the intended ownership split, not a list of implemented generators.
-The current compiler supports ground, procedural foliage and exclusion treatments.
-Asset scattering, mesh foliage and new rule types must acquire real compiler/runtime
-support before their controls are offered. New preset types follow the same split.
+The current compiler supports ground, procedural foliage, exclusions and asset collections.
+Mesh foliage and new rule types must acquire real compiler/runtime support before their
+controls are offered. New preset types follow the same split.
 
 Asset collections can contain trees, bushes, rocks or other supported assets; their
 names do not create separate preset types. Selection weights are relative weights,
@@ -445,6 +449,12 @@ metadata. The implemented browsing behavior is:
   one to paint in a new location. The preset library is browsed independently.
 - Combine saved spatial coverage with local edits when determining nearby membership;
   unloaded or truncated results are not proof that a layer has no coverage.
+- Retain the last completed membership window during asynchronous refresh, including
+  its local edits, and replace it only when the latest query succeeds. Report stale
+  results on refresh failure; clear them when switching worlds. Pending queries must
+  not collapse the list or shift the Inspector controls as the brush crosses cells.
+  Routine refreshes keep the same status label; loading is shown on first discovery,
+  while failures and partial results remain explicit.
 
 This is a browsing filter, not an edit boundary. A layer setting still affects all
 of that layer's patches; a shared preset edit can affect multiple layers/worlds.
@@ -670,7 +680,7 @@ length. Splitting a curve preserves relief within the existing geometric toleran
 Depth variation never inverts a depression into a mound.
 
 The pure compiler reads **original** source heights with a certified one-cell halo,
-then derives quantized heights and normals from the deformed surface. It never uses
+then derives canonical f32 heights and encoded normals from the deformed surface. It never uses
 previous cooked/preview heights as input. The cooker and World/preset previews use
 this same evaluator. World preview replaces both the terrain mesh and its shared CPU
 surface, so grass, picking and existing ground queries follow the new relief. Material
@@ -870,10 +880,14 @@ workflow still matter; preserving old testing-world files does not.
    handles, shared styles, live preview, recovery and cooking are implemented. Road/rut
    relief and explicit two–four-arm junctions now share the same terrain evaluator.
    Mixed paving, custom junction profiles and NPC navigation remain later increments.
-7. **Automatic terrain rules and object scattering.** Add slope/elevation treatments,
-   forest assets, deterministic spacing and manual/generated overrides when those
-   features have content to validate. Add broader material support before recipes
-   require more simultaneous terrain surfaces.
+7. **Asset collections and deterministic scattering — implemented.** Weighted visual
+   assets, scale ranges, stable spacing, slope limits, road clearance, per-use density/seed,
+   preset/world previews and ordinary streamed static-object pages. See the acceptance
+   record below. Manual objects remain independent source records.
+8. **Automatic terrain rules and generated-object overrides.** Add slope/elevation
+   surface treatments, asset footprints, and explicit promotion/removal of generated
+   objects when there is content to validate them. Add broader material support before
+   recipes require more simultaneous terrain surfaces.
 
 Acceptance gates for the early slices:
 
@@ -1283,8 +1297,8 @@ Normal project/runtime/recovery files are untouched. Existing meadow surfaces ar
 stand-ins: this slice adds no paving textures, crack geometry, junction authoring,
 terrain grading or NPC routing. Style deletion/unused-style cleanup is still pending.
 
-**Next:** asset-collection presets and deterministic scattering. The first junction
-policy is implemented below; mixed-style connections and advanced grading remain
+Asset-collection presets, deterministic scattering and the first junction policy are
+implemented in the slices below; mixed-style connections and advanced grading remain
 separate road increments.
 
 
@@ -1358,8 +1372,7 @@ The compiler rejects forks below 30 degrees, overlapping blend areas, more than 
 arms and unconnected centerline crossings. Inactive arms do not contribute wear or
 relief; fewer than two enabled member roads disables the common patch. Mixed styles,
 custom junction geometry, merging existing junction nodes, overpasses, road crowns,
-turn restrictions and actual NPC routing remain separate increments. The next main
-authoring slice is asset collections/scattering, rather than additional grass tuning.
+turn restrictions and actual NPC routing remain separate increments. Asset collections/scattering are implemented in the following slice.
 
 
 Junction verification: **216 tests passed** across editor (114), environment (11),
@@ -1372,3 +1385,83 @@ route. Shared route/style dependency bounds include junctions beyond corridor pa
 Strict compiler/database/cooker Clippy passes; editor Clippy retains unrelated existing
 warnings. Artifacts are under `tmp/road-junctions/`. The current project was updated
 without changing its existing source records or creating a backup.
+
+
+### Asset collections and deterministic scattering — 2026-09-18
+
+`AssetCollection` is a typed leaf preset that can also be used inside compositions.
+Its dedicated editor owns visual asset selection from the existing paginated asset
+library, positive relative weights, per-asset uniform scale ranges, minimum spacing,
+maximum slope, default density/seed and road edge clearance. Map layers and composition
+uses expose only density and seed, with the usual inheritance/reset behavior. An empty
+new collection is a draft; Apply rejects it until it contains a valid asset. Up to 64
+unique assets may be referenced by one collection. Source asset references and glTF LOD
+metadata are checked on save; preview/cook errors are explicit.
+
+The first distribution is **spaced scatter**. Each logical world-space spacing square
+has one seeded jittered candidate. A candidate survives only if no closer neighbour
+has higher deterministic priority. Comparison uses a fixed local neighbourhood,
+independent of loaded cells, camera position, source insertion order and job scheduling.
+The resulting spacing is a minimum within one resolved collection use, including cell
+boundaries. Independent collection uses do not compete; put tree species in a single
+collection when they should share spacing. This conservative distribution is not a
+maximal Poisson-disc fill. Neighbours outside painted coverage still participate in
+spacing, so painting/erasing an edge cannot shuffle nearby roots.
+
+Coverage, layer opacity and density thin the stable candidates. Increasing density
+adds roots; decreasing it retains a subset with unchanged transforms/assets. Stable
+IDs derive from world, layer, resolved composition use, seed and lattice coordinate;
+revision changes alone do not change IDs. Relative asset weights are sampled per root
+and do not promise exact ratios in small patches. Selection, rotation and scale are
+seeded. Trees stay upright and their roots sample the same final quantized terrain
+surface used by the renderer. Maximum slope is tested against its sampled normal.
+
+Exclusions suppress lower collection outputs in the selected channel, matching the
+painted stack's foliage semantics. The Exclusion editor selects an actual foliage or
+asset channel. A collection keeps its roots outside the entire enabled road corridor
+plus 0–4 m clearance, including shared junction blend areas; road wear/grass retention
+cannot accidentally place a tree in a grassy cart-road center. Clearance may not exceed
+the world's cell size. Compilation certifies the road halo and includes its dependencies
+in the cell fingerprint, even when a road only affects clearance outside its own cell.
+
+Placements are derived `StaticObjectInstance`s with a generated marker. They are never
+inserted into the manual source-object table. Cook merges them with manual render
+placements, records asset/LOD dependencies, checks identity collisions and includes tree
+height/scale in cell bounds. They use the existing object renderer and runtime LODs.
+This first slice is render-only: it adds neither collision nor gameplay entities.
+Runtime format is **16**; source remains **22** and recovery remains **11** (new leaf
+and quick-value variants are appended, with no source-table/layout change).
+
+World preview reads asset metadata by ID on its worker, keeps accepted terrain/grass
+and object products together, and replaces only cooked generated visuals. It creates at
+most 64 object roots per frame, uses runtime LOD selection, keeps at most 4,096 generated
+preview roots and drops them on workspace exit/unload. Existing manual proxies are
+unaffected. Preset preview uses LOD0 assets on its isolated render layer and frames tall
+objects; its 8/16 m patch is a visual authoring fixture, not a world-performance estimate.
+
+Per-cell compilation caps candidates at 16,384, accepted objects at 2,048, and scatter
+work at four million operations (also respecting the profile's lower work budget).
+Object buffers participate in compiler/preview memory budgets. Asset lookup is bounded
+at 256 IDs per read. These are workload guards, not GPU performance promises.
+
+The registered library currently contains one tree asset. Mixed-weight behavior is
+covered with two synthetic asset IDs; additional real tree species require imported
+asset catalog entries. No automatic forest is painted into an existing user's world.
+
+Remaining: clumped/ecological distributions, spacing between separate collection uses,
+manual-object footprints, per-instance suppression/promotion, physics/navigation data,
+mesh foliage, and broader forest content. These should reuse the same source/derived
+separation rather than storing generated transforms as new authored objects.
+
+Verification: **222 tests passed** (editor 115; environment 11; compiler 54; database
+35; cooker 7), covering stable placement/thinning, weighted assets, borders, roads,
+terrain/slope, exclusions, composition overrides, budgets, recovery, undo/redo and
+preview/save/cook agreement. Workspace check and strict core Clippy passed. Editor
+Clippy completes with existing renderer/vegetation warnings. A native disposable-world
+smoke test created a collection, added the registered tree, previewed it, painted a
+layer and published successfully. Undo removed the generated patch while preserving
+manual trees; redo restored it. The normal source database was unchanged (SHA-256
+checked); its runtime was recooked as schema 16, generation `7b618006cd4edb85`. Both
+databases passed SQLite integrity/foreign-key checks. Local logs and the verification
+record are in `tmp/asset-collections/`. No sustained GPU test or forest performance
+claim is part of this slice.

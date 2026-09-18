@@ -9,6 +9,12 @@ pub(super) struct PlannedJunction {
     pub bounds: RoadCellBounds,
 }
 impl PlannedJunction {
+    pub fn blocks_scatter(&self, cell: CellCoord, uv: [f64; 2], size: f32, clearance: f32) -> bool {
+        let p = self.source.position.relative_to(cell, f64::from(size));
+        (uv[0] * f64::from(size) - p[0]).hypot(uv[1] * f64::from(size) - p[1])
+            < f64::from(self.source.radius + clearance)
+    }
+
     pub fn blend(&self, cell: CellCoord, uv: [f64; 2], size: f32) -> f64 {
         if !self.bounds.contains(cell) {
             return 0.0;

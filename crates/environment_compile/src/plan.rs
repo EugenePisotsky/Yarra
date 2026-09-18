@@ -238,7 +238,7 @@ impl CompilePlan {
             bincode::config::standard(),
         )?;
         let mut hash = blake3::Hasher::new();
-        hash.update(b"yarra.environment.compiler.v2");
+        hash.update(b"yarra.environment.compiler.v3");
         hash.update(&bytes);
         Ok(Self {
             presets: presets.clone(),

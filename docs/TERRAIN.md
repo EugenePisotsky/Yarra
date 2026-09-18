@@ -95,3 +95,12 @@ demo lighting and exposure use the procedural meadow reference values.
 Streamed heightfields with shared height/normal sampling are implemented; see
 [the terrain integration checkpoint](GROUND_COVER_ARCHITECTURE.md). Terrain geometry
 LOD, cliff projection and a far-terrain renderer remain separate future work.
+Cooked heights now retain source f32 precision, and terrain/vegetation CPU queries
+and GPU grass placement interpolate the actual mesh triangles. Runtime schema 17
+and payload 8 require recooking existing source projects; source schema is unchanged.
+
+The cooker also writes a hierarchy from final road-deformed leaves, with conservative
+error/bounds and bounded node reads. These nodes are not drawn yet. Only the hierarchy
+pass is streamed so far; the preceding source/environment cook still loads the whole
+project. See [Distant world and terrain rendering](DISTANT_WORLD_RENDERING.md) for
+the checkpoint, remaining cooking work and renderer implementation sequence.

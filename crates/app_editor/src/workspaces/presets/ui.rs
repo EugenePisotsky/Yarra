@@ -12,6 +12,7 @@ use environment::{Preset, PresetKind};
 
 #[derive(SystemParam)]
 pub(super) struct Resources<'w> {
+    navigation: ResMut<'w, crate::navigation::ProjectNavigationStore>,
     state: ResMut<'w, PresetAuthoringState>,
     preview: Res<'w, viewport::PreviewState>,
     roads: Res<'w, crate::road_authoring::RoadToolState>,
@@ -27,6 +28,7 @@ pub(super) struct Resources<'w> {
 }
 pub(super) fn draw(mut frame: ResMut<EditorUiFrame>, resources: Resources) -> Result {
     let Resources {
+        mut navigation,
         mut state,
         preview,
         roads,
@@ -138,6 +140,10 @@ pub(super) fn draw(mut frame: ResMut<EditorUiFrame>, resources: Resources) -> Re
                                     added = Some(controls::new_foliage(a.id));
                                     ui.close();
                                 }
+                                if ui.button("Asset collection").clicked() {
+                                    added = Some(controls::new_collection());
+                                    ui.close();
+                                }
                                 if ui.button("Exclusion").clicked() {
                                     added = Some(controls::new_exclusion());
                                     ui.close();
@@ -247,6 +253,8 @@ pub(super) fn draw(mut frame: ResMut<EditorUiFrame>, resources: Resources) -> Re
                                     definition,
                                     &project,
                                     plants.study_source().map(|(c, _, _)| c),
+                                    &mut navigation,
+                                    &preview.assets,
                                 );
                             })
                         });
@@ -293,7 +301,7 @@ pub(super) fn draw(mut frame: ResMut<EditorUiFrame>, resources: Resources) -> Re
             if state.size!=previous_size {state.distance*=f32::from(state.size)/f32::from(previous_size);}
             egui::ComboBox::from_id_salt("patch_shape").selected_text(state.footprint.label()).show_ui(ui,|ui|{for f in [Footprint::Full,Footprint::Patch,Footprint::Hole]{ui.selectable_value(&mut state.footprint,f,f.label());}});
             if ui.button(if state.playing {"Pause wind"} else {"Play wind"}).clicked(){state.playing= !state.playing;}
-            if ui.button("Reset view").clicked(){state.yaw=35.0;state.pitch=40.0;state.distance=f32::from(state.size)*1.375;state.phase=0.0;}
+            if ui.button("Reset view").clicked(){state.yaw=35.0;state.pitch=40.0;state.distance=state.fit_distance;state.phase=0.0;}
         });
         ui.horizontal_wrapped(|ui| {
             ui.label("Base ground");
@@ -308,14 +316,24 @@ pub(super) fn draw(mut frame: ResMut<EditorUiFrame>, resources: Resources) -> Re
             });
         });
         if preview_underlay.is_some(){ui.small(if road_mode {"Coverage shape applies to the reference foliage. Roads only thin the grass already present."} else {"Reference foliage fills the patch underneath this preset, to test clearing and blending."});}
-        if let Some(error)=&preview.error{ui.colored_label(egui::Color32::LIGHT_RED,format!("Preview unavailable: {error}"));}
-        else if preview.pending(){ui.weak("Compiling preview…");}
-        else {ui.weak(format!("Preview current · up to {} foliage candidates",preview.candidates));}
+        let status = if let Some(error)=&preview.error {
+            format!("Preview unavailable: {error}")
+        } else if !preview.has_image() {
+            "Preparing preview…".into()
+        } else if preview.slow_update(std::time::Instant::now()) {
+            "Updating preview · showing previous result".into()
+        } else {
+            format!("Preview · {} objects · up to {} foliage candidates",preview.objects,preview.candidates)
+        };
+        let status_text = if preview.error.is_some() { egui::RichText::new(&status).color(egui::Color32::LIGHT_RED) } else { egui::RichText::new(&status).weak() };
+        ui.add(egui::Label::new(status_text).truncate()).on_hover_text(status);
         let available=ui.available_size();let width=available.x.min((available.y-8.0).max(1.0)*4.0/3.0).max(1.0);
-        let response=ui.add(egui::Image::new((state.texture,egui::vec2(width,width*0.75))).sense(egui::Sense::drag()).tint(if preview.current{egui::Color32::WHITE}else{egui::Color32::from_gray(100)}));
-        if !preview.current {ui.painter().text(response.rect.center(),egui::Align2::CENTER_CENTER,"Preview is not current",egui::FontId::proportional(18.0),egui::Color32::WHITE);}
+        let response=ui.add(egui::Image::new((state.texture,egui::vec2(width,width*0.75))).sense(egui::Sense::drag()));
+        if preview.error.is_some() && preview.has_image() {
+            ui.painter().text(response.rect.left_top()+egui::vec2(12.0,12.0),egui::Align2::LEFT_TOP,"Last valid preview",egui::FontId::proportional(16.0),egui::Color32::WHITE);
+        }
         if response.dragged(){let delta=ui.input(|i|i.pointer.delta());state.yaw-=delta.x*0.4;state.pitch=(state.pitch+delta.y*0.3).clamp(5.0,89.0);}
-        if response.hovered(){let scroll=ui.input(|i|i.smooth_scroll_delta.y);state.distance=(state.distance*(-scroll*0.002).exp()).clamp(2.0,40.0);}
+        if response.hovered(){let scroll=ui.input(|i|i.smooth_scroll_delta.y);state.distance=(state.distance*(-scroll*0.002).exp()).clamp(2.0,80.0);}
     });
     if road_mode {
         state.styles.underlay = preview_underlay;
@@ -368,7 +386,7 @@ pub(super) fn draw(mut frame: ResMut<EditorUiFrame>, resources: Resources) -> Re
         };
         state.message = None;
     }
-    if before != draft.library {
+    if !visual_changes::same_library(&before, &draft.library) {
         state.bump();
     }
     state.draft = Some(draft);

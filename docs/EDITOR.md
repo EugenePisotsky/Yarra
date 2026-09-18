@@ -7,13 +7,14 @@ builds on the bounded source/cooked separation below. References in this documen
 to the old Ground Cover painter are historical: that implementation was removed;
 the new Environment tool now paints composition-layer coverage. Choose Environment
 in the World window, select a layer in the Inspector, and drag to paint or erase.
-The source compiler drives live ground and grass preview; a drag is one undo command.
+The source compiler drives live ground, grass and generated-object preview; a drag is one undo command.
 The Inspector also creates, renames, reorders and disables layers, browses Nearby / All,
 and displays selected-layer coverage. Shared preset configuration lives in the Presets
 workspace. Apply settings makes one layer undo step; Save persists applied definitions
 and masks together. Save & Publish
 updates the game world. Species/population catalog editing remains available; curved
-path editing and explicit junctions are implemented; forest scattering is a subsequent slice. References below to directly editable terrain weights are
+path editing, explicit junctions and asset-collection scattering are implemented.
+References below to directly editable terrain weights are
 historical and superseded by the environment architecture.
 
 This document is the contract for reintroducing the Yarra editor on top of the page-oriented world
@@ -23,7 +24,7 @@ constraints for future work, not a request to build every editor feature now.
 
 Typed presets are project assets shared across worlds (introduced in source schema 19;
 the current source schema is 22).
-Ground, foliage, exclusion and composition presets have code-defined controls.
+Ground, foliage, asset collection, exclusion and composition presets have code-defined controls.
 Composition children reference other presets and retain stable per-use IDs; nested
 uses resolve independently. Quick settings show inherited values and explicit
 Reset actions. **Edit shared preset…** opens the dedicated **Presets** workspace.
@@ -31,12 +32,18 @@ Its library supports search, New, Duplicate and navigation into shared compositi
 children. Duplicating a composition keeps its child preset references shared. Choosing
 a different preset on a map layer clears that layer's overrides and preserves paint.
 
-The preview uses the production compiler and terrain/grass renderers on a fixed-seed,
+The preview uses the production compiler and terrain, grass and object renderers on a fixed-seed,
 flat 8 m or 16 m patch. Choose Full coverage, Soft patch or Patch with hole. The optional
 Reference foliage fills the ground below the selected preset to inspect exclusions.
 Drag to orbit; scroll to zoom. Wind starts paused. This fixture does not include map
 layer overrides, and does not estimate world performance. Blade shape/material assets
-remain in Vegetation; mesh foliage and asset-collection scattering are not implemented.
+remain in Vegetation; mesh foliage is not implemented. Asset collections use the object
+renderer and have their own asset/spacing controls in Presets.
+
+Preset, composition-use and road-style names are authoring metadata: changing them
+does not rebuild the preview. Visual edits keep the last valid image visible while
+compiling; updates longer than 300 ms show a small progress status. Invalid output
+still reports its error and identifies the retained image as the last valid preview.
 
 **Apply preset changes** records one shared-library command, independently of **Apply
 settings** on a map layer. Apply validates all loaded world definitions. Save persists
@@ -49,9 +56,38 @@ journals recover applied changes. World camera and layer selection survive the t
 metadata-only query; unsaved mask replacements/erasures and new layers are combined
 with saved membership. Disabled layers are discoverable. Selected layers stay visible
 even outside the window or search filter. **All** searches the current world's bounded
-layer metadata. Loading, query errors and partial results are explicit. This is not yet
+layer metadata. Moving the brush retains the last completed list while the new nearby
+query runs; the list switches when its result arrives. A refresh failure keeps the
+previous rows with an explicit status, and switching worlds clears them. Loading,
+query errors and partial results are explicit; routine refreshes do not flash the
+status label. This is not yet
 metadata streaming for thousands of layers: the source still caps each world at 128
 layers and loads the bounded preset library and world definitions.
+
+## Painting trees, bushes and rocks
+
+1. Open **Presets → Environment → New → Asset collection**.
+2. Expand **Add from asset library** and add a visual asset. The current local library
+   has one tree; more species can use the same collection after import.
+3. Set relative weights and scale ranges per asset, minimum spacing, maximum slope,
+   road edge clearance and default density. Preview Full / Soft patch / Patch with hole;
+   **Reset view** frames the object height as well as the ground patch.
+4. **Apply preset changes**, return to **World → Environment**, create a layer or choose
+   this preset for a layer, and paint. The Inspector exposes density and seed; detailed
+   asset choices remain in Presets. To paint trees/grass/ground together, create a
+   Composition that references each of those presets.
+5. **Save & Publish** makes the generated placements available in the game.
+
+Density thins stable placements; it does not reshuffle trees that remain. Spacing is
+shared by assets in one collection use, including across cell boundaries. Different
+uses do not compete. Roads clear roots across their whole corridor plus the configured
+margin; grassy wheel-track centers do not admit trees. An Exclusion preset can target
+the asset channel to paint clearings above forest layers.
+
+Generated objects follow terrain, have runtime LODs, and remain separate from manual
+objects. Individual generated-tree editing, manual-object collision avoidance and
+physics are not implemented in this slice. The existing tree model is large: use
+appropriate spacing/scale rather than treating tree density like grass-blade density.
 
 ## Default project
 
@@ -73,6 +109,9 @@ Choose **World → Roads** in Authoring preview. The tool discovers a 5 × 5 cel
 neighborhood around the terrain cursor (camera focus before the first terrain hit),
 plus selected, unsaved and undo-pinned controls and their references. One-hop incident
 spans are loaded before editing a shared knot; a long route is not expanded in full.
+Moving within the already loaded neighborhood keeps road controls available while
+discovery refreshes. A changed source revision or missing dependencies still requires
+loading; a creation click outside the certified loaded area waits for that area.
 
 - **New cart road:** choose a shared road style, then click two ground points at least
   2 m apart. The selected style is used exactly, even when other styles share its materials.
@@ -103,7 +142,8 @@ Use `create-road-demo NEW_PROJECT_DB`, followed by `cook PROJECT_DB RUNTIME_DB`,
 an 8 m-cell fixture with a curved cart road and 0.65 m wheel tracks. The ordinary demo
 uses a coarser 32 m grid and is unchanged. These fixtures use the existing meadow ground
 materials; dedicated paving assets and advanced grading remain future increments.
-Project schema is 22; runtime schema remains 15.
+Project schema is 22; runtime schema is 17 (page payload 8). Existing source projects
+need a recook for the terrain precision/hierarchy checkpoint; no source migration.
 
 ### Shared road styles
 
@@ -201,7 +241,7 @@ restores the remaining road's normal tracks.
 
 Junctions save and recover with roads, and the same evaluator drives preview and cook.
 Source schema **22** adds indexed junction records/membership/cells; recovery schema is
-**11**, runtime remains **15**. Queries expand one connection's incident spans with
+**11**, runtime is **16**. Queries expand one connection's incident spans with
 explicit budgets, never an entire route network.
 
 This first version rejects angles below 30 degrees, overlapping junction blend areas,
@@ -497,6 +537,10 @@ icons, or cell-status tiles. Increasing the detailed streaming radius is not an 
 
 Overview proxies are derived, revisioned data. Selecting a remote proxy may jump the logical camera
 there and begin the normal local working set without first loading the intervening world.
+
+[Distant world and terrain rendering](DISTANT_WORLD_RENDERING.md) specifies the shared
+game/editor terrain hierarchy, coarse coverage, bounded refinement and regional preview
+updates. This is planned work; rendering a distant area will not load all its editable source.
 
 ## Frame and work budgets
 

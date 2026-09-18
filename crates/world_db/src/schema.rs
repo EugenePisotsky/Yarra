@@ -457,5 +457,34 @@ CREATE TABLE page_terrain_surfaces (
         REFERENCES cell_pages(world_space_id, cell_x, cell_z, domain, lod)
 ) STRICT, WITHOUT ROWID;
 
-PRAGMA user_version = 15;
+CREATE TABLE terrain_nodes (
+    world_space_id INTEGER NOT NULL REFERENCES world_spaces(id),
+    level INTEGER NOT NULL CHECK(level BETWEEN 0 AND 30),
+    node_x INTEGER NOT NULL, node_z INTEGER NOT NULL,
+    parent_x INTEGER, parent_z INTEGER,
+    child_mask INTEGER NOT NULL CHECK(child_mask BETWEEN 0 AND 15),
+    minimum_y REAL NOT NULL, maximum_y REAL NOT NULL CHECK(maximum_y >= minimum_y),
+    geometric_error REAL NOT NULL CHECK(geometric_error >= 0),
+    resolution INTEGER CHECK(resolution BETWEEN 2 AND 257),
+    codec INTEGER NOT NULL CHECK(codec IN (0,1)),
+    decoded_bytes INTEGER NOT NULL CHECK(decoded_bytes BETWEEN 1 AND 1048576),
+    gpu_bytes_estimate INTEGER NOT NULL CHECK(gpu_bytes_estimate >= 0),
+    checksum BLOB NOT NULL CHECK(length(checksum)=32),
+    payload BLOB NOT NULL CHECK(length(payload) BETWEEN 1 AND 1048576),
+    PRIMARY KEY(world_space_id,level,node_x,node_z)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE terrain_roots (
+    world_space_id INTEGER NOT NULL, level INTEGER NOT NULL,
+    node_x INTEGER NOT NULL, node_z INTEGER NOT NULL,
+    PRIMARY KEY(world_space_id,level,node_x,node_z),
+    FOREIGN KEY(world_space_id,level,node_x,node_z) REFERENCES terrain_nodes(world_space_id,level,node_x,node_z)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE terrain_hierarchy_spaces (
+    world_space_id INTEGER PRIMARY KEY REFERENCES world_spaces(id),
+    node_count INTEGER NOT NULL CHECK(node_count >= 0),
+    leaf_count INTEGER NOT NULL CHECK(leaf_count >= 0),
+    root_count INTEGER NOT NULL CHECK(root_count BETWEEN 0 AND 256)
+) STRICT;
+
+PRAGMA user_version = 17;
 "#;

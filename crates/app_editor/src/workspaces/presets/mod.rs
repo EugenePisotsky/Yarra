@@ -1,10 +1,12 @@
 //! Shared environment preset authoring, isolated from map-layer overrides and camera state.
+pub(crate) mod collection;
 mod fixture;
 mod road_styles;
 #[cfg(test)]
 mod tests;
 mod ui;
 mod viewport;
+mod visual_changes;
 use super::EditorWorkspace;
 use crate::{
     domain_editing::DenseDomainWorkingSets, project_store::ProjectEditorStore, shell::EditorUiSet,
@@ -70,6 +72,8 @@ pub(crate) struct PresetAuthoringState {
     yaw: f32,
     pitch: f32,
     distance: f32,
+    focus_height: f32,
+    fit_distance: f32,
     playing: bool,
     phase: f32,
     message: Option<String>,
@@ -95,6 +99,8 @@ impl Default for PresetAuthoringState {
             yaw: 35.0,
             pitch: 40.0,
             distance: 11.0,
+            focus_height: 0.25,
+            fit_distance: 11.0,
             playing: false,
             phase: 0.0,
             message: None,
@@ -148,11 +154,17 @@ impl PresetAuthoringState {
             .as_ref()
             .is_none_or(|d| !d.dirty() && d.base != *library)
         {
+            let visual_changed = self
+                .draft
+                .as_ref()
+                .is_none_or(|d| !visual_changes::same_library(&d.library, library));
             self.draft = Some(Draft {
                 base: library.clone(),
                 library: library.clone(),
             });
-            self.bump();
+            if visual_changed {
+                self.bump();
+            }
         }
         if let Some((space, preset)) = self.requested.take() {
             if self.space != Some(space) {
@@ -210,7 +222,11 @@ impl PresetAuthoringState {
     fn camera(&self) -> Transform {
         let yaw = self.yaw.to_radians();
         let pitch = self.pitch.to_radians();
-        let target = Vec3::new(f32::from(self.size) / 2.0, 0.25, f32::from(self.size) / 2.0);
+        let target = Vec3::new(
+            f32::from(self.size) / 2.0,
+            self.focus_height,
+            f32::from(self.size) / 2.0,
+        );
         Transform::from_translation(
             target
                 + Vec3::new(

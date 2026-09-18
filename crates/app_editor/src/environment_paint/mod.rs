@@ -2,6 +2,7 @@
 mod coverage;
 mod inspector;
 mod layer_browser;
+mod objects;
 pub(crate) use layer_browser::EnvironmentLayerBrowser;
 pub(crate) mod preset_controls;
 pub(crate) mod preview;
@@ -67,7 +68,7 @@ impl Plugin for EnvironmentPaintPlugin {
                     .before(VegetationPreviewSync)
                     .before(terrain_render::TerrainMaterialPreparation),
             )
-            .add_systems(PostUpdate, draw_brush);
+            .add_systems(PostUpdate, (draw_brush, objects::sync));
     }
 }
 

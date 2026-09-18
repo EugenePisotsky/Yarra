@@ -1,3 +1,6 @@
+pub mod terrain_hierarchy;
+pub use terrain_hierarchy::*;
+
 use std::{error::Error, fmt};
 
 use serde::{Deserialize, Serialize};
@@ -11,8 +14,8 @@ pub const DEFAULT_RUNTIME_DATABASE: &str = "generated/world.runtime.sqlite";
 pub const DEFAULT_CELL_SIZE: f32 = 32.0;
 pub const MAX_DECODED_PAGE_BYTES: u64 = 64 * 1024 * 1024;
 pub const PROJECT_SCHEMA_VERSION: i64 = 22;
-pub const RUNTIME_SCHEMA_VERSION: i64 = 15;
-pub const PAGE_PAYLOAD_VERSION: u16 = 7;
+pub const RUNTIME_SCHEMA_VERSION: i64 = 17;
+pub const PAGE_PAYLOAD_VERSION: u16 = 8;
 pub const MAX_TERRAIN_SURFACES_PER_CELL: usize = 8;
 pub const MAX_TERRAIN_WEIGHT_PAGES: usize = 2;
 pub const MAX_TERRAIN_WEIGHT_RESOLUTION: u16 = 257;
@@ -122,7 +125,7 @@ impl WorldPosition {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct StableObjectId(pub [u8; 16]);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -134,7 +137,7 @@ pub struct TerrainSurfaceId(pub [u8; 16]);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct TerrainTextureSetId(pub [u8; 16]);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct AssetId(pub [u8; 32]);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -308,15 +311,12 @@ pub struct TerrainRenderPage {
 
 /// Endpoint-inclusive terrain samples for one streamed cell.
 ///
-/// `minimum_height` and `height_scale` are shared quantization parameters. Cookers should use the
-/// containing world space's height range for every page so a world-space height always maps to the
-/// same integer code. That makes independently cooked page edges bit-identical.
+/// Heights retain source f32 precision even in worlds with kilometre-scale relief. Cookers
+/// must evaluate shared endpoints identically; there is no per-page height quantization.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TerrainHeightfield {
     pub resolution: u16,
-    pub minimum_height: f32,
-    pub height_scale: f32,
-    pub heights: Vec<u16>,
+    pub heights: Vec<f32>,
     pub normals_oct: Vec<[i16; 2]>,
 }
 
@@ -395,29 +395,9 @@ impl TerrainHeightfield {
             return Err(TerrainHeightfieldError::HeightOutsideRange);
         }
 
-        let extent = maximum_height - minimum_height;
-        let height_scale = if extent <= f32::EPSILON {
-            0.0
-        } else {
-            extent / f32::from(u16::MAX)
-        };
-        let heights = heights
-            .iter()
-            .map(|height| {
-                if height_scale == 0.0 {
-                    0
-                } else {
-                    ((*height - minimum_height) / height_scale)
-                        .round()
-                        .clamp(0.0, f32::from(u16::MAX)) as u16
-                }
-            })
-            .collect();
         let heightfield = Self {
             resolution,
-            minimum_height,
-            height_scale,
-            heights,
+            heights: heights.to_vec(),
             normals_oct: normals
                 .iter()
                 .copied()
@@ -433,9 +413,7 @@ impl TerrainHeightfield {
         if !(2..=usize::from(MAX_TERRAIN_HEIGHTFIELD_RESOLUTION)).contains(&resolution)
             || self.heights.len() != resolution * resolution
             || self.normals_oct.len() != resolution * resolution
-            || !self.minimum_height.is_finite()
-            || !self.height_scale.is_finite()
-            || self.height_scale < 0.0
+            || !self.heights.iter().all(|height| height.is_finite())
         {
             return Err(TerrainHeightfieldError::InvalidDimensionsOrRange);
         }
@@ -445,21 +423,18 @@ impl TerrainHeightfield {
     pub fn height_at(&self, x: usize, z: usize) -> f32 {
         let resolution = usize::from(self.resolution);
         debug_assert!(x < resolution && z < resolution);
-        self.minimum_height + f32::from(self.heights[z * resolution + x]) * self.height_scale
+        self.heights[z * resolution + x]
     }
 
     pub fn height_bounds(&self) -> [f32; 2] {
-        let Some((&minimum, &maximum)) = self.heights.iter().min().zip(self.heights.iter().max())
-        else {
-            return [self.minimum_height; 2];
-        };
-        [
-            self.minimum_height + f32::from(minimum) * self.height_scale,
-            self.minimum_height + f32::from(maximum) * self.height_scale,
-        ]
+        self.heights
+            .iter()
+            .fold([f32::INFINITY, f32::NEG_INFINITY], |bounds, &height| {
+                [bounds[0].min(height), bounds[1].max(height)]
+            })
     }
 
-    /// Samples local cell coordinates in metres. Inputs are clamped to the page edges.
+    /// Samples the rendered grid triangles in local metres. Inputs clamp to the page edges.
     pub fn sample(&self, local_xz: [f32; 2], cell_size: f32) -> TerrainSurfaceSample {
         debug_assert!(self.validate().is_ok());
         debug_assert!(cell_size.is_finite() && cell_size > 0.0);
@@ -474,12 +449,7 @@ impl TerrainHeightfield {
         let tx = grid_x - x0 as f32;
         let tz = grid_z - z0 as f32;
         let corners = [(x0, z0), (x1, z0), (x0, z1), (x1, z1)];
-        let weights = [
-            (1.0 - tx) * (1.0 - tz),
-            tx * (1.0 - tz),
-            (1.0 - tx) * tz,
-            tx * tz,
-        ];
+        let weights = vegetation::surface_triangle_weights(tx, tz);
         let mut height = 0.0;
         let mut normal = [0.0_f32; 3];
         for ((x, z), weight) in corners.into_iter().zip(weights) {
@@ -553,9 +523,9 @@ fn normalize3(value: [f32; 3]) -> [f32; 3] {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum TerrainHeightfieldError {
-    #[error("terrain heightfield dimensions or quantization range are invalid")]
+    #[error("terrain heightfield dimensions, samples or height range are invalid")]
     InvalidDimensionsOrRange,
-    #[error("terrain height sample lies outside the quantization range")]
+    #[error("terrain height sample lies outside the allowed height range")]
     HeightOutsideRange,
 }
 
@@ -570,6 +540,8 @@ pub struct TerrainHeightfieldPage {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StaticObjectInstance {
+    /// Derived environment placement, never an editable manual source object.
+    pub generated: bool,
     pub id: StableObjectId,
     pub asset: AssetId,
     pub translation: [f32; 3],
@@ -793,7 +765,7 @@ mod tests {
     }
 
     #[test]
-    fn shared_quantization_keeps_adjacent_edges_identical() {
+    fn source_height_precision_keeps_adjacent_edges_identical() {
         let left =
             TerrainHeightfield::from_heights(2, &[0.0, 1.25, 0.5, 1.75], -8.0, 8.0, 32.0).unwrap();
         let right =
@@ -803,6 +775,45 @@ mod tests {
         assert_eq!(left.heights[3], right.heights[2]);
         assert_eq!(left.height_at(1, 0), right.height_at(0, 0));
         assert_eq!(left.height_at(1, 1), right.height_at(0, 1));
+    }
+
+    #[test]
+    fn mountain_range_preserves_shallow_road_relief() {
+        let heights = [1500.0, 1499.995, 1499.99, 1500.0];
+        let field = TerrainHeightfield::from_heights(2, &heights, -500.0, 2500.0, 8.0).unwrap();
+        assert_eq!(field.heights, heights);
+        assert_eq!(field.height_bounds(), [1499.99, 1500.0]);
+        let mut invalid = field.clone();
+        invalid.heights[1] = f32::NAN;
+        assert!(invalid.validate().is_err());
+    }
+
+    #[test]
+    fn terrain_and_vegetation_follow_both_triangles_of_a_saddle() {
+        let terrain =
+            TerrainHeightfield::from_heights(2, &[0.0, 10.0, 20.0, 0.0], 0.0, 20.0, 1.0).unwrap();
+        let surface = vegetation::VegetationSurfaceField {
+            resolution: 2,
+            heights: terrain.heights.clone(),
+            normals_oct: terrain.normals_oct.clone(),
+            validity: vec![255; 4],
+        };
+        // The rendered 00--11 diagonal is zero; bilinear sampling would return 7.5.
+        for (xz, expected) in [
+            ([0.5, 0.5], 0.0),
+            ([0.75, 0.25], 5.0),
+            ([0.25, 0.75], 10.0),
+            ([1.0, 1.0], 0.0),
+            ([1.0, 0.5], 5.0),
+        ] {
+            let ground = terrain.sample(xz, 1.0);
+            let grass = surface.sample([0.0; 2], 1.0, xz);
+            assert_eq!(ground.height, expected);
+            assert_eq!(ground.height, grass.height);
+            for axis in 0..3 {
+                assert!((ground.normal[axis] - grass.normal[axis]).abs() < 1e-6);
+            }
+        }
     }
 
     #[test]

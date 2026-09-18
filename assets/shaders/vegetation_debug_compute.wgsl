@@ -395,12 +395,11 @@ fn sample_surface(item: WorkItem, world_xz: vec2<f32>) -> SurfaceResult {
         item.surface.x + maximum.y * resolution + minimum.x,
         item.surface.x + maximum.y * resolution + maximum.x,
     );
-    let weights = array<f32, 4>(
-        (1.0 - blend.x) * (1.0 - blend.y),
-        blend.x * (1.0 - blend.y),
-        (1.0 - blend.x) * blend.y,
-        blend.x * blend.y,
-    );
+    // Same 00--11 triangle diagonal as the ground mesh and CPU surface_triangle_weights.
+    var weights = array<f32, 4>(1.0 - blend.x, blend.x - blend.y, 0.0, blend.y);
+    if (blend.y >= blend.x) {
+        weights = array<f32, 4>(1.0 - blend.y, 0.0, blend.y - blend.x, blend.x);
+    }
     var height = 0.0;
     var normal = vec3<f32>(0.0);
     var validity = 0.0;

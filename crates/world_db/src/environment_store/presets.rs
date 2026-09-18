@@ -55,6 +55,11 @@ pub(super) fn validate_library_references(
         .validate(plants)
         .map_err(|e| invalid(e.to_string()))?;
     for preset in &library.presets {
+        if let PresetKind::AssetCollection(c) = &preset.kind {
+            for asset in &c.assets {
+                crate::collection_assets::read_asset(connection, asset.asset)?;
+            }
+        }
         if let PresetKind::Ground(g) = &preset.kind {
             for weight in &g.surfaces {
                 let found: bool = connection.query_row(

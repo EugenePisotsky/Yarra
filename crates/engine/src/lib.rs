@@ -28,10 +28,11 @@ pub use environment::{WorldEnvironmentCamera, WorldEnvironmentPlugin, WorldSun};
 pub use msaa_store::{MsaaColorStorePlugin, MsaaColorStorePolicy};
 use terrain_render::{TerrainMacroVariation, TerrainRenderPlugin};
 pub use world_streaming::{
-    ActiveWorldSpace, GameplayObject, StreamedTerrainSurface, StreamedVegetationFieldPage,
-    StreamedVisualObject, StreamingStats, WorldCatalog, WorldDetailDemand, WorldGenerationReload,
-    WorldOrigin, WorldSpaceInfo, WorldStreamingConfig, WorldStreamingPlugin, WorldViewCamera,
-    WorldViewpoint, sample_resident_terrain_surface,
+    ActiveWorldSpace, GameplayObject, GeneratedEnvironmentObject, StreamedTerrainSurface,
+    StreamedVegetationFieldPage, StreamedVisualObject, StreamingStats, WorldCatalog,
+    WorldDetailDemand, WorldGenerationReload, WorldOrigin, WorldSpaceInfo, WorldStreamingConfig,
+    WorldStreamingPlugin, WorldViewCamera, WorldViewpoint, sample_resident_terrain_surface,
+    spawn_collection_visual,
 };
 
 use crate::{

@@ -324,6 +324,12 @@ impl CompilePlan {
             .compile_with_influences(&[cell], coverage, Some(&road_plan))?
             .remove(0);
         compiled.terrain = Some(road_plan.terrain(cell, terrain)?);
+        compiled.objects = self.scatter(
+            cell,
+            &crate::coverage::Coverage::new(self, coverage)?,
+            Some(&road_plan),
+            compiled.terrain.as_ref(),
+        )?;
         let mut hash = blake3::Hasher::new();
         hash.update(b"yarra.road-relief.v1");
         hash.update(&compiled.input_fingerprint);

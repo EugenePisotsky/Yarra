@@ -8,7 +8,7 @@ crates/
   app_game/   Executable and platform composition
   engine/     Bevy gameplay, rendering, and bounded page streaming
   environment/ Environment compositions, layers and spatial source contracts
-  environment_compile/ Pure ground/vegetation compiler and offline acceptance fixture
+  environment_compile/ Pure ground/vegetation/object compiler and offline acceptance fixture
   vegetation/ Renderer-neutral V2 species, population, and field contracts
   vegetation_compile/ Deterministic field compilation and CPU placement reference
   vegetation_render/ GPU placement diagnostics and indirect-draw integration
@@ -68,8 +68,17 @@ each drag supports Undo/Redo. The Inspector browses **Nearby / All** layers, cre
 and reorders them, and shows selected-layer coverage. Quick settings group each
 composition use; Reset restores its inherited default. **Edit shared preset…** opens
 the **Presets** workspace for reusable defaults, child references and duplication,
-with an isolated 8 m / 16 m ground-and-grass preview. **Apply preset changes** and
+with an isolated 8 m / 16 m ground, grass and object preview. **Apply preset changes** and
 **Apply settings** are separate undo steps; **Save & Publish** updates the game runtime.
+
+**Presets → Environment → New → Asset collection** creates a paintable collection of
+trees, bushes or rocks from registered assets. Configure selection weights, scale ranges,
+spacing, slope and road clearance there; map layers expose density and seed. Collections
+also work inside compositions. Placement is deterministic across cells and uses the
+existing object LOD renderer. The local library currently has one tree; generated
+objects are render-only and are not individually editable. See
+[painting objects](docs/EDITOR.md#painting-trees-bushes-and-rocks) for the workflow.
+Runtime schema is **17**; recook an older runtime before launching the updated editor.
 
 Run the game:
 
@@ -109,6 +118,13 @@ reusable environment compositions, painted layers, shared ground/vegetation deri
 and editable curved cart roads. The pure compiler and its two-cell fixture are
 implemented together with source persistence, the layer/preset Inspector and paint UI. Run the offline fixture with
 `cargo run --offline -p yarra-environment-compile --example layered_meadow > /tmp/meadow.svg`.
+
+The next rendering foundation is specified in
+[`docs/DISTANT_WORLD_RENDERING.md`](docs/DISTANT_WORLD_RENDERING.md): hierarchical
+terrain LOD, independent distant visibility, cheaper ground materials, and later
+cliff/forest proxies. Terrain precision and cooked hierarchy products are implemented;
+visible terrain LOD and distant materials remain planned. Meshlets are out of scope.
+
 The first curved-road source/compiler fixture is also available:
 `cargo run --offline -p yarra-environment-compile --example cart_track > /tmp/cart-track.svg`.
 It demonstrates cart wheel tracks, a retained grassy middle, patchy wear and gradual

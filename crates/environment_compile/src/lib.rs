@@ -5,6 +5,7 @@ mod coverage;
 mod plan;
 mod raster;
 mod roads;
+mod scatter;
 pub use roads::{RoadCompileProfile, RoadDetailLimits, TerrainSource, TerrainSourceCell};
 
 use serde::{Deserialize, Serialize};
@@ -59,6 +60,7 @@ pub struct CompiledGround {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CompiledCell {
     pub terrain: Option<world::TerrainHeightfield>,
+    pub objects: Vec<world::StaticObjectInstance>,
     pub space: WorldSpaceId,
     pub cell: CellCoord,
     pub ground: CompiledGround,

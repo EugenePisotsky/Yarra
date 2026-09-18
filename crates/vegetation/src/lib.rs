@@ -801,6 +801,16 @@ pub struct VegetationSurfaceSample {
     pub validity: f32,
 }
 
+/// Weights for corners (00, 10, 01, 11), matching the terrain renderer's 00--11 diagonal.
+/// Keep the GPU `sample_surface` implementation in agreement with this CPU reference.
+pub fn surface_triangle_weights(x: f32, z: f32) -> [f32; 4] {
+    if z >= x {
+        [1.0 - z, 0.0, z - x, x]
+    } else {
+        [1.0 - x, x - z, 0.0, z]
+    }
+}
+
 impl VegetationSurfaceField {
     pub fn flat(resolution: u16, height: f32, normal: [f32; 3]) -> Self {
         let sample_count = usize::from(resolution).saturating_mul(usize::from(resolution));
@@ -842,12 +852,7 @@ impl VegetationSurfaceField {
             z1 * resolution + x0,
             z1 * resolution + x1,
         ];
-        let weights = [
-            (1.0 - tx) * (1.0 - tz),
-            tx * (1.0 - tz),
-            (1.0 - tx) * tz,
-            tx * tz,
-        ];
+        let weights = surface_triangle_weights(tx, tz);
         let mut height = 0.0;
         let mut normal = [0.0; 3];
         let mut validity = 0.0;

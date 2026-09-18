@@ -89,13 +89,15 @@ impl Styles {
                 _ => None,
             });
         let changed = self.draft.as_ref().map(|d| &d.value) != value.as_ref();
+        let visual_changed =
+            !visual_changes::same_road(self.draft.as_ref().map(|d| &d.value), value.as_ref());
         if changed {
             self.draft = value.map(|p| StyleDraft {
                 base: Some(p.clone()),
                 value: p,
             });
         }
-        changed
+        visual_changed
     }
     pub fn discard(&mut self) {
         self.draft = None;
@@ -366,7 +368,10 @@ pub(super) fn panels(
             });
         });
     });
-    if before != state.styles.draft.as_ref().map(|d| d.value.clone()) {
+    if !visual_changes::same_road(
+        before.as_ref(),
+        state.styles.draft.as_ref().map(|d| &d.value),
+    ) {
         state.bump();
     }
     if let Some(id) = edit_ground {

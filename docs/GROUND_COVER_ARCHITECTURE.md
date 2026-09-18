@@ -178,7 +178,10 @@ remain hidden because they belong to a neighboring page and showing them would c
 duplicates at boundaries.
 
 The terrain prerequisite is implemented as a real streamed contract rather than a vertex-shader
-offset:
+offset. The bullets below record its original format; the September 18
+[terrain hierarchy checkpoint](DISTANT_WORLD_RENDERING.md) replaces quantized cooked
+heights with f32 (runtime 17 / payload 8) and bilinear final-surface queries with
+mesh-triangle interpolation on CPU and GPU:
 
 - project schema 12 includes endpoint-inclusive f32 source heightfields; scalar cell height remains
   a coarse source-cell descriptor, not a vegetation compatibility path;

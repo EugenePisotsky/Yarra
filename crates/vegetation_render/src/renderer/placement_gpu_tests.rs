@@ -167,3 +167,147 @@ fn early_rejection_preserves_accepted_candidates_and_diagnostics() {
         "placement comparisons: {total_accepted} accepted, {total_rejected} rejected, zero mismatches across 21 camera/mode/density cases"
     );
 }
+
+#[test]
+#[ignore = "requires a native GPU; run when changing surface interpolation"]
+fn surface_sampling_matches_cpu_on_a_nonplanar_quad() {
+    let resources = bevy::tasks::block_on(initialize_renderer(
+        Backends::PRIMARY,
+        None,
+        &WgpuSettings::default(),
+    ));
+    let device = resources.0.wgpu_device();
+    let queue = &resources.1;
+    let shader = format!(
+        "{}\n{}",
+        include_str!("../../../../assets/shaders/vegetation_debug_compute.wgsl"),
+        r#"
+@group(0) @binding(14) var<storage, read_write> surface_comparison: array<vec4<f32>>;
+@compute @workgroup_size(64)
+fn compare_surface(@builtin(global_invocation_id) id: vec3<u32>) {
+    if (id.x >= 169u) { return; }
+    var item: WorkItem;
+    item.page = vec4<f32>(32.0, -16.0, 8.0, 0.0);
+    item.surface = vec4<u32>(0u, 2u, 0u, 0u);
+    let uv = vec2<f32>(f32(id.x % 13u), f32(id.x / 13u)) / 8.0 - vec2<f32>(0.25);
+    let result = sample_surface(item, item.page.xy + uv * item.page.z);
+    surface_comparison[id.x * 2u] = vec4<f32>(result.height, result.normal);
+    surface_comparison[id.x * 2u + 1u] = vec4<f32>(result.validity, 0.0, 0.0, 0.0);
+}
+"#
+    );
+    let module = device.create_shader_module(ShaderModuleDescriptor {
+        label: Some("terrain triangle interpolation comparison"),
+        source: ShaderSource::Wgsl(shader.into()),
+    });
+    let pipeline = device.create_compute_pipeline(&RawComputePipelineDescriptor {
+        label: None,
+        layout: None,
+        module: &module,
+        entry_point: Some("compare_surface"),
+        compilation_options: default(),
+        cache: None,
+    });
+    let surface = vegetation::VegetationSurfaceField {
+        resolution: 2,
+        heights: vec![0.0, 10.0, 20.0, 0.0],
+        normals_oct: [
+            [0.0, 1.0, 0.0],
+            [0.4, 1.0, 0.0],
+            [0.0, 1.0, -0.5],
+            [0.2, 1.0, 0.2],
+        ]
+        .map(vegetation::encode_octahedral_normal)
+        .to_vec(),
+        validity: vec![255, 128, 0, 255],
+    };
+    let samples: Vec<_> = (0..4)
+        .map(|i| {
+            let n = decode_octahedral_normal(surface.normals_oct[i]);
+            SurfaceSampleGpu {
+                height_validity: [
+                    surface.heights[i],
+                    f32::from(surface.validity[i]) / 255.0,
+                    0.0,
+                    0.0,
+                ],
+                normal: [n[0], n[1], n[2], 0.0],
+            }
+        })
+        .collect();
+    let input = resources.0.create_buffer_with_data(&BufferInitDescriptor {
+        label: None,
+        contents: bytemuck::cast_slice(&samples),
+        usage: BufferUsages::STORAGE,
+    });
+    let bytes = 169 * 2 * 16;
+    let output = resources.0.create_buffer(&BufferDescriptor {
+        label: None,
+        size: bytes,
+        usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    let readback = resources.0.create_buffer(&BufferDescriptor {
+        label: None,
+        size: bytes,
+        usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let group = device.create_bind_group(&BindGroupDescriptor {
+        label: None,
+        layout: &pipeline.get_bind_group_layout(0),
+        entries: &[
+            BindGroupEntry {
+                binding: 3,
+                resource: input.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 14,
+                resource: output.as_entire_binding(),
+            },
+        ],
+    });
+    let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor::default());
+    {
+        let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &group, &[]);
+        pass.dispatch_workgroups(3, 1, 1);
+    }
+    encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, bytes);
+    queue.submit([encoder.finish()]);
+    let (sender, receiver) = std::sync::mpsc::channel();
+    readback
+        .slice(..)
+        .map_async(MapMode::Read, move |result| sender.send(result).unwrap());
+    device.poll(PollType::wait_indefinitely()).unwrap();
+    receiver.recv().unwrap().unwrap();
+    {
+        let data = readback.slice(..).get_mapped_range();
+        let values: &[f32] = bytemuck::cast_slice(&data);
+        for i in 0..169 {
+            let p = [
+                32.0 + ((i % 13) as f32 / 8.0 - 0.25) * 8.0,
+                -16.0 + ((i / 13) as f32 / 8.0 - 0.25) * 8.0,
+            ];
+            let cpu = surface.sample([32.0, -16.0], 8.0, p);
+            let expected = [
+                cpu.height,
+                cpu.normal[0],
+                cpu.normal[1],
+                cpu.normal[2],
+                cpu.validity,
+            ];
+            for (j, value) in expected.into_iter().enumerate() {
+                assert!(
+                    (values[i * 8 + j] - value).abs() < 1e-5,
+                    "sample {i}, component {j}: GPU {} CPU {value}",
+                    values[i * 8 + j]
+                );
+            }
+        }
+        // The nonplanar diagonal must be flat, unlike bilinear interpolation.
+        assert_eq!(values[(6 * 13 + 6) * 8], 0.0);
+    }
+    readback.unmap();
+}

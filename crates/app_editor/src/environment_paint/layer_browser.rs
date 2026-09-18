@@ -98,6 +98,43 @@ fn membership<R: std::borrow::Borrow<SourceEnvironmentCellRecord>>(
     entries.into_iter().map(|(_, layer)| layer).collect()
 }
 impl EnvironmentLayerBrowser {
+    fn set_desired(&mut self, desired: Option<Query>) {
+        if self.desired == desired {
+            return;
+        }
+        // Discovery is asynchronous: keep the last complete list while moving within
+        // this world, rather than treating a pending query as empty coverage.
+        if self
+            .accepted
+            .as_ref()
+            .is_some_and(|(q, _)| desired.is_none_or(|next| next.window.space != q.window.space))
+        {
+            self.accepted = None;
+        }
+        self.desired = desired;
+        self.cached = None;
+        self.error = None;
+        self.submitted = None;
+    }
+
+    fn accept(&mut self, q: Query, result: Result<EnvironmentLayerPresence, String>) {
+        self.in_flight = false;
+        if Some(q) != self.desired {
+            return;
+        }
+        self.cached = None;
+        match result {
+            Ok(p) if p.definition_revision == q.definition_revision => {
+                self.accepted = Some((q, p));
+                self.error = None;
+            }
+            Ok(_) => {
+                self.error = Some("Source changed during discovery; refresh nearby layers".into());
+            }
+            Err(e) => self.error = Some(e),
+        }
+    }
+
     pub(crate) fn refresh(&mut self) {
         self.submitted = None;
         self.error = None;
@@ -121,9 +158,13 @@ impl EnvironmentLayerBrowser {
         dense: &DenseDomainWorkingSets,
         space: WorldSpaceId,
     ) -> BTreeSet<LayerId> {
-        let Some(q) = self.desired.filter(|q| q.window.space == space) else {
+        let Some(desired) = self.desired.filter(|q| q.window.space == space) else {
             return BTreeSet::new();
         };
+        // Saved membership and local edits must use the same completed window until
+        // its replacement arrives; filtering old entries by the new window would
+        // still remove rows prematurely while the cursor moves.
+        let q = self.accepted.as_ref().map_or(desired, |(q, _)| *q);
         if let Some((key, edits, definitions, layers)) = &self.cached
             && *key == q
             && *edits == dense.edit_revision()
@@ -162,7 +203,11 @@ impl EnvironmentLayerBrowser {
     }
     pub(crate) fn status(&self) -> String {
         if let Some(e) = &self.error {
-            return format!("Nearby layers unavailable: {e}");
+            return if self.accepted.is_some() {
+                format!("Nearby refresh failed · showing previous results: {e}")
+            } else {
+                format!("Nearby layers unavailable: {e}")
+            };
         }
         if let Some((_, p)) = &self.accepted {
             if p.truncated {
@@ -199,33 +244,13 @@ pub(super) fn update(
     } else {
         None
     };
-    if browser.desired != desired {
-        browser.desired = desired;
-        browser.accepted = None;
-        browser.cached = None;
-        browser.error = None;
-        browser.submitted = None;
-    }
+    browser.set_desired(desired);
     let completion = browser
         .worker
         .as_ref()
         .and_then(|w| w.results.try_recv().ok());
     if let Some((q, result)) = completion {
-        browser.in_flight = false;
-        if Some(q) == browser.desired {
-            browser.cached = None;
-            match result {
-                Ok(p) if p.definition_revision == q.definition_revision => {
-                    browser.accepted = Some((q, p))
-                }
-                Ok(_) => {
-                    browser.error = Some(
-                        "Source changed during discovery; move the editing focus to refresh".into(),
-                    )
-                }
-                Err(e) => browser.error = Some(e),
-            }
-        }
+        browser.accept(q, result);
     }
     let Some(q) = browser.desired else {
         return;
@@ -280,6 +305,118 @@ mod tests {
             }],
         }
     }
+    fn query(x: i32) -> Query {
+        let mut window = window();
+        window.minimum.x += x;
+        window.maximum.x += x;
+        Query {
+            window,
+            epoch: 1,
+            definition_revision: 1,
+        }
+    }
+    fn presence(q: Query, entries: &[(CellCoord, LayerId)]) -> EnvironmentLayerPresence {
+        EnvironmentLayerPresence {
+            definition_revision: q.definition_revision,
+            entries: entries.to_vec(),
+            truncated: false,
+        }
+    }
+    fn complete(browser: &mut EnvironmentLayerBrowser, q: Query, entries: &[(CellCoord, LayerId)]) {
+        browser.submitted = Some(q);
+        browser.accept(q, Ok(presence(q, entries)));
+    }
+
+    #[test]
+    fn cursor_movement_keeps_completed_rows_until_latest_query_finishes() {
+        let layers = [LayerId([1; 16]), LayerId([2; 16]), LayerId([3; 16])];
+        let entries = layers.map(|id| (CellCoord { x: -2, z: 0 }, id));
+        let dense = DenseDomainWorkingSets::default();
+        let mut browser = EnvironmentLayerBrowser::default();
+        browser.set_desired(Some(query(0)));
+        complete(&mut browser, query(0), &entries);
+        let original = browser.nearby(&dense, WorldSpaceId(1));
+        assert_eq!(original, BTreeSet::from(layers));
+
+        // These rows are outside the new window, but their replacement is not ready.
+        browser.set_desired(Some(query(1)));
+        assert_eq!(browser.nearby(&dense, WorldSpaceId(1)), original);
+        assert!(browser.status().starts_with("Nearby ·"));
+        browser.set_desired(Some(query(2)));
+        browser.accept(query(1), Ok(presence(query(1), &[])));
+        assert_eq!(browser.nearby(&dense, WorldSpaceId(1)), original);
+
+        complete(&mut browser, query(2), &[(CellCoord::ZERO, layers[1])]);
+        assert_eq!(
+            browser.nearby(&dense, WorldSpaceId(1)),
+            BTreeSet::from([layers[1]])
+        );
+        assert!(browser.status().starts_with("Nearby ·"));
+    }
+
+    #[test]
+    fn refreshing_retained_rows_still_applies_local_erasures_and_reports_failures() {
+        let a = LayerId([1; 16]);
+        let cell = CellCoord { x: -2, z: 0 };
+        let mut dense = DenseDomainWorkingSets::from_environment_records(&[record(cell, a, 255)]);
+        let mut browser = EnvironmentLayerBrowser::default();
+        browser.set_desired(Some(query(0)));
+        complete(&mut browser, query(0), &[(cell, a)]);
+        browser.set_desired(Some(query(1)));
+        assert_eq!(browser.nearby(&dense, WorldSpaceId(1)), BTreeSet::from([a]));
+        dense
+            .apply_environment_records(&[record(cell, a, 0)])
+            .unwrap();
+        assert!(browser.nearby(&dense, WorldSpaceId(1)).is_empty());
+        dense
+            .apply_environment_records(&[record(cell, a, 255)])
+            .unwrap();
+        browser.accept(query(1), Err("database unavailable".into()));
+        assert_eq!(browser.nearby(&dense, WorldSpaceId(1)), BTreeSet::from([a]));
+        assert!(browser.status().contains("showing previous results"));
+        assert!(browser.status().contains("database unavailable"));
+        browser.refresh();
+        assert_eq!(browser.nearby(&dense, WorldSpaceId(1)), BTreeSet::from([a]));
+        complete(&mut browser, query(1), &[]);
+        assert!(browser.nearby(&dense, WorldSpaceId(1)).is_empty());
+    }
+
+    #[test]
+    fn saved_revisions_refresh_atomically_but_world_changes_clear_previous_rows() {
+        let a = LayerId([1; 16]);
+        let dense = DenseDomainWorkingSets::default();
+        let mut browser = EnvironmentLayerBrowser::default();
+        browser.set_desired(Some(query(0)));
+        complete(&mut browser, query(0), &[(CellCoord::ZERO, a)]);
+        browser.refresh();
+        assert!(browser.status().starts_with("Nearby ·"));
+        assert_eq!(browser.nearby(&dense, WorldSpaceId(1)), BTreeSet::from([a]));
+
+        let next = Query {
+            epoch: 2,
+            definition_revision: 2,
+            ..query(0)
+        };
+        browser.set_desired(Some(next));
+        browser.accept(next, Ok(presence(query(0), &[])));
+        assert!(browser.status().contains("Source changed"));
+        assert_eq!(browser.nearby(&dense, WorldSpaceId(1)), BTreeSet::from([a]));
+        complete(&mut browser, next, &[(CellCoord::ZERO, a)]);
+        assert!(browser.error.is_none());
+
+        let mut other = next;
+        other.window.space = WorldSpaceId(2);
+        browser.set_desired(Some(other));
+        assert!(browser.nearby(&dense, WorldSpaceId(2)).is_empty());
+        assert!(browser.nearby(&dense, WorldSpaceId(1)).is_empty());
+        browser.accept(next, Ok(presence(next, &[(CellCoord::ZERO, a)])));
+        assert!(browser.accepted.is_none());
+        complete(&mut browser, other, &[(CellCoord::ZERO, a)]);
+        browser.set_desired(None);
+        assert!(browser.accepted.is_none());
+        assert!(browser.nearby(&dense, WorldSpaceId(2)).is_empty());
+    }
+
     #[test]
     fn pending_paint_replaces_saved_membership_including_erasure_and_ignores_other_windows() {
         let a = LayerId([1; 16]);

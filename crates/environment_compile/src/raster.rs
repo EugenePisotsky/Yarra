@@ -43,6 +43,7 @@ impl CompilePlan {
             .map(|cell| {
                 Ok(CompiledCell {
                     terrain: None,
+                    objects: self.scatter(cell, &coverage, roads, None)?,
                     space: self.definition.space,
                     cell,
                     ground: self.ground(cell, &coverage, roads)?,
@@ -50,7 +51,17 @@ impl CompilePlan {
                     input_fingerprint: {
                         let base = coverage.fingerprint(self, cell)?;
                         if let Some(roads) = roads {
-                            roads.fingerprint(cell, base)?
+                            let base = roads.fingerprint(cell, base)?;
+                            if self.has_collections() {
+                                let mut hash = blake3::Hasher::new();
+                                hash.update(&base);
+                                for (_, _, neighbour) in crate::coverage::halo(cell)? {
+                                    hash.update(&roads.fingerprint(neighbour, [0; 32])?);
+                                }
+                                *hash.finalize().as_bytes()
+                            } else {
+                                base
+                            }
                         } else {
                             base
                         }
@@ -68,6 +79,7 @@ impl CompilePlan {
         let bytes = ground_work
             .saturating_mul(4)
             .saturating_add(plant_work.saturating_mul(2))
+            .saturating_add(self.scatter_bytes_per_cell())
             .saturating_mul(cells);
         if bytes > self.profile.max_output_bytes {
             return Err(CompileError::Budget("raster bytes"));

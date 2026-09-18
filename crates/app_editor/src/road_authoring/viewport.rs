@@ -211,7 +211,7 @@ pub(super) fn input(
         return;
     }
     if state.creating {
-        if !state.ready {
+        if !state.can_create_at(space, point.cell) {
             state.status = Some("Wait for nearby road controls to load".into());
             return;
         }

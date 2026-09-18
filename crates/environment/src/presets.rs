@@ -35,6 +35,7 @@ pub enum PresetKind {
     Foliage(VegetationTreatment),
     Exclusion(Exclusion),
     Composition(Vec<PresetUse>),
+    AssetCollection(AssetCollection),
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PresetUse {
@@ -57,6 +58,8 @@ pub enum QuickValue {
     FoliageInfluence(f32),
     FoliageSeed(u32),
     ExclusionInfluence(f32),
+    CollectionDensity(f32),
+    CollectionSeed(u32),
 }
 impl QuickValue {
     pub fn key(self) -> u8 {
@@ -66,6 +69,8 @@ impl QuickValue {
             Self::FoliageInfluence(_) => 2,
             Self::FoliageSeed(_) => 3,
             Self::ExclusionInfluence(_) => 4,
+            Self::CollectionDensity(_) => 5,
+            Self::CollectionSeed(_) => 6,
         }
     }
 }
@@ -82,6 +87,7 @@ pub struct ResolvedComposition {
     pub ground: Option<GroundTreatment>,
     pub vegetation: Vec<VegetationTreatment>,
     pub exclusions: Vec<Exclusion>,
+    pub collections: Vec<AssetCollection>,
     /// Only reachable preset revisions; unrelated library changes do not fingerprint this plan.
     pub dependencies: BTreeMap<PresetId, u64>,
 }
@@ -108,6 +114,7 @@ impl PresetLibrary {
                 return Err(invalid("preset identity"));
             }
             match &preset.kind {
+                PresetKind::AssetCollection(c) => c.validate()?,
                 PresetKind::Ground(g) => {
                     let mut surfaces = BTreeSet::new();
                     if !unit(g.strength)
@@ -189,6 +196,7 @@ impl PresetLibrary {
             ground: None,
             vegetation: vec![],
             exclusions: vec![],
+            collections: vec![],
             dependencies,
         };
         let mut ids = BTreeSet::new();
@@ -237,6 +245,13 @@ impl PresetLibrary {
                     result.exclusions.push(e);
                     id
                 }
+                PresetKind::AssetCollection(mut c) => {
+                    c.id = derive(c.id);
+                    c.assets.sort_by_key(|a| a.asset);
+                    let id = c.id;
+                    result.collections.push(c);
+                    id
+                }
                 PresetKind::Composition(_) => unreachable!(),
             };
             if !ids.insert(output) {
@@ -245,6 +260,7 @@ impl PresetLibrary {
         }
         result.vegetation.sort_by_key(|v| v.id);
         result.exclusions.sort_by_key(|e| e.id);
+        result.collections.sort_by_key(|e| e.id);
         Ok(result)
     }
 }
@@ -331,6 +347,13 @@ fn apply_overrides(
             .find(|l| l.path == path)
             .ok_or_else(|| invalid(format!("override targets a missing leaf at {path:?}")))?;
         let target = match (&mut leaf.kind, edit.value) {
+            (PresetKind::AssetCollection(c), QuickValue::CollectionDensity(v)) => {
+                Some((&mut c.density, v))
+            }
+            (PresetKind::AssetCollection(c), QuickValue::CollectionSeed(seed)) => {
+                c.seed = seed;
+                None
+            }
             (PresetKind::Ground(g), QuickValue::GroundInfluence(v)) => Some((&mut g.strength, v)),
             (PresetKind::Foliage(f), QuickValue::FoliageDensity(v)) => Some((&mut f.density, v)),
             (PresetKind::Foliage(f), QuickValue::FoliageInfluence(v)) => Some((&mut f.strength, v)),

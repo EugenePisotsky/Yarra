@@ -44,7 +44,7 @@ struct Job {
 struct Completion {
     space: WorldSpaceId,
     cells: Vec<(CellCoord, Stamp)>,
-    result: Result<Vec<CompiledCell>, String>,
+    result: Result<Batch, String>,
 }
 struct Worker {
     sender: Option<Sender<Job>>,
@@ -93,9 +93,25 @@ impl Worker {
         })
     }
 }
-fn compile_job(reader: &ProjectReader, job: &Job) -> Result<Vec<CompiledCell>, String> {
+#[cfg(test)]
+impl From<Vec<CompiledCell>> for Batch {
+    fn from(cells: Vec<CompiledCell>) -> Self {
+        Self {
+            cells,
+            assets: vec![],
+        }
+    }
+}
+struct Batch {
+    cells: Vec<CompiledCell>,
+    assets: Vec<world_db::CollectionAssetView>,
+}
+fn compile_job(reader: &ProjectReader, job: &Job) -> Result<Batch, String> {
+    let assets = reader
+        .read_collection_assets(&job.plan.collection_assets())
+        .map_err(|e| e.to_string())?;
     let cells = job.cells.iter().map(|(cell, _)| *cell).collect::<Vec<_>>();
-    compile_source_cells_with_roads(
+    let cells = compile_source_cells_with_roads(
         reader,
         &job.plan,
         job.space,
@@ -104,7 +120,8 @@ fn compile_job(reader: &ProjectReader, job: &Job) -> Result<Vec<CompiledCell>, S
         &cells,
         &job.overrides,
         &job.roads,
-    )
+    )?;
+    Ok(Batch { cells, assets })
 }
 
 #[cfg(test)]
@@ -226,6 +243,7 @@ pub(crate) fn compile_source_cells_with_roads(
 
 #[derive(Resource, Default)]
 pub(crate) struct EnvironmentPreview {
+    pub(super) assets: BTreeMap<world::AssetId, world_db::CollectionAssetView>,
     worker: Option<Worker>,
     in_flight: bool,
     context: Option<(WorldSpaceId, u64, u64, u64, String)>,
@@ -250,6 +268,9 @@ impl EnvironmentPreview {
     }
     pub(crate) fn catalog(&self) -> Option<&vegetation::VegetationCatalog> {
         self.active_catalog.as_ref()
+    }
+    pub(super) fn visible_cells(&self) -> &BTreeMap<Key, (Stamp, CompiledCell)> {
+        &self.accepted
     }
     fn products(&self) -> &BTreeMap<Key, (Stamp, CompiledCell)> {
         self.staging.as_ref().unwrap_or(&self.accepted)
@@ -543,8 +564,12 @@ impl EnvironmentPreview {
     fn accept(&mut self, completion: Completion) {
         self.in_flight = false;
         match completion.result {
-            Ok(cells) => {
-                for cell in cells {
+            Ok(batch) => {
+                // Asset descriptors are immutable source catalog data. Keep only dependencies
+                // of accepted/staged products after processing this completion.
+                self.assets
+                    .extend(batch.assets.into_iter().map(|a| (a.id, a)));
+                for cell in batch.cells {
                     let key = (cell.space, cell.cell);
                     let stamp = completion
                         .cells
@@ -565,11 +590,19 @@ impl EnvironmentPreview {
                                 .map(|(_, (_, c))| compiled_bytes(c))
                                 .sum::<usize>()
                         });
-                        if accepted_bytes + staging_bytes + compiled_bytes(&cell)
-                            > MAX_PREVIEW_BYTES
+                        let object_count = self
+                            .products()
+                            .iter()
+                            .filter(|(k, _)| **k != key)
+                            .map(|(_, (_, c))| c.objects.len())
+                            .sum::<usize>()
+                            + cell.objects.len();
+                        if object_count > 4096
+                            || accepted_bytes + staging_bytes + compiled_bytes(&cell)
+                                > MAX_PREVIEW_BYTES
                         {
                             self.failed.insert(key, stamp);
-                            self.error=Some("Terrain/vegetation preview exceeds its memory budget; reduce the resident area or output resolution.".into());
+                            self.error=Some("Environment preview exceeds its memory or 4,096-object budget; reduce density, resident area or output resolution.".into());
                             continue;
                         }
                         if let Some(staging) = &mut self.staging {
@@ -582,6 +615,13 @@ impl EnvironmentPreview {
                     }
                 }
                 self.install_staging();
+                let used: BTreeSet<_> = self
+                    .accepted
+                    .values()
+                    .chain(self.staging.iter().flat_map(|s| s.values()))
+                    .flat_map(|(_, c)| c.objects.iter().map(|o| o.asset))
+                    .collect();
+                self.assets.retain(|id, _| used.contains(id));
                 if self.failed.is_empty() && self.plan.is_some() {
                     self.error = None;
                 }
@@ -600,12 +640,13 @@ impl EnvironmentPreview {
 }
 
 fn compiled_bytes(cell: &CompiledCell) -> usize {
-    1024 + cell
-        .ground
-        .weight_pages
-        .iter()
-        .map(|p| p.rgba.len())
-        .sum::<usize>()
+    1024 + cell.objects.len() * std::mem::size_of::<world::StaticObjectInstance>()
+        + cell
+            .ground
+            .weight_pages
+            .iter()
+            .map(|p| p.rgba.len())
+            .sum::<usize>()
         + cell
             .vegetation
             .fields
@@ -615,7 +656,7 @@ fn compiled_bytes(cell: &CompiledCell) -> usize {
         + cell
             .terrain
             .as_ref()
-            .map_or(0, |h| h.heights.len() * 2 + h.normals_oct.len() * 4)
+            .map_or(0, |h| h.heights.len() * 4 + h.normals_oct.len() * 4)
 }
 
 pub(super) fn queue_preview(
@@ -876,6 +917,7 @@ mod tests {
         let a = CellCoord::ZERO;
         let b = CellCoord { x: 1, z: 0 };
         let product = |cell, version, height| CompiledCell {
+            objects: vec![],
             space,
             cell,
             ground: environment_compile::CompiledGround {
@@ -903,14 +945,14 @@ mod tests {
         preview.accept(Completion {
             space,
             cells: vec![(a, [2; 32])],
-            result: Ok(vec![product(a, 2, -0.2)]),
+            result: Ok(vec![product(a, 2, -0.2)].into()),
         });
         assert_eq!(preview.cell(space, a).unwrap().terrain, original);
         assert_eq!(preview.cell(space, b).unwrap().terrain, original);
         preview.accept(Completion {
             space,
             cells: vec![(b, [2; 32])],
-            result: Ok(vec![product(b, 2, -0.2)]),
+            result: Ok(vec![product(b, 2, -0.2)].into()),
         });
         assert!(preview.staging.is_none());
         assert!(preview.catalog().is_some());
@@ -925,6 +967,7 @@ mod tests {
         let space = WorldSpaceId(1);
         let cells = [CellCoord::ZERO, CellCoord { x: 1, z: 0 }];
         let product = |cell, version| CompiledCell {
+            objects: vec![],
             terrain: None,
             space,
             cell,
@@ -953,7 +996,7 @@ mod tests {
         let completion = |cell, version| Completion {
             space,
             cells: vec![(cell, [version; 32])],
-            result: Ok(vec![product(cell, version)]),
+            result: Ok(vec![product(cell, version)].into()),
         };
         preview.accept(completion(cells[0], 2));
         assert_eq!(preview.pending(), 1);
@@ -990,6 +1033,7 @@ mod tests {
         let space = WorldSpaceId(1);
         let cell = CellCoord { x: 0, z: 0 };
         let product = CompiledCell {
+            objects: vec![],
             terrain: None,
             space,
             cell,
@@ -1003,7 +1047,7 @@ mod tests {
         let completion = |stamp| Completion {
             space,
             cells: vec![(cell, stamp)],
-            result: Ok(vec![product.clone()]),
+            result: Ok(vec![product.clone()].into()),
         };
         let mut preview = EnvironmentPreview::default();
         preview.desired.insert((space, cell), [2; 32]);
