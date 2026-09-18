@@ -20,6 +20,21 @@ Retained as a bounded work reduction; repeated replay timings show no reliable
 speedup and power/heat benefit remains unmeasured. Only short GPU validation was
 performed; no new sustained run is requested.
 
+[GP-023](GRASS_CLUMP_VERTEX_20260916.md) then tried moving clump lighting to
+vertices. Pixel instructions fell 6.06%, vertex instructions rose 5.72%, and
+combined main-pass arithmetic fell only 1.52%, with no reliable replay speedup.
+The candidate was reverted; its 15-case image validation and evidence are kept.
+The production renderer remains at the pushed `75f8398` checkpoint (GP-022).
+
+## Authoring reset — 2026-09-17
+
+Environment schema 18 replaces the old grass testing world with a smaller layered
+meadow fixture (256 overworld cells, plus the interior). Ground and vegetation are
+now compiled together from source coverage. This is authoring work, not a measured
+rendering optimization. New demo runs must not be compared directly with GP-011–023;
+use their frozen input snapshots for reproducible performance comparisons. No new
+sustained performance run was requested for this change.
+
 ## Target and current conclusions
 
 - Target experience: **1440p, sustained 60 fps, maximum production grass quality
@@ -125,6 +140,7 @@ today's different scene, density, resolution or performance state.
 | GP-020 / Sep 16 | Matched 96-root / default-preparation sustained control | Mostly near-120 with recurring late dips; enlarged allocation not promoted for energy | [Comparison and decision](GRASS_PREPARATION_POWER_COMPARISON_20260916.md), [evidence](performance/20260916-220712/README.md). Default uses 1.53 W less final-five-minute GPU power in this pair. Timing trace subsequently deferred in favor of GP-021 heat work. |
 | GP-021 / Sep 16 | Early heat buildup and revised optimization priority | Existing logs reanalyzed; low-detail vertex-path candidate selected (subsequently implemented in GP-022) | [Early heat review](GRASS_EARLY_HEAT_20260916.md), [analysis](performance/20260916-early-heat/analysis.json). Moving minutes 1–4 use ~25.1 W CPU+GPU with default arena. Stationary asset warmup is a different workload. No new power/trace run. |
 | GP-022 / Sep 16 | Skip overwritten vertex work for fully low-detail paired grass | Retained; arithmetic saving verified, heat benefit open | [Implementation and evidence](GRASS_LOW_VERTEX_20260916.md). Main-pass VS ALU instructions −13.74%, vertices unchanged; 12 byte-identical shader A/B cases. Two profiles per capture at Medium do not demonstrate a reliable speedup. No power run. |
+| GP-023 / Sep 16 | Move constant clump lighting from fragments to vertices | Tried and reverted; net work reduction too small to promote without a demonstrated benefit | [Experiment and evidence](GRASS_CLUMP_VERTEX_20260916.md). Main FS ALU −6.06%, VS ALU +5.72%, combined −1.52%; 15 byte-identical final comparisons. Replay timings overlap; no power run. |
 
 ## GP-017 — actual catalog and individual grass draws
 

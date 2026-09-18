@@ -1,0 +1,203 @@
+{
+  "experiment": "GP-023",
+  "local_large_artifacts": "/Users/eugenepisotsky/Dev/Sources/Hobby/YarraProject/tmp/grass-clump-vertex-20260916",
+  "large_artifacts_note": "Captured frame.gputrace directories, frozen game binaries and databases remain local. Replay inputs are checksummed in each inputs.json.",
+  "entries": {
+    "capture.py": {
+      "bytes": 1770,
+      "sha256": "47ea389a94d54f256b4003623aa1fe62c20ca2f746c3689ba4751292138fed0f"
+    },
+    "checkpoint.txt": {
+      "bytes": 41,
+      "sha256": "64c0844b2c4066353bae2e3c0cd439fd957390d0d983869884c890eeb83087d1"
+    },
+    "replay-observations.json": {
+      "bytes": 1149,
+      "sha256": "bd8debf86ca21fbc8eb71ab20ca22ca3ee8c32f7cb35ef0e04cda84ba9543ae6"
+    },
+    "candidate.diff": {
+      "bytes": 4906,
+      "sha256": "34b013347862beb989d4b6d01134041fc5f2610967b0b17a9f764625ee538d50"
+    },
+    "flat-version.diff": {
+      "bytes": 3104,
+      "sha256": "dc5e4ec7beefdc000e12875b75284f62d443ddb6e0563ab1a7a9d7c60309abd8"
+    },
+    "test-improvements.diff": {
+      "bytes": 1912,
+      "sha256": "45477d34159530d5dd0617e836d7b3e31700b44a882346e7ed9c844b50d85b6c"
+    },
+    "native-shading-flat.log": {
+      "bytes": 1339,
+      "sha256": "02971bfa35a97ea29faa024f3ba9d588324528f5411e26acea12305d1040c4a6"
+    },
+    "native-shading-interpolated.log": {
+      "bytes": 1913,
+      "sha256": "04c7025cb8311c9e660752be64bffc3976796be3de515320ce5e30f74b40f591"
+    },
+    "native-shading-final.log": {
+      "bytes": 1913,
+      "sha256": "02aa59580759c6abdcaa4fd4d06a271a0ab9fae11c08171152ff800eeab9f393"
+    },
+    "unit-tests.log": {
+      "bytes": 4930,
+      "sha256": "af389dc2ee318b1026ba0fc0da126dec7a2a426725ddaa4fabe44b36168dee57"
+    },
+    "unit-tests-restored.log": {
+      "bytes": 4930,
+      "sha256": "1fa4c73ec4e2d8c1ca7ffced9da29304d814ee8d8e2a9cb8dc36ce6831bab2a1"
+    },
+    "baseline/command.json": {
+      "bytes": 781,
+      "sha256": "7f16df7b30b9525c013e6e01bcf71153fd981eb1bbe1cb16f10c551da6a7e59c"
+    },
+    "baseline/result.json": {
+      "bytes": 45,
+      "sha256": "6acc9770555272384bd1086b12ee736cbb258b0394b674910408bfaa61fa533b"
+    },
+    "baseline/game.log": {
+      "bytes": 9061,
+      "sha256": "a670e8da96b4c8eae3a7b2a3ae029363731f9589ec625c182a829360ba2e1246"
+    },
+    "baseline/encoder-counters.csv": {
+      "bytes": 51952,
+      "sha256": "30990cbc79a08e3b471265377b5427508caef1164225e964a06c3b8586a6866b"
+    },
+    "baseline/encoder-counters-repeat.csv": {
+      "bytes": 51794,
+      "sha256": "943f292aec0a11ffb126e75a4d3b9ff54848b0a4932bb84d686b58b6bc90a965"
+    },
+    "baseline/inputs.json": {
+      "bytes": 1870,
+      "sha256": "88ae8228478bf66d2d12fc72625bd566d4fc3b20e47b4c713ae2a7a6ce211767"
+    },
+    "baseline/canopy.ron": {
+      "bytes": 316,
+      "sha256": "e3db7d4a488767bc50d7a6fd4ef8d539e69b90007b489a7cb49c53e93db9377a"
+    },
+    "baseline/shaders/grass_canopy.wgsl": {
+      "bytes": 2597,
+      "sha256": "9782f27f003100478db35b3fc3bb685f5b8d23448428c75f9a17ee7582f9f27b"
+    },
+    "baseline/shaders/terrain_material.wgsl": {
+      "bytes": 14026,
+      "sha256": "cd52b88fe5f834bf5d55f3f04466840a215be4195dabaecffe08f02ccd60f898"
+    },
+    "baseline/shaders/terrain_prepare_control.wgsl": {
+      "bytes": 2433,
+      "sha256": "2293cfd061f2ce00d0ffe48fe5496d6407a98369ad4321dfbf927a9e6716eb34"
+    },
+    "baseline/shaders/terrain_stochastic.wgsl": {
+      "bytes": 990,
+      "sha256": "67c24d0d22743f4be1963ea71a1cc4b022d533d653a12b4db51439aec9fd395c"
+    },
+    "baseline/shaders/terrain_stochastic_cache.wgsl": {
+      "bytes": 897,
+      "sha256": "02d74877933b25d5e6e50df04afc559d5850c4099102372d3272adb63f2c8817"
+    },
+    "baseline/shaders/vegetation_blade.wgsl": {
+      "bytes": 28970,
+      "sha256": "d28d80d56de09935ee52b00031dcd8fc0efb8627b7861c2c867b82a270784592"
+    },
+    "baseline/shaders/vegetation_debug_compute.wgsl": {
+      "bytes": 44362,
+      "sha256": "3b92dc046aa9afd06d347eb67427db72f7a1ec5395aa642e405298ac3d5aee52"
+    },
+    "baseline/shaders/vegetation_debug_draw.wgsl": {
+      "bytes": 45009,
+      "sha256": "03f60aa20fa6c2353beecca31aa97c8fe42db3dac0ea5029822030fcc3582c05"
+    },
+    "baseline/shaders/vegetation_prepare_blades.wgsl": {
+      "bytes": 2584,
+      "sha256": "06344e7d2d7517f9ffe51baaeb069bea79ab5777235463f74f7eb1d52726592f"
+    },
+    "baseline/shaders/vegetation_schedule_compute.wgsl": {
+      "bytes": 11716,
+      "sha256": "cbe01476358c1da99124b6179669d338e78c0ea0c7fdf3f44bece43604ded964"
+    },
+    "candidate/command.json": {
+      "bytes": 785,
+      "sha256": "850a1e48fe398e13a2183e718248cad83834d33bec8e4f132b04ede95d73bd83"
+    },
+    "candidate/result.json": {
+      "bytes": 45,
+      "sha256": "6acc9770555272384bd1086b12ee736cbb258b0394b674910408bfaa61fa533b"
+    },
+    "candidate/game.log": {
+      "bytes": 9062,
+      "sha256": "7596535b5a2225323ca83246a5bb05e9fce4b05d078c32bd53cf306aac0bad02"
+    },
+    "candidate/encoder-counters.csv": {
+      "bytes": 51769,
+      "sha256": "31c3f24e1eb0f88135b9e8bca9aab215f6681435f4cd06e596abeaa93bce2a9e"
+    },
+    "candidate/encoder-counters-repeat.csv": {
+      "bytes": 51891,
+      "sha256": "2d4adfbd993aa649271f8eaa63cdb2248d14310879599cedfd00393c54882846"
+    },
+    "candidate/inputs.json": {
+      "bytes": 1870,
+      "sha256": "ef74e91cc9e29acde6de8367a000f163b821f065f19e14b7a8bc846a55dc0045"
+    },
+    "candidate/canopy.ron": {
+      "bytes": 316,
+      "sha256": "e3db7d4a488767bc50d7a6fd4ef8d539e69b90007b489a7cb49c53e93db9377a"
+    },
+    "candidate/shaders/grass_canopy.wgsl": {
+      "bytes": 2597,
+      "sha256": "9782f27f003100478db35b3fc3bb685f5b8d23448428c75f9a17ee7582f9f27b"
+    },
+    "candidate/shaders/terrain_material.wgsl": {
+      "bytes": 14026,
+      "sha256": "cd52b88fe5f834bf5d55f3f04466840a215be4195dabaecffe08f02ccd60f898"
+    },
+    "candidate/shaders/terrain_prepare_control.wgsl": {
+      "bytes": 2433,
+      "sha256": "2293cfd061f2ce00d0ffe48fe5496d6407a98369ad4321dfbf927a9e6716eb34"
+    },
+    "candidate/shaders/terrain_stochastic.wgsl": {
+      "bytes": 990,
+      "sha256": "67c24d0d22743f4be1963ea71a1cc4b022d533d653a12b4db51439aec9fd395c"
+    },
+    "candidate/shaders/terrain_stochastic_cache.wgsl": {
+      "bytes": 897,
+      "sha256": "02d74877933b25d5e6e50df04afc559d5850c4099102372d3272adb63f2c8817"
+    },
+    "candidate/shaders/vegetation_blade.wgsl": {
+      "bytes": 28970,
+      "sha256": "d28d80d56de09935ee52b00031dcd8fc0efb8627b7861c2c867b82a270784592"
+    },
+    "candidate/shaders/vegetation_debug_compute.wgsl": {
+      "bytes": 44362,
+      "sha256": "3b92dc046aa9afd06d347eb67427db72f7a1ec5395aa642e405298ac3d5aee52"
+    },
+    "candidate/shaders/vegetation_debug_draw.wgsl": {
+      "bytes": 45272,
+      "sha256": "224d182421536cb8666ccc71e0f30f576a4ac300be1019cab9480f29f536afb1"
+    },
+    "candidate/shaders/vegetation_prepare_blades.wgsl": {
+      "bytes": 2584,
+      "sha256": "06344e7d2d7517f9ffe51baaeb069bea79ab5777235463f74f7eb1d52726592f"
+    },
+    "candidate/shaders/vegetation_schedule_compute.wgsl": {
+      "bytes": 11716,
+      "sha256": "cbe01476358c1da99124b6179669d338e78c0ea0c7fdf3f44bece43604ded964"
+    },
+    "rejected-flat/vegetation_debug_draw.wgsl": {
+      "bytes": 44967,
+      "sha256": "566d498379d1494f1a6ef4cb9dee5b41c17eaf4f03765e6bb85a5e9c601dc990"
+    },
+    "capture-tools/grass_profile.py": {
+      "bytes": 18982,
+      "sha256": "6516b703e454c781af90deee5b3f1547adf9bd96edb03fbf17399eba14da35df"
+    },
+    "capture-tools/grass_profile_report.py": {
+      "bytes": 22450,
+      "sha256": "501f8c779d0b93e6449dd8a60e6e7d4a66969dddab24ceed6912571702b2929c"
+    },
+    "tests/shading_gpu_tests.rs": {
+      "bytes": 8414,
+      "sha256": "d3d86a4c721dcd2af8258664a5f356a75fd050e1f6f709d5dbd6ba174c5d499b"
+    }
+  }
+}

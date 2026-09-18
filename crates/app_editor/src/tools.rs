@@ -24,7 +24,8 @@ pub(crate) enum EditorSourceDomain {
     CellDescriptors,
     ObjectPlacements,
     ObjectDefinitions,
-    TerrainWeights,
+    EnvironmentCoverage,
+    RoadRecords,
     VegetationCatalog,
     VegetationFields,
     Navigation,
@@ -54,7 +55,8 @@ pub(crate) enum EditorCommandKind {
     CreatePlacement,
     TransformPlacement,
     DeletePlacement,
-    PatchTerrain,
+    PaintEnvironment,
+    EditRoad,
     EditVegetationProfile,
 }
 
@@ -64,6 +66,7 @@ pub(crate) enum EditorPreviewOverlay {
     SelectionBounds,
     TransformGizmo,
     CellPatch,
+    RoadCurve,
     ProceduralVegetation,
     VegetationGroups,
 }
@@ -71,7 +74,7 @@ pub(crate) enum EditorPreviewOverlay {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum DerivedProduct {
     CookedObjectPage,
-    TerrainPage,
+    EnvironmentCoverage,
     Navigation,
     Collision,
     Overview,
@@ -237,23 +240,46 @@ pub(crate) const OBJECT_TOOL: EditorToolDescriptor = EditorToolDescriptor {
     },
 };
 
-pub(crate) const TERRAIN_TOOL: EditorToolDescriptor = EditorToolDescriptor {
-    id: EditorToolId("world.terrain"),
-    label: "Terrain",
+pub(crate) const ROAD_TOOL: EditorToolDescriptor = EditorToolDescriptor {
+    id: EditorToolId("world.roads"),
+    label: "Roads",
     workspace: EditorWorkspace::World,
     source_domains: &[
         EditorSourceDomain::CellDescriptors,
-        EditorSourceDomain::TerrainWeights,
+        EditorSourceDomain::RoadRecords,
     ],
     spatial_query: SpatialQueryPolicy::ViewpointWindow {
         radius_cells: 2,
-        maximum_records: 50,
+        maximum_records: 1024,
+    },
+    pinning: PinningPolicy::SelectedDirtyAndActiveCommand,
+    commands: &[EditorCommandKind::EditRoad],
+    overlays: &[EditorPreviewOverlay::RoadCurve],
+    invalidates: &[
+        DerivedProduct::EnvironmentCoverage,
+        DerivedProduct::Navigation,
+        DerivedProduct::Overview,
+    ],
+    failure_policy: OBJECT_TOOL.failure_policy,
+};
+
+pub(crate) const ENVIRONMENT_TOOL: EditorToolDescriptor = EditorToolDescriptor {
+    id: EditorToolId("world.environment"),
+    label: "Environment",
+    workspace: EditorWorkspace::World,
+    source_domains: &[
+        EditorSourceDomain::CellDescriptors,
+        EditorSourceDomain::EnvironmentCoverage,
+    ],
+    spatial_query: SpatialQueryPolicy::ViewpointWindow {
+        radius_cells: 2,
+        maximum_records: 25,
     },
     pinning: PinningPolicy::ActivePatchAndDirtyCells,
-    commands: &[EditorCommandKind::PatchTerrain],
+    commands: &[EditorCommandKind::PaintEnvironment],
     overlays: &[EditorPreviewOverlay::CellPatch],
     invalidates: &[
-        DerivedProduct::TerrainPage,
+        DerivedProduct::EnvironmentCoverage,
         DerivedProduct::Navigation,
         DerivedProduct::Collision,
         DerivedProduct::Overview,
@@ -348,7 +374,7 @@ mod tests {
     fn registry_resolves_active_tool_domains_per_workspace() {
         let mut registry = EditorToolRegistry::default();
         registry.register(OBJECT_TOOL, true);
-        registry.register(TERRAIN_TOOL, false);
+        registry.register(ENVIRONMENT_TOOL, false);
         registry.register(VEGETATION_TOOL, false);
         assert!(registry.active_requires(
             EditorWorkspace::World,
@@ -358,10 +384,11 @@ mod tests {
             EditorWorkspace::Animation,
             EditorSourceDomain::ObjectDefinitions
         ));
-        assert!(registry.set_active(EditorWorkspace::World, TERRAIN_TOOL.id));
-        assert!(
-            registry.active_requires(EditorWorkspace::World, EditorSourceDomain::TerrainWeights)
-        );
+        assert!(registry.set_active(EditorWorkspace::World, ENVIRONMENT_TOOL.id));
+        assert!(registry.active_requires(
+            EditorWorkspace::World,
+            EditorSourceDomain::EnvironmentCoverage
+        ));
         assert!(
             !registry.active_requires(EditorWorkspace::World, EditorSourceDomain::ObjectPlacements)
         );

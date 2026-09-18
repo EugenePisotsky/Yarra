@@ -7,6 +7,7 @@ publish.workspace = true
 [dependencies]
 bevy.workspace = true
 engine.workspace = true
+world.workspace = true
 ron.workspace = true
 terrain-render.workspace = true
 vegetation.workspace = true

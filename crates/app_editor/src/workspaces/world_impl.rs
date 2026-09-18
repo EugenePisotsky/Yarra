@@ -434,20 +434,26 @@ pub(crate) fn handle_editor_shortcuts(
     mut gizmo_settings: ResMut<TransformGizmoSettings>,
     mut selection: ResMut<EditorSelection>,
     mut objects: ResMut<EditorObjectWorkingSet>,
-    dense_domains: Res<DenseDomainWorkingSets>,
+    mut dense_domains: ResMut<DenseDomainWorkingSets>,
     vegetation: Res<VegetationAuthoringState>,
     mut history: ResMut<EditorHistory>,
     publication: Res<RuntimePublicationState>,
     mut save: ResMut<EditorSaveCoordinator>,
     tools: Res<EditorToolRegistry>,
+    paint: Res<crate::environment_paint::EnvironmentPaintState>,
+    presets: Res<super::presets::PresetAuthoringState>,
 ) {
     let object_tool_active = tools
         .active(EditorWorkspace::World)
         .is_some_and(|tool| tool.id == OBJECT_TOOL.id);
     if capture.wants_keyboard
+        || paint.has_unapplied_changes()
+        || presets.dirty()
         || (object_tool_active && gizmo.active)
         || objects.saving()
         || dense_domains.saving()
+        || dense_domains.gesture_active
+        || publication.active()
         || vegetation.saving()
         || save.active()
     {
@@ -464,12 +470,12 @@ pub(crate) fn handle_editor_shortcuts(
 
     if command_pressed(&keys) && keys.just_pressed(KeyCode::KeyZ) {
         if shift_pressed(&keys) {
-            history.redo(&mut objects);
+            history.redo(&mut objects, &mut dense_domains);
         } else {
-            history.undo(&mut objects);
+            history.undo(&mut objects, &mut dense_domains);
         }
     } else if control_pressed(&keys) && keys.just_pressed(KeyCode::KeyY) {
-        history.redo(&mut objects);
+        history.redo(&mut objects, &mut dense_domains);
     } else if command_pressed(&keys) && keys.just_pressed(KeyCode::KeyS) && !publication.active() {
         if objects.dirty_count() + dense_domains.dirty_count() + vegetation.dirty_count() > 0 {
             save.request_save();

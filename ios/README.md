@@ -5,6 +5,12 @@ scheme. The Xcode build phase cross-compiles the Rust executable and packages
 the cooked runtime database, shaders, character GLB, and imported tree and
 terrain runtime files.
 
+Packaging cooks the current `content/world.project.sqlite` into
+`assets/generated/world.runtime.sqlite`. On a fresh checkout, initialize the world
+from the repository root with `cargo run -p yarra-world-cook -- init` before building.
+Existing source edits are retained. Historical measurements below used the earlier
+32 m grass fixture; the current 8 m road/layer world is a different workload.
+
 Use the Release build configuration for performance measurements. The Debug
 configuration is intended only for iteration and validation.
 

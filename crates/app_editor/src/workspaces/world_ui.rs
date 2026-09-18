@@ -38,7 +38,7 @@ use crate::{
     publication::RuntimePublicationState,
     saving::EditorSaveCoordinator,
     shell::{EditorUiFrame, EditorWindowDescriptor, EditorWindowId, EditorWindowRegistry},
-    tools::{EditorToolRegistry, OBJECT_TOOL, TERRAIN_TOOL, VEGETATION_TOOL},
+    tools::{ENVIRONMENT_TOOL, EditorToolRegistry, OBJECT_TOOL, ROAD_TOOL, VEGETATION_TOOL},
     vegetation_authoring::{VEGETATION_WINDOW, VegetationAuthoringState},
 };
 
@@ -88,6 +88,12 @@ pub(crate) struct WorldWorkspaceUiResources<'w> {
     derived_artifacts: Res<'w, DerivedArtifactStore>,
     dense_domains: ResMut<'w, DenseDomainWorkingSets>,
     vegetation: ResMut<'w, VegetationAuthoringState>,
+    roads: ResMut<'w, crate::road_authoring::RoadToolState>,
+    paint: ResMut<'w, crate::environment_paint::EnvironmentPaintState>,
+    layer_browser: ResMut<'w, crate::environment_paint::EnvironmentLayerBrowser>,
+    presets: ResMut<'w, super::presets::PresetAuthoringState>,
+    next_workspace: ResMut<'w, NextState<EditorWorkspace>>,
+    environment_preview: Res<'w, crate::environment_paint::EnvironmentPreview>,
     journal: Res<'w, EditorJournalStatus>,
     navigation: ResMut<'w, ProjectNavigationStore>,
     overview: Res<'w, OverviewState>,
@@ -123,6 +129,12 @@ pub(crate) fn world_workspace_ui(
         derived_artifacts,
         mut dense_domains,
         vegetation,
+        mut roads,
+        mut paint,
+        mut layer_browser,
+        mut presets,
+        mut next_workspace,
+        environment_preview,
         journal,
         mut navigation,
         overview,
@@ -148,15 +160,17 @@ pub(crate) fn world_workspace_ui(
     };
 
     egui::Panel::top("editor_world_toolbar").show(viewport_ui, |ui| {
+        if presets.dirty() {ui.colored_label(egui::Color32::YELLOW,"An unapplied preset draft is waiting in Presets. Apply or discard it before saving.");}
         ui.horizontal(|ui| {
             let remaining_changes = objects.dirty_count()
                 + dense_domains.dirty_count()
                 + vegetation.dirty_count();
             let has_dirty_source = remaining_changes > 0;
-            let source_action_available = !save.active()
+            let source_action_available = !paint.has_unapplied_changes() && !presets.dirty() && !save.active()
                 && !project.save_in_flight()
                 && !objects.saving()
                 && !dense_domains.saving()
+                && !dense_domains.gesture_active
                 && !vegetation.saving()
                 && !objects.has_any_conflict()
                 && !dense_domains.has_any_conflict()
@@ -192,9 +206,13 @@ pub(crate) fn world_workspace_ui(
             if ui
                 .add_enabled(
                     history.undo_len() > 0
+                        && !paint.has_unapplied_changes()
+                        && !presets.dirty()
+                        && !publication.active()
                         && !save.active()
                         && !objects.saving()
                         && !dense_domains.saving()
+                        && !dense_domains.gesture_active
                         && !vegetation.saving()
                         && !objects.has_any_conflict()
                         && !dense_domains.has_any_conflict()
@@ -204,15 +222,19 @@ pub(crate) fn world_workspace_ui(
                 .on_hover_text("Undo the last command (Cmd+Z)")
                 .clicked()
             {
-                history.undo(&mut objects);
+                history.undo(&mut objects, &mut dense_domains);
                 transform_draft.sync(&selection, &objects);
             }
             if ui
                 .add_enabled(
                     history.redo_len() > 0
+                        && !paint.has_unapplied_changes()
+                        && !presets.dirty()
+                        && !publication.active()
                         && !save.active()
                         && !objects.saving()
                         && !dense_domains.saving()
+                        && !dense_domains.gesture_active
                         && !vegetation.saving()
                         && !objects.has_any_conflict()
                         && !dense_domains.has_any_conflict()
@@ -222,7 +244,7 @@ pub(crate) fn world_workspace_ui(
                 .on_hover_text("Redo the last command (Cmd+Shift+Z)")
                 .clicked()
             {
-                history.redo(&mut objects);
+                history.redo(&mut objects, &mut dense_domains);
                 transform_draft.sync(&selection, &objects);
             }
 
@@ -292,7 +314,7 @@ pub(crate) fn world_workspace_ui(
                 ui.separator();
                 ui.colored_label(
                     egui::Color32::YELLOW,
-                    format!("{} terrain cell(s) unsaved", dense_domains.dirty_count()),
+                    format!("{} environment change(s) unsaved", dense_domains.dirty_count()),
                 );
             } else if vegetation.dirty_count() > 0 {
                 ui.separator();
@@ -378,6 +400,16 @@ pub(crate) fn world_workspace_ui(
                     &mut focus_request,
                     &tools,
                     gizmo_settings.mode,
+                    &mut roads,
+                    &mut paint,
+                    &mut layer_browser,
+                    &environment_preview,
+                    origin.space(),
+                    vegetation.study_source().map(|(catalog, _, _)| catalog),
+                    save.active()
+                        || publication.active()
+                        || project.save_in_flight()
+                        || presets.dirty(),
                 );
             });
         windows.set_open(INSPECTOR_WINDOW.id, open);
@@ -474,6 +506,14 @@ pub(crate) fn world_workspace_ui(
         windows.set_open(DIAGNOSTICS_WINDOW.id, open);
     }
 
+    if let Some((space, preset)) = paint.preset_request.take() {
+        presets.open(space, preset);
+        next_workspace.set(EditorWorkspace::Presets);
+    }
+    if let Some((space, style)) = roads.style_request.take() {
+        presets.open_road(space, style);
+        next_workspace.set(EditorWorkspace::Presets);
+    }
     Ok(())
 }
 
@@ -513,13 +553,19 @@ fn draw_world_hierarchy(
     ui.separator();
     let active_tool = tools.active(EditorWorkspace::World);
     if ui
+        .selectable_label(active_tool.is_some_and(|t| t.id == ROAD_TOOL.id), "Roads")
+        .clicked()
+    {
+        tools.set_active(EditorWorkspace::World, ROAD_TOOL.id);
+    }
+    if ui
         .selectable_label(
-            active_tool.is_some_and(|tool| tool.id == TERRAIN_TOOL.id),
-            "Terrain",
+            active_tool.is_some_and(|tool| tool.id == ENVIRONMENT_TOOL.id),
+            "Environment",
         )
         .clicked()
     {
-        tools.set_active(EditorWorkspace::World, TERRAIN_TOOL.id);
+        tools.set_active(EditorWorkspace::World, ENVIRONMENT_TOOL.id);
     }
     if ui
         .selectable_label(
@@ -643,6 +689,13 @@ fn draw_context_inspector(
     focus_request: &mut EditorCameraFocusRequest,
     tools: &EditorToolRegistry,
     gizmo_mode: TransformGizmoMode,
+    roads: &mut crate::road_authoring::RoadToolState,
+    paint: &mut crate::environment_paint::EnvironmentPaintState,
+    layer_browser: &mut crate::environment_paint::EnvironmentLayerBrowser,
+    environment_preview: &crate::environment_paint::EnvironmentPreview,
+    space: Option<world::WorldSpaceId>,
+    plants: Option<&vegetation::VegetationCatalog>,
+    busy: bool,
 ) {
     let Some(active_tool) = tools.active(EditorWorkspace::World) else {
         ui.weak("No active World tool.");
@@ -668,13 +721,38 @@ fn draw_context_inspector(
         return;
     }
 
-    if active_tool.id == TERRAIN_TOOL.id {
-        ui.heading("Terrain");
+    if active_tool.id == ROAD_TOOL.id {
+        crate::road_authoring::inspector(
+            ui,
+            roads,
+            dense_domains,
+            history,
+            space,
+            environment_preview,
+            busy,
+        );
+        return;
+    }
+    if active_tool.id == ENVIRONMENT_TOOL.id {
         draw_dense_conflict_controls(ui, dense_domains, history);
-        ui.label("Terrain settings apply to the active bounded cell patch.");
-        draw_dense_domain_inspector(ui, viewpoint, dense_domains, project);
-        ui.separator();
-        ui.weak("Terrain brush controls will use the existing bounded patch command seam.");
+        if let Some(status) = dense_domains.status() {
+            ui.colored_label(egui::Color32::YELLOW, status);
+        }
+        if project.environment_coverage_truncated() {
+            ui.weak("Paint area is incomplete; wait for the source query.");
+        }
+        crate::environment_paint::inspector(
+            ui,
+            paint,
+            layer_browser,
+            environment_preview,
+            project,
+            space,
+            history,
+            dense_domains,
+            plants,
+            busy,
+        );
         return;
     }
 
@@ -723,7 +801,7 @@ fn draw_dense_conflict_controls(
             egui::Button::new("Use database version"),
         )
         .on_disabled_hover_text(
-            "A disappeared dense record cannot be accepted until dense tombstones are supported.",
+            "Missing cells or changed layer definitions require reloading the project.",
         )
         .clicked()
         && dense_domains.accept_database_conflicts() > 0
@@ -731,38 +809,6 @@ fn draw_dense_conflict_controls(
         history.clear();
     }
     ui.separator();
-}
-
-fn draw_dense_domain_inspector(
-    ui: &mut egui::Ui,
-    viewpoint: &WorldViewpoint,
-    dense_domains: &DenseDomainWorkingSets,
-    project: &ProjectEditorStore,
-) {
-    if let Some(position) = viewpoint.position() {
-        ui.monospace(format!("Cell {}, {}", position.cell.x, position.cell.z));
-        let ready = dense_domains.contains_patch(position.space, position.cell);
-        ui.label(if ready {
-            "Source patch ready"
-        } else {
-            "No source patch at the viewpoint"
-        });
-    } else {
-        ui.weak("Waiting for a logical viewpoint…");
-    }
-    ui.small(format!(
-        "{} loaded terrain page(s)",
-        dense_domains.terrain_record_count()
-    ));
-    if project.terrain_weights_truncated() {
-        ui.colored_label(
-            egui::Color32::YELLOW,
-            "Terrain query reached its bounded limit",
-        );
-    }
-    if let Some(status) = dense_domains.status() {
-        ui.colored_label(egui::Color32::YELLOW, status);
-    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1217,8 +1263,8 @@ fn draw_world_diagnostics(
         ));
     }
     ui.small(format!(
-        "{} terrain page(s) · {} dense dirty · {} retained",
-        dense_domains.terrain_record_count(),
+        "{} coverage cell(s) · {} unsaved · {} retained",
+        dense_domains.environment_record_count(),
         dense_domains.dirty_count(),
         format_bytes(dense_domains.retained_bytes() as u64),
     ));

@@ -1,26 +1,29 @@
 # Authored content
 
-`demo.project.sqlite` is the writable authoring representation for the initial
-world. The game never opens it. `yarra-world-cook` reads a committed snapshot and
-publishes an independently validated, immutable runtime database under
-`assets/generated/`.
+`world.project.sqlite` is the current editable world: painted ground/grass layers,
+shared presets, trees and a curved cart road on an 8 m grid. The editor opens it by
+default. The game reads only its published `assets/generated/world.runtime.sqlite`.
 
-The demo vegetation catalog is still code-authored in `yarra-vegetation` while the persistent
-editor command layer is being built. Synchronize only that catalog into an existing local project,
-then republish the runtime generation, with:
+For a fresh checkout:
 
 ```bash
-cargo run -p yarra-world-cook -- sync-demo-vegetation
-cargo run -p yarra-world-cook -- demo
+cargo run -p yarra-world-cook -- init
+cargo run -p yarra-app-editor
 ```
 
-This first database stores an explicit default world space, a large overworld,
-a separate interior, flat cell appearance, and stable tree placements. The
-schema separates sparse placements from cooked terrain/object pages so future
-editor operations do not become runtime loading operations.
+`init` creates a world only when the project is absent. Subsequent runs retain its
+source and republish it. Normal **Save** writes source changes; **Save & Publish**
+cooks and atomically replaces the runtime. The command-line equivalent is:
 
-Models live in `source_assets`; placements reference `object_definitions`.
-Definitions currently contain only identity, display/visual references, and a
-render-only or proximity activation policy. Gameplay capabilities and their
-typed attribute tables will be added when the first real interactive object is
-implemented.
+```bash
+cargo run -p yarra-world-cook -- cook
+```
+
+The old `demo.project.sqlite` is retired from normal launches. Test fixtures require
+explicit `create-demo` / `create-road-demo` commands and separate paths. The former
+`demo` cooker and `sync-demo-vegetation` reset commands are removed. Vegetation is
+edited through the editor; intentional catalog replacement uses `import-vegetation`.
+
+Source and generated databases remain local and ignored by Git. Models live in
+`source_assets`; placements reference `object_definitions`. Authored presets, layers,
+coverage masks and road geometry are source records, not cooked render pages.

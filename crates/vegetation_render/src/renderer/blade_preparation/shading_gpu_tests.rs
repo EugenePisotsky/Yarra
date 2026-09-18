@@ -50,6 +50,8 @@ fn shading_matches_reference_in_frozen_scene() {
         Fallback,
         Overflow,
         Inspection(VegetationShapeInspection),
+        Bands,
+        Lighting(VegetationLightingMode),
     }
     let mut exercised_bins = [false; 4];
     let mut exercised_morph = false;
@@ -80,7 +82,13 @@ fn shading_matches_reference_in_frozen_scene() {
             .into_iter()
             .skip(1)
             .map(DrawPath::Inspection)
-            .chain([DrawPath::Fallback, DrawPath::Overflow])
+            .chain([
+                DrawPath::Bands,
+                DrawPath::Lighting(VegetationLightingMode::Legacy),
+                DrawPath::Lighting(VegetationLightingMode::UnlitDiagnostic),
+                DrawPath::Fallback,
+                DrawPath::Overflow,
+            ])
             .map(|path| {
                 (
                     Vec3::new(12.0, 3.0, 18.0),
@@ -122,6 +130,15 @@ fn shading_matches_reference_in_frozen_scene() {
             settings.shape_inspection = match path {
                 DrawPath::Inspection(mode) => mode,
                 _ => VegetationShapeInspection::Off,
+            };
+            settings.blade_bands = if matches!(path, DrawPath::Bands) {
+                VegetationBladeBands::Medium
+            } else {
+                VegetationBladeBands::Off
+            };
+            settings.lighting_mode = match path {
+                DrawPath::Lighting(mode) => mode,
+                _ => VegetationLightingMode::RoundedGloss,
             };
         }
         settled_pixels(&mut app);

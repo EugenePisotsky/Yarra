@@ -50,8 +50,8 @@ def main():
         parser.error('Use distinct densities in 1..512')
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
-    source_project = ROOT / 'content/demo.project.sqlite'
-    source_runtime = ROOT / 'assets/generated/demo.runtime.sqlite'
+    source_project = ROOT / 'content/world.project.sqlite'
+    source_runtime = ROOT / 'assets/generated/world.runtime.sqlite'
     source_catalog = output / 'source-catalog.ron'
     subprocess.run([str(ROOT / 'target/debug/yarra-world-cook'), 'export-vegetation',
                     str(source_project), str(source_catalog)], check=True)

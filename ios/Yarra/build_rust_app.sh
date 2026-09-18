@@ -52,14 +52,14 @@ if [[ "$CONFIGURATION" != "Debug" ]]; then
     CARGO_ARGUMENTS+=(--release)
 fi
 
-RUNTIME_DATABASE="$REPOSITORY_ROOT/assets/generated/demo.runtime.sqlite"
+RUNTIME_DATABASE="$REPOSITORY_ROOT/assets/generated/world.runtime.sqlite"
 "$CARGO_EXECUTABLE" run \
     --manifest-path "$REPOSITORY_ROOT/Cargo.toml" \
     --locked \
     --package yarra-world-cook \
     -- \
-    demo \
-    "$REPOSITORY_ROOT/content/demo.project.sqlite" \
+    cook \
+    "$REPOSITORY_ROOT/content/world.project.sqlite" \
     "$RUNTIME_DATABASE"
 
 "$CARGO_EXECUTABLE" "${CARGO_ARGUMENTS[@]}"
@@ -77,7 +77,7 @@ ASSET_DESTINATION="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/assets"
     "$ASSET_DESTINATION/local/characters/female_main" \
     "$ASSET_DESTINATION/local/forest_tree_starter_kit/runtime/tree_07" \
     "$ASSET_DESTINATION/local/terrain/temperate_meadow/runtime"
-/usr/bin/install -m 644 "$RUNTIME_DATABASE" "$ASSET_DESTINATION/generated/demo.runtime.sqlite"
+/usr/bin/install -m 644 "$RUNTIME_DATABASE" "$ASSET_DESTINATION/generated/world.runtime.sqlite"
 /usr/bin/ditto "$REPOSITORY_ROOT/assets/shaders" "$ASSET_DESTINATION/shaders"
 /usr/bin/install -m 644 "$REPOSITORY_ROOT/assets/packs/terrain/prepared.terrain-prepared" "$ASSET_DESTINATION/packs/terrain/prepared.terrain-prepared"
 /usr/bin/install -m 644 \

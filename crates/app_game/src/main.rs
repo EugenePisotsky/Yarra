@@ -586,7 +586,7 @@ fn runtime_database_path(asset_root: &std::path::Path) -> std::path::PathBuf {
                 .unwrap_or_else(|| panic!("--world-db requires a database path"));
         }
     }
-    asset_root.join("generated/demo.runtime.sqlite")
+    asset_root.join(world::DEFAULT_RUNTIME_DATABASE)
 }
 
 fn resolve_asset_root() -> std::path::PathBuf {

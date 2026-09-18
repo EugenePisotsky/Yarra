@@ -1573,6 +1573,18 @@ fn attach_page(
                     MeshMaterial3d(prepared_material.material.clone()),
                     Transform::from_xyz(center[0], terrain.height, center[1])
                         .with_scale(Vec3::new(cell_size, 1.0, cell_size)),
+                    StreamedTerrainSurface {
+                        key,
+                        cell_size,
+                        heightfield: TerrainHeightfield::from_heights(
+                            2,
+                            &[terrain.height; 4],
+                            terrain.height,
+                            terrain.height,
+                            cell_size,
+                        )
+                        .map_err(|e| e.to_string())?,
+                    },
                     StreamedPageEntity(key),
                     Name::new(format!("Terrain cell {}, {}", key.cell.x, key.cell.z)),
                 ))
@@ -2396,13 +2408,14 @@ mod tests {
     #[test]
     fn database_worker_reopens_the_exact_published_generation() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../assets/generated/demo.runtime.sqlite");
+            .join("../../assets")
+            .join(world::DEFAULT_RUNTIME_DATABASE);
         let (requests, request_receiver) = bounded(MAX_DATABASE_REQUESTS_IN_FLIGHT);
         let (results, result_receiver) = bounded(MAX_DATABASE_REQUESTS_IN_FLIGHT * 2);
         let worker = thread::spawn(move || database_worker(path, request_receiver, results));
 
         let DatabaseResult::Opened(Ok(manifest)) = result_receiver.recv().unwrap() else {
-            panic!("runtime worker did not open the checked-in generation");
+            panic!("runtime worker did not open the current cooked world");
         };
         let expected = manifest.generation_id;
         requests

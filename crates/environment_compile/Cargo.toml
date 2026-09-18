@@ -1,0 +1,17 @@
+[package]
+name = "yarra-environment-compile"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+bincode.workspace = true
+blake3.workspace = true
+environment.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+vegetation.workspace = true
+world.workspace = true
+
+[dev-dependencies]
+vegetation-compile.workspace = true

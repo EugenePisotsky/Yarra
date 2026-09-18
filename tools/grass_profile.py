@@ -89,7 +89,7 @@ def snapshot(destination, settings):
             shutil.copy2(p, assets / 'shaders' / p.name)
     binary = source(settings.get('binary'), 'target/release/yarra-app-game')
     canopy = source(settings.get('canopy'), 'content/vegetation/canopy-look.ron')
-    database = source(settings.get('world_db'), 'assets/generated/demo.runtime.sqlite')
+    database = source(settings.get('world_db'), 'assets/generated/world.runtime.sqlite')
     shutil.copy2(binary, destination / 'game')
     shutil.copy2(canopy, destination / 'canopy.ron')
     # SQLite backup includes a committed WAL, unlike copying only the main file.

@@ -7,7 +7,23 @@ fn main() -> Result<()> {
     let command = arguments
         .next()
         .and_then(|argument| argument.into_string().ok())
-        .unwrap_or_else(|| "demo".into());
+        .unwrap_or_else(|| "cook".into());
+    if command == "create-demo" || command == "create-road-demo" {
+        let project = PathBuf::from(arguments.next().context("expected a new PROJECT_DB path")?);
+        if arguments.next().is_some() {
+            bail!("usage: yarra-world-cook {command} PROJECT_DB");
+        }
+        if command == "create-road-demo" {
+            yarra_world_cook::create_road_demo_project(&project)?;
+        } else {
+            yarra_world_cook::create_demo_project(&project)?;
+        }
+        println!(
+            "created layer-based authoring database: {}",
+            project.display()
+        );
+        return Ok(());
+    }
     if command == "export-vegetation" {
         use std::io::Write;
         let project = PathBuf::from(arguments.next().context("expected PROJECT_DB")?);
@@ -31,11 +47,11 @@ fn main() -> Result<()> {
         let project = arguments
             .next()
             .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("content/demo.project.sqlite"));
+            .unwrap_or_else(default_project_path);
         let runtime = arguments
             .next()
             .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("assets/generated/demo.runtime.sqlite"));
+            .unwrap_or_else(default_runtime_path);
         if arguments.next().is_some() {
             bail!(
                 "usage: yarra-world-cook import-vegetation CATALOG_RON [PROJECT_DB] [RUNTIME_DB]"
@@ -44,7 +60,6 @@ fn main() -> Result<()> {
         let catalog: vegetation::VegetationCatalog =
             ron::from_str(&std::fs::read_to_string(&source)?)?;
         catalog.validate()?;
-        world_db::migrate_project_database(&project)?;
         world_db::ProjectWriter::open(&project)?.replace_vegetation_catalog(&catalog)?;
         let manifest = yarra_world_cook::cook_project(&project, &runtime)?;
         println!(
@@ -54,66 +69,34 @@ fn main() -> Result<()> {
         );
         return Ok(());
     }
-    if command == "sync-demo-vegetation" {
-        let project_path = arguments
-            .next()
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("content/demo.project.sqlite"));
-        if arguments.next().is_some() {
-            bail!("too many arguments; usage: yarra-world-cook sync-demo-vegetation [PROJECT_DB]");
-        }
-        if !project_path.exists() {
-            yarra_world_cook::create_demo_project(&project_path)
-                .with_context(|| format!("could not initialize {}", project_path.display()))?;
-        } else {
-            if world_db::migrate_project_database(&project_path)
-                .with_context(|| format!("could not migrate {}", project_path.display()))?
-            {
-                println!("migrated authoring database: {}", project_path.display());
-            }
-            let mut writer = world_db::ProjectWriter::open(&project_path)
-                .with_context(|| format!("could not open {}", project_path.display()))?;
-            writer
-                .replace_vegetation_catalog(&vegetation::fixtures::reference_catalog())
-                .with_context(|| {
-                    format!(
-                        "could not synchronize the demo vegetation catalog in {}",
-                        project_path.display()
-                    )
-                })?;
-        }
-        println!(
-            "reset project vegetation catalog to the reference fixture: {}",
-            project_path.display()
-        );
-        return Ok(());
-    }
-    if command != "demo" {
+    if command != "cook" && command != "init" {
         bail!(
-            "unknown command {command:?}; expected `demo`, `import-vegetation` or `sync-demo-vegetation`"
+            "unknown command {command:?}; expected `init`, `cook`, `create-demo`, `create-road-demo`, `export-vegetation` or `import-vegetation`"
         );
     }
 
     let project_path = arguments
         .next()
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("content/demo.project.sqlite"));
+        .unwrap_or_else(default_project_path);
     let runtime_path = arguments
         .next()
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("assets/generated/demo.runtime.sqlite"));
+        .unwrap_or_else(default_runtime_path);
     if arguments.next().is_some() {
-        bail!("too many arguments; usage: yarra-world-cook demo [PROJECT_DB] [RUNTIME_DB]");
+        bail!("too many arguments; usage: yarra-world-cook {command} [PROJECT_DB] [RUNTIME_DB]");
     }
 
-    if !project_path.exists() {
-        yarra_world_cook::create_demo_project(&project_path)
+    if command == "init" && !project_path.exists() {
+        yarra_world_cook::create_world_project(&project_path)
             .with_context(|| format!("could not initialize {}", project_path.display()))?;
         println!("created authoring database: {}", project_path.display());
-    } else if world_db::migrate_project_database(&project_path)
-        .with_context(|| format!("could not migrate {}", project_path.display()))?
-    {
-        println!("migrated authoring database: {}", project_path.display());
+    }
+    if !project_path.exists() {
+        bail!(
+            "project {} does not exist; initialize a new world with `cargo run -p yarra-world-cook -- init` or supply an existing PROJECT_DB",
+            project_path.display()
+        );
     }
     let manifest = yarra_world_cook::cook_project(&project_path, &runtime_path)?;
     println!(
@@ -122,4 +105,16 @@ fn main() -> Result<()> {
         runtime_path.display()
     );
     Ok(())
+}
+
+fn repository_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+fn default_project_path() -> PathBuf {
+    repository_root().join(world::DEFAULT_PROJECT_DATABASE)
+}
+fn default_runtime_path() -> PathBuf {
+    repository_root()
+        .join("assets")
+        .join(world::DEFAULT_RUNTIME_DATABASE)
 }

@@ -2,6 +2,11 @@
 
 ## Status
 
+For the proposed World workspace painter and terrain/vegetation compositions, see
+[Environment compositions and spatial authoring](ENVIRONMENT_AUTHORING_ARCHITECTURE.md)
+(2026-09-17). That design compiles authoring layers into this document's vegetation
+contracts; it does not replace the procedural renderer.
+
 This document defines the clean replacement architecture for Yarra's grass and dense decorative
 vegetation. Its persisted placement slice, procedural-topology slice, and first live authoring slice
 are now implemented.

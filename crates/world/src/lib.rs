@@ -3,9 +3,14 @@ use std::{error::Error, fmt};
 use serde::{Deserialize, Serialize};
 use vegetation::VegetationFieldPageData;
 
+/// Default authoring source relative to the repository root.
+pub const DEFAULT_PROJECT_DATABASE: &str = "content/world.project.sqlite";
+/// Default cooked world relative to the asset root (also used in iOS bundles).
+pub const DEFAULT_RUNTIME_DATABASE: &str = "generated/world.runtime.sqlite";
+
 pub const DEFAULT_CELL_SIZE: f32 = 32.0;
 pub const MAX_DECODED_PAGE_BYTES: u64 = 64 * 1024 * 1024;
-pub const PROJECT_SCHEMA_VERSION: i64 = 17;
+pub const PROJECT_SCHEMA_VERSION: i64 = 22;
 pub const RUNTIME_SCHEMA_VERSION: i64 = 15;
 pub const PAGE_PAYLOAD_VERSION: u16 = 7;
 pub const MAX_TERRAIN_SURFACES_PER_CELL: usize = 8;

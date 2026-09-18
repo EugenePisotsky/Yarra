@@ -1,3 +1,8 @@
+mod environment_cook;
+use environment_cook::{
+    CookedEnvironment, TerrainSlot, TerrainWeights, compile_environment, demo_environment,
+};
+
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fs,
@@ -6,24 +11,23 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use glam::{Vec2, Vec3};
+use glam::Vec2;
 use world::{
     AssetId, CellCoord, DEFAULT_CELL_SIZE, GameplayObjectInstance, GameplayObjectsPage,
     MAX_TERRAIN_HEIGHTFIELD_RESOLUTION, MAX_TERRAIN_SURFACES_PER_CELL, MAX_TERRAIN_WEIGHT_PAGES,
     MAX_TERRAIN_WEIGHT_RESOLUTION, ObjectActivationPolicy, ObjectDefinitionId, PageCodec,
     PageDomain, PageKey, PagePayload, RUNTIME_SCHEMA_VERSION, StableObjectId, StaticObjectInstance,
-    StaticObjectsPage, TerrainHeightfield, TerrainHeightfieldPage, TerrainProfile,
-    TerrainRenderPage, TerrainSurface, TerrainSurfaceId, TerrainTextureLayer, TerrainTextureSet,
-    TerrainTextureSetId, TerrainWeightPage, WorldSpaceId, encode_page_payload,
+    StaticObjectsPage, TerrainHeightfieldPage, TerrainProfile, TerrainSurface, TerrainSurfaceId,
+    TerrainTextureLayer, TerrainTextureSet, TerrainTextureSetId, TerrainWeightPage, WorldSpaceId,
+    encode_page_payload,
 };
 use world_db::{
     AssetVariantRecord, EncodedPage, PageDependencyRecord, PageObjectDefinitionRecord,
     PageTerrainSurfaceRecord, ProjectDocument, RuntimeBuild, RuntimeCellRecord, RuntimeManifest,
     RuntimeObjectDefinition, SourceAssetRecord, SourceAssetVariantRecord, SourceCellRecord,
     SourceObjectDefinitionRecord, SourceObjectRecord, SourceTerrainCellHeightfieldRecord,
-    SourceTerrainCellSurfaceSlotRecord, SourceTerrainCellWeightPageRecord,
-    SourceVegetationFieldPageRecord, WorldSpaceRecord, domain_bit, read_project_database,
-    write_project_database, write_runtime_database,
+    WorldSpaceRecord, domain_bit, read_project_database, write_project_database,
+    write_runtime_database,
 };
 
 pub const DEMO_TREE_KEY: &str = "forest_tree_starter_kit/tree_07";
@@ -38,15 +42,29 @@ pub const DEMO_TREE_LOD_URIS: [&str; 4] = [
 const DEMO_TREE_MINIMUM_SCREEN_HEIGHTS: [f32; 4] = [320.0, 160.0, 80.0, 0.0];
 const DEMO_TREE_GPU_BYTES: [u64; 4] = [593_464, 324_612, 175_064, 85_164];
 const DEMO_TREE_BOUNDS: [f32; 3] = [7.9161, 15.9346, 5.5864];
-const DEMO_MEADOW_CELL_RANGE: std::ops::Range<i32> = -30..30;
-// Endpoint-inclusive samples: 65 gives the large 60-by-60-cell demo a
-// half-metre control-map interval while keeping its Git-tracked project
-// database below the practical size of the legacy 256-sample authoring maps.
+const DEMO_WORLD_CELL_RANGE: std::ops::Range<i32> = -8..8;
+// Half-metre source masks and endpoint-inclusive compiled ground weights.
 const DEMO_TERRAIN_WEIGHT_RESOLUTION: u16 = 65;
 const DEMO_TERRAIN_HEIGHTFIELD_RESOLUTION: u16 = 33;
 const DEMO_TERRAIN_TEXTURE_ROOT: &str = "local/terrain/temperate_meadow/runtime";
 const DEMO_TERRAIN_MINIMUM_HEIGHT: f32 = -4.0;
 const DEMO_TERRAIN_MAXIMUM_HEIGHT: f32 = 4.0;
+
+mod road_demo;
+pub use road_demo::create_road_demo_project;
+
+/// Initialize a fresh editable world at the grid used by the road/layer authoring tools.
+/// Existing projects are never replaced by initialization or cooking.
+pub fn create_world_project(path: &Path) -> Result<()> {
+    let mut document = road_demo::document();
+    for space in &mut document.world_spaces {
+        if let Some(name) = space.name.strip_prefix("demo-") {
+            space.name = name.to_owned();
+        }
+    }
+    write_project_database(path, &document)
+        .with_context(|| format!("failed to create authoring world at {}", path.display()))
+}
 
 pub fn create_demo_project(path: &Path) -> Result<()> {
     let document = demo_project_document();
@@ -89,23 +107,16 @@ pub fn build_runtime(mut project: ProjectDocument) -> Result<RuntimeBuild> {
         .terrain_profiles
         .sort_by_key(|profile| profile.space);
     project
-        .terrain_cell_surface_slots
-        .sort_by_key(|slot| (slot.space, slot.cell, slot.slot));
-    project
-        .terrain_cell_weight_pages
-        .sort_by_key(|weights| (weights.space, weights.cell, weights.page));
-    project
         .terrain_cell_heightfields
         .sort_by_key(|heightfield| (heightfield.space, heightfield.cell));
-    project
-        .vegetation_field_pages
-        .sort_by_key(|page| (page.space, page.cell));
     project.assets.sort_by_key(|asset| asset.id.0);
     project
         .asset_variants
         .sort_by_key(|variant| (variant.asset.0, variant.lod));
     project.definitions.sort_by_key(|definition| definition.id);
     project.objects.sort_by_key(|object| object.id.0);
+
+    let environment = compile_environment(&project)?;
 
     let spaces_by_id: HashMap<_, _> = project
         .world_spaces
@@ -213,11 +224,9 @@ pub fn build_runtime(mut project: ProjectDocument) -> Result<RuntimeBuild> {
             );
         }
     }
-    let mut terrain_slots_by_cell: BTreeMap<
-        (WorldSpaceId, CellCoord),
-        Vec<&SourceTerrainCellSurfaceSlotRecord>,
-    > = BTreeMap::new();
-    for slot in &project.terrain_cell_surface_slots {
+    let mut terrain_slots_by_cell: BTreeMap<(WorldSpaceId, CellCoord), Vec<&TerrainSlot>> =
+        BTreeMap::new();
+    for slot in &environment.slots {
         if !source_cells.contains(&(slot.space, slot.cell)) {
             bail!(
                 "terrain surface slot references missing cell {:?}",
@@ -235,11 +244,9 @@ pub fn build_runtime(mut project: ProjectDocument) -> Result<RuntimeBuild> {
             .or_default()
             .push(slot);
     }
-    let mut terrain_weights_by_cell: BTreeMap<
-        (WorldSpaceId, CellCoord),
-        Vec<&SourceTerrainCellWeightPageRecord>,
-    > = BTreeMap::new();
-    for weights in &project.terrain_cell_weight_pages {
+    let mut terrain_weights_by_cell: BTreeMap<(WorldSpaceId, CellCoord), Vec<&TerrainWeights>> =
+        BTreeMap::new();
+    for weights in &environment.weights {
         if !source_cells.contains(&(weights.space, weights.cell)) {
             bail!(
                 "terrain weight page references missing cell {:?}",
@@ -344,16 +351,15 @@ pub fn build_runtime(mut project: ProjectDocument) -> Result<RuntimeBuild> {
             );
         }
     }
-    validate_terrain_weight_borders(&terrain_weights_by_cell)?;
     validate_terrain_heightfield_borders(&terrain_heightfields_by_cell)?;
     let mut vegetation_pages_by_cell = HashMap::new();
-    if !project.vegetation_field_pages.is_empty() {
-        let catalog = project
-            .vegetation_catalog
+    if !environment.vegetation.is_empty() {
+        let catalog = environment
+            .catalog
             .as_ref()
             .context("vegetation field pages require a vegetation catalog")?;
         catalog.validate()?;
-        for page in &project.vegetation_field_pages {
+        for page in &environment.vegetation {
             if !source_cells.contains(&(page.space, page.cell)) {
                 bail!("vegetation page references missing cell {:?}", page.cell);
             }
@@ -368,7 +374,7 @@ pub fn build_runtime(mut project: ProjectDocument) -> Result<RuntimeBuild> {
                 bail!("vegetation cells may have only one field page");
             }
         }
-    } else if let Some(catalog) = &project.vegetation_catalog {
+    } else if let Some(catalog) = &environment.catalog {
         catalog.validate()?;
     }
     let assets_by_id: HashMap<_, _> = project
@@ -465,8 +471,9 @@ pub fn build_runtime(mut project: ProjectDocument) -> Result<RuntimeBuild> {
         content_hasher.update(&space.minimum_y.to_bits().to_le_bytes());
         content_hasher.update(&space.maximum_y.to_bits().to_le_bytes());
     }
-    hash_terrain_catalog(&mut content_hasher, &project);
-    if let Some(catalog) = &project.vegetation_catalog {
+    hash_terrain_catalog(&mut content_hasher, &project, &environment);
+    content_hasher.update(&environment.fingerprint);
+    if let Some(catalog) = &environment.catalog {
         let encoded = bincode::serde::encode_to_vec(
             catalog,
             bincode::config::standard()
@@ -533,46 +540,18 @@ pub fn build_runtime(mut project: ProjectDocument) -> Result<RuntimeBuild> {
                 rgba: weights.rgba.clone(),
             })
             .collect();
-        let source_heightfield = terrain_heightfields_by_cell
+        let heightfield = environment
+            .terrain
             .get(&(source_cell.space, source_cell.cell))
-            .copied();
-        let (terrain_payload, terrain_height_bounds, heightfield_gpu_bytes) =
-            if let Some(source_heightfield) = source_heightfield {
-                let space = spaces_by_id[&source_cell.space];
-                let normals = terrain_heightfield_normals(
-                    source_heightfield,
-                    &terrain_heightfields_by_cell,
-                    space.cell_size,
-                );
-                let heightfield = TerrainHeightfield::from_heights_and_normals(
-                    source_heightfield.resolution,
-                    &source_heightfield.heights,
-                    &normals,
-                    space.minimum_y,
-                    space.maximum_y,
-                )?;
-                let height_bounds = heightfield.height_bounds();
-                let gpu_bytes = estimate_heightfield_gpu_bytes(heightfield.resolution);
-                (
-                    PagePayload::TerrainHeightfield(TerrainHeightfieldPage {
-                        heightfield,
-                        surfaces,
-                        weight_pages,
-                    }),
-                    height_bounds,
-                    gpu_bytes,
-                )
-            } else {
-                (
-                    PagePayload::TerrainRender(TerrainRenderPage {
-                        height: source_cell.height,
-                        surfaces,
-                        weight_pages,
-                    }),
-                    [source_cell.height; 2],
-                    0,
-                )
-            };
+            .context("environment compiler omitted terrain")?
+            .clone();
+        let terrain_height_bounds = heightfield.height_bounds();
+        let heightfield_gpu_bytes = estimate_heightfield_gpu_bytes(heightfield.resolution);
+        let terrain_payload = PagePayload::TerrainHeightfield(TerrainHeightfieldPage {
+            heightfield,
+            surfaces,
+            weight_pages,
+        });
         let terrain_page = encoded_page(
             terrain_key,
             terrain_payload,
@@ -762,7 +741,7 @@ pub fn build_runtime(mut project: ProjectDocument) -> Result<RuntimeBuild> {
             content_hash,
             default_world_space: project.default_world_space,
             world_spaces: project.world_spaces,
-            vegetation_catalog: project.vegetation_catalog,
+            vegetation_catalog: environment.catalog,
         },
         cells,
         pages,
@@ -836,62 +815,12 @@ fn validate_terrain_texture_set(texture_set: &TerrainTextureSet) -> Result<()> {
     Ok(())
 }
 
-fn validate_terrain_weight_borders(
-    pages_by_cell: &BTreeMap<(WorldSpaceId, CellCoord), Vec<&SourceTerrainCellWeightPageRecord>>,
-) -> Result<()> {
-    for (&(space, cell), pages) in pages_by_cell {
-        for &(dx, dz, current_edge, neighbour_edge) in &[
-            (1, 0, WeightEdge::Right, WeightEdge::Left),
-            (0, 1, WeightEdge::Top, WeightEdge::Bottom),
-        ] {
-            let neighbour_cell = CellCoord {
-                x: cell.x + dx,
-                z: cell.z + dz,
-            };
-            let Some(neighbour_pages) = pages_by_cell.get(&(space, neighbour_cell)) else {
-                continue;
-            };
-            if pages.len() != neighbour_pages.len() {
-                bail!("adjacent terrain cells have incompatible weight pages");
-            }
-            for (current, neighbour) in pages.iter().zip(neighbour_pages) {
-                if current.page != neighbour.page
-                    || current.resolution != neighbour.resolution
-                    || weight_edge(current, current_edge) != weight_edge(neighbour, neighbour_edge)
-                {
-                    bail!(
-                        "terrain weight-map borders do not match between {:?} and {:?}",
-                        cell,
-                        neighbour_cell
-                    );
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
 #[derive(Clone, Copy)]
 enum WeightEdge {
     Left,
     Right,
     Bottom,
     Top,
-}
-
-fn weight_edge(page: &SourceTerrainCellWeightPageRecord, edge: WeightEdge) -> Vec<u8> {
-    let resolution = usize::from(page.resolution);
-    let mut result = Vec::with_capacity(resolution * 4);
-    for index in 0..resolution {
-        let sample = match edge {
-            WeightEdge::Left => index * resolution,
-            WeightEdge::Right => index * resolution + resolution - 1,
-            WeightEdge::Bottom => index,
-            WeightEdge::Top => (resolution - 1) * resolution + index,
-        };
-        result.extend_from_slice(&page.rgba[sample * 4..sample * 4 + 4]);
-    }
-    result
 }
 
 fn validate_terrain_heightfield_borders(
@@ -941,67 +870,11 @@ fn height_edge(page: &SourceTerrainCellHeightfieldRecord, edge: WeightEdge) -> V
         .collect()
 }
 
-fn terrain_heightfield_normals(
-    page: &SourceTerrainCellHeightfieldRecord,
-    pages_by_cell: &BTreeMap<(WorldSpaceId, CellCoord), &SourceTerrainCellHeightfieldRecord>,
-    cell_size: f32,
-) -> Vec<[f32; 3]> {
-    let resolution = usize::from(page.resolution);
-    let spacing = cell_size / (resolution - 1) as f32;
-    let sample = |x: usize, z: usize| page.heights[z * resolution + x];
-    let neighbour = |dx: i32, dz: i32| {
-        pages_by_cell.get(&(
-            page.space,
-            CellCoord {
-                x: page.cell.x + dx,
-                z: page.cell.z + dz,
-            },
-        ))
-    };
-    let mut normals = Vec::with_capacity(resolution * resolution);
-    for z in 0..resolution {
-        for x in 0..resolution {
-            let (left, left_steps) = if x > 0 {
-                (sample(x - 1, z), 1.0)
-            } else if let Some(left) = neighbour(-1, 0) {
-                (left.heights[z * resolution + resolution - 2], 1.0)
-            } else {
-                (sample(x, z), 0.0)
-            };
-            let (right, right_steps) = if x + 1 < resolution {
-                (sample(x + 1, z), 1.0)
-            } else if let Some(right) = neighbour(1, 0) {
-                (right.heights[z * resolution + 1], 1.0)
-            } else {
-                (sample(x, z), 0.0)
-            };
-            let (down, down_steps) = if z > 0 {
-                (sample(x, z - 1), 1.0)
-            } else if let Some(down) = neighbour(0, -1) {
-                (down.heights[(resolution - 2) * resolution + x], 1.0)
-            } else {
-                (sample(x, z), 0.0)
-            };
-            let (up, up_steps) = if z + 1 < resolution {
-                (sample(x, z + 1), 1.0)
-            } else if let Some(up) = neighbour(0, 1) {
-                (up.heights[resolution + x], 1.0)
-            } else {
-                (sample(x, z), 0.0)
-            };
-            let height_dx = (right - left) / ((left_steps + right_steps) * spacing);
-            let height_dz = (up - down) / ((down_steps + up_steps) * spacing);
-            normals.push(
-                Vec3::new(-height_dx, 1.0, -height_dz)
-                    .normalize()
-                    .to_array(),
-            );
-        }
-    }
-    normals
-}
-
-fn hash_terrain_catalog(hasher: &mut blake3::Hasher, project: &ProjectDocument) {
+fn hash_terrain_catalog(
+    hasher: &mut blake3::Hasher,
+    project: &ProjectDocument,
+    environment: &CookedEnvironment,
+) {
     for surface in &project.terrain_surfaces {
         hasher.update(&surface.id.0);
         hasher.update(surface.key.as_bytes());
@@ -1048,14 +921,14 @@ fn hash_terrain_catalog(hasher: &mut blake3::Hasher, project: &ProjectDocument) 
         hasher.update(&profile.macro_contrast.to_bits().to_le_bytes());
         hasher.update(&profile.macro_albedo_strength.to_bits().to_le_bytes());
     }
-    for slot in &project.terrain_cell_surface_slots {
+    for slot in &environment.slots {
         hasher.update(&slot.space.0.to_le_bytes());
         hasher.update(&slot.cell.x.to_le_bytes());
         hasher.update(&slot.cell.z.to_le_bytes());
         hasher.update(&[slot.slot]);
         hasher.update(&slot.surface.0);
     }
-    for weights in &project.terrain_cell_weight_pages {
+    for weights in &environment.weights {
         hasher.update(&weights.space.0.to_le_bytes());
         hasher.update(&weights.cell.x.to_le_bytes());
         hasher.update(&weights.cell.z.to_le_bytes());
@@ -1149,40 +1022,15 @@ fn demo_project_document() -> ProjectDocument {
     let tree_asset = AssetId(*blake3::hash(DEMO_TREE_KEY.as_bytes()).as_bytes());
     let tree_definition = definition_id("demo-tree");
     let proximity_marker_definition = definition_id("demo-proximity-marker");
-    let mut cells = Vec::with_capacity(64 * 64 + 9 * 9);
+    let mut cells = Vec::new();
     let mut objects = Vec::new();
-    let mut vegetation_field_pages = Vec::new();
-    let mut terrain_cell_surface_slots = Vec::with_capacity((64 * 64 * 2) + 9 * 9);
-    let mut terrain_cell_weight_pages = Vec::with_capacity(64 * 64);
-    let mut terrain_cell_heightfields = Vec::with_capacity(64 * 64);
-    for x in -32_i32..32 {
-        for z in -32_i32..32 {
+    let mut terrain_cell_heightfields = Vec::new();
+    for x in DEMO_WORLD_CELL_RANGE {
+        for z in DEMO_WORLD_CELL_RANGE {
             cells.push(SourceCellRecord {
                 space: overworld.id,
                 cell: CellCoord { x, z },
                 height: 0.0,
-                source_revision: 1,
-            });
-            terrain_cell_surface_slots.extend([
-                SourceTerrainCellSurfaceSlotRecord {
-                    space: overworld.id,
-                    cell: CellCoord { x, z },
-                    slot: 0,
-                    surface: uncut_grass,
-                },
-                SourceTerrainCellSurfaceSlotRecord {
-                    space: overworld.id,
-                    cell: CellCoord { x, z },
-                    slot: 1,
-                    surface: dried_grass,
-                },
-            ]);
-            terrain_cell_weight_pages.push(SourceTerrainCellWeightPageRecord {
-                space: overworld.id,
-                cell: CellCoord { x, z },
-                page: 0,
-                resolution: DEMO_TERRAIN_WEIGHT_RESOLUTION,
-                rgba: demo_terrain_weights(CellCoord { x, z }),
                 source_revision: 1,
             });
             terrain_cell_heightfields.push(SourceTerrainCellHeightfieldRecord {
@@ -1192,14 +1040,6 @@ fn demo_project_document() -> ProjectDocument {
                 heights: demo_terrain_heights(CellCoord { x, z }),
                 source_revision: 1,
             });
-            if DEMO_MEADOW_CELL_RANGE.contains(&x) && DEMO_MEADOW_CELL_RANGE.contains(&z) {
-                vegetation_field_pages.push(SourceVegetationFieldPageRecord {
-                    space: overworld.id,
-                    cell: CellCoord { x, z },
-                    data: vegetation::fixtures::reference_page([0.0, 0.0]).data(),
-                    source_revision: 1,
-                });
-            }
             let lod_test_line = x == z && (-3..=-1).contains(&x);
             if lod_test_line || (x.rem_euclid(5) == 2 && z.rem_euclid(5) == 2) {
                 let hash = blake3::hash(format!("demo-tree:{x}:{z}").as_bytes());
@@ -1233,12 +1073,6 @@ fn demo_project_document() -> ProjectDocument {
                 height: 0.0,
                 source_revision: 1,
             });
-            terrain_cell_surface_slots.push(SourceTerrainCellSurfaceSlotRecord {
-                space: interior.id,
-                cell: CellCoord { x, z },
-                slot: 0,
-                surface: dried_grass,
-            });
         }
     }
     objects.push(SourceObjectRecord {
@@ -1252,6 +1086,8 @@ fn demo_project_document() -> ProjectDocument {
         source_revision: 1,
     });
 
+    let (presets, environments, environment_cells) =
+        demo_environment(overworld_id, interior_id, uncut_grass, dried_grass);
     ProjectDocument {
         default_world_space: overworld.id,
         world_spaces: vec![overworld, interior],
@@ -1335,10 +1171,11 @@ fn demo_project_document() -> ProjectDocument {
                 macro_albedo_strength: 0.395,
             },
         ],
-        terrain_cell_surface_slots,
-        terrain_cell_weight_pages,
+        presets,
+        environments,
+        environment_cells,
+        roads: Default::default(),
         terrain_cell_heightfields,
-        vegetation_field_pages,
         assets: vec![SourceAssetRecord {
             id: tree_asset,
             key: DEMO_TREE_KEY.into(),
@@ -1376,31 +1213,6 @@ fn demo_project_document() -> ProjectDocument {
         ],
         objects,
     }
-}
-
-fn demo_terrain_weights(cell: CellCoord) -> Vec<u8> {
-    let resolution = usize::from(DEMO_TERRAIN_WEIGHT_RESOLUTION);
-    let intervals = (resolution - 1) as f32;
-    let mut rgba = Vec::with_capacity(resolution * resolution * 4);
-    for z in 0..resolution {
-        for x in 0..resolution {
-            let world_x =
-                cell.x as f32 * DEFAULT_CELL_SIZE + x as f32 * DEFAULT_CELL_SIZE / intervals;
-            let world_z =
-                cell.z as f32 * DEFAULT_CELL_SIZE + z as f32 * DEFAULT_CELL_SIZE / intervals;
-            // This is the useful two-compatible-surface path from the legacy
-            // meadow compiler: warped coherent noise at broad, medium, small,
-            // and mottling scales, followed by a calibrated continuous mix.
-            // It produces irregular internal structure rather than one huge
-            // analytic gradient between two regions.
-            let signal = demo_terrain_mix_signal(Vec2::new(world_x, world_z));
-            let dried =
-                (demo_terrain_mix_offset() + signal * demo_terrain_mix_amplitude()).clamp(0.0, 1.0);
-            let dried_byte = (dried * 255.0).round() as u8;
-            rgba.extend_from_slice(&[255 - dried_byte, dried_byte, 0, 0]);
-        }
-    }
-    rgba
 }
 
 fn demo_terrain_heights(cell: CellCoord) -> Vec<f32> {
@@ -1648,12 +1460,12 @@ mod tests {
     #[test]
     fn demo_cook_is_large_logically_but_page_addressable() {
         let project = demo_project_document();
-        assert_eq!(project.vegetation_field_pages.len(), 60 * 60);
-        assert_eq!(project.terrain_cell_heightfields.len(), 64 * 64);
+        assert_eq!(project.environments.len(), 2);
+        assert_eq!(project.terrain_cell_heightfields.len(), 16 * 16);
         let build = build_runtime(project).unwrap();
         assert_eq!(build.manifest.world_spaces.len(), 2);
         assert_eq!(build.manifest.default_world_space, WorldSpaceId(1));
-        assert_eq!(build.cells.len(), 64 * 64 + 9 * 9);
+        assert_eq!(build.cells.len(), 16 * 16 + 9 * 9);
         assert!(build.pages.len() > build.cells.len());
         assert_eq!(build.assets.len(), 4);
         assert_eq!(
@@ -1715,15 +1527,17 @@ mod tests {
             .iter()
             .filter(|page| page.key.domain == PageDomain::Vegetation)
             .collect::<Vec<_>>();
-        assert_eq!(vegetation_pages.len(), 60 * 60);
-        assert_eq!(vegetation_pages[0].key.cell, CellCoord { x: -30, z: -30 });
+        assert!(!vegetation_pages.is_empty());
+        assert!(vegetation_pages.len() <= 16 * 16);
+        assert_eq!(vegetation_pages[0].key.cell, CellCoord { x: -8, z: -8 });
         let decoded = vegetation_pages[0].clone().decode().unwrap();
         let PagePayload::Vegetation(page) = decoded.payload else {
             panic!("vegetation page decoded to the wrong domain");
         };
         let catalog = build.manifest.vegetation_catalog.as_ref().unwrap();
         page.validate(catalog).unwrap();
-        assert_eq!(page.fields.len(), 4);
+        assert!(!page.fields.is_empty());
+        assert!(page.fields.len() <= 5);
         assert_eq!(
             build
                 .pages
@@ -1751,31 +1565,6 @@ mod tests {
                 "the demo URI {uri} and tree pack manifest must change together"
             );
         }
-    }
-
-    #[test]
-    fn demo_terrain_blend_contains_green_dry_and_transition_regions() {
-        let dried_weights = (-4..=4)
-            .flat_map(|cell_x| {
-                (-4..=4).flat_map(move |cell_z| {
-                    demo_terrain_weights(CellCoord {
-                        x: cell_x,
-                        z: cell_z,
-                    })
-                    .into_iter()
-                    .skip(1)
-                    .step_by(4)
-                })
-            })
-            .collect::<Vec<_>>();
-
-        assert!(dried_weights.iter().any(|weight| *weight <= 8));
-        assert!(dried_weights.iter().any(|weight| *weight >= 247));
-        assert!(
-            dried_weights
-                .iter()
-                .any(|weight| (32..=223).contains(weight))
-        );
     }
 
     #[test]

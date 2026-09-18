@@ -33,7 +33,7 @@ use crate::preview::{PreviewModesPlugin, authoring_preview_active};
 use crate::saving::{EditorSaveCoordinator, drive_editor_save};
 use crate::shell::{EditorUiSet, EditorWindowRegistry};
 use crate::tools::VEGETATION_TOOL;
-use crate::tools::{EditorToolRegistry, OBJECT_TOOL, TERRAIN_TOOL, object_tool_active};
+use crate::tools::{ENVIRONMENT_TOOL, EditorToolRegistry, OBJECT_TOOL, object_tool_active};
 use crate::vegetation_authoring::{
     VEGETATION_WINDOW, VegetationAuthoringPlugin, process_vegetation_save_completion,
 };
@@ -47,10 +47,13 @@ impl Plugin for WorldWorkspacePlugin {
             .register(OBJECT_TOOL, true);
         app.world_mut()
             .resource_mut::<EditorToolRegistry>()
-            .register(TERRAIN_TOOL, false);
+            .register(ENVIRONMENT_TOOL, false);
         app.world_mut()
             .resource_mut::<EditorToolRegistry>()
             .register(VEGETATION_TOOL, false);
+        app.world_mut()
+            .resource_mut::<EditorToolRegistry>()
+            .register(crate::tools::ROAD_TOOL, false);
         for window in [
             WORLD_WINDOW,
             INSPECTOR_WINDOW,
@@ -81,6 +84,8 @@ impl Plugin for WorldWorkspacePlugin {
                 OverviewPlugin,
                 PreviewModesPlugin,
                 VegetationAuthoringPlugin,
+                crate::environment_paint::EnvironmentPaintPlugin,
+                crate::road_authoring::RoadAuthoringPlugin,
                 crate::canopy::EditorCanopyPlugin,
             ))
             .configure_sets(
@@ -106,7 +111,9 @@ impl Plugin for WorldWorkspacePlugin {
             )
             .add_systems(
                 Update,
-                reconcile_dense_working_sets.run_if(world_workspace_active),
+                reconcile_dense_working_sets
+                    .after(crate::project_store::ProjectStoreUpdate)
+                    .run_if(world_workspace_active),
             )
             .add_systems(
                 Update,

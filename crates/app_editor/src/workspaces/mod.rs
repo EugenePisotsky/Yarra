@@ -6,6 +6,8 @@
 //! user visits another workspace.
 
 mod animation;
+pub(crate) mod presets;
+pub(crate) use presets::{PresetWorkspaceCamera, PresetWorkspacePlugin};
 mod vegetation;
 mod world;
 pub(crate) mod world_impl;
@@ -25,16 +27,23 @@ pub(crate) enum EditorWorkspace {
     World,
     Animation,
     Vegetation,
+    Presets,
 }
 
 impl EditorWorkspace {
-    pub(crate) const ALL: [Self; 3] = [Self::World, Self::Animation, Self::Vegetation];
+    pub(crate) const ALL: [Self; 4] = [
+        Self::World,
+        Self::Animation,
+        Self::Vegetation,
+        Self::Presets,
+    ];
 
     pub(crate) const fn label(self) -> &'static str {
         match self {
             Self::World => "World",
             Self::Animation => "Animation",
             Self::Vegetation => "Vegetation",
+            Self::Presets => "Presets",
         }
     }
 }
@@ -107,7 +116,7 @@ mod tests {
         assert_eq!(EditorWorkspace::default(), EditorWorkspace::World);
         assert_eq!(
             EditorWorkspace::ALL.map(EditorWorkspace::label),
-            ["World", "Animation", "Vegetation"]
+            ["World", "Animation", "Vegetation", "Presets"]
         );
     }
 

@@ -1,4 +1,8 @@
+mod environment_store;
+mod road_store;
 mod schema;
+pub use environment_store::*;
+pub use road_store::*;
 
 use std::{
     collections::HashSet,
@@ -8,13 +12,7 @@ use std::{
 };
 
 use rusqlite::{Connection, OpenFlags, OptionalExtension, Transaction, params};
-use serde::{Deserialize, Serialize};
-use vegetation::{
-    TopologyProfile, VegetationAssemblage, VegetationBounds, VegetationCatalog,
-    VegetationFieldPageData, VegetationGroupResponseProfile, VegetationHeightProfile,
-    VegetationMaterialProfile, VegetationPopulation, VegetationSpecies, VegetationSpeciesId,
-    VegetationWindProfile,
-};
+use vegetation::VegetationCatalog;
 use world::{
     AssetId, CellCoord, MAX_DECODED_PAGE_BYTES, ObjectActivationPolicy, ObjectDefinitionId,
     PROJECT_SCHEMA_VERSION, PageCodec, PageDomain, PageKey, PagePayload, RUNTIME_SCHEMA_VERSION,
@@ -25,8 +23,6 @@ use world::{
 pub const MAX_OBJECT_WRITES_PER_TRANSACTION: usize = 256;
 pub const MAX_DENSE_DOMAIN_WRITES_PER_TRANSACTION: usize = 64;
 const VEGETATION_CATALOG_FORMAT_VERSION: i64 = 7;
-const LEGACY_VEGETATION_CATALOG_FORMAT_VERSION: i64 = 6;
-const MIGRATABLE_PROJECT_SCHEMA_VERSIONS: [i64; 5] = [12, 13, 14, 15, 16];
 
 #[derive(Debug, Clone)]
 pub struct ProjectDocument {
@@ -38,10 +34,12 @@ pub struct ProjectDocument {
     pub terrain_texture_sets: Vec<TerrainTextureSet>,
     pub terrain_texture_layers: Vec<TerrainTextureLayer>,
     pub terrain_profiles: Vec<TerrainProfile>,
-    pub terrain_cell_surface_slots: Vec<SourceTerrainCellSurfaceSlotRecord>,
-    pub terrain_cell_weight_pages: Vec<SourceTerrainCellWeightPageRecord>,
+    pub presets: environment::PresetLibrary,
+    pub environments: Vec<environment::EnvironmentDefinition>,
+    pub environment_cells: Vec<SourceEnvironmentCellRecord>,
+    /// Whole-project import/export only. Interactive readers use bounded road snapshots.
+    pub roads: RoadDocument,
     pub terrain_cell_heightfields: Vec<SourceTerrainCellHeightfieldRecord>,
-    pub vegetation_field_pages: Vec<SourceVegetationFieldPageRecord>,
     pub assets: Vec<SourceAssetRecord>,
     pub asset_variants: Vec<SourceAssetVariantRecord>,
     pub definitions: Vec<SourceObjectDefinitionRecord>,
@@ -127,32 +125,6 @@ pub struct SourceCellRecord {
     pub source_revision: i64,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct SourceVegetationFieldPageRecord {
-    pub space: WorldSpaceId,
-    pub cell: CellCoord,
-    pub data: VegetationFieldPageData,
-    pub source_revision: i64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SourceTerrainCellSurfaceSlotRecord {
-    pub space: WorldSpaceId,
-    pub cell: CellCoord,
-    pub slot: u8,
-    pub surface: TerrainSurfaceId,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SourceTerrainCellWeightPageRecord {
-    pub space: WorldSpaceId,
-    pub cell: CellCoord,
-    pub page: u8,
-    pub resolution: u16,
-    pub rgba: Vec<u8>,
-    pub source_revision: i64,
-}
-
 /// Editable endpoint-inclusive terrain relief for one source cell.
 ///
 /// Authoring keeps f32 samples. Cooking performs the world-space quantization used by runtime
@@ -164,55 +136,6 @@ pub struct SourceTerrainCellHeightfieldRecord {
     pub resolution: u16,
     pub heights: Vec<f32>,
     pub source_revision: i64,
-}
-
-#[derive(Debug, Clone)]
-pub struct SourceTerrainCellWeightPageQuery {
-    pub records: Vec<SourceTerrainCellWeightPageRecord>,
-    pub truncated: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum DenseSourceRecordKey {
-    TerrainWeights {
-        space: WorldSpaceId,
-        cell: CellCoord,
-        page: u8,
-    },
-}
-
-#[derive(Debug, Clone)]
-pub enum DenseSourceWrite {
-    TerrainWeights {
-        expected_source_revision: Option<i64>,
-        record: SourceTerrainCellWeightPageRecord,
-    },
-}
-
-impl DenseSourceWrite {
-    pub fn key(&self) -> DenseSourceRecordKey {
-        match self {
-            Self::TerrainWeights { record, .. } => DenseSourceRecordKey::TerrainWeights {
-                space: record.space,
-                cell: record.cell,
-                page: record.page,
-            },
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DenseSourceRecord {
-    TerrainWeights(SourceTerrainCellWeightPageRecord),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DenseSourceWriteTransactionResult {
-    Committed(Vec<DenseSourceRecord>),
-    Conflict {
-        key: DenseSourceRecordKey,
-        actual: Option<DenseSourceRecord>,
-    },
 }
 
 #[derive(Debug, Clone)]
@@ -557,150 +480,6 @@ pub fn write_project_database(path: &Path, document: &ProjectDocument) -> Result
     Ok(())
 }
 
-/// Transactionally upgrades an existing mutable project database to the current schema.
-///
-/// Runtime databases are immutable publication artifacts and are never migrated in place.
-pub fn migrate_project_database(path: &Path) -> Result<bool, WorldDbError> {
-    let mut connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
-    connection.execute_batch("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 1000;")?;
-    let actual: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    if actual == PROJECT_SCHEMA_VERSION {
-        return Ok(false);
-    }
-    if actual == 16 && PROJECT_SCHEMA_VERSION == 17 {
-        // Catalog format 7 adds the physical height-distribution and short-grass pairing profile.
-        // Bincode structs cannot safely default appended fields, so decode the exact format-6
-        // contract and upgrade it explicitly. Formerly single ribbons remain single; formerly
-        // paired ribbons remain paired at every authored height until the artist opts into an
-        // adaptive threshold.
-        let upgraded_catalog =
-            read_legacy_vegetation_catalog_v6(&connection)?.map(upgrade_vegetation_catalog_v6);
-        let transaction = connection.transaction()?;
-        transaction.execute_batch(
-            "DROP TABLE vegetation_catalog;
-             CREATE TABLE vegetation_catalog (
-                 singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
-                 format_version INTEGER NOT NULL CHECK(format_version = 7),
-                 payload BLOB NOT NULL
-             ) STRICT;",
-        )?;
-        write_vegetation_catalog(&transaction, upgraded_catalog.as_ref())?;
-        transaction.pragma_update(None, "user_version", PROJECT_SCHEMA_VERSION)?;
-        transaction.commit()?;
-        return Ok(true);
-    }
-    if MIGRATABLE_PROJECT_SCHEMA_VERSIONS.contains(&actual) && PROJECT_SCHEMA_VERSION == 17 {
-        // Formats before 6 predate the current ribbon silhouette contract and cannot be upgraded
-        // without inventing authored values. Preserve every other domain and discard only that
-        // incompatible catalog, matching the previous targeted migration policy.
-        let transaction = connection.transaction()?;
-        transaction.execute_batch(
-            "DROP TABLE vegetation_catalog;
-             CREATE TABLE vegetation_catalog (
-                 singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
-                 format_version INTEGER NOT NULL CHECK(format_version = 7),
-                 payload BLOB NOT NULL
-             ) STRICT;",
-        )?;
-        transaction.pragma_update(None, "user_version", PROJECT_SCHEMA_VERSION)?;
-        transaction.commit()?;
-        return Ok(true);
-    }
-    Err(WorldDbError::SchemaVersion {
-        database: "project",
-        expected: PROJECT_SCHEMA_VERSION,
-        actual,
-    })
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct VegetationCatalogV6 {
-    species: Vec<VegetationSpeciesV6>,
-    populations: Vec<VegetationPopulation>,
-    assemblages: Vec<VegetationAssemblage>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct VegetationSpeciesV6 {
-    id: VegetationSpeciesId,
-    key: String,
-    topology: TopologyProfile,
-    material: VegetationMaterialProfile,
-    group_response: VegetationGroupResponseProfile,
-    wind: VegetationWindProfile,
-    bounds: VegetationBounds,
-    representations: Vec<vegetation::RepresentationLevel>,
-}
-
-fn read_legacy_vegetation_catalog_v6(
-    connection: &Connection,
-) -> Result<Option<VegetationCatalogV6>, WorldDbError> {
-    connection
-        .query_row(
-            "SELECT format_version, payload FROM vegetation_catalog WHERE singleton = 1",
-            [],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
-        )
-        .optional()?
-        .map(|(format_version, payload)| {
-            if format_version != LEGACY_VEGETATION_CATALOG_FORMAT_VERSION {
-                return Err(WorldDbError::VegetationCatalogFormatVersion {
-                    expected: LEGACY_VEGETATION_CATALOG_FORMAT_VERSION,
-                    actual: format_version,
-                });
-            }
-            let (catalog, consumed): (VegetationCatalogV6, usize) =
-                bincode::serde::decode_from_slice(
-                    &payload,
-                    bincode::config::standard()
-                        .with_little_endian()
-                        .with_fixed_int_encoding()
-                        .with_limit::<{ MAX_DECODED_PAGE_BYTES as usize }>(),
-                )?;
-            if consumed != payload.len() {
-                return Err(WorldDbError::VegetationCatalogTrailingBytes {
-                    consumed,
-                    total: payload.len(),
-                });
-            }
-            Ok(catalog)
-        })
-        .transpose()
-}
-
-fn upgrade_vegetation_catalog_v6(catalog: VegetationCatalogV6) -> VegetationCatalog {
-    VegetationCatalog {
-        species: catalog
-            .species
-            .into_iter()
-            .map(|species| {
-                let pair_below_height = match species.topology {
-                    TopologyProfile::Ribbon(profile) if profile.blades_per_render_unit == 2 => {
-                        species.bounds.maximum_height
-                    }
-                    _ => 0.0,
-                };
-                VegetationSpecies {
-                    id: species.id,
-                    key: species.key,
-                    topology: species.topology,
-                    material: species.material,
-                    group_response: species.group_response,
-                    wind: species.wind,
-                    bounds: species.bounds,
-                    height: VegetationHeightProfile {
-                        distribution_bias: 0.0,
-                        pair_below_height,
-                    },
-                    representations: species.representations,
-                }
-            })
-            .collect(),
-        populations: catalog.populations,
-        assemblages: catalog.assemblages,
-    }
-}
-
 fn write_vegetation_catalog(
     transaction: &Transaction<'_>,
     catalog: Option<&VegetationCatalog>,
@@ -764,32 +543,6 @@ fn read_vegetation_catalog(
         .transpose()
 }
 
-fn encode_vegetation_field_page(data: &VegetationFieldPageData) -> Result<Vec<u8>, WorldDbError> {
-    Ok(bincode::serde::encode_to_vec(
-        data,
-        bincode::config::standard()
-            .with_little_endian()
-            .with_fixed_int_encoding(),
-    )?)
-}
-
-fn decode_vegetation_field_page(payload: &[u8]) -> Result<VegetationFieldPageData, WorldDbError> {
-    let (data, consumed): (VegetationFieldPageData, usize) = bincode::serde::decode_from_slice(
-        payload,
-        bincode::config::standard()
-            .with_little_endian()
-            .with_fixed_int_encoding()
-            .with_limit::<{ MAX_DECODED_PAGE_BYTES as usize }>(),
-    )?;
-    if consumed != payload.len() {
-        return Err(WorldDbError::VegetationFieldPageTrailingBytes {
-            consumed,
-            total: payload.len(),
-        });
-    }
-    Ok(data)
-}
-
 fn write_project_document(
     transaction: &Transaction<'_>,
     document: &ProjectDocument,
@@ -836,36 +589,6 @@ fn write_project_document(
         &document.terrain_texture_layers,
         &document.terrain_profiles,
     )?;
-    for slot in &document.terrain_cell_surface_slots {
-        transaction.execute(
-            "INSERT INTO terrain_cell_surface_slots( \
-                world_space_id, cell_x, cell_z, slot, surface_id \
-             ) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![
-                slot.space.0,
-                slot.cell.x,
-                slot.cell.z,
-                i64::from(slot.slot),
-                slot.surface.0.as_slice(),
-            ],
-        )?;
-    }
-    for weights in &document.terrain_cell_weight_pages {
-        transaction.execute(
-            "INSERT INTO terrain_cell_weight_pages( \
-                world_space_id, cell_x, cell_z, page, resolution, rgba, source_revision \
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![
-                weights.space.0,
-                weights.cell.x,
-                weights.cell.z,
-                i64::from(weights.page),
-                i64::from(weights.resolution),
-                weights.rgba,
-                weights.source_revision,
-            ],
-        )?;
-    }
     for heightfield in &document.terrain_cell_heightfields {
         transaction.execute(
             "INSERT INTO terrain_cell_heightfields( \
@@ -881,25 +604,8 @@ fn write_project_document(
             ],
         )?;
     }
-    for page in &document.vegetation_field_pages {
-        let catalog = document
-            .vegetation_catalog
-            .as_ref()
-            .ok_or(WorldDbError::MissingVegetationCatalog)?;
-        page.data.validate(catalog)?;
-        transaction.execute(
-            "INSERT INTO vegetation_field_pages( \
-                world_space_id, cell_x, cell_z, format_version, payload, source_revision \
-             ) VALUES (?1, ?2, ?3, 1, ?4, ?5)",
-            params![
-                page.space.0,
-                page.cell.x,
-                page.cell.z,
-                encode_vegetation_field_page(&page.data)?,
-                page.source_revision,
-            ],
-        )?;
-    }
+    environment_store::write_environment_document(transaction, document)?;
+    road_store::write_document(transaction, &document.roads)?;
     for asset in &document.assets {
         transaction.execute(
             "INSERT INTO source_assets(asset_id, asset_key, kind, source_uri) \
@@ -1054,6 +760,7 @@ fn write_terrain_catalog(
 
 pub fn read_project_database(path: &Path) -> Result<ProjectDocument, WorldDbError> {
     let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    connection.execute_batch("BEGIN DEFERRED;")?;
     ensure_schema_version(&connection, PROJECT_SCHEMA_VERSION, "project")?;
 
     let world_spaces = query_world_spaces(&connection)?;
@@ -1086,44 +793,6 @@ pub fn read_project_database(path: &Path) -> Result<ProjectDocument, WorldDbErro
     let terrain_texture_layers = query_all_terrain_texture_layers(&connection)?;
     let terrain_profiles = query_all_terrain_profiles(&connection)?;
     let mut statement = connection.prepare(
-        "SELECT world_space_id, cell_x, cell_z, slot, surface_id \
-         FROM terrain_cell_surface_slots \
-         ORDER BY world_space_id, cell_x, cell_z, slot",
-    )?;
-    let terrain_cell_surface_slots = statement
-        .query_map([], |row| {
-            Ok(SourceTerrainCellSurfaceSlotRecord {
-                space: WorldSpaceId(row.get(0)?),
-                cell: CellCoord {
-                    x: row.get(1)?,
-                    z: row.get(2)?,
-                },
-                slot: row.get::<_, i64>(3)? as u8,
-                surface: TerrainSurfaceId(blob_array(row.get_ref(4)?.as_blob()?, "surface_id")?),
-            })
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-    let mut statement = connection.prepare(
-        "SELECT world_space_id, cell_x, cell_z, page, resolution, rgba, source_revision \
-         FROM terrain_cell_weight_pages \
-         ORDER BY world_space_id, cell_x, cell_z, page",
-    )?;
-    let terrain_cell_weight_pages = statement
-        .query_map([], |row| {
-            Ok(SourceTerrainCellWeightPageRecord {
-                space: WorldSpaceId(row.get(0)?),
-                cell: CellCoord {
-                    x: row.get(1)?,
-                    z: row.get(2)?,
-                },
-                page: row.get::<_, i64>(3)? as u8,
-                resolution: row.get::<_, i64>(4)? as u16,
-                rgba: row.get(5)?,
-                source_revision: row.get(6)?,
-            })
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-    let mut statement = connection.prepare(
         "SELECT world_space_id, cell_x, cell_z, resolution, heights, source_revision \
          FROM terrain_cell_heightfields \
          ORDER BY world_space_id, cell_x, cell_z",
@@ -1142,43 +811,9 @@ pub fn read_project_database(path: &Path) -> Result<ProjectDocument, WorldDbErro
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
-    let mut statement = connection.prepare(
-        "SELECT world_space_id, cell_x, cell_z, payload, source_revision \
-         FROM vegetation_field_pages WHERE format_version = 1 \
-         ORDER BY world_space_id, cell_x, cell_z",
-    )?;
-    let vegetation_field_pages = statement
-        .query_map([], |row| {
-            let payload = row.get::<_, Vec<u8>>(3)?;
-            Ok((
-                WorldSpaceId(row.get(0)?),
-                CellCoord {
-                    x: row.get(1)?,
-                    z: row.get(2)?,
-                },
-                payload,
-                row.get(4)?,
-            ))
-        })?
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
-        .map(|(space, cell, payload, source_revision)| {
-            Ok(SourceVegetationFieldPageRecord {
-                space,
-                cell,
-                data: decode_vegetation_field_page(&payload)?,
-                source_revision,
-            })
-        })
-        .collect::<Result<Vec<_>, WorldDbError>>()?;
-    if !vegetation_field_pages.is_empty() {
-        let catalog = vegetation_catalog
-            .as_ref()
-            .ok_or(WorldDbError::MissingVegetationCatalog)?;
-        for page in &vegetation_field_pages {
-            page.data.validate(catalog)?;
-        }
-    }
+    let (presets, environments, environment_cells) =
+        environment_store::read_environment_document(&connection)?;
+    let roads = road_store::read_document(&connection)?;
 
     let mut statement = connection.prepare(
         "SELECT asset_id, asset_key, kind, source_uri FROM source_assets ORDER BY asset_id",
@@ -1276,10 +911,11 @@ pub fn read_project_database(path: &Path) -> Result<ProjectDocument, WorldDbErro
         terrain_texture_sets,
         terrain_texture_layers,
         terrain_profiles,
-        terrain_cell_surface_slots,
-        terrain_cell_weight_pages,
+        presets,
+        environments,
+        environment_cells,
+        roads,
         terrain_cell_heightfields,
-        vegetation_field_pages,
         assets,
         asset_variants,
         definitions,
@@ -1374,37 +1010,6 @@ impl ProjectReader {
         let truncated = records.len() > maximum_records;
         records.truncate(maximum_records);
         Ok(SourceCellQuery { records, truncated })
-    }
-
-    pub fn read_terrain_weight_pages_in_cells(
-        &self,
-        space: WorldSpaceId,
-        minimum: CellCoord,
-        maximum: CellCoord,
-        maximum_records: usize,
-    ) -> Result<SourceTerrainCellWeightPageQuery, WorldDbError> {
-        validate_spatial_query(minimum, maximum, maximum_records)?;
-        let sql_limit = query_sql_limit(maximum_records)?;
-        let mut statement = self.connection.prepare_cached(
-            "SELECT world_space_id, cell_x, cell_z, page, resolution, rgba, source_revision \
-             FROM terrain_cell_weight_pages \
-             WHERE world_space_id = ?1 \
-               AND cell_x BETWEEN ?2 AND ?3 \
-               AND cell_z BETWEEN ?4 AND ?5 \
-             ORDER BY cell_x, cell_z, page \
-             LIMIT ?6",
-        )?;
-        let mut records = statement
-            .query_map(
-                params![
-                    space.0, minimum.x, maximum.x, minimum.z, maximum.z, sql_limit
-                ],
-                source_terrain_weights_from_row,
-            )?
-            .collect::<Result<Vec<_>, _>>()?;
-        let truncated = records.len() > maximum_records;
-        records.truncate(maximum_records);
-        Ok(SourceTerrainCellWeightPageQuery { records, truncated })
     }
 
     pub fn read_objects_in_cells(
@@ -1729,14 +1334,17 @@ impl ProjectWriter {
 
     /// Replaces the generation-global vegetation catalog in one transaction.
     ///
-    /// This is intentionally separate from spatial field-page writes: profile authoring changes a
+    /// This is intentionally separate from spatial environment-mask writes: profile authoring changes a
     /// small global source domain, while painting and placement tools mutate bounded page domains.
     pub fn replace_vegetation_catalog(
         &mut self,
         catalog: &VegetationCatalog,
     ) -> Result<(), WorldDbError> {
         let payload = encode_vegetation_catalog(catalog)?;
-        let transaction = self.connection.transaction()?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        environment_store::validate_catalog_dependencies(&transaction, catalog)?;
         transaction.execute(
             "INSERT INTO vegetation_catalog(singleton, format_version, payload) \
              VALUES (1, ?1, ?2) \
@@ -1758,12 +1366,15 @@ impl ProjectWriter {
         replacement: &VegetationCatalog,
     ) -> Result<VegetationCatalogWriteResult, WorldDbError> {
         replacement.validate()?;
-        let transaction = self.connection.transaction()?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let actual = read_vegetation_catalog(&transaction)?;
         if actual.as_ref() != expected {
             return Ok(VegetationCatalogWriteResult::Conflict { actual });
         }
 
+        environment_store::validate_catalog_dependencies(&transaction, replacement)?;
         let payload = encode_vegetation_catalog(replacement)?;
         transaction.execute(
             "INSERT INTO vegetation_catalog(singleton, format_version, payload) \
@@ -1935,122 +1546,6 @@ impl ProjectWriter {
         transaction.commit()?;
         Ok(ObjectWriteTransactionResult::Committed(commits))
     }
-
-    pub fn apply_dense_source_transaction(
-        &mut self,
-        writes: &[DenseSourceWrite],
-    ) -> Result<DenseSourceWriteTransactionResult, WorldDbError> {
-        if writes.is_empty() || writes.len() > MAX_DENSE_DOMAIN_WRITES_PER_TRANSACTION {
-            return Err(WorldDbError::InvalidDenseSourceTransaction);
-        }
-        let mut keys = HashSet::with_capacity(writes.len());
-        if writes.iter().any(|write| !keys.insert(write.key())) {
-            return Err(WorldDbError::InvalidDenseSourceTransaction);
-        }
-        for write in writes {
-            validate_dense_source_write(write)?;
-        }
-
-        let transaction = self.connection.transaction()?;
-        let mut commits = Vec::with_capacity(writes.len());
-        for write in writes {
-            let key = write.key();
-            let (expected_source_revision, actual) = match write {
-                DenseSourceWrite::TerrainWeights {
-                    expected_source_revision,
-                    record,
-                } => (
-                    *expected_source_revision,
-                    read_terrain_weights(&transaction, record.space, record.cell, record.page)?
-                        .map(DenseSourceRecord::TerrainWeights),
-                ),
-            };
-            let actual_revision = actual.as_ref().map(dense_source_revision);
-            if expected_source_revision != actual_revision {
-                transaction.rollback()?;
-                return Ok(DenseSourceWriteTransactionResult::Conflict { key, actual });
-            }
-
-            let source_revision = actual_revision.unwrap_or(0).saturating_add(1);
-            let commit = match write {
-                DenseSourceWrite::TerrainWeights { record, .. } => {
-                    transaction.execute(
-                        "INSERT INTO terrain_cell_weight_pages( \
-                            world_space_id, cell_x, cell_z, page, resolution, rgba, \
-                            source_revision \
-                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
-                         ON CONFLICT(world_space_id, cell_x, cell_z, page) DO UPDATE SET \
-                            resolution = excluded.resolution, rgba = excluded.rgba, \
-                            source_revision = excluded.source_revision",
-                        params![
-                            record.space.0,
-                            record.cell.x,
-                            record.cell.z,
-                            i64::from(record.page),
-                            i64::from(record.resolution),
-                            record.rgba.as_slice(),
-                            source_revision,
-                        ],
-                    )?;
-                    let mut committed = record.clone();
-                    committed.source_revision = source_revision;
-                    DenseSourceRecord::TerrainWeights(committed)
-                }
-            };
-            commits.push(commit);
-        }
-        transaction.commit()?;
-        Ok(DenseSourceWriteTransactionResult::Committed(commits))
-    }
-}
-
-fn dense_source_revision(record: &DenseSourceRecord) -> i64 {
-    match record {
-        DenseSourceRecord::TerrainWeights(record) => record.source_revision,
-    }
-}
-
-fn read_terrain_weights(
-    transaction: &Transaction<'_>,
-    space: WorldSpaceId,
-    cell: CellCoord,
-    page: u8,
-) -> Result<Option<SourceTerrainCellWeightPageRecord>, WorldDbError> {
-    transaction
-        .query_row(
-            "SELECT world_space_id, cell_x, cell_z, page, resolution, rgba, source_revision \
-             FROM terrain_cell_weight_pages \
-             WHERE world_space_id = ?1 AND cell_x = ?2 AND cell_z = ?3 AND page = ?4",
-            params![space.0, cell.x, cell.z, i64::from(page)],
-            source_terrain_weights_from_row,
-        )
-        .optional()
-        .map_err(Into::into)
-}
-
-fn validate_dense_source_write(write: &DenseSourceWrite) -> Result<(), WorldDbError> {
-    let expected_revision = match write {
-        DenseSourceWrite::TerrainWeights {
-            expected_source_revision,
-            record,
-        } => {
-            let expected_length = usize::from(record.resolution)
-                .saturating_mul(usize::from(record.resolution))
-                .saturating_mul(4);
-            if record.page > 1
-                || !(2..=257).contains(&record.resolution)
-                || record.rgba.len() != expected_length
-                || record.source_revision < 0
-            {
-                return Err(WorldDbError::InvalidDenseSourceRecord);
-            }
-            *expected_source_revision
-        }
-    };
-    if expected_revision.is_some_and(|revision| revision < 0) {
-        return Err(WorldDbError::InvalidDenseSourceRecord);
-    }
-    Ok(())
 }
 
 fn source_cell_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SourceCellRecord> {
@@ -2062,22 +1557,6 @@ fn source_cell_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SourceCellR
         },
         height: row.get(3)?,
         source_revision: row.get(4)?,
-    })
-}
-
-fn source_terrain_weights_from_row(
-    row: &rusqlite::Row<'_>,
-) -> rusqlite::Result<SourceTerrainCellWeightPageRecord> {
-    Ok(SourceTerrainCellWeightPageRecord {
-        space: WorldSpaceId(row.get(0)?),
-        cell: CellCoord {
-            x: row.get(1)?,
-            z: row.get(2)?,
-        },
-        page: row.get::<_, i64>(3)? as u8,
-        resolution: row.get::<_, i64>(4)? as u16,
-        rgba: row.get(5)?,
-        source_revision: row.get(6)?,
     })
 }
 
@@ -2835,6 +2314,10 @@ fn decode_f32_blob(bytes: &[u8], field: &'static str) -> rusqlite::Result<Vec<f3
 
 #[derive(Debug, thiserror::Error)]
 pub enum WorldDbError {
+    #[error("environment source: {0}")]
+    Environment(String),
+    #[error(transparent)]
+    EnvironmentCompile(#[from] environment_compile::CompileError),
     #[error("SQLite operation failed: {0}")]
     Sqlite(#[from] rusqlite::Error),
     #[error("filesystem operation failed: {0}")]
@@ -2843,8 +2326,6 @@ pub enum WorldDbError {
     Payload(#[from] world::PagePayloadDecodeError),
     #[error("vegetation catalog is invalid: {0}")]
     VegetationCatalog(#[from] vegetation::CatalogValidationError),
-    #[error("vegetation field page is invalid: {0}")]
-    VegetationFieldPage(#[from] vegetation::PageValidationError),
     #[error("vegetation data encoding failed: {0}")]
     VegetationEncode(#[from] bincode::error::EncodeError),
     #[error("vegetation data decoding failed: {0}")]
@@ -2853,10 +2334,6 @@ pub enum WorldDbError {
     VegetationCatalogTrailingBytes { consumed: usize, total: usize },
     #[error("vegetation catalog format version is {actual}, expected {expected}")]
     VegetationCatalogFormatVersion { expected: i64, actual: i64 },
-    #[error("vegetation field page contains trailing bytes: decoded {consumed} of {total}")]
-    VegetationFieldPageTrailingBytes { consumed: usize, total: usize },
-    #[error("vegetation field pages require a vegetation catalog")]
-    MissingVegetationCatalog,
     #[error("database already exists: {0}")]
     AlreadyExists(PathBuf),
     #[error("{database} schema version is {actual}, expected {expected}")]
@@ -2891,159 +2368,15 @@ pub enum WorldDbError {
     InvalidObjectTransform,
     #[error("object transaction must contain 1 to 256 unique object writes")]
     InvalidObjectTransaction,
-    #[error("dense source transaction must contain 1 to 64 unique terrain writes")]
+    #[error("dense source transaction must contain 1 to 64 unique environment cell writes")]
     InvalidDenseSourceTransaction,
-    #[error("dense source record has an invalid page, resolution, payload length, or revision")]
+    #[error("environment cell has invalid coverage or revision")]
     InvalidDenseSourceRecord,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn project_schema_migration_replaces_only_the_incompatible_catalog_table() {
-        for (schema_version, catalog_format) in [(12, 2), (13, 3), (14, 4), (15, 5)] {
-            verify_project_catalog_migration(schema_version, catalog_format);
-        }
-    }
-
-    #[test]
-    fn project_schema_16_migration_preserves_and_upgrades_the_catalog() {
-        let directory = unique_test_directory();
-        fs::create_dir_all(&directory).unwrap();
-        let project_path = directory.join("migration-v16.sqlite");
-        let current = vegetation::fixtures::reference_catalog();
-        let legacy = VegetationCatalogV6 {
-            species: current
-                .species
-                .iter()
-                .map(|species| VegetationSpeciesV6 {
-                    id: species.id,
-                    key: species.key.clone(),
-                    topology: species.topology,
-                    material: species.material,
-                    group_response: species.group_response,
-                    wind: species.wind,
-                    bounds: species.bounds,
-                    representations: species.representations.clone(),
-                })
-                .collect(),
-            populations: current.populations.clone(),
-            assemblages: current.assemblages.clone(),
-        };
-        let payload = bincode::serde::encode_to_vec(
-            &legacy,
-            bincode::config::standard()
-                .with_little_endian()
-                .with_fixed_int_encoding(),
-        )
-        .unwrap();
-        let connection = Connection::open(&project_path).unwrap();
-        connection
-            .execute_batch(
-                "CREATE TABLE vegetation_catalog (
-                     singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
-                     format_version INTEGER NOT NULL CHECK(format_version = 6),
-                     payload BLOB NOT NULL
-                 ) STRICT;
-                 CREATE TABLE preserved_authored_data(value TEXT NOT NULL) STRICT;
-                 INSERT INTO preserved_authored_data(value) VALUES ('kept');
-                 PRAGMA user_version = 16;",
-            )
-            .unwrap();
-        connection
-            .execute(
-                "INSERT INTO vegetation_catalog(singleton, format_version, payload) VALUES (1, 6, ?1)",
-                params![payload],
-            )
-            .unwrap();
-        drop(connection);
-
-        assert!(migrate_project_database(&project_path).unwrap());
-        let connection = Connection::open(&project_path).unwrap();
-        let format: i64 = connection
-            .query_row(
-                "SELECT format_version FROM vegetation_catalog WHERE singleton = 1",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        let upgraded = read_vegetation_catalog(&connection).unwrap().unwrap();
-        let preserved: String = connection
-            .query_row("SELECT value FROM preserved_authored_data", [], |row| {
-                row.get(0)
-            })
-            .unwrap();
-        assert_eq!(format, VEGETATION_CATALOG_FORMAT_VERSION);
-        assert_eq!(preserved, "kept");
-        assert_eq!(upgraded.populations, current.populations);
-        assert_eq!(upgraded.assemblages, current.assemblages);
-        for species in &upgraded.species {
-            let expected_threshold = match species.topology {
-                TopologyProfile::Ribbon(profile) if profile.blades_per_render_unit == 2 => {
-                    species.bounds.maximum_height
-                }
-                _ => 0.0,
-            };
-            assert_eq!(species.height.distribution_bias, 0.0);
-            assert_eq!(species.height.pair_below_height, expected_threshold);
-        }
-        drop(connection);
-        fs::remove_dir_all(directory).unwrap();
-    }
-
-    fn verify_project_catalog_migration(schema_version: i64, catalog_format: i64) {
-        let directory = unique_test_directory();
-        fs::create_dir_all(&directory).unwrap();
-        let project_path = directory.join("migration.sqlite");
-        let connection = Connection::open(&project_path).unwrap();
-        connection
-            .execute_batch(&format!(
-                "CREATE TABLE vegetation_catalog (
-                     singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
-                     format_version INTEGER NOT NULL CHECK(format_version = {catalog_format}),
-                     payload BLOB NOT NULL
-                 ) STRICT;
-                 CREATE TABLE preserved_authored_data(value TEXT NOT NULL) STRICT;
-                 INSERT INTO vegetation_catalog(singleton, format_version, payload)
-                     VALUES (1, {catalog_format}, X'0102');
-                 INSERT INTO preserved_authored_data(value) VALUES ('kept');
-                 PRAGMA user_version = {schema_version};"
-            ))
-            .unwrap();
-        drop(connection);
-
-        assert!(migrate_project_database(&project_path).unwrap());
-        assert!(!migrate_project_database(&project_path).unwrap());
-
-        let connection = Connection::open(&project_path).unwrap();
-        let schema_version: i64 = connection
-            .query_row("PRAGMA user_version", [], |row| row.get(0))
-            .unwrap();
-        let catalog_rows: i64 = connection
-            .query_row("SELECT COUNT(*) FROM vegetation_catalog", [], |row| {
-                row.get(0)
-            })
-            .unwrap();
-        let preserved: String = connection
-            .query_row("SELECT value FROM preserved_authored_data", [], |row| {
-                row.get(0)
-            })
-            .unwrap();
-        assert_eq!(schema_version, PROJECT_SCHEMA_VERSION);
-        assert_eq!(catalog_rows, 0);
-        assert_eq!(preserved, "kept");
-        connection
-            .execute(
-                "INSERT INTO vegetation_catalog(singleton, format_version, payload)
-                 VALUES (1, 7, X'')",
-                [],
-            )
-            .unwrap();
-        drop(connection);
-        fs::remove_dir_all(directory).unwrap();
-    }
 
     #[test]
     fn project_and_runtime_databases_are_distinct_and_readable() {
@@ -3073,10 +2406,11 @@ mod tests {
             terrain_texture_sets: Vec::new(),
             terrain_texture_layers: Vec::new(),
             terrain_profiles: Vec::new(),
-            terrain_cell_surface_slots: Vec::new(),
-            terrain_cell_weight_pages: Vec::new(),
+            presets: Default::default(),
+            environments: Vec::new(),
+            environment_cells: Vec::new(),
+            roads: Default::default(),
             terrain_cell_heightfields: Vec::new(),
-            vegetation_field_pages: Vec::new(),
             assets: Vec::new(),
             asset_variants: Vec::new(),
             definitions: Vec::new(),

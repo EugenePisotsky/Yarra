@@ -102,6 +102,7 @@ fn next_save_domain(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn drive_editor_save(
     mut coordinator: ResMut<EditorSaveCoordinator>,
     mut project: ResMut<ProjectEditorStore>,
@@ -109,14 +110,23 @@ pub(crate) fn drive_editor_save(
     mut dense: ResMut<DenseDomainWorkingSets>,
     mut vegetation: ResMut<VegetationAuthoringState>,
     mut publication: ResMut<RuntimePublicationState>,
+    presets: Res<crate::workspaces::presets::PresetAuthoringState>,
+    paint: Res<crate::environment_paint::EnvironmentPaintState>,
 ) {
     if !coordinator.active() {
         return;
     }
-    if project.save_in_flight() || objects.saving() || dense.saving() || vegetation.saving() {
+    if dense.gesture_active
+        || project.save_in_flight()
+        || objects.saving()
+        || dense.saving()
+        || vegetation.saving()
+    {
         return;
     }
-    if project.write_error().is_some()
+    if presets.dirty()
+        || paint.has_unapplied_changes()
+        || project.write_error().is_some()
         || objects.has_any_conflict()
         || dense.has_any_conflict()
         || vegetation.has_conflict()
@@ -135,7 +145,9 @@ pub(crate) fn drive_editor_save(
             objects.queue_save(&mut project);
         }
         Some(SaveDomain::Dense) => {
-            dense.queue_save(&mut project);
+            if !dense.queue_save(&mut project) {
+                coordinator.finish();
+            }
         }
         Some(SaveDomain::Vegetation) => {
             vegetation.queue_save(&mut project);

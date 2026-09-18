@@ -27,8 +27,8 @@ use crate::{
     tools::EditorToolsPlugin,
     workspaces::{
         AnimationWorkspaceCamera, AnimationWorkspacePlugin, EditorFramePacing, EditorWorkspace,
-        EditorWorkspacesPlugin, VegetationWorkspaceCamera, VegetationWorkspacePlugin,
-        WorldWorkspacePlugin,
+        EditorWorkspacesPlugin, PresetWorkspaceCamera, PresetWorkspacePlugin,
+        VegetationWorkspaceCamera, VegetationWorkspacePlugin, WorldWorkspacePlugin,
     },
 };
 
@@ -36,10 +36,11 @@ pub(crate) const AUTHORING_FRAME_RATE: f64 = 30.0;
 const INTERACTIVE_PREVIEW_FRAME_RATE: f64 = 60.0;
 const UNFOCUSED_FRAME_RATE: f64 = 5.0;
 
-pub(crate) fn run() {
+pub(crate) fn run() -> std::result::Result<(), String> {
     let asset_root = resolve_asset_root();
     let runtime_database = runtime_database_path(&asset_root);
     let project_database = project_database_path();
+    crate::startup::validate_databases(&project_database, &runtime_database)?;
     App::new()
         .insert_resource(ClearColor(Color::srgb(0.055, 0.065, 0.075)))
         .insert_resource(editor_winit_settings())
@@ -85,6 +86,7 @@ pub(crate) fn run() {
             EditorJournalPlugin::new(project_database.clone()),
             RuntimePublicationPlugin::new(project_database, runtime_database),
         ))
+        .add_plugins(PresetWorkspacePlugin)
         .configure_sets(
             EguiPrimaryContextPass,
             (
@@ -108,6 +110,7 @@ pub(crate) fn run() {
             capture_editor_input.in_set(EditorUiSet::Capture),
         )
         .run();
+    Ok(())
 }
 
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -209,11 +212,13 @@ pub(crate) fn editor_ui_camera() -> Camera {
     }
 }
 
+#[allow(clippy::type_complexity)]
 pub(crate) fn sync_workspace_cameras(
     workspace: Res<State<EditorWorkspace>>,
     mut world_cameras: Query<
         &mut Camera,
         (
+            Without<PresetWorkspaceCamera>,
             With<WorldViewCamera>,
             Without<AnimationWorkspaceCamera>,
             Without<VegetationWorkspaceCamera>,
@@ -222,6 +227,7 @@ pub(crate) fn sync_workspace_cameras(
     mut animation_cameras: Query<
         &mut Camera,
         (
+            Without<PresetWorkspaceCamera>,
             With<AnimationWorkspaceCamera>,
             Without<WorldViewCamera>,
             Without<VegetationWorkspaceCamera>,
@@ -230,12 +236,25 @@ pub(crate) fn sync_workspace_cameras(
     mut vegetation_cameras: Query<
         &mut Camera,
         (
+            Without<PresetWorkspaceCamera>,
             With<VegetationWorkspaceCamera>,
             Without<WorldViewCamera>,
             Without<AnimationWorkspaceCamera>,
         ),
     >,
+    mut preset_cameras: Query<
+        &mut Camera,
+        (
+            With<PresetWorkspaceCamera>,
+            Without<WorldViewCamera>,
+            Without<AnimationWorkspaceCamera>,
+            Without<VegetationWorkspaceCamera>,
+        ),
+    >,
 ) {
+    for mut camera in &mut preset_cameras {
+        camera.is_active = *workspace.get() == EditorWorkspace::Presets;
+    }
     let world_active = *workspace.get() == EditorWorkspace::World;
     for mut camera in &mut world_cameras {
         camera.is_active = world_active;
@@ -352,7 +371,7 @@ fn runtime_database_path(asset_root: &std::path::Path) -> PathBuf {
                 .unwrap_or_else(|| panic!("--world-db requires a database path"));
         }
     }
-    asset_root.join("generated/demo.runtime.sqlite")
+    asset_root.join(world::DEFAULT_RUNTIME_DATABASE)
 }
 
 fn project_database_path() -> PathBuf {
@@ -365,7 +384,9 @@ fn project_database_path() -> PathBuf {
                 .unwrap_or_else(|| panic!("--project-db requires a database path"));
         }
     }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../content/demo.project.sqlite")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(world::DEFAULT_PROJECT_DATABASE)
 }
 
 fn resolve_asset_root() -> PathBuf {

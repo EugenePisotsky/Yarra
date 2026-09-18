@@ -732,3 +732,10 @@ cost of retaining detail farther away, not a performance improvement. The user e
 prioritized extending the range and measuring the cost, so the increased range remains active
 for play testing. Future optimizations must not silently restore the old near-field collapse.
 These measurements preceded the September 13 checkpoint request.
+
+
+Default-world change (2026-09-18): density tools now use `content/world.project.sqlite`
+and `assets/generated/world.runtime.sqlite`. These point to the current 8 m authoring
+world; use the archived input snapshots for comparisons with earlier 32 m measurements.
+The historical `sync-demo-vegetation` command above has been removed; use explicit
+catalog import when intentionally replacing authored vegetation.

@@ -418,8 +418,8 @@ mod tests {
             uuid::Uuid::new_v4()
         ));
         fs::create_dir_all(&directory).unwrap();
-        let project =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../content/demo.project.sqlite");
+        let project = directory.join("project.sqlite");
+        world_cook::create_demo_project(&project).unwrap();
         let runtime = directory.join("world.runtime.sqlite");
         let (requests, request_receiver) = crossbeam_channel::unbounded();
         let (results, result_receiver) = crossbeam_channel::unbounded();

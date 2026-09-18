@@ -3,13 +3,20 @@
 This records the terrain implementation that exists today. It is deliberately
 not a complete editor or world-rendering roadmap.
 
+The unified painter direction, terrain treatment rules and curved-road source model
+are described in [Environment compositions and spatial authoring](ENVIRONMENT_AUTHORING_ARCHITECTURE.md).
+Environment storage, cooking, painting, curved-road editing and road relief are implemented.
+Automatic terrain rules remain planned work. Road relief derives a new surface from original
+heightfields for preview and cooking; source heights are never repeatedly offset.
+
 ## Ownership
 
 Terrain data has three different owners:
 
 - Project SQLite stores reusable surface definitions, texture-set metadata,
-  one terrain profile per world space, cell palettes, and painted weight maps.
-- The world cooker validates borders and emits small page-local palettes and
+  one terrain profile per world space, heightfields, and environment compositions,
+  layers and R8 coverage masks. Cell palettes and render weights are derived output.
+- The environment compiler validates shared source-mask borders and the cooker emits small page-local palettes and
   control maps into the runtime SQLite database.
 - `assets/local/terrain/` stores licensed source images and derived KTX2 GPU
   textures. They remain ignored until redistribution rights are known.
@@ -22,7 +29,7 @@ without rewriting painted cells.
 
 ## Cell painting
 
-The project schema permits eight local surface slots per cell and two RGBA
+The runtime format permits eight local surface slots per cell and two RGBA
 weight pages. The first renderer supports one or two surfaces; this keeps the
 initial shader and its cost easy to understand without constraining the future
 editor format.
@@ -33,12 +40,12 @@ cells therefore share their border samples exactly. The cooker rejects
 mismatched borders rather than allowing visible seams. A
 constant one-surface cell carries no weight texture at all.
 
-The demo blend is generated from world coordinates only, so it remains
-continuous across page boundaries. It contains broad pure-green and pure-dry
-regions separated by irregular soft borders; averaging both materials at every
-texel would destroy their individual character. An editor can later replace
-those bytes with painted values without changing the runtime page or shader
-contract.
+The demo source masks are sampled from continuous world-coordinate functions.
+Dry-meadow, green-meadow and clearing compositions derive both ground and grass
+from those masks. Ground weights are no longer independently editable source.
+Painting updates layer masks and previews their compiled ground and grass, without
+changing the runtime page or shader
+contract. Empty coverage produces the world's explicit base material.
 
 ## Rendering
 
@@ -85,6 +92,6 @@ single sample, matching the useful default from the legacy renderer while
 avoiding the much larger cost of stochastic sampling for every texture. The
 demo lighting and exposure use the procedural meadow reference values.
 
-There is no terrain geometry LOD, heightfield, cliff projection, or
-far-terrain renderer yet. These should be added only when a real scene
-demonstrates the need; they are not hidden in this foundation.
+Streamed heightfields with shared height/normal sampling are implemented; see
+[the terrain integration checkpoint](GROUND_COVER_ARCHITECTURE.md). Terrain geometry
+LOD, cliff projection and a far-terrain renderer remain separate future work.

@@ -6358,12 +6358,15 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "bevy_egui",
+ "blake3",
  "crossbeam-channel",
  "image",
  "ron",
  "serde",
  "uuid",
  "yarra-engine",
+ "yarra-environment",
+ "yarra-environment-compile",
  "yarra-terrain-render",
  "yarra-vegetation",
  "yarra-vegetation-render",
@@ -6385,6 +6388,7 @@ dependencies = [
  "yarra-terrain-render",
  "yarra-vegetation",
  "yarra-vegetation-render",
+ "yarra-world",
 ]
 
 [[package]]
@@ -6400,6 +6404,31 @@ dependencies = [
  "yarra-vegetation",
  "yarra-world",
  "yarra-world-db",
+]
+
+[[package]]
+name = "yarra-environment"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "serde",
+ "thiserror 2.0.20",
+ "yarra-vegetation",
+ "yarra-world",
+]
+
+[[package]]
+name = "yarra-environment-compile"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "blake3",
+ "serde",
+ "thiserror 2.0.20",
+ "yarra-environment",
+ "yarra-vegetation",
+ "yarra-vegetation-compile",
+ "yarra-world",
 ]
 
 [[package]]
@@ -6460,6 +6489,8 @@ dependencies = [
  "blake3",
  "glam",
  "ron",
+ "yarra-environment",
+ "yarra-environment-compile",
  "yarra-vegetation",
  "yarra-world",
  "yarra-world-db",
@@ -6475,6 +6506,8 @@ dependencies = [
  "rusqlite",
  "serde",
  "thiserror 2.0.20",
+ "yarra-environment",
+ "yarra-environment-compile",
  "yarra-vegetation",
  "yarra-world",
  "zstd",

@@ -12,8 +12,10 @@ use world_db::{
     SourceObjectViewRecord, SourceObjectWrite, SourceObjectWriteCommit,
 };
 
+use crate::domain_editing::DenseDomainWorkingSets;
 use crate::project_store::{ObjectSaveOutcome, ProjectEditorStore};
 use crate::saving::EditorSaveCoordinator;
+use world_db::SourceEnvironmentCellRecord;
 
 const MAX_HISTORY_ENTRIES: usize = 128;
 const MAX_HISTORY_BYTES: usize = 8 * 1024 * 1024;
@@ -719,15 +721,60 @@ struct ObjectTransformChange {
 
 #[derive(Debug, Clone, PartialEq)]
 enum EditorCommand {
-    Create { object: SourceObjectRecord },
-    Transform { changes: Vec<ObjectTransformChange> },
-    Delete { objects: Vec<SourceObjectRecord> },
+    Roads {
+        before: Vec<crate::road_authoring::working::RoadChange>,
+        after: Vec<crate::road_authoring::working::RoadChange>,
+    },
+    Presets {
+        before: Box<environment::PresetLibrary>,
+        after: Box<environment::PresetLibrary>,
+    },
+    Definition {
+        before_presets: Box<environment::PresetLibrary>,
+        after_presets: Box<environment::PresetLibrary>,
+        before: Box<environment::EnvironmentDefinition>,
+        after: Box<environment::EnvironmentDefinition>,
+    },
+    Environment {
+        before: Vec<SourceEnvironmentCellRecord>,
+        after: Vec<SourceEnvironmentCellRecord>,
+    },
+    Create {
+        object: SourceObjectRecord,
+    },
+    Transform {
+        changes: Vec<ObjectTransformChange>,
+    },
+    Delete {
+        objects: Vec<SourceObjectRecord>,
+    },
 }
 
 impl EditorCommand {
     fn estimated_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
             + match self {
+                Self::Roads { before, after } => (before.len() + after.len()) * 4096,
+                Self::Presets { before, after } => {
+                    crate::domain_editing::library_bytes(before)
+                        + crate::domain_editing::library_bytes(after)
+                }
+                Self::Definition {
+                    before,
+                    after,
+                    before_presets,
+                    after_presets,
+                } => {
+                    crate::domain_editing::library_bytes(before_presets)
+                        + crate::domain_editing::library_bytes(after_presets)
+                        + crate::domain_editing::definition_bytes(before)
+                        + crate::domain_editing::definition_bytes(after)
+                }
+                Self::Environment { before, after } => before
+                    .iter()
+                    .chain(after)
+                    .map(|r| std::mem::size_of::<SourceEnvironmentCellRecord>() + r.sample_bytes())
+                    .sum(),
                 Self::Create { .. } => std::mem::size_of::<SourceObjectRecord>(),
                 Self::Transform { changes } => {
                     changes.len() * std::mem::size_of::<ObjectTransformChange>()
@@ -738,8 +785,22 @@ impl EditorCommand {
             }
     }
 
-    fn apply(&self, objects: &mut EditorObjectWorkingSet) -> bool {
+    fn apply(
+        &self,
+        objects: &mut EditorObjectWorkingSet,
+        dense: &mut DenseDomainWorkingSets,
+    ) -> bool {
         match self {
+            Self::Roads { before, after } => dense.roads.replay(before, after).is_ok(),
+            Self::Presets { before, after } => merge_preset_changes(dense.presets(), before, after)
+                .is_ok_and(|p| dense.apply_presets(&p).is_ok()),
+            Self::Definition {
+                after,
+                before_presets,
+                after_presets,
+                ..
+            } => replay_environment(dense, after, before_presets, after_presets),
+            Self::Environment { after, .. } => dense.apply_environment_records(after).is_ok(),
             Self::Create { object } => objects.restore_object(object.clone()),
             Self::Transform { changes } => objects.set_transforms(
                 &changes
@@ -753,8 +814,22 @@ impl EditorCommand {
         }
     }
 
-    fn revert(&self, objects: &mut EditorObjectWorkingSet) -> bool {
+    fn revert(
+        &self,
+        objects: &mut EditorObjectWorkingSet,
+        dense: &mut DenseDomainWorkingSets,
+    ) -> bool {
         match self {
+            Self::Roads { before, after } => dense.roads.replay(after, before).is_ok(),
+            Self::Presets { before, after } => merge_preset_changes(dense.presets(), after, before)
+                .is_ok_and(|p| dense.apply_presets(&p).is_ok()),
+            Self::Definition {
+                before,
+                before_presets,
+                after_presets,
+                ..
+            } => replay_environment(dense, before, after_presets, before_presets),
+            Self::Environment { before, .. } => dense.apply_environment_records(before).is_ok(),
             Self::Create { object } => objects.delete_object(object.id).is_some(),
             Self::Transform { changes } => objects.set_transforms(
                 &changes
@@ -765,6 +840,53 @@ impl EditorCommand {
             Self::Delete { objects: deleted } => objects.restore_objects(deleted),
         }
     }
+}
+
+// History owns only the presets changed by this command. An unrelated shared edit
+// adopted since the command was recorded must survive undo/redo of a layer edit.
+fn replay_environment(
+    dense: &mut DenseDomainWorkingSets,
+    definition: &environment::EnvironmentDefinition,
+    from: &environment::PresetLibrary,
+    to: &environment::PresetLibrary,
+) -> bool {
+    merge_preset_changes(dense.presets(), from, to)
+        .is_ok_and(|p| dense.apply_environment(definition, &p).is_ok())
+}
+/// Merge only authored changes; revision-only save checkpoints do not conflict.
+pub(crate) fn merge_preset_changes(
+    current: Option<&environment::PresetLibrary>,
+    from: &environment::PresetLibrary,
+    to: &environment::PresetLibrary,
+) -> Result<environment::PresetLibrary, String> {
+    let mut library = current.ok_or("Presets are still loading")?.clone();
+    let same = |a: Option<&environment::Preset>, b: Option<&environment::Preset>| match (a, b) {
+        (None, None) => true,
+        (Some(a), Some(b)) => a.id == b.id && a.name == b.name && a.kind == b.kind,
+        _ => false,
+    };
+    let ids = from
+        .presets
+        .iter()
+        .chain(&to.presets)
+        .map(|p| p.id)
+        .collect::<std::collections::BTreeSet<_>>();
+    for id in ids {
+        if same(from.get(id), to.get(id)) {
+            continue;
+        }
+        if !same(library.get(id), from.get(id)) {
+            return Err(format!(
+                "Preset '{}' changed outside this draft. Reload the draft before applying.",
+                to.get(id).or_else(|| from.get(id)).unwrap().name
+            ));
+        }
+        library.presets.retain(|p| p.id != id);
+        if let Some(preset) = to.get(id) {
+            library.presets.push(preset.clone());
+        }
+    }
+    Ok(library)
 }
 
 #[derive(Debug, Clone)]
@@ -797,6 +919,107 @@ impl Default for EditorHistory {
 }
 
 impl EditorHistory {
+    pub(crate) fn road_keys(&self) -> std::collections::BTreeSet<world_db::RoadRecordKey> {
+        self.undo
+            .iter()
+            .chain(&self.redo)
+            .flat_map(|e| match &e.command {
+                EditorCommand::Roads { before, after } => before
+                    .iter()
+                    .chain(after)
+                    .flat_map(|c| {
+                        std::iter::once(c.key).chain(
+                            c.record
+                                .iter()
+                                .flat_map(world_db::RoadSourceRecord::references),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+                _ => vec![],
+            })
+            .collect()
+    }
+    pub(crate) fn record_roads(
+        &mut self,
+        before: Vec<crate::road_authoring::working::RoadChange>,
+        after: Vec<crate::road_authoring::working::RoadChange>,
+    ) {
+        if before != after {
+            self.record(EditorCommand::Roads { before, after });
+        }
+    }
+
+    pub(crate) fn edit_presets(
+        &mut self,
+        dense: &mut DenseDomainWorkingSets,
+        replacement: &environment::PresetLibrary,
+    ) -> Result<(), String> {
+        let before = dense.presets().ok_or("Presets are still loading")?.clone();
+        dense.apply_presets(replacement)?;
+        let after = dense.presets().unwrap().clone();
+        if before != after {
+            self.record(EditorCommand::Presets {
+                before: Box::new(before),
+                after: Box::new(after),
+            });
+        }
+        Ok(())
+    }
+
+    pub(crate) fn edit_definition(
+        &mut self,
+        dense: &mut DenseDomainWorkingSets,
+        replacement: &environment::EnvironmentDefinition,
+    ) -> Result<(), String> {
+        let presets = dense.presets().ok_or("Presets are still loading")?.clone();
+        self.edit_environment(dense, replacement, &presets)
+    }
+    pub(crate) fn edit_environment(
+        &mut self,
+        dense: &mut DenseDomainWorkingSets,
+        replacement: &environment::EnvironmentDefinition,
+        presets: &environment::PresetLibrary,
+    ) -> Result<(), String> {
+        let before = dense
+            .definition(replacement.space)
+            .ok_or("Environment is still loading")?
+            .clone();
+        let before_presets = dense.presets().ok_or("Presets are still loading")?.clone();
+        dense.apply_environment(replacement, presets)?;
+        let after = dense.definition(replacement.space).unwrap().clone();
+        let after_presets = dense.presets().unwrap().clone();
+        if before != after || before_presets != after_presets {
+            self.record(EditorCommand::Definition {
+                before: Box::new(before),
+                after: Box::new(after),
+                before_presets: Box::new(before_presets),
+                after_presets: Box::new(after_presets),
+            });
+        }
+        Ok(())
+    }
+    pub(crate) fn environment_cells(&self) -> HashSet<(world::WorldSpaceId, world::CellCoord)> {
+        self.undo
+            .iter()
+            .chain(&self.redo)
+            .flat_map(|entry| match &entry.command {
+                EditorCommand::Environment { before, .. } => {
+                    before.iter().map(|r| (r.space, r.cell)).collect::<Vec<_>>()
+                }
+                _ => Vec::new(),
+            })
+            .collect()
+    }
+    pub(crate) fn record_environment_stroke(
+        &mut self,
+        before: Vec<SourceEnvironmentCellRecord>,
+        after: Vec<SourceEnvironmentCellRecord>,
+    ) {
+        if before != after {
+            self.record(EditorCommand::Environment { before, after });
+        }
+    }
+
     fn record(&mut self, command: EditorCommand) {
         self.clear_redo();
         let bytes = command.estimated_bytes();
@@ -924,11 +1147,15 @@ impl EditorHistory {
         true
     }
 
-    pub(crate) fn undo(&mut self, objects: &mut EditorObjectWorkingSet) -> bool {
+    pub(crate) fn undo(
+        &mut self,
+        objects: &mut EditorObjectWorkingSet,
+        dense: &mut DenseDomainWorkingSets,
+    ) -> bool {
         let Some(entry) = self.undo.pop_back() else {
             return false;
         };
-        if !entry.command.revert(objects) {
+        if !entry.command.revert(objects, dense) {
             self.undo.push_back(entry);
             return false;
         }
@@ -936,11 +1163,15 @@ impl EditorHistory {
         true
     }
 
-    pub(crate) fn redo(&mut self, objects: &mut EditorObjectWorkingSet) -> bool {
+    pub(crate) fn redo(
+        &mut self,
+        objects: &mut EditorObjectWorkingSet,
+        dense: &mut DenseDomainWorkingSets,
+    ) -> bool {
         let Some(entry) = self.redo.pop_back() else {
             return false;
         };
-        if !entry.command.apply(objects) {
+        if !entry.command.apply(objects, dense) {
             self.redo.push_back(entry);
             return false;
         }

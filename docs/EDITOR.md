@@ -1,9 +1,213 @@
 # Scalable world editor foundation specification
 
+**Environment authoring direction (2026-09-18):**
+[Environment compositions and spatial authoring](ENVIRONMENT_AUTHORING_ARCHITECTURE.md)
+defines the proposed unified painting workflow and its implementation slices. It
+builds on the bounded source/cooked separation below. References in this document
+to the old Ground Cover painter are historical: that implementation was removed;
+the new Environment tool now paints composition-layer coverage. Choose Environment
+in the World window, select a layer in the Inspector, and drag to paint or erase.
+The source compiler drives live ground and grass preview; a drag is one undo command.
+The Inspector also creates, renames, reorders and disables layers, browses Nearby / All,
+and displays selected-layer coverage. Shared preset configuration lives in the Presets
+workspace. Apply settings makes one layer undo step; Save persists applied definitions
+and masks together. Save & Publish
+updates the game world. Species/population catalog editing remains available; curved
+path editing and explicit junctions are implemented; forest scattering is a subsequent slice. References below to directly editable terrain weights are
+historical and superseded by the environment architecture.
+
 This document is the contract for reintroducing the Yarra editor on top of the page-oriented world
 engine. It records both the first read-only viewport slice and the authoring architecture that later
 terrain, vegetation, object, navigation, and encounter tools must use. Reserved concepts are design
 constraints for future work, not a request to build every editor feature now.
+
+Typed presets are project assets shared across worlds (introduced in source schema 19;
+the current source schema is 22).
+Ground, foliage, exclusion and composition presets have code-defined controls.
+Composition children reference other presets and retain stable per-use IDs; nested
+uses resolve independently. Quick settings show inherited values and explicit
+Reset actions. **Edit shared preset…** opens the dedicated **Presets** workspace.
+Its library supports search, New, Duplicate and navigation into shared composition
+children. Duplicating a composition keeps its child preset references shared. Choosing
+a different preset on a map layer clears that layer's overrides and preserves paint.
+
+The preview uses the production compiler and terrain/grass renderers on a fixed-seed,
+flat 8 m or 16 m patch. Choose Full coverage, Soft patch or Patch with hole. The optional
+Reference foliage fills the ground below the selected preset to inspect exclusions.
+Drag to orbit; scroll to zoom. Wind starts paused. This fixture does not include map
+layer overrides, and does not estimate world performance. Blade shape/material assets
+remain in Vegetation; mesh foliage and asset-collection scattering are not implemented.
+
+**Apply preset changes** records one shared-library command, independently of **Apply
+settings** on a map layer. Apply validates all loaded world definitions. Save persists
+applied presets, references and masks atomically; Save & Publish updates the runtime.
+An unapplied preset draft stays in memory across workspace changes, blocks saving and
+is discarded explicitly in Presets. It is not journaled until Apply; schema-11 recovery
+journals recover applied changes. World camera and layer selection survive the trip.
+
+**Nearby** discovers layer IDs in the 5 × 5 cell editing window using an indexed,
+metadata-only query; unsaved mask replacements/erasures and new layers are combined
+with saved membership. Disabled layers are discoverable. Selected layers stay visible
+even outside the window or search filter. **All** searches the current world's bounded
+layer metadata. Loading, query errors and partial results are explicit. This is not yet
+metadata streaming for thousands of layers: the source still caps each world at 128
+layers and loads the bounded preset library and world definitions.
+
+## Default project
+
+Plain `cargo run -p yarra-app-editor` opens `content/world.project.sqlite` and
+`assets/generated/world.runtime.sqlite`: the current road/layer authoring world,
+promoted out of temporary test directories. The game, cooker, profiling tools and
+iOS packaging use the same runtime default. On a new checkout, run
+`cargo run -p yarra-world-cook -- init` once. `cargo run -p yarra-world-cook -- cook`
+republishes existing source; it never recreates a missing project silently.
+
+The editor validates source and runtime before starting the renderer. Missing or
+incompatible schemas, invalid environment catalogs and different world-space grids
+produce a terminal error with the selected paths, rather than an apparently empty
+vegetation preview. Explicit `--project-db` and `--world-db` overrides still work.
+
+## Roads
+
+Choose **World → Roads** in Authoring preview. The tool discovers a 5 × 5 cell
+neighborhood around the terrain cursor (camera focus before the first terrain hit),
+plus selected, unsaved and undo-pinned controls and their references. One-hop incident
+spans are loaded before editing a shared knot; a long route is not expanded in full.
+
+- **New cart road:** choose a shared road style, then click two ground points at least
+  2 m apart. The selected style is used exactly, even when other styles share its materials.
+  An existing road has its own style selector and **Edit this shared style…** button.
+- Click a curve to select a section, or click a cross to select a point. Drag the point
+  to move it; cyan tangent handles bend the curve; the orange width handle changes
+  corridor shoulders without changing cart wheel spacing. Connected tangents stay aligned.
+- **Split curve** inserts a midpoint without intentionally changing the shape.
+  **Extend from this endpoint** adds a section from the route's last endpoint.
+  **Remove section** removes only the selected span and orphaned endpoint knots.
+- Each drag/action is one undo step. Esc restores the start of a drag or cancels a new
+  route/extension. Undo/redo survives source saves. Rename, enabled state and travel
+  direction are quick route settings; direction is metadata, not connected NPC routing.
+- Source roads, presets, layer definitions and painted coverage save in one atomic
+  transaction. Schema-11 recovery includes unsaved road records and their dependencies.
+  Road conflicts retain edits; the explicit discard/reload action clears editor history.
+- Live previews use the same road compiler as cooking. Invalid tight bends or insufficient
+  grid resolution show a diagnostic and retain the previous valid terrain/grass preview.
+  The road affects existing grass; it does not create grass in an unpainted center.
+
+Road controls are bounded to 64 unsaved record changes and 1,024 retained records.
+The preview retains the existing 256-cell / 32 MiB limits. The Inspector’s
+History and recovery section can release undo history or retry a source query. Local geometry invalidates
+old/new influence regions; shared road metadata or preset edits can refresh the bounded
+resident preview. Whole-project publication is still an offline full cook.
+
+Use `create-road-demo NEW_PROJECT_DB`, followed by `cook PROJECT_DB RUNTIME_DB`, for
+an 8 m-cell fixture with a curved cart road and 0.65 m wheel tracks. The ordinary demo
+uses a coarser 32 m grid and is unchanged. These fixtures use the existing meadow ground
+materials; dedicated paving assets and advanced grading remain future increments.
+Project schema is 22; runtime schema remains 15.
+
+### Shared road styles
+
+**Road style library…** opens **Presets → Road styles**. This is also available from
+Presets directly. Create or duplicate a style; choose its Ground preset and foliage
+channel; adjust wheel spacing/width, grass retention in tracks, center/shoulder ground
+exposure and retention, edge softness/variation and patchy wear. A style is shared by
+all roads referencing it. Per-road shape, width and travel direction stay in World.
+
+Geometry controls show and enforce ranges derived from the other track dimensions,
+the narrowest dependent road and the preview/world output grids. Hover a dimension
+for its current range. Softness cannot exceed track width; edge variation also needs
+enough track core to survive sampling. With the initial 3.5 m corridor, 1.55 m wheel
+spacing, 0.65 m tracks and 0.08 m edge variation, softness tops out at 0.57 m.
+Only the value being edited changes. Existing invalid drafts retain their values for
+repair, with field-specific errors instead of a generic cart-track profile error.
+
+**Edit ground mixture…** opens the existing Ground preset editor for surface weights
+and influence. Its uses remain shared; duplicate the Ground preset first for a private
+mixture. Road drafts survive this navigation. Apply the Ground changes, return to Road
+styles, then apply the style. Save is disabled while either kind has an unapplied draft.
+Unapplied drafts are memory-only; applied changes participate in undo, atomic saving
+and schema-11 recovery.
+
+The production-rendered preview supports straight/curved roads, 8/16 m patches,
+preview-only corridor width, reference foliage, full/soft/hole coverage and wind.
+If a wider style outgrows the preview corridor, **Fit preview width** adjusts the test
+corridor explicitly; it does not change any map road.
+Roads only thin the selected channel's existing foliage; holes never acquire grass.
+The preview uses a 0.125 m output grid. Apply separately checks the target world's
+actual terrain/foliage grid and the style's known dependent worlds. Different-channel
+reference grass deliberately remains unaffected and is identified in the UI.
+
+Saved usage counts and minimum corridor widths include distant roads. Their aggregate
+queries run on the background reader; no distant control graph is loaded. If widening
+a shared style would exceed an existing corridor, widen and save the geometry first or
+duplicate the style. Conservative saved minima remain in force until that save reloads.
+Width/material/grid checks do not certify every distant bend or junction: World preview
+and full publication still validate actual curve geometry. The last valid preview is
+marked stale while compilation is pending or rejected. The library currently caps at
+64 shared styles; deletion/unused-style cleanup is not yet exposed.
+
+### Road relief
+
+In **Presets → Road styles → Road relief**, set **Whole-road depth** and
+**Additional track depth** independently. Both start at zero; 0.15 m road depth plus
+0.08 m track depth gives nominally 0.23 m deep ruts. **Terrain shoulder falloff** blends
+the bed back into surrounding terrain; **Rut roundness** changes the wheel-track
+cross-section. These controls are independent of the material's Edge softness.
+
+Expand **Depth variation** for separate road/track variation percentages and lengths
+in metres. The UI shows the resulting depth ranges. Both tracks share some variation
+but have individual unevenness. Variation is deterministic, survives saving/splitting,
+and does not follow cosmetic grass/wear patches. Set variation to zero for uniform
+depth or depth to zero to disable that shaping effect.
+
+Apply previews the edited terrain and grass in World; Save keeps the editable road
+profile; Save & Publish cooks the same surface for desktop gameplay. Original terrain
+heightfields are preserved. Moving/deleting a road or undoing relief restores the
+underlying terrain. Neighboring changed pages switch together after compilation.
+The current height grid is 0.25 m, coarser than the 0.125 m material/grass grid; narrow
+ruts or short variation lengths can be rejected with a resolution diagnostic. Depths
+that exceed the world's vertical bounds are rejected too. Manual objects are not moved
+automatically. Raised roads, crossfall, local depth overrides and junction grading are
+not part of this first relief implementation.
+
+### Road junctions
+
+The first junction policy connects two to four incident arms **using the same road
+style**. Points belong to separate roads and keep independent tangent handles.
+Connections are explicit; crossing two unconnected curves still produces a diagnostic.
+
+- Select a road point and choose **Branch from point**, then click the new branch end.
+  To branch from the middle of a curve, **Split curve** first and select the new point.
+- To join existing roads, select a point, choose **Connect to point…**, then click the
+  target point. The selected point moves to the target. Split either curve beforehand
+  if its connection needs an intermediate point. Connecting two intermediate points
+  creates a four-arm crossing; branching twice from a through-road creates one too.
+- A pink circle shows the junction's blend area. Dragging a member point moves every
+  connected point in one undoable gesture; Esc restores all of them. The junction's
+  road list selects which member's tangent handles to edit.
+- **Blend radius → Apply radius** commits one undo step. Radius must fit the widest
+  connected corridor. **Disconnect this road point** preserves the road's geometry;
+  move the point away afterwards to remove the unconnected overlap. Removing an orphaned
+  branch point also removes its junction membership; fewer than two member points
+  dissolves the junction automatically.
+
+The common center is a patch of worn ground, preserving the style's patchy wear and
+track grass retention. Approach tracks blend into that patch. Wheel ruts blend into
+one shallow basin: nominal whole-road depth plus half the additional rut depth, with
+smooth seeded variation. Relief is independent of wear and never adds excavations
+from overlapping arms. Original terrain and unpainted grass holes remain preserved.
+Disabling roads recomputes the active connection; fewer than two enabled member roads
+restores the remaining road's normal tracks.
+
+Junctions save and recover with roads, and the same evaluator drives preview and cook.
+Source schema **22** adds indexed junction records/membership/cells; recovery schema is
+**11**, runtime remains **15**. Queries expand one connection's incident spans with
+explicit budgets, never an entire route network.
+
+This first version rejects angles below 30 degrees, overlapping junction blend areas,
+more than four arms, and mixed-style connections. Existing junctions cannot be merged
+with one click; disconnect and reconnect their points. Navigation turn rules, overpasses,
+material transitions and custom intersection shapes remain separate work.
 
 ## Goals
 

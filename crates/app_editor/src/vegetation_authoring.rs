@@ -50,7 +50,12 @@ impl Plugin for VegetationAuthoringPlugin {
                 })
                 .expect("the empty vegetation authoring scene is valid"),
             )
-            .add_systems(Update, (adopt_project_catalog, sync_live_preview).chain().in_set(VegetationPreviewSync))
+            .add_systems(
+                Update,
+                (adopt_project_catalog, sync_live_preview)
+                    .chain()
+                    .in_set(VegetationPreviewSync),
+            )
             .add_systems(
                 EguiPrimaryContextPass,
                 vegetation_authoring_ui
@@ -284,15 +289,19 @@ fn adopt_project_catalog(
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PreviewSignature {
     authoring_revision: u64,
+    environment_revision: u64,
     enabled: bool,
     active_space: Option<world::WorldSpaceId>,
     origin_cell: world::CellCoord,
     pages: Vec<(Entity, i64, i32, i32, u8)>,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn sync_live_preview(
+    runtime: Res<engine::WorldCatalog>,
+    paint: Res<crate::environment_paint::EnvironmentPaintState>,
     workspace: Res<State<EditorWorkspace>>,
-    tools: Res<EditorToolRegistry>,
+    environment: Res<crate::environment_paint::EnvironmentPreview>,
     origin: Res<WorldOrigin>,
     terrain_pages: Query<(Entity, &StreamedTerrainSurface)>,
     field_pages: Query<(Entity, &StreamedVegetationFieldPage)>,
@@ -300,17 +309,18 @@ fn sync_live_preview(
     mut scene: ResMut<VegetationDebugScene>,
     mut previous: Local<Option<PreviewSignature>>,
 ) {
-    if *workspace.get() == EditorWorkspace::Vegetation {
+    if matches!(
+        *workspace.get(),
+        EditorWorkspace::Vegetation | EditorWorkspace::Presets
+    ) {
         *previous = None;
         return;
     }
-    let tool_active = *workspace.get() == EditorWorkspace::World
-        && tools
-            .active(EditorWorkspace::World)
-            .is_some_and(|tool| tool.id == VEGETATION_TOOL.id);
-    let enabled = tool_active && state.preview_enabled && state.working.is_some();
+    let tool_active = *workspace.get() == EditorWorkspace::World;
+    let enabled =
+        tool_active && state.preview_enabled && state.working.is_some() && !paint.coverage_visible;
     let active_space = origin.space();
-    let mut fields = active_space.map_or_else(Vec::new, |space| {
+    let fields = active_space.map_or_else(Vec::new, |space| {
         let mut fields = field_pages
             .iter()
             .filter(|(_, page)| page.key.space == space)
@@ -348,6 +358,7 @@ fn sync_live_preview(
     }
     let signature = PreviewSignature {
         authoring_revision: state.revision,
+        environment_revision: environment.revision,
         enabled,
         active_space,
         origin_cell: origin.cell(),
@@ -357,23 +368,34 @@ fn sync_live_preview(
         return;
     }
 
-    let Some(catalog) = state.working.clone() else {
+    // The accepted catalog and fields switch together after a definition edit. While a new
+    // catalog is compiling, keep rendering the previously accepted ground-and-grass products.
+    let Some(catalog) = environment
+        .catalog()
+        .or_else(|| runtime.vegetation())
+        .cloned()
+    else {
         return;
     };
     let pages = if enabled {
-        fields
-            .drain(..)
-            .filter_map(|(_, fields)| {
-                let terrain = terrain_pages
-                    .iter()
-                    .map(|(_, terrain)| terrain)
-                    .find(|terrain| {
-                        terrain.key.space == fields.key.space
-                            && terrain.key.cell == fields.key.cell
-                            && terrain.key.lod == fields.key.lod
+        terrain_pages
+            .iter()
+            .filter(|(_, terrain)| Some(terrain.key.space) == active_space)
+            .filter_map(|(_, terrain)| {
+                let data = environment
+                    .cell(terrain.key.space, terrain.key.cell)
+                    .map(|cell| &cell.vegetation)
+                    .or_else(|| {
+                        if environment.catalog().is_some() {
+                            return None;
+                        }
+                        fields
+                            .iter()
+                            .find(|(_, page)| page.key == terrain.key)
+                            .map(|(_, page)| &page.data)
                     })?;
-                let cell_origin = fields.key.cell.origin(fields.cell_size);
-                let render_origin = origin.cell().origin(fields.cell_size);
+                let cell_origin = terrain.key.cell.origin(terrain.cell_size);
+                let render_origin = origin.cell().origin(terrain.cell_size);
                 let resolution = terrain.heightfield.resolution;
                 let sample_count = usize::from(resolution).pow(2);
                 Some(VegetationFieldPage::from_data(
@@ -381,7 +403,7 @@ fn sync_live_preview(
                         (cell_origin[0] - render_origin[0]) as f32,
                         (cell_origin[1] - render_origin[1]) as f32,
                     ],
-                    fields.cell_size,
+                    terrain.cell_size,
                     VegetationSurfaceField {
                         resolution,
                         heights: (0..sample_count)
@@ -395,7 +417,7 @@ fn sync_live_preview(
                         normals_oct: terrain.heightfield.normals_oct.clone(),
                         validity: vec![u8::MAX; sample_count],
                     },
-                    fields.data.clone(),
+                    data.clone(),
                 ))
             })
             .collect()

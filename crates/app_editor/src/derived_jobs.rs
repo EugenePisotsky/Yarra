@@ -14,15 +14,15 @@ use bevy::prelude::*;
 use crossbeam_channel::{Receiver, Sender, TryRecvError, bounded};
 use world::{CellCoord, StableObjectId, WorldSpaceId};
 use world_db::{
-    DenseSourceRecord, ProjectReader, SourceCellRecord, SourceObjectRecord,
-    SourceTerrainCellWeightPageRecord,
+    DenseSourceRecord, ProjectReader, SourceCellRecord, SourceEnvironmentCellRecord,
+    SourceObjectRecord,
 };
 
 use crate::{
     domain_editing::DenseDomainWorkingSets,
     editing::EditorObjectWorkingSet,
     project_store::ProjectEditorStore,
-    tools::{DerivedProduct, EditorToolId, OBJECT_TOOL, TERRAIN_TOOL},
+    tools::{DerivedProduct, ENVIRONMENT_TOOL, EditorToolId, OBJECT_TOOL},
 };
 
 const MAX_PENDING_DERIVED_JOBS: usize = 512;
@@ -87,7 +87,7 @@ pub(crate) enum DerivedArtifact {
         object_count: usize,
         fingerprint: u64,
     },
-    TerrainPage {
+    EnvironmentCoverage {
         page_count: usize,
         texel_count: usize,
         average_weight: f32,
@@ -335,7 +335,7 @@ impl DerivedJobScheduler {
 #[derive(Debug)]
 enum DerivedJobInput {
     Objects(Vec<SourceObjectRecord>),
-    Terrain(Vec<SourceTerrainCellWeightPageRecord>),
+    Environment(Vec<SourceEnvironmentCellRecord>),
     Spatial {
         cells: Vec<SourceCellRecord>,
         objects: Vec<SourceObjectRecord>,
@@ -438,19 +438,19 @@ fn build_artifact(
                 fingerprint: fingerprint_objects(&objects),
             })
         }
-        (DerivedProduct::TerrainPage, DerivedJobInput::Terrain(pages)) => {
-            let texel_count = pages.iter().map(|page| page.rgba.len() / 4).sum::<usize>();
+        (DerivedProduct::EnvironmentCoverage, DerivedJobInput::Environment(pages)) => {
+            let texel_count = pages.iter().map(|page| page.sample_bytes()).sum::<usize>();
             let total = pages
                 .iter()
-                .flat_map(|page| page.rgba.iter())
+                .flat_map(|page| page.tiles.iter().flat_map(|tile| tile.samples.iter()))
                 .map(|value| u64::from(*value))
                 .sum::<u64>();
-            let channel_count = pages.iter().map(|page| page.rgba.len()).sum::<usize>();
-            Ok(DerivedArtifact::TerrainPage {
+            let channel_count = pages.iter().map(|page| page.sample_bytes()).sum::<usize>();
+            Ok(DerivedArtifact::EnvironmentCoverage {
                 page_count: pages.len(),
                 texel_count,
                 average_weight: normalized_average(total, channel_count),
-                fingerprint: fingerprint_terrain(&pages),
+                fingerprint: fingerprint_environment(&pages),
             })
         }
         (DerivedProduct::Collision, DerivedJobInput::Spatial { cells, objects }) => {
@@ -479,7 +479,7 @@ fn build_overview_artifact(
 ) -> Result<DerivedArtifact, String> {
     const MAX_CELLS: usize = 256;
     const MAX_OBJECT_ICONS: usize = 2_048;
-    const MAX_TERRAIN_PAGES: usize = MAX_CELLS * 2;
+    const MAX_ENVIRONMENT_CELLS: usize = MAX_CELLS;
 
     let cells = reader
         .read_cells(space, minimum, maximum, MAX_CELLS)
@@ -487,10 +487,10 @@ fn build_overview_artifact(
     let objects = reader
         .read_objects_in_cells(space, minimum, maximum, MAX_OBJECT_ICONS)
         .map_err(|error| error.to_string())?;
-    let terrain = reader
-        .read_terrain_weight_pages_in_cells(space, minimum, maximum, MAX_TERRAIN_PAGES)
+    let environment = reader
+        .read_environment_cells_in_cells(space, minimum, maximum, MAX_ENVIRONMENT_CELLS)
         .map_err(|error| error.to_string())?;
-    if cells.truncated || objects.truncated || terrain.truncated {
+    if cells.truncated || objects.truncated || environment.truncated {
         return Err("overview tile exceeded its bounded source artifact capacity".into());
     }
 
@@ -510,7 +510,7 @@ fn build_overview_artifact(
         .map(|object| (object.id, object.owner_cell))
         .collect::<Vec<_>>();
     let fingerprint = fingerprint_spatial(&cells.records, &objects.records)
-        ^ fingerprint_terrain(&terrain.records).rotate_left(13);
+        ^ fingerprint_environment(&environment.records).rotate_left(13);
     Ok(DerivedArtifact::Overview {
         coarse_heights,
         object_icons,
@@ -539,15 +539,21 @@ fn fingerprint_objects(objects: &[SourceObjectRecord]) -> u64 {
     })
 }
 
-fn fingerprint_terrain(pages: &[SourceTerrainCellWeightPageRecord]) -> u64 {
+fn fingerprint_environment(pages: &[SourceEnvironmentCellRecord]) -> u64 {
     pages.iter().fold(0xcbf29ce484222325, |hash, page| {
-        page.rgba.iter().fold(
-            hash ^ (page.space.0 as u64)
-                ^ (page.cell.x as u64).rotate_left(11)
-                ^ (page.cell.z as u64).rotate_left(23)
-                ^ u64::from(page.page),
-            |hash, byte| fnv_byte(hash, *byte),
-        )
+        let hash = hash
+            ^ (page.space.0 as u64)
+            ^ (page.cell.x as u64).rotate_left(11)
+            ^ (page.cell.z as u64).rotate_left(23)
+            ^ (page.source_revision as u64).rotate_left(29)
+            ^ page.definition_revision.rotate_left(37);
+        page.tiles.iter().fold(hash, |hash, tile| {
+            tile.layer
+                .0
+                .iter()
+                .chain(tile.samples.iter())
+                .fold(hash, |hash, byte| fnv_byte(hash, *byte))
+        })
     })
 }
 
@@ -635,8 +641,8 @@ fn invalidate_dense_products(
     let revision = dense.edit_revision().saturating_add(project.source_epoch());
     let mut terrain_requests = HashMap::<DerivedJobKey, u64>::new();
     for record in dense.runtime_divergent_records() {
-        let DenseSourceRecord::TerrainWeights(record) = record;
-        for product in TERRAIN_TOOL.invalidates {
+        let DenseSourceRecord::EnvironmentCoverage(record) = record;
+        for product in ENVIRONMENT_TOOL.invalidates {
             let scope = DerivedJobScope::Cell {
                 space: record.space,
                 cell: record.cell,
@@ -650,7 +656,7 @@ fn invalidate_dense_products(
             );
         }
     }
-    scheduler.replace_tool_requests(TERRAIN_TOOL.id, terrain_requests);
+    scheduler.replace_tool_requests(ENVIRONMENT_TOOL.id, terrain_requests);
 }
 
 fn dispatch_derived_jobs(
@@ -715,11 +721,11 @@ fn snapshot_job_input(
     let dense_records = dense.current_records();
     match key.product {
         DerivedProduct::CookedObjectPage => DerivedJobInput::Objects(object_records),
-        DerivedProduct::TerrainPage => DerivedJobInput::Terrain(
+        DerivedProduct::EnvironmentCoverage => DerivedJobInput::Environment(
             dense_records
                 .into_iter()
                 .filter_map(|record| match record {
-                    DenseSourceRecord::TerrainWeights(record)
+                    DenseSourceRecord::EnvironmentCoverage(record)
                         if scope_contains(key.scope, record.space, record.cell) =>
                     {
                         Some(record)
@@ -806,7 +812,6 @@ fn scope_contains(scope: DerivedJobScope, space: WorldSpaceId, cell: CellCoord) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
     fn key(cell: i32) -> DerivedJobKey {
         DerivedJobKey {
@@ -896,29 +901,29 @@ mod tests {
     }
 
     #[test]
-    fn terrain_executor_builds_a_typed_bounded_artifact() {
+    fn coverage_executor_builds_a_typed_bounded_artifact() {
         let artifact = build_artifact(
-            DerivedProduct::TerrainPage,
-            DerivedJobInput::Terrain(vec![SourceTerrainCellWeightPageRecord {
+            DerivedProduct::EnvironmentCoverage,
+            DerivedJobInput::Environment(vec![SourceEnvironmentCellRecord {
                 space: WorldSpaceId(1),
                 cell: CellCoord::ZERO,
-                page: 0,
-                resolution: 2,
-                rgba: vec![
-                    0, 64, 128, 255, 0, 64, 128, 255, 0, 64, 128, 255, 0, 64, 128, 255,
-                ],
+                definition_revision: 1,
+                tiles: vec![environment::CoverageTile {
+                    layer: environment::LayerId([1; 16]),
+                    samples: vec![0, 64, 128, 255],
+                }],
                 source_revision: 1,
             }]),
         )
         .unwrap();
-        let DerivedArtifact::TerrainPage {
+        let DerivedArtifact::EnvironmentCoverage {
             page_count,
             texel_count,
             average_weight,
             fingerprint,
         } = artifact
         else {
-            panic!("terrain work should publish a terrain artifact");
+            panic!("coverage work should publish a coverage artifact");
         };
         assert_eq!(page_count, 1);
         assert_eq!(texel_count, 4);
@@ -928,8 +933,11 @@ mod tests {
 
     #[test]
     fn overview_executor_queries_one_concrete_database_region() {
-        let database =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../content/demo.project.sqlite");
+        let directory =
+            std::env::temp_dir().join(format!("yarra-preset-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let database = directory.join("project.sqlite");
+        world_cook::create_demo_project(&database).unwrap();
         let reader = ProjectReader::open_read_only(&database).unwrap();
         let space = reader.manifest().default_world_space;
         let artifact = build_overview_artifact(
@@ -952,5 +960,7 @@ mod tests {
         assert_eq!(coarse_heights.len(), cell_status.len());
         assert!(!object_icons.is_empty());
         assert_ne!(fingerprint, 0);
+        drop(reader);
+        std::fs::remove_dir_all(directory).unwrap();
     }
 }

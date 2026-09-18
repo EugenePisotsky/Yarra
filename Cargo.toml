@@ -3,6 +3,8 @@ members = [
     "crates/app_editor",
     "crates/app_game",
     "crates/engine",
+    "crates/environment",
+    "crates/environment_compile",
     "crates/terrain_render",
     "crates/vegetation",
     "crates/vegetation_compile",
@@ -27,6 +29,8 @@ bincode = { version = "2", features = ["serde"] }
 bytemuck = { version = "1", features = ["derive"] }
 crossbeam-channel = "0.5"
 engine = { package = "yarra-engine", path = "crates/engine" }
+environment = { package = "yarra-environment", path = "crates/environment" }
+environment-compile = { package = "yarra-environment-compile", path = "crates/environment_compile" }
 glam = "0.32"
 terrain-render = { package = "yarra-terrain-render", path = "crates/terrain_render" }
 vegetation = { package = "yarra-vegetation", path = "crates/vegetation" }

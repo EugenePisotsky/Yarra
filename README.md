@@ -7,6 +7,8 @@ crates/
   app_editor/ Separate bounded world-editor viewport and shell
   app_game/   Executable and platform composition
   engine/     Bevy gameplay, rendering, and bounded page streaming
+  environment/ Environment compositions, layers and spatial source contracts
+  environment_compile/ Pure ground/vegetation compiler and offline acceptance fixture
   vegetation/ Renderer-neutral V2 species, population, and field contracts
   vegetation_compile/ Deterministic field compilation and CPU placement reference
   vegetation_render/ GPU placement diagnostics and indirect-draw integration
@@ -18,29 +20,56 @@ crates/
 The data flow is deliberately one-way:
 
 ```text
-content/demo.project.sqlite
+content/world.project.sqlite
   -> yarra-world-cook
-  -> assets/generated/demo.runtime.sqlite
+  -> assets/generated/world.runtime.sqlite
   -> dedicated read-only database worker
   -> async page decode
   -> bounded Bevy attachment and explicit removal
 ```
 
-The authored demo contains two independent world spaces: a 4,096-cell overworld
-and an 81-cell interior. Cells in both areas may use the same coordinates because
-the world-space ID is part of every persistent cell and page key. Only the cells
-demanded by the active area's camera/player working set become Bevy entities.
-The derived runtime database is ignored; the authoring database remains source
-content.
+The current authoring world contains an overworld and interior, painted meadow layers,
+stable tree placements and a curved cart road. Its 8 m cells resolve the physical wheel
+tracks. The editor opens `content/world.project.sqlite`; the game opens its published
+`assets/generated/world.runtime.sqlite`. These are the shared defaults for cooking,
+profiling and iOS packaging too. Both local databases are ignored by Git.
 
-Cook the runtime generation after cloning or changing authored content:
+On a fresh checkout, initialize the editable world and its runtime once:
 
 ```bash
-cargo run -p yarra-world-cook -- demo
+cargo run -p yarra-world-cook -- init
 ```
 
-The command creates the demo authoring database only if it does not exist. It
-then cooks and atomically publishes a new immutable runtime generation.
+Then open the editor normally:
+
+```bash
+cargo run -p yarra-app-editor
+```
+
+Save updates the source; **Save & Publish** also updates the game's runtime. To publish
+from the command line:
+
+```bash
+cargo run -p yarra-world-cook -- cook
+```
+
+`init` creates source only when absent; neither command resets existing edits. `cook`
+requires existing source and never silently creates a demo. Explicit paths work with
+`init PROJECT_DB RUNTIME_DB`, `cook PROJECT_DB RUNTIME_DB`, or the editor's
+`--project-db` / `--world-db` options. Project schema 22 stores typed presets, layers,
+coverage and roads. Incompatible source databases must be replaced explicitly; the
+editor now reports missing/incompatible or mismatched databases before opening its
+window. `create-demo` and `create-road-demo` remain explicit disposable test-fixture
+commands, separate from normal launches. See
+[environment authoring](docs/ENVIRONMENT_AUTHORING_ARCHITECTURE.md) for the design.
+In the editor, choose
+**World → Environment**, select a layer, and drag on terrain. Shift-drag erases;
+each drag supports Undo/Redo. The Inspector browses **Nearby / All** layers, creates
+and reorders them, and shows selected-layer coverage. Quick settings group each
+composition use; Reset restores its inherited default. **Edit shared preset…** opens
+the **Presets** workspace for reusable defaults, child references and duplication,
+with an isolated 8 m / 16 m ground-and-grass preview. **Apply preset changes** and
+**Apply settings** are separate undo steps; **Save & Publish** updates the game runtime.
 
 Run the game:
 
@@ -73,6 +102,39 @@ Run the editor foundation:
 ```bash
 cargo run -p yarra-app-editor
 ```
+
+The new authoring architecture is documented in
+[`docs/ENVIRONMENT_AUTHORING_ARCHITECTURE.md`](docs/ENVIRONMENT_AUTHORING_ARCHITECTURE.md):
+reusable environment compositions, painted layers, shared ground/vegetation derivation,
+and editable curved cart roads. The pure compiler and its two-cell fixture are
+implemented together with source persistence, the layer/preset Inspector and paint UI. Run the offline fixture with
+`cargo run --offline -p yarra-environment-compile --example layered_meadow > /tmp/meadow.svg`.
+The first curved-road source/compiler fixture is also available:
+`cargo run --offline -p yarra-environment-compile --example cart_track > /tmp/cart-track.svg`.
+It demonstrates cart wheel tracks, a retained grassy middle, patchy wear and gradual
+shoulders. **World → Roads** now authors curves with movable points, tangent and width
+handles, extension, splitting, undo/redo, recovery and live ground/grass previews.
+**Presets → Road styles** authors shared wheel/center/shoulder wear, grass retention,
+irregular edges, linked Ground material mixtures, and road/rut relief with seeded depth variation,
+with a straight/curved test preview.
+Explicit road junctions connect two–four arms using the same style, blend wear and relief,
+and move their connected points together. Save checkpoints roads and painter changes together; Save & Publish cooks them for the game.
+Use a fresh schema-22 project; older source databases are not migrated automatically. Journal schema is 11.
+
+For an isolated road experiment, create a disposable 8 m fixture; it has the same
+grid as the current authoring world. The 32 m grass fixture remains available through
+`create-demo` for explicit regression work:
+
+```bash
+cargo run -p yarra-world-cook -- create-road-demo tmp/my-roads.project.sqlite
+cargo run -p yarra-world-cook -- cook tmp/my-roads.project.sqlite tmp/my-roads.runtime.sqlite
+cargo run -p yarra-app-editor -- --project-db tmp/my-roads.project.sqlite --world-db tmp/my-roads.runtime.sqlite
+```
+
+Choose **Roads**, select a style, then click **New cart road** and place two points.
+Use **Road style library…** to create or edit shared styles.
+See [road authoring](docs/EDITOR.md#roads) for controls and current limits.
+Old testing-world formats need no backwards compatibility or import path.
 
 The editor opens in a typed World workspace and can switch through its shell to an isolated
 Animation workspace with its own 3D camera, catalog-backed model/clip browser, and transport

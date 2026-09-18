@@ -1,0 +1,168 @@
+{
+  "changed_shaders": [
+    "vegetation_debug_draw.wgsl"
+  ],
+  "experiment": "GP-023",
+  "inputs": {
+    "baseline": {
+      "asset_scope": "Binary, DB, shaders and canopy copied; other assets linked to workspace and must remain unchanged",
+      "binary_sha256": "6a754e6e0b4f784dc0cd67e763694d8755248c89d3a5ab7cccf7e18d0204e6e0",
+      "canopy_sha256": "e3db7d4a488767bc50d7a6fd4ef8d539e69b90007b489a7cb49c53e93db9377a",
+      "database_sha256": "fb7712f61cd0f9ce462604b0bfe2090aa2dc341e966b5e5f337e1f68670b20e2",
+      "original_sources": {
+        "binary": "/Users/eugenepisotsky/Dev/Sources/Hobby/YarraProject/tmp/grass-draw-density-20260916/density96-prepared/inputs/game",
+        "canopy": "/Users/eugenepisotsky/Dev/Sources/Hobby/YarraProject/tmp/grass-draw-density-20260916/density96-prepared/inputs/canopy.ron",
+        "database": "/Users/eugenepisotsky/Dev/Sources/Hobby/YarraProject/tmp/grass-draw-density-20260916/density96-prepared/inputs/runtime.sqlite"
+      },
+      "shader_sha256": {
+        "grass_canopy.wgsl": "9782f27f003100478db35b3fc3bb685f5b8d23448428c75f9a17ee7582f9f27b",
+        "terrain_material.wgsl": "cd52b88fe5f834bf5d55f3f04466840a215be4195dabaecffe08f02ccd60f898",
+        "terrain_prepare_control.wgsl": "2293cfd061f2ce00d0ffe48fe5496d6407a98369ad4321dfbf927a9e6716eb34",
+        "terrain_stochastic.wgsl": "67c24d0d22743f4be1963ea71a1cc4b022d533d653a12b4db51439aec9fd395c",
+        "terrain_stochastic_cache.wgsl": "02d74877933b25d5e6e50df04afc559d5850c4099102372d3272adb63f2c8817",
+        "vegetation_blade.wgsl": "d28d80d56de09935ee52b00031dcd8fc0efb8627b7861c2c867b82a270784592",
+        "vegetation_debug_compute.wgsl": "3b92dc046aa9afd06d347eb67427db72f7a1ec5395aa642e405298ac3d5aee52",
+        "vegetation_debug_draw.wgsl": "03f60aa20fa6c2353beecca31aa97c8fe42db3dac0ea5029822030fcc3582c05",
+        "vegetation_prepare_blades.wgsl": "06344e7d2d7517f9ffe51baaeb069bea79ab5777235463f74f7eb1d52726592f",
+        "vegetation_schedule_compute.wgsl": "cbe01476358c1da99124b6179669d338e78c0ea0c7fdf3f44bece43604ded964"
+      }
+    },
+    "candidate": {
+      "asset_scope": "Binary, DB, shaders and canopy copied; other assets linked to workspace and must remain unchanged",
+      "binary_sha256": "6a754e6e0b4f784dc0cd67e763694d8755248c89d3a5ab7cccf7e18d0204e6e0",
+      "canopy_sha256": "e3db7d4a488767bc50d7a6fd4ef8d539e69b90007b489a7cb49c53e93db9377a",
+      "database_sha256": "fb7712f61cd0f9ce462604b0bfe2090aa2dc341e966b5e5f337e1f68670b20e2",
+      "original_sources": {
+        "binary": "/Users/eugenepisotsky/Dev/Sources/Hobby/YarraProject/tmp/grass-draw-density-20260916/density96-prepared/inputs/game",
+        "canopy": "/Users/eugenepisotsky/Dev/Sources/Hobby/YarraProject/tmp/grass-draw-density-20260916/density96-prepared/inputs/canopy.ron",
+        "database": "/Users/eugenepisotsky/Dev/Sources/Hobby/YarraProject/tmp/grass-draw-density-20260916/density96-prepared/inputs/runtime.sqlite"
+      },
+      "shader_sha256": {
+        "grass_canopy.wgsl": "9782f27f003100478db35b3fc3bb685f5b8d23448428c75f9a17ee7582f9f27b",
+        "terrain_material.wgsl": "cd52b88fe5f834bf5d55f3f04466840a215be4195dabaecffe08f02ccd60f898",
+        "terrain_prepare_control.wgsl": "2293cfd061f2ce00d0ffe48fe5496d6407a98369ad4321dfbf927a9e6716eb34",
+        "terrain_stochastic.wgsl": "67c24d0d22743f4be1963ea71a1cc4b022d533d653a12b4db51439aec9fd395c",
+        "terrain_stochastic_cache.wgsl": "02d74877933b25d5e6e50df04afc559d5850c4099102372d3272adb63f2c8817",
+        "vegetation_blade.wgsl": "d28d80d56de09935ee52b00031dcd8fc0efb8627b7861c2c867b82a270784592",
+        "vegetation_debug_compute.wgsl": "3b92dc046aa9afd06d347eb67427db72f7a1ec5395aa642e405298ac3d5aee52",
+        "vegetation_debug_draw.wgsl": "224d182421536cb8666ccc71e0f30f576a4ac300be1019cab9480f29f536afb1",
+        "vegetation_prepare_blades.wgsl": "06344e7d2d7517f9ffe51baaeb069bea79ab5777235463f74f7eb1d52726592f",
+        "vegetation_schedule_compute.wgsl": "cbe01476358c1da99124b6179669d338e78c0ea0c7fdf3f44bece43604ded964"
+      }
+    }
+  },
+  "limitations": [
+    "Two profiles per captured frame, order A-B-B-A, all Medium. Not four independent game runs.",
+    "Summed encoder work is replay timing, not live frame latency or power.",
+    "Main encoder includes grass and terrain; this is not a grass-only percentage.",
+    "Candidate reverted: small net arithmetic saving shifts work into the expensive vertex stage; no speedup or energy/thermal benefit established.",
+    "Separate captures have nondeterministic compaction/preparation selection; frozen shader A/B is the image-equivalence evidence."
+  ],
+  "main_alu_instruction_change_percent": {
+    "Combined main VS+FS ALU Instructions": -1.516504539758523,
+    "FS ALU Instructions": -6.064252080158694,
+    "VS ALU Instructions": 5.721452368400115
+  },
+  "main_alu_instruction_means": {
+    "baseline": {
+      "FS ALU Instructions": 9582022784.0,
+      "VS ALU Instructions": 6020569216.0
+    },
+    "candidate": {
+      "FS ALU Instructions": 9000944768.0,
+      "VS ALU Instructions": 6365033216.0
+    }
+  },
+  "replays": [
+    {
+      "csv": "baseline/encoder-counters.csv",
+      "main_counters": {
+        "Bytes Read From Device Memory": "134515200",
+        "Bytes Written To Device Memory": "119502592",
+        "FS ALU Instructions": "9575500032",
+        "FS ALU Limiter": "85.82%",
+        "FS Invocations": "6317696",
+        "FS Occupancy": "29.07%",
+        "Tiled Vertex Buffer Bytes": "78970880",
+        "VS ALU Instructions": "6020547584",
+        "VS ALU Limiter": "68.45%",
+        "VS Invocations": "1115304",
+        "VS Occupancy": "15.11%",
+        "Vertices": "1480956"
+      },
+      "main_ms": 4.856961806718565,
+      "performance_state": "Medium",
+      "summed_encoder_ms": 6.71807790656885,
+      "variant": "baseline"
+    },
+    {
+      "csv": "candidate/encoder-counters.csv",
+      "main_counters": {
+        "Bytes Read From Device Memory": "132306112",
+        "Bytes Written To Device Memory": "117700928",
+        "FS ALU Instructions": "9005567488",
+        "FS ALU Limiter": "85.00%",
+        "FS Invocations": "6327296",
+        "FS Occupancy": "28.89%",
+        "Tiled Vertex Buffer Bytes": "77299712",
+        "VS ALU Instructions": "6365025536",
+        "VS ALU Limiter": "69.13%",
+        "VS Invocations": "1115304",
+        "VS Occupancy": "15.12%",
+        "Vertices": "1480956"
+      },
+      "main_ms": 5.1500406206623826,
+      "performance_state": "Medium",
+      "summed_encoder_ms": 6.986947335442851,
+      "variant": "candidate"
+    },
+    {
+      "csv": "candidate/encoder-counters-repeat.csv",
+      "main_counters": {
+        "Bytes Read From Device Memory": "133539072",
+        "Bytes Written To Device Memory": "117797504",
+        "FS ALU Instructions": "8996322048",
+        "FS ALU Limiter": "84.87%",
+        "FS Invocations": "6324320",
+        "FS Occupancy": "28.86%",
+        "Tiled Vertex Buffer Bytes": "77266944",
+        "VS ALU Instructions": "6365040896",
+        "VS ALU Limiter": "68.87%",
+        "VS Invocations": "1115304",
+        "VS Occupancy": "15.10%",
+        "Vertices": "1480956"
+      },
+      "main_ms": 5.397689147766775,
+      "performance_state": "Medium",
+      "summed_encoder_ms": 7.321831203326451,
+      "variant": "candidate"
+    },
+    {
+      "csv": "baseline/encoder-counters-repeat.csv",
+      "main_counters": {
+        "Bytes Read From Device Memory": "135055040",
+        "Bytes Written To Device Memory": "119476736",
+        "FS ALU Instructions": "9588545536",
+        "FS ALU Limiter": "86.02%",
+        "FS Invocations": "6324288",
+        "FS Occupancy": "28.99%",
+        "Tiled Vertex Buffer Bytes": "78905344",
+        "VS ALU Instructions": "6020590848",
+        "VS ALU Limiter": "68.45%",
+        "VS Invocations": "1115304",
+        "VS Occupancy": "15.10%",
+        "Vertices": "1480956"
+      },
+      "main_ms": 5.777552655200301,
+      "performance_state": "Medium",
+      "summed_encoder_ms": 7.616430124503515,
+      "variant": "baseline"
+    }
+  ],
+  "source_sha256": {
+    "baseline/encoder-counters-repeat.csv": "943f292aec0a11ffb126e75a4d3b9ff54848b0a4932bb84d686b58b6bc90a965",
+    "baseline/encoder-counters.csv": "30990cbc79a08e3b471265377b5427508caef1164225e964a06c3b8586a6866b",
+    "candidate/encoder-counters-repeat.csv": "2d4adfbd993aa649271f8eaa63cdb2248d14310879599cedfd00393c54882846",
+    "candidate/encoder-counters.csv": "31c3f24e1eb0f88135b9e8bca9aab215f6681435f4cd06e596abeaa93bce2a9e"
+  }
+}

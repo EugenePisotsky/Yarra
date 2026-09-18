@@ -11,10 +11,11 @@ use engine::{WorldCatalog, WorldViewpoint};
 use vegetation::VegetationCatalog;
 use world::{CellCoord, StableObjectId, WorldSpaceId};
 use world_db::{
-    DenseSourceRecord, DenseSourceRecordKey, DenseSourceWrite, DenseSourceWriteTransactionResult,
-    ObjectWriteTransactionResult, ProjectManifest, ProjectReader, ProjectWriter, SourceCellRecord,
+    DenseSourceRecord, DenseSourceRecordKey, DenseSourceWrite, EnvironmentDefinitionWrite,
+    EnvironmentSourceCommit, EnvironmentSourceWriteResult, ObjectWriteTransactionResult,
+    ProjectManifest, ProjectReader, ProjectWriter, SourceCellRecord, SourceEnvironmentCellRecord,
     SourceObjectRecord, SourceObjectViewRecord, SourceObjectWrite, SourceObjectWriteCommit,
-    SourceTerrainCellWeightPageRecord, VegetationCatalogWriteResult,
+    VegetationCatalogWriteResult,
 };
 
 use crate::preview::{EditorPreviewMode, PreviewModeState};
@@ -24,8 +25,10 @@ use crate::workspaces::EditorWorkspace;
 const SOURCE_RADIUS_CELLS: i32 = 2;
 const MAX_SOURCE_CELLS: usize = 25;
 const MAX_SOURCE_OBJECTS: usize = 2_048;
-const MAX_SOURCE_TERRAIN_WEIGHT_PAGES: usize = MAX_SOURCE_CELLS * 2;
 const PROJECT_REQUEST_CAPACITY: usize = 2;
+
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct ProjectStoreUpdate;
 
 pub(crate) struct ProjectEditorStorePlugin {
     database_path: PathBuf,
@@ -53,13 +56,14 @@ impl Plugin for ProjectEditorStorePlugin {
                     dispatch_project_save,
                     dispatch_project_query,
                 )
-                    .chain(),
+                    .chain()
+                    .in_set(ProjectStoreUpdate),
             );
     }
 }
 
 #[derive(Resource)]
-struct ProjectDatabasePath(PathBuf);
+pub(crate) struct ProjectDatabasePath(pub(crate) PathBuf);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ProjectQueryWindow {
@@ -103,7 +107,7 @@ struct InFlightQuery {
 struct ProjectSourceDomains {
     cells: bool,
     objects: bool,
-    terrain_weights: bool,
+    environment_coverage: bool,
 }
 
 impl ProjectSourceDomains {
@@ -115,12 +119,12 @@ impl ProjectSourceDomains {
         Self {
             cells: domains.contains(&EditorSourceDomain::CellDescriptors),
             objects: domains.contains(&EditorSourceDomain::ObjectPlacements),
-            terrain_weights: domains.contains(&EditorSourceDomain::TerrainWeights),
+            environment_coverage: domains.contains(&EditorSourceDomain::EnvironmentCoverage),
         }
     }
 
     fn any(self) -> bool {
-        self.cells || self.objects || self.terrain_weights
+        self.cells || self.objects || self.environment_coverage
     }
 }
 
@@ -132,6 +136,11 @@ struct PendingObjectSave {
 
 #[derive(Debug, Clone)]
 struct PendingDenseSave {
+    roads: Vec<world_db::RoadSourceWrite>,
+    road_dependencies: Vec<world_db::RoadDependency>,
+    library_revision: u64,
+    presets: Option<environment::PresetLibrary>,
+    definitions: Vec<EnvironmentDefinitionWrite>,
     request_id: u64,
     writes: Vec<DenseSourceWrite>,
 }
@@ -167,7 +176,17 @@ pub(crate) struct DenseSaveCompletion {
 
 #[derive(Debug, Clone)]
 pub(crate) enum DenseSaveOutcome {
-    Committed(Vec<DenseSourceRecord>),
+    RoadConflict {
+        actual: world_db::RoadRecordState,
+    },
+    Committed(EnvironmentSourceCommit),
+    LibraryConflict {
+        actual: environment::PresetLibrary,
+    },
+    DefinitionConflict {
+        space: WorldSpaceId,
+        actual: Option<environment::EnvironmentDefinition>,
+    },
     Conflict {
         key: DenseSourceRecordKey,
         actual: Option<DenseSourceRecord>,
@@ -193,9 +212,14 @@ pub(crate) struct ProjectEditorStore {
     phase: ProjectStorePhase,
     manifest: Option<ProjectManifest>,
     vegetation_catalog: Option<VegetationCatalog>,
+    environments: Vec<environment::EnvironmentDefinition>,
+    presets: Option<environment::PresetLibrary>,
+    terrain_resources: Vec<world_db::TerrainRenderResources>,
+    height_steps: std::collections::BTreeMap<WorldSpaceId, f32>,
     write_error: Option<String>,
     catalog_compatible: Option<bool>,
     desired_window: Option<ProjectQueryWindow>,
+    environment_focus: Option<(WorldSpaceId, CellCoord)>,
     desired_domains: ProjectSourceDomains,
     loaded_window: Option<ProjectQueryWindow>,
     loaded_domains: ProjectSourceDomains,
@@ -204,10 +228,11 @@ pub(crate) struct ProjectEditorStore {
     in_flight: Option<InFlightQuery>,
     cells: Vec<SourceCellRecord>,
     objects: Vec<SourceObjectViewRecord>,
-    terrain_weight_pages: Vec<SourceTerrainCellWeightPageRecord>,
+    environment_cells: Vec<SourceEnvironmentCellRecord>,
+    environment_snapshot: Option<world_db::EnvironmentReadSnapshot>,
     cells_truncated: bool,
     objects_truncated: bool,
-    terrain_weights_truncated: bool,
+    environment_coverage_truncated: bool,
     query_error: Option<String>,
     next_revision: u64,
     source_epoch: u64,
@@ -244,6 +269,32 @@ impl ProjectEditorStore {
         self.manifest.as_ref()
     }
 
+    pub(crate) fn environment_snapshot(&self) -> Option<&world_db::EnvironmentReadSnapshot> {
+        self.environment_snapshot.as_ref()
+    }
+    pub(crate) fn terrain_height_step(&self, space: WorldSpaceId) -> Option<f32> {
+        self.height_steps.get(&space).copied()
+    }
+    pub(crate) fn terrain_resources(
+        &self,
+        space: WorldSpaceId,
+    ) -> Option<&world_db::TerrainRenderResources> {
+        self.terrain_resources
+            .iter()
+            .find(|r| r.profile.space == space)
+    }
+    pub(crate) fn focus_environment(&mut self, space: WorldSpaceId, cell: CellCoord) {
+        self.environment_focus = Some((space, cell));
+    }
+
+    pub(crate) fn presets(&self) -> Option<&environment::PresetLibrary> {
+        self.presets.as_ref()
+    }
+
+    pub(crate) fn environments(&self) -> &[environment::EnvironmentDefinition] {
+        &self.environments
+    }
+
     pub(crate) fn vegetation_catalog(&self) -> Option<&VegetationCatalog> {
         self.vegetation_catalog.as_ref()
     }
@@ -272,8 +323,8 @@ impl ProjectEditorStore {
         &self.objects
     }
 
-    pub(crate) fn terrain_weight_pages(&self) -> &[SourceTerrainCellWeightPageRecord] {
-        &self.terrain_weight_pages
+    pub(crate) fn environment_cells(&self) -> &[SourceEnvironmentCellRecord] {
+        &self.environment_cells
     }
 
     pub(crate) fn cells_truncated(&self) -> bool {
@@ -284,8 +335,8 @@ impl ProjectEditorStore {
         self.objects_truncated
     }
 
-    pub(crate) fn terrain_weights_truncated(&self) -> bool {
-        self.terrain_weights_truncated
+    pub(crate) fn environment_coverage_truncated(&self) -> bool {
+        self.environment_coverage_truncated
     }
 
     pub(crate) fn completed_queries(&self) -> u64 {
@@ -310,7 +361,7 @@ impl ProjectEditorStore {
                     .map(|object| object.object.source_revision),
             )
             .chain(
-                self.terrain_weight_pages
+                self.environment_cells
                     .iter()
                     .map(|record| record.source_revision),
             )
@@ -343,13 +394,32 @@ impl ProjectEditorStore {
         self.save_completion.take()
     }
 
-    pub(crate) fn queue_dense_transaction(&mut self, writes: Vec<DenseSourceWrite>) -> Option<u64> {
-        if writes.is_empty() || self.save_in_flight() || self.write_error.is_some() {
+    pub(crate) fn queue_dense_transaction(
+        &mut self,
+        library_revision: u64,
+        presets: Option<environment::PresetLibrary>,
+        definitions: Vec<EnvironmentDefinitionWrite>,
+        writes: Vec<DenseSourceWrite>,
+        roads: Vec<world_db::RoadSourceWrite>,
+        road_dependencies: Vec<world_db::RoadDependency>,
+    ) -> Option<u64> {
+        if (writes.is_empty() && definitions.is_empty() && presets.is_none() && roads.is_empty())
+            || self.save_in_flight()
+            || self.write_error.is_some()
+        {
             return None;
         }
         let request_id = self.next_save_request_id.wrapping_add(1).max(1);
         self.next_save_request_id = request_id;
-        self.pending_dense_save = Some(PendingDenseSave { request_id, writes });
+        self.pending_dense_save = Some(PendingDenseSave {
+            roads,
+            road_dependencies,
+            library_revision,
+            presets,
+            request_id,
+            writes,
+            definitions,
+        });
         Some(request_id)
     }
 
@@ -422,7 +492,7 @@ enum ProjectResult {
     },
     SaveDenseTransaction {
         request_id: u64,
-        result: Result<DenseSourceWriteTransactionResult, String>,
+        result: Result<EnvironmentSourceWriteResult, String>,
     },
     SaveVegetationCatalog {
         request_id: u64,
@@ -434,16 +504,21 @@ enum ProjectResult {
 struct ProjectOpenSnapshot {
     manifest: ProjectManifest,
     vegetation_catalog: Option<VegetationCatalog>,
+    environments: Vec<environment::EnvironmentDefinition>,
+    presets: Option<environment::PresetLibrary>,
+    terrain_resources: Vec<world_db::TerrainRenderResources>,
+    height_steps: std::collections::BTreeMap<WorldSpaceId, f32>,
     write_error: Option<String>,
 }
 
 struct ProjectWindowSnapshot {
     cells: Vec<SourceCellRecord>,
     objects: Vec<SourceObjectViewRecord>,
-    terrain_weight_pages: Vec<SourceTerrainCellWeightPageRecord>,
+    environment_cells: Vec<SourceEnvironmentCellRecord>,
+    environment_snapshot: Option<world_db::EnvironmentReadSnapshot>,
     cells_truncated: bool,
     objects_truncated: bool,
-    terrain_weights_truncated: bool,
+    environment_coverage_truncated: bool,
 }
 
 fn start_project_worker(mut commands: Commands, path: Res<ProjectDatabasePath>) {
@@ -478,7 +553,7 @@ fn project_worker(
     };
     let mut writer = ProjectWriter::open(&path)
         .map_err(|error| format!("could not open {} for authoring: {error}", path.display()));
-    let vegetation_catalog = match reader.read_vegetation_catalog() {
+    let (vegetation_catalog, presets, environments) = match reader.read_environment_catalog() {
         Ok(catalog) => catalog,
         Err(error) => {
             let _ = results.send(ProjectResult::Opened(Err(format!(
@@ -487,10 +562,44 @@ fn project_worker(
             return;
         }
     };
+    let terrain_resources = match environments
+        .iter()
+        .map(|d| reader.read_environment_terrain_resources(d.space))
+        .collect::<Result<Vec<_>, _>>()
+    {
+        Ok(resources) => resources,
+        Err(error) => {
+            let _ = results.send(ProjectResult::Opened(Err(format!(
+                "could not read environment materials: {error}"
+            ))));
+            return;
+        }
+    };
+    let height_steps = match environments
+        .iter()
+        .map(|d| {
+            reader
+                .read_terrain_height_step(d.space)
+                .map(|step| (d.space, step))
+        })
+        .collect::<Result<std::collections::BTreeMap<_, _>, _>>()
+    {
+        Ok(steps) => steps,
+        Err(e) => {
+            let _ = results.send(ProjectResult::Opened(Err(format!(
+                "could not read terrain height grids: {e}"
+            ))));
+            return;
+        }
+    };
     if results
         .send(ProjectResult::Opened(Ok(ProjectOpenSnapshot {
             manifest: reader.manifest().clone(),
             vegetation_catalog,
+            environments,
+            presets: Some(presets),
+            terrain_resources,
+            height_steps,
             write_error: writer.as_ref().err().cloned(),
         })))
         .is_err()
@@ -523,28 +632,54 @@ fn project_worker(
                             )
                         })
                         .transpose()?;
-                    let terrain = domains
-                        .terrain_weights
+                    let environment_snapshot = domains
+                        .environment_coverage
                         .then(|| {
-                            reader.read_terrain_weight_pages_in_cells(
+                            let mut core = Vec::new();
+                            for x in window.minimum.x..=window.maximum.x {
+                                for z in window.minimum.z..=window.maximum.z {
+                                    core.push(CellCoord { x, z });
+                                }
+                            }
+                            reader.read_environment_snapshot(
                                 window.space,
-                                window.minimum,
-                                window.maximum,
-                                MAX_SOURCE_TERRAIN_WEIGHT_PAGES,
+                                &world_db::environment_dependency_cells(&core)?,
                             )
                         })
                         .transpose()?;
+                    let environment_cells =
+                        environment_snapshot
+                            .as_ref()
+                            .map_or_else(Vec::new, |snapshot| {
+                                snapshot
+                                    .coverage
+                                    .cells
+                                    .iter()
+                                    .filter(|c| {
+                                        c.cell.x >= window.minimum.x
+                                            && c.cell.x <= window.maximum.x
+                                            && c.cell.z >= window.minimum.z
+                                            && c.cell.z <= window.maximum.z
+                                    })
+                                    .map(|c| SourceEnvironmentCellRecord {
+                                        space: window.space,
+                                        cell: c.cell,
+                                        source_revision: c.revision as i64,
+                                        definition_revision: snapshot.definition.revision,
+                                        tiles: c.tiles.clone(),
+                                    })
+                                    .collect()
+                            });
                     Ok::<_, world_db::WorldDbError>(ProjectWindowSnapshot {
                         cells: cells.records,
                         objects: objects
                             .as_ref()
                             .map_or_else(Vec::new, |query| query.records.clone()),
-                        terrain_weight_pages: terrain
-                            .as_ref()
-                            .map_or_else(Vec::new, |query| query.records.clone()),
+                        environment_cells,
+                        environment_snapshot,
                         cells_truncated: cells.truncated,
                         objects_truncated: objects.is_some_and(|query| query.truncated),
-                        terrain_weights_truncated: terrain.is_some_and(|query| query.truncated),
+                        environment_coverage_truncated: false,
                     })
                 })()
                 .map_err(|error| error.to_string());
@@ -580,7 +715,14 @@ fn project_worker(
             ProjectRequest::SaveDenseTransaction(request) => {
                 let result = match writer.as_mut() {
                     Ok(writer) => writer
-                        .apply_dense_source_transaction(&request.writes)
+                        .apply_environment_and_roads_transaction(
+                            request.library_revision,
+                            request.presets.as_ref(),
+                            &request.definitions,
+                            &request.writes,
+                            &request.roads,
+                            &request.road_dependencies,
+                        )
                         .map_err(|error| error.to_string()),
                     Err(error) => Err(error.clone()),
                 };
@@ -633,6 +775,10 @@ fn receive_project_results(
                 Ok(opened) => {
                     store.manifest = Some(opened.manifest);
                     store.vegetation_catalog = opened.vegetation_catalog;
+                    store.environments = opened.environments;
+                    store.presets = opened.presets;
+                    store.terrain_resources = opened.terrain_resources;
+                    store.height_steps = opened.height_steps;
                     store.write_error = opened.write_error;
                     store.phase = ProjectStorePhase::Ready;
                     store.source_epoch = store.source_epoch.max(1);
@@ -658,10 +804,23 @@ fn receive_project_results(
                     Ok(snapshot) => {
                         store.cells = snapshot.cells;
                         store.objects = snapshot.objects;
-                        store.terrain_weight_pages = snapshot.terrain_weight_pages;
+                        store.environment_cells = snapshot.environment_cells;
+                        if let Some(snapshot) = &snapshot.environment_snapshot
+                            && let Some(definition) = store
+                                .environments
+                                .iter_mut()
+                                .find(|d| d.space == snapshot.definition.space)
+                        {
+                            *definition = snapshot.definition.clone();
+                        }
+                        if let Some(environment) = &snapshot.environment_snapshot {
+                            store.presets = Some(environment.presets.clone());
+                        }
+                        store.environment_snapshot = snapshot.environment_snapshot;
                         store.cells_truncated = snapshot.cells_truncated;
                         store.objects_truncated = snapshot.objects_truncated;
-                        store.terrain_weights_truncated = snapshot.terrain_weights_truncated;
+                        store.environment_coverage_truncated =
+                            snapshot.environment_coverage_truncated;
                         store.loaded_window = Some(window);
                         store.loaded_domains = domains;
                         store.failed_window = None;
@@ -703,13 +862,36 @@ fn receive_project_results(
                     store.dense_save_in_flight = None;
                 }
                 let outcome = match result {
-                    Ok(DenseSourceWriteTransactionResult::Committed(commits)) => {
+                    Ok(EnvironmentSourceWriteResult::Committed(commits)) => {
+                        if let Some(presets) = &commits.presets {
+                            store.presets = Some(presets.clone());
+                        }
+                        for definition in &commits.definitions {
+                            if let Some(old) = store
+                                .environments
+                                .iter_mut()
+                                .find(|d| d.space == definition.space)
+                            {
+                                *old = definition.clone();
+                            }
+                        }
                         store.source_epoch = store.source_epoch.wrapping_add(1).max(1);
                         store.loaded_window = None;
-                        store.terrain_weight_pages.clear();
+                        store.environment_cells.clear();
+                        store.environment_snapshot = None;
                         DenseSaveOutcome::Committed(commits)
                     }
-                    Ok(DenseSourceWriteTransactionResult::Conflict { key, actual }) => {
+                    Ok(EnvironmentSourceWriteResult::RoadConflict { actual }) => {
+                        DenseSaveOutcome::RoadConflict { actual }
+                    }
+                    Ok(EnvironmentSourceWriteResult::LibraryConflict { actual }) => {
+                        store.presets = Some(actual.clone());
+                        DenseSaveOutcome::LibraryConflict { actual }
+                    }
+                    Ok(EnvironmentSourceWriteResult::DefinitionConflict { space, actual }) => {
+                        DenseSaveOutcome::DefinitionConflict { space, actual }
+                    }
+                    Ok(EnvironmentSourceWriteResult::CoverageConflict { key, actual }) => {
                         DenseSaveOutcome::Conflict { key, actual }
                     }
                     Err(error) => DenseSaveOutcome::Failed(error),
@@ -800,7 +982,15 @@ fn update_project_query_demand(
     let Some(position) = viewpoint.position() else {
         return;
     };
-    let desired = ProjectQueryWindow::around(position.space, position.cell);
+    let center = if desired_domains.environment_coverage {
+        store
+            .environment_focus
+            .filter(|(space, _)| *space == position.space)
+            .map_or(position.cell, |(_, cell)| cell)
+    } else {
+        position.cell
+    };
+    let desired = ProjectQueryWindow::around(position.space, center);
     if store.desired_window == Some(desired) && store.desired_domains == desired_domains {
         return;
     }
@@ -813,10 +1003,11 @@ fn update_project_query_demand(
         store.loaded_window = None;
         store.cells.clear();
         store.objects.clear();
-        store.terrain_weight_pages.clear();
+        store.environment_cells.clear();
+        store.environment_snapshot = None;
         store.cells_truncated = false;
         store.objects_truncated = false;
-        store.terrain_weights_truncated = false;
+        store.environment_coverage_truncated = false;
     }
     store.desired_window = Some(desired);
     store.desired_domains = desired_domains;
@@ -1004,15 +1195,18 @@ mod tests {
 
     #[test]
     fn project_worker_reads_a_bounded_demo_window() {
-        let database =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../content/demo.project.sqlite");
+        let directory =
+            std::env::temp_dir().join(format!("yarra-preset-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let database = directory.join("project.sqlite");
+        world_cook::create_demo_project(&database).unwrap();
         let (request_sender, request_receiver) = bounded(PROJECT_REQUEST_CAPACITY);
         let (result_sender, result_receiver) = bounded(PROJECT_REQUEST_CAPACITY + 1);
         let worker =
             thread::spawn(move || project_worker(database, request_receiver, result_sender));
 
         let ProjectResult::Opened(Ok(opened)) = result_receiver.recv().unwrap() else {
-            panic!("project worker did not open the checked-in authoring database");
+            panic!("project worker did not open the fresh authoring database");
         };
         let manifest = opened.manifest;
         assert!(opened.vegetation_catalog.is_some());
@@ -1025,7 +1219,7 @@ mod tests {
                 domains: ProjectSourceDomains {
                     cells: true,
                     objects: true,
-                    terrain_weights: true,
+                    environment_coverage: true,
                 },
             })
             .unwrap();
@@ -1043,7 +1237,7 @@ mod tests {
         assert!(!snapshot.cells.is_empty());
         assert!(snapshot.cells.len() <= MAX_SOURCE_CELLS);
         assert!(snapshot.objects.len() <= MAX_SOURCE_OBJECTS);
-        assert!(snapshot.terrain_weight_pages.len() <= MAX_SOURCE_TERRAIN_WEIGHT_PAGES);
+        assert!(snapshot.environment_cells.len() <= MAX_SOURCE_CELLS);
         assert!(
             snapshot
                 .objects
@@ -1054,5 +1248,6 @@ mod tests {
 
         request_sender.send(ProjectRequest::Shutdown).unwrap();
         worker.join().unwrap();
+        std::fs::remove_dir_all(directory).unwrap();
     }
 }

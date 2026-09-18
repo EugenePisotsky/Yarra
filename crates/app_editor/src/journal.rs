@@ -1,4 +1,4 @@
-//! Crash-recoverable journal for dirty object and dense terrain working sets.
+//! Crash-recoverable journal for dirty objects, environment definitions and coverage.
 
 use std::{
     fs::{self, File},
@@ -14,17 +14,19 @@ use world::{
     AssetId, CellCoord, ObjectActivationPolicy, ObjectDefinitionId, StableObjectId, WorldSpaceId,
 };
 use world_db::{
-    DenseSourceRecord, SourceObjectDefinitionRecord, SourceObjectRecord, SourceObjectViewRecord,
-    SourceTerrainCellWeightPageRecord,
+    DenseSourceRecord, SourceEnvironmentCellRecord, SourceObjectDefinitionRecord,
+    SourceObjectRecord, SourceObjectViewRecord,
 };
 
 use crate::{
-    domain_editing::{DenseDomainWorkingSets, DirtyDenseSnapshot},
+    domain_editing::{
+        DenseDomainWorkingSets, DirtyDefinitionSnapshot, DirtyDenseSnapshot, DirtyPresetSnapshot,
+    },
     editing::{DirtyObjectSnapshot, EditorHistory, EditorObjectWorkingSet},
 };
 
-const JOURNAL_SCHEMA_VERSION: u32 = 5;
-const OLDEST_SUPPORTED_JOURNAL_SCHEMA_VERSION: u32 = 5;
+const JOURNAL_SCHEMA_VERSION: u32 = 11;
+const OLDEST_SUPPORTED_JOURNAL_SCHEMA_VERSION: u32 = 11;
 const JOURNAL_CHANNEL_CAPACITY: usize = 1;
 
 pub(crate) struct EditorJournalPlugin {
@@ -77,12 +79,16 @@ pub(crate) struct EditorJournalStatus {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct JournalRevision {
+    roads: u64,
     objects: u64,
     dense: u64,
 }
 
 #[derive(Debug)]
 struct JournalRecovery {
+    roads: Vec<crate::road_authoring::working::RoadEntry>,
+    presets: Option<DirtyPresetSnapshot>,
+    definitions: Vec<DirtyDefinitionSnapshot>,
     objects: Vec<JournalEntry>,
     dense: Vec<JournalDenseEntry>,
 }
@@ -138,6 +144,9 @@ enum JournalResult {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct JournalFile {
+    roads: Vec<crate::road_authoring::working::RoadEntry>,
+    presets: Option<DirtyPresetSnapshot>,
+    definition_entries: Vec<DirtyDefinitionSnapshot>,
     schema_version: u32,
     project_database: PathBuf,
     entries: Vec<JournalEntry>,
@@ -184,12 +193,11 @@ struct JournalDenseEntry {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum JournalDenseRecord {
-    TerrainWeights {
+    EnvironmentCoverage {
         space: WorldSpaceId,
         cell: CellCoord,
-        page: u8,
-        resolution: u16,
-        rgba: Vec<u8>,
+        definition_revision: u64,
+        tiles: Vec<environment::CoverageTile>,
         source_revision: i64,
     },
 }
@@ -269,12 +277,11 @@ impl From<JournalEntry> for DirtyObjectSnapshot {
 impl JournalDenseRecord {
     fn from_source(record: &DenseSourceRecord) -> Option<Self> {
         match record {
-            DenseSourceRecord::TerrainWeights(record) => Some(Self::TerrainWeights {
+            DenseSourceRecord::EnvironmentCoverage(record) => Some(Self::EnvironmentCoverage {
                 space: record.space,
                 cell: record.cell,
-                page: record.page,
-                resolution: record.resolution,
-                rgba: record.rgba.clone(),
+                definition_revision: record.definition_revision,
+                tiles: record.tiles.clone(),
                 source_revision: record.source_revision,
             }),
         }
@@ -284,19 +291,17 @@ impl JournalDenseRecord {
 impl From<JournalDenseRecord> for DenseSourceRecord {
     fn from(record: JournalDenseRecord) -> Self {
         match record {
-            JournalDenseRecord::TerrainWeights {
+            JournalDenseRecord::EnvironmentCoverage {
                 space,
                 cell,
-                page,
-                resolution,
-                rgba,
+                definition_revision,
+                tiles,
                 source_revision,
-            } => Self::TerrainWeights(SourceTerrainCellWeightPageRecord {
+            } => Self::EnvironmentCoverage(SourceEnvironmentCellRecord {
                 space,
                 cell,
-                page,
-                resolution,
-                rgba,
+                definition_revision,
+                tiles,
                 source_revision,
             }),
         }
@@ -437,11 +442,14 @@ fn receive_journal_results(
                 let object_count = file.entries.len();
                 let dense_count = file.dense_entries.len();
                 status.pending_restore = Some(JournalRecovery {
+                    roads: file.roads,
+                    presets: file.presets,
+                    definitions: file.definition_entries,
                     objects: file.entries,
                     dense: file.dense_entries,
                 });
                 status.message = format!(
-                    "recovering {object_count} object(s) and {dense_count} dense terrain record(s)"
+                    "recovering {object_count} object(s) and {dense_count} environment coverage record(s)"
                 );
             }
             Ok(JournalResult::Loaded(Ok(None))) => {
@@ -480,10 +488,26 @@ fn restore_loaded_journal(
     mut objects: ResMut<EditorObjectWorkingSet>,
     mut dense_domains: ResMut<DenseDomainWorkingSets>,
     mut history: ResMut<EditorHistory>,
+    project: Res<crate::project_store::ProjectEditorStore>,
 ) {
+    let Some(plants) = project.vegetation_catalog() else {
+        return;
+    };
+    let Some(library) = project.presets() else {
+        return;
+    };
     let Some(recovery) = status.pending_restore.take() else {
         return;
     };
+    dense_domains.initialize_presets(library);
+    let recovered_presets = recovery.presets.map_or(0, |p| {
+        usize::from(dense_domains.restore_preset_snapshot(p, plants))
+    });
+    let mut recovered_definitions = 0;
+    for entry in recovery.definitions {
+        recovered_definitions +=
+            usize::from(dense_domains.restore_definition_snapshot(entry, plants));
+    }
     let mut recovered_objects = 0;
     for entry in recovery.objects {
         recovered_objects += usize::from(objects.restore_dirty_snapshot(entry.into()));
@@ -492,13 +516,18 @@ fn restore_loaded_journal(
     for entry in recovery.dense {
         recovered_dense += usize::from(dense_domains.restore_dirty_snapshot(entry.into()));
     }
-    let recovered = recovered_objects + recovered_dense;
+    let recovered_roads = dense_domains.roads.restore(recovery.roads);
+    let recovered = recovered_roads
+        + recovered_objects
+        + recovered_dense
+        + recovered_definitions
+        + recovered_presets;
     if recovered != 0 {
         history.clear();
     }
     status.recovered_entries = recovered;
     status.message = format!(
-        "recovered {recovered_objects} object(s) and {recovered_dense} dense terrain record(s)"
+        "recovered {recovered_roads} road records, {recovered_objects} object(s), {recovered_dense} coverage cells and {recovered_definitions} layer definitions and {recovered_presets} preset library"
     );
 }
 
@@ -513,6 +542,7 @@ fn dispatch_dirty_journal(
         return;
     };
     let revision = JournalRevision {
+        roads: dense_domains.roads.revision,
         objects: objects.edit_revision(),
         dense: dense_domains.edit_revision(),
     };
@@ -529,16 +559,27 @@ fn dispatch_dirty_journal(
         .into_iter()
         .filter_map(JournalDenseEntry::from_snapshot)
         .collect::<Vec<_>>();
-    let request = if entries.is_empty() && dense_entries.is_empty() {
+    let definition_entries = dense_domains.dirty_definition_snapshots();
+    let presets = dense_domains.dirty_preset_snapshot();
+    let roads = dense_domains.roads.journal();
+    let request = if roads.is_empty()
+        && entries.is_empty()
+        && dense_entries.is_empty()
+        && definition_entries.is_empty()
+        && presets.is_none()
+    {
         JournalRequest::Clear { revision }
     } else {
         JournalRequest::Write {
             revision,
             file: JournalFile {
+                roads,
+                presets,
                 schema_version: JOURNAL_SCHEMA_VERSION,
                 project_database: config.project_database.clone(),
                 entries,
                 dense_entries,
+                definition_entries,
             },
         }
     };
@@ -548,5 +589,95 @@ fn dispatch_dirty_journal(
         Err(TrySendError::Disconnected(_)) => {
             status.message = "journal worker stopped".into();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn journal_recovers_a_new_layer_and_its_unsaved_coverage_together() {
+        let dir =
+            std::env::temp_dir().join(format!("yarra-layer-journal-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let project = dir.join("project.sqlite");
+        let journal = dir.join("journal.ron");
+        world_cook::create_demo_project(&project).unwrap();
+        let reader = world_db::ProjectReader::open_read_only(&project).unwrap();
+        let base = reader
+            .read_environment_definitions()
+            .unwrap()
+            .into_iter()
+            .find(|d| !d.layers.is_empty())
+            .unwrap();
+        let plants = reader
+            .read_environment_snapshot(base.space, &[CellCoord::ZERO])
+            .unwrap()
+            .vegetation_catalog;
+        let mut current = base.clone();
+        let mut layer = base.layers[0].clone();
+        layer.id = environment::LayerId([92; 16]);
+        layer.order = 50;
+        let base_presets = reader.read_environment_presets().unwrap();
+        let mut presets = base_presets.clone();
+        let mut preset = presets.get(layer.preset).unwrap().clone();
+        preset.id = environment::PresetId([92; 16]);
+        preset.name = "Recovered preset".into();
+        layer.preset = preset.id;
+        presets.presets.push(preset);
+        current.layers.push(layer.clone());
+        let paint = SourceEnvironmentCellRecord {
+            space: base.space,
+            cell: CellCoord::ZERO,
+            source_revision: 0,
+            definition_revision: base.revision,
+            tiles: vec![environment::CoverageTile {
+                layer: layer.id,
+                samples: vec![128; usize::from(base.mask_resolution).pow(2)],
+            }],
+        };
+        let file = JournalFile {
+            roads: vec![],
+            presets: Some(DirtyPresetSnapshot {
+                base: base_presets,
+                current: presets.clone(),
+            }),
+            definition_entries: vec![DirtyDefinitionSnapshot {
+                base,
+                current: current.clone(),
+            }],
+            schema_version: JOURNAL_SCHEMA_VERSION,
+            project_database: project.clone(),
+            entries: vec![],
+            dense_entries: vec![
+                JournalDenseEntry::from_snapshot(DirtyDenseSnapshot {
+                    base: None,
+                    current: DenseSourceRecord::EnvironmentCoverage(paint.clone()),
+                    runtime: None,
+                })
+                .unwrap(),
+            ],
+        };
+        write_journal_atomically(&journal, &file).unwrap();
+        let recovered = load_journal(&journal, &project).unwrap().unwrap();
+        let mut dense = DenseDomainWorkingSets::default();
+        dense.initialize_presets(&reader.read_environment_presets().unwrap());
+        assert!(dense.restore_preset_snapshot(recovered.presets.unwrap(), &plants));
+        assert_eq!(dense.presets(), Some(&presets));
+        for entry in recovered.definition_entries {
+            assert!(dense.restore_definition_snapshot(entry, &plants));
+        }
+        for entry in recovered.dense_entries {
+            assert!(dense.restore_dirty_snapshot(entry.into()));
+        }
+        assert_eq!(dense.definition(current.space), Some(&current));
+        assert_eq!(
+            dense.environment_record(current.space, CellCoord::ZERO),
+            Some(&paint)
+        );
+        assert_eq!(dense.dirty_count(), 3);
+        assert!(load_journal(&journal, &dir.join("different.sqlite")).is_err());
+        drop(reader);
+        fs::remove_dir_all(dir).unwrap();
     }
 }
