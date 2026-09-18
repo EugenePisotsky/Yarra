@@ -297,7 +297,7 @@ fn read_cell(
 
 /// The caller has explicitly requested each coordinate. Missing rows are therefore known empty;
 /// this never infers empty cells from a truncated spatial result.
-fn read_coverage(
+pub(crate) fn read_coverage(
     connection: &Connection,
     definition: &EnvironmentDefinition,
     cells: &[CellCoord],

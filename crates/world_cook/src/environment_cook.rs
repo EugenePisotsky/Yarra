@@ -37,8 +37,9 @@ pub(super) struct CookedEnvironment {
     pub fingerprint: [u8; 32],
 }
 
-pub(super) fn compile_environment(project: &ProjectDocument) -> Result<CookedEnvironment> {
-    let roads = world_db::RoadDocumentIndex::new(&project.roads, &project.environments)?;
+pub(super) fn prepare_plans(
+    project: &ProjectDocument,
+) -> Result<BTreeMap<WorldSpaceId, CompilePlan>> {
     let empty = VegetationCatalog {
         species: Vec::new(),
         populations: Vec::new(),
@@ -86,6 +87,13 @@ pub(super) fn compile_environment(project: &ProjectDocument) -> Result<CookedEnv
             )?,
         );
     }
+    Ok(plans)
+}
+
+pub(super) fn compile_environment(project: &ProjectDocument) -> Result<CookedEnvironment> {
+    let roads = world_db::RoadDocumentIndex::new(&project.roads, &project.environments)?;
+    let plans = prepare_plans(project)?;
+    let definitions: BTreeMap<_, _> = project.environments.iter().map(|d| (d.space, d)).collect();
     let mut source = BTreeMap::new();
     for record in &project.environment_cells {
         let definition = definitions
@@ -217,47 +225,9 @@ pub(super) fn compile_environment(project: &ProjectDocument) -> Result<CookedEnv
                 &terrain,
                 Default::default(),
             )?;
-            result
-                .terrain
-                .insert((*space, cell), compiled.terrain.clone().unwrap());
-            result.objects.insert((*space, cell), compiled.objects);
             hash.update(&compiled.input_fingerprint);
             let source_revision = source.get(&(*space, cell)).map_or(0, |r| r.source_revision);
-            result
-                .slots
-                .extend(
-                    compiled
-                        .ground
-                        .surfaces
-                        .iter()
-                        .enumerate()
-                        .map(|(slot, &surface)| TerrainSlot {
-                            space: *space,
-                            cell,
-                            slot: slot as u8,
-                            surface,
-                        }),
-                );
-            result
-                .weights
-                .extend(compiled.ground.weight_pages.into_iter().enumerate().map(
-                    |(page, weights)| TerrainWeights {
-                        space: *space,
-                        cell,
-                        page: page as u8,
-                        resolution: weights.resolution,
-                        rgba: weights.rgba,
-                        source_revision,
-                    },
-                ));
-            if !compiled.vegetation.fields.is_empty() {
-                result.vegetation.push(VegetationPage {
-                    space: *space,
-                    cell,
-                    data: compiled.vegetation,
-                    source_revision,
-                });
-            }
+            result.push_cell(*space, cell, source_revision, compiled);
         }
     }
     for cell in &project.cells {
@@ -673,5 +643,67 @@ mod road_tests {
         );
         drop(reader);
         std::fs::remove_dir_all(directory).unwrap();
+    }
+}
+
+impl CookedEnvironment {
+    pub(super) fn empty(catalog: VegetationCatalog, fingerprint: [u8; 32]) -> Self {
+        Self {
+            objects: BTreeMap::new(),
+            terrain: BTreeMap::new(),
+            catalog: Some(catalog),
+            slots: vec![],
+            weights: vec![],
+            vegetation: vec![],
+            fingerprint,
+        }
+    }
+    pub(super) fn push_cell(
+        &mut self,
+        space: WorldSpaceId,
+        cell: CellCoord,
+        source_revision: i64,
+        compiled: environment_compile::CompiledCell,
+    ) {
+        self.terrain
+            .insert((space, cell), compiled.terrain.unwrap());
+        self.objects.insert((space, cell), compiled.objects);
+        self.slots.extend(
+            compiled
+                .ground
+                .surfaces
+                .iter()
+                .enumerate()
+                .map(|(slot, &surface)| TerrainSlot {
+                    space,
+                    cell,
+                    slot: slot as u8,
+                    surface,
+                }),
+        );
+        self.weights
+            .extend(
+                compiled
+                    .ground
+                    .weight_pages
+                    .into_iter()
+                    .enumerate()
+                    .map(|(page, weights)| TerrainWeights {
+                        space,
+                        cell,
+                        page: page as u8,
+                        resolution: weights.resolution,
+                        rgba: weights.rgba,
+                        source_revision,
+                    }),
+            );
+        if !compiled.vegetation.fields.is_empty() {
+            self.vegetation.push(VegetationPage {
+                space,
+                cell,
+                data: compiled.vegetation,
+                source_revision,
+            });
+        }
     }
 }

@@ -6489,6 +6489,7 @@ dependencies = [
  "blake3",
  "glam",
  "ron",
+ "rusqlite",
  "yarra-environment",
  "yarra-environment-compile",
  "yarra-vegetation",

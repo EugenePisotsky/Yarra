@@ -122,7 +122,7 @@ implemented together with source persistence, the layer/preset Inspector and pai
 The next rendering foundation is specified in
 [`docs/DISTANT_WORLD_RENDERING.md`](docs/DISTANT_WORLD_RENDERING.md): hierarchical
 terrain LOD, independent distant visibility, cheaper ground materials, and later
-cliff/forest proxies. Terrain precision and cooked hierarchy products are implemented;
+cliff/forest proxies. Terrain precision, bounded production cooking and hierarchy products are implemented;
 visible terrain LOD and distant materials remain planned. Meshlets are out of scope.
 
 The first curved-road source/compiler fixture is also available:

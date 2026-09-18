@@ -98,11 +98,28 @@ fn main() -> Result<()> {
             project_path.display()
         );
     }
-    let manifest = yarra_world_cook::cook_project(&project_path, &runtime_path)?;
+    let report = yarra_world_cook::cook_project_with_report(&project_path, &runtime_path)?;
+    let manifest = report.manifest;
     println!(
         "published runtime generation {}: {}",
         manifest.generation_id,
         runtime_path.display()
+    );
+    let stats = report.stats;
+    println!(
+        "Cooked {} terrain cells and validated {} coverage-only cells",
+        stats.terrain_cells, stats.coverage_only_cells
+    );
+    println!(
+        "Peak source batch: {} height samples, {} mask bytes, {} manual objects, {} road spans",
+        stats.peak_source_height_samples,
+        stats.peak_source_mask_bytes,
+        stats.peak_source_manual_objects,
+        stats.peak_source_road_spans
+    );
+    println!(
+        "Peak cell output: {} encoded bytes / {} decoded bytes (excludes catalog, SQLite and compiler scratch memory)",
+        stats.peak_encoded_cell_bytes, stats.peak_decoded_cell_bytes
     );
     Ok(())
 }

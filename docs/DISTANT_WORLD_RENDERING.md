@@ -1,6 +1,6 @@
 # Distant world and terrain rendering
 
-Status: first data/cooking checkpoint implemented, 2026-09-18. Terrain hierarchy
+Status: data contracts and bounded production cooking implemented, 2026-09-18. Terrain hierarchy
 products and precision changes exist; camera-driven LOD rendering, distant materials
 and scenery proxies remain **planned**. This is not a measured performance claim.
 
@@ -33,20 +33,69 @@ cover. A separate road fixture verifies 1 cm road depth plus 5 mm track depth at
 1,500 m elevation against the final cooked leaves. These are correctness/topology
 results, not render timings; the new nodes are not drawn yet.
 
-Slice 1 is **partially complete**. The earlier source/environment pass still loads
-`ProjectDocument` and accumulates `RuntimeBuild`; only the new hierarchy pass has
-bounded sample residency. Convert the source-to-leaf pass to bounded snapshot reads
-and staged writes before increasing the authoring fixture to 2 km. Then implement
-slice 2's active cover, transitions and shared game/editor renderer. The saved
-normal authoring world is preserved; synthetic fixtures run in temporary test files.
+Slice 1's data contracts and bounded production cook are now implemented. Both CLI
+cooking and editor publication use `ProjectCookSnapshot` and `RuntimeCookWriter`:
+
+- Keep one read transaction across all source reads. Concurrent saved edits belong
+  to the next cook rather than being mixed into the current generation.
+- Read the ordered union of terrain and painted cells in batches of 128 keys. Both
+  branches use primary-key range seeks. Validate painted cells outside terrain too.
+- Compile one output cell from at most nine source heightfields and a 4 MiB coverage
+  halo. Road snapshots retain their existing record/query limits; manual placements
+  cap at 8,192 per cell. Truncation is an error, never an empty/partial world.
+- Bound global catalog variable data to 32 MiB and total catalog rows to 32,768 before
+  decoding it. Catalogs and compile plans remain resident; they do not grow with
+  terrain-cell count. Each SQLite connection targets an 8 MiB page cache.
+- Write each cell immediately to a private staging database; encoded and decoded
+  cell outputs each cap at 32 MiB. Build hierarchy products after the source pass.
+  Validate source references and road indexes, then validate roots before atomic
+  publication. Failed cooks remove their own staging files and retain the live DB.
+- Reuse the existing compiler and page encoder. `ProjectDocument`/`RuntimeBuild`
+  contain only global metadata plus one cell on this path; the whole-document
+  `build_runtime` remains a small-fixture/reference API. Global catalog validation
+  is currently repeated by the common packer per cell; caching those validated
+  lookup tables is a possible cook-time improvement, not a spatial-memory dependency.
+
+A 2,048 × 2,048 m synthetic mountain fixture cooked **4,096 cells in 10.92 s** on
+this development machine (optimized debug test build, September 18). The largest
+input batch was **9,801 height samples** (39,204 bytes of heights), the same as the
+256 m and 512 m fixtures. Maximum encoded/decoded cell outputs were 8,150 / 8,768
+bytes. The result has four level-5 roots. This fixture has no painted grass or
+objects; road relief and collections are tested separately against the reference
+cooker. It measures cook correctness and bounded arrays, not game frame time.
+These counters exclude catalog copies, compiler scratch, allocator overhead and
+SQLite caches; they are not a total-RSS measurement.
+
+Reproduce the larger acceptance case with:
+
+```sh
+cargo test --offline -p yarra-world-cook two_kilometre_mountain_cooks_with_bounded_source_samples --lib -- --ignored --nocapture
+```
+
+CLI `cook` now prints cell counts and source/output high-water counters. Tests cover
+reference-page equivalence with roads and generated collections, deterministic
+publication, a saved edit during an open snapshot, missing road-index membership,
+invalid out-of-terrain paint, oversized catalogs/manual-object cells, and preservation
+of the previous runtime after failure. A project-import ordering issue discovered by
+the collection fixture was also fixed: asset metadata is stored before validating
+presets that reference it.
+
+**Next is slice 2:** active terrain cover, projected-error selection, transitions and
+the shared game/editor renderer. View distance is still unchanged. The saved normal
+authoring world is preserved; synthetic fixtures run in temporary test files.
 
 Validation: world/database/cooker/environment/vegetation tests and all 123 editor
 tests passed, along with the native Metal interpolation regression, workspace
 compilation and focused Clippy with warnings denied. SQLite query plans confirm
 primary-key range seeks for both hierarchy metadata and staged leaf iteration.
-The default runtime was recooked as generation `771dfe816d3030a7`: overworld
+The default runtime was recooked by the streamed path as generation `5db3ff451dffc61a`: overworld
 256 leaves / 340 nodes / 4 roots; interior 81 leaves / 119 nodes / 21 roots.
-SQLite integrity passed, and the source project checksum stayed unchanged.
+SQLite integrity passed, and the source project checksum stayed unchanged. Every
+runtime product table matches the previous cooker (only generation metadata changed).
+The current scene's maximum input batch was 9,801 height samples / 126,750 mask bytes /
+1 manual object / 1 road span; peak encoded/decoded cell output was 26,389 / 46,510
+bytes. The cooker/database suite passed 53 tests plus the separate 2 km acceptance;
+all 123 editor tests passed. Core Clippy with warnings denied and workspace checks passed.
 
 The desktop target is 60 fps at 1440p on mainstream gaming GPUs. Record the actual
 internal render resolution as well as display resolution: current game defaults
@@ -89,7 +138,7 @@ Checked against the working tree on 2026-09-18:
 | Generated and manual objects use ordinary static meshes with object LODs | Add aggregate distant scenery products without loading every placement. |
 | Database requests, decoding, attachment and residency already have limits | Extend accounting and scheduling to hierarchy metadata, fallback nodes and staged replacements. |
 | The editor supports a floating origin; the game configuration currently disables rebasing | Complete game integration before treating long-distance travel as supported. |
-| The cooker loads a complete `ProjectDocument` and accumulates a complete `RuntimeBuild` | Introduce bounded spatial reads and staged output before expanding to kilometre-scale fixtures. |
+| The production cooker uses one consistent snapshot and writes each compiled cell to staging; the whole-document path remains a fixture/reference API | Preserve these bounds when adding composite materials and scenery products. |
 
 The existing contracts remain relevant: [terrain surfaces](TERRAIN.md),
 [environment authoring](ENVIRONMENT_AUTHORING_ARCHITECTURE.md),
@@ -432,8 +481,8 @@ window; no new broad framework is required for the first slice.
 
 ## Implementation sequence and acceptance
 
-Slice 1 is in progress, as recorded above. Later slices remain pending; implement
-and validate them in order.
+Slice 1 is implemented and checked as recorded above. Later slices remain pending;
+implement and validate them in order.
 
 ### 1. Data contracts, precision and bounded cooking
 

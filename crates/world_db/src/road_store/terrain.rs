@@ -23,52 +23,64 @@ impl ProjectReader {
         let tx = self.connection.unchecked_transaction()?;
         let environment = crate::environment_store::read_snapshot(&tx, space, cells)?;
         let roads = query::read_snapshot(&tx, space, bounds)?;
-        let (cell_size, minimum_height, maximum_height) = tx.query_row(
-            "SELECT cell_size,minimum_y,maximum_y FROM world_spaces WHERE id=?1",
-            [space.0],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-        )?;
-        let mut terrain = TerrainSource {
-            space,
-            cell_size,
-            minimum_height,
-            maximum_height,
-            loaded_cells: cells.to_vec(),
-            cells: vec![],
-        };
-        let mut q = tx.prepare_cached("SELECT s.height,s.source_revision,h.resolution,h.heights,h.source_revision FROM source_cells s LEFT JOIN terrain_cell_heightfields h USING(world_space_id,cell_x,cell_z) WHERE s.world_space_id=?1 AND s.cell_x=?2 AND s.cell_z=?3")?;
-        for &cell in cells {
-            let page = q
-                .query_row(params![space.0, cell.x, cell.z], |r| {
-                    let resolution = r.get::<_, Option<u16>>(2)?.unwrap_or(33);
-                    if !(2..=257).contains(&resolution) {
-                        return Err(rusqlite::Error::InvalidQuery);
-                    }
-                    let heights = if r.get::<_, Option<u16>>(2)?.is_some() {
-                        let bytes = r.get_ref(3)?.as_blob()?;
-                        if bytes.len() != usize::from(resolution).pow(2) * 4 {
-                            return Err(rusqlite::Error::InvalidQuery);
-                        }
-                        crate::decode_f32_blob(bytes, "terrain heights")?
-                    } else {
-                        vec![r.get::<_, f32>(0)?; usize::from(resolution).pow(2)]
-                    };
-                    Ok(TerrainSourceCell {
-                        flat: r.get::<_, Option<u16>>(2)?.is_none(),
-                        cell,
-                        resolution,
-                        heights,
-                        revision: r.get::<_, Option<i64>>(4)?.unwrap_or(r.get(1)?) as u64,
-                    })
-                })
-                .optional()?;
-            if let Some(page) = page {
-                terrain.cells.push(page);
-            }
-        }
+        let terrain = read_terrain_source(&tx, space, cells)?;
         Ok(RoadTerrainSnapshot {
             source: RoadEnvironmentSnapshot { environment, roads },
             terrain,
         })
     }
+}
+
+pub(crate) fn read_terrain_source(
+    c: &Connection,
+    space: WorldSpaceId,
+    cells: &[CellCoord],
+) -> Result<TerrainSource, WorldDbError> {
+    if cells.len() > 9 {
+        return Err(invalid("terrain source query exceeds nine cells"));
+    }
+    let (cell_size, minimum_height, maximum_height) = c.query_row(
+        "SELECT cell_size,minimum_y,maximum_y FROM world_spaces WHERE id=?1",
+        [space.0],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    )?;
+    let mut terrain = TerrainSource {
+        space,
+        cell_size,
+        minimum_height,
+        maximum_height,
+        loaded_cells: cells.to_vec(),
+        cells: vec![],
+    };
+    let mut q = c.prepare_cached("SELECT s.height,s.source_revision,h.resolution,h.heights,h.source_revision FROM source_cells s LEFT JOIN terrain_cell_heightfields h USING(world_space_id,cell_x,cell_z) WHERE s.world_space_id=?1 AND s.cell_x=?2 AND s.cell_z=?3")?;
+    for &cell in cells {
+        let page = q
+            .query_row(params![space.0, cell.x, cell.z], |r| {
+                let resolution = r.get::<_, Option<u16>>(2)?.unwrap_or(33);
+                if !(2..=257).contains(&resolution) {
+                    return Err(rusqlite::Error::InvalidQuery);
+                }
+                let heights = if r.get::<_, Option<u16>>(2)?.is_some() {
+                    let bytes = r.get_ref(3)?.as_blob()?;
+                    if bytes.len() != usize::from(resolution).pow(2) * 4 {
+                        return Err(rusqlite::Error::InvalidQuery);
+                    }
+                    crate::decode_f32_blob(bytes, "terrain heights")?
+                } else {
+                    vec![r.get::<_, f32>(0)?; usize::from(resolution).pow(2)]
+                };
+                Ok(TerrainSourceCell {
+                    flat: r.get::<_, Option<u16>>(2)?.is_none(),
+                    cell,
+                    resolution,
+                    heights,
+                    revision: r.get::<_, Option<i64>>(4)?.unwrap_or(r.get(1)?) as u64,
+                })
+            })
+            .optional()?;
+        if let Some(page) = page {
+            terrain.cells.push(page);
+        }
+    }
+    Ok(terrain)
 }

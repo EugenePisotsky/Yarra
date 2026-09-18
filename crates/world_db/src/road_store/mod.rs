@@ -6,10 +6,12 @@ mod document;
 mod junctions;
 mod query;
 mod terrain;
+pub(crate) use query::read_snapshot as read_cook_roads;
 pub use terrain::RoadTerrainSnapshot;
+pub(crate) use terrain::read_terrain_source;
 mod transaction;
 pub use document::RoadDocumentIndex;
-pub(crate) use document::{read_document, write_document};
+pub(crate) use document::{read_document, validate_cook_source, write_document};
 pub(crate) use transaction::{apply_transaction, validate_shared};
 #[cfg(test)]
 mod tests;

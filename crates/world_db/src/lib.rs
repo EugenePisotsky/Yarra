@@ -1,3 +1,5 @@
+mod cook_store;
+pub use cook_store::*;
 mod terrain_nodes;
 pub use terrain_nodes::*;
 mod collection_assets;
@@ -485,7 +487,7 @@ pub fn write_project_database(path: &Path, document: &ProjectDocument) -> Result
 }
 
 fn write_vegetation_catalog(
-    transaction: &Transaction<'_>,
+    transaction: &Connection,
     catalog: Option<&VegetationCatalog>,
 ) -> Result<(), WorldDbError> {
     let Some(catalog) = catalog else {
@@ -608,8 +610,6 @@ fn write_project_document(
             ],
         )?;
     }
-    environment_store::write_environment_document(transaction, document)?;
-    road_store::write_document(transaction, &document.roads)?;
     for asset in &document.assets {
         transaction.execute(
             "INSERT INTO source_assets(asset_id, asset_key, kind, source_uri) \
@@ -642,6 +642,9 @@ fn write_project_document(
             ],
         )?;
     }
+    // Collection presets validate against assets and their runtime LOD variants.
+    environment_store::write_environment_document(transaction, document)?;
+    road_store::write_document(transaction, &document.roads)?;
     for definition in &document.definitions {
         transaction.execute(
             "INSERT INTO object_definitions( \
@@ -681,7 +684,7 @@ fn write_project_document(
 }
 
 fn write_terrain_catalog(
-    transaction: &Transaction<'_>,
+    transaction: &Connection,
     surfaces: &[TerrainSurface],
     texture_sets: &[TerrainTextureSet],
     texture_layers: &[TerrainTextureLayer],
@@ -762,63 +765,12 @@ fn write_terrain_catalog(
     Ok(())
 }
 
-pub fn read_project_database(path: &Path) -> Result<ProjectDocument, WorldDbError> {
-    let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-    connection.execute_batch("BEGIN DEFERRED;")?;
-    ensure_schema_version(&connection, PROJECT_SCHEMA_VERSION, "project")?;
-
-    let world_spaces = query_world_spaces(&connection)?;
-    let default_world_space = connection.query_row(
-        "SELECT default_world_space_id FROM project_settings WHERE singleton = 1",
-        [],
-        |row| Ok(WorldSpaceId(row.get(0)?)),
-    )?;
-    let vegetation_catalog = read_vegetation_catalog(&connection)?;
-    let mut statement = connection.prepare(
-        "SELECT world_space_id, cell_x, cell_z, height, source_revision \
-         FROM source_cells ORDER BY world_space_id, cell_x, cell_z",
-    )?;
-    let cells = statement
-        .query_map([], |row| {
-            Ok(SourceCellRecord {
-                space: WorldSpaceId(row.get(0)?),
-                cell: CellCoord {
-                    x: row.get(1)?,
-                    z: row.get(2)?,
-                },
-                height: row.get(3)?,
-                source_revision: row.get(4)?,
-            })
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-
-    let terrain_surfaces = query_all_terrain_surfaces(&connection)?;
-    let terrain_texture_sets = query_all_terrain_texture_sets(&connection)?;
-    let terrain_texture_layers = query_all_terrain_texture_layers(&connection)?;
-    let terrain_profiles = query_all_terrain_profiles(&connection)?;
-    let mut statement = connection.prepare(
-        "SELECT world_space_id, cell_x, cell_z, resolution, heights, source_revision \
-         FROM terrain_cell_heightfields \
-         ORDER BY world_space_id, cell_x, cell_z",
-    )?;
-    let terrain_cell_heightfields = statement
-        .query_map([], |row| {
-            Ok(SourceTerrainCellHeightfieldRecord {
-                space: WorldSpaceId(row.get(0)?),
-                cell: CellCoord {
-                    x: row.get(1)?,
-                    z: row.get(2)?,
-                },
-                resolution: row.get::<_, i64>(3)? as u16,
-                heights: decode_f32_blob(row.get_ref(4)?.as_blob()?, "terrain heights")?,
-                source_revision: row.get(5)?,
-            })
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-    let (presets, environments, environment_cells) =
-        environment_store::read_environment_document(&connection)?;
-    let roads = road_store::read_document(&connection)?;
-
+type SourceCatalogRecords = (
+    Vec<SourceAssetRecord>,
+    Vec<SourceAssetVariantRecord>,
+    Vec<SourceObjectDefinitionRecord>,
+);
+fn query_source_catalog(connection: &Connection) -> Result<SourceCatalogRecords, WorldDbError> {
     let mut statement = connection.prepare(
         "SELECT asset_id, asset_key, kind, source_uri FROM source_assets ORDER BY asset_id",
     )?;
@@ -879,6 +831,68 @@ pub fn read_project_database(path: &Path) -> Result<ProjectDocument, WorldDbErro
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
+
+    Ok((assets, asset_variants, definitions))
+}
+
+pub fn read_project_database(path: &Path) -> Result<ProjectDocument, WorldDbError> {
+    let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    connection.execute_batch("BEGIN DEFERRED;")?;
+    ensure_schema_version(&connection, PROJECT_SCHEMA_VERSION, "project")?;
+
+    let world_spaces = query_world_spaces(&connection)?;
+    let default_world_space = connection.query_row(
+        "SELECT default_world_space_id FROM project_settings WHERE singleton = 1",
+        [],
+        |row| Ok(WorldSpaceId(row.get(0)?)),
+    )?;
+    let vegetation_catalog = read_vegetation_catalog(&connection)?;
+    let mut statement = connection.prepare(
+        "SELECT world_space_id, cell_x, cell_z, height, source_revision \
+         FROM source_cells ORDER BY world_space_id, cell_x, cell_z",
+    )?;
+    let cells = statement
+        .query_map([], |row| {
+            Ok(SourceCellRecord {
+                space: WorldSpaceId(row.get(0)?),
+                cell: CellCoord {
+                    x: row.get(1)?,
+                    z: row.get(2)?,
+                },
+                height: row.get(3)?,
+                source_revision: row.get(4)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let terrain_surfaces = query_all_terrain_surfaces(&connection)?;
+    let terrain_texture_sets = query_all_terrain_texture_sets(&connection)?;
+    let terrain_texture_layers = query_all_terrain_texture_layers(&connection)?;
+    let terrain_profiles = query_all_terrain_profiles(&connection)?;
+    let mut statement = connection.prepare(
+        "SELECT world_space_id, cell_x, cell_z, resolution, heights, source_revision \
+         FROM terrain_cell_heightfields \
+         ORDER BY world_space_id, cell_x, cell_z",
+    )?;
+    let terrain_cell_heightfields = statement
+        .query_map([], |row| {
+            Ok(SourceTerrainCellHeightfieldRecord {
+                space: WorldSpaceId(row.get(0)?),
+                cell: CellCoord {
+                    x: row.get(1)?,
+                    z: row.get(2)?,
+                },
+                resolution: row.get::<_, i64>(3)? as u16,
+                heights: decode_f32_blob(row.get_ref(4)?.as_blob()?, "terrain heights")?,
+                source_revision: row.get(5)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let (presets, environments, environment_cells) =
+        environment_store::read_environment_document(&connection)?;
+    let roads = road_store::read_document(&connection)?;
+
+    let (assets, asset_variants, definitions) = query_source_catalog(&connection)?;
 
     let mut statement = connection.prepare(
         "SELECT object_id, world_space_id, owner_cell_x, owner_cell_z, definition_id, \
@@ -1689,8 +1703,12 @@ pub fn write_runtime_database(path: &Path, build: &RuntimeBuild) -> Result<(), W
     Ok(())
 }
 
-fn write_runtime_build(
-    transaction: &Transaction<'_>,
+fn write_runtime_build(transaction: &Connection, build: &RuntimeBuild) -> Result<(), WorldDbError> {
+    write_runtime_header(transaction, build)?;
+    write_runtime_spatial(transaction, build)
+}
+fn write_runtime_header(
+    transaction: &Connection,
     build: &RuntimeBuild,
 ) -> Result<(), WorldDbError> {
     let manifest = &build.manifest;
@@ -1726,22 +1744,6 @@ fn write_runtime_build(
         &build.terrain_texture_layers,
         &build.terrain_profiles,
     )?;
-    for cell in &build.cells {
-        transaction.execute(
-            "INSERT INTO cells( \
-                world_space_id, cell_x, cell_z, minimum_y, maximum_y, domain_mask, source_revision \
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![
-                cell.space.0,
-                cell.cell.x,
-                cell.cell.z,
-                cell.minimum_y,
-                cell.maximum_y,
-                i64::try_from(cell.domain_mask).map_err(|_| WorldDbError::IntegerOverflow)?,
-                cell.source_revision
-            ],
-        )?;
-    }
     for asset in &build.assets {
         transaction.execute(
             "INSERT INTO asset_variants( \
@@ -1774,6 +1776,28 @@ fn write_runtime_build(
                 definition.display_name,
                 definition.visual_asset.map(|asset| asset.0),
                 definition.activation as i64,
+            ],
+        )?;
+    }
+    Ok(())
+}
+fn write_runtime_spatial(
+    transaction: &Connection,
+    build: &RuntimeBuild,
+) -> Result<(), WorldDbError> {
+    for cell in &build.cells {
+        transaction.execute(
+            "INSERT INTO cells( \
+                world_space_id, cell_x, cell_z, minimum_y, maximum_y, domain_mask, source_revision \
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                cell.space.0,
+                cell.cell.x,
+                cell.cell.z,
+                cell.minimum_y,
+                cell.maximum_y,
+                i64::try_from(cell.domain_mask).map_err(|_| WorldDbError::IntegerOverflow)?,
+                cell.source_revision
             ],
         )?;
     }
@@ -2327,6 +2351,8 @@ fn decode_f32_blob(bytes: &[u8], field: &'static str) -> rusqlite::Result<Vec<f3
 pub enum WorldDbError {
     #[error("terrain hierarchy: {0}")]
     TerrainHierarchy(String),
+    #[error("world cook: {0}")]
+    Cook(String),
     #[error("environment source: {0}")]
     Environment(String),
     #[error(transparent)]

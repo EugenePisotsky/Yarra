@@ -1,5 +1,5 @@
 use super::*;
-pub(super) fn read_snapshot(
+pub(crate) fn read_snapshot(
     c: &Connection,
     space: WorldSpaceId,
     bounds: RoadCellBounds,

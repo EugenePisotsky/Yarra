@@ -16,3 +16,6 @@ vegetation.workspace = true
 world.workspace = true
 world-db.workspace = true
 zstd.workspace = true
+
+[dev-dependencies]
+rusqlite.workspace = true

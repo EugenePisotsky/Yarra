@@ -1,6 +1,6 @@
 //! Build terrain products from finalized leaves in an unpublished runtime generation.
-//! This pass has bounded sample memory. The earlier source/environment cook still needs
-//! conversion from ProjectDocument/RuntimeBuild to a streaming writer.
+//! This pass has bounded sample memory, as does the production source/environment
+//! pass in streaming_cook. The whole-document path is retained for reference fixtures.
 use anyhow::{Context, Result, bail};
 use std::path::Path;
 use world::{CellCoord, MAX_TERRAIN_NODE_LEVEL, PagePayload, TerrainNodeKey, WorldSpaceId};

@@ -1,8 +1,12 @@
+#[cfg(test)]
+use world_db::write_runtime_database;
 mod environment_cook;
+mod streaming_cook;
 mod terrain_cook;
 use environment_cook::{
     CookedEnvironment, TerrainSlot, TerrainWeights, compile_environment, demo_environment,
 };
+pub use streaming_cook::{CookReport, CookStats, cook_project_with_report};
 
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
@@ -27,8 +31,7 @@ use world_db::{
     PageTerrainSurfaceRecord, ProjectDocument, RuntimeBuild, RuntimeCellRecord, RuntimeManifest,
     RuntimeObjectDefinition, SourceAssetRecord, SourceAssetVariantRecord, SourceCellRecord,
     SourceObjectDefinitionRecord, SourceObjectRecord, SourceTerrainCellHeightfieldRecord,
-    WorldSpaceRecord, domain_bit, read_project_database, write_project_database,
-    write_runtime_database,
+    WorldSpaceRecord, domain_bit, write_project_database,
 };
 
 pub const DEMO_TREE_KEY: &str = "forest_tree_starter_kit/tree_07";
@@ -74,13 +77,19 @@ pub fn create_demo_project(path: &Path) -> Result<()> {
 }
 
 pub fn cook_project(project_path: &Path, runtime_path: &Path) -> Result<RuntimeManifest> {
-    let project = read_project_database(project_path)
-        .with_context(|| format!("failed to read project database {}", project_path.display()))?;
-    let build = build_runtime(project)?;
-    publish_runtime_database(runtime_path, &build)
+    Ok(cook_project_with_report(project_path, runtime_path)?.manifest)
 }
 
-pub fn build_runtime(mut project: ProjectDocument) -> Result<RuntimeBuild> {
+/// Whole-document reference path for small fixtures and parity tests. Production cooking
+/// uses the snapshot/staged writer in streaming_cook.
+pub fn build_runtime(project: ProjectDocument) -> Result<RuntimeBuild> {
+    let environment = compile_environment(&project)?;
+    build_compiled_runtime(project, environment)
+}
+fn build_compiled_runtime(
+    mut project: ProjectDocument,
+    environment: CookedEnvironment,
+) -> Result<RuntimeBuild> {
     if project.world_spaces.is_empty() {
         bail!("a project must contain at least one world space");
     }
@@ -115,8 +124,6 @@ pub fn build_runtime(mut project: ProjectDocument) -> Result<RuntimeBuild> {
         .sort_by_key(|variant| (variant.asset.0, variant.lod));
     project.definitions.sort_by_key(|definition| definition.id);
     project.objects.sort_by_key(|object| object.id.0);
-
-    let environment = compile_environment(&project)?;
 
     let spaces_by_id: HashMap<_, _> = project
         .world_spaces
@@ -1006,24 +1013,50 @@ fn hash_page(hasher: &mut blake3::Hasher, page: &EncodedPage) {
     hasher.update(&page.checksum);
 }
 
-fn publish_runtime_database(runtime_path: &Path, build: &RuntimeBuild) -> Result<RuntimeManifest> {
-    let file_name = runtime_path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .context("runtime database path must have a UTF-8 file name")?;
-    let temporary_path = runtime_path.with_file_name(format!(".{file_name}.building"));
-    if temporary_path.exists() {
-        fs::remove_file(&temporary_path).with_context(|| {
-            format!(
-                "failed to remove stale cooker output {}",
-                temporary_path.display()
-            )
-        })?;
+struct RuntimeStaging {
+    path: std::path::PathBuf,
+}
+impl RuntimeStaging {
+    fn new(runtime_path: &Path) -> Result<Self> {
+        static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let name = runtime_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .context("runtime database path must have a UTF-8 file name")?;
+        let sequence = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos();
+        Ok(Self {
+            path: runtime_path.with_file_name(format!(
+                ".{name}.{}-{nanos}-{sequence}.building",
+                std::process::id()
+            )),
+        })
     }
-    write_runtime_database(&temporary_path, build)?;
-    let (manifest, _) =
-        terrain_cook::cook_hierarchy(&temporary_path, &build.manifest.world_spaces)?;
-    let reader = world_db::RuntimeReader::open_immutable(&temporary_path)
+}
+impl Drop for RuntimeStaging {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+        let mut journal = self.path.as_os_str().to_os_string();
+        journal.push("-journal");
+        let _ = fs::remove_file(std::path::PathBuf::from(journal));
+    }
+}
+#[cfg(test)]
+fn publish_runtime_database(runtime_path: &Path, build: &RuntimeBuild) -> Result<RuntimeManifest> {
+    let staging = RuntimeStaging::new(runtime_path)?;
+    let temporary_path = &staging.path;
+    write_runtime_database(temporary_path, build)?;
+    finish_runtime_publication(runtime_path, temporary_path, &build.manifest.world_spaces)
+}
+fn finish_runtime_publication(
+    runtime_path: &Path,
+    temporary_path: &Path,
+    spaces: &[WorldSpaceRecord],
+) -> Result<RuntimeManifest> {
+    let (manifest, _) = terrain_cook::cook_hierarchy(temporary_path, spaces)?;
+    let reader = world_db::RuntimeReader::open_immutable(temporary_path)
         .context("cooked runtime database did not pass validation")?;
     for space in &manifest.world_spaces {
         // The roots are the minimum fallback cover: validate their actual payloads
@@ -1036,7 +1069,7 @@ fn publish_runtime_database(runtime_path: &Path, build: &RuntimeBuild) -> Result
         }
     }
     drop(reader);
-    fs::rename(&temporary_path, runtime_path).with_context(|| {
+    fs::rename(temporary_path, runtime_path).with_context(|| {
         format!(
             "failed to publish runtime database {}",
             runtime_path.display()

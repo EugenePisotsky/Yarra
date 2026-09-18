@@ -100,7 +100,8 @@ and GPU grass placement interpolate the actual mesh triangles. Runtime schema 17
 and payload 8 require recooking existing source projects; source schema is unchanged.
 
 The cooker also writes a hierarchy from final road-deformed leaves, with conservative
-error/bounds and bounded node reads. These nodes are not drawn yet. Only the hierarchy
-pass is streamed so far; the preceding source/environment cook still loads the whole
-project. See [Distant world and terrain rendering](DISTANT_WORLD_RENDERING.md) for
-the checkpoint, remaining cooking work and renderer implementation sequence.
+error/bounds and bounded node reads. These nodes are not drawn yet. The production
+source/environment cook uses one consistent snapshot, bounded cell/halo reads and
+staged writes; it no longer needs all spatial samples or output pages in memory.
+See [Distant world and terrain rendering](DISTANT_WORLD_RENDERING.md) for the limits,
+2 km acceptance results and renderer implementation sequence.

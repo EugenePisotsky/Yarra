@@ -21,7 +21,7 @@ pub(crate) fn write_document(c: &Connection, document: &RoadDocument) -> Result<
 }
 pub(crate) fn read_document(c: &Connection) -> Result<RoadDocument, WorldDbError> {
     let mut records = vec![];
-    // Whole-project offline export/cook only. Interactive reads never use this function.
+    // Whole-project import/export/reference tests only. Production cooking uses a snapshot.
     for (table, kind) in [
         ("road_profiles", 0),
         ("roads", 1),
@@ -48,7 +48,7 @@ pub(crate) fn read_document(c: &Connection) -> Result<RoadDocument, WorldDbError
     }
     Ok(RoadDocument { records })
 }
-/// Offline index used by the existing whole-project cooker. Construction may read the whole
+/// Offline index used by small whole-project reference fixtures. Construction may read the whole
 /// document; every subsequent cell snapshot has the same limits as a database viewport query.
 pub struct RoadDocumentIndex {
     profiles: BTreeMap<RoadProfileId, CartTrackProfile>,
@@ -354,4 +354,125 @@ impl RoadDocumentIndex {
         snapshot.validate().map_err(|e| invalid(e.to_string()))?;
         Ok(snapshot)
     }
+}
+
+/// Stream validation over source records, including roads outside existing terrain.
+/// No route-wide control arrays or world-wide spatial index are constructed.
+pub(crate) fn validate_cook_source(
+    c: &Connection,
+    library: &PresetLibrary,
+) -> Result<(), WorldDbError> {
+    transaction::validate_shared(c, library)?;
+    for (table, kind) in [
+        ("road_profiles", 0),
+        ("roads", 1),
+        ("road_knots", 2),
+        ("road_spans", 3),
+        ("road_junctions", 4),
+    ] {
+        let mut q = c.prepare(&format!("SELECT id FROM {table} ORDER BY id"))?;
+        let mut rows = q.query([])?;
+        while let Some(row) = rows.next()? {
+            let id = crate::blob_array(
+                row.get_ref(0)?.as_blob().map_err(rusqlite::Error::from)?,
+                "road id",
+            )?;
+            let key = match kind {
+                0 => RoadRecordKey::Profile(RoadProfileId(id)),
+                1 => RoadRecordKey::Road(RoadId(id)),
+                2 => RoadRecordKey::Knot(RoadKnotId(id)),
+                3 => RoadRecordKey::Span(RoadSpanId(id)),
+                _ => RoadRecordKey::Junction(RoadJunctionId(id)),
+            };
+            let record = required(c, key)?;
+            transaction::validate_record(c, &record)?;
+            match record {
+                RoadSourceRecord::Span(source) => {
+                    let span = span(c, source.id)?;
+                    let route = route(c, span.road)?;
+                    let size = definition(c, route.space)?.cell_size;
+                    let bounds = index_bounds(&span, size)?;
+                    RoadSnapshot {
+                        space: route.space,
+                        cell_size: size,
+                        loaded_bounds: bounds,
+                        truncated: false,
+                        junctions: vec![],
+                        profiles: vec![profile(c, route.road.profile)?],
+                        roads: vec![route.road],
+                        spans: vec![span],
+                    }
+                    .validate()
+                    .map_err(|e| invalid(e.to_string()))?;
+                    validate_cook_index(c, "road_span_cells", "span_id", id, route.space, bounds)?;
+                    let stored = c.query_row(
+                        "SELECT min_x,min_z,max_x,max_z FROM road_spans WHERE id=?1",
+                        [id.as_slice()],
+                        |r| {
+                            Ok(RoadCellBounds {
+                                minimum: CellCoord {
+                                    x: r.get(0)?,
+                                    z: r.get(1)?,
+                                },
+                                maximum: CellCoord {
+                                    x: r.get(2)?,
+                                    z: r.get(3)?,
+                                },
+                            })
+                        },
+                    )?;
+                    if stored != bounds {
+                        return Err(invalid("road span bounds index disagrees with source"));
+                    }
+                }
+                RoadSourceRecord::Junction(source) => {
+                    let bounds = source
+                        .junction
+                        .bounds(definition(c, source.space)?.cell_size)
+                        .map_err(|e| invalid(e.to_string()))?;
+                    validate_cook_index(
+                        c,
+                        "road_junction_cells",
+                        "junction_id",
+                        id,
+                        source.space,
+                        bounds,
+                    )?;
+                    let count: i64 = c.query_row(
+                        "SELECT count(*) FROM road_junction_knots WHERE junction_id=?1",
+                        [id.as_slice()],
+                        |r| r.get(0),
+                    )?;
+                    if count != source.junction.knots.len() as i64 {
+                        return Err(invalid("junction membership count disagrees with source"));
+                    }
+                    for knot in source.junction.knots {
+                        if junctions::for_knot(c, knot)? != Some(source.junction.id) {
+                            return Err(invalid("junction membership disagrees with source"));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(())
+}
+fn validate_cook_index(
+    c: &Connection,
+    table: &str,
+    id_column: &str,
+    id: [u8; 16],
+    space: WorldSpaceId,
+    bounds: RoadCellBounds,
+) -> Result<(), WorldDbError> {
+    let expected = bounds
+        .cell_count()
+        .filter(|&n| n <= MAX_ROAD_INDEX_CELLS_PER_SPAN)
+        .ok_or_else(|| invalid("road index budget"))?;
+    let (total,matching):(i64,i64)=c.query_row(&format!("SELECT count(*),coalesce(sum(world_space_id=?2 AND cell_x BETWEEN ?3 AND ?4 AND cell_z BETWEEN ?5 AND ?6),0) FROM {table} WHERE {id_column}=?1"),params![id.as_slice(),space.0,bounds.minimum.x,bounds.maximum.x,bounds.minimum.z,bounds.maximum.z],|r|Ok((r.get(0)?,r.get(1)?)))?;
+    if total != expected as i64 || matching != total {
+        return Err(invalid("road spatial index disagrees with source coverage"));
+    }
+    Ok(())
 }
