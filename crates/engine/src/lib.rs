@@ -3,12 +3,15 @@ mod terrain_raycast;
 pub use terrain_raycast::raycast_resident_terrain;
 mod character;
 mod character_catalog;
-mod environment;
 mod msaa_store;
 mod world_streaming;
 
 use std::{f32::consts::TAU, path::PathBuf};
 
+pub use atmosphere::{
+    ApplyAtmosphere, AtmosphereOwner, AtmosphereState, WorldEnvironmentCamera,
+    WorldEnvironmentPlugin, WorldEnvironmentView, WorldSun,
+};
 use bevy::{
     core_pipeline::prepass::DepthPrepass,
     diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin},
@@ -26,7 +29,6 @@ pub use character_catalog::{
     CharacterPresentationProfileSummary, CharacterPreviewClipDefinition, CharacterPreviewClipRole,
     DEFAULT_CHARACTER_PRESENTATION_ID, load_character_presentation_catalog_summary,
 };
-pub use environment::{WorldEnvironmentCamera, WorldEnvironmentPlugin, WorldSun};
 pub use msaa_store::{MsaaColorStorePlugin, MsaaColorStorePolicy};
 use terrain_render::{TerrainMacroVariation, TerrainRenderPlugin};
 pub use world_streaming::{
@@ -297,7 +299,8 @@ fn update_demo_sun_motion(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
     mut motion: ResMut<DemoSunMotion>,
-    mut sun: Single<&mut Transform, With<WorldSun>>,
+    sun: Single<&Transform, With<WorldSun>>,
+    mut atmosphere: ResMut<AtmosphereState>,
 ) {
     let current_direction: Vec3 = sun.back().into();
     let base_azimuth = *motion
@@ -322,9 +325,9 @@ fn update_demo_sun_motion(
             elevation.sin(),
             azimuth.cos() * horizontal,
         );
-        sun.rotation = Transform::from_translation(direction_to_sun)
-            .looking_at(Vec3::ZERO, Vec3::Y)
-            .rotation;
+        atmosphere.direction_override = Some(direction_to_sun);
+    } else {
+        atmosphere.direction_override = None;
     }
 }
 

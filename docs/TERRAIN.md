@@ -120,3 +120,8 @@ snapshot, bounded cell/halo reads and
 staged writes; it no longer needs all spatial samples or output pages in memory.
 See [Distant world and terrain rendering](DISTANT_WORLD_RENDERING.md) for the limits,
 2 km acceptance results and renderer implementation sequence.
+
+The [terrain readiness review](performance/20260919-terrain-review/README.md)
+corrects source attachment starvation behind budget-blocked pages, quantifies
+current source sizes, and records a neighbor-lookup GPU experiment that did not
+justify a shader change. Sustained GPU performance remains an open acceptance item.

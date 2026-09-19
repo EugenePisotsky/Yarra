@@ -2,6 +2,7 @@
 members = [
     "crates/app_editor",
     "crates/app_game",
+    "crates/atmosphere",
     "crates/engine",
     "crates/environment",
     "crates/environment_compile",
@@ -22,6 +23,7 @@ publish = false
 
 [workspace.dependencies]
 anyhow = "1"
+atmosphere = { package = "yarra-atmosphere", path = "crates/atmosphere" }
 bevy = { version = "0.19", default-features = false, features = ["3d", "basis-universal", "ktx2", "png", "ui", "zstd_rust"] }
 bevy_egui = "0.41.1"
 blake3 = "1"

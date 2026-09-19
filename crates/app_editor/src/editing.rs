@@ -721,6 +721,11 @@ struct ObjectTransformChange {
 
 #[derive(Debug, Clone, PartialEq)]
 enum EditorCommand {
+    Atmosphere {
+        space: world::WorldSpaceId,
+        before: Box<world::atmosphere::AtmosphereProfile>,
+        after: Box<world::atmosphere::AtmosphereProfile>,
+    },
     Roads {
         before: Vec<crate::road_authoring::working::RoadChange>,
         after: Vec<crate::road_authoring::working::RoadChange>,
@@ -754,6 +759,9 @@ impl EditorCommand {
     fn estimated_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
             + match self {
+                Self::Atmosphere { .. } => {
+                    2 * std::mem::size_of::<world::atmosphere::AtmosphereProfile>()
+                }
                 Self::Roads { before, after } => (before.len() + after.len()) * 4096,
                 Self::Presets { before, after } => {
                     crate::domain_editing::library_bytes(before)
@@ -791,6 +799,7 @@ impl EditorCommand {
         dense: &mut DenseDomainWorkingSets,
     ) -> bool {
         match self {
+            Self::Atmosphere { space, after, .. } => dense.atmospheres.apply(*space, after),
             Self::Roads { before, after } => dense.roads.replay(before, after).is_ok(),
             Self::Presets { before, after } => merge_preset_changes(dense.presets(), before, after)
                 .is_ok_and(|p| dense.apply_presets(&p).is_ok()),
@@ -820,6 +829,7 @@ impl EditorCommand {
         dense: &mut DenseDomainWorkingSets,
     ) -> bool {
         match self {
+            Self::Atmosphere { space, before, .. } => dense.atmospheres.apply(*space, before),
             Self::Roads { before, after } => dense.roads.replay(after, before).is_ok(),
             Self::Presets { before, after } => merge_preset_changes(dense.presets(), after, before)
                 .is_ok_and(|p| dense.apply_presets(&p).is_ok()),
@@ -919,6 +929,21 @@ impl Default for EditorHistory {
 }
 
 impl EditorHistory {
+    pub(crate) fn record_atmosphere(
+        &mut self,
+        space: world::WorldSpaceId,
+        before: world::atmosphere::AtmosphereProfile,
+        after: world::atmosphere::AtmosphereProfile,
+    ) {
+        if before != after {
+            self.record(EditorCommand::Atmosphere {
+                space,
+                before: Box::new(before),
+                after: Box::new(after),
+            });
+        }
+    }
+
     pub(crate) fn road_keys(&self) -> std::collections::BTreeSet<world_db::RoadRecordKey> {
         self.undo
             .iter()

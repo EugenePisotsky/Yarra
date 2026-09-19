@@ -21,6 +21,19 @@ pub(crate) use animation::{AnimationWorkspaceCamera, AnimationWorkspacePlugin};
 pub(crate) use vegetation::{VegetationWorkspaceCamera, VegetationWorkspacePlugin};
 pub(crate) use world::WorldWorkspacePlugin;
 
+/// Reproducible lighting for a fresh asset study, independent of world time/weather.
+fn apply_study_daylight(
+    transform: &mut Transform,
+    light: &mut DirectionalLight,
+    ambient: &mut GlobalAmbientLight,
+) {
+    *transform = Transform::from_xyz(12.0, 20.0, 30.0).looking_at(Vec3::ZERO, Vec3::Y);
+    light.color = Color::srgb(1.0, 0.98, 0.95);
+    light.illuminance = 128_000.0;
+    ambient.color = Color::srgb(0.60, 0.72, 0.92);
+    ambient.brightness = 6000.0;
+}
+
 #[derive(States, Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum EditorWorkspace {
     #[default]
@@ -67,6 +80,7 @@ impl Plugin for EditorWorkspacesPlugin {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum FramePacingOwner {
+    AtmospherePreview,
     AnimationWorkspace,
     WorldGameplayPreview,
     VegetationWorkspace,

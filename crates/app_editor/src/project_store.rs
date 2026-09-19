@@ -248,9 +248,25 @@ pub(crate) struct ProjectEditorStore {
     vegetation_save_in_flight: Option<u64>,
     vegetation_save_completion: Option<VegetationSaveCompletion>,
     next_save_request_id: u64,
+    pending_atmosphere_save: Option<(u64, Vec<world_db::AtmosphereWrite>)>,
+    atmosphere_save_in_flight: Option<u64>,
+    pub(crate) atmosphere_completion:
+        Option<(u64, Result<world_db::AtmosphereWriteResult, String>)>,
 }
 
 impl ProjectEditorStore {
+    pub(crate) fn queue_atmospheres(
+        &mut self,
+        writes: Vec<world_db::AtmosphereWrite>,
+    ) -> Option<u64> {
+        if writes.is_empty() || self.save_in_flight() || self.write_error.is_some() {
+            return None;
+        }
+        self.next_save_request_id = self.next_save_request_id.wrapping_add(1).max(1);
+        self.pending_atmosphere_save = Some((self.next_save_request_id, writes));
+        Some(self.next_save_request_id)
+    }
+
     pub(crate) fn status(&self) -> String {
         match &self.phase {
             ProjectStorePhase::Opening => "opening project SQLite".into(),
@@ -375,6 +391,8 @@ impl ProjectEditorStore {
             || self.dense_save_in_flight.is_some()
             || self.pending_vegetation_save.is_some()
             || self.vegetation_save_in_flight.is_some()
+            || self.pending_atmosphere_save.is_some()
+            || self.atmosphere_save_in_flight.is_some()
     }
 
     pub(crate) fn queue_object_transaction(
@@ -472,6 +490,7 @@ enum ProjectRequest {
         window: ProjectQueryWindow,
         domains: ProjectSourceDomains,
     },
+    SaveAtmospheres(u64, Vec<world_db::AtmosphereWrite>),
     SaveObjectTransaction(PendingObjectSave),
     SaveDenseTransaction(PendingDenseSave),
     SaveVegetationCatalog(PendingVegetationSave),
@@ -479,6 +498,7 @@ enum ProjectRequest {
 }
 
 enum ProjectResult {
+    SaveAtmospheres(u64, Result<world_db::AtmosphereWriteResult, String>),
     Opened(Result<ProjectOpenSnapshot, String>),
     Query {
         revision: u64,
@@ -757,6 +777,18 @@ fn project_worker(
                     return;
                 }
             }
+            ProjectRequest::SaveAtmospheres(id, writes) => {
+                let result = match writer.as_mut() {
+                    Ok(writer) => writer.write_atmospheres(&writes).map_err(|e| e.to_string()),
+                    Err(e) => Err(e.clone()),
+                };
+                if results
+                    .send(ProjectResult::SaveAtmospheres(id, result))
+                    .is_err()
+                {
+                    return;
+                }
+            }
             ProjectRequest::Shutdown => return,
         }
     }
@@ -771,6 +803,27 @@ fn receive_project_results(
     };
     loop {
         match worker.results.try_recv() {
+            Ok(ProjectResult::SaveAtmospheres(id, result)) => {
+                if store.atmosphere_save_in_flight != Some(id) {
+                    continue;
+                }
+                store.atmosphere_save_in_flight = None;
+                if let Ok(world_db::AtmosphereWriteResult::Committed(records)) = &result {
+                    store.source_epoch = store.source_epoch.wrapping_add(1).max(1);
+                    if let Some(manifest) = &mut store.manifest {
+                        for (id, revision, profile) in records {
+                            if let Some(space) =
+                                manifest.world_spaces.iter_mut().find(|s| s.id == *id)
+                            {
+                                space.atmosphere = profile.clone();
+                                space.atmosphere_revision = *revision;
+                            }
+                        }
+                    }
+                }
+                store.atmosphere_completion = Some((id, result));
+            }
+
             Ok(ProjectResult::Opened(result)) => match result {
                 Ok(opened) => {
                     store.manifest = Some(opened.manifest);
@@ -1070,12 +1123,30 @@ fn dispatch_project_save(
         || store.save_in_flight.is_some()
         || store.dense_save_in_flight.is_some()
         || store.vegetation_save_in_flight.is_some()
+        || store.atmosphere_save_in_flight.is_some()
     {
         return;
     }
     let Some(worker) = worker else {
         return;
     };
+
+    if let Some((id, writes)) = store.pending_atmosphere_save.clone() {
+        match worker
+            .requests
+            .try_send(ProjectRequest::SaveAtmospheres(id, writes))
+        {
+            Ok(()) => {
+                store.pending_atmosphere_save = None;
+                store.atmosphere_save_in_flight = Some(id);
+            }
+            Err(TrySendError::Full(_)) => {}
+            Err(TrySendError::Disconnected(_)) => {
+                store.write_error = Some("Project writer stopped".into());
+            }
+        }
+        return;
+    }
 
     if let Some(request) = store.pending_save.clone() {
         match worker

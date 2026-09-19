@@ -501,6 +501,11 @@ fn build_compiled_runtime(
         content_hasher.update(&space.cell_size.to_bits().to_le_bytes());
         content_hasher.update(&space.minimum_y.to_bits().to_le_bytes());
         content_hasher.update(&space.maximum_y.to_bits().to_le_bytes());
+        space.atmosphere.validate().map_err(anyhow::Error::msg)?;
+        content_hasher.update(&bincode::serde::encode_to_vec(
+            &space.atmosphere,
+            bincode::config::standard(),
+        )?);
     }
     hash_terrain_catalog(&mut content_hasher, &project, &environment);
     content_hasher.update(&environment.fingerprint);
@@ -1114,6 +1119,8 @@ fn finish_runtime_publication_with_materials(
 
 fn demo_project_document() -> ProjectDocument {
     let overworld = WorldSpaceRecord {
+        atmosphere: Default::default(),
+        atmosphere_revision: 1,
         id: WorldSpaceId(1),
         name: "demo-overworld".into(),
         cell_size: DEFAULT_CELL_SIZE,
@@ -1121,6 +1128,11 @@ fn demo_project_document() -> ProjectDocument {
         maximum_y: DEMO_TERRAIN_MAXIMUM_HEIGHT,
     };
     let interior = WorldSpaceRecord {
+        atmosphere: world::atmosphere::AtmosphereProfile {
+            outdoor: false,
+            ..Default::default()
+        },
+        atmosphere_revision: 1,
         id: WorldSpaceId(2),
         name: "demo-interior".into(),
         cell_size: DEFAULT_CELL_SIZE,

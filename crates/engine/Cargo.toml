@@ -5,6 +5,7 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
+atmosphere.workspace = true
 bevy.workspace = true
 crossbeam-channel.workspace = true
 log.workspace = true

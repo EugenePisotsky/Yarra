@@ -16,6 +16,7 @@ use std::sync::{
 use bevy::render::diagnostic::RenderDiagnosticsPlugin;
 use bevy::{
     color::LinearRgba,
+    light::SunDisk,
     pbr::MeshPipelineSystems,
     prelude::*,
     render::{
@@ -269,7 +270,12 @@ impl Default for VegetationSun {
 }
 
 fn sync_vegetation_sun(
-    directional_lights: Query<(&DirectionalLight, &GlobalTransform)>,
+    directional_lights: Query<(
+        &DirectionalLight,
+        &GlobalTransform,
+        Option<&SunDisk>,
+        Option<&Visibility>,
+    )>,
     ambient: Option<Res<GlobalAmbientLight>>,
     mut vegetation_sun: ResMut<VegetationSun>,
 ) {
@@ -281,12 +287,20 @@ fn sync_vegetation_sun(
         vegetation_sun.ambient_radiance = Vec3::ONE;
     }
 
-    let Some((light, transform)) = directional_lights
+    let Some((light, transform, _, _)) = directional_lights
         .iter()
-        .filter(|(light, _)| light.illuminance.is_finite())
-        .max_by(|(left, _), (right, _)| left.illuminance.total_cmp(&right.illuminance))
+        .filter(|(light, transform, disk, visibility)| {
+            light.illuminance.is_finite()
+                && light.illuminance > 0.0
+                && visibility.is_none_or(|v| *v != Visibility::Hidden)
+                // Celestial lights below the ground still illuminate the sky at twilight,
+                // but must not steal surface lighting from the moon above the horizon.
+                && disk.is_none_or(|d| transform.back().y > -(d.angular_size * 0.5).sin())
+        })
+        .max_by(|(left, ..), (right, ..)| left.illuminance.total_cmp(&right.illuminance))
     else {
         vegetation_sun.active = false;
+        vegetation_sun.radiance = Vec3::ZERO;
         return;
     };
     let color = LinearRgba::from(light.color);
@@ -916,5 +930,49 @@ mod tests {
         let mut disabled = wind;
         disabled.enabled = false;
         assert_eq!(disabled.sample_force(Vec2::ZERO), 0.0);
+    }
+}
+
+#[cfg(test)]
+mod night_lighting_tests {
+    use super::*;
+
+    #[test]
+    fn moon_above_horizon_wins_over_twilight_sun_and_hidden_lights_are_excluded() {
+        let mut app = App::new();
+        app.init_resource::<VegetationSun>()
+            .add_systems(Update, sync_vegetation_sun);
+        app.world_mut().spawn((
+            DirectionalLight {
+                illuminance: 100_000.0,
+                ..default()
+            },
+            GlobalTransform::from(
+                Transform::from_xyz(1.0, -0.5, 0.0).looking_at(Vec3::ZERO, Vec3::Y),
+            ),
+            SunDisk::EARTH,
+        ));
+        let moon = app
+            .world_mut()
+            .spawn((
+                DirectionalLight {
+                    illuminance: 1800.0,
+                    ..default()
+                },
+                GlobalTransform::from(
+                    Transform::from_xyz(-1.0, 0.5, 0.0).looking_at(Vec3::ZERO, Vec3::Y),
+                ),
+                SunDisk::EARTH,
+            ))
+            .id();
+        app.update();
+        let light = app.world().resource::<VegetationSun>();
+        assert!(light.active);
+        assert!(light.direction_to_light.y > 0.0);
+        assert_eq!(light.radiance, Vec3::splat(1800.0));
+        app.world_mut().entity_mut(moon).insert(Visibility::Hidden);
+        app.update();
+        assert!(!app.world().resource::<VegetationSun>().active);
+        assert_eq!(app.world().resource::<VegetationSun>().radiance, Vec3::ZERO);
     }
 }

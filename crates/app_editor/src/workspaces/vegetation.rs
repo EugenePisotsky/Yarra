@@ -466,7 +466,7 @@ mod tests {
         let original_scene = VegetationDebugScene::reference();
         let mut original_wind = VegetationWind::default();
         original_wind.set_phase_seconds(123.0);
-        let sun_transform = Transform::from_xyz(12.0, 20.0, 30.0).looking_at(Vec3::ZERO, Vec3::Y);
+        let sun_transform = Transform::from_xyz(12.0, -20.0, 30.0).looking_at(Vec3::ZERO, Vec3::Y);
         app.add_plugins(bevy::state::app::StatesPlugin)
             .add_plugins(EditorWorkspacesPlugin)
             .insert_resource(StudyState::new(StudyLaunch::default()))
@@ -480,7 +480,14 @@ mod tests {
             .add_systems(Update, crate::shell::sync_workspace_cameras);
         let sun = app
             .world_mut()
-            .spawn((WorldSun, sun_transform, DirectionalLight::default()))
+            .spawn((
+                WorldSun,
+                sun_transform,
+                DirectionalLight {
+                    illuminance: 0.0,
+                    ..default()
+                },
+            ))
             .id();
         let world_camera = app
             .world_mut()
@@ -505,6 +512,18 @@ mod tests {
                 .resource_mut::<NextState<EditorWorkspace>>()
                 .set(EditorWorkspace::Vegetation);
             app.update();
+            assert_eq!(
+                app.world()
+                    .get::<DirectionalLight>(sun)
+                    .unwrap()
+                    .illuminance,
+                if iteration == 0 { 128_000.0 } else { 20_000.0 }
+            );
+            assert!(app.world().get::<Transform>(sun).unwrap().back().y > 0.0);
+            app.world_mut()
+                .get_mut::<DirectionalLight>(sun)
+                .unwrap()
+                .illuminance = 20_000.0;
             assert_eq!(
                 app.world().resource::<VegetationLighting>().canopy,
                 world_canopy
@@ -570,6 +589,13 @@ mod tests {
             );
             assert!(app.world().get::<RenderLayers>(sun).is_none());
             assert_eq!(*app.world().get::<Transform>(sun).unwrap(), sun_transform);
+            assert_eq!(
+                app.world()
+                    .get::<DirectionalLight>(sun)
+                    .unwrap()
+                    .illuminance,
+                0.0
+            );
         }
     }
 
@@ -780,6 +806,10 @@ fn enter(
             **transform = *t;
             **light = l.clone();
             *ambient = a.clone();
+        } else {
+            // A new study needs its own reproducible daylight, even when entered
+            // from a night/interior world. Saved studies keep their authored lights.
+            super::apply_study_daylight(transform, light, &mut ambient);
         }
     }
     lighting.canopy_origin = [0.0; 2];

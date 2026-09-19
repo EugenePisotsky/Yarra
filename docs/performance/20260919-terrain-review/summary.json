@@ -1,0 +1,241 @@
+{
+  "source_audit": [
+    {
+      "database": "assets/generated/world.runtime.sqlite",
+      "source_pages_by_space_domain": [
+        [
+          1,
+          1,
+          256,
+          25694,
+          6577664
+        ],
+        [
+          1,
+          2,
+          23,
+          152,
+          1978
+        ],
+        [
+          1,
+          9,
+          256,
+          20664,
+          5289984
+        ],
+        [
+          2,
+          1,
+          81,
+          88,
+          7128
+        ],
+        [
+          2,
+          8,
+          1,
+          66,
+          66
+        ]
+      ],
+      "largest_16_decoded_bytes": 411104,
+      "hierarchy_source_gpu_estimate_all_pages": [
+        [
+          1,
+          5242880
+        ],
+        [
+          2,
+          0
+        ]
+      ],
+      "dependency_gpu_estimate_all_pages": [
+        [
+          1,
+          27100992
+        ]
+      ]
+    },
+    {
+      "database": "tmp/hill-landscape/runtime.sqlite",
+      "source_pages_by_space_domain": [
+        [
+          1,
+          1,
+          2304,
+          25694,
+          58894308
+        ],
+        [
+          1,
+          9,
+          2304,
+          20664,
+          47345536
+        ]
+      ],
+      "largest_16_decoded_bytes": 411104,
+      "hierarchy_source_gpu_estimate_all_pages": [
+        [
+          1,
+          46923776
+        ]
+      ],
+      "dependency_gpu_estimate_all_pages": []
+    }
+  ],
+  "gpu_comparison": {
+    "settings": {
+      "baseline": {
+        "size": "2592x1456",
+        "window": "fullscreen",
+        "fps": 120,
+        "msaa": 4,
+        "warmup": 15,
+        "seconds": 25,
+        "view": "grass-soak",
+        "density": "balanced",
+        "grass": "full",
+        "counters": false,
+        "terrain_lod": true,
+        "native_pacing": true,
+        "prepass": true
+      },
+      "neighbor-bypass": {
+        "size": "2592x1456",
+        "window": "fullscreen",
+        "fps": 120,
+        "msaa": 4,
+        "warmup": 15,
+        "seconds": 25,
+        "view": "grass-soak",
+        "density": "balanced",
+        "grass": "full",
+        "counters": false,
+        "terrain_lod": true,
+        "native_pacing": true,
+        "prepass": true,
+        "shaders": "tmp/terrain-review/neighbors-bypass"
+      }
+    },
+    "host": {
+      "os": "macOS-26.4.1-arm64-arm-64bit-Mach-O",
+      "architecture": "arm64",
+      "model": "Mac14,6",
+      "cpu": "Apple M2 Max",
+      "memory_bytes": "34359738368",
+      "power_source": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=21758051)\t95%; charging; 0:32 remaining present: true"
+    },
+    "runs": [
+      {
+        "name": "01-baseline",
+        "updates": {
+          "frames": 3000,
+          "fps": 119.99723526369954,
+          "late_updates": 0,
+          "max_interval_ms": 8.782,
+          "worst_window_p95_ms": 8.599,
+          "worst_window_fps": 119.95729520290776,
+          "worst_window_duration_s": 1.000356,
+          "worst_window_end_s": 1.0,
+          "below_95pct_target_windows": 0,
+          "below_95pct_target_window_s": 0,
+          "late_update_fraction": 0.0
+        },
+        "hud": {
+          "samples": 5880,
+          "gpu_mean_ms": 5.790816326530612,
+          "gpu_p95_ms": 6.53,
+          "presentation_interval_mean_ms": 8.33,
+          "presentation_interval_p95_ms": 8.33,
+          "scope": "Correlated/overlapping HUD samples, not independent frame statistics",
+          "presentation_tail_sample_fraction": 0.0
+        },
+        "power": {
+          "coverage_s": 23.991987943649292,
+          "cpu_w": 6.059461459179615,
+          "gpu_w": 20.51792597968913,
+          "gpu_mhz": 1278.4289712367297,
+          "gpu_active_percent": 90.08447689173359,
+          "gpu_temp_c": 69.4581529714011
+        },
+        "errors": [],
+        "warnings": [],
+        "target_misses": []
+      },
+      {
+        "name": "02-neighbor-bypass",
+        "updates": {
+          "frames": 3000,
+          "fps": 119.99964000108,
+          "late_updates": 0,
+          "max_interval_ms": 8.88,
+          "worst_window_p95_ms": 8.572,
+          "worst_window_fps": 119.95273862098333,
+          "worst_window_duration_s": 1.000394,
+          "worst_window_end_s": 18.074999809265137,
+          "below_95pct_target_windows": 0,
+          "below_95pct_target_window_s": 0,
+          "late_update_fraction": 0.0
+        },
+        "hud": {
+          "samples": 5978,
+          "gpu_mean_ms": 5.91169287387086,
+          "gpu_p95_ms": 6.57,
+          "presentation_interval_mean_ms": 8.33,
+          "presentation_interval_p95_ms": 8.33,
+          "scope": "Correlated/overlapping HUD samples, not independent frame statistics",
+          "presentation_tail_sample_fraction": 0.0
+        },
+        "power": {
+          "coverage_s": 24.0,
+          "cpu_w": 6.162507057189941,
+          "gpu_w": 19.13700528939565,
+          "gpu_mhz": 1203.875,
+          "gpu_active_percent": 88.9813261727492,
+          "gpu_temp_c": 76.80273214975993
+        },
+        "errors": [],
+        "warnings": [],
+        "target_misses": []
+      },
+      {
+        "name": "03-baseline",
+        "updates": {
+          "frames": 3000,
+          "fps": 119.99896320895789,
+          "late_updates": 0,
+          "max_interval_ms": 12.336,
+          "worst_window_p95_ms": 8.722,
+          "worst_window_fps": 119.92792331808582,
+          "worst_window_duration_s": 1.000601,
+          "worst_window_end_s": 9.026999950408936,
+          "below_95pct_target_windows": 0,
+          "below_95pct_target_window_s": 0,
+          "late_update_fraction": 0.0
+        },
+        "hud": {
+          "samples": 5880,
+          "gpu_mean_ms": 5.889882653061225,
+          "gpu_p95_ms": 6.55,
+          "presentation_interval_mean_ms": 8.330003401360544,
+          "presentation_interval_p95_ms": 8.33,
+          "scope": "Correlated/overlapping HUD samples, not independent frame statistics",
+          "presentation_tail_sample_fraction": 0.0
+        },
+        "power": {
+          "coverage_s": 24.0,
+          "cpu_w": 6.496408820152283,
+          "gpu_w": 20.380885521570843,
+          "gpu_mhz": 1256.3333333333333,
+          "gpu_active_percent": 88.45028281211853,
+          "gpu_temp_c": 82.71529706319173
+        },
+        "errors": [],
+        "warnings": [],
+        "target_misses": []
+      }
+    ]
+  }
+}

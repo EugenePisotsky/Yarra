@@ -62,6 +62,8 @@ impl Fixture {
             presets,
             default_world_space: definition.space,
             world_spaces: vec![WorldSpaceRecord {
+                atmosphere: Default::default(),
+                atmosphere_revision: 1,
                 id: definition.space,
                 name: "test".into(),
                 cell_size: 32.0,

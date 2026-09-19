@@ -1,3 +1,5 @@
+mod atmosphere;
+pub use atmosphere::*;
 mod cook_store;
 pub use cook_store::*;
 mod terrain_materials;
@@ -118,6 +120,8 @@ pub struct SourceObjectPalettePage {
 
 #[derive(Debug, Clone)]
 pub struct WorldSpaceRecord {
+    pub atmosphere: world::atmosphere::AtmosphereProfile,
+    pub atmosphere_revision: i64,
     pub id: WorldSpaceId,
     pub name: String,
     pub cell_size: f32,
@@ -569,14 +573,16 @@ fn write_project_document(
     )?;
     for space in &document.world_spaces {
         transaction.execute(
-            "INSERT INTO world_spaces(id, name, cell_size, minimum_y, maximum_y) \
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO world_spaces(id, name, cell_size, minimum_y, maximum_y, atmosphere, atmosphere_revision) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 space.id.0,
                 space.name,
                 space.cell_size,
                 space.minimum_y,
-                space.maximum_y
+                space.maximum_y,
+                atmosphere::encode(&space.atmosphere)?,
+                space.atmosphere_revision
             ],
         )?;
     }
@@ -1724,14 +1730,16 @@ fn write_runtime_header(
     let manifest = &build.manifest;
     for space in &manifest.world_spaces {
         transaction.execute(
-            "INSERT INTO world_spaces(id, name, cell_size, minimum_y, maximum_y) \
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO world_spaces(id, name, cell_size, minimum_y, maximum_y, atmosphere, atmosphere_revision) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 space.id.0,
                 space.name,
                 space.cell_size,
                 space.minimum_y,
-                space.maximum_y
+                space.maximum_y,
+                atmosphere::encode(&space.atmosphere)?,
+                space.atmosphere_revision
             ],
         )?;
     }
@@ -2247,19 +2255,29 @@ fn terrain_profile_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Terrain
 
 fn query_world_spaces(connection: &Connection) -> Result<Vec<WorldSpaceRecord>, WorldDbError> {
     let mut statement = connection.prepare(
-        "SELECT id, name, cell_size, minimum_y, maximum_y FROM world_spaces ORDER BY id",
+        "SELECT id, name, cell_size, minimum_y, maximum_y, atmosphere, atmosphere_revision FROM world_spaces ORDER BY id LIMIT 33",
     )?;
-    Ok(statement
-        .query_map([], |row| {
-            Ok(WorldSpaceRecord {
-                id: WorldSpaceId(row.get(0)?),
-                name: row.get(1)?,
-                cell_size: row.get(2)?,
-                minimum_y: row.get(3)?,
-                maximum_y: row.get(4)?,
-            })
-        })?
-        .collect::<Result<Vec<_>, _>>()?)
+    let mut rows = statement.query([])?;
+    let mut spaces = Vec::new();
+    while let Some(row) = rows.next()? {
+        let bytes: Vec<u8> = row.get(5)?;
+        let profile = atmosphere::decode(&bytes)?;
+        spaces.push(WorldSpaceRecord {
+            id: WorldSpaceId(row.get(0)?),
+            name: row.get(1)?,
+            cell_size: row.get(2)?,
+            minimum_y: row.get(3)?,
+            maximum_y: row.get(4)?,
+            atmosphere: profile,
+            atmosphere_revision: row.get(6)?,
+        });
+    }
+    if spaces.len() > 32 {
+        return Err(WorldDbError::Cook(
+            "at most 32 world atmospheres are supported".into(),
+        ));
+    }
+    Ok(spaces)
 }
 
 fn read_runtime_manifest(connection: &Connection) -> Result<RuntimeManifest, WorldDbError> {
@@ -2439,7 +2457,10 @@ mod tests {
         let connection = Connection::open_in_memory().unwrap();
         connection.execute_batch(schema::RUNTIME_SCHEMA).unwrap();
         connection
-            .execute("INSERT INTO world_spaces VALUES (1,'test',8,-1,1)", [])
+            .execute(
+                "INSERT INTO world_spaces VALUES (1,'test',8,-1,1,?1,1)",
+                [atmosphere::encode(&Default::default()).unwrap()],
+            )
             .unwrap();
         for x in -2..=2 {
             for z in [-10000, -2, -1, 0, 1, 2, 10000] {
@@ -2528,6 +2549,8 @@ mod tests {
         let project_path = directory.join("project.sqlite");
         let runtime_path = directory.join("runtime.sqlite");
         let space = WorldSpaceRecord {
+            atmosphere: Default::default(),
+            atmosphere_revision: 1,
             id: WorldSpaceId(1),
             name: "test".into(),
             cell_size: 32.0,

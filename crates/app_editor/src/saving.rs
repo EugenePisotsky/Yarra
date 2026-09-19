@@ -116,7 +116,8 @@ pub(crate) fn drive_editor_save(
     if !coordinator.active() {
         return;
     }
-    if dense.gesture_active
+    if dense.atmospheres.gesture.is_some()
+        || dense.gesture_active
         || project.save_in_flight()
         || objects.saving()
         || dense.saving()
@@ -133,6 +134,13 @@ pub(crate) fn drive_editor_save(
         || publication.active()
     {
         coordinator.finish();
+        return;
+    }
+
+    if dense.atmospheres.dirty_count() > 0 {
+        if !dense.atmospheres.queue_save(&mut project) {
+            coordinator.finish();
+        }
         return;
     }
 

@@ -25,8 +25,8 @@ use crate::{
     editing::{DirtyObjectSnapshot, EditorHistory, EditorObjectWorkingSet},
 };
 
-const JOURNAL_SCHEMA_VERSION: u32 = 11;
-const OLDEST_SUPPORTED_JOURNAL_SCHEMA_VERSION: u32 = 11;
+const JOURNAL_SCHEMA_VERSION: u32 = 13;
+const OLDEST_SUPPORTED_JOURNAL_SCHEMA_VERSION: u32 = 12;
 const JOURNAL_CHANNEL_CAPACITY: usize = 1;
 
 pub(crate) struct EditorJournalPlugin {
@@ -79,6 +79,7 @@ pub(crate) struct EditorJournalStatus {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct JournalRevision {
+    atmosphere: u64,
     roads: u64,
     objects: u64,
     dense: u64,
@@ -86,6 +87,7 @@ struct JournalRevision {
 
 #[derive(Debug)]
 struct JournalRecovery {
+    atmospheres: Vec<crate::atmosphere_authoring::working::Snapshot>,
     roads: Vec<crate::road_authoring::working::RoadEntry>,
     presets: Option<DirtyPresetSnapshot>,
     definitions: Vec<DirtyDefinitionSnapshot>,
@@ -144,6 +146,7 @@ enum JournalResult {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct JournalFile {
+    atmospheres: Vec<crate::atmosphere_authoring::working::Snapshot>,
     roads: Vec<crate::road_authoring::working::RoadEntry>,
     presets: Option<DirtyPresetSnapshot>,
     definition_entries: Vec<DirtyDefinitionSnapshot>,
@@ -442,6 +445,7 @@ fn receive_journal_results(
                 let object_count = file.entries.len();
                 let dense_count = file.dense_entries.len();
                 status.pending_restore = Some(JournalRecovery {
+                    atmospheres: file.atmospheres,
                     roads: file.roads,
                     presets: file.presets,
                     definitions: file.definition_entries,
@@ -483,7 +487,7 @@ fn receive_journal_results(
     }
 }
 
-fn restore_loaded_journal(
+pub(crate) fn restore_loaded_journal(
     mut status: ResMut<EditorJournalStatus>,
     mut objects: ResMut<EditorObjectWorkingSet>,
     mut dense_domains: ResMut<DenseDomainWorkingSets>,
@@ -516,8 +520,10 @@ fn restore_loaded_journal(
     for entry in recovery.dense {
         recovered_dense += usize::from(dense_domains.restore_dirty_snapshot(entry.into()));
     }
+    let recovered_atmospheres = dense_domains.atmospheres.restore(recovery.atmospheres);
     let recovered_roads = dense_domains.roads.restore(recovery.roads);
-    let recovered = recovered_roads
+    let recovered = recovered_atmospheres
+        + recovered_roads
         + recovered_objects
         + recovered_dense
         + recovered_definitions
@@ -542,6 +548,7 @@ fn dispatch_dirty_journal(
         return;
     };
     let revision = JournalRevision {
+        atmosphere: dense_domains.atmospheres.revision,
         roads: dense_domains.roads.revision,
         objects: objects.edit_revision(),
         dense: dense_domains.edit_revision(),
@@ -562,7 +569,9 @@ fn dispatch_dirty_journal(
     let definition_entries = dense_domains.dirty_definition_snapshots();
     let presets = dense_domains.dirty_preset_snapshot();
     let roads = dense_domains.roads.journal();
-    let request = if roads.is_empty()
+    let atmospheres = dense_domains.atmospheres.journal();
+    let request = if atmospheres.is_empty()
+        && roads.is_empty()
         && entries.is_empty()
         && dense_entries.is_empty()
         && definition_entries.is_empty()
@@ -573,6 +582,7 @@ fn dispatch_dirty_journal(
         JournalRequest::Write {
             revision,
             file: JournalFile {
+                atmospheres,
                 roads,
                 presets,
                 schema_version: JOURNAL_SCHEMA_VERSION,
@@ -637,6 +647,7 @@ mod tests {
             }],
         };
         let file = JournalFile {
+            atmospheres: vec![],
             roads: vec![],
             presets: Some(DirtyPresetSnapshot {
                 base: base_presets,

@@ -6,6 +6,7 @@ Yarra now has a minimal SQLite-backed world path while keeping gameplay small:
 crates/
   app_editor/ Separate bounded world-editor viewport and shell
   app_game/   Executable and platform composition
+  atmosphere/ Shared runtime sky, sunlight, fog and outdoor camera integration
   engine/     Bevy gameplay, rendering, and bounded page streaming
   environment/ Environment compositions, layers and spatial source contracts
   environment_compile/ Pure ground/vegetation/object compiler and offline acceptance fixture
@@ -16,6 +17,9 @@ crates/
   world_db/   Strict authoring/runtime SQLite schemas and readers
   world_cook/ Authoring database to immutable runtime generation
 ```
+
+Sky, day/night and weather ownership is described in
+[Atmosphere architecture](docs/ATMOSPHERE_ARCHITECTURE.md).
 
 The data flow is deliberately one-way:
 

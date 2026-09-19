@@ -33,7 +33,7 @@ The branch changes the surrounding workload: desktop terrain uses 33×33 heightf
 
 The remembered improvement on `main` remains plausible. Its exact cause remains unresolved, and establishing it is not required to proceed. The user explicitly rejected spending further time on a historical runtime comparison. Grass-covered ground is a different workload from ground filling the view: the old cards had different screen coverage and an explicit depth pass. Those differences could change how much expensive ground shading survives, but their effect has not been measured here. The source comparison is retained as context, not as a reason to pursue a historical investigation.
 
-Sources: [terrain shader](../assets/shaders/terrain_material.wgsl), [terrain attachment](../crates/engine/src/world_streaming.rs), [environment](../crates/engine/src/environment.rs), database comparison artifact above.
+Sources: [terrain shader](../assets/shaders/terrain_material.wgsl), [terrain attachment](../crates/engine/src/world_streaming.rs), [atmosphere](../crates/atmosphere/src/lib.rs), database comparison artifact above.
 
 **2. Ground has a high per-pixel cost and no material level of detail.**
 

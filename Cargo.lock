@@ -6393,6 +6393,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "yarra-atmosphere"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "yarra-world",
+]
+
+[[package]]
 name = "yarra-engine"
 version = "0.1.0"
 dependencies = [
@@ -6401,6 +6409,7 @@ dependencies = [
  "log",
  "ron",
  "serde",
+ "yarra-atmosphere",
  "yarra-terrain-render",
  "yarra-vegetation",
  "yarra-vegetation-render",

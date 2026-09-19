@@ -1,5 +1,11 @@
 # Scalable world editor foundation specification
 
+**Atmosphere authoring (2026-09-19):**
+Open **Tools → Atmosphere** in World for temporary time preview and saved sun,
+lighting palette, moonlight, haze and day/night exposure controls. Undo, recovery, Save and Save & Publish
+are integrated. See [the authoring guide](ATMOSPHERE_AUTHORING.md). Weather presets,
+planets and automatic gameplay time are later slices.
+
 **Environment authoring direction (2026-09-18):**
 [Environment compositions and spatial authoring](ENVIRONMENT_AUTHORING_ARCHITECTURE.md)
 defines the proposed unified painting workflow and its implementation slices. It
@@ -23,7 +29,7 @@ terrain, vegetation, object, navigation, and encounter tools must use. Reserved 
 constraints for future work, not a request to build every editor feature now.
 
 Typed presets are project assets shared across worlds (introduced in source schema 19;
-the current source schema is 22).
+the current source schema is 24).
 Ground, foliage, asset collection, exclusion and composition presets have code-defined controls.
 Composition children reference other presets and retain stable per-use IDs; nested
 uses resolve independently. Quick settings show inherited values and explicit

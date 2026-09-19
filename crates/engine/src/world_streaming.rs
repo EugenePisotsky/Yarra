@@ -81,6 +81,10 @@ impl WorldStreamingPlugin {
 
 impl Plugin for WorldStreamingPlugin {
     fn build(&self, app: &mut App) {
+        app.add_systems(
+            PostUpdate,
+            sync_world_atmosphere.before(crate::ApplyAtmosphere),
+        );
         terrain_lod::install(app);
         app.insert_resource(WorldDatabasePath(self.database_path.clone()))
             .insert_resource(self.config)
@@ -228,6 +232,7 @@ impl WorldOrigin {
 
 #[derive(Debug, Clone)]
 pub struct WorldSpaceInfo {
+    pub atmosphere: world::atmosphere::AtmosphereProfile,
     pub id: WorldSpaceId,
     pub name: String,
     pub cell_size: f32,
@@ -851,6 +856,7 @@ fn receive_database_results(
                         .world_spaces
                         .iter()
                         .map(|space| WorldSpaceInfo {
+                            atmosphere: space.atmosphere.clone(),
                             id: space.id,
                             name: space.name.clone(),
                             cell_size: space.cell_size,
@@ -1016,6 +1022,7 @@ fn adopt_runtime_manifest(
         .world_spaces
         .iter()
         .map(|space| WorldSpaceInfo {
+            atmosphere: space.atmosphere.clone(),
             id: space.id,
             name: space.name.clone(),
             cell_size: space.cell_size,
@@ -1585,12 +1592,17 @@ fn attach_prepared_pages(
             &(*b, stream.priorities.get(b).copied().unwrap_or((3, 0.))),
         )
     });
-    keys.truncate(MAX_ATTACHMENTS_PER_FRAME);
+    // Admission checks are cheap and the prepared queue is bounded. A page that
+    // cannot fit must not consume an attachment slot and starve smaller pages.
+    let mut attachment_attempts = 0;
     let mut admitted_decoded_bytes = stats.decoded_bytes;
     let mut admitted_gpu_bytes = stats.gpu_bytes_estimate;
     let mut admitted_terrain_texture_sets = stats.terrain_texture_sets.clone();
 
     for key in keys {
+        if attachment_attempts == MAX_ATTACHMENTS_PER_FRAME {
+            break;
+        }
         let Some(cell_size) = stream
             .manifest
             .as_ref()
@@ -1646,6 +1658,7 @@ fn attach_prepared_pages(
             stream.pages.insert(key, PageState::Prepared(prepared));
             continue;
         }
+        attachment_attempts += 1;
         match attach_page(
             &mut commands,
             &asset_server,
@@ -2690,9 +2703,13 @@ mod tests {
 
     #[test]
     fn database_worker_reopens_the_exact_published_generation() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../assets")
-            .join(world::DEFAULT_RUNTIME_DATABASE);
+        let folder =
+            std::env::temp_dir().join(format!("yarra-worker-reopen-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        let source = folder.join("project.sqlite");
+        let path = folder.join("runtime.sqlite");
+        world_cook::create_demo_project(&source).unwrap();
+        world_cook::cook_project(&source, &path).unwrap();
         let (requests, request_receiver) = bounded(MAX_DATABASE_REQUESTS_IN_FLIGHT);
         let (results, result_receiver) = bounded(MAX_DATABASE_REQUESTS_IN_FLIGHT * 2);
         let worker = thread::spawn(move || database_worker(path, request_receiver, results));
@@ -2734,5 +2751,94 @@ mod tests {
 
         requests.send(DatabaseRequest::Shutdown).unwrap();
         worker.join().unwrap();
+        std::fs::remove_dir_all(folder).unwrap();
+    }
+}
+
+fn sync_world_atmosphere(
+    catalog: Res<WorldCatalog>,
+    active: Res<ActiveWorldSpace>,
+    mut atmosphere: Option<ResMut<crate::AtmosphereState>>,
+    mut initialized: Local<bool>,
+) {
+    let Some(state) = atmosphere.as_mut() else {
+        return;
+    };
+    if state.owner != crate::AtmosphereOwner::Game {
+        return;
+    }
+    let Some(space) = active.current.and_then(|id| catalog.world_space(id)) else {
+        return;
+    };
+    if !*initialized {
+        state.phase = space.atmosphere.initial_phase;
+        *initialized = true;
+    }
+    if state.profile != space.atmosphere {
+        state.profile = space.atmosphere.clone();
+    }
+}
+
+#[cfg(test)]
+mod atmosphere_tests {
+    use super::*;
+    #[test]
+    fn world_changes_and_publication_keep_time_and_editor_ownership() {
+        let mut app = App::new();
+        let first = world::atmosphere::AtmosphereProfile::default();
+        let second = world::atmosphere::AtmosphereProfile {
+            initial_phase: 0.1,
+            outdoor: false,
+            ..first.clone()
+        };
+        app.insert_resource(WorldCatalog {
+            world_spaces: vec![
+                WorldSpaceInfo {
+                    id: WorldSpaceId(1),
+                    name: "outdoor".into(),
+                    cell_size: 32.0,
+                    minimum_y: 0.0,
+                    maximum_y: 1.0,
+                    atmosphere: first.clone(),
+                },
+                WorldSpaceInfo {
+                    id: WorldSpaceId(2),
+                    name: "inside".into(),
+                    cell_size: 32.0,
+                    minimum_y: 0.0,
+                    maximum_y: 1.0,
+                    atmosphere: second,
+                },
+            ],
+            ..default()
+        })
+        .init_resource::<ActiveWorldSpace>()
+        .init_resource::<crate::AtmosphereState>()
+        .add_systems(Update, sync_world_atmosphere);
+        app.world_mut().resource_mut::<ActiveWorldSpace>().current = Some(WorldSpaceId(1));
+        app.update();
+        assert_eq!(
+            app.world().resource::<crate::AtmosphereState>().phase,
+            first.initial_phase
+        );
+        app.world_mut()
+            .resource_mut::<crate::AtmosphereState>()
+            .phase = 0.7;
+        app.world_mut().resource_mut::<ActiveWorldSpace>().current = Some(WorldSpaceId(2));
+        app.update();
+        let state = app.world().resource::<crate::AtmosphereState>();
+        assert_eq!(state.phase, 0.7);
+        assert!(!state.profile.outdoor);
+        app.world_mut()
+            .resource_mut::<crate::AtmosphereState>()
+            .owner = crate::AtmosphereOwner::Editor;
+        app.world_mut().resource_mut::<ActiveWorldSpace>().current = Some(WorldSpaceId(1));
+        app.update();
+        assert!(
+            !app.world()
+                .resource::<crate::AtmosphereState>()
+                .profile
+                .outdoor
+        );
     }
 }

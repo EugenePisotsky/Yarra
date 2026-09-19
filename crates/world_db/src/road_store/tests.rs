@@ -115,6 +115,8 @@ fn project() -> ProjectDocument {
     ProjectDocument {
         default_world_space: SPACE,
         world_spaces: vec![WorldSpaceRecord {
+            atmosphere: Default::default(),
+            atmosphere_revision: 1,
             id: SPACE,
             name: "Test".into(),
             cell_size: 8.0,

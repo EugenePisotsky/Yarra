@@ -18,7 +18,9 @@ CREATE TABLE world_spaces (
     name TEXT NOT NULL UNIQUE,
     cell_size REAL NOT NULL CHECK(cell_size > 0.0),
     minimum_y REAL NOT NULL,
-    maximum_y REAL NOT NULL CHECK(maximum_y >= minimum_y)
+    maximum_y REAL NOT NULL CHECK(maximum_y >= minimum_y),
+    atmosphere BLOB NOT NULL CHECK(length(atmosphere) BETWEEN 1 AND 4096),
+    atmosphere_revision INTEGER NOT NULL CHECK(atmosphere_revision > 0)
 ) STRICT;
 
 CREATE TABLE project_settings (
@@ -287,7 +289,7 @@ CREATE TABLE road_junction_cells (
 ) STRICT;
 CREATE INDEX road_junction_cells_id ON road_junction_cells(junction_id);
 
-PRAGMA user_version = 22;
+PRAGMA user_version = 24;
 "#;
 
 pub const RUNTIME_SCHEMA: &str = r#"
@@ -299,7 +301,9 @@ CREATE TABLE world_spaces (
     name TEXT NOT NULL UNIQUE,
     cell_size REAL NOT NULL CHECK(cell_size > 0.0),
     minimum_y REAL NOT NULL,
-    maximum_y REAL NOT NULL CHECK(maximum_y >= minimum_y)
+    maximum_y REAL NOT NULL CHECK(maximum_y >= minimum_y),
+    atmosphere BLOB NOT NULL CHECK(length(atmosphere) BETWEEN 1 AND 4096),
+    atmosphere_revision INTEGER NOT NULL CHECK(atmosphere_revision > 0)
 ) STRICT;
 
 CREATE TABLE runtime_metadata (
@@ -501,5 +505,5 @@ CREATE TABLE terrain_material_spaces (
     world_space_id INTEGER PRIMARY KEY REFERENCES world_spaces(id),
     tile_count INTEGER NOT NULL CHECK(tile_count>=0)
 ) STRICT;
-PRAGMA user_version = 18;
+PRAGMA user_version = 20;
 "#;

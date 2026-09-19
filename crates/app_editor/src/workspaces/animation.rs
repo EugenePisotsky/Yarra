@@ -19,12 +19,16 @@ impl Plugin for AnimationWorkspacePlugin {
         app.add_plugins(CharacterPresentationPreviewPlugin)
             .init_resource::<AnimationWorkspaceState>()
             .init_resource::<AnimationPreviewSyncState>()
+            .init_resource::<AnimationLighting>()
             .add_systems(Startup, setup_animation_workspace)
             .add_systems(
                 OnEnter(EditorWorkspace::Animation),
-                enter_animation_workspace,
+                (enter_animation_workspace, enter_animation_lighting),
             )
-            .add_systems(OnExit(EditorWorkspace::Animation), exit_animation_workspace)
+            .add_systems(
+                OnExit(EditorWorkspace::Animation),
+                (exit_animation_workspace, exit_animation_lighting),
+            )
             .add_systems(
                 Update,
                 (advance_animation_transport, sync_animation_preview)
@@ -71,6 +75,34 @@ pub(crate) fn setup_animation_workspace(mut commands: Commands) {
 
 #[derive(Component)]
 struct AnimationPreviewActor;
+
+#[derive(Resource, Default)]
+struct AnimationLighting(Option<(Transform, DirectionalLight, GlobalAmbientLight)>);
+
+fn enter_animation_lighting(
+    mut saved: ResMut<AnimationLighting>,
+    mut sun: Query<(&mut Transform, &mut DirectionalLight), With<engine::WorldSun>>,
+    ambient: Option<ResMut<GlobalAmbientLight>>,
+) {
+    if let (Ok((mut transform, mut light)), Some(mut ambient)) = (sun.single_mut(), ambient) {
+        saved.0 = Some((*transform, *light, (*ambient).clone()));
+        super::apply_study_daylight(&mut transform, &mut light, &mut ambient);
+    }
+}
+
+fn exit_animation_lighting(
+    mut saved: ResMut<AnimationLighting>,
+    mut sun: Query<(&mut Transform, &mut DirectionalLight), With<engine::WorldSun>>,
+    ambient: Option<ResMut<GlobalAmbientLight>>,
+) {
+    if let (Some((t, l, a)), Ok((mut transform, mut light)), Some(mut ambient)) =
+        (saved.0.take(), sun.single_mut(), ambient)
+    {
+        *transform = t;
+        *light = l;
+        *ambient = a;
+    }
+}
 
 #[derive(Resource, Default)]
 struct AnimationPreviewSyncState {
@@ -435,6 +467,57 @@ fn render_animation_workspace(workspace_ui: &mut egui::Ui, state: &mut Animation
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn animation_lighting_is_readable_when_entered_from_night_and_restores_world() {
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin)
+            .add_plugins(super::super::EditorWorkspacesPlugin)
+            .init_resource::<AnimationLighting>()
+            .init_resource::<GlobalAmbientLight>()
+            .add_systems(
+                OnEnter(EditorWorkspace::Animation),
+                enter_animation_lighting,
+            )
+            .add_systems(OnExit(EditorWorkspace::Animation), exit_animation_lighting);
+        let transform = Transform::from_xyz(0.0, -1.0, 1.0).looking_at(Vec3::ZERO, Vec3::Y);
+        let sun = app
+            .world_mut()
+            .spawn((
+                engine::WorldSun,
+                transform,
+                DirectionalLight {
+                    illuminance: 0.0,
+                    ..default()
+                },
+            ))
+            .id();
+        app.update();
+        app.world_mut()
+            .resource_mut::<NextState<EditorWorkspace>>()
+            .set(EditorWorkspace::Animation);
+        app.update();
+        assert!(
+            app.world()
+                .get::<DirectionalLight>(sun)
+                .unwrap()
+                .illuminance
+                > 100_000.0
+        );
+        assert!(app.world().get::<Transform>(sun).unwrap().back().y > 0.0);
+        app.world_mut()
+            .resource_mut::<NextState<EditorWorkspace>>()
+            .set(EditorWorkspace::World);
+        app.update();
+        assert_eq!(
+            app.world()
+                .get::<DirectionalLight>(sun)
+                .unwrap()
+                .illuminance,
+            0.0
+        );
+        assert_eq!(*app.world().get::<Transform>(sun).unwrap(), transform);
+    }
 
     #[test]
     fn animation_workspace_preserves_presentation_choice_but_resets_transport() {

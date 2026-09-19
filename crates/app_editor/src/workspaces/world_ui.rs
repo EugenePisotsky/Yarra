@@ -171,6 +171,7 @@ pub(crate) fn world_workspace_ui(
                 && !objects.saving()
                 && !dense_domains.saving()
                 && !dense_domains.gesture_active
+                && dense_domains.atmospheres.gesture.is_none()
                 && !vegetation.saving()
                 && !objects.has_any_conflict()
                 && !dense_domains.has_any_conflict()
@@ -213,6 +214,7 @@ pub(crate) fn world_workspace_ui(
                         && !objects.saving()
                         && !dense_domains.saving()
                         && !dense_domains.gesture_active
+                        && dense_domains.atmospheres.gesture.is_none()
                         && !vegetation.saving()
                         && !objects.has_any_conflict()
                         && !dense_domains.has_any_conflict()
@@ -235,6 +237,7 @@ pub(crate) fn world_workspace_ui(
                         && !objects.saving()
                         && !dense_domains.saving()
                         && !dense_domains.gesture_active
+                        && dense_domains.atmospheres.gesture.is_none()
                         && !vegetation.saving()
                         && !objects.has_any_conflict()
                         && !dense_domains.has_any_conflict()

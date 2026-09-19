@@ -221,6 +221,32 @@ mod tests {
             let _ = fs::remove_dir_all(&self.dir);
         }
     }
+    #[test]
+    fn atmosphere_only_save_changes_generation_and_round_trips_without_changing_cells() {
+        let fixture = Fixture::new(&terrain_fixture::mountain_project(1));
+        let first = cook_project_with_report(&fixture.source(), &fixture.runtime()).unwrap();
+        let id = first.manifest.default_world_space;
+        let mut profile = first.manifest.default_world_space().atmosphere.clone();
+        profile.night.exposure_ev100 = 7.5;
+        profile.night.light_srgb = [0.4, 0.7, 1.0];
+        let mut writer = ProjectWriter::open(&fixture.source()).unwrap();
+        writer
+            .write_atmospheres(&[world_db::AtmosphereWrite {
+                space: id,
+                expected_revision: 1,
+                profile: profile.clone(),
+            }])
+            .unwrap();
+        let old = RuntimeReader::open_immutable(&fixture.runtime()).unwrap();
+        assert_ne!(old.manifest().default_world_space().atmosphere, profile);
+        let second = cook_project_with_report(&fixture.source(), &fixture.runtime()).unwrap();
+        assert_ne!(first.manifest.generation_id, second.manifest.generation_id);
+        assert_eq!(first.stats.terrain_cells, second.stats.terrain_cells);
+        let fresh = RuntimeReader::open_immutable(&fixture.runtime()).unwrap();
+        assert_eq!(fresh.manifest().default_world_space().atmosphere, profile);
+        assert_eq!(old.manifest().generation_id, first.manifest.generation_id);
+    }
+
     fn assert_pages(reference: &RuntimeBuild, reader: &RuntimeReader) {
         for expected in &reference.pages {
             let actual = reader.read_page(expected.key).unwrap().unwrap();

@@ -1,0 +1,137 @@
+[
+  {
+    "path": "admission.patch",
+    "sha256": "29390134854b2a9d65df563a74da4697ddfe2cc89bb68fc8f9107352c25e252b",
+    "bytes": 5035
+  },
+  {
+    "path": "clippy.log",
+    "sha256": "3ebbfaa5aa5089c4f1be6bf3113e2cfc65d250aa5104dc82acd6b59c7aa17f4e",
+    "bytes": 34413
+  },
+  {
+    "path": "cpu-tests.log",
+    "sha256": "ebdbda41792b3add993fbd7d529533a4c37ef94cba77fb7115005339e9bf509d",
+    "bytes": 17867
+  },
+  {
+    "path": "near-native-baseline.log",
+    "sha256": "4ee6e03bedbee71621564c92b5e1fa41acc281e40f0af43610de510cd0b3d46a",
+    "bytes": 328
+  },
+  {
+    "path": "neighbor-probe-summary.json",
+    "sha256": "b7f5ce64547f7ba8cdbce38201e9e442f3c4906ce8874ec6c91bd788f84e3057",
+    "bytes": 2056
+  },
+  {
+    "path": "neighbor-probe.json",
+    "sha256": "1abebb6f864f6ced33c984367cdd62ac8f7834034d7c2aa8b7f97d4827e8330b",
+    "bytes": 485
+  },
+  {
+    "path": "neighbor-probe/inputs/baseline/assets/shaders/terrain_near.wgsl",
+    "sha256": "3ccec8f46c5a73c84bb5214cd7909d5c53ed22410012df8d45cda71ebb7d7c85",
+    "bytes": 9515
+  },
+  {
+    "path": "neighbor-probe/inputs/baseline/inputs.json",
+    "sha256": "84cc604a196bcd8dd927330afa4afd844b9b8c62764f3a02e7a99a6cc93596ff",
+    "bytes": 2060
+  },
+  {
+    "path": "neighbor-probe/inputs/neighbor-bypass/assets/shaders/terrain_near.wgsl",
+    "sha256": "538048d94af5b476d1ecd92bf60196f2ed3755a4b71d59ec6d90bf7dec0bb463",
+    "bytes": 9571
+  },
+  {
+    "path": "neighbor-probe/inputs/neighbor-bypass/inputs.json",
+    "sha256": "f0191fac4ff6893b6b6bc1df12f3a230e497cbcd591aa2050e3aaf1e983dc670",
+    "bytes": 2060
+  },
+  {
+    "path": "neighbor-probe/power-collector.json",
+    "sha256": "245bb8c8c7b3a51a04e26be8c808c0ca59598e66e58f9cce4289e91601116f2f",
+    "bytes": 464
+  },
+  {
+    "path": "neighbor-probe/power-macmon.jsonl",
+    "sha256": "1b341bf2bddcd85b61ed2522753f1da55a3a6f8d50fa9330d0b1dd49fe0d894b",
+    "bytes": 292530
+  },
+  {
+    "path": "neighbor-probe/power-stderr.txt",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0
+  },
+  {
+    "path": "neighbor-probe/report.html",
+    "sha256": "56f6c9edc12cd2382328ca11701099f6c32c7fab4e6f134e4cb9dbeee2103a2b",
+    "bytes": 89391
+  },
+  {
+    "path": "neighbor-probe/report.json",
+    "sha256": "cbc98fd34c5265cd8f0fb2934c4235c4163ea3b95a00c4788fed4a3e10cd6b1a",
+    "bytes": 105287
+  },
+  {
+    "path": "neighbor-probe/report.md",
+    "sha256": "e262dd1d8b12764dfcbdfce358b90b88c51b2cf9777cc064fb9e1d0d61fa1cae",
+    "bytes": 3573
+  },
+  {
+    "path": "neighbor-probe/runs/01-baseline/game.log",
+    "sha256": "d8ae03fc1f9fd7a4cbf38ee976e0f26dbca5fbb0796596b7bac67102772f45d5",
+    "bytes": 122821
+  },
+  {
+    "path": "neighbor-probe/runs/01-baseline/run.json",
+    "sha256": "c4f364d7a4105bcad36b76d82d01ede5afb48028685e2634a9201b86127e7b0d",
+    "bytes": 3346
+  },
+  {
+    "path": "neighbor-probe/runs/02-neighbor-bypass/game.log",
+    "sha256": "e12f0ccda3edc5ab6f808e20c201fb01429d42af1c161c878253b70c86e3d9fe",
+    "bytes": 122532
+  },
+  {
+    "path": "neighbor-probe/runs/02-neighbor-bypass/run.json",
+    "sha256": "ea2e845524a9852eeba87c6bbd41e0dec7c61b035663aca7cd1b941e152bf350",
+    "bytes": 3428
+  },
+  {
+    "path": "neighbor-probe/runs/03-baseline/game.log",
+    "sha256": "6bad801120857f5388e463e01d9203de9b7e00416f5fc91786ae8cd3efb959d1",
+    "bytes": 125565
+  },
+  {
+    "path": "neighbor-probe/runs/03-baseline/run.json",
+    "sha256": "1cfd5c69301f0ec01a7efdd19396af4c5d463c4c16952f695d3cc7c406d7da1a",
+    "bytes": 3346
+  },
+  {
+    "path": "neighbor-probe/session.json",
+    "sha256": "b97d1d8efaced27b1bf789939fc4c4773d2f913cb021fdce44f04f325ce9fd34",
+    "bytes": 1570
+  },
+  {
+    "path": "neighbors-bypass/terrain_near.wgsl",
+    "sha256": "538048d94af5b476d1ecd92bf60196f2ed3755a4b71d59ec6d90bf7dec0bb463",
+    "bytes": 9571
+  },
+  {
+    "path": "source-budget-audit.json",
+    "sha256": "8ad77114b87e914f7469ae60a3cee0b879f2b4afe08a040e55bd2940f359ba03",
+    "bytes": 1235
+  },
+  {
+    "path": "streaming-native.log",
+    "sha256": "089038ed30fbb098912010f2468113d8193ee4807b2807c371e97e9184c4efe6",
+    "bytes": 2818
+  },
+  {
+    "path": "summary.json",
+    "sha256": "71368ec1b00790286a3963c92c9e605289772da0e0c43a1c8e24764ae1c96b47",
+    "bytes": 6336
+  }
+]

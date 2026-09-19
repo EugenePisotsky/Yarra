@@ -468,6 +468,7 @@ pub(crate) fn handle_editor_shortcuts(
         || objects.saving()
         || dense_domains.saving()
         || dense_domains.gesture_active
+        || dense_domains.atmospheres.gesture.is_some()
         || publication.active()
         || vegetation.saving()
         || save.active()

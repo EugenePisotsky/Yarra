@@ -183,6 +183,8 @@ mod tests {
             content_hash: [0; 32],
             default_world_space: WorldSpaceId(1),
             world_spaces: vec![world_db::WorldSpaceRecord {
+                atmosphere: Default::default(),
+                atmosphere_revision: 1,
                 id: WorldSpaceId(1),
                 name: "test".into(),
                 cell_size: 32.,

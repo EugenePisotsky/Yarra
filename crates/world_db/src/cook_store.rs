@@ -181,7 +181,10 @@ fn check_catalog_budget(c: &Connection) -> Result<(), WorldDbError> {
     let mut total_rows = 0_i64;
     let mut total_bytes = 0_i64;
     for (table, bytes) in [
-        ("world_spaces", "length(CAST(name AS BLOB))"),
+        (
+            "world_spaces",
+            "length(CAST(name AS BLOB))+length(atmosphere)",
+        ),
         ("vegetation_catalog", "length(payload)"),
         (
             "terrain_surfaces",

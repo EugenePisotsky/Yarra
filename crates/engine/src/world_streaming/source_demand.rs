@@ -295,6 +295,8 @@ mod tests {
     }
     fn space(size: f32) -> world_db::WorldSpaceRecord {
         world_db::WorldSpaceRecord {
+            atmosphere: Default::default(),
+            atmosphere_revision: 1,
             id: WorldSpaceId(1),
             name: "test".into(),
             cell_size: size,
@@ -544,5 +546,88 @@ mod tests {
             .insert(key, PageState::Resident(default()));
         app.update();
         assert_eq!(rx.try_iter().count(), 1);
+    }
+
+    fn attachment_app(resident_bytes: u64) -> App {
+        let mut app = App::new();
+        app.add_plugins((bevy::app::TaskPoolPlugin::default(), AssetPlugin::default()))
+            .init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<TerrainMaterial>>()
+            .init_resource::<Assets<Image>>()
+            .init_resource::<TerrainMacroVariation>()
+            .init_resource::<WorldOrigin>()
+            .insert_resource(WorldRenderAssets {
+                unit_plane: Handle::default(),
+            })
+            .insert_resource(StreamingStats {
+                decoded_bytes: resident_bytes,
+                ..default()
+            })
+            .insert_resource(WorldStream {
+                manifest: Some(RuntimeManifest {
+                    schema_version: world::RUNTIME_SCHEMA_VERSION,
+                    generation_id: "attachment-test".into(),
+                    content_hash: [0; 32],
+                    default_world_space: WorldSpaceId(1),
+                    world_spaces: vec![space(8.)],
+                    vegetation_catalog: None,
+                }),
+                ..default()
+            })
+            .add_systems(Update, attach_prepared_pages);
+        app
+    }
+
+    fn queue_height(app: &mut App, order: i32, bytes: u64) -> PageKey {
+        let key = PageKey {
+            space: WorldSpaceId(1),
+            cell: CellCoord { x: order, z: 0 },
+            domain: PageDomain::TerrainRender,
+            lod: 0,
+        };
+        let mut page = height_page(key);
+        // Account large pages without allocating irrelevant payloads in this scheduling test.
+        page.decoded.decoded_bytes = bytes;
+        let mut stream = app.world_mut().resource_mut::<WorldStream>();
+        stream.desired.insert(key);
+        stream.priorities.insert(key, (0, f64::from(order)));
+        stream.pages.insert(key, PageState::Prepared(page));
+        key
+    }
+
+    #[test]
+    fn budget_blocked_pages_do_not_starve_smaller_prepared_pages() {
+        let mut app = attachment_app(MAX_RESIDENT_DECODED_BYTES - 128);
+        let blocked = [
+            queue_height(&mut app, 0, 256),
+            queue_height(&mut app, 1, 256),
+        ];
+        let small = [queue_height(&mut app, 2, 64), queue_height(&mut app, 3, 64)];
+        app.update();
+        let stream = app.world().resource::<WorldStream>();
+        for key in blocked {
+            assert!(matches!(stream.pages[&key], PageState::Prepared(_)));
+        }
+        for key in small {
+            assert!(
+                matches!(stream.pages[&key], PageState::Resident(_)),
+                "a fitting page must pass blocked larger pages"
+            );
+        }
+        assert_eq!(stream.admission_blocked, 2);
+    }
+
+    #[test]
+    fn attachment_limit_still_bounds_successful_work_per_frame() {
+        let mut app = attachment_app(0);
+        let keys: Vec<_> = (0..4).map(|i| queue_height(&mut app, i, 64)).collect();
+        app.update();
+        let stream = app.world().resource::<WorldStream>();
+        for key in &keys[..MAX_ATTACHMENTS_PER_FRAME] {
+            assert!(matches!(stream.pages[key], PageState::Resident(_)));
+        }
+        for key in &keys[MAX_ATTACHMENTS_PER_FRAME..] {
+            assert!(matches!(stream.pages[key], PageState::Prepared(_)));
+        }
     }
 }

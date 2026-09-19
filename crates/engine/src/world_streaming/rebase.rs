@@ -110,6 +110,8 @@ mod tests {
                     default_world_space: space,
                     vegetation_catalog: None,
                     world_spaces: vec![world_db::WorldSpaceRecord {
+                        atmosphere: Default::default(),
+                        atmosphere_revision: 1,
                         id: space,
                         name: "test".into(),
                         cell_size: 32.,

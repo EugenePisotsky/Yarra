@@ -518,6 +518,8 @@ mod tests {
                     content_hash: [7; 32],
                     default_world_space: space,
                     world_spaces: vec![WorldSpaceRecord {
+                        atmosphere: Default::default(),
+                        atmosphere_revision: 1,
                         id: space,
                         name: "test".into(),
                         cell_size: 8.0,

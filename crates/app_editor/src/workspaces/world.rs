@@ -62,6 +62,7 @@ impl Plugin for WorldWorkspacePlugin {
             DIAGNOSTICS_WINDOW,
             VEGETATION_WINDOW,
             crate::canopy::CANOPY_WINDOW,
+            crate::atmosphere_authoring::WINDOW,
         ] {
             app.world_mut()
                 .resource_mut::<EditorWindowRegistry>()
@@ -87,6 +88,7 @@ impl Plugin for WorldWorkspacePlugin {
                 crate::environment_paint::EnvironmentPaintPlugin,
                 crate::road_authoring::RoadAuthoringPlugin,
                 crate::canopy::EditorCanopyPlugin,
+                crate::atmosphere_authoring::AtmosphereAuthoringPlugin,
             ))
             .configure_sets(
                 PostUpdate,

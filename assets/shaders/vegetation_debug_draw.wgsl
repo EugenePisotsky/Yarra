@@ -1,3 +1,7 @@
+#ifdef ATMOSPHERE
+#import bevy_pbr::atmosphere::functions::{clamp_to_surface, calculate_visible_sun_ratio}
+#endif
+
 #import "shaders/grass_canopy.wgsl"::{canopy_visibility_at}
 
 #import "shaders/vegetation_blade.wgsl"::{
@@ -515,7 +519,8 @@ fn directional_shadow_visibility(input: VertexOutput) -> f32 {
     if (camera.sun_direction.w <= 0.0) {
         return 1.0;
     }
-    let light = &view_bindings::lights.directional_lights[0u];
+    let light_index = vegetation_light_index();
+    let light = &view_bindings::lights.directional_lights[light_index];
     if (((*light).flags & DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) == 0u) {
         return 1.0;
     }
@@ -528,7 +533,7 @@ fn directional_shadow_visibility(input: VertexOutput) -> f32 {
         view_bindings::view.view_from_world[3].z,
     ), world_position);
     return shadows::fetch_directional_shadow(
-        0u,
+        light_index,
         world_position,
         // Terrain-facing receiver bias is stable for thin two-sided ribbons. Using the rounded
         // blade normal here can offset samples below terrain and make shadows blink by facing.
@@ -536,6 +541,22 @@ fn directional_shadow_visibility(input: VertexOutput) -> f32 {
         view_z,
         input.clip_position.xy,
     );
+}
+
+// Bevy sorts lights by shadow/volume policy, not by illuminance. Locate the
+// selected surface light so moonlight samples the moon's cascades and disk size.
+fn vegetation_light_index() -> u32 {
+    var selected = 0u;
+    var closest = -2.0;
+    for (var i = 0u; i < view_bindings::lights.n_directional_lights; i += 1u) {
+        let alignment = dot(view_bindings::lights.directional_lights[i].direction_to_light,
+            camera.sun_direction.xyz);
+        if alignment > closest {
+            closest = alignment;
+            selected = i;
+        }
+    }
+    return selected;
 }
 
 fn radiance_tint(radiance: vec3<f32>, fallback: vec3<f32>) -> vec3<f32> {
@@ -769,7 +790,17 @@ fn fragment(
 
     // Direct-light energy must use the same camera exposure as Bevy's PBR path. Normalizing the
     // directional radiance to a tint made a 100,000-lux sun indistinguishable from a dim light.
-    let exposed_sun = camera.sun_radiance.xyz * view_bindings::view.exposure;
+    var atmospheric_sun = camera.sun_radiance.xyz;
+#ifdef ATMOSPHERE
+    let atmosphere = view_bindings::atmosphere;
+    let p_as = (atmosphere.world_to_atmosphere * vec4(input.world_position, 1.0)).xyz;
+    let p_clamped = clamp_to_surface(atmosphere, p_as);
+    let r = length(p_clamped);
+    let mu = dot(light_direction, normalize(p_clamped));
+    atmospheric_sun *= pbr_lighting::sample_transmittance_lut(r, mu)
+        * calculate_visible_sun_ratio(atmosphere, r, mu, view_bindings::lights.directional_lights[vegetation_light_index()].sun_disk_angular_size);
+#endif
+    let exposed_sun = atmospheric_sun * view_bindings::view.exposure;
     let exposed_sun_peak = max(max(exposed_sun.r, exposed_sun.g), exposed_sun.b);
     let exposed_sun_tint = radiance_tint(exposed_sun, sun_tint);
     let sun_elevation = clamp(light_direction.y, 0.0, 1.0);

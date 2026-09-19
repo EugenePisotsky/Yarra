@@ -593,6 +593,7 @@ mod tests {
         world.insert_resource(WorldCatalog {
             generation_id: "one".into(),
             world_spaces: vec![WorldSpaceInfo {
+                atmosphere: Default::default(),
                 id: space,
                 name: "test".into(),
                 cell_size: size,

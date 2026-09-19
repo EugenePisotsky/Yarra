@@ -580,6 +580,17 @@ impl Specializer<RenderPipeline> for VegetationPipelineSpecializer {
                 ));
         descriptor.layout = vec![view_layout.main_layout, self.draw_layout.clone()];
         descriptor.multisample.count = key.msaa.samples();
+        if MeshPipelineViewLayoutKey::from_bits_retain(key.view_layout_bits)
+            .contains(MeshPipelineViewLayoutKey::ATMOSPHERE)
+        {
+            descriptor.vertex.shader_defs.push("ATMOSPHERE".into());
+            descriptor
+                .fragment
+                .as_mut()
+                .unwrap()
+                .shader_defs
+                .push("ATMOSPHERE".into());
+        }
         if key.blade_bands != VegetationBladeBands::Off {
             let mut defs = vec![
                 ShaderDefVal::Bool("BLADE_BAND_STUDY".into(), true),
@@ -2688,6 +2699,7 @@ mod tests {
         let mut output = String::new();
         for line in source.lines() {
             match line {
+                "#ifdef ATMOSPHERE" => enabled.push(false),
                 "#ifdef BLADE_BAND_STUDY" => enabled.push(mode != VegetationBladeBands::Off),
                 "#ifdef BLADE_BAND_MASK" => enabled.push(matches!(
                     mode,

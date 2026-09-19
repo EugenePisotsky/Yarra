@@ -1,3 +1,4 @@
+pub mod atmosphere;
 pub mod terrain_material;
 pub use terrain_material::*;
 pub mod terrain_hierarchy;
@@ -19,8 +20,8 @@ pub const DEFAULT_RUNTIME_DATABASE: &str = "generated/world.runtime.sqlite";
 
 pub const DEFAULT_CELL_SIZE: f32 = 32.0;
 pub const MAX_DECODED_PAGE_BYTES: u64 = 64 * 1024 * 1024;
-pub const PROJECT_SCHEMA_VERSION: i64 = 22;
-pub const RUNTIME_SCHEMA_VERSION: i64 = 18;
+pub const PROJECT_SCHEMA_VERSION: i64 = 24;
+pub const RUNTIME_SCHEMA_VERSION: i64 = 20;
 pub const PAGE_PAYLOAD_VERSION: u16 = 8;
 pub const MAX_TERRAIN_SURFACES_PER_CELL: usize = 8;
 pub const MAX_TERRAIN_WEIGHT_PAGES: usize = 2;
