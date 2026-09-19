@@ -2,13 +2,13 @@
 //! Each tile includes neighboring roots and a one-texel border. Neither camera,
 //! wind nor emitted LOD density changes the result.
 mod boundary;
-pub use boundary::{BoundaryField, MAX_DEPTH, MARGIN};
 use bevy::{
     asset::RenderAssetUsages,
     image::{ImageFilterMode, ImageSampler, ImageSamplerDescriptor},
     prelude::*,
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
+pub use boundary::{BoundaryField, MARGIN, MAX_DEPTH};
 use vegetation::{
     VegetationCatalog, VegetationFieldPage, candidate_density_retention, candidate_domain,
     random01, sample_candidate,
@@ -96,12 +96,17 @@ pub fn bake(
         }
     }
     let values = filter(&counts, count_size, radius, step * step);
-    let boundary = BoundaryField::bake(catalog, neighbors, Vec2::from_array(origin),
-        Vec2::from_array(origin) + Vec2::splat(extent));
+    let boundary = BoundaryField::bake(
+        catalog,
+        neighbors,
+        Vec2::from_array(origin),
+        Vec2::from_array(origin) + Vec2::splat(extent),
+    );
     let mut channels = Vec::with_capacity(values.len() * 2);
     for (i, cover) in values.into_iter().enumerate() {
-        let p = output_min + (Vec2::new((i % output_size) as f32, (i / output_size) as f32)
-            + Vec2::splat(0.5)) * step;
+        let p = output_min
+            + (Vec2::new((i % output_size) as f32, (i / output_size) as f32) + Vec2::splat(0.5))
+                * step;
         channels.push(cover);
         channels.push((boundary.sample(p) / MAX_DEPTH * 255.0).round() as u8);
     }
@@ -233,7 +238,10 @@ mod tests {
         let a = a.image.data.unwrap();
         let b = b.image.data.unwrap();
         for y in 0..34 {
-            assert_eq!(&a[(y * 34 + 32) * 2..(y * 34 + 34) * 2], &b[y * 34 * 2..(y * 34 + 2) * 2]);
+            assert_eq!(
+                &a[(y * 34 + 32) * 2..(y * 34 + 34) * 2],
+                &b[y * 34 * 2..(y * 34 + 2) * 2]
+            );
         }
     }
 }

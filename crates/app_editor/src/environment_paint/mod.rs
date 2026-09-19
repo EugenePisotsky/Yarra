@@ -24,12 +24,7 @@ use crate::{
         world_impl::{EditorOverlayGizmos, handle_editor_shortcuts, update_editor_camera},
     },
 };
-use bevy::{
-    ecs::system::SystemParam,
-    picking::mesh_picking::ray_cast::{MeshRayCast, MeshRayCastSettings},
-    prelude::*,
-    window::PrimaryWindow,
-};
+use bevy::{ecs::system::SystemParam, prelude::*, window::PrimaryWindow};
 use bevy_egui::egui;
 use engine::{StreamedTerrainSurface, WorldOrigin, WorldViewCamera};
 use environment::{
@@ -47,16 +42,19 @@ impl Plugin for EnvironmentPaintPlugin {
             .init_resource::<EnvironmentLayerBrowser>()
             .add_systems(Update, layer_browser::update.after(ProjectStoreUpdate))
             .init_resource::<EnvironmentPreview>()
+            .init_resource::<preview::live::LivePreviewState>()
             .init_resource::<preview::PreviewMaterials>()
             .init_resource::<coverage::CoverageOverlays>()
             .add_plugins(MaterialPlugin::<coverage::CoverageMaterial>::default())
             .add_systems(
                 Update,
                 (
+                    preview::live::update,
                     preview::receive_preview,
                     paint_input,
                     preview::queue_preview,
                     preview::apply_ground_preview,
+                    preview::live::apply_sources,
                     coverage::update_coverage,
                 )
                     .chain()
@@ -166,7 +164,6 @@ struct PaintInput<'w, 's> {
 }
 fn paint_input(
     input: PaintInput,
-    mut raycast: MeshRayCast,
     mut project: ResMut<ProjectEditorStore>,
     mut dense: ResMut<DenseDomainWorkingSets>,
     mut history: ResMut<EditorHistory>,
@@ -268,19 +265,7 @@ fn paint_input(
     let Ok(ray) = input.camera.0.viewport_to_world(input.camera.1, cursor) else {
         return;
     };
-    let filter = |entity| {
-        input
-            .terrain
-            .get(entity)
-            .is_ok_and(|(_, terrain)| terrain.key.space == space)
-    };
-    let settings = MeshRayCastSettings::default()
-        .with_filter(&filter)
-        .always_early_exit();
-    let hit = raycast
-        .cast_ray(ray, &settings)
-        .first()
-        .map(|(entity, hit)| (*entity, hit.point));
+    let hit = engine::raycast_resident_terrain(&input.origin, input.terrain.iter(), ray);
     let Some((entity, point)) = hit else {
         if let Some(stroke) = &mut paint.stroke {
             stroke.last_point = None;

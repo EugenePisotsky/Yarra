@@ -160,6 +160,7 @@ mod tests {
     #[test]
     fn only_control_inputs_invalidate_and_non_finite_pages_fall_back() {
         let mut material = TerrainMaterial {
+            source_only: false,
             shading_mode: TerrainShadingMode::Production,
             stochastic_cached: false,
             prepared: false,
@@ -397,7 +398,8 @@ fn maintain(
     let mut allocated = 0;
     if config.enabled {
         for (&id, &(inputs, _, _)) in &wanted {
-            if entries.pages.contains_key(&id)
+            if materials.get(id).is_some_and(|m| m.source_only)
+                || entries.pages.contains_key(&id)
                 || allocated >= BUILDS_PER_FRAME
                 || bytes + PAGE_BYTES > config.max_bytes
             {

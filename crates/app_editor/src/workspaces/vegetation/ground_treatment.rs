@@ -215,11 +215,27 @@ impl TreatmentAssets {
 }
 
 fn canopy_image(mask: &CoverageBake) -> Image {
-    let data = mask.canopy_values.iter().zip(&mask.canopy_depth).flat_map(|(&cover, &depth)| [cover, depth]).collect();
-    let mut image = Image::new(Extent3d { width: mask.size, height: mask.size, depth_or_array_layers: 1 },
-        TextureDimension::D2, data, TextureFormat::Rg8Unorm, RenderAssetUsages::default());
+    let data = mask
+        .canopy_values
+        .iter()
+        .zip(&mask.canopy_depth)
+        .flat_map(|(&cover, &depth)| [cover, depth])
+        .collect();
+    let mut image = Image::new(
+        Extent3d {
+            width: mask.size,
+            height: mask.size,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        data,
+        TextureFormat::Rg8Unorm,
+        RenderAssetUsages::default(),
+    );
     image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
-        min_filter: ImageFilterMode::Linear, mag_filter: ImageFilterMode::Linear, ..default()
+        min_filter: ImageFilterMode::Linear,
+        mag_filter: ImageFilterMode::Linear,
+        ..default()
     });
     image
 }
@@ -354,11 +370,17 @@ fn bake_coverage(scene: &vegetation::VegetationScene) -> Result<CoverageBake, St
     let canopy_radius = (CANOPY_RADIUS_METRES * size as f32 / extent.max_element())
         .round()
         .max(1.0) as usize;
-    let boundary = vegetation_render::canopy_coverage::BoundaryField::for_scene(&scene.catalog, &scene.pages);
-    let canopy_depth = (0..size * size).map(|i| {
-        let p = min + (Vec2::new((i % size) as f32, (i / size) as f32) + Vec2::splat(0.5)) * extent / size as f32;
-        (boundary.sample(p) / vegetation_render::canopy_coverage::MAX_DEPTH * 255.0).round() as u8
-    }).collect();
+    let boundary =
+        vegetation_render::canopy_coverage::BoundaryField::for_scene(&scene.catalog, &scene.pages);
+    let canopy_depth = (0..size * size)
+        .map(|i| {
+            let p = min
+                + (Vec2::new((i % size) as f32, (i / size) as f32) + Vec2::splat(0.5)) * extent
+                    / size as f32;
+            (boundary.sample(p) / vegetation_render::canopy_coverage::MAX_DEPTH * 255.0).round()
+                as u8
+        })
+        .collect();
     let canopy_values = filtered_density(&counts, size as usize, canopy_radius, pixel_area)
         .into_iter()
         .map(|density| ((1.0 - (-density * CANOPY_AREA_PER_ROOT).exp()) * 255.0).round() as u8)
@@ -451,10 +473,7 @@ fn sync(
                 .insert(assets.coverage.id(), image)
                 .expect("study coverage handle");
             images
-                .insert(
-                    assets.canopy.id(),
-                    canopy_image(&mask),
-                )
+                .insert(assets.canopy.id(), canopy_image(&mask))
                 .expect("study canopy coverage handle");
             for (_, material) in materials.iter_mut() {
                 material.extension.settings.bounds = mask.bounds;

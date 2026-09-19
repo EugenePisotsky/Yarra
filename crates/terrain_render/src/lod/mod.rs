@@ -1,11 +1,16 @@
 //! Camera-driven terrain cover planning. IO/upload readiness is deliberately separate:
 //! a caller stages the complete result and retains its previous cover until ready.
 use bevy::math::{DMat4, DVec3};
-use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
+use std::collections::{BTreeMap, BTreeSet};
 use world::TerrainNodeKey;
 
+mod allocation;
 mod mesh;
 pub use mesh::{StitchEdges, build_patch_mesh, stitch_indices};
+mod morph;
+pub use morph::{MorphMesh, MorphSource, build_morph_mesh, common_cover, touches};
+pub mod contact;
+use contact::{ContactRegion, patch_error};
 #[cfg(test)]
 mod tests;
 
@@ -56,6 +61,9 @@ impl LodView {
     /// Bound the screen displacement of a vertical height error, including changes in
     /// perspective W. Using XZ distance alone badly over-refines a valley below a summit.
     pub fn projected_error(&self, bounds: [DVec3; 2], error: f32) -> f64 {
+        if !error.is_finite() {
+            return f64::INFINITY;
+        }
         if error == 0.0 {
             return 0.0;
         }
@@ -149,6 +157,16 @@ impl Planner<'_> {
             true
         }
     }
+    // Leave enough work for the final complete seam pass. A work-limited quality
+    // plan must still return a balanced, drawable cover.
+    fn spend_selection(&mut self) -> bool {
+        if self.stats.work + self.cover.len() * self.cover.len() + 1 >= self.settings.max_work {
+            self.stats.budget_limited = true;
+            false
+        } else {
+            self.spend()
+        }
+    }
     fn split(&mut self, key: TerrainNodeKey) -> bool {
         let Some(children) = key.children().ok().flatten() else {
             return false;
@@ -191,7 +209,7 @@ impl Planner<'_> {
         let current: Vec<_> = self.cover.iter().copied().collect();
         while let Some(candidate) = todo.pop() {
             for &other in &current {
-                if !self.spend() {
+                if !self.spend_selection() {
                     return vec![];
                 }
                 if other.level > candidate.level
@@ -221,8 +239,10 @@ impl Planner<'_> {
                 children.push(child);
             }
         }
-        if self.cover.len() + 3 * group.len() > self.settings.max_patches
+        let next_count = self.cover.len() + 3 * group.len();
+        if next_count > self.settings.max_patches
             || triangles > self.settings.max_triangles
+            || self.stats.work + next_count * next_count >= self.settings.max_work
         {
             self.stats.budget_limited = true;
             return vec![];
@@ -249,6 +269,18 @@ pub fn plan_cover(
     cell_size: f64,
     settings: &LodSettings,
 ) -> Result<PlannedCover, String> {
+    plan_cover_with_contacts(roots, metadata, previous, view, cell_size, settings, &[])
+}
+
+pub fn plan_cover_with_contacts(
+    roots: &[TerrainNodeKey],
+    metadata: &BTreeMap<TerrainNodeKey, PatchMetadata>,
+    previous: &BTreeSet<TerrainNodeKey>,
+    view: &LodView,
+    cell_size: f64,
+    settings: &LodSettings,
+    contacts: &[ContactRegion],
+) -> Result<PlannedCover, String> {
     if !cell_size.is_finite()
         || cell_size <= 0.0
         || settings.max_work == 0
@@ -266,6 +298,8 @@ pub fn plan_cover(
         || view.viewport.contains(&0)
         || !view.clip_from_world.is_finite()
         || !view.contact_position.is_finite()
+        || contacts.len() > contact::MAX_CONTACT_REGIONS
+        || contacts.iter().any(|r| !r.validate())
     {
         return Err("invalid terrain LOD profile/view".into());
     }
@@ -305,27 +339,6 @@ pub fn plan_cover(
             ..Default::default()
         },
     };
-    let score = |key: TerrainNodeKey| {
-        let m = &metadata[&key];
-        let bounds = m.bounds(cell_size);
-        let distance = view.distance(bounds);
-        if distance < settings.exact_radius && key.level > 0 {
-            return f64::INFINITY;
-        }
-        if distance < settings.contact_radius && m.geometric_error > settings.contact_tolerance {
-            return f64::MAX;
-        }
-        if !view.visible(bounds) {
-            return 0.0;
-        }
-        let refined = previous.iter().any(|&k| k != key && contains(key, k));
-        view.projected_error(bounds, m.geometric_error)
-            / if refined {
-                settings.collapse_pixels
-            } else {
-                settings.refine_pixels
-            }
-    };
     // Sparse root forests may start unbalanced. Prepare their minimum balanced
     // cover before publishing anything; a missing child is pending, never absent.
     let mut balanced = true;
@@ -350,67 +363,7 @@ pub fn plan_cover(
         break;
     }
     if balanced {
-        let mut queue: BinaryHeap<_> = p.cover.iter().map(|&k| Candidate(score(k), k)).collect();
-        while let Some(Candidate(priority, key)) = queue.pop() {
-            if p.stats.work + p.cover.len() * p.cover.len() >= settings.max_work {
-                p.stats.budget_limited = true;
-                break;
-            }
-            if !p.spend() {
-                break;
-            }
-            if key.level == 0 || priority <= 1.0 || !p.cover.contains(&key) {
-                continue;
-            }
-            for child in p.refine(key) {
-                queue.push(Candidate(score(child), child));
-            }
-        }
-    }
-    if balanced {
-        let mut blocked = BTreeSet::new();
-        'edges: loop {
-            let keys: Vec<_> = p.cover.iter().copied().collect();
-            // Reserve a complete final seam pass even if quality refinement runs out
-            // of work. Returning an unbalanced half-built seam set is never useful.
-            if p.stats.work + 2 * keys.len() * keys.len() >= settings.max_work {
-                p.stats.budget_limited = true;
-                break;
-            }
-            for (i, &a) in keys.iter().enumerate() {
-                for &b in &keys[i + 1..] {
-                    if !p.spend() {
-                        break 'edges;
-                    }
-                    if a.level.abs_diff(b.level) != 1 || adjacent(a, b).is_none() {
-                        continue;
-                    }
-                    let (fine, coarse) = if a.level < b.level { (a, b) } else { (b, a) };
-                    if blocked.contains(&coarse) {
-                        continue;
-                    }
-                    let bounds = metadata[&fine].bounds(cell_size);
-                    let error = fine
-                        .parent()
-                        .ok()
-                        .flatten()
-                        .and_then(|k| metadata.get(&k))
-                        .map_or(metadata[&fine].geometric_error, |m| m.geometric_error);
-                    let contact = view.distance(bounds) < settings.contact_radius
-                        && error > settings.contact_tolerance;
-                    let exact = view.distance(bounds) < settings.exact_radius && error > 0.0;
-                    let visible = view.visible(bounds)
-                        && view.projected_error(bounds, error) > settings.refine_pixels;
-                    if contact || exact || visible {
-                        if !p.refine(coarse).is_empty() {
-                            continue 'edges;
-                        }
-                        blocked.insert(coarse);
-                    }
-                }
-            }
-            break;
-        }
+        allocation::refine(&mut p, previous, view, cell_size, contacts);
     }
     let mut patches: BTreeMap<_, _> = p
         .cover
@@ -446,15 +399,7 @@ pub fn plan_cover(
         let bounds = m.bounds(cell_size);
         // Stitched patches use some parent samples along the edge. Include that error
         // when reporting contact/quality, even though the body uses finer samples.
-        let error = if patches[key].0 != 0 {
-            key.parent()
-                .ok()
-                .flatten()
-                .and_then(|k| metadata.get(&k))
-                .map_or(m.geometric_error, |m| m.geometric_error)
-        } else {
-            m.geometric_error
-        };
+        let error = patch_error(*key, patches[key], metadata);
         if view.visible(bounds) {
             p.stats.maximum_visible_error = p
                 .stats
@@ -463,7 +408,10 @@ pub fn plan_cover(
         }
         p.stats.contact_limited |= (view.distance(bounds) < settings.exact_radius && key.level > 0)
             || (view.distance(bounds) < settings.contact_radius
-                && error > settings.contact_tolerance);
+                && error > settings.contact_tolerance)
+            || contacts
+                .iter()
+                .any(|r| r.needs_refinement(bounds, key.level, error));
     }
     Ok(PlannedCover {
         patches,
@@ -513,19 +461,4 @@ fn adjacent(a: TerrainNodeKey, b: TerrainNodeKey) -> Option<u8> {
         }
     }
     None
-}
-#[derive(PartialEq)]
-struct Candidate(f64, TerrainNodeKey);
-impl Eq for Candidate {}
-impl PartialOrd for Candidate {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-impl Ord for Candidate {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.0
-            .total_cmp(&other.0)
-            .then_with(|| other.1.cmp(&self.1))
-    }
 }

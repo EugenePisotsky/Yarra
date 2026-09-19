@@ -436,6 +436,7 @@ fn capture_tuft_ambient() {
             for (phase_index, &phase) in phases.iter().enumerate() {
                 let stem = format!("{name}-{light_name}-{phase_index}");
                 let c = CameraGpu {
+                    render_origin: [0.; 4],
                     lod_focus: [0.0; 4],
                     canopy: study.lighting.canopy.packed([0.0; 2]),
                     clip_from_world: (projection * transform.to_matrix().inverse()).to_cols_array(),

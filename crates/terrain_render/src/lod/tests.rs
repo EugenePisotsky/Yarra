@@ -57,6 +57,182 @@ fn check_cover(roots: &[TerrainNodeKey], result: &PlannedCover) {
         }
     }
 }
+
+fn actor_contact(x: f64, z: f64) -> ContactRegion {
+    ContactRegion {
+        bounds: [DVec3::new(x, -100., z), DVec3::new(x + 0.5, 100., z + 0.5)],
+        exact: true,
+        tolerance: 0.,
+        priority: contact::ContactPriority::Actor,
+    }
+}
+
+#[test]
+fn actor_contact_wins_over_camera_plane_infinite_visual_error() {
+    let roots = [key(2, 0, 0), key(2, 2, 0)];
+    let m: BTreeMap<_, _> = roots.into_iter().flat_map(metadata).collect();
+    let v = view(DVec3::new(8., 5., 8.), DVec3::new(8., 0., 20.));
+    assert!(
+        v.projected_error(m[&roots[0]].bounds(8.), 0.5)
+            .is_infinite()
+    );
+    let r = actor_contact(73., 9.);
+    let s = LodSettings {
+        max_patches: 14,
+        ..settings()
+    };
+    let p = plan_cover_with_contacts(
+        &roots,
+        &m,
+        &BTreeSet::new(),
+        &v,
+        8.,
+        &s,
+        std::slice::from_ref(&r),
+    )
+    .unwrap();
+    check_cover(&roots, &p);
+    assert!(contact::cover_accepts(&r, &p.patches, &m, 8.), "{p:?}");
+    assert!(p.patches.len() <= s.max_patches);
+}
+
+#[test]
+fn actor_contact_wins_over_vegetation_under_triangle_pressure() {
+    let roots = [key(2, 0, 0), key(2, 2, 0)];
+    let m: BTreeMap<_, _> = roots.into_iter().flat_map(metadata).collect();
+    let v = view(DVec3::new(8., 5000., 8.), DVec3::ZERO);
+    let actor = actor_contact(73., 9.);
+    let grass = ContactRegion {
+        bounds: [DVec3::splat(-1.), DVec3::new(33., 100., 33.)],
+        priority: contact::ContactPriority::Vegetation,
+        ..actor.clone()
+    };
+    let s = LodSettings {
+        max_triangles: 14 * 2048,
+        ..settings()
+    };
+    let p = plan_cover_with_contacts(
+        &roots,
+        &m,
+        &BTreeSet::new(),
+        &v,
+        8.,
+        &s,
+        &[grass.clone(), actor.clone()],
+    )
+    .unwrap();
+    check_cover(&roots, &p);
+    assert!(contact::cover_accepts(&actor, &p.patches, &m, 8.), "{p:?}");
+    assert!(!contact::cover_accepts(&grass, &p.patches, &m, 8.));
+    assert!(p.stats.budget_limited && p.stats.contact_limited);
+    assert!(p.stats.triangles <= s.max_triangles);
+}
+
+#[test]
+fn contact_seams_receive_budget_before_visible_refinement() {
+    let roots = [key(3, 0, 0)];
+    let m = metadata(roots[0]);
+    let r = actor_contact(25., 25.);
+    let distant = view(DVec3::new(8., 5000., 8.), DVec3::ZERO);
+    let minimum = plan_cover_with_contacts(
+        &roots,
+        &m,
+        &BTreeSet::new(),
+        &distant,
+        8.,
+        &settings(),
+        std::slice::from_ref(&r),
+    )
+    .unwrap();
+    assert!(contact::cover_accepts(&r, &minimum.patches, &m, 8.));
+    let s = LodSettings {
+        max_patches: minimum.patches.len(),
+        ..settings()
+    };
+    let v = view(DVec3::new(28., 11., 28.), DVec3::new(28., 0., 40.));
+    let p = plan_cover_with_contacts(
+        &roots,
+        &m,
+        &BTreeSet::new(),
+        &v,
+        8.,
+        &s,
+        std::slice::from_ref(&r),
+    )
+    .unwrap();
+    check_cover(&roots, &p);
+    assert!(contact::cover_accepts(&r, &p.patches, &m, 8.), "{p:?}");
+    assert!(p.patches.len() <= s.max_patches);
+}
+
+#[test]
+fn contact_metadata_requests_precede_visual_requests_and_stay_bounded() {
+    let roots = [key(2, 0, 0), key(2, 2, 0)];
+    let m = roots
+        .into_iter()
+        .map(|k| (k, metadata(k)[&k].clone()))
+        .collect();
+    let v = view(DVec3::new(8., 5., 8.), DVec3::new(8., 0., 20.));
+    let r = actor_contact(73., 9.);
+    let s = LodSettings {
+        max_requests: 4,
+        ..settings()
+    };
+    let p = plan_cover_with_contacts(&roots, &m, &BTreeSet::new(), &v, 8., &s, &[r]).unwrap();
+    check_cover(&roots, &p);
+    assert_eq!(
+        p.requests,
+        roots[1].children().unwrap().unwrap().into_iter().collect()
+    );
+    assert!(p.stats.contact_limited);
+}
+
+#[test]
+fn bounded_planning_keeps_a_complete_cover_and_deterministic_contact_order() {
+    let roots = [key(4, -1, -1), key(4, 0, -1), key(4, -1, 0), key(4, 0, 0)];
+    let m: BTreeMap<_, _> = roots.into_iter().flat_map(metadata).collect();
+    let v = view(DVec3::new(5., 11., 5.), DVec3::new(5., 0., 20.));
+    let actor = actor_contact(5., 5.);
+    let grass = ContactRegion {
+        bounds: [DVec3::new(-60., -100., -60.), DVec3::new(60., 100., 60.)],
+        priority: contact::ContactPriority::Vegetation,
+        ..actor.clone()
+    };
+    for max_work in [100, 1000, 5000, 50_000, 1_000_000] {
+        let s = LodSettings {
+            max_work,
+            ..settings()
+        };
+        let p = plan_cover_with_contacts(
+            &roots,
+            &m,
+            &BTreeSet::new(),
+            &v,
+            8.,
+            &s,
+            &[grass.clone(), actor.clone()],
+        )
+        .unwrap();
+        check_cover(&roots, &p);
+        assert!(p.stats.work <= s.max_work);
+        assert!(p.stats.triangles <= s.max_triangles);
+        assert!(p.patches.len() <= s.max_patches);
+        let reversed = plan_cover_with_contacts(
+            &roots,
+            &m,
+            &BTreeSet::new(),
+            &v,
+            8.,
+            &s,
+            &[actor.clone(), grass.clone()],
+        )
+        .unwrap();
+        assert_eq!(p.patches, reversed.patches);
+        if max_work == 1_000_000 {
+            assert!(contact::cover_accepts(&actor, &p.patches, &m, 8.));
+        }
+    }
+}
 #[test]
 fn stitched_topologies_cover_patch_without_holes_or_inverted_triangles() {
     for n in [3, 5, 33] {

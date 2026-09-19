@@ -12,6 +12,7 @@ bincode.workspace = true
 blake3.workspace = true
 glam.workspace = true
 ron.workspace = true
+serde.workspace = true
 vegetation.workspace = true
 world.workspace = true
 world-db.workspace = true

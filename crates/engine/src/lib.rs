@@ -1,4 +1,6 @@
 mod actor;
+mod terrain_raycast;
+pub use terrain_raycast::raycast_resident_terrain;
 mod character;
 mod character_catalog;
 mod environment;
@@ -28,11 +30,12 @@ pub use environment::{WorldEnvironmentCamera, WorldEnvironmentPlugin, WorldSun};
 pub use msaa_store::{MsaaColorStorePlugin, MsaaColorStorePolicy};
 use terrain_render::{TerrainMacroVariation, TerrainRenderPlugin};
 pub use world_streaming::{
-    ActiveWorldSpace, GameplayObject, GeneratedEnvironmentObject, StreamedTerrainSurface,
-    StreamedVegetationFieldPage, StreamedVisualObject, StreamingStats, TerrainLodPreview,
-    TerrainLodStats, WorldCatalog, WorldDetailDemand, WorldGenerationReload, WorldOrigin,
-    WorldSpaceInfo, WorldStreamingConfig, WorldStreamingPlugin, WorldViewCamera, WorldViewpoint,
-    sample_resident_terrain_surface, spawn_collection_visual,
+    ActiveWorldSpace, GameplayObject, GeneratedEnvironmentObject, LiveTerrainPreview,
+    StreamedTerrainSurface, StreamedVegetationFieldPage, StreamedVisualObject, StreamingStats,
+    TerrainContactReadiness, TerrainLodPreview, TerrainLodStats, TerrainPreviewRequest,
+    WorldCatalog, WorldDetailDemand, WorldGenerationReload, WorldOrigin, WorldRenderRoot,
+    WorldSpaceInfo, WorldStreamingConfig, WorldStreamingPlugin, WorldStreamingSystems,
+    WorldViewCamera, WorldViewpoint, sample_resident_terrain_surface, spawn_collection_visual,
 };
 
 use crate::{
@@ -76,6 +79,9 @@ const DEBUG_SUN_MAX_ELEVATION: f32 = 55.0_f32.to_radians();
 /// Keep the audit baseline aligned with the normal game camera.
 pub const GAME_DEPTH_PREPASS_ENABLED: bool = !cfg!(target_os = "ios");
 
+mod start_view;
+pub use start_view::WorldStartView;
+
 /// The complete gameplay surface for the first vertical slice.
 ///
 /// The application crate owns the executable and platform window. This plugin
@@ -103,6 +109,7 @@ impl Plugin for MinimalGamePlugin {
             WorldStreamingPlugin::game(self.runtime_database.clone()),
         ))
         .init_resource::<TouchTapState>()
+        .init_resource::<WorldStartView>()
         .init_resource::<GameInputEnabled>()
         .init_resource::<GamePointerInputBlocked>()
         .init_resource::<DemoSunMotion>()
@@ -191,8 +198,12 @@ fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    start_view: Res<WorldStartView>,
 ) {
-    let start = Vec3::ZERO;
+    let start = start_view
+        .0
+        .as_ref()
+        .map_or(Vec3::ZERO, |v| Vec3::from_array(v.position));
     commands.spawn((
         Transform::from_translation(start),
         Visibility::Inherited,
@@ -204,25 +215,39 @@ fn setup(
         TerrainGrounded,
         CameraTarget,
         WorldStreamFocus,
+        WorldRenderRoot,
         Name::new("Player actor root"),
     ));
 
-    let camera_rig = CameraRig {
+    let mut camera_rig = CameraRig {
         yaw: 45.0_f32.to_radians(),
         target_yaw: 45.0_f32.to_radians(),
         distance: CAMERA_DEFAULT_DISTANCE,
         target_distance: CAMERA_DEFAULT_DISTANCE,
         pitch_offset: 0.0,
     };
+    let mut environment = WorldEnvironmentCamera::default();
+    if let Some(view) = &start_view.0 {
+        camera_rig.yaw = view.yaw_degrees.to_radians();
+        camera_rig.target_yaw = camera_rig.yaw;
+        camera_rig.distance = view.distance;
+        camera_rig.target_distance = view.distance;
+        camera_rig.pitch_offset = view.pitch_degrees.to_radians()
+            - (CAMERA_NEAR_PITCH
+                + (CAMERA_FAR_PITCH - CAMERA_NEAR_PITCH) * normalized_camera_zoom(view.distance));
+        environment = WorldEnvironmentCamera::with_visibility(view.fog_visibility);
+    }
     let mut camera = commands.spawn((
         Camera3d::default(),
-        WorldEnvironmentCamera::default(),
+        start_view.projection(),
+        environment,
         Msaa::Sample4,
         MsaaColorStorePolicy::Automatic,
         camera_transform(start, &camera_rig),
         camera_rig,
         MainCamera,
         WorldViewCamera,
+        WorldRenderRoot,
         Name::new("Main camera"),
     ));
     if GAME_DEPTH_PREPASS_ENABLED {
@@ -246,6 +271,7 @@ fn setup(
         Transform::from_xyz(0.0, TARGET_INDICATOR_HEIGHT, 0.0),
         Visibility::Hidden,
         TargetIndicator,
+        WorldRenderRoot,
         Name::new("Movement target indicator"),
     ));
 
@@ -458,8 +484,19 @@ fn ground_characters_to_streamed_terrain(
     origin: Res<WorldOrigin>,
     terrain_pages: Query<&StreamedTerrainSurface>,
     mut actors: Query<&mut Transform, With<TerrainGrounded>>,
+    lod: Res<world_streaming::terrain_lod::TerrainLodStream>,
+    lod_config: Res<TerrainLodPreview>,
+    readiness: Res<TerrainContactReadiness>,
 ) {
     for mut transform in &mut actors {
+        if lod_config.enabled {
+            if let Some(height) =
+                lod.sample_contact_height(transform.translation, &origin, &readiness)
+            {
+                transform.translation.y = height;
+            }
+            continue;
+        }
         if let Some(surface) = sample_resident_terrain_surface(
             &origin,
             terrain_pages.iter(),
@@ -731,6 +768,39 @@ fn update_performance_label(
 #[cfg(test)]
 mod input_tests {
     use super::*;
+
+    #[test]
+    fn launch_bookmark_spawns_actor_and_camera_at_the_elevated_view() {
+        let view = world::WorldViewBookmark {
+            position: [0., 192., 0.],
+            yaw_degrees: 45.,
+            pitch_degrees: 18.,
+            distance: 9.7,
+            fog_visibility: 2500.,
+            route: vec![],
+        };
+        let expected = WorldStartView::camera_at(&view, Vec3::from_array(view.position));
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>()
+            .insert_resource(WorldStartView(Some(view)))
+            .add_systems(Startup, setup);
+        app.update();
+        let world = app.world_mut();
+        let actor = world
+            .query_filtered::<&Transform, With<PlayerControlled>>()
+            .single(world)
+            .unwrap();
+        assert_eq!(actor.translation, Vec3::new(0., 192., 0.));
+        let (camera, projection) = world
+            .query_filtered::<(&Transform, &Projection), With<MainCamera>>()
+            .single(world)
+            .unwrap();
+        assert!(camera.translation.distance(expected.translation) < 0.001);
+        assert!(camera.forward().distance(*expected.forward()) < 0.0001);
+        assert!(camera.up().distance(*expected.up()) < 0.0001);
+        assert!(matches!(projection, Projection::Perspective(p) if p.far == 2500.));
+    }
 
     #[test]
     fn camera_gestures_work_and_are_not_replayed_after_ui_capture_or_unlock() {

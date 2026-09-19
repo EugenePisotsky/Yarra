@@ -1,0 +1,270 @@
+{
+  "scope": "Terrain headroom investigation; raw logs, input hashes, shaders and checks. No binaries/database snapshots.",
+  "macmon": {
+    "release": "https://github.com/vladkens/macmon/releases/tag/v0.8.2",
+    "archive_sha256": "588d5bde79885ba36f693e5150911c10c3ad208a2e418a3f2aa827ac84a2d973",
+    "binary_sha256": "8defa263675d5dce206557634cbad15f40934b0efe38eb85e6244ca51226aa66",
+    "partial_capture_command": [
+      "macmon",
+      "pipe",
+      "--samples",
+      "240",
+      "--interval",
+      "1000"
+    ]
+  },
+  "members": {
+    "01-lod-before.log": {
+      "bytes": 166631,
+      "sha256": "78b47c68ff328e53beb09b14c966f795f12aed0e68fe683cf69320aba8dd74af"
+    },
+    "02-legacy-before.log": {
+      "bytes": 167772,
+      "sha256": "ece5d918e585e07fe65b980a70ae3a72e4cd5ff52bad013d9f0f5521b1c5388a"
+    },
+    "03-near-first.log": {
+      "bytes": 165157,
+      "sha256": "095d7b6a7dc4eec1e1e974e619487bf6d7b8e64d2b5162ee1a850e3323d63c81"
+    },
+    "04-direct-fields.log": {
+      "bytes": 165503,
+      "sha256": "2b7c8ceaf9d237f43b5fb3d5e7bb7d32cf588e22ac5fe39f8a90fdb9c972cb54"
+    },
+    "05-first-probe.log": {
+      "bytes": 164987,
+      "sha256": "665d2b885ad853f2acd6cecd94d4d072c94f06e5669803095d3c427d3be19592"
+    },
+    "06-weight-skip.log": {
+      "bytes": 165138,
+      "sha256": "23c0bf8fe5ce40b27f3d853cc09743b21da24e1af2e9abd366ad596c49bdf0d5"
+    },
+    "build-final.txt": {
+      "bytes": 169,
+      "sha256": "9652ae02fe157d74c325adb58903648ff5f13f316950f3cf908e07f82a29413a"
+    },
+    "build.txt": {
+      "bytes": 169,
+      "sha256": "b8add59b57e4c7664190817f930905a75ff89145d1e787099726babf7d888004"
+    },
+    "clippy.txt": {
+      "bytes": 294,
+      "sha256": "4bb5c61b3dcc84649935e5106f04d981f55cbc83977a6af59ae4db5385992557"
+    },
+    "gpu-tests.txt": {
+      "bytes": 609,
+      "sha256": "01919dd0d8f97aed1a60c55c178a5583fc216de4e678132dcace3324fc7dc53d"
+    },
+    "power-source-native.txt": {
+      "bytes": 114,
+      "sha256": "ebb94d614796c25fe9a1e11cab9d0c37ae76bf4fd3b9c77f86c7383eb5fc8d99"
+    },
+    "profile-tests.txt": {
+      "bytes": 365,
+      "sha256": "10843e7c88dc63212c32cd28718c3db9178e863e9269bfea051b8290d323e968"
+    },
+    "rootless-check-run.txt": {
+      "bytes": 757,
+      "sha256": "fdd2abd72bcdfbc864279a3e2b657302bd5e4bca2deaefd96849f5949c4e4b6a"
+    },
+    "rootless-check.json": {
+      "bytes": 455,
+      "sha256": "0dc9ddc5ace7b16284dafd1efd463bdc0583df09d7806d1de5ec3c9b0da11771"
+    },
+    "rootless-check/inputs/legacy/inputs.json": {
+      "bytes": 2060,
+      "sha256": "37e2f8f5e3318572ab66130f54a3022dbb6ae685a11237cabc68ef095b9e8077"
+    },
+    "rootless-check/inputs/lod/inputs.json": {
+      "bytes": 2060,
+      "sha256": "37e2f8f5e3318572ab66130f54a3022dbb6ae685a11237cabc68ef095b9e8077"
+    },
+    "rootless-check/power-collector.json": {
+      "bytes": 464,
+      "sha256": "86bd2bdc516238bc25b0cc46ba4c765e3715c29f0f6e5d3a1ffe145f19af9e58"
+    },
+    "rootless-check/power-macmon.jsonl": {
+      "bytes": 335515,
+      "sha256": "7855993e0dd2a80293c7b4d63c591d1a73fd66e97a32e40262bd999e10ef94b7"
+    },
+    "rootless-check/power-stderr.txt": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "rootless-check/report.html": {
+      "bytes": 102235,
+      "sha256": "59bea5e4f7485030b2da6612a5d1a81ecb89d749596f44b00a99a105dc5a174a"
+    },
+    "rootless-check/report.json": {
+      "bytes": 121786,
+      "sha256": "2986fbdbe71668377205d9899cc3c11ce3027d9a431aeba58e37dacbf674aad7"
+    },
+    "rootless-check/report.md": {
+      "bytes": 3487,
+      "sha256": "ca7867c85e82c3fc6fb70a1424246d464c93dd506a932111fa21b3c36505a602"
+    },
+    "rootless-check/runs/01-lod/game.log": {
+      "bytes": 139748,
+      "sha256": "40404485942468ec1ab4e967a06e76ee6548ff9ed508b14a3e9122f8b177da83"
+    },
+    "rootless-check/runs/01-lod/run.json": {
+      "bytes": 3365,
+      "sha256": "caf881ccb68aacf4cbbfcbcc60e5eeee02ac99de59dcd7eb09c22c5201e9201b"
+    },
+    "rootless-check/runs/02-legacy/game.log": {
+      "bytes": 120154,
+      "sha256": "c5b3a5d8892e5d86c9673e0fad9779c2810f02ea80224791b7486d764509005c"
+    },
+    "rootless-check/runs/02-legacy/run.json": {
+      "bytes": 3357,
+      "sha256": "dbc52711c5ecebf7e7d989ecf4dee8a4fbdaa7615c9ad0baa48a257c96d16e7b"
+    },
+    "rootless-check/runs/03-lod/game.log": {
+      "bytes": 140686,
+      "sha256": "f287ad0394637d6cf11df92fdc354839f14bbf137a803f954e63e04d0dfbe2c7"
+    },
+    "rootless-check/runs/03-lod/run.json": {
+      "bytes": 3365,
+      "sha256": "72ad7e814efae3c36f62ef8c5f16083b04260a26084192553d16d9cb8ee954bd"
+    },
+    "rootless-check/session.json": {
+      "bytes": 4359,
+      "sha256": "af5d2fd414038062d989e27b6077a6ad923d8321efbde0aa3fbeb429b6799e14"
+    },
+    "rootless-power-stderr.txt": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "rootless-power.jsonl": {
+      "bytes": 582120,
+      "sha256": "67270a3d8159c3cf103f60432c1efaa4237c89623880d69ce7d2625cb5d3b644"
+    },
+    "soak-run.txt": {
+      "bytes": 1214,
+      "sha256": "210ab6f465213837bd8ffd1d41ec11207be8cff03c1d9729dba25538e6a133bf"
+    },
+    "soak/inputs/legacy/inputs.json": {
+      "bytes": 2060,
+      "sha256": "37e2f8f5e3318572ab66130f54a3022dbb6ae685a11237cabc68ef095b9e8077"
+    },
+    "soak/inputs/lod/inputs.json": {
+      "bytes": 2060,
+      "sha256": "37e2f8f5e3318572ab66130f54a3022dbb6ae685a11237cabc68ef095b9e8077"
+    },
+    "soak/report.html": {
+      "bytes": 237386,
+      "sha256": "ba505befbb255d8c8afc0038558f96dd0d877b9b792e1ab8288f8cf9de144fdc"
+    },
+    "soak/report.json": {
+      "bytes": 331839,
+      "sha256": "57c090c03058066968e6ea236eb01a7880ff4087a893a7d34f1f3c7c8811c207"
+    },
+    "soak/report.md": {
+      "bytes": 3919,
+      "sha256": "9c6d1832174fa97895ae4e3dada5a15821bea7b98b855b826e78fd39d540d9c5"
+    },
+    "soak/runs/01-legacy/game.log": {
+      "bytes": 233879,
+      "sha256": "5867e4f9bb6ebf2e1f790ea0c6cbab94c4466f2e8a13d42292505a7fa444bb9c"
+    },
+    "soak/runs/01-legacy/run.json": {
+      "bytes": 3328,
+      "sha256": "9450b1f17e4ded2b1539c8df5c341bdfa5af11cebe3998ff6683beff4ba02231"
+    },
+    "soak/runs/02-lod/game.log": {
+      "bytes": 1951124,
+      "sha256": "202dcaac3ef15633b2ad4de23708eec42bd22dd051d971ba88cc7d2eb506bb7b"
+    },
+    "soak/runs/02-lod/run.json": {
+      "bytes": 3338,
+      "sha256": "c850ed8c4e3d651752755c158dc323ff37127eabcdac3f4d31d4ae79824b8cc6"
+    },
+    "soak/runs/03-legacy/game.log": {
+      "bytes": 241752,
+      "sha256": "158120376efcd748ff64279d7201948a6cdb7de86e7c6039422d72478d74509c"
+    },
+    "soak/runs/03-legacy/run.json": {
+      "bytes": 3328,
+      "sha256": "3fba3a23ff582c38a55d722f4068de9ead7399fa93f4dce021b7e5072e05054a"
+    },
+    "soak/session.json": {
+      "bytes": 4311,
+      "sha256": "4644ac69b233ca024e349df4e4d1e73ae53047896c069dd4e8a608238a90bf11"
+    },
+    "terrain_composite_before.wgsl": {
+      "bytes": 7564,
+      "sha256": "bedd647bdd1b34267a2ccf66e9ac64300d375a69fd6d3dc0909e9324da7a7f3b"
+    },
+    "terrain_composite_near_first.wgsl": {
+      "bytes": 8236,
+      "sha256": "9dc14358482ff1be201758db4ec84424b6ca369cf76d09439500db5ee1867ae9"
+    },
+    "terrain_near_before.wgsl": {
+      "bytes": 8725,
+      "sha256": "1dea80d1e7378cff11245d538ca0bccd4303f67100caf54a4e17256a4fc53314"
+    },
+    "terrain_near_direct_fields.wgsl": {
+      "bytes": 9304,
+      "sha256": "078627f01f7381f6d4d6f87c5914abd10d495e6ff93d2c5ef00d324c988a412a"
+    },
+    "terrain_near_first_probe.wgsl": {
+      "bytes": 9515,
+      "sha256": "3ccec8f46c5a73c84bb5214cd7909d5c53ed22410012df8d45cda71ebb7d7c85"
+    },
+    "terrain_near_weight_skip.wgsl": {
+      "bytes": 9772,
+      "sha256": "c266618bb6864ff8c2c33efbccf8cc32344a2bd0ea56c342814d971d5532cfb4"
+    },
+    "tests.txt": {
+      "bytes": 5112,
+      "sha256": "a22ea40bb9bc39191bffc56e140b2f9bf1bf0d5122e4a2d4983ed7e1ece68b81"
+    },
+    "tools/grass_profile.py": {
+      "bytes": 21230,
+      "sha256": "8f083a53c1a9d9d2d50d9941baec50319277ee40c2aad511f56fb7572f124519"
+    },
+    "tools/grass_profile_report.py": {
+      "bytes": 25484,
+      "sha256": "5ec4750efaa62300fc423364cbd00013cd494080a00006c4eb685cb2641f72ab"
+    },
+    "tools/profiles/terrain-soak-120.json": {
+      "bytes": 434,
+      "sha256": "d5534cbcb9f9bf467dd08259bb392553b6597cb5698cad23b0a2f2873316f400"
+    },
+    "tools/test_grass_profile.py": {
+      "bytes": 20022,
+      "sha256": "ec470f130010e6ce433365b41a41f778888e6883619fb942eb7ac8a0ffd54d33"
+    },
+    "warm-original-run.txt": {
+      "bytes": 602,
+      "sha256": "5765163a3df470feb2494eac9fd76e11e0082e1eb1e379d9c3cfe47025fb8ad2"
+    },
+    "warm-original/inputs/lod-original-warm/inputs.json": {
+      "bytes": 2060,
+      "sha256": "60a54794846189b34f58c8915740262775c638f839f9bd2b1de5fd8686f74c06"
+    },
+    "warm-original/report.html": {
+      "bytes": 26417,
+      "sha256": "b7ae1e85e75b6f5e44596cb465f2d1ac44294f231c50f23886c6ffbc047d72c6"
+    },
+    "warm-original/report.json": {
+      "bytes": 25630,
+      "sha256": "cf560345e6ead41a935c847a80481b50f1c7028bded20752506c27e8c058b680"
+    },
+    "warm-original/report.md": {
+      "bytes": 2204,
+      "sha256": "457051b61ee1664080ec4beecc463b3527032778853b4fad3496fcffb5863708"
+    },
+    "warm-original/runs/01-lod-original-warm/game.log": {
+      "bytes": 108166,
+      "sha256": "ad5549e963648f04135bfb5388950daf0210a27dd46b5aae9193df27f493c0b1"
+    },
+    "warm-original/runs/01-lod-original-warm/run.json": {
+      "bytes": 3699,
+      "sha256": "1635cac2e14f9f75766ea71fd0a6b9761e5ba1c2a042af03295c3f19da332496"
+    },
+    "warm-original/session.json": {
+      "bytes": 4318,
+      "sha256": "f55184a6a1279553f64bdf2e41798ae37d8181bd49cf4e8cf03c975418f78922"
+    }
+  }
+}

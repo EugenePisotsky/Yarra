@@ -11,12 +11,15 @@ fn main() -> Result<()> {
     if command == "create-demo"
         || command == "create-road-demo"
         || command == "create-mountain-fixture"
+        || command == "create-hill-fixture"
     {
         let project = PathBuf::from(arguments.next().context("expected a new PROJECT_DB path")?);
         if arguments.next().is_some() {
             bail!("usage: yarra-world-cook {command} PROJECT_DB");
         }
-        if command == "create-mountain-fixture" {
+        if command == "create-hill-fixture" {
+            yarra_world_cook::create_hill_fixture(&project)?;
+        } else if command == "create-mountain-fixture" {
             yarra_world_cook::create_mountain_fixture(&project)?;
         } else if command == "create-road-demo" {
             yarra_world_cook::create_road_demo_project(&project)?;
@@ -76,7 +79,7 @@ fn main() -> Result<()> {
     }
     if command != "cook" && command != "init" {
         bail!(
-            "unknown command {command:?}; expected `init`, `cook`, `create-demo`, `create-road-demo`, `create-mountain-fixture`, `export-vegetation` or `import-vegetation`"
+            "unknown command {command:?}; expected `init`, `cook`, `create-demo`, `create-road-demo`, `create-mountain-fixture`, `create-hill-fixture`, `export-vegetation` or `import-vegetation`"
         );
     }
 
@@ -88,8 +91,19 @@ fn main() -> Result<()> {
         .next()
         .map(PathBuf::from)
         .unwrap_or_else(default_runtime_path);
+    let bake_assets = match arguments.next() {
+        None => None,
+        Some(flag) if flag == "--terrain-materials" => Some(PathBuf::from(
+            arguments
+                .next()
+                .context("expected ASSET_ROOT after --terrain-materials")?,
+        )),
+        _ => bail!(
+            "usage: yarra-world-cook {command} [PROJECT_DB] [RUNTIME_DB] [--terrain-materials ASSET_ROOT]"
+        ),
+    };
     if arguments.next().is_some() {
-        bail!("too many arguments; usage: yarra-world-cook {command} [PROJECT_DB] [RUNTIME_DB]");
+        bail!("unexpected extra cook argument");
     }
 
     if command == "init" && !project_path.exists() {
@@ -103,13 +117,27 @@ fn main() -> Result<()> {
             project_path.display()
         );
     }
-    let report = yarra_world_cook::cook_project_with_report(&project_path, &runtime_path)?;
+    let report = if let Some(assets) = bake_assets {
+        let inputs = yarra_world_cook::TerrainBakeLibrary::load(&assets)?;
+        yarra_world_cook::cook_project_with_materials(&project_path, &runtime_path, &inputs)?
+    } else {
+        yarra_world_cook::cook_project_with_report(&project_path, &runtime_path)?
+    };
     let manifest = report.manifest;
     println!(
         "published runtime generation {}: {}",
         manifest.generation_id,
         runtime_path.display()
     );
+    if let Some(materials) = report.materials {
+        println!(
+            "Ground composites: {} tiles, {} GPU bytes/tile; peak {} filtering cores ({} pixels, excludes codecs/SQLite scratch)",
+            materials.tiles,
+            materials.tile_gpu_bytes,
+            materials.peak_filter_cores,
+            materials.peak_core_pixels
+        );
+    }
     let stats = report.stats;
     println!(
         "Cooked {} terrain cells and validated {} coverage-only cells",

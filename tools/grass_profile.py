@@ -19,9 +19,10 @@ from grass_profile_report import status, write_report
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULTS = dict(size='game', window='fullscreen', fps=60, msaa=4, warmup=20, seconds=90,
-                view='low-walk', density='balanced', grass='full', counters=False)
+                view='low-walk', density='balanced', grass='full', counters=False,
+                terrain_lod=False, native_pacing=False, prepass=False)
 VIEWS = ['low-walk', 'grass-close', 'grass-away', 'grass-follow', 'grass-follow-far',
-         'grass-zoom', 'grass-overhead', 'grass-top-down', 'grass-stream']
+         'grass-zoom', 'grass-overhead', 'grass-top-down', 'grass-stream', 'grass-soak']
 INPUTS = {'binary', 'world_db', 'shaders', 'canopy', 'vertex_reference', 'candidate_reference', 'placement_reference', 'terrain_reference', 'prepared_blades'}
 
 
@@ -60,7 +61,8 @@ def validate(settings):
         raise ValueError('Invalid MSAA or view')
     if settings['density'] not in ['balanced', 'full', 'authored'] or settings['grass'] not in ['full', 'off']:
         raise ValueError('Invalid density or grass mode')
-    for key in ['counters', *[k for k in INPUTS if k.endswith('_reference')]]:
+    for key in ['counters', 'terrain_lod', 'native_pacing', 'prepass',
+                *[k for k in INPUTS if k.endswith('_reference')]]:
         if key in settings and not isinstance(settings[key], bool):
             raise ValueError(f'{key} must be boolean')
     for key in INPUTS - {k for k in INPUTS if k.endswith('_reference')}:
@@ -120,6 +122,11 @@ def command(inputs, settings):
         result += ['--grass-prepared-blades', str(settings['prepared_blades'])]
     if settings['counters']:
         result.append('--grass-counters')
+    for key, flag in [('terrain_lod', '--terrain-lod'),
+                      ('native_pacing', '--profile-native-pacing'),
+                      ('prepass', '--render-prepass')]:
+        if settings[key]:
+            result.append(flag)
     for option in ['vertex', 'candidate', 'placement']:
         if settings.get(f'{option}_reference'):
             result.append(f'--grass-{option}-reference')
@@ -174,6 +181,35 @@ class PowerCollector:
         for f in (self.output, self.errors):
             if f:
                 f.close()
+
+
+class MacmonCollector(PowerCollector):
+    """Optional rootless collector. The caller supplies an existing executable."""
+    def __init__(self, root, duration, executable):
+        super().__init__(root, duration, True)
+        self.executable = executable
+
+    def start(self):
+        if sys.platform != 'darwin':
+            raise RuntimeError('macmon requires macOS')
+        found = shutil.which(self.executable)
+        if not found:
+            raise RuntimeError('macmon not found; supply --macmon PATH or use --power required/off')
+        executable = Path(found).resolve()
+        version = subprocess.run([str(executable), '--version'], check=True,
+                                 capture_output=True, text=True, timeout=10).stdout.strip()
+        cmd = [str(executable), 'pipe', '--samples', str(math.ceil(self.duration)), '--interval', '1000']
+        save(self.root / 'power-collector.json', {
+            'kind': 'macmon', 'version': version, 'sha256': digest(executable),
+            'command': cmd, 'interval_ms': 1000,
+            'source': 'https://github.com/vladkens/macmon',
+            'scope': 'System-wide private-API estimates; not process-attributed power',
+        })
+        print(f'Rootless power telemetry: {version} (no sudo).', flush=True)
+        self.output = (self.root / 'power-macmon.jsonl').open('w')
+        self.errors = (self.root / 'power-stderr.txt').open('w')
+        self.process = subprocess.Popen(cmd, stdin=subprocess.DEVNULL,
+                                        stdout=self.output, stderr=self.errors)
 
 
 def wait(seconds, collector):
@@ -267,9 +303,10 @@ def run_session(args, variants, order, idle, gap):
                'git_head': subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=ROOT, capture_output=True, text=True).stdout.strip(),
                'git_status': subprocess.run(['git', 'status', '--short'], cwd=ROOT, capture_output=True, text=True).stdout}
     save(root / 'session.json', session)
-    # One bounded privileged process spans all runs. Expiring sudo credentials cannot interrupt it.
+    # One bounded collector spans all runs; no authentication between variants.
     total = idle + sum(variants[n]['warmup'] + variants[n]['seconds'] + gap + 65 for n in order) + 30
-    collector = PowerCollector(root, total, args.power == 'required')
+    collector = (MacmonCollector(root, total, args.macmon) if args.power == 'macmon'
+                 else PowerCollector(root, total, args.power == 'required'))
     try:
         collector.start()
         print(f'Artifacts: {root}\nKeep the game focused; do not change assets/settings or run other GPU work.', flush=True)
@@ -306,7 +343,9 @@ def main():
     for name in ('run', 'suite'):
         p = subs.add_parser(name)
         p.add_argument('--output', type=Path)
-        p.add_argument('--power', choices=['required', 'off'], default='required')
+        p.add_argument('--power', choices=['required', 'macmon', 'off'], default='required',
+                       help='required = sudo powermetrics; macmon = rootless collector; off = no power telemetry')
+        p.add_argument('--macmon', default='macmon', help='Existing macmon executable for --power macmon')
         p.add_argument('--no-build', action='store_true', help='Use existing release binary; hashes remain recorded')
         if name == 'suite':
             p.add_argument('config', type=Path)

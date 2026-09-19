@@ -22,6 +22,33 @@ def power_sample(end, duration=1, cpu=2000, gpu=4000):
 
 
 class PowerTests(unittest.TestCase):
+    def test_macmon_uses_active_ratio_and_excludes_missing_time(self):
+        def sample(second, **extra):
+            return json.dumps(dict(timestamp=f'1970-01-01T00:01:{second:02}+00:00',
+                                   gpu_power=4, cpu_power=2, gpu_freq_mhz=900,
+                                   gpu_active_ratio=.7, gpu_usage=[900, .4],
+                                   temp={'gpu_temp_avg': 65}, fans=[{'rpm': 2500}], **extra))
+        rows = report.parse_macmon('\n'.join(sample(s) for s in [40, 41, 42, 50, 51]))
+        self.assertEqual([r['end_s'] for r in rows], [101, 102, 111])
+        result = report.power_window(rows, 100.5, 112)
+        self.assertEqual(result['coverage_s'], 2)
+        self.assertEqual(result['gpu_active_percent'], 70)
+        self.assertEqual(result['gpu_w'], 4)
+        self.assertEqual(result['gpu_temp_c'], 65)
+        self.assertEqual(result['fan0_rpm'], 2500)
+        self.assertIsNone(result['fan1_rpm'])
+        self.assertEqual(result['thermal_states'], [])
+
+    def test_macmon_missing_or_malformed_data_does_not_invent_telemetry(self):
+        data = {'timestamp': '1970-01-01T00:01:40+00:00'}
+        first = json.dumps(data)
+        data.update(timestamp='1970-01-01T00:01:41+00:00', gpu_power=float('nan'),
+                    gpu_active_ratio=1.5, cpu_power=True, gpu_usage=[900, .4])
+        rows = report.parse_macmon(first + '\n' + json.dumps(data))
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(all(rows[0][k] is None for k in ('gpu_w', 'cpu_w', 'gpu_active_percent', 'gpu_mhz')))
+        self.assertEqual(report.parse_macmon(first + '\n{truncated\n' + json.dumps(data)), [])
+
     def test_duplicate_gpu_sections_and_missing_values(self):
         text = power_sample(102) + power_sample(104, 2, gpu=8000)
         rows = report.parse_power(text)
@@ -45,6 +72,18 @@ class PowerTests(unittest.TestCase):
 
 
 class RunTests(unittest.TestCase):
+    def test_native_lod_soak_flags_must_reach_the_measured_run(self):
+        self.meta['settings'].update(terrain_lod=True, native_pacing=True, prepass=True,
+                                     view='grass-soak')
+        cmd = runner.command(Path('/inputs'), self.meta['settings'])
+        for flag in ('--terrain-lod', '--profile-native-pacing', '--render-prepass'):
+            self.assertIn(flag, cmd)
+        self.assertEqual(len(self.analyze()['errors']), 3)
+        self.log = ('GRASS_PROFILE event=config pacing=native\n' + self.log
+                    .replace('terrain_lod=false', 'terrain_lod=true')
+                    .replace('prepass=false', 'prepass=true'))
+        self.assertEqual(self.analyze()['errors'], [])
+
     def test_preparation_experiment_is_validated_and_must_be_applied(self):
         settings = runner.DEFAULTS | {'prepared_blades': 524288}
         runner.validate(settings)
@@ -62,7 +101,7 @@ class RunTests(unittest.TestCase):
                          exit_code=0, power_required=False, local_utc_offset_seconds=0)
         self.audit = ('RENDER_AUDIT unix_ms=105000 render_px=2560x1440 msaa_samples=4 density=Balanced '
                       'surface_px=2560x1440 scale=1 window_mode=windowed '
-                      'grass=full counters=false prepass=false thermal=nominal source_revision=1 '
+                      'grass=full counters=false prepass=false terrain_lod=false thermal=nominal source_revision=1 '
                       'terrain_prepared_pages=49 terrain_prepared_active=49 sampled_capacity_drops=[0, 0, 0, 0]')
         self.log = '\n'.join([
             'GRASS_PROFILE event=measure_start unix_ms=100000 focused=true',
@@ -200,9 +239,40 @@ class RunTests(unittest.TestCase):
 
 
 class RunnerTests(unittest.TestCase):
+    def test_rootless_collector_records_identity_and_never_calls_sudo(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(runner.sys, 'platform', 'darwin'), \
+                patch.object(runner.subprocess, 'run', return_value=Mock(stdout='macmon 0.8.2')) as run, \
+                patch.object(runner.subprocess, 'Popen') as popen:
+            root = Path(tmp)
+            binary = (root / 'macmon').resolve()
+            binary.write_text('fixture executable')
+            binary.chmod(0o755)
+            popen.return_value.poll.return_value = 0
+            collector = runner.MacmonCollector(root, 100.2, str(binary))
+            collector.start()
+            collector.close()
+            self.assertEqual(run.call_args.args[0], [str(binary), '--version'])
+            self.assertEqual(popen.call_args.args[0],
+                             [str(binary), 'pipe', '--samples', '101', '--interval', '1000'])
+            meta = json.loads((root / 'power-collector.json').read_text())
+            self.assertEqual(meta['sha256'], runner.digest(binary))
+            self.assertEqual(meta['version'], 'macmon 0.8.2')
+            with self.assertRaisesRegex(RuntimeError, 'stopped early'):
+                collector.check()
+
+    def test_missing_rootless_collector_fails_without_sudo_fallback(self):
+        with patch.object(runner.sys, 'platform', 'darwin'), \
+                patch.object(runner.shutil, 'which', return_value=None), \
+                patch.object(runner.subprocess, 'run') as run:
+            with self.assertRaisesRegex(RuntimeError, 'macmon not found'):
+                runner.MacmonCollector(Path('/unused'), 60, 'macmon').start()
+            run.assert_not_called()
+
     def test_invalid_settings_rejected_before_launch(self):
         for change in ({'fps': True}, {'fps': 60.0}, {'warmup': float('nan')}, {'msaa': True},
-                       {'size': '0x1440'}, {'size': 1440}, {'window': 'maximized'}, {'counters': 1}, {'binary': []}, {'density': 'ultra'}):
+                       {'size': '0x1440'}, {'size': 1440}, {'window': 'maximized'}, {'counters': 1},
+                       {'terrain_lod': 1}, {'native_pacing': 'true'}, {'prepass': None},
+                       {'binary': []}, {'density': 'ultra'}):
             with self.subTest(change=change), self.assertRaises(ValueError):
                 runner.validate(runner.DEFAULTS | change)
 

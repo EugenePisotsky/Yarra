@@ -38,6 +38,8 @@ struct Camera {
     wind: vec4<f32>,
     // x: spatial frequency, y: speed, z: gustiness, w: hashed blade flutter
     wind_shape: vec4<f32>,
+    // xy: canonical XZ offset of render coordinates.
+    render_origin: vec4<f32>,
     lod_focus: vec4<f32>,
     canopy_appearance: vec4<f32>,
     canopy_shape: vec4<f32>,
@@ -204,6 +206,8 @@ fn can_schedule_quarter_lod(item: WorkItem) -> bool {
 }
 
 fn item_is_visible(item: WorkItem) -> bool {
+    // Contact readiness can change without invalidating source buffers or caches.
+    if (item.flow_density.w > 0.5) { return false; }
     let half_size = item.page.z * 0.5;
     let center_xz = item.page.xy + vec2<f32>(half_size);
     let minimum_height = bitcast<f32>(item.surface.z);
@@ -215,6 +219,14 @@ fn item_is_visible(item: WorkItem) -> bool {
     let camera_delta = center_xz - camera.camera_position.xz;
     let horizontal_distance = length(camera_delta);
     if (horizontal_distance > MAX_PROCEDURAL_DISTANCE + horizontal_radius) {
+        return false;
+    }
+    // Root distance is three-dimensional, including cameras high above valleys.
+    // Use the full root-height interval, not the page centre, for conservative scheduling.
+    let nearest_root = clamp(camera.camera_position.xyz,
+        vec3<f32>(item.page.x, minimum_height, item.page.y),
+        vec3<f32>(item.page.x + item.page.z, maximum_height, item.page.y + item.page.z));
+    if (distance(nearest_root, camera.camera_position.xyz) > MAX_PROCEDURAL_DISTANCE + blade_reach) {
         return false;
     }
     // A camera inside/very near the page necessarily sees some of it.

@@ -1,14 +1,23 @@
 #[cfg(test)]
 use world_db::write_runtime_database;
 mod environment_cook;
+mod material_bake;
 mod streaming_cook;
 mod terrain_cook;
+pub use material_bake::preview::{
+    MAX_PREVIEW_LEAVES, bake_terrain_preview, published_terrain_leaf,
+};
+pub use material_bake::{TerrainBakeLibrary, TerrainMaterialBakeStats};
 mod terrain_fixture;
 use environment_cook::{
     CookedEnvironment, TerrainSlot, TerrainWeights, compile_environment, demo_environment,
 };
-pub use streaming_cook::{CookReport, CookStats, cook_project_with_report};
+pub use streaming_cook::{
+    CookReport, CookStats, cook_project_with_materials, cook_project_with_report,
+};
 pub use terrain_fixture::create_mountain_fixture;
+mod hill_fixture;
+pub use hill_fixture::create_hill_fixture;
 
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
@@ -1052,12 +1061,29 @@ fn publish_runtime_database(runtime_path: &Path, build: &RuntimeBuild) -> Result
     write_runtime_database(temporary_path, build)?;
     finish_runtime_publication(runtime_path, temporary_path, &build.manifest.world_spaces)
 }
+#[cfg(test)]
 fn finish_runtime_publication(
     runtime_path: &Path,
     temporary_path: &Path,
     spaces: &[WorldSpaceRecord],
 ) -> Result<RuntimeManifest> {
-    let (manifest, _) = terrain_cook::cook_hierarchy(temporary_path, spaces)?;
+    finish_runtime_publication_with_materials(runtime_path, temporary_path, spaces, None)
+        .map(|(manifest, _)| manifest)
+}
+fn finish_runtime_publication_with_materials(
+    runtime_path: &Path,
+    temporary_path: &Path,
+    spaces: &[WorldSpaceRecord],
+    materials: Option<&TerrainBakeLibrary>,
+) -> Result<(RuntimeManifest, Option<TerrainMaterialBakeStats>)> {
+    let (mut manifest, _) = terrain_cook::cook_hierarchy(temporary_path, spaces)?;
+    let stats = if let Some(materials) = materials {
+        let (next, stats) = material_bake::cook(temporary_path, spaces, materials)?;
+        manifest = next;
+        Some(stats)
+    } else {
+        None
+    };
     let reader = world_db::RuntimeReader::open_immutable(temporary_path)
         .context("cooked runtime database did not pass validation")?;
     for space in &manifest.world_spaces {
@@ -1068,6 +1094,12 @@ fn finish_runtime_publication(
                 .read_terrain_node(root.key)?
                 .context("missing cooked terrain root")?
                 .decode()?;
+            if materials.is_some() {
+                reader
+                    .read_terrain_composite(world::TerrainMaterialKey(root.key))?
+                    .context("missing cooked composite root")?
+                    .decode()?;
+            }
         }
     }
     drop(reader);
@@ -1077,7 +1109,7 @@ fn finish_runtime_publication(
             runtime_path.display()
         )
     })?;
-    Ok(manifest)
+    Ok((manifest, stats))
 }
 
 fn demo_project_document() -> ProjectDocument {

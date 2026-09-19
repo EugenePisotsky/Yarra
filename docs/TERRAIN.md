@@ -18,8 +18,13 @@ Terrain data has three different owners:
   layers and R8 coverage masks. Cell palettes and render weights are derived output.
 - The environment compiler validates shared source-mask borders and the cooker emits small page-local palettes and
   control maps into the runtime SQLite database.
-- `assets/local/terrain/` stores licensed source images and derived KTX2 GPU
-  textures. They remain ignored until redistribution rights are known.
+- `assets/local/terrain/` stores source images, derived KTX2 GPU textures and
+  CPU bake inputs. They remain ignored until redistribution rights are known.
+
+Optional ground composites now have a bounded CPU cooking/storage path, independent
+of geometry products. See [the material checkpoint](DISTANT_WORLD_RENDERING.md#cpu-ground-composites-and-bounded-material-cooking-2026-09-18)
+for the input preparation tool, opt-in cook command, format and remaining renderer
+integration. These composites are not yet used for drawing.
 
 A terrain surface is semantic data such as “uncut grass”: stable ID, editor
 name, tile size, optional albedo anti-tiling, normal response, and roughness
@@ -94,15 +99,21 @@ demo lighting and exposure use the procedural meadow reference values.
 
 Streamed heightfields with shared height/normal sampling are implemented; see
 [the terrain integration checkpoint](GROUND_COVER_ARCHITECTURE.md). Terrain geometry
-LOD, cliff projection and a far-terrain renderer remain separate future work.
+LOD and independently streamed baked ground have an opt-in preview with blended
+material levels and a bounded close-range surface cache. Tiled/prepared albedo,
+painted weights, micro normals and canopy shading now transition to the baked ground
+without adding near meshes; see the latest [distant-world checkpoint](DISTANT_WORLD_RENDERING.md).
+Cliff projection and art-pack transition/performance validation remain open.
 Cooked heights now retain source f32 precision, and terrain/vegetation CPU queries
-and GPU grass placement interpolate the actual mesh triangles. Runtime schema 17
+and GPU grass placement interpolate the actual mesh triangles. Runtime schema 18
 and payload 8 require recooking existing source projects; source schema is unchanged.
 
 The cooker also writes a hierarchy from final road-deformed leaves, with conservative
-error/bounds and bounded node reads. An opt-in `--terrain-lod` geometry preview draws
-these nodes in the game/editor using a plain material; normal authoring still uses
-the detailed nearby renderer. The production
+error/bounds and bounded node reads. The opt-in `--terrain-lod` preview draws these
+nodes with pinned coarse ground composites and a bounded fine-tile cache when the
+publication includes baked materials, otherwise with the plain geometry diagnostic. Editor publication in this mode
+also bakes materials; it requires the prepared CPU input pack. Normal authoring still
+uses the detailed nearby renderer. The production
 source/environment cook uses one consistent snapshot, bounded cell/halo reads and
 staged writes; it no longer needs all spatial samples or output pages in memory.
 See [Distant world and terrain rendering](DISTANT_WORLD_RENDERING.md) for the limits,

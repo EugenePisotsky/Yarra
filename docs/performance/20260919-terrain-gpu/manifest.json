@@ -1,0 +1,110 @@
+{
+  "date": "2026-09-19",
+  "files": [
+    {
+      "file": "01-lod-top.log",
+      "bytes": 101599,
+      "sha256": "b101897139b77860333f10a0017f1a39a1aa8b39557fad765466f4c68ee6976d"
+    },
+    {
+      "file": "02-lod-top-no-grass.log",
+      "bytes": 105821,
+      "sha256": "5c850d3c35a61248d925b470e95d9c87afabd346e904d8732eb799d8c6ea0cac"
+    },
+    {
+      "file": "03-legacy-top.log",
+      "bytes": 104261,
+      "sha256": "71220d30805d38a75e56645b416492109791ebd360833da68294c230bd99015a"
+    },
+    {
+      "file": "04-lod-top-near-off.log",
+      "bytes": 100110,
+      "sha256": "cdaec062ed3923a0abec57b79b4aae85c7792c5946f4d16b1e5cfdf11d2b563e"
+    },
+    {
+      "file": "05-native-top-before.log",
+      "bytes": 99737,
+      "sha256": "4641753b57b682cdd2b88d2ec959ac86f637a1e677c6fdf384cd4d06a051559e"
+    },
+    {
+      "file": "06-native-top-indexed.log",
+      "bytes": 99807,
+      "sha256": "539416acf43d32cb00f51cc60c3cc8af578e0cca5919fd0c549c03ee986ced03"
+    },
+    {
+      "file": "07-native-top-weighted.log",
+      "bytes": 99828,
+      "sha256": "4fbe6a793e062b266e25d7ae04b06986349859d448cf590302801653b2b1849f"
+    },
+    {
+      "file": "08-gameplay-before.log",
+      "bytes": 98831,
+      "sha256": "c1cd6aa53ac56020ccfafc65e2371b0ab384e0ce01bfc21dd96112f5a45cb500"
+    },
+    {
+      "file": "09-gameplay-after.log",
+      "bytes": 99775,
+      "sha256": "c0488edf09b6b5c16e438eb7498297eb18a5739e19c32614ad75acc41f5af3f1"
+    },
+    {
+      "file": "10-zoom-after.log",
+      "bytes": 101100,
+      "sha256": "56144d149170ab31536ace42edf530984eaa3681a32eea76d80d724219d84bc4"
+    },
+    {
+      "file": "11-third-person-after.log",
+      "bytes": 101047,
+      "sha256": "423267d5f774e61a2001180a7ad1e39092decd7d78118782c5e4840b1da199d8"
+    },
+    {
+      "file": "terrain_composite_before.wgsl",
+      "bytes": 7564,
+      "sha256": "bedd647bdd1b34267a2ccf66e9ac64300d375a69fd6d3dc0909e9324da7a7f3b"
+    },
+    {
+      "file": "terrain_near_before.wgsl",
+      "bytes": 8236,
+      "sha256": "2bb664920d91bcfe28324701d3b4db43efa4f39b8d77b0df06d39641e0ce2f58"
+    },
+    {
+      "file": "terrain_near_final.wgsl",
+      "bytes": 8725,
+      "sha256": "1dea80d1e7378cff11245d538ca0bccd4303f67100caf54a4e17256a4fc53314"
+    },
+    {
+      "file": "terrain_near_indexed.wgsl",
+      "bytes": 8655,
+      "sha256": "da876d3837633267cbdf7cbaf5ce0b376e96eecf4d766de0dfbe5906a5673e0f"
+    },
+    {
+      "file": "terrain_near_weighted.wgsl",
+      "bytes": 9057,
+      "sha256": "1ca4b3d783e87da67da34e7d813ced1b2665a19e4d9399baa11d2f32d0888232"
+    },
+    {
+      "file": "commands.txt",
+      "bytes": 4463,
+      "sha256": "2c58ca2627c02089abdfb0db8a88e2474741a7ecb8d459ed6cceb9d5331b4e8b"
+    },
+    {
+      "file": "tests-final.txt",
+      "bytes": 4906,
+      "sha256": "1442ae23892d2d6337c2bcf571f29608fb06f312db1831a992138792f2e45f2f"
+    },
+    {
+      "file": "near-gpu-final.txt",
+      "bytes": 549,
+      "sha256": "93c1798bea90729648424813de22cff1ba4b1eb9da992bfc76093652286e5032"
+    },
+    {
+      "file": "build-final.txt",
+      "bytes": 169,
+      "sha256": "b8add59b57e4c7664190817f930905a75ff89145d1e787099726babf7d888004"
+    },
+    {
+      "file": "clippy.txt",
+      "bytes": 520,
+      "sha256": "c4aa12b81d5c7303a46f60793e3740689e1aae704cd51dc7312b687fef5d85ad"
+    }
+  ]
+}

@@ -486,5 +486,20 @@ CREATE TABLE terrain_hierarchy_spaces (
     root_count INTEGER NOT NULL CHECK(root_count BETWEEN 0 AND 256)
 ) STRICT;
 
-PRAGMA user_version = 17;
+CREATE TABLE terrain_composites (
+    world_space_id INTEGER NOT NULL, level INTEGER NOT NULL,
+    node_x INTEGER NOT NULL, node_z INTEGER NOT NULL,
+    fingerprint BLOB NOT NULL CHECK(length(fingerprint)=32),
+    checksum BLOB NOT NULL CHECK(length(checksum)=32),
+    decoded_bytes INTEGER NOT NULL CHECK(decoded_bytes BETWEEN 1 AND 65536),
+    gpu_bytes INTEGER NOT NULL CHECK(gpu_bytes=54432),
+    payload BLOB NOT NULL CHECK(length(payload) BETWEEN 1 AND 65536),
+    PRIMARY KEY(world_space_id,level,node_x,node_z),
+    FOREIGN KEY(world_space_id,level,node_x,node_z) REFERENCES terrain_nodes(world_space_id,level,node_x,node_z)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE terrain_material_spaces (
+    world_space_id INTEGER PRIMARY KEY REFERENCES world_spaces(id),
+    tile_count INTEGER NOT NULL CHECK(tile_count>=0)
+) STRICT;
+PRAGMA user_version = 18;
 "#;

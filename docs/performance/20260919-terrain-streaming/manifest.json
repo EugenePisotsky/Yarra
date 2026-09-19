@@ -1,0 +1,95 @@
+{
+  "date": "2026-09-19",
+  "files": [
+    {
+      "file": "contact-before.txt",
+      "bytes": 595,
+      "sha256": "c9d10ec6ac3c7b447076442eb6df0bf976c02ef8a0efd4068292e290098d6f75"
+    },
+    {
+      "file": "contact-after.txt",
+      "bytes": 1500,
+      "sha256": "5d18e9e437e63ec64cb5d4d90a3a9810efb165201c94d3363116ffe0f47a6816"
+    },
+    {
+      "file": "streaming.sample.txt",
+      "bytes": 1411034,
+      "sha256": "8d9a5e7f687dbcfa2ccbb1e1ab69d419af5c0e79e7e01fb04cc08cdb3a5463a4"
+    },
+    {
+      "file": "streaming-after.sample.txt",
+      "bytes": 4525146,
+      "sha256": "e401bd668f01bb271cb7e34e2d161230cb7990aae247a25db3ea79b5ebcb4923"
+    },
+    {
+      "file": "editor-before.log",
+      "bytes": 329823,
+      "sha256": "c244564023f84f579668a47a8ffe6874173e08bb24a28ac048d8355bfcf62520"
+    },
+    {
+      "file": "editor.log",
+      "bytes": 291606,
+      "sha256": "5df27a3983c8347105adad1ae9f26e53d7fee728ccb0e00d7c3e82dff99c533f"
+    },
+    {
+      "file": "game-before.log",
+      "bytes": 31062,
+      "sha256": "116f88c83938311704bdf3a1904afad02dc6215980e847f7021e59df0c9c353a"
+    },
+    {
+      "file": "game-after.log",
+      "bytes": 32465,
+      "sha256": "d6ebcdd1ae8bb312d3fc7105296ed86423154e7a0438c70fe5eaf35190c4199c"
+    },
+    {
+      "file": "game-after-build-overlap.log",
+      "bytes": 32179,
+      "sha256": "c12ca932b913ad0cad0e910c809aad3699643699f8a1661675ecbac4ec45130a"
+    },
+    {
+      "file": "game-comparison.json",
+      "bytes": 396,
+      "sha256": "8a65ee267e3c98e3d1df032d07dac7c787477cd20a2fe896f429c1c1493a1388"
+    },
+    {
+      "file": "tests.txt",
+      "bytes": 13321,
+      "sha256": "e6a0b68952d95118c5168c74c90bf39ed43e81a6523b3feab343843a6f6c4764"
+    },
+    {
+      "file": "tests-engine-final.txt",
+      "bytes": 5340,
+      "sha256": "2e19e1bfd36e16bea6e342a88b802d00210c6885e86f1a4f2c2e91df069c1e5f"
+    },
+    {
+      "file": "gate-gpu.txt",
+      "bytes": 641,
+      "sha256": "848822ad901d3a85834ece076b03d6cbbcb8ded80da4fca40092483f38ee9254"
+    },
+    {
+      "file": "terrain-gpu.txt",
+      "bytes": 3031,
+      "sha256": "372016272621c49f216342d65afc995fe69937ec32ca586a74174da3e2692f47"
+    },
+    {
+      "file": "check.txt",
+      "bytes": 1423,
+      "sha256": "a2fca30fa8a0ef7b77e5d631ceeb5da4c6e8d3589d76f2660f497e25eb856690"
+    },
+    {
+      "file": "clippy.txt",
+      "bytes": 1080,
+      "sha256": "26424c8014a00dc469d6593ecf1979ece146c57ec388f2c28bd3efdcb80ecb64"
+    },
+    {
+      "file": "build-editor.txt",
+      "bytes": 525,
+      "sha256": "9e812d98d455b6d030da9c00f6f0083e86d71cc465c10b3e8890d766da7a6a8c"
+    },
+    {
+      "file": "build-game.txt",
+      "bytes": 1069,
+      "sha256": "1184e46ef43549bf59d89a78e11708f94e3ad87faaa99f75200c91725eec4262"
+    }
+  ]
+}

@@ -14,6 +14,7 @@ use engine::{
     GAME_DEPTH_PREPASS_ENABLED, GameInputEnabled, GameInputSystems, GamePointerInputBlocked,
     WorldSun, WorldViewCamera,
 };
+use terrain_render::composite::TerrainCompositeMaterial;
 use terrain_render::{TerrainMaterial, TerrainShadingMode};
 use vegetation_render::{
     VegetationDebugSettings, VegetationLightingMode, VegetationProfileMode, VegetationWind,
@@ -59,7 +60,25 @@ impl Plugin for RenderAuditPlugin {
                 PostUpdate,
                 logging::log_status.after(TransformSystems::Propagate),
             );
+        // Timed native-pacing observations can keep the normal gameplay camera
+        // and controls. A reproduction route is optional, not a profiling prerequisite.
+        crate::profile::install(app);
         repro::install(app);
+        if let Some(profile) = app
+            .world()
+            .get_resource::<crate::profile::ProfileSettings>()
+            .cloned()
+        {
+            let mut settings = app.world_mut().resource_mut::<AuditSettings>();
+            settings.render_path = AuditRenderPath::Composite;
+            settings.scale_index = if profile.size.is_some() { 0 } else { 1 };
+            settings.msaa = profile.msaa;
+            settings.grass = if profile.grass {
+                vegetation_render::VegetationProfileMode::Full
+            } else {
+                vegetation_render::VegetationProfileMode::Disabled
+            };
+        }
     }
 }
 
@@ -78,6 +97,7 @@ struct AuditSettings {
     grass: VegetationProfileMode,
     unlit: bool,
     ground_shading: TerrainShadingMode,
+    terrain_near_disabled: bool,
     terrain_prepared: bool,
     shadows: u8,
     prepass: bool,
@@ -100,6 +120,7 @@ impl Default for AuditSettings {
             grass: VegetationProfileMode::Full,
             unlit: false,
             ground_shading: TerrainShadingMode::Production,
+            terrain_near_disabled: std::env::args_os().any(|arg| arg == "--terrain-near-off"),
             terrain_prepared: crate::terrain_prepared_enabled(),
             shadows: 0,
             prepass: GAME_DEPTH_PREPASS_ENABLED,
@@ -220,6 +241,7 @@ struct AuditPanel;
 struct AuditMesh {
     original_visibility: Visibility,
     terrain: Option<Handle<TerrainMaterial>>,
+    composite: Option<Handle<TerrainCompositeMaterial>>,
 }
 
 fn setup(mut commands: Commands, settings: Res<AuditSettings>) {
@@ -485,29 +507,32 @@ fn apply_meshes(
     mut commands: Commands,
     s: Res<AuditSettings>,
     mut materials: ResMut<Assets<TerrainMaterial>>,
+    mut composites: ResMut<Assets<TerrainCompositeMaterial>>,
     mut meshes: Query<
         (
             Entity,
             &mut Visibility,
             Option<&MeshMaterial3d<TerrainMaterial>>,
+            Option<&MeshMaterial3d<TerrainCompositeMaterial>>,
             Option<&mut AuditMesh>,
         ),
         With<Mesh3d>,
     >,
 ) {
-    for (entity, mut visibility, material, saved) in &mut meshes {
+    for (entity, mut visibility, material, composite, saved) in &mut meshes {
         if saved.is_some() && !s.is_changed() {
             continue;
         }
         let initial = AuditMesh {
             original_visibility: *visibility,
             terrain: material.map(|m| m.0.clone()),
+            composite: composite.map(|m| m.0.clone()),
         };
         let is_new = saved.is_none();
         let mut saved = saved;
         let mut initial = initial;
         let state = saved.as_deref_mut().unwrap_or(&mut initial);
-        let terrain = state.terrain.is_some();
+        let terrain = state.terrain.is_some() || state.composite.is_some();
         let desired = match s.scene {
             Scene::Current => state.original_visibility,
             Scene::Ground if terrain => Visibility::Visible,
@@ -523,6 +548,16 @@ fn apply_meshes(
                 .is_some_and(|m| m.shading_mode != desired)
             {
                 materials.get_mut(handle).unwrap().shading_mode = desired;
+            }
+        }
+        if let Some(handle) = &state.composite {
+            let desired = s.terrain_shading();
+            if composites.get(handle).is_some_and(|m| {
+                m.shading_mode != desired || m.near_disabled != s.terrain_near_disabled
+            }) {
+                let mut m = composites.get_mut(handle).unwrap();
+                m.shading_mode = desired;
+                m.near_disabled = s.terrain_near_disabled;
             }
         }
         if is_new {
@@ -573,6 +608,75 @@ mod tests {
         },
         window::WindowResolution,
     };
+
+    #[test]
+    fn ground_audit_includes_hierarchy_materials_and_restores_visibility() {
+        let mut app = App::new();
+        app.init_resource::<Assets<TerrainMaterial>>()
+            .init_resource::<Assets<TerrainCompositeMaterial>>()
+            .insert_resource(AuditSettings {
+                scene: Scene::Ground,
+                ground_shading: TerrainShadingMode::Flat,
+                terrain_near_disabled: true,
+                ..default()
+            })
+            .add_systems(Update, apply_meshes);
+        let material = app
+            .world_mut()
+            .resource_mut::<Assets<TerrainCompositeMaterial>>()
+            .add(TerrainCompositeMaterial::default());
+        let ground = app
+            .world_mut()
+            .spawn((
+                Mesh3d::default(),
+                MeshMaterial3d(material.clone()),
+                Visibility::Inherited,
+            ))
+            .id();
+        let object = app
+            .world_mut()
+            .spawn((Mesh3d::default(), Visibility::Inherited))
+            .id();
+        app.update();
+        assert_eq!(
+            *app.world().get::<Visibility>(ground).unwrap(),
+            Visibility::Visible
+        );
+        assert_eq!(
+            *app.world().get::<Visibility>(object).unwrap(),
+            Visibility::Hidden
+        );
+        let m = app
+            .world()
+            .resource::<Assets<TerrainCompositeMaterial>>()
+            .get(&material)
+            .unwrap();
+        assert_eq!(m.shading_mode, TerrainShadingMode::Flat);
+        assert!(m.near_disabled);
+        app.world_mut().resource_mut::<AuditSettings>().scene = Scene::Clear;
+        app.update();
+        assert_eq!(
+            *app.world().get::<Visibility>(ground).unwrap(),
+            Visibility::Hidden
+        );
+        *app.world_mut().resource_mut::<AuditSettings>() = AuditSettings::default();
+        app.update();
+        assert_eq!(
+            *app.world().get::<Visibility>(ground).unwrap(),
+            Visibility::Inherited
+        );
+        assert_eq!(
+            *app.world().get::<Visibility>(object).unwrap(),
+            Visibility::Inherited
+        );
+        let m = app
+            .world()
+            .resource::<Assets<TerrainCompositeMaterial>>()
+            .get(&material)
+            .unwrap();
+        assert_eq!(m.shading_mode, TerrainShadingMode::Production);
+        assert!(!m.near_disabled);
+    }
 
     #[test]
     fn hud_captures_touch_through_release_but_leaves_world_input_enabled() {

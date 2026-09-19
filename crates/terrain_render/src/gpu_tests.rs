@@ -640,6 +640,7 @@ fn setup(
     .enumerate()
     {
         let material = materials.add(TerrainMaterial {
+            source_only: false,
             shading_mode: mode,
             stochastic_cached: false,
             prepared: false,

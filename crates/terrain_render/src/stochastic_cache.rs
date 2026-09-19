@@ -181,7 +181,7 @@ fn maintain(
     let wanted: HashMap<_, _> = materials
         .iter()
         .filter_map(|(id, m)| {
-            (config.enabled && !m.prepared_albedo)
+            (config.enabled && !m.prepared_albedo && !m.source_only)
                 .then(|| Layout::for_material(&m.settings))
                 .flatten()
                 .map(|layout| (id, layout))
@@ -478,6 +478,7 @@ mod tests {
                 app.world_mut()
                     .resource_mut::<Assets<TerrainMaterial>>()
                     .add(TerrainMaterial {
+                        source_only: false,
                         shading_mode: super::super::TerrainShadingMode::Production,
                         stochastic_cached: false,
                         prepared: false,
@@ -559,6 +560,7 @@ mod tests {
             .world_mut()
             .resource_mut::<Assets<TerrainMaterial>>()
             .add(TerrainMaterial {
+                source_only: false,
                 shading_mode: super::super::TerrainShadingMode::Production,
                 stochastic_cached: false,
                 prepared: false,

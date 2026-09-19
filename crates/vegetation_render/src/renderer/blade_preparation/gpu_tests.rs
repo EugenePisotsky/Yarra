@@ -172,6 +172,74 @@ fn snapshot(app: &App) -> VegetationDiagnosticsSnapshot {
     app.world().resource::<VegetationDiagnostics>().snapshot()
 }
 
+#[test]
+#[ignore = "requires a native GPU; validates grass placement and wind through rebasing"]
+fn rebasing_preserves_placement_and_wind() {
+    let mut app = test_app();
+    app.world_mut()
+        .resource_mut::<VegetationWind>()
+        .set_phase_seconds(3.1);
+    let original = app
+        .world()
+        .resource::<VegetationDebugScene>()
+        .scene()
+        .clone();
+    let before = settled_pixels(&mut app);
+    let counts = snapshot(&app).emitted_instances;
+    assert!(counts.iter().sum::<u32>() > 100);
+    let offset = Vec3::new(320., 0., -320.);
+    let mut scene = original;
+    for page in &mut scene.pages {
+        page.origin_xz[0] -= offset.x;
+        page.origin_xz[1] -= offset.z;
+    }
+    app.world_mut()
+        .resource_mut::<VegetationDebugScene>()
+        .replace(scene)
+        .unwrap();
+    app.world_mut()
+        .resource_mut::<VegetationRenderOrigin>()
+        .world_xz = [320., -320.];
+    {
+        let w = app.world_mut();
+        let mut cameras = w.query_filtered::<&mut Transform, With<Camera3d>>();
+        for mut camera in cameras.iter_mut(w) {
+            camera.translation -= offset;
+        }
+    }
+    for prepared in [true, false] {
+        app.world_mut()
+            .resource_mut::<VegetationBladePreparation>()
+            .enabled = prepared;
+        let after = settled_pixels(&mut app);
+        assert_eq!(
+            counts,
+            snapshot(&app).emitted_instances,
+            "rebase changed canonical placement/LOD counts"
+        );
+        let mean = before
+            .iter()
+            .zip(&after)
+            .map(|(a, b)| f64::from(a.abs_diff(*b)))
+            .sum::<f64>()
+            / before.len() as f64;
+        let changed = before
+            .chunks_exact(4)
+            .zip(after.chunks_exact(4))
+            .filter(|(a, b)| a != b)
+            .count();
+        eprintln!(
+            "rebase grass prepared={prepared}: mean byte error={mean:.6}, changed pixels={changed}"
+        );
+        // f32 cancellation at a translated camera can move thin edges by a
+        // subpixel. A relocated population or a wind-phase jump is far larger.
+        assert!(
+            mean < 0.10 && changed < 800,
+            "grass placement/wind changed after rebase: {mean}, {changed}"
+        );
+    }
+}
+
 fn settled_pixels(app: &mut App) -> Vec<u8> {
     let deadline = Instant::now() + Duration::from_secs(45);
     let mut ready_frames = 0;
@@ -299,6 +367,95 @@ fn test_app() -> App {
     app.finish();
     app.cleanup();
     app
+}
+
+#[test]
+#[ignore = "requires a native GPU; validates terrain contact gating and elevated views"]
+fn contact_gate_clears_frozen_roots_and_elevated_views_cull_grass() {
+    let mut app = test_app();
+    let visible = settled_pixels(&mut app);
+    assert!(snapshot(&app).emitted_instances.iter().sum::<u32>() > 100);
+    let population = generated_instances(&app);
+    let repacks = snapshot(&app).source_repacks;
+    let builds = snapshot(&app).candidate_cache_builds;
+    let one_page = VegetationTerrainGate::page_id(
+        &app.world().resource::<VegetationDebugScene>().scene().pages[0],
+    );
+    app.world_mut()
+        .resource_mut::<VegetationTerrainGate>()
+        .blocked_pages
+        .insert(one_page);
+    let partial = settled_pixels(&mut app);
+    assert_ne!(partial, visible);
+    assert!(snapshot(&app).emitted_instances.iter().sum::<u32>() > 0);
+    assert_eq!(snapshot(&app).source_repacks, repacks);
+    assert_eq!(snapshot(&app).candidate_cache_builds, builds);
+    app.world_mut()
+        .resource_mut::<VegetationTerrainGate>()
+        .block_all = true;
+    let empty = settled_pixels(&mut app);
+    assert_eq!(snapshot(&app).emitted_instances, [0; 4]);
+    assert!(empty.chunks_exact(4).all(|p| p == &empty[..4]));
+    *app.world_mut().resource_mut::<VegetationTerrainGate>() = default();
+    let restored = settled_pixels(&mut app);
+    assert_eq!(generated_instances(&app), population);
+    // Regeneration may change append order at equal-depth blade intersections.
+    // Verify exact instance data above and the same strict image tolerance used
+    // by the candidate-cache reference comparison below.
+    let errors: Vec<_> = restored
+        .iter()
+        .zip(&visible)
+        .map(|(a, b)| a.abs_diff(*b))
+        .collect();
+    let mean = errors.iter().map(|&v| f64::from(v)).sum::<f64>() / errors.len() as f64;
+    let changed = errors.iter().filter(|&&v| v > 2).count() as f64 / errors.len() as f64;
+    assert!(
+        mean < 0.01 && changed < 0.001,
+        "restored image: {mean}, {changed}"
+    );
+    app.world_mut()
+        .resource_mut::<VegetationDebugSettings>()
+        .profile_mode = VegetationProfileMode::DrawFrozen;
+    app.world_mut()
+        .resource_mut::<VegetationTerrainGate>()
+        .block_all = true;
+    let blocked = settled_pixels(&mut app);
+    assert!(
+        blocked.chunks_exact(4).all(|p| p == &blocked[..4]),
+        "frozen grass survived its contact gate"
+    );
+    assert_ne!(blocked, visible);
+    // The authored scene revision did not change. Readiness alone must cause
+    // regeneration when full rendering resumes.
+    *app.world_mut().resource_mut::<VegetationTerrainGate>() = default();
+    app.world_mut()
+        .resource_mut::<VegetationDebugSettings>()
+        .profile_mode = VegetationProfileMode::Full;
+    let resumed = settled_pixels(&mut app);
+    assert!(snapshot(&app).emitted_instances.iter().sum::<u32>() > 100);
+    assert_ne!(resumed, blocked);
+    assert_eq!(
+        snapshot(&app).source_repacks,
+        repacks,
+        "readiness repacked static source data"
+    );
+    assert_eq!(
+        snapshot(&app).candidate_cache_builds,
+        builds,
+        "readiness rebuilt stable acceptance"
+    );
+    {
+        let world = app.world_mut();
+        let mut cameras = world.query_filtered::<&mut Transform, With<Camera3d>>();
+        *cameras.single_mut(world).unwrap() =
+            Transform::from_xyz(12., 1000., 8.).looking_at(Vec3::new(12., 0., 8.), Vec3::Z);
+    }
+    let elevated = settled_pixels(&mut app);
+    assert_eq!(snapshot(&app).emitted_instances, [0; 4]);
+    assert!(
+        elevated.chunks_exact(4).all(|p| p == &elevated[..4]),
+        "high view drew valley grass"
+    );
 }
 
 #[test]

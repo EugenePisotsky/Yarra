@@ -387,7 +387,7 @@ fn geometry_vertex(vertex_index: u32, instance_index: u32) -> VertexOutput {
     let band_length = select(max(length(p3 - p0), 0.01), -blade.p3_amplitude.w, paired_ribbon);
     let normalized_width = clamp(2.0 * authored_half_width / band_length, 0.008, 0.085);
     let phase = camera.wind.w * camera.wind_shape.y
-        + dot(instance.root_clump.xz, camera.wind.xy) * camera.wind_shape.x
+        + dot(instance.root_clump.xz + camera.render_origin.xy, camera.wind.xy) * camera.wind_shape.x
         + f32(band_seed & 255u) * (2.0 * PI / 255.0);
     let drift = normalized_width * min(camera.wind.z, 1.0)
         * (0.75 * sin(phase) + 0.25 * sin(phase * 1.37 + 1.2));

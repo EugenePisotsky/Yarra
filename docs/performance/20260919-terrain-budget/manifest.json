@@ -1,0 +1,26 @@
+{
+  "regressions-before.log": {
+    "sha256": "90c14a9f2a99a4602070d1a36d1021420fbf1fbc98d417c45dd9807c11fe72ea",
+    "bytes": 7055
+  },
+  "cpu-tests.log": {
+    "sha256": "0ae18644cf6abfa0953de3ba74eaff5cb234fab757c24d3b34408d52e32f2f46",
+    "bytes": 9009
+  },
+  "native-metal.log": {
+    "sha256": "d286fe33c4e472c8a1ff95feea22cf9515744861ac1fccebbcdc964502cfa0ae",
+    "bytes": 2973
+  },
+  "hill-budget-probe.log": {
+    "sha256": "afb2fcec99e4fde86dba256a9c3f32bd01524681550623cf18abd26622b9fa9d",
+    "bytes": 991
+  },
+  "clippy.log": {
+    "sha256": "884cf45004668c4c695f5e950a00ec0faf09c420064371f140157704365413e3",
+    "bytes": 22929
+  },
+  "release-build.log": {
+    "sha256": "88c3b12fb2c698c1c624bfa8dce1b304c282d84a3b38a676014b5d2e92268e5d",
+    "bytes": 733
+  }
+}

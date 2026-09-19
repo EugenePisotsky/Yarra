@@ -22,13 +22,22 @@ pub(super) fn install(app: &mut App) {
                 | "grass-top-down"
                 | "grass-overhead"
                 | "grass-stream"
+                | "grass-soak"
+                | "landscape"
+                | "landscape-descent"
                 | "ground-low"
                 | "ground-overhead"
                 | "ground-walk"
                 | "ground-stream"
         ),
-        "expected --render-repro low-walk, grass-close, grass-away, grass-zoom, grass-top-down, grass-overhead, grass-stream, ground-low, ground-overhead, ground-walk or ground-stream"
+        "expected --render-repro low-walk, grass-close, grass-away, grass-zoom, grass-top-down, grass-overhead, grass-stream, grass-soak, landscape, landscape-descent, ground-low, ground-overhead, ground-walk or ground-stream"
     );
+    if name.starts_with("landscape") {
+        assert!(
+            app.world().resource::<engine::WorldStartView>().0.is_some(),
+            "landscape repro requires --start-view FILE"
+        );
+    }
     let ground = name.starts_with("ground-");
     // Same 75%/4x/no-prepass setup as log9. Leave both optimization switches independent.
     *app.world_mut().resource_mut::<AuditSettings>() = AuditSettings {
@@ -44,40 +53,28 @@ pub(super) fn install(app: &mut App) {
         },
         scale_index: if ground { 0 } else { 1 },
         msaa: Msaa::Sample4,
-        prepass: false,
+        prepass: std::env::args_os().any(|arg| arg == "--render-prepass"),
         controls_locked: true,
         counters: std::env::args_os().any(|arg| arg == "--grass-counters"),
-        show_ui: !ground,
+        show_ui: !ground && !std::env::args_os().any(|arg| arg == "--render-ui-off"),
         ..default()
     };
     app.insert_resource(ReproView(name.clone()));
-    crate::profile::install(app);
-    if let Some(profile) = app
-        .world()
-        .get_resource::<crate::profile::ProfileSettings>()
-        .cloned()
-    {
-        let mut settings = app.world_mut().resource_mut::<AuditSettings>();
-        settings.render_path = AuditRenderPath::Composite;
-        settings.scale_index = if profile.size.is_some() { 0 } else { 1 };
-        settings.msaa = profile.msaa;
-        settings.grass = if profile.grass {
-            vegetation_render::VegetationProfileMode::Full
-        } else {
-            vegetation_render::VegetationProfileMode::Disabled
-        };
-    }
     app.add_systems(Update, move_camera.after(GameInputSystems))
         .add_systems(PostUpdate, synchronize_wind);
     let path_frames = if name.ends_with("-stream") {
         6000
+    } else if name == "grass-soak" {
+        1800
     } else if name == "grass-zoom" {
         1200
     } else {
         600
     };
+    let settings = app.world().resource::<AuditSettings>();
     warn!(
-        "RENDER_REPRO name={name} version=8 warmup_frames=300 path_frames={path_frames} msaa=4 prepass=false; ground scenes use native resolution, no UI, no grass; low-walk retains 75% composite"
+        "RENDER_REPRO name={name} version=9 warmup_frames=300 path_frames={path_frames} prepass={} ui={}; ground scenes use native resolution, no UI, no grass; low-walk retains 75% composite",
+        settings.prepass, settings.show_ui
     );
     let value = |flag: &str| {
         let mut args = std::env::args();
@@ -172,11 +169,40 @@ fn pose(frame: u32) -> Transform {
 
 fn move_camera(
     frame: Res<FrameCount>,
+    time: Res<Time<Real>>,
     profile: Option<Res<crate::profile::ProfileClock>>,
     view: Res<ReproView>,
     mut camera: Single<&mut Transform, With<WorldViewCamera>>,
     mut active_space: ResMut<ActiveWorldSpace>,
+    start_view: Res<engine::WorldStartView>,
+    origin: Res<engine::WorldOrigin>,
+    catalog: Res<engine::WorldCatalog>,
 ) {
+    if view.0.starts_with("landscape") {
+        let bookmark = start_view.0.as_ref().unwrap();
+        let elapsed = profile.as_ref().map_or_else(
+            || (time.elapsed_secs() - 5.).max(0.),
+            |p| p.route_seconds as f32,
+        );
+        let position = Vec3::from_array(if view.0 == "landscape-descent" {
+            bookmark.route_position(elapsed * 6.)
+        } else {
+            bookmark.position
+        });
+        let cell_size = origin
+            .space()
+            .and_then(|s| catalog.world_space(s))
+            .map_or(world::DEFAULT_CELL_SIZE, |s| s.cell_size);
+        let offset = origin.cell().origin(cell_size);
+        **camera = engine::WorldStartView::camera_at(
+            bookmark,
+            position - Vec3::new(offset[0] as f32, 0., offset[1] as f32),
+        );
+        if let Some(space) = active_space.current() {
+            active_space.request(space, position.to_array());
+        }
+        return;
+    }
     let frame = profile.as_ref().map_or(frame.0, |p| p.reference_frame());
     **camera = match view.0.as_str() {
         "ground-low" => pose(0),
@@ -196,6 +222,11 @@ fn move_camera(
                 .looking_at(focus, Vec3::Y)
         }
         "grass-zoom" => zoom_pose(frame),
+        "grass-soak" => {
+            let mut camera = zoom_pose(300);
+            camera.translation += soak_focus(frame);
+            camera
+        }
         // Separate vertical inspection from the oblique gameplay/overhead views. NEG_Z
         // avoids a collinear look/up basis while preserving +X toward screen right.
         "grass-top-down" => Transform::from_xyz(0.0, 18.0, 0.0).looking_at(Vec3::ZERO, Vec3::NEG_Z),
@@ -205,12 +236,16 @@ fn move_camera(
         "ground-stream" | "grass-stream" => stream_pose(frame),
         _ => pose(frame),
     };
-    if view.0.ends_with("-stream")
+    if (view.0.ends_with("-stream") || view.0 == "grass-soak")
         && let Some(space) = active_space.current()
     {
         // Drive the actual residency focus too. Camera-only ground-walk stays in
         // the original preload ring and cannot validate page streaming.
-        let position = camera.translation;
+        let position = if view.0 == "grass-soak" {
+            soak_focus(frame)
+        } else {
+            camera.translation
+        };
         active_space.request(space, [position.x, 0.0, position.z]);
     }
 }
@@ -242,6 +277,15 @@ fn stream_pose(frame: u32) -> Transform {
     let mut camera = pose(0);
     camera.translation += Vec3::new(5.389, 0.0, -8.279).normalize() * (128.0 * progress);
     camera
+}
+
+fn soak_focus(frame: u32) -> Vec3 {
+    // Keep traversing the authored meadow, rather than finishing a one-way
+    // stream route or spending most of a long run above empty ground. One 30 s
+    // loop crosses cell boundaries at walking speed and returns continuously.
+    let phase = (frame.saturating_sub(300) % 1800) as f32 / 1800.0;
+    let angle = phase * std::f32::consts::TAU;
+    Vec3::new(12.0 * angle.sin(), 0.0, 12.0 * (1.0 - angle.cos()))
 }
 
 #[cfg(test)]
@@ -279,6 +323,18 @@ mod tests {
                     .distance(stream_pose(frame - 1).translation)
                     < 0.044
             );
+        }
+    }
+
+    #[test]
+    fn soak_route_keeps_moving_across_repeated_cycles() {
+        assert_eq!(soak_focus(0), Vec3::ZERO);
+        assert_eq!(soak_focus(300), soak_focus(2100));
+        assert_eq!(soak_focus(2100), soak_focus(3900));
+        assert!(soak_focus(1200).z > 23.9);
+        for frame in 301..=5700 {
+            let distance = soak_focus(frame).distance(soak_focus(frame - 1));
+            assert!((0.04..0.043).contains(&distance));
         }
     }
 }

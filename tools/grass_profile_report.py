@@ -2,6 +2,7 @@
 import datetime as dt
 import html
 import json
+import math
 from pathlib import Path
 import re
 import statistics
@@ -41,12 +42,56 @@ def parse_power(text):
     return result
 
 
+def parse_macmon(text):
+    """macmon 0.8.x pipe, collected at 1000 ms; timestamps mark sample completion.
+
+    Discard the first row and discontinuities. Never turn a missing/paused collector
+    into a long measurement interval or substitute frequency-scaled utilization for
+    active residency. Raw JSONL is preserved for re-analysis.
+    """
+    result, previous = [], None
+    for line in text.splitlines():
+        try:
+            data = json.loads(line)
+            stamp = dt.datetime.fromisoformat(data['timestamp'])
+            if stamp.tzinfo is None:
+                raise ValueError('timezone missing')
+            end = stamp.timestamp()
+        except (ValueError, KeyError, TypeError):
+            previous = None
+            continue
+        start, previous = previous, end
+        if start is None or not .5 <= end - start <= 1.5:
+            continue
+
+        def value(raw, scale=1):
+            return (raw * scale if type(raw) in (int, float) and math.isfinite(raw)
+                    and raw >= 0 else None)
+
+        row = {'start_s': end - min(1., end - start), 'end_s': end,
+               'duration_s': min(1., end - start), 'thermal': None}
+        for target, source, scale in [('cpu_w', 'cpu_power', 1), ('gpu_w', 'gpu_power', 1),
+                                      ('gpu_mhz', 'gpu_freq_mhz', 1),
+                                      ('gpu_active_percent', 'gpu_active_ratio', 100)]:
+            row[target] = value(data.get(source), scale)
+        if row['gpu_active_percent'] is not None and row['gpu_active_percent'] > 100:
+            row['gpu_active_percent'] = None
+        temp = data.get('temp') or {}
+        row['gpu_temp_c'] = value(temp.get('gpu_temp_avg'))
+        row['cpu_temp_c'] = value(temp.get('cpu_temp_avg'))
+        for i, fan in enumerate((data.get('fans') or [])[:2]):
+            row[f'fan{i}_rpm'] = value(fan.get('rpm'))
+        result.append(row)
+    return result
+
+
 def power_window(rows, start, end):
     # Whole samples only: no pretending to know which part of a boundary sample was idle/warmup.
     selected = [r for r in rows if r['start_s'] >= start and r['end_s'] <= end]
     result = {'samples': len(selected), 'coverage_s': sum(r['duration_s'] for r in selected)}
-    for key in ('cpu_w', 'gpu_w', 'gpu_mhz', 'gpu_active_percent'):
-        valid = [r for r in selected if r[key] is not None]
+    for key in ('cpu_w', 'gpu_w', 'gpu_mhz', 'gpu_active_percent',
+                'cpu_temp_c', 'gpu_temp_c', 'fan0_rpm', 'fan1_rpm'):
+        valid = [r for r in selected if r.get(key) is not None]
         weight = sum(r['duration_s'] for r in valid)
         result[key] = sum(r[key] * r['duration_s'] for r in valid) / weight if weight else None
         result[key + '_coverage_s'] = weight
@@ -131,7 +176,13 @@ def analyze_run(directory, power_rows):
     expected = {'msaa_samples': str(settings['msaa']),
                 'density': {'balanced': 'Balanced', 'full': 'FullReference', 'authored': 'Authored'}[settings['density']],
                 'grass': 'full' if settings['grass'] == 'full' else 'disabled',
-                'counters': str(settings['counters']).lower(), 'prepass': 'false'}
+                'counters': str(settings['counters']).lower(),
+                'prepass': str(settings.get('prepass', False)).lower()}
+    if 'terrain_lod' in settings:
+        expected['terrain_lod'] = str(settings['terrain_lod']).lower()
+    if settings.get('native_pacing') and not any(
+            e.get('event') == 'config' and e.get('pacing') == 'native' for e in events):
+        result['errors'].append('Native presentation pacing was requested but not confirmed')
     if settings['size'] == 'game':
         for audit in selected_audits:
             surface = audit.get('surface_px', '')
@@ -160,7 +211,7 @@ def analyze_run(directory, power_rows):
             result['errors'].append(f'{key} changed during measurement')
     if any(a.get('terrain_prepared_active') != a.get('terrain_prepared_pages') for a in selected_audits):
         result['warnings'].append('Prepared terrain was not fully ready in every audit sample')
-    if settings['view'] != 'grass-stream' and len({a.get('source_revision') for a in selected_audits}) > 1:
+    if settings['view'] not in ('grass-stream', 'grass-soak') and len({a.get('source_revision') for a in selected_audits}) > 1:
         result['warnings'].append('Source residency changed during measurement; check warmup duration')
     if any(any(json.loads(a.get('sampled_capacity_drops', '[0,0,0,0]'))) for a in selected_audits):
         result['errors'].append('Grass instance capacity drops')
@@ -241,15 +292,19 @@ def status(run):
 
 def write_report(root):
     root = Path(root)
-    rows = parse_power((root / 'power.txt').read_text(errors='replace')) if (root / 'power.txt').exists() else []
-    runs = [analyze_run(p.parent, rows) for p in sorted((root / 'runs').glob('*/run.json'))]
     manifest = json.loads((root / 'session.json').read_text())
+    collector = manifest.get('power', 'required' if (root / 'power.txt').exists() else 'off')
+    power_file, parser = (('power-macmon.jsonl', parse_macmon) if collector == 'macmon'
+                          else ('power.txt', parse_power))
+    rows = parser((root / power_file).read_text(errors='replace')) if (root / power_file).exists() else []
+    runs = [analyze_run(p.parent, rows) for p in sorted((root / 'runs').glob('*/run.json'))]
     idle = manifest.get('idle_window')
     baseline = power_window(rows, *idle) if idle else None
     report = {'scope': 'Same-device comparison; subsystem power estimates, not grass-attributed watts',
-              'idle': baseline, 'runs': runs, 'session': manifest, 'power_samples': rows}
+              'collector': collector, 'idle': baseline, 'runs': runs, 'session': manifest, 'power_samples': rows}
     (root / 'report.json').write_text(json.dumps(report, indent=2, allow_nan=False) + '\n')
     lines = ['# Grass profiling report', '', f"Session: {manifest.get('status', 'unknown')}.",
+             f"Power collector: {collector}. macmon uses private macOS APIs; estimates are system-wide.",
              *([f"Error: {manifest['error']}"] if manifest.get('error') else []), '',
              'Power and clock context take priority over small HUD-duration differences. Invalid runs remain visible.', '',
              '| Run | Status | Window | World pixels | Surface pixels | App fps | Worst app window fps | GPU W | CPU W | GPU MHz | Active % | mJ/app frame | HUD GPU ms | HUD interval p95 ms |',
@@ -292,7 +347,7 @@ def write_report(root):
 <h1>Grass profiling</h1><p>Whole-system power estimates. Inspect clocks, thermal state and frame delivery together.</p>
 <p id="session">SESSION</p>
 <div class="table"><table><thead><tr><th>Run</th><th>Status</th><th>Window</th><th>World pixels</th><th>Surface pixels</th><th>App fps</th><th>Worst app window fps</th><th>GPU W</th><th>CPU W</th><th>GPU MHz</th><th>Active %</th><th>mJ/app frame</th><th>HUD GPU ms</th><th>HUD interval p95 ms</th></tr></thead><tbody>ROWS</tbody></table></div>
-<select id="metric" aria-label="Timeline metric"><option value="app_fps">Application cadence · updates/s (normally ~1 s windows)</option><option value="gpu_w">GPU power · W</option><option value="cpu_w">CPU power · W</option><option value="gpu_mhz">GPU active frequency · MHz</option><option value="gpu_active_percent">GPU active residency · %</option></select>
+<select id="metric" aria-label="Timeline metric"><option value="app_fps">Application cadence · updates/s (normally ~1 s windows)</option><option value="gpu_w">GPU power · W</option><option value="cpu_w">CPU power · W</option><option value="gpu_mhz">GPU active frequency · MHz</option><option value="gpu_active_percent">GPU active residency · %</option><option value="gpu_temp_c">GPU temperature · °C (macmon)</option><option value="cpu_temp_c">CPU temperature · °C (macmon)</option><option value="fan0_rpm">Fan 1 · RPM (macmon)</option><option value="fan1_rpm">Fan 2 · RPM (macmon)</option></select>
 <p>Thermal shading: amber = moderate; orange = heavy. These are sampled pressure labels, not temperatures or fan speeds.</p>
 <canvas id="plot"></canvas><details><summary>Run details and interpretation</summary><pre>SUMMARY</pre></details><script>const report=DATA;
 const canvas=document.querySelector('#plot'), select=document.querySelector('#metric');

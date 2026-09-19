@@ -1,0 +1,21 @@
+{
+  "defaults": {
+    "window": "fullscreen",
+    "size": "2592x1456",
+    "fps": 120,
+    "msaa": 4,
+    "density": "balanced",
+    "view": "grass-soak",
+    "native_pacing": true,
+    "prepass": true,
+    "warmup": 15,
+    "seconds": 60
+  },
+  "variants": {
+    "legacy": {"terrain_lod": false},
+    "lod": {"terrain_lod": true, "seconds": 600}
+  },
+  "order": ["legacy", "lod", "legacy"],
+  "idle_seconds": 0,
+  "gap_seconds": 0
+}

@@ -60,6 +60,8 @@ struct Camera {
     wind: vec4<f32>,
     // x: spatial frequency, y: speed, z: gustiness, w: hashed blade flutter
     wind_shape: vec4<f32>,
+    // xy: canonical XZ offset of render coordinates.
+    render_origin: vec4<f32>,
     lod_focus: vec4<f32>,
     canopy_appearance: vec4<f32>,
     canopy_shape: vec4<f32>,
@@ -393,9 +395,9 @@ fn prepare_blade(
         let cross_direction = vec2<f32>(-wind_direction.y, wind_direction.x);
         let frequency = camera.wind_shape.x;
         let wind_speed = camera.wind_shape.y;
-        let broad_phase = dot(root.xz, wind_direction) * frequency
+        let broad_phase = dot(root.xz + camera.render_origin.xy, wind_direction) * frequency
             - shape_wind_time * wind_speed;
-        let cross_phase = dot(root.xz, cross_direction) * frequency * 0.71
+        let cross_phase = dot(root.xz + camera.render_origin.xy, cross_direction) * frequency * 0.71
             + shape_wind_time * wind_speed * 0.37;
         let broad_wave = sin(broad_phase + sin(cross_phase) * 0.85);
         let gust_wave = sin(broad_phase * 0.43 - cross_phase * 0.61);

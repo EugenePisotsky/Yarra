@@ -44,7 +44,7 @@ use bevy::{
 use bytemuck::{Pod, Zeroable};
 use vegetation::{
     GrowthPattern, RepresentationKind, TopologyFamily, TopologyProfile, VegetationGroupingProfile,
-    candidate_density_retention, candidate_domain, decode_octahedral_normal,
+    candidate_density_retention, candidate_domain_for_extent, decode_octahedral_normal,
 };
 
 use crate::{
@@ -226,13 +226,13 @@ struct WorkItemGpu {
     growth: [f32; 4],
     // x: radial, y: tangential, z: random, w: field flow direction
     direction_weights: [f32; 4],
-    // xy: world flow direction, z: requested density, w: unused
+    // xy: world flow direction, z: requested density, w: terrain contact blocked
     flow_density: [f32; 4],
     // x: clump spacing, y: feature jitter, z: boundary softness, w: root attraction
     grouping: [f32; 4],
     // x: center retention, y: edge retention, z: falloff, w: group density variation
     group_density: [f32; 4],
-    // x: shared group direction weight, y: per-root angular jitter
+    // x: shared group direction weight, y: per-root angular jitter; zw: render-origin XZ
     orientation: [f32; 4],
     // x: first work item on page, y: work-item count on page, z: placement pattern,
     // w: grouping source (0 none, 1 parent, 2 Voronoi)
@@ -339,6 +339,8 @@ struct CameraGpu {
     wind: [f32; 4],
     // x: spatial frequency, y: speed, z: gustiness, w: hashed blade flutter
     wind_shape: [f32; 4],
+    // xy: canonical world-XZ offset of render coordinates; zw reserved.
+    render_origin: [f32; 4],
     // xy: detail centre, zw: normalized forward XZ (zero selects the camera disk).
     lod_focus: [f32; 4],
     canopy: [[f32; 4]; 4],
@@ -639,6 +641,10 @@ struct VegetationBuffers {
     compute_bind_group: BindGroup,
     draw_bind_group: BindGroup,
     uploaded_revision: u64,
+    uploaded_origin: [f64; 2],
+    source_serial: u64,
+    uploaded_terrain_gate: crate::VegetationTerrainGate,
+    source_work_items: Vec<WorkItemGpu>,
     generation_inputs: Option<GenerationInputs>,
     last_generation: Option<GenerationKey>,
     generation_serial: u64,
@@ -792,6 +798,10 @@ impl FromWorld for VegetationBuffers {
             compute_bind_group,
             draw_bind_group,
             uploaded_revision: 0,
+            uploaded_origin: [0.; 2],
+            source_serial: 0,
+            uploaded_terrain_gate: default(),
+            source_work_items: Vec::new(),
             generation_inputs: None,
             last_generation: None,
             generation_serial: 0,
@@ -1012,7 +1022,11 @@ fn prepare(
     lighting: Res<VegetationLighting>,
     wind: Res<VegetationWind>,
     sun: Res<VegetationSun>,
-    lod_focus: Res<crate::VegetationLodFocus>,
+    (lod_focus, terrain_gate, render_origin): (
+        Res<crate::VegetationLodFocus>,
+        Res<crate::VegetationTerrainGate>,
+        Res<crate::VegetationRenderOrigin>,
+    ),
     render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
     pipeline_cache: Res<PipelineCache>,
@@ -1026,16 +1040,35 @@ fn prepare(
         buffers.active = false;
         return;
     };
-    if buffers.canopy_boundary.update(&scene, &lighting, &render_device, &render_queue) {
+    if buffers
+        .canopy_boundary
+        .update(&scene, &lighting, &render_device, &render_queue)
+    {
         let layout = pipeline_cache.get_bind_group_layout(&pipelines.draw_layout);
         buffers.draw_bind_group = create_draw_bind_group(
-            &render_device, &layout, &buffers.procedural_instances, &buffers.diagnostic_instances,
-            &buffers.species, &buffers.camera, &buffers.debug_config, &blade_preparation.arena,
+            &render_device,
+            &layout,
+            &buffers.procedural_instances,
+            &buffers.diagnostic_instances,
+            &buffers.species,
+            &buffers.camera,
+            &buffers.debug_config,
+            &blade_preparation.arena,
             &buffers.canopy_boundary.buffer,
         );
     }
-    if scene.revision() != buffers.uploaded_revision {
-        let packed = pack_scene(scene.scene());
+    let gate_changed = *terrain_gate != buffers.uploaded_terrain_gate;
+    if gate_changed {
+        // Even DrawFrozen must stop showing roots whose ground is no longer
+        // certified. Readiness does not change authored candidate acceptance.
+        render_queue.write_buffer(&buffers.args, 0, &[0_u8; DRAW_ARGS_SIZE as usize]);
+        buffers.last_generation = None;
+    }
+    if scene.revision() != buffers.uploaded_revision
+        || render_origin.world_xz != buffers.uploaded_origin
+    {
+        buffers.source_serial = buffers.source_serial.wrapping_add(1);
+        let packed = pack_scene_with_gate(scene.scene(), &terrain_gate, render_origin.world_xz);
         let schedule_layout = pipeline_cache.get_bind_group_layout(&pipelines.schedule_layout);
         let compute_layout = pipeline_cache.get_bind_group_layout(&pipelines.compute_layout);
         let draw_layout = pipeline_cache.get_bind_group_layout(&pipelines.draw_layout);
@@ -1180,6 +1213,8 @@ fn prepare(
         buffers.maximum_candidate_count = packed.maximum_candidate_count;
         buffers.low_detail_capacities = packed.low_detail_capacities;
         buffers.uploaded_revision = scene.revision();
+        buffers.uploaded_origin = render_origin.world_xz;
+        buffers.uploaded_terrain_gate = terrain_gate.clone();
         diagnostics.update(|snapshot| {
             snapshot.scene_revision = scene.revision();
             snapshot.source_repacks = snapshot.source_repacks.saturating_add(1);
@@ -1207,6 +1242,19 @@ fn prepare(
                 buffers.low_detail_capacities[1],
             ];
         });
+        buffers.source_work_items = packed.work_items;
+    } else if gate_changed {
+        // Keep surface/coverage/species buffers and stable candidate masks intact.
+        // Only the compact scheduler input changes as terrain patches become ready.
+        if apply_terrain_gate(&mut buffers.source_work_items, &terrain_gate) {
+            render_queue.write_buffer(
+                &buffers.work_items,
+                0,
+                bytemuck::cast_slice(&buffers.source_work_items),
+            );
+        }
+        buffers.source_serial = buffers.source_serial.wrapping_add(1);
+        buffers.uploaded_terrain_gate = terrain_gate.clone();
     }
 
     let Some(view) = views.iter().next() else {
@@ -1222,6 +1270,12 @@ fn prepare(
         *view.world_from_view.forward(),
     );
     let camera_gpu = CameraGpu {
+        render_origin: [
+            render_origin.world_xz[0] as f32,
+            render_origin.world_xz[1] as f32,
+            0.,
+            0.,
+        ],
         lod_focus: focus_gpu,
         canopy: lighting.canopy.packed(lighting.canopy_origin),
         clip_from_world: clip_from_world.to_cols_array(),
@@ -1303,7 +1357,7 @@ fn prepare(
     render_queue.write_buffer(&buffers.camera, 0, bytemuck::bytes_of(&camera_gpu));
     render_queue.write_buffer(&buffers.debug_config, 0, bytemuck::bytes_of(&config_gpu));
     buffers.generation_inputs = Some(GenerationInputs::new(
-        scene.revision(),
+        buffers.source_serial,
         camera_gpu,
         config_gpu,
     ));
@@ -1517,7 +1571,33 @@ fn effective_horizontal_reach(species: &vegetation::VegetationSpecies) -> f32 {
     )
 }
 
+/// Conservative CPU counterpart of the GPU root range, including blade/wind reach.
+pub fn terrain_contact_radius(
+    catalog: &vegetation::VegetationCatalog,
+    wind: &VegetationWind,
+) -> f32 {
+    let strength = if wind.enabled {
+        wind.strength.max(0.)
+    } else {
+        0.
+    };
+    crate::PROCEDURAL_DISTANCE_METERS
+        + catalog
+            .species
+            .iter()
+            .map(|s| effective_horizontal_reach(s) + s.bounds.maximum_height * strength * 1.65)
+            .fold(0., f32::max)
+}
+
+#[cfg(test)]
 fn pack_scene(scene: &vegetation::VegetationScene) -> PackedScene {
+    pack_scene_with_gate(scene, &default(), [0.; 2])
+}
+fn pack_scene_with_gate(
+    scene: &vegetation::VegetationScene,
+    gate: &crate::VegetationTerrainGate,
+    origin: [f64; 2],
+) -> PackedScene {
     let high_detail_radii = high_detail_radii(scene);
     let low_detail_capacities = low_detail_capacities(scene);
     let species_indices = scene
@@ -1566,7 +1646,14 @@ fn pack_scene(scene: &vegetation::VegetationScene) -> PackedScene {
                 .catalog
                 .population(field.population)
                 .expect("validated scene population");
-            let domain = candidate_domain(page, population);
+            let domain = candidate_domain_for_extent(
+                [
+                    (f64::from(page.origin_xz[0]) + origin[0]) as f32,
+                    (f64::from(page.origin_xz[1]) + origin[1]) as f32,
+                ],
+                page.size,
+                population,
+            );
             maximum_candidate_count = maximum_candidate_count.max(domain.candidate_count());
             let coverage_offset = coverage.len() as u32;
             coverage.extend(field.coverage.iter().map(|value| f32::from(*value) / 255.0));
@@ -1702,8 +1789,8 @@ fn pack_scene(scene: &vegetation::VegetationScene) -> PackedScene {
                 orientation: [
                     orientation.shared_group_weight,
                     orientation.angular_jitter_radians,
-                    0.0,
-                    0.0,
+                    origin[0] as f32,
+                    origin[1] as f32,
                 ],
                 peers: [page_work_start, page_work_count, pattern, grouping_source],
                 surface: [
@@ -1722,6 +1809,7 @@ fn pack_scene(scene: &vegetation::VegetationScene) -> PackedScene {
         }
     }
 
+    apply_terrain_gate(&mut work_items, gate);
     PackedScene {
         work_items,
         choices,
@@ -1731,6 +1819,27 @@ fn pack_scene(scene: &vegetation::VegetationScene) -> PackedScene {
         maximum_candidate_count,
         low_detail_capacities,
     }
+}
+
+/// A gate is a draw/scheduling input, never a change to the source population.
+/// Keeping work-item indices stable also preserves peer ranges and candidate masks.
+fn apply_terrain_gate(items: &mut [WorkItemGpu], gate: &crate::VegetationTerrainGate) -> bool {
+    let mut changed = false;
+    for item in items {
+        let id = [
+            item.page[0].to_bits(),
+            item.page[1].to_bits(),
+            item.page[2].to_bits(),
+        ];
+        let blocked = if gate.block_all || gate.blocked_pages.contains(&id) {
+            1.
+        } else {
+            0.
+        };
+        changed |= item.flow_density[3] != blocked;
+        item.flow_density[3] = blocked;
+    }
+    changed
 }
 
 fn topology_code(family: TopologyFamily) -> f32 {
@@ -2311,7 +2420,7 @@ mod tests {
         assert_eq!(size_of::<SurfaceSampleGpu>(), 32);
         assert_eq!(size_of::<ProceduralInstanceGpu>(), 32);
         assert_eq!(size_of::<DebugInstanceGpu>(), 64);
-        assert_eq!(size_of::<CameraGpu>(), 272);
+        assert_eq!(size_of::<CameraGpu>(), 288);
         assert_eq!(size_of::<DebugConfigGpu>(), 32);
         assert_eq!(GPU_TELEMETRY_SIZE, 64);
         assert_eq!(DRAW_ARGS_SIZE, 80);
@@ -2351,16 +2460,28 @@ mod tests {
     fn streamed_scene_upload_excludes_canopy_raster() {
         let catalog: vegetation::VegetationCatalog = ron::from_str(include_str!(
             "../../../content/vegetation/field-current.ron"
-        )).unwrap();
-        let population = catalog.populations.iter().find(|p| p.key == "short_split_fill").unwrap().id;
-        let pages = (-3..=3).flat_map(|z| (-3..=3).map(move |x| (x, z)))
+        ))
+        .unwrap();
+        let population = catalog
+            .populations
+            .iter()
+            .find(|p| p.key == "short_split_fill")
+            .unwrap()
+            .id;
+        let pages = (-3..=3)
+            .flat_map(|z| (-3..=3).map(move |x| (x, z)))
             .map(|(x, z)| vegetation::VegetationFieldPage {
-                origin_xz: [x as f32 * 32.0, z as f32 * 32.0], size: 32.0,
+                origin_xz: [x as f32 * 32.0, z as f32 * 32.0],
+                size: 32.0,
                 surface: vegetation::VegetationSurfaceField::flat(33, 0.0, [0.0, 1.0, 0.0]),
                 fields: vec![vegetation::VegetationPopulationField {
-                    population, resolution: 16, coverage: vec![255; 256], flow_direction: [0.0, 1.0],
+                    population,
+                    resolution: 16,
+                    coverage: vec![255; 256],
+                    flow_direction: [0.0, 1.0],
                 }],
-            }).collect();
+            })
+            .collect();
         let scene = vegetation::VegetationScene { catalog, pages };
         let started = std::time::Instant::now();
         let packed = pack_scene(&scene);
@@ -2370,10 +2491,16 @@ mod tests {
         // Explicit diagnostic for the removed synchronous path; no timing assertion or GPU loop.
         if std::env::var_os("YARRA_TRACE_BOUNDARY_REBUILD").is_some() {
             let started = std::time::Instant::now();
-            let boundary = crate::canopy_coverage::BoundaryField::for_scene(&scene.catalog, &scene.pages);
+            let boundary =
+                crate::canopy_coverage::BoundaryField::for_scene(&scene.catalog, &scene.pages);
             let values = boundary.gpu_values();
-            eprintln!("49-page scene: former synchronous canopy bake {:.2} ms / {} bytes; source pack without canopy {:.2} ms / {} coverage bytes",
-                started.elapsed().as_secs_f64() * 1000.0, values.len() * 4, pack_ms, packed.coverage.len() * 4);
+            eprintln!(
+                "49-page scene: former synchronous canopy bake {:.2} ms / {} bytes; source pack without canopy {:.2} ms / {} coverage bytes",
+                started.elapsed().as_secs_f64() * 1000.0,
+                values.len() * 4,
+                pack_ms,
+                packed.coverage.len() * 4
+            );
         }
     }
 

@@ -44,7 +44,10 @@ impl Plugin for WorldEnvironmentPlugin {
                 maximum_shadow_distance: self.maximum_shadow_distance,
             })
             .add_systems(Startup, setup_world_environment)
-            .add_systems(PostUpdate, update_sun_visual);
+            .add_systems(
+                PostUpdate,
+                update_sun_visual.before(bevy::transform::TransformSystems::Propagate),
+            );
     }
 }
 
@@ -76,6 +79,12 @@ pub struct WorldEnvironmentCamera {
 
 impl Default for WorldEnvironmentCamera {
     fn default() -> Self {
+        Self::with_visibility(FOG_VISIBILITY_DISTANCE)
+    }
+}
+
+impl WorldEnvironmentCamera {
+    pub fn with_visibility(visibility: f32) -> Self {
         Self {
             fog: DistanceFog {
                 color: SKY_COLOR,
@@ -84,7 +93,7 @@ impl Default for WorldEnvironmentCamera {
                 directional_light_color: Color::srgba(1.0, 0.90, 0.72, 0.14),
                 directional_light_exponent: 32.0,
                 falloff: FogFalloff::from_visibility_colors(
-                    FOG_VISIBILITY_DISTANCE,
+                    visibility,
                     Color::srgb(0.40, 0.52, 0.64),
                     Color::srgb(0.47, 0.58, 0.70),
                 ),

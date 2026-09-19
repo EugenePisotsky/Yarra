@@ -546,7 +546,10 @@ mod tests {
         assert_eq!(look.distance_start, 3.0);
         assert_eq!(look.distance_end, 20.0);
         assert!(look.patch_growth > 0.0 && look.edge_width > 0.0);
-        assert_eq!(doc.settings.density_mode, vegetation_render::VegetationDensityMode::FullReference);
+        assert_eq!(
+            doc.settings.density_mode,
+            vegetation_render::VegetationDensityMode::FullReference
+        );
         let encoded = ron::ser::to_string(&doc).unwrap();
         let decoded: StudyDocument = ron::from_str(&encoded).unwrap();
         assert_eq!(decoded.lighting.canopy, look);

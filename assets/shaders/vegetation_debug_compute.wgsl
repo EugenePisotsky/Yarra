@@ -89,6 +89,8 @@ struct Camera {
     wind: vec4<f32>,
     // x: spatial frequency, y: speed, z: gustiness, w: hashed blade flutter
     wind_shape: vec4<f32>,
+    // xy: canonical XZ offset of render coordinates.
+    render_origin: vec4<f32>,
     lod_focus: vec4<f32>,
     canopy_appearance: vec4<f32>,
     canopy_shape: vec4<f32>,
@@ -568,8 +570,8 @@ fn sample_candidate(item: WorkItem, candidate_index: u32) -> Candidate {
         base_direction.x * sine + base_direction.y * cosine,
     );
     return Candidate(
-        root,
-        group.center,
+        root - item.orientation.zw,
+        group.center - item.orientation.zw,
         direction,
         random01(seed ^ 0x94d049bbu),
         (f32(lod_lane) + random01(seed ^ 0x91e10da5u)) * 0.25,
@@ -621,8 +623,8 @@ fn candidate_is_visible(
     let maximum_reach = bitcast<f32>(choice.metadata.z)
         + bitcast<f32>(choice.metadata.w) * camera.wind.z * 1.65;
     let maximum_height = bitcast<f32>(choice.metadata.w);
-    let camera_delta = candidate.root - camera.camera_position.xz;
-    let distance = length(camera_delta);
+    let root = vec3<f32>(candidate.root.x, surface.height, candidate.root.y);
+    let distance = length(root - camera.camera_position.xyz);
     if (distance > MAX_PROCEDURAL_DISTANCE + maximum_reach) {
         return false;
     }

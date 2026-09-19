@@ -1,5 +1,6 @@
 //! Bounded, asynchronous source compilation. A result is accepted only while its dependency
 //! stamp still matches the draft. Ground and vegetation share the same accepted product.
+pub(super) mod live;
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     sync::Arc,
@@ -335,6 +336,7 @@ fn override_stamp(record: &SourceEnvironmentCellRecord) -> Stamp {
 
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct PreviewSource<'w, 's> {
+    lod: Res<'w, engine::TerrainLodPreview>,
     project: Res<'w, ProjectEditorStore>,
     dense: Res<'w, DenseDomainWorkingSets>,
     plants: Res<'w, VegetationAuthoringState>,
@@ -550,6 +552,9 @@ impl PreviewSource<'_, '_> {
 }
 
 pub(crate) fn receive_preview(source: PreviewSource, mut preview: ResMut<EnvironmentPreview>) {
+    if source.lod.enabled {
+        return;
+    }
     source.refresh(&mut preview);
     let completion = preview
         .worker
@@ -665,6 +670,9 @@ pub(super) fn queue_preview(
     paint: Res<super::EnvironmentPaintState>,
     mut preview: ResMut<EnvironmentPreview>,
 ) {
+    if source.lod.enabled {
+        return;
+    }
     source.refresh(&mut preview);
     if preview.in_flight {
         return;

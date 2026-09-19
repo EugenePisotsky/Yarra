@@ -1,0 +1,18 @@
+{
+  "before": {
+    "frames": 718,
+    "measured_s": 12.013377,
+    "average_update_fps": 59.76670839514984,
+    "worst_update_ms": 47.97,
+    "late_updates": 8,
+    "all_samples_focused": true
+  },
+  "after": {
+    "frames": 719,
+    "measured_s": 12.00187,
+    "average_update_fps": 59.90733110756907,
+    "worst_update_ms": 33.324,
+    "late_updates": 7,
+    "all_samples_focused": true
+  }
+}

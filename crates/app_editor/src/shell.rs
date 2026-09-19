@@ -40,8 +40,10 @@ pub(crate) fn run() -> std::result::Result<(), String> {
     let asset_root = resolve_asset_root();
     let runtime_database = runtime_database_path(&asset_root);
     let project_database = project_database_path();
+    let start_view = engine::WorldStartView::from_args()?;
     crate::startup::validate_databases(&project_database, &runtime_database)?;
     App::new()
+        .insert_resource(start_view)
         .insert_resource(ClearColor(Color::srgb(0.055, 0.065, 0.075)))
         .insert_resource(editor_winit_settings())
         .insert_resource(EguiGlobalSettings {
@@ -84,7 +86,7 @@ pub(crate) fn run() -> std::result::Result<(), String> {
             ProjectEditorStorePlugin::new(project_database.clone()),
             ProjectNavigationPlugin::new(project_database.clone()),
             EditorJournalPlugin::new(project_database.clone()),
-            RuntimePublicationPlugin::new(project_database, runtime_database),
+            RuntimePublicationPlugin::new(project_database, runtime_database, asset_root),
         ))
         .add_plugins(PresetWorkspacePlugin)
         .configure_sets(

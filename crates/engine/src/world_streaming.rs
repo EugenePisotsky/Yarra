@@ -1,5 +1,12 @@
-mod terrain_lod;
-pub use terrain_lod::{TerrainLodPreview, TerrainLodStats};
+mod generation;
+mod rebase;
+mod source_demand;
+pub use rebase::WorldRenderRoot;
+pub(crate) mod terrain_lod;
+pub use terrain_lod::{
+    LiveTerrainPreview, TerrainContactReadiness, TerrainLodPreview, TerrainLodStats,
+    TerrainPreviewRequest,
+};
 
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
@@ -39,10 +46,8 @@ use crate::{
 };
 
 const INDEX_RADIUS_CELLS: i32 = 3;
-// Terrain relief and vegetation fields are compact source residency, not emitted geometry. Keep
-// the complete procedural range resident independent of camera rotation; the render-world GPU
-// scheduler decides which of these pages produce work. With the current 32 m demo cells this 7x7
-// shell matches the vegetation renderer's 96 m range.
+// Local objects/tools and the normal renderer retain their existing cell window.
+// The hierarchy preview's camera source radius is separate and measured in metres.
 const VISUAL_SOURCE_RESIDENCY_RADIUS_CELLS: u32 = 3;
 const GAMEPLAY_PRELOAD_RADIUS_CELLS: u32 = 1;
 const COOLING_SECONDS: f32 = 2.0;
@@ -84,19 +89,24 @@ impl Plugin for WorldStreamingPlugin {
             .init_resource::<WorldCatalog>()
             .init_resource::<WorldGenerationReload>()
             .init_resource::<WorldViewpoint>()
+            .init_resource::<crate::WorldStartView>()
             .init_resource::<WorldOrigin>()
             .init_resource::<WorldDetailDemand>()
+            .init_resource::<source_demand::SourceView>()
             .init_resource::<StreamingStats>()
             .add_systems(Startup, (start_database_worker, create_world_render_assets))
             .add_systems(
                 Update,
                 (
                     receive_database_results,
-                    request_generation_reload,
+                    generation::request_reload,
                     request_world_space_from_keyboard,
+                    terrain_lod::entry::prepare,
+                    generation::advance_reload,
                     apply_world_space_transition,
                     sync_stream_focus_to_viewpoint,
                     update_world_origin,
+                    rebase::sync_vegetation_origin,
                     request_cell_index,
                     calculate_page_demand,
                     receive_decode_results,
@@ -104,17 +114,24 @@ impl Plugin for WorldStreamingPlugin {
                     cool_and_remove_pages,
                     update_streaming_stats,
                 )
-                    .chain(),
+                    .chain()
+                    .in_set(WorldStreamingSystems)
+                    .before(crate::GameInputSystems),
             )
             .add_systems(
                 PostUpdate,
-                update_screen_space_lods.after(TransformSystems::Propagate),
+                (update_screen_space_lods, source_demand::collect_view)
+                    .after(TransformSystems::Propagate),
             );
         if self.config.gameplay_pages {
             app.add_systems(Update, report_streaming_smoke.after(update_streaming_stats));
         }
     }
 }
+
+/// Source attachment and coordinate changes finish before consumers rebuild render data.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct WorldStreamingSystems;
 
 #[derive(Resource, Clone, Copy, Debug)]
 pub struct WorldStreamingConfig {
@@ -229,14 +246,22 @@ pub struct WorldCatalog {
 /// Explicit handshake for replacing the streamer's immutable SQLite snapshot.
 ///
 /// Publishing code first atomically replaces the database file, then requests the exact expected
-/// generation here. The worker reopens the path and validates that identity before the currently
-/// resident pages are allowed to repopulate.
+/// generation here. The worker prepares a second reader while the current one stays live.
+/// With the hierarchy preview enabled, a complete uploaded cover must also be ready.
+/// Only a matching worker commit acknowledgement replaces the catalog and source pages;
+/// preparation failures discard the candidate and retain the current generation.
 #[derive(Resource, Debug, Default)]
 pub struct WorldGenerationReload {
     next_request_id: u64,
     queued: Option<(u64, String)>,
     in_flight: Option<(u64, String)>,
     completion: Option<Result<String, String>>,
+    candidate: Option<RuntimeManifest>,
+    commit_requested: bool,
+    committed: bool,
+    failure: Option<String>,
+    last_error: Option<String>,
+    hierarchy: bool,
 }
 
 impl WorldGenerationReload {
@@ -248,6 +273,7 @@ impl WorldGenerationReload {
         let request_id = self.next_request_id.wrapping_add(1).max(1);
         self.next_request_id = request_id;
         self.completion = None;
+        self.last_error = None;
         self.queued = Some((request_id, expected_generation));
         true
     }
@@ -290,6 +316,7 @@ struct WorldDatabasePath(PathBuf);
 pub struct ActiveWorldSpace {
     current: Option<WorldSpaceId>,
     requested: Option<WorldSpaceTransition>,
+    transition_error: Option<String>,
 }
 
 impl ActiveWorldSpace {
@@ -298,14 +325,19 @@ impl ActiveWorldSpace {
     }
 
     pub fn request(&mut self, space: WorldSpaceId, local_position: [f32; 3]) {
+        self.transition_error = None;
         self.requested = Some(WorldSpaceTransition {
             space,
             local_position,
         });
     }
+
+    pub fn transition_error(&self) -> Option<&str> {
+        self.transition_error.as_deref()
+    }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 struct WorldSpaceTransition {
     space: WorldSpaceId,
     local_position: [f32; 3],
@@ -338,15 +370,24 @@ enum DatabaseRequest {
         request_id: u64,
         expected_generation: String,
     },
+    CommitReload {
+        request_id: u64,
+        expected_generation: String,
+    },
+    DiscardReload {
+        request_id: u64,
+    },
     ReadIndex {
+        generation: String,
         revision: u64,
         space: WorldSpaceId,
-        minimum: CellCoord,
-        maximum: CellCoord,
+        windows: Vec<source_demand::Window>,
     },
     ReadPage {
+        generation: String,
         request_id: u64,
         key: PageKey,
+        height_only: bool,
     },
     Shutdown,
 }
@@ -361,6 +402,10 @@ enum DatabaseResult {
     Reloaded {
         request_id: u64,
         result: Result<RuntimeManifest, String>,
+    },
+    ReloadCommitted {
+        request_id: u64,
+        result: Result<(), String>,
     },
     Index {
         revision: u64,
@@ -380,6 +425,7 @@ struct FetchedPage {
     dependencies: Vec<PageDependency>,
     definitions: Vec<RuntimeObjectDefinition>,
     terrain: Option<TerrainRenderResources>,
+    height_only: bool,
 }
 
 fn start_database_worker(mut commands: Commands, path: Res<WorldDatabasePath>) {
@@ -421,6 +467,7 @@ fn database_worker(
         }
     };
 
+    let mut candidate: Option<(u64, RuntimeReader)> = None;
     while let Ok(request) = requests.recv() {
         match request {
             DatabaseRequest::Terrain {
@@ -430,6 +477,10 @@ fn database_worker(
             } => {
                 let result = if reader.manifest().generation_id == generation {
                     terrain_lod::read(&reader, query)
+                } else if let Some((_, staged)) = &candidate
+                    && staged.manifest().generation_id == generation
+                {
+                    terrain_lod::read(staged, query)
                 } else {
                     Err("terrain request belongs to a stale generation".into())
                 };
@@ -446,15 +497,15 @@ fn database_worker(
             } => {
                 let result = RuntimeReader::open_immutable(&path)
                     .map_err(|error| format!("could not reopen {}: {error}", path.display()))
-                    .and_then(|candidate| {
-                        let manifest = candidate.manifest().clone();
+                    .and_then(|opened| {
+                        let manifest = opened.manifest().clone();
                         if manifest.generation_id != expected_generation {
                             return Err(format!(
                                 "published generation mismatch: expected {expected_generation}, opened {}",
                                 manifest.generation_id
                             ));
                         }
-                        reader = candidate;
+                        candidate = Some((request_id, opened));
                         Ok(manifest)
                     });
                 if results
@@ -464,15 +515,53 @@ fn database_worker(
                     return;
                 }
             }
+            DatabaseRequest::CommitReload {
+                request_id,
+                expected_generation,
+            } => {
+                let result = if candidate.as_ref().is_some_and(|(id, r)| {
+                    *id == request_id && r.manifest().generation_id == expected_generation
+                }) {
+                    reader = candidate.take().unwrap().1;
+                    Ok(())
+                } else {
+                    Err("no matching prepared database generation to commit".into())
+                };
+                if results
+                    .send(DatabaseResult::ReloadCommitted { request_id, result })
+                    .is_err()
+                {
+                    return;
+                }
+            }
+            DatabaseRequest::DiscardReload { request_id } => {
+                if candidate.as_ref().is_some_and(|(id, _)| *id == request_id) {
+                    candidate = None;
+                }
+            }
             DatabaseRequest::ReadIndex {
+                generation,
                 revision,
                 space,
-                minimum,
-                maximum,
+                windows,
             } => {
-                let result = reader
-                    .read_cell_descriptors(space, minimum, maximum)
-                    .map_err(|error| error.to_string());
+                let result = (if reader.manifest().generation_id == generation {
+                    Ok(&reader)
+                } else {
+                    Err("source index belongs to a stale generation".to_string())
+                })
+                .and_then(|reader| {
+                    windows
+                        .into_iter()
+                        .try_fold(BTreeMap::new(), |mut cells, [min, max]| {
+                            for d in reader.read_cell_descriptors(space, min, max)? {
+                                cells.insert(d.cell, d);
+                            }
+                            Ok::<_, world_db::WorldDbError>(cells)
+                        })
+                        .map(|cells| cells.into_values().collect())
+                        .map_err(|error| error.to_string())
+                });
                 if results
                     .send(DatabaseResult::Index {
                         revision,
@@ -484,32 +573,49 @@ fn database_worker(
                     return;
                 }
             }
-            DatabaseRequest::ReadPage { request_id, key } => {
-                let result = reader
-                    .read_page(key)
-                    .and_then(|page| {
-                        page.map(|page| {
-                            let dependencies = reader.read_dependencies(key)?;
-                            let definitions = if key.domain == PageDomain::GameplayObjects {
-                                reader.read_object_definitions(key)?
-                            } else {
-                                Vec::new()
-                            };
-                            let terrain = if key.domain == PageDomain::TerrainRender {
-                                Some(reader.read_terrain_resources(key)?)
-                            } else {
-                                None
-                            };
-                            Ok(FetchedPage {
-                                encoded: page,
-                                dependencies,
-                                definitions,
-                                terrain,
+            DatabaseRequest::ReadPage {
+                generation,
+                request_id,
+                key,
+                height_only,
+            } => {
+                let result = (if reader.manifest().generation_id == generation {
+                    Ok(&reader)
+                } else {
+                    Err("source page belongs to a stale generation".to_string())
+                })
+                .and_then(|reader| {
+                    reader
+                        .read_page(key)
+                        .and_then(|page| {
+                            page.map(|page| {
+                                let dependencies = if height_only {
+                                    Vec::new()
+                                } else {
+                                    reader.read_dependencies(key)?
+                                };
+                                let definitions = if key.domain == PageDomain::GameplayObjects {
+                                    reader.read_object_definitions(key)?
+                                } else {
+                                    Vec::new()
+                                };
+                                let terrain = if key.domain == PageDomain::TerrainRender {
+                                    Some(reader.read_terrain_resources(key)?)
+                                } else {
+                                    None
+                                };
+                                Ok(FetchedPage {
+                                    encoded: page,
+                                    dependencies,
+                                    definitions,
+                                    terrain,
+                                    height_only,
+                                })
                             })
+                            .transpose()
                         })
-                        .transpose()
-                    })
-                    .map_err(|error| error.to_string());
+                        .map_err(|error| error.to_string())
+                });
                 if results
                     .send(DatabaseResult::Page {
                         request_id,
@@ -530,11 +636,15 @@ fn database_worker(
 struct WorldStream {
     phase: StreamPhase,
     manifest: Option<RuntimeManifest>,
-    index_center: Option<CellCoord>,
+    index_windows: Option<Vec<source_demand::Window>>,
+    height_only: bool,
+    demand_error: Option<String>,
+    admission_blocked: usize,
     index_revision: u64,
     requested_index: Option<(u64, WorldSpaceId)>,
     descriptors: Vec<CellDescriptor>,
     desired: BTreeSet<PageKey>,
+    priorities: BTreeMap<PageKey, source_demand::Priority>,
     pages: HashMap<PageKey, PageState>,
     definition_cache: HashMap<ObjectDefinitionId, RuntimeObjectDefinition>,
     decode_tasks: Vec<DecodeTask>,
@@ -570,6 +680,7 @@ struct PreparedPage {
     dependencies: Vec<PageDependency>,
     definitions: Vec<RuntimeObjectDefinition>,
     terrain: Option<TerrainRenderResources>,
+    height_only: bool,
 }
 
 struct DecodeTask {
@@ -578,6 +689,7 @@ struct DecodeTask {
     task: Task<Result<PreparedPage, String>>,
 }
 
+#[derive(Default)]
 struct PageAttachment {
     entities: Vec<Entity>,
     owned_terrain_meshes: Vec<Handle<Mesh>>,
@@ -587,13 +699,15 @@ struct PageAttachment {
     gpu_bytes_estimate: u64,
     gameplay_objects: usize,
     vegetation_pages: usize,
+    height_only_pages: usize,
     terrain_texture_set: Option<(TerrainTextureSetId, u64)>,
 }
 
 /// CPU-readable relief carried by a resident streamed terrain entity.
 ///
 /// This is the bridge for vegetation, character grounding, interactions, and later shadow proxies:
-/// every consumer samples the same quantized page that produced the visible terrain mesh.
+/// every consumer samples the canonical cooked surface. In the hierarchy preview
+/// this entity owns only CPU data; it does not also create a ground mesh.
 #[derive(Component, Debug, Clone)]
 pub struct StreamedTerrainSurface {
     pub key: PageKey,
@@ -699,10 +813,12 @@ fn create_world_render_assets(mut commands: Commands, mut meshes: ResMut<Assets<
 #[allow(clippy::too_many_arguments)]
 fn receive_database_results(
     mut terrain: ResMut<terrain_lod::TerrainLodStream>,
+    mut entry: ResMut<terrain_lod::entry::TerrainEntry>,
     worker: Option<Res<WorldDatabaseWorker>>,
     mut active_space: ResMut<ActiveWorldSpace>,
     mut catalog: ResMut<WorldCatalog>,
     mut viewpoint: ResMut<WorldViewpoint>,
+    start_view: Res<crate::WorldStartView>,
     mut origin: ResMut<WorldOrigin>,
     mut stream: ResMut<WorldStream>,
     mut reload: ResMut<WorldGenerationReload>,
@@ -713,7 +829,11 @@ fn receive_database_results(
     loop {
         match worker.results.try_recv() {
             Ok(DatabaseResult::Terrain { request_id, result }) => {
-                terrain.receive(request_id, result)
+                if entry.owns_request(request_id) {
+                    entry.receive(request_id, result);
+                } else {
+                    terrain.receive(request_id, result);
+                }
             }
             Ok(DatabaseResult::Opened(result)) => match result {
                 Ok(manifest) => {
@@ -740,11 +860,14 @@ fn receive_database_results(
                         .collect();
                     catalog.vegetation = manifest.vegetation_catalog.clone();
                     if viewpoint.position.is_none() {
-                        viewpoint.position = Some(WorldPosition {
-                            space: manifest.default_world_space,
-                            cell: CellCoord::ZERO,
-                            local: [0.0, 0.0, 0.0],
-                        });
+                        viewpoint.position = Some(WorldPosition::from_world(
+                            manifest.default_world_space,
+                            start_view
+                                .0
+                                .as_ref()
+                                .map_or([0.; 3], |v| v.position.map(f64::from)),
+                            manifest.default_world_space().cell_size,
+                        ));
                     }
                     if origin.space.is_none() {
                         origin.space = Some(manifest.default_world_space);
@@ -759,34 +882,29 @@ fn receive_database_results(
                 }
             },
             Ok(DatabaseResult::Reloaded { request_id, result }) => {
-                let Some((active_request, expected_generation)) = reload.in_flight.take() else {
-                    continue;
-                };
-                if active_request != request_id {
-                    reload.in_flight = Some((active_request, expected_generation));
+                if reload
+                    .in_flight
+                    .as_ref()
+                    .is_none_or(|(id, _)| *id != request_id)
+                {
                     continue;
                 }
                 match result {
-                    Ok(manifest) => {
-                        info!(
-                            "adopted runtime world generation {} from SQLite",
-                            manifest.generation_id
-                        );
-                        let generation = manifest.generation_id.clone();
-                        adopt_runtime_manifest(
-                            manifest,
-                            &mut active_space,
-                            &mut catalog,
-                            &mut viewpoint,
-                            &mut origin,
-                            &mut stream,
-                        );
-                        reload.completion = Some(Ok(generation));
-                    }
-                    Err(error) => {
-                        stream.phase = StreamPhase::Failed(error.clone());
-                        reload.completion = Some(Err(error));
-                    }
+                    Ok(manifest) => reload.candidate = Some(manifest),
+                    Err(error) => reload.failure = Some(error),
+                }
+            }
+            Ok(DatabaseResult::ReloadCommitted { request_id, result }) => {
+                if reload
+                    .in_flight
+                    .as_ref()
+                    .is_none_or(|(id, _)| *id != request_id)
+                {
+                    continue;
+                }
+                match result {
+                    Ok(()) => reload.committed = true,
+                    Err(error) => reload.failure = Some(error),
                 }
             }
             Ok(DatabaseResult::Index {
@@ -833,11 +951,17 @@ fn receive_database_results(
                             fetched
                                 .encoded
                                 .decode()
-                                .map(|decoded| PreparedPage {
-                                    decoded,
-                                    dependencies: fetched.dependencies,
-                                    definitions: fetched.definitions,
-                                    terrain: fetched.terrain,
+                                .map(|mut decoded| {
+                                    if fetched.height_only {
+                                        decoded.gpu_bytes_estimate = 0;
+                                    }
+                                    PreparedPage {
+                                        decoded,
+                                        dependencies: fetched.dependencies,
+                                        definitions: fetched.definitions,
+                                        terrain: fetched.terrain,
+                                        height_only: fetched.height_only,
+                                    }
                                 })
                                 .map_err(|error| error.to_string())
                         });
@@ -860,59 +984,15 @@ fn receive_database_results(
             }
             Err(TryRecvError::Empty) => break,
             Err(TryRecvError::Disconnected) => {
+                if reload.active() {
+                    reload.failure =
+                        Some("database worker stopped during generation adoption".into());
+                }
                 if !matches!(stream.phase, StreamPhase::Failed(_)) {
                     stream.phase = StreamPhase::Failed("database worker stopped".into());
                 }
                 break;
             }
-        }
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn request_generation_reload(
-    worker: Option<Res<WorldDatabaseWorker>>,
-    mut commands: Commands,
-    mut terrain_meshes: ResMut<Assets<Mesh>>,
-    mut terrain_materials: ResMut<Assets<TerrainMaterial>>,
-    mut terrain_images: ResMut<Assets<Image>>,
-    mut stream: ResMut<WorldStream>,
-    mut reload: ResMut<WorldGenerationReload>,
-) {
-    if reload.in_flight.is_some() {
-        return;
-    }
-    let Some((request_id, expected_generation)) = reload.queued.take() else {
-        return;
-    };
-    let Some(worker) = worker else {
-        reload.queued = Some((request_id, expected_generation));
-        return;
-    };
-    let request = DatabaseRequest::Reload {
-        request_id,
-        expected_generation: expected_generation.clone(),
-    };
-    match worker.requests.try_send(request) {
-        Ok(()) => {
-            clear_streamed_pages(
-                &mut commands,
-                &mut terrain_meshes,
-                &mut terrain_materials,
-                &mut terrain_images,
-                &mut stream,
-            );
-            stream.definition_cache.clear();
-            stream.phase = StreamPhase::Opening;
-            reload.in_flight = Some((request_id, expected_generation));
-        }
-        Err(TrySendError::Full(_)) => {
-            reload.queued = Some((request_id, expected_generation));
-        }
-        Err(TrySendError::Disconnected(_)) => {
-            let error = "database request channel closed during generation reload".to_string();
-            stream.phase = StreamPhase::Failed(error.clone());
-            reload.completion = Some(Err(error));
         }
     }
 }
@@ -930,7 +1010,6 @@ fn adopt_runtime_manifest(
         .filter(|space| manifest.world_space(*space).is_some())
         .unwrap_or(manifest.default_world_space);
     active_space.current = Some(active);
-    active_space.requested = None;
     catalog.generation_id = manifest.generation_id.clone();
     catalog.default_world_space = Some(manifest.default_world_space);
     catalog.world_spaces = manifest
@@ -1013,10 +1092,35 @@ fn apply_world_space_transition(
         ),
         With<WorldStreamFocus>,
     >,
+    mut entry: ResMut<terrain_lod::entry::TerrainEntry>,
+    mut terrain: ResMut<terrain_lod::TerrainLodStream>,
+    tracker: Res<terrain_lod::UploadTracker>,
+    lod_config: Res<TerrainLodPreview>,
+    reload: Res<WorldGenerationReload>,
 ) {
+    if reload.active() {
+        return;
+    }
+    if lod_config.enabled
+        && active_space
+            .requested
+            .is_some_and(|t| Some(t.space) != active_space.current)
+        && !active_space.requested.is_some_and(|t| {
+            stream
+                .manifest
+                .as_ref()
+                .is_some_and(|m| entry.ready_for(&m.generation_id, t))
+        })
+    {
+        return;
+    }
     let Some(transition) = active_space.requested.take() else {
         return;
     };
+    if !transition.local_position.iter().all(|v| v.is_finite()) {
+        active_space.transition_error = Some("destination coordinates must be finite".into());
+        return;
+    }
     let Some(space) = stream
         .manifest
         .as_ref()
@@ -1054,11 +1158,24 @@ fn apply_world_space_transition(
     viewpoint.set(position);
     if changed_space {
         origin.space = Some(transition.space);
-        origin.cell = if config.floating_origin_threshold_cells.is_some() {
+        origin.cell = if rebase::effective_config(*config, lod_config.enabled)
+            .floating_origin_threshold_cells
+            .is_some()
+        {
             position.cell
         } else {
             CellCoord::ZERO
         };
+    }
+    if changed_space && lod_config.enabled {
+        entry.commit(
+            &mut terrain,
+            &mut commands,
+            &mut terrain_meshes,
+            &tracker,
+            origin.cell,
+            space.cell_size,
+        );
     }
     for (mut transform, mut intent, mut motor, mut motion) in &mut focuses {
         transform.translation =
@@ -1108,31 +1225,62 @@ fn sync_stream_focus_to_viewpoint(
 fn update_world_origin(
     mut commands: Commands,
     config: Res<WorldStreamingConfig>,
+    terrain_lod: Res<TerrainLodPreview>,
     viewpoint: Res<WorldViewpoint>,
     mut origin: ResMut<WorldOrigin>,
     mut terrain_meshes: ResMut<Assets<Mesh>>,
     mut terrain_materials: ResMut<Assets<TerrainMaterial>>,
     mut terrain_images: ResMut<Assets<Image>>,
     mut stream: ResMut<WorldStream>,
+    mut roots: rebase::Roots,
 ) {
     let Some(position) = viewpoint.position else {
         return;
     };
-    let desired_cell = desired_origin_cell(*config, *origin, position);
-    if origin.space == Some(position.space) && origin.cell == desired_cell {
+    let desired_cell = desired_origin_cell(
+        rebase::effective_config(*config, terrain_lod.enabled),
+        *origin,
+        position,
+    );
+    if origin.space == Some(position.space)
+        && origin.cell == desired_cell
+        && stream.height_only == terrain_lod.enabled
+    {
         return;
     }
 
     let previous = *origin;
     origin.space = Some(position.space);
     origin.cell = desired_cell;
-    clear_streamed_pages(
-        &mut commands,
-        &mut terrain_meshes,
-        &mut terrain_materials,
-        &mut terrain_images,
-        &mut stream,
-    );
+    // CPU source pages use canonical keys. Keep them and their pending work on a
+    // same-space rebase; only render roots need translating. The editable renderer
+    // still rebuilds its materials using the editor's existing origin contract.
+    if previous.space == origin.space {
+        if let Some(size) = stream
+            .manifest
+            .as_ref()
+            .and_then(|m| m.world_space(position.space))
+            .map(|s| s.cell_size)
+        {
+            rebase::shift_roots(
+                &mut roots,
+                previous.cell,
+                origin.cell,
+                size,
+                terrain_lod.enabled && stream.height_only,
+            );
+        }
+    }
+    if previous.space != origin.space || !terrain_lod.enabled || !stream.height_only {
+        clear_streamed_pages(
+            &mut commands,
+            &mut terrain_meshes,
+            &mut terrain_materials,
+            &mut terrain_images,
+            &mut stream,
+        );
+    }
+    stream.height_only = terrain_lod.enabled;
     info!(
         "rebased render origin from {:?}:{:?} to {:?}:{:?}",
         previous.space, previous.cell, origin.space, origin.cell
@@ -1179,13 +1327,16 @@ fn clear_streamed_pages(
     }
     stream.decode_tasks.clear();
     stream.desired.clear();
+    stream.priorities.clear();
+    stream.demand_error = None;
     stream.descriptors.clear();
-    stream.index_center = None;
+    stream.index_windows = None;
     stream.index_revision = stream.index_revision.wrapping_add(1).max(1);
     stream.requested_index = None;
 }
 
 fn request_cell_index(
+    source_view: Res<source_demand::SourceView>,
     worker: Option<Res<WorldDatabaseWorker>>,
     active_space: Res<ActiveWorldSpace>,
     viewpoint: Res<WorldViewpoint>,
@@ -1200,7 +1351,7 @@ fn request_cell_index(
     let Some(space_id) = active_space.current else {
         return;
     };
-    let Some(_space) = manifest.world_space(space_id) else {
+    let Some(space) = manifest.world_space(space_id) else {
         stream.phase = StreamPhase::Failed(format!(
             "active world space {:?} is missing from the runtime manifest",
             space_id
@@ -1213,8 +1364,18 @@ fn request_cell_index(
     else {
         return;
     };
-    let center = position.cell;
-    if stream.index_center == Some(center) {
+    let generation = manifest.generation_id.clone();
+    let windows = match source_demand::windows(position, space, &source_view, stream.height_only) {
+        Ok(windows) => {
+            stream.demand_error = None;
+            windows
+        }
+        Err(error) => {
+            stream.demand_error = Some(error);
+            return;
+        }
+    };
+    if stream.index_windows.as_ref() == Some(&windows) {
         return;
     }
     let Some(worker) = worker else {
@@ -1222,20 +1383,14 @@ fn request_cell_index(
     };
     let revision = stream.index_revision.wrapping_add(1).max(1);
     let request = DatabaseRequest::ReadIndex {
+        generation,
         revision,
         space: space_id,
-        minimum: CellCoord {
-            x: center.x.saturating_sub(INDEX_RADIUS_CELLS),
-            z: center.z.saturating_sub(INDEX_RADIUS_CELLS),
-        },
-        maximum: CellCoord {
-            x: center.x.saturating_add(INDEX_RADIUS_CELLS),
-            z: center.z.saturating_add(INDEX_RADIUS_CELLS),
-        },
+        windows: windows.clone(),
     };
     match worker.requests.try_send(request) {
         Ok(()) => {
-            stream.index_center = Some(center);
+            stream.index_windows = Some(windows);
             stream.requested_index = Some((revision, space_id));
         }
         Err(TrySendError::Full(_)) => {}
@@ -1246,12 +1401,13 @@ fn request_cell_index(
 }
 
 fn calculate_page_demand(
+    source_view: Res<source_demand::SourceView>,
     worker: Option<Res<WorldDatabaseWorker>>,
     config: Res<WorldStreamingConfig>,
     detail_demand: Res<WorldDetailDemand>,
     active_space: Res<ActiveWorldSpace>,
     origin: Res<WorldOrigin>,
-    camera: Single<&Frustum, With<WorldViewCamera>>,
+    camera: Query<(&Camera, &Frustum), With<WorldViewCamera>>,
     viewpoint: Res<WorldViewpoint>,
     mut stream: ResMut<WorldStream>,
 ) {
@@ -1268,77 +1424,63 @@ fn calculate_page_demand(
         return;
     };
     let cell_size = space.cell_size;
+    let generation = manifest.generation_id.clone();
     let Some(position) = viewpoint
         .position
         .filter(|position| position.space == space_id)
     else {
         return;
     };
-    let viewpoint_cell = position.cell;
-    let mut desired = BTreeSet::new();
-    for descriptor in &stream.descriptors {
-        let visible = detail_demand.enabled()
-            && cell_intersects_frustum(&camera, descriptor, origin.cell, cell_size);
-        let visual_source_resident = descriptor.cell.chebyshev_distance(viewpoint_cell)
-            <= VISUAL_SOURCE_RESIDENCY_RADIUS_CELLS;
-        let gameplay_preloaded =
-            descriptor.cell.chebyshev_distance(viewpoint_cell) <= GAMEPLAY_PRELOAD_RADIUS_CELLS;
-        if !visible && !visual_source_resident && !gameplay_preloaded {
-            continue;
-        }
-        if (visible || visual_source_resident) && descriptor.has_domain(PageDomain::TerrainRender) {
-            desired.insert(PageKey {
-                space: space_id,
-                cell: descriptor.cell,
-                domain: PageDomain::TerrainRender,
-                lod: 0,
-            });
-        }
-        if visible && descriptor.has_domain(PageDomain::StaticObjects) {
-            desired.insert(PageKey {
-                space: space_id,
-                cell: descriptor.cell,
-                domain: PageDomain::StaticObjects,
-                lod: 0,
-            });
-        }
-        if (visible || visual_source_resident) && descriptor.has_domain(PageDomain::Vegetation) {
-            desired.insert(PageKey {
-                space: space_id,
-                cell: descriptor.cell,
-                domain: PageDomain::Vegetation,
-                lod: 0,
-            });
-        }
-        if config.gameplay_pages
-            && gameplay_preloaded
-            && descriptor.has_domain(PageDomain::GameplayObjects)
-        {
-            desired.insert(PageKey {
-                space: space_id,
-                cell: descriptor.cell,
-                domain: PageDomain::GameplayObjects,
-                lod: 0,
-            });
-        }
+    if stream.demand_error.is_some() {
+        return;
     }
-    stream.desired = desired;
+    let priorities = source_demand::demand(
+        &stream.descriptors,
+        position,
+        cell_size,
+        origin.cell,
+        camera.iter().find(|(c, _)| c.is_active).map(|(_, f)| f),
+        detail_demand.enabled(),
+        config.gameplay_pages,
+        stream.height_only,
+        &source_view,
+    );
+    stream.desired = priorities.keys().copied().collect();
+    stream.priorities = priorities;
 
     let Some(worker) = worker else {
         return;
     };
-    let missing: Vec<_> = stream
-        .desired
+    // Bound all fetched, decoding and waiting-to-attach work, not just the worker's
+    // channel. Otherwise a full resident budget accumulates an unbounded backlog.
+    let in_flight = stream
+        .pages
+        .values()
+        .filter(|p| {
+            matches!(
+                p,
+                PageState::Loading { .. } | PageState::Decoding { .. } | PageState::Prepared(_)
+            )
+        })
+        .count();
+    let mut missing: Vec<_> = stream
+        .priorities
         .iter()
-        .filter(|key| !stream.pages.contains_key(key))
-        .copied()
+        .filter(|(key, _)| !stream.pages.contains_key(key))
+        .map(|(&k, &p)| (k, p))
         .collect();
-    for key in missing {
+    missing.sort_by(source_demand::compare);
+    for (key, _) in missing
+        .into_iter()
+        .take(MAX_DATABASE_REQUESTS_IN_FLIGHT.saturating_sub(in_flight))
+    {
         let request_id = stream.next_request_id.wrapping_add(1).max(1);
-        match worker
-            .requests
-            .try_send(DatabaseRequest::ReadPage { request_id, key })
-        {
+        match worker.requests.try_send(DatabaseRequest::ReadPage {
+            generation: generation.clone(),
+            request_id,
+            key,
+            height_only: stream.height_only && key.domain == PageDomain::TerrainRender,
+        }) {
             Ok(()) => {
                 stream.next_request_id = request_id;
                 stream.pages.insert(key, PageState::Loading { request_id });
@@ -1424,6 +1566,7 @@ fn attach_prepared_pages(
     origin: Res<WorldOrigin>,
     mut stream: ResMut<WorldStream>,
 ) {
+    stream.admission_blocked = 0;
     let Some(render_assets) = render_assets else {
         return;
     };
@@ -1436,7 +1579,12 @@ fn attach_prepared_pages(
         .iter()
         .filter_map(|(key, state)| matches!(state, PageState::Prepared(_)).then_some(*key))
         .collect();
-    keys.sort();
+    keys.sort_by(|a, b| {
+        source_demand::compare(
+            &(*a, stream.priorities.get(a).copied().unwrap_or((3, 0.))),
+            &(*b, stream.priorities.get(b).copied().unwrap_or((3, 0.))),
+        )
+    });
     keys.truncate(MAX_ATTACHMENTS_PER_FRAME);
     let mut admitted_decoded_bytes = stats.decoded_bytes;
     let mut admitted_gpu_bytes = stats.gpu_bytes_estimate;
@@ -1468,13 +1616,17 @@ fn attach_prepared_pages(
                 .iter()
                 .map(|dependency| dependency.gpu_bytes_estimate)
                 .sum::<u64>()
-            + prepared.terrain.as_ref().map_or(0, |terrain| {
-                if admitted_terrain_texture_sets.contains(&terrain.texture_set.id) {
-                    0
-                } else {
-                    terrain.texture_set.runtime_gpu_bytes()
-                }
-            });
+            + prepared
+                .terrain
+                .as_ref()
+                .filter(|_| !prepared.height_only)
+                .map_or(0, |terrain| {
+                    if admitted_terrain_texture_sets.contains(&terrain.texture_set.id) {
+                        0
+                    } else {
+                        terrain.texture_set.runtime_gpu_bytes()
+                    }
+                });
         if page_decoded_bytes > MAX_RESIDENT_DECODED_BYTES
             || page_gpu_bytes > MAX_RESIDENT_GPU_BYTES_ESTIMATE
         {
@@ -1490,6 +1642,7 @@ fn attach_prepared_pages(
         if admitted_decoded_bytes.saturating_add(page_decoded_bytes) > MAX_RESIDENT_DECODED_BYTES
             || admitted_gpu_bytes.saturating_add(page_gpu_bytes) > MAX_RESIDENT_GPU_BYTES_ESTIMATE
         {
+            stream.admission_blocked += 1;
             stream.pages.insert(key, PageState::Prepared(prepared));
             continue;
         }
@@ -1538,6 +1691,9 @@ fn attach_page(
     cell_size: f32,
     prepared: PreparedPage,
 ) -> Result<PageAttachment, String> {
+    if prepared.height_only {
+        return source_demand::attach_height_source(commands, prepared, cell_size);
+    }
     let key = prepared.decoded.key;
     let mut entities = Vec::new();
     #[cfg(target_os = "ios")]
@@ -1892,6 +2048,7 @@ fn attach_page(
                 .sum::<u64>(),
         gameplay_objects,
         vegetation_pages,
+        height_only_pages: 0,
         terrain_texture_set,
     })
 }
@@ -2108,6 +2265,11 @@ pub struct StreamingStats {
     pub cached_definitions: usize,
     pub gameplay_objects: usize,
     pub vegetation_pages: usize,
+    pub height_only_pages: usize,
+    pub indexed_cells: usize,
+    pub source_demand_error: Option<String>,
+    pub pending_decoded_bytes: u64,
+    pub budget_waiting: usize,
     pub lod_counts: BTreeMap<u8, usize>,
     pub minimum_projected_height: f32,
     pub maximum_projected_height: f32,
@@ -2119,6 +2281,7 @@ fn update_streaming_stats(
     active_space: Res<ActiveWorldSpace>,
     lod_objects: Query<&ScreenSpaceLod>,
     mut stats: ResMut<StreamingStats>,
+    reload: Res<WorldGenerationReload>,
 ) {
     stats.status = match &stream.phase {
         StreamPhase::Opening => "opening SQLite".into(),
@@ -2135,6 +2298,37 @@ fn update_streaming_stats(
         ),
         StreamPhase::Failed(error) => format!("failed: {error}"),
     };
+    stats.indexed_cells = stream.descriptors.len();
+    if reload.active() {
+        stats.status.push_str(if reload.commit_requested {
+            " | committing published generation"
+        } else {
+            " | preparing published generation"
+        });
+    }
+    if let Some(error) = &reload.last_error {
+        stats
+            .status
+            .push_str(&format!(" | publication adoption failed: {error}"));
+    }
+    if active_space.requested.is_some() {
+        stats.status.push_str(" | preparing world entry");
+    }
+    if let Some(error) = &active_space.transition_error {
+        stats
+            .status
+            .push_str(&format!(" | entry rejected: {error}"));
+    }
+    stats.source_demand_error = stream.demand_error.clone();
+    stats.budget_waiting = stream.admission_blocked;
+    if stream.admission_blocked > 0 {
+        stats.status.push_str(" | source residency budget full");
+    }
+    if let Some(error) = &stream.demand_error {
+        stats.status = format!("source demand limited: {error}");
+    }
+    stats.pending_decoded_bytes = 0;
+    stats.height_only_pages = 0;
     stats.demanded = stream.desired.len();
     stats.loading = 0;
     stats.prepared = 0;
@@ -2165,7 +2359,10 @@ fn update_streaming_stats(
     for state in stream.pages.values() {
         match state {
             PageState::Loading { .. } | PageState::Decoding { .. } => stats.loading += 1,
-            PageState::Prepared(_) => stats.prepared += 1,
+            PageState::Prepared(p) => {
+                stats.prepared += 1;
+                stats.pending_decoded_bytes += p.decoded.decoded_bytes;
+            }
             PageState::Resident(attachment) => {
                 stats.resident += 1;
                 stats.owned_entities += attachment.entities.len();
@@ -2173,6 +2370,7 @@ fn update_streaming_stats(
                 stats.gpu_bytes_estimate += attachment.gpu_bytes_estimate;
                 stats.gameplay_objects += attachment.gameplay_objects;
                 stats.vegetation_pages += attachment.vegetation_pages;
+                stats.height_only_pages += attachment.height_only_pages;
                 account_terrain_texture_set(&mut stats, attachment);
             }
             PageState::Cooling { attachment, .. } => {
@@ -2182,6 +2380,7 @@ fn update_streaming_stats(
                 stats.gpu_bytes_estimate += attachment.gpu_bytes_estimate;
                 stats.gameplay_objects += attachment.gameplay_objects;
                 stats.vegetation_pages += attachment.vegetation_pages;
+                stats.height_only_pages += attachment.height_only_pages;
                 account_terrain_texture_set(&mut stats, attachment);
             }
             PageState::Failed(error) => {

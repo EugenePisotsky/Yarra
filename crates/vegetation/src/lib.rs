@@ -835,7 +835,12 @@ impl VegetationSurfaceField {
         world_xz: [f32; 2],
     ) -> VegetationSurfaceSample {
         let resolution = usize::from(self.resolution);
-        debug_assert!(resolution >= 2 && self.is_valid());
+        // Scene admission validates every height once. Sampling must remain O(1),
+        // including debug builds used by the editor and CPU canopy baker.
+        debug_assert!((2..=257).contains(&resolution));
+        debug_assert_eq!(self.heights.len(), resolution * resolution);
+        debug_assert_eq!(self.normals_oct.len(), resolution * resolution);
+        debug_assert_eq!(self.validity.len(), resolution * resolution);
         let local_x = ((world_xz[0] - page_origin_xz[0]) / page_size).clamp(0.0, 1.0);
         let local_z = ((world_xz[1] - page_origin_xz[1]) / page_size).clamp(0.0, 1.0);
         let grid_x = local_x * (resolution - 1) as f32;
@@ -1003,6 +1008,15 @@ pub fn candidate_domain(
     page: &VegetationFieldPage,
     population: &VegetationPopulation,
 ) -> CandidateDomain {
+    candidate_domain_for_extent(page.origin_xz, page.size, population)
+}
+
+/// Canonical placement domain independent of the page's render-space offset.
+pub fn candidate_domain_for_extent(
+    origin_xz: [f32; 2],
+    size: f32,
+    population: &VegetationPopulation,
+) -> CandidateDomain {
     let (spacing, placement_radius, candidates_per_cell) = match population.growth {
         GrowthPattern::Uniform { .. } => {
             (population.density_per_square_meter.sqrt().recip(), 0.0, 1)
@@ -1022,12 +1036,12 @@ pub fn candidate_domain(
     };
     let radius = placement_radius.max(grouping_radius);
     let minimum = [
-        ((page.origin_xz[0] - radius) / spacing).floor() as i32,
-        ((page.origin_xz[1] - radius) / spacing).floor() as i32,
+        ((origin_xz[0] - radius) / spacing).floor() as i32,
+        ((origin_xz[1] - radius) / spacing).floor() as i32,
     ];
     let maximum = [
-        ((page.origin_xz[0] + page.size + radius) / spacing).ceil() as i32,
-        ((page.origin_xz[1] + page.size + radius) / spacing).ceil() as i32,
+        ((origin_xz[0] + size + radius) / spacing).ceil() as i32,
+        ((origin_xz[1] + size + radius) / spacing).ceil() as i32,
     ];
     CandidateDomain {
         cell_min: minimum,

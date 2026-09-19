@@ -29,6 +29,26 @@ use vegetation::{SceneValidationError, VegetationScene};
 
 pub mod canopy_coverage;
 mod renderer;
+pub use renderer::terrain_contact_radius;
+
+/// Per-source-page terrain readiness. This gate changes rendering, never authored
+/// coverage or placement data. Empty means all pages are permitted.
+#[derive(Resource, ExtractResource, Clone, Debug, Default, PartialEq, Eq)]
+pub struct VegetationTerrainGate {
+    pub block_all: bool,
+    pub blocked_pages: std::collections::BTreeSet<[u32; 3]>,
+}
+impl VegetationTerrainGate {
+    pub fn page_id(page: &vegetation::VegetationFieldPage) -> [u32; 3] {
+        [
+            page.origin_xz[0].to_bits(),
+            page.origin_xz[1].to_bits(),
+            page.size.to_bits(),
+        ]
+    }
+}
+
+pub const PROCEDURAL_DISTANCE_METERS: f32 = 96.0;
 
 static NEXT_SCENE_REVISION: AtomicU64 = AtomicU64::new(1);
 
@@ -51,6 +71,8 @@ impl Plugin for VegetationRenderPlugin {
             ExtractResourcePlugin::<VegetationLighting>::default(),
             ExtractResourcePlugin::<VegetationWind>::default(),
             ExtractResourcePlugin::<VegetationLodFocus>::default(),
+            ExtractResourcePlugin::<VegetationRenderOrigin>::default(),
+            ExtractResourcePlugin::<VegetationTerrainGate>::default(),
             ExtractResourcePlugin::<VegetationBladePreparation>::default(),
             ExtractResourcePlugin::<VegetationSun>::default(),
             ExtractComponentPlugin::<VegetationDebugView>::default(),
@@ -60,6 +82,8 @@ impl Plugin for VegetationRenderPlugin {
         .init_resource::<VegetationLighting>()
         .init_resource::<VegetationWind>()
         .init_resource::<VegetationLodFocus>()
+        .init_resource::<VegetationRenderOrigin>()
+        .init_resource::<VegetationTerrainGate>()
         .init_resource::<VegetationBladePreparation>()
         .init_resource::<VegetationSun>()
         .add_systems(Update, (cycle_debug_mode, advance_vegetation_wind).chain())
@@ -89,6 +113,12 @@ impl Plugin for VegetationRenderPlugin {
 #[derive(Resource, ExtractResource, Clone, Copy, Debug, Default)]
 pub struct VegetationLodFocus {
     pub position: Option<Vec3>,
+}
+
+/// Canonical XZ offset of render coordinates, for world-anchored wind and shading.
+#[derive(Resource, ExtractResource, Default, Clone, Copy, Debug)]
+pub struct VegetationRenderOrigin {
+    pub world_xz: [f64; 2],
 }
 
 /// Prepare shared curve and wind values once per blade, with a bounded GPU cache.
@@ -664,7 +694,9 @@ fn cycle_debug_mode(
 /// An explicitly enabled, in-memory V2 scene used to validate GPU placement before persistence.
 #[derive(Resource, ExtractResource, Clone, Debug)]
 pub struct VegetationDebugScene {
-    scene: VegetationScene,
+    // Immutable snapshots are shared with extraction and contact certification.
+    // Copying every field on every render extraction scales with resident area.
+    scene: Arc<VegetationScene>,
     revision: u64,
 }
 
@@ -672,7 +704,7 @@ impl VegetationDebugScene {
     pub fn new(scene: VegetationScene) -> Result<Self, SceneValidationError> {
         scene.validate()?;
         Ok(Self {
-            scene,
+            scene: Arc::new(scene),
             revision: NEXT_SCENE_REVISION.fetch_add(1, Ordering::Relaxed),
         })
     }
@@ -688,7 +720,7 @@ impl VegetationDebugScene {
 
     pub fn replace(&mut self, scene: VegetationScene) -> Result<(), SceneValidationError> {
         scene.validate()?;
-        self.scene = scene;
+        self.scene = Arc::new(scene);
         self.revision = NEXT_SCENE_REVISION.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
@@ -749,6 +781,19 @@ fn maintain_debug_draw_entity(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scene_snapshots_share_data_and_replace_atomically() {
+        let mut scene = VegetationDebugScene::reference();
+        let snapshot = scene.clone();
+        assert!(Arc::ptr_eq(&scene.scene, &snapshot.scene));
+        let mut next = scene.scene().clone();
+        next.pages.clear();
+        scene.replace(next).unwrap();
+        assert!(!snapshot.scene().pages.is_empty());
+        assert!(scene.scene().pages.is_empty());
+        assert_ne!(snapshot.revision(), scene.revision());
+    }
 
     #[test]
     fn external_transport_keeps_exact_wind_phase_and_ignores_shortcuts() {

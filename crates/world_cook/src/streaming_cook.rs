@@ -21,17 +21,41 @@ pub struct CookStats {
 pub struct CookReport {
     pub manifest: RuntimeManifest,
     pub stats: CookStats,
+    pub materials: Option<TerrainMaterialBakeStats>,
 }
 
 pub fn cook_project_with_report(project_path: &Path, runtime_path: &Path) -> Result<CookReport> {
+    cook_project_options(project_path, runtime_path, None)
+}
+/// Bake optional experimental ground composites using explicit preprocessed assets.
+pub fn cook_project_with_materials(
+    project_path: &Path,
+    runtime_path: &Path,
+    materials: &TerrainBakeLibrary,
+) -> Result<CookReport> {
+    cook_project_options(project_path, runtime_path, Some(materials))
+}
+fn cook_project_options(
+    project_path: &Path,
+    runtime_path: &Path,
+    materials: Option<&TerrainBakeLibrary>,
+) -> Result<CookReport> {
     if runtime_path.exists() && fs::canonicalize(project_path)? == fs::canonicalize(runtime_path)? {
         bail!("source and runtime paths must be different");
     }
     let snapshot = ProjectCookSnapshot::open(project_path)
         .with_context(|| format!("failed to open cook snapshot {}", project_path.display()))?;
-    cook_snapshot(snapshot, runtime_path)
+    cook_snapshot_options(snapshot, runtime_path, materials)
 }
+#[cfg(test)]
 fn cook_snapshot(snapshot: ProjectCookSnapshot, runtime_path: &Path) -> Result<CookReport> {
+    cook_snapshot_options(snapshot, runtime_path, None)
+}
+fn cook_snapshot_options(
+    snapshot: ProjectCookSnapshot,
+    runtime_path: &Path,
+    materials: Option<&TerrainBakeLibrary>,
+) -> Result<CookReport> {
     let project = snapshot.catalog();
     let plans = prepare_plans(project)?;
     let catalog = merge_runtime_catalogs(&plans.values().collect::<Vec<_>>())?;
@@ -140,8 +164,17 @@ fn cook_snapshot(snapshot: ProjectCookSnapshot, runtime_path: &Path) -> Result<C
     // Release the read transaction before hierarchy work and publication. Every leaf
     // has already been evaluated from that one snapshot, including unsampled masks.
     drop(snapshot);
-    let manifest = finish_runtime_publication(runtime_path, &staging.path, &manifest.world_spaces)?;
-    Ok(CookReport { manifest, stats })
+    let (manifest, materials) = finish_runtime_publication_with_materials(
+        runtime_path,
+        &staging.path,
+        &manifest.world_spaces,
+        materials,
+    )?;
+    Ok(CookReport {
+        manifest,
+        stats,
+        materials,
+    })
 }
 
 #[cfg(test)]

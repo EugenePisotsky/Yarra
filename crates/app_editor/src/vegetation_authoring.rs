@@ -54,7 +54,8 @@ impl Plugin for VegetationAuthoringPlugin {
                 Update,
                 (adopt_project_catalog, sync_live_preview)
                     .chain()
-                    .in_set(VegetationPreviewSync),
+                    .in_set(VegetationPreviewSync)
+                    .after(engine::WorldStreamingSystems),
             )
             .add_systems(
                 EguiPrimaryContextPass,
@@ -308,11 +309,15 @@ fn sync_live_preview(
     mut state: ResMut<VegetationAuthoringState>,
     mut scene: ResMut<VegetationDebugScene>,
     mut previous: Local<Option<PreviewSignature>>,
+    render_origin: Option<ResMut<vegetation_render::VegetationRenderOrigin>>,
 ) {
     if matches!(
         *workspace.get(),
         EditorWorkspace::Vegetation | EditorWorkspace::Presets
     ) {
+        if let Some(mut render_origin) = render_origin {
+            render_origin.world_xz = [0.; 2];
+        }
         *previous = None;
         return;
     }

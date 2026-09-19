@@ -128,8 +128,12 @@ pub(super) fn sync(
                 .iter()
                 .filter(|page| {
                     (0..2).all(|i| {
-                        page.origin_xz[i] < min[i] + surface.cell_size + vegetation_render::canopy_coverage::MARGIN
-                            && page.origin_xz[i] + page.size > min[i] - vegetation_render::canopy_coverage::MARGIN
+                        page.origin_xz[i]
+                            < min[i]
+                                + surface.cell_size
+                                + vegetation_render::canopy_coverage::MARGIN
+                            && page.origin_xz[i] + page.size
+                                > min[i] - vegetation_render::canopy_coverage::MARGIN
                     })
                 })
                 .collect();

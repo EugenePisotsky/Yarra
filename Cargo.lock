@@ -6356,6 +6356,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 name = "yarra-app-editor"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "bevy",
  "bevy_egui",
  "blake3",
@@ -6402,6 +6403,7 @@ dependencies = [
  "serde",
  "yarra-terrain-render",
  "yarra-vegetation",
+ "yarra-vegetation-render",
  "yarra-world",
  "yarra-world-cook",
  "yarra-world-db",
@@ -6491,6 +6493,7 @@ dependencies = [
  "glam",
  "ron",
  "rusqlite",
+ "serde",
  "yarra-environment",
  "yarra-environment-compile",
  "yarra-vegetation",

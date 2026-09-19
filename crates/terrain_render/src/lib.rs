@@ -1,4 +1,6 @@
+pub mod composite;
 pub mod lod;
+pub mod near;
 use bevy::mesh::{Indices, MeshVertexBufferLayoutRef};
 use bevy::{
     asset::RenderAssetUsages,
@@ -16,6 +18,7 @@ use bevy::{
     render::storage::ShaderBuffer,
     shader::ShaderRef,
 };
+pub use composite::TerrainCompositeMaterial;
 use world::{
     CellCoord, TerrainHeightfield, TerrainProfile, TerrainSurface, TerrainSurfaceId,
     TerrainTextureSet, TerrainWeightPage,
@@ -44,8 +47,11 @@ impl Plugin for TerrainRenderPlugin {
     fn build(&self, app: &mut App) {
         stochastic_cache::install(app);
         prepared::install(app);
+        composite::atlas::install(app);
+        near::install(app);
         app.init_resource::<TerrainMacroVariation>()
             .add_plugins(MaterialPlugin::<TerrainMaterial>::default())
+            .add_plugins(MaterialPlugin::<TerrainCompositeMaterial>::default())
             .add_systems(
                 Update,
                 (toggle_macro_variation, apply_macro_variation).chain(),
@@ -152,6 +158,8 @@ impl TerrainShadingMode {
 #[derive(Asset, AsBindGroup, TypePath, Debug, Clone)]
 #[bind_group_data(TerrainMaterialKey)]
 pub struct TerrainMaterial {
+    /// Input carrier for hierarchy shading; owns no drawn mesh or prepared control cache.
+    pub source_only: bool,
     pub shading_mode: TerrainShadingMode,
     stochastic_cached: bool,
     prepared: bool,
@@ -333,6 +341,7 @@ pub fn prepare_terrain_material(
     let first = &context.surfaces[0];
     let second = context.surfaces.get(1).unwrap_or(first);
     let material = context.materials.add(TerrainMaterial {
+        source_only: false,
         shading_mode: TerrainShadingMode::Production,
         stochastic_cached: false,
         prepared: false,

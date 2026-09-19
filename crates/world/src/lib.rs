@@ -1,5 +1,11 @@
+pub mod terrain_material;
+pub use terrain_material::*;
 pub mod terrain_hierarchy;
 pub use terrain_hierarchy::*;
+mod terrain_preview;
+pub use terrain_preview::TerrainPreviewProducts;
+mod view_bookmark;
+pub use view_bookmark::WorldViewBookmark;
 
 use std::{error::Error, fmt};
 
@@ -14,7 +20,7 @@ pub const DEFAULT_RUNTIME_DATABASE: &str = "generated/world.runtime.sqlite";
 pub const DEFAULT_CELL_SIZE: f32 = 32.0;
 pub const MAX_DECODED_PAGE_BYTES: u64 = 64 * 1024 * 1024;
 pub const PROJECT_SCHEMA_VERSION: i64 = 22;
-pub const RUNTIME_SCHEMA_VERSION: i64 = 17;
+pub const RUNTIME_SCHEMA_VERSION: i64 = 18;
 pub const PAGE_PAYLOAD_VERSION: u16 = 8;
 pub const MAX_TERRAIN_SURFACES_PER_CELL: usize = 8;
 pub const MAX_TERRAIN_WEIGHT_PAGES: usize = 2;
@@ -435,10 +441,13 @@ impl TerrainHeightfield {
     }
 
     /// Samples the rendered grid triangles in local metres. Inputs clamp to the page edges.
+    /// Validate the field when loading/constructing it, not for every sample.
     pub fn sample(&self, local_xz: [f32; 2], cell_size: f32) -> TerrainSurfaceSample {
-        debug_assert!(self.validate().is_ok());
         debug_assert!(cell_size.is_finite() && cell_size > 0.0);
         let resolution = usize::from(self.resolution);
+        debug_assert!((2..=usize::from(MAX_TERRAIN_HEIGHTFIELD_RESOLUTION)).contains(&resolution));
+        debug_assert_eq!(self.heights.len(), resolution * resolution);
+        debug_assert_eq!(self.normals_oct.len(), resolution * resolution);
         let maximum_index = (resolution - 1) as f32;
         let grid_x = (local_xz[0] / cell_size).clamp(0.0, 1.0) * maximum_index;
         let grid_z = (local_xz[1] / cell_size).clamp(0.0, 1.0) * maximum_index;

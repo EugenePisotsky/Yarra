@@ -30,7 +30,8 @@ fn main() {
     let runtime_database = runtime_database_path(&asset_root);
     let vegetation_v2_debug = vegetation_v2_debug_enabled();
     let mut app = App::new();
-    app.insert_resource(ClearColor(Color::srgb(0.055, 0.065, 0.075)))
+    app.insert_resource(engine::WorldStartView::from_args().expect("valid launch viewpoint"))
+        .insert_resource(ClearColor(Color::srgb(0.055, 0.065, 0.075)))
         .add_plugins(
             DefaultPlugins
                 .set(game_log_plugin())
@@ -54,7 +55,10 @@ fn main() {
             })
             .expect("empty vegetation runtime scene is valid"),
         )
-        .add_systems(Update, conform_vegetation_debug_to_streamed_terrain);
+        .add_systems(
+            Update,
+            conform_vegetation_debug_to_streamed_terrain.after(engine::WorldStreamingSystems),
+        );
 
     grass_bands::install(&mut app);
     grass_field::install(&mut app);

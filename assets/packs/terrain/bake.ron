@@ -1,0 +1,7 @@
+// CPU input pixels are local derived assets, with the same redistribution policy as the GPU pack.
+(version: 1, entries: [(
+    base_color: "local/terrain/temperate_meadow/runtime/universal/base_color_array.ktx2",
+    normal_material: "local/terrain/temperate_meadow/runtime/universal/normal_material_array.ktx2",
+    macro_variation: "local/terrain/temperate_meadow/runtime/universal/macro_variation.ktx2",
+    input: "local/terrain/temperate_meadow/runtime/material-inputs.terrain-bake",
+)])

@@ -130,19 +130,34 @@ type BuiltinGizmoMeshes<'world, 'state> = Query<
 #[derive(Default, Reflect, GizmoConfigGroup)]
 pub(crate) struct EditorOverlayGizmos;
 
-pub(crate) fn setup_world_workspace(mut commands: Commands) {
-    let controller = EditorCamera {
+pub(crate) fn setup_world_workspace(
+    mut commands: Commands,
+    start_view: Option<Res<engine::WorldStartView>>,
+) {
+    let mut controller = EditorCamera {
         focus: None,
         distance: 48.0,
         yaw: FRAC_PI_4,
         pitch: 0.58,
     };
+    let mut environment = WorldEnvironmentCamera::default();
+    let mut transform = Transform::from_xyz(24.0, 26.0, 24.0).looking_at(Vec3::ZERO, Vec3::Y);
+    if let Some(view) = start_view.as_ref().and_then(|s| s.0.as_ref()) {
+        controller.distance = view.distance;
+        controller.yaw = view.yaw_degrees.to_radians();
+        controller.pitch = view.pitch_degrees.to_radians();
+        environment = WorldEnvironmentCamera::with_visibility(view.fog_visibility);
+        transform = engine::WorldStartView::camera_at(view, Vec3::from_array(view.position));
+    }
     commands.spawn((
         Camera3d::default(),
-        WorldEnvironmentCamera::default(),
+        start_view
+            .as_ref()
+            .map_or_else(Projection::default, |s| s.projection()),
+        environment,
         Msaa::Off,
         DepthPrepass,
-        Transform::from_xyz(24.0, 26.0, 24.0).looking_at(Vec3::ZERO, Vec3::Y),
+        transform,
         controller,
         WorldViewCamera,
         TransformGizmoCamera,

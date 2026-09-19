@@ -505,8 +505,14 @@ mod tests {
                 .resource_mut::<NextState<EditorWorkspace>>()
                 .set(EditorWorkspace::Vegetation);
             app.update();
-            assert_eq!(app.world().resource::<VegetationLighting>().canopy, world_canopy);
-            let study_canopy = vegetation::CanopyShading { height_metres: 0.23, ..world_canopy };
+            assert_eq!(
+                app.world().resource::<VegetationLighting>().canopy,
+                world_canopy
+            );
+            let study_canopy = vegetation::CanopyShading {
+                height_metres: 0.23,
+                ..world_canopy
+            };
             app.world_mut().resource_mut::<VegetationLighting>().canopy = study_canopy;
             assert!(app.world().get::<Camera>(study_camera).unwrap().is_active);
             assert!(!app.world().get::<Camera>(world_camera).unwrap().is_active);
@@ -537,7 +543,10 @@ mod tests {
                 .resource_mut::<NextState<EditorWorkspace>>()
                 .set(EditorWorkspace::World);
             app.update();
-            assert_eq!(app.world().resource::<VegetationLighting>().canopy, study_canopy);
+            assert_eq!(
+                app.world().resource::<VegetationLighting>().canopy,
+                study_canopy
+            );
             assert!(app.world().get::<Camera>(world_camera).unwrap().is_active);
             assert!(!app.world().get::<Camera>(study_camera).unwrap().is_active);
             assert_eq!(

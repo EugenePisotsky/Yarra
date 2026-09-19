@@ -6,11 +6,7 @@ use crate::{
     shell::EditorInputCapture,
     workspaces::world_impl::EditorOverlayGizmos,
 };
-use bevy::{
-    ecs::system::SystemParam,
-    picking::mesh_picking::ray_cast::{MeshRayCast, MeshRayCastSettings},
-    window::PrimaryWindow,
-};
+use bevy::{ecs::system::SystemParam, window::PrimaryWindow};
 use engine::{StreamedTerrainSurface, WorldOrigin, WorldViewCamera};
 #[derive(Clone, Copy, PartialEq)]
 enum Handle {
@@ -78,7 +74,6 @@ fn finish(
 }
 pub(super) fn input(
     input: Input,
-    mut raycast: MeshRayCast,
     mut dense: ResMut<DenseDomainWorkingSets>,
     mut history: ResMut<EditorHistory>,
     mut state: ResMut<RoadToolState>,
@@ -165,19 +160,8 @@ pub(super) fn input(
         }
         return;
     };
-    let filter = |e| {
-        input
-            .terrain
-            .get(e)
-            .is_ok_and(|(_, s)| s.key.space == space)
-    };
-    let settings = MeshRayCastSettings::default()
-        .with_filter(&filter)
-        .always_early_exit();
-    let hit = raycast
-        .cast_ray(ray, &settings)
-        .first()
-        .map(|(_, h)| h.point);
+    let hit = engine::raycast_resident_terrain(&input.origin, input.terrain.iter(), ray)
+        .map(|(_, point)| point);
     let Some(hit) = hit else {
         state.hover = None;
         if !input.buttons.pressed(MouseButton::Left) {

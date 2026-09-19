@@ -19,16 +19,19 @@ const PUBLICATION_CHANNEL_CAPACITY: usize = 1;
 pub(crate) struct RuntimePublicationPlugin {
     project_database: PathBuf,
     runtime_database: PathBuf,
+    asset_root: PathBuf,
 }
 
 impl RuntimePublicationPlugin {
     pub(crate) fn new(
         project_database: impl Into<PathBuf>,
         runtime_database: impl Into<PathBuf>,
+        asset_root: impl Into<PathBuf>,
     ) -> Self {
         Self {
             project_database: project_database.into(),
             runtime_database: runtime_database.into(),
+            asset_root: asset_root.into(),
         }
     }
 }
@@ -38,6 +41,7 @@ impl Plugin for RuntimePublicationPlugin {
         app.insert_resource(RuntimePublicationPaths {
             project_database: self.project_database.clone(),
             runtime_database: self.runtime_database.clone(),
+            asset_root: self.asset_root.clone(),
         })
         .init_resource::<RuntimePublicationState>()
         .add_systems(Startup, start_publication_worker)
@@ -49,9 +53,10 @@ impl Plugin for RuntimePublicationPlugin {
 }
 
 #[derive(Resource)]
-struct RuntimePublicationPaths {
-    project_database: PathBuf,
-    runtime_database: PathBuf,
+pub(crate) struct RuntimePublicationPaths {
+    pub(crate) project_database: PathBuf,
+    pub(crate) runtime_database: PathBuf,
+    pub(crate) asset_root: PathBuf,
 }
 
 #[derive(Debug, Clone)]
@@ -177,17 +182,23 @@ struct PublicationResult {
     result: Result<String, String>,
 }
 
-fn start_publication_worker(mut commands: Commands, paths: Res<RuntimePublicationPaths>) {
+fn start_publication_worker(
+    mut commands: Commands,
+    paths: Res<RuntimePublicationPaths>,
+    terrain: Res<engine::TerrainLodPreview>,
+) {
     let (request_sender, request_receiver) = bounded(PUBLICATION_CHANNEL_CAPACITY);
     let (result_sender, result_receiver) = bounded(PUBLICATION_CHANNEL_CAPACITY);
     let project_database = paths.project_database.clone();
     let runtime_database = paths.runtime_database.clone();
+    let bake_root = terrain.enabled.then(|| paths.asset_root.clone());
     let worker_thread = thread::Builder::new()
         .name("yarra-runtime-publisher".into())
         .spawn(move || {
             publication_worker(
                 project_database,
                 runtime_database,
+                bake_root,
                 request_receiver,
                 result_sender,
             )
@@ -203,6 +214,7 @@ fn start_publication_worker(mut commands: Commands, paths: Res<RuntimePublicatio
 fn publication_worker(
     project_database: PathBuf,
     runtime_database: PathBuf,
+    bake_root: Option<PathBuf>,
     requests: Receiver<PublicationRequest>,
     results: Sender<PublicationResult>,
 ) {
@@ -214,9 +226,19 @@ fn publication_worker(
         else {
             return;
         };
-        let result = world_cook::cook_project(&project_database, &runtime_database)
-            .map(|manifest| manifest.generation_id)
-            .map_err(|error| error.to_string());
+        let result = match &bake_root {
+            Some(root) => world_cook::TerrainBakeLibrary::load(root).and_then(|library| {
+                world_cook::cook_project_with_materials(
+                    &project_database,
+                    &runtime_database,
+                    &library,
+                )
+                .map(|report| report.manifest)
+            }),
+            None => world_cook::cook_project(&project_database, &runtime_database),
+        }
+        .map(|manifest| manifest.generation_id)
+        .map_err(|error| error.to_string());
         if results
             .send(PublicationResult {
                 request_id,
@@ -402,7 +424,40 @@ mod tests {
             .unwrap();
         requests.send(PublicationRequest::Shutdown).unwrap();
 
-        publication_worker(project, runtime.clone(), request_receiver, results);
+        publication_worker(project, runtime.clone(), None, request_receiver, results);
+        assert!(result_receiver.recv().unwrap().result.is_err());
+        assert_eq!(
+            fs::read(&runtime).unwrap(),
+            b"existing immutable generation"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn missing_requested_material_inputs_fail_publication_without_plain_fallback() {
+        let directory = std::env::temp_dir().join(format!(
+            "yarra-material-publication-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let runtime = directory.join("world.runtime.sqlite");
+        fs::write(&runtime, b"existing immutable generation").unwrap();
+        let (requests, receiver) = crossbeam_channel::unbounded();
+        let (results, result_receiver) = crossbeam_channel::unbounded();
+        requests
+            .send(PublicationRequest::Publish {
+                request_id: 1,
+                source_epoch: 1,
+            })
+            .unwrap();
+        requests.send(PublicationRequest::Shutdown).unwrap();
+        publication_worker(
+            directory.join("source.sqlite"),
+            runtime.clone(),
+            Some(directory.join("missing-assets")),
+            receiver,
+            results,
+        );
         assert!(result_receiver.recv().unwrap().result.is_err());
         assert_eq!(
             fs::read(&runtime).unwrap(),
@@ -431,7 +486,7 @@ mod tests {
             .unwrap();
         requests.send(PublicationRequest::Shutdown).unwrap();
 
-        publication_worker(project, runtime.clone(), request_receiver, results);
+        publication_worker(project, runtime.clone(), None, request_receiver, results);
         let published = result_receiver.recv().unwrap().result.unwrap();
         let reader = world_db::RuntimeReader::open_immutable(&runtime).unwrap();
         assert_eq!(reader.manifest().generation_id, published);

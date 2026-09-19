@@ -97,6 +97,12 @@ impl MoveIntent {
         self.destination.map(|destination| destination.position)
     }
 
+    pub(crate) fn rebase(&mut self, shift: Vec3) {
+        if let Some(destination) = &mut self.destination {
+            destination.position += shift;
+        }
+    }
+
     pub(crate) fn clear(&mut self) {
         self.direction = Vec2::ZERO;
         self.strength = 0.0;
@@ -193,16 +199,21 @@ struct MotorOutput {
 
 pub(crate) fn advance_character_motors(
     time: Res<Time>,
+    lod_config: Option<Res<crate::TerrainLodPreview>>,
+    readiness: Option<Res<crate::TerrainContactReadiness>>,
+    origin: Option<Res<crate::WorldOrigin>>,
+    lod: Option<Res<crate::world_streaming::terrain_lod::TerrainLodStream>>,
     mut actors: Query<(
         &mut Transform,
         &mut MoveIntent,
         &CharacterMotorConfig,
         &mut CharacterMotor,
         &mut CharacterMotion,
+        Has<TerrainGrounded>,
     )>,
 ) {
     let delta_seconds = time.delta_secs();
-    for (mut transform, mut intent, config, mut motor, mut motion) in &mut actors {
+    for (mut transform, mut intent, config, mut motor, mut motion, grounded) in &mut actors {
         let output = if let Some(destination) = intent.destination {
             let offset = destination.position - transform.translation;
             motor.update_destination(
@@ -216,6 +227,25 @@ pub(crate) fn advance_character_motors(
             motor.update_direct(*intent, config, delta_seconds)
         };
 
+        let proposed =
+            transform.translation + Vec3::new(output.displacement.x, 0., output.displacement.y);
+        if grounded
+            && lod_config.as_ref().is_some_and(|c| c.enabled)
+            && !lod
+                .as_ref()
+                .zip(origin.as_ref())
+                .zip(readiness.as_ref())
+                .is_some_and(|((lod, origin), readiness)| {
+                    lod.sample_contact_height(proposed, origin, readiness)
+                        .is_some()
+                })
+        {
+            // Keep intent, but do not accumulate movement/animation into unloaded or
+            // still-morphing ground. Resume normally when the certified cover arrives.
+            motor.reset();
+            *motion = CharacterMotion::default();
+            continue;
+        }
         transform.translation.x += output.displacement.x;
         transform.translation.z += output.displacement.y;
         if motor.facing.length_squared() > f32::EPSILON {
@@ -533,6 +563,60 @@ mod tests {
             walk_turn_rate_radians: 7.068_583_5,
             jog_turn_rate_radians: 5.497_787,
         }
+    }
+
+    #[test]
+    fn missing_contact_stops_grounded_motion_without_losing_intent() {
+        let mut app = App::new();
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_secs_f32(DELTA_SECONDS));
+        app.insert_resource(time)
+            .insert_resource(crate::TerrainLodPreview {
+                enabled: true,
+                ..default()
+            })
+            .add_systems(Update, advance_character_motors);
+        let mut intent = MoveIntent::default();
+        intent.set_destination(Vec3::new(0., 0., 0.0001), CharacterGait::Walk);
+        let actor = app
+            .world_mut()
+            .spawn((
+                Transform::default(),
+                intent,
+                test_config(),
+                CharacterMotor::default(),
+                CharacterMotion::default(),
+                TerrainGrounded,
+            ))
+            .id();
+        app.update();
+        assert_eq!(
+            app.world().get::<Transform>(actor).unwrap().translation,
+            Vec3::ZERO
+        );
+        assert_eq!(
+            app.world().get::<MoveIntent>(actor).unwrap().destination(),
+            intent.destination()
+        );
+        assert_eq!(
+            app.world().get::<CharacterMotion>(actor).unwrap().phase,
+            CharacterMotionPhase::Idle
+        );
+        app.world_mut()
+            .resource_mut::<crate::TerrainLodPreview>()
+            .enabled = false;
+        app.update();
+        assert_eq!(
+            app.world().get::<Transform>(actor).unwrap().translation,
+            intent.destination().unwrap()
+        );
+        assert!(
+            app.world()
+                .get::<MoveIntent>(actor)
+                .unwrap()
+                .destination()
+                .is_none()
+        );
     }
 
     fn advance_destination(

@@ -18,6 +18,8 @@ pub(crate) struct ProfileSettings {
     seconds: f64,
     fullscreen: bool,
     diagnostic: bool,
+    /// Keep gameplay event-loop/VSync behavior while recording timed samples.
+    native_pacing: bool,
 }
 
 impl ProfileSettings {
@@ -120,6 +122,7 @@ impl ProfileSettings {
             seconds: duration(seconds.unwrap_or("2"), 2.0, 3600.0)?,
             fullscreen,
             diagnostic,
+            native_pacing: args.iter().any(|a| a == "--profile-native-pacing"),
         }))
     }
 
@@ -174,12 +177,13 @@ pub(crate) fn install(app: &mut App) {
         }
     };
     let diagnostic = settings.diagnostic;
-    app.insert_resource(WinitSettings {
-        focused_mode: mode,
-        unfocused_mode: mode,
-    })
-    .insert_resource(settings)
-    .add_systems(Startup, setup);
+    if !settings.native_pacing {
+        app.insert_resource(WinitSettings {
+            focused_mode: mode,
+            unfocused_mode: mode,
+        });
+    }
+    app.insert_resource(settings).add_systems(Startup, setup);
     // Captures use the existing deterministic frame-based camera/wind, not a timed run.
     // No measure_start/sample/complete events are emitted for diagnostic presentation.
     if !diagnostic {
@@ -199,9 +203,14 @@ fn setup(settings: Res<ProfileSettings>, mut window: Single<&mut Window, With<Pr
             .set(720.0 * size.x as f32 / size.y as f32, 720.0);
     }
     window.resizable = false;
-    if settings.fps == 0 {
+    if settings.fps == 0 && !settings.native_pacing {
         window.present_mode = PresentMode::AutoNoVsync;
     }
+    let pacing = if settings.native_pacing {
+        "native"
+    } else {
+        "profile"
+    };
     let size = settings
         .size
         .map_or_else(|| "game".into(), |s| format!("{}x{}", s.x, s.y));
@@ -212,7 +221,7 @@ fn setup(settings: Res<ProfileSettings>, mut window: Single<&mut Window, With<Pr
     };
     if settings.diagnostic {
         warn!(
-            "GRASS_PROFILE event=diagnostic_config unix_ms={} size={size} window={presentation} resolution_scale={} fps={} msaa={} grass={} clock=frame-based",
+            "GRASS_PROFILE event=diagnostic_config unix_ms={} size={size} window={presentation} resolution_scale={} fps={} msaa={} grass={} pacing={pacing} clock=frame-based",
             unix_ms(),
             settings.resolution_scale(),
             settings.fps,
@@ -222,7 +231,7 @@ fn setup(settings: Res<ProfileSettings>, mut window: Single<&mut Window, With<Pr
         return;
     }
     warn!(
-        "GRASS_PROFILE event=config unix_ms={} size={size} window={presentation} resolution_scale={} fps={} warmup_s={} seconds={} msaa={} grass={} clock=real-time",
+        "GRASS_PROFILE event=config unix_ms={} size={size} window={presentation} resolution_scale={} fps={} warmup_s={} seconds={} msaa={} grass={} pacing={pacing} clock=real-time",
         unix_ms(),
         settings.resolution_scale(),
         settings.fps,
@@ -337,6 +346,11 @@ mod tests {
         assert_eq!(p.size, Some(UVec2::new(2560, 1440)));
         assert!(!p.fullscreen);
         assert!(!p.grass);
+        assert!(!p.native_pacing);
+        let p = parse("--profile-seconds 10 --profile-native-pacing")
+            .unwrap()
+            .unwrap();
+        assert!(p.native_pacing);
     }
 
     #[test]

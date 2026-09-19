@@ -2,16 +2,59 @@
 
 Status: data contracts and bounded production cooking implemented, 2026-09-18.
 An opt-in terrain geometry preview now selects and draws the hierarchy in both
-applications. Slice 2 is **in progress**: morphing and production integration remain
-open. Distant materials and scenery proxies are planned. This is not a performance claim.
+applications, including synchronized geometry/normal morphing and protected
+actor/grass contact, distance-based source streaming, staged world-space entry,
+publication-generation handoff, and origin rebasing in the game preview. Slice 2's
+functional geometry path is implemented; broader production integration and cost
+validation remain open. CPU material baking/storage, bounded coarse and fine material
+residency, and blended composite rendering are implemented. A bounded close-range
+surface cache now adds tiled/prepared albedo, micro normals and canopy treatment to
+that path (2026-09-19). Art-pack transition review, material cost measurements and
+far-material minification remain open. Scenery proxies remain planned. This is not
+a performance claim.
 
 ## Implementation checkpoint
+
+An editable [hill and valley test landscape](HILL_LANDSCAPE_TEST.md) now provides
+the elevated-view acceptance scene: a 1.5 km meadow landscape, a summit spawn,
+curved road and saved summit/slope/valley viewpoints. It uses the existing
+production cook and renderer; performance acceptance remains open.
+
+### Remaining priorities after the hill test (2026-09-19)
+
+The chronological checkpoints below include historical next steps that later
+checkpoints have implemented. Geometry, material cooking/streaming, close shading,
+rebasing and publication handoff are functional; the remaining foundation work is:
+
+1. **Contact readiness under budget pressure — corrected.** Actor, vegetation,
+   camera-contact and visual priorities are now distinct. Stitched-edge requirements
+   compete in the same queue as patch bodies, and budget-limited swaps may retire
+   grass safely to admit actor ground. See the allocation checkpoint below. Hard
+   limits still apply; this does not guarantee every requested grass page can fit.
+2. **Regional live authoring on the hierarchy — integrated with limits.** The
+   editor's `--terrain-lod` path now stages applied source edits into geometry and
+   material overrides, with cancelled-job rejection and a GPU-ready handoff shared
+   with the nearby preview. Paint retains unchanged geometry. The current regional
+   admission is 256 source/affected cells; broader shared edits require publication.
+   See the live-authoring checkpoint for limits and acceptance coverage.
+3. **Acceptance on the landscape.** Use short summit rotation, descent and budget
+   stress checks for transitions, grass contact and bounded residency. Coarse-root
+   material borders, extreme minification and steep-slope projection remain review
+   items. Sustained GPU headroom is still unresolved; no new obvious GPU speedup is
+   established by the hill appearance experiments.
+
+Keep the current hill relief/shading for now. Distant forest/rock proxies, meadow
+representations beyond blade range and a representative cliff asset remain planned
+content/scenery work. They are separate from these foundation corrections. General
+terrain sculpting, slope/elevation authoring rules and dynamic relief smoothing are
+not required for the next checkpoint.
 
 Implemented:
 
 - Canonical f32 cooked heights and matching triangle interpolation in terrain CPU
   queries, vegetation CPU queries and the grass compute shader. Runtime schema is
-  **17**, page payload is **8**, terrain-node payload is **1**; project schema **22**
+  **18**, page payload is **8**, terrain-node payload is **1**, terrain-composite payload
+  is **1**; project schema **22**
   and journal **11** are unchanged. Recook existing projects; no source migration.
 - Typed hierarchy keys, nested height grids, exact retained samples/normals,
   conservative propagated error, descendant height bounds and sparse coverage.
@@ -160,14 +203,12 @@ The create command requires a new output path. The game also accepts `--terrain-
 and `--world-db`. Use the editor for elevated cameras in this unpopulated fixture.
 The existing 2 km acceptance fixture is now reused by the CLI and renderer tests.
 
-**Remaining before normal use:** smooth geometry/normal morphing, detailed-to-distant
-material integration, actor-driven protected contact demand, expanded authoritative
-height/grass demand, staged generation/world-entry readiness and complete game
-floating-origin integration. Generation/world changes currently clear the diagnostic
-cover and load the new one; they do not yet keep an old-world visual transition.
+**Remaining before normal use:** detailed-to-distant material integration and
+broader production integration. World-space switches and publication reloads now
+retain the old cover until replacement terrain is ready (checkpoints below).
 Applied unsaved authoring edits are not reflected in this published-only preview.
-Nearby source pages still load for grass/gameplay, even though their ground meshes
-are hidden after the hierarchy cover is ready. No terrain or full-scene frame-time
+Nearby source pages still load for grass/gameplay. The source-streaming checkpoint
+below removes their duplicate ground meshes in this preview. No terrain or full-scene frame-time
 improvement is claimed from this preview.
 
 Validation: 123 editor tests passed; focused engine/terrain/cooker tests and the
@@ -193,10 +234,953 @@ coordinates, hysteresis, orthographic projection and insufficient patch budgets.
 cargo test --offline -p yarra-engine mountain_cover_uploads_draws_moves_and_rebases --lib -- --ignored --nocapture
 ```
 
+### Smooth transition checkpoint
+
+The published geometry preview now blends geometry **and vertex normals** over
+0.25 s, using one shared Bevy morph weight for a complete replacement group. It
+supports simultaneous refinement and collapse, skipped hierarchy levels, negative
+coordinates and changes in edge stitching. A stalled frame advances at most 1/30 s
+of morph time; weight 1 is extracted before the final static meshes take ownership.
+Unchanged patches keep their existing meshes. Normal launches still use the existing
+authoring renderer; no source/runtime schema or saved-world changes are needed.
+
+The transient partition is the common finer cover of the old and new partitions.
+Each endpoint collapses its grid vertices onto the corresponding retained vertices
+of that endpoint's actual stitched mesh. This moves XZ as well as height; it is a
+triangulation-preserving collapse, not a height-only interpolation through a coarse
+surface. Both endpoints reproduce the original triangles. At shared edges/corners,
+the coarsest closed-boundary owner supplies the canonical position and normal, and
+all changing patches use the same eased blend factor. Conservative mesh bounds
+include both poses. This avoids introducing a second overlapping ground surface.
+
+The original cover remains drawn while the final meshes and transient meshes are
+prepared. Readiness includes vertex/index/morph GPU buffers. A zero-area probe
+prepares the standard material's morph pipelines without painting pixels; the
+renderer waits for compiled main/prepass/shadow variants observed for that probe.
+The production Bevy vertex paths also handle morph normals and motion vectors.
+A render-origin change repositions static and transient patches without rebuilding;
+a world/generation change or disabling the preview releases the in-progress group.
+
+Limits remain **128 MiB** estimated geometry and **32 MiB** decoded samples.
+Geometry admission reserves the complete transient meshes, including Bevy's padded
+morph attributes, in addition to both endpoint covers; cloned source arrays in the
+two asynchronous morph jobs count toward the sample cap. A common cover is limited
+to twice the configured steady patch/triangle limits (at defaults, 1,024 patches /
+2,097,152 pre-stitch triangles). Exceeding a limit retains the old cover and reports
+an error. These are admission estimates, excluding allocator/pipeline overhead and
+CPU/GPU asset duplication, not total process memory measurements. Stationary
+settled scenes release the transient meshes and retain their previous static cost.
+
+`TerrainLodStats` adds morph weight, transient cover counts and `quality_pending`.
+The original error/contact metrics describe the **target cover**. The contact
+checkpoint below adds separate certificates and diagnostics for the drawn cover.
+
+Validation for this checkpoint:
+
+- Pure geometry tests cover all 256 old/new stitch-mask combinations, multilevel
+  changes, irregular balanced partitions and negative coordinates. They check exact
+  endpoint triangle sets, non-inverted intermediate triangles, total coverage,
+  shared-edge/corner normals, internal cracks and conservative pose bounds.
+- A budget rejection leaves the original cover intact without allocating entities
+  or mesh assets.
+- The native Metal test uses the 2 km fixture at 512×512, now with asynchronous
+  pipeline compilation, directional shadows and depth/normal/motion prepasses.
+  Readback checks the start pose against the original image, verifies an intermediate
+  pose changes pixels, and checks rebasing halfway through a held blend. It also
+  exercises delayed acknowledgements, summit/valley views and cancellation during
+  a world switch. The final native run passed in 23.59 s including fixture cooking.
+  These are functional checks, not a 1440p frame-time benchmark.
+- All 37 focused engine/terrain unit tests passed. Workspace compilation and focused
+  Clippy passed, with the existing engine lint exceptions listed above.
+
+### Protected contact checkpoint
+
+The opt-in hierarchy preview now collects contact demand separately from camera
+detail. Grounded actors request exact leaf terrain around their canonical position,
+even offscreen or before their ground height is loaded. Prospective motor steps
+wait for certified ground without clearing movement intent; the grounding resolver
+samples the published leaf payload directly. A teleported actor remains hidden
+until the drawn surface is exact and its root height has been updated. Normal
+launches retain their existing grounding path.
+
+Grass pages within the blade range request exact terrain too, with a 16 m planning
+guard beyond the consumer footprint. Root range culling now uses 3D distance in
+both GPU scheduling and individual candidate rejection. Thus a camera high above
+a valley no longer requests grass just because it shares the valley's XZ position.
+The 96 m range includes the existing blade/wind reach bound; this range correction
+also applies to normal launches. The next checkpoint extends source loading for
+the hierarchy preview. A distant meadow representation remains separate work.
+
+Readiness certifies the **drawn** cover, with complete XZ coverage checked separately
+from accuracy so missing sparse-world ground cannot pass. Static certificates
+include stitch error (conservatively twice the parent error). Morph certificates
+bound the entire swept mesh against the authoritative descendant height extrema;
+they cover horizontal collapse as well as vertical movement. This bound is
+deliberately conservative and can overestimate error on steep terrain. If it cannot
+certify a required contact region, the fully uploaded target replaces the old cover
+atomically instead of animating through that region. If the target would remove
+contact already certified by the old cover, the old cover is restored/retained and
+selection replans with current demand. This may produce a local geometry pop under
+abrupt demand changes; it avoids displaying unsupported grass roots or feet.
+
+Grass rendering filters whole source pages until their drawn terrain is certified.
+It also compares the grass height field with the published leaf over their nested
+grids and requires agreement within the configured contact tolerance (default 1 cm).
+A readiness change invalidates generation without editing authored coverage; even
+the profiling `DrawFrozen` mode clears stale draw arguments. Applied unsaved terrain
+edits can therefore hide mismatched grass in this **published-only diagnostic**
+view. Regional authoring overrides remain future work. Independent preset preview
+cameras are not gated by the world view.
+
+Contact requests cap at 256 regions and the source-page cache at 4,096 pages
+(expanded from 1,024 for small-cell source streaming below).
+Exceeding either cap reports an error and blocks consumers rather than certifying
+unknown ground. Terrain/mesh residency limits are unchanged. Contact data follows
+generation, world and origin identity; actor sampling rejects an old-world
+certificate. Missing data and insufficient budgets are visible readiness failures,
+not a promise that every requested contact can be satisfied within current limits.
+
+Additional `TerrainLodStats` fields report drawn contact shortfalls, conservative
+drawn pixel error, blocked actors, blocked/mismatched grass pages and atomic contact
+handoffs. The target metrics remain separate. Source mismatches have their own
+counter even when the terrain geometry itself is exact.
+
+Validation adds sparse coverage and offscreen-demand budget cases, source-height
+agreement in both grid-resolution directions, rebased/world-specific readiness,
+and preservation of movement intent while ground is unavailable. Native checks
+cover an actor teleported into a held morph, exact offscreen grounding, rejection of
+an obsolete coarse target, frozen grass invalidation/resumption and elevated-view
+grass culling. The engine integration test also offsets a grass source over real
+cooked mountain relief, checks that it is blocked, then repairs it and checks that
+the gate reopens. These are functional tests; they do not measure scene performance.
+
+Recorded validation (2026-09-18): all 76 focused CPU tests passed; the native Metal
+mountain/contact test passed in 24.39 s including cooking, and the grass gate/range
+test passed in 3.09 s. Workspace compilation passed. Focused Clippy passed with the
+existing engine exceptions plus existing vegetation lint categories allowed
+(`precedence`, `nonminimal_bool`, `useless_conversion`, `collapsible_if`,
+`needless_update`, `derivable_impls`, `assertions_on_constants`,
+`format_in_format_args`, `field_reassign_with_default`). Strict Clippy still reports
+those pre-existing vegetation warnings; unrelated cleanup is outside this change.
+
+### Distance-based source streaming checkpoint
+
+`--terrain-lod` now requests terrain/vegetation sources by distance in metres,
+independently of the hierarchy cover and source cell size. The camera requests the
+96 m blade radius plus the shared blade/wind reach bound and a 16 m preload guard.
+Each compiled cell's full height bounds participate in 3D distance rejection, so a
+valley far below a summit does not load grass merely because its XZ position is near.
+Descriptor bounds also include objects; they are conservative and may over-request
+some source data. This does not increase the blade renderer's draw distance.
+
+The gameplay/editing focus keeps its own local window. The game keeps height data
+in its one-cell actor preload ring; the editor retains its three-cell tool window.
+Individual visible objects remain restricted to the local three-cell window, and
+gameplay pages remain in the one-cell ring. A detached camera can therefore request
+nearby terrain/grass without loading all objects between itself and the player.
+These are bounded local policies, not distant scenery proxies or general NPC demand.
+
+Index reads use at most two windows (camera and focus), cap their combined requested
+area at 4,096 cells, and deduplicate overlaps. Oversized requests report a source
+demand error and retain current residency; they are never silently truncated.
+SQLite performs a primary-key seek for each X row with a bounded Z interval rather
+than scanning every distant Z entry in an X strip. Camera rotation reuses the index;
+descriptor queries change only when the covered cell windows change. The source
+view is captured after transform propagation and consumed on the following update;
+the preload guard provides headroom but is not a load-latency guarantee.
+
+In this preview, terrain source attachments contain the canonical height/normal
+field and page identity only. They fetch no terrain material resources/dependencies
+and allocate no meshes, materials or images. They retain the `StreamedTerrainSurface`
+interface used by grass and terrain sampling. The existing page payload is still
+decoded, including its ground weights, which are discarded on attachment; a compact
+source-only payload is not yet introduced. Published hierarchy meshes remain the
+sole ground renderer. Normal launches keep their detailed terrain renderer and
+existing source footprint; toggling the diagnostic mode rebuilds nearby attachments.
+There is no schema change, recook, source edit or saved-world replacement.
+
+Requests prioritize local consumers, then nearby camera sources, then static objects.
+Loading, decoding and prepared pages share a cap of 16 outstanding page slots; the
+worker's queue alone is no longer treated as the admission limit. Attachment remains
+limited to two pages per frame. The existing 64 MiB resident decoded-data and
+256 MiB estimated resident GPU-data caps are unchanged. Prepared data is reported
+separately; the reader's 64 MiB per-page format limit gives 16 slots a conservative
+1 GiB decoded-payload ceiling (the production cooker limits its output pages to
+32 MiB). This is a count-based staging bound, not a claim
+that total process memory fits the resident cap: decoder scratch, encoded replies,
+allocators and the hierarchy's separate residency still cost memory.
+Byte-based admission before decompression remains necessary before production use
+with large page payloads; the current source fixture pages are much smaller.
+
+Grass contact planning coalesces page footprints into 32 m bins while preserving
+their full protected extents. This lets hundreds of small source cells share the
+256-region planning limit. Readiness still checks actual source pages individually;
+the metadata-only contact cache caps at 4,096 pages. This does not relax exact-ground
+requirements or the terrain patch/triangle budgets. Very small cells or extreme
+density/range profiles can still report a budget shortfall.
+
+`StreamingStats` now includes indexed cells, height-only page counts, prepared
+decoded bytes, pages waiting on the residency budget, and source-demand errors.
+Residency/query failures appear in the existing status text.
+
+Validation covers 8 m cells beyond the old three-cell radius, elevated views,
+detached camera/focus windows, negative coordinates, query overflow, preserved relief
+without GPU assets, and a drained worker queue that cannot bypass pending-page limits.
+SQLite query-plan checks confirm seeks on both spatial axes. The native Metal 2 km
+fixture passed in 24.61 s including cooking: its valley state indexed 113 cells and
+held 99 height-only pages (868,032 declared decoded bytes) with zero source-page GPU
+bytes, meshes or terrain materials. Movement, delayed uploads, morphs, contact gates,
+rebasing and world switches still passed. These are functional/representation checks,
+not frame-time measurements; the fixture has no dense grass or object population.
+All 191 engine/database/editor CPU tests passed, along with workspace compilation
+and focused Clippy using the previously documented engine/vegetation exceptions.
+
+### Staged world-space entry and game rebasing (2026-09-18)
+
+The opt-in hierarchy path stages a **balanced coarse cover** for a requested world
+without changing `ActiveWorldSpace`, the camera, origin, or source-page residency.
+It waits for actual mesh allocations and compiled static main/prepass/shadow
+pipelines. Once ready, it installs that complete cover and commits the world change
+at the same deferred-command boundary. Refinement and exact actor/grass contact
+loading then proceed normally; coarse coverage alone does not release grounded
+actors. Same-world teleports reuse the existing cover and its contact gate.
+
+The current cover's LOD work pauses during staging. Already-admitted mesh/morph
+preparation drains first; a running morph can retain its current pose. Current and
+staged declared node/mesh allocations share the **32 MiB / 128 MiB** limits, including
+the entry pipeline probe. The four active IO/decode slots and two mesh-job slots are
+shared by draining old work before new work is admitted. Each metadata cache remains
+capped at 4,096 records; entry can temporarily retain two metadata caches. A budget
+rejection, failed destination decode, or replaced request releases only the staged
+resources. Monotonic request IDs prevent cancelled replies from entering a new stage.
+The existing HUD status reports pending/rejected entry, and `TerrainLodStats`
+records entry status and staged declared bytes separately. Empty worlds require no
+terrain upload. This is an atomic world switch, not a crossfade.
+
+With `--terrain-lod`, the game now rebases beyond eight cells (256 m for 32 m cells).
+`WorldRenderRoot` marks game-owned root transforms: the player, camera and movement
+indicator use it; future positional lights/effects should also use it. Children are
+left in local coordinates. Actor destinations translate without changing gait,
+motor state, or destination revision. Root global transforms update before pointer
+queries. Streamed object roots shift once; canonical CPU height/grass source pages,
+pending requests and their entities survive a same-world rebase. The hierarchy
+continues to position its static and morph meshes from canonical keys. Editor roots
+already reconstructed from canonical records retain their own coordinate contract.
+The camera-relative sun updates before transform propagation.
+
+Rebasing also revealed that grass lattice seeds and wind had been using render
+coordinates. Placement/grouping now use the canonical lattice, then subtract the
+render offset before terrain/coverage/culling queries. Wind and blade shading bands
+use the canonical position too. Both applications synchronize the grass coordinate
+frame after source streaming; isolated preset previews keep origin zero. This adds
+16 bytes to the camera uniform, with no new per-blade storage. Positions/phases on
+the GPU remain f32: the tests cover kilometre-scale terrain and a 320 m offset in
+both axes, not arbitrary planetary coordinates. The normal game launch still uses
+its previous non-rebasing renderer until near/far material integration is ready.
+
+Validation: the CPU rebase test checks world position, destination, camera global
+transform, child transforms, unchanged page entities, pending requests and a second
+frame without drift. The extended native Metal terrain test uses a second populated
+world, pauses upload acknowledgements, injects a destination failure, cancels/retries
+requests, and verifies the old live morph survives until a complete replacement.
+It passed in 24.75 s including cooking. The grass GPU readback test retained identical
+instance counts in all four topology bins after rebasing, for prepared and fallback
+rendering. Mean byte error was 0.023689 / 0.023849 on a 256×256 image (small f32
+subpixel differences), and the test completed in 3.10 s. These are functional checks,
+not frame-time or sustained thermal measurements.
+
+All 217 engine, vegetation, vegetation-renderer, editor and game CPU tests passed.
+The workspace compiles, and focused Clippy passes with the existing engine/vegetation
+lint exceptions. Normal editor/game defaults and the checked-in authoring databases
+were not changed.
+
+Publication swaps use a new immutable SQLite reader; the checkpoint below adds
+that reader's readiness/rollback contract. Startup currently uses the existing
+coarse-cover load and actor contact gate, with no loading-screen or scenery-readiness
+contract. Applied unsaved authoring overrides remain slice 4. The preview is not
+enabled for normal launches yet.
+
+### Staged publication-generation handoff (2026-09-18)
+
+Publishing still atomically replaces the runtime database on disk. Adopting that
+publication now has two phases: the worker opens and validates a **candidate**
+immutable reader while retaining the current reader, then commits it only when the
+main world requests the matching operation ID and generation. A completed open is
+not an adoption acknowledgement. Source index/page requests carry their generation;
+queued requests cannot accidentally read a replacement database. Terrain requests
+can address either snapshot during preparation. At most two readers are retained.
+
+With `--terrain-lod`, the candidate stages a balanced coarse cover through the same
+bounded entry path as world-space changes. Current source pages and terrain stay
+live during opening, decoding, mesh construction and GPU/pipeline preparation.
+After readiness, the main world requests commit, waits for the worker's matching
+acknowledgement, then adopts the catalog, replaces the complete terrain cover and
+invalidates old source pages together. Nearby sources repopulate from the new
+snapshot; existing contact gates protect actors and grass until matching detailed
+ground is ready. This is an atomic terrain replacement, not a relief crossfade or
+a guarantee of uninterrupted nearby scenery while source pages reload.
+
+Opening, validation, stage/decode and budget failures discard only the candidate
+and report an adoption error. The old reader, catalog and resident terrain/pages
+remain usable, and the same publication can be retried. This does **not** undo the
+already published file on disk. Bounded request queues retry preparation, commit
+and discard without reporting early completion. Stale operation acknowledgements
+are ignored. World-space requests wait during adoption and remain queued afterwards.
+Changing/removing the active world's coordinate grid is explicitly rejected: a
+cell-size change needs reopening the world, and removing the active world needs
+entry into another retained world first. Live grid migration is not implemented.
+
+The normal renderer also uses the reader prepare/commit acknowledgement but retains
+its existing nearby-page reload behavior; only the hierarchy preview stages a full
+GPU-ready terrain cover. Default launches and checked-in authoring databases are
+unchanged. No database format change was needed.
+
+Validation: five new CPU tests cover matching/stale acknowledgements, preparation
+and commit failures, bounded queue retries, incompatible active worlds, and actual
+atomic database replacement. The worker test proves the old source pages remain
+readable while candidate terrain comes from the new snapshot, and rejects old
+source work after commit. All 35 engine CPU tests pass. The extended native Metal
+2 km test paused upload acknowledgements, preserved old terrain and source entities,
+injected a publication decode failure, retried, then verified the replacement's
+45 m relief in both drawn node data and newly streamed CPU height sources. It passed
+in **24.49 s**, including the existing movement/morph/rebase/world-entry checks and
+temporary fixture cooking. All 123 editor and 16 game tests also pass, and the
+workspace compiles. This is functional validation, not a GPU cost measurement.
+
+The material-baking checkpoint below begins slice 3. Keep the hierarchy opt-in
+until runtime material residency, shading and their transitions are validated.
+
+### CPU ground composites and bounded material cooking (2026-09-18)
+
+The optional material pass now consumes finalized cooked ground weights and
+preprocessed CPU texture inputs. It runs inside the existing private publication
+staging file after geometry cooking. It requires no graphics device. Normal cooking
+and editor Publish still omit this experimental pass; the CLI/API opt in explicitly.
+The renderer is unchanged in this checkpoint: these products are **not yet drawn**.
+
+`tools/prepare_terrain_bake.py` prepares 128×128 mip chains from the plain/prepared
+albedo, packed AO/roughness and macro sources. Albedo reduction happens in linear
+light. `assets/packs/terrain/bake.ron` maps texture-set URIs to these inputs. The
+current two-surface pack is **611,716 bytes**. Source/derived pixels remain under
+ignored `assets/local`; the manifest and tool are tracked. Regenerate inputs when
+source textures or prepared-albedo settings change. The loader validates version,
+length, layer count, period and texture-set identity; it limits individual files to
+4 MiB, the library to 16 MiB and the manifest to eight entries. Tests use synthetic
+assets and do not require this local texture pack.
+
+Each `TerrainMaterialKey` uses the terrain hierarchy's canonical spatial grid but
+is an independent material product. A tile has **64×64 interior texels**, a four-texel
+neighbor gutter and **three** GPU-compatible mip levels: 72×72, 36×36, 18×18.
+At each level the interior and gutters halve together, retaining globally aligned
+filter footprints. The future material selector must choose a parent beyond this
+mip range rather than generate a clamped full mip chain which would lose valid
+neighbor gutters. Material detail selection must remain independent of mesh detail.
+The future shader maps tile-local normalized coordinates with `(uv * 64 + 4) / 72`.
+
+Products contain two RGBA8 maps: sRGB base color/opaque alpha, and linear-data world
+normal (octahedral X/Z), perceptual roughness and material AO. Their declared GPU
+allocation is **54,432 bytes per tile** (about 53.2 KiB, excluding allocation overhead).
+Decoded/encoded records cap at 64 KiB and use versioned checksummed Zstd payloads.
+The DB exposes descriptor-only reads (up to 128 keys) for admission before fetching
+and decoding; material bytes are not bundled into geometry node reads.
+
+Baking follows the detailed material's surface-slot order, normalized ground weights,
+prepared albedo coordinates (or plain/reference stochastic sampling), roughness
+ranges and macro variation. Coordinates remain canonical f64 until texture wrapping;
+there is no render-origin input. Macro modulation is applied once in linear color.
+No sun, exposure, dynamic shadow, fine tangent-space normal detail, grass canopy or
+forest color is baked. Coarse world normals come from final terrain, are filtered as
+vectors and renormalized. Fine roads are area-filtered using stratified ground
+coverage samples and prefiltered source texture mips. CPU-versus-GPU material image
+parity and the visible near/far blend remain acceptance work for renderer integration.
+
+The material pass uses bounded metadata pages, one leaf at a time, four children
+for parent reduction, and up to nine same-level cores for neighbor gutters. Cores
+are compressed in a disk-backed SQLite temporary table, with an 8 MiB cache target.
+Partial nodes participate in filtering but never become drawable tiles. Missing
+exterior samples clamp to the current tile's edge; no terrain holes are filled.
+A completed bake verifies material coverage against drawable terrain coverage,
+limits each world's coarse material cover to 32 MiB, and validates root payloads
+before atomic publication. Failed baking preserves the previous runtime database.
+
+Independent material fingerprints include the baker contract, packed texture bytes,
+profile/surface settings, weights, final terrain normals and neighboring/child
+fingerprints. Geometry payload checksums are unchanged by material-only edits.
+There is no incremental cook cache yet: dependency separation is ready for later
+reuse, while this pass rebuilds its outputs. A constant elevation offset leaves
+these ground appearance products unchanged when normals and paint are unchanged.
+
+Runtime schema is now **18**; the authoring schema and source are unchanged. The
+current world was recooked as `7ed6140eddb5aa94` with **441 drawable material tiles**
+(340 overworld, 101 interior). Compressed payloads total **12,266,979 bytes**; all
+levels together declare 24,004,512 GPU bytes, which is storage inventory, **not** a
+runtime residency target. The peak was nine filtering cores / 36,864 core pixels,
+also observed on the smaller fixture; output arrays, codecs, catalogs and SQLite
+scratch are additional. SQLite integrity passes and the source SHA256 is unchanged.
+
+Rebuild the local input pack once, then opt into baking:
+
+```sh
+python3 tools/prepare_terrain_bake.py  # Python with NumPy and Pillow
+cargo run -p yarra-world-cook -- cook content/world.project.sqlite assets/generated/world.runtime.sqlite --terrain-materials assets
+```
+
+A normal editor publication currently produces a valid generation without these
+optional products. The material renderer will need to request this pass before it
+can rely on them. Normal game/editor launches and `--terrain-lod` retain their current
+appearance until that integration lands. Other old runtime databases require a
+recook for schema 18; no source migration is needed.
+
+Validation covers linear-light filtering, vector-normal filtering, exact same-level
+gutter agreement at all three mips including negative coordinates, sparse coverage,
+codec/version/truncation rejection, actual road weights, deterministic production
+cooking, material-only fingerprint changes with unchanged geometry, bounded
+metadata requests, corruption detection, and failed-bake preservation of the old
+publication. The world/database/cooker suite passes 77 CPU tests; all 174 engine,
+editor and game CPU tests also pass (251 total). The workspace compiles and focused
+Clippy passes with the existing lint exceptions. The separately invoked 2 km and
+native GPU acceptance checks are not part of that count and were not rerun for this
+CPU-only material stage.
+
+Next: load/admit these tiles independently from geometry, add the cheap lit far
+shader, and blend it with detailed near shading on the same mesh. Verify material
+parity, rebase continuity, changing light and road/biome transitions before making
+this the normal renderer or claiming a GPU performance improvement.
+
+### Resident coarse materials and lit rendering (2026-09-18)
+
+The shared `--terrain-lod` game/editor path now reads and draws baked ground. This
+checkpoint implements the **coarse fallback cover**, not the complete material LOD
+selector or the near/far blend. Normal launches retain the detailed authoring path.
+There is no source or runtime format change and the existing material publication
+`7ed6140eddb5aa94` can be used directly.
+
+Material presence, descriptors and payloads use generation-tagged worker requests,
+independent of geometry payloads. The complete coarse material cover is reserved
+before payload IO; metadata reads contain at most 128 keys. Geometry and material
+IO/decode share the existing four-job limit. Material admission allows up to 512
+tiles per cover and **32 MiB of declared texture data across active and staged
+covers together**. Exceeding this bound rejects the replacement and retains the
+current cover. This counts all three mips of both maps, including tiles in flight;
+texture/binding allocation overhead, encoded buffers and transient CPU/GPU copies
+are additional. Main-world image bytes are released after render extraction.
+
+Coarse material roots stay resident while geometry refines, stitches and morphs.
+Each static or transient mesh binds the enclosing material root; world-projected
+sampling does not stretch the texture over each new patch. This gives a stable
+fallback without tying its residency to the current mesh partition. Finer material
+selection must still be independent of geometry error: simply choosing a texture
+at each mesh's level would under-detail large flat patches. A spatial lookup for
+finer resident tiles and gradual material transitions remains the next step.
+
+The fragment shader takes two filtered samples: sRGB base color and linear packed
+world normal/roughness/AO. It uses the baked gutters and exactly three supplied mip
+levels, decodes the normal, and feeds Bevy's dynamic PBR lighting, shadows and fog.
+Macro color is already baked and is not applied again. It requires no mesh UVs or
+tangents. CPU projection subtracts the cell origin in integer/f64 coordinates
+before converting to render-space f32; rebasing updates small material uniforms
+alongside mesh transforms, without rebuilding/reloading any tile.
+
+World entry/publication preparation waits for **every material's prepared GPU bind
+group**, as well as the existing mesh and pipeline readiness checks. Until then
+the old cover remains intact. Decode/identity/budget failures discard only the
+candidate. A publication that explicitly has no composites retains the plain
+geometry diagnostic and reports that state; a missing tile in a declared composite
+cover is an error. `TerrainLodStats` reports material status, resident tile count,
+reserved bytes, and staged reserved bytes.
+
+Editor **Publish when launched with `--terrain-lod` now includes the material bake**,
+using the resolved asset root. Missing CPU input packs fail publication before
+replacement; there is no silent plain-material fallback for a requested bake.
+Normal editor publication and CLI cooking without `--terrain-materials` still omit
+these experimental products. The input preparation command above remains necessary
+after changing source texture/prepared-albedo settings.
+
+The current overworld uses four coarse tiles: **217,728 bytes (about 213 KiB)** of
+declared texture data. The interior uses 21 tiles / 1,143,072 bytes. These are coarse
+fallback allocations, not the final near-material cost or GPU frame-time results.
+Close-up ground is deliberately low resolution on this experimental path. Different
+root resolutions may show appearance seams; footprint-driven tile refinement,
+parent/child blending, extreme-minification handling, detailed normal/canopy shading
+and CPU/GPU appearance parity remain acceptance work before making it the default.
+
+Validation adds admission-before-payload, absent-versus-missing products, stale
+replies, complete binding readiness, shared material ownership across mesh levels,
+correct mip formats/packing, large negative coordinate precision, and failed editor
+bake preservation tests. A native Metal readback test draws textured ground,
+compares images before/after rebasing, and verifies that changing light intensity
+changes the result. The 2 km streaming test now uses synthetic composite records
+with full production coverage, including static/morph/prepass/shadow paths and
+world/publication handoffs. It separately withholds material acknowledgements after
+geometry/pipelines are ready to verify that entry still waits. These tests use
+synthetic inputs and do not establish visual parity with the local art pack or
+measure 1440p performance.
+
+Results: 201 focused CPU tests passed (38 engine, 23 terrain renderer, 124 editor,
+16 game). The native shader test passed in 2.36 s; the final textured 2 km streaming
+test passed in 31.96 s including fixture cooking. Workspace compilation and
+engine/terrain Clippy pass with the existing lint exceptions. The broader editor
+`-D warnings` check still reports existing vegetation-editor lints
+(`needless_range_loop`, `wrong_self_convention`, `collapsible_match`, `clone_on_copy`,
+`items_after_test_module`); these unrelated files were not changed for this step.
+
+### Independent fine-material streaming and transitions (2026-09-18)
+
+The `--terrain-lod` preview now streams finer baked ground tiles independently of
+mesh tessellation. A flat region can retain a large mesh and still show several
+material resolutions within it. The selector uses projected texel size, conservative
+3D height bounds, frustum visibility and the actual viewport. It refines above two
+pixels per texel and retains selected branches down to 1.25 pixels; these are initial
+quality thresholds, not measured final settings. Perspective and orthographic views
+use the same canonical f64 projection. Looking down from altitude reduces demand
+rather than loading every leaf under the camera's XZ position.
+
+Coarse roots remain pinned. Fine tiles occupy a fixed **128-slot** cache shared by
+all terrain meshes in the active world: two 72×72 texture arrays, each with the
+three supplied mips, plus a 512-entry spatial lookup buffer. Allocation is
+**6,983,680 bytes**, including the lookup buffer, regardless of occupied slot count.
+The four-root overworld therefore reserves **7,201,408 bytes (about 6.87 MiB)** for
+ground composites. The existing **32 MiB** material admission limit includes this
+cache, coarse roots, and a staged destination's roots. This remains logical payload
+accounting; driver overhead and upload/retirement copies are additional.
+
+Selection retains ancestry and caps material descriptors at **2,048**, with at most
+128 missing descriptors requested per batch. Descriptor reads now include final
+height bounds from the existing terrain-node rows; no DB format or pixel recook is
+needed. Required geometry gets request priority over optional material refinement.
+Material payloads continue to share the four IO/decode slots. At most four completed
+tiles enter a render upload transaction. Pending CPU pixels, lookup tables and
+residency are bounded, and old branches are evicted as the camera moves.
+
+Uploads write only the new physical layers. A texture write and the lookup table
+that removes a slot's previous occupant are submitted together before terrain draws.
+The main thread waits for the render transaction to be consumed before advancing
+that cache again; it does not rely on a fixed frame delay. A new tile initially has
+zero availability and fades in over 0.3 seconds after upload. Children wait for a
+fully available parent; eviction fades descendants out before releasing ancestors.
+Stationary views do not keep uploading texture pixels, and settled lookup tables
+are not rewritten. World-entry preparation keeps the existing fine cache frozen
+while staging the new coarse cover.
+
+The fragment shader combines integer canonical cell addressing with local fractional
+coordinates. Lookup survives negative cells, hash collisions and origin rebasing;
+no absolute large world position is converted to f32 for fine addressing. Pixel
+footprint chooses the material level and its valid mip range. Missing data resolves
+to resident ancestors and ultimately the pinned root. Temporal availability,
+continuous level blending and a two-texel edge transition handle partially loaded
+neighbours. Ancestor edge transitions participate too, including when adjacent
+regions differ by several material levels. Color blends in linear light and world
+normals are renormalized. Fully available interiors normally sample one fine tile;
+transition pixels can sample more ancestors, in addition to the current root sample.
+
+This completes blending **between baked material resolutions**. It does not yet
+restore the original detailed tiled surface shader, tangent-space micro normals or
+grass canopy shading on the hierarchy path. Finest baked texel size is cell size / 64
+(12.5 cm on the current 8 m authoring grid). Fine roads can now use those leaf products,
+but close-up texture parity remains a separate acceptance step. Mixed-resolution
+coarse-root seams and extreme minification beyond the root's valid mip range also
+remain open; do not describe this preview as the finished terrain renderer.
+
+Validation covers altitude/flat-geometry selection, request/capacity limits, complete
+ancestry and parent/child fade ordering. The Metal readback test verifies finer
+texture blending on one unchanged mesh, zero-availability fallback, negative-key
+hash collisions, rebasing, slot reuse, dynamic light, and no repeated pixel uploads
+while fading or stationary. The 2 km runtime test exercises the real worker/cache
+through camera movement, geometry morphing, world entry and publication rollback.
+`TerrainLodStats` adds fine tile count, material metadata count, upload count and a
+material-detail budget indicator. These are functional tests and residency counters,
+not performance measurements or a visual parity claim for the local art pack.
+
+Verification for this checkpoint: **125 CPU tests passed** across the engine,
+terrain renderer, world database and cooker. The native Metal material readback
+test passed in **2.46 s**, and the 2 km runtime/entry/publication test passed in
+**26.23 s**. Workspace compilation and focused Clippy checks passed. The runtime
+test reached 125 resident fine tiles while keeping the four-root material allocation
+at 7,201,408 bytes; a stationary interval produced no additional tile uploads.
+
+### Close-range surface integration (2026-09-19)
+
+The published `--terrain-lod` path now blends original detailed surface shading into
+its baked ground. This uses the existing final surface weights (including roads),
+shared texture set, normal strength/sign, AO, roughness, macro settings and optional
+prepared albedo. It does not create a second terrain mesh or force geometry to leaf
+resolution. Normal authoring remains on its existing editable renderer.
+
+Nearby terrain source pages now fetch surface metadata with the already decoded
+height/weight payload. A separate selector admits at most **64 cells**, using
+canonical camera-to-3D-bounds distance, stable ordering and a residency preference.
+It considers cells within **48 m**; the shader fades full close-range surface shading
+between **24 and 40 m**, also reducing it for footprints between 6 and 18 cm per pixel.
+These are provisional quality limits. A high view does not admit the valley merely
+because it shares the camera's XZ position. Capacity pressure keeps baked fallback;
+it is visible in `NearStats` and the `TerrainLodStats.near_material_*` counters.
+
+The GPU cache has 64 layers of **257×257 RG8** source weights, **130×130 RG8** filtered
+canopy coverage and a 256-entry spatial table. Its fixed payload is **10,695,296 bytes
+(about 10.20 MiB)**, checked against a 12 MiB control-cache ceiling. Original weight
+resolution is preserved up to 257 endpoint samples; smaller pages occupy a smaller
+rectangle in the layer. Canopy masks are resampled from the existing filtered baker
+at 128 interior samples per cell plus a one-texel halo. Two new carriers and at most
+two tile uploads are admitted per frame. Texture writes and their addressing/settings
+table publish in one render transaction, after actual GPU image/buffer readiness.
+Availability fades in/out over 0.3 seconds. Missing neighbours receive a one-metre
+transition to baked shading, so cache edges do not expose unrelated slots.
+
+This control cache is **additional to** the 32 MiB baked-composite budget. With the
+current four-root world and 128-slot fine composite cache, their combined logical
+payload is **17,896,704 bytes (about 17.07 MiB)**. Shared original/prepared surface
+textures, existing canopy source masks, CPU source data, driver overhead and temporary
+retirement/upload allocations are additional. The world texture-set declaration is
+still checked against the existing 256 MiB development profile; these figures are
+not a complete GPU residency measurement. Material-only carriers reuse the prepared
+albedo/canopy integrations, share a one-texel dummy weight image, and skip the old
+per-page prepared-control and stochastic caches. Empty near demand unbinds/releases
+its atlas and shared texture references. No surface weights are uploaded twice.
+
+Canonical cell addressing is integer-based. Repeating UV, prepared-lattice and macro
+phases are computed in f64 on the CPU and combined with cell-local shader offsets;
+rebasing cannot move the texture pattern. Non-prepared anti-tiling retains the original
+hash/rotation rule, while prepared albedo uses its declared periodic lattice. Macro
+modulation is evaluated once in each representation, then complete linear colors,
+AO, roughness and normalized world normals blend. Heightfield tangent orientation
+matches the original +X/+Z surface mapping without adding tangents to hierarchy meshes.
+
+The editor and game canopy integrations also cover these material-only source entities.
+The game now discovers newly admitted terrain even when grass source revision stays
+unchanged, and invalidates its canopy frame on a rebase. Canopy darkness transitions
+with the close-range surface; extending it across the full 96 m grass domain is still
+a separate coverage/range decision, not silently assumed by this cache.
+
+Validation includes canonical phases across large/negative cell boundaries and
+altitude rejection. Native Metal readback exercises two painted surfaces on one
+unchanged mesh, patterned albedo, normal-strength changes, canopy coverage, negative
+origin rebasing, source eviction, no stationary reuploads, and the optional prepared
+albedo path. The detailed interior is compared with the original terrain shader.
+The 2 km runtime test continues to cover source streaming, mesh morphs, world entry
+and publication rollback/retry. These establish functionality, not a 1440p timing
+budget or a finished art-pack transition. Coarse-root seams, extreme minification,
+cliff projection and distant scenery remain open.
+
+Verification for this checkpoint: **204 CPU tests passed** (124 editor, 16 game,
+40 engine and 24 terrain renderer). The final near-material Metal readback test
+passed in **3.59 s**, the coarse/fine fallback test in **3.09 s**, and the 2 km
+runtime/entry/publication test in **26.71 s**. Workspace compilation and focused
+Clippy checks passed with the repository's existing lint exceptions. The elevated
+runtime views retained zero near-material pages/bytes; the dedicated close-up test
+exercised populated near shading and release. Existing baked publications need no
+schema change or recook for this integration.
+
 The desktop target is 60 fps at 1440p on mainstream gaming GPUs. Record the actual
 internal render resolution as well as display resolution: current game defaults
 render the world at 75% scale with 4× MSAA. A MacBook Pro M2 remains a development
 and comparison device, not proof of performance on that target class.
+
+### Streaming responsiveness correction (2026-09-19)
+
+The close-range integration's functional tests did not establish interactive
+performance. Repeated navigation in the editor exposed long loading periods and
+unresponsive UI; the game also regressed in a **release** build. A native CPU
+sample taken while returning to the authoring field identified grass/terrain
+contact certification as a dominant editor streaming task.
+
+The correction preserves the rendered density and contact requirements:
+
+- Height sampling no longer validates every height in a field for each individual
+  sample. Full validation stays at construction/decoding/scene admission; sampling
+  uses constant-time shape assertions. The former debug path made a dense field's
+  repeated samples quadratic in its sample count.
+- Contact checks compare only heights on the shared nested triangle grids.
+  Equal-resolution fields use a direct height comparison. Previously each sample
+  also interpolated/decoded normals that the certificate did not use.
+- A streamed page or coverage edit preserves certificates for unchanged heights
+  at the same canonical page key. A rebase preserves them too; changed heights,
+  resolution, page size, world space or publication generation invalidate them.
+  Fresh certification is capped at 66,049 grid vertices per frame. Unchecked pages
+  remain hidden until certified; the budget never permits unsafe grass.
+- Immutable vegetation snapshots share their storage with render extraction and
+  the contact cache. They no longer deep-copy all resident pages every frame.
+- Terrain readiness updates only compact grass work-item flags. They preserve
+  surface/coverage/species buffers, peer indices and candidate acceptance caches.
+  Changing authored source data still repacks and invalidates those caches.
+- An uploaded contact refinement that needs an atomic handoff is recognized
+  before preparing transient morph meshes. A target that would remove already
+  safe contact ground is rejected. Distant changes still use normal morphing.
+
+`TerrainLodStats.contact_source_checks` and `contact_source_samples` count actual
+fresh certification work. On a stable loaded scene both counters should stop;
+page arrivals should not recertify every resident page. Readiness changes alone
+must not increment grass `source_repacks` or restart candidate-cache builds.
+
+The isolated development-build certification benchmark, on this M2 Max, measured:
+
+| Vegetation grid / terrain grid | Before | After |
+| --- | ---: | ---: |
+| 33×33 / 33×33 | 1.407 ms | 0.028 ms |
+| 65×65 / 33×33 | 13.045 ms | 0.068 ms |
+| 257×257 / 33×33 | 1913.325 ms | 1.421 ms |
+
+These are single-run flat-grid CPU measurements, not whole-frame timings or GPU
+savings. Reproduce with `cargo test --offline -p yarra-engine
+profile_surface_certification -- --ignored --nocapture`. Release builds did not
+have the repeated debug validation, but benefit from retained certificates,
+shared snapshots, height-only evaluation and the readiness/cache changes.
+
+Verification: **107 CPU tests passed**, plus the native grass readiness/cache test
+and the 2 km terrain movement/rebase/publication test. The grass test compares the
+exact restored instance multiset, checks the rendered image, and verifies that
+readiness alone neither repacks source buffers nor rebuilds cached acceptance.
+Workspace compilation and focused Clippy passed with existing lint exceptions.
+
+A native editor replay at 2880×1800 repeatedly left and re-entered the field.
+Menus remained usable during reloading; contact checks stopped at 253, 506, 759
+and 1012 after successive complete loads (253 populated pages per load). The
+follow-up CPU sample no longer showed contact validation dominating streaming.
+The replay used panning, not the user's exact trackpad zoom gesture, so that
+gesture still needs a user check. Grass retains incremental loading, and initial
+loading/shader preparation is not instantaneous.
+
+A separate short release-game comparison used `--terrain-lod --render-repro
+grass-stream --profile-warmup 2 --profile-seconds 12 --profile-fps 60
+--profile-size 2560x1440`, with the Metal HUD enabled. Before/after update averages
+were 59.77/59.91 fps; worst measured updates were 47.97/33.32 ms; late updates were
+8/7. Both runs stayed focused. This capped, single-pair smoke check does not prove
+a general frame-time improvement, lower GPU power, or sustained 120 fps. It uses
+the repro route's render settings, not all normal-game defaults. One intermediate
+after run overlapped compilation and is excluded from the comparison.
+
+Commands, logs, CPU samples and compact results are retained in
+[the streaming evidence record](performance/20260919-terrain-streaming/README.md).
+No publication/schema change or recook is required for this correction.
+
+### Close-ground GPU regression correction (2026-09-19)
+
+The streaming correction above did not resolve the release game's high-camera
+cost. The user's Metal HUD showed fragment work dominating the frame. A subsequent
+120 fps comparison isolated the independently resident **close-ground shader**:
+at 2592×1456 internal pixels the initial LOD run averaged 8.35 ms GPU, versus
+3.77 ms when only close-ground shading was bypassed. That bypass retained the
+same grass, geometry and source residency; it is diagnostic, not a shipping
+quality setting. The old terrain renderer averaged 4.12 ms in a separate smoke
+check, but its 49 source pages versus the LOD path's 256 make it a less controlled
+comparison.
+
+The retained fix keeps all surface samples, material blends, canopy evaluation,
+lighting, distances and detail. The shader hash search now returns a table index
+and probes only keys, rather than returning a complete 304-byte `NearEntry` from
+its dynamic loop. Neighbour availability reads only the fade value. Surface and
+macro helpers also take an index and load the fields they use; they no longer
+take that entire material structure as a value parameter. Native image tests
+still compare the detailed interior with the original terrain shader and cover
+mixed surfaces, normals, canopy, negative-coordinate rebasing and source eviction.
+
+An experimental zero-weight layer shortcut was removed: its measured result was
+not better. Skipping the distant material evaluation underneath fully detailed
+ground remains a possible separate optimization; this correction does not change
+the normal basis or near/far blending to accomplish that.
+
+The stronger comparison uses the actual gameplay camera and controls, fullscreen,
+the normal depth prepass and normal event-loop/VSync behavior. At 2592×1456
+internal pixels, 4× MSAA, with 12 s warmup and 20 s measurement on the M2 Max:
+
+| Metric | Original close-ground shader | Optimized close-ground shader |
+| --- | ---: | ---: |
+| Application updates/s | 117.35 | 120.00 |
+| Updates exceeding 12.5 ms | 53 | 0 |
+| Maximum update interval | 17.59 ms | 8.84 ms |
+| Metal HUD mean GPU duration | 8.51 ms | 5.92 ms |
+| Metal HUD p95 GPU duration | 8.74 ms | 6.04 ms |
+
+Both measurements stayed focused with nominal reported thermal pressure. GPU HUD
+samples overlap/correlate; the paired short runs establish a regression fix, not
+a sustained thermal/power claim or a mainstream-PC performance guarantee.
+Follow-up zoom cycles held 120 updates/s with no updates over 12.5 ms. The close
+third-person run averaged 119.90 updates/s with two updates over that threshold
+in 20 seconds, so isolated hitches still need observation.
+
+Profiling now supports `--profile-native-pacing`: `--profile-fps` remains the
+reference for late-update thresholds, but the normal event loop and presentation
+mode are preserved. `--render-audit` can record a timed run without requiring a
+scripted camera. Repro routes accept `--render-prepass` and `--render-ui-off`, and
+log the actual choices. The ground-only/shading diagnostic now recognizes the
+hierarchy's composite materials, including newly streamed meshes. The opt-in
+`--terrain-near-off` shader bypass is logged as `terrain_near=off`; it retains the
+near cache so attribution does not silently change residency.
+
+See the [GPU regression evidence](performance/20260919-terrain-gpu/README.md) for
+commands, controls, intermediate experiments and follow-up camera checks. No
+source/publication data change or recook is required.
+
+### Sustained GPU headroom follow-up (2026-09-19)
+
+The preceding short-run fix did **not** establish sustained 120 fps. A repeating
+30-second walking route now exercises the same meadow for arbitrary durations,
+with a fixed oblique camera and moving streaming/detail focus. The controlled
+legacy → ten-minute LOD → legacy suite reproduced the user's report: the LOD
+path began near 120 updates/s and 5.57 ms GPU, reached about 111 updates/s and
+9.13 ms in minute six, and the following legacy run immediately held about 120
+updates/s and 4.58 ms. LOD page/mesh counts stayed fixed and process memory did
+not grow. Sustained performance acceptance remains open.
+
+This follow-up skips baked root/hierarchy material evaluation under fully
+available close ground, reads near fields directly, and handles the first hash
+probe before the collision loop. The close material now uses the actual mesh
+normal, matching the original detailed renderer; native sloped-image and fallback
+tests cover this basis change. Short stationary tests improved from 5.94 to
+5.31 ms GPU (about 11%), with no resolution, density or geometry reduction.
+The sustained results above already include these changes.
+
+Late rootless GPU telemetry showed changing frequency/activity between paths;
+GPU milliseconds alone are not a stable workload or energy measure. The profiler
+now optionally accepts `--power macmon --macmon PATH` and records the executable
+version/hash, system-wide power, active frequency/residency, temperatures and fan
+speed. It does not download or install a collector, or change system power settings.
+The existing `powermetrics` mode remains available. See the
+[sustained investigation](performance/20260919-terrain-headroom/README.md) for
+the measured limits, partial telemetry coverage and reproduction commands.
+
+### Terrain allocation under budget pressure (2026-09-19)
+
+Three focused cases reproduced lost contact despite enough capacity for its surface:
+a visible patch crossing the camera plane tied contact's infinite score, vegetation
+could consume the actor's capacity, and visual refinement ran before required edge
+refinement. All three failed before the allocation change and pass afterward.
+
+The planner now orders actor contact, vegetation contact, camera contact, then visual
+error as separate priority classes. Projected error can still be infinite within the
+visual class. Coarse neighbours inherit the priority of fine patches whose stitched
+edges require them. Body and edge requests therefore share the same queue. After a
+split, only children and adjacent patches have their priorities refreshed; versioned
+entries reject obsolete queue priorities. Balanced split groups remain atomic. Work
+is reserved for the final seam pass, so exhausted selection work can return a valid
+coarser cover. Triangle, patch, metadata-request and work limits are unchanged.
+
+At runtime a target still cannot discard certified actor ground. A budget-limited
+target may retire previously certified vegetation ground through an atomic handoff;
+the existing contact gate hides the affected grass before extraction. Otherwise an
+old grass page could veto every plan that reallocates its capacity to the character.
+Normal non-budget handoffs retain their previous protection. Missing or impossible
+contact is still reported explicitly; the change never permits floating grass or
+grounding against an uncertified surface.
+
+The CPU-only probe of the current hill publication uses all nearby leaf cells as
+meadow demand, including cells where actual painted coverage may be empty. At a
+2560 × 1440 planning viewport it reported:
+
+| Pitch | Triangle limit | Planned triangles | Actor ready | Satisfied grass guard regions |
+| --- | ---: | ---: | --- | ---: |
+| 35° | 1,048,576 | 755,712 | Yes | 44/44 |
+| 35° | 262,144 | 258,048 | Yes | 2/44 |
+| 70° | 1,048,576 | 485,376 | Yes | 41/41 |
+| 70° | 262,144 | 258,048 | Yes | 2/41 |
+
+Grass guard regions include prefetch/edge padding; these are not visible grass-page
+counts. The smaller limit deliberately demonstrates graceful loss of lower-priority
+detail. It is not a proposed production setting, a GPU timing measurement, or a
+rerun of the original 65 × 65 terrain generation.
+
+The reusable probe reads an existing publication and bookmark without changing them:
+
+```sh
+YARRA_TEST_WORLD_DB="$PWD/tmp/hill-landscape/runtime.sqlite" \
+YARRA_TEST_START_VIEW="$PWD/tmp/hill-landscape/project.views/summit.ron" \
+cargo test -p yarra-engine --lib published_landscape_contact_budget_probe -- --ignored --nocapture
+```
+
+Regression coverage also includes bounded metadata requests, insufficient capacity,
+contact-order determinism, selection-work exhaustion, and priority-aware handoffs.
+The publication test harness now initializes the launch-view resource added with
+the hill fixture. CPU validation passes 45 engine and 29 terrain-renderer tests.
+The native Metal regression also passes movement, morphs, rebasing, contact gating
+and publication rollback/retry. Its new stress phase increases visual refinement
+for the small test viewport, then lowers the triangle ceiling: the active cover
+changes from 450,560 to 260,096 triangles with zero blocked actors. Those quality
+settings exist only in the test. Logs and reproduction commands are preserved in
+[the allocation evidence](performance/20260919-terrain-budget/README.md).
+Regional live authoring is implemented in the following checkpoint.
+
+### Live editor hierarchy checkpoint (2026-09-19)
+
+The editor's opt-in distant path accepts applied environment paint and road edits.
+The normal launch path is unchanged. The new path uses one background compiler,
+debounced requests and cancellation between cells/filter steps. It keeps the last
+accepted ground, grass and objects while replacement work runs. The source and
+published databases are read-only during preview; Save and Save & Publish keep
+their existing meanings.
+
+Finalized edited leaf heights feed the same `TerrainNode` builder as publication.
+Only changed geometry paths are rebuilt, using published siblings. Shared heights
+and encoded normals are checked across leaf borders, including separate coarse
+roots. Ground-only edits produce no geometry replacements. Changed material
+interiors propagate to their ancestors and same-level filter gutters. Published
+composite interiors are decoded in linear light for unchanged filter inputs;
+preview filtering does not repeatedly filter an earlier preview. This can differ
+slightly from a full cook's unquantized intermediates, so publication is the final
+appearance reference. It does not add a runtime terrain filtering shader pass.
+
+The renderer stages affected active meshes and coarse materials, waits for actual
+GPU upload acknowledgements, then exposes a ready revision to the editor. The
+matching nearby source/grass catalog and terrain region commit in one frame.
+Stale database/decode replies cannot overwrite that revision. Changed fine/near
+material caches retire at the handoff and refill against the new revision, using
+its baked coarse materials in the meantime. A brief loss of close texture detail
+is possible during refill. Unchanged camera-only source refreshes reuse terrain
+products and do not reset these caches.
+
+Canonical CPU heightfields now support paint and road ray picking directly. The
+LOD path does not allocate duplicate detailed meshes just to make tools work.
+Picking visits the grid squares crossed by the ray and intersects their actual
+triangles, including after origin rebasing. Painting still requires resident local
+source; this does not add arbitrary distant editing or navigation picking.
+
+Dirty terrain products remain available after their source cells leave the nearby
+working set. Undo carries explicit baseline replacements for previously changed
+nodes/materials. Save updates source without changing the publication; an unsaved
+undo after Save still overrides both. A new published generation discards the old
+preview overlay and recompiles local preview from that generation.
+
+Current limits and remaining integration work:
+
+- One region admits at most 256 existing source/affected cells, 16 MiB compiled
+  source products and 4,096 generated objects. Old and new source snapshots can
+  coexist. The existing nearby source stream and geometry budgets remain bounded.
+- Terrain override products and filter cores have a 96 MiB logical allocation
+  limit per candidate. Old accepted products may coexist with the candidate.
+  Filter reads are bounded separately. Staged meshes/materials must fit the
+  renderer's existing replacement budgets; these counters are not total RSS.
+- Shared preset/style edits conservatively visit the whole current world. If
+  that exceeds admission, the editor retains the previous view and requests
+  Save & Publish. A reverse-dependency index and incremental large-world shared
+  edits remain follow-up work; there is no silent partial shared-preset update.
+- This is an overlay on the published domain: adding/removing terrain cells still
+  requires publication. Distant source edits saved in an earlier editor session
+  should be published before opening the landscape; startup does not scan the
+  entire source database for unpublished spatial differences.
+- The overlay is session-local. Save & Publish is the way to make the complete
+  distant result available to the game and future sessions.
+
+Validation includes CPU paint/ancestor/gutter tests, deterministic repeated baking,
+cross-root seam rejection and direct picking against canonical triangles. The
+native Metal integration test also delays upload acknowledgements, supersedes an
+uncommitted revision, applies paint without changing mesh handles, applies relief,
+and undoes both before continuing its movement/rebase/publication checks. These
+are correctness checks, not a GPU speedup or sustained-performance claim.
+
+The editor worker's disposable-road-world test covers leaving the edited area,
+Save, unsaved undo after Save, and cancelled requests. The CPU suites pass 124
+editor, 46 engine, 29 terrain-renderer and 26 cooker tests. The two explicit
+integration checks are:
+
+```sh
+cargo test --offline -p yarra-app-editor live_road_edit_move_save_undo_and_cancel -- --ignored --nocapture
+cargo test --offline -p yarra-engine --lib mountain_cover_uploads_draws_moves_and_rebases -- --ignored --nocapture
+```
+
+The first requires prepared terrain bake assets and uses no GPU. The second
+requires native Metal/GPU access. Both use disposable source/runtime databases.
+The release editor builds successfully and remains running in an 18-second native
+startup check against a separately cooked road world. Its startup log contains only
+the existing Metal/egui bindless-texture warning. This smoke check does not replace
+interactive brush/road acceptance on the user's landscape.
 
 ## Decisions and scope
 
@@ -227,13 +1211,13 @@ Checked against the working tree on 2026-09-18:
 
 | Existing component | Change required |
 | --- | --- |
-| `engine::world_streaming` queries a 7×7 cell neighbourhood and requests terrain pages at `lod: 0` | Add a spatial hierarchy whose traversal does not depend on the local cell index. The current authoring world's 8 m cells make that query only 56 m across. |
+| Normal `engine::world_streaming` uses a 7×7 local window; `--terrain-lod` has independent distance-based source queries | Keep these local consumers separate from the spatial hierarchy; the hierarchy is already independent of the local index. |
 | `terrain_render::build_heightfield_mesh` creates one mesh per chunk, one vertex per height sample and two triangles per grid quad | Select coarser geometry for larger areas; avoid retaining one draw per tiny source cell throughout the visible world. |
 | Terrain textures have offline mip chains; the renderer includes prepared-ground and reference paths | Add regional composites and a distinct cheap distant material path. |
 | Source heightfields and the road compiler produce a shared final terrain surface | Preserve that authority and build the hierarchy after relief evaluation. |
 | Generated and manual objects use ordinary static meshes with object LODs | Add aggregate distant scenery products without loading every placement. |
 | Database requests, decoding, attachment and residency already have limits | Extend accounting and scheduling to hierarchy metadata, fallback nodes and staged replacements. |
-| The editor supports a floating origin; the game configuration currently disables rebasing | Complete game integration before treating long-distance travel as supported. |
+| The editor and opt-in game hierarchy path support rebasing; normal game launches retain the previous renderer | Validate near/far material continuity before enabling this path by default. |
 | The production cooker uses one consistent snapshot and writes each compiled cell to staging; the whole-document path remains a fixture/reference API | Preserve these bounds when adding composite materials and scenery products. |
 
 The existing contracts remain relevant: [terrain surfaces](TERRAIN.md),
@@ -394,8 +1378,9 @@ by at most one level. Precomputed edge-stitch index patterns connect fine edges 
 the coarser neighbour's triangulation. Balance the **resident active cover**, not
 just the desired tree; if dependencies cannot fit, keep/coarsen the parent.
 
-Add geometry morphing from child positions to the parent triangle surface for
-visible refinement/collapse. Shared edges and corners must use a common transition
+Morph between the actual old and new triangulations for visible refinement/collapse.
+The preview uses a common finer partition with canonical vertex collapse at each
+endpoint, preserving the stitched triangles exactly. Shared edges and corners must use a common transition
 target and factor derived from the active neighbours. Independent patch timers
 must not open cracks. Normals and material transitions must also agree at borders.
 Skirts may hide the outer authored boundary during prototyping; they are not the
@@ -577,9 +1562,9 @@ window; no new broad framework is required for the first slice.
 
 ## Implementation sequence and acceptance
 
-Slice 1 is implemented and checked as recorded above. Slice 2 has an opt-in geometry
-preview; its remaining acceptance requirements are listed above. Later slices remain
-pending; implement and validate them in order.
+Slices 1 and 2 have the bounded data/cooking and functional opt-in geometry paths
+recorded above. Broader production acceptance and performance measurements remain
+open. Later slices remain pending; implement and validate them in order.
 
 ### 1. Data contracts, precision and bounded cooking
 
@@ -599,8 +1584,8 @@ pending; implement and validate them in order.
 - Implement active-cover handoff, edge stitching, contact protection and morphing.
 - Finish game rebasing and verify editor perspective/orthographic views.
 - Pass camera rotation, movement, teleport, delayed upload, eviction, rebase and
-  world-switch tests. No holes, duplicated ground, internal cracks or unbounded
-  residency. Leaf heights, vegetation roots and nearby road relief still agree.
+  world-switch and publication reload/rollback tests. No holes, duplicated ground,
+  internal cracks or unbounded residency. Leaf heights, vegetation roots and nearby road relief still agree.
 - Use a simple material while validating geometry; this slice alone does not claim
   finished scenery or final terrain shading cost.
 

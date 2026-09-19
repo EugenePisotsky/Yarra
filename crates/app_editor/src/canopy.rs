@@ -11,7 +11,9 @@ use bevy::prelude::*;
 use bevy_egui::{EguiPrimaryContextPass, egui};
 use std::path::PathBuf;
 use vegetation::CanopyShading;
-use vegetation_render::{VegetationDebugScene, VegetationDebugSettings, VegetationDensityMode, VegetationLighting};
+use vegetation_render::{
+    VegetationDebugScene, VegetationDebugSettings, VegetationDensityMode, VegetationLighting,
+};
 
 pub(crate) const CANOPY_WINDOW: EditorWindowDescriptor = EditorWindowDescriptor {
     id: EditorWindowId("world.canopy"),
@@ -92,8 +94,16 @@ pub(crate) fn density_controls(ui: &mut egui::Ui, settings: &mut VegetationDebug
     ui.separator();
     ui.label("Grass density · geometry LOD stays enabled");
     ui.horizontal(|ui| {
-        ui.selectable_value(&mut settings.density_mode, VegetationDensityMode::FullReference, "Keep all roots");
-        ui.selectable_value(&mut settings.density_mode, VegetationDensityMode::Balanced, "Balanced");
+        ui.selectable_value(
+            &mut settings.density_mode,
+            VegetationDensityMode::FullReference,
+            "Keep all roots",
+        );
+        ui.selectable_value(
+            &mut settings.density_mode,
+            VegetationDensityMode::Balanced,
+            "Balanced",
+        );
     });
     ui.small("Keep all roots isolates canopy from density thinning. This choice is saved with the study, separately from the canopy look.");
 }
@@ -143,7 +153,9 @@ pub(crate) fn draw_controls(
     look.distance_end = look.distance_end.max(look.distance_start + 0.1);
     ui.add(egui::Slider::new(&mut look.patch_growth, 0.0..=1.0).text("Pocket expansion"));
     ui.add(egui::Slider::new(&mut look.edge_width, 0.05..=4.0).text("Grass edge fade · m"));
-    ui.small("Nearby shade 0 leaves close ground normal. Linked zoom in Study only magnifies the image.");
+    ui.small(
+        "Nearby shade 0 leaves close ground normal. Linked zoom in Study only magnifies the image.",
+    );
     ui.separator();
     let path = look_path();
     ui.horizontal(|ui| {

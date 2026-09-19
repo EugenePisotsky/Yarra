@@ -1,0 +1,88 @@
+{
+  "scope": "Partial late capture only; rootless system-wide macmon 0.8.2 estimates, no powermetrics validation",
+  "capture_start_s": 1789774846.556008,
+  "capture_end_s": 1789775086.98918,
+  "runs": [
+    {
+      "name": "01-legacy",
+      "window_start_s": 1789774277.469,
+      "window_end_s": 1789774337.47,
+      "power": {
+        "samples": 0,
+        "coverage_s": 0,
+        "cpu_w": null,
+        "cpu_w_coverage_s": 0,
+        "gpu_w": null,
+        "gpu_w_coverage_s": 0,
+        "gpu_mhz": null,
+        "gpu_mhz_coverage_s": 0,
+        "gpu_active_percent": null,
+        "gpu_active_percent_coverage_s": 0,
+        "cpu_temp_c": null,
+        "cpu_temp_c_coverage_s": 0,
+        "gpu_temp_c": null,
+        "gpu_temp_c_coverage_s": 0,
+        "fan0_rpm": null,
+        "fan0_rpm_coverage_s": 0,
+        "fan1_rpm": null,
+        "fan1_rpm_coverage_s": 0,
+        "cpu_gpu_w": null,
+        "thermal_states": []
+      }
+    },
+    {
+      "name": "02-lod",
+      "window_start_s": 1789774353.811,
+      "window_end_s": 1789774953.824,
+      "power": {
+        "samples": 106,
+        "coverage_s": 105.99151015281677,
+        "cpu_w": 5.038445884008587,
+        "cpu_w_coverage_s": 105.99151015281677,
+        "gpu_w": 16.17061434769708,
+        "gpu_w_coverage_s": 105.99151015281677,
+        "gpu_mhz": 1027.5530077467613,
+        "gpu_mhz_coverage_s": 105.99151015281677,
+        "gpu_active_percent": 95.93539070381655,
+        "gpu_active_percent_coverage_s": 105.99151015281677,
+        "cpu_temp_c": 65.27584203293594,
+        "cpu_temp_c_coverage_s": 105.99151015281677,
+        "gpu_temp_c": 65.98602667237968,
+        "gpu_temp_c_coverage_s": 105.99151015281677,
+        "fan0_rpm": 3452.0065234186345,
+        "fan0_rpm_coverage_s": 105.99151015281677,
+        "fan1_rpm": 3730.3114527903017,
+        "fan1_rpm_coverage_s": 105.99151015281677,
+        "cpu_gpu_w": 21.209060231705667,
+        "thermal_states": []
+      }
+    },
+    {
+      "name": "03-legacy",
+      "window_start_s": 1789774969.374,
+      "window_end_s": 1789775029.375,
+      "power": {
+        "samples": 58,
+        "coverage_s": 57.99958777427673,
+        "cpu_w": 5.275206926438957,
+        "cpu_w_coverage_s": 57.99958777427673,
+        "gpu_w": 17.111933701916147,
+        "gpu_w_coverage_s": 57.99958777427673,
+        "gpu_mhz": 1258.1727717774588,
+        "gpu_mhz_coverage_s": 57.99958777427673,
+        "gpu_active_percent": 81.45577699605771,
+        "gpu_active_percent_coverage_s": 57.99958777427673,
+        "cpu_temp_c": 66.1257198524391,
+        "cpu_temp_c_coverage_s": 57.99958777427673,
+        "gpu_temp_c": 66.9348371588753,
+        "gpu_temp_c_coverage_s": 57.99958777427673,
+        "fan0_rpm": 3455.3619332304597,
+        "fan0_rpm_coverage_s": 57.99958777427673,
+        "fan1_rpm": 3730.3447857155247,
+        "fan1_rpm_coverage_s": 57.99958777427673,
+        "cpu_gpu_w": 22.387140628355105,
+        "thermal_states": []
+      }
+    }
+  ]
+}

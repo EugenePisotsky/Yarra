@@ -169,6 +169,7 @@ struct GroundTiles {
     revision: Option<u64>,
     settle_until: f64,
     applied_enabled: Option<bool>,
+    coordinate_frame: Option<(Option<world::WorldSpaceId>, world::CellCoord)>,
 }
 struct Tile {
     material: Handle<TerrainMaterial>,
@@ -230,7 +231,9 @@ fn sync_ground(
     let Some(source_catalog) = catalog.vegetation() else {
         return;
     };
-    if tiles.catalog.as_ref() != Some(source_catalog) {
+    if tiles.catalog.as_ref() != Some(source_catalog)
+        || tiles.coordinate_frame != Some((origin.space(), origin.cell()))
+    {
         for tile in tiles.entries.values() {
             if let Some(image) = &tile.image {
                 images.remove(image.id());
@@ -241,11 +244,15 @@ fn sync_ground(
         }
         tiles.entries.clear();
         tiles.catalog = Some(source_catalog.clone());
+        tiles.coordinate_frame = Some((origin.space(), origin.cell()));
         tiles.revision = None;
     }
     // Expired pages release their masks/tasks as part of normal streaming.
     tiles.entries.retain(|entity, tile| {
-        if terrain.get(*entity).is_ok() {
+        if terrain
+            .get(*entity)
+            .is_ok_and(|(_, _, m)| m.0 == tile.material)
+        {
             return true;
         }
         if let Some(image) = &tile.image {
@@ -253,9 +260,15 @@ fn sync_ground(
         }
         false
     });
-    if tiles.revision != Some(scene.revision()) {
+    let source_changed = tiles.revision != Some(scene.revision());
+    let new_terrain = terrain
+        .iter()
+        .any(|(e, _, _)| !tiles.entries.contains_key(&e));
+    if source_changed || new_terrain {
         tiles.revision = Some(scene.revision());
-        tiles.settle_until = time.elapsed_secs_f64() + 0.35;
+        if source_changed {
+            tiles.settle_until = time.elapsed_secs_f64() + 0.35;
+        }
         let pages = &scene.scene().pages;
         let field_entities: HashMap<_, _> = fields
             .iter()
