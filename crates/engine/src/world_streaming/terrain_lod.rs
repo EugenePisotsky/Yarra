@@ -1,5 +1,5 @@
-//! Opt-in geometry validation path, shared by the editor and game. This consumes
-//! published terrain only; normal authoring stays on its detailed, editable meshes.
+//! Default terrain hierarchy shared by the editor and game, with bounded material
+//! streaming and regional live authoring. Legacy rendering is a diagnostic option.
 use super::*;
 use bevy::{
     math::{DMat4, DVec3},
@@ -38,8 +38,13 @@ pub struct TerrainLodPreview {
 }
 impl Default for TerrainLodPreview {
     fn default() -> Self {
+        Self::from_args(std::env::args_os())
+    }
+}
+impl TerrainLodPreview {
+    fn from_args(args: impl IntoIterator<Item = impl AsRef<std::ffi::OsStr>>) -> Self {
         Self {
-            enabled: std::env::args().any(|a| a == "--terrain-lod"),
+            enabled: !args.into_iter().any(|a| a.as_ref() == "--terrain-legacy"),
             settings: LodSettings::default(),
         }
     }

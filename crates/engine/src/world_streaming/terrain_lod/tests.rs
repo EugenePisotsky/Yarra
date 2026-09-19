@@ -12,6 +12,15 @@ use bevy::{
 };
 
 #[test]
+fn hierarchy_is_default_and_legacy_requires_an_explicit_request() {
+    assert!(TerrainLodPreview::from_args(["yarra-app-game"]).enabled);
+    assert!(
+        TerrainLodPreview::from_args(["yarra-app-editor", "--world-db", "world.sqlite"]).enabled
+    );
+    assert!(!TerrainLodPreview::from_args(["yarra-app-game", "--terrain-legacy"]).enabled);
+}
+
+#[test]
 fn late_database_reply_cannot_enter_a_new_world_or_generation() {
     let mut stream = TerrainLodStream {
         next_id: 40,
@@ -140,10 +149,6 @@ fn mountain_cover_uploads_draws_moves_and_rebases() {
         terrain_render::TerrainRenderPlugin,
         WorldStreamingPlugin::editor(&runtime),
     ))
-    .insert_resource(TerrainLodPreview {
-        enabled: true,
-        ..default()
-    })
     .init_resource::<Pixels>()
     .add_systems(Startup, setup)
     .add_systems(Update, crate::ground_characters_to_streamed_terrain);
@@ -154,6 +159,7 @@ fn mountain_cover_uploads_draws_moves_and_rebases() {
     }
     app.finish();
     app.cleanup();
+    assert!(app.world().resource::<TerrainLodPreview>().enabled);
     settle(&mut app, deadline);
     let first = app.world().resource::<TerrainLodStats>().clone();
     assert!(first.patches >= 4);

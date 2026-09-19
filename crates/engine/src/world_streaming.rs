@@ -46,8 +46,8 @@ use crate::{
 };
 
 const INDEX_RADIUS_CELLS: i32 = 3;
-// Local objects/tools and the normal renderer retain their existing cell window.
-// The hierarchy preview's camera source radius is separate and measured in metres.
+// Local objects/tools and the legacy diagnostic retain their existing cell window.
+// The terrain hierarchy's camera source radius is separate and measured in metres.
 const VISUAL_SOURCE_RESIDENCY_RADIUS_CELLS: u32 = 3;
 const GAMEPLAY_PRELOAD_RADIUS_CELLS: u32 = 1;
 const COOLING_SECONDS: f32 = 2.0;

@@ -1,12 +1,11 @@
 # Distant world and terrain rendering
 
-Status: data contracts and bounded production cooking implemented, 2026-09-18.
-An opt-in terrain geometry preview now selects and draws the hierarchy in both
+Status: default game/editor integration implemented, 2026-09-19.
+The default terrain renderer now selects and draws the hierarchy in both
 applications, including synchronized geometry/normal morphing and protected
 actor/grass contact, distance-based source streaming, staged world-space entry,
-publication-generation handoff, and origin rebasing in the game preview. Slice 2's
-functional geometry path is implemented; broader production integration and cost
-validation remain open. CPU material baking/storage, bounded coarse and fine material
+publication-generation handoff, and origin rebasing in the game. Large-world
+authoring and sustained performance acceptance remain open. CPU material baking/storage, bounded coarse and fine material
 residency, and blended composite rendering are implemented. A bounded close-range
 surface cache now adds tiled/prepared albedo, micro normals and canopy treatment to
 that path (2026-09-19). Art-pack transition review, material cost measurements and
@@ -20,6 +19,39 @@ the elevated-view acceptance scene: a 1.5 km meadow landscape, a summit spawn,
 curved road and saved summit/slope/valley viewpoints. It uses the existing
 production cook and renderer; performance acceptance remains open.
 
+### Default renderer checkpoint (2026-09-19)
+
+Normal game/editor launches now enable the terrain hierarchy, material streaming,
+contact protection and regional live authoring. No `--terrain-lod` argument is needed.
+`--terrain-legacy` explicitly selects the previous local renderer for performance
+comparisons. It is a diagnostic option, not a quality preset or automatic fallback.
+The change preserves the hierarchy's existing budgets, density and render settings;
+it is not an additional optimization or a sustained-performance claim.
+
+CLI `init`, `cook` and `import-vegetation` now include material baking by default,
+using the repository's assets; `--terrain-materials ASSET_ROOT` overrides that root.
+`--geometry-only` is an explicit cooker option for geometry diagnostics/fixtures.
+Editor Save & Publish includes materials even when viewing the legacy renderer.
+Missing CPU bake inputs fail publication without replacing the previous runtime.
+Prepare them with `python3 tools/prepare_terrain_bake.py` after the terrain texture
+pack. Previously unbaked runtimes require one normal recook for final ground shading.
+
+The hill launcher no longer passes an enable flag. The profiler defaults to
+`terrain_lod: true`; `false` maps to `--terrain-legacy` and remains checked against
+runtime audit output. Old saved reports retain their measured settings. Historical
+checkpoints and archived commands below describe the defaults at their recording
+time; their opt-in wording is superseded by this checkpoint.
+
+Validation: 218 Rust CPU tests (including explicit renderer/cooker selection and
+publication failure in both editor modes), 29 profiler/report tests, and the native
+Metal terrain/movement/live-edit/publication integration check passed. Release game,
+editor and cooker builds passed; Clippy completed with existing warnings. Short game
+launches reported `terrain_lod=true` by default and `false` with `--terrain-legacy`;
+the editor loaded baked ground without an enable flag. A disposable CLI world verified
+material publication through init, recook and vegetation import, explicit geometry-only
+cooking, and preservation of the prior runtime on missing-input failure. These launch
+checks do not measure performance; no new sustained run was required.
+
 ### Remaining priorities after the hill test (2026-09-19)
 
 The chronological checkpoints below include historical next steps that later
@@ -32,7 +64,7 @@ rebasing and publication handoff are functional; the remaining foundation work i
    grass safely to admit actor ground. See the allocation checkpoint below. Hard
    limits still apply; this does not guarantee every requested grass page can fit.
 2. **Regional live authoring on the hierarchy — integrated with limits.** The
-   editor's `--terrain-lod` path now stages applied source edits into geometry and
+   editor's default terrain path now stages applied source edits into geometry and
    material overrides, with cancelled-job rejection and a GPU-ready handoff shared
    with the nearby preview. Paint retains unchanged geometry. The current regional
    admission is 256 source/affected cells; broader shared edits require publication.
@@ -187,7 +219,7 @@ and 3×3 interior grids. SQLite integrity passed; the authoring source checksum 
 Run the preview on the current published world:
 
 ```sh
-cargo run -p yarra-app-editor -- --terrain-lod
+cargo run -p yarra-app-editor
 ```
 
 For the explicit 2 km mountain fixture (never substituted for the normal world):
@@ -196,11 +228,10 @@ For the explicit 2 km mountain fixture (never substituted for the normal world):
 mkdir -p tmp/terrain-lod
 cargo run -p yarra-world-cook -- create-mountain-fixture tmp/terrain-lod/project.sqlite
 cargo run -p yarra-world-cook -- cook tmp/terrain-lod/project.sqlite tmp/terrain-lod/runtime.sqlite
-cargo run -p yarra-app-editor -- --terrain-lod --project-db tmp/terrain-lod/project.sqlite --world-db tmp/terrain-lod/runtime.sqlite
+cargo run -p yarra-app-editor -- --project-db tmp/terrain-lod/project.sqlite --world-db tmp/terrain-lod/runtime.sqlite
 ```
 
-The create command requires a new output path. The game also accepts `--terrain-lod`
-and `--world-db`. Use the editor for elevated cameras in this unpopulated fixture.
+The create command requires a new output path. The game also accepts `--world-db`. Use the editor for elevated cameras in this unpopulated fixture.
 The existing 2 km acceptance fixture is now reused by the CLI and renderer tests.
 
 **Remaining before normal use:** detailed-to-distant material integration and
@@ -1211,7 +1242,7 @@ Checked against the working tree on 2026-09-18:
 
 | Existing component | Change required |
 | --- | --- |
-| Normal `engine::world_streaming` uses a 7×7 local window; `--terrain-lod` has independent distance-based source queries | Keep these local consumers separate from the spatial hierarchy; the hierarchy is already independent of the local index. |
+| Local object/gameplay streaming uses a 7×7 window; the default terrain hierarchy has independent distance-based source queries | Keep these local consumers separate from the spatial hierarchy; the hierarchy is already independent of the local index. |
 | `terrain_render::build_heightfield_mesh` creates one mesh per chunk, one vertex per height sample and two triangles per grid quad | Select coarser geometry for larger areas; avoid retaining one draw per tiny source cell throughout the visible world. |
 | Terrain textures have offline mip chains; the renderer includes prepared-ground and reference paths | Add regional composites and a distinct cheap distant material path. |
 | Source heightfields and the road compiler produce a shared final terrain surface | Preserve that authority and build the hierarchy after relief evaluation. |

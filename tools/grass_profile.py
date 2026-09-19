@@ -20,7 +20,7 @@ from grass_profile_report import status, write_report
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULTS = dict(size='game', window='fullscreen', fps=60, msaa=4, warmup=20, seconds=90,
                 view='low-walk', density='balanced', grass='full', counters=False,
-                terrain_lod=False, native_pacing=False, prepass=False)
+                terrain_lod=True, native_pacing=False, prepass=False)
 VIEWS = ['low-walk', 'grass-close', 'grass-away', 'grass-follow', 'grass-follow-far',
          'grass-zoom', 'grass-overhead', 'grass-top-down', 'grass-stream', 'grass-soak']
 INPUTS = {'binary', 'world_db', 'shaders', 'canopy', 'vertex_reference', 'candidate_reference', 'placement_reference', 'terrain_reference', 'prepared_blades'}
@@ -122,8 +122,9 @@ def command(inputs, settings):
         result += ['--grass-prepared-blades', str(settings['prepared_blades'])]
     if settings['counters']:
         result.append('--grass-counters')
-    for key, flag in [('terrain_lod', '--terrain-lod'),
-                      ('native_pacing', '--profile-native-pacing'),
+    if not settings['terrain_lod']:
+        result.append('--terrain-legacy')
+    for key, flag in [('native_pacing', '--profile-native-pacing'),
                       ('prepass', '--render-prepass')]:
         if settings[key]:
             result.append(flag)
@@ -359,6 +360,9 @@ def main():
                 elif key == 'size':
                     p.add_argument('--size', default=default,
                                    help='game = normal world scale (default); WIDTHxHEIGHT = fixed internal pixels')
+                elif key == 'terrain_lod':
+                    p.add_argument('--terrain-legacy', dest=key, action='store_false', default=default,
+                                   help='Use the old local terrain renderer for a diagnostic comparison')
                 elif isinstance(default, bool):
                     p.add_argument('--' + key.replace('_', '-'), action='store_true')
                 else:

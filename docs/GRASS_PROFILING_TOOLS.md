@@ -151,6 +151,8 @@ variants. Each variant can override:
 | `shaders` | Directory of replacement `.wgsl` files to overlay on the current shader snapshot |
 | `canopy` | Canopy look RON file |
 | `vertex_reference`, `candidate_reference`, `placement_reference`, `terrain_reference` | Boolean switches for existing renderer reference paths |
+| `terrain_lod` | Boolean; default true. False explicitly launches `--terrain-legacy` for comparison |
+| `native_pacing`, `prepass` | Boolean; preserve gameplay pacing / enable the normal desktop prepass in a repro |
 | `counters` | Boolean; default false, use only for separate workload diagnostics |
 
 Input paths in JSON resolve relative to the repository root. Relative `--output`
@@ -160,6 +162,14 @@ including committed WAL contents. Their SHA-256 hashes are recorded. Remaining
 assets are linked to the workspace; leave them unchanged throughout the suite.
 Archive a matching shader directory when comparing binaries from different commits.
 The runner does not automatically rebuild or cook historical variants.
+
+The hierarchy is now the default for new runs and for suite variants that omit
+`terrain_lod`. Use `run --terrain-legacy` or an explicit `"terrain_lod": false` in
+JSON for the previous renderer. The terrain soak suite already names both variants.
+Existing reports retain their recorded settings; regenerating a report does not
+apply current launch defaults. Renderer choice is checked against the game log, so
+an older binary that ignores the new default cannot silently pass as a hierarchy run.
+Cook the selected world with current material baking before a new hierarchy run.
 
 Use a separate counter run to inspect submitted roots/topology, preparation
 fallbacks and capacity drops:

@@ -182,16 +182,13 @@ struct PublicationResult {
     result: Result<String, String>,
 }
 
-fn start_publication_worker(
-    mut commands: Commands,
-    paths: Res<RuntimePublicationPaths>,
-    terrain: Res<engine::TerrainLodPreview>,
-) {
+fn start_publication_worker(mut commands: Commands, paths: Res<RuntimePublicationPaths>) {
     let (request_sender, request_receiver) = bounded(PUBLICATION_CHANNEL_CAPACITY);
     let (result_sender, result_receiver) = bounded(PUBLICATION_CHANNEL_CAPACITY);
     let project_database = paths.project_database.clone();
     let runtime_database = paths.runtime_database.clone();
-    let bake_root = terrain.enabled.then(|| paths.asset_root.clone());
+    // A diagnostic renderer choice must never strip materials from the publication.
+    let bake_root = Some(paths.asset_root.clone());
     let worker_thread = thread::Builder::new()
         .name("yarra-runtime-publisher".into())
         .spawn(move || {
@@ -463,6 +460,51 @@ mod tests {
             fs::read(&runtime).unwrap(),
             b"existing immutable generation"
         );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn normal_and_legacy_editor_publication_both_require_material_inputs() {
+        let directory = std::env::temp_dir().join(format!(
+            "yarra-default-publication-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let project = directory.join("project.sqlite");
+        world_cook::create_demo_project(&project).unwrap();
+        let runtime = directory.join("runtime.sqlite");
+        fs::write(&runtime, b"previous generation").unwrap();
+        for enabled in [true, false] {
+            let mut app = App::new();
+            app.insert_resource(engine::TerrainLodPreview {
+                enabled,
+                ..default()
+            })
+            .insert_resource(RuntimePublicationPaths {
+                project_database: project.clone(),
+                runtime_database: runtime.clone(),
+                asset_root: directory.join("missing-assets"),
+            })
+            .add_systems(Startup, start_publication_worker);
+            app.update();
+            let worker = app.world().resource::<RuntimePublicationWorker>();
+            worker
+                .requests
+                .send(PublicationRequest::Publish {
+                    request_id: 1,
+                    source_epoch: 1,
+                })
+                .unwrap();
+            assert!(
+                worker
+                    .results
+                    .recv_timeout(std::time::Duration::from_secs(10))
+                    .unwrap()
+                    .result
+                    .is_err()
+            );
+            assert_eq!(fs::read(&runtime).unwrap(), b"previous generation");
+        }
         fs::remove_dir_all(directory).unwrap();
     }
 

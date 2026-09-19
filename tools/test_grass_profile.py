@@ -76,12 +76,24 @@ class RunTests(unittest.TestCase):
         self.meta['settings'].update(terrain_lod=True, native_pacing=True, prepass=True,
                                      view='grass-soak')
         cmd = runner.command(Path('/inputs'), self.meta['settings'])
-        for flag in ('--terrain-lod', '--profile-native-pacing', '--render-prepass'):
+        self.assertNotIn('--terrain-legacy', cmd)
+        self.assertNotIn('--terrain-lod', cmd)
+        for flag in ('--profile-native-pacing', '--render-prepass'):
             self.assertIn(flag, cmd)
+        self.log = self.log.replace('terrain_lod=true', 'terrain_lod=false')
         self.assertEqual(len(self.analyze()['errors']), 3)
         self.log = ('GRASS_PROFILE event=config pacing=native\n' + self.log
                     .replace('terrain_lod=false', 'terrain_lod=true')
                     .replace('prepass=false', 'prepass=true'))
+        self.assertEqual(self.analyze()['errors'], [])
+
+    def test_legacy_comparison_is_explicit_and_checked_against_actual_renderer(self):
+        self.assertTrue(runner.DEFAULTS['terrain_lod'])
+        self.meta['settings']['terrain_lod'] = False
+        cmd = runner.command(Path('/inputs'), self.meta['settings'])
+        self.assertIn('--terrain-legacy', cmd)
+        self.assertTrue(any('terrain_lod' in error for error in self.analyze()['errors']))
+        self.log = self.log.replace('terrain_lod=true', 'terrain_lod=false')
         self.assertEqual(self.analyze()['errors'], [])
 
     def test_preparation_experiment_is_validated_and_must_be_applied(self):
@@ -101,7 +113,7 @@ class RunTests(unittest.TestCase):
                          exit_code=0, power_required=False, local_utc_offset_seconds=0)
         self.audit = ('RENDER_AUDIT unix_ms=105000 render_px=2560x1440 msaa_samples=4 density=Balanced '
                       'surface_px=2560x1440 scale=1 window_mode=windowed '
-                      'grass=full counters=false prepass=false terrain_lod=false thermal=nominal source_revision=1 '
+                      'grass=full counters=false prepass=false terrain_lod=true thermal=nominal source_revision=1 '
                       'terrain_prepared_pages=49 terrain_prepared_active=49 sampled_capacity_drops=[0, 0, 0, 0]')
         self.log = '\n'.join([
             'GRASS_PROFILE event=measure_start unix_ms=100000 focused=true',

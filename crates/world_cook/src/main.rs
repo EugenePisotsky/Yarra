@@ -52,24 +52,13 @@ fn main() -> Result<()> {
     }
     if command == "import-vegetation" {
         let source = PathBuf::from(arguments.next().context("expected catalog.ron")?);
-        let project = arguments
-            .next()
-            .map(PathBuf::from)
-            .unwrap_or_else(default_project_path);
-        let runtime = arguments
-            .next()
-            .map(PathBuf::from)
-            .unwrap_or_else(default_runtime_path);
-        if arguments.next().is_some() {
-            bail!(
-                "usage: yarra-world-cook import-vegetation CATALOG_RON [PROJECT_DB] [RUNTIME_DB]"
-            );
-        }
+        let options = CookOptions::parse(arguments)?;
+        let materials = options.load_materials()?;
         let catalog: vegetation::VegetationCatalog =
             ron::from_str(&std::fs::read_to_string(&source)?)?;
         catalog.validate()?;
-        world_db::ProjectWriter::open(&project)?.replace_vegetation_catalog(&catalog)?;
-        let manifest = yarra_world_cook::cook_project(&project, &runtime)?;
+        world_db::ProjectWriter::open(&options.project)?.replace_vegetation_catalog(&catalog)?;
+        let manifest = options.cook(materials.as_ref())?.manifest;
         println!(
             "imported {} and published runtime generation {}",
             source.display(),
@@ -83,31 +72,13 @@ fn main() -> Result<()> {
         );
     }
 
-    let project_path = arguments
-        .next()
-        .map(PathBuf::from)
-        .unwrap_or_else(default_project_path);
-    let runtime_path = arguments
-        .next()
-        .map(PathBuf::from)
-        .unwrap_or_else(default_runtime_path);
-    let bake_assets = match arguments.next() {
-        None => None,
-        Some(flag) if flag == "--terrain-materials" => Some(PathBuf::from(
-            arguments
-                .next()
-                .context("expected ASSET_ROOT after --terrain-materials")?,
-        )),
-        _ => bail!(
-            "usage: yarra-world-cook {command} [PROJECT_DB] [RUNTIME_DB] [--terrain-materials ASSET_ROOT]"
-        ),
-    };
-    if arguments.next().is_some() {
-        bail!("unexpected extra cook argument");
-    }
+    let options = CookOptions::parse(arguments)?;
+    let materials = options.load_materials()?;
+    let project_path = &options.project;
+    let runtime_path = &options.runtime;
 
     if command == "init" && !project_path.exists() {
-        yarra_world_cook::create_world_project(&project_path)
+        yarra_world_cook::create_world_project(project_path)
             .with_context(|| format!("could not initialize {}", project_path.display()))?;
         println!("created authoring database: {}", project_path.display());
     }
@@ -117,12 +88,7 @@ fn main() -> Result<()> {
             project_path.display()
         );
     }
-    let report = if let Some(assets) = bake_assets {
-        let inputs = yarra_world_cook::TerrainBakeLibrary::load(&assets)?;
-        yarra_world_cook::cook_project_with_materials(&project_path, &runtime_path, &inputs)?
-    } else {
-        yarra_world_cook::cook_project_with_report(&project_path, &runtime_path)?
-    };
+    let report = options.cook(materials.as_ref())?;
     let manifest = report.manifest;
     println!(
         "published runtime generation {}: {}",
@@ -167,4 +133,114 @@ fn default_runtime_path() -> PathBuf {
     repository_root()
         .join("assets")
         .join(world::DEFAULT_RUNTIME_DATABASE)
+}
+
+/// Normal publications always contain distant ground materials. Geometry-only
+/// cooking is reserved for fixtures and explicit renderer diagnostics.
+struct CookOptions {
+    project: PathBuf,
+    runtime: PathBuf,
+    bake_root: Option<PathBuf>,
+}
+impl CookOptions {
+    fn parse(arguments: impl IntoIterator<Item = std::ffi::OsString>) -> Result<Self> {
+        let mut arguments = arguments.into_iter();
+        let mut paths = Vec::new();
+        let mut bake_root = Some(repository_root().join("assets"));
+        let mut material_option = false;
+        while let Some(argument) = arguments.next() {
+            if argument == "--terrain-materials" || argument == "--geometry-only" {
+                if material_option {
+                    bail!("choose either --terrain-materials ASSET_ROOT or --geometry-only once");
+                }
+                material_option = true;
+                bake_root = if argument == "--geometry-only" {
+                    None
+                } else {
+                    let root = arguments
+                        .next()
+                        .context("expected ASSET_ROOT after --terrain-materials")?;
+                    if root.to_string_lossy().starts_with("--") {
+                        bail!("expected ASSET_ROOT after --terrain-materials");
+                    }
+                    Some(PathBuf::from(root))
+                };
+            } else if argument.to_string_lossy().starts_with("--") {
+                bail!("unknown cook option {argument:?}");
+            } else {
+                paths.push(PathBuf::from(argument));
+            }
+        }
+        if paths.len() > 2 {
+            bail!(
+                "expected [PROJECT_DB] [RUNTIME_DB] [--terrain-materials ASSET_ROOT | --geometry-only]"
+            );
+        }
+        let mut paths = paths.into_iter();
+        Ok(Self {
+            project: paths.next().unwrap_or_else(default_project_path),
+            runtime: paths.next().unwrap_or_else(default_runtime_path),
+            bake_root,
+        })
+    }
+    fn load_materials(&self) -> Result<Option<yarra_world_cook::TerrainBakeLibrary>> {
+        self.bake_root.as_ref().map(|root| {
+            yarra_world_cook::TerrainBakeLibrary::load(root).with_context(|| format!(
+                "cannot load terrain bake assets from {}; prepare them with `python3 tools/prepare_terrain_bake.py` after preparing the terrain texture pack", root.display()
+            ))
+        }).transpose()
+    }
+    fn cook(
+        &self,
+        materials: Option<&yarra_world_cook::TerrainBakeLibrary>,
+    ) -> Result<yarra_world_cook::CookReport> {
+        match materials {
+            Some(materials) => yarra_world_cook::cook_project_with_materials(
+                &self.project,
+                &self.runtime,
+                materials,
+            ),
+            None => yarra_world_cook::cook_project_with_report(&self.project, &self.runtime),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn options(args: &[&str]) -> Result<CookOptions> {
+        CookOptions::parse(args.iter().map(std::ffi::OsString::from))
+    }
+    #[test]
+    fn normal_cooks_include_materials_with_default_or_explicit_paths() {
+        let default = options(&[]).unwrap();
+        assert_eq!(default.project, default_project_path());
+        assert_eq!(default.runtime, default_runtime_path());
+        assert_eq!(default.bake_root, Some(repository_root().join("assets")));
+        let custom = options(&["source.sqlite", "runtime.sqlite"]).unwrap();
+        assert_eq!(custom.project, PathBuf::from("source.sqlite"));
+        assert_eq!(custom.runtime, PathBuf::from("runtime.sqlite"));
+        assert_eq!(custom.bake_root, default.bake_root);
+        assert_eq!(
+            options(&["--terrain-materials", "custom-assets"])
+                .unwrap()
+                .bake_root,
+            Some(PathBuf::from("custom-assets"))
+        );
+    }
+    #[test]
+    fn geometry_only_is_explicit_and_conflicting_options_are_rejected() {
+        assert!(options(&["--geometry-only"]).unwrap().bake_root.is_none());
+        for args in [
+            vec!["--terrain-materials"],
+            vec!["--terrain-materials", "--geometry-only"],
+            vec!["--geometry-only", "--terrain-materials", "assets"],
+            vec!["--terrain-materials", "assets", "--geometry-only"],
+            vec!["--geometry-only", "--geometry-only"],
+            vec!["--unknown"],
+            vec!["one", "two", "three"],
+        ] {
+            assert!(options(&args).is_err(), "{args:?}");
+        }
+    }
 }

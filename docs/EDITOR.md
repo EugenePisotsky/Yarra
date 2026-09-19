@@ -98,6 +98,14 @@ iOS packaging use the same runtime default. On a new checkout, run
 `cargo run -p yarra-world-cook -- init` once. `cargo run -p yarra-world-cook -- cook`
 republishes existing source; it never recreates a missing project silently.
 
+The terrain hierarchy and regional live paint/road preview are enabled by default.
+`--terrain-legacy` selects the old nearby renderer only for diagnostics. Save & Publish
+always includes distant ground materials, regardless of that renderer choice. Prepare
+CPU bake inputs once with `python3 tools/prepare_terrain_bake.py` after preparing the
+local terrain texture pack. CLI `init` and `cook` now include the same materials.
+See [live-authoring limits](DISTANT_WORLD_RENDERING.md#live-editor-hierarchy-checkpoint-2026-09-19)
+for regional admission and changes that require Save & Publish.
+
 The editor validates source and runtime before starting the renderer. Missing or
 incompatible schemas, invalid environment catalogs and different world-space grids
 produce a terminal error with the selected paths, rather than an apparently empty

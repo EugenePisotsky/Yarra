@@ -34,9 +34,11 @@ tracks. The editor opens `content/world.project.sqlite`; the game opens its publ
 `assets/generated/world.runtime.sqlite`. These are the shared defaults for cooking,
 profiling and iOS packaging too. Both local databases are ignored by Git.
 
-On a fresh checkout, initialize the editable world and its runtime once:
+After preparing the local terrain texture pack, generate the CPU bake inputs and
+initialize the editable world and its runtime once:
 
 ```bash
+python3 tools/prepare_terrain_bake.py
 cargo run -p yarra-world-cook -- init
 ```
 
@@ -78,7 +80,7 @@ also work inside compositions. Placement is deterministic across cells and uses 
 existing object LOD renderer. The local library currently has one tree; generated
 objects are render-only and are not individually editable. See
 [painting objects](docs/EDITOR.md#painting-trees-bushes-and-rocks) for the workflow.
-Runtime schema is **17**; recook an older runtime before launching the updated editor.
+Runtime schema is **18**; recook an older runtime before launching the updated editor.
 
 Run the game:
 
@@ -88,8 +90,10 @@ cargo run --release -p yarra-app-game
 
 Normal game launches use **75% world render resolution and 4× MSAA**, with UI
 rendered at native resolution. Prepared ground is enabled and optional GPU statistics
-are off. No audit or profiling arguments are needed. `--terrain-reference` selects
-the original ground material; `--grass-counters` enables GPU statistics.
+are off. The terrain hierarchy, distant baked ground and nearby detailed shading
+are enabled in both applications without flags. `--terrain-legacy` selects the old
+local renderer for diagnostics; `--grass-counters` enables GPU statistics.
+`--terrain-reference` only selects the original material in that legacy path.
 
 For fullscreen grass tests at the normal world scale, run
 `python3 tools/grass_profile.py run` in a local terminal. It records the actual
@@ -119,14 +123,15 @@ and editable curved cart roads. The pure compiler and its two-cell fixture are
 implemented together with source persistence, the layer/preset Inspector and paint UI. Run the offline fixture with
 `cargo run --offline -p yarra-environment-compile --example layered_meadow > /tmp/meadow.svg`.
 
-The next rendering foundation is specified in
+The terrain foundation is documented in
 [`docs/DISTANT_WORLD_RENDERING.md`](docs/DISTANT_WORLD_RENDERING.md): hierarchical
-terrain LOD, independent distant visibility, cheaper ground materials, and later
-cliff/forest proxies. Terrain precision, bounded production cooking and hierarchy products are implemented;
-an opt-in `--terrain-lod` geometry preview now draws the hierarchy in both apps.
-Recook once before previewing older flat worlds. Smooth morphing, production
-integration and distant materials remain planned. Meshlets
-are out of scope. The spec includes a separate 2 km mountain fixture and preview commands.
+terrain LOD, independent distant visibility, bounded material streaming, smooth
+morphing, surface contact and live regional authoring are integrated in both apps.
+Normal cooking and editor publication include distant materials. Existing runtimes
+without them need one recook. The old `--terrain-lod` option is no longer required.
+`--terrain-legacy` remains available for performance comparisons; it does not change
+what the editor publishes. Scenery proxies and sustained performance acceptance
+remain open. See the [hill test](docs/HILL_LANDSCAPE_TEST.md) for elevated viewpoints.
 
 The first curved-road source/compiler fixture is also available:
 `cargo run --offline -p yarra-environment-compile --example cart_track > /tmp/cart-track.svg`.

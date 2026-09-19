@@ -99,7 +99,7 @@ demo lighting and exposure use the procedural meadow reference values.
 
 Streamed heightfields with shared height/normal sampling are implemented; see
 [the terrain integration checkpoint](GROUND_COVER_ARCHITECTURE.md). Terrain geometry
-LOD and independently streamed baked ground have an opt-in preview with blended
+LOD and independently streamed baked ground are the default, with blended
 material levels and a bounded close-range surface cache. Tiled/prepared albedo,
 painted weights, micro normals and canopy shading now transition to the baked ground
 without adding near meshes; see the latest [distant-world checkpoint](DISTANT_WORLD_RENDERING.md).
@@ -109,12 +109,14 @@ and GPU grass placement interpolate the actual mesh triangles. Runtime schema 18
 and payload 8 require recooking existing source projects; source schema is unchanged.
 
 The cooker also writes a hierarchy from final road-deformed leaves, with conservative
-error/bounds and bounded node reads. The opt-in `--terrain-lod` preview draws these
+error/bounds and bounded node reads. The default renderer draws these
 nodes with pinned coarse ground composites and a bounded fine-tile cache when the
-publication includes baked materials, otherwise with the plain geometry diagnostic. Editor publication in this mode
-also bakes materials; it requires the prepared CPU input pack. Normal authoring still
-uses the detailed nearby renderer. The production
-source/environment cook uses one consistent snapshot, bounded cell/halo reads and
+publication includes baked materials, otherwise with the plain geometry diagnostic.
+Normal CLI cooking and editor publication bake materials and require the prepared CPU
+input pack. `--terrain-legacy` selects the old nearby renderer for comparisons; it
+does not disable editor material publication. `cook --geometry-only` is an explicit
+fixture/diagnostic option. The production source/environment cook uses one consistent
+snapshot, bounded cell/halo reads and
 staged writes; it no longer needs all spatial samples or output pages in memory.
 See [Distant world and terrain rendering](DISTANT_WORLD_RENDERING.md) for the limits,
 2 km acceptance results and renderer implementation sequence.

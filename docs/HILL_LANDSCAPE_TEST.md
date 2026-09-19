@@ -14,10 +14,10 @@ python3 tools/hill_landscape.py
 ```
 
 The launcher prepares `tmp/hill-landscape/project.sqlite` and `runtime.sqlite` on
-first use, then starts the release game with `--terrain-lod`. The character spawns
-at the hilltop lookout, looking southwest over the valley. Movement and camera controls
-work normally. Subsequent launches reuse the databases. The normal authoring world
-and normal game launch are unchanged.
+first use, then starts the release game with the default terrain hierarchy. The
+character spawns at the hilltop lookout, looking southwest over the valley. Movement
+and camera controls work normally. Subsequent launches reuse the databases. Regular
+launch commands continue to open the default authoring world.
 
 Other entry points:
 
@@ -39,6 +39,10 @@ fresh independent scene, pass `--directory tmp/hill-landscape-2`; generation ref
 to overwrite an existing project or bookmark directory. Extra application flags
 can follow `--`. The launcher uses the existing release rendering settings; it
 does not impose a new FPS cap or a smaller rendering resolution.
+
+Normal game and editor launches now use this terrain path without `--terrain-lod`.
+For a diagnostic comparison, append `-- --terrain-legacy` to the launcher command.
+This changes rendering only; the published landscape and its materials are shared.
 
 ## Scene and viewpoints
 

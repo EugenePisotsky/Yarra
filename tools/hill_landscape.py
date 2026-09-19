@@ -37,7 +37,7 @@ def main():
     if args.action == 'descent':
         view = project.with_suffix('.views') / 'summit.ron'
         extra = ['--render-repro', 'landscape-descent', '--render-prepass', *extra]
-    command = ['--terrain-lod', '--world-db', runtime, '--start-view', view, *extra]
+    command = ['--world-db', runtime, '--start-view', view, *extra]
     if args.action == 'editor':
         command += ['--project-db', project]
     cargo('yarra-app-editor' if args.action == 'editor' else 'yarra-app-game', command)
