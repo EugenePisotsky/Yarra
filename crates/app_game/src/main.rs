@@ -48,6 +48,7 @@ fn main() {
         .add_plugins(game_render::GameRenderPlugin);
 
     app.add_plugins(VegetationRenderPlugin)
+        .insert_resource(vegetation_render::VegetationDebugHotkeys(false))
         .insert_resource(
             VegetationDebugScene::new(VegetationScene {
                 catalog: vegetation::fixtures::reference_catalog(),
@@ -57,7 +58,11 @@ fn main() {
         )
         .add_systems(
             Update,
-            conform_vegetation_debug_to_streamed_terrain.after(engine::WorldStreamingSystems),
+            conform_vegetation_debug_to_streamed_terrain
+                .after(engine::WorldStreamingSystems)
+                .run_if(|settings: Res<VegetationDebugSettings>| {
+                    settings.profile_mode != vegetation_render::VegetationProfileMode::Disabled
+                }),
         );
 
     grass_bands::install(&mut app);
@@ -121,13 +126,18 @@ fn main() {
             .resource_mut::<terrain_render::TerrainCacheSettings>()
             .enabled = false;
     }
-    if std::env::args_os()
-        .any(|argument| argument == "--render-audit" || argument == "--render-repro")
-    {
-        app.add_plugins(render_audit::RenderAuditPlugin);
-    }
+    app.add_plugins(render_audit::RenderAuditPlugin);
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     metal_capture::install(&mut app);
+    let mut arguments = std::env::args();
+    if arguments.any(|arg| arg == "--cloud-quality") {
+        app.insert_resource(match arguments.next().as_deref() {
+            Some("off") => engine::CloudQuality::Off,
+            Some("balanced") => engine::CloudQuality::Balanced,
+            Some("high") => engine::CloudQuality::High,
+            _ => panic!("--cloud-quality requires off, balanced or high"),
+        });
+    }
     app.run();
 }
 
@@ -205,6 +215,7 @@ fn setup_vegetation_debug_legend(
             ..default()
         },
         VegetationDebugLegend,
+        engine::DiagnosticOverlay,
         Name::new("Vegetation V2 diagnostic legend"),
     ));
 }

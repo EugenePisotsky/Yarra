@@ -55,6 +55,8 @@ pub struct AtmosphereProfile {
     pub phases: [LightingPhase; 4],
     #[serde(default)]
     pub night: NightLighting,
+    #[serde(default)]
+    pub clouds: crate::clouds::CloudSettings,
 }
 
 pub const PHASE_NAMES: [&str; 4] = ["Night", "Sunrise", "Day", "Sunset"];
@@ -102,6 +104,7 @@ impl Default for AtmosphereProfile {
                 },
             ],
             night: NightLighting::default(),
+            clouds: Default::default(),
         }
     }
 }
@@ -141,6 +144,7 @@ impl AtmosphereProfile {
         {
             return Err("Atmosphere settings contain an invalid color, time or physical range");
         }
+        self.clouds.validate()?;
         Ok(())
     }
 }
@@ -214,12 +218,22 @@ pub fn evaluate(profile: &AtmosphereProfile, phase: f32) -> EvaluatedAtmosphere 
         let b = linear_rgb(b);
         std::array::from_fn(|i| mix(a[i], b[i]))
     };
+    let overcast = if profile.clouds.enabled {
+        ((profile.clouds.coverage - 0.6) / 0.35).clamp(0., 1.) * profile.clouds.density.min(1.)
+    } else {
+        0.
+    };
+    let mut ambient_linear = mix_color(a.ambient_srgb, b.ambient_srgb);
+    let mean = ambient_linear.iter().sum::<f32>() / 3.;
+    for c in &mut ambient_linear {
+        *c += (mean - *c) * overcast * 0.35;
+    }
     EvaluatedAtmosphere {
         direction_to_sun,
         sun_linear: mix_color(a.sun_srgb, b.sun_srgb),
         sun_lux: mix(a.sun_lux, b.sun_lux),
-        ambient_linear: mix_color(a.ambient_srgb, b.ambient_srgb),
-        ambient_lux: mix(a.ambient_lux, b.ambient_lux),
+        ambient_linear,
+        ambient_lux: mix(a.ambient_lux, b.ambient_lux) * (1. + overcast * 0.4),
         direction_to_moon: [
             moon_azimuth.sin() * moon_elevation.cos(),
             moon_elevation.sin(),

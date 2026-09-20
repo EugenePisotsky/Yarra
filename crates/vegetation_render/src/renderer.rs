@@ -558,6 +558,7 @@ struct VegetationPipelineKey {
     target_format: TextureFormat,
     view_layout_bits: u32,
     blade_bands: VegetationBladeBands,
+    clouds: bool,
 }
 
 struct VegetationPipelineSpecializer {
@@ -579,6 +580,17 @@ impl Specializer<RenderPipeline> for VegetationPipelineSpecializer {
                     key.view_layout_bits,
                 ));
         descriptor.layout = vec![view_layout.main_layout, self.draw_layout.clone()];
+        if key.clouds {
+            descriptor.layout.push(atmosphere::clouds::surface_layout());
+            descriptor.vertex.shader_defs.extend([
+                "YARRA_CLOUDS".into(),
+                ShaderDefVal::UInt("MATERIAL_BIND_GROUP".into(), 2),
+            ]);
+            descriptor.fragment.as_mut().unwrap().shader_defs.extend([
+                "YARRA_CLOUDS".into(),
+                ShaderDefVal::UInt("MATERIAL_BIND_GROUP".into(), 2),
+            ]);
+        }
         descriptor.multisample.count = key.msaa.samples();
         if MeshPipelineViewLayoutKey::from_bits_retain(key.view_layout_bits)
             .contains(MeshPipelineViewLayoutKey::ATMOSPHERE)
@@ -1047,6 +1059,10 @@ fn prepare(
     mut buffers: ResMut<VegetationBuffers>,
     mut candidate_cache: ResMut<candidate_cache::CandidateCache>,
 ) {
+    if settings.profile_mode == VegetationProfileMode::Disabled {
+        buffers.active = false;
+        return;
+    }
     let Some(scene) = scene else {
         buffers.active = false;
         return;
@@ -2158,6 +2174,7 @@ fn queue(
     view_key_cache: Res<ViewKeyCache>,
     views: Query<(Entity, &ExtractedView, &Msaa), With<VegetationDebugView>>,
     draw_entity: Query<(Entity, &MainEntity), With<VegetationDebugDraw>>,
+    clouds: Option<Res<atmosphere::clouds::CloudShadowGpu>>,
 ) {
     let Ok((draw_entity, draw_main_entity)) = draw_entity.single() else {
         return;
@@ -2188,6 +2205,7 @@ fn queue(
                 target_format: view.target_format,
                 view_layout_bits: MeshPipelineViewLayoutKey::from(*mesh_view_key).bits(),
                 blade_bands: settings.blade_bands,
+                clouds: clouds.is_some(),
             },
         ) else {
             continue;
@@ -2219,7 +2237,11 @@ type DrawVegetationDebug = (
 struct DrawVegetationDebugIndirect;
 
 impl<P: PhaseItem> RenderCommand<P> for DrawVegetationDebugIndirect {
-    type Param = (SRes<VegetationBuffers>, Option<SRes<DiagnosticsRecorder>>);
+    type Param = (
+        SRes<VegetationBuffers>,
+        Option<SRes<DiagnosticsRecorder>>,
+        Option<SRes<atmosphere::clouds::CloudShadowGpu>>,
+    );
     type ViewQuery = ();
     type ItemQuery = ();
 
@@ -2227,13 +2249,16 @@ impl<P: PhaseItem> RenderCommand<P> for DrawVegetationDebugIndirect {
         _item: &P,
         _view: ROQueryItem<'w, '_, Self::ViewQuery>,
         _entity: Option<ROQueryItem<'w, '_, Self::ItemQuery>>,
-        (buffers, diagnostics): SystemParamItem<'w, '_, Self::Param>,
+        (buffers, diagnostics, clouds): SystemParamItem<'w, '_, Self::Param>,
         pass: &mut TrackedRenderPass<'w>,
     ) -> RenderCommandResult {
         let buffers = buffers.into_inner();
         let diagnostics = diagnostics.as_deref();
         let draw_span = diagnostics.pass_span(pass, "vegetation_v2_draw");
         pass.set_bind_group(1, &buffers.draw_bind_group, &[]);
+        if let Some(clouds) = clouds {
+            pass.set_bind_group(2, &clouds.into_inner().0, &[]);
+        }
         pass.set_index_buffer(buffers.topology_indices.slice(..), IndexFormat::Uint16);
         pass.draw_indexed_indirect(&buffers.args, 0);
         pass.draw_indexed_indirect(&buffers.args, 20);
@@ -2699,7 +2724,7 @@ mod tests {
         let mut output = String::new();
         for line in source.lines() {
             match line {
-                "#ifdef ATMOSPHERE" => enabled.push(false),
+                "#ifdef ATMOSPHERE" | "#ifdef YARRA_CLOUDS" => enabled.push(false),
                 "#ifdef BLADE_BAND_STUDY" => enabled.push(mode != VegetationBladeBands::Off),
                 "#ifdef BLADE_BAND_MASK" => enabled.push(matches!(
                     mode,

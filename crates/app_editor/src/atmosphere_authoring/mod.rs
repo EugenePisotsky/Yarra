@@ -56,6 +56,9 @@ struct Controls {
     target: usize,
     published: bool,
     exposure: Option<f32>,
+    cloud_seconds: f64,
+    clouds_playing: bool,
+    cloud_speed: f32,
 }
 impl Controls {
     fn new(p: &AtmosphereProfile) -> Self {
@@ -66,6 +69,18 @@ impl Controls {
             target: 1,
             published: false,
             exposure: None,
+            cloud_seconds: 0.,
+            clouds_playing: false,
+            cloud_speed: 1.,
+        }
+    }
+    fn advance(&mut self, seconds: f64, day_seconds: f32) {
+        if self.playing {
+            self.phase = (f64::from(self.phase) + seconds * f64::from(self.speed / day_seconds))
+                .rem_euclid(1.) as f32;
+        }
+        if self.clouds_playing {
+            self.cloud_seconds += seconds * f64::from(self.cloud_speed);
         }
     }
 }
@@ -102,12 +117,17 @@ fn sync(
     time: Res<Time>,
     mode: Res<PreviewModeState>,
     mut pacing: ResMut<EditorFramePacing>,
+    mut cloud_clock: Option<ResMut<atmosphere::clouds::CloudClock>>,
 ) {
     pacing.release(FramePacingOwner::AtmospherePreview);
+    if let Some(clock) = cloud_clock.as_deref_mut() {
+        clock.playing = false;
+    }
     if *workspace.get() != EditorWorkspace::World {
         state.owner = AtmosphereOwner::Study;
         for controls in preview.worlds.values_mut() {
             controls.playing = false;
+            controls.clouds_playing = false;
         }
         preview.gameplay = None;
         return;
@@ -126,6 +146,12 @@ fn sync(
             .is_none_or(|(space, _, _)| *space != id)
         {
             preview.gameplay = Some((id, entry.current.clone(), entry.current.initial_phase));
+            if let Some(clock) = cloud_clock.as_deref_mut() {
+                clock.seconds = 0.;
+            }
+        }
+        if let Some(clock) = cloud_clock.as_deref_mut() {
+            clock.playing = true;
         }
         // Match the standalone game's fixed startup phase until game-clock ownership lands.
         let (_, profile, phase) = preview.gameplay.as_ref().unwrap();
@@ -139,12 +165,6 @@ fn sync(
         .worlds
         .entry(id)
         .or_insert_with(|| Controls::new(&entry.current));
-    if controls.playing {
-        controls.phase = (controls.phase
-            + time.delta_secs() * controls.speed / entry.current.day_seconds)
-            .rem_euclid(1.0);
-        pacing.request(FramePacingOwner::AtmospherePreview);
-    }
     let profile = if controls.published {
         catalog
             .world_space(id)
@@ -153,6 +173,13 @@ fn sync(
     } else {
         &entry.current
     };
+    controls.advance(time.delta_secs_f64(), profile.day_seconds);
+    if controls.playing || controls.clouds_playing {
+        pacing.request(FramePacingOwner::AtmospherePreview);
+    }
+    if let Some(clock) = cloud_clock.as_deref_mut() {
+        clock.seconds = controls.cloud_seconds;
+    }
     state.profile = profile.clone();
     state.phase = controls.phase;
     state.exposure_override = controls.exposure;
@@ -172,6 +199,7 @@ fn draw(
     project: Res<ProjectEditorStore>,
     mode: Res<PreviewModeState>,
     mut cameras: Query<&mut WorldEnvironmentView>,
+    mut cloud_quality: ResMut<engine::CloudQuality>,
 ) {
     let Some(root) = frame.0.as_mut() else {
         return;
@@ -225,6 +253,17 @@ fn draw(
             ui.separator();
             ui.strong("Preview · temporary");
             ui.horizontal(|ui| {
+                ui.label("Cloud quality");
+                for (quality, label) in [(engine::CloudQuality::Off, "Off"),
+                    (engine::CloudQuality::Balanced, "Balanced"), (engine::CloudQuality::High, "High")] {
+                    ui.selectable_value(&mut *cloud_quality, quality, label).on_hover_text(match quality {
+                        engine::CloudQuality::Off => "Hide clouds and their direct shadows.",
+                        engine::CloudQuality::Balanced => "Reuse a cached sky with a limited refresh rate to reduce GPU load.",
+                        engine::CloudQuality::High => "Render clouds every frame. More detail and smoother fast previews, with higher GPU load.",
+                    });
+                }
+            });
+            ui.horizontal(|ui| {
                 for i in [1, 2, 3, 0] {
                     if ui.button(PHASE_NAMES[i]).clicked() {
                         controls.phase = PHASE_TIMES[i];
@@ -232,21 +271,19 @@ fn draw(
                     }
                 }
             });
-            let mut hour = controls.phase * 24.0;
-            if ui
-                .add(
-                    egui::Slider::new(&mut hour, 0.0..=23.999)
-                        .text("Hour")
-                        .fixed_decimals(2),
-                )
-                .changed()
-            {
-                controls.phase = hour / 24.0;
-                controls.playing = false;
-            }
+            preview_hour(ui, controls);
             ui.horizontal(|ui| {
                 ui.checkbox(&mut controls.playing, "Play");
                 ui.add(egui::Slider::new(&mut controls.speed, 1.0..=120.0).text("Speed ×"));
+            });
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut controls.clouds_playing, "Animate clouds");
+                if ui.button("Reset clouds").clicked() { controls.cloud_seconds = 0.; }
+            });
+            ui.horizontal(|ui| {
+                ui.add(egui::Slider::new(&mut controls.cloud_speed, 1.0..=30.0)
+                    .clamping(egui::SliderClamping::Edits).text("Cloud speed ×"));
+                ui.label(format!("{:.1} s", controls.cloud_seconds));
             });
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut controls.published, false, "Edited");
@@ -287,6 +324,25 @@ fn draw(
                 && !dense.has_any_conflict();
             ui.add_enabled_ui(can_edit, |ui| {
                 ui.checkbox(&mut edited.outdoor, "Outdoor sky and celestial lighting");
+                egui::CollapsingHeader::new("Clouds").default_open(true).show(ui, |ui| {
+                    let c = &mut edited.clouds;
+                    ui.horizontal(|ui| {
+                        if ui.button("Clear").clicked() { c.enabled = false; }
+                        if ui.button("Scattered").clicked() { *c = world::clouds::CloudSettings::scattered(); }
+                        if ui.button("Overcast").clicked() { *c = world::clouds::CloudSettings::overcast(); }
+                    });
+                    ui.checkbox(&mut c.enabled, "Cloud layer");
+                    ui.add(egui::Slider::new(&mut c.coverage,0.0..=1.0).text("Coverage"));
+                    ui.add(egui::Slider::new(&mut c.density,0.0..=3.0).text("Density"));
+                    ui.add(egui::Slider::new(&mut c.base_metres,300.0..=6000.0).text("Base · m"));
+                    ui.add(egui::Slider::new(&mut c.thickness_metres,100.0..=3000.0).text("Thickness · m"));
+                    ui.add(egui::Slider::new(&mut c.size_metres,300.0..=6000.0).text("Size · m"));
+                    ui.add(egui::Slider::new(&mut c.erosion,0.0..=1.0).text("Edge detail"));
+                    ui.add(egui::Slider::new(&mut c.wind_degrees,-180.0..=180.0).text("Wind heading °"));
+                    ui.add(egui::Slider::new(&mut c.wind_metres_per_second,0.0..=100.0).text("Wind · m/s"));
+                    ui.horizontal(|ui| { ui.label("Seed"); ui.add(egui::DragValue::new(&mut c.seed)); });
+                    ui.small("Ground-view cloud layer. Use Animate clouds to preview wind independently of the day cycle.");
+                });
                 egui::CollapsingHeader::new("Sun and sky")
                     .default_open(true)
                     .show(ui, |ui| {
@@ -432,6 +488,23 @@ fn draw(
             }
         });
     windows.set_open(WINDOW.id, open);
+}
+fn preview_hour(ui: &mut egui::Ui, controls: &mut Controls) {
+    let mut hour = controls.phase * 24.0;
+    // Always-clamping also rounds every frame, marking an advancing clock as an
+    // edit and immediately stopping Play. Only clamp/round actual user edits.
+    if ui
+        .add(
+            egui::Slider::new(&mut hour, 0.0..=23.999)
+                .clamping(egui::SliderClamping::Edits)
+                .text("Hour")
+                .fixed_decimals(2),
+        )
+        .changed()
+    {
+        controls.phase = hour / 24.0;
+        controls.playing = false;
+    }
 }
 fn color(ui: &mut egui::Ui, label: &str, value: &mut [f32; 3]) {
     ui.horizontal(|ui| {

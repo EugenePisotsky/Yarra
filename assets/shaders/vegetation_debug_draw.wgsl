@@ -1,3 +1,6 @@
+#ifdef YARRA_CLOUDS
+#import "shaders/clouds/surface.wgsl"::cloud_visibility
+#endif
 #ifdef ATMOSPHERE
 #import bevy_pbr::atmosphere::functions::{clamp_to_surface, calculate_visible_sun_ratio}
 #endif
@@ -791,6 +794,9 @@ fn fragment(
     // Direct-light energy must use the same camera exposure as Bevy's PBR path. Normalizing the
     // directional radiance to a tint made a 100,000-lux sun indistinguishable from a dim light.
     var atmospheric_sun = camera.sun_radiance.xyz;
+#ifdef YARRA_CLOUDS
+    atmospheric_sun *= cloud_visibility(input.world_position, camera.sun_direction.xyz);
+#endif
 #ifdef ATMOSPHERE
     let atmosphere = view_bindings::atmosphere;
     let p_as = (atmosphere.world_to_atmosphere * vec4(input.world_position, 1.0)).xyz;

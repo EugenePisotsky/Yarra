@@ -98,6 +98,7 @@ impl Plugin for WorldStreamingPlugin {
             .init_resource::<WorldDetailDemand>()
             .init_resource::<source_demand::SourceView>()
             .init_resource::<StreamingStats>()
+            .init_resource::<VisualLodScale>()
             .add_systems(Startup, (start_database_worker, create_world_render_assets))
             .add_systems(
                 Update,
@@ -2066,7 +2067,17 @@ fn attach_page(
     })
 }
 
+/// Multiplies projected size for visual LOD selection; collision is unchanged.
+#[derive(Resource, Clone, Copy, Debug)]
+pub struct VisualLodScale(pub f32);
+impl Default for VisualLodScale {
+    fn default() -> Self {
+        Self(1.0)
+    }
+}
+
 fn update_screen_space_lods(
+    lod_scale: Res<VisualLodScale>,
     camera: Single<(&Camera, &GlobalTransform), With<WorldViewCamera>>,
     mut objects: Query<(&GlobalTransform, &mut WorldAssetRoot, &mut ScreenSpaceLod)>,
 ) {
@@ -2092,7 +2103,7 @@ fn update_screen_space_lods(
         let target = select_lod_index(
             screen_lod.variants.len(),
             current,
-            projected_height,
+            projected_height * lod_scale.0.clamp(0.25, 4.0),
             |index| screen_lod.variants[index].minimum_screen_height,
         );
         if target == current {

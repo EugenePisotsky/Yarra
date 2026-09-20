@@ -1,5 +1,37 @@
 use super::*;
 use crate::editing::EditorObjectWorkingSet;
+
+#[test]
+fn displaying_a_running_clock_does_not_pause_or_quantize_it() {
+    let context = egui::Context::default();
+    let mut controls = Controls::new(&AtmosphereProfile::default());
+    controls.phase = 0.99999;
+    controls.playing = true;
+    controls.clouds_playing = true;
+    controls.cloud_speed = 10.;
+    for _ in 0..120 {
+        let phase = controls.phase;
+        let _ = context.run_ui(Default::default(), |ui| {
+            preview_hour(ui, &mut controls);
+        });
+        assert!(controls.playing, "rendering an idle slider stopped Play");
+        assert_eq!(controls.phase, phase);
+        controls.advance(1. / 60., 1200.);
+    }
+    assert!((controls.phase - 0.0333233).abs() < 0.00001);
+    assert!((controls.cloud_seconds - 20.).abs() < 0.00001);
+    controls.playing = false;
+    let phase = controls.phase;
+    controls.advance(1., 1200.);
+    assert_eq!(controls.phase, phase);
+    assert!((controls.cloud_seconds - 30.).abs() < 0.00001);
+    controls.clouds_playing = false;
+    controls.playing = true;
+    controls.advance(1., 1200.);
+    assert!(controls.phase > phase);
+    assert!((controls.cloud_seconds - 30.).abs() < 0.00001);
+}
+
 #[test]
 fn preview_is_transient_and_color_drag_is_one_undo_across_a_save() {
     let mut dense = DenseDomainWorkingSets::default();
@@ -16,6 +48,8 @@ fn preview_is_transient_and_color_drag_is_one_undo_across_a_save() {
     let mut controls = Controls::new(&source.atmosphere);
     controls.phase = 0.75;
     controls.playing = true;
+    controls.clouds_playing = true;
+    controls.cloud_seconds = 123.;
     assert_eq!(dense.dirty_count(), 0);
     let before = source.atmosphere.clone();
     dense.atmospheres.gesture = Some((source.id, before.clone()));
@@ -50,12 +84,14 @@ fn preview_is_transient_and_color_drag_is_one_undo_across_a_save() {
     assert!(history.redo(&mut objects, &mut dense));
     assert_eq!(dense.dirty_count(), 0);
     assert_eq!(controls.phase, 0.75);
+    assert_eq!(controls.cloud_seconds, 123.);
 }
 #[test]
 fn recovery_and_conflict_keep_the_local_profile() {
     let mut set = working::WorkingSet::default();
     let mut changed = AtmosphereProfile::default();
     changed.exposure_ev100 = 12.0;
+    changed.clouds = world::clouds::CloudSettings::overcast();
     let id = WorldSpaceId(1);
     let snapshot = working::Snapshot {
         space: id,

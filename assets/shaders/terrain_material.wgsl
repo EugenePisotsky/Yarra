@@ -1,3 +1,4 @@
+#import "shaders/clouds/pbr_lighting.wgsl"::apply_pbr_lighting
 #import bevy_pbr::mesh_view_bindings as canopy_view
 #import "shaders/grass_canopy.wgsl"::{canopy_visibility_at}
 
@@ -10,7 +11,6 @@
     forward_io::{FragmentOutput, VertexOutput},
     pbr_fragment::pbr_input_from_vertex_output,
     pbr_functions::{
-        apply_pbr_lighting,
         calculate_tbn_mikktspace,
         main_pass_post_lighting_processing,
     },

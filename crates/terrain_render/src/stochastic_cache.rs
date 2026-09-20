@@ -479,6 +479,8 @@ mod tests {
                     .resource_mut::<Assets<TerrainMaterial>>()
                     .add(TerrainMaterial {
                         source_only: false,
+                        cloud_parameters: atmosphere::clouds::fallback_parameters(),
+                        cloud_shadows: None,
                         shading_mode: super::super::TerrainShadingMode::Production,
                         stochastic_cached: false,
                         prepared: false,
@@ -561,6 +563,8 @@ mod tests {
             .resource_mut::<Assets<TerrainMaterial>>()
             .add(TerrainMaterial {
                 source_only: false,
+                cloud_parameters: atmosphere::clouds::fallback_parameters(),
+                cloud_shadows: None,
                 shading_mode: super::super::TerrainShadingMode::Production,
                 stochastic_cached: false,
                 prepared: false,

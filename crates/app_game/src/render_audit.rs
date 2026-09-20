@@ -1,13 +1,12 @@
-//! Opt-in A/B controls with normal gameplay input and an explicit profiling lock.
+//! Shared settings backend for the in-game Performance panel and CLI reproductions.
 mod baseline;
 mod logging;
+mod performance;
 mod repro;
+mod timing;
 
 use bevy::{
-    core_pipeline::prepass::DepthPrepass,
-    diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin},
-    light::ShadowFilteringMethod,
-    prelude::*,
+    core_pipeline::prepass::DepthPrepass, light::ShadowFilteringMethod, prelude::*,
     window::PrimaryWindow,
 };
 use engine::{
@@ -29,11 +28,17 @@ pub struct RenderAuditPlugin;
 
 impl Plugin for RenderAuditPlugin {
     fn build(&self, app: &mut App) {
+        let audit_logging =
+            std::env::args_os().any(|a| a == "--render-audit" || a == "--render-repro");
         app.init_resource::<AuditSettings>()
             .init_resource::<baseline::BaselineRun>()
             .add_systems(
                 PostStartup,
-                (sync_render_settings.before(GameRenderSetup), setup),
+                (
+                    performance::initialize,
+                    sync_render_settings.before(GameRenderSetup),
+                )
+                    .chain(),
             )
             .add_systems(
                 Update,
@@ -44,7 +49,6 @@ impl Plugin for RenderAuditPlugin {
                     route_input,
                     sync_render_settings,
                     apply_settings,
-                    status,
                 )
                     .chain()
                     .before(GameRenderSystems)
@@ -58,8 +62,12 @@ impl Plugin for RenderAuditPlugin {
             )
             .add_systems(
                 PostUpdate,
-                logging::log_status.after(TransformSystems::Propagate),
+                logging::log_status
+                    .after(TransformSystems::Propagate)
+                    .run_if(move || audit_logging),
             );
+        performance::install(app);
+        app.add_plugins(timing::TimingPlugin);
         // Timed native-pacing observations can keep the normal gameplay camera
         // and controls. A reproduction route is optional, not a profiling prerequisite.
         crate::profile::install(app);
@@ -91,7 +99,7 @@ enum Scene {
     Grass,
 }
 
-#[derive(Resource, Clone)]
+#[derive(Resource, Clone, Debug)]
 struct AuditSettings {
     scene: Scene,
     grass: VegetationProfileMode,
@@ -104,12 +112,23 @@ struct AuditSettings {
     scale_index: usize,
     msaa: Msaa,
     counters: bool,
+    gpu_pass_timings: bool,
     wind: bool,
     controls_locked: bool,
     render_path: AuditRenderPath,
     show_ui: bool,
     baseline_phase: Option<&'static str>,
     changed_at: f64,
+    clouds: engine::CloudQuality,
+    sky: bool,
+    bloom: bool,
+    hide_terrain: bool,
+    hide_objects: bool,
+    density: vegetation_render::VegetationDensityMode,
+    terrain_detail: usize,
+    overlays: bool,
+    object_detail: usize,
+    lighting: VegetationLightingMode,
 }
 
 impl Default for AuditSettings {
@@ -131,12 +150,23 @@ impl Default for AuditSettings {
             msaa: render.msaa,
             // Statistics atomics are explicit on every platform, including audit startup.
             counters: std::env::args_os().any(|arg| arg == "--grass-counters"),
+            gpu_pass_timings: std::env::args_os().any(|arg| arg == "--gpu-timing-detail"),
             wind: true,
             controls_locked: false,
             render_path: render.render_path,
             show_ui: render.show_ui,
             baseline_phase: None,
             changed_at: 0.0,
+            clouds: engine::CloudQuality::default(),
+            sky: true,
+            bloom: true,
+            hide_terrain: false,
+            hide_objects: false,
+            density: vegetation_render::VegetationDensityMode::Balanced,
+            terrain_detail: 1,
+            overlays: false,
+            object_detail: 1,
+            lighting: VegetationLightingMode::RoundedGloss,
         }
     }
 }
@@ -172,24 +202,49 @@ impl AuditSettings {
 enum Control {
     Scene,
     Grass,
+    GrassEnabled,
     Shading,
     GroundMaterial,
     Shadows,
     Prepass,
     Scale,
     Counters,
+    GpuPassTimings,
     Wind,
     Lock,
     Reset,
     RenderPath,
     Antialiasing,
-    Baseline,
+    Clouds,
+    Sky,
+    Bloom,
+    Terrain,
+    Objects,
+    Density,
+    TerrainDetail,
+    Near,
+    Overlays,
+    ObjectDetail,
 }
 
 impl Control {
     fn label(self, s: &AuditSettings) -> String {
         match self {
+            Self::ObjectDetail => format!("Object LOD size: {}x", [0.5, 1.0, 2.0][s.object_detail]),
+            Self::Clouds => format!("Clouds: {:?}", s.clouds),
+            Self::Sky => format!("Sky + haze pass: {}", on_off(s.sky)),
+            Self::Bloom => format!("Bloom pass: {}", on_off(s.bloom)),
+            Self::Terrain => format!("Terrain draws: {}", on_off(!s.hide_terrain)),
+            Self::Objects => format!("Object draws: {}", on_off(!s.hide_objects)),
+            Self::Density => format!("Grass density: {}", s.density.label()),
+            Self::TerrainDetail => format!("Terrain error: {} px", [1, 2, 4, 8][s.terrain_detail]),
+            Self::Near => format!("Near terrain detail: {}", on_off(!s.terrain_near_disabled)),
+            Self::Overlays => format!("Legacy overlays: {}", on_off(s.overlays)),
             Self::Scene => format!("Scene: {:?}", s.scene),
+            Self::GrassEnabled => format!(
+                "Grass vegetation: {}",
+                on_off(s.grass_mode() != VegetationProfileMode::Disabled)
+            ),
             Self::Grass => format!("Grass: {}", s.grass_mode().label()),
             Self::Shading if s.scene == Scene::Ground => {
                 format!("Ground: {}", s.terrain_shading().label())
@@ -209,20 +264,15 @@ impl Control {
             Self::Prepass => format!("Depth prepass: {}", on_off(s.prepass)),
             Self::Scale => format!("Resolution: {}%", [100, 75, 50][s.scale_index]),
             Self::Counters => format!("GPU counters: {}", on_off(s.counters)),
-            Self::Wind => format!("Wind: {}", on_off(s.wind)),
+            Self::GpuPassTimings => format!("GPU pass timings: {}", on_off(s.gpu_pass_timings)),
+            Self::Wind => format!("Grass wind: {}", on_off(s.wind)),
             Self::Lock => format!("Lock controls: {}", on_off(s.controls_locked)),
-            Self::Reset => "Reset baseline".into(),
+            Self::Reset => "Reset launch settings".into(),
             Self::RenderPath => format!("Render: {}", s.render_path.label()),
             Self::Antialiasing => match s.msaa {
                 Msaa::Off => "AA: off".into(),
                 _ => format!("AA: {}x MSAA", s.msaa.samples()),
             },
-            Self::Baseline => if s.baseline_phase.is_some() {
-                "Stop baseline test"
-            } else {
-                "Baseline test (160s)"
-            }
-            .into(),
         }
     }
 }
@@ -232,83 +282,14 @@ fn on_off(enabled: bool) -> &'static str {
 }
 
 #[derive(Component)]
-struct AuditStatus;
-
-#[derive(Component)]
 struct AuditPanel;
 
 #[derive(Component)]
 struct AuditMesh {
     original_visibility: Visibility,
+    override_active: bool,
     terrain: Option<Handle<TerrainMaterial>>,
     composite: Option<Handle<TerrainCompositeMaterial>>,
-}
-
-fn setup(mut commands: Commands, settings: Res<AuditSettings>) {
-    commands
-        .spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                right: px(12),
-                bottom: px(12),
-                width: px(432),
-                padding: UiRect::all(px(8)),
-                flex_direction: FlexDirection::Column,
-                row_gap: px(6),
-                ..default()
-            },
-            BackgroundColor(Color::srgba(0.02, 0.03, 0.04, 0.96)),
-            GlobalZIndex(100),
-            AuditPanel,
-        ))
-        .with_children(|panel| {
-            let title = if cfg!(target_os = "ios") {
-                "Render audit | target 60 FPS"
-            } else {
-                "Render audit | VSync"
-            };
-            panel.spawn((Text::new(title), font(13.0)));
-            panel.spawn((Text::new("Starting..."), font(12.0), AuditStatus));
-            panel
-                .spawn(Node {
-                    flex_wrap: FlexWrap::Wrap,
-                    column_gap: px(6),
-                    row_gap: px(6),
-                    ..default()
-                })
-                .with_children(|row| {
-                    for control in [
-                        Control::Scene,
-                        Control::Grass,
-                        Control::Shading,
-                        Control::GroundMaterial,
-                        Control::Shadows,
-                        Control::Prepass,
-                        Control::Scale,
-                        Control::Counters,
-                        Control::Wind,
-                        Control::Lock,
-                        Control::Reset,
-                        Control::RenderPath,
-                        Control::Baseline,
-                        Control::Antialiasing,
-                    ] {
-                        row.spawn((
-                            Button,
-                            control,
-                            Node {
-                                width: px(204),
-                                min_height: px(34),
-                                padding: UiRect::all(px(6)),
-                                align_items: AlignItems::Center,
-                                ..default()
-                            },
-                            BackgroundColor(Color::srgb(0.13, 0.19, 0.23)),
-                        ))
-                        .with_child((Text::new(control.label(&settings)), font(12.0)));
-                    }
-                });
-        });
 }
 
 fn font(size: f32) -> TextFont {
@@ -321,21 +302,48 @@ fn font(size: f32) -> TextFont {
 fn buttons(
     interactions: Query<(&Interaction, &Control), Changed<Interaction>>,
     mut s: ResMut<AuditSettings>,
-    mut baseline: ResMut<baseline::BaselineRun>,
     time: Res<Time>,
+    panel: Res<performance::PanelState>,
 ) {
+    if panel.recording() {
+        return;
+    }
     for (interaction, control) in &interactions {
         if *interaction != Interaction::Pressed {
-            continue;
-        }
-        if matches!(control, Control::Baseline) {
-            baseline.toggle_requested = true;
             continue;
         }
         if s.baseline_phase.is_some() {
             continue;
         }
         match control {
+            Control::ObjectDetail => s.object_detail = (s.object_detail + 1) % 3,
+            Control::Clouds => {
+                s.clouds = match s.clouds {
+                    engine::CloudQuality::Off => engine::CloudQuality::Balanced,
+                    engine::CloudQuality::Balanced => engine::CloudQuality::High,
+                    engine::CloudQuality::High => engine::CloudQuality::Off,
+                }
+            }
+            Control::Sky => s.sky = !s.sky,
+            Control::Bloom => s.bloom = !s.bloom,
+            Control::Terrain => s.hide_terrain = !s.hide_terrain,
+            Control::Objects => s.hide_objects = !s.hide_objects,
+            Control::Density => {
+                s.density = match s.density {
+                    vegetation_render::VegetationDensityMode::Balanced => {
+                        vegetation_render::VegetationDensityMode::FullReference
+                    }
+                    vegetation_render::VegetationDensityMode::FullReference => {
+                        vegetation_render::VegetationDensityMode::Authored
+                    }
+                    vegetation_render::VegetationDensityMode::Authored => {
+                        vegetation_render::VegetationDensityMode::Balanced
+                    }
+                }
+            }
+            Control::TerrainDetail => s.terrain_detail = (s.terrain_detail + 1) % 4,
+            Control::Near => s.terrain_near_disabled = !s.terrain_near_disabled,
+            Control::Overlays => s.overlays = !s.overlays,
             Control::Scene => {
                 s.scene = match s.scene {
                     Scene::Current => Scene::Clear,
@@ -344,6 +352,13 @@ fn buttons(
                     Scene::Grass => Scene::Current,
                 };
                 s.grass = VegetationProfileMode::Full;
+            }
+            Control::GrassEnabled => {
+                s.grass = if s.grass == VegetationProfileMode::Disabled {
+                    VegetationProfileMode::Full
+                } else {
+                    VegetationProfileMode::Disabled
+                }
             }
             Control::Grass => {
                 s.grass = match s.grass {
@@ -374,6 +389,7 @@ fn buttons(
                 s.scale_index = (s.scale_index + 1) % 3;
             }
             Control::Counters => s.counters = !s.counters,
+            Control::GpuPassTimings => s.gpu_pass_timings = !s.gpu_pass_timings,
             Control::Wind => s.wind = !s.wind,
             Control::Lock => {
                 s.controls_locked = !s.controls_locked;
@@ -381,7 +397,7 @@ fn buttons(
                     s.grass = VegetationProfileMode::Full;
                 }
             }
-            Control::Reset => *s = AuditSettings::default(),
+            Control::Reset => *s = panel.baseline.clone(),
             Control::RenderPath => {
                 s.render_path = match s.render_path {
                     AuditRenderPath::Composite => AuditRenderPath::Direct,
@@ -396,7 +412,6 @@ fn buttons(
                     _ => Msaa::Off,
                 };
             }
-            Control::Baseline => unreachable!(),
         }
         s.changed_at = time.elapsed_secs_f64();
     }
@@ -476,15 +491,26 @@ fn apply_settings(
     mut grass: ResMut<VegetationDebugSettings>,
     mut wind: ResMut<VegetationWind>,
     mut prepared: ResMut<terrain_render::TerrainPreparedSettings>,
+    mut clouds: ResMut<engine::CloudQuality>,
+    mut atmosphere: ResMut<engine::AtmospherePresentation>,
+    mut lod: ResMut<engine::TerrainLodPreview>,
+    mut object_lod: ResMut<engine::VisualLodScale>,
 ) {
     if !s.is_changed() {
         return;
     }
+    object_lod.0 = [0.5, 1.0, 2.0][s.object_detail];
+    *clouds = s.clouds;
+    atmosphere.sky_and_haze = s.sky;
+    atmosphere.bloom = s.bloom;
+    lod.settings.refine_pixels = [1.0, 2.0, 4.0, 8.0][s.terrain_detail];
+    lod.settings.collapse_pixels = lod.settings.refine_pixels * 0.5;
+    grass.density_mode = s.density;
     grass.profile_mode = s.grass_mode();
     grass.lighting_mode = if s.unlit {
         VegetationLightingMode::UnlitDiagnostic
     } else {
-        VegetationLightingMode::RoundedGloss
+        s.lighting
     };
     grass.gpu_counters_enabled = s.counters;
     wind.enabled = s.wind;
@@ -506,6 +532,7 @@ fn apply_settings(
 fn apply_meshes(
     mut commands: Commands,
     s: Res<AuditSettings>,
+    new_meshes: Query<(), Added<Mesh3d>>,
     mut materials: ResMut<Assets<TerrainMaterial>>,
     mut composites: ResMut<Assets<TerrainCompositeMaterial>>,
     mut meshes: Query<
@@ -519,12 +546,21 @@ fn apply_meshes(
         With<Mesh3d>,
     >,
 ) {
+    if !s.is_changed()
+        && new_meshes.is_empty()
+        && s.scene == Scene::Current
+        && !s.hide_terrain
+        && !s.hide_objects
+    {
+        return;
+    }
     for (entity, mut visibility, material, composite, saved) in &mut meshes {
-        if saved.is_some() && !s.is_changed() {
+        if !s.is_changed() && saved.as_ref().is_some_and(|state| !state.override_active) {
             continue;
         }
         let initial = AuditMesh {
             original_visibility: *visibility,
+            override_active: false,
             terrain: material.map(|m| m.0.clone()),
             composite: composite.map(|m| m.0.clone()),
         };
@@ -533,13 +569,28 @@ fn apply_meshes(
         let mut initial = initial;
         let state = saved.as_deref_mut().unwrap_or(&mut initial);
         let terrain = state.terrain.is_some() || state.composite.is_some();
-        let desired = match s.scene {
-            Scene::Current => state.original_visibility,
-            Scene::Ground if terrain => Visibility::Visible,
-            _ => Visibility::Hidden,
+        let forced = match s.scene {
+            Scene::Current if (terrain && s.hide_terrain) || (!terrain && s.hide_objects) => {
+                Some(Visibility::Hidden)
+            }
+            Scene::Current => None,
+            Scene::Ground if terrain => Some(Visibility::Visible),
+            _ => Some(Visibility::Hidden),
         };
-        if *visibility != desired {
-            *visibility = desired;
+        if let Some(desired) = forced {
+            if !state.override_active {
+                state.original_visibility = *visibility;
+            }
+            state.override_active = true;
+            if *visibility != desired {
+                *visibility = desired;
+            }
+        } else if state.override_active {
+            *visibility = state.original_visibility;
+            state.override_active = false;
+        }
+        if !is_new && !s.is_changed() {
+            continue;
         }
         if let Some(handle) = &state.terrain {
             let desired = s.terrain_shading();
@@ -564,38 +615,6 @@ fn apply_meshes(
             commands.entity(entity).insert(initial);
         }
     }
-}
-
-fn status(
-    settings: Res<AuditSettings>,
-    assets: Res<AuditAssets>,
-    images: Res<Assets<Image>>,
-    window: Single<&Window, With<PrimaryWindow>>,
-    diagnostics: Res<DiagnosticsStore>,
-    time: Res<Time>,
-    mut elapsed: Local<f32>,
-    mut text: Single<&mut Text, With<AuditStatus>>,
-) {
-    *elapsed += time.delta_secs();
-    if *elapsed < 0.5 {
-        return;
-    }
-    *elapsed = 0.0;
-    let fps = diagnostics
-        .get(&FrameTimeDiagnosticsPlugin::FPS)
-        .and_then(|d| d.smoothed())
-        .unwrap_or_default();
-    let size = match settings.render_path {
-        AuditRenderPath::Composite => images.get(&assets.target).unwrap().size(),
-        AuditRenderPath::Direct => window.physical_size(),
-    };
-    let phase = settings.baseline_phase.unwrap_or("manual");
-    **text = Text::new(format!(
-        "{fps:.1} FPS | 3D {}x{} | {:.0}s since change\n{phase} | Metal HUD: GPU time / thermal state",
-        size.x,
-        size.y,
-        time.elapsed_secs_f64() - settings.changed_at
-    ));
 }
 
 #[cfg(test)]
@@ -676,6 +695,49 @@ mod tests {
             .unwrap();
         assert_eq!(m.shading_mode, TerrainShadingMode::Production);
         assert!(!m.near_disabled);
+    }
+
+    #[test]
+    fn draw_switches_cover_new_meshes_and_restore_current_visibility() {
+        let mut app = App::new();
+        app.init_resource::<AuditSettings>()
+            .init_resource::<Assets<TerrainMaterial>>()
+            .init_resource::<Assets<TerrainCompositeMaterial>>()
+            .add_systems(Update, apply_meshes);
+        let object = app
+            .world_mut()
+            .spawn((Mesh3d::default(), Visibility::Inherited))
+            .id();
+        app.update();
+        // Normal application visibility changes must survive unrelated settings edits.
+        *app.world_mut().get_mut::<Visibility>(object).unwrap() = Visibility::Hidden;
+        app.world_mut().resource_mut::<AuditSettings>().bloom = false;
+        app.update();
+        assert_eq!(
+            app.world().get::<Visibility>(object),
+            Some(&Visibility::Hidden)
+        );
+        app.world_mut().resource_mut::<AuditSettings>().hide_objects = true;
+        app.update();
+        let streamed = app
+            .world_mut()
+            .spawn((Mesh3d::default(), Visibility::Inherited))
+            .id();
+        app.update();
+        assert_eq!(
+            app.world().get::<Visibility>(streamed),
+            Some(&Visibility::Hidden)
+        );
+        app.world_mut().resource_mut::<AuditSettings>().hide_objects = false;
+        app.update();
+        assert_eq!(
+            app.world().get::<Visibility>(streamed),
+            Some(&Visibility::Inherited)
+        );
+        assert_eq!(
+            app.world().get::<Visibility>(object),
+            Some(&Visibility::Hidden)
+        );
     }
 
     #[test]

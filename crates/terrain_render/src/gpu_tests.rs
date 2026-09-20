@@ -641,6 +641,8 @@ fn setup(
     {
         let material = materials.add(TerrainMaterial {
             source_only: false,
+            cloud_parameters: atmosphere::clouds::fallback_parameters(),
+            cloud_shadows: None,
             shading_mode: mode,
             stochastic_cached: false,
             prepared: false,

@@ -1,10 +1,11 @@
+#import "shaders/clouds/pbr_lighting.wgsl"::apply_pbr_lighting
 // World-projected composites with an independently resident close-up surface cache.
 #import "shaders/terrain_near.wgsl"::{close_ground, map_sampler}
 #import bevy_pbr::{
     decal::clustered::apply_decals,
     forward_io::{FragmentOutput, VertexOutput},
     pbr_fragment::pbr_input_from_vertex_output,
-    pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
+    pbr_functions::{ main_pass_post_lighting_processing},
     pbr_types,
 }
 

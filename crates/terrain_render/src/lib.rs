@@ -50,6 +50,8 @@ impl Plugin for TerrainRenderPlugin {
         composite::atlas::install(app);
         near::install(app);
         app.init_resource::<TerrainMacroVariation>()
+            .add_systems(Startup, atmosphere::clouds::init_fallback)
+            .add_systems(PostUpdate, sync_cloud_inputs)
             .add_plugins(MaterialPlugin::<TerrainMaterial>::default())
             .add_plugins(MaterialPlugin::<TerrainCompositeMaterial>::default())
             .add_systems(
@@ -160,6 +162,11 @@ impl TerrainShadingMode {
 pub struct TerrainMaterial {
     /// Input carrier for hierarchy shading; owns no drawn mesh or prepared control cache.
     pub source_only: bool,
+    #[storage(120, read_only)]
+    cloud_parameters: Handle<ShaderBuffer>,
+    #[texture(121)]
+    #[sampler(122)]
+    cloud_shadows: Option<Handle<Image>>,
     pub shading_mode: TerrainShadingMode,
     stochastic_cached: bool,
     prepared: bool,
@@ -342,6 +349,8 @@ pub fn prepare_terrain_material(
     let second = context.surfaces.get(1).unwrap_or(first);
     let material = context.materials.add(TerrainMaterial {
         source_only: false,
+        cloud_parameters: atmosphere::clouds::fallback_parameters(),
+        cloud_shadows: None,
         shading_mode: TerrainShadingMode::Production,
         stochastic_cached: false,
         prepared: false,
@@ -546,5 +555,35 @@ mod tests {
         assert_eq!(mesh.count_vertices(), 9);
         assert_eq!(mesh.indices().unwrap().len(), 24);
         assert!(mesh.attribute(Mesh::ATTRIBUTE_TANGENT).is_some());
+    }
+}
+
+fn sync_cloud_inputs(
+    clouds: Option<Res<atmosphere::clouds::CloudAssets>>,
+    mut near: ResMut<Assets<TerrainMaterial>>,
+    mut far: ResMut<Assets<TerrainCompositeMaterial>>,
+) {
+    let Some(clouds) = clouds else {
+        return;
+    };
+    let ids: Vec<_> = near
+        .iter()
+        .filter(|(_, m)| m.cloud_parameters != clouds.parameters)
+        .map(|(id, _)| id)
+        .collect();
+    for id in ids {
+        let mut m = near.get_mut(id).unwrap();
+        m.cloud_parameters = clouds.parameters.clone();
+        m.cloud_shadows = Some(clouds.shadows.clone());
+    }
+    let ids: Vec<_> = far
+        .iter()
+        .filter(|(_, m)| m.cloud_parameters != clouds.parameters)
+        .map(|(id, _)| id)
+        .collect();
+    for id in ids {
+        let mut m = far.get_mut(id).unwrap();
+        m.cloud_parameters = clouds.parameters.clone();
+        m.cloud_shadows = Some(clouds.shadows.clone());
     }
 }

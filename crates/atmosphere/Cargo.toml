@@ -7,3 +7,4 @@ publish.workspace = true
 [dependencies]
 bevy.workspace = true
 world.workspace = true
+bytemuck.workspace = true

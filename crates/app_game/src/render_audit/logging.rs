@@ -15,13 +15,13 @@ use vegetation_render::{
 use super::{AuditAssets, AuditRenderPath, AuditSettings};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct PowerState {
-    thermal: &'static str,
-    low_power: &'static str,
+pub(super) struct PowerState {
+    pub(super) thermal: &'static str,
+    pub(super) low_power: &'static str,
 }
 
 #[cfg(target_vendor = "apple")]
-fn power_state() -> PowerState {
+pub(super) fn power_state() -> PowerState {
     use objc2_foundation::{NSProcessInfo, NSProcessInfoThermalState};
     let process = NSProcessInfo::processInfo();
     PowerState {
@@ -41,7 +41,7 @@ fn power_state() -> PowerState {
 }
 
 #[cfg(not(target_vendor = "apple"))]
-fn power_state() -> PowerState {
+pub(super) fn power_state() -> PowerState {
     PowerState {
         thermal: "unavailable",
         low_power: "unavailable",

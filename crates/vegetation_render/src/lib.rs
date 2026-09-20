@@ -655,12 +655,16 @@ impl Default for VegetationDebugSettings {
     }
 }
 
+#[derive(Resource)]
+pub struct VegetationDebugHotkeys(pub bool);
+
 fn cycle_debug_mode(
+    hotkeys: Option<Res<VegetationDebugHotkeys>>,
     keys: Res<ButtonInput<KeyCode>>,
     mut settings: ResMut<VegetationDebugSettings>,
     mut wind: ResMut<VegetationWind>,
 ) {
-    if wind.externally_driven {
+    if wind.externally_driven || hotkeys.is_some_and(|h| !h.0) {
         return;
     }
     if keys.just_pressed(KeyCode::KeyX) {

@@ -227,8 +227,8 @@ mod tests {
         let first = cook_project_with_report(&fixture.source(), &fixture.runtime()).unwrap();
         let id = first.manifest.default_world_space;
         let mut profile = first.manifest.default_world_space().atmosphere.clone();
-        profile.night.exposure_ev100 = 7.5;
-        profile.night.light_srgb = [0.4, 0.7, 1.0];
+        profile.clouds = world::clouds::CloudSettings::overcast();
+        profile.clouds.seed = 192;
         let mut writer = ProjectWriter::open(&fixture.source()).unwrap();
         writer
             .write_atmospheres(&[world_db::AtmosphereWrite {

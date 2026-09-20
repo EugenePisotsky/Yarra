@@ -1,5 +1,7 @@
 //! Shared sky, sun and illumination. Applications supply profile/time inputs;
 //! one ordered presentation system applies them before transform propagation.
+pub mod clouds;
+
 use bevy::{
     camera::Exposure,
     light::{
@@ -17,6 +19,21 @@ pub enum AtmosphereOwner {
     Game,
     Editor,
     Study,
+}
+
+/// Temporary presentation switches. Authored lighting and weather are preserved.
+#[derive(Resource, Clone, Copy, Debug)]
+pub struct AtmospherePresentation {
+    pub sky_and_haze: bool,
+    pub bloom: bool,
+}
+impl Default for AtmospherePresentation {
+    fn default() -> Self {
+        Self {
+            sky_and_haze: true,
+            bloom: true,
+        }
+    }
 }
 
 #[derive(Resource)]
@@ -65,7 +82,9 @@ impl WorldEnvironmentPlugin {
 }
 impl Plugin for WorldEnvironmentPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(ClearColor(Color::BLACK))
+        app.init_resource::<AtmospherePresentation>()
+            .add_plugins(clouds::CloudsPlugin)
+            .insert_resource(ClearColor(Color::BLACK))
             .insert_resource(AtmosphereState {
                 owner: self.owner,
                 ..default()
@@ -174,6 +193,7 @@ fn rgb(c: [f32; 3]) -> Color {
 fn apply(
     mut commands: Commands,
     state: Res<AtmosphereState>,
+    presentation: Option<Res<AtmospherePresentation>>,
     mut sun: Query<
         (&mut Transform, &mut DirectionalLight, &mut SunDisk),
         (With<WorldSun>, Without<WorldMoon>),
@@ -255,20 +275,26 @@ fn apply(
     }
     ambient.color = rgb(value.ambient_linear);
     ambient.brightness = value.ambient_lux;
+    let presentation = presentation.as_deref().copied().unwrap_or_default();
+    let sky_enabled = profile.outdoor && presentation.sky_and_haze;
     for (entity, camera, view, mut exposure, settings, bloom) in &mut views {
         exposure.ev100 = state
             .exposure_override
             .filter(|v| v.is_finite())
             .unwrap_or(value.exposure_ev100);
-        if profile.outdoor && settings.is_none() {
+        if sky_enabled && settings.is_none() {
             commands
                 .entity(entity)
                 .insert(AtmosphereSettings::default());
         }
-        if !profile.outdoor && settings.is_some() {
+        if !sky_enabled && settings.is_some() {
             commands.entity(entity).remove::<AtmosphereSettings>();
         }
-        if let Some(mut bloom) = bloom {
+        if !presentation.bloom {
+            if bloom.is_some() {
+                commands.entity(entity).remove::<Bloom>();
+            }
+        } else if let Some(mut bloom) = bloom {
             bloom.intensity = profile.bloom_intensity;
         } else {
             commands.entity(entity).insert(Bloom {
@@ -399,6 +425,34 @@ mod tests {
             Some(&Visibility::Hidden)
         );
     }
+    #[test]
+    fn presentation_switches_remove_passes_and_restore_without_editing_profile() {
+        let mut app = App::new();
+        app.init_resource::<Assets<ScatteringMedium>>()
+            .add_plugins(WorldEnvironmentPlugin::game());
+        let camera = app
+            .world_mut()
+            .spawn((Transform::default(), WorldEnvironmentCamera::default()))
+            .id();
+        app.update();
+        assert!(app.world().get::<AtmosphereSettings>(camera).is_some());
+        assert!(app.world().get::<Bloom>(camera).is_some());
+        let profile = app.world().resource::<AtmosphereState>().profile.clone();
+        *app.world_mut().resource_mut::<AtmospherePresentation>() = AtmospherePresentation {
+            sky_and_haze: false,
+            bloom: false,
+        };
+        app.update();
+        assert!(app.world().get::<AtmosphereSettings>(camera).is_none());
+        assert!(app.world().get::<Bloom>(camera).is_none());
+        assert_eq!(app.world().resource::<AtmosphereState>().profile, profile);
+        *app.world_mut().resource_mut::<AtmospherePresentation>() =
+            AtmospherePresentation::default();
+        app.update();
+        assert!(app.world().get::<AtmosphereSettings>(camera).is_some());
+        assert!(app.world().get::<Bloom>(camera).is_some());
+    }
+
     #[test]
     fn study_owns_lighting_and_world_return_restores_profile_without_changing_shadow_policy() {
         let mut app = App::new();

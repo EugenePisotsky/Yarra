@@ -25,7 +25,7 @@ use crate::{
     editing::{DirtyObjectSnapshot, EditorHistory, EditorObjectWorkingSet},
 };
 
-const JOURNAL_SCHEMA_VERSION: u32 = 13;
+const JOURNAL_SCHEMA_VERSION: u32 = 14;
 const OLDEST_SUPPORTED_JOURNAL_SCHEMA_VERSION: u32 = 12;
 const JOURNAL_CHANNEL_CAPACITY: usize = 1;
 

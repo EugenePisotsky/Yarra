@@ -10,7 +10,14 @@ pub(super) fn sync_vegetation_origin(
     origin: Res<WorldOrigin>,
     catalog: Res<WorldCatalog>,
     vegetation: Option<ResMut<vegetation_render::VegetationRenderOrigin>>,
+    clouds: Option<ResMut<atmosphere::clouds::CloudOrigin>>,
 ) {
+    if let Some(mut clouds) = clouds {
+        clouds.0 = origin
+            .space()
+            .and_then(|id| catalog.world_space(id))
+            .map_or([0.; 2], |space| origin.cell().origin(space.cell_size));
+    }
     if let Some(mut vegetation) = vegetation {
         vegetation.world_xz = origin
             .space()

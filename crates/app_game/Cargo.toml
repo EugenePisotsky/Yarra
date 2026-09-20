@@ -5,10 +5,11 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
-bevy.workspace = true
+bevy = { workspace = true, features = ["debug"] }
 engine.workspace = true
 world.workspace = true
 ron.workspace = true
+wgpu = { version = "29.0.4", default-features = false }
 terrain-render.workspace = true
 vegetation.workspace = true
 vegetation-render.workspace = true

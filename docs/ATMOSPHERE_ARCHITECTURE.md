@@ -119,7 +119,7 @@ remain outstanding.
 Source schema 24 and runtime schema 20 include one validated profile and revision
 per world. Reads cap profiles at 4 KiB and world metadata at 32 worlds. Source
 writes use expected revisions and an atomic transaction across the requested
-worlds. The editor integrates history, recovery journal version 13 (version 12 remains readable), source epochs,
+worlds. The editor integrates history, recovery journal version 14 (versions 12–13 remain readable), source epochs,
 Save and Save & Publish. Preview controls never change authored startup settings.
 
 Cooking hashes the atmosphere parameters into the generation identity even when
@@ -128,6 +128,11 @@ cell payloads. The existing exact-generation adoption path supplies the active
 profile. Failed publication leaves the previous generation active. Atmosphere
 editing does not invalidate terrain/vegetation source previews; publication still
 uses the existing full cook.
+
+## Clouds
+
+The first cloud renderer and shared ground shadows are described in [CLOUDS.md](CLOUDS.md).
+Cloud settings are a tagged, backward-readable extension of the atmosphere blob.
 
 ## Next slices
 
@@ -140,7 +145,7 @@ uses the existing full cook.
 3. Add a planet by direction and angular size, lit by the shared sun and composited
    behind atmosphere, clouds and foreground geometry. Orbits, eclipses and reflected
    planet light are separate features.
-4. Add the game clock, weather transitions, clouds, rain, wetness and wind consumers.
+4. Add the game clock, weather transitions, rain, wetness and wind consumers.
    Stars, a textured moon, lunar phases and planet appearance remain future work.
 
 The [terrain readiness review](performance/20260919-terrain-review/README.md)

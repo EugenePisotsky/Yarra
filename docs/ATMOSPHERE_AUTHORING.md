@@ -11,9 +11,17 @@ window does not change the painting tool or spatial source demand.
 
 **Preview · temporary** contains:
 
+- Cloud quality: Off / Balanced / High. This is a rendering preference, separate
+  from the saved cloud layer. Balanced is the game/editor default and refreshes a
+  cached sky at a bounded rate; High traces clouds every frame at the earlier
+  resolution. High is useful for inspecting fast wind previews and rapid lighting
+  changes. The game also accepts `--cloud-quality high` (or `off`).
 - Sunrise, Day, Sunset and Night shortcuts, an hour scrubber, Play/Pause and speed.
   Sunrise/Sunset show a low visible sun; the geometric horizon crossings are 6:00
   and 18:00 on the current normalized cycle.
+- Animate clouds, a separate Cloud speed multiplier, elapsed cloud time and Reset
+  clouds. Wind is real-time at 1×; use 10–30× to inspect motion quickly without
+  changing the saved wind speed or the time of day.
 - Edited / Published comparison at the same time and camera.
 - Reset preview, which restores preview defaults without reverting source edits.
 - An optional exposure lock that captures the current evaluated exposure, independent
@@ -125,3 +133,8 @@ selection of the moon for grass lighting/shadows, saved night parameters, exposu
 locking and a first Vegetation-study visit from night. New Vegetation studies and the Animation workspace use stable daylight;
 saved vegetation-study lighting remains independent. This is functional validation, not a
 sustained performance benchmark.
+
+## Clouds
+
+See [the cloud prototype guide](CLOUDS.md) for Scattered/Overcast presets, saved
+shape and wind controls, independent preview animation and current limits.

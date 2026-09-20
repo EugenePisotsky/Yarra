@@ -18,23 +18,99 @@ pub enum AtmosphereWriteResult {
     },
 }
 
+// Binary compatibility: keep the schema-24/20 core unchanged and append a tagged extension.
+// Older readers reject the trailing bytes rather than misreading a newer profile.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct CoreProfile {
+    outdoor: bool,
+    initial_phase: f32,
+    day_seconds: f32,
+    azimuth_degrees: f32,
+    maximum_elevation_degrees: f32,
+    sun_diameter_degrees: f32,
+    exposure_ev100: f32,
+    bloom_intensity: f32,
+    visibility_metres: f32,
+    haze_srgb: [f32; 3],
+    molecular_density: f32,
+    phases: [world::atmosphere::LightingPhase; 4],
+    night: world::atmosphere::NightLighting,
+}
+impl From<&AtmosphereProfile> for CoreProfile {
+    fn from(p: &AtmosphereProfile) -> Self {
+        Self {
+            outdoor: p.outdoor,
+            initial_phase: p.initial_phase,
+            day_seconds: p.day_seconds,
+            azimuth_degrees: p.azimuth_degrees,
+            maximum_elevation_degrees: p.maximum_elevation_degrees,
+            sun_diameter_degrees: p.sun_diameter_degrees,
+            exposure_ev100: p.exposure_ev100,
+            bloom_intensity: p.bloom_intensity,
+            visibility_metres: p.visibility_metres,
+            haze_srgb: p.haze_srgb,
+            molecular_density: p.molecular_density,
+            phases: p.phases.clone(),
+            night: p.night.clone(),
+        }
+    }
+}
+impl From<CoreProfile> for AtmosphereProfile {
+    fn from(p: CoreProfile) -> Self {
+        Self {
+            outdoor: p.outdoor,
+            initial_phase: p.initial_phase,
+            day_seconds: p.day_seconds,
+            azimuth_degrees: p.azimuth_degrees,
+            maximum_elevation_degrees: p.maximum_elevation_degrees,
+            sun_diameter_degrees: p.sun_diameter_degrees,
+            exposure_ev100: p.exposure_ev100,
+            bloom_intensity: p.bloom_intensity,
+            visibility_metres: p.visibility_metres,
+            haze_srgb: p.haze_srgb,
+            molecular_density: p.molecular_density,
+            phases: p.phases,
+            night: p.night,
+            clouds: Default::default(),
+        }
+    }
+}
+const CLOUD_EXTENSION: &[u8; 4] = b"CLD1";
 pub(super) fn encode(profile: &AtmosphereProfile) -> Result<Vec<u8>, WorldDbError> {
     profile
         .validate()
         .map_err(|e| WorldDbError::Cook(e.into()))?;
-    Ok(bincode::serde::encode_to_vec(
-        profile,
-        bincode::config::standard(),
-    )?)
+    let mut bytes =
+        bincode::serde::encode_to_vec(CoreProfile::from(profile), bincode::config::standard())?;
+    // Preserve the exact checkpoint encoding when the extension is unused.
+    if profile.clouds != Default::default() {
+        bytes.extend_from_slice(CLOUD_EXTENSION);
+        bytes.extend(bincode::serde::encode_to_vec(
+            &profile.clouds,
+            bincode::config::standard(),
+        )?);
+    }
+    Ok(bytes)
 }
 pub(super) fn decode(bytes: &[u8]) -> Result<AtmosphereProfile, WorldDbError> {
     if bytes.len() > 4096 {
         return Err(WorldDbError::Cook("atmosphere exceeds 4096 bytes".into()));
     }
-    let (p, consumed): (AtmosphereProfile, _) =
+    let (core, consumed): (CoreProfile, _) =
         bincode::serde::decode_from_slice(bytes, bincode::config::standard().with_limit::<4096>())?;
-    if consumed != bytes.len() {
-        return Err(WorldDbError::Cook("trailing atmosphere bytes".into()));
+    let mut p = AtmosphereProfile::from(core);
+    if consumed < bytes.len() {
+        let extension = bytes[consumed..]
+            .strip_prefix(CLOUD_EXTENSION)
+            .ok_or_else(|| WorldDbError::Cook("unknown atmosphere extension".into()))?;
+        let (clouds, used) = bincode::serde::decode_from_slice(
+            extension,
+            bincode::config::standard().with_limit::<4096>(),
+        )?;
+        if used != extension.len() {
+            return Err(WorldDbError::Cook("trailing atmosphere bytes".into()));
+        }
+        p.clouds = clouds;
     }
     p.validate().map_err(|e| WorldDbError::Cook(e.into()))?;
     Ok(p)
@@ -102,7 +178,30 @@ impl ProjectWriter {
 mod tests {
     use super::*;
     #[test]
-    fn conflict_rolls_back_the_entire_batch_and_round_trips_colors() {
+    fn checkpoint_and_tagged_cloud_profiles_round_trip_without_accepting_corruption() {
+        let p = AtmosphereProfile::default();
+        let legacy =
+            bincode::serde::encode_to_vec(CoreProfile::from(&p), bincode::config::standard())
+                .unwrap();
+        assert_eq!(decode(&legacy).unwrap(), p);
+        assert_eq!(encode(&p).unwrap(), legacy);
+        let mut clouds = p.clone();
+        clouds.clouds = world::clouds::CloudSettings::overcast();
+        clouds.clouds.seed = u32::MAX;
+        let bytes = encode(&clouds).unwrap();
+        assert_eq!(decode(&bytes).unwrap(), clouds);
+        assert!(decode(&bytes[..bytes.len() - 1]).is_err());
+        let mut unknown = bytes.clone();
+        unknown[legacy.len() + 3] = b'2';
+        assert!(decode(&unknown).is_err());
+        let mut trailing = bytes;
+        trailing.push(0);
+        assert!(decode(&trailing).is_err());
+        clouds.clouds.density = f32::INFINITY;
+        assert!(encode(&clouds).is_err());
+    }
+    #[test]
+    fn conflict_rolls_back_the_entire_batch_and_round_trips_colors_and_clouds() {
         let connection = Connection::open_in_memory().unwrap();
         connection.execute_batch(schema::PROJECT_SCHEMA).unwrap();
         let p = AtmosphereProfile::default();
@@ -117,6 +216,7 @@ mod tests {
         let mut writer = ProjectWriter { connection };
         let mut changed = p.clone();
         changed.phases[1].sun_srgb = [0.8, 0.5, 0.2];
+        changed.clouds = world::clouds::CloudSettings::scattered();
         let writes = [
             AtmosphereWrite {
                 space: WorldSpaceId(1),

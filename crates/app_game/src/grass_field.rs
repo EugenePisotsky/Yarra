@@ -102,6 +102,7 @@ fn setup(mut commands: Commands) {
             ..default()
         },
         FieldStatus,
+        engine::DiagnosticOverlay,
     ));
 }
 fn toggle(
@@ -128,8 +129,12 @@ fn status(
     scene: Res<VegetationDebugScene>,
     tiles: Res<GroundTiles>,
     settings: Res<VegetationDebugSettings>,
+    node: Single<&Node, With<FieldStatus>>,
     mut text: Single<&mut Text, With<FieldStatus>>,
 ) {
+    if node.display == Display::None {
+        return;
+    }
     let ready = tiles
         .entries
         .values()

@@ -8,9 +8,10 @@ mod world_streaming;
 
 use std::{f32::consts::TAU, path::PathBuf};
 
+pub use atmosphere::clouds::CloudQuality;
 pub use atmosphere::{
-    ApplyAtmosphere, AtmosphereOwner, AtmosphereState, WorldEnvironmentCamera,
-    WorldEnvironmentPlugin, WorldEnvironmentView, WorldSun,
+    ApplyAtmosphere, AtmosphereOwner, AtmospherePresentation, AtmosphereState,
+    WorldEnvironmentCamera, WorldEnvironmentPlugin, WorldEnvironmentView, WorldSun,
 };
 use bevy::{
     core_pipeline::prepass::DepthPrepass,
@@ -35,9 +36,10 @@ pub use world_streaming::{
     ActiveWorldSpace, GameplayObject, GeneratedEnvironmentObject, LiveTerrainPreview,
     StreamedTerrainSurface, StreamedVegetationFieldPage, StreamedVisualObject, StreamingStats,
     TerrainContactReadiness, TerrainLodPreview, TerrainLodStats, TerrainPreviewRequest,
-    WorldCatalog, WorldDetailDemand, WorldGenerationReload, WorldOrigin, WorldRenderRoot,
-    WorldSpaceInfo, WorldStreamingConfig, WorldStreamingPlugin, WorldStreamingSystems,
-    WorldViewCamera, WorldViewpoint, sample_resident_terrain_surface, spawn_collection_visual,
+    VisualLodScale, WorldCatalog, WorldDetailDemand, WorldGenerationReload, WorldOrigin,
+    WorldRenderRoot, WorldSpaceInfo, WorldStreamingConfig, WorldStreamingPlugin,
+    WorldStreamingSystems, WorldViewCamera, WorldViewpoint, sample_resident_terrain_surface,
+    spawn_collection_visual,
 };
 
 use crate::{
@@ -174,6 +176,9 @@ struct CameraRig {
 struct TargetIndicator;
 
 #[derive(Component)]
+pub struct DiagnosticOverlay;
+
+#[derive(Component)]
 struct PerformanceLabel;
 
 #[derive(Resource, Default)]
@@ -291,6 +296,7 @@ fn setup(
             ..default()
         },
         PerformanceLabel,
+        DiagnosticOverlay,
         Name::new("Performance label"),
     ));
 }
@@ -684,10 +690,14 @@ fn update_performance_label(
     sun: Single<&Transform, With<WorldSun>>,
     player_motion: Single<&CharacterMotion, With<PlayerControlled>>,
     primary_monitor: Option<Single<&Monitor, With<PrimaryMonitor>>>,
+    node: Single<&Node, With<PerformanceLabel>>,
     mut label: Single<&mut Text, With<PerformanceLabel>>,
     time: Res<Time>,
     mut elapsed: Local<f32>,
 ) {
+    if node.display == Display::None {
+        return;
+    }
     *elapsed += time.delta_secs();
     if *elapsed < 0.25 {
         return;

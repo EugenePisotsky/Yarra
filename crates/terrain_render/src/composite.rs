@@ -13,9 +13,14 @@ struct DetailProjection {
     world: Vec4,
 }
 
-#[derive(Asset, AsBindGroup, TypePath, Debug, Clone, Default)]
+#[derive(Asset, AsBindGroup, TypePath, Debug, Clone)]
 #[bind_group_data(CompositePipelineKey)]
 pub struct TerrainCompositeMaterial {
+    #[storage(120, read_only)]
+    pub(super) cloud_parameters: Handle<ShaderBuffer>,
+    #[texture(121)]
+    #[sampler(122)]
+    pub(super) cloud_shadows: Option<Handle<Image>>,
     pub key: Option<TerrainMaterialKey>,
     pub shading_mode: TerrainShadingMode,
     /// Diagnostic shader bypass only; retains near-source residency for a fair A/B.
@@ -53,6 +58,33 @@ pub struct TerrainCompositeMaterial {
     near_macro: Option<Handle<Image>>,
     #[texture(16, dimension = "2d_array")]
     near_prepared: Option<Handle<Image>>,
+}
+
+impl Default for TerrainCompositeMaterial {
+    fn default() -> Self {
+        Self {
+            cloud_parameters: atmosphere::clouds::fallback_parameters(),
+            cloud_shadows: None,
+            key: None,
+            shading_mode: Default::default(),
+            near_disabled: false,
+            projection: Default::default(),
+            color: None,
+            response: None,
+            detail_projection: Default::default(),
+            detail_color: None,
+            detail_response: None,
+            detail_table: Default::default(),
+            near_weights: None,
+            near_canopy: None,
+            near_table: Default::default(),
+            near_settings: Default::default(),
+            near_base: None,
+            near_normal: None,
+            near_macro: None,
+            near_prepared: None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

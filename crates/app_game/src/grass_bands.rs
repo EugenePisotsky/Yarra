@@ -53,6 +53,7 @@ fn setup(mut commands: Commands, settings: Res<VegetationDebugSettings>) {
             ..default()
         },
         GrassBandStatus,
+        engine::DiagnosticOverlay,
     ));
 }
 
