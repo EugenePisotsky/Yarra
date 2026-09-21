@@ -1,6 +1,7 @@
 //! Detailed source demand stays independent of the distant terrain cover.
 use super::*;
 use bevy::math::DVec3;
+use std::collections::BTreeMap;
 
 pub(super) const PRELOAD_METERS: f64 = 16.;
 pub(super) type Window = [CellCoord; 2];
@@ -18,7 +19,7 @@ pub(super) fn collect_view(
     catalog: Res<WorldCatalog>,
     detail: Res<WorldDetailDemand>,
     cameras: Query<(&Camera, &GlobalTransform), With<WorldViewCamera>>,
-    scene: Option<Res<vegetation_render::VegetationDebugScene>>,
+    scene: Option<Res<vegetation_render::VegetationSceneState>>,
     wind: Option<Res<vegetation_render::VegetationWind>>,
     mut view: ResMut<SourceView>,
 ) {
@@ -195,90 +196,12 @@ pub(super) fn compare(a: &(PageKey, Priority), b: &(PageKey, Priority)) -> std::
         .then_with(|| a.0.cmp(&b.0))
 }
 
-/// Keep CPU relief and surface inputs; GPU near shading admits its own bounded subset.
-pub(super) fn attach_height_source(
-    commands: &mut Commands,
-    page: PreparedPage,
-    cell_size: f32,
-) -> Result<PageAttachment, String> {
-    let key = page.decoded.key;
-    let (heightfield, surfaces, weights) = match page.decoded.payload {
-        PagePayload::TerrainHeightfield(t) => (t.heightfield, t.surfaces, t.weight_pages),
-        PagePayload::TerrainRender(t) => (
-            TerrainHeightfield::from_heights(2, &[t.height; 4], t.height, t.height, cell_size)
-                .map_err(|e| e.to_string())?,
-            t.surfaces,
-            t.weight_pages,
-        ),
-        _ => return Err("height-only request returned a non-terrain page".into()),
-    };
-    heightfield.validate().map_err(|e| e.to_string())?;
-    let bounds = [
-        heightfield
-            .heights
-            .iter()
-            .copied()
-            .fold(f32::INFINITY, f32::min),
-        heightfield
-            .heights
-            .iter()
-            .copied()
-            .fold(f32::NEG_INFINITY, f32::max),
-    ];
-    let near = page
-        .terrain
-        .map(|resources| {
-            let layers = surfaces
-                .iter()
-                .map(|id| {
-                    let r = resources
-                        .surfaces
-                        .iter()
-                        .find(|s| s.surface.id == *id)
-                        .ok_or("unresolved near terrain surface")?;
-                    Ok(TerrainSurfaceLayer {
-                        surface: r.surface.clone(),
-                        layer: r.layer,
-                    })
-                })
-                .collect::<Result<Vec<_>, String>>()?;
-            Ok::<_, String>(terrain_render::near::NearSource {
-                key,
-                cell_size,
-                height_bounds: bounds,
-                surfaces,
-                weights,
-                profile: resources.profile,
-                texture_set: resources.texture_set,
-                layers,
-            })
-        })
-        .transpose()?;
-    let entity = commands
-        .spawn((
-            StreamedTerrainSurface {
-                key,
-                cell_size,
-                heightfield,
-            },
-            StreamedPageEntity(key),
-            Name::new(format!("Terrain source {}, {}", key.cell.x, key.cell.z)),
-        ))
-        .id();
-    if let Some(near) = near {
-        commands.entity(entity).insert(near);
-    }
-    Ok(PageAttachment {
-        entities: vec![entity],
-        decoded_bytes: page.decoded.decoded_bytes,
-        height_only_pages: 1,
-        ..default()
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world_streaming::residency::{
+        MAX_PENDING_SOURCE_PAGES, PageState, tests::height_page,
+    };
     fn position() -> WorldPosition {
         WorldPosition {
             space: WorldSpaceId(1),
@@ -433,105 +356,54 @@ mod tests {
         assert_eq!(order.last().unwrap().0.cell, CellCoord { x: -12, z: 0 });
     }
 
-    fn height_page(key: PageKey) -> PreparedPage {
-        PreparedPage {
-            height_only: true,
-            terrain: None,
-            definitions: vec![],
-            dependencies: vec![],
-            decoded: DecodedPage {
-                key,
-                decoded_bytes: 64,
-                gpu_bytes_estimate: 0,
-                payload: PagePayload::TerrainHeightfield(world::TerrainHeightfieldPage {
-                    heightfield: TerrainHeightfield::from_heights(2, &[1., 2., 4., 8.], 1., 8., 8.)
-                        .unwrap(),
-                    surfaces: vec![],
-                    weight_pages: vec![],
-                }),
-            },
-        }
-    }
-    #[test]
-    fn height_sources_preserve_relief_without_allocating_render_assets() {
-        let mut world = World::new();
-        let mut queue = bevy::ecs::world::CommandQueue::default();
-        let mut commands = Commands::new(&mut queue, &world);
-        let key = PageKey {
-            space: WorldSpaceId(1),
-            cell: CellCoord { x: -3, z: 2 },
-            domain: PageDomain::TerrainRender,
-            lod: 0,
-        };
-        let attachment = attach_height_source(&mut commands, height_page(key), 8.).unwrap();
-        queue.apply(&mut world);
-        assert_eq!(attachment.gpu_bytes_estimate, 0);
-        assert_eq!(attachment.height_only_pages, 1);
-        assert!(
-            attachment.owned_terrain_meshes.is_empty()
-                && attachment.owned_terrain_materials.is_empty()
-                && attachment.owned_terrain_images.is_empty()
-                && attachment.terrain_texture_set.is_none()
-        );
-        let entity = attachment.entities[0];
-        assert!(world.get::<Mesh3d>(entity).is_none());
-        let surface = world.get::<StreamedTerrainSurface>(entity).unwrap();
-        assert_eq!(surface.key, key);
-        assert_eq!(surface.heightfield.heights, vec![1., 2., 4., 8.]);
-        assert!((surface.sample_world([-22., 22.]).height - 4.25).abs() < 1e-5);
-    }
     #[test]
     fn draining_the_worker_queue_does_not_bypass_the_pending_page_cap() {
-        let (requests, rx) = bounded(MAX_DATABASE_REQUESTS_IN_FLIGHT);
-        let (_tx, results) = bounded(1);
+        let (worker, rx, _tx) = WorldDatabaseWorker::test_channel_pair(MAX_PENDING_SOURCE_PAGES, 1);
         let mut app = App::new();
-        app.insert_resource(WorldDatabaseWorker {
-            requests,
-            results,
-            thread: None,
-        })
-        .insert_resource(WorldStreamingConfig::game())
-        .insert_resource(WorldDetailDemand::default())
-        .insert_resource(ActiveWorldSpace {
-            current: Some(WorldSpaceId(1)),
-            ..default()
-        })
-        .insert_resource(WorldOrigin {
-            space: Some(WorldSpaceId(1)),
-            cell: CellCoord::ZERO,
-        })
-        .insert_resource(WorldViewpoint {
-            position: Some(position()),
-        })
-        .insert_resource(view(DVec3::ZERO))
-        .insert_resource(WorldStream {
-            phase: StreamPhase::Ready,
-            height_only: true,
-            manifest: Some(RuntimeManifest {
-                schema_version: world::RUNTIME_SCHEMA_VERSION,
-                generation_id: "test".into(),
-                content_hash: [0; 32],
-                default_world_space: WorldSpaceId(1),
-                world_spaces: vec![space(8.)],
-                vegetation_catalog: None,
-            }),
-            descriptors: (-3..=3)
-                .flat_map(|x| (-3..=3).map(move |z| descriptor(CellCoord { x, z })))
-                .collect(),
-            ..default()
-        })
-        .add_systems(Update, calculate_page_demand);
+        app.insert_resource(worker)
+            .init_resource::<SourceResidency>()
+            .insert_resource(WorldStreamingConfig::game())
+            .insert_resource(WorldDetailDemand::default())
+            .insert_resource(ActiveWorldSpace {
+                current: Some(WorldSpaceId(1)),
+                ..default()
+            })
+            .insert_resource(WorldOrigin {
+                space: Some(WorldSpaceId(1)),
+                cell: CellCoord::ZERO,
+            })
+            .insert_resource(WorldViewpoint {
+                position: Some(position()),
+            })
+            .insert_resource(view(DVec3::ZERO))
+            .insert_resource(WorldStream {
+                phase: StreamPhase::Ready,
+                height_only: true,
+                manifest: Some(RuntimeManifest {
+                    schema_version: world::RUNTIME_SCHEMA_VERSION,
+                    generation_id: "test".into(),
+                    content_hash: [0; 32],
+                    default_world_space: WorldSpaceId(1),
+                    world_spaces: vec![space(8.)],
+                    vegetation_catalog: None,
+                }),
+                descriptors: (-3..=3)
+                    .flat_map(|x| (-3..=3).map(move |z| descriptor(CellCoord { x, z })))
+                    .collect(),
+                ..default()
+            })
+            .add_systems(Update, calculate_page_demand);
         app.update();
-        assert_eq!(rx.try_iter().count(), MAX_DATABASE_REQUESTS_IN_FLIGHT);
+        assert_eq!(rx.try_iter().count(), MAX_PENDING_SOURCE_PAGES);
         let key = *app
             .world()
-            .resource::<WorldStream>()
+            .resource::<SourceResidency>()
             .pages
             .keys()
             .next()
             .unwrap();
         app.world_mut()
-            .resource_mut::<WorldStream>()
+            .resource_mut::<SourceResidency>()
             .pages
             .insert(key, PageState::Prepared(height_page(key)));
         app.update();
@@ -541,93 +413,10 @@ mod tests {
             "queued, decoding and prepared work share the cap"
         );
         app.world_mut()
-            .resource_mut::<WorldStream>()
+            .resource_mut::<SourceResidency>()
             .pages
             .insert(key, PageState::Resident(default()));
         app.update();
         assert_eq!(rx.try_iter().count(), 1);
-    }
-
-    fn attachment_app(resident_bytes: u64) -> App {
-        let mut app = App::new();
-        app.add_plugins((bevy::app::TaskPoolPlugin::default(), AssetPlugin::default()))
-            .init_resource::<Assets<Mesh>>()
-            .init_resource::<Assets<TerrainMaterial>>()
-            .init_resource::<Assets<Image>>()
-            .init_resource::<TerrainMacroVariation>()
-            .init_resource::<WorldOrigin>()
-            .insert_resource(WorldRenderAssets {
-                unit_plane: Handle::default(),
-            })
-            .insert_resource(StreamingStats {
-                decoded_bytes: resident_bytes,
-                ..default()
-            })
-            .insert_resource(WorldStream {
-                manifest: Some(RuntimeManifest {
-                    schema_version: world::RUNTIME_SCHEMA_VERSION,
-                    generation_id: "attachment-test".into(),
-                    content_hash: [0; 32],
-                    default_world_space: WorldSpaceId(1),
-                    world_spaces: vec![space(8.)],
-                    vegetation_catalog: None,
-                }),
-                ..default()
-            })
-            .add_systems(Update, attach_prepared_pages);
-        app
-    }
-
-    fn queue_height(app: &mut App, order: i32, bytes: u64) -> PageKey {
-        let key = PageKey {
-            space: WorldSpaceId(1),
-            cell: CellCoord { x: order, z: 0 },
-            domain: PageDomain::TerrainRender,
-            lod: 0,
-        };
-        let mut page = height_page(key);
-        // Account large pages without allocating irrelevant payloads in this scheduling test.
-        page.decoded.decoded_bytes = bytes;
-        let mut stream = app.world_mut().resource_mut::<WorldStream>();
-        stream.desired.insert(key);
-        stream.priorities.insert(key, (0, f64::from(order)));
-        stream.pages.insert(key, PageState::Prepared(page));
-        key
-    }
-
-    #[test]
-    fn budget_blocked_pages_do_not_starve_smaller_prepared_pages() {
-        let mut app = attachment_app(MAX_RESIDENT_DECODED_BYTES - 128);
-        let blocked = [
-            queue_height(&mut app, 0, 256),
-            queue_height(&mut app, 1, 256),
-        ];
-        let small = [queue_height(&mut app, 2, 64), queue_height(&mut app, 3, 64)];
-        app.update();
-        let stream = app.world().resource::<WorldStream>();
-        for key in blocked {
-            assert!(matches!(stream.pages[&key], PageState::Prepared(_)));
-        }
-        for key in small {
-            assert!(
-                matches!(stream.pages[&key], PageState::Resident(_)),
-                "a fitting page must pass blocked larger pages"
-            );
-        }
-        assert_eq!(stream.admission_blocked, 2);
-    }
-
-    #[test]
-    fn attachment_limit_still_bounds_successful_work_per_frame() {
-        let mut app = attachment_app(0);
-        let keys: Vec<_> = (0..4).map(|i| queue_height(&mut app, i, 64)).collect();
-        app.update();
-        let stream = app.world().resource::<WorldStream>();
-        for key in &keys[..MAX_ATTACHMENTS_PER_FRAME] {
-            assert!(matches!(stream.pages[key], PageState::Resident(_)));
-        }
-        for key in &keys[MAX_ATTACHMENTS_PER_FRAME..] {
-            assert!(matches!(stream.pages[key], PageState::Prepared(_)));
-        }
     }
 }

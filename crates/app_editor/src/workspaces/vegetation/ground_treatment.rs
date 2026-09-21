@@ -437,7 +437,7 @@ fn filtered_density(counts: &[f32], size: usize, radius: usize, pixel_area: f32)
 fn sync(
     lighting: Res<VegetationLighting>,
     mut assets: ResMut<TreatmentAssets>,
-    scene: Res<VegetationDebugScene>,
+    scene: Res<VegetationSceneState>,
     mut state: ResMut<StudyState>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<StudyMaterial>>,

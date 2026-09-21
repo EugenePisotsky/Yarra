@@ -203,7 +203,7 @@ fn preset_workspace_restores_scene_lighting_wind_and_camera_ownership() {
     use bevy::camera::visibility::RenderLayers;
     use vegetation_render::*;
     let mut app = App::new();
-    let original = VegetationDebugScene::reference();
+    let original = VegetationSceneState::reference();
     let mut wind = VegetationWind::default();
     wind.set_phase_seconds(12.0);
     let transform = Transform::from_xyz(1.0, 2.0, 3.0);
@@ -266,7 +266,7 @@ fn preset_workspace_restores_scene_lighting_wind_and_camera_ownership() {
         app.update();
         assert!(!app.world().get::<Camera>(preview).unwrap().is_active);
         assert_eq!(
-            app.world().resource::<VegetationDebugScene>().scene(),
+            app.world().resource::<VegetationSceneState>().scene(),
             original.scene()
         );
         assert_eq!(

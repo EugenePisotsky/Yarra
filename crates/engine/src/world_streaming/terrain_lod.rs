@@ -8,8 +8,12 @@ use bevy::{
         mesh::{RenderMesh, allocator::MeshAllocator},
         render_asset::RenderAssets,
     },
+    tasks::{AsyncComputeTaskPool, Task, futures::check_ready},
 };
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::{Arc, Mutex},
+};
 mod contact;
 mod material;
 use terrain_render::TerrainCompositeMaterial;
@@ -17,12 +21,13 @@ pub(super) mod entry;
 mod transition;
 pub use contact::TerrainContactReadiness;
 mod authoring;
+use super::database::{TerrainQuery, TerrainReply};
 pub use authoring::{LiveTerrainPreview, TerrainPreviewRequest};
 use contact::{ContactInputs, ContactSystems};
 use terrain_render::lod::{self, LodSettings, LodView, PatchMetadata, PlannedCover, StitchEdges};
 use transition::{Transition, patch_transform};
 use world::{TerrainNode, TerrainNodeKey};
-use world_db::{EncodedTerrainNode, TerrainNodeDescriptor};
+use world_db::TerrainNodeDescriptor;
 
 const MAX_METADATA: usize = 4096;
 const MAX_NODE_BYTES: u64 = 32 * 1024 * 1024;
@@ -38,13 +43,8 @@ pub struct TerrainLodPreview {
 }
 impl Default for TerrainLodPreview {
     fn default() -> Self {
-        Self::from_args(std::env::args_os())
-    }
-}
-impl TerrainLodPreview {
-    fn from_args(args: impl IntoIterator<Item = impl AsRef<std::ffi::OsStr>>) -> Self {
         Self {
-            enabled: !args.into_iter().any(|a| a.as_ref() == "--terrain-legacy"),
+            enabled: true,
             settings: LodSettings::default(),
         }
     }
@@ -100,41 +100,6 @@ pub struct TerrainLodStats {
     pub transition_patches: usize,
     pub transition_triangles: usize,
 }
-#[derive(Clone, Debug)]
-pub(super) enum TerrainQuery {
-    Roots(WorldSpaceId),
-    Metadata(Vec<TerrainNodeKey>),
-    Node(TerrainNodeKey),
-    Material(material::Query),
-}
-#[derive(Debug)]
-pub(super) enum TerrainReply {
-    Metadata(Vec<TerrainNodeDescriptor>),
-    Node(EncodedTerrainNode),
-    Material(material::Reply),
-}
-pub(super) fn read(reader: &RuntimeReader, query: TerrainQuery) -> Result<TerrainReply, String> {
-    match query {
-        TerrainQuery::Material(query) => material::read(reader, query).map(TerrainReply::Material),
-        TerrainQuery::Roots(space) => reader
-            .read_terrain_roots(space)
-            .map(TerrainReply::Metadata)
-            .map_err(|e| e.to_string()),
-        TerrainQuery::Metadata(keys) => reader
-            .read_terrain_node_descriptors(&keys)
-            .map_err(|e| e.to_string())?
-            .into_iter()
-            .collect::<Option<Vec<_>>>()
-            .map(TerrainReply::Metadata)
-            .ok_or("missing required terrain metadata".into()),
-        TerrainQuery::Node(key) => reader
-            .read_terrain_node(key)
-            .map_err(|e| e.to_string())?
-            .map(TerrainReply::Node)
-            .ok_or("missing required terrain node".into()),
-    }
-}
-
 #[derive(Default)]
 struct Uploads {
     #[cfg(test)]
@@ -419,7 +384,7 @@ impl TerrainLodStream {
         };
         let id = self.next_id.wrapping_add(1).max(1);
         self.next_id = id;
-        match worker.requests.try_send(DatabaseRequest::Terrain {
+        match worker.try_send(DatabaseRequest::Terrain {
             request_id: id,
             generation: generation.clone(),
             query: query.clone(),

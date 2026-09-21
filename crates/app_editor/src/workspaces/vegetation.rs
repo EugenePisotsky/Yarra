@@ -29,8 +29,8 @@ use std::{path::PathBuf, time::Instant};
 use study::*;
 use ui::ui;
 use vegetation_render::{
-    VegetationBladeBands, VegetationDebugScene, VegetationDebugSettings, VegetationDiagnostics,
-    VegetationLighting, VegetationProfileMode, VegetationShapeInspection, VegetationWind,
+    VegetationBladeBands, VegetationDebugSettings, VegetationDiagnostics, VegetationLighting,
+    VegetationProfileMode, VegetationSceneState, VegetationShapeInspection, VegetationWind,
 };
 
 const LAYER: usize = 31;
@@ -94,7 +94,7 @@ impl Plugin for VegetationWorkspacePlugin {
 }
 
 struct RestoredWorld {
-    scene: VegetationDebugScene,
+    scene: VegetationSceneState,
     settings: VegetationDebugSettings,
     lighting: VegetationLighting,
     wind: VegetationWind,
@@ -463,7 +463,7 @@ mod tests {
     #[test]
     fn repeated_workspace_switches_restore_world_resources_and_camera_ownership() {
         let mut app = App::new();
-        let original_scene = VegetationDebugScene::reference();
+        let original_scene = VegetationSceneState::reference();
         let mut original_wind = VegetationWind::default();
         original_wind.set_phase_seconds(123.0);
         let sun_transform = Transform::from_xyz(12.0, -20.0, 30.0).looking_at(Vec3::ZERO, Vec3::Y);
@@ -555,7 +555,7 @@ mod tests {
                 .unwrap()
                 .0;
             app.world_mut()
-                .resource_mut::<VegetationDebugScene>()
+                .resource_mut::<VegetationSceneState>()
                 .replace(patch)
                 .unwrap();
             app.world_mut()
@@ -569,7 +569,7 @@ mod tests {
             assert!(app.world().get::<Camera>(world_camera).unwrap().is_active);
             assert!(!app.world().get::<Camera>(study_camera).unwrap().is_active);
             assert_eq!(
-                app.world().resource::<VegetationDebugScene>().scene(),
+                app.world().resource::<VegetationSceneState>().scene(),
                 original_scene.scene()
             );
             assert_eq!(
@@ -609,7 +609,7 @@ mod tests {
             zoom: 2.0,
             center: [0.6, 0.4],
         };
-        let scene = VegetationDebugScene::new(
+        let scene = VegetationSceneState::new(
             bounded_scene(&vegetation::fixtures::reference_catalog(), 3, state.seed)
                 .unwrap()
                 .0,
@@ -761,7 +761,7 @@ fn sync_scale_figure(
 fn enter(
     mut commands: Commands,
     mut state: ResMut<StudyState>,
-    scene: Res<VegetationDebugScene>,
+    scene: Res<VegetationSceneState>,
     mut settings: ResMut<VegetationDebugSettings>,
     mut lighting: ResMut<VegetationLighting>,
     mut wind: ResMut<VegetationWind>,
@@ -842,7 +842,7 @@ fn enter(
 fn leave(
     mut commands: Commands,
     mut state: ResMut<StudyState>,
-    mut scene: ResMut<VegetationDebugScene>,
+    mut scene: ResMut<VegetationSceneState>,
     mut settings: ResMut<VegetationDebugSettings>,
     mut lighting: ResMut<VegetationLighting>,
     mut wind: ResMut<VegetationWind>,
@@ -877,7 +877,7 @@ fn sync(
     time: Res<Time>,
     mut state: ResMut<StudyState>,
     mut authoring: ResMut<VegetationAuthoringState>,
-    mut scene: ResMut<VegetationDebugScene>,
+    mut scene: ResMut<VegetationSceneState>,
     mut wind: ResMut<VegetationWind>,
     mut settings: ResMut<VegetationDebugSettings>,
     mut cameras: Query<(&mut Transform, &mut Projection), With<VegetationWorkspaceCamera>>,
@@ -1003,7 +1003,7 @@ fn document(
 fn capture(
     mut commands: Commands,
     mut state: ResMut<StudyState>,
-    scene: Res<VegetationDebugScene>,
+    scene: Res<VegetationSceneState>,
     mut settings: ResMut<VegetationDebugSettings>,
     lighting: Res<VegetationLighting>,
     diagnostics: Res<VegetationDiagnostics>,

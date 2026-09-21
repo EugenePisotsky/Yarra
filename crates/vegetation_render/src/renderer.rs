@@ -48,9 +48,9 @@ use vegetation::{
 };
 
 use crate::{
-    VegetationBladeBands, VegetationDebugDraw, VegetationDebugScene, VegetationDebugSettings,
-    VegetationDebugView, VegetationDiagnostics, VegetationLighting, VegetationProfileMode,
-    VegetationSun, VegetationWind,
+    VegetationBladeBands, VegetationDebugSettings, VegetationDiagnostics, VegetationDraw,
+    VegetationLighting, VegetationProfileMode, VegetationSceneState, VegetationSun, VegetationView,
+    VegetationWind,
 };
 
 mod blade_preparation;
@@ -988,7 +988,7 @@ impl Default for VegetationTelemetryStaging {
 fn prepare_telemetry_staging(
     render_device: Res<RenderDevice>,
     settings: Res<VegetationDebugSettings>,
-    scene: Option<Res<VegetationDebugScene>>,
+    scene: Option<Res<VegetationSceneState>>,
     mut staging: ResMut<VegetationTelemetryStaging>,
 ) {
     if !settings.gpu_counters_enabled {
@@ -1079,7 +1079,7 @@ fn begin_telemetry_readback(
 
 #[allow(clippy::too_many_arguments)] // Bevy render-world system parameters are independent resources.
 fn prepare(
-    scene: Option<Res<VegetationDebugScene>>,
+    scene: Option<Res<VegetationSceneState>>,
     settings: Res<VegetationDebugSettings>,
     blade_settings: Res<crate::VegetationBladePreparation>,
     blade_preparation: Res<blade_preparation::BladePreparation>,
@@ -1101,7 +1101,7 @@ fn prepare(
             &ExtractedView,
             Option<&bevy::camera::MainPassResolutionOverride>,
         ),
-        With<VegetationDebugView>,
+        With<VegetationView>,
     >,
     mut buffers: ResMut<VegetationBuffers>,
     mut candidate_cache: ResMut<candidate_cache::CandidateCache>,
@@ -2228,9 +2228,9 @@ fn queue(
             &Msaa,
             Option<&upscaling::temporal::TemporalView>,
         ),
-        With<VegetationDebugView>,
+        With<VegetationView>,
     >,
-    draw_entity: Query<(Entity, &MainEntity), With<VegetationDebugDraw>>,
+    draw_entity: Query<(Entity, &MainEntity), With<VegetationDraw>>,
     clouds: Option<Res<atmosphere::clouds::CloudShadowGpu>>,
 ) {
     let Ok((draw_entity, draw_main_entity)) = draw_entity.single() else {

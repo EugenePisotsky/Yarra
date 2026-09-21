@@ -54,23 +54,8 @@ impl Plugin for TerrainRenderPlugin {
             .add_systems(PostUpdate, sync_cloud_inputs)
             .add_plugins(MaterialPlugin::<TerrainMaterial>::default())
             .add_plugins(MaterialPlugin::<TerrainCompositeMaterial>::default())
-            .add_systems(
-                Update,
-                (toggle_macro_variation, apply_macro_variation).chain(),
-            );
+            .add_systems(Update, apply_macro_variation);
     }
-}
-
-fn toggle_macro_variation(
-    keys: Res<ButtonInput<KeyCode>>,
-    mut variation: ResMut<TerrainMacroVariation>,
-) {
-    if !keys.just_pressed(KeyCode::KeyV) {
-        return;
-    }
-
-    *variation = variation.toggled();
-    info!("terrain macro variation: {}", variation.label());
 }
 
 fn apply_macro_variation(
@@ -100,7 +85,7 @@ impl TerrainMacroVariation {
         }
     }
 
-    fn toggled(self) -> Self {
+    pub fn toggled(self) -> Self {
         match self {
             Self::Disabled => Self::Enabled,
             Self::Enabled => Self::Disabled,

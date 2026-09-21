@@ -14,15 +14,11 @@ impl WorldStartView {
         Projection::Perspective(perspective)
     }
 
-    pub fn from_args() -> Result<Self, String> {
-        let mut args = std::env::args_os();
-        let Some(_) = args.find(|arg| arg == "--start-view") else {
+    pub fn load(path: Option<&std::path::Path>) -> Result<Self, String> {
+        let Some(path) = path else {
             return Ok(Self::default());
         };
-        let path = args
-            .next()
-            .ok_or("--start-view requires a RON viewpoint file")?;
-        let text = std::fs::read_to_string(&path)
+        let text = std::fs::read_to_string(path)
             .map_err(|e| format!("cannot read start view {path:?}: {e}"))?;
         let view: WorldViewBookmark =
             ron::from_str(&text).map_err(|e| format!("invalid start view {path:?}: {e}"))?;
@@ -33,7 +29,7 @@ impl WorldStartView {
     pub fn camera_at(view: &WorldViewBookmark, position: Vec3) -> Transform {
         let pitch = view.pitch_degrees.to_radians();
         let yaw = view.yaw_degrees.to_radians();
-        let focus = position + Vec3::Y * super::CAMERA_FOCUS_HEIGHT;
+        let focus = position + Vec3::Y * crate::gameplay::CAMERA_FOCUS_HEIGHT;
         let offset = Vec3::new(
             yaw.sin() * pitch.cos(),
             pitch.sin(),

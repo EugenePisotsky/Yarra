@@ -1,5 +1,4 @@
 //! Shared canopy controls and world-terrain integration.
-mod world;
 
 use crate::{
     shell::{
@@ -12,7 +11,7 @@ use bevy_egui::{EguiPrimaryContextPass, egui};
 use std::path::PathBuf;
 use vegetation::CanopyShading;
 use vegetation_render::{
-    VegetationDebugScene, VegetationDebugSettings, VegetationDensityMode, VegetationLighting,
+    VegetationDebugSettings, VegetationDensityMode, VegetationLighting, VegetationSceneState,
 };
 
 pub(crate) const CANOPY_WINDOW: EditorWindowDescriptor = EditorWindowDescriptor {
@@ -25,13 +24,12 @@ pub(crate) const CANOPY_WINDOW: EditorWindowDescriptor = EditorWindowDescriptor 
 pub(crate) struct EditorCanopyPlugin;
 impl Plugin for EditorCanopyPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<world::GroundTiles>()
+        app.add_plugins(engine::GroundCanopyPlugin)
             .add_systems(Startup, load_saved_look)
-            .add_systems(
+            .configure_sets(
                 Update,
-                world::sync
+                engine::GroundCanopySystems
                     .after(crate::vegetation_authoring::VegetationPreviewSync)
-                    .before(terrain_render::TerrainMaterialPreparation)
                     .run_if(world_workspace_active),
             )
             .add_systems(
@@ -63,7 +61,7 @@ fn world_ui(
     mut windows: ResMut<EditorWindowRegistry>,
     mut lighting: ResMut<VegetationLighting>,
     mut settings: ResMut<VegetationDebugSettings>,
-    scene: Res<VegetationDebugScene>,
+    scene: Res<VegetationSceneState>,
     mut message: Local<Option<String>>,
 ) {
     let mut open = windows.is_open(CANOPY_WINDOW.id);
@@ -166,7 +164,7 @@ pub(crate) fn draw_controls(
                     .and_then(|s| std::fs::write(&path, s).map_err(|e| e.to_string()))
                 {
                     Ok(()) => {
-                        "Saved for editor startup and game. Press H in the game to reload canopy."
+                        "Saved for editor startup and game. Use F1 → Advanced → Reload canopy look in the game."
                             .into()
                     }
                     Err(e) => e,

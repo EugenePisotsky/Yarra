@@ -122,9 +122,20 @@ struct Messages {
 #[derive(Resource, Clone, Default)]
 struct Bridge(Arc<Mutex<Messages>>);
 
+/// Optional startup diagnostics, configured by the application.
+#[derive(Resource, Clone, Copy, Default)]
+pub struct UpscalingDiagnostics {
+    pub temporal_timing: bool,
+}
+
 pub struct UpscalingPlugin;
 impl Plugin for UpscalingPlugin {
     fn build(&self, app: &mut App) {
+        app.init_resource::<UpscalingDiagnostics>();
+        let diagnostics = *app.world().resource::<UpscalingDiagnostics>();
+        if let Some(render) = app.get_sub_app_mut(bevy::render::RenderApp) {
+            render.insert_resource(diagnostics);
+        }
         let bridge = Bridge::default();
         app.insert_resource(bridge.clone())
             .init_resource::<UpscalingCapabilities>()

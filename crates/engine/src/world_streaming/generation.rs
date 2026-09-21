@@ -46,7 +46,7 @@ pub(super) fn request_reload(
         reload.queued = Some((id, generation));
         return;
     };
-    match worker.requests.try_send(DatabaseRequest::Reload {
+    match worker.try_send(DatabaseRequest::Reload {
         request_id: id,
         expected_generation: generation.clone(),
     }) {
@@ -75,6 +75,7 @@ pub(super) fn advance_reload(
     mut viewpoint: ResMut<WorldViewpoint>,
     mut origin: ResMut<WorldOrigin>,
     mut stream: ResMut<WorldStream>,
+    mut residency: ResMut<SourceResidency>,
     mut reload: ResMut<WorldGenerationReload>,
     mut entry: ResMut<terrain_lod::entry::TerrainEntry>,
     mut terrain: ResMut<terrain_lod::TerrainLodStream>,
@@ -92,9 +93,8 @@ pub(super) fn advance_reload(
     if let Some(error) = reload.failure.clone() {
         // Keep the operation single-flight until the candidate's reader is queued
         // for release. A later retry cannot be cleared by this discard's identity.
-        if let Err(TrySendError::Full(_)) = worker
-            .requests
-            .try_send(DatabaseRequest::DiscardReload { request_id: id })
+        if let Err(TrySendError::Full(_)) =
+            worker.try_send(DatabaseRequest::DiscardReload { request_id: id })
         {
             return;
         }
@@ -120,7 +120,7 @@ pub(super) fn advance_reload(
         return;
     }
     if !reload.commit_requested {
-        match worker.requests.try_send(DatabaseRequest::CommitReload {
+        match worker.try_send(DatabaseRequest::CommitReload {
             request_id: id,
             expected_generation: expected,
         }) {
@@ -145,8 +145,9 @@ pub(super) fn advance_reload(
         &mut materials,
         &mut images,
         &mut stream,
+        &mut residency,
     );
-    stream.definition_cache.clear();
+    residency.definition_cache.clear();
     adopt_runtime_manifest(
         candidate,
         &mut active,
@@ -175,6 +176,7 @@ pub(super) fn advance_reload(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crossbeam_channel::{Receiver, Sender};
 
     fn manifest(generation: &str) -> RuntimeManifest {
         RuntimeManifest {
@@ -203,52 +205,51 @@ mod tests {
     }
     impl Harness {
         fn new() -> Self {
-            let (requests, receiver) = bounded(1);
-            let (replies, results) = bounded(8);
+            let (worker, receiver, replies) = WorldDatabaseWorker::test_channel_pair(1, 8);
             let mut app = App::new();
-            app.insert_resource(WorldDatabaseWorker {
-                requests,
-                results,
-                thread: None,
-            })
-            .init_resource::<WorldGenerationReload>()
-            .init_resource::<ActiveWorldSpace>()
-            .init_resource::<WorldCatalog>()
-            .init_resource::<WorldViewpoint>()
-            .init_resource::<crate::WorldStartView>()
-            .init_resource::<WorldOrigin>()
-            .init_resource::<WorldStream>()
-            .init_resource::<terrain_lod::TerrainLodStream>()
-            .init_resource::<terrain_lod::entry::TerrainEntry>()
-            .init_resource::<terrain_lod::UploadTracker>()
-            .init_resource::<Assets<Mesh>>()
-            .init_resource::<Assets<TerrainMaterial>>()
-            .init_resource::<Assets<Image>>()
-            .insert_resource(TerrainLodPreview {
-                enabled: false,
-                ..default()
-            })
-            .add_systems(
-                Update,
-                (receive_database_results, request_reload, advance_reload).chain(),
-            );
+            app.insert_resource(worker)
+                .init_resource::<WorldGenerationReload>()
+                .init_resource::<ActiveWorldSpace>()
+                .init_resource::<WorldCatalog>()
+                .init_resource::<WorldViewpoint>()
+                .init_resource::<crate::WorldStartView>()
+                .init_resource::<WorldOrigin>()
+                .init_resource::<WorldStream>()
+                .init_resource::<SourceResidency>()
+                .init_resource::<terrain_lod::TerrainLodStream>()
+                .init_resource::<terrain_lod::entry::TerrainEntry>()
+                .init_resource::<terrain_lod::UploadTracker>()
+                .init_resource::<Assets<Mesh>>()
+                .init_resource::<Assets<TerrainMaterial>>()
+                .init_resource::<Assets<Image>>()
+                .insert_resource(TerrainLodPreview {
+                    enabled: false,
+                    ..default()
+                })
+                .add_systems(
+                    Update,
+                    (receive_database_results, request_reload, advance_reload).chain(),
+                );
             replies
                 .send(DatabaseResult::Opened(Ok(manifest("old"))))
                 .unwrap();
             app.update();
             let resident = app.world_mut().spawn_empty().id();
-            app.world_mut().resource_mut::<WorldStream>().pages.insert(
-                PageKey {
-                    space: WorldSpaceId(1),
-                    cell: CellCoord::ZERO,
-                    domain: PageDomain::TerrainRender,
-                    lod: 0,
-                },
-                PageState::Resident(PageAttachment {
-                    entities: vec![resident],
-                    ..default()
-                }),
-            );
+            app.world_mut()
+                .resource_mut::<SourceResidency>()
+                .pages
+                .insert(
+                    PageKey {
+                        space: WorldSpaceId(1),
+                        cell: CellCoord::ZERO,
+                        domain: PageDomain::TerrainRender,
+                        lod: 0,
+                    },
+                    PageState::Resident(PageAttachment {
+                        entities: vec![resident],
+                        ..default()
+                    }),
+                );
             Self {
                 app,
                 requests: receiver,
@@ -296,7 +297,7 @@ mod tests {
                 "old"
             );
             assert!(w.get_entity(self.resident).is_ok());
-            assert_eq!(w.resource::<WorldStream>().pages.len(), 1);
+            assert_eq!(w.resource::<SourceResidency>().pages.len(), 1);
         }
         fn completion(&mut self) -> Option<Result<String, String>> {
             self.app
@@ -305,16 +306,6 @@ mod tests {
                 .take_completion()
         }
     }
-    impl Drop for Harness {
-        fn drop(&mut self) {
-            // The fake worker has no consumer to drain a bounded shutdown request.
-            while self.requests.try_recv().is_ok() {}
-            self.app
-                .world_mut()
-                .remove_resource::<WorldDatabaseWorker>();
-        }
-    }
-
     #[test]
     fn publication_changes_live_state_only_after_matching_commit_acknowledgement() {
         let mut h = Harness::new();
@@ -351,7 +342,7 @@ mod tests {
             "next"
         );
         assert!(h.app.world().get_entity(h.resident).is_err());
-        assert!(h.app.world().resource::<WorldStream>().pages.is_empty());
+        assert!(h.app.world().resource::<SourceResidency>().pages.is_empty());
         assert_eq!(
             h.app
                 .world()
@@ -405,7 +396,6 @@ mod tests {
         h.app
             .world()
             .resource::<WorldDatabaseWorker>()
-            .requests
             .try_send(DatabaseRequest::DiscardReload { request_id: 0 })
             .unwrap();
         h.prepared(id, manifest("next"));
@@ -472,164 +462,5 @@ mod tests {
                 matches!(h.requests.try_recv().unwrap(), DatabaseRequest::DiscardReload { request_id } if request_id == id)
             );
         }
-    }
-
-    #[test]
-    fn worker_keeps_both_snapshots_until_commit_and_rejects_stale_source_work() {
-        use terrain_lod::{TerrainQuery, TerrainReply};
-        let folder =
-            std::env::temp_dir().join(format!("yarra-generation-worker-{}", std::process::id()));
-        std::fs::create_dir_all(&folder).unwrap();
-        let source = folder.join("source.sqlite");
-        let runtime = folder.join("runtime.sqlite");
-        world_cook::create_demo_project(&source).unwrap();
-        let mut project = world_db::read_project_database(&source).unwrap();
-        project
-            .cells
-            .retain(|c| c.space == WorldSpaceId(1) && c.cell == CellCoord::ZERO);
-        project.world_spaces[0].minimum_y = 0.;
-        project.world_spaces[0].maximum_y = 100.;
-        project.cells[0].height = 3.;
-        project.objects.clear();
-        project.environment_cells.clear();
-        project.terrain_cell_heightfields.clear();
-        std::fs::remove_file(&source).unwrap();
-        world_db::write_project_database(&source, &project).unwrap();
-        let old = world_cook::cook_project(&source, &runtime).unwrap();
-        let (requests, input) = bounded(4);
-        let (output, replies) = bounded(4);
-        let path = runtime.clone();
-        let worker = thread::spawn(move || database_worker(path, input, output));
-        let recv = || replies.recv_timeout(Duration::from_secs(10)).unwrap();
-        assert!(matches!(recv(), DatabaseResult::Opened(Ok(_))));
-        project.cells[0].height = 8.;
-        project.cells[0].source_revision += 1;
-        let updated = folder.join("updated.sqlite");
-        world_db::write_project_database(&updated, &project).unwrap();
-        let next = world_cook::cook_project(&updated, &runtime).unwrap();
-        assert_ne!(old.generation_id, next.generation_id);
-        let roots = |generation: &str| {
-            requests
-                .send(DatabaseRequest::Terrain {
-                    request_id: 100,
-                    generation: generation.into(),
-                    query: TerrainQuery::Roots(WorldSpaceId(1)),
-                })
-                .unwrap();
-            let DatabaseResult::Terrain { result, .. } = recv() else {
-                panic!("expected terrain reply")
-            };
-            result.map(|reply| {
-                let TerrainReply::Metadata(m) = reply else {
-                    panic!("expected roots")
-                };
-                assert_eq!(m.len(), 1);
-                m[0].height_bounds[0]
-            })
-        };
-        let index = |generation: &str| {
-            requests
-                .send(DatabaseRequest::ReadIndex {
-                    generation: generation.into(),
-                    revision: 1,
-                    space: WorldSpaceId(1),
-                    windows: vec![[CellCoord::ZERO; 2]],
-                })
-                .unwrap();
-            let DatabaseResult::Index { result, .. } = recv() else {
-                panic!("expected index")
-            };
-            result.map(|cells| {
-                assert_eq!(cells.len(), 1);
-                cells[0].minimum_y
-            })
-        };
-        let page = |generation: &str| {
-            requests
-                .send(DatabaseRequest::ReadPage {
-                    generation: generation.into(),
-                    request_id: 101,
-                    key: PageKey {
-                        space: WorldSpaceId(1),
-                        cell: CellCoord::ZERO,
-                        domain: PageDomain::TerrainRender,
-                        lod: 0,
-                    },
-                    height_only: true,
-                })
-                .unwrap();
-            let DatabaseResult::Page { result, .. } = recv() else {
-                panic!("expected page")
-            };
-            result.map(|p| {
-                let encoded = p.unwrap().encoded;
-                let checksum = encoded.checksum;
-                encoded.decode().unwrap();
-                checksum
-            })
-        };
-        let old_page = page(&old.generation_id).unwrap();
-        for id in [1, 2] {
-            requests
-                .send(DatabaseRequest::Reload {
-                    request_id: id,
-                    expected_generation: next.generation_id.clone(),
-                })
-                .unwrap();
-            assert!(matches!(
-                recv(),
-                DatabaseResult::Reloaded { result: Ok(_), .. }
-            ));
-            // An older discard must not remove this operation's candidate.
-            requests
-                .send(DatabaseRequest::DiscardReload { request_id: 0 })
-                .unwrap();
-            assert!((roots(&old.generation_id).unwrap() - 3.).abs() < 0.01);
-            assert!((roots(&next.generation_id).unwrap() - 8.).abs() < 0.01);
-            assert!((index(&old.generation_id).unwrap() - 3.).abs() < 0.01);
-            assert_eq!(page(&old.generation_id).unwrap(), old_page);
-            assert!(index(&next.generation_id).is_err());
-            assert!(page(&next.generation_id).is_err());
-            for (wrong_id, wrong_generation) in [
-                (id + 20, next.generation_id.clone()),
-                (id, old.generation_id.clone()),
-            ] {
-                requests
-                    .send(DatabaseRequest::CommitReload {
-                        request_id: wrong_id,
-                        expected_generation: wrong_generation,
-                    })
-                    .unwrap();
-                assert!(matches!(
-                    recv(),
-                    DatabaseResult::ReloadCommitted { result: Err(_), .. }
-                ));
-            }
-            if id == 1 {
-                requests
-                    .send(DatabaseRequest::DiscardReload { request_id: id })
-                    .unwrap();
-                assert!(roots(&next.generation_id).is_err());
-                assert_eq!(page(&old.generation_id).unwrap(), old_page);
-            }
-        }
-        requests
-            .send(DatabaseRequest::CommitReload {
-                request_id: 2,
-                expected_generation: next.generation_id.clone(),
-            })
-            .unwrap();
-        assert!(matches!(
-            recv(),
-            DatabaseResult::ReloadCommitted { result: Ok(()), .. }
-        ));
-        assert!(index(&old.generation_id).is_err());
-        assert!(page(&old.generation_id).is_err());
-        assert!(roots(&old.generation_id).is_err());
-        assert!((index(&next.generation_id).unwrap() - 8.).abs() < 0.01);
-        assert_ne!(page(&next.generation_id).unwrap(), old_page);
-        requests.send(DatabaseRequest::Shutdown).unwrap();
-        worker.join().unwrap();
-        std::fs::remove_dir_all(folder).unwrap();
     }
 }

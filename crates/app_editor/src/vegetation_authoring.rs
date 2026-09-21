@@ -8,13 +8,13 @@ use bevy::prelude::*;
 use bevy_egui::{EguiPrimaryContextPass, egui};
 use engine::{StreamedTerrainSurface, StreamedVegetationFieldPage, WorldOrigin};
 use vegetation::{
-    GrowthPattern, RibbonCurveProfile, TopologyProfile, VegetationCatalog, VegetationFieldPage,
-    VegetationGroupingProfile, VegetationScene, VegetationSurfaceField, VoronoiClumpProfile,
+    GrowthPattern, RibbonCurveProfile, TopologyProfile, VegetationCatalog,
+    VegetationGroupingProfile, VegetationScene, VoronoiClumpProfile,
 };
 use vegetation_render::{
-    VegetationDebugMode, VegetationDebugScene, VegetationDebugSettings, VegetationDensityMode,
-    VegetationDiagnostics, VegetationLighting, VegetationLightingMode, VegetationProfileMode,
-    VegetationRenderPlugin,
+    VegetationDebugMode, VegetationDebugSettings, VegetationDensityMode, VegetationDiagnostics,
+    VegetationLighting, VegetationLightingMode, VegetationProfileMode, VegetationRenderPlugin,
+    VegetationSceneState,
 };
 
 use crate::{
@@ -41,10 +41,14 @@ pub(crate) struct VegetationPreviewSync;
 
 impl Plugin for VegetationAuthoringPlugin {
     fn build(&self, app: &mut App) {
+        // The editor explicitly opts into render diagnostics; the renderer itself is reusable
+        // by game compositions that omit instrumentation.
+        #[cfg(not(target_os = "ios"))]
+        app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
         app.add_plugins(VegetationRenderPlugin)
             .init_resource::<VegetationAuthoringState>()
             .insert_resource(
-                VegetationDebugScene::new(VegetationScene {
+                VegetationSceneState::new(VegetationScene {
                     catalog: vegetation::fixtures::reference_catalog(),
                     pages: Vec::new(),
                 })
@@ -307,7 +311,7 @@ fn sync_live_preview(
     terrain_pages: Query<(Entity, &StreamedTerrainSurface)>,
     field_pages: Query<(Entity, &StreamedVegetationFieldPage)>,
     mut state: ResMut<VegetationAuthoringState>,
-    mut scene: ResMut<VegetationDebugScene>,
+    mut scene: ResMut<VegetationSceneState>,
     mut previous: Local<Option<PreviewSignature>>,
     render_origin: Option<ResMut<vegetation_render::VegetationRenderOrigin>>,
 ) {
@@ -396,34 +400,10 @@ fn sync_live_preview(
                         }
                         fields
                             .iter()
-                            .find(|(_, page)| page.key == terrain.key)
+                            .find(|(_, page)| terrain.matches_vegetation(page))
                             .map(|(_, page)| &page.data)
                     })?;
-                let cell_origin = terrain.key.cell.origin(terrain.cell_size);
-                let render_origin = origin.cell().origin(terrain.cell_size);
-                let resolution = terrain.heightfield.resolution;
-                let sample_count = usize::from(resolution).pow(2);
-                Some(VegetationFieldPage::from_data(
-                    [
-                        (cell_origin[0] - render_origin[0]) as f32,
-                        (cell_origin[1] - render_origin[1]) as f32,
-                    ],
-                    terrain.cell_size,
-                    VegetationSurfaceField {
-                        resolution,
-                        heights: (0..sample_count)
-                            .map(|index| {
-                                terrain.heightfield.height_at(
-                                    index % usize::from(resolution),
-                                    index / usize::from(resolution),
-                                )
-                            })
-                            .collect(),
-                        normals_oct: terrain.heightfield.normals_oct.clone(),
-                        validity: vec![u8::MAX; sample_count],
-                    },
-                    data.clone(),
-                ))
+                Some(terrain.vegetation_page(origin.cell(), data))
             })
             .collect()
     } else {

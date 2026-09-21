@@ -12,8 +12,6 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
-#[cfg(not(target_os = "ios"))]
-use bevy::render::diagnostic::RenderDiagnosticsPlugin;
 use bevy::{
     color::LinearRgba,
     light::SunDisk,
@@ -54,20 +52,20 @@ pub const PROCEDURAL_DISTANCE_METERS: f32 = 96.0;
 static NEXT_SCENE_REVISION: AtomicU64 = AtomicU64::new(1);
 
 /// Installs the independent vegetation V2 render path.
+/// Timing instrumentation is an application choice; this plugin never installs GPU probes.
 ///
-/// It remains dormant until a [`VegetationDebugScene`] resource exists and a camera carries
-/// [`VegetationDebugView`]. The current game integration enables this path explicitly while V2 is
-/// measured; the renderer contracts themselves are the production foundation.
+/// It remains dormant until a [`VegetationSceneState`] resource exists and a camera carries
+/// [`VegetationView`]. Applications own world streaming and scene construction.
 pub struct VegetationRenderPlugin;
 
 impl Plugin for VegetationRenderPlugin {
     fn build(&self, app: &mut App) {
+        app.init_resource::<VegetationPreparationCapacity>();
+        let capacity = *app.world().resource::<VegetationPreparationCapacity>();
         let diagnostics = VegetationDiagnostics::default();
         app.insert_resource(diagnostics.clone());
-        #[cfg(not(target_os = "ios"))]
-        app.add_plugins(RenderDiagnosticsPlugin);
         app.add_plugins((
-            ExtractResourcePlugin::<VegetationDebugScene>::default(),
+            ExtractResourcePlugin::<VegetationSceneState>::default(),
             ExtractResourcePlugin::<VegetationDebugSettings>::default(),
             ExtractResourcePlugin::<VegetationLighting>::default(),
             ExtractResourcePlugin::<VegetationWind>::default(),
@@ -76,8 +74,8 @@ impl Plugin for VegetationRenderPlugin {
             ExtractResourcePlugin::<VegetationTerrainGate>::default(),
             ExtractResourcePlugin::<VegetationBladePreparation>::default(),
             ExtractResourcePlugin::<VegetationSun>::default(),
-            ExtractComponentPlugin::<VegetationDebugView>::default(),
-            ExtractComponentPlugin::<VegetationDebugDraw>::default(),
+            ExtractComponentPlugin::<VegetationView>::default(),
+            ExtractComponentPlugin::<VegetationDraw>::default(),
         ))
         .init_resource::<VegetationDebugSettings>()
         .init_resource::<VegetationLighting>()
@@ -87,20 +85,19 @@ impl Plugin for VegetationRenderPlugin {
         .init_resource::<VegetationTerrainGate>()
         .init_resource::<VegetationBladePreparation>()
         .init_resource::<VegetationSun>()
-        .add_systems(Update, (cycle_debug_mode, advance_vegetation_wind).chain())
+        .add_systems(Update, advance_vegetation_wind)
         .add_systems(
             PostUpdate,
             sync_vegetation_sun.after(TransformSystems::Propagate),
         )
-        .add_systems(
-            PostUpdate,
-            (attach_default_debug_views, maintain_debug_draw_entity),
-        );
+        .add_systems(PostUpdate, (attach_default_views, maintain_draw_entity));
 
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
         };
-        render_app.insert_resource(diagnostics);
+        render_app
+            .insert_resource(diagnostics)
+            .insert_resource(capacity);
         render_app.add_systems(
             RenderStartup,
             renderer::initialize.after(MeshPipelineSystems),
@@ -120,6 +117,15 @@ pub struct VegetationLodFocus {
 #[derive(Resource, ExtractResource, Default, Clone, Copy, Debug)]
 pub struct VegetationRenderOrigin {
     pub world_xz: [f64; 2],
+}
+
+/// Startup-only capacity for the prepared-blade arena. Applications own configuration.
+#[derive(Resource, Clone, Copy)]
+pub struct VegetationPreparationCapacity(pub u64);
+impl Default for VegetationPreparationCapacity {
+    fn default() -> Self {
+        Self(131_072)
+    }
 }
 
 /// Prepare shared curve and wind values once per blade, with a bounded GPU cache.
@@ -413,16 +419,6 @@ impl VegetationDebugMode {
             Self::GroupStructure => "group structure",
         }
     }
-
-    fn next(self) -> Self {
-        match self {
-            Self::ProceduralGeometry => Self::AcceptedSpecies,
-            Self::AcceptedSpecies => Self::ParentLinks,
-            Self::ParentLinks => Self::CandidateOutcomes,
-            Self::CandidateOutcomes => Self::GroupStructure,
-            Self::GroupStructure => Self::ProceduralGeometry,
-        }
-    }
 }
 
 /// Selects an isolated V2 workload for target-hardware measurements.
@@ -453,16 +449,6 @@ impl VegetationProfileMode {
             Self::Disabled => "disabled",
         }
     }
-
-    fn next(self) -> Self {
-        match self {
-            Self::Full => Self::DrawFrozen,
-            Self::DrawFrozen => Self::ComputeOnly,
-            Self::ComputeOnly => Self::ScheduleOnly,
-            Self::ScheduleOnly => Self::Full,
-            Self::Disabled => Self::Full,
-        }
-    }
 }
 
 /// Selects the population-density policy independently from procedural geometry LOD.
@@ -484,14 +470,6 @@ impl VegetationDensityMode {
             Self::Authored => "authored thinning",
             Self::Balanced => "balanced production",
             Self::FullReference => "100% reference",
-        }
-    }
-
-    fn next(self) -> Self {
-        match self {
-            Self::Authored => Self::Balanced,
-            Self::Balanced => Self::FullReference,
-            Self::FullReference => Self::Authored,
         }
     }
 }
@@ -518,15 +496,6 @@ impl VegetationLightingMode {
             Self::Legacy => "legacy",
             Self::UnlitDiagnostic => "unlit diagnostic",
             Self::VertexOnlyDiagnostic => "minimal vertex diagnostic",
-        }
-    }
-
-    fn next(self) -> Self {
-        match self {
-            Self::RoundedGloss => Self::Legacy,
-            Self::Legacy => Self::UnlitDiagnostic,
-            Self::UnlitDiagnostic => Self::VertexOnlyDiagnostic,
-            Self::VertexOnlyDiagnostic => Self::RoundedGloss,
         }
     }
 }
@@ -605,12 +574,9 @@ fn default_band_density() -> f32 {
     1.0
 }
 
-/// Runtime controls for the V2 placement and profiling diagnostics.
-///
-/// Press `X` to cycle the visual explanation, `P` to isolate render workloads, and `O` to cycle
-/// balanced production, full-reference, and authored population density. Press `L` to compare the
-/// production foliage lighting with the former empirical response, and `K` to compare bounded
-/// far-ribbon width compensation with authored widths.
+/// Shared rendering controls, including production quality and explicit diagnostic overrides.
+/// Applications own the UI: the game uses F1 and the editor uses workspace controls.
+/// Keep this serialized type and its fields compatible with existing vegetation study files.
 #[derive(Resource, ExtractResource, Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct VegetationDebugSettings {
     pub mode: VegetationDebugMode,
@@ -655,70 +621,16 @@ impl Default for VegetationDebugSettings {
     }
 }
 
-#[derive(Resource)]
-pub struct VegetationDebugHotkeys(pub bool);
-
-fn cycle_debug_mode(
-    hotkeys: Option<Res<VegetationDebugHotkeys>>,
-    keys: Res<ButtonInput<KeyCode>>,
-    mut settings: ResMut<VegetationDebugSettings>,
-    mut wind: ResMut<VegetationWind>,
-) {
-    if wind.externally_driven || hotkeys.is_some_and(|h| !h.0) {
-        return;
-    }
-    if keys.just_pressed(KeyCode::KeyX) {
-        settings.mode = settings.mode.next();
-        warn!("vegetation-v2 diagnostic: {}", settings.mode.label());
-    }
-    if keys.just_pressed(KeyCode::KeyP) {
-        settings.profile_mode = settings.profile_mode.next();
-        warn!(
-            "vegetation-v2 profile workload: {}",
-            settings.profile_mode.label()
-        );
-    }
-    if keys.just_pressed(KeyCode::KeyO) {
-        settings.density_mode = settings.density_mode.next();
-        warn!(
-            "vegetation-v2 LOD density: {}",
-            settings.density_mode.label()
-        );
-    }
-    if keys.just_pressed(KeyCode::KeyL) {
-        settings.lighting_mode = settings.lighting_mode.next();
-        warn!("vegetation-v2 lighting: {}", settings.lighting_mode.label());
-    }
-    if keys.just_pressed(KeyCode::KeyK) {
-        settings.far_width_compensation = !settings.far_width_compensation;
-        warn!(
-            "vegetation-v2 far width compensation: {}",
-            if settings.far_width_compensation {
-                "on"
-            } else {
-                "off"
-            }
-        );
-    }
-    if keys.just_pressed(KeyCode::KeyI) {
-        wind.enabled = !wind.enabled;
-        warn!(
-            "vegetation-v2 wind: {}",
-            if wind.enabled { "strong" } else { "off" }
-        );
-    }
-}
-
-/// An explicitly enabled, in-memory V2 scene used to validate GPU placement before persistence.
+/// Immutable render-facing vegetation snapshot shared by gameplay, editor previews and probes.
 #[derive(Resource, ExtractResource, Clone, Debug)]
-pub struct VegetationDebugScene {
+pub struct VegetationSceneState {
     // Immutable snapshots are shared with extraction and contact certification.
     // Copying every field on every render extraction scales with resident area.
     scene: Arc<VegetationScene>,
     revision: u64,
 }
 
-impl VegetationDebugScene {
+impl VegetationSceneState {
     pub fn new(scene: VegetationScene) -> Result<Self, SceneValidationError> {
         scene.validate()?;
         Ok(Self {
@@ -748,47 +660,47 @@ impl VegetationDebugScene {
     }
 }
 
-/// Opts a camera into V2 rendering and its placement diagnostics.
+/// Opts a camera into vegetation rendering. Diagnostics are configured separately.
 #[derive(Component, ExtractComponent, Clone, Copy, Debug, Default)]
-pub struct VegetationDebugView;
+pub struct VegetationView;
 
 /// Excludes non-vegetation editor cameras from automatic scene attachment.
 #[derive(Component)]
 pub struct VegetationViewDisabled;
 
 #[derive(Component, ExtractComponent, Clone, Copy, Debug, Default)]
-pub(crate) struct VegetationDebugDraw;
+pub(crate) struct VegetationDraw;
 
-fn attach_default_debug_views(
+fn attach_default_views(
     mut commands: Commands,
-    scene: Option<Res<VegetationDebugScene>>,
+    scene: Option<Res<VegetationSceneState>>,
     cameras: Query<
         (
             Entity,
             &Camera,
-            Has<VegetationDebugView>,
+            Has<VegetationView>,
             Has<VegetationViewDisabled>,
         ),
         With<Camera3d>,
     >,
 ) {
-    for (entity, camera, has_debug_view, disabled) in &cameras {
+    for (entity, camera, has_view, disabled) in &cameras {
         let enabled = scene.is_some() && camera.is_active && !disabled;
-        if enabled && !has_debug_view {
-            commands.entity(entity).insert(VegetationDebugView);
-        } else if !enabled && has_debug_view {
-            commands.entity(entity).remove::<VegetationDebugView>();
+        if enabled && !has_view {
+            commands.entity(entity).insert(VegetationView);
+        } else if !enabled && has_view {
+            commands.entity(entity).remove::<VegetationView>();
         }
     }
 }
 
-fn maintain_debug_draw_entity(
+fn maintain_draw_entity(
     mut commands: Commands,
-    scene: Option<Res<VegetationDebugScene>>,
-    draw_entities: Query<Entity, With<VegetationDebugDraw>>,
+    scene: Option<Res<VegetationSceneState>>,
+    draw_entities: Query<Entity, With<VegetationDraw>>,
 ) {
     if scene.is_some() && draw_entities.is_empty() {
-        commands.spawn((VegetationDebugDraw, Name::new("Vegetation V2 debug draw")));
+        commands.spawn((VegetationDraw, Name::new("Vegetation draw")));
     } else if scene.is_none() {
         for entity in &draw_entities {
             commands.entity(entity).despawn();
@@ -802,7 +714,7 @@ mod tests {
 
     #[test]
     fn scene_snapshots_share_data_and_replace_atomically() {
-        let mut scene = VegetationDebugScene::reference();
+        let mut scene = VegetationSceneState::reference();
         let snapshot = scene.clone();
         assert!(Arc::ptr_eq(&scene.scene, &snapshot.scene));
         let mut next = scene.scene().clone();
@@ -814,21 +726,17 @@ mod tests {
     }
 
     #[test]
-    fn external_transport_keeps_exact_wind_phase_and_ignores_shortcuts() {
+    fn external_transport_keeps_exact_wind_phase() {
         let mut app = App::new();
         let mut time: Time = Time::default();
         time.advance_by(std::time::Duration::from_secs_f32(0.05));
         let mut wind = VegetationWind::default();
         wind.externally_driven = true;
         wind.set_phase_seconds(7.125);
-        let mut keys = ButtonInput::<KeyCode>::default();
-        keys.press(KeyCode::KeyI);
-        keys.press(KeyCode::KeyO);
         app.insert_resource(time)
             .insert_resource(wind)
-            .insert_resource(keys)
             .init_resource::<VegetationDebugSettings>()
-            .add_systems(Update, (cycle_debug_mode, advance_vegetation_wind).chain());
+            .add_systems(Update, advance_vegetation_wind);
         app.update();
         let wind = app.world().resource::<VegetationWind>();
         assert_eq!(wind.phase_seconds(), 7.125);
@@ -842,9 +750,6 @@ mod tests {
         app.world_mut()
             .resource_mut::<VegetationWind>()
             .externally_driven = false;
-        app.world_mut()
-            .resource_mut::<ButtonInput<KeyCode>>()
-            .clear();
         app.update();
         assert!(app.world().resource::<VegetationWind>().phase_seconds() > 7.125);
     }
@@ -852,8 +757,8 @@ mod tests {
     #[test]
     fn inactive_and_excluded_cameras_do_not_own_vegetation_draws() {
         let mut app = App::new();
-        app.insert_resource(VegetationDebugScene::reference())
-            .add_systems(Update, attach_default_debug_views);
+        app.insert_resource(VegetationSceneState::reference())
+            .add_systems(Update, attach_default_views);
         let active = app
             .world_mut()
             .spawn((Camera3d::default(), Camera::default()))
@@ -866,7 +771,7 @@ mod tests {
                     is_active: false,
                     ..default()
                 },
-                VegetationDebugView,
+                VegetationView,
             ))
             .id();
         let excluded = app
@@ -874,51 +779,9 @@ mod tests {
             .spawn((Camera3d::default(), VegetationViewDisabled))
             .id();
         app.update();
-        assert!(app.world().get::<VegetationDebugView>(active).is_some());
-        assert!(app.world().get::<VegetationDebugView>(inactive).is_none());
-        assert!(app.world().get::<VegetationDebugView>(excluded).is_none());
-    }
-
-    #[test]
-    fn profile_cycle_enters_frozen_draw_directly_after_full() {
-        let full = VegetationProfileMode::Full;
-        let draw = full.next();
-        let compute = draw.next();
-        let schedule = compute.next();
-        assert_eq!(draw, VegetationProfileMode::DrawFrozen);
-        assert_eq!(compute, VegetationProfileMode::ComputeOnly);
-        assert_eq!(schedule, VegetationProfileMode::ScheduleOnly);
-        assert_eq!(schedule.next(), full);
-    }
-
-    #[test]
-    fn density_cycle_keeps_balanced_between_authored_and_full_reference() {
-        assert_eq!(
-            VegetationDensityMode::default(),
-            VegetationDensityMode::Balanced
-        );
-        let authored = VegetationDensityMode::Authored;
-        let balanced = authored.next();
-        let full = balanced.next();
-        assert_eq!(balanced, VegetationDensityMode::Balanced);
-        assert_eq!(full, VegetationDensityMode::FullReference);
-        assert_eq!(full.next(), authored);
-    }
-
-    #[test]
-    fn rounded_gloss_is_the_default_and_cycles_through_diagnostic_lighting() {
-        let rounded = VegetationLightingMode::default();
-        assert_eq!(rounded, VegetationLightingMode::RoundedGloss);
-        assert_eq!(rounded.next(), VegetationLightingMode::Legacy);
-        assert_eq!(
-            rounded.next().next(),
-            VegetationLightingMode::UnlitDiagnostic
-        );
-        assert_eq!(
-            rounded.next().next().next(),
-            VegetationLightingMode::VertexOnlyDiagnostic
-        );
-        assert_eq!(rounded.next().next().next().next(), rounded);
+        assert!(app.world().get::<VegetationView>(active).is_some());
+        assert!(app.world().get::<VegetationView>(inactive).is_none());
+        assert!(app.world().get::<VegetationView>(excluded).is_none());
     }
 
     #[test]

@@ -2,6 +2,7 @@
 use super::*;
 use bevy::camera::CameraProjection;
 use lod::contact::{ContactPriority, ContactRegion, cover_accepts};
+use world_db::RuntimeReader;
 
 #[test]
 #[ignore = "set YARRA_TEST_WORLD_DB and YARRA_TEST_START_VIEW to a cooked landscape and bookmark"]

@@ -24,7 +24,11 @@ const MAX_EVENTS: usize = 16_384;
 const MAX_FRAMES: usize = 8_192;
 
 pub(super) fn install(app: &mut App) {
-    if !std::env::args_os().any(|a| a == "--trace-camera-input") {
+    if !app
+        .world()
+        .resource::<crate::launch::LaunchOptions>()
+        .input_trace
+    {
         return;
     }
     app.init_resource::<CameraInputDiagnostics>()

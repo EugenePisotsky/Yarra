@@ -21,11 +21,6 @@ use bevy::{
 use game_render::{GameRenderPlugin, GameRenderSettings, RenderPath};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[derive(Resource, Default)]
-struct AuditSettings {
-    gpu_pass_timings: bool,
-}
-
 fn main() {
     let args: Vec<_> = std::env::args().collect();
     let value = |flag: &str| {
@@ -50,6 +45,14 @@ fn main() {
     let prepass = args.iter().any(|s| s == "--prepass");
     let bypass = args.iter().any(|s| s == "--temporal-bypass");
     let settings = GameRenderSettings {
+        upscaler: match value("--upscaler").unwrap_or("auto") {
+            "auto" => upscaling::UpscaleMethod::Auto,
+            "linear" => upscaling::UpscaleMethod::Linear,
+            "metalfx-spatial" => upscaling::UpscaleMethod::MetalFxSpatial,
+            "metalfx-temporal" => upscaling::UpscaleMethod::MetalFxTemporal,
+            _ => panic!("invalid --upscaler"),
+        },
+        direct_temporal_output: !args.iter().any(|a| a == "--temporal-standard-output"),
         resolution_scale: scale,
         msaa,
         temporal_debug: if bypass {
@@ -80,6 +83,7 @@ fn main() {
         ..default()
     }))
     .insert_resource(ClearColor(Color::srgb(0.2, 0.25, 0.3)))
+    .insert_resource(upscaling::UpscalingDiagnostics { temporal_timing: args.iter().any(|a| a == "--metalfx-timing-log") })
     .insert_resource(settings)
     .init_resource::<Measurement>()
     .add_systems(
@@ -113,10 +117,22 @@ fn main() {
         app.add_plugins(GameRenderPlugin);
     }
     if probes {
-        app.init_resource::<AuditSettings>()
-            .add_plugins(timing::TimingPlugin);
+        app.add_systems(Last, stamp_frame.before(timing::CollectTimings))
+            .add_plugins(timing::TimingPlugin {
+                log: args.iter().any(|a| a == "--timing-log"),
+                gpu_off: args.iter().any(|a| a == "--gpu-timing-off"),
+            });
     }
-    frame_pacing::install(&mut app);
+    frame_pacing::install(
+        &mut app,
+        frame_pacing::FrameRate::new(
+            value("--fps")
+                .unwrap_or("0")
+                .parse()
+                .expect("numeric --fps"),
+        ),
+        args.iter().any(|a| a == "--frame-pacing-timer"),
+    );
     app.run();
 }
 
@@ -167,4 +183,8 @@ fn measure(
         );
         exit.write(AppExit::Success);
     }
+}
+
+fn stamp_frame(frame: Res<bevy::diagnostic::FrameCount>, mut stamp: ResMut<timing::Stamp>) {
+    stamp.frame = frame.0;
 }

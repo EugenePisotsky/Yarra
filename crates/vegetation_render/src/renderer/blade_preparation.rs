@@ -1,6 +1,7 @@
 //! Per-blade curve preparation. Overflow uses the original vertex calculation, not fewer blades.
 use super::*;
 
+#[cfg(test)]
 pub(super) const BLADE_CAPACITY: u64 = 131_072;
 pub(super) const BLADE_BYTES: u64 = 128;
 #[cfg(test)]
@@ -98,22 +99,15 @@ impl BladePreparation {
 impl FromWorld for BladePreparation {
     fn from_world(world: &mut World) -> Self {
         let device = world.resource::<RenderDevice>();
-        // Explicit profiling experiment; normal game allocation remains unchanged.
-        let mut args = std::env::args();
-        let capacity = if args.any(|arg| arg == "--grass-prepared-blades") {
-            let value = args
-                .next()
-                .expect("--grass-prepared-blades requires a value")
-                .parse::<u64>()
-                .expect("invalid prepared-blade capacity");
-            assert!(
-                (32_768..=524_288).contains(&value),
-                "prepared blades must be in 32768..524288"
-            );
-            value
-        } else {
-            BLADE_CAPACITY
-        };
+        let capacity = world
+            .get_resource::<crate::VegetationPreparationCapacity>()
+            .copied()
+            .unwrap_or_default()
+            .0;
+        assert!(
+            (32_768..=524_288).contains(&capacity),
+            "prepared blades must be in 32768..524288"
+        );
         let arena_bytes = PROCEDURAL_INSTANCE_CAPACITY as u64 * 4 + capacity * BLADE_BYTES;
         assert!(
             arena_bytes <= u64::from(device.limits().max_storage_buffer_binding_size),

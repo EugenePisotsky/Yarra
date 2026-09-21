@@ -46,8 +46,8 @@ Runtime character composition is separate from pack provenance. The checked-in
 `assets/catalogs/character_presentations.catalog.ron` assigns stable IDs to
 skeleton contracts, models, animation banks, clips, movement sets, and
 presentation profiles. It may reference ignored local assets, but it never
-changes their licensing or redistribution policy. See `docs/CHARACTERS.md` for
-the runtime contract and future animation extension points.
+changes their licensing or redistribution policy. See the
+[character runtime contract](../docs/ARCHITECTURE.md#characters-and-editor-lifecycle).
 
 After restoring the five source images from the legacy repository, compile the
 portable UASTC and native iOS ASTC variants with:

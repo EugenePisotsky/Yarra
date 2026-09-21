@@ -3,7 +3,6 @@
 #[path = "timing/gpu.rs"]
 mod gpu;
 use bevy::{
-    diagnostic::FrameCount,
     ecs::{
         change_detection::{CheckChangeTicks, Tick},
         query::FilteredAccessSet,
@@ -100,14 +99,33 @@ struct Bus {
 }
 #[derive(Resource, Clone, Default)]
 struct Bridge(Arc<Mutex<Bus>>);
-#[derive(Resource, Default)]
+#[derive(Resource)]
 pub(super) struct History {
+    pub enabled: bool,
+    pub gpu_disabled: bool,
     pub gpu: VecDeque<GpuSample>,
     pub cpu: VecDeque<CpuSample>,
     pub status: String,
     pub dropped: u64,
     pub gpu_received: Option<Instant>,
 }
+impl Default for History {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            gpu_disabled: true,
+            gpu: VecDeque::new(),
+            cpu: VecDeque::new(),
+            status: "CPU/GPU timing probes disabled. Restart with --diagnostics full for timings."
+                .into(),
+            dropped: 0,
+            gpu_received: None,
+        }
+    }
+}
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(super) struct CollectTimings;
+
 struct Probe {
     name: String,
     kind: Kind,
@@ -121,42 +139,39 @@ struct Probes {
 #[derive(Resource, Default)]
 struct GraphTime(AtomicU64);
 
-pub(super) struct TimingPlugin;
+#[derive(Default)]
+pub(super) struct TimingPlugin {
+    pub log: bool,
+    pub gpu_off: bool,
+}
 impl Plugin for TimingPlugin {
     fn build(&self, app: &mut App) {
         let bridge = Bridge::default();
-        let logging = std::env::args_os().any(|a| a == "--timing-log");
+        let logging = self.log;
         app.insert_resource(bridge.clone())
-            .init_resource::<History>()
+            .insert_resource(History {
+                enabled: true,
+                gpu_disabled: self.gpu_off,
+                status: "Waiting for timing samples...".into(),
+                ..default()
+            })
             .init_resource::<Stamp>()
             .add_plugins(ExtractResourcePlugin::<Stamp>::default())
             .add_systems(First, receive)
             .add_systems(Update, log_timings.run_if(move || logging))
-            .add_systems(Last, (update_stamp, collect_cpu).chain());
+            .add_systems(Last, collect_cpu.in_set(CollectTimings));
         let render = app.sub_app_mut(RenderApp);
         render
             .insert_resource(bridge)
             .init_resource::<Stamp>()
             .init_resource::<GraphTime>()
             .add_systems(Render, collect_cpu.after(RenderSystems::PostCleanup));
-        gpu::install(render);
+        gpu::install(render, !self.gpu_off);
     }
     fn finish(&self, app: &mut App) {
         // All plugins have populated their schedules, and the opaque-pass replacement is in place.
         instrument(app.world_mut(), false);
         instrument(app.sub_app_mut(RenderApp).world_mut(), true);
-    }
-}
-fn update_stamp(
-    frame: Res<FrameCount>,
-    settings: Res<super::AuditSettings>,
-    mut stamp: ResMut<Stamp>,
-    pacing: Res<crate::frame_pacing::FramePacing>,
-) {
-    stamp.frame = frame.0;
-    stamp.detailed = settings.gpu_pass_timings;
-    if settings.is_changed() || pacing.is_changed() {
-        stamp.epoch = stamp.epoch.wrapping_add(1);
     }
 }
 fn receive(bridge: Res<Bridge>, mut history: ResMut<History>) {
@@ -229,7 +244,7 @@ fn classify(name: &str, schedule: &str, render: bool) -> Kind {
         Kind::Terrain
     } else if name.contains("world_streaming") {
         Kind::Streaming
-    } else if name.contains("vegetation") || name.contains("grass_field") {
+    } else if name.contains("vegetation") {
         Kind::Vegetation
     } else if name.contains("animation") || name.contains("character") || name.contains("motor") {
         Kind::Simulation
@@ -502,5 +517,13 @@ mod tests {
             Kind::Submit
         );
         assert_eq!(classify("prepare_meshes", "Render", true), Kind::Prepare);
+        assert_eq!(
+            classify(
+                "yarra_engine::world_vegetation::canopy::sync",
+                "Update",
+                false
+            ),
+            Kind::Vegetation
+        );
     }
 }

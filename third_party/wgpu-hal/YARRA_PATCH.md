@@ -12,6 +12,10 @@ The only source changes are in `src/metal/mod.rs` and `src/metal/adapter.rs`:
 - When enabled and supported, use Metal's `presentDrawable:afterMinimumDuration:`
   (or the corresponding drawable method for transaction-based presentation).
 
+The Cargo manifests also enable `objc2-metal/objc2-core-foundation`, which exposes
+those duration-based methods. Declare it here so builds without MetalFX do not
+depend on another crate enabling it through Cargo feature unification.
+
 All other backends and queues that do not opt in retain upstream behavior. The
 setter does not wait for the GPU or sleep. The application controls update pacing
 separately. The interval is a minimum display duration, not a guarantee that an

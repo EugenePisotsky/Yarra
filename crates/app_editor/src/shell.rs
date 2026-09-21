@@ -40,10 +40,23 @@ pub(crate) fn run() -> std::result::Result<(), String> {
     let asset_root = resolve_asset_root();
     let runtime_database = runtime_database_path(&asset_root);
     let project_database = project_database_path();
-    let start_view = engine::WorldStartView::from_args()?;
+    let mut args = std::env::args_os();
+    let start_path = if args.any(|a| a == "--start-view") {
+        Some(std::path::PathBuf::from(
+            args.next().ok_or("--start-view requires a file")?,
+        ))
+    } else {
+        None
+    };
+    let start_view = engine::WorldStartView::load(start_path.as_deref())?;
+    let terrain_lod = engine::TerrainLodPreview {
+        enabled: !std::env::args_os().any(|a| a == "--terrain-legacy"),
+        ..default()
+    };
     crate::startup::validate_databases(&project_database, &runtime_database)?;
     App::new()
         .insert_resource(start_view)
+        .insert_resource(terrain_lod)
         .insert_resource(ClearColor(Color::srgb(0.055, 0.065, 0.075)))
         .insert_resource(editor_winit_settings())
         .insert_resource(EguiGlobalSettings {

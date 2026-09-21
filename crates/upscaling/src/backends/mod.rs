@@ -40,6 +40,7 @@ pub(crate) fn temporal_support(_: &bevy::render::renderer::RenderDevice) -> Resu
 pub(crate) struct Temporal;
 #[cfg(not(all(feature = "metalfx", any(target_os = "macos", target_os = "ios"))))]
 impl Temporal {
+    pub fn set_timing(&mut self, _enabled: bool) {}
     pub fn new(
         _: &bevy::render::renderer::RenderDevice,
         _: bevy::math::UVec2,

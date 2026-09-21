@@ -12,7 +12,7 @@ use vegetation_render::{
     VegetationDebugSettings, VegetationDiagnostics, VegetationDiagnosticsSnapshot,
 };
 
-use super::{AuditAssets, AuditRenderPath, AuditSettings};
+use super::{AuditAssets, AuditRenderPath, RuntimeSettings};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct PowerState {
@@ -105,7 +105,7 @@ fn gpu_readback_fields(snapshot: VegetationDiagnosticsSnapshot) -> String {
 
 #[allow(clippy::too_many_arguments)] // Independent, read-only Bevy diagnostic resources.
 pub(super) fn log_status(
-    settings: Res<AuditSettings>,
+    settings: Res<RuntimeSettings>,
     grass: Res<VegetationDebugSettings>,
     time: Res<Time<Real>>,
     frame: Res<FrameCount>,
@@ -179,7 +179,6 @@ pub(super) fn log_status(
     let macro_state = terrain_macro.label();
     let render_path = settings.render_path.label();
     let ui = if settings.show_ui { "on" } else { "off" };
-    let baseline_phase = settings.baseline_phase.unwrap_or("manual");
     let focused = window.focused;
     let present_mode = window.present_mode;
     let window_mode = match window.mode {
@@ -248,7 +247,7 @@ pub(super) fn log_status(
     let generation_dispatches = snapshot.generation_dispatches;
     let generation_reuses = snapshot.generation_reuses;
     warn!(
-        "RENDER_AUDIT v=1 event={event} seq={} unix_ms={unix_ms} elapsed_s={now:.3} main_frame={} app_fps_window={app_fps} window_s={window_s:.3} since_change_s={:.3} thermal={} low_power={} scene={:?} grass={} unlit={} ground_shader={ground_shader} terrain_lod={terrain_lod} terrain_near={terrain_near} terrain_macro={macro_state} shadows={} prepass={} scale={} msaa_samples={msaa_samples} requested_msaa_samples={requested_msaa_samples} msaa_store_policy={msaa_store_policy:?} counters={} wind={} locked={} render_path={render_path} ui={ui} baseline_phase={baseline_phase} render_px={}x{} surface_px={}x{} {display_fields} focused={focused} present_mode={present_mode:?} camera_pos={:.3},{:.3},{:.3} camera_rot={:.4},{:.4},{:.4},{:.4} density={:?} lighting={:?} far_width_compensation={} entities={} mesh_assets={} image_assets={} source_revision={} source_pages={} source_work_items={} source_repacks={} source_reallocs={} last_source_upload_bytes={} source_capacity_bytes={} instance_capacity={} instance_capacity_bytes={} generation_dispatches={generation_dispatches} generation_reuses={generation_reuses} early_rejection={early_rejection} {candidate_cache} {terrain_cache_fields} {blade_preparation} {gpu} os={} debug_assertions={}",
+        "RENDER_AUDIT v=1 event={event} seq={} unix_ms={unix_ms} elapsed_s={now:.3} main_frame={} app_fps_window={app_fps} window_s={window_s:.3} since_change_s={:.3} thermal={} low_power={} scene={:?} grass={} unlit={} ground_shader={ground_shader} terrain_lod={terrain_lod} terrain_near={terrain_near} terrain_macro={macro_state} shadows={} prepass={} scale={} msaa_samples={msaa_samples} requested_msaa_samples={requested_msaa_samples} msaa_store_policy={msaa_store_policy:?} counters={} wind={} locked={} render_path={render_path} ui={ui} render_px={}x{} surface_px={}x{} {display_fields} focused={focused} present_mode={present_mode:?} camera_pos={:.3},{:.3},{:.3} camera_rot={:.4},{:.4},{:.4},{:.4} density={:?} lighting={:?} far_width_compensation={} entities={} mesh_assets={} image_assets={} source_revision={} source_pages={} source_work_items={} source_repacks={} source_reallocs={} last_source_upload_bytes={} source_capacity_bytes={} instance_capacity={} instance_capacity_bytes={} generation_dispatches={generation_dispatches} generation_reuses={generation_reuses} early_rejection={early_rejection} {candidate_cache} {terrain_cache_fields} {blade_preparation} {gpu} os={} debug_assertions={}",
         state.sequence,
         frame.0,
         now - state.changed_at_s,

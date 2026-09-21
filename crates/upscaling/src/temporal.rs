@@ -205,6 +205,7 @@ pub fn jitter(index: u32) -> Vec2 {
 }
 #[allow(clippy::type_complexity)] // Render-view inputs are one Bevy query.
 fn prepare(
+    diagnostics: Option<Res<crate::UpscalingDiagnostics>>,
     mut commands: Commands,
     mut state: ResMut<State>,
     device: Res<RenderDevice>,
@@ -263,6 +264,9 @@ fn prepare(
                 forward,
                 request.reset_epoch,
             );
+        }
+        if let Ok(native) = &mut h.native {
+            native.set_timing(diagnostics.as_ref().is_some_and(|d| d.temporal_timing));
         }
         let reset = h.index == 0
             || h.epoch != request.reset_epoch

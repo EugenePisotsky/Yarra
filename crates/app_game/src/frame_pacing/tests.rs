@@ -62,13 +62,6 @@ fn fallback_and_diagnostic_modes_do_not_add_a_second_limiter() {
             }
         );
     }
-    let display_only = FramePacing {
-        display_only: true,
-        ..request
-    }
-    .resolve(true);
-    assert_eq!(display_only.source, ClockSource::Display);
-    assert_eq!(display_only.presentation_interval, Duration::ZERO);
 }
 
 #[test]

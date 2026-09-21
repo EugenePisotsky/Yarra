@@ -149,7 +149,7 @@ fn prepared_blades_match_reference_with_wind_msaa_and_overflow() {
     let mut scene = vegetation::fixtures::reference_scene();
     scene.pages.truncate(1);
     app.world_mut()
-        .resource_mut::<VegetationDebugScene>()
+        .resource_mut::<VegetationSceneState>()
         .replace(scene)
         .unwrap();
     settled_pixels(&mut app);
@@ -184,7 +184,7 @@ fn rebasing_preserves_placement_and_wind() {
         .set_phase_seconds(3.1);
     let original = app
         .world()
-        .resource::<VegetationDebugScene>()
+        .resource::<VegetationSceneState>()
         .scene()
         .clone();
     let before = settled_pixels(&mut app);
@@ -197,7 +197,7 @@ fn rebasing_preserves_placement_and_wind() {
         page.origin_xz[1] -= offset.z;
     }
     app.world_mut()
-        .resource_mut::<VegetationDebugScene>()
+        .resource_mut::<VegetationSceneState>()
         .replace(scene)
         .unwrap();
     app.world_mut()
@@ -358,7 +358,7 @@ fn test_app() -> App {
         gpu_counters_enabled: true,
         ..default()
     })
-    .insert_resource(VegetationDebugScene::reference())
+    .insert_resource(VegetationSceneState::reference())
     .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::ZERO))
     .init_resource::<Pixels>()
     .add_systems(Startup, setup);
@@ -382,7 +382,7 @@ fn contact_gate_clears_frozen_roots_and_elevated_views_cull_grass() {
     let repacks = snapshot(&app).source_repacks;
     let builds = snapshot(&app).candidate_cache_builds;
     let one_page = VegetationTerrainGate::page_id(
-        &app.world().resource::<VegetationDebugScene>().scene().pages[0],
+        &app.world().resource::<VegetationSceneState>().scene().pages[0],
     );
     app.world_mut()
         .resource_mut::<VegetationTerrainGate>()
@@ -513,7 +513,7 @@ fn candidate_cache_preserves_population_images_and_source_lifetime() {
             }
         }
         app.world_mut()
-            .resource_mut::<VegetationDebugScene>()
+            .resource_mut::<VegetationSceneState>()
             .replace(scene)
             .unwrap();
         compare_candidate_images(&mut app);

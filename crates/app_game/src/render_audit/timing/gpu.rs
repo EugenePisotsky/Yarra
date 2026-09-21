@@ -49,7 +49,7 @@ impl FromWorld for Timer {
         let supported = device
             .features()
             .contains(bevy::render::settings::WgpuFeatures::TIMESTAMP_QUERY)
-            && !std::env::args_os().any(|a| a == "--gpu-timing-off");
+            && world.resource::<GpuTimingEnabled>().0;
         let slots = if supported {
             (0..SLOTS)
                 .map(|_| Slot {
@@ -116,8 +116,12 @@ impl FromWorld for Timer {
         }
     }
 }
-pub(super) fn install(render: &mut SubApp) {
+#[derive(Resource)]
+struct GpuTimingEnabled(bool);
+
+pub(super) fn install(render: &mut SubApp, enabled: bool) {
     render
+        .insert_resource(GpuTimingEnabled(enabled))
         .init_gpu_resource::<Timer>()
         .add_systems(
             RenderGraph,

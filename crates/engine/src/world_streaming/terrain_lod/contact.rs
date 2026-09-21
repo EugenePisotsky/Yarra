@@ -1,7 +1,7 @@
 use super::*;
 use crate::actor::TerrainGrounded;
 use lod::contact::{ContactCertificate, ContactPriority, ContactRegion, MAX_CONTACT_REGIONS};
-use vegetation_render::{VegetationDebugScene, VegetationTerrainGate, VegetationWind};
+use vegetation_render::{VegetationSceneState, VegetationTerrainGate, VegetationWind};
 
 const GUARD_METERS: f64 = 16.;
 const ACTOR_RADIUS: f64 = 0.35;
@@ -25,7 +25,7 @@ pub(super) struct ContactInputs {
     radius: f64,
     cache_identity: Option<(u64, CellCoord, String, WorldSpaceId)>,
     pages: Vec<ContactPage>,
-    scene: Option<VegetationDebugScene>,
+    scene: Option<VegetationSceneState>,
 }
 struct ContactPage {
     id: [u32; 3],
@@ -95,7 +95,7 @@ fn collect(
     catalog: Res<WorldCatalog>,
     origin: Res<WorldOrigin>,
     active_space: Res<ActiveWorldSpace>,
-    scene: Option<Res<VegetationDebugScene>>,
+    scene: Option<Res<VegetationSceneState>>,
     wind: Option<Res<VegetationWind>>,
     camera: Query<
         (
@@ -363,7 +363,7 @@ fn publish(
     stream: Res<TerrainLodStream>,
     mut readiness: ResMut<TerrainContactReadiness>,
     mut inputs: ResMut<ContactInputs>,
-    scene: Option<Res<VegetationDebugScene>>,
+    scene: Option<Res<VegetationSceneState>>,
     gate: Option<ResMut<VegetationTerrainGate>>,
     mut actors: Query<
         (
@@ -621,7 +621,7 @@ mod tests {
             ..default()
         });
         world.insert_resource(ContactInputs::default());
-        world.insert_resource(VegetationDebugScene::new(scene.clone()).unwrap());
+        world.insert_resource(VegetationSceneState::new(scene.clone()).unwrap());
         world.spawn((
             Camera::default(),
             GlobalTransform::default(),
@@ -635,7 +635,7 @@ mod tests {
         scene.pages[0].fields[0].coverage.fill(127);
         scene.pages.insert(0, other);
         world
-            .resource_mut::<VegetationDebugScene>()
+            .resource_mut::<VegetationSceneState>()
             .replace(scene.clone())
             .unwrap();
         world.run_system_once(collect).unwrap();
@@ -652,7 +652,7 @@ mod tests {
             page.origin_xz[0] -= size;
         }
         world
-            .resource_mut::<VegetationDebugScene>()
+            .resource_mut::<VegetationSceneState>()
             .replace(scene.clone())
             .unwrap();
         world.run_system_once(collect).unwrap();
@@ -662,7 +662,7 @@ mod tests {
         );
         scene.pages[1].surface.heights[0] += 0.05;
         world
-            .resource_mut::<VegetationDebugScene>()
+            .resource_mut::<VegetationSceneState>()
             .replace(scene)
             .unwrap();
         world.run_system_once(collect).unwrap();

@@ -100,7 +100,7 @@ fn prepare(
     mut state: ResMut<State>,
     buffers: Res<VegetationBuffers>,
     queue: Res<RenderQueue>,
-    mut frames: Query<&mut TemporalFrame, With<VegetationDebugView>>,
+    mut frames: Query<&mut TemporalFrame, With<VegetationView>>,
     device: Res<RenderDevice>,
     cache: Res<PipelineCache>,
     mut preparation: ResMut<blade_preparation::BladePreparation>,

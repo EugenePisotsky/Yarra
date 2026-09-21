@@ -15,7 +15,7 @@ use terrain_render::{
     prepare_terrain_material,
 };
 use vegetation_render::{
-    VegetationDebugScene, VegetationDebugSettings, VegetationLighting, VegetationWind,
+    VegetationDebugSettings, VegetationLighting, VegetationSceneState, VegetationWind,
 };
 
 const LAYER: usize = 30;
@@ -24,7 +24,7 @@ pub(crate) struct PresetWorkspaceCamera;
 #[derive(Component)]
 struct PreviewGround;
 struct SavedWorld {
-    scene: VegetationDebugScene,
+    scene: VegetationSceneState,
     settings: VegetationDebugSettings,
     wind: VegetationWind,
     lighting: VegetationLighting,
@@ -130,7 +130,7 @@ pub(super) fn setup(
 }
 #[derive(bevy::ecs::system::SystemParam)]
 pub(super) struct SharedRender<'w, 's> {
-    scene: ResMut<'w, VegetationDebugScene>,
+    scene: ResMut<'w, VegetationSceneState>,
     settings: ResMut<'w, VegetationDebugSettings>,
     wind: ResMut<'w, VegetationWind>,
     lighting: ResMut<'w, VegetationLighting>,
@@ -258,7 +258,7 @@ pub(super) fn update(
     path: Res<crate::project_store::ProjectDatabasePath>,
     dense: Res<DenseDomainWorkingSets>,
     plants: Res<VegetationAuthoringState>,
-    mut scene: ResMut<VegetationDebugScene>,
+    mut scene: ResMut<VegetationSceneState>,
     mut wind: ResMut<VegetationWind>,
     time: Res<Time>,
     mut assets: PreviewAssets,

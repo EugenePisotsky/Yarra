@@ -86,12 +86,16 @@ impl Temporal {
                 scaler,
                 exposure,
                 initialized: Vec::with_capacity(2),
-                timing: std::env::args_os().any(|a| a == "--metalfx-timing-log"),
+                timing: false,
                 frame: 0,
                 pending_timing: default(),
             })
         })
     }
+    pub fn set_timing(&mut self, enabled: bool) {
+        self.timing = enabled;
+    }
+
     pub fn encode(
         &mut self,
         device: &RenderDevice,

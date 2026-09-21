@@ -104,6 +104,7 @@ mod tests {
                 cell: CellCoord { x: 10, z: -10 },
             })
             .init_resource::<WorldViewpoint>()
+            .init_resource::<SourceResidency>()
             .init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<TerrainMaterial>>()
             .init_resource::<Assets<Image>>()
@@ -175,7 +176,7 @@ mod tests {
             ..key
         };
         {
-            let mut stream = app.world_mut().resource_mut::<WorldStream>();
+            let mut stream = app.world_mut().resource_mut::<SourceResidency>();
             stream.pages.insert(
                 key,
                 PageState::Resident(PageAttachment {
@@ -219,6 +220,7 @@ mod tests {
         );
         let stream = w.resource::<WorldStream>();
         assert_eq!(stream.index_revision, 7);
+        let stream = w.resource::<SourceResidency>();
         assert!(matches!(
             stream.pages[&pending],
             PageState::Loading { request_id: 41 }

@@ -6,7 +6,7 @@ use bevy::{
     render::render_resource::{Extent3d, TextureFormat},
     window::PrimaryWindow,
 };
-use engine::{GameInputSystems, WorldViewCamera};
+use engine::{GameplaySystems, WorldViewCamera};
 
 pub(crate) struct GameRenderPlugin;
 
@@ -19,7 +19,7 @@ impl Plugin for GameRenderPlugin {
                 Update,
                 apply_render_path
                     .in_set(GameRenderSystems)
-                    .before(GameInputSystems),
+                    .before(GameplaySystems::CameraInput),
             );
     }
 }
@@ -42,6 +42,7 @@ pub(crate) struct GameRenderSettings {
     pub(crate) msaa: Msaa,
     pub(crate) render_path: RenderPath,
     pub(crate) show_ui: bool,
+    pub(crate) direct_temporal_output: bool,
 }
 
 impl Default for GameRenderSettings {
@@ -49,26 +50,12 @@ impl Default for GameRenderSettings {
         Self {
             resolution_scale: 0.5,
             temporal_debug: default(),
-            upscaler: {
-                let mut args = std::env::args();
-                if args.any(|a| a == "--upscaler") {
-                    match args.next().as_deref() {
-                        Some("auto") => upscaling::UpscaleMethod::Auto,
-                        Some("linear") => upscaling::UpscaleMethod::Linear,
-                        Some("metalfx-temporal") => upscaling::UpscaleMethod::MetalFxTemporal,
-                        Some("metalfx-spatial") => upscaling::UpscaleMethod::MetalFxSpatial,
-                        _ => panic!(
-                            "--upscaler requires auto, linear, metalfx-spatial or metalfx-temporal"
-                        ),
-                    }
-                } else {
-                    upscaling::UpscaleMethod::Auto
-                }
-            },
+            upscaler: upscaling::UpscaleMethod::Auto,
             render_size: None,
             msaa: Msaa::Sample4,
             render_path: RenderPath::Composite,
             show_ui: true,
+            direct_temporal_output: true,
         }
     }
 }
@@ -301,7 +288,7 @@ fn apply_render_path(
                 .insert((request, bevy::camera::MainPassResolutionOverride(size)));
             // The world camera has HDR effects only; UI is composited afterward.
             // Retain the original output path for matched performance comparisons.
-            if !std::env::args_os().any(|a| a == "--temporal-standard-output") {
+            if s.direct_temporal_output {
                 commands
                     .entity(camera.0)
                     .insert(upscaling::DirectTonemapOutput);

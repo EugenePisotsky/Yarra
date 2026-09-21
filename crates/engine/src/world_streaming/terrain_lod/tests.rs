@@ -10,14 +10,19 @@ use bevy::{
     window::ExitCondition,
     winit::WinitPlugin,
 };
+use std::time::Duration;
+use world_db::RuntimeReader;
 
 #[test]
-fn hierarchy_is_default_and_legacy_requires_an_explicit_request() {
-    assert!(TerrainLodPreview::from_args(["yarra-app-game"]).enabled);
+fn hierarchy_is_default_and_configuration_is_explicit() {
+    assert!(TerrainLodPreview::default().enabled);
     assert!(
-        TerrainLodPreview::from_args(["yarra-app-editor", "--world-db", "world.sqlite"]).enabled
+        !TerrainLodPreview {
+            enabled: false,
+            ..default()
+        }
+        .enabled
     );
-    assert!(!TerrainLodPreview::from_args(["yarra-app-game", "--terrain-legacy"]).enabled);
 }
 
 #[test]
@@ -30,13 +35,7 @@ fn late_database_reply_cannot_enter_a_new_world_or_generation() {
     stream.receive(39, Err("an old generation failed".into()));
     assert!(stream.error.is_none());
     assert!(stream.metadata.is_empty());
-    let (requests, _request_receiver) = bounded(4);
-    let (_result_sender, results) = bounded(4);
-    let worker = WorldDatabaseWorker {
-        requests,
-        results,
-        thread: None,
-    };
+    let (worker, _request_receiver, _result_sender) = WorldDatabaseWorker::test_channel_pair(4, 4);
     stream.request(&worker, TerrainQuery::Roots(WorldSpaceId(2)));
     assert!(stream.pending.contains_key(&41));
     stream.receive(41, Ok(TerrainReply::Metadata(vec![])));
@@ -151,7 +150,10 @@ fn mountain_cover_uploads_draws_moves_and_rebases() {
     ))
     .init_resource::<Pixels>()
     .add_systems(Startup, setup)
-    .add_systems(Update, crate::ground_characters_to_streamed_terrain);
+    .add_systems(
+        Update,
+        crate::gameplay::actors::ground_characters_to_streamed_terrain,
+    );
     let deadline = std::time::Instant::now() + Duration::from_secs(90);
     while app.plugins_state() != PluginsState::Ready {
         assert!(std::time::Instant::now() < deadline);
@@ -813,7 +815,7 @@ fn publication_reload(
         .collect();
     let old_sources: Vec<_> = app
         .world()
-        .resource::<WorldStream>()
+        .resource::<SourceResidency>()
         .pages
         .values()
         .flat_map(|p| match p {
@@ -991,7 +993,7 @@ fn publication_reload(
 }
 
 fn grass_source_gate(app: &mut App) {
-    use vegetation_render::{VegetationDebugScene, VegetationTerrainGate};
+    use vegetation_render::{VegetationSceneState, VegetationTerrainGate};
     // Use real cooked relief under the offscreen actor, with the normal source
     // resource bridge. The renderer-side gate itself has separate GPU coverage.
     let cell = CellCoord { x: 18, z: -16 };
@@ -1001,7 +1003,7 @@ fn grass_source_gate(app: &mut App) {
         .as_ref()
         .unwrap()
         .clone();
-    let mut scene = VegetationDebugScene::reference().scene().clone();
+    let mut scene = VegetationSceneState::reference().scene().clone();
     scene.pages.truncate(1);
     let page = &mut scene.pages[0];
     page.origin_xz = [576., -512.];
@@ -1013,7 +1015,7 @@ fn grass_source_gate(app: &mut App) {
         validity: vec![255; usize::from(field.resolution).pow(2)],
     };
     let id = VegetationTerrainGate::page_id(page);
-    app.insert_resource(VegetationDebugScene::new(scene.clone()).unwrap())
+    app.insert_resource(VegetationSceneState::new(scene.clone()).unwrap())
         .init_resource::<VegetationTerrainGate>();
     app.update();
     assert_eq!(
@@ -1024,7 +1026,7 @@ fn grass_source_gate(app: &mut App) {
         *height += 0.05;
     }
     app.world_mut()
-        .resource_mut::<VegetationDebugScene>()
+        .resource_mut::<VegetationSceneState>()
         .replace(scene.clone())
         .unwrap();
     app.update();
@@ -1044,7 +1046,7 @@ fn grass_source_gate(app: &mut App) {
         *height -= 0.05;
     }
     app.world_mut()
-        .resource_mut::<VegetationDebugScene>()
+        .resource_mut::<VegetationSceneState>()
         .replace(scene)
         .unwrap();
     app.update();
@@ -1058,7 +1060,7 @@ fn grass_source_gate(app: &mut App) {
             .mismatched_grass_pages,
         0
     );
-    app.world_mut().remove_resource::<VegetationDebugScene>();
+    app.world_mut().remove_resource::<VegetationSceneState>();
     app.world_mut().remove_resource::<VegetationTerrainGate>();
 }
 
@@ -1106,7 +1108,8 @@ fn settle_sources(app: &mut App, deadline: std::time::Instant) {
         let stream = app.world().resource::<WorldStream>();
         assert!(matches!(stream.phase, StreamPhase::Ready));
         assert!(stream.demand_error.is_none(), "{:?}", stream.demand_error);
-        let pending = stream
+        let residency = app.world().resource::<SourceResidency>();
+        let pending = residency
             .pages
             .values()
             .filter(|p| {
@@ -1116,19 +1119,19 @@ fn settle_sources(app: &mut App, deadline: std::time::Instant) {
                 )
             })
             .count();
-        assert!(pending <= MAX_DATABASE_REQUESTS_IN_FLIGHT);
+        assert!(pending <= MAX_PENDING_SOURCE_PAGES);
         assert!(
-            stream
+            residency
                 .pages
                 .values()
                 .all(|p| !matches!(p, PageState::Failed(_)))
         );
         stable = if stream.requested_index.is_none()
-            && !stream.desired.is_empty()
-            && stream
+            && !residency.desired.is_empty()
+            && residency
                 .desired
                 .iter()
-                .all(|k| matches!(stream.pages.get(k), Some(PageState::Resident(_))))
+                .all(|k| matches!(residency.pages.get(k), Some(PageState::Resident(_))))
         {
             stable + 1
         } else {

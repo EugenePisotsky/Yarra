@@ -53,7 +53,6 @@ pub(crate) struct FramePacing {
     pub(crate) rate: FrameRate,
     pub(crate) profile_locked: bool,
     timer: bool,
-    display_only: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -90,7 +89,7 @@ impl FramePacing {
         AppliedPacing {
             rate: self.rate,
             source,
-            presentation_interval: if source == ClockSource::Display && !self.display_only {
+            presentation_interval: if source == ClockSource::Display {
                 self.rate.interval()
             } else {
                 Duration::ZERO
@@ -127,21 +126,13 @@ struct Controller {
     original_event_loop: WinitSettings,
 }
 
-pub(crate) fn install(app: &mut App) {
-    let args: Vec<_> = std::env::args().collect();
-    let fps = args.iter().position(|a| a == "--fps").map_or(0, |i| {
-        args.get(i + 1)
-            .expect("--fps requires 0 or 15..240")
-            .parse::<u32>()
-            .expect("--fps requires 0 or 15..240")
-    });
+pub(crate) fn install(app: &mut App, rate: FrameRate, timer: bool) {
     let original_event_loop = app.world().resource::<WinitSettings>().clone();
     app.insert_resource(FramePacing {
-        rate: FrameRate::new(fps),
+        rate,
         profile_locked: false,
         // Retain the old limiter for a controlled comparison.
-        timer: args.iter().any(|a| a == "--frame-pacing-timer"),
-        display_only: args.iter().any(|a| a == "--frame-pacing-display-only"),
+        timer,
     })
     .insert_resource(Controller {
         last: None,

@@ -1,4 +1,5 @@
 use super::*;
+use crossbeam_channel::Receiver;
 
 fn fixture() -> (
     TerrainLodStream,
@@ -6,19 +7,14 @@ fn fixture() -> (
     Receiver<DatabaseRequest>,
 ) {
     let key = TerrainNodeKey::leaf(WorldSpaceId(1), CellCoord { x: -2, z: 1 });
-    let (requests, receiver) = bounded(8);
-    let (_, results) = bounded(8);
+    let (worker, receiver, _) = WorldDatabaseWorker::test_channel_pair(8, 8);
     (
         TerrainLodStream {
             identity: Some(("test-generation".into(), key.space)),
             roots: Some(vec![key]),
             ..default()
         },
-        WorldDatabaseWorker {
-            requests,
-            results,
-            thread: None,
-        },
+        worker,
         receiver,
     )
 }

@@ -39,10 +39,12 @@ struct CaptureState {
 }
 
 pub(super) fn install(app: &mut App) {
-    let mut arguments = std::env::args_os();
-    let Some(path) = arguments.find(|arg| arg == "--metal-capture").map(|_| {
-        std::path::PathBuf::from(arguments.next().expect("--metal-capture requires a path"))
-    }) else {
+    let Some(path) = app
+        .world()
+        .resource::<crate::launch::LaunchOptions>()
+        .metal_capture
+        .clone()
+    else {
         return;
     };
     #[cfg(target_os = "ios")]
@@ -88,7 +90,7 @@ fn begin_capture(
     mut state: ResMut<CaptureState>,
     done: Res<CaptureDone>,
     main_frame: Res<CaptureMainFrame>,
-    views: Query<&ExtractedView, With<vegetation_render::VegetationDebugView>>,
+    views: Query<&ExtractedView, With<vegetation_render::VegetationView>>,
     wind: Res<vegetation_render::VegetationWind>,
 ) {
     state.frame += 1;

@@ -64,7 +64,7 @@ impl CanopyBoundary {
     /// Poll once; never wait. Returning true means the draw binding needs the new buffer.
     pub fn update(
         &mut self,
-        scene: &VegetationDebugScene,
+        scene: &VegetationSceneState,
         lighting: &VegetationLighting,
         device: &RenderDevice,
         queue: &RenderQueue,

@@ -1,47 +1,17 @@
 //! Coarse fallback and bounded ground detail, selected independently of mesh LOD.
+pub(super) use super::super::database::{
+    TerrainMaterialQuery as Query, TerrainMaterialReply as Reply,
+};
 use super::*;
 use terrain_render::TerrainCompositeMaterial;
 use world::{TerrainComposite, TerrainMaterialKey};
-use world_db::{EncodedTerrainComposite, TerrainCompositeDescriptor};
+use world_db::TerrainCompositeDescriptor;
 
 pub(super) const MAX_MATERIAL_BYTES: u64 = 32 * 1024 * 1024;
 pub(super) const MAX_MATERIAL_TILES: usize = 512;
 const MAX_MATERIAL_METADATA: usize = 2048;
 mod detail;
 mod selection;
-
-#[derive(Clone, Debug)]
-pub(in crate::world_streaming) enum Query {
-    Presence(WorldSpaceId),
-    Descriptors(Vec<TerrainMaterialKey>),
-    Tile(TerrainMaterialKey),
-}
-#[derive(Debug)]
-pub(in crate::world_streaming) enum Reply {
-    Presence(bool),
-    Descriptors(Vec<TerrainCompositeDescriptor>),
-    Tile(EncodedTerrainComposite),
-}
-pub(super) fn read(reader: &RuntimeReader, query: Query) -> Result<Reply, String> {
-    match query {
-        Query::Presence(space) => reader
-            .has_terrain_composites(space)
-            .map(Reply::Presence)
-            .map_err(|e| e.to_string()),
-        Query::Descriptors(keys) => reader
-            .read_terrain_composite_descriptors(&keys)
-            .map_err(|e| e.to_string())?
-            .into_iter()
-            .collect::<Option<Vec<_>>>()
-            .map(Reply::Descriptors)
-            .ok_or("missing declared terrain composite".into()),
-        Query::Tile(key) => reader
-            .read_terrain_composite(key)
-            .map_err(|e| e.to_string())?
-            .map(Reply::Tile)
-            .ok_or("missing declared terrain composite".into()),
-    }
-}
 
 #[derive(Default)]
 pub(super) struct Cover {

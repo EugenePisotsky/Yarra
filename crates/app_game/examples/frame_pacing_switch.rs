@@ -42,7 +42,7 @@ fn main() {
         commands.spawn((Camera3d::default(), Msaa::Off));
     })
     .add_systems(Update, advance);
-    frame_pacing::install(&mut app);
+    frame_pacing::install(&mut app, frame_pacing::FrameRate::default(), false);
     frame_pacing::set_fps(&mut app, RATES[0]);
     app.run();
 }

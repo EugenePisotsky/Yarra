@@ -26,7 +26,7 @@ pub(crate) struct ProfileSettings {
 }
 
 impl ProfileSettings {
-    fn parse(args: &[String]) -> Result<Option<Self>, String> {
+    pub(crate) fn parse(args: &[String]) -> Result<Option<Self>, String> {
         let value = |key: &str| -> Result<Option<&str>, String> {
             args.iter()
                 .position(|a| a == key)
@@ -185,8 +185,12 @@ fn unix_ms() -> u128 {
 }
 
 pub(crate) fn install(app: &mut App) {
-    let args: Vec<_> = std::env::args().collect();
-    let Some(settings) = ProfileSettings::parse(&args).unwrap_or_else(|e| panic!("{e}")) else {
+    let Some(settings) = app
+        .world()
+        .resource::<crate::launch::LaunchOptions>()
+        .profile
+        .clone()
+    else {
         return;
     };
     let diagnostic = settings.diagnostic;
@@ -336,6 +340,28 @@ fn tick(
         clock.finished = true;
         exit.write(AppExit::Success);
     }
+}
+
+/// Profile presentation overrides both normal launch and reproduction settings.
+pub(crate) fn apply_runtime_settings(app: &mut App) {
+    let Some(profile) = app.world().get_resource::<ProfileSettings>().cloned() else {
+        return;
+    };
+    let mut settings = app
+        .world_mut()
+        .resource_mut::<crate::runtime_settings::RuntimeSettings>();
+    settings.render_path = crate::game_render::RenderPath::Composite;
+    settings.scale_index = if profile.size.is_some() { 0 } else { 2 };
+    settings.msaa = profile.msaa;
+    settings.bloom = profile.bloom;
+    if profile.temporal_bypass {
+        settings.temporal_debug = upscaling::temporal::TemporalDebug::Bypass;
+    }
+    settings.grass = if profile.grass {
+        vegetation_render::VegetationProfileMode::Full
+    } else {
+        vegetation_render::VegetationProfileMode::Disabled
+    };
 }
 
 #[cfg(test)]
