@@ -1,0 +1,149 @@
+--- a/crates/upscaling/src/temporal.rs
++++ b/crates/upscaling/src/temporal.rs
+@@ -5,6 +5,7 @@
+     camera::MainPassResolutionOverride,
+     core_pipeline::{
+         Core3dSystems,
++        core_3d::prepare_prepass_textures,
+         prepass::{DepthPrepass, MotionVectorPrepass, ViewPrepassTextures},
+         schedule::Core3d,
+     },
+@@ -107,6 +108,12 @@
+                 .before(prepare_view_targets),
+         )
+         .add_systems(
++            Render,
++            share_prepass_motion
++                .in_set(RenderSystems::PrepareResources)
++                .after(prepare_prepass_textures),
++        )
++        .add_systems(
+             Core3d,
+             initialize_motion
+                 .in_set(InitializeTemporalMotion)
+@@ -128,13 +135,14 @@
+     forward: Vec3,
+     epoch: u64,
+     index: u32,
+-    motion: TemporalMotionTarget,
++    motion: Option<TemporalMotionTarget>,
+     native: Result<backends::Temporal, String>,
+     last_pair: Option<[TextureId; 2]>,
+ }
+ #[derive(Resource)]
+ struct State {
+     histories: HashMap<Entity, History>,
++    shared_motion: bool,
+     motion_pipeline: wgpu::RenderPipeline,
+     motion_layout: wgpu::BindGroupLayout,
+     display_pipeline: wgpu::RenderPipeline,
+@@ -179,6 +187,7 @@
+         let display_pipeline = pipeline("display", TextureFormat::Rgba16Float);
+         Self {
+             histories: default(),
++            shared_motion: std::env::args_os().any(|a| a == "--temporal-shared-motion"),
+             motion_layout: motion_pipeline.get_bind_group_layout(0),
+             motion_pipeline,
+             display_layout: display_pipeline.get_bind_group_layout(0),
+@@ -287,7 +296,6 @@
+         TemporalJitter { offset }.jitter_projection(&mut projection, size.as_vec2());
+         commands.entity(entity).insert((
+             MainPassResolutionOverride(size),
+-            h.motion.clone(),
+             TemporalFrame {
+                 size,
+                 jitter: offset,
+@@ -297,6 +305,9 @@
+                 reset,
+             },
+         ));
++        if let Some(motion) = &h.motion {
++            commands.entity(entity).insert(motion.clone());
++        }
+         h.clip = clip;
+         h.position = position;
+         h.forward = forward;
+@@ -313,23 +324,26 @@
+     forward: Vec3,
+     epoch: u64,
+ ) -> History {
+-    let texture = device.create_texture(&TextureDescriptor {
+-        label: Some("complete scene temporal motion"),
+-        size: Extent3d {
+-            width: output_size.x,
+-            height: output_size.y,
+-            depth_or_array_layers: 1,
+-        },
+-        mip_level_count: 1,
+-        sample_count: 1,
+-        dimension: TextureDimension::D2,
+-        format: TextureFormat::Rg16Float,
+-        usage: TextureUsages::TEXTURE_BINDING
+-            | TextureUsages::RENDER_ATTACHMENT
+-            | TextureUsages::COPY_SRC,
+-        view_formats: &[],
++    let motion = (!std::env::args_os().any(|a| a == "--temporal-shared-motion")).then(|| {
++        let texture = device.create_texture(&TextureDescriptor {
++            label: Some("complete scene temporal motion"),
++            size: Extent3d {
++                width: output_size.x,
++                height: output_size.y,
++                depth_or_array_layers: 1,
++            },
++            mip_level_count: 1,
++            sample_count: 1,
++            dimension: TextureDimension::D2,
++            format: TextureFormat::Rg16Float,
++            usage: TextureUsages::TEXTURE_BINDING
++                | TextureUsages::RENDER_ATTACHMENT
++                | TextureUsages::COPY_SRC,
++            view_formats: &[],
++        });
++        let view = texture.create_view(&default());
++        TemporalMotionTarget { texture, view }
+     });
+-    let view = texture.create_view(&default());
+     History {
+         size,
+         output_size,
+@@ -338,7 +352,7 @@
+         forward,
+         epoch,
+         index: 0,
+-        motion: TemporalMotionTarget { texture, view },
++        motion,
+         native: backends::Temporal::new(device, size, output_size),
+         last_pair: None,
+     }
+@@ -373,11 +387,31 @@
+         ],
+     }
+ }
++fn share_prepass_motion(
++    mut commands: Commands,
++    state: Res<State>,
++    views: Query<(Entity, &ViewPrepassTextures), With<TemporalFrame>>,
++) {
++    if !state.shared_motion {
++        return;
++    }
++    for (entity, prepass) in &views {
++        if let Some(motion) = &prepass.motion_vectors {
++            commands.entity(entity).insert(TemporalMotionTarget {
++                texture: motion.texture.texture.clone(),
++                view: motion.texture.default_view.clone(),
++            });
++        }
++    }
++}
+ fn initialize_motion(
+     view: ViewQuery<(&TemporalFrame, &TemporalMotionTarget, &ViewPrepassTextures)>,
+     state: Res<State>,
+     mut ctx: RenderContext,
+ ) {
++    if state.shared_motion {
++        return;
++    }
+     let (frame, target, prepass) = view.into_inner();
+     let (Some(motion), Some(depth)) = (&prepass.motion_vectors, &prepass.depth) else {
+         return;

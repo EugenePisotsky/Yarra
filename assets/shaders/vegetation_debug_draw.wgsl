@@ -28,7 +28,16 @@
 // The geometry path has no vertex streams. A fixed procedural vertex budget is decoded from
 // vertex_index while instance_index selects compact data emitted by the placement compute pass.
 
+#ifdef TEMPORAL_GRASS
+struct TemporalGrass { previous: Camera, raster_clip: mat4x4<f32> }
+@group(3) @binding(0) var<uniform> temporal_grass: TemporalGrass;
+@group(3) @binding(1) var<storage,read> previous_prepared_arena: PreparedArena;
+#endif
 struct VertexOutput {
+#ifdef TEMPORAL_GRASS
+    @location(11) current_clip: vec4<f32>,
+    @location(12) previous_clip: vec4<f32>,
+#endif
     @builtin(position) clip_position: vec4<f32>,
     @location(0) color: vec3<f32>,
     @location(1) world_normal: vec3<f32>,
@@ -122,7 +131,7 @@ fn cubic_bezier_derivative(
         + 3.0 * t * t * (p3 - p2);
 }
 
-fn geometry_vertex(vertex_index: u32, instance_index: u32) -> VertexOutput {
+fn geometry_pose(vertex_index: u32, instance_index: u32, pose_camera: Camera, previous: bool) -> VertexOutput {
     // Keep the indirect commands, instance counts, index fetches, and vertex invocations intact,
     // but avoid every procedural instance read and all deformation math. Comparing this mode with
     // the full vertex-only run separates raw topology throughput from vertex-shader cost.
@@ -140,7 +149,12 @@ fn geometry_vertex(vertex_index: u32, instance_index: u32) -> VertexOutput {
         return output;
     }
 
-    let instance = procedural_instances[instance_index];
+    var instance = procedural_instances[instance_index];
+    if previous {
+        // Both poses use the same stable root/seed, independent of atomic append order.
+        instance.root_clump.x += camera.render_origin.x - pose_camera.render_origin.x;
+        instance.root_clump.z += camera.render_origin.y - pose_camera.render_origin.y;
+    }
     let inspection = shape_inspection_mode(debug_config);
     let low_lod = (instance.geometry.y >> 31u) != 0u && inspection == 0u;
     let profile = species[instance.geometry.y & SPECIES_INDEX_MASK];
@@ -153,13 +167,19 @@ fn geometry_vertex(vertex_index: u32, instance_index: u32) -> VertexOutput {
     var side_sign = select(-1.0, 1.0, (vertex_index & 1u) != 0u);
     var blade: PreparedBlade;
     var prepared_index = 0u;
-    if (debug_config.workload.z != 0u) {
+    if (debug_config.workload.z != 0u && !previous) {
         prepared_index = prepared_arena.indices[instance_index];
     }
+#ifdef TEMPORAL_GRASS
+    if previous && debug_config.workload.z != 0u { prepared_index = previous_prepared_arena.indices[instance_index]; }
+#endif
     if (prepared_index != 0u) {
         blade = prepared_arena.blades[prepared_index - 1u + blade_index];
+#ifdef TEMPORAL_GRASS
+        if previous { blade = previous_prepared_arena.blades[prepared_index - 1u + blade_index]; }
+#endif
     } else {
-        blade = prepare_blade(instance, profile, camera, debug_config, blade_index);
+        blade = prepare_blade(instance, profile, pose_camera, debug_config, blade_index);
     }
     let p0 = blade.p0_width.xyz;
     let p1 = blade.p1_authored_width.xyz;
@@ -238,7 +258,7 @@ fn geometry_vertex(vertex_index: u32, instance_index: u32) -> VertexOutput {
             cross(local_ribbon_side, curve_tangent),
             surface_normal,
         );
-        let to_camera = normalize3_or(camera.camera_position.xyz - curve_position, physical_normal);
+        let to_camera = normalize3_or(pose_camera.camera_position.xyz - curve_position, physical_normal);
         // Rotate the ribbon's *width line* toward the camera-facing width line by no more than the
         // authored angle. A width line is unoriented (S and -S describe the same two edge positions),
         // so align the camera line to the nearest hemisphere before finding the angular remainder.
@@ -275,16 +295,16 @@ fn geometry_vertex(vertex_index: u32, instance_index: u32) -> VertexOutput {
         // very distant or edge-on subpixel ribbons. Both terms are derived independently of the
         // density-transition width, so blades selected for removal still contract all the way to zero.
         var far_width_scale = 1.0;
-        if (camera.projection.w > 0.5 && !is_broad_leaf) {
+        if (pose_camera.projection.w > 0.5 && !is_broad_leaf) {
             let low_lod_coverage_scale = blade.topology.z;
-            let camera_distance = max(distance(camera.camera_position.xyz, curve_position), 0.05);
+            let camera_distance = max(distance(pose_camera.camera_position.xyz, curve_position), 0.05);
             let side_view_alignment = clamp(dot(rendered_ribbon_side, to_camera), -1.0, 1.0);
             let projected_side_factor = sqrt(max(
                 1.0 - side_view_alignment * side_view_alignment,
                 0.0,
             ));
             let projected_authored_half_width = authored_half_width
-                * camera.projection.x
+                * pose_camera.projection.x
                 * projected_side_factor
                 / camera_distance;
             let required_scale = clamp(
@@ -306,7 +326,7 @@ fn geometry_vertex(vertex_index: u32, instance_index: u32) -> VertexOutput {
     var shading_side = side_sign;
     var shading_t = t;
     if (paired_ribbon && !low_lod && topology_row == 0u) {
-        world_position = p0 + side_sign * paired_base_width(blade, instance, camera)
+        world_position = p0 + side_sign * paired_base_width(blade, instance, pose_camera)
             * (half_width / max(authored_half_width, 1e-6));
     }
     if (paired_main && lod_morph < 1.0) {
@@ -367,13 +387,13 @@ fn geometry_vertex(vertex_index: u32, instance_index: u32) -> VertexOutput {
     let color = mix(profile.root_color.xyz, profile.tip_color_height.xyz, shading_t) * (1.0 + variation);
 
     var output: VertexOutput;
-    output.clip_position = camera.clip_from_world * vec4<f32>(world_position, 1.0);
+    output.clip_position = pose_camera.clip_from_world * vec4<f32>(world_position, 1.0);
     output.color = color;
     output.world_normal = physical_normal;
     output.world_position = world_position;
     output.canopy_coordinates = vec4(max(0.0, dot(world_position - p0, surface_normal)),
-        distance(camera.camera_position.xyz, p0), canopy_edge_depth(p0.xz),
-        distance(camera.camera_position.xz, p0.xz));
+        distance(pose_camera.camera_position.xyz, p0), canopy_edge_depth(p0.xz),
+        distance(pose_camera.camera_position.xz, p0.xz));
     output.blade_t = shading_t;
     output.material = vec4<f32>(
         profile.material.y,
@@ -393,10 +413,10 @@ fn geometry_vertex(vertex_index: u32, instance_index: u32) -> VertexOutput {
     let relative_height = dot(world_position - p0, surface_normal) / crown;
     let band_length = select(max(length(p3 - p0), 0.01), -blade.p3_amplitude.w, paired_ribbon);
     let normalized_width = clamp(2.0 * authored_half_width / band_length, 0.008, 0.085);
-    let phase = camera.wind.w * camera.wind_shape.y
-        + dot(instance.root_clump.xz + camera.render_origin.xy, camera.wind.xy) * camera.wind_shape.x
+    let phase = pose_camera.wind.w * pose_camera.wind_shape.y
+        + dot(instance.root_clump.xz + pose_camera.render_origin.xy, pose_camera.wind.xy) * pose_camera.wind_shape.x
         + f32(band_seed & 255u) * (2.0 * PI / 255.0);
-    let drift = normalized_width * min(camera.wind.z, 1.0)
+    let drift = normalized_width * min(pose_camera.wind.z, 1.0)
         * (0.75 * sin(phase) + 0.25 * sin(phase * 1.37 + 1.2));
     output.band_coordinates = vec4<f32>(select(shading_t, -shading_t, blade_index != 0u), relative_height, normalized_width, drift);
     output.band_seed = band_seed;
@@ -413,6 +433,10 @@ fn geometry_vertex(vertex_index: u32, instance_index: u32) -> VertexOutput {
     }
 
     return output;
+}
+
+fn geometry_vertex(vertex_index: u32, instance_index: u32) -> VertexOutput {
+    return geometry_pose(vertex_index, instance_index, camera, false);
 }
 
 fn diagnostic_vertex(vertex_index: u32, instance_index: u32) -> VertexOutput {
@@ -513,9 +537,22 @@ fn vertex(
     @builtin(instance_index) instance_index: u32,
 ) -> VertexOutput {
     if (debug_config.values.x == 0u) {
-        return geometry_vertex(vertex_index, instance_index);
+        var output = geometry_pose(vertex_index, instance_index, camera, false);
+#ifdef TEMPORAL_GRASS
+        let previous = geometry_pose(vertex_index, instance_index, temporal_grass.previous, true);
+        output.current_clip = output.clip_position;
+        output.previous_clip = previous.clip_position;
+        output.clip_position = temporal_grass.raster_clip * vec4(output.world_position,1.0);
+#endif
+        return output;
     }
-    return diagnostic_vertex(vertex_index, instance_index);
+    var output = diagnostic_vertex(vertex_index, instance_index);
+#ifdef TEMPORAL_GRASS
+    output.current_clip = output.clip_position;
+    output.previous_clip = temporal_grass.previous.clip_from_world * vec4(output.world_position,1.0);
+    output.clip_position = temporal_grass.raster_clip * vec4(output.world_position,1.0);
+#endif
+    return output;
 }
 
 fn directional_shadow_visibility(input: VertexOutput) -> f32 {
@@ -685,10 +722,7 @@ fn study_band_mask(input: VertexOutput) -> f32 {
 }
 #endif
 
-@fragment
-fn fragment(
-    input: VertexOutput,
-) -> @location(0) vec4<f32> {
+fn shade(input: VertexOutput) -> vec4<f32> {
     if (input.material.w < 0.5) {
         return vec4<f32>(input.color, 1.0);
     }
@@ -950,3 +984,18 @@ fn fragment(
 
     return vec4<f32>((foliage_ambient + diffuse + transmission + highlight) * canopy_visibility, 1.0);
 }
+
+#ifdef TEMPORAL_GRASS
+struct TemporalFragment { @location(0) color: vec4<f32>, @location(1) motion: vec2<f32> }
+@fragment fn fragment(input: VertexOutput) -> TemporalFragment {
+    var output: TemporalFragment;
+    output.color = shade(input);
+    output.motion = vec2(0.0);
+    if input.current_clip.w > 0.00001 && input.previous_clip.w > 0.00001 {
+        output.motion = (input.current_clip.xy / input.current_clip.w - input.previous_clip.xy / input.previous_clip.w) * vec2(0.5,-0.5);
+    }
+    return output;
+}
+#else
+@fragment fn fragment(input: VertexOutput) -> @location(0) vec4<f32> { return shade(input); }
+#endif

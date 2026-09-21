@@ -359,6 +359,7 @@ fn draw(
         &ViewDepthTexture,
         &ViewUniformOffset,
         &Msaa,
+        Option<&bevy::camera::MainPassResolutionOverride>,
     )>,
     assets: Option<Res<CloudAssets>>,
     pipelines: Res<Pipelines>,
@@ -371,7 +372,7 @@ fn draw(
     params: Res<CloudParams>,
     mut ctx: RenderContext,
 ) {
-    let (_, extracted, view, depth, offset, msaa) = view.into_inner();
+    let (_, extracted, view, depth, offset, msaa, resolution) = view.into_inner();
     if view.main_texture_format() != TextureFormat::Rgba16Float {
         return;
     }
@@ -389,10 +390,11 @@ fn draw(
     ) else {
         return;
     };
-    let size = quality.target_size(UVec2::new(
-        view.main_texture().width(),
-        view.main_texture().height(),
-    ));
+    let main_size = resolution.map_or(
+        UVec2::new(view.main_texture().width(), view.main_texture().height()),
+        |r| r.0,
+    );
+    let size = quality.target_size(main_size);
     let resized = target.size != size || target.texture.is_none();
     if resized {
         let texture = ctx.render_device().create_texture(&TextureDescriptor {
@@ -519,6 +521,7 @@ fn draw(
             occlusion_query_set: None,
             multiview_mask: None,
         });
+    pass.set_viewport(0., 0., main_size.x as f32, main_size.y as f32, 0., 1.);
     pass.set_pipeline(composite);
     pass.set_bind_group(0, &group, &[offset.offset]);
     pass.draw(0..3, 0..1);

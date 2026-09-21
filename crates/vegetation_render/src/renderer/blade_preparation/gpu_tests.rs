@@ -22,6 +22,9 @@ use std::{
 #[path = "shading_gpu_tests.rs"]
 mod shading;
 
+#[path = "temporal_quality_tests.rs"]
+mod temporal_quality;
+
 #[derive(Resource, Default, Clone)]
 struct Pixels(Arc<Mutex<Vec<u8>>>);
 
@@ -285,7 +288,7 @@ fn replace_arena(app: &mut App, blades: u64) {
                 usage: BufferUsages::STORAGE,
                 mapped_at_creation: false,
             });
-            preparation.bind_group = None;
+            preparation.bind_groups.clear();
             preparation.last_key = None;
             let cache = world.resource::<PipelineCache>();
             let layout =
@@ -349,7 +352,7 @@ fn test_app() -> App {
             .disable::<WinitPlugin>()
             .disable::<PipelinedRenderingPlugin>(),
     )
-    .add_plugins(VegetationRenderPlugin)
+    .add_plugins((VegetationRenderPlugin, upscaling::UpscalingPlugin))
     // Counters are opt-in in the renderer, but these tests assert on GPU readbacks.
     .insert_resource(VegetationDebugSettings {
         gpu_counters_enabled: true,
@@ -836,4 +839,324 @@ fn shape_inspection_preserves_production_population_and_density() {
         production,
         "returning to production changed placement"
     );
+}
+
+#[test]
+#[ignore = "requires native GPU; bounded temporal grass/depth/motion integration"]
+fn temporal_grass_motion_tracks_wind_camera_and_fallback() {
+    use bevy::render::render_resource::{PollType, TexelCopyBufferInfo, TexelCopyBufferLayout};
+    use upscaling::temporal::{TemporalDebug, TemporalMotionTarget, TemporalView};
+    let mut app = test_app();
+    app.update();
+    let camera = app
+        .world_mut()
+        .query_filtered::<Entity, With<Camera3d>>()
+        .single(app.world())
+        .unwrap();
+    app.world_mut().entity_mut(camera).insert(TemporalView {
+        input_size: UVec2::splat(128),
+        reset_epoch: 0,
+        debug: TemporalDebug::Motion,
+    });
+    app.world_mut().resource_mut::<VegetationWind>().enabled = false;
+    settled_pixels(&mut app);
+    assert!(snapshot(&app).emitted_instances.iter().sum::<u32>() > 100);
+    assert!(super::super::temporal::reused_previous(
+        app.sub_app(RenderApp).world()
+    ));
+    let motion = |app: &mut App| -> Vec<f32> {
+        let world = app.sub_app_mut(RenderApp).world_mut();
+        let image = world
+            .query::<&TemporalMotionTarget>()
+            .single(world)
+            .unwrap()
+            .texture
+            .clone();
+        let device = world.resource::<RenderDevice>();
+        let queue = world.resource::<RenderQueue>();
+        let readback = device.create_buffer(&BufferDescriptor {
+            label: None,
+            size: 256 * 256 * 4,
+            usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&default());
+        encoder.copy_texture_to_buffer(
+            image.as_image_copy(),
+            TexelCopyBufferInfo {
+                buffer: &readback,
+                layout: TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(1024),
+                    rows_per_image: Some(256),
+                },
+            },
+            image.size(),
+        );
+        queue.submit([encoder.finish()]);
+        let (tx, rx) = std::sync::mpsc::channel();
+        readback.slice(..).map_async(MapMode::Read, move |r| {
+            let _ = tx.send(r);
+        });
+        device
+            .poll(PollType::Wait {
+                submission_index: None,
+                timeout: Some(Duration::from_secs(10)),
+            })
+            .unwrap();
+        rx.recv_timeout(Duration::from_secs(10)).unwrap().unwrap();
+        let data = readback.slice(..).get_mapped_range();
+        let values = data
+            .chunks_exact(2)
+            .map(|b| {
+                let v = u16::from_le_bytes([b[0], b[1]]);
+                let e = i32::from((v >> 10) & 31);
+                let m = f32::from(v & 1023) / 1024.;
+                let sign = if v & 0x8000 == 0 { 1. } else { -1. };
+                sign * if e == 0 {
+                    m * 2.0_f32.powi(-14)
+                } else {
+                    (1. + m) * 2.0_f32.powi(e - 15)
+                }
+            })
+            .collect();
+        drop(data);
+        readback.unmap();
+        values
+    };
+    let max = |values: Vec<f32>| values.into_iter().map(f32::abs).fold(0., f32::max);
+    assert!(
+        max(motion(&mut app)) < 0.0001,
+        "static grass must have zero motion despite jitter"
+    );
+    for prepared in [true, false] {
+        app.world_mut()
+            .resource_mut::<VegetationBladePreparation>()
+            .enabled = prepared;
+        app.world_mut().resource_mut::<VegetationWind>().enabled = true;
+        settled_pixels(&mut app);
+        app.world_mut()
+            .resource_mut::<VegetationWind>()
+            .phase_seconds += 0.05;
+        app.update();
+        assert_eq!(
+            super::super::temporal::reused_previous(app.sub_app(RenderApp).world()),
+            prepared,
+            "unchanged placement should reuse its previous prepared pose"
+        );
+        let vectors = motion(&mut app);
+        assert!(vectors.iter().all(|v| v.is_finite()));
+        assert!(
+            max(vectors) > 0.0001,
+            "wind motion missing: prepared={prepared}"
+        );
+    }
+    app.world_mut().resource_mut::<VegetationWind>().enabled = false;
+    settled_pixels(&mut app);
+    app.world_mut()
+        .get_mut::<Transform>(camera)
+        .unwrap()
+        .translation
+        .x += 0.1;
+    app.update();
+    assert!(max(motion(&mut app)) > 0.001, "camera movement missing");
+    assert!(!super::super::temporal::reused_previous(
+        app.sub_app(RenderApp).world()
+    ));
+    app.world_mut()
+        .get_mut::<TemporalView>(camera)
+        .unwrap()
+        .reset_epoch += 1;
+    app.update();
+    assert!(
+        max(motion(&mut app)) < 0.0001,
+        "cut must invalidate old grass pose"
+    );
+    app.world_mut().entity_mut(camera).remove::<TemporalView>();
+    settled_pixels(&mut app);
+    assert!(!super::super::temporal::reused_previous(
+        app.sub_app(RenderApp).world()
+    ));
+    assert!(
+        app.sub_app_mut(RenderApp)
+            .world_mut()
+            .query::<&TemporalMotionTarget>()
+            .iter(app.sub_app(RenderApp).world())
+            .next()
+            .is_none()
+    );
+}
+
+#[test]
+#[ignore = "requires native GPU; validates camera motion numerically against final depth"]
+fn temporal_strafe_motion_matches_reprojection() {
+    use bevy::render::view::ViewDepthTexture;
+    use upscaling::temporal::{TemporalDebug, TemporalFrame, TemporalMotionTarget, TemporalView};
+    let mut app = test_app();
+    app.update();
+    let camera = app
+        .world_mut()
+        .query_filtered::<Entity, With<Camera3d>>()
+        .single(app.world())
+        .unwrap();
+    app.world_mut().entity_mut(camera).insert(TemporalView {
+        input_size: UVec2::splat(128),
+        reset_epoch: 0,
+        debug: TemporalDebug::Motion,
+    });
+    {
+        let mut c = app.world_mut().get_mut::<Camera3d>(camera).unwrap();
+        c.depth_texture_usages =
+            (TextureUsages::from(c.depth_texture_usages) | TextureUsages::COPY_SRC).into();
+    }
+    app.world_mut().resource_mut::<VegetationWind>().enabled = false;
+    // A standard mesh exercises Bevy's prepass; grass exercises our custom motion attachment.
+    let mesh = app
+        .world_mut()
+        .resource_mut::<Assets<Mesh>>()
+        .add(Cuboid::new(4., 4., 4.));
+    let material = app
+        .world_mut()
+        .resource_mut::<Assets<StandardMaterial>>()
+        .add(StandardMaterial::default());
+    let cube = app
+        .world_mut()
+        .spawn((
+            Mesh3d(mesh),
+            MeshMaterial3d(material),
+            Transform::from_xyz(12., 3., 10.),
+            Visibility::Hidden,
+        ))
+        .id();
+    for grass in [false, true] {
+        *app.world_mut().get_mut::<Visibility>(cube).unwrap() = if grass {
+            Visibility::Hidden
+        } else {
+            Visibility::Visible
+        };
+        app.world_mut()
+            .resource_mut::<VegetationDebugSettings>()
+            .profile_mode = if grass {
+            VegetationProfileMode::Full
+        } else {
+            VegetationProfileMode::Disabled
+        };
+        for delta in [Vec3::X * 0.1, Vec3::Z * 0.1] {
+            settled_pixels(&mut app);
+            app.world_mut()
+                .get_mut::<Transform>(camera)
+                .unwrap()
+                .translation += delta;
+            app.update();
+            let world = app.sub_app_mut(RenderApp).world_mut();
+            let (frame, motion, depth) = world
+                .query::<(&TemporalFrame, &TemporalMotionTarget, &ViewDepthTexture)>()
+                .single(world)
+                .unwrap();
+            assert!(
+                !frame.reset,
+                "ordinary camera translation must retain history"
+            );
+            let motion = read_temporal_texture(world, &motion.texture);
+            let depth = read_temporal_texture(world, &depth.texture);
+            let previous_from_raster =
+                frame.previous_clip_from_world * frame.raster_clip_from_world.inverse();
+            let mut errors = Vec::new();
+            let mut speeds = Vec::new();
+            for y in 1..127 {
+                for x in 1..127 {
+                    let i = (y * 256 + x) * 4;
+                    let d = f32::from_le_bytes(depth[i..i + 4].try_into().unwrap());
+                    if d <= 0.0 {
+                        continue;
+                    }
+                    let pixel = Vec2::new(x as f32 + 0.5, y as f32 + 0.5);
+                    let uv = pixel / 128.;
+                    let previous =
+                        previous_from_raster * Vec4::new(uv.x * 2. - 1., 1. - uv.y * 2., d, 1.);
+                    let previous_uv =
+                        previous.xy() / previous.w * Vec2::new(0.5, -0.5) + Vec2::splat(0.5);
+                    let expected = (pixel + frame.jitter) / 128. - previous_uv;
+                    let actual = Vec2::new(
+                        temporal_half(&motion[i..i + 2]),
+                        temporal_half(&motion[i + 2..i + 4]),
+                    );
+                    errors.push((actual - expected).length() * 128.);
+                    speeds.push(expected.length() * 128.);
+                }
+            }
+            assert!(
+                errors.len() > 100,
+                "motion probe must cover visible geometry"
+            );
+            errors.sort_by(f32::total_cmp);
+            let mean = errors.iter().sum::<f32>() / errors.len() as f32;
+            let speed = speeds.iter().sum::<f32>() / speeds.len() as f32;
+            let p95 = errors[errors.len() * 95 / 100];
+            println!(
+                "TEMPORAL_REPROJECTION grass={grass} delta={delta:?} pixels={} mean_motion_px={speed:.6} mean_error_px={mean:.6} p95_error_px={p95:.6}",
+                errors.len()
+            );
+            // Grass changes silhouette slightly with camera-dependent LOD/pose. Its
+            // camera-only reprojection should still agree to a small fraction of a pixel.
+            assert!(
+                speed > 0.05 && p95 < 0.1,
+                "incorrect camera motion: grass={grass}, speed={speed}, error={p95}"
+            );
+        }
+    }
+}
+
+fn temporal_half(bytes: &[u8]) -> f32 {
+    let h = u16::from_le_bytes(bytes.try_into().unwrap());
+    let exponent = i32::from((h >> 10) & 31);
+    let magnitude = if exponent == 0 {
+        f32::from(h & 1023) * 2.0f32.powi(-24)
+    } else {
+        (1.0 + f32::from(h & 1023) / 1024.) * 2.0f32.powi(exponent - 15)
+    };
+    magnitude * if h & 0x8000 == 0 { 1. } else { -1. }
+}
+
+fn read_temporal_texture(
+    world: &World,
+    texture: &bevy::render::render_resource::Texture,
+) -> Vec<u8> {
+    use bevy::render::render_resource::{PollType, TexelCopyBufferInfo, TexelCopyBufferLayout};
+    let device = world.resource::<RenderDevice>();
+    let queue = world.resource::<RenderQueue>();
+    let buffer = device.create_buffer(&BufferDescriptor {
+        label: None,
+        size: 256 * 256 * 4,
+        usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut encoder = device.create_command_encoder(&default());
+    encoder.copy_texture_to_buffer(
+        texture.as_image_copy(),
+        TexelCopyBufferInfo {
+            buffer: &buffer,
+            layout: TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(1024),
+                rows_per_image: Some(256),
+            },
+        },
+        texture.size(),
+    );
+    queue.submit([encoder.finish()]);
+    let (tx, rx) = std::sync::mpsc::channel();
+    buffer.slice(..).map_async(MapMode::Read, move |r| {
+        let _ = tx.send(r);
+    });
+    device
+        .poll(PollType::Wait {
+            submission_index: None,
+            timeout: Some(Duration::from_secs(10)),
+        })
+        .unwrap();
+    rx.recv_timeout(Duration::from_secs(10)).unwrap().unwrap();
+    let bytes = buffer.slice(..).get_mapped_range().to_vec();
+    buffer.unmap();
+    bytes
 }

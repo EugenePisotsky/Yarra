@@ -58,6 +58,7 @@ mod candidate_cache;
 mod canopy_boundary;
 #[cfg(test)]
 mod shadow_study;
+mod temporal;
 
 const COMPUTE_SHADER_PATH: &str = "shaders/vegetation_debug_compute.wgsl";
 const SCHEDULE_SHADER_PATH: &str = "shaders/vegetation_schedule_compute.wgsl";
@@ -170,6 +171,7 @@ fn build_topology_indices() -> Vec<u16> {
 }
 
 pub(crate) fn install(render_app: &mut SubApp) {
+    temporal::install(render_app);
     render_app
         .add_render_command::<Opaque3d, DrawVegetationDebug>()
         .add_systems(
@@ -346,6 +348,19 @@ struct CameraGpu {
     canopy: [[f32; 4]; 4],
 }
 
+impl CameraGpu {
+    fn geometry_cache_key(mut self) -> Self {
+        // These fields are read only by the draw shader. Cloud-driven illumination and
+        // the day cycle must not regenerate placement or invalidate prepared wind poses.
+        self.sun_direction = [0.0; 4];
+        self.sun_radiance = [0.0; 4];
+        self.ambient_radiance = [0.0; 4];
+        self.lighting = [0.0; 4];
+        self.canopy = [[0.0; 4]; 4];
+        self
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Pod, Zeroable)]
 #[repr(C)]
 struct DebugConfigGpu {
@@ -371,7 +386,7 @@ impl GenerationInputs {
         // Placement uses wind strength for conservative bounds, but wind phase is evaluated
         // only by blade preparation/drawing. Animate existing blades without rebuilding them.
         camera.wind[3] = 0.0;
-        camera.canopy = [[0.0; 4]; 4]; // shading sliders never invalidate placement
+        camera = camera.geometry_cache_key();
         config.workload[3] &= !(255 << 16);
         Self {
             source_revision,
@@ -559,6 +574,7 @@ struct VegetationPipelineKey {
     view_layout_bits: u32,
     blade_bands: VegetationBladeBands,
     clouds: bool,
+    temporal: bool,
 }
 
 struct VegetationPipelineSpecializer {
@@ -590,6 +606,31 @@ impl Specializer<RenderPipeline> for VegetationPipelineSpecializer {
                 "YARRA_CLOUDS".into(),
                 ShaderDefVal::UInt("MATERIAL_BIND_GROUP".into(), 2),
             ]);
+        }
+        if key.temporal {
+            if !key.clouds {
+                descriptor
+                    .layout
+                    .push(BindGroupLayoutDescriptor::new("unused clouds", &[]));
+            }
+            descriptor.layout.push(temporal::layout());
+            descriptor.vertex.shader_defs.push("TEMPORAL_GRASS".into());
+            descriptor
+                .fragment
+                .as_mut()
+                .unwrap()
+                .shader_defs
+                .push("TEMPORAL_GRASS".into());
+            descriptor
+                .fragment
+                .as_mut()
+                .unwrap()
+                .targets
+                .push(Some(ColorTargetState {
+                    format: TextureFormat::Rg16Float,
+                    blend: None,
+                    write_mask: ColorWrites::ALL,
+                }));
         }
         descriptor.multisample.count = key.msaa.samples();
         if MeshPipelineViewLayoutKey::from_bits_retain(key.view_layout_bits)
@@ -1055,7 +1096,13 @@ fn prepare(
     pipeline_cache: Res<PipelineCache>,
     pipelines: Res<VegetationPipelines>,
     diagnostics: Res<VegetationDiagnostics>,
-    views: Query<&ExtractedView, With<VegetationDebugView>>,
+    views: Query<
+        (
+            &ExtractedView,
+            Option<&bevy::camera::MainPassResolutionOverride>,
+        ),
+        With<VegetationDebugView>,
+    >,
     mut buffers: ResMut<VegetationBuffers>,
     mut candidate_cache: ResMut<candidate_cache::CandidateCache>,
 ) {
@@ -1102,7 +1149,7 @@ fn prepare(
         let position = views
             .iter()
             .next()
-            .map_or(Vec3::ZERO, |view| view.world_from_view.translation());
+            .map_or(Vec3::ZERO, |(view, _)| view.world_from_view.translation());
         let cache_replaced =
             candidate_cache.prepare(&render_device, &render_queue, &packed.work_items, position);
         let mut replaced_buffers = u64::from(cache_replaced);
@@ -1284,13 +1331,14 @@ fn prepare(
         buffers.uploaded_terrain_gate = terrain_gate.clone();
     }
 
-    let Some(view) = views.iter().next() else {
+    let Some((view, resolution)) = views.iter().next() else {
         buffers.active = false;
         return;
     };
     let clip_from_world = view
         .clip_from_world
         .unwrap_or_else(|| view.clip_from_view * view.world_from_view.to_matrix().inverse());
+    let view_size = resolution.map_or(view.viewport.zw(), |r| r.0);
     let focus_gpu = pack_lod_focus(
         lod_focus.position,
         view.world_from_view.translation(),
@@ -1309,12 +1357,12 @@ fn prepare(
         camera_position: view
             .world_from_view
             .translation()
-            .extend(view.viewport.w.max(1) as f32)
+            .extend(view_size.y.max(1) as f32)
             .to_array(),
         projection: [
-            view.clip_from_view.y_axis.y.abs() * view.viewport.w.max(1) as f32 * 0.5,
-            view.viewport.z.max(1) as f32,
-            view.viewport.w.max(1) as f32,
+            view.clip_from_view.y_axis.y.abs() * view_size.y.max(1) as f32 * 0.5,
+            view_size.x.max(1) as f32,
+            view_size.y.max(1) as f32,
             if settings.far_width_compensation {
                 1.0
             } else {
@@ -2165,6 +2213,7 @@ fn copy_telemetry_to_staging(
 }
 
 fn queue(
+    mut commands: Commands,
     pipeline_cache: Res<PipelineCache>,
     mut pipelines: ResMut<VegetationPipelines>,
     buffers: Res<VegetationBuffers>,
@@ -2172,7 +2221,15 @@ fn queue(
     mut opaque_phases: ResMut<ViewBinnedRenderPhases<Opaque3d>>,
     draw_functions: Res<DrawFunctions<Opaque3d>>,
     view_key_cache: Res<ViewKeyCache>,
-    views: Query<(Entity, &ExtractedView, &Msaa), With<VegetationDebugView>>,
+    views: Query<
+        (
+            Entity,
+            &ExtractedView,
+            &Msaa,
+            Option<&upscaling::temporal::TemporalView>,
+        ),
+        With<VegetationDebugView>,
+    >,
     draw_entity: Query<(Entity, &MainEntity), With<VegetationDebugDraw>>,
     clouds: Option<Res<atmosphere::clouds::CloudShadowGpu>>,
 ) {
@@ -2180,7 +2237,8 @@ fn queue(
         return;
     };
     let draw_function = draw_functions.read().id::<DrawVegetationDebug>();
-    for (_view_entity, view, msaa) in &views {
+    for (view_entity, view, msaa, temporal) in &views {
+        commands.entity(view_entity).remove::<temporal::Pipeline>();
         let (Some(phase), Some(mesh_view_key)) = (
             opaque_phases.get_mut(&view.retained_view_entity),
             view_key_cache.get(&view.retained_view_entity),
@@ -2206,10 +2264,17 @@ fn queue(
                 view_layout_bits: MeshPipelineViewLayoutKey::from(*mesh_view_key).bits(),
                 blade_bands: settings.blade_bands,
                 clouds: clouds.is_some(),
+                temporal: temporal.is_some(),
             },
         ) else {
             continue;
         };
+        if temporal.is_some() {
+            commands
+                .entity(view_entity)
+                .insert(temporal::Pipeline(pipeline));
+            continue;
+        }
         phase.add(
             Opaque3dBatchSetKey {
                 draw_function,
@@ -2282,6 +2347,10 @@ mod tests {
         let baseline = GenerationInputs::new(1, camera, config);
         let mut shaded = camera;
         shaded.canopy = vegetation::CanopyShading::experiment().packed([32.0, -64.0]);
+        shaded.sun_direction = [0.2, 0.8, 0.3, 1.0];
+        shaded.sun_radiance = [20.0, 18.0, 15.0, 0.0];
+        shaded.ambient_radiance = [0.1, 0.2, 0.3, 0.0];
+        shaded.lighting = [1.0, 0.5, 0.8, 1.0];
         assert!(baseline == GenerationInputs::new(1, shaded, config));
         let mut animated = camera;
         animated.wind[3] = 12.5;
@@ -2720,10 +2789,14 @@ mod tests {
 
     // Standalone fixtures do not run Bevy's import/define preprocessor.
     pub(super) fn preprocess_band_study(source: &str, mode: VegetationBladeBands) -> String {
+        preprocess_variant(source, mode, false)
+    }
+    fn preprocess_variant(source: &str, mode: VegetationBladeBands, temporal: bool) -> String {
         let mut enabled = vec![true];
         let mut output = String::new();
         for line in source.lines() {
             match line {
+                "#ifdef TEMPORAL_GRASS" => enabled.push(temporal),
                 "#ifdef ATMOSPHERE" | "#ifdef YARRA_CLOUDS" => enabled.push(false),
                 "#ifdef BLADE_BAND_STUDY" => enabled.push(mode != VegetationBladeBands::Off),
                 "#ifdef BLADE_BAND_MASK" => enabled.push(matches!(
@@ -2787,7 +2860,7 @@ mod tests {
         // Naga's standalone WGSL parser does not run Bevy's #import preprocessor. Validate the
         // complete draw shader with only the imported CSM adapter replaced by an identity stub.
         let draw = include_str!("../../../assets/shaders/vegetation_debug_draw.wgsl");
-        let declarations = draw.find("struct VertexOutput").unwrap();
+        let declarations = draw.find("// Vegetation V2 procedural").unwrap();
         let shadow_adapter = draw.find("fn directional_shadow_visibility").unwrap();
         let post_adapter = draw.find("fn radiance_tint").unwrap();
         let sanitized = format!(
@@ -2807,8 +2880,11 @@ mod tests {
              fn test_v_smith_ggx_correlated(_roughness: f32, _n_dot_v: f32, _n_dot_l: f32) -> f32 {{ return 1.0; }}\n\
              {sanitized}"
         );
-        for mode in VegetationBladeBands::ALL {
-            let variant = preprocess_band_study(&sanitized, mode);
+        for (mode, temporal) in VegetationBladeBands::ALL
+            .into_iter()
+            .flat_map(|m| [(m, false), (m, true)])
+        {
+            let variant = preprocess_variant(&sanitized, mode, temporal);
             let module = naga::front::wgsl::parse_str(&variant).unwrap();
             naga::valid::Validator::new(
                 naga::valid::ValidationFlags::all(),

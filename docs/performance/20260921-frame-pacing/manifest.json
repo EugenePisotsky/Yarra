@@ -1,0 +1,12 @@
+{
+  "binary_sha256": "60e4f663acbfd301bdbb83cd87c88fc31f8e97c2429098a4cc73e5bb26337da9",
+  "world_sha256": "676227eb7f061786020d59a321e1d0d215ba3fdd45d91987593aa86bd0385264",
+  "view_sha256": "4e9441d10ebd04f611e03cf22beeae1642267e2f3f5645726c32b33d4ff67dd6",
+  "same_binary_cases": [
+    "metal-duration",
+    "timer-control",
+    "normal-60"
+  ],
+  "display": "User confirmed ProMotion enabled; no display settings changed",
+  "scope": "Mac presentation pacing, not iPhone performance or sustained thermal acceptance"
+}

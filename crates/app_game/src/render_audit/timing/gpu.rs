@@ -17,6 +17,13 @@ const QUERIES: u32 = 128;
 const BYTES: u64 = QUERIES as u64 * 8;
 const SLOTS: usize = 4;
 const SAMPLE_EVERY: u32 = 6;
+// Pass markers serialize GPU command groups and can substantially perturb tile GPUs.
+// Keep them infrequent and never present those frames as normal whole-frame costs.
+const DETAIL_EVERY: u32 = 60;
+fn sampled_stamp(mut stamp: Stamp) -> Stamp {
+    stamp.detailed &= stamp.frame.is_multiple_of(DETAIL_EVERY);
+    stamp
+}
 struct Slot {
     queries: QuerySet,
     resolve: Buffer,
@@ -217,7 +224,7 @@ fn begin(
         .position(|s| s.state.load(Ordering::Acquire) == 0)
     {
         let slot = &mut timer.slots[index];
-        slot.stamp = *stamp;
+        slot.stamp = sampled_stamp(*stamp);
         slot.scopes.clear();
         slot.used = 2;
         timer.active = Some(index);
@@ -337,6 +344,30 @@ fn decode(stamp: Stamp, times: &[u64], labels: &[String], period_ns: f64) -> Opt
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detailed_probes_leave_normal_frame_samples_available() {
+        let samples: Vec<_> = (SAMPLE_EVERY..=DETAIL_EVERY)
+            .step_by(SAMPLE_EVERY as usize)
+            .map(|frame| {
+                sampled_stamp(Stamp {
+                    frame,
+                    epoch: 7,
+                    detailed: true,
+                })
+            })
+            .collect();
+        assert_eq!(samples.iter().filter(|s| s.detailed).count(), 1);
+        assert_eq!(samples.iter().filter(|s| !s.detailed).count(), 9);
+        assert!(samples.iter().all(|s| s.epoch == 7));
+        assert!(
+            !sampled_stamp(Stamp {
+                frame: DETAIL_EVERY,
+                ..default()
+            })
+            .detailed
+        );
+    }
 
     #[test]
     fn timestamp_conversion_preserves_source_frame_and_nested_spans() {

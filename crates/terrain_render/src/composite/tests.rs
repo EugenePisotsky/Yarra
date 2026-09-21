@@ -228,6 +228,12 @@ fn composite_draws_rebases_and_responds_to_light() {
         }
     };
     let coarse_pixels = settle(&mut app);
+    // Temporal upscaling adds another view binding. Fragment-only material
+    // buffers must not collide with Metal's vertex/array-size buffer slots.
+    app.world_mut()
+        .entity_mut(camera)
+        .insert(bevy::core_pipeline::prepass::MotionVectorPrepass);
+    assert_eq!(coarse_pixels, settle(&mut app));
     let hub = app.world().resource::<atlas::CompositeUploadHub>().clone();
     let atlas = app
         .world_mut()

@@ -14,6 +14,7 @@ fn ambient_source() -> String {
         begin..end,
         "fn directional_shadow_visibility(input: VertexOutput) -> f32 { return 1.0; }\n",
     );
+    draw = draw.replace("@fragment fn fragment(input: VertexOutput) -> @location(0) vec4<f32> { return shade(input); }", "");
     for (from, to) in [
         (
             "struct VertexOutput {",
@@ -28,10 +29,9 @@ fn ambient_source() -> String {
             "output.blade_t = shading_t;\n output.companion_t = select(0.0, shading_t, ((vertex_index >> 5u) & 1u) != 0u);",
         ),
         (
-            "@fragment\nfn fragment(\n    input: VertexOutput,",
-            "fn shade_blade(\n input: VertexOutput, direct_visibility: f32, ambient_visibility: f32,",
+            "fn shade(input: VertexOutput) -> vec4<f32>",
+            "fn shade_blade(input: VertexOutput, direct_visibility: f32, ambient_visibility: f32) -> vec4<f32>",
         ),
-        (") -> @location(0) vec4<f32>", ") -> vec4<f32>"),
         ("view_bindings::view.exposure", "fixture.counts.w"),
         ("pbr_lighting::", ""),
         (

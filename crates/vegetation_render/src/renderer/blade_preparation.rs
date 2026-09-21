@@ -10,13 +10,13 @@ const SHADER: &str = "shaders/vegetation_prepare_blades.wgsl";
 #[derive(Resource)]
 pub(super) struct BladePreparation {
     pub arena: Buffer,
-    dispatch: Buffer,
-    layout: BindGroupLayoutDescriptor,
+    pub(super) dispatch: Buffer,
+    pub(super) layout: BindGroupLayoutDescriptor,
     setup_layout: BindGroupLayoutDescriptor,
     setup_pipeline: CachedComputePipelineId,
-    prepare_pipeline: CachedComputePipelineId,
-    bind_group: Option<(
-        bevy::render::render_resource::BufferId,
+    pub(super) prepare_pipeline: CachedComputePipelineId,
+    bind_groups: Vec<(
+        [bevy::render::render_resource::BufferId; 2],
         BindGroup,
         BindGroup,
     )>,
@@ -40,7 +40,7 @@ impl PreparationKey {
         config: DebugConfigGpu,
         pipelines: [ComputePipelineId; 2],
     ) -> Self {
-        camera.canopy = [[0.0; 4]; 4]; // material-only controls
+        camera = camera.geometry_cache_key();
         if camera.wind[2] <= 1e-5 || config.workload[3] & (1 << 9) != 0 {
             camera.wind[3] = 0.0;
         }
@@ -55,6 +55,40 @@ impl PreparationKey {
 }
 
 impl BladePreparation {
+    pub(super) fn swap_arena(&mut self, previous: &mut Buffer) {
+        std::mem::swap(&mut self.arena, previous);
+        self.last_key = None;
+    }
+    pub(super) fn release_history_bindings(&mut self) {
+        let arena = self.arena.id();
+        self.bind_groups.retain(|(key, _, _)| key[1] == arena);
+    }
+
+    /// The arena still holds this exact pose before this frame's preparation overwrites it.
+    /// Identity includes placement generation: compacted instance indices alone are not stable.
+    pub(super) fn contains_pose(
+        &self,
+        buffers: &VegetationBuffers,
+        camera: CameraGpu,
+        cache: &PipelineCache,
+    ) -> bool {
+        let (Some(setup), Some(prepare), Some(inputs)) = (
+            cache.get_compute_pipeline(self.setup_pipeline),
+            cache.get_compute_pipeline(self.prepare_pipeline),
+            buffers.generation_inputs,
+        ) else {
+            return false;
+        };
+        self.last_key
+            == Some(PreparationKey::new(
+                buffers.generation_serial,
+                buffers.uploaded_revision,
+                camera,
+                inputs.config,
+                [setup.id(), prepare.id()],
+            ))
+    }
+
     pub fn available(&self, cache: &PipelineCache) -> bool {
         cache.get_compute_pipeline(self.setup_pipeline).is_some()
             && cache.get_compute_pipeline(self.prepare_pipeline).is_some()
@@ -151,7 +185,7 @@ impl FromWorld for BladePreparation {
             prepare_pipeline: pipeline("prepare"),
             layout,
             setup_layout,
-            bind_group: None,
+            bind_groups: Vec::new(),
             last_key: None,
         }
     }
@@ -202,11 +236,14 @@ pub(super) fn run(
         diagnostics.update(|s| s.blade_preparation_reuses += 1);
         return;
     }
-    if preparation
-        .bind_group
-        .as_ref()
-        .is_none_or(|(id, _, _)| *id != buffers.species.id())
-    {
+    let binding_key = [buffers.species.id(), preparation.arena.id()];
+    let binding_index = preparation
+        .bind_groups
+        .iter()
+        .position(|(key, _, _)| *key == binding_key);
+    let binding_index = if let Some(index) = binding_index {
+        index
+    } else {
         let group = device.create_bind_group(
             "vegetation blade preparation",
             &cache.get_bind_group_layout(&preparation.setup_layout),
@@ -233,8 +270,14 @@ pub(super) fn run(
                 preparation.arena.as_entire_binding(),
             )),
         );
-        preparation.bind_group = Some((buffers.species.id(), group, draw_preparation));
-    }
+        if preparation.bind_groups.len() == 2 {
+            preparation.bind_groups.remove(0);
+        }
+        preparation
+            .bind_groups
+            .push((binding_key, group, draw_preparation));
+        preparation.bind_groups.len() - 1
+    };
     let recorder = context.diagnostic_recorder();
     let mut pass = context
         .command_encoder()
@@ -244,11 +287,11 @@ pub(super) fn run(
         });
     let recorder_ref = recorder.as_deref();
     let span = recorder_ref.pass_span(&mut pass, "vegetation_v2_prepare_blades");
-    pass.set_bind_group(0, &preparation.bind_group.as_ref().unwrap().1, &[]);
+    pass.set_bind_group(0, &preparation.bind_groups[binding_index].1, &[]);
     pass.set_pipeline(setup);
     pass.dispatch_workgroups(1, 1, 1);
     pass.set_pipeline(prepare);
-    pass.set_bind_group(0, &preparation.bind_group.as_ref().unwrap().2, &[]);
+    pass.set_bind_group(0, &preparation.bind_groups[binding_index].2, &[]);
     pass.dispatch_workgroups_indirect(&preparation.dispatch, 0);
     span.end(&mut pass);
     drop(pass);
@@ -259,6 +302,23 @@ pub(super) fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prepared_pose_ignores_lighting_but_tracks_wind_and_placement_identity() {
+        let mut camera = CameraGpu::zeroed();
+        camera.wind[2] = 1.0;
+        let config = DebugConfigGpu::zeroed();
+        let pipelines = [ComputePipelineId::new(), ComputePipelineId::new()];
+        let key = PreparationKey::new(5, 2, camera, config, pipelines);
+        camera.sun_radiance = [100.0; 4];
+        camera.ambient_radiance = [0.2; 4];
+        camera.sun_direction = [0.5; 4];
+        camera.lighting = [1.0; 4];
+        assert!(key == PreparationKey::new(5, 2, camera, config, pipelines));
+        assert!(key != PreparationKey::new(6, 2, camera, config, pipelines));
+        camera.wind[3] = 0.05;
+        assert!(key != PreparationKey::new(5, 2, camera, config, pipelines));
+    }
 
     #[test]
     fn motion_mask_reuses_fixed_geometry_but_switching_back_restores_live_wind() {

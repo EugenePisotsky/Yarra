@@ -1,0 +1,8 @@
+device=Apple M2 Max os=Version 26.4.1 (Build 25E253)
+case=subrect-auto-A samples=180 median_gpu_ms=2.377124998020008 p95=3.686333333462244
+case=compact-auto-A samples=180 median_gpu_ms=2.334624998184154 p95=2.838375003193505
+case=compact-manual samples=180 median_gpu_ms=2.355124997848179 p95=3.5420000021986198
+case=compact-auto-B samples=180 median_gpu_ms=2.3462916688004043 p95=3.5529166671040002
+case=subrect-auto-B samples=180 median_gpu_ms=2.3688333312748 p95=3.487208334263414
+case=1440p-subrect samples=180 median_gpu_ms=1.4393333331099711 p95=1.9546666662790813
+case=1440p-compact samples=180 median_gpu_ms=1.4353750011650845 p95=1.899833332572598

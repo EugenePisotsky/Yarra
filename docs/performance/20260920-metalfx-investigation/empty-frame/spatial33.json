@@ -1,0 +1,24 @@
+{
+  "case": "spatial33",
+  "code": 0,
+  "command": [
+    "/Users/eugenepisotsky/Dev/Sources/Hobby/YarraProject/tmp/empty-frame-20260920/YarraEmptyFrame.app/Contents/MacOS/empty_frame",
+    "--scale",
+    "0.33333334",
+    "--upscaler",
+    "metalfx-spatial",
+    "--msaa",
+    "4"
+  ],
+  "errors": [],
+  "start": "2026-09-20T19:54:59.363985Z  WARN empty_frame: EMPTY_FRAME event=measure_start unix_ms=1789934099363 surface=UVec2(3456, 1942) focused=true",
+  "complete": "2026-09-20T19:55:07.364007Z  WARN empty_frame: EMPTY_FRAME event=complete unix_ms=1789934107364 frames=956 seconds=8.000 fps=119.50 focused=true",
+  "packets": 18,
+  "hud_gpu_median": 2.74,
+  "hud_interval_mean": 8.368253968253969,
+  "power_samples": 7,
+  "gpu_power_mean": 0.42173461403165546,
+  "cpu_power_mean": 8.935569218226842,
+  "gpu_freq_mhz_mean": 450.85714285714283,
+  "gpu_active_ratio_mean": 0.6317678434508187
+}

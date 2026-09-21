@@ -1,0 +1,117 @@
+{
+  "input": [
+    1728,
+    971
+  ],
+  "output": [
+    3456,
+    1942
+  ],
+  "warmup_seconds": 8,
+  "measurement_seconds": 8,
+  "hashes": {
+    "target/release/examples/empty_frame": "585513d842c5fd7171ab005de43387db6c509ee6f9620deb2528b500dbf3ac8d",
+    "tmp/temporal-empty-20260920/native-empty": "ac1d370cf01eed9ac3f205e4cabd26362ef1e41f8fe04cd34db5af88c4e5ac24",
+    "crates/app_game/examples/empty_frame.rs": "155b84125bf511fa0918029e32b607b2d77679aa5ab33fec0b1279f4e19bbe1a",
+    "crates/upscaling/src/temporal.rs": "1702c6e191b9b044e952db501672f59d29a7b2e6899c9c8910f20fa3bb85be0e",
+    "crates/upscaling/src/backends/temporal.rs": "1b88228dd52a0c1b50508ec7436b145bae962b1a15e77b4da7dbc89f05971e66"
+  },
+  "results": [
+    {
+      "case": "temporal50-bypass",
+      "code": 0,
+      "command": [
+        "/Users/eugenepisotsky/Dev/Sources/Hobby/YarraProject/tmp/temporal-empty-20260920/TemporalEmpty.app/Contents/MacOS/empty_frame",
+        "--scale",
+        "0.5",
+        "--upscaler",
+        "metalfx-temporal",
+        "--temporal-bypass",
+        "--metalfx-timing-log"
+      ],
+      "errors": [],
+      "native_gpu_median": null,
+      "native_samples": 0,
+      "native_reset_samples": 0,
+      "valid_focus": true,
+      "start": "2026-09-20T20:35:17.038208Z  WARN empty_frame: EMPTY_FRAME event=measure_start unix_ms=1789936517038 surface=UVec2(3456, 1942) focused=true actual_msaa=1 upscaler=Some(UpscaleStatus { requested: MetalFxTemporal, active: None, reason: Some(\"Reconstruction bypass (diagnostic)\"), input_size: UVec2(1728, 971), output_size: UVec2(3456, 1942) })",
+      "complete": "2026-09-20T20:35:25.038281Z  WARN empty_frame: EMPTY_FRAME event=complete unix_ms=1789936525038 frames=960 seconds=8.000 fps=120.00 focused=true",
+      "packets": 18,
+      "hud_gpu_median": 2.3049999999999997,
+      "hud_interval_mean": 8.331043083900227,
+      "power_samples": 7,
+      "gpu_power_mean": 0.8960291317531041,
+      "cpu_power_mean": 4.244520255497524,
+      "gpu_freq_mhz_mean": 444,
+      "gpu_active_ratio_mean": 0.563344555241721
+    },
+    {
+      "case": "temporal50-on",
+      "code": 0,
+      "command": [
+        "/Users/eugenepisotsky/Dev/Sources/Hobby/YarraProject/tmp/temporal-empty-20260920/TemporalEmpty.app/Contents/MacOS/empty_frame",
+        "--scale",
+        "0.5",
+        "--upscaler",
+        "metalfx-temporal",
+        "--metalfx-timing-log"
+      ],
+      "errors": [],
+      "native_gpu_median": 3.609,
+      "native_samples": 8,
+      "native_reset_samples": 0,
+      "valid_focus": true,
+      "start": "2026-09-20T20:35:45.346576Z  WARN empty_frame: EMPTY_FRAME event=measure_start unix_ms=1789936545346 surface=UVec2(3456, 1942) focused=true actual_msaa=1 upscaler=Some(UpscaleStatus { requested: MetalFxTemporal, active: Some(MetalFxTemporal), reason: None, input_size: UVec2(1728, 971), output_size: UVec2(3456, 1942) })",
+      "complete": "2026-09-20T20:35:53.347021Z  WARN empty_frame: EMPTY_FRAME event=complete unix_ms=1789936553347 frames=960 seconds=8.000 fps=119.99 focused=true",
+      "packets": 18,
+      "hud_gpu_median": 4.72,
+      "hud_interval_mean": 8.332267573696145,
+      "power_samples": 7,
+      "gpu_power_mean": 9.402639525277275,
+      "cpu_power_mean": 5.677409580775669,
+      "gpu_freq_mhz_mean": 1100.2857142857142,
+      "gpu_active_ratio_mean": 0.8603664040565491
+    },
+    {
+      "case": "native-empty",
+      "code": 0,
+      "command": [
+        "/Users/eugenepisotsky/Dev/Sources/Hobby/YarraProject/tmp/temporal-empty-20260920/native-empty"
+      ],
+      "events": [
+        {
+          "device": "Apple M2 Max",
+          "event": "setup",
+          "input": [
+            1728,
+            971
+          ],
+          "os": "Version 26.4.1 (Build 25E253)",
+          "output": [
+            3456,
+            1942
+          ],
+          "target_fps": 120
+        },
+        {
+          "event": "measure_start",
+          "unix_ms": 1789936713998.7632
+        },
+        {
+          "event": "complete",
+          "frames": 1921,
+          "measured_fps": 120.03661179115444,
+          "median_gpu_ms": 3.962458333262475,
+          "p95_gpu_ms": 5.215375000261702,
+          "samples": 961,
+          "unix_ms": 1789936722004.7021
+        }
+      ],
+      "power_samples": 7,
+      "gpu_power_mean": 3.6862101554870605,
+      "cpu_power_mean": 1.655842389379229,
+      "gpu_freq_mhz_mean": 532,
+      "gpu_active_ratio_mean": 0.7849248477390834
+    }
+  ]
+}

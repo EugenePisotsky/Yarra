@@ -27,7 +27,7 @@ fn light_at(p:vec3<f32>, ray:vec3<f32>, light:vec4<f32>, color:vec3<f32>) -> vec
     if radius2>=1.0 {return vec4(0.0,0.0,0.0,1.0);}
     let ray=vec3(2.0*disk.x,1.0-radius2,2.0*disk.y)/(1.0+radius2);
 #else
-    let uv=(in.uv*vec2<f32>(textureDimensions(scene))-view.viewport.xy)/view.viewport.zw;
+    let uv=in.uv;
     if any(uv<vec2(0.0)) || any(uv>vec2(1.0)) {return vec4(0.0,0.0,0.0,1.0);}
     let ndc=vec4(uv*vec2(2.0,-2.0)+vec2(-1.0,1.0),1.0,1.0);
     let point=view.world_from_clip*ndc;

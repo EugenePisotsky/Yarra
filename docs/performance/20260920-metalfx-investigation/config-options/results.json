@@ -1,0 +1,132 @@
+{
+  "executable_sha256": "0a84a70368d717b11c685e9a26788d12c32c90a67e163b2c7ae39086f5b37dfe",
+  "results": [
+    {
+      "case": "rgba16-native",
+      "code": 0,
+      "command": [
+        "/Users/eugenepisotsky/Dev/Sources/Hobby/YarraProject/tmp/metalfx-config-20260921/native-empty"
+      ],
+      "events": [
+        {
+          "device": "Apple M2 Max",
+          "event": "setup",
+          "input": [
+            1728,
+            971
+          ],
+          "os": "Version 26.4.1 (Build 25E253)",
+          "output": [
+            3456,
+            1942
+          ],
+          "packed_hdr": false,
+          "target_fps": 120
+        },
+        {
+          "event": "measure_start",
+          "unix_ms": 1789938724942.132
+        },
+        {
+          "event": "complete",
+          "frames": 1921,
+          "measured_fps": 120.02445139120725,
+          "median_gpu_ms": 4.834750001464272,
+          "p95_gpu_ms": 5.981083333608694,
+          "samples": 961,
+          "unix_ms": 1789938732948.914
+        }
+      ],
+      "power_samples": 7,
+      "gpu_power_mean": 2.1572032826287404,
+      "cpu_power_mean": 1.721883773803711,
+      "gpu_freq_mhz_mean": 668.2857142857143,
+      "gpu_active_ratio_mean": 0.8691371083259583
+    },
+    {
+      "case": "packed-native",
+      "code": 0,
+      "command": [
+        "/Users/eugenepisotsky/Dev/Sources/Hobby/YarraProject/tmp/metalfx-config-20260921/native-empty",
+        "--packed"
+      ],
+      "events": [
+        {
+          "device": "Apple M2 Max",
+          "event": "setup",
+          "input": [
+            1728,
+            971
+          ],
+          "os": "Version 26.4.1 (Build 25E253)",
+          "output": [
+            3456,
+            1942
+          ],
+          "packed_hdr": true,
+          "target_fps": 120
+        },
+        {
+          "event": "measure_start",
+          "unix_ms": 1789938757722.7058
+        },
+        {
+          "event": "complete",
+          "frames": 1921,
+          "measured_fps": 120.03539107983546,
+          "median_gpu_ms": 3.493791664368473,
+          "p95_gpu_ms": 4.796499997610226,
+          "samples": 961,
+          "unix_ms": 1789938765728.7578
+        }
+      ],
+      "power_samples": 7,
+      "gpu_power_mean": 5.019172668457031,
+      "cpu_power_mean": 1.962798033441816,
+      "gpu_freq_mhz_mean": 752.5714285714286,
+      "gpu_active_ratio_mean": 0.7793139389583043
+    },
+    {
+      "case": "rgba16-repeat",
+      "code": 0,
+      "command": [
+        "/Users/eugenepisotsky/Dev/Sources/Hobby/YarraProject/tmp/metalfx-config-20260921/native-empty"
+      ],
+      "events": [
+        {
+          "device": "Apple M2 Max",
+          "event": "setup",
+          "input": [
+            1728,
+            971
+          ],
+          "os": "Version 26.4.1 (Build 25E253)",
+          "output": [
+            3456,
+            1942
+          ],
+          "packed_hdr": false,
+          "target_fps": 120
+        },
+        {
+          "event": "measure_start",
+          "unix_ms": 1789938807526.852
+        },
+        {
+          "event": "complete",
+          "frames": 1921,
+          "measured_fps": 120.03561660345218,
+          "median_gpu_ms": 4.841500001930399,
+          "p95_gpu_ms": 6.201208332640817,
+          "samples": 961,
+          "unix_ms": 1789938815532.889
+        }
+      ],
+      "power_samples": 7,
+      "gpu_power_mean": 2.1416175365448,
+      "cpu_power_mean": 2.046957356589181,
+      "gpu_freq_mhz_mean": 669,
+      "gpu_active_ratio_mean": 0.8387985910688128
+    }
+  ]
+}

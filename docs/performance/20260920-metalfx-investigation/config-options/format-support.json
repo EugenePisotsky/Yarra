@@ -1,0 +1,26 @@
+[
+  {
+    "case": "rgba16",
+    "exit": 0,
+    "output": "{\"case\":\"rgba16\",\"color_format\":115,\"created\":true,\"device\":\"Apple M2 Max\",\"os\":\"Version 26.4.1 (Build 25E253)\",\"output_format\":115}",
+    "diagnostics": ""
+  },
+  {
+    "case": "packed-input",
+    "exit": 0,
+    "output": "{\"case\":\"packed-input\",\"color_format\":92,\"created\":true,\"device\":\"Apple M2 Max\",\"os\":\"Version 26.4.1 (Build 25E253)\",\"output_format\":115}",
+    "diagnostics": ""
+  },
+  {
+    "case": "packed-output",
+    "exit": 0,
+    "output": "{\"case\":\"packed-output\",\"color_format\":115,\"created\":true,\"device\":\"Apple M2 Max\",\"os\":\"Version 26.4.1 (Build 25E253)\",\"output_format\":92}",
+    "diagnostics": ""
+  },
+  {
+    "case": "packed-both",
+    "exit": 0,
+    "output": "{\"case\":\"packed-both\",\"color_format\":92,\"created\":true,\"device\":\"Apple M2 Max\",\"os\":\"Version 26.4.1 (Build 25E253)\",\"output_format\":92}",
+    "diagnostics": ""
+  }
+]

@@ -5,9 +5,22 @@ text overlays. Click it or press F1 to open/close the panel. Escape closes it or
 cancels an active capture. `--performance-open` opens it at launch; `--render-audit`
 also opens the new panel and retains audit logging. The editor is unchanged.
 
-All controls are temporary and share the existing audit settings backend.
+All controls are temporary.
 **Reset launch settings** restores the initial configuration, including applicable
 command-line overrides. Nothing writes to authored or published world data.
+
+The **FPS limit** button above the tabs is available on every page. Click to cycle
+**Follow display → 30 → 60 → 120 → Follow display**. Changes apply while playing;
+VSync stays enabled. Follow display removes the app cap. On macOS 14+, capped
+modes update the window's display link and Metal presentation interval together.
+Other platforms and older macOS use the timer fallback. Changing only FPS does
+not reapply scene settings or reset Temporal history.
+
+`--fps N` sets the launch value (0 or 15–240); Reset restores it, including custom
+values outside the button's presets. Starting from a custom value, the next click
+selects Follow display. Recent frame averages clear after a change. The FPS control
+locks during A/B recording and scripted profiling; profiling labels it
+**(profile locked)**. These choices are not saved between launches.
 
 ## Pages
 
@@ -17,16 +30,24 @@ command-line overrides. Nothing writes to authored or published world data.
   loading, terrain triangles/patches, and available object LOD counts.
 - **Features:** clouds, grass, sky/haze, bloom, terrain/object draws, shadow filtering,
   and grass wind. Click controls to toggle or cycle their labelled modes.
-- **Quality:** 3D resolution (100/75/50%), MSAA, grass density, terrain error
+- **Quality:** 3D resolution (100/75/50/33%), upscaler (Auto/Linear/MetalFX Spatial/MetalFX Temporal), MSAA, grass density, terrain error
   (1/2/4/8 pixels), object LOD size multiplier (0.5/1/2), and near terrain detail.
   Larger terrain error permits coarser geometry. A smaller object size multiplier
   selects coarser *available* visual assets. Neither changes collision detail.
+  Normal startup uses 50% in each dimension (25% of native pixels), Auto upscaling
+  and 4× MSAA. Temporal is an explicit prototype option and automatically replaces MSAA.
+  Its Motion vectors / Depth views help inspect grass and scene inputs; return to Image
+  before capturing normal frame cost. UI remains native. The summary and A/B report show the backend actually
+  running, including any fallback reason. See [upscaling](UPSCALING.md).
 - **Compare:** capture the current settings into A/B, restore either settings
   configuration, and export a report plus per-frame CSV files.
 - **Advanced:** grass workload isolation, scene isolation, shading/material paths,
   prepass, expensive GPU counters, render path, input lock and legacy overlays.
   The **GPU pass timings** control enables a sampled command-group breakdown.
-  It is off by default because the extra markers perturb execution. CPU system
+  It is off by default because the extra markers can substantially perturb execution.
+  Detailed probes run once every 60 frames, and their totals are excluded from the
+  normal GPU figure. A/B captures temporarily pause them and restore the setting
+  afterward, including on cancellation. CPU system
   timings remain available. Missing or invalid GPU samples are not treated as zero.
 
 ## What a switch actually disables
@@ -59,9 +80,11 @@ The operating system's Metal HUD is separate from the game's legacy overlays.
    takes more than 8 seconds or the window loses focus. F1/Escape cancels manually.
 3. Change one setting and capture B. The old slot survives a cancelled capture.
 4. Compare **GPU render milliseconds**, CPU work and conditions, even if FPS stays
-   capped. Leave GPU pass timings in the same mode for A and B. The report lists changed settings
+   capped. A/B captures automatically pause detailed GPU probes. The report lists changed settings
    and flags viewpoint/time/thermal differences, camera movement or loading during
-   capture. Restore A/B changes settings only, **not** camera or weather state.
+   capture. Captures record the FPS limit, and Restore A/B restores it along with
+   scene settings, **not** camera or weather state. An external FPS change during
+   recording cancels that capture so it cannot mix rates.
 5. Export writes `tmp/performance/comparison-<timestamp>/report.txt`, frame interval
    CSVs (`A.csv` / `B.csv`), GPU samples (`A-gpu.csv` / `B-gpu.csv`), and CPU categories
    (`A-cpu.csv` / `B-cpu.csv`). Override the output root with `YARRA_PERFORMANCE_DIR`. A/B slots live
@@ -77,13 +100,18 @@ devices show unavailable. On Metal, stage-boundary compute markers avoid Bevy's
 disabled encoder-timestamp path; query resolution waits for submission completion
 asynchronously to avoid stale counter data.
 
-Detailed command-group spans surround each rendering system's queued buffers.
+Detailed command-group spans surround each rendering system's queued buffers, once
+every 60 frames when enabled. Other sampled frames retain just the outer markers.
 They include marker/scheduling overhead, can overlap on the GPU, and are a guide
 for choosing A/B toggles, not isolated per-feature costs. Grass draws share the
-opaque pass with terrain and objects. Invalid detailed scopes are omitted without
-discarding a valid total. Compare total GPU time with a feature toggled to establish
+opaque pass with terrain and objects in the spatial/native path; temporal grass has
+its own colour/motion pass. Detailed-frame totals are excluded from normal GPU
+statistics, even when their timestamps are valid. Invalid detailed scopes are omitted.
+Compare total GPU time with a feature toggled to establish
 its effect. Use `--gpu-timing-detail` to enable details at launch,
 `--gpu-timing-off` to disable GPU probes entirely, and `--timing-log` for sampled logs.
+Logs identify normal `gpu_frame`/`gpu_ms` separately from `probe_frame`/`probe_gpu_ms`;
+the command-group scopes belong to the probe frame.
 
 CPU work sums measured system durations in the main and render schedules. Parallel
 jobs may overlap; durations include waits inside those systems and exclude detached

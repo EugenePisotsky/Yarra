@@ -16,7 +16,9 @@ struct DetailProjection {
 #[derive(Asset, AsBindGroup, TypePath, Debug, Clone)]
 #[bind_group_data(CompositePipelineKey)]
 pub struct TerrainCompositeMaterial {
-    #[storage(120, read_only)]
+    // These storage buffers are read only by the fragment shader. Exposing them
+    // to the motion prepass can exhaust Metal's available vertex buffer slots.
+    #[storage(120, read_only, visibility(fragment))]
     pub(super) cloud_parameters: Handle<ShaderBuffer>,
     #[texture(121)]
     #[sampler(122)]
@@ -39,13 +41,13 @@ pub struct TerrainCompositeMaterial {
     detail_color: Option<Handle<Image>>,
     #[texture(6, dimension = "2d_array")]
     detail_response: Option<Handle<Image>>,
-    #[storage(7, read_only)]
+    #[storage(7, read_only, visibility(fragment))]
     detail_table: Handle<ShaderBuffer>,
     #[texture(8, dimension = "2d_array")]
     near_weights: Option<Handle<Image>>,
     #[texture(9, dimension = "2d_array")]
     near_canopy: Option<Handle<Image>>,
-    #[storage(10, read_only)]
+    #[storage(10, read_only, visibility(fragment))]
     near_table: Handle<ShaderBuffer>,
     #[uniform(11)]
     near_settings: Vec4,

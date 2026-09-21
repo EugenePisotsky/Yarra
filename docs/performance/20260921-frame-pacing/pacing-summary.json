@@ -1,0 +1,62 @@
+[
+  {
+    "case": "timer-before",
+    "hud_samples": 1141,
+    "steady_samples": 929,
+    "steady_percent": 81.41980718667836,
+    "p95_ms": 25.0,
+    "hud_fps": 60.09789478286013,
+    "short_samples": 110,
+    "long_samples": 102,
+    "focused": true,
+    "exit_code": 0
+  },
+  {
+    "case": "display-link",
+    "hud_samples": 1121,
+    "steady_samples": 945,
+    "steady_percent": 84.29973238180196,
+    "p95_ms": 25.0,
+    "hud_fps": 59.995001308543955,
+    "short_samples": 88,
+    "long_samples": 88,
+    "focused": true,
+    "exit_code": 0
+  },
+  {
+    "case": "metal-duration",
+    "hud_samples": 1147,
+    "steady_samples": 1143,
+    "steady_percent": 99.6512641673932,
+    "p95_ms": 16.67,
+    "hud_fps": 59.885398039497204,
+    "short_samples": 0,
+    "long_samples": 4,
+    "focused": true,
+    "exit_code": 0
+  },
+  {
+    "case": "timer-control",
+    "hud_samples": 1125,
+    "steady_samples": 469,
+    "steady_percent": 41.68888888888889,
+    "p95_ms": 25.0,
+    "hud_fps": 60.05300678732428,
+    "short_samples": 330,
+    "long_samples": 326,
+    "focused": true,
+    "exit_code": 0
+  },
+  {
+    "case": "normal-60",
+    "hud_samples": 7140,
+    "steady_samples": 7130,
+    "steady_percent": 99.85994397759103,
+    "p95_ms": 16.67,
+    "hud_fps": 59.96548205444764,
+    "short_samples": 2,
+    "long_samples": 8,
+    "focused": true,
+    "exit_code": 0
+  }
+]

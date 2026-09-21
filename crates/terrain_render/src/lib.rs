@@ -162,7 +162,9 @@ impl TerrainShadingMode {
 pub struct TerrainMaterial {
     /// Input carrier for hierarchy shading; owns no drawn mesh or prepared control cache.
     pub source_only: bool,
-    #[storage(120, read_only)]
+    // Shading-only buffers must not consume vertex slots in the motion prepass.
+    // On Metal, that can collide with the vertex buffer's reserved binding.
+    #[storage(120, read_only, visibility(fragment))]
     cloud_parameters: Handle<ShaderBuffer>,
     #[texture(121)]
     #[sampler(122)]
@@ -185,7 +187,7 @@ pub struct TerrainMaterial {
     normal_material_array: Handle<Image>,
     #[texture(6)]
     macro_variation: Handle<Image>,
-    #[storage(7, read_only)]
+    #[storage(7, read_only, visibility(fragment))]
     stochastic_cache: Handle<ShaderBuffer>,
     #[uniform(11)]
     canopy_shading: TerrainCanopyShading,

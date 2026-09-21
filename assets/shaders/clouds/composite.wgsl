@@ -11,7 +11,7 @@
 @group(0) @binding(3) var<uniform> view: View;
 @group(0) @binding(4) var<storage,read> clouds: CloudParams;
 @fragment fn fragment(in:FullscreenVertexOutput)->@location(0) vec4<f32> {
-    let uv=(in.position.xy-view.viewport.xy)/view.viewport.zw;
+    let uv=(in.position.xy-view.main_pass_viewport.xy)/view.main_pass_viewport.zw;
     if any(uv<vec2(0.0)) || any(uv>vec2(1.0)) {discard;}
     let ndc=uv*vec2(2.0,-2.0)+vec2(-1.0,1.0);
     let near=view.world_from_clip*vec4(ndc,1.0,1.0);

@@ -1,0 +1,24 @@
+{
+  "case": "linear33",
+  "code": 0,
+  "command": [
+    "/Users/eugenepisotsky/Dev/Sources/Hobby/YarraProject/tmp/empty-frame-20260920/YarraEmptyFrame.app/Contents/MacOS/empty_frame",
+    "--scale",
+    "0.33333334",
+    "--upscaler",
+    "linear",
+    "--msaa",
+    "4"
+  ],
+  "errors": [],
+  "start": "2026-09-20T19:54:20.639393Z  WARN empty_frame: EMPTY_FRAME event=measure_start unix_ms=1789934060639 surface=UVec2(3456, 1942) focused=true",
+  "complete": "2026-09-20T19:54:28.639510Z  WARN empty_frame: EMPTY_FRAME event=complete unix_ms=1789934068639 frames=959 seconds=8.000 fps=119.87 focused=true",
+  "packets": 19,
+  "hud_gpu_median": 1.25,
+  "hud_interval_mean": 8.339419978517723,
+  "power_samples": 7,
+  "gpu_power_mean": 0.8377149786267962,
+  "cpu_power_mean": 8.37978036063058,
+  "gpu_freq_mhz_mean": 444,
+  "gpu_active_ratio_mean": 0.6036752036639622
+}

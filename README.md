@@ -92,8 +92,34 @@ Run the game:
 cargo run --release -p yarra-app-game
 ```
 
-Normal game launches use **75% world render resolution and 4× MSAA**, with UI
-rendered at native resolution. Prepared ground is enabled and optional GPU statistics
+Open **F1 → FPS limit** to change the frame cap while playing. It cycles through
+**Follow display → 30 → 60 → 120**, without restarting or changing the macOS display
+settings. The choice lasts for this session; **Reset launch settings** restores
+the initial cap.
+
+To start at 60 FPS while leaving the Mac display on ProMotion:
+
+```bash
+cargo run --release -p yarra-app-game -- --fps 60
+```
+
+On macOS 14+, this schedules frames through the window's display link, sets Metal's
+minimum presentation interval, and keeps VSync enabled. Runtime changes update
+these together. `--fps 0` (the default) follows the existing VSync behavior without
+an app frame cap; custom launch caps from 15 to 240 are also accepted.
+`--frame-pacing-timer` selects the older timer limiter for comparison; other
+platforms and older macOS versions use that timer fallback.
+
+For trackpad delivery issues, `--trace-camera-input` records a bounded native-event
+and camera-input trace on macOS; see [the capture instructions](docs/performance/20260921-camera-input-trace.md).
+
+Normal game launches use **50% world render resolution and 4× MSAA**, with UI
+rendered at native resolution. Upscaling defaults to Auto (MetalFX Spatial on supported
+Apple devices, otherwise Linear). Use **F1 → Quality** to compare upscalers; the panel
+shows the active backend and any fallback reason. MetalFX Temporal is available as an
+explicit prototype option (`--upscaler metalfx-temporal`), with grass/wind motion and
+automatic MSAA replacement. See [upscaling](docs/UPSCALING.md).
+Prepared ground is enabled and optional GPU statistics
 are off. The terrain hierarchy, distant baked ground and nearby detailed shading
 are enabled in both applications without flags. `--terrain-legacy` selects the old
 local renderer for diagnostics; `--grass-counters` enables GPU statistics.

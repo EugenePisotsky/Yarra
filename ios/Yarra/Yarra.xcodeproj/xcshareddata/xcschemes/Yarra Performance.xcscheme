@@ -57,7 +57,7 @@
       <CommandLineArguments>
          <CommandLineArgument
             argument = "--render-audit"
-            isEnabled = "YES">
+            isEnabled = "NO">
          </CommandLineArgument>
       </CommandLineArguments>
    </LaunchAction>

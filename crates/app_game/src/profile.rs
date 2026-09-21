@@ -1,16 +1,19 @@
 //! Opt-in profiling controls. Normal game presentation is unchanged.
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use bevy::{
     prelude::*,
     window::{MonitorSelection, PresentMode, PrimaryWindow, WindowMode},
-    winit::{UpdateMode, WinitSettings},
 };
 
 #[derive(Resource, Clone)]
 pub(crate) struct ProfileSettings {
     /// None follows the normal game's world-resolution scale and surface aspect ratio.
     pub size: Option<UVec2>,
+    /// Exact physical window size for comparable Retina GPU measurements.
+    surface: Option<UVec2>,
+    pub bloom: bool,
+    pub temporal_bypass: bool,
     pub msaa: Msaa,
     pub grass: bool,
     fps: u32,
@@ -89,6 +92,24 @@ impl ProfileSettings {
             }
             Some(UVec2::new(width, height))
         };
+        let surface = value("--profile-surface")?
+            .map(|s| {
+                let (w, h) = s
+                    .split_once('x')
+                    .ok_or("Expected WIDTHxHEIGHT for profile surface")?;
+                let w = w.parse::<u32>().map_err(|_| "Invalid surface width")?;
+                let h = h.parse::<u32>().map_err(|_| "Invalid surface height")?;
+                if !(64..=8192).contains(&w) || !(64..=8192).contains(&h) {
+                    return Err("Profile surface dimensions must be in 64..8192");
+                }
+                Ok(UVec2::new(w, h))
+            })
+            .transpose()?;
+        let bloom = match value("--profile-bloom")?.unwrap_or("on") {
+            "on" => true,
+            "off" => false,
+            _ => return Err("Profile bloom must be on or off".into()),
+        };
         // Preserve old direct profiling commands; the runner explicitly selects its new default.
         let fullscreen = match value("--profile-window")?.unwrap_or("windowed") {
             "fullscreen" => true,
@@ -115,6 +136,9 @@ impl ProfileSettings {
         };
         Ok(Some(Self {
             size,
+            surface,
+            bloom,
+            temporal_bypass: args.iter().any(|a| a == "--profile-temporal-bypass"),
             msaa,
             grass,
             fps,
@@ -165,24 +189,14 @@ pub(crate) fn install(app: &mut App) {
     let Some(settings) = ProfileSettings::parse(&args).unwrap_or_else(|e| panic!("{e}")) else {
         return;
     };
-    let mode = if settings.fps == 0 {
-        UpdateMode::Continuous
-    } else {
-        // Wait in the event loop, not a busy spin. Mouse/event traffic must not bypass the cap.
-        UpdateMode::Reactive {
-            wait: Duration::from_secs_f64(1.0 / f64::from(settings.fps)),
-            react_to_device_events: false,
-            react_to_user_events: false,
-            react_to_window_events: false,
-        }
-    };
     let diagnostic = settings.diagnostic;
     if !settings.native_pacing {
-        app.insert_resource(WinitSettings {
-            focused_mode: mode,
-            unfocused_mode: mode,
-        });
+        crate::frame_pacing::set_fps(app, settings.fps);
     }
+    // A timed/diagnostic profile describes one launch rate, not a changing UI cap.
+    app.world_mut()
+        .resource_mut::<crate::frame_pacing::FramePacing>()
+        .profile_locked = true;
     app.insert_resource(settings).add_systems(Startup, setup);
     // Captures use the existing deterministic frame-based camera/wind, not a timed run.
     // No measure_start/sample/complete events are emitted for diagnostic presentation.
@@ -197,10 +211,16 @@ fn setup(settings: Res<ProfileSettings>, mut window: Single<&mut Window, With<Pr
         window.mode = WindowMode::BorderlessFullscreen(MonitorSelection::Primary);
     } else {
         window.mode = WindowMode::Windowed;
-        let size = settings.size.unwrap_or(UVec2::new(1280, 720));
-        window
-            .resolution
-            .set(720.0 * size.x as f32 / size.y as f32, 720.0);
+        if let Some(surface) = settings.surface {
+            window
+                .resolution
+                .set_physical_resolution(surface.x, surface.y);
+        } else {
+            let size = settings.size.unwrap_or(UVec2::new(1280, 720));
+            window
+                .resolution
+                .set(720.0 * size.x as f32 / size.y as f32, 720.0);
+        }
     }
     window.resizable = false;
     if settings.fps == 0 && !settings.native_pacing {
@@ -332,6 +352,9 @@ mod tests {
             "--profile-seconds -1",
             "--profile-seconds 10 --profile-fps 1",
             "--profile-seconds 10 --profile-size 0x1440",
+            "--profile-seconds 10 --profile-surface 0x1440",
+            "--profile-seconds 10 --profile-surface 3456",
+            "--profile-seconds 10 --profile-bloom invalid",
             "--profile-seconds 10 --profile-window maximized",
             "--profile-seconds 10 --render-snapshot file.png",
             "--profile-seconds 10 --metal-capture /tmp/frame.gputrace",
@@ -368,7 +391,21 @@ mod tests {
             .unwrap();
         assert!(p.fullscreen);
         assert_eq!(p.size, None);
-        assert_eq!(p.resolution_scale(), 0.75);
+        assert_eq!(p.resolution_scale(), 0.5);
+    }
+    #[test]
+    fn physical_surface_does_not_override_scene_resolution() {
+        let p = parse("--profile-seconds 10 --profile-size game --profile-surface 3456x1942 --profile-bloom off --profile-temporal-bypass")
+            .unwrap().unwrap();
+        assert_eq!(p.surface, Some(UVec2::new(3456, 1942)));
+        assert_eq!(p.size, None);
+        assert_eq!(p.resolution_scale(), 0.5);
+        assert!(!p.bloom);
+        assert!(p.temporal_bypass);
+        let default = parse("--profile-seconds 10").unwrap().unwrap();
+        assert!(default.bloom);
+        assert!(!default.temporal_bypass);
+        assert!(default.surface.is_none());
     }
     #[test]
     fn route_position_depends_on_elapsed_time_not_update_count() {

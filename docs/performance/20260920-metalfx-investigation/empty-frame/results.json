@@ -1,0 +1,110 @@
+{
+  "accepted": [
+    {
+      "case": "plain4",
+      "code": 0,
+      "command": [
+        "/Users/eugenepisotsky/Dev/Sources/Hobby/YarraProject/tmp/empty-frame-20260920/YarraEmptyFrame.app/Contents/MacOS/empty_frame",
+        "--plain",
+        "--msaa",
+        "4"
+      ],
+      "errors": [],
+      "start": "2026-09-20T19:53:48.889747Z  WARN empty_frame: EMPTY_FRAME event=measure_start unix_ms=1789934028889 surface=UVec2(3456, 1942) focused=true",
+      "complete": "2026-09-20T19:53:56.897732Z  WARN empty_frame: EMPTY_FRAME event=complete unix_ms=1789934036897 frames=959 seconds=8.008 fps=119.75 focused=true",
+      "packets": 19,
+      "hud_gpu_median": 0.79,
+      "hud_interval_mean": 8.348227712137486,
+      "power_samples": 7,
+      "gpu_power_mean": 1.0626019750322615,
+      "cpu_power_mean": 7.822507790156773,
+      "gpu_freq_mhz_mean": 444,
+      "gpu_active_ratio_mean": 0.5467065743037632
+    },
+    {
+      "case": "linear33",
+      "code": 0,
+      "command": [
+        "/Users/eugenepisotsky/Dev/Sources/Hobby/YarraProject/tmp/empty-frame-20260920/YarraEmptyFrame.app/Contents/MacOS/empty_frame",
+        "--scale",
+        "0.33333334",
+        "--upscaler",
+        "linear",
+        "--msaa",
+        "4"
+      ],
+      "errors": [],
+      "start": "2026-09-20T19:54:20.639393Z  WARN empty_frame: EMPTY_FRAME event=measure_start unix_ms=1789934060639 surface=UVec2(3456, 1942) focused=true",
+      "complete": "2026-09-20T19:54:28.639510Z  WARN empty_frame: EMPTY_FRAME event=complete unix_ms=1789934068639 frames=959 seconds=8.000 fps=119.87 focused=true",
+      "packets": 19,
+      "hud_gpu_median": 1.25,
+      "hud_interval_mean": 8.339419978517723,
+      "power_samples": 7,
+      "gpu_power_mean": 0.8377149786267962,
+      "cpu_power_mean": 8.37978036063058,
+      "gpu_freq_mhz_mean": 444,
+      "gpu_active_ratio_mean": 0.6036752036639622
+    },
+    {
+      "case": "spatial33",
+      "code": 0,
+      "command": [
+        "/Users/eugenepisotsky/Dev/Sources/Hobby/YarraProject/tmp/empty-frame-20260920/YarraEmptyFrame.app/Contents/MacOS/empty_frame",
+        "--scale",
+        "0.33333334",
+        "--upscaler",
+        "metalfx-spatial",
+        "--msaa",
+        "4"
+      ],
+      "errors": [],
+      "start": "2026-09-20T19:54:59.363985Z  WARN empty_frame: EMPTY_FRAME event=measure_start unix_ms=1789934099363 surface=UVec2(3456, 1942) focused=true",
+      "complete": "2026-09-20T19:55:07.364007Z  WARN empty_frame: EMPTY_FRAME event=complete unix_ms=1789934107364 frames=956 seconds=8.000 fps=119.50 focused=true",
+      "packets": 18,
+      "hud_gpu_median": 2.74,
+      "hud_interval_mean": 8.368253968253969,
+      "power_samples": 7,
+      "gpu_power_mean": 0.42173461403165546,
+      "cpu_power_mean": 8.935569218226842,
+      "gpu_freq_mhz_mean": 450.85714285714283,
+      "gpu_active_ratio_mean": 0.6317678434508187
+    },
+    {
+      "case": "spatial33-shadows-prepass",
+      "code": 0,
+      "command": [
+        "/Users/eugenepisotsky/Dev/Sources/Hobby/YarraProject/tmp/empty-frame-20260920/YarraEmptyFrame.app/Contents/MacOS/empty_frame",
+        "--scale",
+        "0.33333334",
+        "--upscaler",
+        "metalfx-spatial",
+        "--msaa",
+        "4",
+        "--shadows",
+        "--prepass"
+      ],
+      "errors": [],
+      "start": "2026-09-20T19:58:46.028593Z  WARN empty_frame: EMPTY_FRAME event=measure_start unix_ms=1789934326028 surface=UVec2(3456, 1942) focused=true",
+      "complete": "2026-09-20T19:58:54.029059Z  WARN empty_frame: EMPTY_FRAME event=complete unix_ms=1789934334029 frames=958 seconds=8.001 fps=119.74 focused=true",
+      "packets": 18,
+      "hud_gpu_median": 2.94,
+      "hud_interval_mean": 8.35092970521542,
+      "power_samples": 7,
+      "gpu_power_mean": 0.7090803299631391,
+      "cpu_power_mean": 3.1258362361363004,
+      "gpu_freq_mhz_mean": 444,
+      "gpu_active_ratio_mean": 0.7080142753464835
+    }
+  ],
+  "excluded": {
+    "spatial33-probes": "Diagnostic-only import path caused probe self-instrumentation and a schedule cycle. Fixed using module_path!; app tests passed. No timing result accepted.",
+    "spatial33-probes-fixed": "Unfocused, 60 FPS and no Metal HUD packets.",
+    "spatial33-probes-retry": "Unfocused, 60 FPS and no Metal HUD packets."
+  },
+  "source_sha256": {
+    "crates/app_game/examples/empty_frame.rs": "b98e3521ce560c9f6ff7664a20ae4033dd82ba28fdd11bcd93ad5f5677ee8b38",
+    "crates/app_game/src/game_render.rs": "846cb86e3b0b0157e8f4aa1a45846dd6b44ce00ef89ae91c76e225f8d5619a8e",
+    "crates/app_game/src/render_audit/timing.rs": "b7fe9a07d4e3729117d6a1a833ab62500683c8410bd36738f4a43635b6de5018"
+  },
+  "measurement": "8 s warmup + 8 s measurement; native VSync pacing; no geometry, world, grass, atmosphere or performance panel; 4x MSAA; first overlapping HUD packet excluded."
+}

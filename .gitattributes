@@ -1,0 +1,5 @@
+# Preserve upstream formatting and keep the vendored dependency collapsed in reviews.
+third_party/wgpu-hal/** linguist-vendored -whitespace
+# Keep our small patch and its maintenance notes visible.
+third_party/wgpu-hal/yarra-metal-presentation.patch linguist-vendored=false
+third_party/wgpu-hal/YARRA_PATCH.md linguist-vendored=false

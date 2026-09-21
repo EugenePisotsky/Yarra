@@ -17,6 +17,9 @@ use vegetation_render::{
     VegetationDiagnosticsSnapshot, VegetationRenderPlugin, VegetationWind,
 };
 
+#[cfg(target_os = "macos")]
+mod camera_input_trace;
+mod frame_pacing;
 mod game_render;
 mod grass_bands;
 mod grass_field;
@@ -47,6 +50,9 @@ fn main() {
         .add_plugins(MinimalGamePlugin::new(runtime_database))
         .add_plugins(game_render::GameRenderPlugin);
 
+    frame_pacing::install(&mut app);
+    #[cfg(target_os = "macos")]
+    camera_input_trace::install(&mut app);
     app.add_plugins(VegetationRenderPlugin)
         .insert_resource(vegetation_render::VegetationDebugHotkeys(false))
         .insert_resource(

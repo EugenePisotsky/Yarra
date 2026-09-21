@@ -1,0 +1,146 @@
+{
+  "gpu_markers": "Disabled for all accepted follow-up runs; Metal HUD used for comparisons.",
+  "warmup_seconds": 15,
+  "measurement_seconds": 10,
+  "physical_output": [
+    3456,
+    1942
+  ],
+  "grass": false,
+  "frame_cap": 120,
+  "raw_directory": "tmp/metalfx-followup-20260920",
+  "release_binary_sha256": "41f0dddbf1663cc1ce5981f3674dc0411abf6b8260302921b186c09e7e085b30",
+  "runs": [
+    {
+      "case": "shared-motion",
+      "seconds": 10.0,
+      "app_frames": 1199,
+      "marker_gpu_median": null,
+      "native_fx_median": 2.831,
+      "hud_gpu_median": 7.26,
+      "hud_gpu_mean": 7.28234693877551,
+      "hud_interval_mean": 8.339515306122449,
+      "hud_packet_count": 24,
+      "thermal": [
+        "fair"
+      ],
+      "errors": [],
+      "power_samples": 9,
+      "gpu_power_mean": 22.621814092000324,
+      "cpu_power_mean": 10.912555376688639,
+      "gpu_active_ratio_mean": 0.9969964424769083,
+      "gpu_freq_mhz_mean": 1395.6666666666667,
+      "ane_power_mean": 0.5231306751569113
+    },
+    {
+      "case": "original-motion",
+      "seconds": 10.004999876022339,
+      "app_frames": 1198,
+      "marker_gpu_median": null,
+      "native_fx_median": 2.741,
+      "hud_gpu_median": 7.15,
+      "hud_gpu_mean": 7.198018707482993,
+      "hud_interval_mean": 8.353809523809524,
+      "hud_packet_count": 24,
+      "thermal": [
+        "fair"
+      ],
+      "errors": [],
+      "power_samples": 9,
+      "gpu_power_mean": 22.289754231770832,
+      "cpu_power_mean": 10.988190015157064,
+      "gpu_active_ratio_mean": 0.9941788845592074,
+      "gpu_freq_mhz_mean": 1395.111111111111,
+      "ane_power_mean": 0.519944836695989
+    },
+    {
+      "case": "native-no-probes",
+      "seconds": 9.990999937057495,
+      "app_frames": 1199,
+      "marker_gpu_median": null,
+      "native_fx_median": null,
+      "hud_gpu_median": 6.3,
+      "hud_gpu_mean": 6.541002661934339,
+      "hud_interval_mean": 8.337879325643302,
+      "hud_packet_count": 23,
+      "thermal": [
+        "nominal"
+      ],
+      "errors": [],
+      "power_samples": 9,
+      "gpu_power_mean": 24.138309054904514,
+      "cpu_power_mean": 9.465292400783962,
+      "gpu_active_ratio_mean": 0.9750617874993218,
+      "gpu_freq_mhz_mean": 1388.2222222222222,
+      "ane_power_mean": 0.0
+    },
+    {
+      "case": "temporal-one-third",
+      "seconds": 10.000999927520752,
+      "app_frames": 1198,
+      "marker_gpu_median": null,
+      "native_fx_median": 2.501,
+      "hud_gpu_median": 5.53,
+      "hud_gpu_mean": 5.659228039041704,
+      "hud_interval_mean": 8.34729370008873,
+      "hud_packet_count": 23,
+      "thermal": [
+        "nominal"
+      ],
+      "errors": [],
+      "power_samples": 9,
+      "gpu_power_mean": 11.559142642550999,
+      "cpu_power_mean": 9.272272321912977,
+      "gpu_active_ratio_mean": 0.9222024348047044,
+      "gpu_freq_mhz_mean": 1377,
+      "ane_power_mean": 0.20056723223792183
+    },
+    {
+      "case": "temporal-one-third-repeat",
+      "seconds": 10.009000062942505,
+      "app_frames": 1201,
+      "marker_gpu_median": null,
+      "native_fx_median": 2.368,
+      "hud_gpu_median": 5.49,
+      "hud_gpu_mean": 5.6536011904761905,
+      "hud_interval_mean": 8.332738095238096,
+      "hud_packet_count": 24,
+      "thermal": [
+        "nominal"
+      ],
+      "errors": [],
+      "power_samples": 9,
+      "gpu_power_mean": 12.71884791056315,
+      "cpu_power_mean": 10.399249076843262,
+      "gpu_active_ratio_mean": 0.9603424602084689,
+      "gpu_freq_mhz_mean": 1379.4444444444443,
+      "ane_power_mean": 0.209824424650934
+    }
+  ],
+  "capture": {
+    "build": "debug diagnostic only, not used for timing comparisons",
+    "input_size": [
+      1728,
+      971
+    ],
+    "files": {
+      "size.txt": {
+        "bytes": 9,
+        "sha256": "93ab3d31149a63c9041c7ad651ccb24bed56e9039d469d9e637e436778cccef8"
+      },
+      "depth.bin": {
+        "bytes": 6711552,
+        "sha256": "3bf6a39d8483de5ddafd6db285ba98d80eef19830f33661363fc52951168bf59"
+      },
+      "color.bin": {
+        "bytes": 13423104,
+        "sha256": "36529a77cd5efedcf73047bed56e8abf3fc2c5addcd75b7c6a8c68f17627e7d9"
+      },
+      "motion.bin": {
+        "bytes": 6711552,
+        "sha256": "6e88a762948770df7e00a8f591a9b16f12a5663e5a060cbdfa2930430a09155d"
+      }
+    },
+    "temporal_history_index": 1200
+  }
+}

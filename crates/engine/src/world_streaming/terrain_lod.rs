@@ -644,7 +644,14 @@ fn update(
     active_space: Res<ActiveWorldSpace>,
     worker: Option<Res<WorldDatabaseWorker>>,
     time: Res<Time>,
-    camera: Query<(&Camera, &GlobalTransform), With<WorldViewCamera>>,
+    camera: Query<
+        (
+            &Camera,
+            &GlobalTransform,
+            Option<&bevy::camera::MainPassResolutionOverride>,
+        ),
+        With<WorldViewCamera>,
+    >,
     mut leaves: Query<&mut Visibility, With<StreamedTerrainSurface>>,
     mut stream: ResMut<TerrainLodStream>,
     mut stats: ResMut<TerrainLodStats>,
@@ -684,7 +691,7 @@ fn update(
     if stream.material.is_none() {
         stream.material = Some(materials.add(TerrainCompositeMaterial::default()));
     }
-    let visible = camera.iter().any(|(c, _)| c.is_active);
+    let visible = camera.iter().any(|(c, _, _)| c.is_active);
     let ready = stream.roots.is_some()
         && (!stream.active.is_empty() || stream.roots.as_ref().is_some_and(Vec::is_empty));
     for mut visibility in &mut leaves {
@@ -775,8 +782,10 @@ fn update(
     // cancel the last missing child and starve publication.
     if stream.target.is_none()
         && visible
-        && let Some((camera, transform)) = camera.iter().find(|(c, _)| c.is_active)
-        && let Some(size) = camera.physical_viewport_size()
+        && let Some((camera, transform, resolution)) = camera.iter().find(|(c, _, _)| c.is_active)
+        && let Some(size) = resolution
+            .map(|r| r.0)
+            .or_else(|| camera.physical_viewport_size())
         && let Some(roots) = stream.roots.as_ref()
     {
         let shift = DVec3::new(
@@ -920,8 +929,10 @@ fn update(
         }
     }
     if stream.materials_ready(&tracker)
-        && let Some((camera, transform)) = camera.iter().find(|(c, _)| c.is_active)
-        && let Some(viewport) = camera.physical_viewport_size()
+        && let Some((camera, transform, resolution)) = camera.iter().find(|(c, _, _)| c.is_active)
+        && let Some(viewport) = resolution
+            .map(|r| r.0)
+            .or_else(|| camera.physical_viewport_size())
     {
         let shift = DVec3::new(
             origin.cell().x as f64 * info.cell_size as f64,

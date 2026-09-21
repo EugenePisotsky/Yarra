@@ -1,0 +1,3 @@
+{"device":"Apple M2 Max","event":"setup","input":[1728,971],"os":"Version 26.4.1 (Build 25E253)","output":[3456,1942],"packed_hdr":false,"target_fps":120}
+{"event":"measure_start","unix_ms":1789938724942.1321}
+{"event":"complete","frames":1921,"measured_fps":120.02445139120725,"median_gpu_ms":4.8347500014642719,"p95_gpu_ms":5.9810833336086944,"samples":961,"unix_ms":1789938732948.9141}

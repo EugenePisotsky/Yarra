@@ -97,7 +97,14 @@ fn collect(
     active_space: Res<ActiveWorldSpace>,
     scene: Option<Res<VegetationDebugScene>>,
     wind: Option<Res<VegetationWind>>,
-    camera: Query<(&Camera, &GlobalTransform), With<WorldViewCamera>>,
+    camera: Query<
+        (
+            &Camera,
+            &GlobalTransform,
+            Option<&bevy::camera::MainPassResolutionOverride>,
+        ),
+        With<WorldViewCamera>,
+    >,
     actors: Query<&GlobalTransform, With<TerrainGrounded>>,
     mut inputs: ResMut<ContactInputs>,
 ) {
@@ -106,9 +113,9 @@ fn collect(
     inputs.error = None;
     inputs.camera = None;
     inputs.view = None;
-    let Some((projection, camera)) = camera
+    let Some((projection, camera, resolution)) = camera
         .iter()
-        .find(|(c, _)| c.is_active)
+        .find(|(c, _, _)| c.is_active)
         .filter(|_| config.enabled)
     else {
         return;
@@ -122,7 +129,10 @@ fn collect(
     let shift = origin_shift(origin.cell(), space.cell_size as f64);
     let eye = camera.translation().as_dvec3() + shift;
     inputs.camera = Some(eye);
-    if let Some(size) = projection.physical_viewport_size() {
+    if let Some(size) = resolution
+        .map(|r| r.0)
+        .or_else(|| projection.physical_viewport_size())
+    {
         inputs.view = Some(LodView {
             clip_from_world: projection.clip_from_view().as_dmat4()
                 * camera.to_matrix().as_dmat4().inverse()

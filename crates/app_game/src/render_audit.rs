@@ -19,9 +19,10 @@ use vegetation_render::{
     VegetationDebugSettings, VegetationLightingMode, VegetationProfileMode, VegetationWind,
 };
 
+use crate::frame_pacing::{FramePacing, FrameRate};
 use crate::game_render::{
     GameRenderAssets as AuditAssets, GameRenderSettings, GameRenderSetup, GameRenderSystems,
-    RenderPath as AuditRenderPath,
+    RESOLUTION_SCALES, RenderPath as AuditRenderPath,
 };
 
 pub struct RenderAuditPlugin;
@@ -79,8 +80,12 @@ impl Plugin for RenderAuditPlugin {
         {
             let mut settings = app.world_mut().resource_mut::<AuditSettings>();
             settings.render_path = AuditRenderPath::Composite;
-            settings.scale_index = if profile.size.is_some() { 0 } else { 1 };
+            settings.scale_index = if profile.size.is_some() { 0 } else { 2 };
             settings.msaa = profile.msaa;
+            settings.bloom = profile.bloom;
+            if profile.temporal_bypass {
+                settings.temporal_debug = upscaling::temporal::TemporalDebug::Bypass;
+            }
             settings.grass = if profile.grass {
                 vegetation_render::VegetationProfileMode::Full
             } else {
@@ -110,6 +115,8 @@ struct AuditSettings {
     shadows: u8,
     prepass: bool,
     scale_index: usize,
+    upscaler: upscaling::UpscaleMethod,
+    temporal_debug: upscaling::temporal::TemporalDebug,
     msaa: Msaa,
     counters: bool,
     gpu_pass_timings: bool,
@@ -143,11 +150,13 @@ impl Default for AuditSettings {
             terrain_prepared: crate::terrain_prepared_enabled(),
             shadows: 0,
             prepass: GAME_DEPTH_PREPASS_ENABLED,
-            scale_index: [1.0, 0.75, 0.5]
+            scale_index: RESOLUTION_SCALES
                 .iter()
                 .position(|&scale| scale == render.resolution_scale)
                 .expect("game scale is available in audit controls"),
             msaa: render.msaa,
+            upscaler: render.upscaler,
+            temporal_debug: render.temporal_debug,
             // Statistics atomics are explicit on every platform, including audit startup.
             counters: std::env::args_os().any(|arg| arg == "--grass-counters"),
             gpu_pass_timings: std::env::args_os().any(|arg| arg == "--gpu-timing-detail"),
@@ -172,10 +181,14 @@ impl Default for AuditSettings {
 }
 
 impl AuditSettings {
+    fn temporal_active(&self) -> bool {
+        self.upscaler == upscaling::UpscaleMethod::MetalFxTemporal
+            && self.render_path == AuditRenderPath::Composite
+    }
     fn scale(&self) -> f32 {
         match self.render_path {
             AuditRenderPath::Direct => 1.0,
-            AuditRenderPath::Composite => [1.0, 0.75, 0.5][self.scale_index],
+            AuditRenderPath::Composite => RESOLUTION_SCALES[self.scale_index],
         }
     }
 
@@ -200,6 +213,7 @@ impl AuditSettings {
 
 #[derive(Component, Clone, Copy)]
 enum Control {
+    FrameRate,
     Scene,
     Grass,
     GrassEnabled,
@@ -208,6 +222,8 @@ enum Control {
     Shadows,
     Prepass,
     Scale,
+    Upscaler,
+    TemporalDebug,
     Counters,
     GpuPassTimings,
     Wind,
@@ -228,8 +244,9 @@ enum Control {
 }
 
 impl Control {
-    fn label(self, s: &AuditSettings) -> String {
+    fn label(self, s: &AuditSettings, frame_rate: FrameRate) -> String {
         match self {
+            Self::FrameRate => frame_rate.label(),
             Self::ObjectDetail => format!("Object LOD size: {}x", [0.5, 1.0, 2.0][s.object_detail]),
             Self::Clouds => format!("Clouds: {:?}", s.clouds),
             Self::Sky => format!("Sky + haze pass: {}", on_off(s.sky)),
@@ -261,18 +278,35 @@ impl Control {
             Self::Shadows => ["PBR shadows: Gaussian", "PBR shadows: 2x2", "Shadows: off"]
                 [s.shadows as usize]
                 .into(),
-            Self::Prepass => format!("Depth prepass: {}", on_off(s.prepass)),
-            Self::Scale => format!("Resolution: {}%", [100, 75, 50][s.scale_index]),
+            Self::Prepass => {
+                if s.temporal_active() {
+                    "Depth prepass: required by temporal".into()
+                } else {
+                    format!("Depth prepass: {}", on_off(s.prepass))
+                }
+            }
+            Self::Scale => format!(
+                "Resolution: {}%",
+                (100.0 * RESOLUTION_SCALES[s.scale_index]).round() as u32
+            ),
+            Self::TemporalDebug => format!("Temporal view: {}", s.temporal_debug.label()),
+            Self::Upscaler => format!("Upscaler: {}", s.upscaler.label()),
             Self::Counters => format!("GPU counters: {}", on_off(s.counters)),
             Self::GpuPassTimings => format!("GPU pass timings: {}", on_off(s.gpu_pass_timings)),
             Self::Wind => format!("Grass wind: {}", on_off(s.wind)),
             Self::Lock => format!("Lock controls: {}", on_off(s.controls_locked)),
             Self::Reset => "Reset launch settings".into(),
             Self::RenderPath => format!("Render: {}", s.render_path.label()),
-            Self::Antialiasing => match s.msaa {
-                Msaa::Off => "AA: off".into(),
-                _ => format!("AA: {}x MSAA", s.msaa.samples()),
-            },
+            Self::Antialiasing => {
+                if s.temporal_active() {
+                    "AA: temporal (MSAA off)".into()
+                } else {
+                    match s.msaa {
+                        Msaa::Off => "AA: off".into(),
+                        _ => format!("AA: {}x MSAA", s.msaa.samples()),
+                    }
+                }
+            }
         }
     }
 }
@@ -304,6 +338,7 @@ fn buttons(
     mut s: ResMut<AuditSettings>,
     time: Res<Time>,
     panel: Res<performance::PanelState>,
+    mut pacing: ResMut<FramePacing>,
 ) {
     if panel.recording() {
         return;
@@ -316,6 +351,13 @@ fn buttons(
             continue;
         }
         match control {
+            Control::FrameRate => {
+                if !pacing.profile_locked {
+                    pacing.rate = pacing.rate.next();
+                }
+                // FPS alone must not reapply scene settings or disturb Temporal history.
+                continue;
+            }
             Control::ObjectDetail => s.object_detail = (s.object_detail + 1) % 3,
             Control::Clouds => {
                 s.clouds = match s.clouds {
@@ -386,7 +428,15 @@ fn buttons(
             Control::Prepass => s.prepass = !s.prepass,
             Control::Scale => {
                 s.render_path = AuditRenderPath::Composite;
-                s.scale_index = (s.scale_index + 1) % 3;
+                s.scale_index = (s.scale_index + 1) % RESOLUTION_SCALES.len();
+            }
+            Control::TemporalDebug => {
+                s.temporal_debug = s.temporal_debug.next();
+            }
+            Control::Upscaler => {
+                let methods = upscaling::UpscaleMethod::ALL;
+                let index = methods.iter().position(|m| *m == s.upscaler).unwrap_or(0);
+                s.upscaler = methods[(index + 1) % methods.len()];
             }
             Control::Counters => s.counters = !s.counters,
             Control::GpuPassTimings => s.gpu_pass_timings = !s.gpu_pass_timings,
@@ -397,7 +447,10 @@ fn buttons(
                     s.grass = VegetationProfileMode::Full;
                 }
             }
-            Control::Reset => *s = panel.baseline.clone(),
+            Control::Reset => {
+                *s = panel.baseline.clone();
+                pacing.rate = panel.baseline_rate;
+            }
             Control::RenderPath => {
                 s.render_path = match s.render_path {
                     AuditRenderPath::Composite => AuditRenderPath::Direct,
@@ -419,14 +472,19 @@ fn buttons(
 
 fn update_labels(
     s: Res<AuditSettings>,
+    pacing: Res<FramePacing>,
     controls: Query<(&Control, &Children)>,
     mut labels: Query<&mut Text>,
 ) {
-    if s.is_changed() {
+    if s.is_changed() || pacing.is_changed() {
         for (control, children) in &controls {
             for child in children {
                 if let Ok(mut text) = labels.get_mut(*child) {
-                    **text = control.label(&s);
+                    **text = if matches!(control, Control::FrameRate) {
+                        pacing.control_label()
+                    } else {
+                        control.label(&s, pacing.rate)
+                    };
                 }
             }
         }
@@ -475,6 +533,8 @@ fn sync_render_settings(
     if s.is_changed() {
         render.set_if_neq(GameRenderSettings {
             resolution_scale: profile.as_ref().map_or(s.scale(), |p| p.resolution_scale()),
+            upscaler: s.upscaler,
+            temporal_debug: s.temporal_debug,
             render_size: profile.as_ref().and_then(|p| p.size),
             msaa: s.msaa,
             render_path: s.render_path,
@@ -521,7 +581,7 @@ fn apply_settings(
     } else {
         ShadowFilteringMethod::Gaussian
     });
-    if s.prepass {
+    if s.prepass || s.temporal_active() {
         commands.entity(*camera).insert(DepthPrepass);
     } else {
         commands.entity(*camera).remove::<DepthPrepass>();
@@ -620,6 +680,65 @@ fn apply_meshes(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fps_button_changes_only_pacing_and_reset_restores_custom_launch_rate() {
+        #[derive(Resource, Default)]
+        struct SceneWrites(u32);
+        let mut app = App::new();
+        app.init_resource::<AuditSettings>()
+            .init_resource::<FramePacing>()
+            .init_resource::<Time>()
+            .init_resource::<performance::PanelState>()
+            .init_resource::<SceneWrites>()
+            .add_systems(
+                Update,
+                (
+                    buttons,
+                    |settings: Res<AuditSettings>, mut count: ResMut<SceneWrites>| {
+                        if settings.is_changed() {
+                            count.0 += 1;
+                        }
+                    },
+                )
+                    .chain(),
+            );
+        app.world_mut().resource_mut::<FramePacing>().rate = FrameRate::new(45);
+        app.world_mut()
+            .resource_mut::<performance::PanelState>()
+            .baseline_rate = FrameRate::new(45);
+        app.update();
+        let before = app.world().resource::<SceneWrites>().0;
+        let button = app
+            .world_mut()
+            .spawn((Interaction::Pressed, Control::FrameRate))
+            .id();
+        app.update();
+        assert_eq!(app.world().resource::<FramePacing>().rate.fps(), 0);
+        assert_eq!(app.world().resource::<SceneWrites>().0, before);
+        assert_eq!(
+            app.world().resource::<FramePacing>().control_label(),
+            "FPS limit: Follow display"
+        );
+        app.world_mut().entity_mut(button).insert(Control::Reset);
+        *app.world_mut().get_mut::<Interaction>(button).unwrap() = Interaction::Pressed;
+        app.update();
+        assert_eq!(app.world().resource::<FramePacing>().rate.fps(), 45);
+        // Profiling must retain the launch rate even if a user presses the control.
+        app.world_mut().resource_mut::<FramePacing>().profile_locked = true;
+        app.world_mut()
+            .entity_mut(button)
+            .insert(Control::FrameRate);
+        *app.world_mut().get_mut::<Interaction>(button).unwrap() = Interaction::Pressed;
+        app.update();
+        assert_eq!(app.world().resource::<FramePacing>().rate.fps(), 45);
+        assert!(
+            app.world()
+                .resource::<FramePacing>()
+                .control_label()
+                .contains("profile locked")
+        );
+    }
     use bevy::{
         input::{
             InputPlugin,

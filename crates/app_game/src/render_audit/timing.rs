@@ -1,5 +1,6 @@
 //! Measurements keep their source-frame identity across the render thread and async readback.
 //! System wrappers preserve access, conditions, ordering and deferred commands (Bevy 0.19).
+#[path = "timing/gpu.rs"]
 mod gpu;
 use bevy::{
     diagnostic::FrameCount,
@@ -150,10 +151,11 @@ fn update_stamp(
     frame: Res<FrameCount>,
     settings: Res<super::AuditSettings>,
     mut stamp: ResMut<Stamp>,
+    pacing: Res<crate::frame_pacing::FramePacing>,
 ) {
     stamp.frame = frame.0;
     stamp.detailed = settings.gpu_pass_timings;
-    if settings.is_changed() {
+    if settings.is_changed() || pacing.is_changed() {
         stamp.epoch = stamp.epoch.wrapping_add(1);
     }
 }
@@ -278,7 +280,7 @@ fn instrument(world: &mut World, render: bool) {
         for key in keys {
             let slot = schedule.graph_mut().systems.get_mut(key).unwrap();
             let name = slot.name().to_string();
-            if name.contains("render_audit::timing") || name.contains("camera_driver") {
+            if name.contains(module_path!()) || name.contains("camera_driver") {
                 continue;
             }
             let probe = Arc::new(Probe {
@@ -392,7 +394,8 @@ fn log_timings(time: Res<Time<Real>>, history: Res<History>, mut last: Local<f64
         return;
     }
     *last = time.elapsed_secs_f64();
-    let gpu = history.gpu.back();
+    let gpu = history.gpu.iter().rev().find(|s| !s.stamp.detailed);
+    let detail = history.gpu.iter().rev().find(|s| s.stamp.detailed);
     let render = history
         .cpu
         .iter()
@@ -400,10 +403,12 @@ fn log_timings(time: Res<Time<Real>>, history: Res<History>, mut last: Local<f64
         .find(|s| s.work[Kind::RenderCall as usize] > 0.0);
     let main = history.cpu.iter().rev().find(|s| cpu_main_ms(s) > 0.0);
     warn!(
-        "PERFORMANCE_TIMING gpu_ms={:?} gpu_frame={:?} scopes={:?} main_work_ms={:?} render_prep_ms={:?} acquire_ms={:?} submit_ms={:?} tail_ms={:?} dropped={} status={}",
+        "PERFORMANCE_TIMING gpu_ms={:?} gpu_frame={:?} probe_frame={:?} probe_gpu_ms={:?} scopes={:?} main_work_ms={:?} render_prep_ms={:?} acquire_ms={:?} submit_ms={:?} tail_ms={:?} dropped={} status={}",
         gpu.map(|s| s.elapsed_ms),
         gpu.map(|s| s.stamp.frame),
-        gpu.map(|s| &s.scopes),
+        detail.map(|s| s.stamp.frame),
+        detail.map(|s| s.elapsed_ms),
+        detail.map(|s| &s.scopes),
         main.map(cpu_main_ms),
         render.map(|s| s.work[Kind::Prepare as usize]),
         render.map(|s| s.work[Kind::Acquire as usize]),

@@ -1,0 +1,158 @@
+{
+  "date": "2026-09-20",
+  "device": "Apple M2 Max",
+  "os": "macOS 26.4.1 (25E253)",
+  "head": "8b668796946ffc256b18b6e5399043ff3b90011d",
+  "working_tree": "Uncommitted upscaling integration; no renderer edits made during this investigation",
+  "build": "cargo build --release -p yarra-app-game --offline",
+  "physical_surface": [
+    3456,
+    1942
+  ],
+  "scaled_input": [
+    1728,
+    971
+  ],
+  "warmup_seconds": 15,
+  "measurement_seconds": 10,
+  "fps_cap": 120,
+  "grass": false,
+  "bloom": true,
+  "raw_artifacts": "tmp/metalfx-investigation-20260920",
+  "notes": [
+    "Metal HUD samples overlap; reported median is descriptive, not independent-frame statistics.",
+    "Power is system-wide macmon v0.8.2 estimation; not process-attributed. Nine full measurement-window samples per power run.",
+    "No clock locking; thermal state was fair for most runs. These are short diagnostic checks, not sustained thermal comparisons.",
+    "The first native and temporal runs used only five seconds of warmup and are excluded because pipeline/loading stalls entered their measurement windows.",
+    "Built-in marker spans are not trusted as whole-frame costs.",
+    "The bypass keeps jitter and Temporal prerequisites; it is an isolation experiment, not a quality-equivalent rendering mode."
+  ],
+  "release_binary": {
+    "path": "target/release/yarra-app-game",
+    "sha256": "269fcce3b642a0f82db38dd704e6bec1dacad773343b2f8332727f9f8dc41444"
+  },
+  "world": {
+    "path": "tmp/cloud-performance/static.sqlite",
+    "sha256": "676227eb7f061786020d59a321e1d0d215ba3fdd45d91987593aa86bd0385264"
+  },
+  "camera": {
+    "path": "tmp/cloud-performance/close-view.ron",
+    "sha256": "4e9441d10ebd04f611e03cf22beeae1642267e2f3f5645726c32b33d4ff67dd6"
+  },
+  "runs": [
+    {
+      "case": "release-native-warm",
+      "seconds": 10.007999897003174,
+      "app_frames": 1198,
+      "marker_gpu_median": 6.42725,
+      "native_fx_median": null,
+      "hud_gpu_median": 6.36,
+      "hud_gpu_mean": 6.623655723158829,
+      "hud_interval_mean": 8.352937000887312,
+      "hud_packet_count": 23,
+      "thermal": [
+        "nominal"
+      ],
+      "errors": []
+    },
+    {
+      "case": "release-bypass-warm",
+      "seconds": 10.009000062942505,
+      "app_frames": 1200,
+      "marker_gpu_median": 4.576,
+      "native_fx_median": null,
+      "hud_gpu_median": 4.01,
+      "hud_gpu_mean": 4.267389455782313,
+      "hud_interval_mean": 8.339064625850341,
+      "hud_packet_count": 24,
+      "thermal": [
+        "fair"
+      ],
+      "errors": []
+    },
+    {
+      "case": "release-native-power",
+      "seconds": 10.013999938964844,
+      "app_frames": 1199,
+      "marker_gpu_median": 6.401625,
+      "native_fx_median": null,
+      "hud_gpu_median": 6.36,
+      "hud_gpu_mean": 6.61980479148181,
+      "hud_interval_mean": 8.34552795031056,
+      "hud_packet_count": 23,
+      "thermal": [
+        "fair"
+      ],
+      "errors": [],
+      "power_samples": 9,
+      "gpu_power_mean": 24.237024731106228,
+      "cpu_power_mean": 10.429367595248753,
+      "gpu_active_ratio_mean": 0.9746117459403144,
+      "gpu_freq_mhz_mean": 1387.4444444444443,
+      "ane_power_mean": 0.0
+    },
+    {
+      "case": "release-temporal-power",
+      "seconds": 10.009999990463257,
+      "app_frames": 1199,
+      "marker_gpu_median": 6.631541,
+      "native_fx_median": 3.333,
+      "hud_gpu_median": 7.07,
+      "hud_gpu_mean": 7.122537710736468,
+      "hud_interval_mean": 8.34717834960071,
+      "hud_packet_count": 23,
+      "thermal": [
+        "fair"
+      ],
+      "errors": [],
+      "power_samples": 9,
+      "gpu_power_mean": 21.89680332607693,
+      "cpu_power_mean": 10.400520006815592,
+      "gpu_active_ratio_mean": 0.9943351546923319,
+      "gpu_freq_mhz_mean": 1394.5555555555557,
+      "ane_power_mean": 0.526178949409061
+    },
+    {
+      "case": "release-spatial-power",
+      "seconds": 10.008000135421753,
+      "app_frames": 1200,
+      "marker_gpu_median": 4.9455,
+      "native_fx_median": null,
+      "hud_gpu_median": 3.97,
+      "hud_gpu_mean": 4.211224489795918,
+      "hud_interval_mean": 8.338305235137533,
+      "hud_packet_count": 23,
+      "thermal": [
+        "fair"
+      ],
+      "errors": [],
+      "power_samples": 9,
+      "gpu_power_mean": 10.73259343041314,
+      "cpu_power_mean": 9.837553766038683,
+      "gpu_active_ratio_mean": 0.8572132521205478,
+      "gpu_freq_mhz_mean": 1165.111111111111,
+      "ane_power_mean": 0.0
+    },
+    {
+      "case": "release-temporal-no-bloom",
+      "seconds": 10.0,
+      "app_frames": 1200,
+      "marker_gpu_median": 3.931875,
+      "native_fx_median": 3.421,
+      "hud_gpu_median": 6.85,
+      "hud_gpu_mean": 7.017772108843538,
+      "hud_interval_mean": 8.332780612244898,
+      "hud_packet_count": 24,
+      "thermal": [
+        "fair"
+      ],
+      "errors": [],
+      "power_samples": 9,
+      "gpu_power_mean": 19.775740093655056,
+      "cpu_power_mean": 9.852489153544107,
+      "gpu_active_ratio_mean": 0.9897077017360263,
+      "gpu_freq_mhz_mean": 1392.7777777777778,
+      "ane_power_mean": 0.32010937068197465
+    }
+  ]
+}

@@ -11,6 +11,7 @@ world.workspace = true
 ron.workspace = true
 wgpu = { version = "29.0.4", default-features = false }
 terrain-render.workspace = true
+upscaling = { workspace = true, features = ["metalfx"] }
 vegetation.workspace = true
 vegetation-render.workspace = true
 
@@ -18,3 +19,10 @@ vegetation-render.workspace = true
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSObject", "NSProcessInfo", "NSString", "NSURL", "NSPathUtilities"] }
 objc2-metal = { version = "0.3.2", default-features = false, features = ["std", "MTLCaptureManager", "MTLDevice"] }
 wgpu = { version = "29.0.4", default-features = false, features = ["metal"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6.4"
+block2 = "0.6.2"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "block2", "NSEvent", "NSWindow", "NSView", "NSResponder", "objc2-core-foundation", "objc2-quartz-core"] }
+objc2-quartz-core = { version = "0.3.2", default-features = false, features = ["std", "CADisplayLink", "CAFrameRateRange"] }
+raw-window-handle = "0.6.2"

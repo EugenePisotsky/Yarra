@@ -309,6 +309,15 @@ presentation controls plus `--metal-capture` or finite `--render-frames`.
 Camera/wind remain frame-based for matching views. Diagnostic mode cannot be
 combined with `--profile-seconds` and emits no timed measurement events.
 
+On macOS 14+, a nonzero `--profile-fps` now uses the same display-link frame cap
+as normal gameplay's `--fps`. ProMotion can stay enabled. For a comparison with
+the original independent timer, add `--frame-pacing-timer` to a direct game
+command. `--frame-pacing-display-only` keeps display callbacks but disables Metal's
+minimum presentation interval to isolate update scheduling from presentation.
+The startup `FRAME_PACING` logs identify the macOS display link and Metal interval.
+`--profile-native-pacing` still preserves the
+normal launch's pacing settings, including an explicit `--fps` if supplied.
+
 Runner/suite option `prepared_blades` (CLI `--prepared-blades`) is an opt-in
 preparation-arena experiment, integer 32768–524288. It passes
 `--grass-prepared-blades` to the game. Default game allocation remains 131072.

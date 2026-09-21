@@ -1,4 +1,6 @@
 mod actor;
+mod camera_input_diagnostics;
+pub use camera_input_diagnostics::CameraInputDiagnostics;
 mod terrain_raycast;
 pub use terrain_raycast::raycast_resident_terrain;
 mod character;
@@ -17,7 +19,7 @@ use bevy::{
     core_pipeline::prepass::DepthPrepass,
     diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin},
     input::gestures::{PanGesture, PinchGesture},
-    input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit},
+    input::mouse::{AccumulatedMouseMotion, MouseScrollUnit, MouseWheel},
     prelude::*,
     render::view::Msaa,
     window::{Monitor, PrimaryMonitor, PrimaryWindow, Window},
@@ -580,16 +582,55 @@ fn update_camera_controls(
     time: Res<Time>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     mouse_motion: Res<AccumulatedMouseMotion>,
-    mouse_scroll: Res<AccumulatedMouseScroll>,
+    mut mouse_scroll: MessageReader<MouseWheel>,
     mut pan_gestures: MessageReader<PanGesture>,
     mut pinch_gestures: MessageReader<PinchGesture>,
     gamepads: Query<&Gamepad>,
     mut rig: Single<&mut CameraRig, With<MainCamera>>,
+    mut diagnostics: Option<ResMut<CameraInputDiagnostics>>,
 ) {
+    if let Some(d) = diagnostics.as_deref_mut() {
+        *d = CameraInputDiagnostics {
+            sequence: d.sequence + 1,
+            read_at: Some(std::time::Instant::now()),
+            enabled: enabled.0,
+            pointer_blocked: pointer_blocked.0,
+            startup_guard: time.elapsed_secs() <= 0.5,
+            dt_secs: time.delta_secs(),
+            yaw_before: rig.yaw,
+            yaw_after: rig.yaw,
+            target_yaw: rig.target_yaw,
+            ..default()
+        };
+    }
     // Always consume native gestures, including while locked/captured, so unlocking cannot
     // replay a pending pan or pinch. Keyboard and gamepad remain usable over the HUD.
     let touch_pan: Vec2 = pan_gestures.read().map(|gesture| gesture.0).sum();
     let touch_pinch: f32 = pinch_gestures.read().map(|gesture| gesture.0).sum();
+    // Clamp individual native events, not a frame's accumulated movement. At
+    // 60 FPS the same gesture may put twice as many events in one update as at 120.
+    let scroll: Vec2 = mouse_scroll
+        .read()
+        .map(|event| {
+            let (limit, speed) = match event.unit {
+                MouseScrollUnit::Line => (
+                    3.0,
+                    Vec2::new(CAMERA_WHEEL_ORBIT_SPEED, CAMERA_WHEEL_ZOOM_SPEED),
+                ),
+                MouseScrollUnit::Pixel => (
+                    80.0,
+                    Vec2::new(CAMERA_TRACKPAD_ORBIT_SPEED, CAMERA_TRACKPAD_ZOOM_SPEED),
+                ),
+            };
+            if let Some(d) = diagnostics.as_deref_mut() {
+                d.record_wheel(event, limit);
+            }
+            Vec2::new(event.x, event.y).clamp(Vec2::splat(-limit), Vec2::splat(limit)) * speed
+        })
+        .sum();
+    if let Some(d) = diagnostics.as_deref_mut() {
+        d.requested_orbit = -scroll.x;
+    }
     if !enabled.0 {
         return;
     }
@@ -620,20 +661,14 @@ fn update_camera_controls(
         + right_stick.y * CAMERA_GAMEPAD_ORBIT_SPEED * time.delta_secs())
     .clamp(-CAMERA_MAX_PITCH_OFFSET, CAMERA_MAX_PITCH_OFFSET);
 
+    let previous_target_yaw = rig.target_yaw;
     if !pointer_blocked.0 && time.elapsed_secs() > 0.5 {
-        let (orbit_delta, zoom_delta) = match mouse_scroll.unit {
-            MouseScrollUnit::Line => (
-                mouse_scroll.delta.x.clamp(-3.0, 3.0) * CAMERA_WHEEL_ORBIT_SPEED,
-                mouse_scroll.delta.y.clamp(-3.0, 3.0) * CAMERA_WHEEL_ZOOM_SPEED,
-            ),
-            MouseScrollUnit::Pixel => (
-                mouse_scroll.delta.x.clamp(-80.0, 80.0) * CAMERA_TRACKPAD_ORBIT_SPEED,
-                mouse_scroll.delta.y.clamp(-80.0, 80.0) * CAMERA_TRACKPAD_ZOOM_SPEED,
-            ),
-        };
-        rig.target_yaw -= orbit_delta;
+        rig.target_yaw -= scroll.x;
+        if let Some(d) = diagnostics.as_deref_mut() {
+            d.applied_orbit = -scroll.x;
+        }
         rig.target_distance =
-            (rig.target_distance - zoom_delta).clamp(CAMERA_MIN_DISTANCE, CAMERA_MAX_DISTANCE);
+            (rig.target_distance - scroll.y).clamp(CAMERA_MIN_DISTANCE, CAMERA_MAX_DISTANCE);
     }
 
     if !pointer_blocked.0 && touch_pan != Vec2::ZERO {
@@ -647,10 +682,35 @@ fn update_camera_controls(
             .clamp(CAMERA_MIN_DISTANCE, CAMERA_MAX_DISTANCE);
     }
 
-    let orbit_blend = 1.0 - (-CAMERA_ORBIT_SMOOTHING * time.delta_secs()).exp();
-    rig.yaw += (rig.target_yaw - rig.yaw) * orbit_blend;
+    rig.yaw = smooth_camera_orbit(
+        rig.yaw,
+        previous_target_yaw,
+        rig.target_yaw,
+        time.delta_secs(),
+    );
     let zoom_blend = 1.0 - (-CAMERA_ZOOM_SMOOTHING * time.delta_secs()).exp();
     rig.distance += (rig.target_distance - rig.distance) * zoom_blend;
+    if let Some(d) = diagnostics.as_deref_mut() {
+        d.yaw_after = rig.yaw;
+        d.target_yaw = rig.target_yaw;
+    }
+}
+
+fn smooth_camera_orbit(yaw: f32, previous_target: f32, target: f32, dt: f32) -> f32 {
+    let step = CAMERA_ORBIT_SMOOTHING * dt;
+    if step <= 0.0 {
+        return yaw;
+    }
+    let blend = -(-step).exp_m1();
+    // Integrate the existing exponential smoother with gesture movement spread
+    // across the elapsed interval. Applying the entire batch at the start of
+    // the interval exaggerates packet-to-packet velocity changes at lower FPS.
+    let movement_blend = if step < 0.001 {
+        step * 0.5 - step * step / 6.0
+    } else {
+        1.0 - blend / step
+    };
+    yaw + (previous_target - yaw) * blend + (target - previous_target) * movement_blend
 }
 
 fn update_camera_transform(
@@ -816,12 +876,72 @@ mod input_tests {
     }
 
     #[test]
-    fn camera_gestures_work_and_are_not_replayed_after_ui_capture_or_unlock() {
+    fn trackpad_orbit_is_independent_of_frame_batching() {
+        let simulate = |fps: u32, pixels_per_event: f32| {
+            let mut app = App::new();
+            app.add_plugins(bevy::input::InputPlugin)
+                .init_resource::<Time>()
+                .init_resource::<GameInputEnabled>()
+                .init_resource::<GamePointerInputBlocked>()
+                .add_systems(Update, update_camera_controls);
+            let camera = app
+                .world_mut()
+                .spawn((
+                    MainCamera,
+                    CameraRig {
+                        yaw: 0.0,
+                        target_yaw: 0.0,
+                        distance: CAMERA_DEFAULT_DISTANCE,
+                        target_distance: CAMERA_DEFAULT_DISTANCE,
+                        pitch_offset: 0.0,
+                    },
+                ))
+                .id();
+            app.world_mut()
+                .resource_mut::<Time>()
+                .advance_by(std::time::Duration::from_secs(1));
+            for _ in 0..fps {
+                app.world_mut()
+                    .resource_mut::<Time>()
+                    .advance_by(std::time::Duration::from_secs_f64(1.0 / f64::from(fps)));
+                // Identical 120 Hz native event stream, grouped into render frames.
+                for _ in 0..120 / fps {
+                    app.world_mut().write_message(MouseWheel {
+                        unit: MouseScrollUnit::Pixel,
+                        phase: bevy::input::touch::TouchPhase::Moved,
+                        x: pixels_per_event,
+                        y: 0.0,
+                        window: Entity::PLACEHOLDER,
+                    });
+                }
+                app.update();
+            }
+            let rig = app.world().get::<CameraRig>(camera).unwrap();
+            (rig.yaw, rig.target_yaw)
+        };
+        for speed in [2.0, 60.0] {
+            let a = simulate(60, speed);
+            let b = simulate(120, speed);
+            assert!(
+                (a.1 - b.1).abs() < 0.0001,
+                "gesture distance changed: {a:?} / {b:?}"
+            );
+            assert!(
+                (a.0 - b.0).abs() < 0.0001,
+                "smoothing changed with FPS: {a:?} / {b:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn irregular_scroll_batches_are_consumed_once_and_account_for_clipping() {
+        use bevy::input::touch::TouchPhase;
         let mut app = App::new();
         app.add_plugins(bevy::input::InputPlugin)
             .init_resource::<Time>()
             .init_resource::<GameInputEnabled>()
             .init_resource::<GamePointerInputBlocked>()
+            .init_resource::<CameraInputDiagnostics>()
             .add_systems(Update, update_camera_controls);
         let camera = app
             .world_mut()
@@ -836,7 +956,89 @@ mod input_tests {
                 },
             ))
             .id();
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs(1));
+        let mut expected_yaw = 0.0;
+        let mut sent = 0;
+        for (frame, batch_size) in [0, 1, 0, 4, 2, 0, 3, 0].into_iter().enumerate() {
+            // Idle frames, uneven native batches, and an event above the current clamp.
+            let mut raw_x = 0.0;
+            let mut clipped = 0;
+            for _ in 0..batch_size {
+                let x = if sent == 5 {
+                    100.0_f32
+                } else {
+                    2.0 + sent as f32
+                };
+                let phase = match sent % 3 {
+                    0 => TouchPhase::Started,
+                    1 => TouchPhase::Moved,
+                    _ => TouchPhase::Ended,
+                };
+                app.world_mut().write_message(MouseWheel {
+                    unit: MouseScrollUnit::Pixel,
+                    phase,
+                    x,
+                    y: 0.0,
+                    window: Entity::PLACEHOLDER,
+                });
+                raw_x += x;
+                clipped += usize::from(x > 80.0);
+                expected_yaw -= x.min(80.0) * CAMERA_TRACKPAD_ORBIT_SPEED;
+                sent += 1;
+            }
+            app.world_mut()
+                .resource_mut::<Time>()
+                .advance_by(std::time::Duration::from_millis(17));
+            app.update();
+            let d = app.world().resource::<CameraInputDiagnostics>();
+            assert_eq!(d.sequence, frame as u64 + 1);
+            assert_eq!(d.wheel_events, batch_size);
+            assert_eq!(d.pixel_delta.x, raw_x);
+            assert_eq!(d.clipped_events, clipped);
+            assert_eq!(d.requested_orbit, d.applied_orbit);
+            assert!(
+                (app.world().get::<CameraRig>(camera).unwrap().target_yaw - expected_yaw).abs()
+                    < 1e-6
+            );
+        }
+        assert_eq!(sent, 10);
+    }
+
+    #[test]
+    fn camera_gestures_work_and_are_not_replayed_after_ui_capture_or_unlock() {
+        let mut app = App::new();
+        app.add_plugins(bevy::input::InputPlugin)
+            .init_resource::<Time>()
+            .init_resource::<GameInputEnabled>()
+            .init_resource::<GamePointerInputBlocked>()
+            .init_resource::<CameraInputDiagnostics>()
+            .add_systems(Update, update_camera_controls);
+        let camera = app
+            .world_mut()
+            .spawn((
+                MainCamera,
+                CameraRig {
+                    yaw: 0.0,
+                    target_yaw: 0.0,
+                    distance: CAMERA_DEFAULT_DISTANCE,
+                    target_distance: CAMERA_DEFAULT_DISTANCE,
+                    pitch_offset: 0.0,
+                },
+            ))
+            .id();
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs(1));
         let gesture = |app: &mut App| {
+            app.world_mut().write_message(MouseWheel {
+                unit: MouseScrollUnit::Pixel,
+                phase: bevy::input::touch::TouchPhase::Moved,
+                x: 20.0,
+                y: 10.0,
+                window: Entity::PLACEHOLDER,
+            });
             app.world_mut()
                 .write_message(PanGesture(Vec2::new(20.0, 0.0)));
             app.world_mut().write_message(PinchGesture(0.1));
@@ -844,6 +1046,11 @@ mod input_tests {
         };
         app.world_mut().resource_mut::<GameInputEnabled>().0 = false;
         gesture(&mut app);
+        let d = app.world().resource::<CameraInputDiagnostics>();
+        assert_eq!(d.wheel_events, 1);
+        assert!(!d.enabled);
+        assert_ne!(d.requested_orbit, 0.0);
+        assert_eq!(d.applied_orbit, 0.0);
         app.world_mut().resource_mut::<GameInputEnabled>().0 = true;
         app.update();
         assert_eq!(
@@ -852,6 +1059,10 @@ mod input_tests {
         );
         app.world_mut().resource_mut::<GamePointerInputBlocked>().0 = true;
         gesture(&mut app);
+        let d = app.world().resource::<CameraInputDiagnostics>();
+        assert_eq!(d.wheel_events, 1);
+        assert!(d.pointer_blocked);
+        assert_eq!(d.applied_orbit, 0.0);
         app.world_mut().resource_mut::<GamePointerInputBlocked>().0 = false;
         app.update();
         let rig = app.world().get::<CameraRig>(camera).unwrap();

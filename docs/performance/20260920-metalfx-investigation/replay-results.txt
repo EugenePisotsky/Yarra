@@ -1,0 +1,6 @@
+device=Apple M2 Max os=Version 26.4.1 (Build 25E253)
+case=real-writable-A samples=180 median_gpu_ms=2.3112500020943116 p95=2.6006250009231735
+case=real-readonly-A samples=180 median_gpu_ms=2.311500000359956 p95=2.585833331977483
+case=real-compact samples=180 median_gpu_ms=2.281791665154742 p95=2.457333332131384
+case=real-readonly-B samples=180 median_gpu_ms=2.3140000012062956 p95=2.5057916682271753
+case=real-writable-B samples=180 median_gpu_ms=2.309374998731073 p95=2.4563750012021046

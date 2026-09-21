@@ -15,6 +15,7 @@ const SAMPLE_SECONDS: f64 = 10.0;
 const SETTLE_SECONDS: f64 = 2.0;
 const MAX_SETTLE_SECONDS: f64 = 8.0;
 const ALL_CONTROLS: &[Control] = &[
+    Control::FrameRate,
     Control::Clouds,
     Control::Sky,
     Control::Bloom,
@@ -24,6 +25,8 @@ const ALL_CONTROLS: &[Control] = &[
     Control::Shadows,
     Control::Wind,
     Control::Scale,
+    Control::Upscaler,
+    Control::TemporalDebug,
     Control::Antialiasing,
     Control::Density,
     Control::TerrainDetail,
@@ -87,6 +90,7 @@ pub(super) struct PanelState {
     open: bool,
     tab: Tab,
     pub(super) baseline: AuditSettings,
+    pub(super) baseline_rate: FrameRate,
     slots: [Option<Capture>; 2],
     active: Option<Recording>,
     message: String,
@@ -97,6 +101,7 @@ impl Default for PanelState {
             open: std::env::args_os().any(|a| a == "--performance-open" || a == "--render-audit"),
             tab: Tab::Overview,
             baseline: default(),
+            baseline_rate: default(),
             slots: [None, None],
             active: None,
             message: "Settings are temporary. Reset restores this launch's configuration.".into(),
@@ -114,16 +119,25 @@ struct Recording {
     sampling_since: Option<f64>,
     timing_start: timing::Stamp,
     was_locked: bool,
+    was_detailed: bool,
     capture: Capture,
+}
+impl Recording {
+    fn restore_controls(&self, settings: &mut AuditSettings) {
+        settings.controls_locked = self.was_locked;
+        settings.gpu_pass_timings = self.was_detailed;
+    }
 }
 #[derive(Clone, Debug)]
 struct Capture {
     settings: AuditSettings,
+    frame_rate: FrameRate,
     frames: Vec<f64>,
     app_times: Vec<f64>,
     thermal_start: String,
     thermal_end: String,
     context: String,
+    upscaler: Option<upscaling::UpscaleStatus>,
     camera: Mat4,
     phase: f32,
     viewport: UVec2,
@@ -180,11 +194,13 @@ pub(super) fn initialize(
     mut state: ResMut<PanelState>,
     clouds: Res<engine::CloudQuality>,
     grass: Res<VegetationDebugSettings>,
+    pacing: Res<FramePacing>,
 ) {
     s.clouds = *clouds;
     s.density = grass.density_mode;
     s.lighting = grass.lighting_mode;
     state.baseline = s.clone();
+    state.baseline_rate = pacing.rate;
     commands
         .spawn((
             Button,
@@ -209,6 +225,8 @@ pub(super) fn initialize(
     .with_children(|panel| {
         panel.spawn((Text::new("PERFORMANCE"), font(18.0)));
         panel.spawn((Text::new("Starting measurements..."), font(14.0), Summary));
+        panel.spawn((Button, Control::FrameRate, button_node(), BackgroundColor(button_color())))
+            .with_child((Text::new(pacing.control_label()), font(13.0)));
         panel.spawn(Node { column_gap: px(4), flex_wrap: FlexWrap::Wrap, row_gap: px(4), ..default() }).with_children(|row| {
             for tab in [Tab::Overview, Tab::Features, Tab::Quality, Tab::Compare, Tab::Advanced] {
                 row.spawn((Button, Action::Tab(tab), button_node(), BackgroundColor(button_color())))
@@ -225,19 +243,19 @@ pub(super) fn initialize(
         });
         for (tab, note, controls) in [
             (Tab::Features, "Grass Disabled skips its render preparation, compute and draws; source streaming remains. Terrain/object draw switches keep streaming, animation and collision. Sky + haze keeps authored illumination. Cloud Off skips cloud passes; shared material bookkeeping remains.", &[Control::Clouds, Control::GrassEnabled, Control::Sky, Control::Bloom, Control::Terrain, Control::Objects, Control::Shadows, Control::Wind][..]),
-            (Tab::Quality, "Click to cycle. Larger terrain error allows coarser geometry. Object LOD size below 1 selects coarser available assets. Ground contact requirements still apply; grass density changes acceptance and geometry LOD. Lower resolution affects the 3D scene only.", &[Control::Scale, Control::Antialiasing, Control::Density, Control::TerrainDetail, Control::ObjectDetail, Control::Near][..]),
+            (Tab::Quality, "Click to cycle. Larger terrain error allows coarser geometry. Object LOD size below 1 selects coarser available assets. Ground contact requirements still apply; grass density changes acceptance and geometry LOD. Lower resolution affects the 3D scene only.", &[Control::Scale, Control::Upscaler, Control::TemporalDebug, Control::Antialiasing, Control::Density, Control::TerrainDetail, Control::ObjectDetail, Control::Near][..]),
             (Tab::Advanced, "Diagnostic experiments. Compute only hides grass draws but keeps generation; Schedule only omits generation. Draw frozen locks controls. These settings do not change published content.", &[Control::Grass, Control::Scene, Control::Shading, Control::GroundMaterial, Control::Prepass, Control::Counters, Control::GpuPassTimings, Control::RenderPath, Control::Lock, Control::Overlays][..]),
         ] {
             panel.spawn((Page(tab), page_node())).with_children(|page| {
                 page.spawn((Text::new(note), font(12.0)));
                 if tab == Tab::Advanced { page.spawn((Text::new(""), font(12.0), PassTimes)); }
                 page.spawn(Node { flex_wrap: FlexWrap::Wrap, column_gap: px(6), row_gap: px(6), ..default() }).with_children(|row| {
-                    for &control in controls { row.spawn((Button, control, Node { width: px(218), ..button_node() }, BackgroundColor(button_color()))).with_child((Text::new(control.label(&s)), font(13.0))); }
+                    for &control in controls { row.spawn((Button, control, Node { width: px(218), ..button_node() }, BackgroundColor(button_color()))).with_child((Text::new(control.label(&s, pacing.rate)), font(13.0))); }
                 });
             });
         }
         panel.spawn((Page(Tab::Compare), page_node())).with_children(|page| {
-            page.spawn((Text::new("Capture current settings into A or B: settle at least 2 s, then record 10 s. View controls lock and this panel closes. F1 / Escape cancels. Slots last for this session. Restore changes settings only; keep the same viewpoint and time of day yourself."), font(12.0)));
+            page.spawn((Text::new("Capture current settings into A or B: settle at least 2 s, then record 10 s. Detailed GPU probes pause during capture. View controls lock and this panel closes. F1 / Escape cancels. Slots last for this session. Restore changes settings only; keep the same viewpoint and time of day yourself."), font(12.0)));
             page.spawn(Node { flex_wrap: FlexWrap::Wrap, column_gap: px(6), row_gap: px(6), ..default() }).with_children(|row| {
                 for (action,label) in [(Action::Capture(0),"Capture A | 10 s"),(Action::Restore(0),"Restore A settings"),(Action::Capture(1),"Capture B | 10 s"),(Action::Restore(1),"Restore B settings"),(Action::Export,"Export report + frames")] {
                     row.spawn((Button, action, button_node(), BackgroundColor(button_color()))).with_child((Text::new(label), font(13.0)));
@@ -275,6 +293,7 @@ fn actions(
     time: Res<Time<Real>>,
     mut scroll: Query<&mut ScrollPosition, With<PanelRoot>>,
     wheel: Res<bevy::input::mouse::AccumulatedMouseScroll>,
+    mut pacing: ResMut<FramePacing>,
 ) {
     if state.open && wheel.delta.y != 0.0 {
         for mut pos in &mut scroll {
@@ -294,7 +313,7 @@ fn actions(
     for action in actions {
         if matches!(action, Action::Toggle) {
             if let Some(recording) = state.active.take() {
-                settings.controls_locked = recording.was_locked;
+                recording.restore_controls(&mut settings);
                 state.message = "Capture cancelled; previous results kept.".into();
                 state.open = true;
             } else {
@@ -315,6 +334,7 @@ fn actions(
             Action::Restore(slot) => {
                 if let Some(capture) = &state.slots[slot] {
                     *settings = capture.settings.clone();
+                    pacing.rate = capture.frame_rate;
                     settings.changed_at = time.elapsed_secs_f64();
                     state.message = format!(
                         "Restored {} settings; viewpoint unchanged.",
@@ -323,13 +343,17 @@ fn actions(
                 }
             }
             Action::Capture(slot) => {
+                let was_detailed = settings.gpu_pass_timings;
+                settings.gpu_pass_timings = false;
                 let capture = Capture {
                     settings: settings.clone(),
+                    frame_rate: pacing.rate,
                     frames: vec![],
                     app_times: vec![],
                     thermal_start: String::new(),
                     thermal_end: String::new(),
                     context: String::new(),
+                    upscaler: None,
                     camera: Mat4::IDENTITY,
                     phase: 0.0,
                     viewport: UVec2::ZERO,
@@ -343,6 +367,7 @@ fn actions(
                     sampling_since: None,
                     timing_start: timing::Stamp::default(),
                     was_locked: settings.controls_locked,
+                    was_detailed,
                     capture,
                 });
                 settings.controls_locked = true;
@@ -377,9 +402,16 @@ fn sample(
     terrain: Res<engine::TerrainLodStats>,
     camera: Single<(&GlobalTransform, &Camera), With<WorldViewCamera>>,
     atmosphere: Res<engine::AtmosphereState>,
+    upscaler: Query<&upscaling::UpscaleStatus, With<WorldViewCamera>>,
     timings: Res<timing::History>,
     stamp: Res<timing::Stamp>,
+    pacing: Res<FramePacing>,
 ) {
+    if pacing.is_changed() {
+        // Averages from the previous cap must not masquerade as the new FPS.
+        t.frames.clear();
+        t.app_times.clear();
+    }
     let frame_ms = time.delta_secs_f64() * 1000.0;
     let app_ms = t.app_ms;
     if window.focused {
@@ -392,9 +424,21 @@ fn sample(
     let Some(recording) = state.active.as_mut() else {
         return;
     };
+    if pacing.rate != recording.capture.frame_rate {
+        let recording = state.active.take().unwrap();
+        recording.restore_controls(&mut settings);
+        state.open = true;
+        state.message = "Capture cancelled: FPS limit changed.".into();
+        return;
+    }
     let now = time.elapsed_secs_f64();
-    let busy =
-        pending.0.load(Ordering::Relaxed) > 0 || streaming.loading > 0 || terrain.quality_pending;
+    let busy = pending.0.load(Ordering::Relaxed) > 0
+        || streaming.loading > 0
+        || terrain.quality_pending
+        || upscaler.single().is_ok_and(|s| {
+            settings.render_path == AuditRenderPath::Composite
+                && (s.active.is_none() || s.requested != settings.upscaler)
+        });
     let mut cancel = None;
     let mut done = false;
     if !window.focused {
@@ -405,7 +449,13 @@ fn sample(
         if busy {
             add_warning(
                 &mut recording.capture,
-                "Loading or pipeline compilation occurred during this capture.",
+                "Loading, pipeline compilation or upscaler preparation occurred during this capture.",
+            );
+        }
+        if upscaler.single().ok() != recording.capture.upscaler.as_ref() {
+            add_warning(
+                &mut recording.capture,
+                "Active upscaler or its dimensions changed during capture.",
             );
         }
         if !camera
@@ -422,11 +472,11 @@ fn sample(
         recording.capture.thermal_start = super::logging::power_state().thermal.into();
         recording.capture.camera = camera.0.to_matrix();
         recording.capture.phase = atmosphere.phase;
-        recording.capture.viewport = camera.1.physical_viewport_size().unwrap_or_default();
+        recording.capture.viewport = scene_size(camera.1, upscaler.single().ok());
         recording.capture.context = format!(
             "{}\n3D viewport: {:?}; window: {:?}; camera: {:?}; phase: {:.5}\nTerrain triangles: {}; patches: {}; resident pages: {}",
             streaming.status,
-            camera.1.physical_viewport_size(),
+            recording.capture.viewport,
             window.physical_size(),
             camera.0.to_matrix(),
             atmosphere.phase,
@@ -434,14 +484,18 @@ fn sample(
             terrain.patches,
             streaming.resident
         );
+        if let Ok(status) = upscaler.single() {
+            recording.capture.context += &format!("\n{}", status.description());
+            recording.capture.upscaler = Some(status.clone());
+        }
     } else if now - recording.started >= MAX_SETTLE_SECONDS {
         cancel = Some(
-            "Capture cancelled: loading did not settle within 8 s. Try again once the scene is ready.",
+            "Capture cancelled: render resources did not settle within 8 s. Try again once the scene is ready.",
         );
     }
     if let Some(message) = cancel {
         let recording = state.active.take().unwrap();
-        settings.controls_locked = recording.was_locked;
+        recording.restore_controls(&mut settings);
         state.open = true;
         state.message = message.into();
     } else if done {
@@ -449,7 +503,7 @@ fn sample(
         recording.capture.gpu = timings
             .gpu
             .iter()
-            .filter(|s| in_capture(s.stamp, recording.timing_start, *stamp))
+            .filter(|s| !s.stamp.detailed && in_capture(s.stamp, recording.timing_start, *stamp))
             .cloned()
             .collect();
         recording.capture.cpu = timings
@@ -477,7 +531,7 @@ fn sample(
                 "Thermal state changed during capture.",
             );
         }
-        settings.controls_locked = recording.was_locked;
+        recording.restore_controls(&mut settings);
         state.message = format!(
             "Captured {}. Compare GPU and CPU work; FPS may stay capped.",
             ['A', 'B'][recording.slot]
@@ -528,10 +582,11 @@ fn comparison(state: &PanelState) -> String {
         if let Some(c) = slot {
             let s = stats(c.frames.iter().copied());
             out += &format!(
-                "\n{} | {} frames | {:.1} FPS average\nFrame ms: median {:.2} / p95 {:.2} / p99 {:.2}\nThermal: {} -> {}\n",
+                "\n{} | {} frames | {:.1} FPS average\n{}\nFrame ms: median {:.2} / p95 {:.2} / p99 {:.2}\nThermal: {} -> {}\n",
                 ['A', 'B'][i],
                 c.frames.len(),
                 1000.0 / s.mean,
+                c.frame_rate.label(),
                 s.median,
                 s.p95,
                 s.p99,
@@ -539,6 +594,9 @@ fn comparison(state: &PanelState) -> String {
                 c.thermal_end
             );
             out += &timing_summary(&c.gpu, &c.cpu);
+            if let Some(upscaler) = &c.upscaler {
+                out += &format!("{}\n", upscaler.description());
+            }
             for warning in &c.warnings {
                 out += &format!("{warning}\n");
             }
@@ -558,8 +616,8 @@ fn comparison(state: &PanelState) -> String {
         );
         let mut differences = 0;
         for &control in ALL_CONTROLS {
-            let from = control.label(&a.settings);
-            let to = control.label(&b.settings);
+            let from = control.label(&a.settings, a.frame_rate);
+            let to = control.label(&b.settings, b.frame_rate);
             if from != to {
                 differences += 1;
                 out += &format!("{from} -> {to}\n");
@@ -589,6 +647,7 @@ fn refresh(
     streaming: Res<engine::StreamingStats>,
     terrain: Res<engine::TerrainLodStats>,
     camera: Single<&Camera, With<WorldViewCamera>>,
+    upscaler: Query<&upscaling::UpscaleStatus, With<WorldViewCamera>>,
     window: Single<&Window, With<PrimaryWindow>>,
     mut texts: ParamSet<(
         Query<&mut Text, (With<Summary>, Without<PassTimes>)>,
@@ -656,6 +715,7 @@ fn refresh(
         .iter()
         .filter(|s| {
             gpu_fresh
+                && !s.stamp.detailed
                 && s.stamp.epoch == stamp.epoch
                 && stamp.frame.saturating_sub(s.stamp.frame) < 240
         })
@@ -667,7 +727,10 @@ fn refresh(
         .filter(|s| s.stamp.epoch == stamp.epoch && stamp.frame.saturating_sub(s.stamp.frame) < 240)
         .cloned()
         .collect();
-    let timing_line = timing_summary(&recent_gpu, &recent_cpu);
+    let mut timing_line = timing_summary(&recent_gpu, &recent_cpu);
+    if let Ok(status) = upscaler.single() {
+        timing_line += &status.description();
+    }
     let s = stats(t.frames.iter().copied());
     for mut text in &mut texts.p0() {
         **text = format!(
@@ -683,8 +746,8 @@ fn refresh(
     for mut text in &mut texts.p1() {
         **text = format!(
             "3D: {}x{} | display: {}x{}\nMain-app elapsed median: {:.2} ms\nPipelines compiling: {} | loading pages: {}\nResident pages: {} | failed: {}\nTerrain: {} triangles / {} patches\nContact limited: {} | quality pending: {}\nObject LOD counts: {:?}\n{}",
-            camera.physical_viewport_size().unwrap_or_default().x,
-            camera.physical_viewport_size().unwrap_or_default().y,
+            scene_size(&camera, upscaler.single().ok()).x,
+            scene_size(&camera, upscaler.single().ok()).y,
             window.physical_width(),
             window.physical_height(),
             stats(t.app_times.iter().copied()).median,
@@ -817,12 +880,13 @@ fn timing_details(history: &timing::History, stamp: timing::Stamp) -> String {
         "{}\nDropped / invalid samples: {}\n",
         history.status, history.dropped
     );
-    let latest =
-        history.gpu.iter().rev().find(|s| {
-            s.stamp.epoch == stamp.epoch && stamp.frame.saturating_sub(s.stamp.frame) < 120
-        });
+    let latest = history.gpu.iter().rev().find(|s| {
+        s.stamp.detailed
+            && s.stamp.epoch == stamp.epoch
+            && stamp.frame.saturating_sub(s.stamp.frame) < 240
+    });
     if let Some(gpu) = latest {
-        out += "GPU command groups (elapsed spans, ms):\n";
+        out += "GPU diagnostic spans (ms, includes probe overhead):\n";
         if gpu.invalid_scopes > 0 {
             out += &format!("{} invalid scope(s) omitted.\n", gpu.invalid_scopes);
         }
@@ -834,6 +898,8 @@ fn timing_details(history: &timing::History, stamp: timing::Stamp) -> String {
     }
     if !stamp.detailed {
         out += "Enable GPU pass timings above for a breakdown (adds probe overhead).\n";
+    } else {
+        out += "Probes run every 60 frames and can reduce performance. Their totals are excluded from the normal GPU figure. A/B captures pause probes.\n";
     }
     let recent: Vec<_> = history
         .cpu
@@ -875,7 +941,28 @@ fn timing_details(history: &timing::History, stamp: timing::Stamp) -> String {
     }
     out
 }
+fn scene_size(camera: &Camera, status: Option<&upscaling::UpscaleStatus>) -> UVec2 {
+    status.filter(|s| s.input_size != UVec2::ZERO).map_or_else(
+        || camera.physical_viewport_size().unwrap_or_default(),
+        |s| s.input_size,
+    )
+}
 fn display_name(name: &str) -> &str {
+    if name.contains("yarra_upscaling::output::draw") {
+        return "Tone map + output";
+    }
+    if name.contains("temporal::resolve") {
+        return "Temporal reconstruction";
+    }
+    if name.contains("temporal::initialize_motion") {
+        return "Scene motion preparation";
+    }
+    if name.contains("temporal::prepare_previous") {
+        return "Grass previous wind pose";
+    }
+    if name.contains("temporal::draw") {
+        return "Grass colour + motion";
+    }
     if name.contains("blade_preparation") {
         return "Grass generation";
     }
@@ -969,6 +1056,7 @@ mod tests {
     fn recording_app() -> App {
         let mut app = App::new();
         app.init_resource::<Time<Real>>()
+            .init_resource::<FramePacing>()
             .init_resource::<Telemetry>()
             .init_resource::<AuditSettings>()
             .init_resource::<PendingPipelines>()
@@ -994,19 +1082,23 @@ mod tests {
         app.world_mut()
             .resource_mut::<AuditSettings>()
             .controls_locked = true;
+        app.world_mut().resource_mut::<FramePacing>().rate = FrameRate::new(60);
         app.world_mut().resource_mut::<PanelState>().active = Some(Recording {
             slot: 0,
             started: 0.0,
             sampling_since: None,
             timing_start: timing::Stamp::default(),
             was_locked: false,
+            was_detailed: true,
             capture: Capture {
                 settings: AuditSettings::default(),
+                frame_rate: FrameRate::new(60),
                 frames: vec![],
                 app_times: vec![],
                 thermal_start: String::new(),
                 thermal_end: String::new(),
                 context: String::new(),
+                upscaler: None,
                 camera: Mat4::IDENTITY,
                 phase: 0.0,
                 viewport: UVec2::ZERO,
@@ -1023,6 +1115,78 @@ mod tests {
             .advance_by(std::time::Duration::from_secs_f64(seconds));
         app.update();
     }
+    #[test]
+    fn capture_rejects_an_external_fps_change() {
+        let mut app = recording_app();
+        advance(&mut app, 2.1);
+        app.world_mut().resource_mut::<FramePacing>().rate = FrameRate::new(30);
+        advance(&mut app, 0.1);
+        let panel = app.world().resource::<PanelState>();
+        assert!(!panel.recording());
+        assert!(panel.slots[0].is_none());
+        assert!(panel.message.contains("FPS limit changed"));
+        assert!(!app.world().resource::<AuditSettings>().controls_locked);
+    }
+
+    #[test]
+    fn capture_waits_for_upscaling_and_flags_a_backend_change() {
+        let mut app = recording_app();
+        let camera = app
+            .world_mut()
+            .query_filtered::<Entity, With<WorldViewCamera>>()
+            .single(app.world())
+            .unwrap();
+        app.world_mut()
+            .entity_mut(camera)
+            .insert(upscaling::UpscaleStatus::default());
+        advance(&mut app, 2.1);
+        assert!(
+            app.world()
+                .resource::<PanelState>()
+                .active
+                .as_ref()
+                .unwrap()
+                .sampling_since
+                .is_none()
+        );
+        app.world_mut()
+            .get_mut::<upscaling::UpscaleStatus>(camera)
+            .unwrap()
+            .active = Some(upscaling::UpscaleMethod::Linear);
+        advance(&mut app, 0.1);
+        assert!(
+            app.world()
+                .resource::<PanelState>()
+                .active
+                .as_ref()
+                .unwrap()
+                .sampling_since
+                .is_some()
+        );
+        app.world_mut()
+            .get_mut::<upscaling::UpscaleStatus>(camera)
+            .unwrap()
+            .active = Some(upscaling::UpscaleMethod::MetalFxSpatial);
+        advance(&mut app, 0.1);
+        let recording = app
+            .world()
+            .resource::<PanelState>()
+            .active
+            .as_ref()
+            .unwrap();
+        assert!(
+            recording
+                .capture
+                .warnings
+                .iter()
+                .any(|w| w.contains("upscaler"))
+        );
+        assert_eq!(
+            recording.capture.upscaler.as_ref().unwrap().active,
+            Some(upscaling::UpscaleMethod::Linear)
+        );
+    }
+
     #[test]
     fn capture_is_bounded_and_restores_input_lock() {
         let mut app = recording_app();
@@ -1044,6 +1208,7 @@ mod tests {
         assert!(panel.open);
         assert_eq!(panel.slots[0].as_ref().unwrap().frames.len(), 2);
         assert!(!app.world().resource::<AuditSettings>().controls_locked);
+        assert!(app.world().resource::<AuditSettings>().gpu_pass_timings);
     }
     #[test]
     fn capture_aborts_if_loading_never_settles_or_focus_is_lost() {
@@ -1055,6 +1220,7 @@ mod tests {
         assert!(!app.world().resource::<PanelState>().recording());
         assert!(app.world().resource::<PanelState>().slots[0].is_none());
         assert!(!app.world().resource::<AuditSettings>().controls_locked);
+        assert!(app.world().resource::<AuditSettings>().gpu_pass_timings);
         let mut app = recording_app();
         advance(&mut app, 2.1);
         let window = app
@@ -1088,7 +1254,13 @@ mod tests {
             epoch: 7,
             ..default()
         };
-        for (frame, epoch, ms) in [(90, 7, 9.0), (102, 6, 99.0), (106, 7, 2.5), (201, 7, 30.0)] {
+        for (frame, epoch, ms, detailed) in [
+            (90, 7, 9.0, false),
+            (102, 6, 99.0, false),
+            (106, 7, 2.5, false),
+            (120, 7, 200.0, true),
+            (201, 7, 30.0, false),
+        ] {
             app.world_mut()
                 .resource_mut::<timing::History>()
                 .gpu
@@ -1096,7 +1268,7 @@ mod tests {
                     stamp: timing::Stamp {
                         frame,
                         epoch,
-                        ..default()
+                        detailed,
                     },
                     elapsed_ms: ms,
                     invalid_scopes: 0,
@@ -1114,7 +1286,9 @@ mod tests {
         }
         app.world_mut()
             .spawn((Interaction::Pressed, Action::Restore(0)));
+        app.world_mut().resource_mut::<FramePacing>().rate = FrameRate::new(120);
         app.update();
+        assert_eq!(app.world().resource::<FramePacing>().rate.fps(), 60);
         let settings = app.world().resource::<AuditSettings>();
         assert!(!settings.hide_objects);
         assert_eq!(
@@ -1146,7 +1320,7 @@ mod tests {
         assert_eq!(
             gpu.lines().count(),
             3,
-            "only the in-range sample from this settings epoch is captured"
+            "only normal, in-range samples from this settings epoch are captured"
         );
         assert!(dir.join("A-cpu.csv").exists());
         assert!(!dir.join("B.csv").exists());
@@ -1165,11 +1339,13 @@ mod tests {
     fn comparison_surfaces_multiple_changes() {
         let mut capture = Capture {
             settings: AuditSettings::default(),
+            frame_rate: default(),
             frames: vec![8.0; 10],
             app_times: vec![2.0; 10],
             thermal_start: "nominal".into(),
             thermal_end: "nominal".into(),
             context: String::new(),
+            upscaler: None,
             camera: Mat4::IDENTITY,
             phase: 0.5,
             viewport: UVec2::ZERO,
@@ -1190,6 +1366,7 @@ mod tests {
             sample.elapsed_ms = 2.2;
         }
         b.settings.clouds = engine::CloudQuality::Off;
+        b.frame_rate = FrameRate::new(60);
         b.settings.hide_objects = true;
         b.thermal_start = "fair".into();
         let state = PanelState {
@@ -1198,6 +1375,7 @@ mod tests {
         };
         let report = comparison(&state);
         assert!(report.contains("Clouds:"));
+        assert!(report.contains("FPS limit: Follow display -> FPS limit: 60"));
         assert!(report.contains("Object draws:"));
         assert!(report.contains("Conditions differ"));
         assert!(report.contains("B - A GPU median: +0.70 ms"));

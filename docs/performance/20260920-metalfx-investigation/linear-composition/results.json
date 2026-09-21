@@ -1,0 +1,72 @@
+{
+  "settings": {
+    "scale": 0.75,
+    "msaa": 4,
+    "output": [
+      3456,
+      1942
+    ],
+    "input": [
+      2592,
+      1457
+    ],
+    "warmup_seconds": 8,
+    "measure_seconds": 8
+  },
+  "results": [
+    {
+      "case": "linear75-before",
+      "code": 0,
+      "command": [
+        "/Users/eugenepisotsky/Dev/Sources/Hobby/YarraProject/tmp/recovery-20260920/Before.app/Contents/MacOS/empty_frame",
+        "--scale",
+        "0.75",
+        "--upscaler",
+        "linear",
+        "--msaa",
+        "4"
+      ],
+      "errors": [],
+      "valid_focus": true,
+      "start": "2026-09-20T20:29:13.824634Z  WARN empty_frame: EMPTY_FRAME event=measure_start unix_ms=1789936153824 surface=UVec2(3456, 1942) focused=true",
+      "complete": "2026-09-20T20:29:21.832514Z  WARN empty_frame: EMPTY_FRAME event=complete unix_ms=1789936161832 frames=961 seconds=8.008 fps=120.00 focused=true",
+      "packets": 19,
+      "hud_gpu_median": 1.43,
+      "hud_interval_mean": 8.330247046186896,
+      "power_samples": 7,
+      "gpu_power_mean": 0.40915607128824505,
+      "cpu_power_mean": 7.619573661259243,
+      "gpu_freq_mhz_mean": 444,
+      "gpu_active_ratio_mean": 0.5583044716290065,
+      "executable_sha256": "7276ada449838cedc23cc1b69c552cec08a5226c0d6037623bda716d35a079a9",
+      "source_has_direct_linear_status": false
+    },
+    {
+      "case": "linear75-after",
+      "code": 0,
+      "command": [
+        "/Users/eugenepisotsky/Dev/Sources/Hobby/YarraProject/tmp/recovery-20260920/After.app/Contents/MacOS/empty_frame",
+        "--scale",
+        "0.75",
+        "--upscaler",
+        "linear",
+        "--msaa",
+        "4"
+      ],
+      "errors": [],
+      "valid_focus": true,
+      "start": "2026-09-20T20:29:41.782916Z  WARN empty_frame: EMPTY_FRAME event=measure_start unix_ms=1789936181782 surface=UVec2(3456, 1942) focused=true",
+      "complete": "2026-09-20T20:29:49.791017Z  WARN empty_frame: EMPTY_FRAME event=complete unix_ms=1789936189791 frames=961 seconds=8.008 fps=120.01 focused=true",
+      "packets": 19,
+      "hud_gpu_median": 1.42,
+      "hud_interval_mean": 8.331299677765843,
+      "power_samples": 7,
+      "gpu_power_mean": 0.2581672647169658,
+      "cpu_power_mean": 2.46935544695173,
+      "gpu_freq_mhz_mean": 444,
+      "gpu_active_ratio_mean": 0.5426943983350482,
+      "executable_sha256": "07975c7c271195ee0ebe698e37d4ade0ab4fcdf6c2cc3dbfc5ef45dea2265689",
+      "source_has_direct_linear_status": true
+    }
+  ]
+}

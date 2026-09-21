@@ -1,0 +1,76 @@
+--- a/src/metal/mod.rs
++++ b/src/metal/mod.rs
+@@ -459,6 +459,7 @@
+ pub struct Queue {
+     shared: Arc<QueueShared>,
+     timestamp_period: f32,
++    minimum_presentation_duration: atomic::AtomicU64,
+ }
+ 
+ unsafe impl Send for Queue {}
+@@ -475,11 +476,20 @@
+                 command_buffer_created_not_submitted: atomic::AtomicUsize::new(0),
+             }),
+             timestamp_period,
++            minimum_presentation_duration: atomic::AtomicU64::new(0),
+         }
+     }
+ 
+     pub fn as_raw(&self) -> &ProtocolObject<dyn MTLCommandQueue> {
+         &self.shared.raw
++    }
++
++    /// Sets the minimum display duration for drawables presented by this queue.
++    /// Zero retains wgpu's default presentation. Requires macOS 10.15.4 or iOS 10.3.
++    /// This schedules presentation on Metal; it does not sleep or wait on the CPU.
++    pub fn set_minimum_presentation_duration(&self, duration: core::time::Duration) {
++        self.minimum_presentation_duration
++            .store(duration.as_secs_f64().to_bits(), atomic::Ordering::Relaxed);
+     }
+ }
+ 
+@@ -610,17 +620,32 @@
+             // because we immediately commit this buffer.
+             let command_buffer = self.shared.raw.commandBuffer().unwrap();
+             command_buffer.setLabel(Some(ns_string!("(wgpu internal) Present")));
++            let duration = f64::from_bits(
++                self.minimum_presentation_duration
++                    .load(atomic::Ordering::Relaxed),
++            );
++            let paced = duration > 0.0
++                && available!(macos = 10.15.4, ios = 10.3, tvos = 10.3, visionos = 1.0);
+ 
+             // https://developer.apple.com/documentation/quartzcore/cametallayer/1478157-presentswithtransaction?language=objc
+             if !texture.present_with_transaction {
+-                command_buffer.presentDrawable(&texture.drawable);
++                if paced {
++                    command_buffer
++                        .presentDrawable_afterMinimumDuration(&texture.drawable, duration);
++                } else {
++                    command_buffer.presentDrawable(&texture.drawable);
++                }
+             }
+ 
+             command_buffer.commit();
+ 
+             if texture.present_with_transaction {
+                 command_buffer.waitUntilScheduled();
+-                texture.drawable.present();
++                if paced {
++                    texture.drawable.presentAfterMinimumDuration(duration);
++                } else {
++                    texture.drawable.present();
++                }
+             }
+         });
+         Ok(())
+--- a/src/metal/adapter.rs
++++ b/src/metal/adapter.rs
+@@ -106,6 +106,7 @@
+                     command_buffer_created_not_submitted: atomic::AtomicUsize::new(0),
+                 }),
+                 timestamp_period,
++                minimum_presentation_duration: atomic::AtomicU64::new(0),
+             },
+         })
+     }

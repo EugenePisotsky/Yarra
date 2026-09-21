@@ -3823,9 +3823,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d49e936b501e5c5bf01fda3a9452ff86dc3ea98ad5f283e1455153142d97518c"
 dependencies = [
  "bitflags 2.13.1",
+ "block2 0.6.2",
  "objc2 0.6.4",
+ "objc2-core-foundation",
  "objc2-core-graphics",
  "objc2-foundation 0.3.2",
+ "objc2-quartz-core 0.3.2",
 ]
 
 [[package]]
@@ -3997,7 +4000,19 @@ dependencies = [
  "bitflags 2.13.1",
  "block2 0.6.2",
  "objc2 0.6.4",
+ "objc2-core-foundation",
  "objc2-foundation 0.3.2",
+]
+
+[[package]]
+name = "objc2-metal-fx"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2db6f3a9d3b07481d9e5884f592aff6fd3f99e155423d1d1af3977e77a90ea0e"
+dependencies = [
+ "objc2 0.6.4",
+ "objc2-foundation 0.3.2",
+ "objc2-metal 0.3.2",
 ]
 
 [[package]]
@@ -5816,8 +5831,6 @@ dependencies = [
 [[package]]
 name = "wgpu-hal"
 version = "29.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97ace1c17727311c22a46e4e3faf56ea6de81af99dcc839bdfb54857b94d448d"
 dependencies = [
  "android_system_properties",
  "arrayvec",
@@ -6382,12 +6395,18 @@ name = "yarra-app-game"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "block2 0.6.2",
+ "objc2 0.6.4",
+ "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
  "objc2-metal 0.3.2",
+ "objc2-quartz-core 0.3.2",
+ "raw-window-handle",
  "ron",
  "wgpu",
  "yarra-engine",
  "yarra-terrain-render",
+ "yarra-upscaling",
  "yarra-vegetation",
  "yarra-vegetation-render",
  "yarra-world",
@@ -6458,6 +6477,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "yarra-upscaling"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "bytemuck",
+ "objc2 0.6.4",
+ "objc2-metal 0.3.2",
+ "objc2-metal-fx",
+ "wgpu",
+]
+
+[[package]]
 name = "yarra-vegetation"
 version = "0.1.0"
 dependencies = [
@@ -6483,6 +6514,7 @@ dependencies = [
  "ron",
  "serde",
  "yarra-atmosphere",
+ "yarra-upscaling",
  "yarra-vegetation",
 ]
 
