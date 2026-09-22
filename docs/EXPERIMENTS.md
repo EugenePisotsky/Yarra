@@ -27,12 +27,12 @@ These results were recorded in the former `RENDER_AUDIT.md`, `PERFORMANCE_HANDOF
 
 ## Grass appearance and canopy — September 9–16
 
-Appearance acceptance and performance acceptance are separate. The former grass-density/improvement/shadow/lighting documents at `2afce93` retain the full iteration narrative; local studies/screenshots may require the original ignored `.editor/` or `tmp/` files.
+Appearance acceptance and performance acceptance are separate. The former grass-density/improvement/shadow/lighting documents at `2afce93` retain the full iteration narrative; local studies/screenshots may require the original ignored `.editor/` or `tmp/` files. Offline shadow/tuft fixtures, field shader-injection and fixed density/curve recipe tools were retired September 22; their source is recoverable at `efc6566`, and the findings below remain.
 
 | Trial | Decision / measured effect |
 | --- | --- |
 | Raised shadow sheet and clump proxy | **Rejected and removed September 9.** Blurry repeated patterns, zoom boundaries and poor overhead appearance. On/off means 4.220/4.199 ms and 4.053/4.018 ms were noise-sized, not proof of zero cost. No production physical grass-shadow caster resulted. |
-| Pixel/contact shadow fixture | **Test only.** Pixel16 gave subtle blade contact; Pixel8 lost detail. Missing ground shadows and false edges remained. No runtime GPU measurement or accepted integration. |
+| Pixel/contact shadow fixture | **Retired offline study.** Pixel16 gave subtle blade contact; Pixel8 lost detail. Missing ground shadows and false edges remained. No runtime GPU measurement or accepted integration. |
 | Static root coverage | **Art study only**, not directional occlusion. One/two extra ground samples; ~1.42 MiB in a 16 m fixture, CPU bake 1–3.4 ms. No GPU-cost result. |
 | Procedural blade bands | First version too faint; second made regular static stripes; third used irregular wind advection. **Historical optional experiment; game controls removed during cleanup**; not an accepted physical shadow solution and not GPU-timed. |
 | Density, length and curvature studies | Fuller paired/arched blades compared ~45 versus 60 candidates; length/layering and width trials changed local catalogs. Fixed curvature sampling showed visible knees and was rejected; the geometric direction-error metric did not match appearance. These studies do not establish a density performance target. |
@@ -82,7 +82,7 @@ Primary [summary](performance/20260920-metalfx-investigation/summary.json) and [
 
 | Approach | Decision / observation |
 | --- | --- |
-| Native / Spatial / Temporal baseline | Native 100% + 4×: HUD 6.36 ms / GPU 24.2 W; Spatial 50%: 3.97 / 10.7; Temporal 50%: 7.07 / 21.9. Temporal with linear bypass 4.01 ms; no bloom 6.85. **Spatial remains Auto on supported devices; Temporal is a prototype.** |
+| Native / Spatial / Temporal baseline | Native 100% + 4×: HUD 6.36 ms / GPU 24.2 W; Spatial 50%: 3.97 / 10.7; Temporal 50%: 7.07 / 21.9. Temporal with linear bypass 4.01 ms; no bloom 6.85. **Spatial remains Auto on supported devices; Temporal is integrated and selectable, with unresolved performance/quality issues below.** |
 | GPU timing validity | Temporal bloom on/off markers 6.63/3.93 ms versus HUD 7.07/6.85. **Marker undercount unresolved.** F1's sampled GPU span cannot settle total Temporal cost. No repeated scaler recreation, separate submission queue, CPU pixel copy or continuous reset was identified. |
 | Native/compact input packing | Real input native ~2.31 ms versus compact ~2.282 (only ~0.03 ms). Flat input ~2.37 ms at large output versus ~1.44 at 720→1440. Packing added work without useful saving and was removed. No allocation/auto-exposure configuration fix established. |
 | Shared motion attachment | Temporary ~25.6 MiB saving, Temporal 7.15→7.26 ms; grass-off test did not validate grass. **Reverted.** [Follow-up](performance/20260920-metalfx-investigation/followup-results.json), [patch](performance/20260920-metalfx-investigation/shared-motion-experiment.patch). |

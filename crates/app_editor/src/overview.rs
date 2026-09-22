@@ -10,7 +10,7 @@ use crate::derived_jobs::{
 use crate::project_store::ProjectEditorStore;
 use crate::tools::{DerivedProduct, EditorToolId};
 use crate::workspaces::{
-    world_impl::{EditorCamera, EditorOverlayGizmos, update_editor_camera},
+    world::{EditorCamera, EditorOverlayGizmos, update_editor_camera},
     world_workspace_active,
 };
 

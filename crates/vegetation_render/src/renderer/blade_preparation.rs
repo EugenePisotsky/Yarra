@@ -1,5 +1,24 @@
 //! Per-blade curve preparation. Overflow uses the original vertex calculation, not fewer blades.
-use super::*;
+use super::{
+    buffers::VegetationBuffers,
+    gpu_types::{CameraGpu, DebugConfigGpu, PROCEDURAL_INSTANCE_CAPACITY},
+};
+use crate::VegetationDiagnostics;
+use bevy::{
+    prelude::*,
+    render::{
+        diagnostic::RecordDiagnostics,
+        render_resource::{
+            BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, Buffer,
+            BufferDescriptor, BufferUsages, CachedComputePipelineId, ComputePassDescriptor,
+            ComputePipelineDescriptor, ComputePipelineId, PipelineCache, ShaderStages,
+            binding_types::{
+                storage_buffer_read_only_sized, storage_buffer_sized, uniform_buffer_sized,
+            },
+        },
+        renderer::{RenderContext, RenderDevice},
+    },
+};
 
 #[cfg(test)]
 pub(super) const BLADE_CAPACITY: u64 = 131_072;
@@ -296,6 +315,7 @@ pub(super) fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bytemuck::Zeroable;
 
     #[test]
     fn prepared_pose_ignores_lighting_but_tracks_wind_and_placement_identity() {

@@ -29,9 +29,9 @@ impl Plugin for RoadAuthoringPlugin {
                     .chain()
                     .after(crate::project_store::ProjectStoreUpdate)
                     .after(crate::domain_editing::reconcile_dense_working_sets)
-                    .after(crate::workspaces::world_impl::update_editor_camera)
+                    .after(crate::workspaces::world::update_editor_camera)
                     .before(crate::environment_paint::preview::receive_preview)
-                    .before(crate::workspaces::world_impl::handle_editor_shortcuts)
+                    .before(crate::workspaces::world::handle_editor_shortcuts)
                     .before(crate::saving::drive_editor_save),
             )
             .add_systems(PostUpdate, viewport::draw);

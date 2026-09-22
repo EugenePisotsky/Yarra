@@ -86,7 +86,7 @@ Repro names: `low-walk`, `grass-close`, `grass-away`, `grass-follow`, `grass-fol
 
 Timed power runs reject frame-limited screenshots/GPU captures. `--profile-diagnostic` is for explicit finite capture presentation, not an ordinary power measurement. `--profile-native-pacing` preserves the normal scheduler; its profile FPS describes the reference deadline. Scripted profiles lock F1's cap.
 
-Specialized tools remain under `tools/`: `grass_game_benchmark.py` isolates shader assets; `grass_study_benchmark.py` temporarily replaces live shaders and is unsuitable for concurrent editing; `summarize_gpu_counters.py` analyzes exported Xcode CSVs. Study/shadow scripts create local visual fixtures, not accepted performance results. Prefer the controlled runner for new comparable performance sessions.
+Specialized tools remain under `tools/`: `grass_game_benchmark.py` isolates shader assets; `summarize_gpu_counters.py` analyzes exported Xcode CSVs. `vegetation_study.py` captures editor studies; ground, blade-band and shape-comparison tools produce visual fixtures, not accepted performance results. Prefer the controlled runner for new comparable performance sessions. Historical shader-injection and shadow/tuft runners were retired; see [refactoring](REFACTORING.md#completed-standalone-experiment-retirement).
 
 ## Input and native probes
 

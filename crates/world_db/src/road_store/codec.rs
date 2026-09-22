@@ -238,7 +238,7 @@ pub(super) fn adjacent(c: &Connection, id: RoadKnotId) -> Result<Vec<RoadSpanId>
     let mut q=c.prepare("SELECT id FROM road_spans WHERE start_id=?1 UNION SELECT id FROM road_spans WHERE end_id=?1 LIMIT 3")?;
     let ids = q
         .query_map([id.0.as_slice()], |r| {
-            Ok(RoadSpanId(crate::blob_array(
+            Ok(RoadSpanId(crate::storage::blob_array(
                 r.get_ref(0)?.as_blob()?,
                 "span id",
             )?))

@@ -180,7 +180,7 @@ impl StudyDocument {
             || ![[WIDTH, HEIGHT], [1280, 960], [1920, 1080]].contains(&self.render_size)
             || ![1, 4].contains(&self.msaa_samples)
             || self.exposure_ev100 != 13.0
-            || self.ground_color != super::GROUND_COLOR
+            || self.ground_color != super::viewport::GROUND_COLOR
             || self.character_profile != engine::DEFAULT_CHARACTER_PRESENTATION_ID
         {
             return Err("Unsupported study version or render configuration".into());

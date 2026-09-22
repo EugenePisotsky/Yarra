@@ -2,7 +2,6 @@
 //!
 //! Reads use one SQLite snapshot. Writes compare definition and cell revisions in an IMMEDIATE
 //! transaction, validate the shared mask borders, and commit the entire gesture or nothing.
-
 use std::collections::{BTreeMap, BTreeSet};
 
 use environment::{
@@ -14,7 +13,9 @@ use serde::{Deserialize, Serialize};
 use vegetation::VegetationCatalog;
 use world::{CellCoord, WorldSpaceId};
 
-use crate::{ProjectDocument, ProjectReader, ProjectWriter, WorldDbError, read_vegetation_catalog};
+use crate::{
+    ProjectDocument, ProjectReader, ProjectWriter, WorldDbError, catalog::read_vegetation_catalog,
+};
 
 pub const MAX_ENVIRONMENT_DEFINITIONS: usize = 32;
 pub const MAX_ENVIRONMENT_READ_CELLS: usize = 576;
@@ -273,7 +274,7 @@ fn read_cell(
                 "coverage read exceeded its byte budget or contains malformed tiles",
             ));
         }
-        let layer = environment::LayerId(crate::blob_array(
+        let layer = environment::LayerId(crate::storage::blob_array(
             row.get_ref(0)?.as_blob().map_err(rusqlite::Error::from)?,
             "layer_id",
         )?);
@@ -463,7 +464,7 @@ impl ProjectReader {
         maximum: CellCoord,
         maximum_records: usize,
     ) -> Result<SourceEnvironmentCellQuery, WorldDbError> {
-        crate::validate_spatial_query(minimum, maximum, maximum_records)?;
+        crate::project::query::validate_spatial_query(minimum, maximum, maximum_records)?;
         if maximum_records > MAX_ENVIRONMENT_READ_CELLS {
             return Err(invalid("environment query exceeds the cell budget"));
         }
@@ -677,13 +678,13 @@ impl ProjectReader {
         space: WorldSpaceId,
     ) -> Result<crate::TerrainRenderResources, WorldDbError> {
         let tx = self.connection.unchecked_transaction()?;
-        let profile = tx.query_row("SELECT world_space_id, texture_set_id, weight_resolution, macro_small_scale, macro_medium_scale, macro_large_scale, macro_contrast, macro_albedo_strength FROM world_space_terrain_profiles WHERE world_space_id = ?1", [space.0], crate::terrain_profile_from_row)?;
-        let texture_set = tx.query_row("SELECT texture_set_id, texture_set_key, base_color_universal_uri, normal_material_universal_uri, macro_variation_universal_uri, base_color_astc_uri, normal_material_astc_uri, macro_variation_astc_uri, universal_gpu_bytes, astc_gpu_bytes FROM terrain_texture_sets WHERE texture_set_id = ?1", [profile.texture_set.0.as_slice()], crate::terrain_texture_set_from_row)?;
+        let profile = tx.query_row("SELECT world_space_id, texture_set_id, weight_resolution, macro_small_scale, macro_medium_scale, macro_large_scale, macro_contrast, macro_albedo_strength FROM world_space_terrain_profiles WHERE world_space_id = ?1", [space.0], crate::catalog::terrain_profile_from_row)?;
+        let texture_set = tx.query_row("SELECT texture_set_id, texture_set_key, base_color_universal_uri, normal_material_universal_uri, macro_variation_universal_uri, base_color_astc_uri, normal_material_astc_uri, macro_variation_astc_uri, universal_gpu_bytes, astc_gpu_bytes FROM terrain_texture_sets WHERE texture_set_id = ?1", [profile.texture_set.0.as_slice()], crate::catalog::terrain_texture_set_from_row)?;
         let mut query = tx.prepare("SELECT s.surface_id, s.surface_key, s.display_name, s.tile_size, s.anti_tiling, s.normal_y_sign, s.normal_strength, s.roughness_min, s.roughness_max, l.layer FROM terrain_texture_set_layers l JOIN terrain_surfaces s ON s.surface_id = l.surface_id WHERE l.texture_set_id = ?1 ORDER BY l.layer LIMIT 65")?;
         let surfaces = query
             .query_map([profile.texture_set.0.as_slice()], |row| {
                 Ok(crate::RuntimeTerrainSurface {
-                    surface: crate::terrain_surface_from_row(row)?,
+                    surface: crate::catalog::terrain_surface_from_row(row)?,
                     layer: row.get(9)?,
                 })
             })?

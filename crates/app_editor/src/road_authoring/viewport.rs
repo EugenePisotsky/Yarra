@@ -4,7 +4,7 @@ use crate::{
     publication::RuntimePublicationState,
     saving::EditorSaveCoordinator,
     shell::EditorInputCapture,
-    workspaces::world_impl::EditorOverlayGizmos,
+    workspaces::world::EditorOverlayGizmos,
 };
 use bevy::{ecs::system::SystemParam, window::PrimaryWindow};
 use engine::{StreamedTerrainSurface, WorldOrigin, WorldViewCamera};

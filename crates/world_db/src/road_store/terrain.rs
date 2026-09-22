@@ -65,7 +65,7 @@ pub(crate) fn read_terrain_source(
                     if bytes.len() != usize::from(resolution).pow(2) * 4 {
                         return Err(rusqlite::Error::InvalidQuery);
                     }
-                    crate::decode_f32_blob(bytes, "terrain heights")?
+                    crate::storage::decode_f32_blob(bytes, "terrain heights")?
                 } else {
                     vec![r.get::<_, f32>(0)?; usize::from(resolution).pow(2)]
                 };

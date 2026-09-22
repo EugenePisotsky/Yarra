@@ -21,7 +21,7 @@ use crate::{
     vegetation_authoring::{VegetationAuthoringState, VegetationPreviewSync},
     workspaces::{
         EditorWorkspace,
-        world_impl::{EditorOverlayGizmos, handle_editor_shortcuts, update_editor_camera},
+        world::{EditorOverlayGizmos, handle_editor_shortcuts, update_editor_camera},
     },
 };
 use bevy::{ecs::system::SystemParam, prelude::*, window::PrimaryWindow};

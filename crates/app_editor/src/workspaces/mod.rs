@@ -9,9 +9,7 @@ mod animation;
 pub(crate) mod presets;
 pub(crate) use presets::{PresetWorkspaceCamera, PresetWorkspacePlugin};
 mod vegetation;
-mod world;
-pub(crate) mod world_impl;
-mod world_ui;
+pub(crate) mod world;
 
 use std::collections::HashSet;
 

@@ -1,8 +1,14 @@
 //! Bounded composite IO and private staging storage; no renderer dependencies.
-use super::*;
+use crate::runtime::read_runtime_manifest;
+use crate::storage::{blob_array, ensure_schema_version};
+use crate::{RuntimeManifest, RuntimeReader, WorldDbError};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
+use std::io::{Cursor, Read};
+use std::path::Path;
 use world::{
-    MAX_TERRAIN_COMPOSITE_BYTES, TerrainComposite, TerrainMaterialKey, TerrainNodeKey,
-    decode_terrain_composite, encode_terrain_composite,
+    CellCoord, MAX_TERRAIN_COMPOSITE_BYTES, RUNTIME_SCHEMA_VERSION, TerrainComposite,
+    TerrainMaterialKey, TerrainNodeKey, WorldSpaceId, decode_terrain_composite,
+    encode_terrain_composite,
 };
 const MAX_CORE_BYTES: usize = 262144;
 const MAX_QUERY: usize = 128;

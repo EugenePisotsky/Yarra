@@ -1,10 +1,25 @@
-use super::*;
+use super::stage;
 use crate::{
     project_store::ProjectEditorStore,
     saving::EditorSaveCoordinator,
     shell::EditorUiFrame,
     tools::EditorToolRegistry,
-    vegetation_authoring::{draw_population_colors, draw_vegetation_authoring},
+    vegetation_authoring::{
+        VegetationAuthoringState, draw_population_colors, draw_vegetation_authoring,
+    },
+    workspaces::vegetation::{
+        comparison::{self, ComparisonView},
+        ground,
+        stage::{CharacterPlacement, GrassEdge, GroundMode},
+        state::StudyState,
+        study::{StudyCamera, directory},
+    },
+};
+use bevy::prelude::*;
+use bevy_egui::egui;
+use vegetation_render::{
+    VegetationBladeBands, VegetationDebugSettings, VegetationDiagnostics, VegetationLighting,
+    VegetationShapeInspection,
 };
 
 #[allow(clippy::too_many_arguments)]

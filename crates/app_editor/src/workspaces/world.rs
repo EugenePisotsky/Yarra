@@ -1,42 +1,59 @@
-//! World-authoring workspace registration.
-//!
-//! The implementation systems currently live in the crate composition module while they are
-//! incrementally split by tool. This plugin is the ownership boundary: adding another workspace no
-//! longer requires accumulating its resources, schedules, and UI in the editor shell.
-
-use bevy::gizmos::transform_gizmo::{TransformGizmoPlugin, TransformGizmoSystems};
-use bevy::prelude::*;
+//! World workspace composition. Tools, window presentation and interaction systems have separate owners.
+use crate::{
+    domain_editing::{
+        DenseDomainWorkingSets, process_dense_save_completion, reconcile_dense_working_sets,
+    },
+    editing::{
+        EditorHistory, EditorObjectWorkingSet, EditorSelection, TransformInspectorDraft,
+        process_project_save_completion,
+    },
+    overview::OverviewPlugin,
+    preview::{PreviewModesPlugin, authoring_preview_active},
+    saving::{EditorSaveCoordinator, drive_editor_save},
+    shell::{EditorUiSet, EditorWindowRegistry},
+    tools::{
+        ENVIRONMENT_TOOL, EditorToolRegistry, OBJECT_TOOL, VEGETATION_TOOL, object_tool_active,
+    },
+    vegetation_authoring::{
+        VEGETATION_WINDOW, VegetationAuthoringPlugin, process_vegetation_save_completion,
+    },
+    workspaces::{
+        EditorWorkspace,
+        world::{
+            camera::{EditorCameraDrag, EditorCameraFocusRequest, setup_world_workspace},
+            gizmo::{
+                GizmoEditTransaction, apply_promoted_gizmo, configure_transform_gizmo,
+                editor_gizmo_enabled, prepare_builtin_transform_gizmo_renderer,
+            },
+            input::{pick_source_object, suspend_world_workspace_interactions},
+            objects::{
+                EditorObjectPalette, reconcile_editor_selection, sync_cooked_visual_visibility,
+                sync_promoted_editor_object,
+            },
+            overlay::{draw_editor_grid, draw_promoted_editor_object, draw_source_object_handles},
+            ui::{
+                ASSETS_WINDOW, DIAGNOSTICS_WINDOW, INSPECTOR_WINDOW, NAVIGATOR_WINDOW,
+                WORLD_WINDOW, WorldWorkspaceUiState, world_workspace_ui,
+            },
+        },
+        world_workspace_active,
+    },
+};
+use bevy::{
+    gizmos::transform_gizmo::{TransformGizmoPlugin, TransformGizmoSystems},
+    prelude::*,
+};
 use bevy_egui::EguiPrimaryContextPass;
 
-use super::world_impl::{
-    EditorCameraDrag, EditorCameraFocusRequest, EditorObjectPalette, EditorOverlayGizmos,
-    GizmoEditTransaction, apply_promoted_gizmo, configure_transform_gizmo, draw_editor_grid,
-    draw_promoted_editor_object, draw_source_object_handles, editor_gizmo_enabled,
-    handle_editor_shortcuts, pick_source_object, prepare_builtin_transform_gizmo_renderer,
-    reconcile_editor_selection, setup_world_workspace, suspend_world_workspace_interactions,
-    sync_cooked_visual_visibility, sync_promoted_editor_object, update_editor_camera,
-};
-use super::world_ui::{
-    ASSETS_WINDOW, DIAGNOSTICS_WINDOW, INSPECTOR_WINDOW, NAVIGATOR_WINDOW, WORLD_WINDOW,
-    WorldWorkspaceUiState, world_workspace_ui,
-};
-use super::{EditorWorkspace, world_workspace_active};
-use crate::domain_editing::{
-    DenseDomainWorkingSets, process_dense_save_completion, reconcile_dense_working_sets,
-};
-use crate::editing::{
-    EditorHistory, EditorObjectWorkingSet, EditorSelection, TransformInspectorDraft,
-    process_project_save_completion,
-};
-use crate::overview::OverviewPlugin;
-use crate::preview::{PreviewModesPlugin, authoring_preview_active};
-use crate::saving::{EditorSaveCoordinator, drive_editor_save};
-use crate::shell::{EditorUiSet, EditorWindowRegistry};
-use crate::tools::VEGETATION_TOOL;
-use crate::tools::{ENVIRONMENT_TOOL, EditorToolRegistry, OBJECT_TOOL, object_tool_active};
-use crate::vegetation_authoring::{
-    VEGETATION_WINDOW, VegetationAuthoringPlugin, process_vegetation_save_completion,
-};
+pub(crate) use camera::{EditorCamera, update_editor_camera};
+pub(crate) use input::handle_editor_shortcuts;
+pub(crate) use overlay::EditorOverlayGizmos;
+mod camera;
+mod gizmo;
+mod input;
+mod objects;
+mod overlay;
+mod ui;
 
 pub(crate) struct WorldWorkspacePlugin;
 

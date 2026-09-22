@@ -1,5 +1,7 @@
 //! Targeted source asset resolution; never scans the placement table or loads glTF bytes.
-use super::*;
+use crate::{ProjectReader, SourceAssetVariantRecord, WorldDbError};
+use rusqlite::{Connection, OptionalExtension};
+use world::AssetId;
 
 pub const MAX_COLLECTION_ASSET_READS: usize = 256;
 #[derive(Debug, Clone)]

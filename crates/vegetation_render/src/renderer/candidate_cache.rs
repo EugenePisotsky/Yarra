@@ -1,5 +1,17 @@
 //! Cache only stable production acceptance, not view-dependent visibility or LOD.
-use super::*;
+use super::{
+    buffers::{VegetationBuffers, dummy_storage, grow_storage, update_storage},
+    gpu_types::WorkItemGpu,
+    pipelines::VegetationPipelines,
+};
+use crate::{VegetationDebugSettings, VegetationDiagnostics, VegetationProfileMode};
+use bevy::{
+    prelude::*,
+    render::{
+        render_resource::{Buffer, ComputePassDescriptor, ComputePipelineId, PipelineCache},
+        renderer::{RenderContext, RenderDevice, RenderQueue},
+    },
+};
 
 const MAX_MASK_BYTES: u64 = 1024 * 1024;
 const MAX_BUILD_LANES: u32 = 262_144;
@@ -201,6 +213,7 @@ pub(super) fn build(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::renderer::packing::pack_scene;
     #[test]
     fn planning_has_bounded_nonoverlapping_slots_and_reference_fallback() {
         let mut items = pack_scene(&vegetation::fixtures::reference_scene()).work_items;

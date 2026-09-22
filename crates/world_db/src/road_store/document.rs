@@ -32,7 +32,7 @@ pub(crate) fn read_document(c: &Connection) -> Result<RoadDocument, WorldDbError
         let mut q = c.prepare(&format!("SELECT id FROM {table} ORDER BY id"))?;
         let mut rows = q.query([])?;
         while let Some(row) = rows.next()? {
-            let id = crate::blob_array(
+            let id = crate::storage::blob_array(
                 row.get_ref(0)?.as_blob().map_err(rusqlite::Error::from)?,
                 "road record id",
             )?;
@@ -373,7 +373,7 @@ pub(crate) fn validate_cook_source(
         let mut q = c.prepare(&format!("SELECT id FROM {table} ORDER BY id"))?;
         let mut rows = q.query([])?;
         while let Some(row) = rows.next()? {
-            let id = crate::blob_array(
+            let id = crate::storage::blob_array(
                 row.get_ref(0)?.as_blob().map_err(rusqlite::Error::from)?,
                 "road id",
             )?;

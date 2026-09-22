@@ -1,5 +1,7 @@
-use super::*;
-use world::atmosphere::AtmosphereProfile;
+use crate::{ProjectWriter, WorldDbError};
+use rusqlite::params;
+use std::collections::HashSet;
+use world::{WorldSpaceId, atmosphere::AtmosphereProfile};
 
 #[derive(Debug, Clone)]
 pub struct AtmosphereWrite {
@@ -177,6 +179,8 @@ impl ProjectWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{catalog::query_world_spaces, schema};
+    use rusqlite::Connection;
     #[test]
     fn checkpoint_and_tagged_cloud_profiles_round_trip_without_accepting_corruption() {
         let p = AtmosphereProfile::default();

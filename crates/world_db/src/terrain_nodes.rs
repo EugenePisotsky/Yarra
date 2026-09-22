@@ -1,7 +1,13 @@
 //! Bounded terrain-node IO. A cook store only mutates an unpublished staging generation.
-use super::*;
+use crate::runtime::{read_page_connection, read_runtime_manifest};
+use crate::storage::{blob_array, ensure_schema_version};
+use crate::{EncodedPage, RuntimeManifest, RuntimeReader, WorldDbError, WorldSpaceRecord};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
+use std::io::{Cursor, Read};
+use std::path::Path;
 use world::{
-    MAX_TERRAIN_NODE_BYTES, TerrainNode, TerrainNodeKey, decode_terrain_node, encode_terrain_node,
+    CellCoord, MAX_TERRAIN_NODE_BYTES, PageCodec, PageDomain, PageKey, RUNTIME_SCHEMA_VERSION,
+    TerrainNode, TerrainNodeKey, WorldSpaceId, decode_terrain_node, encode_terrain_node,
 };
 
 pub const MAX_TERRAIN_NODE_QUERY: usize = 128;
@@ -487,6 +493,9 @@ fn invalid(message: impl Into<String>) -> WorldDbError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{RuntimeBuild, RuntimeCellRecord, domain_bit, write_runtime_database};
+    use std::{fs, path::PathBuf};
+    use world::PagePayload;
     use world::{TerrainHeightfield, TerrainHeightfieldPage, encode_page_payload};
 
     struct Fixture {

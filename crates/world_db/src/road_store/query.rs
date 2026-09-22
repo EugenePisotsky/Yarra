@@ -26,7 +26,7 @@ pub(crate) fn read_snapshot(
                     truncated = true;
                     break 'cells;
                 }
-                ids.insert(RoadSpanId(crate::blob_array(
+                ids.insert(RoadSpanId(crate::storage::blob_array(
                     row.get_ref(0)?.as_blob().map_err(rusqlite::Error::from)?,
                     "span id",
                 )?));
@@ -147,7 +147,7 @@ impl ProjectReader {
                 params![id.as_slice(), minimum.as_slice(), limit as i64 + 2],
                 |row| {
                     Ok((
-                        RoadSpanId(crate::blob_array(
+                        RoadSpanId(crate::storage::blob_array(
                             row.get_ref(0)?.as_blob().map_err(rusqlite::Error::from)?,
                             "span id",
                         )?),

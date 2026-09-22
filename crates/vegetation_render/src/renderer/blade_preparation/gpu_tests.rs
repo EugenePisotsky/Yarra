@@ -1,14 +1,30 @@
 //! Real Bevy pipeline/readback coverage for preparation, reference, and bounded overflow.
-use super::*;
+use super::{BLADE_BYTES, BladePreparation};
+use crate::renderer::{
+    buffers::{VegetationBuffers, create_draw_bind_group},
+    candidate_cache,
+    gpu_types::{DRAW_ARGS_SIZE, PROCEDURAL_INSTANCE_CAPACITY, ProceduralInstanceGpu},
+    packing::pack_species,
+    pipelines::VegetationPipelines,
+    topology::{
+        SPLIT_HIGH_FIRST_INDEX, SPLIT_HIGH_INDEX_COUNT, SPLIT_LOW_FIRST_INDEX,
+        SPLIT_LOW_INDEX_COUNT,
+    },
+};
 use crate::*;
 use bevy::{
     app::PluginsState,
     camera::RenderTarget,
+    mesh::Mesh,
     render::{
         RenderApp, RenderPlugin,
         gpu_readback::{Readback, ReadbackComplete},
         pipelined_rendering::PipelinedRenderingPlugin,
-        render_resource::{CachedPipelineState, TextureUsages},
+        render_resource::{
+            BufferDescriptor, BufferUsages, CachedPipelineState, MapMode, PipelineCache,
+            TextureFormat, TextureUsages,
+        },
+        renderer::{RenderDevice, RenderQueue},
     },
     time::TimeUpdateStrategy,
     window::ExitCondition,
@@ -18,6 +34,7 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
+use vegetation::TopologyProfile;
 
 #[path = "shading_gpu_tests.rs"]
 mod shading;

@@ -1,13 +1,22 @@
 //! Compare every accepted candidate's data on the GPU, independent of atomic append order.
-use super::*;
-use bevy::render::{
-    render_resource::{
-        BindGroupDescriptor, BindGroupEntry, CommandEncoderDescriptor, MapMode, PollType,
-        RawComputePipelineDescriptor, ShaderModuleDescriptor, ShaderSource,
-    },
-    renderer::initialize_renderer,
-    settings::{Backends, WgpuSettings},
+use super::{
+    gpu_types::{CameraGpu, DebugConfigGpu, GPU_TELEMETRY_SIZE, SurfaceSampleGpu},
+    packing::pack_scene,
 };
+use bevy::{
+    prelude::*,
+    render::{
+        render_resource::{
+            BindGroupDescriptor, BindGroupEntry, BufferDescriptor, BufferInitDescriptor,
+            BufferUsages, CommandEncoderDescriptor, ComputePassDescriptor, MapMode, PollType,
+            RawComputePipelineDescriptor, ShaderModuleDescriptor, ShaderSource,
+        },
+        renderer::initialize_renderer,
+        settings::{Backends, WgpuSettings},
+    },
+};
+use bytemuck::Zeroable;
+use vegetation::decode_octahedral_normal;
 
 #[test]
 #[ignore = "requires a native GPU; run when changing placement rejection"]
@@ -310,4 +319,127 @@ fn compare_surface(@builtin(global_invocation_id) id: vec3<u32>) {
         assert_eq!(values[(6 * 13 + 6) * 8], 0.0);
     }
     readback.unmap();
+}
+
+/// Exercises the real scheduler against a retained allocation full of valid, visible old
+/// records. The old arrayLength guard schedules all 64 records after the live set shrinks.
+#[test]
+#[ignore = "requires a native GPU; run explicitly when changing scheduler bounds"]
+fn gpu_scheduler_ignores_retired_records_and_keeps_dispatch_without_telemetry() {
+    use bevy::render::{
+        render_resource::{
+            BindGroupDescriptor, BindGroupEntry, CommandEncoderDescriptor, MapMode, PollType,
+            RawComputePipelineDescriptor, ShaderModuleDescriptor, ShaderSource,
+        },
+        renderer::initialize_renderer,
+        settings::{Backends, WgpuSettings},
+    };
+    let resources = bevy::tasks::block_on(initialize_renderer(
+        Backends::PRIMARY,
+        None,
+        &WgpuSettings::default(),
+    ));
+    let device = resources.0.wgpu_device();
+    let queue = &resources.1;
+    let shader = device.create_shader_module(ShaderModuleDescriptor {
+        label: Some("scheduler regression"),
+        source: ShaderSource::Wgsl(
+            include_str!("../../../../assets/shaders/vegetation_schedule_compute.wgsl").into(),
+        ),
+    });
+    let pipeline = device.create_compute_pipeline(&RawComputePipelineDescriptor {
+        label: None,
+        layout: None,
+        module: &shader,
+        entry_point: Some("schedule"),
+        compilation_options: default(),
+        cache: None,
+    });
+    let layout = pipeline.get_bind_group_layout(0);
+    let mut item = pack_scene(&vegetation::fixtures::reference_scene()).work_items[0];
+    item.page = [-2.0, -2.0, 4.0, 1.0];
+    item.layout[1] = 64;
+    let records = [item; 64];
+    let work = resources.0.create_buffer_with_data(&BufferInitDescriptor {
+        label: None,
+        contents: bytemuck::cast_slice(&records),
+        usage: BufferUsages::STORAGE,
+    });
+    let camera = resources.0.create_buffer_with_data(&BufferInitDescriptor {
+        label: None,
+        contents: bytemuck::bytes_of(&CameraGpu::zeroed()),
+        usage: BufferUsages::UNIFORM,
+    });
+    for (live_count, counters) in [(64u32, 1u32), (5, 1), (5, 0), (0, 1)] {
+        let config = resources.0.create_buffer_with_data(&BufferInitDescriptor {
+            label: None,
+            contents: bytemuck::bytes_of(&DebugConfigGpu {
+                values: [0, 1, 0, 0],
+                workload: [live_count, counters, 0, 0],
+            }),
+            usage: BufferUsages::UNIFORM,
+        });
+        let storage = |size| {
+            resources.0.create_buffer(&BufferDescriptor {
+                label: None,
+                size,
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            })
+        };
+        let visible = storage(64 * 4);
+        let dispatch = storage(12);
+        let telemetry = storage(GPU_TELEMETRY_SIZE);
+        let buffers = [&work, &visible, &dispatch, &camera, &telemetry, &config];
+        let entries = buffers
+            .iter()
+            .enumerate()
+            .map(|(binding, buffer)| BindGroupEntry {
+                binding: binding as u32,
+                resource: buffer.as_entire_binding(),
+            })
+            .collect::<Vec<_>>();
+        let bind_group = device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &layout,
+            entries: &entries,
+        });
+        let readback = resources.0.create_buffer(&BufferDescriptor {
+            label: None,
+            size: 12 + GPU_TELEMETRY_SIZE,
+            usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor::default());
+        {
+            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+            pass.dispatch_workgroups(1, 1, 1);
+        }
+        encoder.copy_buffer_to_buffer(&dispatch, 0, &readback, 0, 12);
+        encoder.copy_buffer_to_buffer(&telemetry, 0, &readback, 12, GPU_TELEMETRY_SIZE);
+        queue.submit([encoder.finish()]);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        readback
+            .slice(..)
+            .map_async(MapMode::Read, move |result| sender.send(result).unwrap());
+        device.poll(PollType::wait_indefinitely()).unwrap();
+        receiver.recv().unwrap().unwrap();
+        {
+            let data = readback.slice(..).get_mapped_range();
+            let words: &[u32] = bytemuck::cast_slice(&data);
+            assert_eq!(
+                words[1], live_count,
+                "retired work must not enter the indirect dispatch"
+            );
+            assert_eq!(
+                words[3],
+                live_count * counters,
+                "diagnostic atomics must be optional"
+            );
+            assert_eq!(words[0], u32::from(live_count > 0));
+        }
+        readback.unmap();
+    }
 }

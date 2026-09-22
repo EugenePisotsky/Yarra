@@ -1,5 +1,13 @@
 //! Uses the published world's terrain surfaces, compressed mip chains and production material.
-use super::*;
+use crate::workspaces::vegetation::{
+    ground_treatment,
+    stage::GroundMode,
+    state::StudyState,
+    study::PATCH_SIZE,
+    viewport::{LAYER, StudyGround},
+};
+use bevy::{camera::visibility::RenderLayers, prelude::*};
+use std::path::PathBuf;
 use terrain_render::{
     PrepareTerrainMaterialContext, TerrainMacroVariation, TerrainMaterial, TerrainSurfaceLayer,
     prepare_terrain_material,

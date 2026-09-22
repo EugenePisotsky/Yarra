@@ -15,7 +15,7 @@ pub(super) fn for_knot(
         "SELECT junction_id FROM road_junction_knots WHERE knot_id=?1",
         [id.0.as_slice()],
         |r| {
-            Ok(RoadJunctionId(crate::blob_array(
+            Ok(RoadJunctionId(crate::storage::blob_array(
                 r.get_ref(0)?.as_blob()?,
                 "junction id",
             )?))
@@ -109,7 +109,7 @@ pub(super) fn expand(
     for x in bounds.minimum.x..=bounds.maximum.x {
         for z in bounds.minimum.z..=bounds.maximum.z {
             for id in q.query_map(params![space.0, x, z], |r| {
-                Ok(RoadJunctionId(crate::blob_array(
+                Ok(RoadJunctionId(crate::storage::blob_array(
                     r.get_ref(0)?.as_blob()?,
                     "junction id",
                 )?))

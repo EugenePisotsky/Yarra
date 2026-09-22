@@ -1,12 +1,15 @@
 //! Exercise the actual preparation shader on both sides of the topology boundary.
-use super::*;
-use bevy::render::{
-    render_resource::{
-        BindGroupDescriptor, BindGroupEntry, CommandEncoderDescriptor, MapMode, PollType,
-        RawComputePipelineDescriptor, ShaderModuleDescriptor, ShaderSource,
+use bevy::{
+    prelude::*,
+    render::{
+        render_resource::{
+            BindGroupDescriptor, BindGroupEntry, BufferDescriptor, BufferUsages,
+            CommandEncoderDescriptor, ComputePassDescriptor, MapMode, PollType,
+            RawComputePipelineDescriptor, ShaderModuleDescriptor, ShaderSource,
+        },
+        renderer::initialize_renderer,
+        settings::{Backends, WgpuSettings},
     },
-    renderer::initialize_renderer,
-    settings::{Backends, WgpuSettings},
 };
 
 #[test]

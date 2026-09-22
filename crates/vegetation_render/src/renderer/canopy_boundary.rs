@@ -1,6 +1,14 @@
 //! Optional canopy work never runs inside synchronous scene packing.
-use super::*;
-use bevy::tasks::{AsyncComputeTaskPool, Task, futures::check_ready};
+use super::buffers::{dummy_storage, update_storage};
+use crate::{VegetationLighting, VegetationSceneState};
+use bevy::{
+    prelude::*,
+    render::{
+        render_resource::Buffer,
+        renderer::{RenderDevice, RenderQueue},
+    },
+    tasks::{AsyncComputeTaskPool, Task, futures::check_ready},
+};
 use std::time::{Duration, Instant};
 
 const SETTLE: Duration = Duration::from_millis(150);

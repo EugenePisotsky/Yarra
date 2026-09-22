@@ -60,7 +60,7 @@ Further composition within existing crates:
 
 | Proposed module/plugin | Responsibility |
 | --- | --- |
-| Internals of existing `WorldStreamingPlugin` | Separate residency/attachment, object LOD and remaining transition coordination |
+| Internals of existing `WorldStreamingPlugin` | Further isolate world/generation transition coordination if needed; residency, attachment and object LOD are already separated |
 | `ExperimentsPlugin` | Explicitly enabled alternative implementations/catalogs |
 
 `GameRenderPlugin` already owns presentation/output; platform pacing, profile routes and native captures remain explicit application setup.
@@ -95,27 +95,59 @@ Reset/restore values, two-second settling, eight-second readiness deadline, ten-
 
 Validation: **510 Rust tests passed / 29 ignored**. Six new tests cover UI cancellation/result preservation, completion/abort ordering, overlapping recordings, CPU sample provenance, rolling history limits and empty export. Existing Reset, canopy, A/B restore, GPU filtering and CSV escaping checks pass. Workspace clippy, formatting/diff, iOS compile and game build pass with existing warnings. Native Full and Panel runs each reached frame 900 and saved inspected F1 screenshots; Full showed probe data and Panel correctly reported probes disabled. These are functional checks, not performance comparisons or physical-device acceptance. The five-guide structure and all 154 raw evidence files remain intact.
 
-## Split large modules by responsibility
+## Completed: world database ownership
 
-| Area | Internal boundaries to establish |
-| --- | --- |
-| [Vegetation renderer](../crates/vegetation_render/src/renderer.rs) | GPU ABI/packing, buffers, pipelines, generation/draw, telemetry |
-| [World DB](../crates/world_db/src/lib.rs) | Record contracts, bounded authoring reads/writes, import/export, runtime reader |
-| Editor vegetation/world UI | Authoring model/commands, previews, input/picking/gizmos, presentation |
+[world_db](../crates/world_db/src/lib.rs) now exposes the same public API through a 34-line facade, down from a 2,684-line root. Internal modules separate record/error contracts, bounded editor reads and revisioned transactions, whole-project import/export, immutable runtime reads, runtime output writing, and shared catalogs/codecs/budgets. The incremental cook writer now lives beside the whole-build writer and shares its SQL; the source cook snapshot has no output-writing responsibility. Domain stores import their internal dependencies explicitly.
+
+This is a structural move: all 205 SQL literals, schemas, binary encodings, limits and transaction boundaries are unchanged. No migration, recook, new crate or dependency change is required, and no performance/build-size improvement is claimed. Existing database tests were retained; the source/runtime round-trip check now exercises the public crate API as an integration test.
+
+Validation: **510 Rust tests passed / 29 ignored**, including existing bounded-read, conflict/rollback, snapshot isolation and staged/reference cook parity coverage. Workspace clippy, API documentation generation, formatting/diff, iOS compilation and game/editor builds pass with existing warnings. The native Metal terrain lifecycle test passed separately against temporary databases, covering uploads/rendering, live authoring, world/rebase transitions and rejected/retried publication. All 213 public declarations and existing function bodies/data declarations were retained; the five guides and 154 raw evidence files remain intact. No physical-device or performance acceptance is claimed.
+
+## Completed: vegetation renderer ownership
+
+The [renderer](../crates/vegetation_render/src/renderer.rs) is now a 73-line composition entry point, down from 3,034 lines. Internal modules own GPU layouts, CPU packing, index templates, buffers/bind groups, pipelines, uploads, placement dispatch, drawing and telemetry. Existing cache, blade-preparation, temporal and canopy modules import those dependencies explicitly. Packing, topology, allocation and cache tests live beside their implementations; native fixtures and shared shader checks remain available.
+
+All 199 existing function bodies/data declarations and all constants are preserved apart from internal paths and visibility. Shader files, binding layouts, budgets, cache invalidation, resource initialization and render ordering are unchanged, including temporal dependencies and the iOS readback exclusion. Public APIs, serialized settings, CLI controls and dependencies are unchanged. This establishes internal ownership; it adds no independently removable plugin or performance claim.
+
+Validation: **510 workspace tests passed / 29 ignored**. Seven selected native Metal regressions passed separately: scheduler bounds/counters, placement rejection equivalence, prepared/reference wind/MSAA/overflow, candidate-cache/source lifetime, rebasing, terrain gating/frozen draws, and temporal motion/history/fallback. Workspace clippy, formatting/diff, iOS compile checking and game/editor builds pass with existing warnings. These are functional checks, not performance comparisons or physical iOS acceptance. The five guides and all 154 raw evidence files remain intact.
+
+## Completed: editor world and vegetation ownership
+
+[World workspace composition](../crates/app_editor/src/workspaces/world.rs) now names dedicated camera, input/picking, object-proxy, gizmo and overlay modules. Removed the generic 1,616-line `world_impl.rs`; the former 1,477-line `world_ui.rs` is split into toolbar/window composition and individual views. [Vegetation authoring](../crates/app_editor/src/vegetation_authoring.rs) shrank from 1,869 to 64 lines, with draft/save handling, live preview and inspector controls in separate modules. [Vegetation study composition](../crates/app_editor/src/workspaces/vegetation.rs) shrank from 1,170 to 80 lines, separating session state, viewport, enter/leave restoration and capture/export. Existing tests moved beside their owners.
+
+This is a structural move. Camera/picking behavior, grouped undo commands, save conflicts, source acceptance, workspace restoration, study formats, capture readiness and UI labels/layout remain unchanged. System registration/order, run conditions and external editor entry points are preserved; no new crate, plugin toggle or performance improvement is claimed.
+
+Validation: **510 workspace tests passed / 29 ignored**, including 130 editor tests. Workspace clippy, formatting/diff and the native editor build pass with existing warnings. Native checks against a copied project database covered World windows, selection/inspector routing, World → Vegetation → World restoration, and vegetation inspector/capture/export; both completed without runtime errors. These are functional checks, not performance measurements. The five guides and all 154 raw evidence files remain intact.
+
+## Further structural work
 
 Preserve shader layouts, ordering, bounds, stale-result rejection and transaction semantics. Share low-level joining/cache mechanisms without merging editor drafts into gameplay. Use meaningful `SystemParam`/query groups, not opaque wrappers solely to silence argument-count warnings. Review large queue/state enum payloads for boxing only where storage/allocation tradeoffs justify it; no performance gain is assumed.
 
 Possible later crates: shared devtools once a second consumer exists; `world_runtime` after viewpoint/contact-demand contracts separate it from actors; runtime DB reader if excluding authoring/compiler dependencies measurably helps builds/packaging. Do not create a crate for every system or experiment.
 
+## Completed: standalone experiment retirement
+
+Removed 13 files / 2,888 lines of standalone studies and historical recipes: the test-only shadow/tuft fixture bundle and report tools; `grass_field_study.py/.html`; `grass_study_benchmark.py`; `grass_density_experiment.py`; and `grass_curve_sampling.py`. Removed their module registration and unused preprocessing wrapper. The field runner generated a duplicate shader output location; the benchmark overwrote live shaders. Neither is needed by the current editor or controlled profiler.
+
+Production shaders, Temporal integration, fallback/reference paths and current placement/shading/overflow tests are unchanged. Current study capture, density profiling, shape comparison and the isolated game benchmark remain. Results and limitations stay in [the experiment ledger](EXPERIMENTS.md); removed implementations are recoverable from Git at `efc6566`.
+
+Validation: **508 workspace tests passed / 27 ignored**, plus all 29 Python profiler tests. The retired fixtures account for two passing tests and two ignored captures removed from the previous total. Workspace clippy passes with existing warnings; formatting, diff, surviving Python imports and documentation links pass. All 154 raw evidence files remain byte-identical. No native render rerun was needed for this test/tool-only deletion.
+
 ## Retire old implementations with explicit gates
 
-| Candidate | Required decision |
+Remaining recommendations from the September 22 caller/dependency audit:
+
+| Candidate | Recommendation / dependency |
 | --- | --- |
-| `PagePayload::TerrainRender` | Current cooker emits heightfields; old constructor found only in serialization test. Remove with intentional ABI/runtime version bump and recook, or reserved encoding. Never shift bincode discriminants silently. |
-| `--terrain-legacy` world renderer / iOS flattening | Still reachable performance reference; hierarchy sustained cost remains unresolved. Isolate first. `TerrainMaterial` is shared by current near detail/editor previews and must remain. |
-| Alternate grass placement/preparation/vertex and terrain material paths | Distinguish fallback, correctness oracle, active comparison and completed experiment. Only completed experiments are immediate deletion candidates. |
-| Remaining blade-band/shadow study shader APIs | Game controls are removed. Keep only explicitly used editor/test paths; retire against recorded visual acceptance. |
-| Study benchmark script | `grass_study_benchmark.py` mutates live shaders/study text. Prefer isolated assets and typed study configuration before relying on concurrent runs. |
+| Blade-band experiment | **Retire next:** shader/pipeline branches, editor controls, CLI and `grass_blade_band_study.py/.html`. Defaults and tracked studies use Off; it was never accepted as physical shadows. Handle saved-study fields explicitly; the script imports `sparse_source` from the ground-study script. |
+| `VegetationLightingMode::Legacy` | **Retire next:** previous empirical lighting remains selectable in the editor and covered in shader comparisons. Preserve current lighting, unlit/vertex diagnostics, numeric IDs and deliberate old-study handling. |
+| Old ground-treatment modes | **Trim separately:** Original/Darkened/Understory trials and their runner. Keep canopy integration, its shared bake/shader code and useful coverage diagnostics; two tracked studies use `CanopyGroundStudy`. Do not delete `ground_treatment` wholesale. |
+| `PagePayload::TerrainRender` | **Retire in a format batch:** current cooker emits heightfields; remaining constructors are tests. Readers still accept it. Reserve its bincode encoding or bump payload/runtime versions and recook; never shift discriminants silently. |
+| `--terrain-legacy` / iOS flattening | **Keep pending acceptance:** hierarchy sustained cost remains unresolved. Legacy iOS attachment also substitutes flat geometry/contact data. Retire after a matched soak and physical-device relief/contact check. Shared `TerrainMaterial` remains in current near detail/editor previews. |
+| Grass and terrain reference paths | **Keep:** unprepared blades and uncached candidate acceptance handle normal misses/overflow; early-rejection reference is a correctness oracle. Terrain procedural/uncached controls and portable textures handle loading, budgets and device support. Removing diagnostic switches does not remove these responsibilities. |
+| Temporal, Linear and cloud alternatives | **Keep as supported rendering paths:** Temporal is integrated and selectable, with recorded cost/blur issues requiring follow-up; it is not a legacy-removal candidate. Linear is the portability fallback. Balanced cached clouds and High direct clouds are current quality modes. Standard tone-map output remains a fallback for unsupported direct-output conditions. |
+
+Suggested order: blade bands/legacy lighting with saved-study handling and native image checks, then ground-mode simplification. Payload and terrain-renderer retirement are separate batches.
 
 Preserve CPU vegetation oracles, explicit cooker fixtures/parity helpers, Linear upscaling, timer pacing fallbacks and the documented wgpu patch. The staged cooker calls shared compilation code also used by the whole-document reference; deleting it as legacy would break production.
 

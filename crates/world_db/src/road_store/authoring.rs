@@ -158,7 +158,7 @@ impl ProjectReader {
         let mut q = tx.prepare("SELECT id FROM road_profiles ORDER BY id LIMIT 65")?;
         let ids = q
             .query_map([], |row| {
-                Ok(RoadProfileId(crate::blob_array(
+                Ok(RoadProfileId(crate::storage::blob_array(
                     row.get_ref(0)?.as_blob()?,
                     "profile id",
                 )?))

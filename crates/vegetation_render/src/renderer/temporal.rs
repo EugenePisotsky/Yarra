@@ -1,15 +1,34 @@
 //! One grass draw writes colour, final scene depth and deformation-aware motion.
-use super::*;
+use super::{
+    blade_preparation,
+    buffers::{VegetationBuffers, create_draw_bind_group},
+    gpu_types::CameraGpu,
+    pipelines::VegetationPipelines,
+};
+use crate::VegetationView;
 use bevy::{
-    core_pipeline::{Core3dSystems, schedule::Core3d},
+    core_pipeline::{
+        Core3dSystems,
+        schedule::{Core3d, camera_driver},
+    },
+    prelude::*,
     render::{
-        GpuResourceAppExt,
-        render_resource::*,
-        renderer::ViewQuery,
+        GpuResourceAppExt, Render, RenderSystems,
+        render_resource::{
+            BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, Buffer,
+            BufferDescriptor, BufferId, BufferUsages, CachedRenderPipelineId,
+            ComputePassDescriptor, IndexFormat, LoadOp, Operations, PipelineCache,
+            RenderPassColorAttachment, RenderPassDescriptor, ShaderStages, StoreOp,
+            binding_types::{storage_buffer_read_only_sized, uniform_buffer_sized},
+        },
+        renderer::{RenderContext, RenderDevice, RenderGraph, RenderQueue, ViewQuery},
         view::{ViewDepthTexture, ViewTarget},
     },
 };
+use bytemuck::{Pod, Zeroable};
+use std::mem::size_of;
 use upscaling::temporal::{TemporalFrame, TemporalMotionTarget};
+
 #[derive(Component)]
 pub(super) struct Pipeline(pub CachedRenderPipelineId);
 #[repr(C)]
@@ -73,7 +92,7 @@ pub(super) fn install(app: &mut SubApp) {
         .add_systems(
             RenderGraph,
             reuse_previous
-                .after(super::generate)
+                .after(super::generation::generate)
                 .before(blade_preparation::run),
         )
         .add_systems(
@@ -85,7 +104,7 @@ pub(super) fn install(app: &mut SubApp) {
         .add_systems(
             Render,
             prepare
-                .after(super::prepare)
+                .after(super::prepare::prepare)
                 .in_set(RenderSystems::PrepareBindGroups),
         )
         .add_systems(

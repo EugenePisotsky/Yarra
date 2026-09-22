@@ -1,15 +1,21 @@
 //! Static material experiment, compiled only into the editor. Uses the production terrain
 //! shader and a coverage bake from source roots, independent of camera, wind and render LOD.
-use super::*;
+use crate::workspaces::{
+    EditorWorkspace,
+    vegetation::{stage::GroundMode, state::StudyState},
+};
 use bevy::{
     asset::{RenderAssetUsages, uuid_handle},
     image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor},
     pbr::{ExtendedMaterial, MaterialExtension},
-    render::render_resource::{AsBindGroup, Extent3d, ShaderType, TextureDimension},
+    prelude::*,
+    render::render_resource::{AsBindGroup, Extent3d, ShaderType, TextureDimension, TextureFormat},
     shader::{Shader, ShaderRef},
 };
+use std::path::PathBuf;
 use terrain_render::TerrainMaterial;
 use vegetation::{candidate_density_retention, candidate_domain, random01, sample_candidate};
+use vegetation_render::{VegetationLighting, VegetationSceneState};
 
 const SHADER: Handle<Shader> = uuid_handle!("08d0e6d7-04e5-4197-92ca-27eb09d40b4e");
 const TERRAIN: &str = include_str!("../../../../../assets/shaders/terrain_material.wgsl");
@@ -109,7 +115,7 @@ pub(super) fn register(app: &mut App) {
         .add_systems(Update, sync_base_materials)
         .add_systems(
             Update,
-            sync.after(super::sync)
+            sync.after(super::viewport::sync)
                 .run_if(in_state(EditorWorkspace::Vegetation)),
         );
     app.world_mut()
