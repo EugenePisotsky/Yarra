@@ -17,6 +17,7 @@ pub(crate) const NAMES: &[&str] = &[
     "grass-stream",
     "grass-soak",
     "landscape",
+    "landscape-turn",
     "landscape-descent",
     "ground-low",
     "ground-overhead",
@@ -56,12 +57,12 @@ pub(crate) fn install(app: &mut App) {
     };
     app.insert_resource(ReproView(name.clone()));
     app.add_systems(Update, move_camera.after(GameplaySystems::CameraFollow))
-        .add_systems(PostUpdate, synchronize_wind);
+        .add_systems(PostUpdate, synchronize_wind.before(engine::TreeWindSystems));
     let path_frames = if name.ends_with("-stream") {
         6000
     } else if name == "grass-soak" {
         1800
-    } else if name == "grass-zoom" {
+    } else if name == "grass-zoom" || name == "landscape-turn" {
         1200
     } else {
         600
@@ -169,6 +170,14 @@ fn move_camera(
             bookmark,
             position - Vec3::new(offset[0] as f32, 0., offset[1] as f32),
         );
+        if view.0 == "landscape-turn" {
+            // Turn in place, then dwell well beyond source residency's cooling period.
+            // At 60 FPS each heading lasts ten seconds; no camera translation/rebase.
+            let frame = profile.as_ref().map_or(frame.0, |p| p.reference_frame());
+            if (frame / 600) % 2 == 1 {
+                camera.rotation = Quat::from_rotation_y(135_f32.to_radians()) * camera.rotation;
+            }
+        }
         if let Some(space) = active_space.current() {
             active_space.request(space, position.to_array());
         }

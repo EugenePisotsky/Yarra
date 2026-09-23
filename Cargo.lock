@@ -6426,10 +6426,12 @@ name = "yarra-engine"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "bytemuck",
  "crossbeam-channel",
  "log",
  "ron",
  "serde",
+ "serde_json",
  "yarra-atmosphere",
  "yarra-terrain-render",
  "yarra-vegetation",

@@ -1,0 +1,46 @@
+
+running 1 test
+GRASS_STREAM_HISTORY prepared=true step=0 reset=false max_motion_uv=0.000000
+GRASS_STREAM_HISTORY prepared=true step=1 reset=false max_motion_uv=0.000000
+GRASS_STREAM_HISTORY prepared=true step=2 reset=false max_motion_uv=0.000000
+GRASS_STREAM_HISTORY prepared=true step=3 reset=false max_motion_uv=0.000000
+GRASS_STREAM_HISTORY prepared=true step=4 reset=false max_motion_uv=0.004040
+GRASS_STREAM_REPROJECTION pixels=2004 p95_error_px=0.000252
+GRASS_STREAM_HISTORY prepared=true step=5 reset=false max_motion_uv=0.003956
+GRASS_STREAM_REPROJECTION pixels=2045 p95_error_px=0.000259
+GRASS_STREAM_HISTORY prepared=true step=6 reset=false max_motion_uv=0.003960
+GRASS_STREAM_REPROJECTION pixels=2027 p95_error_px=0.000259
+GRASS_STREAM_HISTORY prepared=true step=7 reset=false max_motion_uv=0.003952
+GRASS_STREAM_REPROJECTION pixels=1977 p95_error_px=0.000282
+GRASS_STREAM_HISTORY prepared=true step=8 reset=false max_motion_uv=0.018908
+GRASS_STREAM_HISTORY prepared=true step=9 reset=false max_motion_uv=0.004572
+GRASS_STREAM_HISTORY prepared=true step=10 reset=false max_motion_uv=0.004495
+GRASS_STREAM_HISTORY prepared=true step=11 reset=false max_motion_uv=0.004644
+GRASS_STREAM_REPROJECTION pixels=2041 p95_error_px=0.000214
+GRASS_STREAM_REPROJECTION pixels=1954 p95_error_px=0.000206
+GRASS_STREAM_REPROJECTION pixels=1991 p95_error_px=0.000214
+GRASS_STREAM_REPROJECTION pixels=1992 p95_error_px=0.000229
+GRASS_STREAM_HISTORY prepared=false step=0 reset=false max_motion_uv=0.000000
+GRASS_STREAM_HISTORY prepared=false step=1 reset=false max_motion_uv=0.000000
+GRASS_STREAM_HISTORY prepared=false step=2 reset=false max_motion_uv=0.000000
+GRASS_STREAM_HISTORY prepared=false step=3 reset=false max_motion_uv=0.000000
+GRASS_STREAM_HISTORY prepared=false step=4 reset=false max_motion_uv=0.004044
+GRASS_STREAM_REPROJECTION pixels=1994 p95_error_px=0.000280
+GRASS_STREAM_HISTORY prepared=false step=5 reset=false max_motion_uv=0.003971
+GRASS_STREAM_REPROJECTION pixels=1929 p95_error_px=0.000267
+GRASS_STREAM_HISTORY prepared=false step=6 reset=false max_motion_uv=0.003990
+GRASS_STREAM_REPROJECTION pixels=2025 p95_error_px=0.000237
+GRASS_STREAM_HISTORY prepared=false step=7 reset=false max_motion_uv=0.004047
+GRASS_STREAM_REPROJECTION pixels=1948 p95_error_px=0.000290
+GRASS_STREAM_HISTORY prepared=false step=8 reset=false max_motion_uv=0.018812
+GRASS_STREAM_HISTORY prepared=false step=9 reset=false max_motion_uv=0.004515
+GRASS_STREAM_HISTORY prepared=false step=10 reset=false max_motion_uv=0.004357
+GRASS_STREAM_HISTORY prepared=false step=11 reset=false max_motion_uv=0.004150
+GRASS_STREAM_REPROJECTION pixels=2012 p95_error_px=0.000229
+GRASS_STREAM_REPROJECTION pixels=2003 p95_error_px=0.000199
+GRASS_STREAM_REPROJECTION pixels=2028 p95_error_px=0.000272
+GRASS_STREAM_REPROJECTION pixels=2043 p95_error_px=0.000221
+2026-09-23T20:07:20.588022Z  WARN bevy_render::gpu_readback: Failed to send readback result: sending into a closed channel
+test renderer::blade_preparation::gpu_tests::temporal_streaming::temporal_offscreen_grass_streaming_preserves_history ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 44 filtered out; finished in 2.56s

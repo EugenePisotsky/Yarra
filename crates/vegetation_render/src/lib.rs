@@ -628,14 +628,18 @@ pub struct VegetationSceneState {
     // Copying every field on every render extraction scales with resident area.
     scene: Arc<VegetationScene>,
     revision: u64,
+    // Page residency changes source packing, but not how stable blade seeds are animated.
+    catalog_revision: u64,
 }
 
 impl VegetationSceneState {
     pub fn new(scene: VegetationScene) -> Result<Self, SceneValidationError> {
         scene.validate()?;
+        let revision = NEXT_SCENE_REVISION.fetch_add(1, Ordering::Relaxed);
         Ok(Self {
             scene: Arc::new(scene),
-            revision: NEXT_SCENE_REVISION.fetch_add(1, Ordering::Relaxed),
+            revision,
+            catalog_revision: revision,
         })
     }
 
@@ -650,13 +654,21 @@ impl VegetationSceneState {
 
     pub fn replace(&mut self, scene: VegetationScene) -> Result<(), SceneValidationError> {
         scene.validate()?;
+        let revision = NEXT_SCENE_REVISION.fetch_add(1, Ordering::Relaxed);
+        if scene.catalog != self.scene.catalog {
+            self.catalog_revision = revision;
+        }
         self.scene = Arc::new(scene);
-        self.revision = NEXT_SCENE_REVISION.fetch_add(1, Ordering::Relaxed);
+        self.revision = revision;
         Ok(())
     }
 
     pub fn revision(&self) -> u64 {
         self.revision
+    }
+
+    pub(crate) fn catalog_revision(&self) -> u64 {
+        self.catalog_revision
     }
 }
 
@@ -723,6 +735,11 @@ mod tests {
         assert!(!snapshot.scene().pages.is_empty());
         assert!(scene.scene().pages.is_empty());
         assert_ne!(snapshot.revision(), scene.revision());
+        assert_eq!(snapshot.catalog_revision(), scene.catalog_revision());
+        let mut next = scene.scene().clone();
+        next.catalog.species[0].material.root_color[0] *= 0.5;
+        scene.replace(next).unwrap();
+        assert_ne!(snapshot.catalog_revision(), scene.catalog_revision());
     }
 
     #[test]

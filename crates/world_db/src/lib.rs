@@ -2,6 +2,7 @@
 //!
 //! The crate root is the supported API. Internals separate record contracts, bounded project
 //! access, whole-project import/export, runtime reading/writing and shared storage codecs.
+mod asset_import;
 mod atmosphere;
 mod catalog;
 mod collection_assets;
@@ -19,6 +20,7 @@ mod storage;
 mod terrain_materials;
 mod terrain_nodes;
 
+pub use asset_import::*;
 pub use atmosphere::*;
 pub use collection_assets::*;
 pub use cook_store::*;

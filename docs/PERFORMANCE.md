@@ -2,6 +2,17 @@
 
 Use [EXPERIMENTS.md](EXPERIMENTS.md) before proposing an optimization. It records rejected approaches as well as retained ones. Current operation is in [WORKFLOWS.md](WORKFLOWS.md); implementation ownership is in [ARCHITECTURE.md](ARCHITECTURE.md).
 
+## Environment milestone before broad profiling
+
+The next accepted workload is one integrated environment scene, rather than isolated grass or tree density trials. Build and visually validate these together before resuming broad performance tuning:
+
+1. A day/night cycle with stable sun/moon lighting and shadows.
+2. Weather, particles and fog in the same scene.
+3. Tree billboards and their transitions from mesh LODs.
+4. A large traversable area with nearby vegetation, distant forests and mountains, covering every terrain/tree LOD and streaming boundary.
+
+Then use repeatable camera routes and feature on/off comparisons to choose density, visual distance, LOD and shadow budgets. Continue bounded correctness checks while building the environment; these are not performance acceptance or a reason to start another optimization campaign.
+
 ## What a measurement means
 
 **The in-game GPU markers are not an authoritative whole-frame timer.** The MetalFX investigation found Temporal bloom-on/off marker medians of 6.63/3.93 ms while Metal HUD reported 7.07/6.85 ms. Independent compute markers do not necessarily enclose all dependent graphics/MetalFX work. This affects normal sampled markers and F1 A/B reports, not just detailed probes. Use them for diagnostics; cross-check complete-frame comparisons with Metal HUD/runtime traces. Repair remains open.
@@ -82,7 +93,7 @@ Precedence is normal defaults → launch options → repro preset → profile pr
 | Terrain/output/pacing references | `--terrain-legacy`, `--terrain-reference`, `--terrain-procedural`, `--terrain-prepared-universal`, `--terrain-near-off`, `--msaa-store-reference`, `--temporal-standard-output`, `--frame-pacing-timer` |
 | Input/demo controls | `--trace-camera-input` on macOS, `--debug-world-switch` to enable Tab |
 
-Repro names: `low-walk`, `grass-close`, `grass-away`, `grass-follow`, `grass-follow-far`, `grass-zoom`, `grass-top-down`, `grass-overhead`, `grass-stream`, `grass-soak`, `landscape`, `landscape-descent`, `ground-low`, `ground-overhead`, `ground-walk`, `ground-stream`. Landscape routes require a start-view file. Repro presets override ordinary camera/presentation settings; inspect the logged configuration. `--terrain-lod` and `--terrain-prepared` are rejected obsolete switches; those paths are defaults. Removed experiment switches are `--grass-field-baseline`, `--grass-bands`, `--vegetation-v2-debug` and `--frame-pacing-display-only`. The previous grass catalog and duplicate overlays were deleted. Shader/reference APIs used by editor studies remain available.
+Repro names: `low-walk`, `grass-close`, `grass-away`, `grass-follow`, `grass-follow-far`, `grass-zoom`, `grass-top-down`, `grass-overhead`, `grass-stream`, `grass-soak`, `landscape`, `landscape-turn`, `landscape-descent`, `ground-low`, `ground-overhead`, `ground-walk`, `ground-stream`. Landscape routes require a start-view file. `landscape-turn` alternates the bookmarked heading and a 135° turn in place every 600 frames (ten seconds at 60 FPS), dwelling beyond source cooling to check off-screen caster retention. Use at least 1800 frames to include the return heading; snapshots at 660/990 and 1260/1590 compare early/late views after each turn. Repro presets override ordinary camera/presentation settings; inspect the logged configuration. `--terrain-lod` and `--terrain-prepared` are rejected obsolete switches; those paths are defaults. Removed experiment switches are `--grass-field-baseline`, `--grass-bands`, `--vegetation-v2-debug` and `--frame-pacing-display-only`. The previous grass catalog and duplicate overlays were deleted. Shader/reference APIs used by editor studies remain available.
 
 Timed power runs reject frame-limited screenshots/GPU captures. `--profile-diagnostic` is for explicit finite capture presentation, not an ordinary power measurement. `--profile-native-pacing` preserves the normal scheduler; its profile FPS describes the reference deadline. Scripted profiles lock F1's cap.
 

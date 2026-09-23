@@ -99,10 +99,11 @@ fn run() -> Result<(), String> {
     );
     #[cfg(target_os = "macos")]
     camera_input_trace::install(&mut app);
-    app.add_plugins(WorldVegetationPlugin).configure_sets(
-        Update,
-        engine::WorldVegetationSystems.after(runtime_settings::RuntimeSettingsApply),
-    );
+    app.add_plugins((WorldVegetationPlugin, engine::TreeWindPlugin))
+        .configure_sets(
+            Update,
+            engine::WorldVegetationSystems.after(runtime_settings::RuntimeSettingsApply),
+        );
 
     app.world_mut()
         .resource_mut::<vegetation_render::VegetationLighting>()

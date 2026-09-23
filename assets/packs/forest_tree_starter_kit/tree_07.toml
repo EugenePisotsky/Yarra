@@ -1,6 +1,6 @@
 schema_version = 2
 asset_key = "forest_tree_starter_kit/tree_07"
-display_name = "Forest Tree 07"
+display_name = "Forest Tree 07 (Summer)"
 
 [provenance]
 status = "unverified"
@@ -13,19 +13,19 @@ texture_root = "assets/local/forest_tree_starter_kit/source/textures"
 format = "fbx"
 sha256 = "8b9bec274051230b07d159b3420fabb3a8082054e9a54c30b2edecf884ad7f8b"
 mesh_lods = ["Forest_Tree_Bark_LOD0", "Forest_Tree_Bark_LOD1", "Forest_Tree_Bark_LOD2", "Forest_Tree_Bark_LOD3"]
-billboard_mesh = "Forest_Tree_Bark_LOD4_Billboard"
 billboard_status = "unavailable: source texture is missing"
 
 [import]
-tool = "tools/export_tree_lods.py"
+tool = "tools/export_forest_pack.py"
 runtime_format = "gltf"
 texture_size = 1024
 foliage_alpha_mode = "mask"
 foliage_alpha_cutoff = 0.5
 foliage_double_sided = true
 source_scale = 0.55
-demo_instance_scale = 0.55
 wind_flutter_weight = 0.4
+bark_variant = "red"
+wind_contract = "foliage_uv1_v1"
 
 [lod_policy]
 measurement = "projected logical-pixel height"
@@ -39,7 +39,8 @@ mesh_name = "tree_07_summer_lod0"
 triangles = 11364
 minimum_screen_height = 320.0
 runtime_bounds_m = [7.9161, 15.9346, 5.5864]
-gltf_sha256 = "98cf82dd8954be66deaf1f7bf3ffa8caff743d5c2abe3e1ac1692bb67da37123"
+gpu_bytes_estimate = 593464
+gltf_sha256 = "836dfcf528ef1c63955ac638c98d77eaf0b11ac6f25e2da1a0c821d8bae46820"
 buffer_sha256 = "8528848e82e618f270df5adb6f73901c5d89c6346bee8497011682da16dd49d7"
 
 [[variants]]
@@ -50,7 +51,8 @@ mesh_name = "tree_07_summer_lod1"
 triangles = 4747
 minimum_screen_height = 160.0
 runtime_bounds_m = [7.9161, 15.9346, 5.5864]
-gltf_sha256 = "9b62c96f3a00b874a69223dfe1f44709ac05a835ee24cb058d5701dd0d3cc1b8"
+gpu_bytes_estimate = 324612
+gltf_sha256 = "9aaac4656f7154c23875ebe3c11657ebca8d3c55ceea1f3788e04e18a77ea94b"
 buffer_sha256 = "c96f67a81b31450d67e5f1ac52906e2a07a29c4728f3bb98b16f20515778e180"
 
 [[variants]]
@@ -61,7 +63,8 @@ mesh_name = "tree_07_summer_lod2"
 triangles = 2120
 minimum_screen_height = 80.0
 runtime_bounds_m = [7.9161, 15.9346, 5.5864]
-gltf_sha256 = "7da6b7cfe71d84e3590668f4260b0818a327b46c1b415dae41026ed7e16d169c"
+gpu_bytes_estimate = 175064
+gltf_sha256 = "b11acaa868cda55edad771af7a57616c21631c269cf6c24ab81bf8f5a409fe9c"
 buffer_sha256 = "90ab824277f713d15d473e937de3d18434cf93a9df996c4887f39a341a49dbe9"
 
 [[variants]]
@@ -72,7 +75,8 @@ mesh_name = "tree_07_summer_lod3"
 triangles = 735
 minimum_screen_height = 0.0
 runtime_bounds_m = [7.9161, 15.9346, 5.5864]
-gltf_sha256 = "3da9310cf20b4bf201e27ca3d9c540d5a41ed4cf1aeeaf44dcb8008ef673e945"
+gpu_bytes_estimate = 85164
+gltf_sha256 = "fc1aea7bf0e7899b9ff462e28e77882e472324a7b08eb9e58a9b40d6fc17fbea"
 buffer_sha256 = "70009b5ded6f70940ee4589dbaa717c6163b4b63be6f5922b9b559885a0b3829"
 
 [[textures]]

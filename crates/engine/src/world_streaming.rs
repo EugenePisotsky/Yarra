@@ -39,8 +39,8 @@ use world_db::{CellDescriptor, RuntimeManifest};
 use crate::actor::{CharacterMotion, CharacterMotor, MoveIntent, WorldStreamFocus};
 
 const INDEX_RADIUS_CELLS: i32 = 3;
-// Local objects/tools and the legacy diagnostic retain their existing cell window.
-// The terrain hierarchy's camera source radius is separate and measured in metres.
+// Local tools/contact and the legacy diagnostic retain their existing cell window.
+// Normal camera source and object visibility radii are separate and measured in metres.
 const VISUAL_SOURCE_RESIDENCY_RADIUS_CELLS: u32 = 3;
 const GAMEPLAY_PRELOAD_RADIUS_CELLS: u32 = 1;
 

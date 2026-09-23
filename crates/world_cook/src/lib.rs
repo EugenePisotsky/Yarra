@@ -1680,6 +1680,29 @@ mod tests {
     }
 
     #[test]
+    fn forest_summer_catalog_is_importable_with_complete_lod_chains() {
+        let catalog: world_db::AssetImportCatalog = ron::from_str(include_str!(
+            "../../../assets/packs/forest_tree_starter_kit/summer.catalog.ron"
+        ))
+        .unwrap();
+        catalog.validate().unwrap();
+        assert_eq!(catalog.assets.len(), 19);
+        assert!(catalog.assets.iter().all(|asset| asset.variants.len() == 4));
+        let tree = catalog
+            .assets
+            .iter()
+            .find(|asset| asset.key == DEMO_TREE_KEY)
+            .unwrap();
+        assert_eq!(
+            tree.variants
+                .iter()
+                .map(|v| v.uri.as_str())
+                .collect::<Vec<_>>(),
+            DEMO_TREE_LOD_URIS
+        );
+    }
+
+    #[test]
     fn demo_tree_lod_uris_match_the_tracked_pack_contract() {
         for uri in DEMO_TREE_LOD_URIS {
             let expected = format!("runtime_uri = \"{uri}\"");

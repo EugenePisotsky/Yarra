@@ -5,7 +5,7 @@ use super::{
     gpu_types::CameraGpu,
     pipelines::VegetationPipelines,
 };
-use crate::VegetationView;
+use crate::{VegetationSceneState, VegetationView};
 use bevy::{
     core_pipeline::{
         Core3dSystems,
@@ -49,6 +49,7 @@ struct State {
     draw_groups: Vec<([BufferId; 7], BindGroup)>,
     previous_groups: Vec<(BufferId, BindGroup)>,
     source: u64,
+    catalog_revision: u64,
     was_active: bool,
 }
 impl FromWorld for State {
@@ -71,6 +72,7 @@ impl FromWorld for State {
             draw_groups: Vec::new(),
             previous_groups: Vec::new(),
             source: 0,
+            catalog_revision: 0,
             was_active: false,
         }
     }
@@ -115,6 +117,7 @@ pub(super) fn install(app: &mut SubApp) {
                 .before(bevy::core_pipeline::core_3d::main_transparent_pass_3d),
         );
 }
+#[allow(clippy::too_many_arguments)] // Independent render-world resources.
 fn prepare(
     mut state: ResMut<State>,
     buffers: Res<VegetationBuffers>,
@@ -123,6 +126,8 @@ fn prepare(
     device: Res<RenderDevice>,
     cache: Res<PipelineCache>,
     mut preparation: ResMut<blade_preparation::BladePreparation>,
+    scene: Option<Res<VegetationSceneState>>,
+    diagnostics: Option<Res<upscaling::UpscalingDiagnostics>>,
 ) {
     let (Some(camera), Ok(mut frame)) = (buffers.preparation_camera, frames.single_mut()) else {
         state.previous = None;
@@ -153,19 +158,39 @@ fn prepare(
         ));
         state.arena = Some(arena);
     }
-    let reset = frame.reset
-        || state.source != buffers.uploaded_revision
-        || state.was_active != buffers.active
-        || state.previous.is_some_and(|p| {
+    let catalog_revision = scene.as_ref().map_or(0, |s| s.catalog_revision());
+    let catalog_changed = buffers.active && state.catalog_revision != catalog_revision;
+    let active_changed = state.was_active != buffers.active;
+    let pose_discontinuity = state.was_active
+        && buffers.active
+        && state.previous.is_some_and(|p| {
             p.render_origin != camera.render_origin || (p.wind[3] - camera.wind[3]).abs() > 0.25
         });
-    // Streaming/world swaps and origin rebases invalidate correspondence rather than creating trails.
+    let reset = frame.reset || catalog_changed || pose_discontinuity;
+    // Residency repacks instance indices, not blade identity. Preparation keys reject
+    // stale arenas, and prepare_previous rebuilds old poses from current roots/seeds.
+    // Resetting the whole view here would flash unrelated trees/terrain on every page load.
+    if diagnostics.as_ref().is_some_and(|d| d.temporal_timing)
+        && (state.source != buffers.uploaded_revision
+            || active_changed
+            || catalog_changed
+            || pose_discontinuity)
+    {
+        info!(
+            "GRASS_TEMPORAL_HISTORY source_revision={} catalog_changed={catalog_changed} active_changed={active_changed} pose_discontinuity={pose_discontinuity} reset={reset}",
+            buffers.uploaded_revision
+        );
+    }
     frame.reset |= reset;
-    let previous = if reset {
+    let mut previous = if reset || active_changed {
         camera
     } else {
         state.previous.unwrap_or(camera)
     };
+    if active_changed && !reset {
+        // Newly enabled grass has no old deformation, but still has camera motion.
+        previous.clip_from_world = frame.previous_clip_from_world.to_cols_array();
+    }
     state.previous_pose = Some(previous);
     queue.write_buffer(
         &state.uniform,
@@ -177,6 +202,10 @@ fn prepare(
     );
     state.previous = Some(camera);
     state.source = buffers.uploaded_revision;
+    // An edit while disabled must still invalidate when the new catalog is first drawn.
+    if buffers.active {
+        state.catalog_revision = catalog_revision;
+    }
     state.was_active = buffers.active;
 }
 fn draw(

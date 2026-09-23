@@ -268,10 +268,22 @@ fn prepare(
         if let Ok(native) = &mut h.native {
             native.set_timing(diagnostics.as_ref().is_some_and(|d| d.temporal_timing));
         }
+        let camera_delta = h.position.distance(position);
+        let direction_dot = h.forward.dot(forward);
         let reset = h.index == 0
             || h.epoch != request.reset_epoch
-            || h.position.distance(position) > 8.0
-            || h.forward.dot(forward) < 0.5;
+            || camera_delta > 8.0
+            || direction_dot < 0.5;
+        if reset && diagnostics.as_ref().is_some_and(|d| d.temporal_timing) {
+            // Log every reset, not just the backend's sampled timing frames. This
+            // distinguishes coordinate/camera cuts from local mesh/LOD draw gaps.
+            warn!(
+                "TEMPORAL_HISTORY_RESET view={entity:?} history_frame={} initial={} epoch_changed={} camera_delta_m={camera_delta:.3} direction_dot={direction_dot:.4} input={size:?} output={output_size:?}",
+                h.index,
+                h.index == 0,
+                h.epoch != request.reset_epoch,
+            );
+        }
         let offset = if h.native.is_ok() {
             jitter(h.index)
         } else {
@@ -443,6 +455,7 @@ fn resolve(
     )>,
     mut state: ResMut<State>,
     bridge: Res<Bridge>,
+    diagnostics: Option<Res<crate::UpscalingDiagnostics>>,
     mut ctx: RenderContext,
 ) {
     let entity = view.entity();
@@ -452,10 +465,17 @@ fn resolve(
     };
     let pp = target.post_process_write();
     let pair = [pp.source_texture.id(), pp.destination_texture.id()];
-    let reset = frame.reset
-        || history
-            .last_pair
-            .is_none_or(|old| !pair.iter().all(|id| old.contains(id)));
+    let targets_changed = history
+        .last_pair
+        .is_none_or(|old| !pair.iter().all(|id| old.contains(id)));
+    let reset = frame.reset || targets_changed;
+    if targets_changed && diagnostics.as_ref().is_some_and(|d| d.temporal_timing) {
+        warn!(
+            "TEMPORAL_HISTORY_RESET view={entity:?} history_frame={} targets_changed=true initial_targets={}",
+            history.index.saturating_sub(1),
+            history.last_pair.is_none(),
+        );
+    }
     history.last_pair = Some(pair);
     let mut failure = history.native.as_ref().err().cloned();
     if request.debug == TemporalDebug::Off

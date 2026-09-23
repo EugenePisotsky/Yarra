@@ -8,6 +8,39 @@ fn main() -> Result<()> {
         .next()
         .and_then(|argument| argument.into_string().ok())
         .unwrap_or_else(|| "cook".into());
+    if command == "import-assets" {
+        let source = PathBuf::from(arguments.next().context("expected CATALOG_RON")?);
+        let project = arguments
+            .next()
+            .map(PathBuf::from)
+            .unwrap_or_else(default_project_path);
+        if arguments.next().is_some() {
+            bail!("usage: yarra-world-cook import-assets CATALOG_RON [PROJECT_DB]");
+        }
+        let catalog: world_db::AssetImportCatalog =
+            ron::from_str(&std::fs::read_to_string(&source)?)?;
+        catalog.validate()?;
+        let asset_root = repository_root().join("assets");
+        for asset in &catalog.assets {
+            for uri in
+                std::iter::once(&asset.source_uri).chain(asset.variants.iter().map(|v| &v.uri))
+            {
+                if !asset_root.join(uri).is_file() {
+                    bail!(
+                        "missing local asset {}; run the pack exporter first",
+                        asset_root.join(uri).display()
+                    );
+                }
+            }
+        }
+        world_db::ProjectWriter::open(&project)?.import_assets(&catalog)?;
+        println!(
+            "Registered {} assets in {}. Reopen the editor to refresh its palette; cook after placing or scattering them.",
+            catalog.assets.len(),
+            project.display()
+        );
+        return Ok(());
+    }
     if command == "create-demo"
         || command == "create-road-demo"
         || command == "create-mountain-fixture"
@@ -68,7 +101,7 @@ fn main() -> Result<()> {
     }
     if command != "cook" && command != "init" {
         bail!(
-            "unknown command {command:?}; expected `init`, `cook`, `create-demo`, `create-road-demo`, `create-mountain-fixture`, `create-hill-fixture`, `export-vegetation` or `import-vegetation`"
+            "unknown command {command:?}; expected `init`, `cook`, `create-demo`, `create-road-demo`, `create-mountain-fixture`, `create-hill-fixture`, `export-vegetation`, `import-vegetation` or `import-assets`"
         );
     }
 

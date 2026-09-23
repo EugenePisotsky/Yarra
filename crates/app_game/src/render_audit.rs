@@ -164,7 +164,7 @@ impl Control {
             Self::Upscaler => format!("Upscaler: {}", s.upscaler.label()),
             Self::Counters => format!("GPU counters: {}", on_off(s.counters)),
             Self::GpuPassTimings => format!("GPU pass timings: {}", on_off(s.gpu_pass_timings)),
-            Self::Wind => format!("Grass wind: {}", on_off(s.wind)),
+            Self::Wind => format!("Vegetation wind: {}", on_off(s.wind)),
             Self::Lock => format!("Lock controls: {}", on_off(s.controls_locked)),
             Self::Reset => "Reset launch settings".into(),
             Self::RenderPath => format!("Render: {}", s.render_path.label()),

@@ -114,8 +114,11 @@ def textured_material(
 
     if alpha_cutoff is not None:
         material.use_backface_culling = False
-        material.blend_method = "CLIP"
-        material.alpha_threshold = alpha_cutoff
+        if hasattr(material, "surface_render_method"):
+            material.surface_render_method = "DITHERED"
+        else:
+            material.blend_method = "CLIP"
+            material.alpha_threshold = alpha_cutoff
         clip = nodes.new("ShaderNodeMath")
         clip.name = "Runtime alpha clip"
         clip.operation = "GREATER_THAN"
@@ -129,10 +132,12 @@ def runtime_materials(
     texture_root: str,
     texture_size: int,
     alpha_cutoff: float,
+    bark_variant: str = "red",
+    foliage_kind: str = "tree",
 ) -> tuple[bpy.types.Material, bpy.types.Material]:
     bark_color = load_scaled_image(
-        os.path.join(texture_root, "Bark_RedVariant.tif"),
-        "forest_starter_bark_red_runtime",
+        os.path.join(texture_root, f"Bark_{bark_variant.title()}Variant.tif"),
+        f"forest_starter_bark_{bark_variant}_runtime",
         texture_size,
         color_space="sRGB",
     )
@@ -144,8 +149,8 @@ def runtime_materials(
     )
     leaf_root = os.path.join(texture_root, "Leave")
     leaf_color = load_scaled_image(
-        os.path.join(leaf_root, "Tree_Leaves_SummerVariant.tif"),
-        "forest_starter_tree_summer_leaves_runtime",
+        os.path.join(leaf_root, f"{foliage_kind.title()}_Leaves_SummerVariant.tif"),
+        f"forest_starter_{foliage_kind}_summer_leaves_runtime",
         texture_size,
         color_space="sRGB",
     )
@@ -156,9 +161,9 @@ def runtime_materials(
         color_space="Non-Color",
     )
     return (
-        textured_material("forest_starter_bark_red", bark_color, bark_normal),
+        textured_material(f"forest_starter_bark_{bark_variant}", bark_color, bark_normal),
         textured_material(
-            "forest_starter_tree_summer_leaves",
+            f"forest_starter_{foliage_kind}_summer_leaves",
             leaf_color,
             leaf_normal,
             alpha_cutoff=alpha_cutoff,
@@ -257,11 +262,14 @@ def export_lod(
     flutter_weight: float,
     bark: bpy.types.Material,
     foliage: bpy.types.Material,
+    asset_name: str = "tree_07",
+    texture_dir: str = "textures",
+    alpha_cutoff: float = 0.5,
 ) -> LodExport:
     mesh, dimensions, triangles = extract_lod_mesh(
         fbx_path, lod, scale, flutter_weight, bark, foliage
     )
-    mesh_name = f"tree_07_summer_lod{lod}"
+    mesh_name = f"{asset_name}_summer_lod{lod}"
     mesh.name = f"{mesh_name}_mesh"
     exported = bpy.data.objects.new(mesh_name, mesh)
     bpy.context.scene.collection.objects.link(exported)
@@ -269,13 +277,13 @@ def export_lod(
     exported.select_set(True)
     bpy.context.view_layer.objects.active = exported
 
-    filename = f"tree_07_summer_lod{lod}.gltf"
+    filename = f"{mesh_name}.gltf"
     output_path = os.path.join(output_dir, filename)
     bpy.ops.export_scene.gltf(
         filepath=output_path,
         check_existing=False,
         export_format="GLTF_SEPARATE",
-        export_texture_dir="textures",
+        export_texture_dir=texture_dir,
         use_selection=True,
         export_apply=True,
         export_yup=True,
@@ -290,6 +298,20 @@ def export_lod(
         export_shared_accessors=True,
     )
 
+    # Blender 4.2+ exports the clipping node as BLEND. glTF MASK is the
+    # engine contract: retain source alpha and use a depth-writing cutout.
+    with open(output_path, encoding="utf-8") as file:
+        document = json.load(file)
+    for material in document.get("materials", []):
+        if "leaves" in material["name"]:
+            material["alphaMode"] = "MASK"
+            material["alphaCutoff"] = alpha_cutoff
+            material["doubleSided"] = True
+            # Explicit renderer contract; UV1 contains (flutter, branch) weights.
+            material.setdefault("extras", {})["yarra_wind"] = "foliage_uv1_v1"
+    with open(output_path, "w", encoding="utf-8") as file:
+        json.dump(document, file, indent=2)
+        file.write("\n")
     buffer_path = os.path.splitext(output_path)[0] + ".bin"
     result = LodExport(
         lod=lod,
@@ -333,6 +355,7 @@ def main() -> None:
             args.flutter_weight,
             bark,
             foliage,
+            alpha_cutoff=args.alpha_cutoff,
         )
         for lod in range(4)
     ]

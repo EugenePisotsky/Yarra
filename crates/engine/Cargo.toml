@@ -7,10 +7,12 @@ publish.workspace = true
 [dependencies]
 atmosphere.workspace = true
 bevy.workspace = true
+bytemuck.workspace = true
 crossbeam-channel.workspace = true
 log.workspace = true
 ron.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 terrain-render.workspace = true
 vegetation.workspace = true
 vegetation-render.workspace = true

@@ -15,7 +15,7 @@ use bevy::{
     },
 };
 use bytemuck::{Pod, Zeroable};
-pub use material::CloudMaterial;
+pub use material::{CloudMaterial, CloudMaterialOptIn, CloudMaterialSystems};
 pub use render::{CloudShadowGpu, CloudShadowLayout, surface_layout};
 use world::atmosphere::{evaluate, linear_rgb};
 

@@ -8,6 +8,8 @@ mod character_catalog;
 mod msaa_store;
 mod object_lod;
 pub use object_lod::ObjectLodPlugin;
+mod tree_wind;
+pub use tree_wind::{TreeWindPlugin, TreeWindResponse, TreeWindSystems};
 mod world_streaming;
 mod world_vegetation;
 pub use world_vegetation::{

@@ -1,0 +1,96 @@
+schema_version = 2
+asset_key = "forest_tree_starter_kit/tree_02"
+display_name = "Forest Tree 02 (Summer)"
+
+[provenance]
+status = "unverified"
+redistributable = false
+reason = "The legacy project records neither the original author/source URL nor a redistribution license."
+
+[source]
+local_path = "assets/local/forest_tree_starter_kit/source/tree_02/DA_Forest_Tree_5639_Tris.FBX"
+texture_root = "assets/local/forest_tree_starter_kit/source/textures"
+format = "fbx"
+sha256 = "935f770f687e05bdff43d164a7b3e0f25dd4023ac678cfd72e96944a56cccce6"
+mesh_lods = ["Forest_Tree_Bark_LOD0", "Forest_Tree_Bark_LOD1", "Forest_Tree_Bark_LOD2", "Forest_Tree_Bark_LOD3"]
+billboard_status = "unavailable: source texture is missing"
+
+[import]
+tool = "tools/export_forest_pack.py"
+runtime_format = "gltf"
+texture_size = 1024
+foliage_alpha_mode = "mask"
+foliage_alpha_cutoff = 0.5
+foliage_double_sided = true
+source_scale = 0.55
+wind_flutter_weight = 0.4
+bark_variant = "green"
+wind_contract = "foliage_uv1_v1"
+
+[lod_policy]
+measurement = "projected logical-pixel height"
+hysteresis_fraction = 0.12
+
+[[variants]]
+appearance = "summer"
+lod = 0
+runtime_uri = "local/forest_tree_starter_kit/runtime/tree_02/summer/tree_02_summer_lod0.gltf"
+mesh_name = "tree_02_summer_lod0"
+triangles = 5639
+minimum_screen_height = 320.0
+runtime_bounds_m = [5.1189, 12.3418, 4.4544]
+gpu_bytes_estimate = 293732
+gltf_sha256 = "ea878e9a954b8f075b8c015628be406e7a00e0324ff5968092fc4301117a8df3"
+buffer_sha256 = "a939088d79698cae876e31305a84b1ae2e822a0006543ced75bf3cf1c6c67d8b"
+
+[[variants]]
+appearance = "summer"
+lod = 1
+runtime_uri = "local/forest_tree_starter_kit/runtime/tree_02/summer/tree_02_summer_lod1.gltf"
+mesh_name = "tree_02_summer_lod1"
+triangles = 2384
+minimum_screen_height = 160.0
+runtime_bounds_m = [5.1189, 12.3418, 4.4544]
+gpu_bytes_estimate = 156432
+gltf_sha256 = "ec8444bd9cca661ccce48b855f1844463f34a4bb3fbfd5a2fd876b8b6321993f"
+buffer_sha256 = "55f9cb3db0d77ee0c6a894e9e825d5650f9f5d71bd47893afd33acfe9d14ddfb"
+
+[[variants]]
+appearance = "summer"
+lod = 2
+runtime_uri = "local/forest_tree_starter_kit/runtime/tree_02/summer/tree_02_summer_lod2.gltf"
+mesh_name = "tree_02_summer_lod2"
+triangles = 1014
+minimum_screen_height = 80.0
+runtime_bounds_m = [5.1189, 12.3418, 4.4544]
+gpu_bytes_estimate = 82976
+gltf_sha256 = "450f20c0c97a0c7a3c44156c6f7674f88a9c09646110466b42842cfafe50e0a4"
+buffer_sha256 = "4c20cb6075d09440e1bafea497e3721893931d6d2fcf42aaf570ff7130d17e8e"
+
+[[variants]]
+appearance = "summer"
+lod = 3
+runtime_uri = "local/forest_tree_starter_kit/runtime/tree_02/summer/tree_02_summer_lod3.gltf"
+mesh_name = "tree_02_summer_lod3"
+triangles = 356
+minimum_screen_height = 0.0
+runtime_bounds_m = [5.1189, 12.3418, 4.4544]
+gpu_bytes_estimate = 40384
+gltf_sha256 = "8f0f3af08bc717902cb105bdf981ed1191ea3b90a1b1d436ab1422298c7ada90"
+buffer_sha256 = "474eee0e1ed3f881ca61c5c18885b185595f3c8fa8302de4b98fa1d4e9f2dd14"
+
+[[textures]]
+file = "forest_starter_bark_green_runtime.png"
+sha256 = "85bd2807f15f3d1b19c35ee30779a5cce7db6c2d51775919c34ed589e3a20947"
+
+[[textures]]
+file = "forest_starter_bark_normal_runtime.png"
+sha256 = "2a18c949cc530261a7231e283381755b676bb8028d997ce4f6ab926ee5dbd5a6"
+
+[[textures]]
+file = "forest_starter_leaf_normal_runtime.png"
+sha256 = "77e04ebaac1ca7532c9632c158e25b2083f3dd9460c2f3c95386e4c87ed47900"
+
+[[textures]]
+file = "forest_starter_tree_summer_leaves_runtime.png"
+sha256 = "fa75e71ae506ec9f587f7539b043c7507b1cdc459928b6272020e7f32f56b6b7"

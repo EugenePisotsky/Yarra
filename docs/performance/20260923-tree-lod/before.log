@@ -1,0 +1,22 @@
+
+running 1 test
+
+thread 'tree_wind::scene_tests::imported_tree_lod_materials_remain_drawable' (1930883) panicked at crates/engine/src/tree_wind/scene_tests.rs:116:5:
+LOD draw gaps without Temporal:
+lod=1 frame=0: Snapshot { wanted: [(427v0, "tree_07_summer_lod1_mesh.forest_starter_bark_red"), (428v0, "tree_07_summer_lod1_mesh.forest_starter_tree_summer_leaves")], ready: ["tree_07_summer_lod1_mesh.forest_starter_bark_red"], missing: ["tree_07_summer_lod1_mesh.forest_starter_tree_summer_leaves: material=false pipeline=false"] }
+lod=2 frame=0: Snapshot { wanted: [(470v0, "tree_07_summer_lod2_mesh.forest_starter_bark_red"), (471v0, "tree_07_summer_lod2_mesh.forest_starter_tree_summer_leaves")], ready: ["tree_07_summer_lod2_mesh.forest_starter_bark_red"], missing: ["tree_07_summer_lod2_mesh.forest_starter_tree_summer_leaves: material=false pipeline=false"] }
+lod=3 frame=0: Snapshot { wanted: [(470v1, "tree_07_summer_lod3_mesh.forest_starter_bark_red"), (471v1, "tree_07_summer_lod3_mesh.forest_starter_tree_summer_leaves")], ready: ["tree_07_summer_lod3_mesh.forest_starter_bark_red"], missing: ["tree_07_summer_lod3_mesh.forest_starter_tree_summer_leaves: material=false pipeline=false"] }
+lod=0 frame=0: Snapshot { wanted: [(427v1, "tree_07_summer_lod0_mesh.forest_starter_bark_red"), (428v1, "tree_07_summer_lod0_mesh.forest_starter_tree_summer_leaves")], ready: ["tree_07_summer_lod0_mesh.forest_starter_bark_red"], missing: ["tree_07_summer_lod0_mesh.forest_starter_tree_summer_leaves: material=false pipeline=false"] }
+lod=1 frame=0: Snapshot { wanted: [(375v1, "tree_07_summer_lod1_mesh.forest_starter_bark_red"), (376v1, "tree_07_summer_lod1_mesh.forest_starter_tree_summer_leaves")], ready: ["tree_07_summer_lod1_mesh.forest_starter_bark_red"], missing: ["tree_07_summer_lod1_mesh.forest_starter_tree_summer_leaves: material=false pipeline=false"] }
+lod=2 frame=0: Snapshot { wanted: [(376v2, "tree_07_summer_lod2_mesh.forest_starter_bark_red"), (512v0, "tree_07_summer_lod2_mesh.forest_starter_tree_summer_leaves")], ready: ["tree_07_summer_lod2_mesh.forest_starter_bark_red"], missing: ["tree_07_summer_lod2_mesh.forest_starter_tree_summer_leaves: material=false pipeline=false"] }
+lod=3 frame=0: Snapshot { wanted: [(428v2, "tree_07_summer_lod3_mesh.forest_starter_bark_red"), (377v1, "tree_07_summer_lod3_mesh.forest_starter_tree_summer_leaves")], ready: ["tree_07_summer_lod3_mesh.forest_starter_bark_red"], missing: ["tree_07_summer_lod3_mesh.forest_starter_tree_summer_leaves: material=false pipeline=false"] }
+lod=0 frame=0: Snapshot { wanted: [(471v2, "tree_07_summer_lod0_mesh.forest_starter_bark_red"), (429v1, "tree_07_summer_lod0_mesh.forest_starter_tree_summer_leaves")], ready: ["tree_07_summer_lod0_mesh.forest_starter_bark_red"], missing: ["tree_07_summer_lod0_mesh.forest_starter_tree_summer_leaves: material=false pipeline=false"] }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test tree_wind::scene_tests::imported_tree_lod_materials_remain_drawable ... FAILED
+
+failures:
+
+failures:
+    tree_wind::scene_tests::imported_tree_lod_materials_remain_drawable
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 92 filtered out; finished in 5.96s

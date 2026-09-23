@@ -4,6 +4,10 @@ use bevy::math::DVec3;
 use std::collections::BTreeMap;
 
 pub(super) const PRELOAD_METERS: f64 = 16.;
+// Object residency is independent of source cell size, grass range and camera heading.
+// Bevy culls resident meshes separately for the camera and each shadow cascade.
+// Keep the final mesh LOD until this bounded range; billboards are not available yet.
+const OBJECT_VISIBILITY_METERS: f64 = 192.;
 pub(super) type Window = [CellCoord; 2];
 pub(super) type Priority = (u8, f64);
 
@@ -72,6 +76,7 @@ pub(super) fn windows(
     // bounds below. Authored world height ranges are not a culling certificate.
     if hierarchy && view.space == Some(position.space) {
         let size = f64::from(space.cell_size);
+        let radius = view.radius.max(OBJECT_VISIBILITY_METERS);
         let coordinate = |v: f64| -> Result<i32, String> {
             let v = (v / size).floor();
             if v < i32::MIN as f64 || v > i32::MAX as f64 {
@@ -82,12 +87,12 @@ pub(super) fn windows(
         };
         let camera = [
             CellCoord {
-                x: coordinate(view.eye.x - view.radius)?,
-                z: coordinate(view.eye.z - view.radius)?,
+                x: coordinate(view.eye.x - radius)?,
+                z: coordinate(view.eye.z - radius)?,
             },
             CellCoord {
-                x: coordinate(view.eye.x + view.radius)?,
-                z: coordinate(view.eye.z + view.radius)?,
+                x: coordinate(view.eye.x + radius)?,
+                z: coordinate(view.eye.z + radius)?,
             },
         ];
         if contains(camera, windows[0]) {
@@ -142,11 +147,24 @@ pub(super) fn demand(
         let cell_distance = d.cell.chebyshev_distance(position.cell);
         let local = cell_distance <= VISUAL_SOURCE_RESIDENCY_RADIUS_CELLS;
         let active = cell_distance <= GAMEPLAY_PRELOAD_RADIUS_CELLS;
-        // Expanding source range must not implicitly expand detailed objects.
-        let visible = local
+        let source_distance = distance_squared(view.eye, d, cell_size);
+        let object_near = if hierarchy {
+            view.space == Some(position.space)
+                && source_distance <= OBJECT_VISIBILITY_METERS.powi(2)
+        } else {
+            local
+        };
+        let visible = object_near
             && detail
             && camera.is_some_and(|f| cell_intersects_frustum(f, d, origin, cell_size));
-        let source_distance = distance_squared(view.eye, d, cell_size);
+        // A tree behind the camera may still cast a shadow onto visible ground. Keep
+        // the bounded object neighborhood resident, even across a long camera turn.
+        // Frustum visibility prioritizes loading; it must not drive caster lifetime.
+        let objects = if hierarchy {
+            object_near && detail
+        } else {
+            visible
+        };
         let near = if hierarchy {
             view.space == Some(position.space) && source_distance <= view.radius.powi(2)
         } else {
@@ -165,12 +183,12 @@ pub(super) fn demand(
         for (domain, needed) in [
             (PageDomain::TerrainRender, terrain),
             (PageDomain::Vegetation, near),
-            (PageDomain::StaticObjects, visible),
+            (PageDomain::StaticObjects, objects),
             (PageDomain::GameplayObjects, gameplay && active),
         ] {
             if needed && d.has_domain(domain) {
                 let priority = if domain == PageDomain::StaticObjects {
-                    (2, f64::from(cell_distance))
+                    (if visible { 2 } else { 3 }, source_distance)
                 } else {
                     priority
                 };
@@ -243,15 +261,150 @@ mod tests {
             .sum(),
         }
     }
+    fn forest_frustum() -> Frustum {
+        use bevy::camera::CameraProjection;
+        PerspectiveProjection::default().compute_frustum(&GlobalTransform::from(
+            Transform::from_xyz(-10., 5., 0.).looking_at(Vec3::new(200., 0., 0.), Vec3::Y),
+        ))
+    }
     #[test]
-    fn small_cells_cover_blade_range_without_loading_distant_objects_or_gameplay() {
+    fn unseen_casters_are_requested_but_visible_objects_load_first() {
+        let front = descriptor(CellCoord { x: 20, z: 0 });
+        let back = descriptor(CellCoord { x: -21, z: 0 });
+        let view = view(DVec3::ZERO);
+        let frustum = forest_frustum();
+        let selected = demand(
+            &[front, back],
+            position(),
+            8.,
+            CellCoord::ZERO,
+            Some(&frustum),
+            true,
+            true,
+            true,
+            &view,
+        );
+        let mut order: Vec<_> = selected.into_iter().collect();
+        order.sort_by(compare);
+        assert_eq!(order.len(), 2);
+        assert_eq!(order[0].0.domain, PageDomain::StaticObjects);
+        assert_eq!(order[0].0.cell.x, 20);
+        assert_eq!(order[0].1.0, 2);
+        assert_eq!(order[1].0.domain, PageDomain::StaticObjects);
+        assert_eq!(order[1].0.cell.x, -21);
+        assert_eq!(order[1].1.0, 3);
+    }
+    #[test]
+    fn offscreen_casters_survive_rotation_past_cooling_but_unload_outside_range() {
+        use crate::world_streaming::residency::{
+            attachment::PageAttachment, cool_and_remove_pages,
+        };
+        use bevy::camera::CameraProjection;
+        use std::time::Duration;
+
+        let caster = descriptor(CellCoord { x: 10, z: 0 });
+        let key = PageKey {
+            space: position().space,
+            cell: caster.cell,
+            domain: PageDomain::StaticObjects,
+            lod: 0,
+        };
+        let ahead = forest_frustum();
+        let behind = PerspectiveProjection::default().compute_frustum(&GlobalTransform::from(
+            Transform::from_xyz(-10., 5., 0.).looking_at(Vec3::new(-200., 0., 0.), Vec3::Y),
+        ));
+        assert!(cell_intersects_frustum(
+            &ahead,
+            &caster,
+            CellCoord::ZERO,
+            8.
+        ));
+        assert!(!cell_intersects_frustum(
+            &behind,
+            &caster,
+            CellCoord::ZERO,
+            8.
+        ));
+        let mut view = view(DVec3::new(-10., 5., 0.));
+        let mut app = App::new();
+        app.init_resource::<Time>()
+            .init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<terrain_render::TerrainMaterial>>()
+            .init_resource::<Assets<Image>>()
+            .init_resource::<SourceResidency>()
+            .add_systems(Update, cool_and_remove_pages);
+        let entity = app.world_mut().spawn_empty().id();
+        app.world_mut()
+            .resource_mut::<SourceResidency>()
+            .pages
+            .insert(
+                key,
+                PageState::Resident(PageAttachment {
+                    entities: vec![entity],
+                    ..default()
+                }),
+            );
+        let select = |view: &SourceView, camera: &Frustum| {
+            demand(
+                &[caster.clone()],
+                position(),
+                8.,
+                CellCoord::ZERO,
+                Some(camera),
+                true,
+                true,
+                true,
+                view,
+            )
+        };
+        for camera in [&ahead, &behind, &ahead, &behind] {
+            app.world_mut()
+                .resource_mut::<SourceResidency>()
+                .set_demand(select(&view, camera));
+            app.update();
+            // The reported failure waited for the existing two-second unload grace.
+            app.world_mut()
+                .resource_mut::<Time>()
+                .advance_by(Duration::from_secs(5));
+            app.update();
+            assert!(
+                app.world().get_entity(entity).is_ok(),
+                "turning must retain off-screen shadow casters"
+            );
+            assert!(matches!(
+                app.world().resource::<SourceResidency>().pages[&key],
+                PageState::Resident(_)
+            ));
+        }
+        view.eye.x += 500.;
+        app.world_mut()
+            .resource_mut::<SourceResidency>()
+            .set_demand(select(&view, &behind));
+        app.update();
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(Duration::from_secs(5));
+        app.update();
+        assert!(
+            app.world().get_entity(entity).is_err(),
+            "moving out of range must still release casters"
+        );
+        assert!(
+            !app.world()
+                .resource::<SourceResidency>()
+                .pages
+                .contains_key(&key)
+        );
+    }
+    #[test]
+    fn small_cells_cover_forest_and_blade_ranges_without_distant_gameplay() {
         let view = view(DVec3::new(1., 2., 1.));
         let windows = windows(position(), &space(8.), &view, true).unwrap();
         assert_eq!(windows.len(), 1);
         assert!(windows[0][0].x <= -14 && windows[0][1].x >= 14);
         let distant = descriptor(CellCoord { x: 10, z: 0 });
         let local = descriptor(CellCoord::ZERO);
-        let frustum = Frustum::default();
+        let frustum = forest_frustum();
         let selected = demand(
             &[local, distant],
             position(),
@@ -273,7 +426,7 @@ mod tests {
         };
         assert!(has(CellCoord { x: 10, z: 0 }, PageDomain::Vegetation));
         assert!(has(CellCoord { x: 10, z: 0 }, PageDomain::TerrainRender));
-        assert!(!has(CellCoord { x: 10, z: 0 }, PageDomain::StaticObjects));
+        assert!(has(CellCoord { x: 10, z: 0 }, PageDomain::StaticObjects));
         assert!(!has(CellCoord { x: 10, z: 0 }, PageDomain::GameplayObjects));
         assert!(has(CellCoord::ZERO, PageDomain::GameplayObjects));
         let legacy = demand(
@@ -288,6 +441,53 @@ mod tests {
             &view,
         );
         assert!(legacy.is_empty());
+    }
+    #[test]
+    fn forest_range_is_in_metres_and_does_not_expand_grass_or_gameplay() {
+        let view = view(DVec3::ZERO);
+        let frustum = forest_frustum();
+        for size in [8., 32.] {
+            let inside = CellCoord {
+                x: (160. / size) as i32,
+                z: 0,
+            };
+            let outside = CellCoord {
+                x: (224. / size) as i32,
+                z: 0,
+            };
+            let windows = windows(position(), &space(size), &view, true).unwrap();
+            assert!(windows.iter().any(|w| contains(*w, [inside; 2])));
+            let selected = demand(
+                &[descriptor(inside), descriptor(outside)],
+                position(),
+                size,
+                CellCoord::ZERO,
+                Some(&frustum),
+                true,
+                true,
+                true,
+                &view,
+            );
+            assert_eq!(selected.len(), 1);
+            assert!(selected.contains_key(&PageKey {
+                space: WorldSpaceId(1),
+                cell: inside,
+                domain: PageDomain::StaticObjects,
+                lod: 0
+            }));
+            let disabled = demand(
+                &[descriptor(inside)],
+                position(),
+                size,
+                CellCoord::ZERO,
+                Some(&frustum),
+                false,
+                true,
+                true,
+                &view,
+            );
+            assert!(disabled.is_empty());
+        }
     }
     #[test]
     fn elevated_views_keep_local_consumers_but_do_not_load_valley_grass() {

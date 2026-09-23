@@ -1,10 +1,11 @@
 use super::*;
 use bevy::{
+    asset::AssetEventSystems,
     pbr::{ExtendedMaterial, MaterialExtension},
     shader::ShaderRef,
 };
 use std::collections::HashMap;
-#[derive(Asset, AsBindGroup, TypePath, Debug, Clone)]
+#[derive(Asset, AsBindGroup, TypePath, Debug, Clone, Default)]
 pub struct CloudExtension {
     #[storage(120, read_only)]
     pub parameters: Handle<ShaderBuffer>,
@@ -19,12 +20,25 @@ impl MaterialExtension for CloudExtension {
 }
 pub type CloudMaterial = ExtendedMaterial<StandardMaterial, CloudExtension>;
 pub struct CloudMaterialPlugin;
+/// Scene-material conversion completes before optional surface effects compose with it.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CloudMaterialSystems;
+/// Request this material pipeline in isolated studies for extensions that compose
+/// with it. Study atmosphere already disables cloud transmission in the shared data.
+#[derive(Component)]
+pub struct CloudMaterialOptIn;
 #[derive(Component)]
 struct OriginalMaterial(Handle<StandardMaterial>);
 impl Plugin for CloudMaterialPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(bevy::pbr::MaterialPlugin::<CloudMaterial>::default())
-            .add_systems(PostUpdate, convert.after(ApplyAtmosphere));
+            .add_systems(
+                PostUpdate,
+                convert
+                    .in_set(CloudMaterialSystems)
+                    .after(ApplyAtmosphere)
+                    .before(AssetEventSystems),
+            );
     }
 }
 // Keep source handles alive and mirror edits. Unlit/editor overlay materials retain
@@ -36,7 +50,11 @@ fn convert(
     mut events: MessageReader<AssetEvent<StandardMaterial>>,
     source: Res<Assets<StandardMaterial>>,
     mut target: ResMut<Assets<CloudMaterial>>,
-    meshes: Query<(Entity, &MeshMaterial3d<StandardMaterial>)>,
+    meshes: Query<(
+        Entity,
+        &MeshMaterial3d<StandardMaterial>,
+        Has<CloudMaterialOptIn>,
+    )>,
     retained: Query<&OriginalMaterial>,
     mut cache: Local<HashMap<AssetId<StandardMaterial>, Handle<CloudMaterial>>>,
 ) {
@@ -54,10 +72,10 @@ fn convert(
     }
     let live: std::collections::HashSet<_> = retained.iter().map(|p| p.0.id()).collect();
     cache.retain(|id, _| live.contains(id));
-    if state.owner == AtmosphereOwner::Study {
-        return;
-    }
-    for (e, handle) in &meshes {
+    for (e, handle, opt_in) in &meshes {
+        if state.owner == AtmosphereOwner::Study && !opt_in {
+            continue;
+        }
         let Some(base) = source.get(handle) else {
             continue;
         };
@@ -80,5 +98,47 @@ fn convert(
             .entity(e)
             .remove::<MeshMaterial3d<StandardMaterial>>()
             .insert((OriginalMaterial(handle.0.clone()), MeshMaterial3d(material)));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn study_conversion_requires_explicit_composition_opt_in() {
+        let mut app = App::new();
+        app.init_resource::<Assets<StandardMaterial>>()
+            .init_resource::<Assets<CloudMaterial>>()
+            .add_message::<AssetEvent<StandardMaterial>>()
+            .insert_resource(AtmosphereState {
+                owner: AtmosphereOwner::Study,
+                ..default()
+            })
+            .insert_resource(CloudAssets {
+                parameters: default(),
+                shadows: default(),
+                noise: default(),
+            })
+            .add_systems(Update, convert);
+        let material = app
+            .world_mut()
+            .resource_mut::<Assets<StandardMaterial>>()
+            .add(StandardMaterial::default());
+        let ordinary = app.world_mut().spawn(MeshMaterial3d(material.clone())).id();
+        let composed = app
+            .world_mut()
+            .spawn((MeshMaterial3d(material), CloudMaterialOptIn))
+            .id();
+        app.update();
+        assert!(
+            app.world()
+                .get::<MeshMaterial3d<StandardMaterial>>(ordinary)
+                .is_some()
+        );
+        assert!(
+            app.world()
+                .get::<MeshMaterial3d<CloudMaterial>>(composed)
+                .is_some()
+        );
     }
 }

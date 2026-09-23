@@ -1,0 +1,40 @@
+
+running 1 test
+GRASS_STREAM_HISTORY prepared=true step=0 reset=true max_motion_uv=0.000000
+GRASS_STREAM_HISTORY prepared=true step=1 reset=true max_motion_uv=0.000000
+GRASS_STREAM_HISTORY prepared=true step=2 reset=true max_motion_uv=0.000000
+GRASS_STREAM_HISTORY prepared=true step=3 reset=true max_motion_uv=0.000000
+GRASS_STREAM_HISTORY prepared=true step=4 reset=true max_motion_uv=0.000000
+GRASS_STREAM_HISTORY prepared=true step=5 reset=true max_motion_uv=0.000000
+GRASS_STREAM_HISTORY prepared=true step=6 reset=true max_motion_uv=0.000000
+GRASS_STREAM_HISTORY prepared=true step=7 reset=true max_motion_uv=0.000000
+GRASS_STREAM_HISTORY prepared=true step=8 reset=true max_motion_uv=0.000000
+GRASS_STREAM_HISTORY prepared=true step=9 reset=true max_motion_uv=0.000000
+GRASS_STREAM_HISTORY prepared=true step=10 reset=true max_motion_uv=0.000000
+GRASS_STREAM_HISTORY prepared=true step=11 reset=true max_motion_uv=0.000000
+GRASS_STREAM_HISTORY prepared=false step=0 reset=true max_motion_uv=0.000000
+GRASS_STREAM_HISTORY prepared=false step=1 reset=true max_motion_uv=0.000000
+GRASS_STREAM_HISTORY prepared=false step=2 reset=true max_motion_uv=0.000000
+GRASS_STREAM_HISTORY prepared=false step=3 reset=true max_motion_uv=0.000000
+GRASS_STREAM_HISTORY prepared=false step=4 reset=true max_motion_uv=0.000000
+GRASS_STREAM_HISTORY prepared=false step=5 reset=true max_motion_uv=0.000000
+GRASS_STREAM_HISTORY prepared=false step=6 reset=true max_motion_uv=0.000000
+GRASS_STREAM_HISTORY prepared=false step=7 reset=true max_motion_uv=0.000000
+GRASS_STREAM_HISTORY prepared=false step=8 reset=true max_motion_uv=0.000000
+GRASS_STREAM_HISTORY prepared=false step=9 reset=true max_motion_uv=0.000000
+GRASS_STREAM_HISTORY prepared=false step=10 reset=true max_motion_uv=0.000000
+GRASS_STREAM_HISTORY prepared=false step=11 reset=true max_motion_uv=0.000000
+
+thread 'renderer::blade_preparation::gpu_tests::temporal_streaming::temporal_offscreen_grass_streaming_preserves_history' (1979006) panicked at crates/vegetation_render/src/renderer/blade_preparation/temporal_streaming_tests.rs:64:5:
+assertion `left == right` failed: offscreen residency updates reset the whole view
+  left: 24
+ right: 0
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test renderer::blade_preparation::gpu_tests::temporal_streaming::temporal_offscreen_grass_streaming_preserves_history ... FAILED
+
+failures:
+
+failures:
+    renderer::blade_preparation::gpu_tests::temporal_streaming::temporal_offscreen_grass_streaming_preserves_history
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 44 filtered out; finished in 1.84s

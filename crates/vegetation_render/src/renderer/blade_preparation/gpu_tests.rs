@@ -42,6 +42,9 @@ mod shading;
 #[path = "temporal_quality_tests.rs"]
 mod temporal_quality;
 
+#[path = "temporal_streaming_tests.rs"]
+mod temporal_streaming;
+
 #[derive(Resource, Default, Clone)]
 struct Pixels(Arc<Mutex<Vec<u8>>>);
 

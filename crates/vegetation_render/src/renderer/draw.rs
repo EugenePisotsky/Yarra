@@ -31,7 +31,6 @@ pub(super) fn queue(
     mut commands: Commands,
     pipeline_cache: Res<PipelineCache>,
     mut pipelines: ResMut<VegetationPipelines>,
-    buffers: Res<VegetationBuffers>,
     settings: Res<VegetationDebugSettings>,
     mut opaque_phases: ResMut<ViewBinnedRenderPhases<Opaque3d>>,
     draw_functions: Res<DrawFunctions<Opaque3d>>,
@@ -61,14 +60,15 @@ pub(super) fn queue(
             continue;
         };
         phase.remove(*draw_main_entity);
-        if !buffers.active
-            || matches!(
-                settings.profile_mode,
-                VegetationProfileMode::ComputeOnly
-                    | VegetationProfileMode::ScheduleOnly
-                    | VegetationProfileMode::Disabled
-            )
-        {
+        // Queue precedes PrepareBindGroups: buffers.active still describes the last
+        // frame here. Decide residency at draw time so newly resident grass does not
+        // miss its first frame (including after an empty scene or a visibility toggle).
+        if matches!(
+            settings.profile_mode,
+            VegetationProfileMode::ComputeOnly
+                | VegetationProfileMode::ScheduleOnly
+                | VegetationProfileMode::Disabled
+        ) {
             continue;
         }
         let Ok(pipeline) = pipelines.draw_variants.specialize(
@@ -133,6 +133,9 @@ impl<P: PhaseItem> RenderCommand<P> for DrawVegetationDebugIndirect {
         pass: &mut TrackedRenderPass<'w>,
     ) -> RenderCommandResult {
         let buffers = buffers.into_inner();
+        if !buffers.active {
+            return RenderCommandResult::Success;
+        }
         let diagnostics = diagnostics.as_deref();
         let draw_span = diagnostics.pass_span(pass, "vegetation_v2_draw");
         pass.set_bind_group(1, &buffers.draw_bind_group, &[]);
