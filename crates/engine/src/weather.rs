@@ -146,6 +146,26 @@ impl Plugin for GameWeatherPlugin {
     }
 }
 
+/// The ground the camera looks at: where its view ray meets the height of the followed
+/// character (or 1.7 m below a free camera), clamped for low grazing views. The radius grows
+/// with viewing distance so steep, distant views cover what they show.
+fn splash_area(camera: &GlobalTransform, ground: Option<f32>) -> (Vec2, f32) {
+    let position = camera.translation();
+    let forward = camera.forward();
+    let ground = ground.unwrap_or(position.y - 1.7);
+    let height = (position.y - ground).max(0.5);
+    let horizontal = if forward.y < -0.05 {
+        height / -forward.y * forward.xz().length()
+    } else {
+        f32::INFINITY
+    };
+    let distance = horizontal.min(10.0);
+    let centre = position.xz() + forward.xz().normalize_or(Vec2::Y) * distance;
+    let [smallest, largest] = SPLASH_RADIUS;
+    let radius = (0.8 * height.hypot(distance)).clamp(smallest, largest);
+    (centre, radius)
+}
+
 /// Rain streaks stretch with the player's movement, not with the orbiting camera.
 fn update_precipitation_reference(
     target: Query<&Transform, With<crate::actor::CameraTarget>>,
@@ -160,10 +180,10 @@ fn update_precipitation_reference(
     }
 }
 
-/// Impacts per second at full precipitation, ahead of the camera where they are visible.
-const SPLASHES_PER_SECOND: f32 = 900.0;
-const SPLASH_DISTANCE: [f32; 2] = [1.0, 12.0];
-const SPLASH_HALF_ANGLE: f32 = 1.2;
+/// Impacts per square metre per second at full precipitation, around the ground the camera
+/// looks at. The spawn disc is capped so the 512-entry buffer covers every live splash.
+const SPLASHES_PER_SQUARE_METRE: f32 = 5.0;
+const SPLASH_RADIUS: [f32; 2] = [6.0, 10.0];
 
 /// Small generator for splash placement; variety, not statistical quality.
 #[derive(Default)]
@@ -187,6 +207,7 @@ fn spawn_rain_splashes(
     shelter: Res<RainShelter>,
     origin: Option<Res<WorldOrigin>>,
     camera: Query<&GlobalTransform, With<WorldViewCamera>>,
+    target: Query<&Transform, With<crate::actor::CameraTarget>>,
     surfaces: Query<&StreamedTerrainSurface>,
     splashes: Option<ResMut<RainSplashes>>,
     mut state: Local<(SplashRandom, f32)>,
@@ -204,17 +225,19 @@ fn spawn_rain_splashes(
         *due = 0.0;
         return;
     }
-    *due += SPLASHES_PER_SECOND * precipitation * time.delta_secs().min(0.1);
+    let (centre, radius) = splash_area(camera, target.iter().next().map(|t| t.translation.y));
+    *due += SPLASHES_PER_SQUARE_METRE
+        * std::f32::consts::PI
+        * radius
+        * radius
+        * precipitation
+        * time.delta_secs().min(0.1);
     let count = due.floor().min(128.0);
     *due -= count;
-    let position = camera.translation().xz();
-    let forward = camera.forward().xz().normalize_or(Vec2::Y);
-    let [near, far] = SPLASH_DISTANCE;
     for _ in 0..count as u32 {
-        let angle = (random.next() * 2.0 - 1.0) * SPLASH_HALF_ANGLE;
-        // Uniform over the sector's area.
-        let distance = (near * near + (far * far - near * near) * random.next()).sqrt();
-        let point = position + Vec2::from_angle(angle).rotate(forward) * distance;
+        // Uniform over the disc.
+        let angle = random.next() * std::f32::consts::TAU;
+        let point = centre + Vec2::from_angle(angle) * radius * random.next().sqrt();
         let Some(ground) =
             sample_resident_terrain_surface(&origin, surfaces.iter(), point.to_array())
         else {
@@ -589,6 +612,30 @@ mod tests {
             Some(WeatherKind::Clear.preset());
         app.update();
         assert!(!app.world().resource::<RainShelter>().enabled);
+    }
+
+    #[test]
+    fn splashes_surround_what_the_camera_looks_at() {
+        // Third-person camera looking down at a character 10 m ahead on flat ground.
+        let camera = GlobalTransform::from(
+            Transform::from_xyz(0.0, 12.0, 10.0).looking_at(Vec3::new(0.0, 1.0, 0.0), Vec3::Y),
+        );
+        let (centre, radius) = splash_area(&camera, Some(0.0));
+        assert!(
+            centre.distance(Vec2::ZERO) < 1.5,
+            "centred near the character: {centre}"
+        );
+        assert_eq!(radius, SPLASH_RADIUS[1]);
+        // A low grazing camera covers the ground ahead of it instead of the far horizon.
+        let low = GlobalTransform::from(
+            Transform::from_xyz(0.0, 1.6, 0.0).looking_to(Vec3::NEG_Z, Vec3::Y),
+        );
+        let (centre, radius) = splash_area(&low, Some(0.0));
+        assert!((centre.y + 10.0).abs() < 1e-3);
+        assert!(radius >= SPLASH_RADIUS[0]);
+        let capacity =
+            SPLASHES_PER_SQUARE_METRE * std::f32::consts::PI * SPLASH_RADIUS[1].powi(2) * 0.3;
+        assert!(capacity < atmosphere::precipitation::SPLASH_CAPACITY as f32);
     }
 
     #[test]

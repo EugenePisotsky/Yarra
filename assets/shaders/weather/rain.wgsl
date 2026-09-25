@@ -55,11 +55,10 @@ fn vertex(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance:
     if f32(instance) >= rain.layers[2].z { layer = 2u; }
     let size = vec3(rain.offsets[layer].w, rain.layers[layer].x, rain.offsets[layer].w);
 
-    // Most of each box sits ahead of the camera, where drops are visible.
-    let forward = -view.world_from_view[2].xyz;
-    let ahead = select(vec2(0.0), normalize(forward.xz), dot(forward.xz, forward.xz) > 1e-6);
-    let anchor = view.world_position
-        + vec3(ahead.x * size.x, 0.1 * size.y, ahead.y * size.z) * vec3(rain.shape.w, 1.0, rain.shape.w);
+    // Most of each box sits ahead of the camera along the view direction, so a high camera
+    // looking down still sees dense rain reaching the ground.
+    let forward = normalize(-view.world_from_view[2].xyz);
+    let anchor = view.world_position + forward * size.x * rain.shape.w + vec3(0.0, 0.1 * size.y, 0.0);
     // Drops are fixed in the world and move with the shared fall offset; the box wraps them.
     let lattice = random3(instance * 3u + 11u) * size + rain.offsets[layer].xyz;
     let head = anchor + (fract((lattice - anchor) / size + 0.5) - 0.5) * size;
@@ -209,13 +208,14 @@ fn fragment_splash(in: Splash) -> @location(0) vec4<f32> {
         let radius = mix(0.15, 1.0, sqrt(in.age));
         let ring = abs(length(in.coords) - radius);
         let wet = mix(0.15, 1.0, clamp(clouds.weather.x, 0.0, 1.0));
-        shape = (1.0 - smoothstep(0.0, mix(0.12, 0.05, in.age), ring)) * (1.0 - in.age) * 0.3 * wet;
+        shape = (1.0 - smoothstep(0.0, mix(0.12, 0.05, in.age), ring)) * (1.0 - in.age) * 0.2 * wet;
     } else {
-        shape = (1.0 - smoothstep(0.3, 1.0, length(in.coords))) * (1.0 - in.age * in.age) * 0.7;
+        shape = (1.0 - smoothstep(0.3, 1.0, length(in.coords))) * (1.0 - in.age * in.age) * 0.4;
     }
-    // The impact sits on the surface: hide it only behind nearer geometry such as blades.
-    let soft = clamp((scene_depth(in.position.xy) + 0.25 - in.view_depth) / 0.25, 0.0, 1.0);
+    // The impact sits on the terrain. Allow a few centimetres for the rendered terrain LOD to
+    // differ from the sampled height; anything nearer, such as grass blades, hides it.
+    let soft = clamp((scene_depth(in.position.xy) + 0.08 - in.view_depth) / 0.06, 0.0, 1.0);
     let alpha = in.alpha * shape * soft;
     if alpha < 1e-4 { discard; }
-    return vec4(rain_light() * 1.2 * alpha, alpha);
+    return vec4(rain_light() * 0.9 * alpha, alpha);
 }
