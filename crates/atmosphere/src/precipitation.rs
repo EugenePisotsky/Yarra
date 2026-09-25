@@ -38,28 +38,42 @@ impl Default for PrecipitationPresentation {
 pub struct PrecipitationView;
 
 pub const SPLASH_CAPACITY: usize = 512;
-const SPLASH_SECONDS: f32 = 0.2;
-const SPLASH_SIZE: f32 = 0.07;
+const SPLASH_SECONDS: f32 = 0.3;
+/// Largest ripple radius, in metres.
+const SPLASH_SIZE: f32 = 0.09;
+/// Ripple ring plus thrown droplets, as quads of six vertices.
+const SPLASH_VERTICES: u32 = 5 * 6;
 
-/// Recent drop impacts: position and spawn time on the `Time` clock. Callers that know the
-/// ground (terrain, shelter) spawn them; the rain pass draws the crowns.
+/// Recent drop impacts: position, spawn time on the `Time` clock, surface normal and a random
+/// seed. Callers that know the ground (terrain, shelter) spawn them; the rain pass draws a
+/// ripple lying on the surface and droplets thrown from it.
 #[derive(Resource, Clone, ExtractResource)]
 pub struct RainSplashes {
-    instances: Vec<[f32; 4]>,
+    instances: Vec<[f32; 8]>,
     next: usize,
+    spawned: u32,
 }
 impl Default for RainSplashes {
     fn default() -> Self {
         Self {
-            instances: vec![[0.0, 0.0, 0.0, f32::NEG_INFINITY]; SPLASH_CAPACITY],
+            instances: vec![
+                [0.0, 0.0, 0.0, f32::NEG_INFINITY, 0.0, 1.0, 0.0, 0.0];
+                SPLASH_CAPACITY
+            ],
             next: 0,
+            spawned: 0,
         }
     }
 }
 impl RainSplashes {
     /// Overwrites the oldest splash once full.
-    pub fn spawn(&mut self, position: Vec3, time: f32) {
-        self.instances[self.next] = position.extend(time).to_array();
+    pub fn spawn(&mut self, position: Vec3, normal: Vec3, time: f32) {
+        let normal = normal.try_normalize().unwrap_or(Vec3::Y);
+        let seed = (self.spawned as f32 * 0.618_034).fract();
+        self.spawned = self.spawned.wrapping_add(1);
+        self.instances[self.next] = [
+            position.x, position.y, position.z, time, normal.x, normal.y, normal.z, seed,
+        ];
         self.next = (self.next + 1) % SPLASH_CAPACITY;
     }
     fn alive(&self, time: f32) -> bool {
@@ -68,6 +82,12 @@ impl RainSplashes {
             .any(|s| (0.0..SPLASH_SECONDS).contains(&(time - s[3])))
     }
 }
+
+/// World position whose motion stretches streaks, like a camera shutter moving with it. The
+/// game sets the camera's follow target: orbiting the camera must not tilt the rain. None
+/// (free cameras) draws unstretched streaks.
+#[derive(Resource, Default, Clone, Copy)]
+pub struct PrecipitationReference(pub Option<Vec3>);
 
 struct Layer {
     /// Horizontal box edge and height in metres, centred slightly ahead of the camera.
@@ -120,7 +140,12 @@ struct CameraMotion {
 }
 impl CameraMotion {
     fn update(&mut self, position: Option<Vec3>, dt: f32) -> Vec3 {
-        let (Some(position), true) = (position, dt > 0.0) else {
+        if dt <= 0.0 {
+            return self.velocity;
+        }
+        let Some(position) = position else {
+            self.previous = None;
+            self.velocity = Vec3::ZERO;
             return self.velocity;
         };
         if let Some(previous) = self.previous.replace(position) {
@@ -166,7 +191,8 @@ impl Plugin for PrecipitationPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PrecipitationPresentation>()
             .init_resource::<RainFrame>()
-            .init_resource::<RainSplashes>();
+            .init_resource::<RainSplashes>()
+            .init_resource::<PrecipitationReference>();
         if app.get_sub_app(RenderApp).is_none() {
             return;
         }
@@ -186,16 +212,8 @@ impl Plugin for PrecipitationPlugin {
     }
 }
 
-type RainViews<'w, 's> = Query<
-    'w,
-    's,
-    (
-        Entity,
-        Option<&'static PrecipitationView>,
-        Option<&'static GlobalTransform>,
-    ),
-    With<WorldEnvironmentView>,
->;
+type RainViews<'w, 's> =
+    Query<'w, 's, (Entity, Option<&'static PrecipitationView>), With<WorldEnvironmentView>>;
 
 #[allow(clippy::too_many_arguments)] // Weather, views and the per-view accumulators.
 fn sync(
@@ -204,16 +222,12 @@ fn sync(
     presentation: Res<PrecipitationPresentation>,
     time: Res<Time>,
     views: RainViews,
+    reference: Res<PrecipitationReference>,
     mut frame: ResMut<RainFrame>,
     mut offsets: Local<[[f64; 3]; 3]>,
     mut camera: Local<CameraMotion>,
 ) {
-    let camera_velocity = camera.update(
-        views
-            .iter()
-            .find_map(|(_, _, transform)| transform.map(GlobalTransform::translation)),
-        time.delta_secs(),
-    );
+    let camera_velocity = camera.update(reference.0, time.delta_secs());
     let precipitation = state
         .weather
         .filter(|_| state.owner != AtmosphereOwner::Study && state.profile.outdoor)
@@ -256,7 +270,7 @@ fn sync(
     }
     *frame = RainFrame { uniform, active };
     let visible = presentation.enabled && active.iter().any(|&n| n > 0);
-    for (entity, view, _) in &views {
+    for (entity, view) in &views {
         if visible && view.is_none() {
             commands.entity(entity).insert(PrecipitationView);
         } else if !visible && view.is_some() {
@@ -297,7 +311,7 @@ fn init(mut commands: Commands, server: Res<AssetServer>, cache: Res<PipelineCac
                     texture_2d(TextureSampleType::Float { filterable: false }),
                     storage_buffer_read_only_sized(
                         false,
-                        std::num::NonZeroU64::new((SPLASH_CAPACITY * 16) as u64),
+                        std::num::NonZeroU64::new((SPLASH_CAPACITY * 32) as u64),
                     ),
                 ),
             ),
@@ -435,7 +449,7 @@ fn draw(
     }
     if splashes.alive(rain.uniform.splash[0]) {
         pass.set_pipeline(splash_pipeline);
-        pass.draw(0..6, 0..SPLASH_CAPACITY as u32);
+        pass.draw(0..SPLASH_VERTICES, 0..SPLASH_CAPACITY as u32);
     }
 }
 
@@ -462,6 +476,7 @@ mod tests {
             })
             .init_resource::<PrecipitationPresentation>()
             .init_resource::<RainFrame>()
+            .init_resource::<PrecipitationReference>()
             .add_systems(Update, sync);
         for _ in 0..frames {
             app.update();
@@ -493,8 +508,13 @@ mod tests {
         let mut splashes = RainSplashes::default();
         assert!(!splashes.alive(0.0));
         for i in 0..SPLASH_CAPACITY + 3 {
-            splashes.spawn(Vec3::X * i as f32, 10.0);
+            splashes.spawn(Vec3::X * i as f32, Vec3::ZERO, 10.0);
         }
+        assert_eq!(
+            splashes.instances[0][4..7],
+            [0.0, 1.0, 0.0],
+            "invalid normals face up"
+        );
         assert_eq!(splashes.instances[2][0], (SPLASH_CAPACITY + 2) as f32);
         assert!(splashes.alive(10.1));
         assert!(!splashes.alive(10.0 + SPLASH_SECONDS + 0.01));
@@ -513,6 +533,8 @@ mod tests {
         motion.update(Some(Vec3::X * 1000.0), 0.1);
         assert!(motion.velocity.length() < settled.length());
         assert!(motion.velocity.length() <= MAX_CAMERA_SPEED);
+        // Without a reference there is nothing to stretch against.
+        assert_eq!(motion.update(None, 0.1), Vec3::ZERO);
     }
 
     #[test]

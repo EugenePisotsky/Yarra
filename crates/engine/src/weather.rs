@@ -6,7 +6,7 @@ use crate::{
     sample_resident_terrain_surface,
 };
 use atmosphere::{
-    precipitation::RainSplashes,
+    precipitation::{PrecipitationReference, RainSplashes},
     shelter::{METRES_PER_TEXEL, RainShelter, SIZE, ShelterDisc},
 };
 use bevy::prelude::*;
@@ -139,9 +139,24 @@ impl Plugin for GameWeatherPlugin {
                     update_rain_shelter.before(ApplyAtmosphere),
                 ),
                 spawn_rain_splashes,
+                update_precipitation_reference.before(ApplyAtmosphere),
             )
                 .chain(),
         );
+    }
+}
+
+/// Rain streaks stretch with the player's movement, not with the orbiting camera.
+fn update_precipitation_reference(
+    target: Query<&Transform, With<crate::actor::CameraTarget>>,
+    reference: Option<ResMut<PrecipitationReference>>,
+) {
+    let Some(mut reference) = reference else {
+        return;
+    };
+    let position = target.iter().next().map(|t| t.translation);
+    if reference.0 != position {
+        reference.0 = position;
     }
 }
 
@@ -212,7 +227,7 @@ fn spawn_rain_splashes(
         if random.next() > shelter.exposure(impact) {
             continue;
         }
-        splashes.spawn(impact + Vec3::Y * 0.01, time.elapsed_secs());
+        splashes.spawn(impact, Vec3::from_array(ground.normal), time.elapsed_secs());
     }
 }
 

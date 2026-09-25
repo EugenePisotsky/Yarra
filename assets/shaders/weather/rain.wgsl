@@ -20,7 +20,7 @@ struct Rain {
 @group(0) @binding(3) var depth: texture_depth_2d;
 #endif
 @group(0) @binding(4) var shelter_map: texture_2d<f32>;
-// Recent impacts: xyz position, w spawn time.
+// Recent impacts, two entries each: position and spawn time; surface normal and seed.
 @group(0) @binding(5) var<storage, read> splashes: array<vec4<f32>>;
 
 struct Streak {
@@ -133,14 +133,18 @@ fn fragment(in: Streak) -> @location(0) vec4<f32> {
 
 struct Splash {
     @builtin(position) position: vec4<f32>,
-    // x: across, -1..1; y: up from the impact, 0..1.
+    // Ripple: position on the ring quad, -1..1. Droplet: position on the dot, -1..1.
     @location(0) coords: vec2<f32>,
     @location(1) view_depth: f32,
     @location(2) age: f32,
     @location(3) alpha: f32,
+    // 0: ripple lying on the surface; 1: thrown droplet.
+    @location(4) @interpolate(flat) kind: u32,
 }
 
-// An upright crown at each impact that widens and fades over its lifetime.
+const SPLASH_GRAVITY: f32 = 9.8;
+
+// Each impact draws a ripple lying on the surface and four droplets thrown from it.
 @vertex
 fn vertex_splash(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance: u32) -> Splash {
     var out: Splash;
@@ -149,21 +153,47 @@ fn vertex_splash(@builtin(vertex_index) vertex: u32, @builtin(instance_index) in
     out.view_depth = 0.0;
     out.age = 1.0;
     out.alpha = 0.0;
-    let splash = splashes[instance];
-    let age = (rain.splash.x - splash.w) / rain.splash.y;
+    out.kind = 0u;
+    let origin = splashes[instance * 2u];
+    let surface = splashes[instance * 2u + 1u];
+    let age = (rain.splash.x - origin.w) / rain.splash.y;
     if age < 0.0 || age >= 1.0 { return out; }
+    let normal = surface.xyz;
     let corner = vertex % 6u;
-    let across = select(-1.0, 1.0, corner == 1u || corner == 2u || corner == 4u);
-    let up = select(0.0, 1.0, corner == 2u || corner == 4u || corner == 5u);
-    let to_camera = view.world_position - splash.xyz;
-    let side = cross(vec3(0.0, 1.0, 0.0), to_camera);
-    let right = select(vec3(1.0, 0.0, 0.0), normalize(side), dot(side, side) > 1e-6);
-    let size = rain.splash.z * mix(0.6, 1.1, random3(instance * 5u + 1u).x);
-    let world = splash.xyz + right * across * size + vec3(0.0, up * size * 0.8, 0.0);
+    let quad = vertex / 6u;
+    let corner_x = select(-1.0, 1.0, corner == 1u || corner == 2u || corner == 4u);
+    let corner_y = select(-1.0, 1.0, corner == 2u || corner == 4u || corner == 5u);
+    let seed = u32(surface.w * 65535.0) * 16u + quad;
+    var world: vec3<f32>;
+    if quad == 0u {
+        // Ripple on the sampled surface, slightly lifted to stay in front of it.
+        let reference = select(vec3(1.0, 0.0, 0.0), vec3(0.0, 0.0, 1.0), abs(normal.x) > 0.9);
+        let tangent = normalize(cross(normal, reference));
+        let bitangent = cross(normal, tangent);
+        world = origin.xyz + normal * 0.01
+            + (tangent * corner_x + bitangent * corner_y) * rain.splash.z;
+    } else {
+        // Droplets leave the surface in a cone and fall back under gravity.
+        let random = random3(seed);
+        let reference = select(vec3(1.0, 0.0, 0.0), vec3(0.0, 0.0, 1.0), abs(normal.x) > 0.9);
+        let tangent = normalize(cross(normal, reference));
+        let bitangent = cross(normal, tangent);
+        let angle = random.x * 6.2831853;
+        let outward = (tangent * cos(angle) + bitangent * sin(angle)) * mix(0.3, 0.7, random.y);
+        let velocity = outward + normal * mix(0.9, 1.5, random.z);
+        let t = age * rain.splash.y;
+        let centre = origin.xyz + velocity * t + vec3(0.0, -0.5 * SPLASH_GRAVITY * t * t, 0.0);
+        let to_camera = view.world_position - centre;
+        let side = cross(vec3(0.0, 1.0, 0.0), to_camera);
+        let right = select(vec3(1.0, 0.0, 0.0), normalize(side), dot(side, side) > 1e-6);
+        let up = normalize(cross(to_camera, right));
+        world = centre + (right * corner_x + up * corner_y) * 0.008;
+        out.kind = 1u;
+    }
     let clip = view.unjittered_clip_from_world * vec4(world, 1.0);
     if clip.w < 0.1 { return out; }
     out.position = vec4(clip.xy, 0.5 * clip.w, clip.w);
-    out.coords = vec2(across, up);
+    out.coords = vec2(corner_x, corner_y);
     out.view_depth = clip.w;
     out.age = age;
     out.alpha = rain.shape.y * exp(-clouds.fog.w * clip.w);
@@ -172,14 +202,20 @@ fn vertex_splash(@builtin(vertex_index) vertex: u32, @builtin(instance_index) in
 
 @fragment
 fn fragment_splash(in: Splash) -> @location(0) vec4<f32> {
-    let radius = mix(0.2, 0.9, sqrt(in.age));
-    let ring = abs(length(vec2(in.coords.x, in.coords.y * 1.25)) - radius);
-    // A soft spray rather than a crisp arc; strongest near the surface.
-    let crown = (1.0 - smoothstep(0.0, 0.3, ring)) * (1.0 - 0.6 * in.coords.y);
+    var shape: f32;
+    if in.kind == 0u {
+        // An expanding ring, thinning and fading as it spreads. Rings show on wet ground and
+        // water; dry soil mostly shows the thrown droplets.
+        let radius = mix(0.15, 1.0, sqrt(in.age));
+        let ring = abs(length(in.coords) - radius);
+        let wet = mix(0.15, 1.0, clamp(clouds.weather.x, 0.0, 1.0));
+        shape = (1.0 - smoothstep(0.0, mix(0.12, 0.05, in.age), ring)) * (1.0 - in.age) * 0.3 * wet;
+    } else {
+        shape = (1.0 - smoothstep(0.3, 1.0, length(in.coords))) * (1.0 - in.age * in.age) * 0.7;
+    }
     // The impact sits on the surface: hide it only behind nearer geometry such as blades.
     let soft = clamp((scene_depth(in.position.xy) + 0.25 - in.view_depth) / 0.25, 0.0, 1.0);
-    let fade = (1.0 - in.age) * (1.0 - in.age);
-    let alpha = in.alpha * crown * fade * soft * 0.35;
+    let alpha = in.alpha * shape * soft;
     if alpha < 1e-4 { discard; }
     return vec4(rain_light() * 1.2 * alpha, alpha);
 }
