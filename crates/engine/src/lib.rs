@@ -7,7 +7,7 @@ mod character;
 mod character_catalog;
 mod msaa_store;
 mod object_lod;
-pub use object_lod::ObjectLodPlugin;
+pub use object_lod::{ObjectFootprint, ObjectLodPlugin};
 mod tree_wind;
 pub use tree_wind::{TreeWindPlugin, TreeWindResponse, TreeWindSystems};
 mod weather;

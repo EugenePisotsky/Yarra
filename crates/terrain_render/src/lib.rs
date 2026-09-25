@@ -154,6 +154,8 @@ pub struct TerrainMaterial {
     #[texture(121)]
     #[sampler(122)]
     cloud_shadows: Option<Handle<Image>>,
+    #[texture(123, sample_type = "float", filterable = false)]
+    rain_shelter: Option<Handle<Image>>,
     pub shading_mode: TerrainShadingMode,
     stochastic_cached: bool,
     prepared: bool,
@@ -338,6 +340,7 @@ pub fn prepare_terrain_material(
         source_only: false,
         cloud_parameters: atmosphere::clouds::fallback_parameters(),
         cloud_shadows: None,
+        rain_shelter: None,
         shading_mode: TerrainShadingMode::Production,
         stochastic_cached: false,
         prepared: false,
@@ -562,6 +565,7 @@ fn sync_cloud_inputs(
         let mut m = near.get_mut(id).unwrap();
         m.cloud_parameters = clouds.parameters.clone();
         m.cloud_shadows = Some(clouds.shadows.clone());
+        m.rain_shelter = Some(clouds.shelter.clone());
     }
     let ids: Vec<_> = far
         .iter()
@@ -572,5 +576,6 @@ fn sync_cloud_inputs(
         let mut m = far.get_mut(id).unwrap();
         m.cloud_parameters = clouds.parameters.clone();
         m.cloud_shadows = Some(clouds.shadows.clone());
+        m.rain_shelter = Some(clouds.shelter.clone());
     }
 }

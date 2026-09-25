@@ -2,6 +2,7 @@
 //! one ordered presentation system applies them before transform propagation.
 pub mod clouds;
 pub mod precipitation;
+pub mod shelter;
 
 use bevy::{
     camera::Exposure,

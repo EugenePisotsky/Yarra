@@ -52,6 +52,8 @@ pub struct CloudAssets {
     pub parameters: Handle<ShaderBuffer>,
     pub shadows: Handle<Image>,
     pub noise: Handle<Image>,
+    /// Top-down rain shelter around the camera; see `crate::shelter`.
+    pub shelter: Handle<Image>,
 }
 #[derive(Resource, Clone, Copy, Default, ExtractResource, Pod, Zeroable)]
 #[repr(C)]
@@ -72,6 +74,8 @@ pub struct CloudParams {
     pub transition: [f32; 4],
     /// Game weather for surfaces and precipitation: wetness, precipitation intensity.
     pub weather: [f32; 4],
+    /// Rain shelter map: origin XZ, metres per texel, enabled.
+    pub shelter: [f32; 4],
 }
 #[derive(Component, Clone, bevy::render::extract_component::ExtractComponent)]
 pub struct CloudView;
@@ -79,6 +83,7 @@ pub struct CloudsPlugin;
 impl Plugin for CloudsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CloudClock>()
+            .init_resource::<crate::shelter::RainShelter>()
             .init_resource::<CloudOrigin>()
             .init_resource::<CloudQuality>()
             .init_resource::<CloudParams>();
@@ -94,7 +99,7 @@ impl Plugin for CloudsPlugin {
             material::CloudMaterialPlugin,
         ))
         .add_systems(Startup, setup)
-        .add_systems(PostUpdate, sync.after(ApplyAtmosphere));
+        .add_systems(PostUpdate, (sync, publish_shelter).after(ApplyAtmosphere));
         render::install(app);
     }
 }
@@ -141,6 +146,7 @@ fn setup(
     commands.insert_resource(CloudAssets {
         noise: images.add(noise),
         shadows: images.add(shadows),
+        shelter: images.add(crate::shelter::RainShelter::image()),
         parameters: buffers.add(ShaderBuffer::new(
             bytemuck::bytes_of(&CloudParams::default()),
             RenderAssetUsages::RENDER_WORLD,
@@ -156,6 +162,7 @@ fn sync(
     quality: Res<CloudQuality>,
     mut params: ResMut<CloudParams>,
     views: Query<(Entity, Option<&CloudView>, &WorldEnvironmentView)>,
+    shelter: Res<crate::shelter::RainShelter>,
 ) {
     let profile = state.effective_profile();
     let profile = profile.as_ref();
@@ -222,6 +229,7 @@ fn sync(
         fog: [0.; 4],
         transition: [0.; 4],
         weather: [0.; 4],
+        shelter: shelter.parameters(),
     };
     if state.owner == AtmosphereOwner::Game && profile.outdoor {
         params.weather = [
@@ -272,6 +280,25 @@ fn sync(
     }
 }
 
+/// Upload the shelter map only when a rebuild changed it.
+fn publish_shelter(
+    shelter: Res<crate::shelter::RainShelter>,
+    assets: Option<Res<CloudAssets>>,
+    mut images: ResMut<Assets<Image>>,
+    mut published: Local<Option<u64>>,
+) {
+    let Some(assets) = assets else {
+        return;
+    };
+    if *published == Some(shelter.revision()) {
+        return;
+    }
+    if let Some(mut image) = images.get_mut(&assets.shelter) {
+        shelter.write(&mut image);
+        *published = Some(shelter.revision());
+    }
+}
+
 /// Approximate clear-air extinction for the cloud lighting path, which does not
 /// sample Bevy's atmosphere LUT. Authored lux is outside the atmosphere; it must
 /// not illuminate clouds or their foreground haze after the light has set.
@@ -313,6 +340,7 @@ mod tests {
             .init_resource::<CloudOrigin>()
             .init_resource::<CloudQuality>()
             .init_resource::<CloudParams>()
+            .init_resource::<crate::shelter::RainShelter>()
             .add_systems(Update, sync);
         app.update();
         let first = app.world().resource::<CloudParams>().offset;
@@ -361,6 +389,7 @@ mod tests {
             .init_resource::<CloudOrigin>()
             .init_resource::<CloudQuality>()
             .init_resource::<CloudParams>()
+            .init_resource::<crate::shelter::RainShelter>()
             .add_systems(Update, sync);
         app.update();
         let params = *app.world().resource::<CloudParams>();

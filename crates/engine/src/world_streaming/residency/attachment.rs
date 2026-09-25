@@ -1,6 +1,6 @@
 //! Translate source payloads into ECS entities and explicitly owned terrain assets.
 use super::PreparedPage;
-use crate::object_lod::{ScreenSpaceLod, ScreenSpaceLodVariant};
+use crate::object_lod::{ObjectFootprint, ScreenSpaceLod, ScreenSpaceLodVariant};
 use crate::world_streaming::{
     GameplayObject, GeneratedEnvironmentObject, StreamedPageEntity, StreamedTerrainSurface,
     StreamedVegetationFieldPage, StreamedVisualObject,
@@ -315,10 +315,10 @@ pub(super) fn attach_page(
                         minimum_screen_height: dependency.minimum_screen_height,
                     })
                     .collect();
-                let bounds_height = dependencies
-                    .iter()
-                    .map(|dependency| dependency.bounds[1])
-                    .fold(0.0_f32, f32::max);
+                let bounds = dependencies.iter().fold([0.0_f32; 3], |b, dependency| {
+                    std::array::from_fn(|i| b[i].max(dependency.bounds[i]))
+                });
+                let bounds_height = bounds[1];
                 let lod = ScreenSpaceLod::new(variants, bounds_height);
                 let entity = commands
                     .spawn((
@@ -328,6 +328,10 @@ pub(super) fn attach_page(
                             .with_scale(Vec3::splat(instance.scale)),
                         lod,
                         StreamedVisualObject { id: instance.id },
+                        ObjectFootprint {
+                            half_extent: Vec2::new(bounds[0], bounds[2]) * 0.5,
+                            height: bounds_height,
+                        },
                         StreamedPageEntity(key),
                         Name::new(format!("Streamed object {:?}", instance.id)),
                     ))

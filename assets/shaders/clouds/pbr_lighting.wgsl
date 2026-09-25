@@ -60,7 +60,7 @@ fn apply_pbr_lighting(
 ) -> vec4<f32> {
     // Yarra: wet surfaces absorb more (darker diffuse albedo) and reflect more coherently.
     var in = input;
-    let wet = surface_wetness(in.N);
+    let wet = surface_wetness(in.world_position.xyz, in.N);
     in.material.base_color = vec4(in.material.base_color.rgb * mix(1.0, 0.55, wet), in.material.base_color.a);
     in.material.perceptual_roughness = mix(
         in.material.perceptual_roughness,

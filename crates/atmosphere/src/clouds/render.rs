@@ -211,18 +211,24 @@ fn prepare(
     queue: Res<RenderQueue>,
     cache: Res<PipelineCache>,
     layout: Res<CloudShadowLayout>,
-    mut previous: Local<Option<(BufferId, TextureViewId)>>,
+    mut previous: Local<Option<(BufferId, TextureViewId, TextureViewId)>>,
 ) {
     let Some(assets) = assets else {
         return;
     };
-    let (Some(buffer), Some(image)) =
-        (buffers.get(&assets.parameters), images.get(&assets.shadows))
-    else {
+    let (Some(buffer), Some(image), Some(shelter)) = (
+        buffers.get(&assets.parameters),
+        images.get(&assets.shadows),
+        images.get(&assets.shelter),
+    ) else {
         return;
     };
     queue.write_buffer(&buffer.buffer, 0, bytemuck::bytes_of(&*params));
-    let key = (buffer.buffer.id(), image.texture_view.id());
+    let key = (
+        buffer.buffer.id(),
+        image.texture_view.id(),
+        shelter.texture_view.id(),
+    );
     if *previous != Some(key) {
         commands.insert_resource(CloudShadowGpu(device.create_bind_group(
             "cloud surface bind group",
@@ -231,6 +237,7 @@ fn prepare(
                 (120, buffer.buffer.as_entire_binding()),
                 (121, &image.texture_view),
                 (122, &image.sampler),
+                (123, &shelter.texture_view),
             )),
         )));
         *previous = Some(key);
@@ -702,6 +709,10 @@ pub fn surface_layout() -> BindGroupLayoutDescriptor {
                     texture_2d(TextureSampleType::Float { filterable: true }),
                 ),
                 (122, sampler(SamplerBindingType::Filtering)),
+                (
+                    123,
+                    texture_2d(TextureSampleType::Float { filterable: false }),
+                ),
             ),
         ),
     )

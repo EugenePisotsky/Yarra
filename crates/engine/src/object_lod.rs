@@ -190,5 +190,13 @@ pub struct StreamedVisualObject {
     pub id: StableObjectId,
 }
 
+/// Unscaled extent of a placed object's largest LOD: half widths in X/Z, and height above its
+/// root. The root transform's uniform scale applies. Used for rain shelter.
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+pub struct ObjectFootprint {
+    pub half_extent: Vec2,
+    pub height: f32,
+}
+
 #[cfg(test)]
 mod tests;

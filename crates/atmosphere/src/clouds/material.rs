@@ -12,6 +12,8 @@ pub struct CloudExtension {
     #[texture(121)]
     #[sampler(122)]
     pub shadows: Handle<Image>,
+    #[texture(123, sample_type = "float", filterable = false)]
+    pub shelter: Handle<Image>,
 }
 impl MaterialExtension for CloudExtension {
     fn fragment_shader() -> ShaderRef {
@@ -90,6 +92,7 @@ fn convert(
                     extension: CloudExtension {
                         parameters: assets.parameters.clone(),
                         shadows: assets.shadows.clone(),
+                        shelter: assets.shelter.clone(),
                     },
                 })
             })
@@ -118,6 +121,7 @@ mod tests {
                 parameters: default(),
                 shadows: default(),
                 noise: default(),
+                shelter: default(),
             })
             .add_systems(Update, convert);
         let material = app

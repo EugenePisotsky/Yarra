@@ -1,13 +1,15 @@
 // Rain streaks: instanced camera-facing quads in camera-anchored boxes that wrap around a
 // world-fixed drop lattice. Drawn over the resolved HDR scene with a soft depth test.
 #import bevy_render::view::View
-#import "shaders/clouds/types.wgsl"::CloudParams
+#import "shaders/clouds/types.wgsl"::{CloudParams, shelter_exposure}
 
 struct Rain {
     velocity: vec4<f32>, // xyz m/s, w streak seconds
     shape: vec4<f32>, // drop width m, intensity alpha, soft depth m, forward shift
     offsets: array<vec4<f32>, 3>, // accumulated fall offset, w horizontal box size
     layers: array<vec4<f32>, 3>, // box height, alpha, first instance
+    streak: vec4<f32>, // xyz drop velocity relative to the camera
+    splash: vec4<f32>, // current time, lifetime s, size m
 }
 @group(0) @binding(0) var<uniform> rain: Rain;
 @group(0) @binding(1) var<storage, read> clouds: CloudParams;
@@ -17,6 +19,9 @@ struct Rain {
 #else
 @group(0) @binding(3) var depth: texture_depth_2d;
 #endif
+@group(0) @binding(4) var shelter_map: texture_2d<f32>;
+// Recent impacts: xyz position, w spawn time.
+@group(0) @binding(5) var<storage, read> splashes: array<vec4<f32>>;
 
 struct Streak {
     @builtin(position) position: vec4<f32>,
@@ -59,7 +64,11 @@ fn vertex(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance:
     let lattice = random3(instance * 3u + 11u) * size + rain.offsets[layer].xyz;
     let head = anchor + (fract((lattice - anchor) / size + 0.5) - 0.5) * size;
     let variation = random3(instance * 7u + 5u);
-    let tail = head - rain.velocity.xyz * rain.velocity.w * mix(0.75, 1.25, variation.x);
+    // Like a camera shutter: streaks follow the drop's motion relative to the camera.
+    let tail = head - rain.streak.xyz * rain.velocity.w * mix(0.75, 1.25, variation.x);
+    // No rain below a canopy: drops above the tree top still fall.
+    let exposure = shelter_exposure(shelter_map, clouds.shelter, head);
+    if exposure < 0.02 { return out; }
 
     // Unjittered: streaks are drawn after temporal reconstruction.
     let head_clip = view.unjittered_clip_from_world * vec4(head, 1.0);
@@ -89,27 +98,88 @@ fn vertex(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance:
     out.coords = vec2(along, side);
     out.view_depth = w;
     let fog = exp(-clouds.fog.w * w);
-    out.alpha = rain.layers[layer].y * rain.shape.y * (true_width / width) * fog
-        * mix(0.6, 1.0, variation.y);
+    // Drops brushing past the lens would become huge streaks; fade them out.
+    let near_fade = smoothstep(0.4, 1.5, min(tail_clip.w, head_clip.w));
+    out.alpha = rain.layers[layer].y * rain.shape.y * (true_width / width) * fog * exposure
+        * near_fade * mix(0.6, 1.0, variation.y);
     return out;
+}
+
+// Linear scene depth under a fragment. Scene depth may be at a lower resolution after
+// temporal reconstruction.
+fn scene_depth(fragment: vec2<f32>) -> f32 {
+    let scale = view.main_pass_viewport.zw / view.viewport.zw;
+    let texel = vec2<i32>((fragment - view.viewport.xy) * scale + view.main_pass_viewport.xy);
+    let z = textureLoad(depth, texel, 0);
+    return select(1.0e9, view.clip_from_view[3][2] / z, z > 0.0);
+}
+
+// Drops scatter the surrounding sky and sun light, like the haze in front of clouds.
+fn rain_light() -> vec3<f32> {
+    return clouds.haze.rgb * (clouds.ambient.rgb * clouds.ambient.w * 0.3
+        + clouds.sun_color.rgb * clouds.sun.w * 0.025
+        + clouds.moon_color.rgb * clouds.moon.w * 0.025) * view.exposure * 1.4;
 }
 
 @fragment
 fn fragment(in: Streak) -> @location(0) vec4<f32> {
     let across = 1.0 - smoothstep(0.3, 1.0, abs(in.coords.y));
     let ends = smoothstep(0.0, 0.3, in.coords.x) * (1.0 - smoothstep(0.85, 1.0, in.coords.x));
-    // Scene depth may be at a lower resolution after temporal reconstruction.
-    let scale = view.main_pass_viewport.zw / view.viewport.zw;
-    let texel = vec2<i32>((in.position.xy - view.viewport.xy) * scale + view.main_pass_viewport.xy);
-    let z = textureLoad(depth, texel, 0);
-    let near = view.clip_from_view[3][2];
-    let scene_depth = select(1.0e9, near / z, z > 0.0);
-    let soft = clamp((scene_depth - in.view_depth) / rain.shape.z, 0.0, 1.0);
+    let soft = clamp((scene_depth(in.position.xy) - in.view_depth) / rain.shape.z, 0.0, 1.0);
     let alpha = in.alpha * across * ends * soft;
     if alpha < 1e-4 { discard; }
-    // Drops scatter the surrounding sky and sun light, like the haze in front of clouds.
-    let light = clouds.haze.rgb * (clouds.ambient.rgb * clouds.ambient.w * 0.3
-        + clouds.sun_color.rgb * clouds.sun.w * 0.025
-        + clouds.moon_color.rgb * clouds.moon.w * 0.025) * view.exposure * 1.4;
-    return vec4(light * alpha, alpha);
+    return vec4(rain_light() * alpha, alpha);
+}
+
+struct Splash {
+    @builtin(position) position: vec4<f32>,
+    // x: across, -1..1; y: up from the impact, 0..1.
+    @location(0) coords: vec2<f32>,
+    @location(1) view_depth: f32,
+    @location(2) age: f32,
+    @location(3) alpha: f32,
+}
+
+// An upright crown at each impact that widens and fades over its lifetime.
+@vertex
+fn vertex_splash(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance: u32) -> Splash {
+    var out: Splash;
+    out.position = vec4(0.0, 0.0, 0.0, 1.0);
+    out.coords = vec2(0.0);
+    out.view_depth = 0.0;
+    out.age = 1.0;
+    out.alpha = 0.0;
+    let splash = splashes[instance];
+    let age = (rain.splash.x - splash.w) / rain.splash.y;
+    if age < 0.0 || age >= 1.0 { return out; }
+    let corner = vertex % 6u;
+    let across = select(-1.0, 1.0, corner == 1u || corner == 2u || corner == 4u);
+    let up = select(0.0, 1.0, corner == 2u || corner == 4u || corner == 5u);
+    let to_camera = view.world_position - splash.xyz;
+    let side = cross(vec3(0.0, 1.0, 0.0), to_camera);
+    let right = select(vec3(1.0, 0.0, 0.0), normalize(side), dot(side, side) > 1e-6);
+    let size = rain.splash.z * mix(0.6, 1.1, random3(instance * 5u + 1u).x);
+    let world = splash.xyz + right * across * size + vec3(0.0, up * size * 0.8, 0.0);
+    let clip = view.unjittered_clip_from_world * vec4(world, 1.0);
+    if clip.w < 0.1 { return out; }
+    out.position = vec4(clip.xy, 0.5 * clip.w, clip.w);
+    out.coords = vec2(across, up);
+    out.view_depth = clip.w;
+    out.age = age;
+    out.alpha = rain.shape.y * exp(-clouds.fog.w * clip.w);
+    return out;
+}
+
+@fragment
+fn fragment_splash(in: Splash) -> @location(0) vec4<f32> {
+    let radius = mix(0.2, 0.9, sqrt(in.age));
+    let ring = abs(length(vec2(in.coords.x, in.coords.y * 1.25)) - radius);
+    // A soft spray rather than a crisp arc; strongest near the surface.
+    let crown = (1.0 - smoothstep(0.0, 0.3, ring)) * (1.0 - 0.6 * in.coords.y);
+    // The impact sits on the surface: hide it only behind nearer geometry such as blades.
+    let soft = clamp((scene_depth(in.position.xy) + 0.25 - in.view_depth) / 0.25, 0.0, 1.0);
+    let fade = (1.0 - in.age) * (1.0 - in.age);
+    let alpha = in.alpha * crown * fade * soft * 0.35;
+    if alpha < 1e-4 { discard; }
+    return vec4(rain_light() * 1.2 * alpha, alpha);
 }

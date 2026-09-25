@@ -1,4 +1,5 @@
 #import "shaders/clouds/pbr_lighting.wgsl"::apply_pbr_lighting
+#import "shaders/weather/ground_wetness.wgsl"::apply_rain_puddles
 // World-projected composites with an independently resident close-up surface cache.
 #import "shaders/terrain_near.wgsl"::{close_ground, map_sampler}
 #import bevy_pbr::{
@@ -158,6 +159,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
 #ifdef TERRAIN_SURFACE_UNLIT
     out.color = pbr.material.base_color;
 #else
+    pbr = apply_rain_puddles(pbr);
     let lit = apply_pbr_lighting(pbr);
     out.color = main_pass_post_lighting_processing(pbr, vec4(lit.rgb * canopy, lit.a));
 #endif

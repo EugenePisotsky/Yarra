@@ -23,6 +23,8 @@ pub struct TerrainCompositeMaterial {
     #[texture(121)]
     #[sampler(122)]
     pub(super) cloud_shadows: Option<Handle<Image>>,
+    #[texture(123, sample_type = "float", filterable = false)]
+    pub(super) rain_shelter: Option<Handle<Image>>,
     pub key: Option<TerrainMaterialKey>,
     pub shading_mode: TerrainShadingMode,
     /// Diagnostic shader bypass only; retains near-source residency for a fair A/B.
@@ -67,6 +69,7 @@ impl Default for TerrainCompositeMaterial {
         Self {
             cloud_parameters: atmosphere::clouds::fallback_parameters(),
             cloud_shadows: None,
+            rain_shelter: None,
             key: None,
             shading_mode: Default::default(),
             near_disabled: false,

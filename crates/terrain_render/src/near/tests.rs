@@ -60,6 +60,7 @@ fn material(s: &NearSource) -> TerrainMaterial {
         source_only: true,
         cloud_parameters: atmosphere::clouds::fallback_parameters(),
         cloud_shadows: None,
+        rain_shelter: None,
         shading_mode: TerrainShadingMode::Production,
         stochastic_cached: false,
         prepared: false,

@@ -834,7 +834,7 @@ fn shade(input: VertexOutput) -> vec4<f32> {
     // Wet blades darken like wet PBR surfaces, a little less since grass is already dark.
     var body_color = input.color;
 #ifdef YARRA_CLOUDS
-    body_color *= mix(1.0, 0.7, surface_wetness(vec3<f32>(0.0, 1.0, 0.0)));
+    body_color *= mix(1.0, 0.7, surface_wetness(input.world_position, vec3<f32>(0.0, 1.0, 0.0)));
 #endif
 
     // Direct-light energy must use the same camera exposure as Bevy's PBR path. Normalizing the

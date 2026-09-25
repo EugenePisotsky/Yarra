@@ -37,6 +37,38 @@ impl Default for PrecipitationPresentation {
 #[derive(Component, Clone, ExtractComponent)]
 pub struct PrecipitationView;
 
+pub const SPLASH_CAPACITY: usize = 512;
+const SPLASH_SECONDS: f32 = 0.2;
+const SPLASH_SIZE: f32 = 0.07;
+
+/// Recent drop impacts: position and spawn time on the `Time` clock. Callers that know the
+/// ground (terrain, shelter) spawn them; the rain pass draws the crowns.
+#[derive(Resource, Clone, ExtractResource)]
+pub struct RainSplashes {
+    instances: Vec<[f32; 4]>,
+    next: usize,
+}
+impl Default for RainSplashes {
+    fn default() -> Self {
+        Self {
+            instances: vec![[0.0, 0.0, 0.0, f32::NEG_INFINITY]; SPLASH_CAPACITY],
+            next: 0,
+        }
+    }
+}
+impl RainSplashes {
+    /// Overwrites the oldest splash once full.
+    pub fn spawn(&mut self, position: Vec3, time: f32) {
+        self.instances[self.next] = position.extend(time).to_array();
+        self.next = (self.next + 1) % SPLASH_CAPACITY;
+    }
+    fn alive(&self, time: f32) -> bool {
+        self.instances
+            .iter()
+            .any(|s| (0.0..SPLASH_SECONDS).contains(&(time - s[3])))
+    }
+}
+
 struct Layer {
     /// Horizontal box edge and height in metres, centred slightly ahead of the camera.
     size: f32,
@@ -75,6 +107,36 @@ const DROP_WIDTH: f32 = 0.004;
 const SOFT_DEPTH: f32 = 0.35;
 /// Share of each box placed ahead of the camera, where drops are visible.
 const FORWARD_SHIFT: f32 = 0.3;
+/// Camera motion above this is a teleport or origin rebase, not movement to blur.
+const MAX_CAMERA_SPEED: f32 = 40.0;
+/// Smoothing time constant for camera velocity, in seconds.
+const CAMERA_SMOOTHING: f32 = 0.1;
+
+/// Smoothed camera velocity for streak stretching.
+#[derive(Default)]
+struct CameraMotion {
+    previous: Option<Vec3>,
+    velocity: Vec3,
+}
+impl CameraMotion {
+    fn update(&mut self, position: Option<Vec3>, dt: f32) -> Vec3 {
+        let (Some(position), true) = (position, dt > 0.0) else {
+            return self.velocity;
+        };
+        if let Some(previous) = self.previous.replace(position) {
+            let raw = (position - previous) / dt;
+            let raw = if raw.length() <= MAX_CAMERA_SPEED {
+                raw
+            } else {
+                Vec3::ZERO
+            };
+            self.velocity = self
+                .velocity
+                .lerp(raw, 1.0 - (-dt / CAMERA_SMOOTHING).exp());
+        }
+        self.velocity
+    }
+}
 
 #[derive(Clone, Copy, Default, Debug, Pod, Zeroable)]
 #[repr(C)]
@@ -87,6 +149,10 @@ struct RainUniform {
     offsets: [[f32; 4]; 3],
     /// Per layer: x box height, y alpha, z first instance.
     layers: [[f32; 4]; 3],
+    /// xyz: drop velocity relative to the camera, which sets streak direction and length.
+    streak: [f32; 4],
+    /// Splashes: current time, lifetime (s), size (m).
+    splash: [f32; 4],
 }
 
 #[derive(Resource, Clone, Copy, Default, ExtractResource)]
@@ -99,12 +165,14 @@ pub(crate) struct PrecipitationPlugin;
 impl Plugin for PrecipitationPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PrecipitationPresentation>()
-            .init_resource::<RainFrame>();
+            .init_resource::<RainFrame>()
+            .init_resource::<RainSplashes>();
         if app.get_sub_app(RenderApp).is_none() {
             return;
         }
         app.add_plugins((
             ExtractResourcePlugin::<RainFrame>::default(),
+            ExtractResourcePlugin::<RainSplashes>::default(),
             ExtractComponentPlugin::<PrecipitationView>::default(),
         ))
         .add_systems(PostUpdate, sync.after(ApplyAtmosphere));
@@ -118,15 +186,34 @@ impl Plugin for PrecipitationPlugin {
     }
 }
 
+type RainViews<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        Option<&'static PrecipitationView>,
+        Option<&'static GlobalTransform>,
+    ),
+    With<WorldEnvironmentView>,
+>;
+
+#[allow(clippy::too_many_arguments)] // Weather, views and the per-view accumulators.
 fn sync(
     mut commands: Commands,
     state: Res<AtmosphereState>,
     presentation: Res<PrecipitationPresentation>,
     time: Res<Time>,
-    views: Query<(Entity, Option<&PrecipitationView>), With<WorldEnvironmentView>>,
+    views: RainViews,
     mut frame: ResMut<RainFrame>,
     mut offsets: Local<[[f64; 3]; 3]>,
+    mut camera: Local<CameraMotion>,
 ) {
+    let camera_velocity = camera.update(
+        views
+            .iter()
+            .find_map(|(_, _, transform)| transform.map(GlobalTransform::translation)),
+        time.delta_secs(),
+    );
     let precipitation = state
         .weather
         .filter(|_| state.owner == AtmosphereOwner::Game && state.profile.outdoor)
@@ -149,6 +236,8 @@ fn sync(
     let mut first = 0;
     let mut uniform = RainUniform {
         velocity: velocity.extend(STREAK_SECONDS).to_array(),
+        streak: (velocity - camera_velocity).extend(0.0).to_array(),
+        splash: [time.elapsed_secs(), SPLASH_SECONDS, SPLASH_SIZE, 0.0],
         shape: [
             DROP_WIDTH,
             0.6 + 0.4 * precipitation,
@@ -167,7 +256,7 @@ fn sync(
     }
     *frame = RainFrame { uniform, active };
     let visible = presentation.enabled && active.iter().any(|&n| n > 0);
-    for (entity, view) in &views {
+    for (entity, view, _) in &views {
         if visible && view.is_none() {
             commands.entity(entity).insert(PrecipitationView);
         } else if !visible && view.is_some() {
@@ -179,7 +268,8 @@ fn sync(
 #[derive(Resource)]
 struct Pipelines {
     layout: [BindGroupLayoutDescriptor; 2],
-    render: [CachedRenderPipelineId; 2],
+    /// Indexed by [streaks, splashes] then MSAA.
+    render: [[CachedRenderPipelineId; 2]; 2],
 }
 fn init(mut commands: Commands, server: Res<AssetServer>, cache: Res<PipelineCache>) {
     let layout = std::array::from_fn(|i| {
@@ -204,38 +294,50 @@ fn init(mut commands: Commands, server: Res<AssetServer>, cache: Res<PipelineCac
                     } else {
                         texture_depth_2d_multisampled()
                     },
+                    texture_2d(TextureSampleType::Float { filterable: false }),
+                    storage_buffer_read_only_sized(
+                        false,
+                        std::num::NonZeroU64::new((SPLASH_CAPACITY * 16) as u64),
+                    ),
                 ),
             ),
         )
     });
     let shader = server.load("shaders/weather/rain.wgsl");
-    let render = std::array::from_fn(|i| {
-        let defs = if i == 1 {
-            vec!["MULTISAMPLED".into()]
-        } else {
-            vec![]
-        };
-        cache.queue_render_pipeline(RenderPipelineDescriptor {
-            label: Some("rain".into()),
-            layout: vec![layout[i].clone()],
-            vertex: VertexState {
-                shader: shader.clone(),
-                shader_defs: defs.clone(),
-                entry_point: Some("vertex".into()),
-                buffers: vec![],
-            },
-            fragment: Some(FragmentState {
-                shader: shader.clone(),
-                shader_defs: defs,
-                entry_point: Some("fragment".into()),
-                targets: vec![Some(ColorTargetState {
-                    format: TextureFormat::Rgba16Float,
-                    // Premultiplied: streak radiance over the scene.
-                    blend: Some(BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-                    write_mask: ColorWrites::ALL,
-                })],
-            }),
-            ..default()
+    let render = std::array::from_fn(|kind| {
+        std::array::from_fn(|i| {
+            let defs = if i == 1 {
+                vec!["MULTISAMPLED".into()]
+            } else {
+                vec![]
+            };
+            let (vertex, fragment) = if kind == 0 {
+                ("vertex", "fragment")
+            } else {
+                ("vertex_splash", "fragment_splash")
+            };
+            cache.queue_render_pipeline(RenderPipelineDescriptor {
+                label: Some(if kind == 0 { "rain" } else { "rain splashes" }.into()),
+                layout: vec![layout[i].clone()],
+                vertex: VertexState {
+                    shader: shader.clone(),
+                    shader_defs: defs.clone(),
+                    entry_point: Some(vertex.into()),
+                    buffers: vec![],
+                },
+                fragment: Some(FragmentState {
+                    shader: shader.clone(),
+                    shader_defs: defs,
+                    entry_point: Some(fragment.into()),
+                    targets: vec![Some(ColorTargetState {
+                        format: TextureFormat::Rgba16Float,
+                        // Premultiplied: streak radiance over the scene.
+                        blend: Some(BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                        write_mask: ColorWrites::ALL,
+                    })],
+                }),
+                ..default()
+            })
         })
     });
     commands.insert_resource(Pipelines { layout, render });
@@ -251,8 +353,10 @@ fn draw(
         &Msaa,
     )>,
     rain: Res<RainFrame>,
+    splashes: Res<RainSplashes>,
     assets: Option<Res<CloudAssets>>,
     buffers: Res<RenderAssets<GpuShaderBuffer>>,
+    images: Res<RenderAssets<bevy::render::texture::GpuImage>>,
     pipelines: Res<Pipelines>,
     cache: Res<PipelineCache>,
     uniforms: Res<ViewUniforms>,
@@ -263,14 +367,17 @@ fn draw(
         return;
     }
     let index = usize::from(msaa.samples() > 1);
-    let (Some(assets), Some(pipeline), Some(view_binding)) = (
+    let (Some(assets), Some(pipeline), Some(splash_pipeline), Some(view_binding)) = (
         assets,
-        cache.get_render_pipeline(pipelines.render[index]),
+        cache.get_render_pipeline(pipelines.render[0][index]),
+        cache.get_render_pipeline(pipelines.render[1][index]),
         uniforms.uniforms.binding(),
     ) else {
         return;
     };
-    let Some(clouds) = buffers.get(&assets.parameters) else {
+    let (Some(clouds), Some(shelter)) =
+        (buffers.get(&assets.parameters), images.get(&assets.shelter))
+    else {
         return;
     };
     let uniform = ctx
@@ -280,6 +387,13 @@ fn draw(
             contents: bytemuck::bytes_of(&rain.uniform),
             usage: BufferUsages::UNIFORM,
         });
+    let splash_buffer = ctx
+        .render_device()
+        .create_buffer_with_data(&BufferInitDescriptor {
+            label: Some("rain splashes"),
+            contents: bytemuck::cast_slice(&splashes.instances),
+            usage: BufferUsages::STORAGE,
+        });
     let group = ctx.render_device().create_bind_group(
         "rain",
         &cache.get_bind_group_layout(&pipelines.layout[index]),
@@ -288,6 +402,8 @@ fn draw(
             clouds.buffer.as_entire_binding(),
             view_binding,
             depth.view(),
+            &shelter.texture_view,
+            splash_buffer.as_entire_binding(),
         )),
     );
     let mut pass = ctx
@@ -316,6 +432,10 @@ fn draw(
             pass.draw(0..6, first..first + active);
         }
         first += layer.count;
+    }
+    if splashes.alive(rain.uniform.splash[0]) {
+        pass.set_pipeline(splash_pipeline);
+        pass.draw(0..6, 0..SPLASH_CAPACITY as u32);
     }
 }
 
@@ -368,6 +488,33 @@ mod tests {
             !run(Some(WeatherKind::Storm), editor, 0.016, 1).1,
             "editor workspaces own the authored atmosphere"
         );
+    }
+
+    #[test]
+    fn splashes_recycle_the_oldest_and_expire() {
+        let mut splashes = RainSplashes::default();
+        assert!(!splashes.alive(0.0));
+        for i in 0..SPLASH_CAPACITY + 3 {
+            splashes.spawn(Vec3::X * i as f32, 10.0);
+        }
+        assert_eq!(splashes.instances[2][0], (SPLASH_CAPACITY + 2) as f32);
+        assert!(splashes.alive(10.1));
+        assert!(!splashes.alive(10.0 + SPLASH_SECONDS + 0.01));
+    }
+
+    #[test]
+    fn camera_motion_is_smoothed_and_teleports_are_ignored() {
+        let mut motion = CameraMotion::default();
+        assert_eq!(motion.update(Some(Vec3::ZERO), 0.1), Vec3::ZERO);
+        for step in 1..=20 {
+            motion.update(Some(Vec3::X * step as f32 * 0.5), 0.1);
+        }
+        assert!((motion.velocity.x - 5.0).abs() < 0.1, "{}", motion.velocity);
+        let settled = motion.velocity;
+        // An origin rebase or teleport decays towards zero instead of a huge streak.
+        motion.update(Some(Vec3::X * 1000.0), 0.1);
+        assert!(motion.velocity.length() < settled.length());
+        assert!(motion.velocity.length() <= MAX_CAMERA_SPEED);
     }
 
     #[test]
