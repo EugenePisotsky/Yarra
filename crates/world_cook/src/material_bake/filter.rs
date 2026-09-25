@@ -10,6 +10,8 @@ pub(super) struct Pixel {
     pub normal: [f32; 3],
     pub roughness: f32,
     pub ao: f32,
+    /// 0..1 depth below the surrounding ground; see `TERRAIN_HOLLOW_DEPTH_METRES`.
+    pub hollow: f32,
     pub valid: bool,
 }
 impl Pixel {
@@ -24,12 +26,14 @@ impl Pixel {
             }
             p.roughness += s.roughness;
             p.ao += s.ao;
+            p.hollow += s.hollow;
         }
         if count > 0. {
             p.color = p.color.map(|x| x / count);
             p.normal = normalize(p.normal);
             p.roughness /= count;
             p.ao /= count;
+            p.hollow /= count;
             p.valid = true;
         }
         p
@@ -60,7 +64,7 @@ impl Core {
                 p.color
                     .iter()
                     .chain(&p.normal)
-                    .chain([&p.roughness, &p.ao])
+                    .chain([&p.roughness, &p.ao, &p.hollow])
                     .any(|v| !v.is_finite())
             })
         {
@@ -144,7 +148,7 @@ pub(super) fn finish(
         let mut response = Vec::with_capacity(pixels.len() * 4);
         for p in &pixels {
             color.extend(p.color.map(srgb));
-            color.push(255);
+            color.push(unorm(p.hollow));
             let n = p.normal;
             let inverse = (n[0].abs() + n[1].abs() + n[2].abs()).recip();
             let mut oct = [n[0] * inverse, n[2] * inverse];

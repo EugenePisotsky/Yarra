@@ -1,5 +1,6 @@
 #import "shaders/clouds/pbr_lighting.wgsl"::apply_pbr_lighting
 #import "shaders/weather/ground_wetness.wgsl"::apply_rain_puddles
+#import "shaders/clouds/surface.wgsl"::surface_weather
 // World-projected composites with an independently resident close-up surface cache.
 #import "shaders/terrain_near.wgsl"::{close_ground, map_sampler}
 #import bevy_pbr::{
@@ -101,6 +102,29 @@ fn detailed_ground(base: GroundSample, world: vec2<f32>, footprint: f32) -> Grou
     result.ao += base.ao * remaining;
     return result;
 }
+// Rain hollowness (composite alpha) from the same tiles `detailed_ground` blends, for pixels
+// whose colour comes from the close surface cache instead.
+fn detailed_hollow(base: f32, world: vec2<f32>, footprint: f32) -> f32 {
+    if detail.origin.w == 0 { return base; }
+    let render_cell = world / detail.world.x;
+    let cell = vec2<i32>(floor(render_cell)) + detail.origin.xy;
+    let fraction = fract(render_cell);
+    let lod = max(log2(max(footprint * 64.0 / detail.world.x, 0.000001)), 0.0);
+    var result = 0.0;
+    var remaining = 1.0;
+    for (var level = u32(min(floor(lod), 30.0)); level < u32(detail.world.y); level += 1u) {
+        let entry = lookup(vec3(cell.x >> level, cell.y >> level, i32(level)));
+        if entry.key.w == 0 { continue; }
+        let weight = detail_weight(entry, local_uv(cell, fraction, entry), lod);
+        if weight <= 0.0 { continue; }
+        let uv = (local_uv(cell, fraction, entry) * 64.0 + 4.0) / 72.0;
+        let mip = clamp(log2(max(footprint * 64.0 / (detail.world.x * f32(1u << level)), 0.000001)), 0.0, 2.0);
+        result += textureSampleLevel(detail_color, map_sampler, uv, entry.key.w - 1, mip).a * remaining * weight;
+        remaining *= 1.0 - weight;
+        if remaining == 0.0 { break; }
+    }
+    return result + base * remaining;
+}
 
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
@@ -109,17 +133,23 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     out.color = vec4(0.05, 0.12, 0.025, 1.0);
 #else ifdef TERRAIN_SINGLE_TEXTURE
     let uv = ((in.world_position.xz - projection.xy) / projection.z * 64.0 + 4.0) / 72.0;
-    out.color = textureSample(color_map, map_sampler, uv);
+    out.color = vec4(textureSample(color_map, map_sampler, uv).rgb, 1.0);
 #else
     let world_dx = dpdx(in.world_position.xz);
     let world_dy = dpdy(in.world_position.xz);
     let footprint = max(length(world_dx), length(world_dy));
     var canopy = 1.0;
+    var hollow = -1.0;
     var pbr = pbr_input_from_vertex_output(in, is_front, false);
     // Same placeholder as the geometry diagnostic when the publication has no bake.
     pbr.material.base_color = vec4(0.1128048, 0.1548725, 0.0684782, 1.0);
     pbr.material.perceptual_roughness = 1.0;
     if projection.w > 0.5 {
+        let tile_uv = (in.world_position.xz - projection.xy) / projection.z;
+        let uv = (tile_uv * 64.0 + 4.0) / 72.0;
+        // Derivatives were taken before the per-pixel availability branch.
+        let uv_dx = world_dx / projection.z * (64.0 / 72.0);
+        let uv_dy = world_dy / projection.z * (64.0 / 72.0);
         var ground: GroundSample;
 #ifndef TERRAIN_NEAR_DISABLED
         // Close material normals use the actual mesh, as the original detailed
@@ -130,14 +160,11 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         canopy = mix(1.0, close.canopy, close.weight);
         if close.weight < 1.0 {
 #endif
-        let tile_uv = (in.world_position.xz - projection.xy) / projection.z;
-        let uv = (tile_uv * 64.0 + 4.0) / 72.0;
-        // Derivatives were taken before the per-pixel availability branch.
-        let uv_dx = world_dx / projection.z * (64.0 / 72.0);
-        let uv_dy = world_dy / projection.z * (64.0 / 72.0);
         let response = textureSampleGrad(response_map, map_sampler, uv, uv_dx, uv_dy);
         let base = ground_sample(textureSampleGrad(color_map, map_sampler, uv, uv_dx, uv_dy), response);
         ground = detailed_ground(base, in.world_position.xz, footprint);
+        // Composite alpha is rain hollowness, not coverage.
+        hollow = ground.color.a;
 #ifndef TERRAIN_NEAR_DISABLED
         ground.color = mix(ground.color, close.color, close.weight);
         ground.normal = normalize(mix(ground.normal, close.normal, close.weight));
@@ -145,7 +172,12 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         ground.ao = mix(ground.ao, close.ao, close.weight);
         }
 #endif
-        pbr.material.base_color = ground.color;
+        // The close cache has no relief; look hollowness up only where puddles can form.
+        if hollow < 0.0 && surface_weather().x > 0.3 {
+            let base = textureSampleGrad(color_map, map_sampler, uv, uv_dx, uv_dy).a;
+            hollow = detailed_hollow(base, in.world_position.xz, footprint);
+        }
+        pbr.material.base_color = vec4(ground.color.rgb, 1.0);
         pbr.N = ground.normal;
         pbr.clearcoat_N = pbr.N;
         pbr.material.perceptual_roughness = clamp(ground.roughness, 0.08, 1.0);
@@ -159,7 +191,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
 #ifdef TERRAIN_SURFACE_UNLIT
     out.color = pbr.material.base_color;
 #else
-    pbr = apply_rain_puddles(pbr);
+    pbr = apply_rain_puddles(pbr, hollow);
     let lit = apply_pbr_lighting(pbr);
     out.color = main_pass_post_lighting_processing(pbr, vec4(lit.rgb * canopy, lit.a));
 #endif

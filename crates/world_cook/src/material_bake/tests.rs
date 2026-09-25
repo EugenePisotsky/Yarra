@@ -221,6 +221,7 @@ fn synthetic_core(x: i32, z: i32) -> Core {
                 normal: filter::normalize([x * 0.002, 1., z * 0.001]),
                 roughness: 0.8,
                 ao: 1.,
+                hollow: 0.,
                 valid: true,
             }
         })
@@ -242,6 +243,7 @@ fn composites_filter_linear_light_and_vectors_not_encoded_channels() {
             normal: [1., 0., 0.],
             roughness: 0.2,
             ao: 0.5,
+            hollow: 0.,
             valid: true,
         },
         Pixel {
@@ -249,10 +251,12 @@ fn composites_filter_linear_light_and_vectors_not_encoded_channels() {
             normal: [0., 1., 0.],
             roughness: 0.8,
             ao: 1.,
+            hollow: 1.,
             valid: true,
         },
     ]);
     assert_eq!(p.color, [0.5; 3]);
+    assert_eq!(p.hollow, 0.5, "hollowness filters like every other channel");
     assert_eq!(inputs::srgb(p.color[0]), 188);
     assert!((p.normal[0] - std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-6);
     assert_eq!(p.roughness, 0.5);
@@ -315,6 +319,7 @@ fn parent_filter_preserves_area_and_partial_coverage() {
                         normal: [0., 1., 0.],
                         roughness: 0.5,
                         ao: 1.,
+                        hollow: 0.,
                         valid: true
                     };
                     N * N
@@ -512,8 +517,19 @@ fn road_composite_uses_final_ground_weights_and_keeps_relief_out_of_albedo() {
             inputs.get(&resources.texture_set).unwrap(),
         )
         .unwrap();
-        assert_eq!(core.fingerprint, shifted.fingerprint);
-        assert_eq!(core.encode().unwrap(), shifted.encode().unwrap());
+        // Absolute height never reaches albedo or response. Hollowness is relative relief,
+        // so a uniform shift changes it only by float rounding; heights are fingerprinted.
+        for (a, b) in core.pixels.iter().zip(&shifted.pixels) {
+            assert_eq!(
+                (a.color, a.normal, a.roughness, a.ao),
+                (b.color, b.normal, b.roughness, b.ao)
+            );
+            assert!((a.hollow - b.hollow).abs() < 1e-3);
+        }
+        assert!(
+            core.pixels.iter().any(|p| p.hollow > 0.1),
+            "carved road ruts collect water"
+        );
         found = true;
         break;
     }
@@ -544,4 +560,35 @@ fn incomplete_material_pass_rolls_back_and_decode_checks_declared_bytes() {
     assert_eq!(reader.manifest().content_hash, before.content_hash);
     assert!(!reader.has_terrain_composites(WorldSpaceId(1)).unwrap());
     assert!(reader.read_terrain_composite(key(0, 0)).unwrap().is_none());
+}
+
+#[test]
+fn hollowness_finds_dips_below_the_surrounding_ground_only() {
+    let size = 8.0;
+    let resolution = 33_u16;
+    let n = resolution as usize;
+    let spacing = size / (n - 1) as f32;
+    // A 1 m pit 20 cm deep at (2, 2) and a 1 m bump 20 cm high at (6, 6) on flat ground.
+    let heights: Vec<f32> = (0..n * n)
+        .map(|i| {
+            let p = [(i % n) as f32 * spacing, (i / n) as f32 * spacing];
+            let near = |c: [f32; 2]| (p[0] - c[0]).hypot(p[1] - c[1]) <= 0.5;
+            if near([2., 2.]) {
+                -0.2
+            } else if near([6., 6.]) {
+                0.2
+            } else {
+                0.
+            }
+        })
+        .collect();
+    let field = TerrainHeightfield::from_heights(resolution, &heights, -1., 1., size).unwrap();
+    assert_eq!(evaluate::hollowness(&field, [2., 2.], size), 1.);
+    assert_eq!(evaluate::hollowness(&field, [6., 6.], size), 0.);
+    assert_eq!(evaluate::hollowness(&field, [4., 6.], size), 0.);
+    assert_eq!(
+        evaluate::hollowness(&field, [7.9, 0.1], size),
+        0.,
+        "flat page edges stay dry"
+    );
 }

@@ -50,7 +50,7 @@ pub(super) fn leaf(
     // matching TerrainMaterial's production prepared path.
     let prepared = surfaces.iter().all(|s| s.surface.anti_tiling);
     let mut hash = blake3::Hasher::new();
-    hash.update(b"terrain-composite-leaf-v1");
+    hash.update(b"terrain-composite-leaf-v2");
     hash.update(&inputs.hash);
     hash.update(&bincode::serde::encode_to_vec(
         (
@@ -59,6 +59,7 @@ pub(super) fn leaf(
             &page.weight_pages,
             page.heightfield.resolution,
             &page.heightfield.normals_oct,
+            &page.heightfield.heights,
         ),
         bincode::config::standard(),
     )?);
@@ -103,11 +104,10 @@ pub(super) fn leaf(
                 } else {
                     [1., 0.]
                 };
+                let local = [uv[0] as f32 * size, uv[1] as f32 * size];
                 let mut p = Pixel {
-                    normal: page
-                        .heightfield
-                        .sample([uv[0] as f32 * size, uv[1] as f32 * size], size)
-                        .normal,
+                    normal: page.heightfield.sample(local, size).normal,
+                    hollow: hollowness(&page.heightfield, local, size),
                     valid: true,
                     ..Default::default()
                 };
@@ -182,6 +182,35 @@ pub(super) fn leaf(
         pixels,
     })
 }
+/// Depth of `local` below the surrounding ground, where rain water would collect: the mean of
+/// two rings of heights minus the centre, normalised by `TERRAIN_HOLLOW_DEPTH_METRES`. It
+/// finds carved road ruts and terrain dips alike. Rings outside this page clamp to its edge,
+/// which can only weaken hollows touching the edge; puddles also require flat ground.
+pub(super) fn hollowness(heightfield: &TerrainHeightfield, local: [f32; 2], size: f32) -> f32 {
+    let height = |x: f32, z: f32| {
+        heightfield
+            .sample([x.clamp(0., size), z.clamp(0., size)], size)
+            .height
+    };
+    let centre = height(local[0], local[1]);
+    let mut sum = 0.;
+    let mut count = 0.;
+    for (radius, samples, twist) in [
+        (TERRAIN_HOLLOW_RADIUS_METRES * 0.5, 6, 0.),
+        (TERRAIN_HOLLOW_RADIUS_METRES, 12, 0.5),
+    ] {
+        for i in 0..samples {
+            let angle = std::f32::consts::TAU * (i as f32 + twist) / samples as f32;
+            sum += height(
+                local[0] + radius * angle.cos(),
+                local[1] + radius * angle.sin(),
+            );
+            count += 1.;
+        }
+    }
+    ((sum / count - centre) / TERRAIN_HOLLOW_DEPTH_METRES).clamp(0., 1.)
+}
+
 fn weights(map: &TerrainWeightPage, uv: [f64; 2]) -> [f32; 2] {
     let n = map.resolution as usize;
     let p = uv.map(|x| x * (n - 1) as f64);

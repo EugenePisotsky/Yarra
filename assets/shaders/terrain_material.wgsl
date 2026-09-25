@@ -376,7 +376,8 @@ fn fragment(
     pbr_input.material.flags = pbr_types::STANDARD_MATERIAL_FLAGS_FOG_ENABLED_BIT;
     apply_decals(&pbr_input);
 
-    pbr_input = apply_rain_puddles(pbr_input);
+    // This path has no baked relief; puddles come from noise alone.
+    pbr_input = apply_rain_puddles(pbr_input, -1.0);
     out.color = apply_pbr_lighting(pbr_input);
 #ifdef TERRAIN_CANOPY
     out.color = vec4(out.color.rgb * canopy_visibility(in.world_position.xz, distance(canopy_view::view.world_position, in.world_position.xyz)), out.color.a);

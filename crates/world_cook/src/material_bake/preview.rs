@@ -318,6 +318,7 @@ fn published_core(
                     normal: filter::normalize(normal),
                     roughness: mip.response[j + 2] as f32 / 255.,
                     ao: mip.response[j + 3] as f32 / 255.,
+                    hollow: mip.color[j + 3] as f32 / 255.,
                     valid: true,
                 }
             })
