@@ -10,6 +10,7 @@ struct CloudParams {
     haze: vec4<f32>, // linear RGB, visibility
     fog: vec4<f32>, // weather fog: unexposed in-scattered radiance, extra extinction / metre
     transition: vec4<f32>, // previous coverage, extinction / metre, erosion; linear progress
+    weather: vec4<f32>, // x: surface wetness, y: precipitation intensity
 }
 
 // Cached sky: azimuth across, square-root warped elevation down from the tracing cutoff (ray.y

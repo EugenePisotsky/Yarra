@@ -21,6 +21,7 @@ pub use world_vegetation::{
 };
 
 pub use atmosphere::clouds::CloudQuality;
+pub use atmosphere::precipitation::PrecipitationPresentation;
 pub use atmosphere::{
     ApplyAtmosphere, AtmosphereOwner, AtmospherePresentation, AtmosphereState,
     WorldEnvironmentCamera, WorldEnvironmentPlugin, WorldEnvironmentView, WorldSun,

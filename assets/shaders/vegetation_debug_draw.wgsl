@@ -1,5 +1,5 @@
 #ifdef YARRA_CLOUDS
-#import "shaders/clouds/surface.wgsl"::cloud_visibility
+#import "shaders/clouds/surface.wgsl"::{cloud_visibility, surface_wetness}
 #endif
 #ifdef ATMOSPHERE
 #import bevy_pbr::atmosphere::functions::{clamp_to_surface, calculate_visible_sun_ratio}
@@ -831,6 +831,12 @@ fn shade(input: VertexOutput) -> vec4<f32> {
         return vec4<f32>((ambient + diffuse + transmission + highlight) * canopy_visibility, 1.0);
     }
 
+    // Wet blades darken like wet PBR surfaces, a little less since grass is already dark.
+    var body_color = input.color;
+#ifdef YARRA_CLOUDS
+    body_color *= mix(1.0, 0.7, surface_wetness(vec3<f32>(0.0, 1.0, 0.0)));
+#endif
+
     // Direct-light energy must use the same camera exposure as Bevy's PBR path. Normalizing the
     // directional radiance to a tint made a 100,000-lux sun indistinguishable from a dim light.
     var atmospheric_sun = camera.sun_radiance.xyz * cloud_sun;
@@ -944,7 +950,7 @@ fn shade(input: VertexOutput) -> vec4<f32> {
     let diffuse_filter = distance_stability * 0.65;
     let wrapped_diffuse = mix(directional_diffuse, canopy_diffuse, diffuse_filter);
     let diffuse_energy = min(exposed_sun_peak * camera.lighting.x, 1.20);
-    let diffuse = input.color
+    let diffuse = body_color
         * exposed_sun_tint
         * wrapped_diffuse
         * diffuse_energy
@@ -955,7 +961,7 @@ fn shade(input: VertexOutput) -> vec4<f32> {
     let backscatter = smoothstep(0.14, 0.86, backscatter_alignment);
     let transmission_energy = min(exposed_sun_peak, 3.0);
     let transmission = mix(
-        input.color * exposed_sun_tint,
+        body_color * exposed_sun_tint,
         exposed_sun_tint,
         0.22,
     ) * backscatter
@@ -980,7 +986,7 @@ fn shade(input: VertexOutput) -> vec4<f32> {
     // the underside of an otherwise exposed leaf. Directional contrast comes from the sun term.
     let sky_facing = mix(abs(flat_blade_normal.y), clump_normal.y, diffuse_filter);
     let sky_fill = mix(0.75, 1.0, clamp(sky_facing, 0.0, 1.0));
-    let foliage_ambient = input.color
+    let foliage_ambient = body_color
         * bounded_ambient
         * mix(0.40, 0.85, ambient_occlusion)
         * sky_fill

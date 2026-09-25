@@ -11,3 +11,7 @@ fn cloud_visibility(p: vec3<f32>, direction: vec3<f32>) -> f32 {
     let t=textureSampleLevel(cloud_shadow,cloud_repeat,(hit-clouds.offset.zw)/(clouds.layer.z*4.0),0.0).rg;
     return select(t.y,t.x,sun);
 }
+/// Rain wetness of a surface: sky-facing surfaces soak fully, vertical ones partly.
+fn surface_wetness(normal: vec3<f32>) -> f32 {
+    return clamp(clouds.weather.x, 0.0, 1.0) * mix(0.35, 1.0, smoothstep(-0.2, 0.7, normal.y));
+}

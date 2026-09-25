@@ -148,6 +148,7 @@ fn advance_weather(
         if atmosphere.weather.is_some() || atmosphere.weather_transition.is_some() {
             atmosphere.weather = None;
             atmosphere.weather_transition = None;
+            atmosphere.wetness = 0.0;
         }
         return;
     }
@@ -179,9 +180,17 @@ fn advance_weather(
         *previous_target = target;
     }
     let transition = weather.runtime.as_ref().map(WeatherRuntime::transition);
-    if atmosphere.weather != current || atmosphere.weather_transition != transition {
+    let wetness = weather
+        .runtime
+        .as_ref()
+        .map_or(0.0, WeatherRuntime::wetness);
+    if atmosphere.weather != current
+        || atmosphere.weather_transition != transition
+        || atmosphere.wetness != wetness
+    {
         atmosphere.weather = current;
         atmosphere.weather_transition = transition;
+        atmosphere.wetness = wetness;
     }
 }
 

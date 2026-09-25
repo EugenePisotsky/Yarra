@@ -54,10 +54,19 @@
 #import bevy_pbr::pbr_functions::calculate_contact_shadow
 #endif
 #endif
-#import "shaders/clouds/surface.wgsl"::cloud_visibility
+#import "shaders/clouds/surface.wgsl"::{cloud_visibility, surface_wetness}
 fn apply_pbr_lighting(
-    in: pbr_types::PbrInput,
+    input: pbr_types::PbrInput,
 ) -> vec4<f32> {
+    // Yarra: wet surfaces absorb more (darker diffuse albedo) and reflect more coherently.
+    var in = input;
+    let wet = surface_wetness(in.N);
+    in.material.base_color = vec4(in.material.base_color.rgb * mix(1.0, 0.55, wet), in.material.base_color.a);
+    in.material.perceptual_roughness = mix(
+        in.material.perceptual_roughness,
+        max(0.2, in.material.perceptual_roughness * 0.45),
+        wet,
+    );
     var output_color: vec4<f32> = in.material.base_color;
 
     let emissive = in.material.emissive;

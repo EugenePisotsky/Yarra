@@ -70,6 +70,8 @@ pub struct CloudParams {
     /// Previous coverage, extinction and erosion, and linear change progress. Each region of
     /// the field blends from these to `shape` at its own time within the change.
     pub transition: [f32; 4],
+    /// Game weather for surfaces and precipitation: wetness, precipitation intensity.
+    pub weather: [f32; 4],
 }
 #[derive(Component, Clone, bevy::render::extract_component::ExtractComponent)]
 pub struct CloudView;
@@ -219,7 +221,16 @@ fn sync(
             .to_array(),
         fog: [0.; 4],
         transition: [0.; 4],
+        weather: [0.; 4],
     };
+    if state.owner == AtmosphereOwner::Game && profile.outdoor {
+        params.weather = [
+            state.wetness.clamp(0., 1.),
+            state.weather.map_or(0., |w| w.precipitation.clamp(0., 1.)),
+            0.,
+            0.,
+        ];
+    }
     params.transition = [params.shape[0], params.shape[1], params.shape[2], 1.];
     if let Some(change) = state
         .weather_transition

@@ -3,7 +3,7 @@
 use super::capture::CaptureSession;
 use crate::render_audit::font;
 use bevy::prelude::*;
-use engine::{AtmosphereState, GameWeather, WeatherKind};
+use engine::{AtmosphereState, GameWeather, PrecipitationPresentation, WeatherKind};
 
 // Clouds change region by region over ~40% of a transition; 10 s is for quick checks only.
 const TRANSITIONS: [f32; 3] = [60.0, 10.0, 0.0];
@@ -17,6 +17,7 @@ pub(super) enum WeatherAction {
     Transition,
     Clock,
     Authored,
+    RainRendering,
 }
 #[derive(Component)]
 struct WeatherStatus;
@@ -56,6 +57,7 @@ pub(super) fn spawn(page: &mut ChildSpawnerCommands, button: impl Fn() -> (Node,
                 WeatherAction::Transition,
                 WeatherAction::Clock,
                 WeatherAction::Authored,
+                WeatherAction::RainRendering,
             ]);
         for action in actions {
             let (mut node, color) = button();
@@ -82,9 +84,10 @@ fn actions(
     session: Res<CaptureSession>,
     atmosphere: Option<Res<AtmosphereState>>,
     weather: Option<ResMut<GameWeather>>,
+    rain: Option<ResMut<PrecipitationPresentation>>,
     mut panel: ResMut<WeatherPanel>,
 ) {
-    let (Some(atmosphere), Some(mut weather)) = (atmosphere, weather) else {
+    let (Some(atmosphere), Some(mut weather), Some(mut rain)) = (atmosphere, weather, rain) else {
         return;
     };
     if session.recording() {
@@ -111,13 +114,19 @@ fn actions(
                 weather.time_scale = CLOCKS[panel.clock];
             }
             WeatherAction::Authored => weather.clear(),
+            WeatherAction::RainRendering => rain.enabled = !rain.enabled,
         }
         // Show the result immediately rather than at the next periodic refresh.
         panel.refreshed = f64::NEG_INFINITY;
     }
 }
 
-fn label(action: WeatherAction, weather: &GameWeather, panel: &WeatherPanel) -> String {
+fn label(
+    action: WeatherAction,
+    weather: &GameWeather,
+    rain: &PrecipitationPresentation,
+    panel: &WeatherPanel,
+) -> String {
     let runtime = weather.runtime();
     match action {
         WeatherAction::Preset(kind) => {
@@ -153,6 +162,10 @@ fn label(action: WeatherAction, weather: &GameWeather, panel: &WeatherPanel) -> 
             }
         }
         WeatherAction::Authored => "Authored profile (weather off)".into(),
+        WeatherAction::RainRendering => format!(
+            "Rain rendering: {}",
+            if rain.enabled { "on" } else { "off" }
+        ),
     }
 }
 
@@ -182,7 +195,7 @@ fn status(weather: &GameWeather, atmosphere: &AtmosphereState) -> String {
         "manual hold".into()
     };
     format!(
-        "Weather: {} {:.0}% | {mode} | seed {}\nClouds: coverage {:.2} | density {:.2} | thickness {:.0} m\nVisibility {:.1} km | fog grey {:.2} | exposure {:+.1} EV\nWind: strength x{:.2} | gusts x{:.2} | rate x{:.2}\nPrecipitation {:.2} | wetness {:.2} (rain rendering not yet implemented)",
+        "Weather: {} {:.0}% | {mode} | seed {}\nClouds: coverage {:.2} | density {:.2} | thickness {:.0} m\nVisibility {:.1} km | fog grey {:.2} | exposure {:+.1} EV\nWind: strength x{:.2} | gusts x{:.2} | rate x{:.2}\nPrecipitation {:.2} | wetness {:.2}",
         runtime.target().label(),
         runtime.progress() * 100.0,
         weather.seed(),
@@ -200,16 +213,18 @@ fn status(weather: &GameWeather, atmosphere: &AtmosphereState) -> String {
     )
 }
 
+#[allow(clippy::too_many_arguments)] // Optional weather resources plus panel text queries.
 fn refresh(
     time: Res<Time<Real>>,
     weather: Option<Res<GameWeather>>,
     atmosphere: Option<Res<AtmosphereState>>,
+    rain: Option<Res<PrecipitationPresentation>>,
     mut panel: ResMut<WeatherPanel>,
     mut texts: Query<&mut Text>,
     status_text: Query<Entity, With<WeatherStatus>>,
     buttons: Query<(&WeatherAction, &Children)>,
 ) {
-    let (Some(weather), Some(atmosphere)) = (weather, atmosphere) else {
+    let (Some(weather), Some(atmosphere), Some(rain)) = (weather, atmosphere, rain) else {
         return;
     };
     let now = time.elapsed_secs_f64();
@@ -226,7 +241,7 @@ fn refresh(
         }
     }
     for (action, children) in &buttons {
-        let value = label(*action, &weather, &panel);
+        let value = label(*action, &weather, &rain, &panel);
         for child in children {
             if let Ok(mut text) = texts.get_mut(*child)
                 && text.0 != value
@@ -246,6 +261,7 @@ mod tests {
         let mut app = App::new();
         app.init_resource::<CaptureSession>()
             .init_resource::<engine::AtmosphereState>()
+            .init_resource::<PrecipitationPresentation>()
             .insert_resource(GameWeather::new(engine::WeatherStart::Automatic, 1))
             .init_resource::<Time<Real>>();
         install(&mut app);

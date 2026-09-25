@@ -1,6 +1,7 @@
 //! Shared sky, sun and illumination. Applications supply profile/time inputs;
 //! one ordered presentation system applies them before transform propagation.
 pub mod clouds;
+pub mod precipitation;
 
 use bevy::{
     camera::Exposure,
@@ -51,6 +52,8 @@ pub struct AtmosphereState {
     pub weather: Option<WeatherParams>,
     /// Both ends of the current weather change, for the region-by-region cloud field.
     pub weather_transition: Option<WeatherTransition>,
+    /// 0..1 surface wetness accumulated by game rain; lags precipitation.
+    pub wetness: f32,
 }
 impl Default for AtmosphereState {
     fn default() -> Self {
@@ -63,6 +66,7 @@ impl Default for AtmosphereState {
             exposure_override: None,
             weather: None,
             weather_transition: None,
+            wetness: 0.0,
         }
     }
 }
@@ -113,7 +117,7 @@ impl WorldEnvironmentPlugin {
 impl Plugin for WorldEnvironmentPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<AtmospherePresentation>()
-            .add_plugins(clouds::CloudsPlugin)
+            .add_plugins((clouds::CloudsPlugin, precipitation::PrecipitationPlugin))
             .insert_resource(ClearColor(Color::BLACK))
             .insert_resource(AtmosphereState {
                 owner: self.owner,
