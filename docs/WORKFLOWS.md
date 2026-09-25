@@ -60,7 +60,7 @@ For grass streaming/history regression, run `cargo test -p yarra-vegetation-rend
 
 **Roads:** activate Roads, choose a style, then New cart road and place two points. Edit control points, tangents and widths; extend/split with the tool controls. Road styles define wheel/center/shoulder wear, retained grass, ground mixtures and rut/relief variation. Explicit junctions connect compatible 2–4-arm endpoints. Save checkpoints roads and painter changes together; publication derives ground, grass and relief from the same source.
 
-**Atmosphere:** open World → Atmosphere for the active space's profile and preview time/weather. Apply authored profile edits through normal undo/save/publication. Preview transport and temporary quality controls do not rewrite startup time/weather merely by being adjusted. Clouds Off removes rendering/shadows, not the weather's ambient response.
+**Atmosphere:** open World → Atmosphere for the active space's profile and preview time/weather. **Weather** edits each preset (clouds, visibility, fog and skylight grey, exposure, wind, rain) and the random sequence (change and hold durations, next-state weights); the preview row shows any preset with a chosen wetness, without saving. Apply authored profile edits through normal undo/save/publication. Preview transport and temporary quality controls do not rewrite startup time/weather merely by being adjusted. Clouds Off removes rendering/shadows, not the weather's ambient response.
 
 Save conflicts indicate newer source revisions: resolve/reload the draft rather than forcing a stale overwrite. Recovery data under `.editor` is separate from saved source. Generated preview failures must remain visible as stale/error state; they are not publication success.
 

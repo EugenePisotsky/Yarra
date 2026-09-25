@@ -74,10 +74,12 @@ impl From<CoreProfile> for AtmosphereProfile {
             phases: p.phases,
             night: p.night,
             clouds: Default::default(),
+            weather: Default::default(),
         }
     }
 }
 const CLOUD_EXTENSION: &[u8; 4] = b"CLD1";
+const WEATHER_EXTENSION: &[u8; 4] = b"WTH1";
 pub(super) fn encode(profile: &AtmosphereProfile) -> Result<Vec<u8>, WorldDbError> {
     profile
         .validate()
@@ -92,6 +94,16 @@ pub(super) fn encode(profile: &AtmosphereProfile) -> Result<Vec<u8>, WorldDbErro
             bincode::config::standard(),
         )?);
     }
+    if profile.weather != Default::default() {
+        bytes.extend_from_slice(WEATHER_EXTENSION);
+        bytes.extend(bincode::serde::encode_to_vec(
+            &profile.weather,
+            bincode::config::standard(),
+        )?);
+    }
+    if bytes.len() > 4096 {
+        return Err(WorldDbError::Cook("atmosphere exceeds 4096 bytes".into()));
+    }
     Ok(bytes)
 }
 pub(super) fn decode(bytes: &[u8]) -> Result<AtmosphereProfile, WorldDbError> {
@@ -101,18 +113,23 @@ pub(super) fn decode(bytes: &[u8]) -> Result<AtmosphereProfile, WorldDbError> {
     let (core, consumed): (CoreProfile, _) =
         bincode::serde::decode_from_slice(bytes, bincode::config::standard().with_limit::<4096>())?;
     let mut p = AtmosphereProfile::from(core);
-    if consumed < bytes.len() {
-        let extension = bytes[consumed..]
-            .strip_prefix(CLOUD_EXTENSION)
-            .ok_or_else(|| WorldDbError::Cook("unknown atmosphere extension".into()))?;
-        let (clouds, used) = bincode::serde::decode_from_slice(
-            extension,
-            bincode::config::standard().with_limit::<4096>(),
-        )?;
-        if used != extension.len() {
-            return Err(WorldDbError::Cook("trailing atmosphere bytes".into()));
-        }
+    // Tagged extensions follow the core in a fixed order, each at most once.
+    let mut rest = &bytes[consumed..];
+    let limit = bincode::config::standard().with_limit::<4096>();
+    if let Some(extension) = rest.strip_prefix(CLOUD_EXTENSION) {
+        let (clouds, used) = bincode::serde::decode_from_slice(extension, limit)?;
         p.clouds = clouds;
+        rest = &extension[used..];
+    }
+    if let Some(extension) = rest.strip_prefix(WEATHER_EXTENSION) {
+        let (weather, used) = bincode::serde::decode_from_slice(extension, limit)?;
+        p.weather = weather;
+        rest = &extension[used..];
+    }
+    if !rest.is_empty() {
+        return Err(WorldDbError::Cook(
+            "unknown or trailing atmosphere extension".into(),
+        ));
     }
     p.validate().map_err(|e| WorldDbError::Cook(e.into()))?;
     Ok(p)
@@ -203,6 +220,23 @@ mod tests {
         assert!(decode(&trailing).is_err());
         clouds.clouds.density = f32::INFINITY;
         assert!(encode(&clouds).is_err());
+    }
+    #[test]
+    fn authored_weather_round_trips_alone_and_after_clouds() {
+        let mut weather = AtmosphereProfile::default();
+        weather.weather.presets[3].cloud_coverage = 0.7;
+        weather.weather.schedule.transition_seconds = [120., 300.];
+        let bytes = encode(&weather).unwrap();
+        assert_eq!(decode(&bytes).unwrap(), weather);
+        let mut both = weather.clone();
+        both.clouds = world::clouds::CloudSettings::overcast();
+        let bytes = encode(&both).unwrap();
+        assert!(bytes.len() <= 4096);
+        assert_eq!(decode(&bytes).unwrap(), both);
+        assert!(decode(&bytes[..bytes.len() - 1]).is_err());
+        let mut invalid = both;
+        invalid.weather.presets[0].precipitation = 2.;
+        assert!(encode(&invalid).is_err());
     }
     #[test]
     fn conflict_rolls_back_the_entire_batch_and_round_trips_colors_and_clouds() {

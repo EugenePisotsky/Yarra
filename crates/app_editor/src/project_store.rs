@@ -498,7 +498,8 @@ enum ProjectRequest {
 }
 
 enum ProjectResult {
-    SaveAtmospheres(u64, Result<world_db::AtmosphereWriteResult, String>),
+    // Boxed: a conflict carries a whole atmosphere profile, including authored weather.
+    SaveAtmospheres(u64, Box<Result<world_db::AtmosphereWriteResult, String>>),
     Opened(Result<ProjectOpenSnapshot, String>),
     Query {
         revision: u64,
@@ -783,7 +784,7 @@ fn project_worker(
                     Err(e) => Err(e.clone()),
                 };
                 if results
-                    .send(ProjectResult::SaveAtmospheres(id, result))
+                    .send(ProjectResult::SaveAtmospheres(id, Box::new(result)))
                     .is_err()
                 {
                     return;
@@ -804,6 +805,7 @@ fn receive_project_results(
     loop {
         match worker.results.try_recv() {
             Ok(ProjectResult::SaveAtmospheres(id, result)) => {
+                let result = *result;
                 if store.atmosphere_save_in_flight != Some(id) {
                     continue;
                 }

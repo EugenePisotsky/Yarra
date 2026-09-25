@@ -24,6 +24,7 @@ use std::collections::BTreeMap;
 use world::{
     WorldSpaceId,
     atmosphere::{AtmosphereProfile, PHASE_NAMES, PHASE_TIMES, evaluate},
+    weather::{WeatherKind, WeatherParams, WeatherSettings},
 };
 pub(crate) const WINDOW: EditorWindowDescriptor = EditorWindowDescriptor {
     id: EditorWindowId("world.atmosphere"),
@@ -59,6 +60,11 @@ struct Controls {
     cloud_seconds: f64,
     clouds_playing: bool,
     cloud_speed: f32,
+    /// Temporary weather preview over the edited or published profile.
+    weather: Option<WeatherKind>,
+    wetness: f32,
+    /// Preset shown in the saved Weather editor.
+    weather_target: WeatherKind,
 }
 impl Controls {
     fn new(p: &AtmosphereProfile) -> Self {
@@ -72,6 +78,9 @@ impl Controls {
             cloud_seconds: 0.,
             clouds_playing: false,
             cloud_speed: 1.,
+            weather: None,
+            wetness: 0.,
+            weather_target: WeatherKind::Rain,
         }
     }
     fn advance(&mut self, seconds: f64, day_seconds: f32) {
@@ -123,6 +132,8 @@ fn sync(
     if let Some(clock) = cloud_clock.as_deref_mut() {
         clock.playing = false;
     }
+    // Weather is only ever a deliberate preview in the editor.
+    clear_weather(&mut state);
     if *workspace.get() != EditorWorkspace::World {
         state.owner = AtmosphereOwner::Study;
         for controls in preview.worlds.values_mut() {
@@ -183,6 +194,17 @@ fn sync(
     state.profile = profile.clone();
     state.phase = controls.phase;
     state.exposure_override = controls.exposure;
+    if let Some(kind) = controls.weather {
+        state.weather = Some(profile.weather.preset(kind));
+        state.wetness = controls.wetness;
+    }
+}
+fn clear_weather(state: &mut AtmosphereState) {
+    if state.weather.is_some() || state.weather_transition.is_some() || state.wetness != 0. {
+        state.weather = None;
+        state.weather_transition = None;
+        state.wetness = 0.;
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -304,6 +326,17 @@ fn draw(
             if let Some(ev) = &mut controls.exposure {
                 ui.add(egui::Slider::new(ev, 0.0..=20.0).text("Preview EV100"));
             }
+            ui.horizontal_wrapped(|ui| {
+                ui.label("Weather");
+                ui.selectable_value(&mut controls.weather, None, "Off");
+                for kind in WeatherKind::ALL {
+                    ui.selectable_value(&mut controls.weather, Some(kind), kind.label());
+                }
+            });
+            if controls.weather.is_some() {
+                ui.add(egui::Slider::new(&mut controls.wetness, 0.0..=1.0).text("Preview wetness"))
+                    .on_hover_text("In the game, wetness builds up over minutes of rain and dries afterwards.");
+            }
             for mut view in &mut cameras {
                 if let Some(visibility) = view.visibility_override {
                     ui.horizontal(|ui| {
@@ -414,6 +447,9 @@ fn draw(
                         .text("Night exposure · EV100"));
                     ui.small("Moonlight and exposure blend through twilight. Adjust shadow fill in the Night palette.");
                 });
+                egui::CollapsingHeader::new("Weather").show(ui, |ui| {
+                    weather_editor(ui, &mut edited.weather, controls);
+                });
                 egui::CollapsingHeader::new("Haze").show(ui, |ui| {
                     ui.add(
                         egui::Slider::new(&mut edited.visibility_metres, 50.0..=100_000.0)
@@ -421,7 +457,7 @@ fn draw(
                             .text("Visibility · m"),
                     );
                     color(ui, "Haze tint", &mut edited.haze_srgb);
-                    ui.small("Near-ground aerosols. Weather presets will build on these controls.");
+                    ui.small("Near-ground aerosols in clear weather. Weather adds fog on top of this.");
                 });
                 egui::CollapsingHeader::new("Presentation").show(ui, |ui| {
                     ui.add(
@@ -454,6 +490,9 @@ fn draw(
                     edited = saved;
                 }
             });
+            if edited != before && let Err(error) = edited.validate() {
+                ui.colored_label(egui::Color32::YELLOW, format!("Not applied: {error}"));
+            }
             if edited != before && edited.validate().is_ok() {
                 if dense.atmospheres.gesture.is_none() {
                     dense.atmospheres.gesture = Some((id, before));
@@ -488,6 +527,111 @@ fn draw(
             }
         });
     windows.set_open(WINDOW.id, open);
+}
+/// Presets and the random sequence the game plays. Values match `WeatherParams::validate`.
+fn weather_editor(ui: &mut egui::Ui, weather: &mut WeatherSettings, controls: &mut Controls) {
+    ui.horizontal(|ui| {
+        ui.label("Preset");
+        egui::ComboBox::from_id_salt("weather_target")
+            .selected_text(controls.weather_target.label())
+            .show_ui(ui, |ui| {
+                for kind in WeatherKind::ALL {
+                    ui.selectable_value(&mut controls.weather_target, kind, kind.label());
+                }
+            });
+        if ui.button("Preview").clicked() {
+            controls.weather = Some(controls.weather_target);
+        }
+    });
+    let kind = controls.weather_target;
+    let p: &mut WeatherParams = &mut weather.presets[kind.index()];
+    ui.add(egui::Slider::new(&mut p.cloud_coverage, 0.0..=1.0).text("Cloud coverage"));
+    ui.add(egui::Slider::new(&mut p.cloud_density, 0.0..=3.0).text("Cloud density"));
+    ui.add(egui::Slider::new(&mut p.cloud_thickness_scale, 0.1..=4.0).text("Cloud thickness ×"));
+    ui.add(egui::Slider::new(&mut p.cloud_erosion, 0.0..=1.0).text("Cloud edge detail"));
+    ui.add(
+        egui::Slider::new(&mut p.visibility_scale, 0.01..=1.0)
+            .logarithmic(true)
+            .text("Visibility ×"),
+    )
+    .on_hover_text("Fraction of the clear-weather visibility below; the rest becomes fog.");
+    ui.add(egui::Slider::new(&mut p.haze_grey, 0.0..=1.0).text("Fog and skylight grey"));
+    ui.add(egui::Slider::new(&mut p.exposure_offset_ev, -6.0..=6.0).text("Exposure offset · EV"))
+        .on_hover_text("Negative brightens, like a camera opening up under cloud.");
+    ui.add(egui::Slider::new(&mut p.wind_strength, 0.0..=3.0).text("Wind strength ×"));
+    ui.add(egui::Slider::new(&mut p.wind_gustiness, 0.0..=3.0).text("Gusts ×"));
+    ui.add(
+        egui::Slider::new(&mut p.wind_rate, 0.0..=world::weather::MAX_WIND_RATE)
+            .text("Wind speed ×"),
+    );
+    ui.add(egui::Slider::new(&mut p.precipitation, 0.0..=1.0).text("Rain"));
+    if ui.button("Reset preset").clicked() {
+        *p = kind.preset();
+    }
+    ui.separator();
+    ui.strong("Random sequence");
+    let schedule = &mut weather.schedule;
+    ui.horizontal(|ui| {
+        ui.label("Changes take");
+        seconds_range(ui, &mut schedule.transition_seconds);
+    });
+    egui::Grid::new("weather_holds")
+        .striped(true)
+        .show(ui, |ui| {
+            ui.label("Holds");
+            ui.label("seconds");
+            ui.end_row();
+            for kind in WeatherKind::ALL {
+                ui.label(kind.label());
+                seconds_range(ui, &mut schedule.hold_seconds[kind.index()]);
+                ui.end_row();
+            }
+        });
+    ui.label("Next state weights (row: current, column: next)");
+    egui::Grid::new("weather_weights")
+        .striped(true)
+        .show(ui, |ui| {
+            ui.label("");
+            for kind in WeatherKind::ALL {
+                ui.label(&kind.label()[..2]).on_hover_text(kind.label());
+            }
+            ui.end_row();
+            for from in WeatherKind::ALL {
+                ui.label(from.label());
+                for to in WeatherKind::ALL {
+                    ui.add(
+                        egui::DragValue::new(&mut schedule.next_weights[from.index()][to.index()])
+                            .range(0.0..=10.0)
+                            .speed(0.02)
+                            .fixed_decimals(2),
+                    );
+                }
+                ui.end_row();
+            }
+        });
+    ui.small("Zero forbids a change. Each state needs at least one positive weight.");
+    if ui.button("Reset sequence").clicked() {
+        *schedule = Default::default();
+    }
+}
+fn seconds_range(ui: &mut egui::Ui, range: &mut [f32; 2]) {
+    ui.add(
+        egui::DragValue::new(&mut range[0])
+            .range(0.0..=86_400.0)
+            .speed(1.0)
+            .suffix(" s"),
+    );
+    ui.label("to");
+    ui.add(
+        egui::DragValue::new(&mut range[1])
+            .range(0.0..=86_400.0)
+            .speed(1.0)
+            .suffix(" s"),
+    );
+    // Keep the pair ordered rather than rejecting the edit.
+    if range[1] < range[0] {
+        range[1] = range[0];
+    }
 }
 fn preview_hour(ui: &mut egui::Ui, controls: &mut Controls) {
     let mut hour = controls.phase * 24.0;

@@ -57,6 +57,9 @@ pub struct AtmosphereProfile {
     pub night: NightLighting,
     #[serde(default)]
     pub clouds: crate::clouds::CloudSettings,
+    /// Weather presets and random sequence the game plays over this profile.
+    #[serde(default)]
+    pub weather: crate::weather::WeatherSettings,
 }
 
 pub const PHASE_NAMES: [&str; 4] = ["Night", "Sunrise", "Day", "Sunset"];
@@ -105,6 +108,7 @@ impl Default for AtmosphereProfile {
             ],
             night: NightLighting::default(),
             clouds: Default::default(),
+            weather: Default::default(),
         }
     }
 }
@@ -145,6 +149,7 @@ impl AtmosphereProfile {
             return Err("Atmosphere settings contain an invalid color, time or physical range");
         }
         self.clouds.validate()?;
+        self.weather.validate()?;
         Ok(())
     }
 }

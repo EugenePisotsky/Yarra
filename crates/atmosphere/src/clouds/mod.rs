@@ -231,7 +231,7 @@ fn sync(
         weather: [0.; 4],
         shelter: shelter.parameters(),
     };
-    if state.owner == AtmosphereOwner::Game && profile.outdoor {
+    if state.owner != AtmosphereOwner::Study && profile.outdoor {
         params.weather = [
             state.wetness.clamp(0., 1.),
             state.weather.map_or(0., |w| w.precipitation.clamp(0., 1.)),
@@ -242,7 +242,7 @@ fn sync(
     params.transition = [params.shape[0], params.shape[1], params.shape[2], 1.];
     if let Some(change) = state
         .weather_transition
-        .filter(|_| state.owner == AtmosphereOwner::Game)
+        .filter(|_| state.owner != AtmosphereOwner::Study)
     {
         let from = change.from.apply(&state.profile).clouds;
         let to = change.to.apply(&state.profile).clouds;

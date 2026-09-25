@@ -13,7 +13,7 @@ use bevy::prelude::*;
 use vegetation_render::{VegetationAmbientGain, VegetationWind};
 use world::{
     atmosphere::{AtmosphereProfile, evaluate},
-    weather::{WeatherKind, WeatherRuntime, WeatherSchedule},
+    weather::{WeatherKind, WeatherRuntime},
 };
 
 /// How weather starts once the first world space is active.
@@ -32,7 +32,6 @@ pub enum WeatherStart {
 pub struct GameWeather {
     start: WeatherStart,
     seed: u64,
-    schedule: WeatherSchedule,
     runtime: Option<WeatherRuntime>,
     /// Freeze the weather clock, e.g. during an A/B capture.
     pub paused: bool,
@@ -44,7 +43,6 @@ impl GameWeather {
         Self {
             start,
             seed,
-            schedule: default(),
             runtime: None,
             paused: false,
             time_scale: 1.0,
@@ -67,7 +65,7 @@ impl GameWeather {
     fn running(&mut self, profile: &AtmosphereProfile) -> &mut WeatherRuntime {
         self.runtime.get_or_insert_with(|| {
             WeatherRuntime::new(
-                self.schedule.clone(),
+                profile.weather.clone(),
                 self.seed,
                 WeatherKind::nearest_to(profile),
                 false,
@@ -100,13 +98,13 @@ impl GameWeather {
         self.runtime = match self.start {
             WeatherStart::Authored => None,
             WeatherStart::Automatic => Some(WeatherRuntime::new(
-                self.schedule.clone(),
+                profile.weather.clone(),
                 self.seed,
                 WeatherKind::nearest_to(profile),
                 true,
             )),
             WeatherStart::Manual(kind) => Some(WeatherRuntime::new(
-                self.schedule.clone(),
+                profile.weather.clone(),
                 self.seed,
                 kind,
                 false,
@@ -303,6 +301,10 @@ fn advance_weather(
         1.0
     };
     let current = weather.runtime.as_mut().map(|runtime| {
+        // Published or previewed edits apply live, without restarting the sequence.
+        if runtime.settings() != &atmosphere.profile.weather {
+            runtime.set_settings(atmosphere.profile.weather.clone());
+        }
         if !paused {
             runtime.advance(time.delta_secs() * scale);
         }

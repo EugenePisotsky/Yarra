@@ -49,7 +49,8 @@ pub struct AtmosphereState {
     pub owner: AtmosphereOwner,
     pub direction_override: Option<Vec3>,
     pub exposure_override: Option<f32>,
-    /// Game weather overlaid on the authored profile. None presents the profile as authored.
+    /// Weather overlaid on the authored profile: the game's sequence or an editor preview.
+    /// None presents the profile as authored; studies never apply it.
     pub weather: Option<WeatherParams>,
     /// Both ends of the current weather change, for the region-by-region cloud field.
     pub weather_transition: Option<WeatherTransition>,
@@ -75,7 +76,7 @@ impl AtmosphereState {
     /// The presented profile: authored, with any game weather overlaid.
     pub fn effective_profile(&self) -> Cow<'_, AtmosphereProfile> {
         match &self.weather {
-            Some(weather) if self.owner == AtmosphereOwner::Game => {
+            Some(weather) if self.owner != AtmosphereOwner::Study => {
                 Cow::Owned(weather.apply(&self.profile))
             }
             _ => Cow::Borrowed(&self.profile),
@@ -84,7 +85,7 @@ impl AtmosphereState {
     /// Reduced-visibility fog from game weather, in front of the authored clear-air haze.
     pub fn weather_fog(&self) -> Option<WeatherFog> {
         match &self.weather {
-            Some(weather) if self.owner == AtmosphereOwner::Game => {
+            Some(weather) if self.owner != AtmosphereOwner::Study => {
                 Some(weather.fog(&self.profile))
             }
             _ => None,

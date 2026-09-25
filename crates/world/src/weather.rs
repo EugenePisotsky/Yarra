@@ -32,6 +32,7 @@ impl WeatherKind {
     pub fn index(self) -> usize {
         self as usize
     }
+    /// Built-in default for this state; worlds author their own in `WeatherSettings`.
     pub fn preset(self) -> WeatherParams {
         let p = |cloud_coverage,
                  cloud_density,
@@ -85,10 +86,10 @@ impl WeatherKind {
         let coverage = profile.clouds.coverage;
         Self::ALL
             .into_iter()
-            .filter(|k| k.preset().precipitation == 0.0)
+            .filter(|k| profile.weather.preset(*k).precipitation == 0.0)
             .min_by(|a, b| {
-                let da = (a.preset().cloud_coverage - coverage).abs();
-                let db = (b.preset().cloud_coverage - coverage).abs();
+                let da = (profile.weather.preset(*a).cloud_coverage - coverage).abs();
+                let db = (profile.weather.preset(*b).cloud_coverage - coverage).abs();
                 da.total_cmp(&db)
             })
             .unwrap_or(Self::Clear)
@@ -275,6 +276,33 @@ impl WeatherSchedule {
     }
 }
 
+/// Authored weather for one world: the preset of each state and the random sequence.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WeatherSettings {
+    /// Indexed by `WeatherKind::index`.
+    pub presets: [WeatherParams; 5],
+    pub schedule: WeatherSchedule,
+}
+impl Default for WeatherSettings {
+    fn default() -> Self {
+        Self {
+            presets: WeatherKind::ALL.map(WeatherKind::preset),
+            schedule: WeatherSchedule::default(),
+        }
+    }
+}
+impl WeatherSettings {
+    pub fn preset(&self, kind: WeatherKind) -> WeatherParams {
+        self.presets[kind.index()]
+    }
+    pub fn validate(&self) -> Result<(), &'static str> {
+        for preset in &self.presets {
+            preset.validate()?;
+        }
+        self.schedule.validate()
+    }
+}
+
 /// Small deterministic generator; weather needs variety, not statistical quality.
 #[derive(Debug, Clone)]
 struct SplitMix64(u64);
@@ -308,7 +336,7 @@ const DRYING_SECONDS: f32 = 240.;
 /// change can start mid-transition without a jump.
 #[derive(Debug, Clone)]
 pub struct WeatherRuntime {
-    schedule: WeatherSchedule,
+    settings: WeatherSettings,
     rng: SplitMix64,
     from: WeatherParams,
     target: WeatherKind,
@@ -320,35 +348,51 @@ pub struct WeatherRuntime {
     wetness: f32,
 }
 impl WeatherRuntime {
-    /// Settled at `initial`. An invalid schedule falls back to the default one.
+    /// Settled at `initial`. Invalid settings fall back to the defaults.
     pub fn new(
-        schedule: WeatherSchedule,
+        settings: WeatherSettings,
         seed: u64,
         initial: WeatherKind,
         automatic: bool,
     ) -> Self {
-        let schedule = if schedule.validate().is_ok() {
-            schedule
+        let settings = if settings.validate().is_ok() {
+            settings
         } else {
-            WeatherSchedule::default()
+            WeatherSettings::default()
         };
         let mut runtime = Self {
             rng: SplitMix64(seed),
-            from: initial.preset(),
+            from: settings.preset(initial),
             target: initial,
             elapsed: 0.,
             duration: 0.,
             hold_remaining: 0.,
             automatic,
             wetness: 0.,
-            schedule,
+            settings,
         };
         runtime.hold_remaining = runtime.draw_hold(initial);
         runtime
     }
 
     fn draw_hold(&mut self, kind: WeatherKind) -> f32 {
-        self.rng.range(self.schedule.hold_seconds[kind.index()])
+        self.rng
+            .range(self.settings.schedule.hold_seconds[kind.index()])
+    }
+
+    pub fn settings(&self) -> &WeatherSettings {
+        &self.settings
+    }
+
+    /// Adopt edited settings without restarting. Invalid settings are ignored; an edited
+    /// target preset applies immediately, as an authoring change should.
+    pub fn set_settings(&mut self, settings: WeatherSettings) {
+        if settings.validate().is_ok() {
+            if self.progress() >= 1. {
+                self.from = settings.preset(self.target);
+            }
+            self.settings = settings;
+        }
     }
 
     pub fn target(&self) -> WeatherKind {
@@ -373,14 +417,14 @@ impl WeatherRuntime {
     pub fn transition(&self) -> WeatherTransition {
         WeatherTransition {
             from: self.from,
-            to: self.target.preset(),
+            to: self.settings.preset(self.target),
             progress: self.progress(),
         }
     }
 
     pub fn current(&self) -> WeatherParams {
         let t = self.progress();
-        let to = self.target.preset();
+        let to = self.settings.preset(self.target);
         let mut params = self.from.lerp(to, smoothstep(t));
         // Rain starts once the cloud deck has built and stops before it clears.
         let rain_t = if to.precipitation > self.from.precipitation {
@@ -399,7 +443,7 @@ impl WeatherRuntime {
         self.from = if duration > 0. {
             self.current()
         } else {
-            kind.preset()
+            self.settings.preset(kind)
         };
         self.target = kind;
         self.elapsed = 0.;
@@ -409,7 +453,7 @@ impl WeatherRuntime {
 
     /// Choose the next state from the schedule weights of the current target.
     pub fn next_random(&mut self) -> WeatherKind {
-        let weights = self.schedule.next_weights[self.target.index()];
+        let weights = self.settings.schedule.next_weights[self.target.index()];
         let mut pick = self.rng.next_f32() * weights.iter().sum::<f32>();
         let mut next = self.target;
         for kind in WeatherKind::ALL {
@@ -422,7 +466,7 @@ impl WeatherRuntime {
                 pick -= weight;
             }
         }
-        let seconds = self.rng.range(self.schedule.transition_seconds);
+        let seconds = self.rng.range(self.settings.schedule.transition_seconds);
         self.request(next, seconds);
         next
     }
@@ -448,7 +492,7 @@ impl WeatherRuntime {
                 self.elapsed += step;
                 remaining -= step;
                 if self.elapsed >= self.duration {
-                    self.from = self.target.preset();
+                    self.from = self.settings.preset(self.target);
                     self.elapsed = 0.;
                     self.duration = 0.;
                 }
@@ -609,7 +653,11 @@ mod tests {
     fn automatic_sequence_is_deterministic_and_follows_allowed_changes() {
         let schedule = WeatherSchedule::default();
         let sequence = |seed| {
-            let mut w = WeatherRuntime::new(schedule.clone(), seed, WeatherKind::Clear, true);
+            let settings = WeatherSettings {
+                schedule: schedule.clone(),
+                ..default_schedule()
+            };
+            let mut w = WeatherRuntime::new(settings, seed, WeatherKind::Clear, true);
             let mut seen = vec![WeatherKind::Clear];
             for _ in 0..20_000 {
                 w.advance(5.);
@@ -646,15 +694,37 @@ mod tests {
     }
 
     #[test]
-    fn invalid_schedule_falls_back() {
-        let mut schedule = WeatherSchedule::default();
-        schedule.next_weights[0] = [0.; 5];
-        assert!(schedule.validate().is_err());
-        let w = WeatherRuntime::new(schedule, 1, WeatherKind::Clear, true);
-        assert_eq!(w.schedule, WeatherSchedule::default());
+    fn invalid_settings_fall_back() {
+        let mut settings = WeatherSettings::default();
+        settings.schedule.next_weights[0] = [0.; 5];
+        assert!(settings.validate().is_err());
+        let w = WeatherRuntime::new(settings.clone(), 1, WeatherKind::Clear, true);
+        assert_eq!(w.settings(), &WeatherSettings::default());
+        settings = WeatherSettings::default();
+        settings.presets[0].cloud_coverage = 2.;
+        assert!(settings.validate().is_err());
     }
 
-    fn default_schedule() -> WeatherSchedule {
-        WeatherSchedule::default()
+    #[test]
+    fn authored_presets_drive_the_runtime_and_live_edits_apply_without_restarting() {
+        let mut settings = WeatherSettings::default();
+        settings.presets[WeatherKind::Rain.index()].cloud_coverage = 0.7;
+        let mut w = WeatherRuntime::new(settings.clone(), 3, WeatherKind::Rain, false);
+        assert_eq!(w.current().cloud_coverage, 0.7);
+        assert_eq!(w.transition().to.cloud_coverage, 0.7);
+        w.advance(30.);
+        let wetness = w.wetness();
+        settings.presets[WeatherKind::Rain.index()].cloud_coverage = 0.8;
+        w.set_settings(settings.clone());
+        assert_eq!(w.current().cloud_coverage, 0.8);
+        assert_eq!(w.wetness(), wetness, "an edit is not a restart");
+        let mut invalid = settings;
+        invalid.presets[0].precipitation = -1.;
+        w.set_settings(invalid);
+        assert_eq!(w.current().cloud_coverage, 0.8);
+    }
+
+    fn default_schedule() -> WeatherSettings {
+        WeatherSettings::default()
     }
 }

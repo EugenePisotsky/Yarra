@@ -216,7 +216,7 @@ fn sync(
     );
     let precipitation = state
         .weather
-        .filter(|_| state.owner == AtmosphereOwner::Game && state.profile.outdoor)
+        .filter(|_| state.owner != AtmosphereOwner::Study && state.profile.outdoor)
         .map_or(0.0, |w| w.precipitation.clamp(0.0, 1.0));
     let wind = state.weather.map_or(1.0, |w| w.wind_strength);
     let direction = state.profile.clouds.wind_degrees.to_radians();
@@ -471,7 +471,7 @@ mod tests {
     }
 
     #[test]
-    fn only_game_precipitation_draws_and_intensity_scales_drop_counts() {
+    fn only_set_precipitation_draws_outside_studies_and_intensity_scales_drop_counts() {
         let game = AtmosphereOwner::Game;
         assert!(
             !run(None, game, 0.016, 1).1,
@@ -483,11 +483,9 @@ mod tests {
         assert_eq!(storm.active, LAYERS.map(|l| l.count));
         let (rain, _) = run(Some(WeatherKind::Rain), game, 0.016, 1);
         assert!(rain.active[0] > 0 && rain.active[0] < LAYERS[0].count);
-        let editor = AtmosphereOwner::Editor;
-        assert!(
-            !run(Some(WeatherKind::Storm), editor, 0.016, 1).1,
-            "editor workspaces own the authored atmosphere"
-        );
+        // Editors preview weather they set explicitly; studies never show it.
+        assert!(run(Some(WeatherKind::Storm), AtmosphereOwner::Editor, 0.016, 1).1);
+        assert!(!run(Some(WeatherKind::Storm), AtmosphereOwner::Study, 0.016, 1).1);
     }
 
     #[test]
