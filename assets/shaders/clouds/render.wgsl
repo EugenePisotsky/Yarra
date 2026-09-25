@@ -1,6 +1,6 @@
 #import bevy_render::view::View
 #import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput
-#import "shaders/clouds/types.wgsl"::CloudParams
+#import "shaders/clouds/types.wgsl"::{CloudParams,sky_panorama_ray}
 #import "shaders/clouds/density.wgsl"::{density_at,light_transmission}
 @group(0) @binding(0) var<storage,read> clouds: CloudParams;
 @group(0) @binding(1) var noise: texture_3d<f32>;
@@ -20,12 +20,9 @@ fn light_at(p:vec3<f32>, ray:vec3<f32>, light:vec4<f32>, color:vec3<f32>) -> vec
 }
 @fragment fn fragment(in:FullscreenVertexOutput)->@location(0) vec4<f32> {
 #ifdef CACHED_SKY
-    // Stereographic hemisphere atlas. It covers every camera orientation; turns
-    // only change the lookup in the full-resolution composite, never the cache.
-    let disk=in.uv*2.0-vec2(1.0);
-    let radius2=dot(disk,disk);
-    if radius2>=1.0 {return vec4(0.0,0.0,0.0,1.0);}
-    let ray=vec3(2.0*disk.x,1.0-radius2,2.0*disk.y)/(1.0+radius2);
+    // Hemisphere panorama. It covers every camera orientation; turns only change
+    // the lookup in the full-resolution composite, never the cache.
+    let ray=sky_panorama_ray(in.uv);
 #else
     let uv=in.uv;
     if any(uv<vec2(0.0)) || any(uv>vec2(1.0)) {return vec4(0.0,0.0,0.0,1.0);}

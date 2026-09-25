@@ -20,6 +20,7 @@ enum Tab {
     Quality,
     Compare,
     Advanced,
+    Weather,
 }
 impl Tab {
     fn label(self) -> &'static str {
@@ -29,6 +30,7 @@ impl Tab {
             Self::Quality => "Quality",
             Self::Compare => "Compare",
             Self::Advanced => "Advanced",
+            Self::Weather => "Weather",
         }
     }
 }
@@ -123,7 +125,7 @@ fn initialize(
         panel.spawn((Button, Control::FrameRate, button_node(), BackgroundColor(button_color())))
             .with_child((Text::new(pacing.control_label()), font(13.0)));
         panel.spawn(Node { column_gap: px(4), flex_wrap: FlexWrap::Wrap, row_gap: px(4), ..default() }).with_children(|row| {
-            for tab in [Tab::Overview, Tab::Features, Tab::Quality, Tab::Compare, Tab::Advanced] {
+            for tab in [Tab::Overview, Tab::Features, Tab::Quality, Tab::Weather, Tab::Compare, Tab::Advanced] {
                 row.spawn((Button, Action::Tab(tab), button_node(), BackgroundColor(button_color())))
                     .with_child((Text::new(tab.label()), font(12.0)));
             }
@@ -151,6 +153,9 @@ fn initialize(
                 });
             });
         }
+        panel.spawn((Page(Tab::Weather), page_node())).with_children(|page| {
+            super::weather::spawn(page, || (button_node(), BackgroundColor(button_color())));
+        });
         panel.spawn((Page(Tab::Compare), page_node())).with_children(|page| {
             page.spawn((Text::new("Capture current settings into A or B: settle at least 2 s, then record 10 s. Detailed GPU probes pause during capture. View controls lock and this panel closes. F1 / Escape cancels. Slots last for this session. Restore changes settings only; keep the same viewpoint and time of day yourself."), font(12.0)));
             page.spawn(Node { flex_wrap: FlexWrap::Wrap, column_gap: px(6), row_gap: px(6), ..default() }).with_children(|row| {

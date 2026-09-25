@@ -99,6 +99,12 @@ fn run() -> Result<(), String> {
     );
     #[cfg(target_os = "macos")]
     camera_input_trace::install(&mut app);
+    // Variety between sessions; the seed is logged when weather starts.
+    let weather_seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_nanos() as u64);
+    app.insert_resource(engine::GameWeather::new(options.weather, weather_seed))
+        .add_plugins(engine::GameWeatherPlugin);
     app.add_plugins((WorldVegetationPlugin, engine::TreeWindPlugin))
         .configure_sets(
             Update,

@@ -10,6 +10,9 @@ mod object_lod;
 pub use object_lod::ObjectLodPlugin;
 mod tree_wind;
 pub use tree_wind::{TreeWindPlugin, TreeWindResponse, TreeWindSystems};
+mod weather;
+pub use weather::{GameWeather, GameWeatherPlugin, WeatherStart};
+pub use world::weather::{WeatherKind, WeatherParams};
 mod world_streaming;
 mod world_vegetation;
 pub use world_vegetation::{

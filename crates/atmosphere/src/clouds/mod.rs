@@ -36,7 +36,7 @@ pub enum CloudQuality {
 impl CloudQuality {
     pub(super) fn target_size(self, full: UVec2) -> UVec2 {
         if self == Self::Balanced {
-            return UVec2::splat(sky_cache::SIZE);
+            return UVec2::new(sky_cache::WIDTH, sky_cache::HEIGHT);
         }
         let divisor = 2;
         UVec2::new(
@@ -65,6 +65,11 @@ pub struct CloudParams {
     pub moon_color: [f32; 4],
     pub ambient: [f32; 4],
     pub haze: [f32; 4],
+    /// Weather fog: unexposed in-scattered radiance, extra extinction per metre.
+    pub fog: [f32; 4],
+    /// Previous coverage, extinction and erosion, and linear change progress. Each region of
+    /// the field blends from these to `shape` at its own time within the change.
+    pub transition: [f32; 4],
 }
 #[derive(Component, Clone, bevy::render::extract_component::ExtractComponent)]
 pub struct CloudView;
@@ -150,16 +155,18 @@ fn sync(
     mut params: ResMut<CloudParams>,
     views: Query<(Entity, Option<&CloudView>, &WorldEnvironmentView)>,
 ) {
-    let p = &state.profile.clouds;
+    let profile = state.effective_profile();
+    let profile = profile.as_ref();
+    let p = &profile.clouds;
     let active = state.owner != AtmosphereOwner::Study
         && *quality != CloudQuality::Off
-        && state.profile.outdoor
+        && profile.outdoor
         && p.enabled
         && p.validate().is_ok();
     if active && (state.owner == AtmosphereOwner::Game || clock.playing) {
         clock.seconds += time.delta_secs_f64();
     }
-    let value = evaluate(&state.profile, state.phase);
+    let value = evaluate(profile, state.phase);
     let sun = state
         .direction_override
         .filter(|v| v.is_finite() && v.length_squared() > 0.01)
@@ -210,7 +217,41 @@ fn sync(
                     .unwrap_or(state.profile.visibility_metres),
             )
             .to_array(),
+        fog: [0.; 4],
+        transition: [0.; 4],
     };
+    params.transition = [params.shape[0], params.shape[1], params.shape[2], 1.];
+    if let Some(change) = state
+        .weather_transition
+        .filter(|_| state.owner == AtmosphereOwner::Game)
+    {
+        let from = change.from.apply(&state.profile).clouds;
+        let to = change.to.apply(&state.profile).clouds;
+        params.shape[0] = to.coverage;
+        params.shape[1] = to.density * 0.025;
+        params.shape[2] = to.erosion;
+        params.transition = [
+            from.coverage,
+            from.density * 0.025,
+            from.erosion,
+            change.progress.clamp(0., 1.),
+        ];
+    }
+    if let Some(fog) = state.weather_fog().filter(|f| f.extinction > 0.) {
+        // Rain fog is lit by the sky: the same deck that brings it hides the sun and moon.
+        let overcast = ((p.coverage - 0.5) / 0.45).clamp(0., 1.);
+        let direct = (Vec3::from_array(value.sun_linear) * params.sun[3]
+            + Vec3::from_array(value.moon_linear) * params.moon[3])
+            * 0.025
+            * (1. - overcast);
+        // Light under a cloud deck is close to neutral grey, not blue skylight.
+        let ambient = Vec3::from_array(value.ambient_linear);
+        let ambient = ambient.lerp(Vec3::splat(ambient.element_sum() / 3.), overcast * 0.8);
+        let light = ambient * value.ambient_lux * 0.3 + direct;
+        params.fog = (Vec3::from_array(fog.tint_linear) * light)
+            .extend(fog.extinction)
+            .to_array();
+    }
     for (e, view, _) in &views {
         if active && view.is_none() {
             commands.entity(e).insert(CloudView);
@@ -236,7 +277,7 @@ mod tests {
     fn cached_sky_has_a_fixed_budget_and_high_handles_odd_or_tiny_views() {
         assert_eq!(
             CloudQuality::Balanced.target_size(UVec2::new(2592, 1456)),
-            UVec2::splat(512)
+            UVec2::new(2048, 256)
         );
         assert_eq!(
             CloudQuality::High.target_size(UVec2::new(2592, 1456)),
@@ -244,7 +285,7 @@ mod tests {
         );
         assert_eq!(
             CloudQuality::Balanced.target_size(UVec2::new(5, 3)),
-            UVec2::splat(512)
+            UVec2::new(2048, 256)
         );
         assert_eq!(CloudQuality::High.target_size(UVec2::ONE), UVec2::ONE);
     }
@@ -287,6 +328,50 @@ mod tests {
         app.update();
         assert_eq!(app.world().resource::<CloudParams>().layer[3], 0.);
         assert_eq!(app.world().resource::<CloudClock>().seconds, 31.);
+    }
+
+    #[test]
+    fn weather_changes_send_both_cloud_shapes_and_settled_weather_matches_the_target() {
+        use world::weather::WeatherKind;
+        let mut app = App::new();
+        let mut state = AtmosphereState::default();
+        state.profile.clouds = world::clouds::CloudSettings::scattered();
+        let authored = state.profile.clone();
+        let change = world::weather::WeatherTransition {
+            from: WeatherKind::Clear.preset(),
+            to: WeatherKind::Storm.preset(),
+            progress: 0.25,
+        };
+        state.weather = Some(change.from.lerp(change.to, 0.1));
+        state.weather_transition = Some(change);
+        app.insert_resource(state)
+            .init_resource::<Time>()
+            .init_resource::<CloudClock>()
+            .init_resource::<CloudOrigin>()
+            .init_resource::<CloudQuality>()
+            .init_resource::<CloudParams>()
+            .add_systems(Update, sync);
+        app.update();
+        let params = *app.world().resource::<CloudParams>();
+        let from = change.from.apply(&authored).clouds;
+        let to = change.to.apply(&authored).clouds;
+        assert_eq!(params.shape[0], to.coverage);
+        assert_eq!(params.shape[1], to.density * 0.025);
+        assert_eq!(
+            params.transition,
+            [from.coverage, from.density * 0.025, from.erosion, 0.25]
+        );
+
+        // Settled or authored weather: the previous shape equals the target at full progress.
+        let mut state = app.world_mut().resource_mut::<AtmosphereState>();
+        state.weather = None;
+        state.weather_transition = None;
+        app.update();
+        let params = *app.world().resource::<CloudParams>();
+        assert_eq!(
+            params.transition,
+            [params.shape[0], params.shape[1], params.shape[2], 1.]
+        );
     }
 
     #[test]

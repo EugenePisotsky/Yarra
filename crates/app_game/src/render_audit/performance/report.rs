@@ -122,11 +122,12 @@ pub(super) fn comparison(state: &CaptureSession) -> String {
         }
         if !a.camera.abs_diff_eq(b.camera, 0.02)
             || (a.phase - b.phase).abs() > 0.001
+            || a.weather != b.weather
             || a.viewport != b.viewport
             || a.thermal_start != b.thermal_start
             || a.thermal_end != b.thermal_end
         {
-            out += "Conditions differ (view / resolution / time / thermal). Do not treat this as an isolated feature comparison.\n";
+            out += "Conditions differ (view / resolution / time / weather / thermal). Do not treat this as an isolated feature comparison.\n";
         }
     }
     out

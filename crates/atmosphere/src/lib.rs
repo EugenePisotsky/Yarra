@@ -12,7 +12,11 @@ use bevy::{
     post_process::bloom::Bloom,
     prelude::*,
 };
-use world::atmosphere::{AtmosphereProfile, evaluate, linear_rgb};
+use std::borrow::Cow;
+use world::{
+    atmosphere::{AtmosphereProfile, evaluate, linear_rgb},
+    weather::{WeatherFog, WeatherParams, WeatherTransition},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AtmosphereOwner {
@@ -43,6 +47,10 @@ pub struct AtmosphereState {
     pub owner: AtmosphereOwner,
     pub direction_override: Option<Vec3>,
     pub exposure_override: Option<f32>,
+    /// Game weather overlaid on the authored profile. None presents the profile as authored.
+    pub weather: Option<WeatherParams>,
+    /// Both ends of the current weather change, for the region-by-region cloud field.
+    pub weather_transition: Option<WeatherTransition>,
 }
 impl Default for AtmosphereState {
     fn default() -> Self {
@@ -53,6 +61,28 @@ impl Default for AtmosphereState {
             owner: AtmosphereOwner::Game,
             direction_override: None,
             exposure_override: None,
+            weather: None,
+            weather_transition: None,
+        }
+    }
+}
+impl AtmosphereState {
+    /// The presented profile: authored, with any game weather overlaid.
+    pub fn effective_profile(&self) -> Cow<'_, AtmosphereProfile> {
+        match &self.weather {
+            Some(weather) if self.owner == AtmosphereOwner::Game => {
+                Cow::Owned(weather.apply(&self.profile))
+            }
+            _ => Cow::Borrowed(&self.profile),
+        }
+    }
+    /// Reduced-visibility fog from game weather, in front of the authored clear-air haze.
+    pub fn weather_fog(&self) -> Option<WeatherFog> {
+        match &self.weather {
+            Some(weather) if self.owner == AtmosphereOwner::Game => {
+                Some(weather.fog(&self.profile))
+            }
+            _ => None,
         }
     }
 }
@@ -233,10 +263,11 @@ fn apply(
         }
         return;
     }
-    if state.profile.validate().is_err() || !state.phase.is_finite() {
+    let profile = state.effective_profile();
+    let profile = profile.as_ref();
+    if profile.validate().is_err() || !state.phase.is_finite() {
         return;
     }
-    let profile = &state.profile;
     let value = evaluate(profile, state.phase);
     let direction = state
         .direction_override

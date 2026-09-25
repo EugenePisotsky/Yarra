@@ -37,10 +37,11 @@ pub(super) fn prepare(
     lighting: Res<VegetationLighting>,
     wind: Res<VegetationWind>,
     sun: Res<VegetationSun>,
-    (lod_focus, terrain_gate, render_origin): (
+    (lod_focus, terrain_gate, render_origin, ambient_gain): (
         Res<crate::VegetationLodFocus>,
         Res<crate::VegetationTerrainGate>,
         Res<crate::VegetationRenderOrigin>,
+        Option<Res<crate::VegetationAmbientGain>>,
     ),
     render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
@@ -325,7 +326,11 @@ pub(super) fn prepare(
             .extend(if sun.active { 1.0 } else { 0.0 })
             .to_array(),
         sun_radiance: sun.radiance.extend(0.0).to_array(),
-        ambient_radiance: sun.ambient_radiance.extend(0.0).to_array(),
+        // w: ambient bound gain; the shader treats non-positive values as 1.
+        ambient_radiance: sun
+            .ambient_radiance
+            .extend(ambient_gain.map_or(1.0, |gain| gain.0).clamp(0.0625, 16.0))
+            .to_array(),
         lighting: [
             lighting.diffuse_strength.max(0.0),
             lighting.specular_strength.max(0.0),

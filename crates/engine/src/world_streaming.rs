@@ -1165,7 +1165,7 @@ mod tests {
     }
 }
 
-fn sync_world_atmosphere(
+pub(crate) fn sync_world_atmosphere(
     catalog: Res<WorldCatalog>,
     active: Res<ActiveWorldSpace>,
     mut atmosphere: Option<ResMut<crate::AtmosphereState>>,

@@ -154,6 +154,7 @@ pub(super) struct Capture {
     pub(super) upscaler: Option<upscaling::UpscaleStatus>,
     pub(super) camera: Mat4,
     pub(super) phase: f32,
+    pub(super) weather: Option<engine::WeatherParams>,
     pub(super) viewport: UVec2,
     pub(super) warnings: Vec<String>,
     pub(super) gpu: Vec<timing::GpuSample>,
@@ -172,6 +173,7 @@ impl Capture {
             upscaler: None,
             camera: Mat4::IDENTITY,
             phase: 0.0,
+            weather: None,
             viewport: UVec2::ZERO,
             warnings: vec![],
             gpu: vec![],
@@ -240,6 +242,9 @@ pub(super) fn sample(
         {
             add_warning(&mut recording.capture, "Camera moved during capture.");
         }
+        if atmosphere.weather != recording.capture.weather {
+            add_warning(&mut recording.capture, "Weather changed during capture.");
+        }
         done = now - start >= SAMPLE_SECONDS;
     } else if now - recording.started >= SETTLE_SECONDS && !busy {
         recording.sampling_since = Some(now);
@@ -248,15 +253,17 @@ pub(super) fn sample(
             crate::render_audit::logging::power_state().thermal.into();
         recording.capture.camera = camera.0.to_matrix();
         recording.capture.phase = atmosphere.phase;
+        recording.capture.weather = atmosphere.weather;
         recording.capture.viewport = scene_size(camera.1, upscaler.single().ok());
         recording.capture.context = format!(
-            "{}\nTiming instrumentation: {}\n3D viewport: {:?}; window: {:?}; camera: {:?}; phase: {:.5}\nTerrain triangles: {}; patches: {}; resident pages: {}",
+            "{}\nTiming instrumentation: {}\n3D viewport: {:?}; window: {:?}; camera: {:?}; phase: {:.5}; weather: {:?}\nTerrain triangles: {}; patches: {}; resident pages: {}",
             streaming.status,
             timings.status,
             recording.capture.viewport,
             window.physical_size(),
             camera.0.to_matrix(),
             atmosphere.phase,
+            atmosphere.weather,
             terrain.triangles,
             terrain.patches,
             streaming.resident

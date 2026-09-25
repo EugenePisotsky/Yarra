@@ -15,6 +15,7 @@ pub(crate) struct LaunchOptions {
     pub upscaler: upscaling::UpscaleMethod,
     pub clouds: engine::CloudQuality,
     pub density: vegetation_render::VegetationDensityMode,
+    pub weather: engine::WeatherStart,
     pub canopy_path: Option<PathBuf>,
     pub diagnostics: DiagnosticsMode,
     pub panel_open: bool,
@@ -87,6 +88,11 @@ const FLAGS: &[(&str, bool, &str)] = &[
     ),
     ("--cloud-quality", true, "off | balanced | high"),
     ("--grass-density", true, "balanced | full | authored"),
+    (
+        "--weather",
+        true,
+        "auto | authored | clear | scattered | overcast | rain | storm; profiles, repros and captures default to authored",
+    ),
     (
         "--canopy-look",
         true,
@@ -357,6 +363,20 @@ impl LaunchOptions {
             "authored" => vegetation_render::VegetationDensityMode::Authored,
             _ => return Err("--grass-density requires balanced, full or authored".into()),
         };
+        let weather = value("--weather")?
+            .map(|name| match name {
+                "auto" => Ok(engine::WeatherStart::Automatic),
+                "authored" => Ok(engine::WeatherStart::Authored),
+                _ => engine::WeatherKind::ALL
+                    .into_iter()
+                    .find(|kind| kind.label().eq_ignore_ascii_case(name))
+                    .map(engine::WeatherStart::Manual)
+                    .ok_or_else(|| {
+                        "--weather requires auto, authored, clear, scattered, overcast, rain or storm"
+                            .to_string()
+                    }),
+            })
+            .transpose()?;
         let diagnostics = match value("--diagnostics")?.unwrap_or("full") {
             "off" => DiagnosticsMode::Off,
             "panel" => DiagnosticsMode::Panel,
@@ -505,6 +525,18 @@ impl LaunchOptions {
                 return Err("Metal capture output already exists".into());
             }
         }
+        // Measurements and regressions must not change weather unless asked explicitly.
+        let weather = weather.unwrap_or(
+            if profile.is_some()
+                || repro.is_some()
+                || has("--metal-capture")
+                || has("--streaming-smoke")
+            {
+                engine::WeatherStart::Authored
+            } else {
+                engine::WeatherStart::Automatic
+            },
+        );
         Ok(Self {
             help: false,
             world_db: path("--world-db"),
@@ -513,6 +545,7 @@ impl LaunchOptions {
             upscaler,
             clouds,
             density,
+            weather,
             canopy_path: path("--canopy-look"),
             diagnostics,
             panel_open: has("--performance-open") || has("--render-audit"),

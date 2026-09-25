@@ -24,6 +24,7 @@ fn comparison_surfaces_multiple_changes() {
         upscaler: None,
         camera: Mat4::IDENTITY,
         phase: 0.5,
+        weather: None,
         viewport: UVec2::ZERO,
         warnings: vec![],
         gpu: vec![],

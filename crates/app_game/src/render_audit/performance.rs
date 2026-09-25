@@ -3,6 +3,7 @@ mod capture;
 mod panel;
 mod report;
 mod telemetry;
+mod weather;
 
 use super::timing;
 use crate::runtime_settings::RuntimeSettingsInit;
@@ -16,4 +17,5 @@ pub(super) fn install(app: &mut App) {
         .add_systems(PostStartup, capture::initialize.after(RuntimeSettingsInit));
     telemetry::install(app);
     panel::install(app);
+    weather::install(app);
 }

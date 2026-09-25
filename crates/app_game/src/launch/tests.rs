@@ -179,3 +179,31 @@ fn diagnostic_composition_is_explicit_and_rejects_incompatible_controls() {
     );
     assert!(parse(&["--diagnostics", "off", "--profile-seconds", "10"]).is_ok());
 }
+#[test]
+fn weather_defaults_to_automatic_play_and_authored_measurements() {
+    assert_eq!(parse(&[]).unwrap().weather, engine::WeatherStart::Automatic);
+    assert_eq!(
+        parse(&["--weather", "Rain"]).unwrap().weather,
+        engine::WeatherStart::Manual(engine::WeatherKind::Rain)
+    );
+    assert_eq!(
+        parse(&["--weather", "authored"]).unwrap().weather,
+        engine::WeatherStart::Authored
+    );
+    assert_eq!(
+        parse(&["--render-repro", "grass-close"]).unwrap().weather,
+        engine::WeatherStart::Authored
+    );
+    assert_eq!(
+        parse(&["--profile-seconds", "10"]).unwrap().weather,
+        engine::WeatherStart::Authored
+    );
+    assert_eq!(
+        parse(&["--profile-seconds", "10", "--weather", "auto"])
+            .unwrap()
+            .weather,
+        engine::WeatherStart::Automatic
+    );
+    assert!(parse(&["--weather", "snow"]).is_err());
+    assert!(parse(&["--weather"]).is_err());
+}

@@ -778,14 +778,20 @@ fn shade(input: VertexOutput) -> vec4<f32> {
         camera.canopy_appearance, camera.canopy_shape, camera.canopy_distance,
         camera.canopy_origin, camera.canopy_appearance.z, input.canopy_coordinates.z, input.canopy_coordinates.w);
     let shadow_visibility = directional_shadow_visibility(input);
+    // Fraction of the direct beam passing the cloud layer at this point.
+    var cloud_sun = 1.0;
+#ifdef YARRA_CLOUDS
+    cloud_sun = cloud_visibility(input.world_position, camera.sun_direction.xyz);
+#endif
     // The old receiver cache could only darken direct light and therefore became almost invisible
     // under the stable authored body color. Let dense/AO-heavy blade regions lose part of that body
-    // as well, while retaining enough ambient fill to avoid black cutout silhouettes.
+    // as well, while retaining enough ambient fill to avoid black cutout silhouettes. A sun shadow
+    // cannot darken anything once clouds block the sun itself, as on PBR surfaces.
     let shadow_floor = mix(0.16, 0.42, ambient_occlusion);
     let received_shadow = mix(
         1.0,
         mix(shadow_floor, 1.0, shadow_visibility),
-        camera.lighting.w,
+        camera.lighting.w * cloud_sun,
     );
     let sun_tint = radiance_tint(camera.sun_radiance.xyz, vec3<f32>(1.0));
     let sun_active = camera.sun_direction.w;
@@ -827,10 +833,7 @@ fn shade(input: VertexOutput) -> vec4<f32> {
 
     // Direct-light energy must use the same camera exposure as Bevy's PBR path. Normalizing the
     // directional radiance to a tint made a 100,000-lux sun indistinguishable from a dim light.
-    var atmospheric_sun = camera.sun_radiance.xyz;
-#ifdef YARRA_CLOUDS
-    atmospheric_sun *= cloud_visibility(input.world_position, camera.sun_direction.xyz);
-#endif
+    var atmospheric_sun = camera.sun_radiance.xyz * cloud_sun;
 #ifdef ATMOSPHERE
     let atmosphere = view_bindings::atmosphere;
     let p_as = (atmosphere.world_to_atmosphere * vec4(input.world_position, 1.0)).xyz;
@@ -970,7 +973,9 @@ fn shade(input: VertexOutput) -> vec4<f32> {
     // This is directional ambient illumination, not visibility of neighboring blades.
     let exposed_ambient = camera.ambient_radiance.xyz * view_bindings::view.exposure;
     let ambient_peak = max(max(exposed_ambient.r, exposed_ambient.g), exposed_ambient.b);
-    let bounded_ambient = exposed_ambient / max(1.0, ambient_peak / 0.60);
+    // The bound keeps clear-day fill stylized; weather's exposure adaptation raises it.
+    let ambient_bound = 0.60 * select(1.0, camera.ambient_radiance.w, camera.ambient_radiance.w > 0.0);
+    let bounded_ambient = exposed_ambient / max(1.0, ambient_peak / ambient_bound);
     // Both sides of a thin leaf receive sky fill; viewer-facing normal flips must not blacken
     // the underside of an otherwise exposed leaf. Directional contrast comes from the sun term.
     let sky_facing = mix(abs(flat_blade_normal.y), clump_normal.y, diffuse_filter);

@@ -74,6 +74,7 @@ impl Plugin for VegetationRenderPlugin {
             ExtractResourcePlugin::<VegetationTerrainGate>::default(),
             ExtractResourcePlugin::<VegetationBladePreparation>::default(),
             ExtractResourcePlugin::<VegetationSun>::default(),
+            ExtractResourcePlugin::<VegetationAmbientGain>::default(),
             ExtractComponentPlugin::<VegetationView>::default(),
             ExtractComponentPlugin::<VegetationDraw>::default(),
         ))
@@ -85,6 +86,7 @@ impl Plugin for VegetationRenderPlugin {
         .init_resource::<VegetationTerrainGate>()
         .init_resource::<VegetationBladePreparation>()
         .init_resource::<VegetationSun>()
+        .init_resource::<VegetationAmbientGain>()
         .add_systems(Update, advance_vegetation_wind)
         .add_systems(
             PostUpdate,
@@ -192,6 +194,9 @@ pub struct VegetationWind {
     pub gustiness: f32,
     /// Grass-only hashed flutter amplitude as a fraction of blade height.
     pub flutter: f32,
+    /// Clock multiplier for every travelling wave and flutter. Weather changes this rather than
+    /// `speed`: phase is `time * speed`, so varying `speed` would jump the whole field.
+    pub rate: f32,
     phase_seconds: f32,
 }
 
@@ -206,6 +211,7 @@ impl Default for VegetationWind {
             speed: 2.4,
             gustiness: 0.95,
             flutter: 0.28,
+            rate: 1.0,
             phase_seconds: 0.0,
         }
     }
@@ -252,7 +258,25 @@ fn advance_vegetation_wind(time: Res<Time>, mut wind: ResMut<VegetationWind>) {
         return;
     }
     // Bound hitch recovery so a paused debugger does not produce a single violent deformation.
-    wind.phase_seconds = (wind.phase_seconds + time.delta_secs().min(0.1)).rem_euclid(4096.0);
+    // The rate bound keeps one frame's advance below the grass history-reset threshold.
+    let rate = if wind.rate.is_finite() {
+        wind.rate.clamp(0.0, 2.0)
+    } else {
+        1.0
+    };
+    wind.phase_seconds =
+        (wind.phase_seconds + time.delta_secs().min(0.1) * rate).rem_euclid(4096.0);
+}
+
+/// Exposure adaptation relative to the authored scene. Grass bounds its ambient fill in exposed
+/// units for the stylized clear-day look; weather that opens exposure under cloud raises that
+/// bound by the same factor, so grass keeps pace with PBR terrain, trees and characters.
+#[derive(Resource, ExtractResource, Debug, Clone, Copy, PartialEq)]
+pub struct VegetationAmbientGain(pub f32);
+impl Default for VegetationAmbientGain {
+    fn default() -> Self {
+        Self(1.0)
+    }
 }
 
 /// Render-facing snapshot of the strongest directional light and the global ambient fill.
@@ -769,6 +793,28 @@ mod tests {
             .externally_driven = false;
         app.update();
         assert!(app.world().resource::<VegetationWind>().phase_seconds() > 7.125);
+    }
+
+    #[test]
+    fn wind_rate_scales_the_clock_and_is_bounded() {
+        let advance = |rate: f32, delta: f32| {
+            let mut app = App::new();
+            let mut time: Time = Time::default();
+            time.advance_by(std::time::Duration::from_secs_f32(delta));
+            let mut wind = VegetationWind { rate, ..default() };
+            wind.set_phase_seconds(10.0);
+            app.insert_resource(time)
+                .insert_resource(wind)
+                .add_systems(Update, advance_vegetation_wind);
+            app.update();
+            app.world().resource::<VegetationWind>().phase_seconds() - 10.0
+        };
+        assert!((advance(1.0, 0.05) - 0.05).abs() < 1e-5);
+        assert!((advance(1.5, 0.05) - 0.075).abs() < 1e-5);
+        assert_eq!(advance(0.0, 0.05), 0.0);
+        // Hitches and invalid rates stay below the 0.25 s grass history-reset threshold.
+        assert!((advance(5.0, 1.0) - 0.2).abs() < 1e-5);
+        assert!((advance(f32::NAN, 0.05) - 0.05).abs() < 1e-5);
     }
 
     #[test]

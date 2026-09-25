@@ -1,6 +1,7 @@
 pub mod atmosphere;
 pub mod clouds;
 pub mod terrain_material;
+pub mod weather;
 pub use terrain_material::*;
 pub mod terrain_hierarchy;
 pub use terrain_hierarchy::*;
