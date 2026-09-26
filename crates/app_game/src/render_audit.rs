@@ -87,6 +87,7 @@ enum Control {
     Shading,
     GroundMaterial,
     Shadows,
+    ShadowMap,
     Prepass,
     Scale,
     Upscaler,
@@ -149,6 +150,10 @@ impl Control {
             Self::Shadows => ["PBR shadows: Gaussian", "PBR shadows: 2x2", "Shadows: off"]
                 [s.shadows as usize]
                 .into(),
+            Self::ShadowMap => {
+                let size = crate::runtime_settings::SHADOW_MAP_SIZES[s.shadow_map];
+                format!("Shadow map: {size} px")
+            }
             Self::Prepass => {
                 if s.temporal_active() {
                     "Depth prepass: required by temporal".into()
@@ -306,6 +311,9 @@ fn buttons(
             Control::Shading => s.unlit = !s.unlit,
             Control::GroundMaterial => s.terrain_prepared = !s.terrain_prepared,
             Control::Shadows => s.shadows = (s.shadows + 1) % 3,
+            Control::ShadowMap => {
+                s.shadow_map = (s.shadow_map + 1) % crate::runtime_settings::SHADOW_MAP_SIZES.len()
+            }
             Control::Prepass => s.prepass = !s.prepass,
             Control::Scale => {
                 s.render_path = AuditRenderPath::Composite;

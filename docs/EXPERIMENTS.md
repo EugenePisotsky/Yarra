@@ -143,7 +143,10 @@ Marginal costs below come from uncapped timed profiles (`--profile-fps 0`, GPU-b
 | Change | Decision / observation |
 | --- | --- |
 | Depth prepass off outside Temporal | **Retained/default.** 9.46/9.31 → 8.63/8.72 ms. Only MetalFX Temporal consumes it, and the game still adds it there. Repro snapshots already ran without it. |
-| Shadows | **Open, user decision.** Off saves ~2.2 ms. 1024² maps save ~0.7 ms, 1536² ~0.15 ms, terrain not casting ~0.2 ms; Gaussian vs 2×2 filtering makes no difference. Most of the remainder is tree casting into three cascades. |
+| Shadows | **Open, user decision; F1 Features → Shadow map compares 2048/1536/1024.** Off saves ~2.2 ms. 1024² maps save ~0.7 ms, 1536² ~0.15 ms, terrain not casting ~0.2 ms; Gaussian vs 2×2 filtering makes no difference. With every mesh a non-caster (maps still rendered and sampled), about 70% of the cost disappeared: casting dominates, and the lookup while shading is 0.4–0.9 ms. A 1024² close-up looked only slightly softer. |
+| Coarse tree shadow casters | **Rejected before implementation.** Forcing coarser tree LODs everywhere (LOD scale 0.25) left the shadow cost unchanged (~1.9 ms either way), so shadow-only low-LOD proxies would not help; covered map area and per-cascade work dominate, not triangles. |
+| Terrain shader components | Disabling parts in the shader: close-range surface 0.7–1.25 ms, lighting including normal/roughness work 1.3–2.0 ms, directional shadow lookup 0.4–0.9 ms, canopy noise ~0.14 ms; macro variation, detail tiles, decals, cloud shadow lookup and the BRDF itself were within noise. Coarser terrain error did not coarsen this small world (all 256 patches stay at level 0). MSAA 4× vs 1× costs ~1 ms overall. |
+| Skipping a negligible second near layer | **Rejected.** Branching to skip a layer below 1/256 of the blend was consistently slower (8.7–8.9 → 9.3–10.0 ms): the larger, divergent shader cost more than the saved reads. |
 | Terrain / trees and objects / bloom / sky and haze | Hiding them saved ~1.7 / ~1.2 / ~0.9 / ~0.4 ms. Tree cost includes their shadow casting. |
 | Grass / clouds | ~0.2 / ~0.1 ms in this view. |
 | Atmosphere tables | Near-free table settings changed nothing measurable: the compute runs beside shadow rendering. Caching the static tables is not worth owning Bevy's table pass. |

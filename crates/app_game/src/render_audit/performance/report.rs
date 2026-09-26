@@ -15,6 +15,7 @@ const ALL_CONTROLS: &[Control] = &[
     Control::Terrain,
     Control::Objects,
     Control::Shadows,
+    Control::ShadowMap,
     Control::Wind,
     Control::Scale,
     Control::Upscaler,
