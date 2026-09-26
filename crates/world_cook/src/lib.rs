@@ -14,7 +14,8 @@ use environment_cook::{
     CookedEnvironment, TerrainSlot, TerrainWeights, compile_environment, demo_environment,
 };
 pub use streaming_cook::{
-    CookReport, CookStats, cook_project_with_materials, cook_project_with_report,
+    CookReport, CookStats, cook_project_fresh, cook_project_with_materials,
+    cook_project_with_report,
 };
 pub use terrain_fixture::create_mountain_fixture;
 mod hill_fixture;

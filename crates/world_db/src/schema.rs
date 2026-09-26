@@ -314,6 +314,8 @@ CREATE TABLE runtime_metadata (
     schema_version INTEGER NOT NULL,
     generation_id TEXT NOT NULL,
     content_hash BLOB NOT NULL CHECK(length(content_hash) = 32),
+    -- Content hash of the global catalogs and environment, shared by every cell.
+    header_hash BLOB NOT NULL CHECK(length(header_hash) = 32),
     default_world_space_id INTEGER NOT NULL REFERENCES world_spaces(id)
 ) STRICT;
 
@@ -331,6 +333,10 @@ CREATE TABLE cells (
     maximum_y REAL NOT NULL CHECK(maximum_y >= minimum_y),
     domain_mask INTEGER NOT NULL CHECK(domain_mask >= 0),
     source_revision INTEGER NOT NULL CHECK(source_revision >= 0),
+    -- Fingerprint of the source this cell was cooked from; zeros when unknown.
+    input_fingerprint BLOB NOT NULL CHECK(length(input_fingerprint) = 32),
+    -- Hash of this cell's pages, folded into the generation's content hash.
+    content_hash BLOB NOT NULL CHECK(length(content_hash) = 32),
     PRIMARY KEY(world_space_id, cell_x, cell_z)
 ) STRICT, WITHOUT ROWID;
 
@@ -509,5 +515,5 @@ CREATE TABLE terrain_material_spaces (
     world_space_id INTEGER PRIMARY KEY REFERENCES world_spaces(id),
     tile_count INTEGER NOT NULL CHECK(tile_count>=0)
 ) STRICT;
-PRAGMA user_version = 21;
+PRAGMA user_version = 22;
 "#;

@@ -22,7 +22,9 @@ pub fn write_runtime_database(path: &Path, build: &RuntimeBuild) -> Result<(), W
 
 fn write_runtime_build(transaction: &Connection, build: &RuntimeBuild) -> Result<(), WorldDbError> {
     write_runtime_header(transaction, build)?;
-    write_runtime_spatial(transaction, build)
+    // A whole build has no per-cell source fingerprints or hashes; incremental cooks
+    // treat its cells as unknown.
+    write_runtime_spatial(transaction, build, [0; 32], [0; 32])
 }
 fn write_runtime_header(
     transaction: &Connection,
@@ -47,8 +49,9 @@ fn write_runtime_header(
     }
     transaction.execute(
         "INSERT INTO runtime_metadata( \
-            singleton, schema_version, generation_id, content_hash, default_world_space_id \
-         ) VALUES (1, ?1, ?2, ?3, ?4)",
+            singleton, schema_version, generation_id, content_hash, header_hash, \
+            default_world_space_id \
+         ) VALUES (1, ?1, ?2, ?3, ?3, ?4)",
         params![
             manifest.schema_version,
             manifest.generation_id,
@@ -104,12 +107,15 @@ fn write_runtime_header(
 fn write_runtime_spatial(
     transaction: &Connection,
     build: &RuntimeBuild,
+    input_fingerprint: [u8; 32],
+    content_hash: [u8; 32],
 ) -> Result<(), WorldDbError> {
     for cell in &build.cells {
         transaction.execute(
             "INSERT INTO cells( \
-                world_space_id, cell_x, cell_z, minimum_y, maximum_y, domain_mask, source_revision \
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                world_space_id, cell_x, cell_z, minimum_y, maximum_y, domain_mask, \
+                source_revision, input_fingerprint, content_hash \
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 cell.space.0,
                 cell.cell.x,
@@ -117,7 +123,9 @@ fn write_runtime_spatial(
                 cell.minimum_y,
                 cell.maximum_y,
                 i64::try_from(cell.domain_mask).map_err(|_| WorldDbError::IntegerOverflow)?,
-                cell.source_revision
+                cell.source_revision,
+                input_fingerprint.as_slice(),
+                content_hash.as_slice()
             ],
         )?;
     }
@@ -214,7 +222,80 @@ impl RuntimeCookWriter {
         write_runtime_header(&connection, header)?;
         Ok(Self { connection })
     }
-    pub fn append_cell(&self, batch: &RuntimeBuild) -> Result<(), WorldDbError> {
+    /// Continues a copy of the previous publication, whose unchanged cells are kept.
+    /// The caller checks that its header hash matches this cook's.
+    pub fn open_incremental(path: &Path) -> Result<Self, WorldDbError> {
+        let connection = Connection::open(path)?;
+        crate::storage::ensure_schema_version(
+            &connection,
+            world::RUNTIME_SCHEMA_VERSION,
+            "runtime",
+        )?;
+        connection.execute_batch(
+            "PRAGMA foreign_keys=ON; PRAGMA cache_size=-8192; PRAGMA temp_store=FILE; BEGIN IMMEDIATE;",
+        )?;
+        Ok(Self { connection })
+    }
+    pub fn header_hash(&self) -> Result<[u8; 32], WorldDbError> {
+        Ok(self.connection.query_row(
+            "SELECT header_hash FROM runtime_metadata WHERE singleton=1",
+            [],
+            |r| crate::storage::blob_array(r.get_ref(0)?.as_blob()?, "header hash"),
+        )?)
+    }
+    /// Source fingerprints of the cells already in this output.
+    pub fn cell_fingerprints(
+        &self,
+        space: world::WorldSpaceId,
+    ) -> Result<std::collections::BTreeMap<world::CellCoord, [u8; 32]>, WorldDbError> {
+        let mut query = self.connection.prepare(
+            "SELECT cell_x, cell_z, input_fingerprint FROM cells WHERE world_space_id=?1",
+        )?;
+        let rows = query.query_map([space.0], |r| {
+            Ok((
+                world::CellCoord {
+                    x: r.get(0)?,
+                    z: r.get(1)?,
+                },
+                crate::storage::blob_array(r.get_ref(2)?.as_blob()?, "input fingerprint")?,
+            ))
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+    /// Drops the terrain hierarchy and composites so they can be rebuilt from the cells.
+    pub fn clear_terrain_products(&self) -> Result<(), WorldDbError> {
+        self.connection.execute_batch(
+            "DELETE FROM terrain_composites; DELETE FROM terrain_material_spaces;
+             DELETE FROM terrain_roots; DELETE FROM terrain_nodes;
+             DELETE FROM terrain_hierarchy_spaces;",
+        )?;
+        Ok(())
+    }
+    /// Removes a cell and every page row that depends on it.
+    pub fn remove_cell(
+        &self,
+        space: world::WorldSpaceId,
+        cell: world::CellCoord,
+    ) -> Result<(), WorldDbError> {
+        for table in [
+            "page_dependencies",
+            "page_object_definitions",
+            "page_terrain_surfaces",
+            "cell_pages",
+            "cells",
+        ] {
+            self.connection.execute(
+                &format!("DELETE FROM {table} WHERE world_space_id=?1 AND cell_x=?2 AND cell_z=?3"),
+                params![space.0, cell.x, cell.z],
+            )?;
+        }
+        Ok(())
+    }
+    pub fn append_cell(
+        &self,
+        batch: &RuntimeBuild,
+        input_fingerprint: [u8; 32],
+    ) -> Result<(), WorldDbError> {
         let decoded_bytes = batch
             .pages
             .iter()
@@ -252,9 +333,38 @@ impl RuntimeCookWriter {
         {
             return Err(invalid("runtime dependencies cross cell boundaries"));
         }
-        write_runtime_spatial(&self.connection, batch)
+        write_runtime_spatial(
+            &self.connection,
+            batch,
+            input_fingerprint,
+            batch.manifest.content_hash,
+        )
     }
-    pub fn finish(self, content_hash: [u8; 32]) -> Result<RuntimeManifest, WorldDbError> {
+    /// The generation's content hash folds the header with every cell in key order, read
+    /// back from the output, so full and incremental cooks agree.
+    pub fn finish(self) -> Result<RuntimeManifest, WorldDbError> {
+        let mut hash = blake3::Hasher::new();
+        hash.update(b"bounded-source-cook-v2");
+        hash.update(&self.header_hash()?);
+        {
+            let mut query = self.connection.prepare(
+                "SELECT world_space_id, cell_x, cell_z, content_hash, minimum_y, maximum_y, \
+                        domain_mask, source_revision \
+                 FROM cells ORDER BY world_space_id, cell_x, cell_z",
+            )?;
+            let mut rows = query.query([])?;
+            while let Some(r) = rows.next()? {
+                hash.update(&r.get::<_, i64>(0)?.to_le_bytes());
+                hash.update(&r.get::<_, i32>(1)?.to_le_bytes());
+                hash.update(&r.get::<_, i32>(2)?.to_le_bytes());
+                hash.update(r.get_ref(3)?.as_blob().map_err(rusqlite::Error::from)?);
+                hash.update(&r.get::<_, f32>(4)?.to_bits().to_le_bytes());
+                hash.update(&r.get::<_, f32>(5)?.to_bits().to_le_bytes());
+                hash.update(&r.get::<_, i64>(6)?.to_le_bytes());
+                hash.update(&r.get::<_, i64>(7)?.to_le_bytes());
+            }
+        }
+        let content_hash = *hash.finalize().as_bytes();
         let generation_id = blake3::Hash::from_bytes(content_hash).to_hex()[..16].to_owned();
         self.connection.execute(
             "UPDATE runtime_metadata SET generation_id=?1,content_hash=?2 WHERE singleton=1",

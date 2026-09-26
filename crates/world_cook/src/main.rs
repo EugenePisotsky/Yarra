@@ -153,8 +153,10 @@ fn main() -> Result<()> {
         );
     }
     println!(
-        "Cooked {} terrain cells and validated {} coverage-only cells",
-        stats.terrain_cells, stats.coverage_only_cells
+        "Cooked {} {}terrain cells and validated {} coverage-only cells",
+        stats.terrain_cells,
+        if stats.incremental { "changed " } else { "" },
+        stats.coverage_only_cells
     );
     println!(
         "Peak source batch: {} height samples, {} mask bytes, {} manual objects, {} road spans",
@@ -188,6 +190,8 @@ struct CookOptions {
     project: PathBuf,
     runtime: PathBuf,
     bake_root: Option<PathBuf>,
+    /// Recompile every cell instead of continuing the existing runtime.
+    full: bool,
 }
 impl CookOptions {
     fn parse(arguments: impl IntoIterator<Item = std::ffi::OsString>) -> Result<Self> {
@@ -195,8 +199,11 @@ impl CookOptions {
         let mut paths = Vec::new();
         let mut bake_root = Some(repository_root().join("assets"));
         let mut material_option = false;
+        let mut full = false;
         while let Some(argument) = arguments.next() {
-            if argument == "--terrain-materials" || argument == "--geometry-only" {
+            if argument == "--full" {
+                full = true;
+            } else if argument == "--terrain-materials" || argument == "--geometry-only" {
                 if material_option {
                     bail!("choose either --terrain-materials ASSET_ROOT or --geometry-only once");
                 }
@@ -220,7 +227,7 @@ impl CookOptions {
         }
         if paths.len() > 2 {
             bail!(
-                "expected [PROJECT_DB] [RUNTIME_DB] [--terrain-materials ASSET_ROOT | --geometry-only]"
+                "expected [PROJECT_DB] [RUNTIME_DB] [--terrain-materials ASSET_ROOT | --geometry-only] [--full]"
             );
         }
         let mut paths = paths.into_iter();
@@ -228,6 +235,7 @@ impl CookOptions {
             project: paths.next().unwrap_or_else(default_project_path),
             runtime: paths.next().unwrap_or_else(default_runtime_path),
             bake_root,
+            full,
         })
     }
     fn load_materials(&self) -> Result<Option<yarra_world_cook::TerrainBakeLibrary>> {
@@ -241,6 +249,9 @@ impl CookOptions {
         &self,
         materials: Option<&yarra_world_cook::TerrainBakeLibrary>,
     ) -> Result<yarra_world_cook::CookReport> {
+        if self.full {
+            return yarra_world_cook::cook_project_fresh(&self.project, &self.runtime, materials);
+        }
         match materials {
             Some(materials) => yarra_world_cook::cook_project_with_materials(
                 &self.project,

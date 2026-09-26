@@ -13,6 +13,7 @@ use crate::{
 use environment::{CoverageSnapshot, EnvironmentDefinition};
 use environment_compile::TerrainSource;
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use world::{CellCoord, PROJECT_SCHEMA_VERSION, WorldSpaceId};
 
@@ -20,6 +21,12 @@ pub struct ProjectCookSnapshot {
     connection: Connection,
     // Only global definitions/catalogs; all spatial fields in this document are empty.
     catalog: ProjectDocument,
+}
+/// A cell's cook-input fingerprint, and whether it has terrain (else only paint to validate).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CellFingerprint {
+    pub input: [u8; 32],
+    pub source: bool,
 }
 pub struct CookSourceCell {
     pub source: Option<SourceCellRecord>,
@@ -115,6 +122,132 @@ impl ProjectCookSnapshot {
         )?
         .collect::<Result<_, _>>()?)
     }
+    /// Fingerprints of every cell's cook inputs, without reading heights or masks: revisions
+    /// of its own and neighbouring terrain and coverage rows (the halo `read_cell` reads),
+    /// its manual objects, and the exact road snapshot `read_cell` would take for cells near
+    /// a road. `header` stands for everything global. Source writes bump revisions; a direct
+    /// database edit that does not is invisible here, so a full cook remains available.
+    pub fn cell_fingerprints(
+        &self,
+        definition: &EnvironmentDefinition,
+        header: &[u8; 32],
+    ) -> Result<BTreeMap<CellCoord, CellFingerprint>, WorldDbError> {
+        let space = definition.space;
+        let cell = |r: &rusqlite::Row<'_>| -> rusqlite::Result<CellCoord> {
+            Ok(CellCoord {
+                x: r.get(0)?,
+                z: r.get(1)?,
+            })
+        };
+        let rows = |sql: &str| -> Result<HashMap<CellCoord, [i64; 2]>, WorldDbError> {
+            let mut query = self.connection.prepare(sql)?;
+            let rows = query.query_map([space.0], |r| {
+                Ok((cell(r)?, [r.get::<_, i64>(2)?, r.get::<_, i64>(3)?]))
+            })?;
+            Ok(rows.collect::<Result<_, _>>()?)
+        };
+        // Pairs: unused and revision; resolution and revision; revision twice.
+        let sources = rows(
+            "SELECT cell_x,cell_z,0,source_revision FROM source_cells WHERE world_space_id=?1",
+        )?;
+        let heights: HashMap<CellCoord, f32> = {
+            let mut query = self
+                .connection
+                .prepare("SELECT cell_x,cell_z,height FROM source_cells WHERE world_space_id=?1")?;
+            let rows = query.query_map([space.0], |r| Ok((cell(r)?, r.get::<_, f32>(2)?)))?;
+            rows.collect::<Result<_, _>>()?
+        };
+        let heightfields = rows(
+            "SELECT cell_x,cell_z,resolution,source_revision FROM terrain_cell_heightfields WHERE world_space_id=?1",
+        )?;
+        let coverage = rows(
+            "SELECT cell_x,cell_z,revision,revision FROM environment_cells WHERE world_space_id=?1",
+        )?;
+        let mut objects: HashMap<CellCoord, blake3::Hasher> = HashMap::new();
+        {
+            let mut query = self.connection.prepare(
+                "SELECT owner_cell_x,owner_cell_z,object_id,source_revision FROM object_placements \
+                 WHERE world_space_id=?1 ORDER BY owner_cell_x,owner_cell_z,object_id",
+            )?;
+            let mut rows = query.query([space.0])?;
+            while let Some(r) = rows.next()? {
+                let hasher = objects.entry(cell(r)?).or_default();
+                hasher.update(r.get_ref(2)?.as_blob().map_err(rusqlite::Error::from)?);
+                hasher.update(&r.get::<_, i64>(3)?.to_le_bytes());
+            }
+        }
+        let road_cells: HashSet<CellCoord> = {
+            let mut query = self.connection.prepare(
+                "SELECT cell_x,cell_z FROM road_span_cells WHERE world_space_id=?1 \
+                 UNION SELECT cell_x,cell_z FROM road_junction_cells WHERE world_space_id=?1",
+            )?;
+            let rows = query.query_map([space.0], cell)?;
+            rows.collect::<Result<_, _>>()?
+        };
+        let mut result = BTreeMap::new();
+        for &target in sources.keys().chain(coverage.keys()) {
+            if result.contains_key(&target) {
+                continue;
+            }
+            let halo = environment_dependency_cells(&[target])?;
+            let mut hash = blake3::Hasher::new();
+            hash.update(b"cook-cell-input-v1");
+            hash.update(header);
+            hash.update(&target.x.to_le_bytes());
+            hash.update(&target.z.to_le_bytes());
+            for neighbour in &halo {
+                for value in [
+                    sources.get(neighbour).map(|v| v[1]),
+                    heights.get(neighbour).map(|h| i64::from(h.to_bits())),
+                    heightfields.get(neighbour).map(|v| v[0]),
+                    heightfields.get(neighbour).map(|v| v[1]),
+                    coverage.get(neighbour).map(|v| v[0]),
+                ] {
+                    match value {
+                        Some(v) => {
+                            hash.update(&[1]);
+                            hash.update(&v.to_le_bytes());
+                        }
+                        None => {
+                            hash.update(&[0]);
+                        }
+                    }
+                }
+            }
+            hash.update(
+                objects
+                    .get(&target)
+                    .map_or([0; 32], |h| *h.finalize().as_bytes())
+                    .as_slice(),
+            );
+            if halo.iter().any(|c| road_cells.contains(c)) {
+                let bounds = environment::roads::RoadCellBounds {
+                    minimum: CellCoord {
+                        x: target.x - 1,
+                        z: target.z - 1,
+                    },
+                    maximum: CellCoord {
+                        x: target.x + 1,
+                        z: target.z + 1,
+                    },
+                };
+                let roads = road_store::read_cook_roads(&self.connection, space, bounds)?;
+                hash.update(
+                    &bincode::serde::encode_to_vec(&roads.roads, bincode::config::standard())
+                        .map_err(|e| invalid(e.to_string()))?,
+                );
+            }
+            result.insert(
+                target,
+                CellFingerprint {
+                    input: *hash.finalize().as_bytes(),
+                    source: sources.contains_key(&target),
+                },
+            );
+        }
+        Ok(result)
+    }
+
     pub fn read_cell(
         &self,
         definition: &EnvironmentDefinition,

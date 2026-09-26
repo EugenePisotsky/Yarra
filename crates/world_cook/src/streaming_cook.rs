@@ -1,7 +1,10 @@
 //! Production cook: one stable source snapshot, bounded local inputs, staged output.
 use super::*;
+use environment_compile::CompilePlan;
 use environment_compile::merge_runtime_catalogs;
 use environment_cook::prepare_plans;
+use std::collections::BTreeSet;
+use vegetation::VegetationCatalog;
 use world_db::{ProjectCookSnapshot, RuntimeCookWriter};
 
 #[derive(Debug, Clone, Default)]
@@ -20,6 +23,8 @@ pub struct CookStats {
     /// and validating the publication.
     pub cell_seconds: f64,
     pub publish_seconds: f64,
+    /// Continued the previous publication: `terrain_cells` counts only changed cells.
+    pub incremental: bool,
 }
 #[derive(Debug, Clone)]
 pub struct CookReport {
@@ -28,8 +33,10 @@ pub struct CookReport {
     pub materials: Option<TerrainMaterialBakeStats>,
 }
 
+/// Cooks continue the existing runtime at `runtime_path` when it was cooked from the same
+/// global inputs and terrain cells, recompiling only cells whose inputs changed.
 pub fn cook_project_with_report(project_path: &Path, runtime_path: &Path) -> Result<CookReport> {
-    cook_project_options(project_path, runtime_path, None)
+    cook_project_options(project_path, runtime_path, None, true)
 }
 /// Bake optional experimental ground composites using explicit preprocessed assets.
 pub fn cook_project_with_materials(
@@ -37,12 +44,22 @@ pub fn cook_project_with_materials(
     runtime_path: &Path,
     materials: &TerrainBakeLibrary,
 ) -> Result<CookReport> {
-    cook_project_options(project_path, runtime_path, Some(materials))
+    cook_project_options(project_path, runtime_path, Some(materials), true)
+}
+/// Recompiles every cell, ignoring the existing runtime; for sources edited without
+/// revision bumps. Composite cores still come from the cook cache.
+pub fn cook_project_fresh(
+    project_path: &Path,
+    runtime_path: &Path,
+    materials: Option<&TerrainBakeLibrary>,
+) -> Result<CookReport> {
+    cook_project_options(project_path, runtime_path, materials, false)
 }
 fn cook_project_options(
     project_path: &Path,
     runtime_path: &Path,
     materials: Option<&TerrainBakeLibrary>,
+    incremental: bool,
 ) -> Result<CookReport> {
     if runtime_path.exists() && fs::canonicalize(project_path)? == fs::canonicalize(runtime_path)? {
         bail!("source and runtime paths must be different");
@@ -51,17 +68,24 @@ fn cook_project_options(
         .with_context(|| format!("failed to open cook snapshot {}", project_path.display()))?;
     // Beside the project, like its other local state; it never ships and may be deleted.
     let core_cache = project_path.with_extension("cook-cache.sqlite");
-    cook_snapshot_options(snapshot, runtime_path, materials, Some(&core_cache))
+    cook_snapshot_options(
+        snapshot,
+        runtime_path,
+        materials,
+        Some(&core_cache),
+        incremental,
+    )
 }
 #[cfg(test)]
 fn cook_snapshot(snapshot: ProjectCookSnapshot, runtime_path: &Path) -> Result<CookReport> {
-    cook_snapshot_options(snapshot, runtime_path, None, None)
+    cook_snapshot_options(snapshot, runtime_path, None, None, true)
 }
 fn cook_snapshot_options(
     snapshot: ProjectCookSnapshot,
     runtime_path: &Path,
     materials: Option<&TerrainBakeLibrary>,
     core_cache: Option<&Path>,
+    incremental: bool,
 ) -> Result<CookReport> {
     let project = snapshot.catalog();
     let plans = prepare_plans(project)?;
@@ -76,116 +100,90 @@ fn cook_snapshot_options(
         project.clone(),
         CookedEnvironment::empty(catalog.clone(), *environment_hash.finalize().as_bytes()),
     )?;
-    let staging = RuntimeStaging::new(runtime_path)?;
-    let writer = RuntimeCookWriter::create(&staging.path, &header)?;
-    let mut hash = blake3::Hasher::new();
-    hash.update(b"bounded-source-cook-v1");
-    hash.update(&header.manifest.content_hash);
     let mut stats = CookStats::default();
     let start = std::time::Instant::now();
+    let mut fingerprints = BTreeMap::new();
     for world in &project.world_spaces {
-        let mut cursor = None;
-        loop {
-            let keys = snapshot.next_cells(world.id, cursor)?;
-            if keys.is_empty() {
-                break;
+        match project.environments.iter().find(|d| d.space == world.id) {
+            Some(definition) => {
+                let cells =
+                    snapshot.cell_fingerprints(definition, &header.manifest.content_hash)?;
+                fingerprints.insert(world.id, cells);
             }
-            let definition = project
-                .environments
-                .iter()
-                .find(|d| d.space == world.id)
-                .context("world with source cells requires an environment definition")?;
-            let plan = &plans[&world.id];
-            // Sources are read here, cells compile on every core, and pages are written
-            // in key order, so the publication matches a sequential cook exactly.
-            let sources = keys
-                .iter()
-                .map(|&cell| {
-                    let source = snapshot.read_cell(definition, cell).with_context(|| {
-                        format!("could not read source cell {:?} {cell:?}", world.id)
-                    })?;
-                    Ok((cell, source))
-                })
-                .collect::<Result<Vec<_>>>()?;
-            for (_, source) in &sources {
-                stats.peak_source_height_samples = stats
-                    .peak_source_height_samples
-                    .max(source.terrain.cells.iter().map(|h| h.heights.len()).sum());
-                stats.peak_source_mask_bytes = stats.peak_source_mask_bytes.max(
-                    source
-                        .coverage
-                        .cells
-                        .iter()
-                        .flat_map(|c| &c.tiles)
-                        .map(|t| t.samples.len())
-                        .sum(),
-                );
-                stats.peak_source_manual_objects =
-                    stats.peak_source_manual_objects.max(source.objects.len());
-                stats.peak_source_road_spans = stats
-                    .peak_source_road_spans
-                    .max(source.roads.roads.spans.len());
+            None if !snapshot.next_cells(world.id, None)?.is_empty() => {
+                bail!("world with source cells requires an environment definition")
             }
-            let built = parallel::map(&sources, |(cell, source)| -> Result<Option<RuntimeBuild>> {
-                let cell = *cell;
-                let Some(base) = source.source.clone() else {
-                    plan.validate_coverage(&[cell], &source.coverage)?;
-                    return Ok(None);
-                };
-                let compiled = plan
-                    .compile_cell_with_terrain(
-                        cell,
-                        &source.coverage,
-                        &source.roads.roads,
-                        &source.terrain,
-                        Default::default(),
-                    )
-                    .with_context(|| {
-                        format!("could not compile source cell {:?} {cell:?}", world.id)
-                    })?;
-                let revision = source
-                    .coverage
-                    .cells
-                    .iter()
-                    .find(|c| c.cell == cell)
-                    .context("missing requested coverage cell")?
-                    .revision;
-                let mut environment =
-                    CookedEnvironment::empty(catalog.clone(), compiled.input_fingerprint);
-                environment.push_cell(world.id, cell, i64::try_from(revision)?, compiled);
-                let mut local = project.clone();
-                local.cells.push(base);
-                local.objects = source.objects.clone();
-                build_compiled_runtime(local, environment).map(Some)
-            });
-            for ((cell, _), batch) in sources.iter().zip(built) {
-                let cell = *cell;
-                let Some(batch) = batch? else {
+            None => {}
+        }
+    }
+    let staging = RuntimeStaging::new(runtime_path)?;
+    let writer = match incremental
+        .then(|| continue_publication(runtime_path, &staging.path, &header, &fingerprints))
+        .transpose()?
+        .flatten()
+    {
+        Some(writer) => {
+            stats.incremental = true;
+            writer
+        }
+        None => RuntimeCookWriter::create(&staging.path, &header)?,
+    };
+    for world in &project.world_spaces {
+        let Some(cells) = fingerprints.get(&world.id) else {
+            continue;
+        };
+        let previous = if stats.incremental {
+            writer.cell_fingerprints(world.id)?
+        } else {
+            BTreeMap::new()
+        };
+        // Unchanged cells keep their published pages. Paint-only cells have no pages and
+        // are validated again every time.
+        let keys: Vec<_> = cells
+            .iter()
+            .filter(|(cell, fingerprint)| previous.get(cell) != Some(&fingerprint.input))
+            .map(|(&cell, _)| cell)
+            .collect();
+        let definition = project
+            .environments
+            .iter()
+            .find(|d| d.space == world.id)
+            .context("world with source cells requires an environment definition")?;
+        for batch in keys.chunks(world_db::COOK_KEY_BATCH) {
+            let compiled = compile_cells(
+                &snapshot,
+                project,
+                &plans[&world.id],
+                &catalog,
+                world.id,
+                definition,
+                batch,
+                &mut stats,
+            )?;
+            for (cell, compiled) in batch.iter().zip(compiled) {
+                let Some(compiled) = compiled else {
                     stats.coverage_only_cells += 1;
                     continue;
                 };
                 stats.peak_encoded_cell_bytes = stats
                     .peak_encoded_cell_bytes
-                    .max(batch.pages.iter().map(|p| p.payload.len() as u64).sum());
+                    .max(compiled.pages.iter().map(|p| p.payload.len() as u64).sum());
                 stats.peak_decoded_cell_bytes = stats
                     .peak_decoded_cell_bytes
-                    .max(batch.pages.iter().map(|p| p.decoded_bytes).sum());
-                hash.update(&world.id.0.to_le_bytes());
-                hash.update(&cell.x.to_le_bytes());
-                hash.update(&cell.z.to_le_bytes());
-                hash.update(&batch.manifest.content_hash);
-                let descriptor = &batch.cells[0];
-                hash.update(&descriptor.minimum_y.to_bits().to_le_bytes());
-                hash.update(&descriptor.maximum_y.to_bits().to_le_bytes());
-                hash.update(&descriptor.domain_mask.to_le_bytes());
-                hash.update(&descriptor.source_revision.to_le_bytes());
-                writer.append_cell(&batch)?;
+                    .max(compiled.pages.iter().map(|p| p.decoded_bytes).sum());
+                if stats.incremental {
+                    writer.remove_cell(world.id, *cell)?;
+                }
+                writer.append_cell(&compiled, cells[cell].input)?;
                 stats.terrain_cells += 1;
             }
-            cursor = keys.last().copied();
         }
     }
-    let manifest = writer.finish(*hash.finalize().as_bytes())?;
+    if stats.incremental {
+        // Rebuilt from the cells below; unchanged composite cores come from the cook cache.
+        writer.clear_terrain_products()?;
+    }
+    let manifest = writer.finish()?;
     stats.cell_seconds = start.elapsed().as_secs_f64();
     let start = std::time::Instant::now();
     // Release the read transaction before hierarchy work and publication. Every leaf
@@ -204,6 +202,122 @@ fn cook_snapshot_options(
         stats,
         materials,
     })
+}
+
+/// A copy of the previous publication to continue from, when it was cooked from the same
+/// global inputs and the same set of terrain cells. Otherwise the cook starts afresh.
+fn continue_publication(
+    runtime_path: &Path,
+    staging_path: &Path,
+    header: &RuntimeBuild,
+    fingerprints: &BTreeMap<WorldSpaceId, BTreeMap<CellCoord, world_db::CellFingerprint>>,
+) -> Result<Option<RuntimeCookWriter>> {
+    if !runtime_path.exists() {
+        return Ok(None);
+    }
+    // A copy-on-write clone on APFS; the published file is never opened for writing.
+    fs::copy(runtime_path, staging_path)?;
+    let Ok(writer) = RuntimeCookWriter::open_incremental(staging_path) else {
+        fs::remove_file(staging_path)?;
+        return Ok(None);
+    };
+    let mut same = writer.header_hash()? == header.manifest.content_hash;
+    for (space, cells) in fingerprints {
+        if !same {
+            break;
+        }
+        let terrain: BTreeSet<_> = cells
+            .iter()
+            .filter(|(_, f)| f.source)
+            .map(|(&cell, _)| cell)
+            .collect();
+        same = writer
+            .cell_fingerprints(*space)?
+            .keys()
+            .copied()
+            .collect::<BTreeSet<_>>()
+            == terrain;
+    }
+    if !same {
+        drop(writer);
+        fs::remove_file(staging_path)?;
+        return Ok(None);
+    }
+    Ok(Some(writer))
+}
+
+/// Reads a batch of cells here and compiles them on every core; `None` for paint-only cells,
+/// which are validated. Output order matches `batch`.
+#[allow(clippy::too_many_arguments)] // The global cook inputs shared by every cell.
+fn compile_cells(
+    snapshot: &ProjectCookSnapshot,
+    project: &ProjectDocument,
+    plan: &CompilePlan,
+    catalog: &VegetationCatalog,
+    space: WorldSpaceId,
+    definition: &environment::EnvironmentDefinition,
+    batch: &[CellCoord],
+    stats: &mut CookStats,
+) -> Result<Vec<Option<RuntimeBuild>>> {
+    let sources = batch
+        .iter()
+        .map(|&cell| {
+            let source = snapshot
+                .read_cell(definition, cell)
+                .with_context(|| format!("could not read source cell {space:?} {cell:?}"))?;
+            Ok((cell, source))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    for (_, source) in &sources {
+        stats.peak_source_height_samples = stats
+            .peak_source_height_samples
+            .max(source.terrain.cells.iter().map(|h| h.heights.len()).sum());
+        stats.peak_source_mask_bytes = stats.peak_source_mask_bytes.max(
+            source
+                .coverage
+                .cells
+                .iter()
+                .flat_map(|c| &c.tiles)
+                .map(|t| t.samples.len())
+                .sum(),
+        );
+        stats.peak_source_manual_objects =
+            stats.peak_source_manual_objects.max(source.objects.len());
+        stats.peak_source_road_spans = stats
+            .peak_source_road_spans
+            .max(source.roads.roads.spans.len());
+    }
+    parallel::map(&sources, |(cell, source)| -> Result<Option<RuntimeBuild>> {
+        let cell = *cell;
+        let Some(base) = source.source.clone() else {
+            plan.validate_coverage(&[cell], &source.coverage)?;
+            return Ok(None);
+        };
+        let compiled = plan
+            .compile_cell_with_terrain(
+                cell,
+                &source.coverage,
+                &source.roads.roads,
+                &source.terrain,
+                Default::default(),
+            )
+            .with_context(|| format!("could not compile source cell {space:?} {cell:?}"))?;
+        let revision = source
+            .coverage
+            .cells
+            .iter()
+            .find(|c| c.cell == cell)
+            .context("missing requested coverage cell")?
+            .revision;
+        let mut environment = CookedEnvironment::empty(catalog.clone(), compiled.input_fingerprint);
+        environment.push_cell(space, cell, i64::try_from(revision)?, compiled);
+        let mut local = project.clone();
+        local.cells.push(base);
+        local.objects = source.objects.clone();
+        build_compiled_runtime(local, environment).map(Some)
+    })
+    .into_iter()
+    .collect()
 }
 
 #[cfg(test)]
@@ -369,6 +483,58 @@ mod tests {
         drop(reader);
         let repeat = cook_project_with_report(&fixture.source(), &fixture.runtime()).unwrap();
         assert_eq!(report.manifest.content_hash, repeat.manifest.content_hash);
+        fixture.assert_no_staging_files();
+    }
+    #[test]
+    fn incremental_cook_recompiles_changed_cells_and_matches_a_full_cook() {
+        let project = road_demo::document();
+        let fixture = Fixture::new(&project);
+        let first = cook_project_with_report(&fixture.source(), &fixture.runtime()).unwrap();
+        assert!(!first.stats.incremental);
+        let unchanged = cook_project_with_report(&fixture.source(), &fixture.runtime()).unwrap();
+        assert!(unchanged.stats.incremental);
+        assert_eq!(unchanged.stats.terrain_cells, 0);
+        assert_eq!(unchanged.manifest.content_hash, first.manifest.content_hash);
+
+        // Paint one cell: it and the neighbours whose halo reads it are recompiled.
+        let record = project
+            .environment_cells
+            .iter()
+            .find(|r| r.space == project.default_world_space && r.cell == CellCoord { x: 2, z: 3 })
+            .unwrap();
+        let mut edited = record.clone();
+        let n = project.environments[0].mask_resolution as usize;
+        // Interior samples only: borders are shared with the neighbouring cells.
+        for y in n / 3..n / 2 {
+            for x in 1..n - 1 {
+                let sample = &mut edited.tiles[0].samples[y * n + x];
+                *sample = 255 - *sample;
+            }
+        }
+        assert!(matches!(
+            ProjectWriter::open(&fixture.source())
+                .unwrap()
+                .apply_dense_source_transaction(&[DenseSourceWrite::EnvironmentCoverage {
+                    expected_source_revision: Some(record.source_revision),
+                    record: edited,
+                }])
+                .unwrap(),
+            DenseSourceWriteTransactionResult::Committed(_)
+        ));
+        let incremental = cook_project_with_report(&fixture.source(), &fixture.runtime()).unwrap();
+        assert!(incremental.stats.incremental);
+        assert_eq!(incremental.stats.terrain_cells, 9);
+        assert_ne!(
+            incremental.manifest.content_hash,
+            first.manifest.content_hash
+        );
+        let full_path = fixture.dir.join("full.sqlite");
+        let full = cook_project_fresh(&fixture.source(), &full_path, None).unwrap();
+        assert!(!full.stats.incremental);
+        assert_eq!(
+            incremental.manifest.content_hash,
+            full.manifest.content_hash
+        );
         fixture.assert_no_staging_files();
     }
     #[test]
