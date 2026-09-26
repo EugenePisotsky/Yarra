@@ -45,8 +45,10 @@ pub use world_streaming::{
     WorldViewpoint, sample_resident_terrain_surface, spawn_collection_visual,
 };
 
+mod ocean;
+pub use ocean::{OceanPlugin, OceanSurface};
 mod start_view;
-pub use start_view::WorldStartView;
+pub use start_view::{WORLD_VIEW_DISTANCE, WorldStartView};
 mod gameplay;
 pub use gameplay::{
     GAME_DEPTH_PREPASS_ENABLED, GameCameraPlugin, GameInputEnabled, GameInputPlugin,

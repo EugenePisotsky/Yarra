@@ -1,0 +1,122 @@
+{
+  "question": "How much runtime storage does a cooked world need per km2, and how much do compact heightfields and a composite minimum level save?",
+  "fixture": "world-cook create-hill-fixture: 48x48 cells of 32 m (1.536 km square, 2.36 km2), 33x33 heights (1 m), Y -8..350 m; same source cooked by every run",
+  "device": "M2 Max, macOS, release yarra-world-cook, --terrain-materials assets, single run each",
+  "area_km2": 2.359296,
+  "runs": {
+    "base": {
+      "build": "5b6a30e (before)",
+      "composite_minimum_level": 0,
+      "cook_seconds": 69.66,
+      "file_bytes": 155594752,
+      "payload_bytes": {
+        "terrain_pages": 20960934,
+        "vegetation_pages": 2028262,
+        "terrain_nodes": 24221170,
+        "composites": 93374727
+      },
+      "composite_tiles": 3064,
+      "file_MB_per_km2": 65.9
+    },
+    "l0": {
+      "build": "feat/terrain-storage",
+      "composite_minimum_level": 0,
+      "cook_seconds": 69.96,
+      "file_bytes": 130121728,
+      "payload_bytes": {
+        "terrain_pages": 8991878,
+        "vegetation_pages": 2027946,
+        "terrain_nodes": 9691792,
+        "composites": 93369421
+      },
+      "composite_tiles": 3064,
+      "file_MB_per_km2": 55.2
+    },
+    "l1": {
+      "build": "feat/terrain-storage",
+      "composite_minimum_level": 1,
+      "cook_seconds": 61.87,
+      "file_bytes": 57745408,
+      "payload_bytes": {
+        "terrain_pages": 8991878,
+        "vegetation_pages": 2027946,
+        "terrain_nodes": 9691792,
+        "composites": 25354545
+      },
+      "composite_tiles": 760,
+      "file_MB_per_km2": 24.5
+    },
+    "l2": {
+      "build": "feat/terrain-storage",
+      "composite_minimum_level": 2,
+      "cook_seconds": 60.96,
+      "file_bytes": 38170624,
+      "payload_bytes": {
+        "terrain_pages": 8991878,
+        "vegetation_pages": 2027946,
+        "terrain_nodes": 9691792,
+        "composites": 6632216
+      },
+      "composite_tiles": 184,
+      "file_MB_per_km2": 16.2
+    }
+  },
+  "sqlite_page_size_probe": {
+    "note": "VACUUM after PRAGMA page_size; blobs above ~1 KB in WITHOUT ROWID tables spill to overflow pages, so no single page size wins",
+    "l0_MB": {
+      "4096": 129.8,
+      "8192": 156.0,
+      "16384": 144.5,
+      "32768": 138.7,
+      "65536": 253.6
+    },
+    "l2_MB": {
+      "4096": 37.9,
+      "8192": 59.9,
+      "16384": 44.0,
+      "32768": 30.8,
+      "65536": 37.9
+    }
+  },
+  "limitations": "Procedural smooth hills; eroded or imported terrain and noisier paint compress worse. File size includes ~10 MB of SQLite overflow-page overhead at 4 KiB pages. Cook times are single runs on a warm machine.",
+  "visual_check": {
+    "method": "yarra-app-game release, --render-repro landscape --render-frames 900 --render-ui-off, 2560x1440, hill views valley.ron and summit.ron, runtime l0 vs l2",
+    "valley": {
+      "mean_abs_diff_255": 0.081,
+      "pixels_over_8_percent": 0.18
+    },
+    "summit": {
+      "mean_abs_diff_255": 0.15,
+      "pixels_over_8_percent": 0.16
+    },
+    "summit_weather_clear": {
+      "mean_abs_diff_255": 0.138,
+      "pixels_over_8_percent": 0.12
+    },
+    "note": "Largest differences are the animated character; ground beyond 40 m is covered by grass and haze in these views, so bare ground at 40-150 m is not represented"
+  },
+  "authored_world_8m_cells": {
+    "area_km2": 0.016384,
+    "payload_MB": {
+      "before": {
+        "terrain_pages": 4.2,
+        "grass": 1.91,
+        "nodes": 2.72,
+        "composites": 12.98
+      },
+      "level0": {
+        "terrain_pages": 2.8,
+        "grass": 1.91,
+        "nodes": 0.9,
+        "composites": 12.98
+      },
+      "level2": {
+        "terrain_pages": 2.8,
+        "grass": 1.91,
+        "nodes": 0.9,
+        "composites": 0.76
+      }
+    },
+    "note": "copy of content/world.project.sqlite (schema 24) given the new profile column (schema 25) and cooked; the original was not modified"
+  }
+}

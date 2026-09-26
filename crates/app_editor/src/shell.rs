@@ -102,7 +102,7 @@ pub(crate) fn run() -> std::result::Result<(), String> {
             RuntimePublicationPlugin::new(project_database, runtime_database, asset_root),
         ))
         .add_plugins(PresetWorkspacePlugin)
-        .add_plugins(engine::TreeWindPlugin)
+        .add_plugins((engine::TreeWindPlugin, engine::OceanPlugin))
         .configure_sets(
             EguiPrimaryContextPass,
             (

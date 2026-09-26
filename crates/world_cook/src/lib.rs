@@ -17,6 +17,7 @@ pub use streaming_cook::{
 };
 pub use terrain_fixture::create_mountain_fixture;
 mod hill_fixture;
+mod island_fixture;
 pub use hill_fixture::create_hill_fixture;
 
 use std::{
@@ -30,12 +31,12 @@ use anyhow::{Context, Result, bail};
 use glam::Vec2;
 use world::{
     AssetId, CellCoord, DEFAULT_CELL_SIZE, GameplayObjectInstance, GameplayObjectsPage,
-    MAX_TERRAIN_HEIGHTFIELD_RESOLUTION, MAX_TERRAIN_SURFACES_PER_CELL, MAX_TERRAIN_WEIGHT_PAGES,
-    MAX_TERRAIN_WEIGHT_RESOLUTION, ObjectActivationPolicy, ObjectDefinitionId, PageCodec,
-    PageDomain, PageKey, PagePayload, RUNTIME_SCHEMA_VERSION, StableObjectId, StaticObjectInstance,
-    StaticObjectsPage, TerrainHeightfieldPage, TerrainProfile, TerrainSurface, TerrainSurfaceId,
-    TerrainTextureLayer, TerrainTextureSet, TerrainTextureSetId, TerrainWeightPage, WorldSpaceId,
-    encode_page_payload,
+    MAX_TERRAIN_HEIGHTFIELD_RESOLUTION, MAX_TERRAIN_NODE_LEVEL, MAX_TERRAIN_SURFACES_PER_CELL,
+    MAX_TERRAIN_WEIGHT_PAGES, MAX_TERRAIN_WEIGHT_RESOLUTION, ObjectActivationPolicy,
+    ObjectDefinitionId, PageCodec, PageDomain, PageKey, PagePayload, RUNTIME_SCHEMA_VERSION,
+    StableObjectId, StaticObjectInstance, StaticObjectsPage, TerrainHeightfieldPage,
+    TerrainProfile, TerrainSurface, TerrainSurfaceId, TerrainTextureLayer, TerrainTextureSet,
+    TerrainTextureSetId, TerrainWeightPage, WorldSpaceId, encode_page_payload,
 };
 use world_db::{
     AssetVariantRecord, EncodedPage, PageDependencyRecord, PageObjectDefinitionRecord,
@@ -68,17 +69,11 @@ const DEMO_TERRAIN_MAXIMUM_HEIGHT: f32 = 4.0;
 mod road_demo;
 pub use road_demo::create_road_demo_project;
 
-/// Initialize a fresh editable world at the grid used by the road/layer authoring tools.
+/// Initialize the default world: for now the Phase 0 island, with start views in a sibling
+/// `.views` directory. The small 8 m authoring world remains `create-road-demo`.
 /// Existing projects are never replaced by initialization or cooking.
 pub fn create_world_project(path: &Path) -> Result<()> {
-    let mut document = road_demo::document();
-    for space in &mut document.world_spaces {
-        if let Some(name) = space.name.strip_prefix("demo-") {
-            space.name = name.to_owned();
-        }
-    }
-    write_project_database(path, &document)
-        .with_context(|| format!("failed to create authoring world at {}", path.display()))
+    island_fixture::create_island_world(path)
 }
 
 pub fn create_demo_project(path: &Path) -> Result<()> {
@@ -847,6 +842,7 @@ fn validate_terrain_profile(profile: &TerrainProfile) -> Result<()> {
         || profile.macro_contrast < 0.0
         || !profile.macro_albedo_strength.is_finite()
         || !(0.0..=0.5).contains(&profile.macro_albedo_strength)
+        || profile.composite_minimum_level > MAX_TERRAIN_NODE_LEVEL
     {
         bail!("terrain profile for {:?} is invalid", profile.space);
     }
@@ -976,6 +972,7 @@ fn hash_terrain_catalog(
         }
         hasher.update(&profile.macro_contrast.to_bits().to_le_bytes());
         hasher.update(&profile.macro_albedo_strength.to_bits().to_le_bytes());
+        hasher.update(&[profile.composite_minimum_level]);
     }
     for slot in &environment.slots {
         hasher.update(&slot.space.0.to_le_bytes());
@@ -1126,6 +1123,7 @@ fn demo_project_document() -> ProjectDocument {
         cell_size: DEFAULT_CELL_SIZE,
         minimum_y: DEMO_TERRAIN_MINIMUM_HEIGHT,
         maximum_y: DEMO_TERRAIN_MAXIMUM_HEIGHT,
+        sea_level: None,
     };
     let interior = WorldSpaceRecord {
         atmosphere: world::atmosphere::AtmosphereProfile {
@@ -1138,6 +1136,7 @@ fn demo_project_document() -> ProjectDocument {
         cell_size: DEFAULT_CELL_SIZE,
         minimum_y: 0.0,
         maximum_y: 0.0,
+        sea_level: None,
     };
     let overworld_id = overworld.id;
     let interior_id = interior.id;
@@ -1286,6 +1285,7 @@ fn demo_project_document() -> ProjectDocument {
                 macro_scales: [7.7, 31.5, 235.0],
                 macro_contrast: 2.5,
                 macro_albedo_strength: 0.395,
+                composite_minimum_level: 0,
             },
             TerrainProfile {
                 space: interior_id,
@@ -1294,6 +1294,7 @@ fn demo_project_document() -> ProjectDocument {
                 macro_scales: [7.7, 31.5, 235.0],
                 macro_contrast: 2.5,
                 macro_albedo_strength: 0.395,
+                composite_minimum_level: 0,
             },
         ],
         presets,
@@ -1724,6 +1725,7 @@ mod tests {
             macro_scales: [7.7, 31.5, 235.0],
             macro_contrast: 0.0,
             macro_albedo_strength: 0.5,
+            composite_minimum_level: MAX_TERRAIN_NODE_LEVEL,
         };
         assert!(validate_terrain_profile(&profile).is_ok());
 
@@ -1732,6 +1734,10 @@ mod tests {
 
         profile.weight_resolution = MAX_TERRAIN_WEIGHT_RESOLUTION;
         profile.macro_albedo_strength = 0.500_1;
+        assert!(validate_terrain_profile(&profile).is_err());
+
+        profile.macro_albedo_strength = 0.5;
+        profile.composite_minimum_level = MAX_TERRAIN_NODE_LEVEL + 1;
         assert!(validate_terrain_profile(&profile).is_err());
     }
 }

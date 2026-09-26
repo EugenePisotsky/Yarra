@@ -96,7 +96,8 @@ pub(in crate::world_streaming) enum TerrainMaterialQuery {
 }
 #[derive(Debug)]
 pub(in crate::world_streaming) enum TerrainMaterialReply {
-    Presence(bool),
+    /// The finest published composite level, or `None` without baked ground.
+    Presence(Option<u8>),
     Descriptors(Vec<TerrainCompositeDescriptor>),
     Tile(EncodedTerrainComposite),
 }

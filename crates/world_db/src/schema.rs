@@ -20,7 +20,8 @@ CREATE TABLE world_spaces (
     minimum_y REAL NOT NULL,
     maximum_y REAL NOT NULL CHECK(maximum_y >= minimum_y),
     atmosphere BLOB NOT NULL CHECK(length(atmosphere) BETWEEN 1 AND 4096),
-    atmosphere_revision INTEGER NOT NULL CHECK(atmosphere_revision > 0)
+    atmosphere_revision INTEGER NOT NULL CHECK(atmosphere_revision > 0),
+    sea_level REAL CHECK(sea_level IS NULL OR sea_level BETWEEN minimum_y AND maximum_y)
 ) STRICT;
 
 CREATE TABLE project_settings (
@@ -78,7 +79,8 @@ CREATE TABLE world_space_terrain_profiles (
     macro_medium_scale REAL NOT NULL CHECK(macro_medium_scale > 0.0),
     macro_large_scale REAL NOT NULL CHECK(macro_large_scale > 0.0),
     macro_contrast REAL NOT NULL CHECK(macro_contrast >= 0.0),
-    macro_albedo_strength REAL NOT NULL CHECK(macro_albedo_strength BETWEEN 0.0 AND 0.5)
+    macro_albedo_strength REAL NOT NULL CHECK(macro_albedo_strength BETWEEN 0.0 AND 0.5),
+    composite_minimum_level INTEGER NOT NULL CHECK(composite_minimum_level BETWEEN 0 AND 30)
 ) STRICT;
 
 CREATE TABLE terrain_cell_heightfields (
@@ -289,7 +291,7 @@ CREATE TABLE road_junction_cells (
 ) STRICT;
 CREATE INDEX road_junction_cells_id ON road_junction_cells(junction_id);
 
-PRAGMA user_version = 24;
+PRAGMA user_version = 25;
 "#;
 
 pub const RUNTIME_SCHEMA: &str = r#"
@@ -303,7 +305,8 @@ CREATE TABLE world_spaces (
     minimum_y REAL NOT NULL,
     maximum_y REAL NOT NULL CHECK(maximum_y >= minimum_y),
     atmosphere BLOB NOT NULL CHECK(length(atmosphere) BETWEEN 1 AND 4096),
-    atmosphere_revision INTEGER NOT NULL CHECK(atmosphere_revision > 0)
+    atmosphere_revision INTEGER NOT NULL CHECK(atmosphere_revision > 0),
+    sea_level REAL CHECK(sea_level IS NULL OR sea_level BETWEEN minimum_y AND maximum_y)
 ) STRICT;
 
 CREATE TABLE runtime_metadata (
@@ -372,7 +375,8 @@ CREATE TABLE world_space_terrain_profiles (
     macro_medium_scale REAL NOT NULL CHECK(macro_medium_scale > 0.0),
     macro_large_scale REAL NOT NULL CHECK(macro_large_scale > 0.0),
     macro_contrast REAL NOT NULL CHECK(macro_contrast >= 0.0),
-    macro_albedo_strength REAL NOT NULL CHECK(macro_albedo_strength BETWEEN 0.0 AND 0.5)
+    macro_albedo_strength REAL NOT NULL CHECK(macro_albedo_strength BETWEEN 0.0 AND 0.5),
+    composite_minimum_level INTEGER NOT NULL CHECK(composite_minimum_level BETWEEN 0 AND 30)
 ) STRICT;
 
 CREATE TABLE cell_pages (
@@ -505,5 +509,5 @@ CREATE TABLE terrain_material_spaces (
     world_space_id INTEGER PRIMARY KEY REFERENCES world_spaces(id),
     tile_count INTEGER NOT NULL CHECK(tile_count>=0)
 ) STRICT;
-PRAGMA user_version = 20;
+PRAGMA user_version = 21;
 "#;

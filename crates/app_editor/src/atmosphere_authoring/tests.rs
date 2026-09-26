@@ -41,6 +41,7 @@ fn preview_is_transient_and_color_drag_is_one_undo_across_a_save() {
         cell_size: 32.0,
         minimum_y: 0.0,
         maximum_y: 1.0,
+        sea_level: None,
         atmosphere: Default::default(),
         atmosphere_revision: 1,
     };

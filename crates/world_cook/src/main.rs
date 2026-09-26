@@ -45,12 +45,15 @@ fn main() -> Result<()> {
         || command == "create-road-demo"
         || command == "create-mountain-fixture"
         || command == "create-hill-fixture"
+        || command == "create-island-fixture"
     {
         let project = PathBuf::from(arguments.next().context("expected a new PROJECT_DB path")?);
         if arguments.next().is_some() {
             bail!("usage: yarra-world-cook {command} PROJECT_DB");
         }
-        if command == "create-hill-fixture" {
+        if command == "create-island-fixture" {
+            yarra_world_cook::create_world_project(&project)?;
+        } else if command == "create-hill-fixture" {
             yarra_world_cook::create_hill_fixture(&project)?;
         } else if command == "create-mountain-fixture" {
             yarra_world_cook::create_mountain_fixture(&project)?;
@@ -101,7 +104,7 @@ fn main() -> Result<()> {
     }
     if command != "cook" && command != "init" {
         bail!(
-            "unknown command {command:?}; expected `init`, `cook`, `create-demo`, `create-road-demo`, `create-mountain-fixture`, `create-hill-fixture`, `export-vegetation`, `import-vegetation` or `import-assets`"
+            "unknown command {command:?}; expected `init`, `cook`, `create-demo`, `create-road-demo`, `create-mountain-fixture`, `create-hill-fixture`, `create-island-fixture`, `export-vegetation`, `import-vegetation` or `import-assets`"
         );
     }
 

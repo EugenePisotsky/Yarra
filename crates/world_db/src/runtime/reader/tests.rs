@@ -7,7 +7,7 @@ fn runtime_cell_windows_are_bounded_and_seek_both_spatial_axes() {
     connection.execute_batch(schema::RUNTIME_SCHEMA).unwrap();
     connection
         .execute(
-            "INSERT INTO world_spaces VALUES (1,'test',8,-1,1,?1,1)",
+            "INSERT INTO world_spaces VALUES (1,'test',8,-1,1,?1,1,NULL)",
             [atmosphere::encode(&Default::default()).unwrap()],
         )
         .unwrap();

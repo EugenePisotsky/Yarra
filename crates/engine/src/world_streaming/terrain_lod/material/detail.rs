@@ -112,6 +112,7 @@ impl TerrainLodStream {
             view,
             size as f64,
             DETAIL_SLOTS,
+            self.composites.minimum_level,
         );
         cache.desired = plan.keys.iter().copied().collect();
         cache.limited = plan.limited;

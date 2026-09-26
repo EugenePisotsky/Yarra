@@ -5,6 +5,7 @@ pub mod weather;
 pub use terrain_material::*;
 pub mod terrain_hierarchy;
 pub use terrain_hierarchy::*;
+mod terrain_heightfield_codec;
 mod terrain_preview;
 pub use terrain_preview::TerrainPreviewProducts;
 mod view_bookmark;
@@ -22,13 +23,24 @@ pub const DEFAULT_RUNTIME_DATABASE: &str = "generated/world.runtime.sqlite";
 
 pub const DEFAULT_CELL_SIZE: f32 = 32.0;
 pub const MAX_DECODED_PAGE_BYTES: u64 = 64 * 1024 * 1024;
-pub const PROJECT_SCHEMA_VERSION: i64 = 24;
-pub const RUNTIME_SCHEMA_VERSION: i64 = 20;
-pub const PAGE_PAYLOAD_VERSION: u16 = 8;
+pub const PROJECT_SCHEMA_VERSION: i64 = 25;
+pub const RUNTIME_SCHEMA_VERSION: i64 = 21;
+pub const PAGE_PAYLOAD_VERSION: u16 = 9;
 pub const MAX_TERRAIN_SURFACES_PER_CELL: usize = 8;
 pub const MAX_TERRAIN_WEIGHT_PAGES: usize = 2;
 pub const MAX_TERRAIN_WEIGHT_RESOLUTION: u16 = 257;
 pub const MAX_TERRAIN_HEIGHTFIELD_RESOLUTION: u16 = 257;
+/// Terrain heights are whole multiples of this step (1/1024 m) on one grid shared by every
+/// page. Scaling by a power of two is exact, so rounding never depends on the page.
+pub const TERRAIN_HEIGHT_STEP: f32 = 1.0 / 1024.0;
+/// Precision of each octahedral terrain normal axis (about 0.05°). The low bits of the
+/// stored `i16` are zero.
+pub const TERRAIN_NORMAL_BITS: u32 = 12;
+
+/// Rounds a height to the shared terrain grid. Equal inputs give equal outputs on every page.
+pub fn quantize_terrain_height(height: f32) -> f32 {
+    (height / TERRAIN_HEIGHT_STEP).round() * TERRAIN_HEIGHT_STEP
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct WorldSpaceId(pub i64);
@@ -301,6 +313,10 @@ pub struct TerrainProfile {
     pub macro_scales: [f32; 3],
     pub macro_contrast: f32,
     pub macro_albedo_strength: f32,
+    /// Finest hierarchy level whose baked ground composites are published. Finer tiles are
+    /// still computed to filter their parents, but only roots are stored below this level.
+    /// Zero stores every level; each step up quarters the finest stored texel density.
+    pub composite_minimum_level: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -320,9 +336,12 @@ pub struct TerrainRenderPage {
 
 /// Endpoint-inclusive terrain samples for one streamed cell.
 ///
-/// Heights retain source f32 precision even in worlds with kilometre-scale relief. Cookers
-/// must evaluate shared endpoints identically; there is no per-page height quantization.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// Constructors round heights to [`TERRAIN_HEIGHT_STEP`] and normals to
+/// [`TERRAIN_NORMAL_BITS`]. The height grid is world-wide, never per page, so cookers that
+/// evaluate shared endpoints identically still produce bit-identical edges at any altitude.
+/// Serialization stores the rounded values compactly and round-trips them exactly; see
+/// `terrain_heightfield_codec`.
+#[derive(Debug, Clone, PartialEq)]
 pub struct TerrainHeightfield {
     pub resolution: u16,
     pub heights: Vec<f32>,
@@ -404,9 +423,15 @@ impl TerrainHeightfield {
             return Err(TerrainHeightfieldError::HeightOutsideRange);
         }
 
+        // The range is checked before rounding; bounds off the grid may be exceeded by at most
+        // half a step.
         let heightfield = Self {
             resolution,
-            heights: heights.to_vec(),
+            heights: heights
+                .iter()
+                .copied()
+                .map(quantize_terrain_height)
+                .collect(),
             normals_oct: normals
                 .iter()
                 .copied()
@@ -485,6 +510,8 @@ impl TerrainHeightfield {
 }
 
 fn encode_octahedral_normal(normal: [f32; 3]) -> [i16; 2] {
+    const UNIT: f32 = ((1 << (TERRAIN_NORMAL_BITS - 1)) - 1) as f32;
+    const SHIFT: u32 = 16 - TERRAIN_NORMAL_BITS;
     let normal = normalize3(normal);
     let inverse_l1 = (normal[0].abs() + normal[1].abs() + normal[2].abs()).recip();
     let mut encoded = [normal[0] * inverse_l1, normal[2] * inverse_l1];
@@ -495,8 +522,8 @@ fn encode_octahedral_normal(normal: [f32; 3]) -> [i16; 2] {
         ];
     }
     [
-        (encoded[0].clamp(-1.0, 1.0) * f32::from(i16::MAX)).round() as i16,
-        (encoded[1].clamp(-1.0, 1.0) * f32::from(i16::MAX)).round() as i16,
+        ((encoded[0].clamp(-1.0, 1.0) * UNIT).round() as i16) << SHIFT,
+        ((encoded[1].clamp(-1.0, 1.0) * UNIT).round() as i16) << SHIFT,
     ]
 }
 
@@ -793,8 +820,16 @@ mod tests {
     fn mountain_range_preserves_shallow_road_relief() {
         let heights = [1500.0, 1499.995, 1499.99, 1500.0];
         let field = TerrainHeightfield::from_heights(2, &heights, -500.0, 2500.0, 8.0).unwrap();
-        assert_eq!(field.heights, heights);
-        assert_eq!(field.height_bounds(), [1499.99, 1500.0]);
+        // Millimetre rounding keeps 5 mm steps at 1.5 km, where a per-page 16-bit range
+        // over this world's 3 km would round to 4.6 cm.
+        for (stored, source) in field.heights.iter().zip(heights) {
+            assert!((stored - source).abs() <= TERRAIN_HEIGHT_STEP / 2.0);
+        }
+        assert!(field.heights[0] > field.heights[1] && field.heights[1] > field.heights[2]);
+        assert_eq!(
+            field.height_bounds(),
+            [quantize_terrain_height(1499.99), 1500.0]
+        );
         let mut invalid = field.clone();
         invalid.heights[1] = f32::NAN;
         assert!(invalid.validate().is_err());

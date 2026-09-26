@@ -122,6 +122,7 @@ fn project() -> ProjectDocument {
             cell_size: 8.0,
             minimum_y: 0.0,
             maximum_y: 0.0,
+            sea_level: None,
         }],
         vegetation_catalog: Some(vegetation::fixtures::reference_catalog()),
         cells: vec![SourceCellRecord {

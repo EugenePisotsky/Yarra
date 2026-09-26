@@ -54,6 +54,7 @@ pub(super) fn plan(
     view: &LodView,
     size: f64,
     capacity: usize,
+    minimum_level: u8,
 ) -> Plan {
     let mut output = Plan {
         keys: vec![],
@@ -71,6 +72,9 @@ pub(super) fn plan(
         .max_by(|(_, a), (_, b)| a.0.total_cmp(&b.0).then_with(|| b.1.cmp(&a.1)))
     {
         let (pixels, key) = frontier.swap_remove(i);
+        if key.0.level <= minimum_level {
+            continue;
+        }
         let Some(children) = key.0.children().ok().flatten() else {
             continue;
         };

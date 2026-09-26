@@ -39,6 +39,7 @@ fn source(cell: CellCoord) -> NearSource {
             macro_scales: [7., 19., 43.],
             macro_contrast: 1.,
             macro_albedo_strength: 0.3,
+            composite_minimum_level: 0,
         },
         texture_set: TerrainTextureSet {
             id: set,

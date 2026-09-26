@@ -155,6 +155,31 @@ Marginal costs below come from uncapped timed profiles (`--profile-fps 0`, GPU-b
 | Grass / clouds | Grass 0.7–1.0 ms (9.1–9.2 → 8.2–8.4 ms with `--profile-grass off`); clouds ~0.1 ms. A first grass figure of ~0.2 ms and early bloom figures came from switching F1 settings inside a profile, which re-applies its own grass and bloom presentation; use the profile flags for those. |
 | Atmosphere tables | Near-free table settings changed nothing measurable: the compute runs beside shadow rendering. Caching the static tables is not worth owning Bevy's table pass. |
 
+## World storage — September 26
+
+Question: how much cooked data a world needs per km². The authored 8 m world measured ~1.3 GB/km², far too much for a ~40 km² island. Main fixture: `create-hill-fixture` (48×48 cells of 32 m, 2.36 km², 1 m heights, Y −8..350 m). Every run cooked the same source once, on M2 Max with a release build and material bake. [Summary](performance/20260926-world-storage/summary.json).
+
+| Change | Decision / observation |
+| --- | --- |
+| Where the bytes went | Per 8 m authored cell: 16 KB terrain page (f32 heights, 16-bit normals, 12.5 cm weights), 7.5 KB grass fields, 8 KB leaf node repeating the page's heights and normals, and a 38 KB composite (12.5 cm texels), plus about a third again for parent levels. Composites were ~60%; float heights barely compress under zstd. |
+| Compact heightfields | **Retained.** Heights on a world-wide 1/1024 m grid, 12-bit octahedral normals, planar-predicted varint steps. Hill: terrain pages 21.0 → 9.0 MB, nodes 24.2 → 9.7 MB, file 155.5 → 130.1 MB (66 → 55 MB/km²); cook 69.7 → 70.0 s. Authored world: pages 4.2 → 2.8 MB, nodes 2.7 → 0.9 MB. The previous contract kept source f32 heights so shallow road relief survives on mountains, where a 16-bit range per page would round it to centimetres; the global grid keeps millimetres at any altitude and keeps shared edges identical. |
+| Composite minimum level | **Retained, per world, default 0 (unchanged output).** Hill level 1: 3064 → 760 tiles, composites 93.4 → 25.4 MB, file 57.7 MB (24 MB/km²). Level 2: 184 tiles, 6.6 MB, file 38.2 MB (16 MB/km²); cook 61 s. Coarser tiles are byte-identical to a full cook (test). Authored world at level 2: 21.8 → 6.4 MB of payload (~0.39 GB/km²), now dominated by 12.5 cm weights and grass fields. Native release renders of the hill `valley` and `summit` bookmarks (`landscape` repro, frame 900, 2560×1440; summit also with `--weather clear`) differ from level 0 by 0.08–0.15/255 on average. At most 0.2% of pixels differ by more than 8/255, mostly the animated character. There, grass and haze cover the ground beyond the 40 m near range. Bare rock, sand or roads at 40–150 m will show the coarser texels until composites are generated at runtime. |
+| SQLite layout | **Open.** About 10 MB of the 38 MB level-2 hill file is row overhead: 3–4 KB blobs spill to overflow pages. No page size from 4 to 64 KiB wins for both runs; rowid tables recover only ~3 MB. Packing several cells per row is the likely fix. |
+| Remaining duplication | **Open.** Leaf heights and normals are still stored in both the cell page and the level-0 node (~3 KB per 32 m cell each). Legacy terrain, CPU sources and editor previews read the page copy. |
+
+## Island Phase 0 — September 27
+
+Question: can the engine host, cook, stream and draw a real island with distant landscape? Default world from `init`: an 8,192 m square of 32 m cells (65,536), 27.7 km² of land, 762 m summit, sea level 0 and composite minimum level 2. M2 Max, release builds. [Summary and screenshots](performance/20260927-island-phase0/summary.json).
+
+| Change | Decision / observation |
+| --- | --- |
+| Cook | **Works at this size.** `init` took 432 s including ~28 s of source generation; peak memory 665 MB. Leaf composites now evaluate on all cores in batches of 32 (hill material cook 61 → 17 s, identical content hash); the rest of the cook is single-threaded. Source 531 MB (raw float heights and masks); runtime 789 MB for 445 MB of payload, the rest SQLite overflow pages. Editor Save & Publish recooks everything, so publishing this world takes minutes. |
+| View distance | **Retained.** Bevy's default 1 km far plane had culled all distant terrain. World views now cull at 20 km. Terrain cost stays bounded by the screen-error LOD. The massif reads clearly through haze from 3 km. |
+| Terrain LOD budget | **Open.** Views over the island hit the 512-patch / 1M-triangle budget (spawn 2.4 px, summit 4.7 px, hills 9.3 px maximum visible error; beach 1.9 px, unlimited). The planner's pairwise checks (`max_work`) limit simply raising it. Knife-edge ridges from folded noise showed saw-tooth silhouettes at coarse levels (9,335 px error from the summit); rounding the crests in the generator fixed that. |
+| Haze streaks | **Open, found by the new view distance.** Coloured one-to-four-pixel horizontal streaks appear on hazy distant terrain. They disappear with 100 km visibility and persist with clouds off, so they come from the aerial-perspective transmittance segment: Bevy's `sample_transmittance_lut_segment` divides tiny half-float LUT values for ground-hitting rays. It is probably the same cause as the earlier weather NaN streaks and the unexplained magenta marks at 20 km. The fix is our own segment transmittance in the sky composite. [Crop](performance/20260927-island-phase0/haze-streaks-crop.jpg). |
+| Frame rate | Uncapped `landscape` profiles, 2560×1440 native, 4× MSAA, grass on: island 93–99 fps (update p95 ~21–22 ms), hill fixture in the same build 137–152 fps (p95 ~14 ms). Update intervals, not GPU attribution; the high p95 also occurs on the hill. |
+| Sea | **Placeholder retained.** An opaque, glossy plane at sea level follows the view; the terrain forms the shore. There are no waves, foam, transparency or swimming. |
+
 ## Open gates and maintenance
 
 The remaining gates are sustained terrain/whole-game power, Temporal cost and motion quality, field-scale grass lighting, target-PC acceptance, and physical-phone heat/60-FPS delivery. Keep correctness references until their replacements pass the relevant gate. Existing counters often identify less work without demonstrating better delivered frames or lower power.

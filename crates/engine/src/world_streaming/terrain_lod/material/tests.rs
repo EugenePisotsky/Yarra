@@ -59,12 +59,12 @@ fn declared_absence_is_distinct_from_missing_tiles_and_stale_replies() {
     };
     stream.receive(
         request_id + 10,
-        Ok(TerrainReply::Material(Reply::Presence(true))),
+        Ok(TerrainReply::Material(Reply::Presence(Some(0)))),
     );
     assert_eq!(stream.composites.available, None);
     stream.receive(
         request_id,
-        Ok(TerrainReply::Material(Reply::Presence(false))),
+        Ok(TerrainReply::Material(Reply::Presence(None))),
     );
     stream.prepare_materials(&worker, MAX_MATERIAL_BYTES);
     assert!(requests.is_empty());
@@ -153,6 +153,7 @@ fn texture_demand_refines_flat_geometry_and_respects_altitude_and_capacity() {
         &view(40.),
         32.,
         128,
+        0,
     );
     let high = selection::plan(
         &[root.0],
@@ -161,6 +162,7 @@ fn texture_demand_refines_flat_geometry_and_respects_altitude_and_capacity() {
         &view(8000.),
         32.,
         128,
+        0,
     );
     assert!(low.keys.iter().any(|k| k.0.level == 0));
     assert!(
@@ -174,6 +176,7 @@ fn texture_demand_refines_flat_geometry_and_respects_altitude_and_capacity() {
         &view(40.),
         32.,
         4,
+        0,
     );
     assert!(limited.limited && limited.keys.len() <= 4);
     for key in &low.keys {
@@ -192,7 +195,59 @@ fn texture_demand_refines_flat_geometry_and_respects_altitude_and_capacity() {
         &view(40.),
         32.,
         128,
+        0,
     );
     assert!(loading.keys.is_empty());
     assert_eq!(loading.metadata.len(), 4);
+}
+
+#[test]
+fn texture_demand_stops_at_the_finest_published_level() {
+    let root = TerrainMaterialKey(TerrainNodeKey {
+        space: WorldSpaceId(1),
+        x: -1,
+        z: 0,
+        level: 3,
+    });
+    let mut descriptors = BTreeMap::new();
+    let mut pending = vec![root];
+    while let Some(key) = pending.pop() {
+        if key.0.level > 2 {
+            pending.extend(key.0.children().unwrap().unwrap().map(TerrainMaterialKey));
+        }
+        descriptors.insert(
+            key,
+            TerrainCompositeDescriptor {
+                key,
+                fingerprint: [0; 32],
+                checksum: [0; 32],
+                encoded_bytes: 1,
+                decoded_bytes: 1,
+                gpu_bytes: TerrainComposite::gpu_bytes() as u64,
+                height_bounds: [0., 0.],
+            },
+        );
+    }
+    let eye = DVec3::new(-64., 40., 64.);
+    let view = LodView {
+        clip_from_world: DMat4::perspective_rh(1., 1., 0.1, 10000.)
+            * DMat4::look_at_rh(eye, DVec3::new(-64., 0., 64.), DVec3::Z),
+        viewport: [800, 800],
+        contact_position: eye,
+    };
+    let plan = selection::plan(
+        &[root.0],
+        &descriptors,
+        &BTreeSet::new(),
+        &view,
+        32.,
+        128,
+        2,
+    );
+    assert!(!plan.keys.is_empty());
+    assert!(plan.keys.iter().all(|k| k.0.level == 2));
+    assert!(
+        plan.metadata.is_empty(),
+        "unpublished finer tiles are never requested"
+    );
 }

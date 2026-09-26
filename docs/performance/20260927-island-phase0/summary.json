@@ -1,0 +1,71 @@
+{
+  "question": "Phase 0: can the engine host, cook, stream and draw an island world with distant landscape?",
+  "world": "world-cook init (island_fixture.rs): 8,192 m square of 32 m cells (65,536), 27.7 km2 of land, 762 m summit, sea level 0, 1 m heights and paint, composite minimum level 2",
+  "device": "M2 Max, macOS, release builds",
+  "cook": {
+    "init_seconds": 432,
+    "note": "source generation ~28 s plus cook; leaf composites evaluated on 12 cores; peak memory 665 MB",
+    "source_MB": 531,
+    "runtime_MB": 789,
+    "runtime_payload_MB": {
+      "terrain_pages": 134.5,
+      "vegetation_pages": 43.3,
+      "terrain_nodes": 146.5,
+      "composites": 120.3
+    },
+    "roots": "4 at level 7",
+    "composite_tiles": 5460,
+    "hill_parallel_bake": "hill fixture material cook 61 s -> 17 s with an identical content hash"
+  },
+  "profiles": {
+    "method": "yarra-app-game --render-repro landscape --profile-seconds 10 --profile-warmup 8 --profile-fps 0, 2560x1440 native, 4x MSAA, grass on, windowed; update intervals, not GPU time",
+    "island": {
+      "spawn": {
+        "windows": 10,
+        "update_fps_mean": 93.0,
+        "update_p95_ms_median": 22.4
+      },
+      "beach": {
+        "windows": 10,
+        "update_fps_mean": 95.4,
+        "update_p95_ms_median": 22.3
+      },
+      "summit": {
+        "windows": 10,
+        "update_fps_mean": 98.8,
+        "update_p95_ms_median": 21.3
+      },
+      "hills": {
+        "windows": 10,
+        "update_fps_mean": 96.1,
+        "update_p95_ms_median": 20.8
+      }
+    },
+    "hill_same_build": {
+      "summit": {
+        "windows": 10,
+        "update_fps_mean": 137.2,
+        "update_p95_ms_median": 14.5
+      },
+      "valley": {
+        "windows": 10,
+        "update_fps_mean": 151.7,
+        "update_p95_ms_median": 14.3
+      }
+    }
+  },
+  "terrain_lod": {
+    "spawn": "511 patches / 1,046,528 triangles, budget limited, max visible error 2.4 px",
+    "summit": "511 / 1,046,528, budget limited, 4.7 px (9,335 px before rounding ridge crests)",
+    "hills": "511 / 1,046,528, budget limited, 9.3 px",
+    "beach": "400 / 819,200, not limited, 1.9 px"
+  },
+  "findings": [
+    "Distant terrain beyond 1 km was never drawn before: Bevy's default far plane culled it. World views now cull at 20 km.",
+    "Coloured horizontal streaks in hazy distant terrain vanish with 100 km visibility and persist with clouds off: they come from the aerial-perspective transmittance segment (Bevy sample_transmittance_lut_segment on ground-hitting rays), not terrain.",
+    "Views over the whole island saturate the terrain LOD budget (512 patches, 1M triangles); the planner's pairwise checks limit raising it.",
+    "Knife-edge ridges from folded noise aliased into saw-tooth silhouettes at coarse levels; rounded crests fixed it.",
+    "The runtime file is 789 MB for 445 MB of payload: SQLite overflow pages for 1-4 KB blobs."
+  ],
+  "limitations": "Single short runs, windowed, display-paced update intervals; not GPU attribution, power or sustained thermals. Grass-covered procedural island without trees, sand or rock textures."
+}

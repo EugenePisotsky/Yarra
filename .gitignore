@@ -5,6 +5,7 @@ __pycache__/
 /assets/local/
 /assets/generated/
 /content/*.project.sqlite
+/content/*.project.views/
 *.sqlite-wal
 *.sqlite-shm
 *.sqlite-journal

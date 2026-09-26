@@ -105,11 +105,15 @@ fn run() -> Result<(), String> {
         .map_or(0, |elapsed| elapsed.as_nanos() as u64);
     app.insert_resource(engine::GameWeather::new(options.weather, weather_seed))
         .add_plugins(engine::GameWeatherPlugin);
-    app.add_plugins((WorldVegetationPlugin, engine::TreeWindPlugin))
-        .configure_sets(
-            Update,
-            engine::WorldVegetationSystems.after(runtime_settings::RuntimeSettingsApply),
-        );
+    app.add_plugins((
+        WorldVegetationPlugin,
+        engine::TreeWindPlugin,
+        engine::OceanPlugin,
+    ))
+    .configure_sets(
+        Update,
+        engine::WorldVegetationSystems.after(runtime_settings::RuntimeSettingsApply),
+    );
 
     app.world_mut()
         .resource_mut::<vegetation_render::VegetationLighting>()

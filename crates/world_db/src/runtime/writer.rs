@@ -31,8 +31,8 @@ fn write_runtime_header(
     let manifest = &build.manifest;
     for space in &manifest.world_spaces {
         transaction.execute(
-            "INSERT INTO world_spaces(id, name, cell_size, minimum_y, maximum_y, atmosphere, atmosphere_revision) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO world_spaces(id, name, cell_size, minimum_y, maximum_y, atmosphere, atmosphere_revision, sea_level) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 space.id.0,
                 space.name,
@@ -40,7 +40,8 @@ fn write_runtime_header(
                 space.minimum_y,
                 space.maximum_y,
                 atmosphere::encode(&space.atmosphere)?,
-                space.atmosphere_revision
+                space.atmosphere_revision,
+                space.sea_level
             ],
         )?;
     }

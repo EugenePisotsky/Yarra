@@ -228,6 +228,7 @@ pub struct WorldSpaceInfo {
     pub cell_size: f32,
     pub minimum_y: f32,
     pub maximum_y: f32,
+    pub sea_level: Option<f32>,
 }
 
 #[derive(Resource, Debug, Default, Clone)]
@@ -481,6 +482,7 @@ fn receive_database_results(
                             cell_size: space.cell_size,
                             minimum_y: space.minimum_y,
                             maximum_y: space.maximum_y,
+                            sea_level: space.sea_level,
                         })
                         .collect();
                     catalog.vegetation = manifest.vegetation_catalog.clone();
@@ -601,6 +603,7 @@ fn adopt_runtime_manifest(
             cell_size: space.cell_size,
             minimum_y: space.minimum_y,
             maximum_y: space.maximum_y,
+            sea_level: space.sea_level,
         })
         .collect();
     catalog.vegetation = manifest.vegetation_catalog.clone();
@@ -1077,6 +1080,7 @@ pub(crate) fn test_world_resources(
                 cell_size: 16.,
                 minimum_y: -100.,
                 maximum_y: 100.,
+                sea_level: None,
             }],
             vegetation,
         },
@@ -1085,6 +1089,23 @@ pub(crate) fn test_world_resources(
             cell,
         },
     )
+}
+
+#[cfg(test)]
+impl WorldCatalog {
+    pub(crate) fn world_spaces_mut(&mut self) -> &mut Vec<WorldSpaceInfo> {
+        &mut self.world_spaces
+    }
+}
+
+#[cfg(test)]
+impl ActiveWorldSpace {
+    pub(crate) fn current_for_tests(space: WorldSpaceId) -> Self {
+        Self {
+            current: Some(space),
+            ..default()
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1209,6 +1230,7 @@ mod atmosphere_tests {
                     cell_size: 32.0,
                     minimum_y: 0.0,
                     maximum_y: 1.0,
+                    sea_level: None,
                     atmosphere: first.clone(),
                 },
                 WorldSpaceInfo {
@@ -1217,6 +1239,7 @@ mod atmosphere_tests {
                     cell_size: 32.0,
                     minimum_y: 0.0,
                     maximum_y: 1.0,
+                    sea_level: None,
                     atmosphere: second,
                 },
             ],

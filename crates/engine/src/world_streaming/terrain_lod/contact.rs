@@ -609,6 +609,7 @@ mod tests {
                 cell_size: size,
                 minimum_y: -10.,
                 maximum_y: 10.,
+                sea_level: None,
             }],
             ..default()
         });
@@ -701,7 +702,8 @@ mod tests {
                         )
                         .height;
                     assert!(
-                        (grid_height(&heights, intervals, fine, x, z) - reference).abs() < 0.00001
+                        (grid_height(&field.heights, intervals, fine, x, z) - reference).abs()
+                            < 0.00001
                     );
                 }
             }
@@ -749,7 +751,8 @@ mod tests {
         let mut heights = [0.; 25];
         heights[6] = -0.07;
         let fine = TerrainHeightfield::from_heights(5, &heights, -1., 1., 32.).unwrap();
-        assert!((source_error(&page, &fine) - 0.07).abs() < 1e-6);
+        // The stored vertex is -0.07 rounded to the terrain height grid.
+        assert!((source_error(&page, &fine) + fine.heights[6]).abs() < 1e-6);
     }
 
     #[test]

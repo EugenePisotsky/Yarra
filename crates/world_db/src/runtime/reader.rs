@@ -232,7 +232,8 @@ impl RuntimeReader {
     ) -> Result<TerrainRenderResources, WorldDbError> {
         let profile = self.connection.query_row(
             "SELECT world_space_id, texture_set_id, weight_resolution, macro_small_scale, \
-                    macro_medium_scale, macro_large_scale, macro_contrast, macro_albedo_strength \
+                    macro_medium_scale, macro_large_scale, macro_contrast, macro_albedo_strength, \
+                    composite_minimum_level \
              FROM world_space_terrain_profiles WHERE world_space_id = ?1",
             [key.space.0],
             terrain_profile_from_row,

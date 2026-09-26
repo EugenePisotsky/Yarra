@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 pub const MAX_TERRAIN_NODE_LEVEL: u8 = 30;
 pub const MAX_TERRAIN_NODE_BYTES: usize = 1024 * 1024;
-pub const TERRAIN_NODE_VERSION: u16 = 1;
+pub const TERRAIN_NODE_VERSION: u16 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct TerrainNodeKey {
@@ -381,7 +381,7 @@ mod tests {
             expanded
                 .heights
                 .iter()
-                .all(|&h| h.to_bits() == heights[0].to_bits())
+                .all(|&h| h.to_bits() == field.heights[0].to_bits())
         );
         assert!(
             expanded

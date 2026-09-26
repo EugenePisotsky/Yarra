@@ -16,6 +16,8 @@ mod selection;
 #[derive(Default)]
 pub(super) struct Cover {
     pub available: Option<bool>,
+    /// Finer non-root tiles are not published; their parents are the finest material.
+    pub minimum_level: u8,
     pub bytes: u64,
     pub detail: Option<detail::Detail>,
     pub(super) descriptors: BTreeMap<TerrainMaterialKey, TerrainCompositeDescriptor>,
@@ -28,7 +30,10 @@ impl Cover {
     }
     fn receive(&mut self, query: Query, reply: Reply) -> Result<(), String> {
         match (query, reply) {
-            (Query::Presence(_), Reply::Presence(present)) => self.available = Some(present),
+            (Query::Presence(_), Reply::Presence(level)) => {
+                self.available = Some(level.is_some());
+                self.minimum_level = level.unwrap_or(0);
+            }
             (Query::Descriptors(keys), Reply::Descriptors(descriptors))
                 if keys.len() == descriptors.len()
                     && keys.iter().zip(&descriptors).all(|(k, d)| *k == d.key) =>

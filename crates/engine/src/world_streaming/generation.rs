@@ -192,6 +192,7 @@ mod tests {
                 cell_size: 32.,
                 minimum_y: 0.,
                 maximum_y: 100.,
+                sea_level: None,
             }],
             vegetation_catalog: None,
         }

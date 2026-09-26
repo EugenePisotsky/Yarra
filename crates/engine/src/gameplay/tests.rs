@@ -300,5 +300,8 @@ fn launch_bookmark_spawns_actor_and_camera_at_the_elevated_view() {
     assert!(camera.translation.distance(expected.translation) < 0.001);
     assert!(camera.forward().distance(*expected.forward()) < 0.0001);
     assert!(camera.up().distance(*expected.up()) < 0.0001);
-    assert!(matches!(projection, Projection::Perspective(p) if p.far == 2500.));
+    // A hazy 2.5 km bookmark still culls at the shared world view distance.
+    assert!(
+        matches!(projection, Projection::Perspective(p) if p.far == crate::WORLD_VIEW_DISTANCE)
+    );
 }

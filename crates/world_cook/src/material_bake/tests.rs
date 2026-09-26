@@ -352,12 +352,24 @@ fn production_cook_is_deterministic_bounded_and_material_changes_leave_geometry_
     let a = cook_project_with_materials(&f.source(), &f.runtime(), &inputs).unwrap();
     let stats = a.materials.unwrap();
     assert_eq!(stats.tiles, 20);
-    assert_eq!(stats.peak_filter_cores, 9);
-    assert_eq!(stats.peak_core_pixels, 9 * 64 * 64);
+    // All 16 leaves are evaluated in one parallel batch (at most `LEAF_BATCH`).
+    assert_eq!(stats.peak_filter_cores, 16);
+    assert_eq!(stats.peak_core_pixels, 16 * 64 * 64);
     assert_eq!(stats.tile_gpu_bytes, 54432);
     let reader = RuntimeReader::open_immutable(&f.runtime()).unwrap();
-    assert!(reader.has_terrain_composites(WorldSpaceId(1)).unwrap());
-    assert!(reader.has_terrain_composites(WorldSpaceId(2)).unwrap()); // declared empty world
+    assert_eq!(
+        reader
+            .terrain_composite_minimum_level(WorldSpaceId(1))
+            .unwrap(),
+        Some(0)
+    );
+    // Declared empty world.
+    assert_eq!(
+        reader
+            .terrain_composite_minimum_level(WorldSpaceId(2))
+            .unwrap(),
+        Some(0)
+    );
     let geometry = reader
         .read_terrain_node(key(0, 0).0)
         .unwrap()
@@ -558,7 +570,12 @@ fn incomplete_material_pass_rolls_back_and_decode_checks_declared_bytes() {
     }
     let reader = RuntimeReader::open_immutable(&f.runtime()).unwrap();
     assert_eq!(reader.manifest().content_hash, before.content_hash);
-    assert!(!reader.has_terrain_composites(WorldSpaceId(1)).unwrap());
+    assert_eq!(
+        reader
+            .terrain_composite_minimum_level(WorldSpaceId(1))
+            .unwrap(),
+        None
+    );
     assert!(reader.read_terrain_composite(key(0, 0)).unwrap().is_none());
 }
 
@@ -590,5 +607,111 @@ fn hollowness_finds_dips_below_the_surrounding_ground_only() {
         evaluate::hollowness(&field, [7.9, 0.1], size),
         0.,
         "flat page edges stay dry"
+    );
+}
+
+#[test]
+fn composite_minimum_level_publishes_coarser_tiles_unchanged_and_previews_still_filter() {
+    use std::sync::Arc;
+    let mut project = demo_project_document();
+    let keep = |space, cell: CellCoord| {
+        space == WorldSpaceId(1) && (-4..4).contains(&cell.x) && (-4..4).contains(&cell.z)
+    };
+    project.cells.retain(|c| keep(c.space, c.cell));
+    project
+        .terrain_cell_heightfields
+        .retain(|c| keep(c.space, c.cell));
+    project.environment_cells.clear();
+    project.objects.clear();
+    let library = TerrainBakeLibrary::fixture(&project.terrain_texture_sets[0]);
+    let full = Fixture::new(&project);
+    cook_project_with_materials(&full.source(), &full.runtime(), &library).unwrap();
+    for profile in &mut project.terrain_profiles {
+        profile.composite_minimum_level = 1;
+    }
+    let cut = Fixture::new(&project);
+    cook_project_with_materials(&cut.source(), &cut.runtime(), &library).unwrap();
+
+    let tiles = |path: &std::path::Path| {
+        let connection = rusqlite::Connection::open(path).unwrap();
+        let mut statement = connection
+            .prepare(
+                "SELECT level, node_x, node_z, checksum FROM terrain_composites \
+                 WHERE world_space_id = 1 ORDER BY level, node_x, node_z",
+            )
+            .unwrap();
+        statement
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, u8>(0)?,
+                    r.get::<_, i32>(1)?,
+                    r.get::<_, i32>(2)?,
+                    r.get::<_, Vec<u8>>(3)?,
+                ))
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+    };
+    let (all, coarse) = (tiles(&full.runtime()), tiles(&cut.runtime()));
+    assert_eq!(all.iter().filter(|t| t.0 == 0).count(), 64);
+    assert_eq!(
+        coarse,
+        all.into_iter().filter(|t| t.0 >= 1).collect::<Vec<_>>(),
+        "the cutoff drops leaves and leaves every coarser tile byte-identical"
+    );
+    assert_eq!(coarse.iter().filter(|t| t.0 == 2).count(), 4, "roots");
+
+    let reader = RuntimeReader::open_immutable(&cut.runtime()).unwrap();
+    assert_eq!(
+        reader
+            .terrain_composite_minimum_level(WorldSpaceId(1))
+            .unwrap(),
+        Some(1)
+    );
+    let cell = CellCoord { x: -3, z: -3 };
+    let page_key = PageKey {
+        space: WorldSpaceId(1),
+        cell,
+        domain: PageDomain::TerrainRender,
+        lod: 0,
+    };
+    let resources = reader.read_terrain_resources(page_key).unwrap();
+    let mut page = preview::published_terrain_leaf(&reader, WorldSpaceId(1), cell)
+        .unwrap()
+        .unwrap();
+    for weight in &mut page.weight_pages {
+        weight.rgba.reverse();
+    }
+    let leaves = std::collections::BTreeMap::from([(cell, Arc::new(page))]);
+    let bake = || {
+        preview::bake_terrain_preview(
+            &reader,
+            WorldSpaceId(1),
+            leaves.clone(),
+            &resources,
+            &library,
+            || false,
+        )
+        .unwrap()
+    };
+    let a = bake();
+    let parent = TerrainMaterialKey(key(-3, -3).0.parent().unwrap().unwrap());
+    assert!(a.composites.keys().all(|k| k.0.level >= 1));
+    assert!(a.composites.contains_key(&parent));
+    let published = reader
+        .read_terrain_composite(parent)
+        .unwrap()
+        .unwrap()
+        .decode()
+        .unwrap();
+    assert_ne!(
+        a.composites[&parent].mips, published.mips,
+        "the edited leaf reaches its published parent"
+    );
+    assert_eq!(
+        a.composites,
+        bake().composites,
+        "unpublished leaves evaluate deterministically"
     );
 }

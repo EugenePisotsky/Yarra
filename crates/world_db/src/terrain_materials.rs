@@ -111,6 +111,19 @@ impl TerrainMaterialCookStore {
             )?
             .collect::<Result<_, _>>()?)
     }
+    /// The profile's finest published level; spaces without a profile publish every level.
+    pub fn composite_minimum_level(&self, space: WorldSpaceId) -> Result<u8, WorldDbError> {
+        composite_minimum_level(&self.reader.connection, space)
+    }
+    /// Roots stay published at any level: they are the resident fallback cover.
+    pub fn is_root(&self, key: TerrainMaterialKey) -> Result<bool, WorldDbError> {
+        let k = key.0;
+        Ok(self.reader.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM terrain_roots WHERE world_space_id=?1 AND level=?2 AND node_x=?3 AND node_z=?4)",
+            params![k.space.0, k.level, k.x, k.z],
+            |r| r.get(0),
+        )?)
+    }
     pub fn put_core(&self, key: TerrainMaterialKey, bytes: &[u8]) -> Result<(), WorldDbError> {
         key.0.cell_bounds().map_err(|e| invalid(e.to_string()))?;
         if bytes.is_empty() || bytes.len() > MAX_CORE_BYTES {
@@ -146,7 +159,9 @@ impl TerrainMaterialCookStore {
         Ok(())
     }
     pub fn finish(self) -> Result<RuntimeManifest, WorldDbError> {
-        let mismatch: bool = self.reader.connection.query_row("SELECT EXISTS(SELECT 1 FROM terrain_nodes n LEFT JOIN terrain_composites c USING(world_space_id,level,node_x,node_z) WHERE (n.resolution IS NOT NULL) != (c.payload IS NOT NULL))",[],|r| r.get(0))?;
+        // Every drawable root and every drawable node at or above the profile's minimum level
+        // has exactly one composite; finer non-root nodes have none.
+        let mismatch: bool = self.reader.connection.query_row("SELECT EXISTS(SELECT 1 FROM terrain_nodes n LEFT JOIN terrain_composites c USING(world_space_id,level,node_x,node_z) LEFT JOIN terrain_roots r USING(world_space_id,level,node_x,node_z) LEFT JOIN world_space_terrain_profiles p USING(world_space_id) WHERE (n.resolution IS NOT NULL AND (n.level >= coalesce(p.composite_minimum_level,0) OR r.world_space_id IS NOT NULL)) != (c.payload IS NOT NULL))",[],|r| r.get(0))?;
         if mismatch {
             return Err(invalid("composite coverage disagrees with terrain"));
         }
@@ -179,12 +194,20 @@ impl TerrainMaterialCookStore {
 }
 
 impl RuntimeReader {
-    pub fn has_terrain_composites(&self, space: WorldSpaceId) -> Result<bool, WorldDbError> {
-        Ok(self.connection.query_row(
+    /// `None` when the publication has no baked ground; otherwise the finest level whose
+    /// non-root composites were published (see `TerrainProfile::composite_minimum_level`).
+    pub fn terrain_composite_minimum_level(
+        &self,
+        space: WorldSpaceId,
+    ) -> Result<Option<u8>, WorldDbError> {
+        let baked: bool = self.connection.query_row(
             "SELECT EXISTS(SELECT 1 FROM terrain_material_spaces WHERE world_space_id=?1)",
             [space.0],
             |r| r.get(0),
-        )?)
+        )?;
+        baked
+            .then(|| composite_minimum_level(&self.connection, space))
+            .transpose()
     }
     pub fn read_terrain_composite_descriptors(
         &self,
@@ -215,6 +238,22 @@ impl RuntimeReader {
             payload,
         }))
     }
+}
+fn composite_minimum_level(
+    connection: &Connection,
+    space: WorldSpaceId,
+) -> Result<u8, WorldDbError> {
+    let level: Option<i64> = connection
+        .query_row(
+            "SELECT composite_minimum_level FROM world_space_terrain_profiles WHERE world_space_id=?1",
+            [space.0],
+            |r| r.get(0),
+        )
+        .optional()?;
+    u8::try_from(level.unwrap_or(0))
+        .ok()
+        .filter(|&level| level <= world::MAX_TERRAIN_NODE_LEVEL)
+        .ok_or_else(|| invalid("composite minimum level"))
 }
 fn descriptor(
     connection: &Connection,

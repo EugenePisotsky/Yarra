@@ -110,6 +110,7 @@ fn opt_in_smoke_transitions_after_streaming_and_emits_success_only_once() {
                         cell_size: s.cell_size,
                         minimum_y: s.minimum_y,
                         maximum_y: s.maximum_y,
+                        sea_level: None,
                         atmosphere: s.atmosphere.clone(),
                         atmosphere_revision: 1,
                     })

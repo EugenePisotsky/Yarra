@@ -2,16 +2,21 @@
 use bevy::prelude::*;
 use world::WorldViewBookmark;
 
+/// Culling distance of world views. Depth is infinite reverse-Z, so this only decides what is
+/// drawn: kilometre-scale terrain and the sea out to the default 20 km haze visibility.
+pub const WORLD_VIEW_DISTANCE: f32 = 20_000.0;
+
 #[derive(Resource, Default)]
 pub struct WorldStartView(pub Option<WorldViewBookmark>);
 
 impl WorldStartView {
     pub fn projection(&self) -> Projection {
-        let mut perspective = PerspectiveProjection::default();
-        if let Some(view) = &self.0 {
-            perspective.far = perspective.far.max(view.fog_visibility);
-        }
-        Projection::Perspective(perspective)
+        Projection::Perspective(PerspectiveProjection {
+            far: self.0.as_ref().map_or(WORLD_VIEW_DISTANCE, |view| {
+                WORLD_VIEW_DISTANCE.max(view.fog_visibility)
+            }),
+            ..default()
+        })
     }
 
     pub fn load(path: Option<&std::path::Path>) -> Result<Self, String> {

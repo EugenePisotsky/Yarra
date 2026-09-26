@@ -69,6 +69,7 @@ impl Fixture {
                 cell_size: 32.0,
                 minimum_y: 0.0,
                 maximum_y: 0.0,
+                sea_level: None,
             }],
             vegetation_catalog: Some(vegetation::fixtures::reference_catalog()),
             cells: Vec::new(),

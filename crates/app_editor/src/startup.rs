@@ -45,7 +45,8 @@ mod tests {
                 .unwrap_err()
                 .contains("-- init")
         );
-        world_cook::create_world_project(&project).unwrap();
+        // The default island takes minutes to cook; any small world exercises the checks.
+        world_cook::create_road_demo_project(&project).unwrap();
         assert!(
             validate_databases(&project, &runtime)
                 .unwrap_err()

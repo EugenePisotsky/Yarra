@@ -178,7 +178,7 @@ pub fn bake_terrain_preview(
         }
         changed = parents;
     }
-    if !reader.has_terrain_composites(space)? {
+    if reader.terrain_composite_minimum_level(space)?.is_none() {
         bail!(
             "Live terrain needs baked ground materials; Save & Publish once before editing with terrain LOD"
         )
@@ -236,7 +236,7 @@ pub fn bake_terrain_preview(
                 let child = TerrainMaterialKey(child);
                 children[i] = match cores.get(&child) {
                     Some(c) => Some(c.clone()),
-                    None => published_core(reader, child, &mut reads)?,
+                    None => published_core(reader, library, size, child, &mut reads)?,
                 };
             }
             cores.insert(key, filter::parent(&children));
@@ -262,7 +262,7 @@ pub fn bake_terrain_preview(
             });
             *neighbor = match cores.get(&k) {
                 Some(c) => Some(c.clone()),
-                None => published_core(reader, k, &mut reads)?,
+                None => published_core(reader, library, size, k, &mut reads)?,
             };
         }
         result
@@ -277,6 +277,8 @@ pub fn bake_terrain_preview(
 
 fn published_core(
     reader: &RuntimeReader,
+    library: &TerrainBakeLibrary,
+    size: f32,
     key: TerrainMaterialKey,
     reads: &mut usize,
 ) -> Result<Option<Core>> {
@@ -328,6 +330,30 @@ fn published_core(
             pixels,
         }));
     }
+    if key.0.level == 0 {
+        // Leaves below the profile's published levels: evaluate them exactly as the cook did.
+        let cell = CellCoord {
+            x: key.0.x,
+            z: key.0.z,
+        };
+        let Some(page) = published_terrain_leaf(reader, key.0.space, cell)? else {
+            return Ok(None);
+        };
+        let resources = reader.read_terrain_resources(PageKey {
+            space: key.0.space,
+            cell,
+            domain: PageDomain::TerrainRender,
+            lod: 0,
+        })?;
+        let texture_set = library.get(&resources.texture_set)?;
+        return Ok(Some(evaluate::leaf(
+            key,
+            size,
+            &page,
+            &resources,
+            texture_set,
+        )?));
+    }
     let Some(d) = reader
         .read_terrain_node_descriptors(&[key.0])?
         .pop()
@@ -347,7 +373,7 @@ fn published_core(
         .enumerate()
     {
         if d.child_mask & (1 << i) != 0 {
-            children[i] = published_core(reader, TerrainMaterialKey(k), reads)?
+            children[i] = published_core(reader, library, size, TerrainMaterialKey(k), reads)?
         }
     }
     Ok(Some(filter::parent(&children)))

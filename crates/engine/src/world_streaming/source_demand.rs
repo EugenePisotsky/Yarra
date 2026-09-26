@@ -243,6 +243,7 @@ mod tests {
             cell_size: size,
             minimum_y: -100.,
             maximum_y: 100.,
+            sea_level: None,
         }
     }
     fn descriptor(cell: CellCoord) -> CellDescriptor {

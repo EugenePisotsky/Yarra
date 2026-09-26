@@ -246,7 +246,7 @@ mod tests {
         for id in [1, 2] {
             connection
                 .execute(
-                    "INSERT INTO world_spaces VALUES (?1,?2,32,0,10,?3,1)",
+                    "INSERT INTO world_spaces VALUES (?1,?2,32,0,10,?3,1,NULL)",
                     params![id, format!("world{id}"), encode(&p).unwrap()],
                 )
                 .unwrap();

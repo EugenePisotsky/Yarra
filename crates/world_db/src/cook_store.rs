@@ -72,6 +72,9 @@ impl ProjectCookSnapshot {
                 || !space.minimum_y.is_finite()
                 || !space.maximum_y.is_finite()
                 || space.minimum_y > space.maximum_y
+                || space
+                    .sea_level
+                    .is_some_and(|level| !(space.minimum_y..=space.maximum_y).contains(&level))
             {
                 return Err(invalid("invalid world bounds"));
             }

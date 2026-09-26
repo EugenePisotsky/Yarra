@@ -17,6 +17,7 @@ fn project_and_runtime_databases_are_distinct_and_readable() {
         cell_size: 32.0,
         minimum_y: -8.0,
         maximum_y: 16.0,
+        sea_level: None,
     };
     let vegetation_catalog = vegetation::fixtures::reference_catalog();
     let project = ProjectDocument {

@@ -260,7 +260,7 @@ fn read_material(
 ) -> Result<TerrainMaterialReply, String> {
     match query {
         TerrainMaterialQuery::Presence(space) => reader
-            .has_terrain_composites(space)
+            .terrain_composite_minimum_level(space)
             .map(TerrainMaterialReply::Presence)
             .map_err(|e| e.to_string()),
         TerrainMaterialQuery::Descriptors(keys) => reader

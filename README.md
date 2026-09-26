@@ -32,7 +32,7 @@ cargo run -p yarra-world-cook -- cook
 cargo run --release -p yarra-app-game
 ```
 
-Default files are `content/world.project.sqlite` and `assets/generated/world.runtime.sqlite`, both ignored. The current authored world uses 8 m cells; old 32 m grass fixtures are separate workloads. See workflows for explicit paths, recovery and disposable fixtures.
+Default files are `content/world.project.sqlite` and `assets/generated/world.runtime.sqlite`, both ignored. The default world is currently a Phase 0 test island in an 8 km sea, with start views in `content/world.project.views/`. The small 8 m authoring world is `create-road-demo`. See workflows for explicit paths, recovery and disposable fixtures.
 
 Move with WASD/gamepad or a ground click/tap; orbit with right-drag/two-finger horizontal scrolling/right stick. **F1** opens the unified Performance panel. Normal presentation uses 50% physical world resolution, 4× MSAA and native-resolution UI; Auto selects MetalFX Spatial where supported, otherwise Linear. Temporal remains an explicit prototype. **F1 → FPS limit** selects Follow display / 30 / 60 / 120; `--fps 60` chooses a launch cap. Optional grass counters default off. `--diagnostics panel` keeps F1 without timing probes; `--diagnostics off` omits F1 and instrumentation. Full diagnostics remain the default. Run with `--help` for validated launch options.
 

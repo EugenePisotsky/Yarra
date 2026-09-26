@@ -13,6 +13,7 @@ fn space(size: f32) -> world_db::WorldSpaceRecord {
         cell_size: size,
         minimum_y: -100.,
         maximum_y: 100.,
+        sea_level: None,
     }
 }
 pub(in crate::world_streaming) fn height_page(key: PageKey) -> PreparedPage {
@@ -316,6 +317,7 @@ fn rendered_height_page(key: PageKey) -> PreparedPage {
             macro_scales: [1.; 3],
             macro_contrast: 1.,
             macro_albedo_strength: 0.,
+            composite_minimum_level: 0,
         },
         texture_set: textures,
         surfaces: vec![world_db::RuntimeTerrainSurface {

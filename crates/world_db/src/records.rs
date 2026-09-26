@@ -100,6 +100,8 @@ pub struct WorldSpaceRecord {
     pub cell_size: f32,
     pub minimum_y: f32,
     pub maximum_y: f32,
+    /// Height of the open sea, drawn to the horizon; `None` for worlds without one.
+    pub sea_level: Option<f32>,
 }
 
 #[derive(Debug, Clone)]

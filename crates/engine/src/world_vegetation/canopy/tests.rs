@@ -66,6 +66,7 @@ fn material(app: &mut App) -> Handle<TerrainMaterial> {
         macro_scales: [1.; 3],
         macro_contrast: 1.,
         macro_albedo_strength: 0.,
+        composite_minimum_level: 0,
     };
     let layers = [terrain_render::TerrainSurfaceLayer {
         layer: 0,

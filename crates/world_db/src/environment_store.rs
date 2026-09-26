@@ -678,7 +678,7 @@ impl ProjectReader {
         space: WorldSpaceId,
     ) -> Result<crate::TerrainRenderResources, WorldDbError> {
         let tx = self.connection.unchecked_transaction()?;
-        let profile = tx.query_row("SELECT world_space_id, texture_set_id, weight_resolution, macro_small_scale, macro_medium_scale, macro_large_scale, macro_contrast, macro_albedo_strength FROM world_space_terrain_profiles WHERE world_space_id = ?1", [space.0], crate::catalog::terrain_profile_from_row)?;
+        let profile = tx.query_row("SELECT world_space_id, texture_set_id, weight_resolution, macro_small_scale, macro_medium_scale, macro_large_scale, macro_contrast, macro_albedo_strength, composite_minimum_level FROM world_space_terrain_profiles WHERE world_space_id = ?1", [space.0], crate::catalog::terrain_profile_from_row)?;
         let texture_set = tx.query_row("SELECT texture_set_id, texture_set_key, base_color_universal_uri, normal_material_universal_uri, macro_variation_universal_uri, base_color_astc_uri, normal_material_astc_uri, macro_variation_astc_uri, universal_gpu_bytes, astc_gpu_bytes FROM terrain_texture_sets WHERE texture_set_id = ?1", [profile.texture_set.0.as_slice()], crate::catalog::terrain_texture_set_from_row)?;
         let mut query = tx.prepare("SELECT s.surface_id, s.surface_key, s.display_name, s.tile_size, s.anti_tiling, s.normal_y_sign, s.normal_strength, s.roughness_min, s.roughness_max, l.layer FROM terrain_texture_set_layers l JOIN terrain_surfaces s ON s.surface_id = l.surface_id WHERE l.texture_set_id = ?1 ORDER BY l.layer LIMIT 65")?;
         let surfaces = query

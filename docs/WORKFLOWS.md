@@ -14,7 +14,7 @@ cargo run -p yarra-app-editor
 cargo run --release -p yarra-app-game
 ```
 
-`init` creates source only if absent, then cooks it. `cook` requires existing source and never creates a demo. The editor defaults to `content/world.project.sqlite`; the game reads `assets/generated/world.runtime.sqlite`. A fresh public clone needs the local pack inputs before ordinary material cooking succeeds.
+`init` creates source only if absent, then cooks it. The default world is currently the Phase 0 island (8 km of sea and island, a few minutes to cook), with start views in `content/world.project.views/` (`spawn`, `beach`, `summit`, `hills`), e.g. `cargo run --release -p yarra-app-game -- --start-view content/world.project.views/beach.ron`. To start over, delete the project and runtime databases and run `init` again. `cook` requires existing source and never creates a demo. The editor defaults to `content/world.project.sqlite`; the game reads `assets/generated/world.runtime.sqlite`. A fresh public clone needs the local pack inputs before ordinary material cooking succeeds.
 
 **Save** writes source edits. **Save & Publish** also cooks and atomically replaces the runtime. To publish from a terminal:
 
@@ -92,7 +92,7 @@ python3 tools/hill_landscape.py editor --view valley
 python3 tools/hill_landscape.py descent
 ```
 
-`create-demo` provides the historical 32 m grass fixture; `create-mountain-fixture` and `create-hill-fixture` provide terrain fixtures. The hill helper uses `tmp/hill-landscape`, preserves existing source, and supports `--recook`. It is separate from normal game content. Pure compiler fixtures remain available as `layered_meadow` and `cart_track` examples in `yarra-environment-compile`.
+`create-demo` provides the historical 32 m grass fixture; `create-mountain-fixture` and `create-hill-fixture` provide terrain fixtures. `create-island-fixture` writes the default island (and its views) to another path without cooking. The hill helper uses `tmp/hill-landscape`, preserves existing source, and supports `--recook`. It is separate from normal game content. Pure compiler fixtures remain available as `layered_meadow` and `cart_track` examples in `yarra-environment-compile`.
 
 `export-vegetation PROJECT_DB CATALOG_RON` writes a new catalog file. `import-vegetation CATALOG_RON [PROJECT_DB RUNTIME_DB]` intentionally replaces the catalog and publishes; it is not a read-only preview. The old `demo` and `sync-demo-vegetation` reset commands no longer exist.
 
@@ -105,7 +105,7 @@ cargo test --offline --workspace
 python3 -m unittest discover -s tools -p test_grass_profile.py
 ```
 
-`--streaming-smoke` explicitly installs `StreamingSmokePlugin`; ordinary game/editor composition contains no smoke state or exit system. It runs the demo-world traversal, cooling/ownership and second-world gameplay checks, then exits. Use the cooked overworld/interior fixture (zero initial gameplay objects, one interior object), not arbitrary authored worlds. It accepts both hierarchy and `--terrain-legacy`; traversal checks canonical destination cells and current source demand after rebasing. The existing 3/7.5/11-second checkpoints are readiness assertions, not performance measurements. It cannot share control/exit ownership with a profile, repro or capture. The current 8 m authoring world can exceed the fixed startup checkpoint; run against a separately cooked historical demo. With unused database paths:
+`--streaming-smoke` explicitly installs `StreamingSmokePlugin`; ordinary game/editor composition contains no smoke state or exit system. It runs the demo-world traversal, cooling/ownership and second-world gameplay checks, then exits. Use the cooked overworld/interior fixture (zero initial gameplay objects, one interior object), not arbitrary authored worlds. It accepts both hierarchy and `--terrain-legacy`; traversal checks canonical destination cells and current source demand after rebasing. The existing 3/7.5/11-second checkpoints are readiness assertions, not performance measurements. It cannot share control/exit ownership with a profile, repro or capture. The default island is not a smoke fixture; run against a separately cooked historical demo. With unused database paths:
 
 ```sh
 cargo run -p yarra-world-cook -- create-demo tmp/smoke.project.sqlite
