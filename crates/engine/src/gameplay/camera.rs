@@ -21,7 +21,7 @@ impl Plugin for GameCameraPlugin {
 /// prepass while Temporal is active. Otherwise it is pure cost: alpha-tested leaves
 /// are drawn twice and Bevy 0.19 copies the full-resolution depth texture every
 /// frame. On M2 Max with 4× MSAA it cost ~0.7 ms on the grass route at 2560×1440 and
-/// ~2.2 ms facing the forest in third person at 3456×1942.
+/// ~1.0 ms of GPU time facing the forest in third person at 3456×1942.
 pub const GAME_DEPTH_PREPASS_ENABLED: bool = false;
 
 pub(super) const CAMERA_MIN_DISTANCE: f32 = 4.0;
