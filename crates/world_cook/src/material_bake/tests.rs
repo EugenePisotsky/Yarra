@@ -352,9 +352,9 @@ fn production_cook_is_deterministic_bounded_and_material_changes_leave_geometry_
     let a = cook_project_with_materials(&f.source(), &f.runtime(), &inputs).unwrap();
     let stats = a.materials.unwrap();
     assert_eq!(stats.tiles, 20);
-    // All 16 leaves are evaluated in one parallel batch (at most `LEAF_BATCH`).
-    assert_eq!(stats.peak_filter_cores, 16);
-    assert_eq!(stats.peak_core_pixels, 16 * 64 * 64);
+    // Batches of at most `BATCH` items: here 4 parents with up to 4 children each.
+    assert_eq!(stats.peak_filter_cores, 20);
+    assert_eq!(stats.peak_core_pixels, 20 * 64 * 64);
     assert_eq!(stats.tile_gpu_bytes, 54432);
     let reader = RuntimeReader::open_immutable(&f.runtime()).unwrap();
     assert_eq!(

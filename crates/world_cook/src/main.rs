@@ -131,16 +131,23 @@ fn main() -> Result<()> {
         manifest.generation_id,
         runtime_path.display()
     );
+    let stats = report.stats;
+    println!(
+        "Cook time: cells {:.1} s, hierarchy/composites/validation {:.1} s",
+        stats.cell_seconds, stats.publish_seconds
+    );
     if let Some(materials) = report.materials {
         println!(
-            "Ground composites: {} tiles, {} GPU bytes/tile; peak {} filtering cores ({} pixels, excludes codecs/SQLite scratch)",
+            "Ground composites: {} tiles, {} GPU bytes/tile; peak {} filtering cores ({} pixels, excludes codecs/SQLite scratch); leaves {:.1} s, parents {:.1} s, tiles {:.1} s",
             materials.tiles,
             materials.tile_gpu_bytes,
             materials.peak_filter_cores,
-            materials.peak_core_pixels
+            materials.peak_core_pixels,
+            materials.leaf_seconds,
+            materials.parent_seconds,
+            materials.tile_seconds
         );
     }
-    let stats = report.stats;
     println!(
         "Cooked {} terrain cells and validated {} coverage-only cells",
         stats.terrain_cells, stats.coverage_only_cells

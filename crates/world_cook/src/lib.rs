@@ -2,6 +2,7 @@
 use world_db::write_runtime_database;
 mod environment_cook;
 mod material_bake;
+mod parallel;
 mod streaming_cook;
 mod terrain_cook;
 pub use material_bake::preview::{

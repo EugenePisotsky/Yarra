@@ -56,6 +56,53 @@ impl EncodedTerrainComposite {
     }
 }
 
+/// A compressed filtering core in staging.
+pub struct StagedCore {
+    decoded_bytes: u64,
+    payload: Vec<u8>,
+}
+impl StagedCore {
+    pub fn compress(bytes: &[u8]) -> Result<Self, WorldDbError> {
+        if bytes.is_empty() || bytes.len() > MAX_CORE_BYTES {
+            return Err(invalid("composite core byte limit"));
+        }
+        Ok(Self {
+            decoded_bytes: bytes.len() as u64,
+            payload: zstd::stream::encode_all(Cursor::new(bytes), 1)?,
+        })
+    }
+    pub fn decompress(&self) -> Result<Vec<u8>, WorldDbError> {
+        decompress(&self.payload, self.decoded_bytes, MAX_CORE_BYTES)
+    }
+}
+
+/// An encoded, compressed composite ready to insert. Preparing it needs no database, so it
+/// can run on any thread.
+pub struct PreparedComposite {
+    key: TerrainMaterialKey,
+    fingerprint: [u8; 32],
+    checksum: [u8; 32],
+    decoded_bytes: u64,
+    payload: Vec<u8>,
+}
+impl PreparedComposite {
+    pub fn new(tile: &TerrainComposite) -> Result<Self, WorldDbError> {
+        let bytes = encode_terrain_composite(tile).map_err(invalid)?;
+        let payload = zstd::stream::encode_all(Cursor::new(&bytes), 3)?;
+        if bytes.len() > MAX_TERRAIN_COMPOSITE_BYTES || payload.len() > MAX_TERRAIN_COMPOSITE_BYTES
+        {
+            return Err(invalid("composite byte limit"));
+        }
+        Ok(Self {
+            key: tile.key,
+            fingerprint: tile.fingerprint,
+            checksum: *blake3::hash(&bytes).as_bytes(),
+            decoded_bytes: bytes.len() as u64,
+            payload,
+        })
+    }
+}
+
 pub struct TerrainMaterialCookStore {
     reader: RuntimeReader,
 }
@@ -125,37 +172,53 @@ impl TerrainMaterialCookStore {
         )?)
     }
     pub fn put_core(&self, key: TerrainMaterialKey, bytes: &[u8]) -> Result<(), WorldDbError> {
+        self.put_core_payload(key, &StagedCore::compress(bytes)?)
+    }
+    /// Stores a core compressed elsewhere, for example on a worker thread.
+    pub fn put_core_payload(
+        &self,
+        key: TerrainMaterialKey,
+        core: &StagedCore,
+    ) -> Result<(), WorldDbError> {
         key.0.cell_bounds().map_err(|e| invalid(e.to_string()))?;
-        if bytes.is_empty() || bytes.len() > MAX_CORE_BYTES {
-            return Err(invalid("composite core byte limit"));
-        }
-        let payload = zstd::stream::encode_all(Cursor::new(bytes), 1)?;
         let k = key.0;
         self.reader.connection.execute(
             "INSERT INTO composite_cores VALUES (?1,?2,?3,?4,?5,?6)",
-            params![k.space.0, k.level, k.x, k.z, bytes.len() as i64, payload],
+            params![
+                k.space.0,
+                k.level,
+                k.x,
+                k.z,
+                core.decoded_bytes as i64,
+                core.payload
+            ],
         )?;
         Ok(())
     }
     pub fn core(&self, key: TerrainMaterialKey) -> Result<Option<Vec<u8>>, WorldDbError> {
-        let k = key.0;
-        let data = self.reader.connection.query_row("SELECT decoded_bytes,payload FROM composite_cores WHERE world_space_id=?1 AND level=?2 AND node_x=?3 AND node_z=?4",params![k.space.0,k.level,k.x,k.z], |r| {
-            let bytes = r.get_ref(1)?.as_blob()?;
-            if bytes.len() > MAX_CORE_BYTES { return Err(rusqlite::Error::InvalidQuery); }
-            Ok((r.get::<_,i64>(0)? as u64,bytes.to_vec()))
-        }).optional()?;
-        data.map(|(size, payload)| decompress(&payload, size, MAX_CORE_BYTES))
+        self.core_payload(key)?
+            .map(|core| core.decompress())
             .transpose()
     }
+    /// The still-compressed core, so callers can decompress it on another thread.
+    pub fn core_payload(
+        &self,
+        key: TerrainMaterialKey,
+    ) -> Result<Option<StagedCore>, WorldDbError> {
+        let k = key.0;
+        Ok(self.reader.connection.query_row("SELECT decoded_bytes,payload FROM composite_cores WHERE world_space_id=?1 AND level=?2 AND node_x=?3 AND node_z=?4",params![k.space.0,k.level,k.x,k.z], |r| {
+            let bytes = r.get_ref(1)?.as_blob()?;
+            if bytes.len() > MAX_CORE_BYTES { return Err(rusqlite::Error::InvalidQuery); }
+            Ok(StagedCore { decoded_bytes: r.get::<_,i64>(0)? as u64, payload: bytes.to_vec() })
+        }).optional()?)
+    }
     pub fn insert(&self, tile: &TerrainComposite) -> Result<(), WorldDbError> {
-        let bytes = encode_terrain_composite(tile).map_err(invalid)?;
-        let payload = zstd::stream::encode_all(Cursor::new(&bytes), 3)?;
-        if bytes.len() > MAX_TERRAIN_COMPOSITE_BYTES || payload.len() > MAX_TERRAIN_COMPOSITE_BYTES
-        {
-            return Err(invalid("composite byte limit"));
-        }
+        self.insert_prepared(&PreparedComposite::new(tile)?)
+    }
+    /// Stores a composite encoded elsewhere, for example on a worker thread.
+    pub fn insert_prepared(&self, tile: &PreparedComposite) -> Result<(), WorldDbError> {
         let k = tile.key.0;
-        self.reader.connection.execute("INSERT INTO terrain_composites(world_space_id,level,node_x,node_z,fingerprint,checksum,decoded_bytes,gpu_bytes,payload) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",params![k.space.0,k.level,k.x,k.z,tile.fingerprint.as_slice(),blake3::hash(&bytes).as_bytes().as_slice(),bytes.len() as i64,TerrainComposite::gpu_bytes() as i64,payload])?;
+        self.reader.connection.execute("INSERT INTO terrain_composites(world_space_id,level,node_x,node_z,fingerprint,checksum,decoded_bytes,gpu_bytes,payload) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",params![k.space.0,k.level,k.x,k.z,tile.fingerprint.as_slice(),tile.checksum.as_slice(),tile.decoded_bytes as i64,TerrainComposite::gpu_bytes() as i64,tile.payload])?;
         Ok(())
     }
     pub fn finish(self) -> Result<RuntimeManifest, WorldDbError> {

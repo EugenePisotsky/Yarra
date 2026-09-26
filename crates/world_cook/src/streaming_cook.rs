@@ -16,6 +16,10 @@ pub struct CookStats {
     pub peak_source_road_spans: usize,
     pub peak_encoded_cell_bytes: u64,
     pub peak_decoded_cell_bytes: u64,
+    /// Wall-clock time compiling and writing cells, then building the hierarchy, composites
+    /// and validating the publication.
+    pub cell_seconds: f64,
+    pub publish_seconds: f64,
 }
 #[derive(Debug, Clone)]
 pub struct CookReport {
@@ -75,6 +79,7 @@ fn cook_snapshot_options(
     hash.update(b"bounded-source-cook-v1");
     hash.update(&header.manifest.content_hash);
     let mut stats = CookStats::default();
+    let start = std::time::Instant::now();
     for world in &project.world_spaces {
         let mut cursor = None;
         loop {
@@ -88,10 +93,18 @@ fn cook_snapshot_options(
                 .find(|d| d.space == world.id)
                 .context("world with source cells requires an environment definition")?;
             let plan = &plans[&world.id];
-            for &cell in &keys {
-                let source = snapshot.read_cell(definition, cell).with_context(|| {
-                    format!("could not read source cell {:?} {cell:?}", world.id)
-                })?;
+            // Sources are read here, cells compile on every core, and pages are written
+            // in key order, so the publication matches a sequential cook exactly.
+            let sources = keys
+                .iter()
+                .map(|&cell| {
+                    let source = snapshot.read_cell(definition, cell).with_context(|| {
+                        format!("could not read source cell {:?} {cell:?}", world.id)
+                    })?;
+                    Ok((cell, source))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            for (_, source) in &sources {
                 stats.peak_source_height_samples = stats
                     .peak_source_height_samples
                     .max(source.terrain.cells.iter().map(|h| h.heights.len()).sum());
@@ -109,10 +122,12 @@ fn cook_snapshot_options(
                 stats.peak_source_road_spans = stats
                     .peak_source_road_spans
                     .max(source.roads.roads.spans.len());
-                let Some(base) = source.source else {
+            }
+            let built = parallel::map(&sources, |(cell, source)| -> Result<Option<RuntimeBuild>> {
+                let cell = *cell;
+                let Some(base) = source.source.clone() else {
                     plan.validate_coverage(&[cell], &source.coverage)?;
-                    stats.coverage_only_cells += 1;
-                    continue;
+                    return Ok(None);
                 };
                 let compiled = plan
                     .compile_cell_with_terrain(
@@ -137,8 +152,15 @@ fn cook_snapshot_options(
                 environment.push_cell(world.id, cell, i64::try_from(revision)?, compiled);
                 let mut local = project.clone();
                 local.cells.push(base);
-                local.objects = source.objects;
-                let batch = build_compiled_runtime(local, environment)?;
+                local.objects = source.objects.clone();
+                build_compiled_runtime(local, environment).map(Some)
+            });
+            for ((cell, _), batch) in sources.iter().zip(built) {
+                let cell = *cell;
+                let Some(batch) = batch? else {
+                    stats.coverage_only_cells += 1;
+                    continue;
+                };
                 stats.peak_encoded_cell_bytes = stats
                     .peak_encoded_cell_bytes
                     .max(batch.pages.iter().map(|p| p.payload.len() as u64).sum());
@@ -161,6 +183,8 @@ fn cook_snapshot_options(
         }
     }
     let manifest = writer.finish(*hash.finalize().as_bytes())?;
+    stats.cell_seconds = start.elapsed().as_secs_f64();
+    let start = std::time::Instant::now();
     // Release the read transaction before hierarchy work and publication. Every leaf
     // has already been evaluated from that one snapshot, including unsampled masks.
     drop(snapshot);
@@ -170,6 +194,7 @@ fn cook_snapshot_options(
         &manifest.world_spaces,
         materials,
     )?;
+    stats.publish_seconds = start.elapsed().as_secs_f64();
     Ok(CookReport {
         manifest,
         stats,

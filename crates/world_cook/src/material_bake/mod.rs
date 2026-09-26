@@ -3,13 +3,15 @@ mod evaluate;
 mod filter;
 mod inputs;
 pub(crate) mod preview;
+use crate::parallel;
 use anyhow::{Context, Result, bail};
 use filter::Core;
 pub use inputs::TerrainBakeLibrary;
 use std::path::Path;
 use world::*;
 use world_db::{
-    RuntimeManifest, TerrainMaterialCookStore, TerrainRenderResources, WorldSpaceRecord,
+    PreparedComposite, RuntimeManifest, StagedCore, TerrainMaterialCookStore,
+    TerrainRenderResources, WorldSpaceRecord,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -19,6 +21,10 @@ pub struct TerrainMaterialBakeStats {
     pub peak_filter_cores: usize,
     pub peak_core_pixels: usize,
     pub tile_gpu_bytes: u64,
+    /// Wall-clock time evaluating leaves, filtering parents and finishing published tiles.
+    pub leaf_seconds: f64,
+    pub parent_seconds: f64,
+    pub tile_seconds: f64,
 }
 
 pub(super) fn cook(
@@ -35,73 +41,63 @@ pub(super) fn cook(
         let minimum_level = store.composite_minimum_level(space.id)?;
         for level in 0..=MAX_TERRAIN_NODE_LEVEL {
             let mut count = 0;
-            if level == 0 {
-                let mut cursor = None;
-                loop {
-                    let keys = store.keys(space.id, 0, cursor)?;
-                    let Some((last, _)) = keys.last() else {
-                        break;
+            let start = std::time::Instant::now();
+            visit(&store, space.id, level, |keys| {
+                for batch in keys.chunks(BATCH) {
+                    let cores = if level == 0 {
+                        leaf_cores(&store, space.cell_size, library, batch)?
+                    } else {
+                        parent_cores(&store, batch)?
                     };
-                    cursor = Some(CellCoord {
-                        x: last.0.x,
-                        z: last.0.z,
-                    });
-                    for batch in keys.chunks(LEAF_BATCH) {
-                        let inputs = batch
-                            .iter()
-                            .map(|&(key, _)| leaf_inputs(&store, key))
-                            .collect::<Result<Vec<_>>>()?;
-                        let cores = evaluate_leaves(space.cell_size, library, &inputs)?;
-                        record(&mut stats, cores.len());
-                        for ((key, _, _), core) in inputs.iter().zip(cores) {
-                            store.put_core(*key, &core.encode()?)?;
-                            count += 1;
-                        }
+                    record(&mut stats, if level == 0 { 1 } else { 5 } * batch.len());
+                    for (&(key, _), core) in batch.iter().zip(cores) {
+                        store.put_core_payload(key, &core?)?;
+                        count += 1;
                     }
                 }
+                Ok(())
+            })?;
+            *if level == 0 {
+                &mut stats.leaf_seconds
             } else {
-                visit(&store, space.id, level, |key, _| {
-                    let mut children: [Option<Core>; 4] = std::array::from_fn(|_| None);
-                    for (i, k) in key.0.children()?.unwrap().into_iter().enumerate() {
-                        children[i] = load(&store, TerrainMaterialKey(k))?;
-                    }
-                    record(&mut stats, children.iter().flatten().count() + 1);
-                    store.put_core(key, &filter::parent(&children).encode()?)?;
-                    count += 1;
-                    Ok(())
-                })?;
-            }
+                &mut stats.parent_seconds
+            } += start.elapsed().as_secs_f64();
             if count == 0 {
                 break;
             }
-            visit(&store, space.id, level, |key, drawable| {
+            let start = std::time::Instant::now();
+            visit(&store, space.id, level, |keys| {
                 // Finer levels still supply filtering cores to their parents above.
-                if !drawable || (level < minimum_level && !store.is_root(key)?) {
-                    return Ok(());
-                }
-                let mut neighbors: [Option<Core>; 9] = std::array::from_fn(|_| None);
-                for (i, slot) in neighbors.iter_mut().enumerate() {
-                    if let (Some(x), Some(z)) = (
-                        key.0.x.checked_add(i as i32 % 3 - 1),
-                        key.0.z.checked_add(i as i32 / 3 - 1),
-                    ) {
-                        *slot = load(&store, TerrainMaterialKey(TerrainNodeKey { x, z, ..key.0 }))?;
+                let mut published = Vec::with_capacity(keys.len());
+                for &(key, drawable) in keys {
+                    if drawable && (level >= minimum_level || store.is_root(key)?) {
+                        published.push(key);
                     }
                 }
-                record(&mut stats, neighbors.iter().flatten().count());
-                let tile = filter::finish(key, &neighbors)?;
-                store.insert(&tile)?;
-                stats.tiles += 1;
+                for batch in published.chunks(BATCH) {
+                    let neighbourhoods = neighbourhood_cores(&store, batch)?;
+                    record(&mut stats, neighbourhoods.len());
+                    let tiles = parallel::map(batch, |&key| -> Result<PreparedComposite> {
+                        let neighbors =
+                            neighbours(key).map(|k| k.and_then(|k| neighbourhoods.get(&k)));
+                        Ok(PreparedComposite::new(&filter::finish(key, &neighbors)?)?)
+                    });
+                    for tile in tiles {
+                        store.insert_prepared(&tile?)?;
+                        stats.tiles += 1;
+                    }
+                }
                 Ok(())
             })?;
+            stats.tile_seconds += start.elapsed().as_secs_f64();
         }
     }
     Ok((store.finish()?, stats))
 }
-/// Leaves are independent. Each batch is read here, evaluated on every core and stored in key
-/// order, so SQLite access stays on this thread and the output matches a sequential pass.
-/// The batch size is fixed, not per machine, and bounds the leaf cores held at once.
-const LEAF_BATCH: usize = 32;
+/// Every phase reads its inputs here, works on every core and writes in key order, so SQLite
+/// access stays on this thread and the output matches a sequential pass. The batch size is
+/// fixed, not per machine, and bounds the cores held at once.
+const BATCH: usize = 32;
 
 type LeafInputs = (
     TerrainMaterialKey,
@@ -132,65 +128,112 @@ fn leaf_inputs(store: &TerrainMaterialCookStore, key: TerrainMaterialKey) -> Res
     Ok((key, page, resources))
 }
 
-fn evaluate_leaves(
+fn leaf_cores(
+    store: &TerrainMaterialCookStore,
     size: f32,
     library: &TerrainBakeLibrary,
-    inputs: &[LeafInputs],
-) -> Result<Vec<Core>> {
-    let threads = std::thread::available_parallelism()
-        .map_or(1, |n| n.get())
-        .clamp(1, inputs.len().max(1));
-    std::thread::scope(|scope| {
-        let workers: Vec<_> = inputs
-            .chunks(inputs.len().div_ceil(threads).max(1))
-            .map(|chunk| {
-                scope.spawn(move || {
-                    chunk
-                        .iter()
-                        .map(|(key, page, resources)| {
-                            evaluate::leaf(
-                                *key,
-                                size,
-                                page,
-                                resources,
-                                library.get(&resources.texture_set)?,
-                            )
-                        })
-                        .collect::<Result<Vec<_>>>()
-                })
-            })
-            .collect();
-        let mut cores = Vec::with_capacity(inputs.len());
-        for worker in workers {
-            cores.extend(worker.join().expect("leaf evaluation panicked")?);
+    batch: &[(TerrainMaterialKey, bool)],
+) -> Result<Vec<Result<StagedCore>>> {
+    let inputs = batch
+        .iter()
+        .map(|&(key, _)| leaf_inputs(store, key))
+        .collect::<Result<Vec<_>>>()?;
+    Ok(parallel::map(&inputs, |(key, page, resources)| {
+        let core = evaluate::leaf(
+            *key,
+            size,
+            page,
+            resources,
+            library.get(&resources.texture_set)?,
+        )?;
+        Ok(StagedCore::compress(&core.encode()?)?)
+    }))
+}
+
+fn parent_cores(
+    store: &TerrainMaterialCookStore,
+    batch: &[(TerrainMaterialKey, bool)],
+) -> Result<Vec<Result<StagedCore>>> {
+    let children = batch
+        .iter()
+        .map(|&(key, _)| {
+            let keys = key.0.children()?.context("parent without children")?;
+            let mut payloads: [Option<StagedCore>; 4] = Default::default();
+            for (payload, child) in payloads.iter_mut().zip(keys) {
+                *payload = store.core_payload(TerrainMaterialKey(child))?;
+            }
+            Ok(payloads)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(parallel::map(&children, |payloads| {
+        let mut cores: [Option<Core>; 4] = Default::default();
+        for (core, payload) in cores.iter_mut().zip(payloads) {
+            *core = payload.as_ref().map(decode_core).transpose()?;
         }
-        Ok(cores)
+        Ok(StagedCore::compress(&filter::parent(&cores).encode()?)?)
+    }))
+}
+
+/// Same-level 3×3 neighbourhood of a tile, row-major; `None` where a key would overflow.
+fn neighbours(key: TerrainMaterialKey) -> [Option<TerrainMaterialKey>; 9] {
+    std::array::from_fn(|i| {
+        Some(TerrainMaterialKey(TerrainNodeKey {
+            x: key.0.x.checked_add(i as i32 % 3 - 1)?,
+            z: key.0.z.checked_add(i as i32 / 3 - 1)?,
+            ..key.0
+        }))
     })
+}
+
+/// Every core the batch's neighbourhoods read, each loaded and decoded once.
+fn neighbourhood_cores(
+    store: &TerrainMaterialCookStore,
+    batch: &[TerrainMaterialKey],
+) -> Result<std::collections::BTreeMap<TerrainMaterialKey, Core>> {
+    let keys: std::collections::BTreeSet<_> = batch
+        .iter()
+        .flat_map(|&k| neighbours(k))
+        .flatten()
+        .collect();
+    let mut payloads = Vec::with_capacity(keys.len());
+    for key in keys {
+        if let Some(payload) = store.core_payload(key)? {
+            payloads.push((key, payload));
+        }
+    }
+    parallel::map(&payloads, |(key, payload)| {
+        Ok((*key, decode_core(payload)?))
+    })
+    .into_iter()
+    .collect()
+}
+
+fn decode_core(payload: &StagedCore) -> Result<Core> {
+    Core::decode(&payload.decompress()?)
 }
 
 fn record(stats: &mut TerrainMaterialBakeStats, count: usize) {
     stats.peak_filter_cores = stats.peak_filter_cores.max(count);
     stats.peak_core_pixels = stats.peak_core_pixels.max(count * filter::N * filter::N);
 }
-fn load(store: &TerrainMaterialCookStore, key: TerrainMaterialKey) -> Result<Option<Core>> {
-    store.core(key)?.map(|b| Core::decode(&b)).transpose()
-}
+
 fn visit(
     store: &TerrainMaterialCookStore,
     space: WorldSpaceId,
     level: u8,
-    mut f: impl FnMut(TerrainMaterialKey, bool) -> Result<()>,
+    mut f: impl FnMut(&[(TerrainMaterialKey, bool)]) -> Result<()>,
 ) -> Result<()> {
     let mut cursor = None;
     loop {
         let keys = store.keys(space, level, cursor)?;
-        if keys.is_empty() {
+        let Some((last, _)) = keys.last() else {
             return Ok(());
-        }
-        for &(key, drawable) in &keys {
-            f(key, drawable)?;
-        }
-        cursor = keys.last().map(|(k, _)| CellCoord { x: k.0.x, z: k.0.z });
+        };
+        cursor = Some(CellCoord {
+            x: last.0.x,
+            z: last.0.z,
+        });
+        f(&keys)?;
     }
 }
 #[cfg(test)]

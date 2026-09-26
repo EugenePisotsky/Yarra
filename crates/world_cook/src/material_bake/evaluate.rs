@@ -187,28 +187,33 @@ pub(super) fn leaf(
 /// finds carved road ruts and terrain dips alike. Rings outside this page clamp to its edge,
 /// which can only weaken hollows touching the edge; puddles also require flat ground.
 pub(super) fn hollowness(heightfield: &TerrainHeightfield, local: [f32; 2], size: f32) -> f32 {
-    let height = |x: f32, z: f32| {
-        heightfield
-            .sample([x.clamp(0., size), z.clamp(0., size)], size)
-            .height
-    };
+    let height =
+        |x: f32, z: f32| heightfield.sample_height([x.clamp(0., size), z.clamp(0., size)], size);
     let centre = height(local[0], local[1]);
     let mut sum = 0.;
-    let mut count = 0.;
-    for (radius, samples, twist) in [
-        (TERRAIN_HOLLOW_RADIUS_METRES * 0.5, 6, 0.),
-        (TERRAIN_HOLLOW_RADIUS_METRES, 12, 0.5),
-    ] {
-        for i in 0..samples {
-            let angle = std::f32::consts::TAU * (i as f32 + twist) / samples as f32;
-            sum += height(
-                local[0] + radius * angle.cos(),
-                local[1] + radius * angle.sin(),
-            );
-            count += 1.;
-        }
+    for [dx, dz] in hollow_rings() {
+        sum += height(local[0] + dx, local[1] + dz);
     }
-    ((sum / count - centre) / TERRAIN_HOLLOW_DEPTH_METRES).clamp(0., 1.)
+    ((sum / hollow_rings().len() as f32 - centre) / TERRAIN_HOLLOW_DEPTH_METRES).clamp(0., 1.)
+}
+
+/// Offsets of the two rings of 6 and 12 samples, computed once: a leaf takes 16,384 samples.
+fn hollow_rings() -> &'static [[f32; 2]; 18] {
+    static RINGS: std::sync::OnceLock<[[f32; 2]; 18]> = std::sync::OnceLock::new();
+    RINGS.get_or_init(|| {
+        let mut rings = [[0.; 2]; 18];
+        let mut next = rings.iter_mut();
+        for (radius, samples, twist) in [
+            (TERRAIN_HOLLOW_RADIUS_METRES * 0.5, 6, 0.),
+            (TERRAIN_HOLLOW_RADIUS_METRES, 12, 0.5),
+        ] {
+            for i in 0..samples {
+                let angle = std::f32::consts::TAU * (i as f32 + twist) / samples as f32;
+                *next.next().unwrap() = [radius * angle.cos(), radius * angle.sin()];
+            }
+        }
+        rings
+    })
 }
 
 fn weights(map: &TerrainWeightPage, uv: [f64; 2]) -> [f32; 2] {

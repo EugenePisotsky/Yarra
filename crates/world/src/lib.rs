@@ -471,6 +471,34 @@ impl TerrainHeightfield {
     /// Samples the rendered grid triangles in local metres. Inputs clamp to the page edges.
     /// Validate the field when loading/constructing it, not for every sample.
     pub fn sample(&self, local_xz: [f32; 2], cell_size: f32) -> TerrainSurfaceSample {
+        let (corners, weights) = self.triangle(local_xz, cell_size);
+        let mut height = 0.0;
+        let mut normal = [0.0_f32; 3];
+        for ((x, z), weight) in corners.into_iter().zip(weights) {
+            height += self.height_at(x, z) * weight;
+            let vertex_normal = self.normal_at(x, z);
+            normal[0] += vertex_normal[0] * weight;
+            normal[1] += vertex_normal[1] * weight;
+            normal[2] += vertex_normal[2] * weight;
+        }
+        TerrainSurfaceSample {
+            height,
+            normal: normalize3(normal),
+        }
+    }
+
+    /// The height of [`Self::sample`], bit for bit, without decoding normals.
+    pub fn sample_height(&self, local_xz: [f32; 2], cell_size: f32) -> f32 {
+        let (corners, weights) = self.triangle(local_xz, cell_size);
+        let mut height = 0.0;
+        for ((x, z), weight) in corners.into_iter().zip(weights) {
+            height += self.height_at(x, z) * weight;
+        }
+        height
+    }
+
+    /// Grid corners and rendered-triangle weights at a clamped local position.
+    fn triangle(&self, local_xz: [f32; 2], cell_size: f32) -> ([(usize, usize); 4], [f32; 4]) {
         debug_assert!(cell_size.is_finite() && cell_size > 0.0);
         let resolution = usize::from(self.resolution);
         debug_assert!((2..=usize::from(MAX_TERRAIN_HEIGHTFIELD_RESOLUTION)).contains(&resolution));
@@ -485,21 +513,10 @@ impl TerrainHeightfield {
         let z1 = (z0 + 1).min(resolution - 1);
         let tx = grid_x - x0 as f32;
         let tz = grid_z - z0 as f32;
-        let corners = [(x0, z0), (x1, z0), (x0, z1), (x1, z1)];
-        let weights = vegetation::surface_triangle_weights(tx, tz);
-        let mut height = 0.0;
-        let mut normal = [0.0_f32; 3];
-        for ((x, z), weight) in corners.into_iter().zip(weights) {
-            height += self.height_at(x, z) * weight;
-            let vertex_normal = self.normal_at(x, z);
-            normal[0] += vertex_normal[0] * weight;
-            normal[1] += vertex_normal[1] * weight;
-            normal[2] += vertex_normal[2] * weight;
-        }
-        TerrainSurfaceSample {
-            height,
-            normal: normalize3(normal),
-        }
+        (
+            [(x0, z0), (x1, z0), (x0, z1), (x1, z1)],
+            vegetation::surface_triangle_weights(tx, tz),
+        )
     }
 
     pub fn normal_at(&self, x: usize, z: usize) -> [f32; 3] {

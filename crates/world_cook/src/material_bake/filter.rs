@@ -79,19 +79,20 @@ impl Core {
         )?)
     }
 }
-pub(super) fn parent(children: &[Option<Core>; 4]) -> Core {
+pub(super) fn parent<C: std::borrow::Borrow<Core>>(children: &[Option<C>; 4]) -> Core {
     let mut hash = blake3::Hasher::new();
     hash.update(b"terrain-composite-parent-v1");
     for c in children {
-        hash.update(&c.as_ref().map_or([0; 32], |c| c.fingerprint));
+        hash.update(&c.as_ref().map_or([0; 32], |c| c.borrow().fingerprint));
     }
     let pixels = (0..N * N)
         .map(|i| {
             let x = i % N;
             let y = i / N;
-            let Some(c) = &children[(x / (N / 2)) + 2 * (y / (N / 2))] else {
+            let Some(c) = children[(x / (N / 2)) + 2 * (y / (N / 2))].as_ref() else {
                 return Pixel::default();
             };
+            let c = c.borrow();
             let x = x % (N / 2) * 2;
             let y = y % (N / 2) * 2;
             Pixel::mean(&[
@@ -109,12 +110,13 @@ pub(super) fn parent(children: &[Option<Core>; 4]) -> Core {
 }
 /// Nine same-level cores, row-major around the tile. Missing/partial exterior
 /// samples clamp to its own valid edge. No missing authored tile is filled in.
-pub(super) fn finish(
+pub(super) fn finish<C: std::borrow::Borrow<Core>>(
     key: TerrainMaterialKey,
-    neighbors: &[Option<Core>; 9],
+    neighbors: &[Option<C>; 9],
 ) -> Result<TerrainComposite> {
     let center = neighbors[4]
         .as_ref()
+        .map(|c| c.borrow())
         .ok_or_else(|| anyhow::anyhow!("missing composite core"))?;
     if center.pixels.iter().any(|p| !p.valid) {
         bail!("cannot draw a partial composite tile");
@@ -122,7 +124,7 @@ pub(super) fn finish(
     let mut hash = blake3::Hasher::new();
     hash.update(b"terrain-composite-halo-v1");
     for c in neighbors {
-        hash.update(&c.as_ref().map_or([0; 32], |c| c.fingerprint));
+        hash.update(&c.as_ref().map_or([0; 32], |c| c.borrow().fingerprint));
     }
     let width = TerrainComposite::mip_size(0);
     let mut pixels: Vec<_> = (0..width * width)
@@ -133,7 +135,8 @@ pub(super) fn finish(
             neighbors[index]
                 .as_ref()
                 .map(|c| {
-                    c.pixels[y.rem_euclid(N as i32) as usize * N + x.rem_euclid(N as i32) as usize]
+                    c.borrow().pixels
+                        [y.rem_euclid(N as i32) as usize * N + x.rem_euclid(N as i32) as usize]
                 })
                 .filter(|p| p.valid)
                 .unwrap_or(
