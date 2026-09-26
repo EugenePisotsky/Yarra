@@ -93,7 +93,9 @@ fn can_discard_color(
     }) {
         return false;
     }
-    if world.get::<GpuAtmosphereSettings>(view_entity).is_some()
+    // Bevy's sky pass loads multisample color; the sky composite that replaces it does not.
+    if (world.get::<GpuAtmosphereSettings>(view_entity).is_some()
+        && !world.contains_resource::<atmosphere::sky::BevySkyPassReplaced>())
         || world
             .get::<OrderIndependentTransparencySettings>(view_entity)
             .is_some()

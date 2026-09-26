@@ -17,6 +17,7 @@ use bevy::{
 use bytemuck::{Pod, Zeroable};
 pub use material::{CloudMaterial, CloudMaterialOptIn, CloudMaterialSystems};
 pub use render::{CloudShadowGpu, CloudShadowLayout, surface_layout};
+pub(crate) use render::{CloudTarget, Pipelines as CloudPipelines, refresh as refresh_clouds};
 use world::atmosphere::{evaluate, linear_rgb};
 
 #[derive(Resource, Default)]
@@ -256,7 +257,10 @@ fn sync(
             change.progress.clamp(0., 1.),
         ];
     }
-    if let Some(fog) = state.weather_fog().filter(|f| f.extinction > 0.) {
+    if let Some(fog) = state
+        .weather_fog()
+        .filter(|f| profile.outdoor && f.extinction > 0.)
+    {
         // Rain fog is lit by the sky: the same deck that brings it hides the sun and moon.
         let overcast = ((p.coverage - 0.5) / 0.45).clamp(0., 1.);
         let direct = (Vec3::from_array(value.sun_linear) * params.sun[3]

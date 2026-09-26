@@ -3,6 +3,7 @@
 pub mod clouds;
 pub mod precipitation;
 pub mod shelter;
+pub mod sky;
 
 use bevy::{
     camera::Exposure,
@@ -13,6 +14,7 @@ use bevy::{
     pbr::AtmosphereSettings,
     post_process::bloom::Bloom,
     prelude::*,
+    render::{extract_resource::ExtractResource, render_resource::TextureUsages},
 };
 use std::borrow::Cow;
 use world::{
@@ -27,8 +29,10 @@ pub enum AtmosphereOwner {
     Study,
 }
 
-/// Temporary presentation switches. Authored lighting and weather are preserved.
-#[derive(Resource, Clone, Copy, Debug)]
+/// Temporary presentation switches. Authored lighting and weather are preserved. Hiding the
+/// sky and haze keeps Bevy's atmosphere tables, which also light surfaces; only the sky
+/// composite stops drawing them.
+#[derive(Resource, Clone, Copy, Debug, ExtractResource)]
 pub struct AtmospherePresentation {
     pub sky_and_haze: bool,
     pub bloom: bool,
@@ -119,7 +123,11 @@ impl WorldEnvironmentPlugin {
 impl Plugin for WorldEnvironmentPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<AtmospherePresentation>()
-            .add_plugins((clouds::CloudsPlugin, precipitation::PrecipitationPlugin))
+            .add_plugins((
+                clouds::CloudsPlugin,
+                precipitation::PrecipitationPlugin,
+                sky::SkyCompositePlugin,
+            ))
             .insert_resource(ClearColor(Color::BLACK))
             .insert_resource(AtmosphereState {
                 owner: self.owner,
@@ -141,6 +149,7 @@ pub struct WorldSun;
 #[derive(Component)]
 pub struct WorldMoon;
 #[derive(Component, Default)]
+#[require(sky::SkyCompositeView)]
 pub struct WorldEnvironmentView {
     /// Explicit launch/bookmark override, displayed and clearable by the editor.
     pub visibility_override: Option<f32>,
@@ -252,6 +261,7 @@ fn apply(
             &mut Exposure,
             Option<&AtmosphereSettings>,
             Option<&mut Bloom>,
+            Option<&mut Camera3d>,
         ),
         (Without<WorldSun>, Without<WorldMoon>),
     >,
@@ -313,19 +323,26 @@ fn apply(
     ambient.color = rgb(value.ambient_linear);
     ambient.brightness = value.ambient_lux;
     let presentation = presentation.as_deref().copied().unwrap_or_default();
-    let sky_enabled = profile.outdoor && presentation.sky_and_haze;
-    for (entity, camera, view, mut exposure, settings, bloom) in &mut views {
+    for (entity, camera, view, mut exposure, settings, bloom, camera_3d) in &mut views {
         exposure.ev100 = state
             .exposure_override
             .filter(|v| v.is_finite())
             .unwrap_or(value.exposure_ev100);
-        if sky_enabled && settings.is_none() {
+        if profile.outdoor && settings.is_none() {
             commands
                 .entity(entity)
                 .insert(AtmosphereSettings::default());
         }
-        if !sky_enabled && settings.is_some() {
+        if !profile.outdoor && settings.is_some() {
             commands.entity(entity).remove::<AtmosphereSettings>();
+        }
+        // The sky composite reads depth whether or not the atmosphere is present; Bevy only
+        // requests sampling for atmosphere views.
+        if let Some(mut camera_3d) = camera_3d {
+            let usages = TextureUsages::from(camera_3d.depth_texture_usages);
+            if !usages.contains(TextureUsages::TEXTURE_BINDING) {
+                camera_3d.depth_texture_usages = (usages | TextureUsages::TEXTURE_BINDING).into();
+            }
         }
         if !presentation.bloom {
             if bloom.is_some() {
@@ -480,7 +497,8 @@ mod tests {
             bloom: false,
         };
         app.update();
-        assert!(app.world().get::<AtmosphereSettings>(camera).is_none());
+        // Surfaces keep atmosphere lighting; the composite alone stops drawing sky and haze.
+        assert!(app.world().get::<AtmosphereSettings>(camera).is_some());
         assert!(app.world().get::<Bloom>(camera).is_none());
         assert_eq!(app.world().resource::<AtmosphereState>().profile, profile);
         *app.world_mut().resource_mut::<AtmospherePresentation>() =

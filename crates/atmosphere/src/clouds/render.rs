@@ -7,10 +7,7 @@ use bevy::{
         renderer::{RenderContext, RenderDevice, RenderQueue, ViewQuery},
         storage::GpuShaderBuffer,
         texture::GpuImage,
-        view::{
-            ExtractedView, ViewDepthTexture, ViewTarget, ViewUniform, ViewUniformOffset,
-            ViewUniforms,
-        },
+        view::{ExtractedView, ViewTarget, ViewUniform, ViewUniformOffset, ViewUniforms},
     },
 };
 use binding_types::*;
@@ -20,29 +17,39 @@ pub struct CloudShadowLayout(pub BindGroupLayoutDescriptor);
 #[derive(Resource)]
 pub struct CloudShadowGpu(pub BindGroup);
 #[derive(Resource)]
-struct Pipelines {
+pub(crate) struct Pipelines {
     compute_layout: BindGroupLayoutDescriptor,
     render_layout: BindGroupLayoutDescriptor,
-    composite_layout: [BindGroupLayoutDescriptor; 2],
     compute: CachedComputePipelineId,
     render: [CachedRenderPipelineId; 2],
-    composite: [CachedRenderPipelineId; 4],
     sampler: Sampler,
     clamp_sampler: Sampler,
     /// Cached sky: wraps across the azimuth seam, clamps at the horizon and zenith rows.
     panorama_sampler: Sampler,
+}
+impl Pipelines {
+    /// Sampler for displaying the cloud image: the panorama cache or a per-frame screen image.
+    pub(crate) fn display_sampler(&self, cached: bool) -> &Sampler {
+        if cached {
+            &self.panorama_sampler
+        } else {
+            &self.clamp_sampler
+        }
+    }
 }
 pub(super) fn install(app: &mut App) {
     let Some(render) = app.get_sub_app_mut(RenderApp) else {
         return;
     };
     render
+        .init_resource::<CloudTarget>()
         .add_systems(RenderStartup, init)
         .add_systems(Render, prepare.in_set(RenderSystems::PrepareBindGroups))
         .add_systems(Core3d, update_shadows.before(Core3dSystems::MainPass))
         .add_systems(
             Core3d,
-            draw.after(Core3dSystems::MainPass)
+            refresh
+                .after(Core3dSystems::MainPass)
                 .before(Core3dSystems::EarlyPostProcess),
         );
 }
@@ -85,27 +92,6 @@ fn init(
             ),
         ),
     );
-    let composite_layout = std::array::from_fn(|i| {
-        BindGroupLayoutDescriptor::new(
-            "cloud composite",
-            &BindGroupLayoutEntries::sequential(
-                ShaderStages::FRAGMENT,
-                (
-                    texture_2d(TextureSampleType::Float { filterable: true }),
-                    sampler(SamplerBindingType::Filtering),
-                    if i == 0 {
-                        texture_depth_2d()
-                    } else {
-                        texture_depth_2d_multisampled()
-                    },
-                    uniform_buffer::<ViewUniform>(true),
-                    params(),
-                    texture_2d(TextureSampleType::Float { filterable: true }),
-                    uniform_buffer_sized(false, std::num::NonZeroU64::new(16)),
-                ),
-            ),
-        )
-    });
     let compute = cache.queue_compute_pipeline(ComputePipelineDescriptor {
         label: Some("cloud sun/moon transmittance".into()),
         layout: vec![compute_layout.clone()],
@@ -134,52 +120,12 @@ fn init(
             ..default()
         })
     });
-    let composite = std::array::from_fn(|i| {
-        cache.queue_render_pipeline(RenderPipelineDescriptor {
-            label: Some("cloud HDR composite".into()),
-            layout: vec![composite_layout[i % 2].clone()],
-            vertex: fullscreen.to_vertex_state(),
-            fragment: Some(FragmentState {
-                shader: server.load("shaders/clouds/composite.wgsl"),
-                shader_defs: {
-                    let mut defs = Vec::new();
-                    if i % 2 == 1 {
-                        defs.push("MULTISAMPLED".into());
-                    }
-                    if i >= 2 {
-                        defs.push("CACHED_SKY".into());
-                    }
-                    defs
-                },
-                targets: vec![Some(ColorTargetState {
-                    format: TextureFormat::Rgba16Float,
-                    blend: Some(BlendState {
-                        color: BlendComponent {
-                            src_factor: BlendFactor::One,
-                            dst_factor: BlendFactor::SrcAlpha,
-                            operation: BlendOperation::Add,
-                        },
-                        alpha: BlendComponent {
-                            src_factor: BlendFactor::Zero,
-                            dst_factor: BlendFactor::One,
-                            operation: BlendOperation::Add,
-                        },
-                    }),
-                    write_mask: ColorWrites::ALL,
-                })],
-                ..default()
-            }),
-            ..default()
-        })
-    });
     commands.insert_resource(CloudShadowLayout(shadow_layout));
     commands.insert_resource(Pipelines {
         compute_layout,
         render_layout,
-        composite_layout,
         compute,
         render,
-        composite,
         clamp_sampler: device.create_sampler(&SamplerDescriptor {
             mag_filter: FilterMode::Linear,
             min_filter: FilterMode::Linear,
@@ -425,11 +371,11 @@ mod tests {
     }
 }
 /// Balanced keeps three cache images: the previous and newest complete refreshes, which the
-/// composite cross-fades by sweep progress, and one being refreshed row by row. Displaying only
-/// complete images turns 4 Hz texel updates into continuous change: no stepping, and no seam
-/// where the refresh cursor passes. High keeps a single per-frame image.
-#[derive(Default)]
-struct CloudTarget {
+/// sky composite cross-fades by sweep progress, and one being refreshed row by row. Displaying
+/// only complete images turns 4 Hz texel updates into continuous change: no stepping, and no
+/// seam where the refresh cursor passes. High keeps a single per-frame image.
+#[derive(Resource, Default)]
+pub(crate) struct CloudTarget {
     size: UVec2,
     slots: Vec<(Texture, TextureView)>,
     /// Indices into `slots`: previous complete, newest complete, being refreshed.
@@ -442,8 +388,16 @@ struct CloudTarget {
     last_report: std::time::Duration,
     traced_pixels: u64,
     composites: u64,
+    /// Cross-fade from the previous to the newest complete image.
+    blend: f32,
 }
 impl CloudTarget {
+    /// Newest and previous complete images and the cross-fade between them, once traced.
+    pub(crate) fn display(&self) -> Option<(&TextureView, &TextureView, f32)> {
+        let newer = self.slots.get(self.newer)?;
+        let older = self.slots.get(self.older)?;
+        Some((&newer.1, &older.1, self.blend))
+    }
     /// A finished sweep becomes the newest image; the oldest slot is refreshed next.
     fn rotate(&mut self) {
         (self.older, self.newer, self.building) = (self.newer, self.building, self.older);
@@ -485,15 +439,14 @@ fn trace(
     pass.set_scissor_rect(0, rows.0, width, rows.1);
     pass.draw(0..3, 0..1);
 }
+/// Trace this frame's share of the cloud images. The sky composite displays them.
 #[allow(clippy::too_many_arguments)]
-fn draw(
+pub(crate) fn refresh(
     view: ViewQuery<(
         &CloudView,
         &ExtractedView,
         &ViewTarget,
-        &ViewDepthTexture,
         &ViewUniformOffset,
-        &Msaa,
         Option<&bevy::camera::MainPassResolutionOverride>,
     )>,
     assets: Option<Res<CloudAssets>>,
@@ -502,25 +455,23 @@ fn draw(
     buffers: Res<RenderAssets<GpuShaderBuffer>>,
     images: Res<RenderAssets<GpuImage>>,
     uniforms: Res<ViewUniforms>,
-    mut target: Local<CloudTarget>,
+    mut target: ResMut<CloudTarget>,
     quality: Res<CloudQuality>,
     params: Res<CloudParams>,
     mut ctx: RenderContext,
 ) {
-    let (_, extracted, view, depth, offset, msaa, resolution) = view.into_inner();
+    let (_, extracted, view, offset, resolution) = view.into_inner();
     if view.main_texture_format() != TextureFormat::Rgba16Float {
         return;
     }
     let Some(assets) = assets else {
         return;
     };
-    let index = usize::from(msaa.samples() > 1);
     let cached = *quality == CloudQuality::Balanced;
-    let (Some(buffer), Some(noise), Some(render), Some(composite), Some(view_binding)) = (
+    let (Some(buffer), Some(noise), Some(render), Some(view_binding)) = (
         buffers.get(&assets.parameters),
         images.get(&assets.noise),
         cache.get_render_pipeline(pipelines.render[usize::from(cached)]),
-        cache.get_render_pipeline(pipelines.composite[index + usize::from(cached) * 2]),
         uniforms.uniforms.binding(),
     ) else {
         return;
@@ -634,58 +585,11 @@ fn draw(
         target.composites = 0;
         target.traced_pixels = 0;
     }
-    let blend = if cached {
+    target.blend = if cached {
         target.sky_refresh.progress()
     } else {
         1.0
     };
-    let blend = ctx
-        .render_device()
-        .create_buffer_with_data(&BufferInitDescriptor {
-            label: Some("cloud cache blend"),
-            contents: bytemuck::bytes_of(&[blend, 0.0, 0.0, 0.0]),
-            usage: BufferUsages::UNIFORM,
-        });
-    let group = ctx.render_device().create_bind_group(
-        "cloud composite",
-        &cache.get_bind_group_layout(&pipelines.composite_layout[index]),
-        &BindGroupEntries::sequential((
-            &target.slots[target.newer].1,
-            if cached {
-                &pipelines.panorama_sampler
-            } else {
-                &pipelines.clamp_sampler
-            },
-            depth.view(),
-            view_binding,
-            buffer.buffer.as_entire_binding(),
-            &target.slots[target.older].1,
-            blend.as_entire_binding(),
-        )),
-    );
-    let mut pass = ctx
-        .command_encoder()
-        .begin_render_pass(&RenderPassDescriptor {
-            label: Some("cloud composite"),
-            color_attachments: &[Some(RenderPassColorAttachment {
-                view: view.main_texture_view(),
-                depth_slice: None,
-                resolve_target: None,
-                ops: Operations {
-                    load: LoadOp::Load,
-                    store: StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: None,
-            timestamp_writes: None,
-            occlusion_query_set: None,
-            multiview_mask: None,
-        });
-    pass.set_viewport(0., 0., main_size.x as f32, main_size.y as f32, 0., 1.);
-    pass.set_pipeline(composite);
-    pass.set_bind_group(0, &group, &[offset.offset]);
-    pass.draw(0..3, 0..1);
-    drop(pass);
 }
 
 pub fn surface_layout() -> BindGroupLayoutDescriptor {
