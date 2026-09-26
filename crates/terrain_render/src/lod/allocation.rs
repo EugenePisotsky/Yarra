@@ -23,7 +23,8 @@ impl Ord for Priority {
 struct Candidate(Priority, std::cmp::Reverse<TerrainNodeKey>, u64);
 
 struct Demand<'a> {
-    previous: &'a BTreeSet<TerrainNodeKey>,
+    /// Strict ancestors of the previous cover: nodes refined last time.
+    previously_refined: HashSet<TerrainNodeKey>,
     view: &'a LodView,
     cell_size: f64,
     contacts: &'a [ContactRegion],
@@ -56,8 +57,7 @@ impl Demand<'_> {
         if !self.view.visible(bounds) {
             return Priority(0, 0.);
         }
-        let refined = self.previous.iter().any(|&k| k != key && contains(key, k));
-        let threshold = if refined {
+        let threshold = if self.previously_refined.contains(&key) {
             p.settings.collapse_pixels
         } else {
             p.settings.refine_pixels
@@ -77,11 +77,15 @@ impl Demand<'_> {
         let mut priority = self.priority(p, key, p.metadata[&key].geometric_error);
         // Refining this coarse neighbour may be needed to certify a fine patch,
         // even when the coarse patch's own body doesn't intersect the consumer.
-        for fine in p.cover.iter().copied().collect::<Vec<_>>() {
+        let mut finer = Vec::new();
+        for edge in EDGES {
             if !p.spend_selection() {
                 return Err(());
             }
-            if fine.level + 1 == key.level && adjacent(fine, key).is_some() {
+            neighbours::finer(&p.cover, &p.interior, key, edge, &mut finer);
+        }
+        for fine in finer {
+            if fine.level + 1 == key.level {
                 let error = patch_error(fine, StitchEdges(1), p.metadata);
                 priority = priority.max(self.priority(p, fine, error));
             }
@@ -98,7 +102,7 @@ pub(super) fn refine(
     contacts: &[ContactRegion],
 ) {
     let demand = Demand {
-        previous,
+        previously_refined: neighbours::interior_of(previous),
         view,
         cell_size,
         contacts,
@@ -135,16 +139,16 @@ pub(super) fn refine(
         // demand. Refresh those entries rather than rescanning every pair after
         // every split; versioned heap entries discard stale higher priorities.
         changed.extend(children.iter().copied());
-        let current: Vec<_> = p.cover.iter().copied().collect();
         for child in children {
-            for &other in &current {
+            let mut touching = Vec::new();
+            for edge in EDGES {
                 if !p.spend_selection() {
                     return;
                 }
-                if adjacent(child, other).is_some() {
-                    changed.insert(other);
-                }
+                touching.extend(neighbours::coarser(&p.cover, child, edge));
+                neighbours::finer(&p.cover, &p.interior, child, edge, &mut touching);
             }
+            changed.extend(touching);
         }
     }
 }

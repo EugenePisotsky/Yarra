@@ -1,10 +1,12 @@
 //! Camera-driven terrain cover planning. IO/upload readiness is deliberately separate:
 //! a caller stages the complete result and retains its previous cover until ready.
 use bevy::math::{DMat4, DVec3};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use world::TerrainNodeKey;
 
 mod allocation;
+mod neighbours;
+use neighbours::EDGES;
 mod mesh;
 pub use mesh::{StitchEdges, build_patch_mesh, stitch_indices};
 mod morph;
@@ -116,10 +118,18 @@ impl Default for LodSettings {
             exact_radius: 8.0,
             contact_radius: 96.0,
             contact_tolerance: 0.01,
-            max_patches: 512,
-            max_triangles: 1_048_576,
+            // Desktop views across a whole island need about 1,100 patches (2.3M triangles)
+            // for the 2 px target. Phones keep the earlier budget until measured there.
+            max_patches: if cfg!(target_os = "ios") { 512 } else { 2048 },
+            max_triangles: if cfg!(target_os = "ios") {
+                1_048_576
+            } else {
+                4_194_304
+            },
             max_work: 1_000_000,
-            max_requests: 128,
+            // Each plan refines at most a quarter of this many nodes before its morph, so
+            // it sets how quickly a large cover arrives after a teleport or start.
+            max_requests: if cfg!(target_os = "ios") { 128 } else { 512 },
         }
     }
 }
@@ -144,6 +154,8 @@ struct Planner<'a> {
     metadata: &'a BTreeMap<TerrainNodeKey, PatchMetadata>,
     settings: &'a LodSettings,
     cover: BTreeSet<TerrainNodeKey>,
+    /// Strict ancestors of `cover`; the planner only splits, so this only grows.
+    interior: HashSet<TerrainNodeKey>,
     requests: BTreeSet<TerrainNodeKey>,
     stats: CoverStats,
 }
@@ -157,10 +169,10 @@ impl Planner<'_> {
             true
         }
     }
-    // Leave enough work for the final complete seam pass. A work-limited quality
-    // plan must still return a balanced, drawable cover.
+    // Leave enough work for the final seam pass (one lookup per patch edge). A
+    // work-limited quality plan must still return a balanced, drawable cover.
     fn spend_selection(&mut self) -> bool {
-        if self.stats.work + self.cover.len() * self.cover.len() + 1 >= self.settings.max_work {
+        if self.stats.work + EDGES.len() * self.cover.len() + 1 >= self.settings.max_work {
             self.stats.budget_limited = true;
             false
         } else {
@@ -198,6 +210,7 @@ impl Planner<'_> {
         }
         self.cover.remove(&key);
         self.cover.extend(children);
+        self.interior.insert(key);
         self.stats.triangles = triangles;
         true
     }
@@ -206,14 +219,13 @@ impl Planner<'_> {
         // Admission is atomic; independently splitting/coarsening neighbours can cycle.
         let mut group = BTreeSet::from([key]);
         let mut todo = vec![key];
-        let current: Vec<_> = self.cover.iter().copied().collect();
         while let Some(candidate) = todo.pop() {
-            for &other in &current {
+            for edge in EDGES {
                 if !self.spend_selection() {
                     return vec![];
                 }
-                if other.level > candidate.level
-                    && adjacent(candidate, other).is_some()
+                if let Some(other) = neighbours::coarser(&self.cover, candidate, edge)
+                    && other.level > candidate.level
                     && group.insert(other)
                 {
                     todo.push(other);
@@ -242,7 +254,7 @@ impl Planner<'_> {
         let next_count = self.cover.len() + 3 * group.len();
         if next_count > self.settings.max_patches
             || triangles > self.settings.max_triangles
-            || self.stats.work + next_count * next_count >= self.settings.max_work
+            || self.stats.work + EDGES.len() * next_count >= self.settings.max_work
         {
             self.stats.budget_limited = true;
             return vec![];
@@ -252,6 +264,7 @@ impl Planner<'_> {
         }
         for parent in group {
             self.cover.remove(&parent);
+            self.interior.insert(parent);
         }
         self.cover.extend(children.iter().copied());
         self.stats.triangles = triangles;
@@ -333,6 +346,7 @@ pub fn plan_cover_with_contacts(
         metadata,
         settings,
         cover: roots.iter().copied().collect(),
+        interior: neighbours::interior_of(roots),
         requests: BTreeSet::new(),
         stats: CoverStats {
             triangles,
@@ -342,16 +356,18 @@ pub fn plan_cover_with_contacts(
     // Sparse root forests may start unbalanced. Prepare their minimum balanced
     // cover before publishing anything; a missing child is pending, never absent.
     let mut balanced = true;
+    // Every unbalanced pair is seen from its finer node, as a coarser neighbour.
     'balance: loop {
         let keys: Vec<_> = p.cover.iter().copied().collect();
-        for (i, &a) in keys.iter().enumerate() {
-            for &b in &keys[i + 1..] {
+        for &a in &keys {
+            for edge in EDGES {
                 if !p.spend() {
                     balanced = false;
                     break 'balance;
                 }
-                if adjacent(a, b).is_some() && a.level.abs_diff(b.level) > 1 {
-                    let coarse = if a.level > b.level { a } else { b };
+                if let Some(coarse) = neighbours::coarser(&p.cover, a, edge)
+                    && coarse.level > a.level + 1
+                {
                     if !p.split(coarse) {
                         balanced = false;
                         break 'balance;
@@ -371,26 +387,17 @@ pub fn plan_cover_with_contacts(
         .map(|&k| (k, StitchEdges::default()))
         .collect();
     if balanced {
+        // A fine patch stitches every edge it shares with a patch one level coarser.
         let keys: Vec<_> = p.cover.iter().copied().collect();
-        for (i, &a) in keys.iter().enumerate() {
-            for &b in &keys[i + 1..] {
+        'seams: for &a in &keys {
+            for edge in EDGES {
                 if !p.spend() {
                     balanced = false;
-                    break;
+                    break 'seams;
                 }
-                if a.level + 1 == b.level
-                    && let Some(edge) = adjacent(a, b)
-                {
+                if neighbours::coarser(&p.cover, a, edge).is_some_and(|b| b.level == a.level + 1) {
                     patches.get_mut(&a).unwrap().insert(edge);
                 }
-                if b.level + 1 == a.level
-                    && let Some(edge) = adjacent(b, a)
-                {
-                    patches.get_mut(&b).unwrap().insert(edge);
-                }
-            }
-            if !balanced {
-                break;
             }
         }
     }
@@ -429,6 +436,7 @@ pub fn contains(parent: TerrainNodeKey, child: TerrainNodeKey) -> bool {
     child.x.checked_shr(shift) == Some(parent.x) && child.z.checked_shr(shift) == Some(parent.z)
 }
 /// Edge of A touching B, with positive edge length (corner-only contacts excluded).
+#[cfg(test)]
 fn adjacent(a: TerrainNodeKey, b: TerrainNodeKey) -> Option<u8> {
     if a.space != b.space {
         return None;

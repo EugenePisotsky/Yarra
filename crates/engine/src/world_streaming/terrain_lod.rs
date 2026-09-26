@@ -31,7 +31,8 @@ use world_db::TerrainNodeDescriptor;
 
 const MAX_METADATA: usize = 4096;
 const MAX_NODE_BYTES: u64 = 32 * 1024 * 1024;
-const MAX_MESH_BYTES: u64 = 128 * 1024 * 1024;
+/// Room for the desktop patch budget twice over (the drawn and staged covers).
+const MAX_MESH_BYTES: u64 = if cfg!(target_os = "ios") { 128 } else { 256 } * 1024 * 1024;
 const MAX_REQUESTS: usize = 4;
 const MAX_BUILDS: usize = 2;
 type Patch = (TerrainNodeKey, StitchEdges);
@@ -95,6 +96,10 @@ pub struct TerrainLodStats {
     pub entry_material_reserved_bytes: u64,
     pub pending: usize,
     pub staged: usize,
+    /// Main-thread cover plans (they run whenever the view or demand changes) and the
+    /// duration of the latest one.
+    pub plans: u64,
+    pub plan_milliseconds: f64,
     /// A whole replacement group shares this weight; None means no visible morph.
     pub morph_weight: Option<f32>,
     pub transition_patches: usize,
@@ -773,7 +778,8 @@ fn update(
         };
         if stream.last_plan.as_ref() != Some(&identity) {
             let previous = stream.active.keys().map(|(k, _)| *k).collect();
-            match lod::plan_cover_with_contacts(
+            let start = std::time::Instant::now();
+            let planned = lod::plan_cover_with_contacts(
                 roots,
                 &stream.metadata,
                 &previous,
@@ -781,7 +787,10 @@ fn update(
                 info.cell_size as f64,
                 &config.settings,
                 &contacts.planning,
-            ) {
+            );
+            stats.plans += 1;
+            stats.plan_milliseconds = start.elapsed().as_secs_f64() * 1000.;
+            match planned {
                 Ok(plan) => {
                     if plan.requests.is_empty() {
                         stream.last_plan = Some(identity);

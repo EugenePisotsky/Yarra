@@ -106,8 +106,15 @@ fn published_landscape_contact_budget_probe() {
                 }),
         );
         assert!(contacts.len() <= lod::contact::MAX_CONTACT_REGIONS);
-        for max_triangles in [1_048_576, 262_144] {
+        // The default budget, a phone-sized one and two larger desktop candidates.
+        for (max_patches, max_triangles) in [
+            (512, 1_048_576),
+            (512, 262_144),
+            (1024, 2_097_152),
+            (2048, 4_194_304),
+        ] {
             let settings = LodSettings {
+                max_patches,
                 max_triangles,
                 ..default()
             };
@@ -128,14 +135,24 @@ fn published_landscape_contact_budget_probe() {
                 .skip(1)
                 .filter(|r| cover_accepts(r, &plan.patches, &metadata, size))
                 .count();
+            // Identifies the exact cover and its stitched edges across planner changes.
+            let cover_hash = {
+                use std::hash::{Hash, Hasher};
+                let mut hasher = std::hash::DefaultHasher::new();
+                for (key, edges) in &plan.patches {
+                    (key.level, key.x, key.z, edges.0).hash(&mut hasher);
+                }
+                hasher.finish()
+            };
             println!(
-                "budget={max_triangles} pitch={pitch} patches={} triangles={} work={} actor_ready={actor_ready} grass_regions={grass_ready}/{} limited={} elapsed_ms={:.3}",
+                "budget={max_patches}/{max_triangles} pitch={pitch} patches={} triangles={} work={} actor_ready={actor_ready} grass_regions={grass_ready}/{} limited={} error_px={:.2} elapsed_ms={:.3} cover={cover_hash:016x}",
                 plan.patches.len(),
                 plan.stats.triangles,
                 plan.stats.work,
                 contacts.len() - 1,
                 plan.stats.budget_limited,
-                start.elapsed().as_secs_f64() * 1000.
+                plan.stats.maximum_visible_error,
+                start.elapsed().as_secs_f64() * 1000.,
             );
             assert!(plan.balanced && actor_ready);
             assert!(plan.patches.len() <= settings.max_patches);
