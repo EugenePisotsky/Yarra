@@ -134,6 +134,20 @@ The same 24 updates now produce **zero history resets**, across prepared and pro
 | F1 preset clicks "did nothing" | **Changed.** Handler verified by test; the 60 s default blend was the cause. Default became 10 s, then returned to 60 s once clouds changed region by region. |
 | Rain, first version | **Retained for tuning.** Instanced streaks in near/mid/far boxes (3,000/6,000/8,000 drops at Storm), drawn after Temporal reconstruction or on the resolved MSAA image; soft depth occlusion; wetness darkens PBR surfaces and grass. Native snapshots of Rain (Spatial, 4× MSAA) and Storm (Temporal) plus an accelerated wet/dry comparison. Density, brightness and wet-ground sheen are first guesses; no shelter under trees, splashes or puddles yet. Cost unmeasured; F1 **Rain rendering** isolates it. |
 
+## Frame cost attribution — September 26
+
+M2 Max, release, `--weather clear`, 4× MSAA. User report: with nearly everything off in F1 at native 3456×1942 the Metal HUD still showed ~5 ms GPU (terrain on) and ~3.5–4 ms (terrain off). Metal System Trace (`xctrace` attached after a 20 s warmup) showed the GPU in its **Minimum** performance state for most of the terrain-off recording and **Maximum** with terrain on: the same passes took about twice as long in the lighter scene (tone mapping 0.15→0.28 ms, UI 0.19→0.44 ms, atmosphere tables 0.60→1.35 ms). HUD GPU time under light load is therefore inflated by clock scaling and is not a work measure. At maximum clock the terrain-only frame was dominated by the opaque pass (2.96 ms), the sky composite (0.52 ms), atmosphere tables (0.6 ms), the unused depth prepass plus Bevy's depth copy (~0.5 ms) and native-resolution tone mapping/upscaling/UI copies (~0.75 ms). Per-encoder intervals overlap (compute runs beside shadow rendering), so they rank work but do not give marginal costs.
+
+Marginal costs below come from uncapped timed profiles (`--profile-fps 0`, GPU-bound, 2560×1440 native, everything on, prepass off, 10 s after 8 s warmup), interleaved and repeated; ±0.3 ms is noise from clock and thermal drift.
+
+| Change | Decision / observation |
+| --- | --- |
+| Depth prepass off outside Temporal | **Retained/default.** 9.46/9.31 → 8.63/8.72 ms. Only MetalFX Temporal consumes it, and the game still adds it there. Repro snapshots already ran without it. |
+| Shadows | **Open, user decision.** Off saves ~2.2 ms. 1024² maps save ~0.7 ms, 1536² ~0.15 ms, terrain not casting ~0.2 ms; Gaussian vs 2×2 filtering makes no difference. Most of the remainder is tree casting into three cascades. |
+| Terrain / trees and objects / bloom / sky and haze | Hiding them saved ~1.7 / ~1.2 / ~0.9 / ~0.4 ms. Tree cost includes their shadow casting. |
+| Grass / clouds | ~0.2 / ~0.1 ms in this view. |
+| Atmosphere tables | Near-free table settings changed nothing measurable: the compute runs beside shadow rendering. Caching the static tables is not worth owning Bevy's table pass. |
+
 ## Open gates and maintenance
 
 The remaining gates are sustained terrain/whole-game power, Temporal cost and motion quality, field-scale grass lighting, target-PC acceptance, and physical-phone heat/60-FPS delivery. Keep correctness references until their replacements pass the relevant gate. Existing counters often identify less work without demonstrating better delivered frames or lower power.

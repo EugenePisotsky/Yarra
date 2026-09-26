@@ -75,6 +75,8 @@ Runner defaults are fullscreen, `--size game`, 60 FPS, 4× MSAA, Balanced densit
 
 Keep window focus, device/power source, power mode, display, AA, world/camera, wind and density controlled. No overlapping builds, editor rendering, screen recording, GPU captures or Xcode replay. Reject unfocused/loading/invalid runs and keep the rejection reason. Use a return control (A/B/A) to reveal thermal/clock drift. Record subjective heat/noise separately.
 
+Under light load macOS lowers the GPU clock, so the Metal HUD's GPU time grows as work is removed; it is not a work measure there. Compare changes with uncapped (`--profile-fps 0`) GPU-bound profiles, and attribute passes with Instruments' Metal System Trace, recording its GPU performance state alongside ([example](EXPERIMENTS.md#frame-cost-attribution--september-26)).
+
 Start with a short diagnostic. Longer heat/power runs need a specific unanswered question; duration alone does not prove equilibrium. Inspect per-second/30-second/final-window cadence and power, not just average FPS. `grass-stream` eventually stops; use `grass-soak` for repeated boundary-crossing movement. Historical long presets are reproduction tools, not mandatory tests for every edit.
 
 ## Launch controls and scenarios

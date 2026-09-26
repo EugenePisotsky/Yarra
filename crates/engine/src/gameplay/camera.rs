@@ -17,10 +17,11 @@ impl Plugin for GameCameraPlugin {
     }
 }
 
-/// The current mobile scene has no effects that consume prepass depth. In Bevy
-/// 0.19 the pass also copies the full-resolution depth texture every frame.
-/// Keep the audit baseline aligned with the normal game camera.
-pub const GAME_DEPTH_PREPASS_ENABLED: bool = !cfg!(target_os = "ios");
+/// Only MetalFX Temporal consumes prepass depth and motion, and the game adds the
+/// prepass while Temporal is active. Otherwise it is pure cost: Bevy 0.19 also
+/// copies the full-resolution depth texture every frame. On M2 Max at
+/// 2560×1440 with 4× MSAA it cost ~0.7 ms of uncapped frame time.
+pub const GAME_DEPTH_PREPASS_ENABLED: bool = false;
 
 pub(super) const CAMERA_MIN_DISTANCE: f32 = 4.0;
 pub(super) const CAMERA_MAX_DISTANCE: f32 = 17.6;
