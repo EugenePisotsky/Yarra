@@ -149,7 +149,7 @@ Marginal costs below come from uncapped timed profiles (`--profile-fps 0`, GPU-b
 | Terrain shader components | Disabling parts in the shader: close-range surface 0.7–1.25 ms, lighting including normal/roughness work 1.3–2.0 ms, directional shadow lookup 0.4–0.9 ms, canopy noise ~0.14 ms; macro variation, detail tiles, decals, cloud shadow lookup and the BRDF itself were within noise. Coarser terrain error did not coarsen this small world (all 256 patches stay at level 0). MSAA 4× vs 1× costs ~1 ms overall. |
 | Skipping a negligible second near layer | **Rejected.** Branching to skip a layer below 1/256 of the blend was consistently slower (8.7–8.9 → 9.3–10.0 ms): the larger, divergent shader cost more than the saved reads. |
 | Terrain / trees and objects / bloom / sky and haze | Hiding them saved ~1.7 / ~1.2 / ~0.9 / ~0.4 ms. Tree cost includes their shadow casting. |
-| Grass / clouds | ~0.2 / ~0.1 ms in this view. |
+| Grass / clouds | Grass 0.7–1.0 ms (9.1–9.2 → 8.2–8.4 ms with `--profile-grass off`); clouds ~0.1 ms. A first grass figure of ~0.2 ms and early bloom figures came from switching F1 settings inside a profile, which re-applies its own grass and bloom presentation; use the profile flags for those. |
 | Atmosphere tables | Near-free table settings changed nothing measurable: the compute runs beside shadow rendering. Caching the static tables is not worth owning Bevy's table pass. |
 
 ## Open gates and maintenance
