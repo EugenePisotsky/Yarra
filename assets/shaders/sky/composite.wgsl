@@ -18,9 +18,8 @@ enable dual_source_blending;
 #import bevy_pbr::atmosphere::{
     bindings::view,
     functions::{
-        direction_world_to_atmosphere, get_view_position, sample_aerial_view_lut,
-        sample_sky_view_lut, sample_sun_radiance, sample_transmittance_lut,
-        sample_transmittance_lut_segment,
+        direction_world_to_atmosphere, get_local_r, get_view_position, sample_aerial_view_lut,
+        sample_density_lut, sample_sky_view_lut, sample_sun_radiance, sample_transmittance_lut,
     },
 }
 #else
@@ -99,11 +98,31 @@ fn aerial_perspective(ray: vec3<f32>, uv: vec2<f32>, distance: f32) -> Path {
     let r = length(position);
     let mu = dot(ray, normalize(position));
     return Path(sample_aerial_view_lut(uv, distance) * view.exposure,
-        sample_transmittance_lut_segment(r, mu, distance));
+        segment_transmittance(r, mu, distance));
 #else
     return Path(vec3(0.0), vec3(1.0));
 #endif
 }
+
+#ifdef ATMOSPHERE
+// Transmittance of the camera-to-surface segment alone. Bevy's
+// `sample_transmittance_lut_segment` divides two whole-atmosphere transmittances. For
+// near-horizontal rays towards the ground both paths cross hundreds of kilometres of low haze,
+// underflow its half-float table, and the ratio turns into coloured horizontal streaks.
+// Surfaces lie within the view distance, so integrate the extinction along the segment itself:
+// Simpson's rule over the full-precision medium density table, whose haze falls off over about
+// a kilometre of altitude.
+fn segment_transmittance(r: f32, mu: f32, distance: f32) -> vec3<f32> {
+    let depth = extinction(r)
+        + 4.0 * extinction(get_local_r(r, mu, 0.5 * distance))
+        + extinction(get_local_r(r, mu, distance));
+    return exp(-depth * (distance / 6.0));
+}
+
+fn extinction(r: f32) -> vec3<f32> {
+    return sample_density_lut(r, 0.0) + sample_density_lut(r, 1.0);
+}
+#endif
 
 @fragment
 fn fragment(in: FullscreenVertexOutput) -> Output {

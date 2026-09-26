@@ -24,8 +24,8 @@ use bevy::{
         system::IntoSystem,
     },
     pbr::{
-        ExtractedAtmosphere, GpuAtmosphereSettings, GpuLights, LightMeta, ViewLightsUniformOffset,
-        main_transmissive_pass_3d,
+        ExtractedAtmosphere, GpuAtmosphereSettings, GpuLights, GpuScatteringMedium, LightMeta,
+        ScatteringMediumSampler, ViewLightsUniformOffset, main_transmissive_pass_3d,
         resources::{
             AtmosphereSampler, AtmosphereTextures, AtmosphereTransform, AtmosphereTransforms,
             AtmosphereTransformsOffset, GpuAtmosphere,
@@ -254,6 +254,9 @@ fn init(
                 (2, uniform_buffer::<AtmosphereTransform>(true)),
                 (3, uniform_buffer::<ViewUniform>(true)),
                 (4, uniform_buffer::<GpuLights>(true)),
+                // Medium density, for the camera-to-surface transmittance.
+                (5, texture_2d(TextureSampleType::Float { filterable: true })),
+                (7, sampler(SamplerBindingType::Filtering)),
                 (8, texture_2d(TextureSampleType::Float { filterable: true })),
                 (
                     10,
@@ -354,6 +357,7 @@ fn queue(
 }
 
 type AtmosphereBindings = (
+    &'static ExtractedAtmosphere,
     &'static AtmosphereTextures,
     &'static DynamicUniformIndex<GpuAtmosphere>,
     &'static DynamicUniformIndex<GpuAtmosphereSettings>,
@@ -369,6 +373,8 @@ struct AtmosphereBuffers<'w> {
     transforms: Option<Res<'w, AtmosphereTransforms>>,
     lights: Res<'w, LightMeta>,
     sampler: Option<Res<'w, AtmosphereSampler>>,
+    media: Option<Res<'w, RenderAssets<GpuScatteringMedium>>>,
+    medium_sampler: Option<Res<'w, ScatteringMediumSampler>>,
 }
 
 type CompositeView = (
@@ -412,12 +418,21 @@ fn draw(
     let device = ctx.render_device().clone();
     let (view_group, offsets) = if key.atmosphere {
         let (
-            Some((textures, atmosphere_index, settings_index, transforms_offset, lights_offset)),
+            Some((
+                extracted,
+                textures,
+                atmosphere_index,
+                settings_index,
+                transforms_offset,
+                lights_offset,
+            )),
             Some(atmosphere_binding),
             Some(settings_binding),
             Some(transforms_binding),
             Some(lights_binding),
             Some(sampler),
+            Some(media),
+            Some(medium_sampler),
         ) = (
             bindings,
             atmosphere.atmosphere.as_ref().and_then(|u| u.binding()),
@@ -428,8 +443,13 @@ fn draw(
                 .and_then(|t| t.uniforms().binding()),
             atmosphere.lights.view_gpu_lights.binding(),
             atmosphere.sampler.as_ref(),
+            atmosphere.media.as_ref(),
+            atmosphere.medium_sampler.as_ref(),
         )
         else {
+            return;
+        };
+        let Some(medium) = media.get(extracted.medium) else {
             return;
         };
         let group = device.create_bind_group(
@@ -441,6 +461,8 @@ fn draw(
                 (2, transforms_binding),
                 (3, view_binding),
                 (4, lights_binding),
+                (5, &medium.density_lut_view),
+                (7, medium_sampler.sampler()),
                 (8, &textures.transmittance_lut.default_view),
                 (10, &textures.sky_view_lut.default_view),
                 (11, &textures.aerial_view_lut.default_view),
