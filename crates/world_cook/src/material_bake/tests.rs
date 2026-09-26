@@ -715,3 +715,69 @@ fn composite_minimum_level_publishes_coarser_tiles_unchanged_and_previews_still_
         "unpublished leaves evaluate deterministically"
     );
 }
+
+#[test]
+fn cached_cores_rebuild_only_changed_groups_and_match_an_uncached_cook() {
+    let mut project = demo_project_document();
+    let keep = |space, cell: CellCoord| {
+        space == WorldSpaceId(1) && (-4..4).contains(&cell.x) && (-4..4).contains(&cell.z)
+    };
+    project.cells.retain(|c| keep(c.space, c.cell));
+    project
+        .terrain_cell_heightfields
+        .retain(|c| keep(c.space, c.cell));
+    project.environment_cells.clear();
+    project.objects.clear();
+    for profile in &mut project.terrain_profiles {
+        profile.composite_minimum_level = 1;
+    }
+    let library = TerrainBakeLibrary::fixture(&project.terrain_texture_sets[0]);
+    let fixture = Fixture::new(&project);
+    let cache = fixture.source().with_extension("cook-cache.sqlite");
+    let cold = cook_project_with_materials(&fixture.source(), &fixture.runtime(), &library)
+        .unwrap()
+        .materials
+        .unwrap();
+    // 64 leaves in 16 groups of four at level 1.
+    assert_eq!((cold.cached_cores, cold.evaluated_cores), (0, 16));
+    assert_eq!(cold.evaluated_leaves, 64);
+
+    // Raise one interior sample of one cell, leaving the edges its neighbours share.
+    let connection = rusqlite::Connection::open(fixture.source()).unwrap();
+    let (resolution, bytes): (i64, Vec<u8>) = connection
+        .query_row(
+            "SELECT resolution, heights FROM terrain_cell_heightfields \
+             WHERE world_space_id = 1 AND cell_x = 1 AND cell_z = 2",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    let mut heights: Vec<f32> = bytes
+        .chunks_exact(4)
+        .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
+        .collect();
+    let resolution = resolution as usize;
+    heights[resolution / 2 * resolution + resolution / 2] -= 0.5;
+    connection
+        .execute(
+            "UPDATE terrain_cell_heightfields SET heights = ?1, source_revision = source_revision + 1 \
+             WHERE world_space_id = 1 AND cell_x = 1 AND cell_z = 2",
+            [heights.iter().flat_map(|h| h.to_le_bytes()).collect::<Vec<_>>()],
+        )
+        .unwrap();
+    drop(connection);
+
+    let warm =
+        cook_project_with_materials(&fixture.source(), &fixture.runtime(), &library).unwrap();
+    let stats = warm.materials.unwrap();
+    assert_eq!((stats.cached_cores, stats.evaluated_cores), (15, 1));
+    assert_eq!(stats.evaluated_leaves, 4);
+    std::fs::remove_file(&cache).unwrap();
+    let uncached =
+        cook_project_with_materials(&fixture.source(), &fixture.runtime(), &library).unwrap();
+    assert_eq!(uncached.materials.unwrap().cached_cores, 0);
+    assert_eq!(
+        warm.manifest.content_hash, uncached.manifest.content_hash,
+        "reused cores publish exactly what evaluating them would"
+    );
+}

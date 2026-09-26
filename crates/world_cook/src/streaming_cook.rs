@@ -49,16 +49,19 @@ fn cook_project_options(
     }
     let snapshot = ProjectCookSnapshot::open(project_path)
         .with_context(|| format!("failed to open cook snapshot {}", project_path.display()))?;
-    cook_snapshot_options(snapshot, runtime_path, materials)
+    // Beside the project, like its other local state; it never ships and may be deleted.
+    let core_cache = project_path.with_extension("cook-cache.sqlite");
+    cook_snapshot_options(snapshot, runtime_path, materials, Some(&core_cache))
 }
 #[cfg(test)]
 fn cook_snapshot(snapshot: ProjectCookSnapshot, runtime_path: &Path) -> Result<CookReport> {
-    cook_snapshot_options(snapshot, runtime_path, None)
+    cook_snapshot_options(snapshot, runtime_path, None, None)
 }
 fn cook_snapshot_options(
     snapshot: ProjectCookSnapshot,
     runtime_path: &Path,
     materials: Option<&TerrainBakeLibrary>,
+    core_cache: Option<&Path>,
 ) -> Result<CookReport> {
     let project = snapshot.catalog();
     let plans = prepare_plans(project)?;
@@ -193,6 +196,7 @@ fn cook_snapshot_options(
         &staging.path,
         &manifest.world_spaces,
         materials,
+        core_cache,
     )?;
     stats.publish_seconds = start.elapsed().as_secs_f64();
     Ok(CookReport {

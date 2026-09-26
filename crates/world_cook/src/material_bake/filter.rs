@@ -79,12 +79,20 @@ impl Core {
         )?)
     }
 }
-pub(super) fn parent<C: std::borrow::Borrow<Core>>(children: &[Option<C>; 4]) -> Core {
+/// A parent core's fingerprint from its children's, in child order; missing children hash
+/// as zeros. Parent cores are identical exactly when this is.
+pub(super) fn parent_fingerprint(children: [Option<[u8; 32]>; 4]) -> [u8; 32] {
     let mut hash = blake3::Hasher::new();
     hash.update(b"terrain-composite-parent-v1");
-    for c in children {
-        hash.update(&c.as_ref().map_or([0; 32], |c| c.borrow().fingerprint));
+    for fingerprint in children {
+        hash.update(&fingerprint.unwrap_or([0; 32]));
     }
+    *hash.finalize().as_bytes()
+}
+pub(super) fn parent<C: std::borrow::Borrow<Core>>(children: &[Option<C>; 4]) -> Core {
+    let fingerprint = parent_fingerprint(std::array::from_fn(|i| {
+        children[i].as_ref().map(|c| c.borrow().fingerprint)
+    }));
     let pixels = (0..N * N)
         .map(|i| {
             let x = i % N;
@@ -104,7 +112,7 @@ pub(super) fn parent<C: std::borrow::Borrow<Core>>(children: &[Option<C>; 4]) ->
         })
         .collect();
     Core {
-        fingerprint: *hash.finalize().as_bytes(),
+        fingerprint,
         pixels,
     }
 }

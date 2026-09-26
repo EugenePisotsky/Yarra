@@ -6,6 +6,7 @@ __pycache__/
 /assets/generated/
 /content/*.project.sqlite
 /content/*.project.views/
+/content/*.project.cook-cache.sqlite
 *.sqlite-wal
 *.sqlite-shm
 *.sqlite-journal

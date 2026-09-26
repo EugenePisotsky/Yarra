@@ -14,7 +14,7 @@ cargo run -p yarra-app-editor
 cargo run --release -p yarra-app-game
 ```
 
-`init` creates source only if absent, then cooks it. The default world is currently the Phase 0 island (8 km of sea and island, a few minutes to cook), with start views in `content/world.project.views/` (`spawn`, `beach`, `summit`, `hills`), e.g. `cargo run --release -p yarra-app-game -- --start-view content/world.project.views/beach.ron`. To start over, delete the project and runtime databases and run `init` again. `cook` requires existing source and never creates a demo. The editor defaults to `content/world.project.sqlite`; the game reads `assets/generated/world.runtime.sqlite`. A fresh public clone needs the local pack inputs before ordinary material cooking succeeds.
+`init` creates source only if absent, then cooks it. The default world is currently the Phase 0 island (8 km of sea and island, a few minutes to cook), with start views in `content/world.project.views/` (`spawn`, `beach`, `summit`, `hills`), e.g. `cargo run --release -p yarra-app-game -- --start-view content/world.project.views/beach.ron`. To start over, delete the project and runtime databases and run `init` again. Cooking keeps ground-composite cores in `content/world.project.cook-cache.sqlite` (about 430 MB for the island), so later cooks re-evaluate only changed areas. Delete it to force full evaluation. `cook` requires existing source and never creates a demo. The editor defaults to `content/world.project.sqlite`; the game reads `assets/generated/world.runtime.sqlite`. A fresh public clone needs the local pack inputs before ordinary material cooking succeeds.
 
 **Save** writes source edits. **Save & Publish** also cooks and atomically replaces the runtime. To publish from a terminal:
 

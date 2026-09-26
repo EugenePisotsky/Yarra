@@ -14,173 +14,217 @@ pub(super) fn leaf(
     resources: &TerrainRenderResources,
     inputs: &Inputs,
 ) -> Result<Core> {
-    page.heightfield.validate()?;
-    if key.0.level != 0
-        || !(1..=2).contains(&page.surfaces.len())
-        || !size.is_finite()
-        || size <= 0.
-    {
-        bail!("composite baker supports one or two surfaces on valid leaf terrain");
-    }
-    let surfaces = page
-        .surfaces
-        .iter()
-        .map(|id| {
-            resources
-                .surfaces
-                .iter()
-                .find(|s| s.surface.id == *id)
-                .context("missing composite surface")
-        })
-        .collect::<Result<Vec<_>>>()?;
-    let blended = surfaces.len() == 2;
-    if surfaces.iter().any(|s| s.layer as usize >= inputs.layers) {
-        bail!("composite surface array layer out of range");
-    }
-    if blended
-        && (page.weight_pages.len() != 1
-            || page.weight_pages[0].resolution < 2
-            || page.weight_pages[0].rgba.len()
-                != (page.weight_pages[0].resolution as usize).pow(2) * 4)
-    {
-        bail!("invalid composite ground weights");
-    }
-    let profile = &resources.profile;
-    // Prepared albedo is selected for both slots only when both opt into it,
-    // matching TerrainMaterial's production prepared path.
-    let prepared = surfaces.iter().all(|s| s.surface.anti_tiling);
-    let mut hash = blake3::Hasher::new();
-    hash.update(b"terrain-composite-leaf-v2");
-    hash.update(&inputs.hash);
-    hash.update(&bincode::serde::encode_to_vec(
-        (
-            key,
-            &page.surfaces,
-            &page.weight_pages,
-            page.heightfield.resolution,
-            &page.heightfield.normals_oct,
-            &page.heightfield.heights,
-        ),
-        bincode::config::standard(),
-    )?);
-    for s in &surfaces {
-        hash.update(&s.layer.to_le_bytes());
-        hash.update(&[s.surface.anti_tiling as u8]);
+    Ok(LeafPlan::new(key, size, page, resources, inputs)?.evaluate(inputs))
+}
+
+/// A validated leaf and the fingerprint of its core, which hashes everything the evaluation
+/// reads. Equal fingerprints mean identical cores, so the fingerprint can stand in for the
+/// core before evaluating it.
+pub(super) struct LeafPlan<'a> {
+    key: TerrainMaterialKey,
+    size: f32,
+    page: &'a TerrainHeightfieldPage,
+    surfaces: Vec<&'a world_db::RuntimeTerrainSurface>,
+    profile: &'a TerrainProfile,
+    pub fingerprint: [u8; 32],
+}
+
+impl<'a> LeafPlan<'a> {
+    pub fn new(
+        key: TerrainMaterialKey,
+        size: f32,
+        page: &'a TerrainHeightfieldPage,
+        resources: &'a TerrainRenderResources,
+        inputs: &Inputs,
+    ) -> Result<Self> {
+        page.heightfield.validate()?;
+        if key.0.level != 0
+            || !(1..=2).contains(&page.surfaces.len())
+            || !size.is_finite()
+            || size <= 0.
+        {
+            bail!("composite baker supports one or two surfaces on valid leaf terrain");
+        }
+        let surfaces = page
+            .surfaces
+            .iter()
+            .map(|id| {
+                resources
+                    .surfaces
+                    .iter()
+                    .find(|s| s.surface.id == *id)
+                    .context("missing composite surface")
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let blended = surfaces.len() == 2;
+        if surfaces.iter().any(|s| s.layer as usize >= inputs.layers) {
+            bail!("composite surface array layer out of range");
+        }
+        if blended
+            && (page.weight_pages.len() != 1
+                || page.weight_pages[0].resolution < 2
+                || page.weight_pages[0].rgba.len()
+                    != (page.weight_pages[0].resolution as usize).pow(2) * 4)
+        {
+            bail!("invalid composite ground weights");
+        }
+        let profile = &resources.profile;
+        let mut hash = blake3::Hasher::new();
+        hash.update(b"terrain-composite-leaf-v2");
+        hash.update(&inputs.hash);
+        hash.update(&bincode::serde::encode_to_vec(
+            (
+                key,
+                &page.surfaces,
+                &page.weight_pages,
+                page.heightfield.resolution,
+                &page.heightfield.normals_oct,
+                &page.heightfield.heights,
+            ),
+            bincode::config::standard(),
+        )?);
+        for s in &surfaces {
+            hash.update(&s.layer.to_le_bytes());
+            hash.update(&[s.surface.anti_tiling as u8]);
+            for v in [
+                s.surface.tile_size,
+                s.surface.roughness_min,
+                s.surface.roughness_max,
+            ] {
+                hash.update(&v.to_bits().to_le_bytes());
+            }
+        }
         for v in [
-            s.surface.tile_size,
-            s.surface.roughness_min,
-            s.surface.roughness_max,
+            size,
+            profile.macro_scales[0],
+            profile.macro_scales[1],
+            profile.macro_scales[2],
+            profile.macro_contrast,
+            profile.macro_albedo_strength,
         ] {
             hash.update(&v.to_bits().to_le_bytes());
         }
+        Ok(Self {
+            key,
+            size,
+            page,
+            surfaces,
+            profile,
+            fingerprint: *hash.finalize().as_bytes(),
+        })
     }
-    for v in [
-        size,
-        profile.macro_scales[0],
-        profile.macro_scales[1],
-        profile.macro_scales[2],
-        profile.macro_contrast,
-        profile.macro_albedo_strength,
-    ] {
-        hash.update(&v.to_bits().to_le_bytes());
-    }
-    let footprint = size as f64 / N as f64;
-    let mut pixels = Vec::with_capacity(N * N);
-    for y in 0..N {
-        for x in 0..N {
-            // Stratified coverage/macro filtering, with source texture mips selecting
-            // the full output footprint. Narrow roads fade by area instead of aliasing.
-            let samples: [Pixel; 4] = std::array::from_fn(|q| {
-                let uv = [
-                    (x as f64 + 0.25 + (q % 2) as f64 * 0.5) / N as f64,
-                    (y as f64 + 0.25 + (q / 2) as f64 * 0.5) / N as f64,
-                ];
-                let world = [
-                    (key.0.x as f64 + uv[0]) * size as f64,
-                    (key.0.z as f64 + uv[1]) * size as f64,
-                ];
-                let blend = if blended {
-                    weights(&page.weight_pages[0], uv)
-                } else {
-                    [1., 0.]
-                };
-                let local = [uv[0] as f32 * size, uv[1] as f32 * size];
-                let mut p = Pixel {
-                    normal: page.heightfield.sample(local, size).normal,
-                    hollow: hollowness(&page.heightfield, local, size),
-                    valid: true,
-                    ..Default::default()
-                };
-                for (i, s) in surfaces.iter().enumerate() {
-                    let tile = s.surface.tile_size.max(0.001) as f64;
-                    let layer = s.layer as usize;
-                    let u = world.map(|x| x / tile);
-                    let color = if prepared {
-                        inputs.sample(
-                            inputs.layers + layer,
-                            [
-                                (u[0] + u[1] * 0.5773502692) / inputs.period,
-                                u[1] * 1.1547005384 / inputs.period,
-                            ],
-                            footprint / tile * 1.1547005384 / inputs.period,
-                            true,
-                        )
-                    } else if s.surface.anti_tiling {
-                        stochastic(inputs, layer, u, footprint / tile)
+
+    pub fn evaluate(&self, inputs: &Inputs) -> Core {
+        let Self {
+            key,
+            size,
+            page,
+            profile,
+            ..
+        } = *self;
+        let surfaces = &self.surfaces;
+        let blended = surfaces.len() == 2;
+        // Prepared albedo is selected for both slots only when both opt into it,
+        // matching TerrainMaterial's production prepared path.
+        let prepared = surfaces.iter().all(|s| s.surface.anti_tiling);
+        let footprint = size as f64 / N as f64;
+        let mut pixels = Vec::with_capacity(N * N);
+        for y in 0..N {
+            for x in 0..N {
+                // Stratified coverage/macro filtering, with source texture mips selecting
+                // the full output footprint. Narrow roads fade by area instead of aliasing.
+                let samples: [Pixel; 4] = std::array::from_fn(|q| {
+                    let uv = [
+                        (x as f64 + 0.25 + (q % 2) as f64 * 0.5) / N as f64,
+                        (y as f64 + 0.25 + (q / 2) as f64 * 0.5) / N as f64,
+                    ];
+                    let world = [
+                        (key.0.x as f64 + uv[0]) * size as f64,
+                        (key.0.z as f64 + uv[1]) * size as f64,
+                    ];
+                    let blend = if blended {
+                        weights(&page.weight_pages[0], uv)
                     } else {
-                        inputs.sample(layer, u, footprint / tile, true)
+                        [1., 0.]
                     };
-                    let material =
-                        inputs.sample(inputs.layers * 2 + layer, u, footprint / tile, false);
-                    for (channel, value) in p.color.iter_mut().zip(color) {
-                        *channel += value * blend[i];
+                    let local = [uv[0] as f32 * size, uv[1] as f32 * size];
+                    let mut p = Pixel {
+                        normal: page.heightfield.sample(local, size).normal,
+                        hollow: hollowness(&page.heightfield, local, size),
+                        valid: true,
+                        ..Default::default()
+                    };
+                    for (i, s) in surfaces.iter().enumerate() {
+                        let tile = s.surface.tile_size.max(0.001) as f64;
+                        let layer = s.layer as usize;
+                        let u = world.map(|x| x / tile);
+                        let color = if prepared {
+                            inputs.sample(
+                                inputs.layers + layer,
+                                [
+                                    (u[0] + u[1] * 0.5773502692) / inputs.period,
+                                    u[1] * 1.1547005384 / inputs.period,
+                                ],
+                                footprint / tile * 1.1547005384 / inputs.period,
+                                true,
+                            )
+                        } else if s.surface.anti_tiling {
+                            stochastic(inputs, layer, u, footprint / tile)
+                        } else {
+                            inputs.sample(layer, u, footprint / tile, true)
+                        };
+                        let material =
+                            inputs.sample(inputs.layers * 2 + layer, u, footprint / tile, false);
+                        for (channel, value) in p.color.iter_mut().zip(color) {
+                            *channel += value * blend[i];
+                        }
+                        p.ao += material[2] * blend[i];
+                        p.roughness += (s.surface.roughness_min
+                            + (s.surface.roughness_max - s.surface.roughness_min) * material[3])
+                            * blend[i];
                     }
-                    p.ao += material[2] * blend[i];
-                    p.roughness += (s.surface.roughness_min
-                        + (s.surface.roughness_max - s.surface.roughness_min) * material[3])
-                        * blend[i];
-                }
-                let transforms = [
-                    world,
-                    [
-                        world[0] * 0.819 - world[1] * 0.574,
-                        world[0] * 0.574 + world[1] * 0.819,
-                    ],
-                    [
-                        world[0] * -0.342 - world[1] * 0.940,
-                        world[0] * 0.940 - world[1] * 0.342,
-                    ],
-                ];
-                let offsets = [[0.11, 0.73], [0.37, 0.61], [0.83, 0.19]];
-                let strengths = [0.28, 0.36, 0.36];
-                let mut signal = 0.;
-                for i in 0..3 {
-                    let scale = profile.macro_scales[i].max(0.001) as f64;
-                    let v = inputs.sample(
-                        inputs.layers * 3,
+                    let transforms = [
+                        world,
                         [
-                            transforms[i][0] / scale + offsets[i][0],
-                            transforms[i][1] / scale + offsets[i][1],
+                            world[0] * 0.819 - world[1] * 0.574,
+                            world[0] * 0.574 + world[1] * 0.819,
                         ],
-                        footprint / scale,
-                        false,
-                    )[0];
-                    signal += (v - 0.5) * 2. * strengths[i];
-                }
-                let response = ((signal * profile.macro_contrast).clamp(-1., 1.)
-                    * profile.macro_albedo_strength)
-                    .exp2();
-                p.color = p.color.map(|x| (x * response).clamp(0., 1.));
-                p.roughness = p.roughness.clamp(0.08, 1.);
-                p
-            });
-            pixels.push(Pixel::mean(&samples));
+                        [
+                            world[0] * -0.342 - world[1] * 0.940,
+                            world[0] * 0.940 - world[1] * 0.342,
+                        ],
+                    ];
+                    let offsets = [[0.11, 0.73], [0.37, 0.61], [0.83, 0.19]];
+                    let strengths = [0.28, 0.36, 0.36];
+                    let mut signal = 0.;
+                    for i in 0..3 {
+                        let scale = profile.macro_scales[i].max(0.001) as f64;
+                        let v = inputs.sample(
+                            inputs.layers * 3,
+                            [
+                                transforms[i][0] / scale + offsets[i][0],
+                                transforms[i][1] / scale + offsets[i][1],
+                            ],
+                            footprint / scale,
+                            false,
+                        )[0];
+                        signal += (v - 0.5) * 2. * strengths[i];
+                    }
+                    let response = ((signal * profile.macro_contrast).clamp(-1., 1.)
+                        * profile.macro_albedo_strength)
+                        .exp2();
+                    p.color = p.color.map(|x| (x * response).clamp(0., 1.));
+                    p.roughness = p.roughness.clamp(0.08, 1.);
+                    p
+                });
+                pixels.push(Pixel::mean(&samples));
+            }
+        }
+        Core {
+            fingerprint: self.fingerprint,
+            pixels,
         }
     }
-    Ok(Core {
-        fingerprint: *hash.finalize().as_bytes(),
-        pixels,
-    })
 }
 /// Depth of `local` below the surrounding ground, where rain water would collect: the mean of
 /// two rings of heights minus the centre, normalised by `TERRAIN_HOLLOW_DEPTH_METRES`. It

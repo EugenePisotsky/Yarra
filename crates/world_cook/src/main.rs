@@ -147,6 +147,10 @@ fn main() -> Result<()> {
             materials.parent_seconds,
             materials.tile_seconds
         );
+        println!(
+            "Composite cores: {} reused from the cook cache, {} evaluated from {} leaves",
+            materials.cached_cores, materials.evaluated_cores, materials.evaluated_leaves
+        );
     }
     println!(
         "Cooked {} terrain cells and validated {} coverage-only cells",

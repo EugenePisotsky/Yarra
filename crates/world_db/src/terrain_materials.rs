@@ -74,6 +74,15 @@ impl StagedCore {
     pub fn decompress(&self) -> Result<Vec<u8>, WorldDbError> {
         decompress(&self.payload, self.decoded_bytes, MAX_CORE_BYTES)
     }
+    pub(crate) fn from_parts(decoded_bytes: u64, payload: Vec<u8>) -> Self {
+        Self {
+            decoded_bytes,
+            payload,
+        }
+    }
+    pub(crate) fn parts(&self) -> (u64, &[u8]) {
+        (self.decoded_bytes, &self.payload)
+    }
 }
 
 /// An encoded, compressed composite ready to insert. Preparing it needs no database, so it
@@ -161,6 +170,36 @@ impl TerrainMaterialCookStore {
     /// The profile's finest published level; spaces without a profile publish every level.
     pub fn composite_minimum_level(&self, space: WorldSpaceId) -> Result<u8, WorldDbError> {
         composite_minimum_level(&self.reader.connection, space)
+    }
+    /// Existing leaves under `key`, in key order.
+    pub fn leaves_within(
+        &self,
+        key: TerrainMaterialKey,
+    ) -> Result<Vec<TerrainMaterialKey>, WorldDbError> {
+        let [minimum, maximum] = key.0.cell_bounds().map_err(|e| invalid(e.to_string()))?;
+        let mut query = self.reader.connection.prepare_cached("SELECT node_x,node_z FROM terrain_nodes WHERE world_space_id=?1 AND level=0 AND node_x BETWEEN ?2 AND ?3 AND node_z BETWEEN ?4 AND ?5 ORDER BY node_x,node_z")?;
+        Ok(query
+            .query_map(
+                params![key.0.space.0, minimum.x, maximum.x, minimum.z, maximum.z],
+                |r| {
+                    Ok(TerrainMaterialKey(TerrainNodeKey::leaf(
+                        key.0.space,
+                        CellCoord {
+                            x: r.get(0)?,
+                            z: r.get(1)?,
+                        },
+                    )))
+                },
+            )?
+            .collect::<Result<_, _>>()?)
+    }
+    /// The finest level holding a root, if the space has any.
+    pub fn lowest_root_level(&self, space: WorldSpaceId) -> Result<Option<u8>, WorldDbError> {
+        Ok(self.reader.connection.query_row(
+            "SELECT min(level) FROM terrain_roots WHERE world_space_id=?1",
+            [space.0],
+            |r| r.get(0),
+        )?)
     }
     /// Roots stay published at any level: they are the resident fallback cover.
     pub fn is_root(&self, key: TerrainMaterialKey) -> Result<bool, WorldDbError> {

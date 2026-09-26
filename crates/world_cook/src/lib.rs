@@ -1070,7 +1070,7 @@ fn finish_runtime_publication(
     temporary_path: &Path,
     spaces: &[WorldSpaceRecord],
 ) -> Result<RuntimeManifest> {
-    finish_runtime_publication_with_materials(runtime_path, temporary_path, spaces, None)
+    finish_runtime_publication_with_materials(runtime_path, temporary_path, spaces, None, None)
         .map(|(manifest, _)| manifest)
 }
 fn finish_runtime_publication_with_materials(
@@ -1078,10 +1078,11 @@ fn finish_runtime_publication_with_materials(
     temporary_path: &Path,
     spaces: &[WorldSpaceRecord],
     materials: Option<&TerrainBakeLibrary>,
+    core_cache: Option<&Path>,
 ) -> Result<(RuntimeManifest, Option<TerrainMaterialBakeStats>)> {
     let (mut manifest, _) = terrain_cook::cook_hierarchy(temporary_path, spaces)?;
     let stats = if let Some(materials) = materials {
-        let (next, stats) = material_bake::cook(temporary_path, spaces, materials)?;
+        let (next, stats) = material_bake::cook(temporary_path, spaces, materials, core_cache)?;
         manifest = next;
         Some(stats)
     } else {
