@@ -15,7 +15,29 @@
     },
     "roots": "4 at level 7",
     "composite_tiles": 5460,
-    "hill_parallel_bake": "hill fixture material cook 61 s -> 17 s with an identical content hash"
+    "hill_parallel_bake": "hill fixture material cook 61 s -> 17 s with an identical content hash",
+    "incremental": {
+      "full_cook_warm_cache_seconds": 68,
+      "full_cook_cold_cache_seconds": 168,
+      "no_op_seconds": 7.7,
+      "one_cell_height_edit": {
+        "seconds": 5.8,
+        "recompiled_cells": 9,
+        "changed_ground_cells": 1,
+        "evaluated_cores": 1,
+        "evaluated_leaves": 16,
+        "refinished_tiles": 49,
+        "content_hash_equals_full_cook": true
+      },
+      "hierarchy_build_seconds": {
+        "before": 21,
+        "after": 7
+      },
+      "core_cache_MB": 572,
+      "before_stage_b": {
+        "no_op_seconds": 66
+      }
+    }
   },
   "profiles": {
     "method": "yarra-app-game --render-repro landscape --profile-seconds 10 --profile-warmup 8 --profile-fps 0, 2560x1440 native, 4x MSAA, grass on, windowed; update intervals, not GPU time",

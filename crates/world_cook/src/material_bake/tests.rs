@@ -566,7 +566,7 @@ fn incomplete_material_pass_rolls_back_and_decode_checks_declared_bytes() {
             .unwrap();
         encoded.descriptor.decoded_bytes = MAX_TERRAIN_COMPOSITE_BYTES as u64 + 1;
         assert!(encoded.decode().is_err());
-        assert!(store.finish().is_err());
+        assert!(store.finish(&[0; 32]).is_err());
     }
     let reader = RuntimeReader::open_immutable(&f.runtime()).unwrap();
     assert_eq!(reader.manifest().content_hash, before.content_hash);
@@ -716,8 +716,38 @@ fn composite_minimum_level_publishes_coarser_tiles_unchanged_and_previews_still_
     );
 }
 
+/// Lowers one interior sample of a cell, leaving the edges its neighbours share.
+fn dent(source: &std::path::Path, cell: CellCoord) {
+    let connection = rusqlite::Connection::open(source).unwrap();
+    let (resolution, bytes): (i64, Vec<u8>) = connection
+        .query_row(
+            "SELECT resolution, heights FROM terrain_cell_heightfields \
+             WHERE world_space_id = 1 AND cell_x = ?1 AND cell_z = ?2",
+            [cell.x, cell.z],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    let mut heights: Vec<f32> = bytes
+        .chunks_exact(4)
+        .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
+        .collect();
+    let resolution = resolution as usize;
+    heights[resolution / 2 * resolution + resolution / 2] -= 0.5;
+    connection
+        .execute(
+            "UPDATE terrain_cell_heightfields SET heights = ?1, source_revision = source_revision + 1 \
+             WHERE world_space_id = 1 AND cell_x = ?2 AND cell_z = ?3",
+            rusqlite::params![
+                heights.iter().flat_map(|h| h.to_le_bytes()).collect::<Vec<_>>(),
+                cell.x,
+                cell.z
+            ],
+        )
+        .unwrap();
+}
+
 #[test]
-fn cached_cores_rebuild_only_changed_groups_and_match_an_uncached_cook() {
+fn incremental_cooks_rebake_only_changed_cores_and_tiles_and_match_a_fresh_cook() {
     let mut project = demo_project_document();
     let keep = |space, cell: CellCoord| {
         space == WorldSpaceId(1) && (-4..4).contains(&cell.x) && (-4..4).contains(&cell.z)
@@ -734,50 +764,69 @@ fn cached_cores_rebuild_only_changed_groups_and_match_an_uncached_cook() {
     let library = TerrainBakeLibrary::fixture(&project.terrain_texture_sets[0]);
     let fixture = Fixture::new(&project);
     let cache = fixture.source().with_extension("cook-cache.sqlite");
+    // Every space, including the empty interior, continues its published composites.
+    let spaces = project.world_spaces.len() as u64;
+    let fresh = || {
+        crate::cook_project_fresh(
+            &fixture.source(),
+            &fixture.dir.join("fresh.sqlite"),
+            Some(&library),
+        )
+        .unwrap()
+    };
     let cold = cook_project_with_materials(&fixture.source(), &fixture.runtime(), &library)
         .unwrap()
         .materials
         .unwrap();
-    // 64 leaves in 16 groups of four at level 1.
+    // 64 leaves in 16 groups of four at level 1, below four roots at level 2.
     assert_eq!((cold.cached_cores, cold.evaluated_cores), (0, 16));
     assert_eq!(cold.evaluated_leaves, 64);
+    assert_eq!(cold.updated_spaces, 0);
 
-    // Raise one interior sample of one cell, leaving the edges its neighbours share.
-    let connection = rusqlite::Connection::open(fixture.source()).unwrap();
-    let (resolution, bytes): (i64, Vec<u8>) = connection
-        .query_row(
-            "SELECT resolution, heights FROM terrain_cell_heightfields \
-             WHERE world_space_id = 1 AND cell_x = 1 AND cell_z = 2",
-            [],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
+    let unchanged = cook_project_with_materials(&fixture.source(), &fixture.runtime(), &library)
+        .unwrap()
+        .materials
         .unwrap();
-    let mut heights: Vec<f32> = bytes
-        .chunks_exact(4)
-        .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
-        .collect();
-    let resolution = resolution as usize;
-    heights[resolution / 2 * resolution + resolution / 2] -= 0.5;
-    connection
-        .execute(
-            "UPDATE terrain_cell_heightfields SET heights = ?1, source_revision = source_revision + 1 \
-             WHERE world_space_id = 1 AND cell_x = 1 AND cell_z = 2",
-            [heights.iter().flat_map(|h| h.to_le_bytes()).collect::<Vec<_>>()],
-        )
-        .unwrap();
-    drop(connection);
+    assert_eq!(unchanged.updated_spaces, spaces);
+    assert_eq!((unchanged.evaluated_cores, unchanged.tiles), (0, 0));
 
+    // The edited cell's group and its root are baked again, and only the tiles whose
+    // neighbourhood holds one of them are finished again.
+    dent(&fixture.source(), CellCoord { x: 1, z: 2 });
     let warm =
         cook_project_with_materials(&fixture.source(), &fixture.runtime(), &library).unwrap();
     let stats = warm.materials.unwrap();
-    assert_eq!((stats.cached_cores, stats.evaluated_cores), (15, 1));
+    assert_eq!(stats.updated_spaces, spaces);
+    assert_eq!((stats.cached_cores, stats.evaluated_cores), (0, 1));
     assert_eq!(stats.evaluated_leaves, 4);
+    // The group (0, 1) is on the edge of the 4×4 level-1 grid, so six level-1 tiles hold it
+    // in their neighbourhood; its root (0, 0) is a neighbour of all four roots.
+    assert_eq!(stats.tiles, 6 + 4);
     std::fs::remove_file(&cache).unwrap();
-    let uncached =
-        cook_project_with_materials(&fixture.source(), &fixture.runtime(), &library).unwrap();
-    assert_eq!(uncached.materials.unwrap().cached_cores, 0);
+    let reference = fresh();
+    let reference_stats = reference.materials.unwrap();
     assert_eq!(
-        warm.manifest.content_hash, uncached.manifest.content_hash,
-        "reused cores publish exactly what evaluating them would"
+        (
+            reference_stats.cached_cores,
+            reference_stats.evaluated_cores
+        ),
+        (0, 16)
+    );
+    assert_eq!(
+        warm.manifest.content_hash, reference.manifest.content_hash,
+        "an updated publication matches baking everything again"
+    );
+
+    // Clean cores that left the cache cannot be reused, so the space is baked afresh.
+    std::fs::remove_file(&cache).unwrap();
+    dent(&fixture.source(), CellCoord { x: -3, z: -1 });
+    let recovered =
+        cook_project_with_materials(&fixture.source(), &fixture.runtime(), &library).unwrap();
+    let stats = recovered.materials.unwrap();
+    assert_eq!(stats.updated_spaces, spaces - 1);
+    assert_eq!(stats.tiles, cold.tiles);
+    assert_eq!(
+        recovered.manifest.content_hash,
+        fresh().manifest.content_hash
     );
 }

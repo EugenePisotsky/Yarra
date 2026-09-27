@@ -6,7 +6,7 @@ use crate::{
     MAX_COOK_CATALOG_ROWS, MAX_COOK_CELL_BYTES, MAX_COOK_MANUAL_OBJECTS_PER_CELL, RuntimeBuild,
     RuntimeManifest, WorldDbError, atmosphere, schema,
 };
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use std::path::Path;
 
 pub fn write_runtime_database(path: &Path, build: &RuntimeBuild) -> Result<(), WorldDbError> {
@@ -114,8 +114,8 @@ fn write_runtime_spatial(
         transaction.execute(
             "INSERT INTO cells( \
                 world_space_id, cell_x, cell_z, minimum_y, maximum_y, domain_mask, \
-                source_revision, input_fingerprint, content_hash \
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                source_revision, terrain_resolution, input_fingerprint, content_hash \
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 cell.space.0,
                 cell.cell.x,
@@ -124,6 +124,7 @@ fn write_runtime_spatial(
                 cell.maximum_y,
                 i64::try_from(cell.domain_mask).map_err(|_| WorldDbError::IntegerOverflow)?,
                 cell.source_revision,
+                cell.terrain_resolution,
                 input_fingerprint.as_slice(),
                 content_hash.as_slice()
             ],
@@ -262,14 +263,33 @@ impl RuntimeCookWriter {
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
-    /// Drops the terrain hierarchy and composites so they can be rebuilt from the cells.
-    pub fn clear_terrain_products(&self) -> Result<(), WorldDbError> {
+    /// Drops the ground composites so they can be baked again from the updated hierarchy.
+    pub fn clear_terrain_composites(&self) -> Result<(), WorldDbError> {
         self.connection.execute_batch(
-            "DELETE FROM terrain_composites; DELETE FROM terrain_material_spaces;
-             DELETE FROM terrain_roots; DELETE FROM terrain_nodes;
-             DELETE FROM terrain_hierarchy_spaces;",
+            "DELETE FROM terrain_composites; DELETE FROM terrain_cores;
+             DELETE FROM terrain_material_spaces;",
         )?;
         Ok(())
+    }
+    pub fn page_checksum(&self, key: world::PageKey) -> Result<Option<[u8; 32]>, WorldDbError> {
+        let checksum: Option<Vec<u8>> = self
+            .connection
+            .query_row(
+                "SELECT checksum FROM cell_pages WHERE world_space_id=?1 AND cell_x=?2 AND \
+                 cell_z=?3 AND domain=?4 AND lod=?5",
+                params![
+                    key.space.0,
+                    key.cell.x,
+                    key.cell.z,
+                    key.domain as i64,
+                    key.lod
+                ],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(checksum
+            .map(|c| crate::storage::blob_array(&c, "page checksum"))
+            .transpose()?)
     }
     /// Removes a cell and every page row that depends on it.
     pub fn remove_cell(

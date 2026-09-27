@@ -579,6 +579,7 @@ fn build_compiled_runtime(
             .context("environment compiler omitted terrain")?
             .clone();
         let terrain_height_bounds = heightfield.height_bounds();
+        let terrain_resolution = heightfield.resolution;
         let heightfield_gpu_bytes = estimate_heightfield_gpu_bytes(heightfield.resolution);
         let terrain_payload = PagePayload::TerrainHeightfield(TerrainHeightfieldPage {
             heightfield,
@@ -753,6 +754,7 @@ fn build_compiled_runtime(
             maximum_y,
             domain_mask,
             source_revision: source_cell.source_revision,
+            terrain_resolution,
         });
     }
 
@@ -1071,8 +1073,15 @@ fn finish_runtime_publication(
     temporary_path: &Path,
     spaces: &[WorldSpaceRecord],
 ) -> Result<RuntimeManifest> {
-    finish_runtime_publication_with_materials(runtime_path, temporary_path, spaces, None, None)
-        .map(|(manifest, _)| manifest)
+    finish_runtime_publication_with_materials(
+        runtime_path,
+        temporary_path,
+        spaces,
+        None,
+        None,
+        None,
+    )
+    .map(|(manifest, _, _)| manifest)
 }
 fn finish_runtime_publication_with_materials(
     runtime_path: &Path,
@@ -1080,10 +1089,14 @@ fn finish_runtime_publication_with_materials(
     spaces: &[WorldSpaceRecord],
     materials: Option<&TerrainBakeLibrary>,
     core_cache: Option<&Path>,
-) -> Result<(RuntimeManifest, Option<TerrainMaterialBakeStats>)> {
-    let (mut manifest, _) = terrain_cook::cook_hierarchy(temporary_path, spaces)?;
+    changed: Option<&terrain_cook::ChangedCells>,
+) -> Result<(RuntimeManifest, Option<TerrainMaterialBakeStats>, f64)> {
+    let start = std::time::Instant::now();
+    let (mut manifest, _) = terrain_cook::cook_hierarchy(temporary_path, spaces, changed)?;
+    let hierarchy_seconds = start.elapsed().as_secs_f64();
     let stats = if let Some(materials) = materials {
-        let (next, stats) = material_bake::cook(temporary_path, spaces, materials, core_cache)?;
+        let (next, stats) =
+            material_bake::cook(temporary_path, spaces, materials, core_cache, changed)?;
         manifest = next;
         Some(stats)
     } else {
@@ -1114,7 +1127,7 @@ fn finish_runtime_publication_with_materials(
             runtime_path.display()
         )
     })?;
-    Ok((manifest, stats))
+    Ok((manifest, stats, hierarchy_seconds))
 }
 
 fn demo_project_document() -> ProjectDocument {

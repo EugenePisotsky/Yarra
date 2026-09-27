@@ -1,95 +1,205 @@
 //! Build terrain products from finalized leaves in an unpublished runtime generation.
-//! This pass has bounded sample memory, as does the production source/environment
-//! pass in streaming_cook. The whole-document path is retained for reference fixtures.
+//! Nodes are read and written here in key order and prepared on every core; batches bound
+//! the sample data held at once. The whole-document path is retained for reference fixtures.
+use crate::parallel;
 use anyhow::{Context, Result, bail};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
-use world::{CellCoord, MAX_TERRAIN_NODE_LEVEL, PagePayload, TerrainNodeKey, WorldSpaceId};
-use world_db::{RuntimeManifest, TerrainCookStore, TerrainHierarchySummary, WorldSpaceRecord};
+use world::{
+    CellCoord, MAX_TERRAIN_NODE_LEVEL, PagePayload, TerrainNode, TerrainNodeKey, WorldSpaceId,
+};
+use world_db::{
+    EncodedPage, EncodedTerrainNode, MAX_TERRAIN_NODE_QUERY, PreparedTerrainNode, RuntimeManifest,
+    TerrainCookStore, TerrainHierarchySummary, WorldSpaceRecord,
+};
 
+/// Cells whose ground page changed since the publication a cook continues, per world.
+pub(super) type ChangedCells = BTreeMap<WorldSpaceId, BTreeSet<CellCoord>>;
+
+/// Builds the hierarchy into empty staging, or with `changed` updates the copied hierarchy
+/// of a publication with the same terrain cells: only changed leaves and their ancestors.
 pub(super) fn cook_hierarchy(
     staging_path: &Path,
     spaces: &[WorldSpaceRecord],
+    changed: Option<&ChangedCells>,
 ) -> Result<(RuntimeManifest, Vec<TerrainHierarchySummary>)> {
-    let store = TerrainCookStore::open_staging(staging_path)?;
+    let store = match changed {
+        Some(_) => TerrainCookStore::open_incremental(staging_path)?,
+        None => TerrainCookStore::open_staging(staging_path)?,
+    };
     for space in spaces {
         // A world uses one hierarchy grid. In particular, the compiler's 2x2 flat
         // optimization must not create incompatible topology next to detailed relief.
-        // Three samples are the minimum for stitching: the midpoint shared by two
-        // fine patches must exist on their coarse neighbour's edge, even in flat worlds.
-        let mut resolution = 3;
-        visit_leaves(&store, space.id, |_, field| {
-            resolution = resolution.max(field.resolution);
-            Ok(())
-        })?;
-        visit_leaves(&store, space.id, |key, field| {
-            store.insert_leaf(key, &field, resolution)?;
-            Ok(())
-        })?;
-
-        for level in 0..MAX_TERRAIN_NODE_LEVEL {
-            let mut cursor = None;
-            let mut count = 0_u64;
-            let mut at_origin = true;
-            // Check whether another level can merge anything. Four quadrants around
-            // zero never share a parent; one remaining node cannot merge either.
-            loop {
-                let keys = store.keys(space.id, level, cursor)?;
-                if keys.is_empty() {
-                    break;
-                }
-                count += keys.len() as u64;
-                at_origin &= keys
-                    .iter()
-                    .all(|k| (-1..=0).contains(&k.x) && (-1..=0).contains(&k.z));
-                cursor = keys.last().map(|k| CellCoord { x: k.x, z: k.z });
-            }
-            if count <= 1 || at_origin {
-                break;
-            }
-            cursor = None;
-            loop {
-                let keys = store.keys(space.id, level, cursor)?;
-                if keys.is_empty() {
-                    break;
-                }
-                for key in &keys {
-                    let parent = key.parent()?.context("terrain hierarchy level limit")?;
-                    // The keyset page can split siblings. A DB existence check keeps
-                    // this bounded without retaining a world-sized set of parents.
-                    if !store.contains(parent)? {
-                        store.build_parent(parent).with_context(|| {
-                            format!("could not build terrain parent {parent:?}")
-                        })?;
-                    }
-                }
-                cursor = keys.last().map(|k| CellCoord { x: k.x, z: k.z });
-            }
-        }
+        let resolution = store.grid_resolution(space.id)?;
+        let Some(changed) = changed else {
+            build(&store, space.id, resolution)?;
+            continue;
+        };
+        let cells = if store
+            .stored_resolution(space.id)?
+            .is_some_and(|stored| stored != resolution)
+        {
+            // Every leaf is resampled to the new grid.
+            leaf_cells(&store, space.id)?
+        } else {
+            changed.get(&space.id).cloned().unwrap_or_default()
+        };
+        update(&store, space.id, resolution, &cells)?;
     }
     Ok(store.finish(spaces)?)
 }
 
-fn visit_leaves(
-    store: &TerrainCookStore,
-    space: WorldSpaceId,
-    mut visit: impl FnMut(TerrainNodeKey, world::TerrainHeightfield) -> Result<()>,
-) -> Result<()> {
+fn build(store: &TerrainCookStore, space: WorldSpaceId, resolution: u16) -> Result<()> {
     let mut cursor = None;
     loop {
-        let pages = store.leaf_pages(space, cursor)?;
-        if pages.is_empty() {
+        let pages = store.leaf_pages(space, cursor, MAX_TERRAIN_NODE_QUERY)?;
+        let Some(last) = pages.last() else {
+            break;
+        };
+        cursor = Some(last.key.cell);
+        for node in prepare_leaves(&pages, resolution) {
+            store.write(&node?, false)?;
+        }
+    }
+    for level in 0..MAX_TERRAIN_NODE_LEVEL {
+        let mut cursor = None;
+        let mut count = 0_u64;
+        let mut at_origin = true;
+        // Check whether another level can merge anything. Four quadrants around
+        // zero never share a parent; one remaining node cannot merge either.
+        loop {
+            let keys = store.keys(space, level, cursor)?;
+            if keys.is_empty() {
+                break;
+            }
+            count += keys.len() as u64;
+            at_origin &= keys
+                .iter()
+                .all(|k| (-1..=0).contains(&k.x) && (-1..=0).contains(&k.z));
+            cursor = keys.last().map(|k| CellCoord { x: k.x, z: k.z });
+        }
+        if count <= 1 || at_origin {
             break;
         }
-        for page in pages {
-            cursor = Some(page.key.cell);
-            let key = TerrainNodeKey::leaf(space, page.key.cell);
-            let PagePayload::TerrainHeightfield(terrain) = page.decode()?.payload else {
-                bail!("terrain hierarchy requires finalized heightfield pages at {key:?}");
-            };
-            visit(key, terrain.heightfield)?;
+        cursor = None;
+        loop {
+            let keys = store.keys(space, level, cursor)?;
+            if keys.is_empty() {
+                break;
+            }
+            let mut parents = BTreeSet::new();
+            for key in &keys {
+                let parent = key.parent()?.context("terrain hierarchy level limit")?;
+                // The keyset page can split siblings. A DB existence check keeps
+                // this bounded without retaining a world-sized set of parents.
+                if !store.contains(parent)? {
+                    parents.insert(parent);
+                }
+            }
+            write_parents(store, &parents, false)?;
+            cursor = keys.last().map(|k| CellCoord { x: k.x, z: k.z });
         }
     }
     Ok(())
+}
+
+/// Replaces the leaves of `cells`, then each level of their ancestors. The leaf set is
+/// unchanged, so the tree keeps its shape and only existing ancestors are rebuilt.
+fn update(
+    store: &TerrainCookStore,
+    space: WorldSpaceId,
+    resolution: u16,
+    cells: &BTreeSet<CellCoord>,
+) -> Result<()> {
+    let cells: Vec<_> = cells.iter().copied().collect();
+    for batch in cells.chunks(MAX_TERRAIN_NODE_QUERY) {
+        let pages = batch
+            .iter()
+            .map(|&cell| {
+                store
+                    .leaf_page(space, cell)?
+                    .with_context(|| format!("changed terrain cell {cell:?} has no ground page"))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        for node in prepare_leaves(&pages, resolution) {
+            store.write(&node?, true)?;
+        }
+    }
+    let mut level: BTreeSet<_> = cells
+        .iter()
+        .map(|&cell| TerrainNodeKey::leaf(space, cell))
+        .collect();
+    while !level.is_empty() {
+        let mut parents = BTreeSet::new();
+        for key in &level {
+            if let Some(parent) = key.parent()?
+                && store.contains(parent)?
+            {
+                parents.insert(parent);
+            }
+        }
+        write_parents(store, &parents, true)?;
+        level = parents;
+    }
+    Ok(())
+}
+
+fn prepare_leaves(pages: &[EncodedPage], resolution: u16) -> Vec<Result<PreparedTerrainNode>> {
+    parallel::map(pages, |page| {
+        let key = TerrainNodeKey::leaf(page.key.space, page.key.cell);
+        let PagePayload::TerrainHeightfield(terrain) = page.clone().decode()?.payload else {
+            bail!("terrain hierarchy requires finalized heightfield pages at {key:?}");
+        };
+        Ok(PreparedTerrainNode::leaf(
+            key,
+            &terrain.heightfield,
+            resolution,
+        )?)
+    })
+}
+
+/// Builds `parents` from their stored children, which are loaded per batch.
+fn write_parents(
+    store: &TerrainCookStore,
+    parents: &BTreeSet<TerrainNodeKey>,
+    replace: bool,
+) -> Result<()> {
+    let parents: Vec<_> = parents.iter().copied().collect();
+    for batch in parents.chunks(MAX_TERRAIN_NODE_QUERY) {
+        let children = batch
+            .iter()
+            .map(|&key| Ok((key, store.children(key)?)))
+            .collect::<Result<Vec<_>>>()?;
+        let nodes = parallel::map(&children, |(key, children)| -> Result<_> {
+            let children = children
+                .iter()
+                .map(|child| child.clone().map(EncodedTerrainNode::decode).transpose())
+                .collect::<Result<Vec<_>, _>>()?;
+            let node = TerrainNode::parent(*key, std::array::from_fn(|i| children[i].as_ref()))
+                .with_context(|| format!("could not build terrain parent {key:?}"))?;
+            Ok(PreparedTerrainNode::new(&node)?)
+        });
+        for node in nodes {
+            store.write(&node?, replace)?;
+        }
+    }
+    Ok(())
+}
+
+fn leaf_cells(store: &TerrainCookStore, space: WorldSpaceId) -> Result<BTreeSet<CellCoord>> {
+    let mut cells = BTreeSet::new();
+    let mut cursor = None;
+    loop {
+        let keys = store.keys(space, 0, cursor)?;
+        let Some(last) = keys.last() else {
+            return Ok(cells);
+        };
+        cursor = Some(CellCoord {
+            x: last.x,
+            z: last.z,
+        });
+        cells.extend(keys.iter().map(|k| CellCoord { x: k.x, z: k.z }));
+    }
 }
 
 #[cfg(test)]

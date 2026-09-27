@@ -117,15 +117,23 @@ pub struct TerrainMaterialCookStore {
 }
 impl TerrainMaterialCookStore {
     pub fn open_staging(path: &Path) -> Result<Self, WorldDbError> {
+        let store = Self::open_incremental(path)?;
+        let count: i64 = store.reader.connection.query_row(
+            "SELECT (SELECT count(*) FROM terrain_composites)+(SELECT count(*) FROM terrain_cores)",
+            [],
+            |r| r.get(0),
+        )?;
+        if count != 0 {
+            return Err(invalid("staged terrain composites already populated"));
+        }
+        Ok(store)
+    }
+    /// Continues the composites of a copied publication; see `clear_space` and `finish`.
+    pub fn open_incremental(path: &Path) -> Result<Self, WorldDbError> {
         let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
         ensure_schema_version(&connection, RUNTIME_SCHEMA_VERSION, "runtime")?;
         connection.execute_batch("PRAGMA foreign_keys=ON; PRAGMA cache_size=-8192; PRAGMA temp_store=FILE; PRAGMA temp.cache_size=-8192; BEGIN IMMEDIATE;
             CREATE TEMP TABLE composite_cores(world_space_id INTEGER, level INTEGER, node_x INTEGER, node_z INTEGER, decoded_bytes INTEGER, payload BLOB, PRIMARY KEY(world_space_id,level,node_x,node_z)) WITHOUT ROWID;")?;
-        let count: i64 =
-            connection.query_row("SELECT count(*) FROM terrain_composites", [], |r| r.get(0))?;
-        if count != 0 {
-            return Err(invalid("staged terrain composites already populated"));
-        }
         let manifest = read_runtime_manifest(&connection)?;
         Ok(Self {
             reader: RuntimeReader {
@@ -133,6 +141,79 @@ impl TerrainMaterialCookStore {
                 manifest,
             },
         })
+    }
+    /// Drops a space's composites and cores, to bake it again from scratch.
+    pub fn clear_space(&self, space: WorldSpaceId) -> Result<(), WorldDbError> {
+        for table in [
+            "terrain_composites",
+            "terrain_cores",
+            "temp.composite_cores",
+        ] {
+            self.reader.connection.execute(
+                &format!("DELETE FROM {table} WHERE world_space_id=?1"),
+                [space.0],
+            )?;
+        }
+        Ok(())
+    }
+    /// The bake inputs the space's published composites were made with, if it has any.
+    pub fn library_fingerprint(
+        &self,
+        space: WorldSpaceId,
+    ) -> Result<Option<[u8; 32]>, WorldDbError> {
+        let fingerprint: Option<Vec<u8>> = self
+            .reader
+            .connection
+            .query_row(
+                "SELECT library_fingerprint FROM terrain_material_spaces WHERE world_space_id=?1",
+                [space.0],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(fingerprint
+            .map(|f| blob_array(&f, "library fingerprint"))
+            .transpose()?)
+    }
+    /// The fingerprint of the core behind `key`, as published or updated in this cook.
+    pub fn core_fingerprint(
+        &self,
+        key: TerrainMaterialKey,
+    ) -> Result<Option<[u8; 32]>, WorldDbError> {
+        let k = key.0;
+        let fingerprint: Option<Vec<u8>> = self
+            .reader
+            .connection
+            .query_row(
+                "SELECT fingerprint FROM terrain_cores WHERE world_space_id=?1 AND level=?2 AND \
+                 node_x=?3 AND node_z=?4",
+                params![k.space.0, k.level, k.x, k.z],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(fingerprint
+            .map(|f| blob_array(&f, "core fingerprint"))
+            .transpose()?)
+    }
+    pub fn put_core_fingerprint(
+        &self,
+        key: TerrainMaterialKey,
+        fingerprint: &[u8; 32],
+    ) -> Result<(), WorldDbError> {
+        let k = key.0;
+        self.reader.connection.execute(
+            "INSERT OR REPLACE INTO terrain_cores VALUES (?1,?2,?3,?4,?5)",
+            params![k.space.0, k.level, k.x, k.z, fingerprint.as_slice()],
+        )?;
+        Ok(())
+    }
+    pub fn has_composite(&self, key: TerrainMaterialKey) -> Result<bool, WorldDbError> {
+        let k = key.0;
+        Ok(self.reader.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM terrain_composites WHERE world_space_id=?1 AND level=?2 \
+             AND node_x=?3 AND node_z=?4)",
+            params![k.space.0, k.level, k.x, k.z],
+            |r| r.get(0),
+        )?)
     }
     pub fn reader(&self) -> &RuntimeReader {
         &self.reader
@@ -222,7 +303,7 @@ impl TerrainMaterialCookStore {
         key.0.cell_bounds().map_err(|e| invalid(e.to_string()))?;
         let k = key.0;
         self.reader.connection.execute(
-            "INSERT INTO composite_cores VALUES (?1,?2,?3,?4,?5,?6)",
+            "INSERT OR REPLACE INTO composite_cores VALUES (?1,?2,?3,?4,?5,?6)",
             params![
                 k.space.0,
                 k.level,
@@ -254,18 +335,28 @@ impl TerrainMaterialCookStore {
     pub fn insert(&self, tile: &TerrainComposite) -> Result<(), WorldDbError> {
         self.insert_prepared(&PreparedComposite::new(tile)?)
     }
-    /// Stores a composite encoded elsewhere, for example on a worker thread.
+    /// Stores a composite encoded elsewhere, for example on a worker thread, replacing the
+    /// node's previous one.
     pub fn insert_prepared(&self, tile: &PreparedComposite) -> Result<(), WorldDbError> {
         let k = tile.key.0;
-        self.reader.connection.execute("INSERT INTO terrain_composites(world_space_id,level,node_x,node_z,fingerprint,checksum,decoded_bytes,gpu_bytes,payload) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",params![k.space.0,k.level,k.x,k.z,tile.fingerprint.as_slice(),tile.checksum.as_slice(),tile.decoded_bytes as i64,TerrainComposite::gpu_bytes() as i64,tile.payload])?;
+        self.reader.connection.execute("INSERT OR REPLACE INTO terrain_composites(world_space_id,level,node_x,node_z,fingerprint,checksum,decoded_bytes,gpu_bytes,payload) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",params![k.space.0,k.level,k.x,k.z,tile.fingerprint.as_slice(),tile.checksum.as_slice(),tile.decoded_bytes as i64,TerrainComposite::gpu_bytes() as i64,tile.payload])?;
         Ok(())
     }
-    pub fn finish(self) -> Result<RuntimeManifest, WorldDbError> {
+    pub fn finish(self, library_fingerprint: &[u8; 32]) -> Result<RuntimeManifest, WorldDbError> {
         // Every drawable root and every drawable node at or above the profile's minimum level
         // has exactly one composite; finer non-root nodes have none.
         let mismatch: bool = self.reader.connection.query_row("SELECT EXISTS(SELECT 1 FROM terrain_nodes n LEFT JOIN terrain_composites c USING(world_space_id,level,node_x,node_z) LEFT JOIN terrain_roots r USING(world_space_id,level,node_x,node_z) LEFT JOIN world_space_terrain_profiles p USING(world_space_id) WHERE (n.resolution IS NOT NULL AND (n.level >= coalesce(p.composite_minimum_level,0) OR r.world_space_id IS NOT NULL)) != (c.payload IS NOT NULL))",[],|r| r.get(0))?;
         if mismatch {
             return Err(invalid("composite coverage disagrees with terrain"));
+        }
+        let uncored: bool = self.reader.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM terrain_composites c LEFT JOIN terrain_cores t \
+             USING(world_space_id,level,node_x,node_z) WHERE t.fingerprint IS NULL)",
+            [],
+            |r| r.get(0),
+        )?;
+        if uncored {
+            return Err(invalid("composite without a recorded core"));
         }
         let oversized: bool = self.reader.connection.query_row("SELECT EXISTS(SELECT 1 FROM terrain_roots r JOIN terrain_composites c USING(world_space_id,level,node_x,node_z) GROUP BY r.world_space_id HAVING sum(c.gpu_bytes)>33554432)",[],|r| r.get(0))?;
         if oversized {
@@ -288,9 +379,17 @@ impl TerrainMaterialCookStore {
                 hash.finalize().as_bytes().as_slice()
             ],
         )?;
-        self.reader.connection.execute_batch("INSERT INTO terrain_material_spaces SELECT world_space_id,count(*) FROM terrain_composites GROUP BY world_space_id;
-            INSERT OR IGNORE INTO terrain_material_spaces SELECT id,0 FROM world_spaces;
-            DROP TABLE composite_cores; COMMIT;")?;
+        self.reader
+            .connection
+            .execute("DELETE FROM terrain_material_spaces", [])?;
+        self.reader.connection.execute(
+            "INSERT INTO terrain_material_spaces SELECT id, (SELECT count(*) FROM \
+             terrain_composites c WHERE c.world_space_id=w.id), ?1 FROM world_spaces w",
+            [library_fingerprint.as_slice()],
+        )?;
+        self.reader
+            .connection
+            .execute_batch("DROP TABLE composite_cores; COMMIT;")?;
         read_runtime_manifest(&self.reader.connection)
     }
 }

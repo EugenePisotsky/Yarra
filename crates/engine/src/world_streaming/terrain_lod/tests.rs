@@ -104,6 +104,7 @@ fn mountain_cover_uploads_draws_moves_and_rebases() {
                         z: key.0.z,
                     });
                     if drawable {
+                        store.put_core_fingerprint(key, &[7; 32]).unwrap();
                         store
                             .insert(&world::TerrainComposite {
                                 key,
@@ -124,7 +125,7 @@ fn mountain_cover_uploads_draws_moves_and_rebases() {
             }
         }
     }
-    store.finish().unwrap();
+    store.finish(&[0; 32]).unwrap();
     let mut app = App::new();
     app.add_plugins(
         DefaultPlugins

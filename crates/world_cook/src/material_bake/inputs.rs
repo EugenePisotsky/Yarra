@@ -29,6 +29,7 @@ struct Entry {
 /// Immutable, bounded preprocessed texture inputs. Loading never requires a GPU.
 pub struct TerrainBakeLibrary {
     entries: BTreeMap<String, (String, String, Inputs)>,
+    fingerprint: [u8; 32],
 }
 impl TerrainBakeLibrary {
     pub fn load(asset_root: &Path) -> Result<Self> {
@@ -64,7 +65,26 @@ impl TerrainBakeLibrary {
                 bail!("duplicate terrain bake texture set");
             }
         }
-        Ok(Self { entries })
+        Ok(Self::new(entries))
+    }
+    fn new(entries: BTreeMap<String, (String, String, Inputs)>) -> Self {
+        let mut hash = blake3::Hasher::new();
+        hash.update(b"terrain-bake-library-v1");
+        for (base_color, (normal, macro_uri, inputs)) in &entries {
+            for uri in [base_color, normal, macro_uri] {
+                hash.update(&(uri.len() as u64).to_le_bytes());
+                hash.update(uri.as_bytes());
+            }
+            hash.update(&inputs.hash);
+        }
+        Self {
+            entries,
+            fingerprint: *hash.finalize().as_bytes(),
+        }
+    }
+    /// Identifies every input a bake may read; published composites record it.
+    pub(super) fn fingerprint(&self) -> [u8; 32] {
+        self.fingerprint
     }
     pub(super) fn get(&self, set: &TerrainTextureSet) -> Result<&Inputs> {
         let (normal, macro_uri, inputs) = self
@@ -109,7 +129,7 @@ impl TerrainBakeLibrary {
                 Inputs::decode(bytes).unwrap(),
             ),
         );
-        Self { entries }
+        Self::new(entries)
     }
 }
 fn read_limited(path: &Path, limit: u64) -> Result<Vec<u8>> {

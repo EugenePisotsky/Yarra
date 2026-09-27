@@ -23,8 +23,12 @@ pub struct CookStats {
     /// and validating the publication.
     pub cell_seconds: f64,
     pub publish_seconds: f64,
+    /// The part of `publish_seconds` spent building the terrain hierarchy.
+    pub hierarchy_seconds: f64,
     /// Continued the previous publication: `terrain_cells` counts only changed cells.
     pub incremental: bool,
+    /// Recompiled cells whose ground page changed; only their terrain nodes are rebuilt.
+    pub changed_ground_cells: u64,
 }
 #[derive(Debug, Clone)]
 pub struct CookReport {
@@ -128,6 +132,7 @@ fn cook_snapshot_options(
         }
         None => RuntimeCookWriter::create(&staging.path, &header)?,
     };
+    let mut changed = crate::terrain_cook::ChangedCells::new();
     for world in &project.world_spaces {
         let Some(cells) = fingerprints.get(&world.id) else {
             continue;
@@ -171,7 +176,19 @@ fn cook_snapshot_options(
                 stats.peak_decoded_cell_bytes = stats
                     .peak_decoded_cell_bytes
                     .max(compiled.pages.iter().map(|p| p.decoded_bytes).sum());
+                let ground = PageKey {
+                    space: world.id,
+                    cell: *cell,
+                    domain: PageDomain::TerrainRender,
+                    lod: 0,
+                };
                 if stats.incremental {
+                    // Cells whose ground page is unchanged keep their terrain nodes.
+                    let before = writer.page_checksum(ground)?;
+                    let after = compiled.pages.iter().find(|p| p.key == ground);
+                    if before != after.map(|p| p.checksum) {
+                        changed.entry(world.id).or_default().insert(*cell);
+                    }
                     writer.remove_cell(world.id, *cell)?;
                 }
                 writer.append_cell(&compiled, cells[cell].input)?;
@@ -179,9 +196,9 @@ fn cook_snapshot_options(
             }
         }
     }
-    if stats.incremental {
-        // Rebuilt from the cells below; unchanged composite cores come from the cook cache.
-        writer.clear_terrain_products()?;
+    if stats.incremental && materials.is_none() {
+        // A geometry-only cook publishes no composites; otherwise they are updated in place.
+        writer.clear_terrain_composites()?;
     }
     let manifest = writer.finish()?;
     stats.cell_seconds = start.elapsed().as_secs_f64();
@@ -189,14 +206,17 @@ fn cook_snapshot_options(
     // Release the read transaction before hierarchy work and publication. Every leaf
     // has already been evaluated from that one snapshot, including unsampled masks.
     drop(snapshot);
-    let (manifest, materials) = finish_runtime_publication_with_materials(
+    stats.changed_ground_cells = changed.values().map(|c| c.len() as u64).sum();
+    let (manifest, materials, hierarchy_seconds) = finish_runtime_publication_with_materials(
         runtime_path,
         &staging.path,
         &manifest.world_spaces,
         materials,
         core_cache,
+        stats.incremental.then_some(&changed),
     )?;
     stats.publish_seconds = start.elapsed().as_secs_f64();
+    stats.hierarchy_seconds = hierarchy_seconds;
     Ok(CookReport {
         manifest,
         stats,
@@ -534,6 +554,41 @@ mod tests {
         assert_eq!(
             incremental.manifest.content_hash,
             full.manifest.content_hash
+        );
+
+        // Reshape the middle of one cell, within the demo's narrow height bounds. Samples next
+        // to the border stay put, so neighbours' shared border normals do not change and only
+        // this leaf and its ancestors move.
+        let heightfield = project
+            .terrain_cell_heightfields
+            .iter()
+            .find(|h| h.space == project.default_world_space && h.cell == CellCoord { x: 2, z: 3 })
+            .unwrap();
+        let n = usize::from(heightfield.resolution);
+        let mut heights = heightfield.heights.clone();
+        for z in 2..n - 2 {
+            for x in 2..n - 2 {
+                let h = &mut heights[z * n + x];
+                *h += if *h > 0.0 { -0.25 } else { 0.25 };
+            }
+        }
+        let bytes: Vec<u8> = heights.iter().flat_map(|h| h.to_le_bytes()).collect();
+        rusqlite::Connection::open(fixture.source())
+            .unwrap()
+            .execute(
+                "UPDATE terrain_cell_heightfields SET heights=?1, source_revision=source_revision+1 \
+                 WHERE world_space_id=?2 AND cell_x=2 AND cell_z=3",
+                rusqlite::params![bytes, project.default_world_space.0],
+            )
+            .unwrap();
+        let raised = cook_project_with_report(&fixture.source(), &fixture.runtime()).unwrap();
+        assert!(raised.stats.incremental);
+        assert_eq!(raised.stats.changed_ground_cells, 1);
+        let full = cook_project_fresh(&fixture.source(), &full_path, None).unwrap();
+        assert_eq!(raised.manifest.content_hash, full.manifest.content_hash);
+        assert_ne!(
+            raised.manifest.content_hash,
+            incremental.manifest.content_hash
         );
         fixture.assert_no_staging_files();
     }

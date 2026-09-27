@@ -138,7 +138,7 @@ fn main() -> Result<()> {
     );
     if let Some(materials) = report.materials {
         println!(
-            "Ground composites: {} tiles, {} GPU bytes/tile; peak {} filtering cores ({} pixels, excludes codecs/SQLite scratch); leaves {:.1} s, parents {:.1} s, tiles {:.1} s",
+            "Ground composites: {} tiles finished, {} GPU bytes/tile; peak {} filtering cores ({} pixels, excludes codecs/SQLite scratch); leaves {:.1} s, parents {:.1} s, tiles {:.1} s",
             materials.tiles,
             materials.tile_gpu_bytes,
             materials.peak_filter_cores,
@@ -148,8 +148,11 @@ fn main() -> Result<()> {
             materials.tile_seconds
         );
         println!(
-            "Composite cores: {} reused from the cook cache, {} evaluated from {} leaves",
-            materials.cached_cores, materials.evaluated_cores, materials.evaluated_leaves
+            "Composite cores: {} reused from the cook cache, {} evaluated from {} leaves; {} world spaces updated in place",
+            materials.cached_cores,
+            materials.evaluated_cores,
+            materials.evaluated_leaves,
+            materials.updated_spaces
         );
     }
     println!(
@@ -158,6 +161,17 @@ fn main() -> Result<()> {
         if stats.incremental { "changed " } else { "" },
         stats.coverage_only_cells
     );
+    if stats.incremental {
+        println!(
+            "Terrain hierarchy: updated for {} cells with changed ground in {:.1} s",
+            stats.changed_ground_cells, stats.hierarchy_seconds
+        );
+    } else {
+        println!(
+            "Terrain hierarchy: built in {:.1} s",
+            stats.hierarchy_seconds
+        );
+    }
     println!(
         "Peak source batch: {} height samples, {} mask bytes, {} manual objects, {} road spans",
         stats.peak_source_height_samples,

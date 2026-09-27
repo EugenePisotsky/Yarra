@@ -333,6 +333,8 @@ CREATE TABLE cells (
     maximum_y REAL NOT NULL CHECK(maximum_y >= minimum_y),
     domain_mask INTEGER NOT NULL CHECK(domain_mask >= 0),
     source_revision INTEGER NOT NULL CHECK(source_revision >= 0),
+    -- Samples per side of the cell's ground page; the hierarchy grid is the world's maximum.
+    terrain_resolution INTEGER NOT NULL CHECK(terrain_resolution BETWEEN 2 AND 257),
     -- Fingerprint of the source this cell was cooked from; zeros when unknown.
     input_fingerprint BLOB NOT NULL CHECK(length(input_fingerprint) = 32),
     -- Hash of this cell's pages, folded into the generation's content hash.
@@ -513,7 +515,18 @@ CREATE TABLE terrain_composites (
 ) STRICT, WITHOUT ROWID;
 CREATE TABLE terrain_material_spaces (
     world_space_id INTEGER PRIMARY KEY REFERENCES world_spaces(id),
-    tile_count INTEGER NOT NULL CHECK(tile_count>=0)
+    tile_count INTEGER NOT NULL CHECK(tile_count>=0),
+    -- The bake inputs (texture library) the composites were made with.
+    library_fingerprint BLOB NOT NULL CHECK(length(library_fingerprint)=32)
 ) STRICT;
-PRAGMA user_version = 22;
+-- The filtering core behind every node from the first baked level up. Equal fingerprints
+-- mean equal cores, so a later cook reuses unchanged cores from its cache by them.
+CREATE TABLE terrain_cores (
+    world_space_id INTEGER NOT NULL, level INTEGER NOT NULL,
+    node_x INTEGER NOT NULL, node_z INTEGER NOT NULL,
+    fingerprint BLOB NOT NULL CHECK(length(fingerprint)=32),
+    PRIMARY KEY(world_space_id,level,node_x,node_z),
+    FOREIGN KEY(world_space_id,level,node_x,node_z) REFERENCES terrain_nodes(world_space_id,level,node_x,node_z)
+) STRICT, WITHOUT ROWID;
+PRAGMA user_version = 23;
 "#;

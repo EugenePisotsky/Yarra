@@ -76,15 +76,70 @@ pub struct TerrainHierarchySummary {
     pub root_gpu_bytes: u64,
 }
 
+/// A node encoded for storage. Preparing is pure, so a cook can do it on every core and
+/// write the results in key order.
+#[derive(Debug, Clone)]
+pub struct PreparedTerrainNode {
+    key: TerrainNodeKey,
+    parent: Option<TerrainNodeKey>,
+    child_mask: u8,
+    height_bounds: [f32; 2],
+    geometric_error: f32,
+    resolution: Option<u16>,
+    codec: PageCodec,
+    decoded_bytes: u64,
+    gpu_bytes_estimate: u64,
+    checksum: [u8; 32],
+    payload: Vec<u8>,
+}
+impl PreparedTerrainNode {
+    pub fn new(node: &TerrainNode) -> Result<Self, WorldDbError> {
+        let bytes = encode_terrain_node(node).map_err(|e| invalid(e.to_string()))?;
+        let compressed = zstd::stream::encode_all(Cursor::new(&bytes), 3)?;
+        let (codec, payload) = if compressed.len() < bytes.len() {
+            (PageCodec::Zstd, compressed)
+        } else {
+            (PageCodec::Raw, bytes.clone())
+        };
+        Ok(Self {
+            key: node.key,
+            parent: node.key.parent().map_err(|e| invalid(e.to_string()))?,
+            child_mask: node.child_mask,
+            height_bounds: node.height_bounds,
+            geometric_error: node.geometric_error,
+            resolution: node.heightfield.as_ref().map(|h| h.resolution),
+            codec,
+            decoded_bytes: bytes.len() as u64,
+            gpu_bytes_estimate: node.gpu_bytes_estimate(),
+            checksum: *blake3::hash(&bytes).as_bytes(),
+            payload,
+        })
+    }
+    pub fn leaf(
+        key: TerrainNodeKey,
+        field: &world::TerrainHeightfield,
+        resolution: u16,
+    ) -> Result<Self, WorldDbError> {
+        Self::new(&TerrainNode::leaf(key, field, resolution).map_err(|e| invalid(e.to_string()))?)
+    }
+    pub fn key(&self) -> TerrainNodeKey {
+        self.key
+    }
+}
+
 pub struct TerrainCookStore {
     connection: Connection,
 }
 impl TerrainCookStore {
-    pub fn open_staging(path: &Path) -> Result<Self, WorldDbError> {
+    fn open(path: &Path) -> Result<Connection, WorldDbError> {
         let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
         ensure_schema_version(&connection, RUNTIME_SCHEMA_VERSION, "runtime")?;
         connection
             .execute_batch("PRAGMA foreign_keys=ON; PRAGMA cache_size=-8192; BEGIN IMMEDIATE;")?;
+        Ok(connection)
+    }
+    pub fn open_staging(path: &Path) -> Result<Self, WorldDbError> {
+        let connection = Self::open(path)?;
         let count: i64 = connection.query_row(
             "SELECT (SELECT count(*) FROM terrain_nodes)+(SELECT count(*) FROM \
              terrain_hierarchy_spaces)",
@@ -96,40 +151,56 @@ impl TerrainCookStore {
         }
         Ok(Self { connection })
     }
-    fn insert(&self, node: &TerrainNode) -> Result<(), WorldDbError> {
-        let bytes = encode_terrain_node(node).map_err(|e| invalid(e.to_string()))?;
-        let compressed = zstd::stream::encode_all(Cursor::new(&bytes), 3)?;
-        let (codec, payload) = if compressed.len() < bytes.len() {
-            (PageCodec::Zstd, compressed.as_slice())
+    /// Continues the hierarchy of a copied publication whose terrain cells are the same set:
+    /// nodes are replaced in place, so the tree keeps its shape, and `finish` seals it again.
+    pub fn open_incremental(path: &Path) -> Result<Self, WorldDbError> {
+        let connection = Self::open(path)?;
+        connection
+            .execute_batch("DELETE FROM terrain_roots; DELETE FROM terrain_hierarchy_spaces;")?;
+        Ok(Self { connection })
+    }
+    /// Inserts a new node, or with `replace` overwrites an existing one in place.
+    pub fn write(&self, node: &PreparedTerrainNode, replace: bool) -> Result<(), WorldDbError> {
+        let key = node.key;
+        let values = params![
+            key.space.0,
+            key.level,
+            key.x,
+            key.z,
+            node.parent.map(|p| p.x),
+            node.parent.map(|p| p.z),
+            node.child_mask,
+            node.height_bounds[0],
+            node.height_bounds[1],
+            node.geometric_error,
+            node.resolution,
+            node.codec as i64,
+            node.decoded_bytes as i64,
+            node.gpu_bytes_estimate as i64,
+            node.checksum.as_slice(),
+            node.payload,
+        ];
+        if replace {
+            let changed = self.connection.execute(
+                "UPDATE terrain_nodes SET parent_x=?5, parent_z=?6, child_mask=?7, minimum_y=?8, \
+                     maximum_y=?9, geometric_error=?10, resolution=?11, codec=?12, \
+                     decoded_bytes=?13, gpu_bytes_estimate=?14, checksum=?15, payload=?16 \
+                 WHERE world_space_id=?1 AND level=?2 AND node_x=?3 AND node_z=?4",
+                values,
+            )?;
+            if changed != 1 {
+                return Err(invalid("replaced terrain node does not exist"));
+            }
         } else {
-            (PageCodec::Raw, bytes.as_slice())
-        };
-        let parent = node.key.parent().map_err(|e| invalid(e.to_string()))?;
-        self.connection.execute(
-            "INSERT INTO terrain_nodes( \
-                 world_space_id, level, node_x, node_z, parent_x, parent_z, child_mask, \
-                 minimum_y, maximum_y, geometric_error, resolution, codec, decoded_bytes, \
-                 gpu_bytes_estimate, checksum, payload \
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
-            params![
-                node.key.space.0,
-                node.key.level,
-                node.key.x,
-                node.key.z,
-                parent.map(|p| p.x),
-                parent.map(|p| p.z),
-                node.child_mask,
-                node.height_bounds[0],
-                node.height_bounds[1],
-                node.geometric_error,
-                node.heightfield.as_ref().map(|h| h.resolution),
-                codec as i64,
-                bytes.len() as i64,
-                node.gpu_bytes_estimate() as i64,
-                blake3::hash(&bytes).as_bytes().as_slice(),
-                payload,
-            ],
-        )?;
+            self.connection.execute(
+                "INSERT INTO terrain_nodes( \
+                     world_space_id, level, node_x, node_z, parent_x, parent_z, child_mask, \
+                     minimum_y, maximum_y, geometric_error, resolution, codec, decoded_bytes, \
+                     gpu_bytes_estimate, checksum, payload \
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+                values,
+            )?;
+        }
         Ok(())
     }
     pub fn insert_leaf(
@@ -138,31 +209,76 @@ impl TerrainCookStore {
         field: &world::TerrainHeightfield,
         resolution: u16,
     ) -> Result<(), WorldDbError> {
-        let node = TerrainNode::leaf(key, field, resolution).map_err(|e| invalid(e.to_string()))?;
-        let exists: bool = self.connection.query_row(
-            "SELECT EXISTS(SELECT 1 FROM cell_pages WHERE world_space_id=?1 AND domain=1 AND lod=0 \
-             AND cell_x=?2 AND cell_z=?3)",
-            params![key.space.0, key.x, key.z],
-            |r| r.get(0),
-        )?;
-        if !exists {
+        let node = PreparedTerrainNode::leaf(key, field, resolution)?;
+        if self
+            .leaf_page(key.space, CellCoord { x: key.x, z: key.z })?
+            .is_none()
+        {
             return Err(invalid("terrain leaf has no source page"));
         }
-        self.insert(&node)
+        self.write(&node, false)
     }
     /// Children are loaded and released per parent; no whole level of sample data is retained.
     pub fn build_parent(&self, key: TerrainNodeKey) -> Result<(), WorldDbError> {
+        let children = self.children(key)?;
+        let children = children
+            .into_iter()
+            .map(|child| child.map(EncodedTerrainNode::decode).transpose())
+            .collect::<Result<Vec<_>, _>>()?;
+        let node = TerrainNode::parent(key, std::array::from_fn(|i| children[i].as_ref()))
+            .map_err(|e| invalid(e.to_string()))?;
+        self.write(&PreparedTerrainNode::new(&node)?, false)
+    }
+    /// The stored children of `key`, in child order.
+    pub fn children(
+        &self,
+        key: TerrainNodeKey,
+    ) -> Result<[Option<EncodedTerrainNode>; 4], WorldDbError> {
         let keys = key
             .children()
             .map_err(|e| invalid(e.to_string()))?
             .ok_or(invalid("parent level"))?;
-        let children = keys
-            .map(|key| self.read(key))
-            .into_iter()
-            .collect::<Result<Vec<_>, _>>()?;
-        let node = TerrainNode::parent(key, std::array::from_fn(|i| children[i].as_ref()))
-            .map_err(|e| invalid(e.to_string()))?;
-        self.insert(&node)
+        let mut children: [Option<EncodedTerrainNode>; 4] = Default::default();
+        for (child, key) in children.iter_mut().zip(keys) {
+            *child = read_encoded(&self.connection, key)?;
+        }
+        Ok(children)
+    }
+    /// The hierarchy grid: the finest ground page resolution among the world's cells, and
+    /// at least three samples, which stitching needs even in flat worlds.
+    pub fn grid_resolution(&self, space: WorldSpaceId) -> Result<u16, WorldDbError> {
+        let finest: Option<u16> = self.connection.query_row(
+            "SELECT max(terrain_resolution) FROM cells WHERE world_space_id=?1",
+            [space.0],
+            |r| r.get(0),
+        )?;
+        Ok(finest.unwrap_or(0).max(3))
+    }
+    /// The grid the stored leaves were built with, if there are any.
+    pub fn stored_resolution(&self, space: WorldSpaceId) -> Result<Option<u16>, WorldDbError> {
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT resolution FROM terrain_nodes WHERE world_space_id=?1 AND level=0 LIMIT 1",
+                [space.0],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+    pub fn leaf_page(
+        &self,
+        space: WorldSpaceId,
+        cell: CellCoord,
+    ) -> Result<Option<EncodedPage>, WorldDbError> {
+        read_page_connection(
+            &self.connection,
+            PageKey {
+                space,
+                cell,
+                domain: PageDomain::TerrainRender,
+                lod: 0,
+            },
+        )
     }
     pub fn contains(&self, key: TerrainNodeKey) -> Result<bool, WorldDbError> {
         Ok(self.connection.query_row(
@@ -208,19 +324,22 @@ impl TerrainCookStore {
             )?
             .collect::<Result<_, _>>()?)
     }
+    /// Up to `limit` ground pages after `after`, in cell order.
     pub fn leaf_pages(
         &self,
         space: WorldSpaceId,
         after: Option<CellCoord>,
+        limit: usize,
     ) -> Result<Vec<EncodedPage>, WorldDbError> {
         let mut query = self.connection.prepare_cached("SELECT cell_x, cell_z FROM cell_pages WHERE world_space_id=?1 AND domain=1 AND lod=0 AND \
-             (cell_x, cell_z)>(?2, ?3) ORDER BY cell_x, cell_z LIMIT 1")?;
+             (cell_x, cell_z)>(?2, ?3) ORDER BY cell_x, cell_z LIMIT ?4")?;
         let keys = query
             .query_map(
                 params![
                     space.0,
                     after.map_or(i64::MIN, |c| i64::from(c.x)),
-                    after.map_or(i64::MIN, |c| i64::from(c.z))
+                    after.map_or(i64::MIN, |c| i64::from(c.z)),
+                    limit.min(MAX_TERRAIN_NODE_QUERY) as i64
                 ],
                 |r| {
                     Ok(PageKey {
@@ -546,6 +665,7 @@ mod tests {
                         maximum_y: 0.0,
                         source_revision: 1,
                         domain_mask: domain_bit(PageDomain::TerrainRender),
+                        terrain_resolution: 2,
                     })
                     .collect(),
                 pages: (0..count)

@@ -15,7 +15,7 @@ fn runtime_cell_windows_are_bounded_and_seek_both_spatial_axes() {
         for z in [-10000, -2, -1, 0, 1, 2, 10000] {
             connection
                 .execute(
-                    "INSERT INTO cells VALUES (1,?1,?2,-1,1,0,1,zeroblob(32),zeroblob(32))",
+                    "INSERT INTO cells VALUES (1,?1,?2,-1,1,0,1,2,zeroblob(32),zeroblob(32))",
                     params![x, z],
                 )
                 .unwrap();

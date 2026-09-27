@@ -299,6 +299,8 @@ pub struct RuntimeCellRecord {
     pub maximum_y: f32,
     pub domain_mask: u64,
     pub source_revision: i64,
+    /// Samples per side of the cell's ground heightfield page.
+    pub terrain_resolution: u16,
 }
 
 #[derive(Debug, Clone)]

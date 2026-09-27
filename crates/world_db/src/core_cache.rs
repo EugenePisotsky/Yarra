@@ -1,5 +1,5 @@
-//! Cook-only cache of composite filtering cores at the finest published level, keyed by node
-//! and core fingerprint. A core's fingerprint hashes everything its evaluation reads, so a
+//! Cook-only cache of composite filtering cores at every baked level, keyed by node and core
+//! fingerprint. A core's fingerprint hashes everything its evaluation reads, so a
 //! matching entry is exactly the core the bake would compute. It lives beside the project,
 //! never ships, keeps one entry per node and can be deleted at any time.
 use crate::{StagedCore, WorldDbError};
@@ -60,6 +60,24 @@ impl CoreCache {
                 },
             )
             .optional()?)
+    }
+
+    pub fn contains(
+        &self,
+        key: TerrainMaterialKey,
+        fingerprint: &[u8; 32],
+    ) -> Result<bool, WorldDbError> {
+        let k = key.0;
+        Ok(self
+            .connection
+            .prepare_cached(
+                "SELECT EXISTS(SELECT 1 FROM cores WHERE world_space_id = ?1 AND level = ?2 \
+                 AND node_x = ?3 AND node_z = ?4 AND fingerprint = ?5)",
+            )?
+            .query_row(
+                params![k.space.0, k.level, k.x, k.z, fingerprint.as_slice()],
+                |r| r.get(0),
+            )?)
     }
 
     /// Replaces whatever was cached for `key`.
