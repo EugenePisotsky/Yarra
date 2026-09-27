@@ -656,6 +656,7 @@ mod tests {
                         sea_level: None,
                     }],
                     vegetation_catalog: None,
+                    start_view: None,
                 },
                 cells: (0..count)
                     .map(|x| RuntimeCellRecord {

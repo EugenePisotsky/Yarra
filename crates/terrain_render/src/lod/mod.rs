@@ -144,7 +144,9 @@ pub struct CoverStats {
 #[derive(Clone, Debug)]
 pub struct PlannedCover {
     pub patches: BTreeMap<TerrainNodeKey, StitchEdges>,
-    pub requests: BTreeSet<TerrainNodeKey>,
+    /// Missing metadata, most urgent first: callers that load only a prefix must keep this
+    /// order, or a large visual demand can starve the terrain under an actor.
+    pub requests: Vec<TerrainNodeKey>,
     pub stats: CoverStats,
     /// False means the initial sparse root cover still needs balancing before drawing.
     pub balanced: bool,
@@ -156,10 +158,23 @@ struct Planner<'a> {
     cover: BTreeSet<TerrainNodeKey>,
     /// Strict ancestors of `cover`; the planner only splits, so this only grows.
     interior: HashSet<TerrainNodeKey>,
-    requests: BTreeSet<TerrainNodeKey>,
+    requests: Vec<TerrainNodeKey>,
+    requested: HashSet<TerrainNodeKey>,
     stats: CoverStats,
 }
 impl Planner<'_> {
+    /// Demand is refined in priority order, so requests are recorded in that order.
+    fn request(&mut self, key: TerrainNodeKey) {
+        if self.requested.contains(&key) {
+            return;
+        }
+        if self.requests.len() < self.settings.max_requests {
+            self.requests.push(key);
+            self.requested.insert(key);
+        } else {
+            self.stats.budget_limited = true;
+        }
+    }
     fn spend(&mut self) -> bool {
         if self.stats.work >= self.settings.max_work {
             self.stats.budget_limited = true;
@@ -186,11 +201,7 @@ impl Planner<'_> {
         let mut ready = true;
         for child in children {
             if !self.metadata.contains_key(&child) {
-                if self.requests.len() < self.settings.max_requests {
-                    self.requests.insert(child);
-                } else {
-                    self.stats.budget_limited = true;
-                }
+                self.request(child);
                 ready = false;
             }
         }
@@ -242,11 +253,7 @@ impl Planner<'_> {
                     triangles += m.triangles();
                 } else {
                     ready = false;
-                    if self.requests.len() < self.settings.max_requests {
-                        self.requests.insert(child);
-                    } else {
-                        self.stats.budget_limited = true;
-                    }
+                    self.request(child);
                 }
                 children.push(child);
             }
@@ -347,7 +354,8 @@ pub fn plan_cover_with_contacts(
         settings,
         cover: roots.iter().copied().collect(),
         interior: neighbours::interior_of(roots),
-        requests: BTreeSet::new(),
+        requests: Vec::new(),
+        requested: HashSet::new(),
         stats: CoverStats {
             triangles,
             ..Default::default()
@@ -356,6 +364,9 @@ pub fn plan_cover_with_contacts(
     // Sparse root forests may start unbalanced. Prepare their minimum balanced
     // cover before publishing anything; a missing child is pending, never absent.
     let mut balanced = true;
+    // Nodes that must split but whose children are still loading. Scanning on requests
+    // every one of them in this plan, rather than one per plan.
+    let mut waiting = HashSet::new();
     // Every unbalanced pair is seen from its finer node, as a coarser neighbour.
     'balance: loop {
         let keys: Vec<_> = p.cover.iter().copied().collect();
@@ -367,17 +378,27 @@ pub fn plan_cover_with_contacts(
                 }
                 if let Some(coarse) = neighbours::coarser(&p.cover, a, edge)
                     && coarse.level > a.level + 1
+                    && !waiting.contains(&coarse)
                 {
-                    if !p.split(coarse) {
+                    let loading = coarse
+                        .children()
+                        .ok()
+                        .flatten()
+                        .is_some_and(|c| c.iter().any(|k| !metadata.contains_key(k)));
+                    if p.split(coarse) {
+                        continue 'balance;
+                    }
+                    if !loading {
                         balanced = false;
                         break 'balance;
                     }
-                    continue 'balance;
+                    waiting.insert(coarse);
                 }
             }
         }
         break;
     }
+    balanced &= waiting.is_empty();
     if balanced {
         allocation::refine(&mut p, previous, view, cell_size, contacts);
     }

@@ -180,11 +180,35 @@ fn contact_metadata_requests_precede_visual_requests_and_stay_bounded() {
     };
     let p = plan_cover_with_contacts(&roots, &m, &BTreeSet::new(), &v, 8., &s, &[r]).unwrap();
     check_cover(&roots, &p);
-    assert_eq!(
-        p.requests,
-        roots[1].children().unwrap().unwrap().into_iter().collect()
-    );
+    assert_eq!(p.requests, roots[1].children().unwrap().unwrap());
     assert!(p.stats.contact_limited);
+}
+
+#[test]
+fn actor_requests_precede_finer_visual_requests() {
+    // Near the camera, level-1 nodes want their leaves. The actor stands on the other root,
+    // whose children are coarser but more urgent. Callers load only a prefix of the
+    // requests, so key order (finest first) would starve the actor.
+    let near = key(4, 0, 0);
+    let far = key(4, 1, 0);
+    let mut m: BTreeMap<_, _> = metadata(near)
+        .into_iter()
+        .filter(|(k, _)| k.level >= 1)
+        .collect();
+    m.insert(far, metadata(far)[&far].clone());
+    let v = view(DVec3::new(64., 30., -20.), DVec3::new(64., 0., 64.));
+    let p = plan_cover_with_contacts(
+        &[near, far],
+        &m,
+        &BTreeSet::new(),
+        &v,
+        8.,
+        &settings(),
+        &[actor_contact(200., 60.)],
+    )
+    .unwrap();
+    assert_eq!(p.requests[..4], far.children().unwrap().unwrap());
+    assert!(p.requests[4..].iter().any(|k| k.level == 0));
 }
 
 #[test]
@@ -393,6 +417,23 @@ fn sparse_roots_never_invent_ground_and_unready_balance_is_explicit() {
     let p = plan_cover(&roots, &coarse, &BTreeSet::new(), &v, 8.0, &settings()).unwrap();
     assert!(!p.balanced);
     assert!(!p.requests.is_empty());
+}
+#[test]
+fn unready_balance_requests_every_blocked_root_in_one_plan() {
+    // Two coarse roots each touch a leaf root three levels finer.
+    let roots = [key(3, 0, 0), key(0, 8, 0), key(3, 2, 0), key(0, 15, 0)];
+    let coarse: BTreeMap<_, _> = roots
+        .into_iter()
+        .map(|k| (k, metadata(k)[&k].clone()))
+        .collect();
+    let v = view(DVec3::new(0., 3000., 0.), DVec3::ZERO);
+    let p = plan_cover(&roots, &coarse, &BTreeSet::new(), &v, 8.0, &settings()).unwrap();
+    assert!(!p.balanced);
+    for root in [roots[0], roots[2]] {
+        for child in root.children().unwrap().unwrap() {
+            assert!(p.requests.contains(&child), "{child:?}");
+        }
+    }
 }
 #[test]
 fn hysteresis_preserves_refinement_and_bad_budgets_fail_explicitly() {

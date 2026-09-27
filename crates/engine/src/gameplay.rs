@@ -63,6 +63,7 @@ impl Plugin for GameplayPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(CharacterPresentationPlugin)
             .init_resource::<WorldStartView>()
+            .add_message::<crate::WorldStartAdopted>()
             .init_resource::<GameInputEnabled>()
             .init_resource::<GamePointerInputBlocked>()
             .configure_sets(
@@ -90,6 +91,7 @@ impl Plugin for GameplayPlugin {
                     advance_character_motors
                         .in_set(GameplaySystems::Movement)
                         .run_if(resource_equals(GameInputEnabled(true))),
+                    actors::move_player_to_adopted_start.in_set(GameplaySystems::MoveIntent),
                     actors::ground_characters_to_streamed_terrain
                         .in_set(GameplaySystems::Grounding),
                 ),

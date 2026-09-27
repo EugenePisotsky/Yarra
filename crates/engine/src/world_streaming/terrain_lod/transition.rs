@@ -1,3 +1,4 @@
+use super::contact::ContactIndex;
 use super::*;
 use bevy::{
     asset::RenderAssetUsages,
@@ -34,6 +35,9 @@ pub(super) struct Transition {
     keys: Vec<TerrainNodeKey>,
     jobs: Vec<MorphJob>,
     meshes: BTreeMap<TerrainNodeKey, MorphResident>,
+    handoff: HandoffIndex,
+    /// The complete morph's certificates, indexed once its meshes are built.
+    morph_index: Option<ContactIndex>,
     pub entities: BTreeMap<TerrainNodeKey, Entity>,
     controller: Entity,
     probe: Entity,
@@ -51,6 +55,7 @@ impl Transition {
         commands: &mut Commands,
         assets: &mut Assets<Mesh>,
         tracker: &UploadTracker,
+        handoff: HandoffIndex,
     ) -> Result<Self, String> {
         let old: BTreeMap<_, _> = stream.active.keys().copied().collect();
         let new = stream.target.as_ref().unwrap().patches.clone();
@@ -112,6 +117,8 @@ impl Transition {
             keys,
             jobs: Vec::new(),
             meshes: BTreeMap::new(),
+            handoff,
+            morph_index: None,
             entities: BTreeMap::new(),
             controller,
             probe,
@@ -160,13 +167,26 @@ impl Transition {
             upload.ready.remove(&mesh.handle.id());
         }
     }
-    pub fn certificates(&self) -> impl Iterator<Item = &lod::contact::ContactCertificate> {
-        self.meshes.values().map(|m| &m.certificate)
+    /// Certificates with the node each morph mesh draws.
+    pub fn keyed_certificates(
+        &self,
+    ) -> impl Iterator<Item = (TerrainNodeKey, &lod::contact::ContactCertificate)> {
+        self.meshes.iter().map(|(k, m)| (*k, &m.certificate))
     }
-    fn contact_safe(&self, contacts: &[lod::contact::ContactRegion]) -> bool {
-        contacts
-            .iter()
-            .all(|r| self.certificates().all(|c| r.accepts(c)))
+    fn contact_safe(&mut self, contacts: &[lod::contact::ContactRegion], cell_size: f64) -> bool {
+        // Called once every morph mesh is built; the set is then fixed.
+        if self
+            .morph_index
+            .as_ref()
+            .is_none_or(|i| i.certificate_count() != self.meshes.len())
+        {
+            self.morph_index = Some(ContactIndex::from_certificates(
+                self.keyed_certificates(),
+                cell_size,
+            ));
+        }
+        let index = self.morph_index.as_ref().unwrap();
+        contacts.iter().all(|r| index.certificates_accept(r))
     }
     fn update(
         &mut self,
@@ -181,11 +201,7 @@ impl Transition {
         contacts: &[lod::contact::ContactRegion],
         handoffs: &mut u64,
     ) -> Result<Progress, String> {
-        match contact_handoff(
-            &self.old,
-            &self.new,
-            &stream.metadata,
-            cell_size as f64,
+        match self.handoff.handoff(
             contacts,
             stream
                 .target
@@ -205,7 +221,7 @@ impl Transition {
             // A moving/teleported consumer can enter a previously distant morph.
             // Its final cover is already uploaded: finish atomically, then replan.
             // Readiness remains closed wherever the final cover still lacks detail.
-            if !self.contact_safe(contacts) {
+            if !self.contact_safe(contacts, cell_size as f64) {
                 *handoffs += 1;
                 return Ok(Progress::Publish);
             }
@@ -308,7 +324,7 @@ impl Transition {
         // Never animate an uncertified intermediate surface beneath a consumer.
         // The bounded interval certificate may be pessimistic; an atomic switch
         // between uploaded endpoints is preferable to floating grass or feet.
-        if !self.contact_safe(contacts) {
+        if !self.contact_safe(contacts, cell_size as f64) {
             *handoffs += 1;
             return Ok(Progress::Publish);
         }
@@ -352,17 +368,12 @@ impl TerrainLodStream {
         // contact refinement from uncertified ground will require an atomic
         // handoff anyway. Do not spend frames building hundreds of transient
         // meshes which cannot be shown beneath those roots/feet.
+        let mut handoff = None;
         if self.transition.is_none() {
             let old: BTreeMap<_, _> = self.active.keys().copied().collect();
             let plan = self.target.as_ref().unwrap();
-            match contact_handoff(
-                &old,
-                &plan.patches,
-                &self.metadata,
-                cell_size as f64,
-                contacts,
-                plan.stats.budget_limited,
-            ) {
+            let index = HandoffIndex::new(&old, &plan.patches, &self.metadata, cell_size as f64);
+            match index.handoff(contacts, plan.stats.budget_limited) {
                 Some(false) => {
                     self.target = None;
                     self.last_plan = None;
@@ -375,10 +386,20 @@ impl TerrainLodStream {
                 }
                 None => {}
             }
+            handoff = Some(index);
         }
         let mut transition = match self.transition.take() {
             Some(t) => t,
-            None => match Transition::new(self, settings, commands, assets, tracker) {
+            None => match Transition::new(
+                self,
+                settings,
+                commands,
+                assets,
+                tracker,
+                handoff
+                    .take()
+                    .expect("indexed before the first transition update"),
+            ) {
                 Ok(t) => t,
                 Err(e) => {
                     self.error = Some(e);
@@ -418,8 +439,63 @@ impl TerrainLodStream {
     }
 }
 
-/// None permits a morph, true chooses an atomic contact handoff, false replans
-/// an obsolete target which would remove an already safe contact surface.
+/// Contact checks for replacing `old` with `new`, indexed once per target. Contact demand
+/// changes every frame while an actor moves; the covers do not, and certifying every patch
+/// for every region each frame dominated frames at the full patch budget.
+pub(super) struct HandoffIndex {
+    old: ContactIndex,
+    new: ContactIndex,
+    /// Patches that differ between the covers.
+    changed: ContactIndex,
+}
+impl HandoffIndex {
+    pub(super) fn new(
+        old: &BTreeMap<TerrainNodeKey, StitchEdges>,
+        new: &BTreeMap<TerrainNodeKey, StitchEdges>,
+        metadata: &BTreeMap<TerrainNodeKey, PatchMetadata>,
+        size: f64,
+    ) -> Self {
+        let changed: BTreeSet<_> = old
+            .keys()
+            .chain(new.keys())
+            .filter(|k| old.get(k) != new.get(k))
+            .copied()
+            .collect();
+        Self {
+            old: ContactIndex::from_cover(old, metadata, size),
+            new: ContactIndex::from_cover(new, metadata, size),
+            changed: ContactIndex::from_footprints(changed.into_iter(), metadata, size),
+        }
+    }
+    /// None permits a morph, true chooses an atomic contact handoff, false replans
+    /// an obsolete target which would remove an already safe contact surface.
+    fn handoff(
+        &self,
+        contacts: &[lod::contact::ContactRegion],
+        budget_limited: bool,
+    ) -> Option<bool> {
+        let mut atomic = false;
+        for region in contacts {
+            let old_safe = self.old.accepts(region);
+            let new_safe = self.new.accepts(region);
+            if old_safe && !new_safe {
+                if region.priority == lod::contact::ContactPriority::Actor || !budget_limited {
+                    return Some(false);
+                }
+                // A budget-limited plan can trade lower-priority vegetation for actor
+                // ground. Publish atomically; ContactSystems::Publish then hides any
+                // grass whose new surface isn't certified, before render extraction.
+                // Without this, a previously safe grass page can veto every new plan.
+                atomic = true;
+            }
+            if !old_safe || !new_safe {
+                atomic |= self.changed.any_footprint_intersects(region);
+            }
+        }
+        atomic.then_some(true)
+    }
+}
+#[cfg(test)]
 fn contact_handoff(
     old: &BTreeMap<TerrainNodeKey, StitchEdges>,
     new: &BTreeMap<TerrainNodeKey, StitchEdges>,
@@ -428,28 +504,7 @@ fn contact_handoff(
     contacts: &[lod::contact::ContactRegion],
     budget_limited: bool,
 ) -> Option<bool> {
-    let mut atomic = false;
-    for region in contacts {
-        let old_safe = lod::contact::cover_accepts(region, old, metadata, size);
-        let new_safe = lod::contact::cover_accepts(region, new, metadata, size);
-        if old_safe && !new_safe {
-            if region.priority == lod::contact::ContactPriority::Actor || !budget_limited {
-                return Some(false);
-            }
-            // A budget-limited plan can trade lower-priority vegetation for actor
-            // ground. Publish atomically; ContactSystems::Publish then hides any
-            // grass whose new surface isn't certified, before render extraction.
-            // Without this, a previously safe grass page can veto every new plan.
-            atomic = true;
-        }
-        if !old_safe || !new_safe {
-            atomic |= old
-                .keys()
-                .chain(new.keys())
-                .any(|k| old.get(k) != new.get(k) && region.intersects(metadata[k].bounds(size)));
-        }
-    }
-    atomic.then_some(true)
+    HandoffIndex::new(old, new, metadata, size).handoff(contacts, budget_limited)
 }
 pub(super) fn patch_transform(key: TerrainNodeKey, origin: CellCoord, cell_size: f32) -> Transform {
     let min = key.cell_bounds().unwrap()[0];
@@ -487,7 +542,7 @@ mod tests {
         );
         stream.target = Some(PlannedCover {
             patches: BTreeMap::from([(key, StitchEdges(1))]),
-            requests: BTreeSet::new(),
+            requests: Vec::new(),
             stats: default(),
             balanced: true,
         });
@@ -504,8 +559,19 @@ mod tests {
         ] {
             let mut queue = bevy::ecs::world::CommandQueue::default();
             let mut commands = Commands::new(&mut queue, &world);
+            let old: BTreeMap<_, _> = stream.active.keys().copied().collect();
+            let new = &stream.target.as_ref().unwrap().patches;
+            let handoff = HandoffIndex::new(&old, new, &stream.metadata, 8.);
             assert!(
-                Transition::new(&stream, &settings, &mut commands, &mut assets, &tracker).is_err()
+                Transition::new(
+                    &stream,
+                    &settings,
+                    &mut commands,
+                    &mut assets,
+                    &tracker,
+                    handoff
+                )
+                .is_err()
             );
             queue.apply(&mut world);
             assert_eq!(stream.active[&patch], Entity::PLACEHOLDER);

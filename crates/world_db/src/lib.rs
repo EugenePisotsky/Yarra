@@ -18,6 +18,7 @@ mod road_store;
 mod runtime;
 mod schema;
 mod storage;
+mod terrain_import;
 mod terrain_materials;
 mod terrain_nodes;
 
@@ -34,5 +35,6 @@ pub use project::{ProjectReader, ProjectWriter, read_project_database, write_pro
 pub use records::*;
 pub use road_store::*;
 pub use runtime::{RuntimeCookWriter, RuntimeReader, write_runtime_database};
+pub use terrain_import::*;
 pub use terrain_materials::*;
 pub use terrain_nodes::*;

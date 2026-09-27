@@ -48,7 +48,7 @@ pub use world_streaming::{
 mod ocean;
 pub use ocean::{OceanPlugin, OceanSurface};
 mod start_view;
-pub use start_view::{WORLD_VIEW_DISTANCE, WorldStartView};
+pub use start_view::{WORLD_VIEW_DISTANCE, WorldStartAdopted, WorldStartView};
 mod gameplay;
 pub use gameplay::{
     GAME_DEPTH_PREPASS_ENABLED, GameCameraPlugin, GameInputEnabled, GameInputPlugin,

@@ -14,6 +14,16 @@ use std::time::Duration;
 use world_db::RuntimeReader;
 
 #[test]
+fn metadata_limit_holds_everything_a_full_budget_retains() {
+    // Retention keeps the drawn and staged covers, their ancestors (at most a third as many)
+    // and up to four loaded children each; a plan adds its requests in flight. If the table
+    // can fill, requests stop and a walking actor never gets new ground.
+    let settings = LodSettings::default();
+    let covers = 2 * settings.max_patches;
+    assert!(MAX_METADATA >= covers + covers / 3 + 4 * covers + settings.max_requests);
+}
+
+#[test]
 fn hierarchy_is_default_and_configuration_is_explicit() {
     assert!(TerrainLodPreview::default().enabled);
     assert!(
@@ -1290,7 +1300,7 @@ fn force_coarse_target(app: &mut App) {
         .collect();
     stream.target = Some(PlannedCover {
         patches,
-        requests: BTreeSet::new(),
+        requests: Vec::new(),
         stats: lod::CoverStats {
             triangles: 8192,
             ..default()

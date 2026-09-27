@@ -587,6 +587,7 @@ mod tests {
                     default_world_space: WorldSpaceId(1),
                     world_spaces: vec![space(8.)],
                     vegetation_catalog: None,
+                    start_view: None,
                 }),
                 descriptors: (-3..=3)
                     .flat_map(|x| (-3..=3).map(move |z| descriptor(CellCoord { x, z })))

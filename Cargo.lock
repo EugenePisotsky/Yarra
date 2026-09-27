@@ -6541,6 +6541,7 @@ dependencies = [
  "ron",
  "rusqlite",
  "serde",
+ "serde_json",
  "yarra-environment",
  "yarra-environment-compile",
  "yarra-vegetation",

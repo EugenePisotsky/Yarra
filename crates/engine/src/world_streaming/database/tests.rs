@@ -30,6 +30,7 @@ impl EmptyRuntime {
                         sea_level: None,
                     }],
                     vegetation_catalog: None,
+                    start_view: None,
                 },
                 cells: vec![],
                 pages: vec![],

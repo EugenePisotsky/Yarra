@@ -50,13 +50,14 @@ fn write_runtime_header(
     transaction.execute(
         "INSERT INTO runtime_metadata( \
             singleton, schema_version, generation_id, content_hash, header_hash, \
-            default_world_space_id \
-         ) VALUES (1, ?1, ?2, ?3, ?3, ?4)",
+            default_world_space_id, start_view \
+         ) VALUES (1, ?1, ?2, ?3, ?3, ?4, ?5)",
         params![
             manifest.schema_version,
             manifest.generation_id,
             manifest.content_hash.as_slice(),
-            manifest.default_world_space.0
+            manifest.default_world_space.0,
+            crate::storage::encode_start_view(manifest.start_view.as_ref())?
         ],
     )?;
     write_vegetation_catalog(transaction, manifest.vegetation_catalog.as_ref())?;
@@ -262,6 +263,17 @@ impl RuntimeCookWriter {
             ))
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
+    }
+    /// Replaces the start view of a continued publication; it is not part of any hash.
+    pub fn set_start_view(
+        &self,
+        view: Option<&world::WorldViewBookmark>,
+    ) -> Result<(), WorldDbError> {
+        self.connection.execute(
+            "UPDATE runtime_metadata SET start_view=?1 WHERE singleton=1",
+            [crate::storage::encode_start_view(view)?],
+        )?;
+        Ok(())
     }
     /// Drops the ground composites so they can be baked again from the updated hierarchy.
     pub fn clear_terrain_composites(&self) -> Result<(), WorldDbError> {

@@ -61,6 +61,7 @@ impl Fixture {
         let document = ProjectDocument {
             presets,
             default_world_space: definition.space,
+            start_view: None,
             world_spaces: vec![WorldSpaceRecord {
                 atmosphere: Default::default(),
                 atmosphere_revision: 1,

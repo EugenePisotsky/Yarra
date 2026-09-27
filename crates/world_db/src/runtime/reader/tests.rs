@@ -30,6 +30,7 @@ fn runtime_cell_windows_are_bounded_and_seek_both_spatial_axes() {
             default_world_space: WorldSpaceId(1),
             world_spaces: vec![],
             vegetation_catalog: None,
+            start_view: None,
         },
     };
     let rows = reader

@@ -9,6 +9,11 @@ pub const WORLD_VIEW_DISTANCE: f32 = 20_000.0;
 #[derive(Resource, Default)]
 pub struct WorldStartView(pub Option<WorldViewBookmark>);
 
+/// Sent once when the runtime opens without an explicit start view and the world has its own.
+/// The player and camera were spawned at the origin before it was known; they move there.
+#[derive(Message, Clone, Debug)]
+pub struct WorldStartAdopted(pub WorldViewBookmark);
+
 impl WorldStartView {
     pub fn projection(&self) -> Projection {
         Projection::Perspective(PerspectiveProjection {

@@ -32,6 +32,20 @@ pub(super) fn spawn_player(mut commands: Commands, start_view: Res<WorldStartVie
     ));
 }
 
+pub(super) fn move_player_to_adopted_start(
+    mut adopted: MessageReader<crate::WorldStartAdopted>,
+    mut player: Query<(&mut Transform, &mut MoveIntent), With<PlayerControlled>>,
+) {
+    let Some(crate::WorldStartAdopted(view)) = adopted.read().last() else {
+        return;
+    };
+    for (mut transform, mut intent) in &mut player {
+        // The origin is still the zero cell: the manifest has only just opened.
+        transform.translation = Vec3::from_array(view.position);
+        *intent = MoveIntent::default();
+    }
+}
+
 pub(crate) fn ground_characters_to_streamed_terrain(
     origin: Res<WorldOrigin>,
     terrain_pages: Query<&StreamedTerrainSurface>,

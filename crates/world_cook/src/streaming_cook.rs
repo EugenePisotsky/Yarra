@@ -263,6 +263,8 @@ fn continue_publication(
         fs::remove_file(staging_path)?;
         return Ok(None);
     }
+    // Outside the header hash, so a moved start does not recook anything.
+    writer.set_start_view(header.manifest.start_view.as_ref())?;
     Ok(Some(writer))
 }
 

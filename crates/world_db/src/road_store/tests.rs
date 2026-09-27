@@ -114,6 +114,7 @@ fn project() -> ProjectDocument {
         .collect();
     ProjectDocument {
         default_world_space: SPACE,
+        start_view: None,
         world_spaces: vec![WorldSpaceRecord {
             atmosphere: Default::default(),
             atmosphere_revision: 1,

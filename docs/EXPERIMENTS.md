@@ -183,6 +183,19 @@ Question: can the engine host, cook, stream and draw a real island with distant 
 | Frame rate | Uncapped `landscape` profiles, 2560×1440 native, 4× MSAA, grass on: island 93–99 fps (update p95 ~21–22 ms), hill fixture in the same build 137–152 fps (p95 ~14 ms). Update intervals, not GPU attribution; the high p95 also occurs on the hill. |
 | Sea | **Placeholder retained.** An opaque, glossy plane at sea level follows the view; the terrain forms the shore. There are no waves, foam, transparency or swimming. |
 
+## Houdini island import — September 27
+
+Question: can a terrain tool's heightfield define the default world? Source: `world_next.hipnc` (Houdini 22 Apprentice), a 10 km square at 2 m spacing, heights −30 to 1,266 m, 50.5 km² of land. Evidence: [summary](performance/20260927-houdini-import/summary.json), [top view](performance/20260927-houdini-import/overview.png), [slopes](performance/20260927-houdini-import/slope.png), [start](performance/20260927-houdini-import/start.jpg), [sea](performance/20260927-houdini-import/sea.jpg), [summit](performance/20260927-houdini-import/summit.jpg).
+
+| Change | Decision / observation |
+| --- | --- |
+| Export and import | **Retained.** `hython` exports the height volume in 22 s. `import-heightfield` writes 102,400 cells (44,956 flat sea) in 20 s: a 763 MB project. A re-import touching nothing changes 0 cells in 13.5 s. A cold cook takes 271 s with 217 MB peak memory: an 817 MB runtime and a 750 MB core cache. |
+| Coarse cover | **Fixed in the importer.** The footprint covered cells −157 to 156, which needed more than 256 coarse roots. Worlds now widen to whole 32-cell blocks of flat sea: 36 level-5 and 4 level-7 roots. |
+| Actor ground | **Fixed.** Facing inland from the beach, the actor and grass never appeared, even after 80 s. The planner put the actor's metadata requests first, but returned them sorted by node key. The engine loads 128 keys per plan, and that prefix held only fine terrain near the camera. Requests now keep priority order, and blocked root balancing asks for every missing split at once. The actor's ground arrives after 7 plans (about 6 s); `streamed_actor_contact_arrives_within_a_few_plans` replays this against a cooked world. |
+| Walking stops | **Fixed.** After a minute or two of play, grass ended and the character could not walk on. The terrain descriptor table was still capped at 4,096, sized for the old 512-patch budget; a settled 2,048-patch view needs 4,072. Once it was full, no ground could load around the moving actor. The cap is now 12 per budgeted patch (24,576), which a test checks against everything a full budget retains. |
+| Walking frame rate | **Fixed.** Walking inland at the full 2,048-patch budget fell to 30–50 fps, CPU-bound. A CPU sample put over 40% of the main thread in contact certification (`static_certificate`, `covered`, `patch_error`). During every morph frame, each grass page and actor region re-certified every patch of the old and new covers. Contact checks now use indexes built once per cover or morph, and plans are throttled to 10 per second while ground demand is met. The same camera route holds 110–118 fps (mean 116) at 2560×1440. |
+| Shape | **For Houdini iteration.** The south beach reaches the water at about 5°. The mountains are 60–80° spires (13% of land is steeper than 60°), and the character stands on near-vertical faces. There are no sand or rock textures, so beaches and cliffs render as meadow. Looking inland, frame rate is 110 fps falling to about 79 fps as the cover grows past 1,300 patches. |
+
 ## Open gates and maintenance
 
 The remaining gates are sustained terrain/whole-game power, Temporal cost and motion quality, field-scale grass lighting, target-PC acceptance, and physical-phone heat/60-FPS delivery. Keep correctness references until their replacements pass the relevant gate. Existing counters often identify less work without demonstrating better delivered frames or lower power.

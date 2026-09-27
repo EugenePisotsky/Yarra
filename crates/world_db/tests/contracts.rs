@@ -22,6 +22,14 @@ fn project_and_runtime_databases_are_distinct_and_readable() {
     let vegetation_catalog = vegetation::fixtures::reference_catalog();
     let project = ProjectDocument {
         default_world_space: space.id,
+        start_view: Some(world::WorldViewBookmark {
+            position: [12., 3., -40.],
+            yaw_degrees: 30.,
+            pitch_degrees: 8.,
+            distance: 9.7,
+            fog_visibility: 20_000.,
+            route: Vec::new(),
+        }),
         world_spaces: vec![space.clone()],
         vegetation_catalog: Some(vegetation_catalog.clone()),
         cells: vec![SourceCellRecord {
@@ -47,6 +55,7 @@ fn project_and_runtime_databases_are_distinct_and_readable() {
     write_project_database(&project_path, &project).unwrap();
     let read_project = read_project_database(&project_path).unwrap();
     assert_eq!(read_project.default_world_space, space.id);
+    assert_eq!(read_project.start_view, project.start_view);
     assert_eq!(read_project.cells.len(), 1);
     assert_eq!(
         read_project
@@ -106,6 +115,7 @@ fn project_and_runtime_databases_are_distinct_and_readable() {
             default_world_space: space.id,
             world_spaces: vec![space],
             vegetation_catalog: Some(vegetation_catalog.clone()),
+            start_view: project.start_view.clone(),
         },
         cells: Vec::new(),
         pages: Vec::new(),
@@ -122,6 +132,7 @@ fn project_and_runtime_databases_are_distinct_and_readable() {
     write_runtime_database(&runtime_path, &runtime).unwrap();
     let reader = RuntimeReader::open_immutable(&runtime_path).unwrap();
     assert_eq!(reader.manifest().generation_id, "test-generation");
+    assert_eq!(reader.manifest().start_view, project.start_view);
     assert_eq!(
         reader
             .manifest()

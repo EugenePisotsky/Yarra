@@ -1,0 +1,51 @@
+{
+  "question": "Can a Houdini heightfield define the default world, and what does it look like in the engine?",
+  "source": {
+    "scene": "world_next.hipnc (Houdini 22 Apprentice)",
+    "node": "/obj/island/preview",
+    "samples": [
+      5000,
+      5000
+    ],
+    "spacing_m": 2,
+    "extent_m": 10000,
+    "heights_m": [
+      -30.0,
+      1265.8
+    ],
+    "land_km2": 50.5,
+    "export_seconds": 22
+  },
+  "import": {
+    "cells": 102400,
+    "cells_with_relief": 57444,
+    "flat_cells": 44956,
+    "first_import_seconds": 19.8,
+    "reimport_seconds": 13.5,
+    "reimport_added_padding_cells": 3804,
+    "reimport_changed_cells": 0,
+    "project_MB": 763
+  },
+  "cook": {
+    "cold_seconds": 271,
+    "peak_rss_MB": 217,
+    "runtime_MB": 817,
+    "core_cache_MB": 750,
+    "roots": {
+      "level_5": 36,
+      "level_7": 4
+    },
+    "composite_tiles": 8520
+  },
+  "findings": [
+    "An unaligned 314-cell footprint needed more than 256 coarse roots; the importer now widens worlds to whole 32-cell blocks of flat sea (40 roots).",
+    "The actor never received ground facing inland: planner requests were sorted by node key, so a 128-key load prefix held only fine visual terrain. Requests now keep priority order; the actor's ground arrives after 7 plans (about 6 s) instead of never.",
+    "Unready root balancing requested one blocked split per plan (4 plans); it now requests them all at once (1 plan).",
+    "Inland start view: 110 fps falling to about 79 fps as the cover grows past 1,300 patches (2560x1440 surface, 4x MSAA)."
+  ],
+  "limitations": [
+    "Mountains are 60-80 degree spires; 13% of land is steeper than 60 degrees.",
+    "No sand or rock textures: beaches and cliffs render as meadow with grass to the waterline.",
+    "Frames were captured once each with the landscape render repro; no interleaved performance comparison."
+  ]
+}

@@ -88,6 +88,7 @@ fn attachment_app(resident_bytes: u64) -> App {
                 default_world_space: WorldSpaceId(1),
                 world_spaces: vec![space(8.)],
                 vegetation_catalog: None,
+                start_view: None,
             }),
             ..default()
         })

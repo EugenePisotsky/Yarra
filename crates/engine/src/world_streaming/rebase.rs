@@ -117,6 +117,7 @@ mod tests {
                     content_hash: [0; 32],
                     default_world_space: space,
                     vegetation_catalog: None,
+                    start_view: None,
                     world_spaces: vec![world_db::WorldSpaceRecord {
                         atmosphere: Default::default(),
                         atmosphere_revision: 1,

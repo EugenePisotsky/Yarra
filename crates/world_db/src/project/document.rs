@@ -52,8 +52,12 @@ fn write_project_document(
         )?;
     }
     transaction.execute(
-        "INSERT INTO project_settings(singleton, default_world_space_id) VALUES (1, ?1)",
-        [document.default_world_space.0],
+        "INSERT INTO project_settings(singleton, default_world_space_id, start_view) \
+         VALUES (1, ?1, ?2)",
+        params![
+            document.default_world_space.0,
+            crate::storage::encode_start_view(document.start_view.as_ref())?
+        ],
     )?;
     write_vegetation_catalog(transaction, document.vegetation_catalog.as_ref())?;
     for cell in &document.cells {
@@ -170,11 +174,12 @@ pub fn read_project_database(path: &Path) -> Result<ProjectDocument, WorldDbErro
     ensure_schema_version(&connection, PROJECT_SCHEMA_VERSION, "project")?;
 
     let world_spaces = query_world_spaces(&connection)?;
-    let default_world_space = connection.query_row(
-        "SELECT default_world_space_id FROM project_settings WHERE singleton = 1",
+    let (default_world_space, start_view) = connection.query_row(
+        "SELECT default_world_space_id, start_view FROM project_settings WHERE singleton = 1",
         [],
-        |row| Ok(WorldSpaceId(row.get(0)?)),
+        |row| Ok((WorldSpaceId(row.get(0)?), row.get::<_, Option<Vec<u8>>>(1)?)),
     )?;
+    let start_view = crate::storage::decode_start_view(start_view)?;
     let vegetation_catalog = read_vegetation_catalog(&connection)?;
     let mut statement = connection.prepare(
         "SELECT world_space_id, cell_x, cell_z, height, source_revision \
@@ -251,6 +256,7 @@ pub fn read_project_database(path: &Path) -> Result<ProjectDocument, WorldDbErro
 
     Ok(ProjectDocument {
         default_world_space,
+        start_view,
         world_spaces,
         vegetation_catalog,
         cells,

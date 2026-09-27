@@ -81,6 +81,7 @@ impl Plugin for WorldStreamingPlugin {
             .init_resource::<WorldGenerationReload>()
             .init_resource::<WorldViewpoint>()
             .init_resource::<crate::WorldStartView>()
+            .add_message::<crate::WorldStartAdopted>()
             .init_resource::<WorldOrigin>()
             .init_resource::<WorldDetailDemand>()
             .init_resource::<source_demand::SourceView>()
@@ -442,7 +443,10 @@ fn receive_database_results(
     mut active_space: ResMut<ActiveWorldSpace>,
     mut catalog: ResMut<WorldCatalog>,
     mut viewpoint: ResMut<WorldViewpoint>,
-    start_view: Res<crate::WorldStartView>,
+    (mut start_view, mut adopted): (
+        ResMut<crate::WorldStartView>,
+        MessageWriter<crate::WorldStartAdopted>,
+    ),
     mut origin: ResMut<WorldOrigin>,
     mut stream: ResMut<WorldStream>,
     mut residency: ResMut<SourceResidency>,
@@ -487,6 +491,18 @@ fn receive_database_results(
                         .collect();
                     catalog.vegetation = manifest.vegetation_catalog.clone();
                     if viewpoint.position.is_none() {
+                        // An explicit start view wins; otherwise play starts where the
+                        // world says.
+                        if start_view.0.is_none()
+                            && let Some(view) = &manifest.start_view
+                        {
+                            info!(
+                                "starting at the world's start view ({:.0}, {:.0}, {:.0})",
+                                view.position[0], view.position[1], view.position[2]
+                            );
+                            start_view.0 = Some(view.clone());
+                            adopted.write(crate::WorldStartAdopted(view.clone()));
+                        }
                         viewpoint.position = Some(WorldPosition::from_world(
                             manifest.default_world_space,
                             start_view

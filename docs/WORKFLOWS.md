@@ -14,7 +14,7 @@ cargo run -p yarra-app-editor
 cargo run --release -p yarra-app-game
 ```
 
-`init` creates source only if absent, then cooks it. The default world is currently the Phase 0 island (8 km of sea and island, a few minutes to cook), with start views in `content/world.project.views/` (`spawn`, `beach`, `summit`, `hills`), e.g. `cargo run --release -p yarra-app-game -- --start-view content/world.project.views/beach.ron`. To start over, delete the project and runtime databases and run `init` again. `cook` continues the existing runtime: it recompiles only cells whose sources changed and updates the terrain hierarchy and ground composites above them. Ground-composite cores are kept in `content/world.project.cook-cache.sqlite` for this (about 570 MB for the island). Deleting it is safe; the next cook re-evaluates what it needs. `cook --full` rebuilds the runtime from scratch. `cook` requires existing source and never creates a demo. The editor defaults to `content/world.project.sqlite`; the game reads `assets/generated/world.runtime.sqlite`. A fresh public clone needs the local pack inputs before ordinary material cooking succeeds.
+`init` creates source only if absent, then cooks it: the procedural Phase 0 island (8 km of sea and island, a few minutes to cook), with start views in `content/world.project.views/` (`spawn`, `beach`, `summit`, `hills`), e.g. `cargo run --release -p yarra-app-game -- --start-view content/world.project.views/beach.ron`. The local default world is currently imported from Houdini instead (see [Terrain from Houdini](#terrain-from-houdini)). To start over, delete the project and runtime databases and run `init` again. `cook` continues the existing runtime: it recompiles only cells whose sources changed and updates the terrain hierarchy and ground composites above them. Ground-composite cores are kept in `content/world.project.cook-cache.sqlite` for this (about 570 MB for the island). Deleting it is safe; the next cook re-evaluates what it needs. `cook --full` rebuilds the runtime from scratch. `cook` requires existing source and never creates a demo. The editor defaults to `content/world.project.sqlite`; the game reads `assets/generated/world.runtime.sqlite`. A fresh public clone needs the local pack inputs before ordinary material cooking succeeds.
 
 **Save** writes source edits. **Save & Publish** also cooks and atomically replaces the runtime. To publish from a terminal:
 
@@ -23,6 +23,19 @@ cargo run -p yarra-world-cook -- cook
 ```
 
 Explicit paths: `init PROJECT_DB RUNTIME_DB`, `cook PROJECT_DB RUNTIME_DB`, editor `--project-db PROJECT_DB --world-db RUNTIME_DB`, game `--world-db RUNTIME_DB`. The editor validates the source/runtime pair before opening its window. Recook outdated runtime data; source incompatibility requires an explicit replacement decision, not an automatic reset.
+
+### Terrain from Houdini
+
+A heightfield from a terrain tool defines the world: its footprint sets the cells, and its heights replace the default world's terrain. Houdini's `hython` (Apprentice or Indie) writes the neutral format, float32 heights plus a JSON manifest:
+
+```sh
+/Applications/Houdini/Current/Frameworks/Houdini.framework/Versions/Current/Resources/bin/hython \
+  tools/houdini_export_heightfield.py ~/Dev/world_next.hipnc /tmp/island --start 2500 4330
+cargo run --release -p yarra-world-cook -- import-heightfield /tmp/island/heightfield.json
+cargo run --release -p yarra-app-game
+```
+
+The script exports the display node's `height` volume (or `--node SOP`) with Houdini's axes unchanged: in the top view +X is right and +Z is down. `import-heightfield MANIFEST [PROJECT_DB] [RUNTIME_DB]` creates the project if it is missing, then cooks. It samples the heightfield every metre with smooth (Catmull-Rom) interpolation and paints ground from height and slope. The world is widened to whole 1 km blocks of flat sea so the terrain hierarchy closes. The `--start` point (by default the shore nearest the centre) becomes the world's start: the game and editor begin there unless `--start-view` overrides it. `start` and `summit` views are also written beside the project. Moving the start recooks nothing. Re-importing after a change in Houdini rewrites only cells whose heights or paint changed, so the cook that follows is incremental. Objects and roads in the project are kept; a cell the new footprint no longer covers is removed and fails if it still holds them. Sculpt in Houdini, not in the editor: a re-import replaces heights.
 
 ## Game and F1
 

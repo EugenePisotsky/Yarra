@@ -162,3 +162,92 @@ fn published_landscape_contact_budget_probe() {
         }
     }
 }
+
+/// Replays the engine's streaming loop from the roots alone: plan, load the first metadata
+/// batch the plan requests, repeat. The actor's ground must arrive within a few plans even
+/// where the view keeps requesting more fine terrain than one batch can load.
+#[test]
+#[ignore = "set YARRA_TEST_WORLD_DB and YARRA_TEST_START_VIEW to a cooked landscape and bookmark"]
+fn streamed_actor_contact_arrives_within_a_few_plans() {
+    let path = std::env::var_os("YARRA_TEST_WORLD_DB").expect("YARRA_TEST_WORLD_DB");
+    let view_path = std::env::var_os("YARRA_TEST_START_VIEW").expect("YARRA_TEST_START_VIEW");
+    let bookmark: world::WorldViewBookmark =
+        ron::from_str(&std::fs::read_to_string(view_path).unwrap()).unwrap();
+    let reader = RuntimeReader::open_immutable(std::path::Path::new(&path)).unwrap();
+    let space = reader
+        .manifest()
+        .world_space(reader.manifest().default_world_space)
+        .unwrap();
+    let size = f64::from(space.cell_size);
+    let roots = reader.read_terrain_roots(space.id).unwrap();
+    let keys: Vec<_> = roots.iter().map(|d| d.key).collect();
+    let describe = |d: &world_db::TerrainNodeDescriptor| PatchMetadata {
+        key: d.key,
+        resolution: d.resolution.unwrap_or(2),
+        height_bounds: d.height_bounds,
+        geometric_error: d.geometric_error,
+    };
+    let mut metadata: BTreeMap<_, _> = roots.iter().map(|d| (d.key, describe(d))).collect();
+    let position = Vec3::from_array(bookmark.position);
+    let actor = ContactRegion {
+        bounds: [
+            position.as_dvec3() - DVec3::new(0.35, 10000., 0.35),
+            position.as_dvec3() + DVec3::new(0.35, 10000., 0.35),
+        ],
+        exact: true,
+        tolerance: 0.,
+        priority: ContactPriority::Actor,
+    };
+    let camera = crate::WorldStartView::camera_at(&bookmark, position);
+    let projection = PerspectiveProjection {
+        aspect_ratio: 16. / 9.,
+        far: bookmark.fog_visibility,
+        ..default()
+    };
+    let view = LodView {
+        clip_from_world: projection.get_clip_from_view().as_dmat4()
+            * camera.to_matrix().as_dmat4().inverse(),
+        viewport: [2560, 1440],
+        contact_position: camera.translation.as_dvec3(),
+    };
+    let settings = LodSettings::default();
+    let mut previous = BTreeSet::new();
+    for plan_number in 0..16 {
+        let plan = lod::plan_cover_with_contacts(
+            &keys,
+            &metadata,
+            &previous,
+            &view,
+            size,
+            &settings,
+            std::slice::from_ref(&actor),
+        )
+        .unwrap();
+        if cover_accepts(&actor, &plan.patches, &metadata, size) {
+            println!(
+                "actor ground after {plan_number} plans, {} patches",
+                plan.patches.len()
+            );
+            return;
+        }
+        // As the engine does: one bounded batch of the requests, in the plan's order.
+        let batch: Vec<_> = plan
+            .requests
+            .iter()
+            .take(world_db::MAX_TERRAIN_NODE_QUERY)
+            .copied()
+            .collect();
+        for (key, descriptor) in batch
+            .iter()
+            .zip(reader.read_terrain_node_descriptors(&batch).unwrap())
+        {
+            if let Some(descriptor) = descriptor {
+                metadata.insert(*key, describe(&descriptor));
+            }
+        }
+        if plan.balanced {
+            previous = plan.patches.keys().copied().collect();
+        }
+    }
+    panic!("the actor's ground did not arrive within 16 plans");
+}

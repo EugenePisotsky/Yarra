@@ -195,6 +195,7 @@ mod tests {
                 sea_level: None,
             }],
             vegetation_catalog: None,
+            start_view: None,
         }
     }
 
@@ -214,6 +215,7 @@ mod tests {
                 .init_resource::<WorldCatalog>()
                 .init_resource::<WorldViewpoint>()
                 .init_resource::<crate::WorldStartView>()
+                .add_message::<crate::WorldStartAdopted>()
                 .init_resource::<WorldOrigin>()
                 .init_resource::<WorldStream>()
                 .init_resource::<SourceResidency>()

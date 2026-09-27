@@ -102,9 +102,18 @@ fn main() -> Result<()> {
         );
         return Ok(());
     }
-    if command != "cook" && command != "init" {
+    let heightfield = if command == "import-heightfield" {
+        Some(PathBuf::from(
+            arguments
+                .next()
+                .context("expected a heightfield MANIFEST_JSON")?,
+        ))
+    } else {
+        None
+    };
+    if command != "cook" && command != "init" && heightfield.is_none() {
         bail!(
-            "unknown command {command:?}; expected `init`, `cook`, `create-demo`, `create-road-demo`, `create-mountain-fixture`, `create-hill-fixture`, `create-island-fixture`, `export-vegetation`, `import-vegetation` or `import-assets`"
+            "unknown command {command:?}; expected `init`, `cook`, `import-heightfield`, `create-demo`, `create-road-demo`, `create-mountain-fixture`, `create-hill-fixture`, `create-island-fixture`, `export-vegetation`, `import-vegetation` or `import-assets`"
         );
     }
 
@@ -112,6 +121,29 @@ fn main() -> Result<()> {
     let materials = options.load_materials()?;
     let project_path = &options.project;
     let runtime_path = &options.runtime;
+
+    if let Some(manifest) = &heightfield {
+        // The heightfield defines the world; the cook below publishes it.
+        let report = yarra_world_cook::import_heightfield(manifest, project_path)?;
+        let stats = report.stats;
+        println!(
+            "{} {} in {:.1} s: {} cells ({} added, {} changed, {} removed, {} flat), heights {} to {} m",
+            if report.created { "Created" } else { "Updated" },
+            project_path.display(),
+            report.seconds,
+            stats.cells,
+            stats.added,
+            stats.changed,
+            stats.removed,
+            report.flat_cells,
+            report.bounds[0],
+            report.bounds[1]
+        );
+        println!(
+            "Start views: {}",
+            project_path.with_extension("views").display()
+        );
+    }
 
     if command == "init" && !project_path.exists() {
         yarra_world_cook::create_world_project(project_path)

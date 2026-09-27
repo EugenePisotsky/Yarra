@@ -1,6 +1,8 @@
 use super::*;
 use crate::actor::TerrainGrounded;
+use bevy::math::DVec2;
 use lod::contact::{ContactCertificate, ContactPriority, ContactRegion, MAX_CONTACT_REGIONS};
+use std::collections::HashMap;
 use vegetation_render::{VegetationSceneState, VegetationTerrainGate, VegetationWind};
 
 const GUARD_METERS: f64 = 16.;
@@ -43,15 +45,21 @@ pub struct TerrainContactReadiness {
     space: Option<WorldSpaceId>,
     identity: Option<(String, WorldSpaceId)>,
     cell_size: f64,
-    domain: Vec<[DVec3; 2]>,
-    certificates: Vec<ContactCertificate>,
+    /// Rejects every region, e.g. while contact demand is invalid.
+    blocked: bool,
+    index: ContactIndex,
+    /// Fingerprint of the cover `index` was built from; it is rebuilt only when that changes.
+    built_from: Option<u64>,
 }
 impl TerrainContactReadiness {
     pub fn permits(&self, region: &ContactRegion) -> bool {
-        !self.enabled
-            || (region.validate()
-                && lod::contact::covered(region, self.domain.iter().copied())
-                && self.certificates.iter().all(|c| region.accepts(c)))
+        if !self.enabled {
+            return true;
+        }
+        if self.blocked || !region.validate() {
+            return false;
+        }
+        self.index.accepts(region)
     }
     pub(crate) fn actor_ready(&self, position: Vec3, origin: &WorldOrigin) -> bool {
         if !self.enabled {
@@ -62,6 +70,176 @@ impl TerrainContactReadiness {
         }
         let shift = origin_shift(origin.cell(), self.cell_size);
         self.permits(&actor_region(position.as_dvec3() + shift, ACTOR_RADIUS))
+    }
+}
+
+/// The drawn cover's footprints and contact certificates, filed under the node square each
+/// belongs to. A query visits only the squares under a region, level by level, instead of
+/// every patch: at the full patch budget, dozens of regions are checked every frame.
+#[derive(Default)]
+pub(super) struct ContactIndex {
+    space: Option<WorldSpaceId>,
+    cell_size: f64,
+    domain: Vec<[DVec3; 2]>,
+    certificates: Vec<ContactCertificate>,
+    /// Indices into `domain` and `certificates`.
+    by_key: HashMap<TerrainNodeKey, (Vec<usize>, Vec<usize>)>,
+    levels: BTreeSet<u8>,
+    /// How far any entry reaches beyond its square; queries grow by this much.
+    margin: f64,
+}
+/// Beyond this many squares at one level, a query scans every entry instead.
+const MAX_INDEX_SQUARES: i64 = 1024;
+impl ContactIndex {
+    fn new(space: WorldSpaceId, cell_size: f64) -> Self {
+        Self {
+            space: Some(space),
+            cell_size,
+            ..default()
+        }
+    }
+    fn empty(space: Option<WorldSpaceId>, cell_size: f64) -> Self {
+        Self {
+            space,
+            cell_size,
+            ..default()
+        }
+    }
+    /// A cover's footprints and static certificates.
+    pub(super) fn from_cover(
+        cover: &BTreeMap<TerrainNodeKey, StitchEdges>,
+        metadata: &BTreeMap<TerrainNodeKey, PatchMetadata>,
+        cell_size: f64,
+    ) -> Self {
+        let mut index = Self::empty(cover.keys().next().map(|k| k.space), cell_size);
+        for (&key, &edges) in cover {
+            index.insert_domain(key, metadata[&key].bounds(cell_size));
+            index.insert_certificate(
+                key,
+                lod::contact::static_certificate(key, edges, metadata, cell_size),
+            );
+        }
+        index
+    }
+    /// Footprints only, e.g. the patches a replacement changes.
+    pub(super) fn from_footprints(
+        keys: impl Iterator<Item = TerrainNodeKey>,
+        metadata: &BTreeMap<TerrainNodeKey, PatchMetadata>,
+        cell_size: f64,
+    ) -> Self {
+        let mut index = Self::empty(None, cell_size);
+        for key in keys {
+            index.space = Some(key.space);
+            index.insert_domain(key, metadata[&key].bounds(cell_size));
+        }
+        index
+    }
+    /// Certificates only, e.g. a morph's meshes.
+    pub(super) fn from_certificates<'a>(
+        certificates: impl Iterator<Item = (TerrainNodeKey, &'a ContactCertificate)>,
+        cell_size: f64,
+    ) -> Self {
+        let mut index = Self::empty(None, cell_size);
+        for (key, certificate) in certificates {
+            index.space = Some(key.space);
+            index.insert_certificate(key, certificate.clone());
+        }
+        index
+    }
+    /// What `lod::contact::cover_accepts` answers for the indexed cover: the region is
+    /// covered and every certificate under it is accurate enough.
+    pub(super) fn accepts(&self, region: &ContactRegion) -> bool {
+        match self.near(region.bounds) {
+            Some((domain, certificates)) => {
+                lod::contact::covered(region, domain.into_iter())
+                    && certificates.iter().all(|c| region.accepts(c))
+            }
+            None => {
+                lod::contact::covered(region, self.domain.iter().copied())
+                    && self.certificates.iter().all(|c| region.accepts(c))
+            }
+        }
+    }
+    pub(super) fn certificate_count(&self) -> usize {
+        self.certificates.len()
+    }
+    pub(super) fn certificates_accept(&self, region: &ContactRegion) -> bool {
+        match self.near(region.bounds) {
+            Some((_, certificates)) => certificates.iter().all(|c| region.accepts(c)),
+            None => self.certificates.iter().all(|c| region.accepts(c)),
+        }
+    }
+    pub(super) fn any_footprint_intersects(&self, region: &ContactRegion) -> bool {
+        match self.near(region.bounds) {
+            Some((domain, _)) => domain.into_iter().any(|b| region.intersects(b)),
+            None => self.domain.iter().any(|&b| region.intersects(b)),
+        }
+    }
+    fn square(&self, key: TerrainNodeKey) -> [DVec2; 2] {
+        let span = self.cell_size * (1_u64 << key.level) as f64;
+        let min = DVec2::new(key.x as f64, key.z as f64) * span;
+        [min, min + DVec2::splat(span)]
+    }
+    fn reach(&mut self, key: TerrainNodeKey, bounds: [DVec3; 2]) {
+        let [min, max] = self.square(key);
+        self.margin = self
+            .margin
+            .max(min.x - bounds[0].x)
+            .max(min.y - bounds[0].z)
+            .max(bounds[1].x - max.x)
+            .max(bounds[1].z - max.y);
+        self.levels.insert(key.level);
+    }
+    fn insert_domain(&mut self, key: TerrainNodeKey, bounds: [DVec3; 2]) {
+        self.reach(key, bounds);
+        self.by_key
+            .entry(key)
+            .or_default()
+            .0
+            .push(self.domain.len());
+        self.domain.push(bounds);
+    }
+    fn insert_certificate(&mut self, key: TerrainNodeKey, certificate: ContactCertificate) {
+        self.reach(key, certificate.bounds);
+        self.by_key
+            .entry(key)
+            .or_default()
+            .1
+            .push(self.certificates.len());
+        self.certificates.push(certificate);
+    }
+    /// Every footprint and certificate that can overlap `bounds` in XZ (and possibly more),
+    /// or `None` when the region spans too many squares to visit.
+    #[allow(clippy::type_complexity)]
+    fn near(&self, bounds: [DVec3; 2]) -> Option<(Vec<[DVec3; 2]>, Vec<&ContactCertificate>)> {
+        let space = self.space?;
+        let low = DVec2::new(bounds[0].x, bounds[0].z) - self.margin;
+        let high = DVec2::new(bounds[1].x, bounds[1].z) + self.margin;
+        let (mut domain, mut certificates) = (Vec::new(), Vec::new());
+        for &level in &self.levels {
+            let span = self.cell_size * (1_u64 << level) as f64;
+            let first = (low / span).floor();
+            let last = (high / span).floor();
+            if !(first.is_finite() && last.is_finite()) {
+                return None;
+            }
+            let (x0, z0, x1, z1) = (first.x as i64, first.y as i64, last.x as i64, last.y as i64);
+            if (x1 - x0 + 1).saturating_mul(z1 - z0 + 1) > MAX_INDEX_SQUARES {
+                return None;
+            }
+            for x in x0..=x1 {
+                for z in z0..=z1 {
+                    let (Ok(x), Ok(z)) = (i32::try_from(x), i32::try_from(z)) else {
+                        continue;
+                    };
+                    if let Some((d, c)) = self.by_key.get(&TerrainNodeKey { space, level, x, z }) {
+                        domain.extend(d.iter().map(|&i| self.domain[i]));
+                        certificates.extend(c.iter().map(|&i| &self.certificates[i]));
+                    }
+                }
+            }
+        }
+        Some((domain, certificates))
     }
 }
 
@@ -294,26 +472,43 @@ fn coalesce_grass_requests(requests: Vec<ContactRegion>) -> Vec<ContactRegion> {
 }
 
 impl TerrainLodStream {
-    pub(super) fn certificates(&self, size: f64) -> Vec<ContactCertificate> {
-        let mut result = Vec::new();
-        for &(key, edges) in self.active.keys() {
-            if self
-                .transition
-                .as_ref()
-                .is_none_or(|t| !t.running() || t.keeps(&(key, edges)))
-            {
-                result.push(lod::contact::static_certificate(
-                    key,
-                    edges,
-                    &self.metadata,
-                    size,
-                ));
-            }
+    /// Identifies what `contact_index` would build: the drawn cover, a running morph and the
+    /// metadata they were certified from. Hashing keys each frame is far cheaper than
+    /// certifying every patch.
+    fn contact_fingerprint(&self, size: f64) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hash = std::hash::DefaultHasher::new();
+        self.identity.hash(&mut hash);
+        size.to_bits().hash(&mut hash);
+        self.metadata_revision.hash(&mut hash);
+        for (key, edges) in self.active.keys() {
+            (key, edges.0).hash(&mut hash);
         }
         if let Some(t) = self.transition.as_ref().filter(|t| t.running()) {
-            result.extend(t.certificates().cloned());
+            for (key, _) in t.keyed_certificates() {
+                key.hash(&mut hash);
+            }
         }
-        result
+        hash.finish()
+    }
+    fn contact_index(&self, space: WorldSpaceId, size: f64) -> ContactIndex {
+        let mut index = ContactIndex::new(space, size);
+        let running = self.transition.as_ref().filter(|t| t.running());
+        for &(key, edges) in self.active.keys() {
+            index.insert_domain(key, self.metadata[&key].bounds(size));
+            if running.is_none_or(|t| t.keeps(&(key, edges))) {
+                index.insert_certificate(
+                    key,
+                    lod::contact::static_certificate(key, edges, &self.metadata, size),
+                );
+            }
+        }
+        if let Some(t) = running {
+            for (key, certificate) in t.keyed_certificates() {
+                index.insert_certificate(key, certificate.clone());
+            }
+        }
+        index
     }
     pub(crate) fn sample_contact_height(
         &self,
@@ -383,19 +578,20 @@ fn publish(
         .space
         .and_then(|id| catalog.world_space(id))
         .map_or(1., |s| s.cell_size as f64);
-    readiness.domain = stream
-        .active
-        .keys()
-        .map(|(k, _)| stream.metadata[k].bounds(readiness.cell_size))
-        .collect();
-    readiness.certificates = stream.certificates(readiness.cell_size);
-    if inputs.error.is_some() {
-        readiness.domain.clear();
+    let fingerprint = stream.contact_fingerprint(readiness.cell_size);
+    if readiness.built_from != Some(fingerprint) {
+        readiness.index = readiness
+            .space
+            .map(|space| stream.contact_index(space, readiness.cell_size))
+            .unwrap_or_default();
+        readiness.built_from = Some(fingerprint);
     }
+    readiness.blocked = inputs.error.is_some();
     stats.drawn_contact_limited =
         inputs.error.is_some() || inputs.required.iter().any(|r| !readiness.permits(r));
     stats.drawn_maximum_visible_error = inputs.view.as_ref().map_or(0., |view| {
         readiness
+            .index
             .certificates
             .iter()
             .filter(|c| view.visible(c.bounds))
@@ -756,18 +952,100 @@ mod tests {
     }
 
     #[test]
+    fn indexed_readiness_matches_scanning_every_patch() {
+        // A level-2 square beside level-0 and level-1 squares, with mixed accuracy and one
+        // morph certificate reaching past its square.
+        let space = WorldSpaceId(1);
+        let size = 32.;
+        let key = |level, x, z| TerrainNodeKey { space, level, x, z };
+        let mut keys = vec![key(2, 0, 0), key(1, 2, 0), key(1, 2, 1)];
+        keys.extend((0..4).map(|z| key(0, 6, z)));
+        let mut index = ContactIndex::new(space, size);
+        for (i, &k) in keys.iter().enumerate() {
+            let span = size * f64::from(1_u32 << k.level);
+            let min = DVec3::new(f64::from(k.x) * span, -5., f64::from(k.z) * span);
+            let bounds = [min, min + DVec3::new(span, 10., span)];
+            index.insert_domain(k, bounds);
+            let error = if i % 3 == 1 { 0.02 } else { 0. };
+            index.insert_certificate(
+                k,
+                ContactCertificate {
+                    bounds,
+                    error,
+                    exact: k.level == 0 && error == 0.,
+                },
+            );
+        }
+        let reach = [DVec3::new(200., -5., -3.), DVec3::new(214., 5., 20.)];
+        index.insert_certificate(
+            key(0, 6, 0),
+            ContactCertificate {
+                bounds: reach,
+                error: 0.5,
+                exact: false,
+            },
+        );
+        let readiness = TerrainContactReadiness {
+            enabled: true,
+            space: Some(space),
+            cell_size: size,
+            index,
+            ..default()
+        };
+        let mut state = 7_u64;
+        let mut next = || {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (state >> 33) as f64 / (1_u64 << 31) as f64
+        };
+        let mut agreed = [0, 0];
+        for _ in 0..4000 {
+            let min = DVec3::new(next() * 260. - 20., -10., next() * 160. - 20.);
+            let extent = DVec3::new(
+                if next() < 0.1 { 0. } else { next() * 40. },
+                20.,
+                next() * 40.,
+            );
+            let region = ContactRegion {
+                bounds: [min, min + extent],
+                exact: next() < 0.5,
+                tolerance: if next() < 0.5 { 0. } else { 0.05 },
+                priority: ContactPriority::Actor,
+            };
+            let scanned = region.validate()
+                && lod::contact::covered(&region, readiness.index.domain.iter().copied())
+                && readiness
+                    .index
+                    .certificates
+                    .iter()
+                    .all(|c| region.accepts(c));
+            assert_eq!(readiness.permits(&region), scanned, "{region:?}");
+            agreed[usize::from(scanned)] += 1;
+        }
+        // Both outcomes occur, so the comparison is not vacuous.
+        assert!(agreed[0] > 100 && agreed[1] > 100, "{agreed:?}");
+    }
+
+    #[test]
     fn contact_readiness_uses_canonical_space_and_rejects_morphing_ground() {
         let bounds = [DVec3::new(320., 0., -320.), DVec3::new(352., 0., -288.)];
+        let key = TerrainNodeKey::leaf(WorldSpaceId(1), CellCoord { x: 10, z: -10 });
+        let mut index = ContactIndex::new(WorldSpaceId(1), 32.);
+        index.insert_domain(key, bounds);
+        index.insert_certificate(
+            key,
+            ContactCertificate {
+                bounds,
+                error: 0.,
+                exact: true,
+            },
+        );
         let mut readiness = TerrainContactReadiness {
             enabled: true,
             space: Some(WorldSpaceId(1)),
             cell_size: 32.,
-            domain: vec![bounds],
-            certificates: vec![ContactCertificate {
-                bounds,
-                error: 0.,
-                exact: true,
-            }],
+            index,
             ..default()
         };
         let mut origin = WorldOrigin {
@@ -781,8 +1059,8 @@ mod tests {
         origin.space = Some(WorldSpaceId(2));
         assert!(!readiness.actor_ready(Vec3::new(336., 100., -304.), &origin));
         origin.space = Some(WorldSpaceId(1));
-        readiness.certificates[0].error = 0.02;
-        readiness.certificates[0].exact = false;
+        readiness.index.certificates[0].error = 0.02;
+        readiness.index.certificates[0].exact = false;
         assert!(!readiness.actor_ready(Vec3::new(336., 100., -304.), &origin));
     }
 }

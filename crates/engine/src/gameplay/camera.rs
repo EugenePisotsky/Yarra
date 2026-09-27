@@ -10,10 +10,15 @@ use bevy::{core_pipeline::prepass::DepthPrepass, prelude::*, render::view::Msaa}
 pub struct GameCameraPlugin;
 impl Plugin for GameCameraPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, setup_camera).add_systems(
-            Update,
-            update_camera_transform.in_set(GameplaySystems::CameraFollow),
-        );
+        app.add_message::<crate::WorldStartAdopted>()
+            .add_systems(Startup, setup_camera)
+            .add_systems(
+                Update,
+                (
+                    frame_adopted_start.in_set(GameplaySystems::CameraInput),
+                    update_camera_transform.in_set(GameplaySystems::CameraFollow),
+                ),
+            );
     }
 }
 
@@ -44,29 +49,56 @@ pub(super) struct CameraRig {
     pub(super) pitch_offset: f32,
 }
 
+/// The orbit and haze that frame a start view, or the defaults without one.
+fn start_rig(view: Option<&world::WorldViewBookmark>) -> (CameraRig, WorldEnvironmentCamera) {
+    let Some(view) = view else {
+        return (
+            CameraRig {
+                yaw: 45.0_f32.to_radians(),
+                target_yaw: 45.0_f32.to_radians(),
+                distance: CAMERA_DEFAULT_DISTANCE,
+                target_distance: CAMERA_DEFAULT_DISTANCE,
+                pitch_offset: 0.0,
+            },
+            WorldEnvironmentCamera::default(),
+        );
+    };
+    let yaw = view.yaw_degrees.to_radians();
+    (
+        CameraRig {
+            yaw,
+            target_yaw: yaw,
+            distance: view.distance,
+            target_distance: view.distance,
+            pitch_offset: view.pitch_degrees.to_radians()
+                - (CAMERA_NEAR_PITCH
+                    + (CAMERA_FAR_PITCH - CAMERA_NEAR_PITCH)
+                        * normalized_camera_zoom(view.distance)),
+        },
+        WorldEnvironmentCamera::with_visibility(view.fog_visibility),
+    )
+}
+
+/// Frames the world's own start once it arrives with the runtime (see `WorldStartAdopted`).
+fn frame_adopted_start(
+    mut adopted: MessageReader<crate::WorldStartAdopted>,
+    mut camera: Query<(&mut CameraRig, &mut atmosphere::WorldEnvironmentView), With<MainCamera>>,
+) {
+    let Some(crate::WorldStartAdopted(view)) = adopted.read().last() else {
+        return;
+    };
+    for (mut rig, mut environment) in &mut camera {
+        (*rig, _) = start_rig(Some(view));
+        environment.visibility_override = Some(view.fog_visibility);
+    }
+}
+
 fn setup_camera(mut commands: Commands, start_view: Res<WorldStartView>) {
     let start = start_view
         .0
         .as_ref()
         .map_or(Vec3::ZERO, |v| Vec3::from_array(v.position));
-    let mut camera_rig = CameraRig {
-        yaw: 45.0_f32.to_radians(),
-        target_yaw: 45.0_f32.to_radians(),
-        distance: CAMERA_DEFAULT_DISTANCE,
-        target_distance: CAMERA_DEFAULT_DISTANCE,
-        pitch_offset: 0.0,
-    };
-    let mut environment = WorldEnvironmentCamera::default();
-    if let Some(view) = &start_view.0 {
-        camera_rig.yaw = view.yaw_degrees.to_radians();
-        camera_rig.target_yaw = camera_rig.yaw;
-        camera_rig.distance = view.distance;
-        camera_rig.target_distance = view.distance;
-        camera_rig.pitch_offset = view.pitch_degrees.to_radians()
-            - (CAMERA_NEAR_PITCH
-                + (CAMERA_FAR_PITCH - CAMERA_NEAR_PITCH) * normalized_camera_zoom(view.distance));
-        environment = WorldEnvironmentCamera::with_visibility(view.fog_visibility);
-    }
+    let (camera_rig, environment) = start_rig(start_view.0.as_ref());
     let mut camera = commands.spawn((
         Camera3d::default(),
         start_view.projection(),

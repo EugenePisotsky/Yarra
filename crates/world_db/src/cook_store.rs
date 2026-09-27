@@ -50,12 +50,14 @@ impl ProjectCookSnapshot {
             return Err(invalid("source contains broken foreign-key references"));
         }
         let (assets, asset_variants, definitions) = query_source_catalog(&connection)?;
+        let (default_world_space, start_view) = connection.query_row(
+            "SELECT default_world_space_id, start_view FROM project_settings WHERE singleton=1",
+            [],
+            |r| Ok((WorldSpaceId(r.get(0)?), r.get::<_, Option<Vec<u8>>>(1)?)),
+        )?;
         let catalog = ProjectDocument {
-            default_world_space: connection.query_row(
-                "SELECT default_world_space_id FROM project_settings WHERE singleton=1",
-                [],
-                |r| Ok(WorldSpaceId(r.get(0)?)),
-            )?,
+            default_world_space,
+            start_view: crate::storage::decode_start_view(start_view)?,
             world_spaces: query_world_spaces(&connection)?,
             vegetation_catalog: read_vegetation_catalog(&connection)?,
             terrain_surfaces: query_all_terrain_surfaces(&connection)?,

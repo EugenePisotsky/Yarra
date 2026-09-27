@@ -18,8 +18,11 @@ pub use streaming_cook::{
     cook_project_with_report,
 };
 pub use terrain_fixture::create_mountain_fixture;
+mod heightfield_import;
 mod hill_fixture;
 mod island_fixture;
+mod terrain_world;
+pub use heightfield_import::{HeightfieldImportReport, import_heightfield};
 pub use hill_fixture::create_hill_fixture;
 
 use std::{
@@ -797,6 +800,8 @@ fn build_compiled_runtime(
             default_world_space: project.default_world_space,
             world_spaces: project.world_spaces,
             vegetation_catalog: environment.catalog,
+            // Not hashed: moving the start never recooks the world.
+            start_view: project.start_view,
         },
         cells,
         pages,
@@ -1230,6 +1235,7 @@ fn demo_project_document() -> ProjectDocument {
         demo_environment(overworld_id, interior_id, uncut_grass, dried_grass);
     ProjectDocument {
         default_world_space: overworld.id,
+        start_view: None,
         world_spaces: vec![overworld, interior],
         vegetation_catalog: Some(vegetation::fixtures::reference_catalog()),
         cells,

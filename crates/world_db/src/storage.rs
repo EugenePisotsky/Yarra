@@ -57,6 +57,37 @@ pub(crate) fn blob_array<const N: usize>(
     })
 }
 
+pub(crate) fn encode_start_view(
+    view: Option<&world::WorldViewBookmark>,
+) -> Result<Option<Vec<u8>>, WorldDbError> {
+    view.map(|view| {
+        view.validate()
+            .map_err(|e| WorldDbError::Cook(format!("start view: {e}")))?;
+        Ok(bincode::serde::encode_to_vec(
+            view,
+            bincode::config::standard(),
+        )?)
+    })
+    .transpose()
+}
+
+pub(crate) fn decode_start_view(
+    bytes: Option<Vec<u8>>,
+) -> Result<Option<world::WorldViewBookmark>, WorldDbError> {
+    bytes
+        .map(|bytes| {
+            let (view, used): (world::WorldViewBookmark, usize) =
+                bincode::serde::decode_from_slice(&bytes, bincode::config::standard())?;
+            if used != bytes.len() {
+                return Err(WorldDbError::Cook("start view has trailing bytes".into()));
+            }
+            view.validate()
+                .map_err(|e| WorldDbError::Cook(format!("start view: {e}")))?;
+            Ok(view)
+        })
+        .transpose()
+}
+
 pub(crate) fn encode_f32_blob(values: &[f32]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(std::mem::size_of_val(values));
     for value in values {

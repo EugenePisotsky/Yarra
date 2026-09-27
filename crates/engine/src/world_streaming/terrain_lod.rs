@@ -29,11 +29,20 @@ use transition::{Transition, patch_transform};
 use world::{TerrainNode, TerrainNodeKey};
 use world_db::TerrainNodeDescriptor;
 
-const MAX_METADATA: usize = 4096;
+/// Descriptors kept per patch of the budget: the drawn and staged covers, their ancestors and
+/// the children already loaded for refinement. At 8 per patch (4,096 for 2,048 patches) a
+/// settled desktop view filled the table, after which no new ground could load around a
+/// moving actor.
+const METADATA_PER_PATCH: usize = 12;
+const MAX_METADATA: usize = METADATA_PER_PATCH * if cfg!(target_os = "ios") { 512 } else { 2048 };
 const MAX_NODE_BYTES: u64 = 32 * 1024 * 1024;
 /// Room for the desktop patch budget twice over (the drawn and staged covers).
 const MAX_MESH_BYTES: u64 = if cfg!(target_os = "ios") { 128 } else { 256 } * 1024 * 1024;
 const MAX_REQUESTS: usize = 4;
+/// A moving view re-plans at most this often while the drawn ground satisfies contact
+/// demand. A full-budget plan takes about 10 ms; planning after every publication kept
+/// 20–40 plans a second running on the main thread.
+const PLAN_INTERVAL_SECONDS: f64 = 0.1;
 const MAX_BUILDS: usize = 2;
 type Patch = (TerrainNodeKey, StitchEdges);
 
@@ -296,6 +305,8 @@ pub(crate) struct TerrainLodStream {
     error: Option<String>,
     last_report: f64,
     last_plan: Option<PlanIdentity>,
+    /// When the last plan ran, in seconds of app time.
+    last_plan_at: Option<f64>,
     metadata_revision: u64,
     position_origin: Option<CellCoord>,
     draw_visible: bool,
@@ -776,7 +787,12 @@ fn update(
             metadata_revision: stream.metadata_revision,
             contacts: contacts.planning.clone(),
         };
-        if stream.last_plan.as_ref() != Some(&identity) {
+        // Ground an actor or grass is waiting for is planned for at once.
+        let due = stats.drawn_contact_limited
+            || stream
+                .last_plan_at
+                .is_none_or(|at| time.elapsed_secs_f64() - at >= PLAN_INTERVAL_SECONDS);
+        if due && stream.last_plan.as_ref() != Some(&identity) {
             let previous = stream.active.keys().map(|(k, _)| *k).collect();
             let start = std::time::Instant::now();
             let planned = lod::plan_cover_with_contacts(
@@ -790,6 +806,7 @@ fn update(
             );
             stats.plans += 1;
             stats.plan_milliseconds = start.elapsed().as_secs_f64() * 1000.;
+            stream.last_plan_at = Some(time.elapsed_secs_f64());
             match planned {
                 Ok(plan) => {
                     if plan.requests.is_empty() {

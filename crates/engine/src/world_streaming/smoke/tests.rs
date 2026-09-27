@@ -101,6 +101,7 @@ fn opt_in_smoke_transitions_after_streaming_and_emits_success_only_once() {
                 content_hash: [0; 32],
                 default_world_space: WorldSpaceId(1),
                 vegetation_catalog: None,
+                start_view: None,
                 world_spaces: catalog
                     .world_spaces
                     .iter()

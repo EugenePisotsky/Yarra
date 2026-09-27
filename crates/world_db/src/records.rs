@@ -10,6 +10,8 @@ use world::{
 #[derive(Debug, Clone)]
 pub struct ProjectDocument {
     pub default_world_space: WorldSpaceId,
+    /// Where play starts without an explicit start view.
+    pub start_view: Option<world::WorldViewBookmark>,
     pub world_spaces: Vec<WorldSpaceRecord>,
     pub vegetation_catalog: Option<VegetationCatalog>,
     pub cells: Vec<SourceCellRecord>,
@@ -278,6 +280,8 @@ pub struct RuntimeManifest {
     pub default_world_space: WorldSpaceId,
     pub world_spaces: Vec<WorldSpaceRecord>,
     pub vegetation_catalog: Option<VegetationCatalog>,
+    /// Where play starts without an explicit start view; outside the content hash.
+    pub start_view: Option<world::WorldViewBookmark>,
 }
 
 impl RuntimeManifest {

@@ -305,3 +305,26 @@ fn launch_bookmark_spawns_actor_and_camera_at_the_elevated_view() {
         matches!(projection, Projection::Perspective(p) if p.far == crate::WORLD_VIEW_DISTANCE)
     );
 }
+
+#[test]
+fn world_start_from_the_runtime_moves_the_actor_and_frames_it() {
+    let mut app = headless_game(false, true, false);
+    let view = world::WorldViewBookmark {
+        position: [8., 5., 8.],
+        yaw_degrees: 120.,
+        pitch_degrees: 12.,
+        distance: 9.7,
+        fog_visibility: 2500.,
+        route: vec![],
+    };
+    app.world_mut()
+        .write_message(crate::WorldStartAdopted(view.clone()));
+    tick(&mut app);
+    let player = player(&mut app);
+    let actor = *app.world().get::<Transform>(player).unwrap();
+    assert_eq!(actor.translation, Vec3::new(8., 5., 8.));
+    let expected = WorldStartView::camera_at(&view, actor.translation);
+    let camera = camera_transform(&mut app);
+    assert!(camera.translation.distance(expected.translation) < 0.001);
+    assert!(camera.forward().distance(*expected.forward()) < 0.0001);
+}

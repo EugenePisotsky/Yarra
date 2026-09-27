@@ -251,7 +251,7 @@ fn store_definition(
     Ok(())
 }
 
-fn read_cell(
+pub(crate) fn read_cell(
     connection: &Connection,
     definition: &EnvironmentDefinition,
     cell: CellCoord,
@@ -553,7 +553,7 @@ fn validate_cell(
     Ok(())
 }
 
-fn store_cell(
+pub(crate) fn store_cell(
     connection: &Connection,
     record: &SourceEnvironmentCellRecord,
 ) -> Result<(), WorldDbError> {
