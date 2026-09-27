@@ -53,5 +53,5 @@ mod gameplay;
 pub use gameplay::{
     GAME_DEPTH_PREPASS_ENABLED, GameCameraPlugin, GameInputEnabled, GameInputPlugin,
     GamePointerInputBlocked, GameplayPlugin, GameplayPlugins, GameplaySystems, MinimalGamePlugin,
-    MovementTargetPlugin,
+    MovementTargetPlugin, PlayerRoute,
 };

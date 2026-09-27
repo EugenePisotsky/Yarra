@@ -196,17 +196,46 @@ impl TerrainNode {
                 }
             }
         }
+        // The four children as one grid of 2n - 1 samples a side; shared borders are equal.
+        let fine = |ix: usize, iz: usize| {
+            let cx = usize::from(ix >= n - 1);
+            let cz = usize::from(iz >= n - 1);
+            let sample = (iz - cz * (n - 1)) * n + ix - cx * (n - 1);
+            (fields[cz * 2 + cx], sample)
+        };
         let mut heights = Vec::with_capacity(n * n);
         let mut normals_oct = Vec::with_capacity(n * n);
         for z in 0..n {
             for x in 0..n {
-                let cx = usize::from(x * 2 >= n - 1);
-                let cz = usize::from(z * 2 >= n - 1);
-                let sample = (z * 2 - cz * (n - 1)) * n + x * 2 - cx * (n - 1);
-                let field = fields[cz * 2 + cx];
+                let (field, sample) = fine(x * 2, z * 2);
+                // Heights are decimated exactly: stitching and the error bound use them.
                 heights.push(field.heights[sample]);
-                // Retain canonical normals for now; all same-level neighbours share their codes.
-                normals_oct.push(field.normals_oct[sample]);
+                // Normals are filtered like a mip level. One fine normal per coarse sample
+                // aliases on rough relief: every level lit the same slope differently, so far
+                // lighting jumped at each level change. Border samples filter only along
+                // their edge, whose samples a same-level neighbour shares, so neighbours'
+                // codes still agree exactly.
+                let taps = |edge: bool| -> &'static [(isize, f32)] {
+                    if edge {
+                        &[(0, 1.)]
+                    } else {
+                        &[(-1, 1.), (0, 2.), (1, 1.)]
+                    }
+                };
+                let mut sum = [0.0_f32; 3];
+                for &(dz, wz) in taps(z == 0 || z == n - 1) {
+                    for &(dx, wx) in taps(x == 0 || x == n - 1) {
+                        let (field, sample) = fine(
+                            (x * 2).wrapping_add_signed(dx),
+                            (z * 2).wrapping_add_signed(dz),
+                        );
+                        let normal = crate::decode_octahedral_normal(field.normals_oct[sample]);
+                        for (s, v) in sum.iter_mut().zip(normal) {
+                            *s += v * wx * wz;
+                        }
+                    }
+                }
+                normals_oct.push(crate::encode_octahedral_normal(sum));
             }
         }
         let field = TerrainHeightfield {
@@ -366,6 +395,96 @@ mod tests {
         )
         .unwrap()
     }
+    /// A leaf of a rough surface sampled on the world grid, so neighbours share borders.
+    fn rough_leaf(x: i32, z: i32) -> TerrainNode {
+        let n = 9;
+        let point = |i: usize, j: usize| {
+            (
+                x as f32 + i as f32 / (n - 1) as f32,
+                z as f32 + j as f32 / (n - 1) as f32,
+            )
+        };
+        let height =
+            |(u, v): (f32, f32)| 6. * (u * 7.3).sin() * (v * 5.1).cos() + 3. * (u * v * 3.).sin();
+        let normal = |(u, v): (f32, f32)| {
+            let e = 1e-3;
+            let dx = (height((u + e, v)) - height((u - e, v))) / (2. * e * 8.);
+            let dz = (height((u, v + e)) - height((u, v - e))) / (2. * e * 8.);
+            [-dx, 1., -dz]
+        };
+        let heights: Vec<_> = (0..n)
+            .flat_map(|j| (0..n).map(move |i| height(point(i, j))))
+            .collect();
+        let normals: Vec<_> = (0..n)
+            .flat_map(|j| (0..n).map(move |i| normal(point(i, j))))
+            .collect();
+        let field =
+            TerrainHeightfield::from_heights_and_normals(n as u16, &heights, &normals, -20., 20.)
+                .unwrap();
+        TerrainNode::leaf(
+            TerrainNodeKey::leaf(WorldSpaceId(1), CellCoord { x, z }),
+            &field,
+            n as u16,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn parent_normals_are_filtered_and_neighbours_share_their_border() {
+        let parent = |px: i32| {
+            let key = TerrainNodeKey {
+                space: WorldSpaceId(1),
+                level: 1,
+                x: px,
+                z: 0,
+            };
+            let children = key
+                .children()
+                .unwrap()
+                .unwrap()
+                .map(|c| rough_leaf(c.x, c.z));
+            let node =
+                TerrainNode::parent(key, std::array::from_fn(|i| Some(&children[i]))).unwrap();
+            (node, children)
+        };
+        let (west, children) = parent(0);
+        let (east, _) = parent(1);
+        let n = 9;
+        let (a, b) = (west.heightfield.unwrap(), east.heightfield.unwrap());
+        for z in 0..n {
+            assert_eq!(a.normals_oct[z * n + n - 1], b.normals_oct[z * n]);
+        }
+        // An interior sample is the tent-weighted average of the children's normals around it,
+        // not the one fine normal beneath it.
+        let (x, z) = (2, 3);
+        let fine = |ix: usize, iz: usize| {
+            let child = &children[usize::from(iz >= n - 1) * 2 + usize::from(ix >= n - 1)];
+            let field = child.heightfield.as_ref().unwrap();
+            let (lx, lz) = (ix % (n - 1), iz % (n - 1));
+            crate::decode_octahedral_normal(field.normals_oct[lz * n + lx])
+        };
+        let mut sum = [0.; 3];
+        for (dz, wz) in [(-1, 1.), (0, 2.), (1, 1.)] {
+            for (dx, wx) in [(-1, 1.), (0, 2.), (1, 1.)] {
+                let v = fine(
+                    (2 * x as isize + dx) as usize,
+                    (2 * z as isize + dz) as usize,
+                );
+                for k in 0..3 {
+                    sum[k] += v[k] * wx * wz;
+                }
+            }
+        }
+        assert_eq!(
+            a.normals_oct[z * n + x],
+            crate::encode_octahedral_normal(sum)
+        );
+        assert_ne!(
+            a.normals_oct[z * n + x],
+            children[0].heightfield.as_ref().unwrap().normals_oct[2 * z * n + 2 * x]
+        );
+    }
+
     #[test]
     fn flat_leaf_expansion_preserves_nonbinary_heights_and_original_normals() {
         let heights = [1500.01; 4];

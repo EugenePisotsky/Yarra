@@ -131,7 +131,8 @@ fn supported_automation_commands_keep_their_configuration() {
             "--render-snapshot-frames",
             "600,900",
         ];
-        if name.starts_with("landscape") {
+        if name.starts_with("landscape") || *name == "actor-walk" {
+            assert!(parse(&args).is_err(), "{name} needs a start view");
             args.extend(["--start-view", "view.ron"]);
         }
         assert!(parse(&args).is_ok(), "{name}");

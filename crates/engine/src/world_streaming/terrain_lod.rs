@@ -11,7 +11,7 @@ use bevy::{
     tasks::{AsyncComputeTaskPool, Task, futures::check_ready},
 };
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     sync::{Arc, Mutex},
 };
 mod contact;
@@ -34,16 +34,27 @@ use world_db::TerrainNodeDescriptor;
 /// settled desktop view filled the table, after which no new ground could load around a
 /// moving actor.
 const METADATA_PER_PATCH: usize = 12;
-const MAX_METADATA: usize = METADATA_PER_PATCH * if cfg!(target_os = "ios") { 512 } else { 2048 };
+/// Descriptors kept after they leave the cover, most recently used first, so a view the
+/// camera returns to plans its detail at once instead of refining it level by level again.
+const METADATA_CACHE: usize = 4096;
+const MAX_METADATA: usize =
+    METADATA_PER_PATCH * if cfg!(target_os = "ios") { 512 } else { 2048 } + METADATA_CACHE;
+/// Decoded node samples kept after they leave the cover (about 5 KB per node). A new cover
+/// always evicts them before its sample budget is checked.
+const NODE_CACHE_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_NODE_BYTES: u64 = 32 * 1024 * 1024;
-/// Room for the desktop patch budget twice over (the drawn and staged covers).
-const MAX_MESH_BYTES: u64 = if cfg!(target_os = "ios") { 128 } else { 256 } * 1024 * 1024;
-const MAX_REQUESTS: usize = 4;
+/// Room for a full drawn cover and a completely different staged one at the patch and
+/// triangle budgets (about 157 MB each on desktop), plus smaller morphs. At 256 MiB, turning
+/// the camera at the full budget exceeded it and stopped terrain streaming.
+const MAX_MESH_BYTES: u64 = if cfg!(target_os = "ios") { 128 } else { 384 } * 1024 * 1024;
+/// Database queries in flight: metadata batches, node samples and ground materials.
+const MAX_REQUESTS: usize = 12;
 /// A moving view re-plans at most this often while the drawn ground satisfies contact
 /// demand. A full-budget plan takes about 10 ms; planning after every publication kept
 /// 20–40 plans a second running on the main thread.
 const PLAN_INTERVAL_SECONDS: f64 = 0.1;
-const MAX_BUILDS: usize = 2;
+/// Patch meshes built at once on the compute task pool.
+const MAX_BUILDS: usize = 8;
 type Patch = (TerrainNodeKey, StitchEdges);
 
 #[derive(Resource, Clone)]
@@ -84,6 +95,10 @@ pub struct TerrainLodStats {
     pub blocked_grass_pages: usize,
     pub mismatched_grass_pages: usize,
     pub contact_handoffs: u64,
+    /// Cumulative targets dropped because they would remove certified contact ground.
+    pub replans: u64,
+    /// Cumulative replacements swapped in without a morph, lacking room for its meshes.
+    pub unmorphed_swaps: u64,
     /// Cumulative source-height certifications, excluding reused certificates.
     pub contact_source_checks: u64,
     pub contact_source_samples: u64,
@@ -307,6 +322,15 @@ pub(crate) struct TerrainLodStream {
     last_plan: Option<PlanIdentity>,
     /// When the last plan ran, in seconds of app time.
     last_plan_at: Option<f64>,
+    replans: u64,
+    unmorphed_swaps: u64,
+    /// Eviction generation, and when each retained descriptor or node was last needed.
+    epoch: u64,
+    last_used: HashMap<TerrainNodeKey, u64>,
+    /// When the actor last started waiting for ground, and when that was last reported.
+    stalled_since: Option<f64>,
+    last_stall_report: f64,
+    failure_reported: bool,
     metadata_revision: u64,
     position_origin: Option<CellCoord>,
     draw_visible: bool,
@@ -512,6 +536,10 @@ impl TerrainLodStream {
             return;
         };
         let patches: Vec<_> = plan.patches.iter().map(|(&k, &e)| (k, e)).collect();
+        // Totals once per pass: summing every resident node per patch was quadratic.
+        let mut mesh_bytes = self.mesh_bytes();
+        let mut decoded_bytes = self.decoded_bytes();
+        let mut requests_open = true;
         for patch @ (key, edges) in &patches {
             if self.meshes.contains_key(patch) || self.builds.iter().any(|b| b.patch == *patch) {
                 continue;
@@ -521,10 +549,11 @@ impl TerrainLodStream {
                     continue;
                 }
                 let bytes = self.descriptors[key].gpu_bytes_estimate;
-                if self.mesh_bytes() + bytes > mesh_limit {
+                if mesh_bytes + bytes > mesh_limit {
                     self.error = Some("terrain replacement exceeds mesh budget".into());
                     break;
                 }
+                mesh_bytes += bytes;
                 let field = field.clone();
                 let extent = cell_size * (1_u32 << key.level) as f32;
                 let edges = *edges;
@@ -534,17 +563,29 @@ impl TerrainLodStream {
                     task: AsyncComputeTaskPool::get()
                         .spawn(async move { lod::build_patch_mesh(&field, extent, edges) }),
                 });
-            } else if !self.decodes.contains_key(key)
+            } else if requests_open
+                && !self.decodes.contains_key(key)
                 && !self
                     .pending
                     .values()
                     .any(|q| matches!(q,TerrainQuery::Node(k) if k==key))
             {
-                if self.decoded_bytes() + self.descriptors[key].decoded_bytes > node_limit {
+                if decoded_bytes + self.descriptors[key].decoded_bytes > node_limit {
+                    self.drop_node_cache();
+                    decoded_bytes = self.decoded_bytes();
+                }
+                if decoded_bytes + self.descriptors[key].decoded_bytes > node_limit {
                     self.error = Some("terrain replacement exceeds sample budget".into());
                     break;
                 }
+                let before = self.pending.len();
                 self.request(worker, TerrainQuery::Node(*key));
+                if self.pending.len() > before {
+                    decoded_bytes += self.descriptors[key].decoded_bytes;
+                } else {
+                    // At the in-flight limit: builds may continue, requests wait a frame.
+                    requests_open = false;
+                }
             }
         }
     }
@@ -584,9 +625,26 @@ impl TerrainLodStream {
             .map(|(k, _)| *k)
             .chain(self.roots.iter().flatten().copied())
             .collect();
-        self.nodes.retain(|key, _| keys.contains(key));
+        self.epoch += 1;
+        let epoch = self.epoch;
+        for key in &keys {
+            self.last_used.insert(*key, epoch);
+        }
+        // Nodes outside the covers stay as a cache of the most recently needed ones.
+        let cached = recent_within(
+            self.nodes.keys().filter(|k| !keys.contains(k)).map(|k| {
+                (
+                    *k,
+                    self.last_used.get(k).copied().unwrap_or(0),
+                    self.descriptors[k].decoded_bytes,
+                )
+            }),
+            NODE_CACHE_BYTES,
+        );
+        self.nodes
+            .retain(|key, _| keys.contains(key) || cached.contains(key));
         // Keep ancestors for hysteresis/balancing, direct children for pending refinements,
-        // and all in-flight descriptors. Discard old distant branches after movement.
+        // and all in-flight descriptors; older branches stay only as a bounded cache.
         let mut metadata = keys.clone();
         for key in keys {
             let mut ancestor = key;
@@ -611,8 +669,33 @@ impl TerrainLodStream {
             }
         }
         metadata.extend(self.decodes.keys().copied());
+        metadata.extend(self.nodes.keys().copied());
+        for key in &metadata {
+            self.last_used.insert(*key, epoch);
+        }
+        let cached = recent_within(
+            self.metadata
+                .keys()
+                .filter(|k| !metadata.contains(k))
+                .map(|k| (*k, self.last_used.get(k).copied().unwrap_or(0), 1)),
+            METADATA_CACHE as u64,
+        );
+        metadata.extend(cached);
         self.metadata.retain(|k, _| metadata.contains(k));
         self.descriptors.retain(|k, _| metadata.contains(k));
+        self.last_used.retain(|k, _| metadata.contains(k));
+    }
+    /// Frees the decoded-node cache for a cover that needs its sample budget.
+    fn drop_node_cache(&mut self) {
+        let mut keys: BTreeSet<_> = self
+            .target
+            .as_ref()
+            .into_iter()
+            .flat_map(|p| p.patches.keys().copied())
+            .chain(self.active.keys().map(|(k, _)| *k))
+            .collect();
+        keys.extend(self.roots.iter().flatten().copied());
+        self.nodes.retain(|key, _| keys.contains(key));
     }
 }
 
@@ -657,6 +740,7 @@ fn update(
         stats.status = "disabled".into();
         return;
     }
+    report_stall(&mut stream, &stats, &contacts, time.elapsed_secs_f64());
     let (Some(space), Some(worker)) = (active_space.current(), worker) else {
         return;
     };
@@ -743,8 +827,12 @@ fn update(
         stats.budget_limited = true;
         return;
     }
-    if let Some(error) = &stream.error {
+    if let Some(error) = stream.error.clone() {
         stats.status = format!("terrain LOD failed (cover retained): {error}");
+        if !stream.failure_reported {
+            stream.failure_reported = true;
+            warn!("TERRAIN_LOD_FAILED {error}");
+        }
         return;
     }
     if stream.roots.is_none() && stream.pending.is_empty() {
@@ -805,6 +893,8 @@ fn update(
                 &contacts.planning,
             );
             stats.plans += 1;
+            stats.replans = stream.replans;
+            stats.unmorphed_swaps = stream.unmorphed_swaps;
             stats.plan_milliseconds = start.elapsed().as_secs_f64() * 1000.;
             stream.last_plan_at = Some(time.elapsed_secs_f64());
             match planned {
@@ -827,17 +917,18 @@ fn update(
                         })
                         .flatten()
                         .collect();
-                    let keys: Vec<_> =
-                        plan.requests
-                            .iter()
-                            .filter(|k| !queued.contains(k))
-                            .copied()
-                            .take(world_db::MAX_TERRAIN_NODE_QUERY.min(
-                                MAX_METADATA.saturating_sub(stream.metadata.len() + queued.len()),
-                            ))
-                            .collect();
-                    if !keys.is_empty() {
-                        stream.request(&worker, TerrainQuery::Metadata(keys));
+                    // Every requested key, in batches. Refining a patch needs its four
+                    // children, so one batch a plan grew a cover by only ~100 patches per
+                    // plan and morph: a turned view took tens of seconds to sharpen.
+                    let keys: Vec<_> = plan
+                        .requests
+                        .iter()
+                        .filter(|k| !queued.contains(k))
+                        .copied()
+                        .take(MAX_METADATA.saturating_sub(stream.metadata.len() + queued.len()))
+                        .collect();
+                    for batch in keys.chunks(world_db::MAX_TERRAIN_NODE_QUERY) {
+                        stream.request(&worker, TerrainQuery::Metadata(batch.to_vec()));
                     }
                     if plan.balanced {
                         stream.target = Some(plan);
@@ -1021,6 +1112,66 @@ fn update(
         stream.last_report = time.elapsed_secs_f64();
         info!("TERRAIN_LOD {stats:?}");
     }
+}
+
+/// The most recently used entries whose sizes fit `budget`, newest first.
+fn recent_within(
+    entries: impl Iterator<Item = (TerrainNodeKey, u64, u64)>,
+    budget: u64,
+) -> BTreeSet<TerrainNodeKey> {
+    let mut entries: Vec<_> = entries.collect();
+    entries.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    let mut total = 0;
+    entries
+        .into_iter()
+        .take_while(|&(_, _, bytes)| {
+            total += bytes;
+            total <= budget
+        })
+        .map(|(key, _, _)| key)
+        .collect()
+}
+
+/// An actor waiting more than a few seconds for ground is reported with the loader's state,
+/// including early exits that skip the periodic report.
+fn report_stall(
+    stream: &mut TerrainLodStream,
+    stats: &TerrainLodStats,
+    contacts: &ContactInputs,
+    now: f64,
+) {
+    if stats.blocked_actors == 0 {
+        stream.stalled_since = None;
+        return;
+    }
+    let since = *stream.stalled_since.get_or_insert(now);
+    if now - since < 5. || now - stream.last_stall_report < 5. {
+        return;
+    }
+    stream.last_stall_report = now;
+    warn!(
+        "TERRAIN_STALL actor waiting {:.0} s: status={:?} error={:?} contact_error={:?} target={:?} transition={:?} pending={} metadata={} mesh={:.0} MB patches={} plan_budget_limited={} contact_limited={} drawn_contact_limited={} blocked_grass_pages={} plans={} replans={} unmorphed_swaps={}",
+        now - since,
+        stats.status,
+        stream.error,
+        contacts.error,
+        stream
+            .target
+            .as_ref()
+            .map(|t| (t.patches.len(), t.requests.len(), t.balanced)),
+        stream.transition.as_ref().map(|t| t.running()),
+        stream.pending.len(),
+        stream.metadata.len(),
+        stream.mesh_bytes() as f64 / 1048576.,
+        stats.patches,
+        stats.budget_limited,
+        stats.contact_limited,
+        stats.drawn_contact_limited,
+        stats.blocked_grass_pages,
+        stats.plans,
+        stream.replans,
+        stream.unmorphed_swaps,
+    );
 }
 
 #[cfg(test)]

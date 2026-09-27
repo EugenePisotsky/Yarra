@@ -23,6 +23,8 @@ pub(crate) const NAMES: &[&str] = &[
     "ground-overhead",
     "ground-walk",
     "ground-stream",
+    // The player walks the start view's route with the normal follow camera.
+    "actor-walk",
 ];
 
 pub(crate) fn install(app: &mut App) {
@@ -50,11 +52,24 @@ pub(crate) fn install(app: &mut App) {
         scale_index: if ground { 0 } else { 1 },
         msaa: Msaa::Sample4,
         prepass: repro.prepass,
-        controls_locked: true,
+        // A scripted walk needs the character to move.
+        controls_locked: name != "actor-walk",
         counters: options.counters,
         show_ui: !ground && !repro.hide_ui,
         ..app.world().resource::<RuntimeSettings>().clone()
     };
+    if name == "actor-walk" {
+        let view = app
+            .world()
+            .resource::<engine::WorldStartView>()
+            .0
+            .clone()
+            .expect("actor-walk requires --start-view with a route");
+        app.insert_resource(engine::PlayerRoute::new(view.route).with_speed(ACTOR_WALK_SPEED_MPS));
+    }
+    if name == "actor-walk" {
+        app.add_systems(Update, log_actor_walk);
+    }
     app.insert_resource(ReproView(name.clone()));
     app.add_systems(Update, move_camera.after(GameplaySystems::CameraFollow))
         .add_systems(PostUpdate, synchronize_wind.before(engine::TreeWindSystems));
@@ -88,6 +103,9 @@ pub(crate) fn install(app: &mut App) {
         .add_systems(Update, output);
     }
 }
+
+/// About 70 km/h: kilometres of island in a couple of minutes.
+const ACTOR_WALK_SPEED_MPS: f32 = 20.;
 
 #[derive(Resource)]
 struct ReproView(String);
@@ -128,6 +146,32 @@ fn output(
     }
 }
 
+/// Where the walk has reached, every two seconds of frames at 60 FPS.
+fn log_actor_walk(
+    frame: Res<FrameCount>,
+    viewpoint: Res<engine::WorldViewpoint>,
+    catalog: Res<engine::WorldCatalog>,
+    route: Option<Res<engine::PlayerRoute>>,
+) {
+    if frame.0 % 120 != 0 {
+        return;
+    }
+    let Some(position) = viewpoint.position() else {
+        return;
+    };
+    let size = catalog
+        .world_space(position.space)
+        .map_or(world::DEFAULT_CELL_SIZE, |s| s.cell_size);
+    let origin = position.cell.origin(size);
+    warn!(
+        "ACTOR_WALK frame={} x={:.0} z={:.0} remaining={}",
+        frame.0,
+        origin[0] + f64::from(position.local[0]),
+        origin[1] + f64::from(position.local[2]),
+        route.map_or(0, |r| r.remaining())
+    );
+}
+
 fn pose(frame: u32) -> Transform {
     // Warm up the actual close view first. Walk ~10 m forward and back so all source
     // pages stay in the resident shell around the idle actor, without teleports.
@@ -149,7 +193,33 @@ fn move_camera(
     start_view: Res<engine::WorldStartView>,
     origin: Res<engine::WorldOrigin>,
     catalog: Res<engine::WorldCatalog>,
+    viewpoint: Res<engine::WorldViewpoint>,
 ) {
+    if view.0 == "actor-walk" {
+        // Follow the walking player while looking left and right, as a player does.
+        let (Some(bookmark), Some(position)) = (start_view.0.as_ref(), viewpoint.position()) else {
+            return;
+        };
+        let size = catalog
+            .world_space(position.space)
+            .map_or(world::DEFAULT_CELL_SIZE, |s| s.cell_size);
+        let offset = origin.cell().origin(size);
+        let at = position.cell.origin(size);
+        let relative = Vec3::new(
+            (at[0] + f64::from(position.local[0]) - offset[0]) as f32,
+            position.local[1],
+            (at[1] + f64::from(position.local[2]) - offset[1]) as f32,
+        );
+        // Hold the heading while the cover grows to the full patch budget, then look behind
+        // to one side and back every 20 s: most of the cover is replaced each time.
+        let mut look = bookmark.clone();
+        let t = time.elapsed_secs();
+        if t > 60. && ((t - 60.) / 20.) as u32 % 2 == 0 {
+            look.yaw_degrees += 180.;
+        }
+        **camera = engine::WorldStartView::camera_at(&look, relative);
+        return;
+    }
     if view.0.starts_with("landscape") {
         let bookmark = start_view.0.as_ref().unwrap();
         let elapsed = profile.as_ref().map_or_else(

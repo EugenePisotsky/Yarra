@@ -328,3 +328,20 @@ fn world_start_from_the_runtime_moves_the_actor_and_frames_it() {
     assert!(camera.translation.distance(expected.translation) < 0.001);
     assert!(camera.forward().distance(*expected.forward()) < 0.0001);
 }
+
+#[test]
+fn a_player_route_steers_through_its_points_at_the_requested_speed() {
+    let mut app = headless_game(false, false, false);
+    let (catalog, _) = test_world_resources(world::WorldSpaceId(1), world::CellCoord::ZERO, None);
+    app.insert_resource(catalog).insert_resource(
+        crate::PlayerRoute::new(vec![[12., 0., 4.], [12., 0., 12.]]).with_speed(8.),
+    );
+    let player = player(&mut app);
+    for _ in 0..240 {
+        tick(&mut app);
+    }
+    let at = app.world().get::<Transform>(player).unwrap().translation;
+    // Four seconds at up to 8 m/s covers both 8 m legs; the last point is within reach.
+    assert!(Vec2::new(at.x - 12., at.z - 12.).length() < 3., "{at}");
+    assert_eq!(app.world().resource::<crate::PlayerRoute>().remaining(), 0);
+}

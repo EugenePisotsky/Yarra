@@ -533,5 +533,5 @@ CREATE TABLE terrain_cores (
     PRIMARY KEY(world_space_id,level,node_x,node_z),
     FOREIGN KEY(world_space_id,level,node_x,node_z) REFERENCES terrain_nodes(world_space_id,level,node_x,node_z)
 ) STRICT, WITHOUT ROWID;
-PRAGMA user_version = 24;
+PRAGMA user_version = 25;
 "#;

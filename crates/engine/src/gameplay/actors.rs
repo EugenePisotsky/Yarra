@@ -32,6 +32,78 @@ pub(super) fn spawn_player(mut commands: Commands, start_view: Res<WorldStartVie
     ));
 }
 
+/// Walks the player through world-space points in order, steered as input would: a scripted
+/// route for stress tests and profiling. Input is overridden while points remain.
+#[derive(Resource, Clone, Debug)]
+pub struct PlayerRoute {
+    points: Vec<[f32; 3]>,
+    next: usize,
+    /// Overrides the character's jog speed, so long routes finish in reasonable time. Steps
+    /// onto ground that is not yet certified still wait, as they do at normal speed.
+    speed_mps: Option<f32>,
+}
+impl PlayerRoute {
+    pub fn new(points: Vec<[f32; 3]>) -> Self {
+        Self {
+            points,
+            next: 0,
+            speed_mps: None,
+        }
+    }
+    pub fn with_speed(self, speed_mps: f32) -> Self {
+        Self {
+            speed_mps: Some(speed_mps),
+            ..self
+        }
+    }
+    /// Points not reached yet.
+    pub fn remaining(&self) -> usize {
+        self.points.len() - self.next
+    }
+}
+
+pub(super) fn steer_player_along_route(
+    route: Option<ResMut<PlayerRoute>>,
+    origin: Option<Res<crate::WorldOrigin>>,
+    catalog: Option<Res<crate::WorldCatalog>>,
+    mut player: Query<
+        (
+            &Transform,
+            &mut MoveIntent,
+            Option<&mut crate::actor::CharacterMotorConfig>,
+        ),
+        With<PlayerControlled>,
+    >,
+) {
+    let (Some(mut route), Some(origin), Some(catalog)) = (route, origin, catalog) else {
+        return;
+    };
+    let size = origin
+        .space()
+        .and_then(|space| catalog.world_space(space))
+        .map_or(world::DEFAULT_CELL_SIZE, |space| space.cell_size);
+    let offset = origin.cell().origin(size);
+    for (transform, mut intent, config) in &mut player {
+        // Re-applied each frame: the character's presentation may replace its config.
+        if let (Some(speed), Some(mut config)) = (route.speed_mps, config) {
+            config.jog_speed_mps = speed;
+        }
+        let here = Vec2::new(
+            (f64::from(transform.translation.x) + offset[0]) as f32,
+            (f64::from(transform.translation.z) + offset[1]) as f32,
+        );
+        let target =
+            |route: &PlayerRoute| route.points.get(route.next).map(|p| Vec2::new(p[0], p[2]));
+        while target(&route).is_some_and(|p| here.distance(p) < 3.) {
+            route.next += 1;
+        }
+        match target(&route) {
+            Some(p) => intent.set_direct(p - here, 1., Some(crate::actor::CharacterGait::Jog)),
+            None => intent.set_direct(Vec2::ZERO, 0., None),
+        }
+    }
+}
+
 pub(super) fn move_player_to_adopted_start(
     mut adopted: MessageReader<crate::WorldStartAdopted>,
     mut player: Query<(&mut Transform, &mut MoveIntent), With<PlayerControlled>>,

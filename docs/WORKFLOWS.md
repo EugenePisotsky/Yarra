@@ -37,6 +37,8 @@ cargo run --release -p yarra-app-game
 
 The script exports the display node's `height` volume (or `--node SOP`) with Houdini's axes unchanged: in the top view +X is right and +Z is down. `import-heightfield MANIFEST [PROJECT_DB] [RUNTIME_DB]` creates the project if it is missing, then cooks. It samples the heightfield every metre with smooth (Catmull-Rom) interpolation and paints ground from height and slope. The world is widened to whole 1 km blocks of flat sea so the terrain hierarchy closes. The `--start` point (by default the shore nearest the centre) becomes the world's start: the game and editor begin there unless `--start-view` overrides it. `start` and `summit` views are also written beside the project. Moving the start recooks nothing. Re-importing after a change in Houdini rewrites only cells whose heights or paint changed, so the cook that follows is incremental. Objects and roads in the project are kept; a cell the new footprint no longer covers is removed and fails if it still holds them. Sculpt in Houdini, not in the editor: a re-import replaces heights.
 
+To stress streaming on foot, `--render-repro actor-walk --start-view VIEW` walks the player along the view's `route` at 20 m/s. The camera follows, holds its heading for 60 s, then looks back and forth every 20 s. Add `--fps 60` to match a 60 Hz display. `ACTOR_WALK` lines log progress. Whenever an actor waits more than 5 s for ground, the game logs `TERRAIN_STALL` with the loader's state; a loader that stops for good logs `TERRAIN_LOD_FAILED`. To send a log of a normal session: `cargo run --release -p yarra-app-game 2>&1 | tee tmp/walk.log`.
+
 ## Game and F1
 
 - Click/tap ground for a destination; WASD/left gamepad stick gives camera-relative movement.

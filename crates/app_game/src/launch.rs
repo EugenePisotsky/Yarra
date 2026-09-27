@@ -448,6 +448,9 @@ impl LaunchOptions {
             if name.starts_with("landscape") && !has("--start-view") {
                 return Err("Landscape repro requires --start-view".into());
             }
+            if name == "actor-walk" && !has("--start-view") {
+                return Err("actor-walk requires --start-view with a route".into());
+            }
             let frames = value("--render-frames")?
                 .map(|v| {
                     v.parse::<u32>()

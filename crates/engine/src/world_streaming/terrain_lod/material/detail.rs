@@ -120,6 +120,10 @@ impl TerrainLodStream {
         cache.cpu.retain(|k, _| cache.desired.contains(k));
         let mut uploads = vec![];
         for key in &plan.keys {
+            // One atlas transaction carries at most four tiles; the rest wait a frame.
+            if uploads.len() == atlas::MAX_UPLOADS {
+                break;
+            }
             if cache.slots.contains_key(key) {
                 continue;
             }

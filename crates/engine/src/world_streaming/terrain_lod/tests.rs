@@ -14,6 +14,54 @@ use std::time::Duration;
 use world_db::RuntimeReader;
 
 #[test]
+fn caches_keep_the_most_recently_needed_entries_within_their_budget() {
+    let key = |x| TerrainNodeKey::leaf(WorldSpaceId(1), CellCoord { x, z: 0 });
+    // Last needed in eviction generations 5, 9, 7 and 9, with sizes 4, 3, 2 and 5.
+    let kept = recent_within(
+        [
+            (key(0), 5, 4),
+            (key(1), 9, 3),
+            (key(2), 7, 2),
+            (key(3), 9, 5),
+        ]
+        .into_iter(),
+        10,
+    );
+    // Newest first (key order breaks the tie): 3 + 5 + 2 fit, the oldest does not.
+    assert_eq!(kept, BTreeSet::from([key(1), key(2), key(3)]));
+    assert!(recent_within([(key(0), 1, 11)].into_iter(), 10).is_empty());
+}
+
+#[test]
+fn mesh_budget_holds_a_full_cover_and_a_completely_different_one() {
+    // A staged replacement is uploaded beside the drawn cover before it is shown; turning the
+    // camera can replace every patch. Whatever grid a world uses, both must fit.
+    let settings = LodSettings::default();
+    let largest = [3_u16, 5, 9, 17, 33, 65, 129, 257]
+        .into_iter()
+        .map(|n| {
+            let field = world::TerrainHeightfield::from_heights(
+                n,
+                &vec![0.; usize::from(n).pow(2)],
+                0.,
+                0.,
+                32.,
+            )
+            .unwrap();
+            let key = TerrainNodeKey::leaf(WorldSpaceId(1), CellCoord::ZERO);
+            let bytes = TerrainNode::leaf(key, &field, n)
+                .unwrap()
+                .gpu_bytes_estimate();
+            let triangles = 2 * (usize::from(n) - 1).pow(2);
+            let patches = settings.max_patches.min(settings.max_triangles / triangles);
+            patches as u64 * bytes
+        })
+        .max()
+        .unwrap();
+    assert!(MAX_MESH_BYTES >= 2 * largest, "{largest}");
+}
+
+#[test]
 fn metadata_limit_holds_everything_a_full_budget_retains() {
     // Retention keeps the drawn and staged covers, their ancestors (at most a third as many)
     // and up to four loaded children each; a plan adds its requests in flight. If the table

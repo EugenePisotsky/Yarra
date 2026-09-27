@@ -3,6 +3,7 @@ pub(crate) mod actors;
 mod camera;
 mod input;
 mod target;
+pub use actors::PlayerRoute;
 pub(crate) use camera::CAMERA_FOCUS_HEIGHT;
 pub use camera::{GAME_DEPTH_PREPASS_ENABLED, GameCameraPlugin};
 pub use input::GameInputPlugin;
@@ -92,6 +93,10 @@ impl Plugin for GameplayPlugin {
                         .in_set(GameplaySystems::Movement)
                         .run_if(resource_equals(GameInputEnabled(true))),
                     actors::move_player_to_adopted_start.in_set(GameplaySystems::MoveIntent),
+                    // After input, which clears the intent when no key is held.
+                    actors::steer_player_along_route
+                        .after(GameplaySystems::MoveIntent)
+                        .before(GameplaySystems::Movement),
                     actors::ground_characters_to_streamed_terrain
                         .in_set(GameplaySystems::Grounding),
                 ),

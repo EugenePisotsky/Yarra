@@ -48,6 +48,14 @@ pub(super) struct Transition {
     pub patches: usize,
     pub triangles: usize,
 }
+/// Why a morph could not start.
+#[derive(Debug)]
+pub(super) enum MorphStart {
+    /// The transient covers or meshes exceed their budget: swap without animating instead.
+    OverBudget,
+    Invalid(String),
+}
+
 impl Transition {
     fn new(
         stream: &TerrainLodStream,
@@ -56,10 +64,10 @@ impl Transition {
         assets: &mut Assets<Mesh>,
         tracker: &UploadTracker,
         handoff: HandoffIndex,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, MorphStart> {
         let old: BTreeMap<_, _> = stream.active.keys().copied().collect();
         let new = stream.target.as_ref().unwrap().patches.clone();
-        let common = lod::common_cover(&old, &new)?;
+        let common = lod::common_cover(&old, &new).map_err(MorphStart::Invalid)?;
         let triangles = common
             .iter()
             .map(|k| 2 * usize::from(stream.metadata[k].resolution - 1).pow(2))
@@ -67,7 +75,7 @@ impl Transition {
         if common.len() > settings.max_patches.saturating_mul(2)
             || triangles > settings.max_triangles.saturating_mul(2)
         {
-            return Err("terrain morph exceeds transient cover budget".into());
+            return Err(MorphStart::OverBudget);
         }
         let keys: Vec<_> = common
             .iter()
@@ -80,7 +88,7 @@ impl Transition {
                 .map(|k| MorphMesh::bytes_estimate(stream.metadata[k].resolution))
                 .sum::<u64>();
         if stream.mesh_bytes() + bytes > MAX_MESH_BYTES {
-            return Err("terrain morph exceeds geometry budget; old cover retained".into());
+            return Err(MorphStart::OverBudget);
         }
         let controller = commands
             .spawn(MorphWeights::new(vec![0.], None).unwrap())
@@ -375,6 +383,7 @@ impl TerrainLodStream {
             let index = HandoffIndex::new(&old, &plan.patches, &self.metadata, cell_size as f64);
             match index.handoff(contacts, plan.stats.budget_limited) {
                 Some(false) => {
+                    self.replans += 1;
                     self.target = None;
                     self.last_plan = None;
                     self.evict(assets, tracker);
@@ -401,7 +410,14 @@ impl TerrainLodStream {
                     .expect("indexed before the first transition update"),
             ) {
                 Ok(t) => t,
-                Err(e) => {
+                // A large replacement, e.g. after turning the camera at the full patch
+                // budget, has no room for morph meshes. Swap to the uploaded cover instead;
+                // failing here would stop terrain streaming for good.
+                Err(MorphStart::OverBudget) => {
+                    self.unmorphed_swaps += 1;
+                    return true;
+                }
+                Err(MorphStart::Invalid(e)) => {
                     self.error = Some(e);
                     return false;
                 }
@@ -415,6 +431,7 @@ impl TerrainLodStream {
                 true
             }
             Ok(Progress::Replan) => {
+                self.replans += 1;
                 for &entity in self.active.values() {
                     commands.entity(entity).insert(if visible {
                         Visibility::Inherited

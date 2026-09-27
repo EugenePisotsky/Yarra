@@ -17,6 +17,8 @@ use bevy::{
 };
 use std::sync::{Arc, Mutex, Weak};
 
+/// Tiles one `submit` may upload.
+pub const MAX_UPLOADS: usize = 4;
 pub const DETAIL_SLOTS: usize = 128;
 pub const TABLE_SIZE: usize = 512;
 pub const DETAIL_BYTES: u64 =
@@ -131,7 +133,7 @@ impl DetailAtlas {
     /// occupants are one render transaction, so reuse never exposes another tile.
     pub fn submit(&self, entries: Vec<DetailEntry>, tiles: Vec<(u32, TerrainComposite)>) {
         assert_eq!(entries.len(), TABLE_SIZE);
-        assert!(tiles.len() <= 4);
+        assert!(tiles.len() <= MAX_UPLOADS);
         assert!(
             tiles
                 .iter()
