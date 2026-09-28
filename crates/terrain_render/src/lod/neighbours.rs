@@ -2,8 +2,7 @@
 //! testing every pair. A neighbour at least as coarse as a node is an ancestor-or-self of the
 //! same-level square across the edge. Finer neighbours are that square's descendants along the
 //! shared edge, reached only through `interior` nodes (strict ancestors of cover nodes).
-use super::{StitchEdges, contains};
-use std::collections::{BTreeSet, HashSet};
+use super::{KeySet, StitchEdges, contains};
 use world::TerrainNodeKey;
 
 pub(super) const EDGES: [u8; 4] = [
@@ -14,10 +13,8 @@ pub(super) const EDGES: [u8; 4] = [
 ];
 
 /// Strict ancestors of every node in `cover`.
-pub(super) fn interior_of<'a>(
-    cover: impl IntoIterator<Item = &'a TerrainNodeKey>,
-) -> HashSet<TerrainNodeKey> {
-    let mut interior = HashSet::new();
+pub(super) fn interior_of<'a>(cover: impl IntoIterator<Item = &'a TerrainNodeKey>) -> KeySet {
+    let mut interior = KeySet::new();
     for key in cover {
         let mut node = *key;
         while let Some(parent) = node.parent().ok().flatten() {
@@ -49,7 +46,8 @@ fn across(key: TerrainNodeKey, edge: u8) -> Option<TerrainNodeKey> {
 
 /// The cover node at least as coarse as `key` touching its `edge`, if there is one.
 pub(super) fn coarser(
-    cover: &BTreeSet<TerrainNodeKey>,
+    cover: &KeySet,
+    interior: &KeySet,
     key: TerrainNodeKey,
     edge: u8,
 ) -> Option<TerrainNodeKey> {
@@ -62,14 +60,18 @@ pub(super) fn coarser(
         if cover.contains(&square) {
             return Some(square);
         }
+        // Cover nodes lie inside an interior node, so none of its ancestors is in the cover.
+        if interior.contains(&square) {
+            return None;
+        }
         square = square.parent().ok().flatten()?;
     }
 }
 
 /// Cover nodes finer than `key` touching its `edge`, appended to `out`.
 pub(super) fn finer(
-    cover: &BTreeSet<TerrainNodeKey>,
-    interior: &HashSet<TerrainNodeKey>,
+    cover: &KeySet,
+    interior: &KeySet,
     key: TerrainNodeKey,
     edge: u8,
     out: &mut Vec<TerrainNodeKey>,
@@ -109,6 +111,7 @@ pub(super) fn finer(
 mod tests {
     use super::*;
     use crate::lod::adjacent;
+    use std::collections::BTreeSet;
     use world::WorldSpaceId;
 
     /// Random disjoint covers: split random nodes of a root square, unbalanced on purpose.
@@ -138,13 +141,14 @@ mod tests {
         for seed in 0..40 {
             let cover = random_cover(seed, 5 + seed as usize * 3);
             let interior = interior_of(&cover);
+            let members: KeySet = cover.iter().copied().collect();
             for &key in &cover {
                 for edge in EDGES {
                     let mut found = Vec::new();
-                    if let Some(c) = coarser(&cover, key, edge) {
+                    if let Some(c) = coarser(&members, &interior, key, edge) {
                         found.push(c);
                     }
-                    finer(&cover, &interior, key, edge, &mut found);
+                    finer(&members, &interior, key, edge, &mut found);
                     found.sort();
                     let expected: Vec<_> = cover
                         .iter()
@@ -155,7 +159,7 @@ mod tests {
                     for other in &found {
                         assert!(
                             (other.level >= key.level)
-                                == (coarser(&cover, key, edge) == Some(*other))
+                                == (coarser(&members, &interior, key, edge) == Some(*other))
                         );
                     }
                 }

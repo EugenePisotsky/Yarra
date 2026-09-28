@@ -1,7 +1,7 @@
 //! Camera-driven terrain cover planning. IO/upload readiness is deliberately separate:
 //! a caller stages the complete result and retains its previous cover until ready.
 use bevy::math::{DMat4, DVec3};
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 use world::TerrainNodeKey;
 
 mod allocation;
@@ -15,6 +15,11 @@ pub mod contact;
 use contact::{ContactRegion, patch_error};
 #[cfg(test)]
 mod tests;
+
+/// Node sets and maps with Bevy's fixed foldhash: SipHash lookups were a large part of a
+/// full-budget plan. Iteration order never decides a result; ordered covers stay BTree.
+type KeySet = bevy::platform::collections::HashSet<TerrainNodeKey>;
+type KeyMap<V> = bevy::platform::collections::HashMap<TerrainNodeKey, V>;
 
 #[derive(Clone, Debug)]
 pub struct PatchMetadata {
@@ -155,11 +160,13 @@ pub struct PlannedCover {
 struct Planner<'a> {
     metadata: &'a BTreeMap<TerrainNodeKey, PatchMetadata>,
     settings: &'a LodSettings,
+    /// Ordered for deterministic passes; `members` holds the same nodes for lookups.
     cover: BTreeSet<TerrainNodeKey>,
+    members: KeySet,
     /// Strict ancestors of `cover`; the planner only splits, so this only grows.
-    interior: HashSet<TerrainNodeKey>,
+    interior: KeySet,
     requests: Vec<TerrainNodeKey>,
-    requested: HashSet<TerrainNodeKey>,
+    requested: KeySet,
     stats: CoverStats,
 }
 impl Planner<'_> {
@@ -220,7 +227,9 @@ impl Planner<'_> {
             return false;
         }
         self.cover.remove(&key);
+        self.members.remove(&key);
         self.cover.extend(children);
+        self.members.extend(children);
         self.interior.insert(key);
         self.stats.triangles = triangles;
         true
@@ -235,7 +244,8 @@ impl Planner<'_> {
                 if !self.spend_selection() {
                     return vec![];
                 }
-                if let Some(other) = neighbours::coarser(&self.cover, candidate, edge)
+                if let Some(other) =
+                    neighbours::coarser(&self.members, &self.interior, candidate, edge)
                     && other.level > candidate.level
                     && group.insert(other)
                 {
@@ -271,9 +281,11 @@ impl Planner<'_> {
         }
         for parent in group {
             self.cover.remove(&parent);
+            self.members.remove(&parent);
             self.interior.insert(parent);
         }
         self.cover.extend(children.iter().copied());
+        self.members.extend(children.iter().copied());
         self.stats.triangles = triangles;
         children
     }
@@ -353,9 +365,10 @@ pub fn plan_cover_with_contacts(
         metadata,
         settings,
         cover: roots.iter().copied().collect(),
+        members: roots.iter().copied().collect(),
         interior: neighbours::interior_of(roots),
         requests: Vec::new(),
-        requested: HashSet::new(),
+        requested: KeySet::new(),
         stats: CoverStats {
             triangles,
             ..Default::default()
@@ -366,7 +379,7 @@ pub fn plan_cover_with_contacts(
     let mut balanced = true;
     // Nodes that must split but whose children are still loading. Scanning on requests
     // every one of them in this plan, rather than one per plan.
-    let mut waiting = HashSet::new();
+    let mut waiting = KeySet::new();
     // Every unbalanced pair is seen from its finer node, as a coarser neighbour.
     'balance: loop {
         let keys: Vec<_> = p.cover.iter().copied().collect();
@@ -376,7 +389,7 @@ pub fn plan_cover_with_contacts(
                     balanced = false;
                     break 'balance;
                 }
-                if let Some(coarse) = neighbours::coarser(&p.cover, a, edge)
+                if let Some(coarse) = neighbours::coarser(&p.members, &p.interior, a, edge)
                     && coarse.level > a.level + 1
                     && !waiting.contains(&coarse)
                 {
@@ -416,7 +429,9 @@ pub fn plan_cover_with_contacts(
                     balanced = false;
                     break 'seams;
                 }
-                if neighbours::coarser(&p.cover, a, edge).is_some_and(|b| b.level == a.level + 1) {
+                if neighbours::coarser(&p.members, &p.interior, a, edge)
+                    .is_some_and(|b| b.level == a.level + 1)
+                {
                     patches.get_mut(&a).unwrap().insert(edge);
                 }
             }

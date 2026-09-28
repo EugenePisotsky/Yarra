@@ -1125,6 +1125,7 @@ fn grass_source_gate(app: &mut App) {
 
 fn settle(app: &mut App, deadline: std::time::Instant) {
     let mut stable = 0;
+    let mut stable_since = 0.;
     let mut previous = BTreeSet::new();
     loop {
         assert!(
@@ -1142,6 +1143,7 @@ fn settle(app: &mut App, deadline: std::time::Instant) {
             && stream.decodes.is_empty()
             && stream.builds.is_empty()
             && stream.target.is_none()
+            && stream.planning.is_none()
         {
             stable + 1
         } else {
@@ -1149,7 +1151,13 @@ fn settle(app: &mut App, deadline: std::time::Instant) {
         };
         previous = keys;
         assert_valid_cover(app);
-        if stable >= 8 {
+        // Stable across a whole plan interval: a changed setting or demand is only planned
+        // once the throttle allows, so eight quick frames could end before that plan ran.
+        let now = app.world().resource::<Time>().elapsed_secs_f64();
+        if stable <= 1 {
+            stable_since = now;
+        }
+        if stable >= 8 && now - stable_since > PLAN_INTERVAL_SECONDS {
             return;
         }
         std::thread::sleep(Duration::from_millis(5));

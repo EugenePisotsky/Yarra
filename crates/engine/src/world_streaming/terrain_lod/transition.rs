@@ -280,6 +280,8 @@ impl Transition {
                 i += 1;
             }
         }
+        // Once per frame: the stream's samples don't change while jobs are queued here.
+        let decoded_bytes = stream.decoded_bytes();
         for &key in &self.keys {
             if self.jobs.len() >= MAX_BUILDS {
                 break;
@@ -307,7 +309,7 @@ impl Transition {
                 .filter(|&&k| lod::touches(key, k))
                 .map(|k| stream.descriptors[k].decoded_bytes)
                 .sum();
-            if stream.decoded_bytes() + self.input_bytes() + input_bytes > MAX_NODE_BYTES {
+            if decoded_bytes + self.input_bytes() + input_bytes > MAX_NODE_BYTES {
                 return Err("terrain morph exceeds sample budget; old cover retained".into());
             }
             let (old, new) = (sources(&self.old)?, sources(&self.new)?);
@@ -548,7 +550,7 @@ mod tests {
                 bytes: MAX_MESH_BYTES,
             },
         );
-        stream.metadata.insert(
+        Arc::make_mut(&mut stream.metadata).insert(
             key,
             PatchMetadata {
                 key,

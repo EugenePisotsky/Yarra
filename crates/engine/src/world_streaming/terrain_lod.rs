@@ -29,6 +29,8 @@ use transition::{Transition, patch_transform};
 use world::{TerrainNode, TerrainNodeKey};
 use world_db::TerrainNodeDescriptor;
 
+/// Membership sets for eviction; their iteration order never decides what is kept.
+type KeySet = bevy::platform::collections::HashSet<TerrainNodeKey>;
 /// Descriptors kept per patch of the budget: the drawn and staged covers, their ancestors and
 /// the children already loaded for refinement. At 8 per patch (4,096 for 2,048 patches) a
 /// settled desktop view filled the table, after which no new ground could load around a
@@ -50,8 +52,8 @@ const MAX_MESH_BYTES: u64 = if cfg!(target_os = "ios") { 128 } else { 384 } * 10
 /// Database queries in flight: metadata batches, node samples and ground materials.
 const MAX_REQUESTS: usize = 12;
 /// A moving view re-plans at most this often while the drawn ground satisfies contact
-/// demand. A full-budget plan takes about 10 ms; planning after every publication kept
-/// 20–40 plans a second running on the main thread.
+/// demand. A full-budget plan takes about 6 ms of a pool thread; planning after every
+/// publication kept 20–40 plans a second running.
 const PLAN_INTERVAL_SECONDS: f64 = 0.1;
 /// Patch meshes built at once on the compute task pool.
 const MAX_BUILDS: usize = 8;
@@ -120,8 +122,8 @@ pub struct TerrainLodStats {
     pub entry_material_reserved_bytes: u64,
     pub pending: usize,
     pub staged: usize,
-    /// Main-thread cover plans (they run whenever the view or demand changes) and the
-    /// duration of the latest one.
+    /// Completed cover plans (they run on the async compute pool whenever the view or
+    /// demand changes) and the duration of the latest one.
     pub plans: u64,
     pub plan_milliseconds: f64,
     /// A whole replacement group shares this weight; None means no visible morph.
@@ -293,6 +295,13 @@ struct ResidentMesh {
     handle: Handle<Mesh>,
     bytes: u64,
 }
+/// A cover plan running on the async compute pool, from snapshots of its inputs. Plans
+/// start only while no target is staged, so the drawn cover and the retained descriptors
+/// they reference cannot be replaced or evicted before the result is applied.
+struct PlanTask {
+    identity: PlanIdentity,
+    task: Task<(Result<PlannedCover, String>, f64)>,
+}
 struct MeshJob {
     patch: Patch,
     bytes: u64,
@@ -307,7 +316,8 @@ pub(crate) struct TerrainLodStream {
     pending: BTreeMap<u64, TerrainQuery>,
     roots: Option<Vec<TerrainNodeKey>>,
     descriptors: BTreeMap<TerrainNodeKey, TerrainNodeDescriptor>,
-    metadata: BTreeMap<TerrainNodeKey, PatchMetadata>,
+    /// Shared with a running plan; copied on write only if a reply lands during one.
+    metadata: Arc<BTreeMap<TerrainNodeKey, PatchMetadata>>,
     nodes: BTreeMap<TerrainNodeKey, TerrainNode>,
     decodes: BTreeMap<TerrainNodeKey, Task<Result<TerrainNode, String>>>,
     builds: Vec<MeshJob>,
@@ -320,8 +330,9 @@ pub(crate) struct TerrainLodStream {
     error: Option<String>,
     last_report: f64,
     last_plan: Option<PlanIdentity>,
-    /// When the last plan ran, in seconds of app time.
+    /// When the last plan started, in seconds of app time.
     last_plan_at: Option<f64>,
+    planning: Option<PlanTask>,
     replans: u64,
     unmorphed_swaps: u64,
     /// Eviction generation, and when each retained descriptor or node was last needed.
@@ -369,6 +380,7 @@ impl TerrainLodStream {
                     self.roots = Some(descriptors.iter().map(|d| d.key).collect());
                 }
                 self.metadata_revision = self.metadata_revision.wrapping_add(1);
+                let metadata = Arc::make_mut(&mut self.metadata);
                 for mut d in descriptors {
                     if let Some(node) = self.overlay.as_ref().and_then(|o| o.nodes.get(&d.key)) {
                         d = authoring::descriptor(node);
@@ -382,7 +394,7 @@ impl TerrainLodStream {
                             Some("terrain LOD requires edge midpoints; recook this runtime".into());
                         return;
                     }
-                    self.metadata.insert(
+                    metadata.insert(
                         d.key,
                         PatchMetadata {
                             key: d.key,
@@ -439,20 +451,37 @@ impl TerrainLodStream {
         }
     }
     fn decoded_bytes(&self) -> u64 {
-        let mut keys: BTreeSet<_> = self
+        // Every resident node has a descriptor, so walk both ordered maps together rather
+        // than collecting the keys into a set and looking each one up (every frame).
+        let mut descriptors = self.descriptors.iter();
+        let resident: u64 = self
             .nodes
             .keys()
-            .chain(self.decodes.keys())
-            .copied()
+            .map(|key| {
+                descriptors
+                    .find(|(k, _)| *k == key)
+                    .expect("resident node without a descriptor")
+                    .1
+                    .decoded_bytes
+            })
+            .sum();
+        // A few loading nodes, counted once each and never twice with a resident one.
+        let mut loading: Vec<_> = self
+            .decodes
+            .keys()
+            .chain(self.pending.values().filter_map(|q| match q {
+                TerrainQuery::Node(key) => Some(key),
+                _ => None,
+            }))
+            .filter(|k| !self.nodes.contains_key(k))
             .collect();
-        for query in self.pending.values() {
-            if let TerrainQuery::Node(key) = query {
-                keys.insert(*key);
-            }
-        }
-        keys.iter()
-            .map(|k| self.descriptors[k].decoded_bytes)
-            .sum::<u64>()
+        loading.sort();
+        loading.dedup();
+        resident
+            + loading
+                .into_iter()
+                .map(|k| self.descriptors[k].decoded_bytes)
+                .sum::<u64>()
             + self.transition.as_ref().map_or(0, Transition::input_bytes)
     }
     fn mesh_bytes(&self) -> u64 {
@@ -536,11 +565,15 @@ impl TerrainLodStream {
             return;
         };
         let patches: Vec<_> = plan.patches.iter().map(|(&k, &e)| (k, e)).collect();
-        // Totals once per pass: summing every resident node per patch was quadratic.
-        let mut mesh_bytes = self.mesh_bytes();
-        let mut decoded_bytes = self.decoded_bytes();
+        // Totals once per pass, and only once something is to start: summing every
+        // resident node per patch was quadratic, and every frame of a staged cover paid it.
+        let mut mesh_bytes = None;
+        let mut decoded_bytes = None;
         let mut requests_open = true;
         for patch @ (key, edges) in &patches {
+            if self.builds.len() >= MAX_BUILDS && !requests_open {
+                break;
+            }
             if self.meshes.contains_key(patch) || self.builds.iter().any(|b| b.patch == *patch) {
                 continue;
             }
@@ -548,12 +581,13 @@ impl TerrainLodStream {
                 if self.builds.len() >= MAX_BUILDS {
                     continue;
                 }
+                let mesh_bytes = mesh_bytes.get_or_insert_with(|| self.mesh_bytes());
                 let bytes = self.descriptors[key].gpu_bytes_estimate;
-                if mesh_bytes + bytes > mesh_limit {
+                if *mesh_bytes + bytes > mesh_limit {
                     self.error = Some("terrain replacement exceeds mesh budget".into());
                     break;
                 }
-                mesh_bytes += bytes;
+                *mesh_bytes += bytes;
                 let field = field.clone();
                 let extent = cell_size * (1_u32 << key.level) as f32;
                 let edges = *edges;
@@ -570,24 +604,37 @@ impl TerrainLodStream {
                     .values()
                     .any(|q| matches!(q,TerrainQuery::Node(k) if k==key))
             {
-                if decoded_bytes + self.descriptors[key].decoded_bytes > node_limit {
+                let mut total = match decoded_bytes {
+                    Some(total) => total,
+                    None => self.decoded_bytes(),
+                };
+                if total + self.descriptors[key].decoded_bytes > node_limit {
                     self.drop_node_cache();
-                    decoded_bytes = self.decoded_bytes();
+                    total = self.decoded_bytes();
                 }
-                if decoded_bytes + self.descriptors[key].decoded_bytes > node_limit {
+                decoded_bytes = Some(total);
+                if total + self.descriptors[key].decoded_bytes > node_limit {
                     self.error = Some("terrain replacement exceeds sample budget".into());
                     break;
                 }
                 let before = self.pending.len();
                 self.request(worker, TerrainQuery::Node(*key));
                 if self.pending.len() > before {
-                    decoded_bytes += self.descriptors[key].decoded_bytes;
+                    decoded_bytes = Some(total + self.descriptors[key].decoded_bytes);
                 } else {
                     // At the in-flight limit: builds may continue, requests wait a frame.
                     requests_open = false;
                 }
             }
         }
+    }
+    /// Whether `plan` is exactly the cover already drawn, stitched edges included.
+    fn draws(&self, plan: &PlannedCover) -> bool {
+        plan.patches.len() == self.active.len()
+            && plan
+                .patches
+                .iter()
+                .all(|(&key, &edges)| self.active.contains_key(&(key, edges)))
     }
     fn target_uploaded(&self, tracker: &UploadTracker) -> bool {
         let Some(plan) = &self.target else {
@@ -620,7 +667,7 @@ impl TerrainLodStream {
                 false
             }
         });
-        let keys: BTreeSet<_> = wanted
+        let keys: KeySet = wanted
             .iter()
             .map(|(k, _)| *k)
             .chain(self.roots.iter().flatten().copied())
@@ -632,7 +679,7 @@ impl TerrainLodStream {
         }
         // Nodes outside the covers stay as a cache of the most recently needed ones.
         let cached = recent_within(
-            self.nodes.keys().filter(|k| !keys.contains(k)).map(|k| {
+            self.nodes.keys().filter(|&k| !keys.contains(k)).map(|k| {
                 (
                     *k,
                     self.last_used.get(k).copied().unwrap_or(0),
@@ -649,10 +696,10 @@ impl TerrainLodStream {
         for key in keys {
             let mut ancestor = key;
             while let Some(parent) = ancestor.parent().ok().flatten() {
-                if !self.metadata.contains_key(&parent) {
+                // A parent already kept had its own ancestors walked, or will as a key.
+                if !self.metadata.contains_key(&parent) || !metadata.insert(parent) {
                     break;
                 }
-                metadata.insert(parent);
                 ancestor = parent;
             }
             if let Some(children) = key.children().ok().flatten() {
@@ -676,12 +723,12 @@ impl TerrainLodStream {
         let cached = recent_within(
             self.metadata
                 .keys()
-                .filter(|k| !metadata.contains(k))
+                .filter(|&k| !metadata.contains(k))
                 .map(|k| (*k, self.last_used.get(k).copied().unwrap_or(0), 1)),
             METADATA_CACHE as u64,
         );
         metadata.extend(cached);
-        self.metadata.retain(|k, _| metadata.contains(k));
+        Arc::make_mut(&mut self.metadata).retain(|k, _| metadata.contains(k));
         self.descriptors.retain(|k, _| metadata.contains(k));
         self.last_used.retain(|k, _| metadata.contains(k));
     }
@@ -847,9 +894,73 @@ fn update(
         info.cell_size,
     );
     stream.prepare_materials(&worker, material::MAX_MATERIAL_BYTES);
+    // A finished plan is applied before anything else can stage a target.
+    if stream.target.is_none()
+        && let Some((planned, milliseconds)) = stream
+            .planning
+            .as_mut()
+            .and_then(|p| check_ready(&mut p.task))
+    {
+        let identity = stream.planning.take().unwrap().identity;
+        stats.plans += 1;
+        stats.replans = stream.replans;
+        stats.unmorphed_swaps = stream.unmorphed_swaps;
+        stats.plan_milliseconds = milliseconds;
+        match planned {
+            Ok(plan) => {
+                if plan.requests.is_empty() {
+                    stream.last_plan = Some(identity);
+                }
+                stats.maximum_visible_error = plan.stats.maximum_visible_error;
+                stats.budget_limited = plan.stats.budget_limited;
+                stats.contact_limited = plan.stats.contact_limited;
+                let queued: BTreeSet<_> = stream
+                    .pending
+                    .values()
+                    .filter_map(|q| {
+                        if let TerrainQuery::Metadata(keys) = q {
+                            Some(keys.iter().copied())
+                        } else {
+                            None
+                        }
+                    })
+                    .flatten()
+                    .collect();
+                // Every requested key, in batches. Refining a patch needs its four
+                // children, so one batch a plan grew a cover by only ~100 patches per
+                // plan and morph: a turned view took tens of seconds to sharpen.
+                let keys: Vec<_> = plan
+                    .requests
+                    .iter()
+                    .filter(|k| !queued.contains(k))
+                    .copied()
+                    .take(MAX_METADATA.saturating_sub(stream.metadata.len() + queued.len()))
+                    .collect();
+                for batch in keys.chunks(world_db::MAX_TERRAIN_NODE_QUERY) {
+                    stream.request(&worker, TerrainQuery::Metadata(batch.to_vec()));
+                }
+                if !plan.balanced {
+                    stats.status = "balancing coarse terrain cover".into();
+                } else if stream.draws(&plan) {
+                    // Nothing to stage. Publishing the same cover ran upload checks, a
+                    // quadratic removal scan and a full eviction on the plan's frame.
+                    stats.triangles = plan.stats.triangles;
+                    if stream.metadata.len() > MAX_METADATA - METADATA_CACHE {
+                        // Descriptors loaded for refinements this cover could not take
+                        // yet would otherwise fill the table and block every request.
+                        stream.evict(&mut meshes, &tracker);
+                    }
+                } else {
+                    stream.target = Some(plan);
+                }
+            }
+            Err(e) => stream.error = Some(e),
+        }
+    }
     // Freeze a replacement while it uploads; changing camera demand cannot continually
     // cancel the last missing child and starve publication.
     if stream.target.is_none()
+        && stream.planning.is_none()
         && visible
         && let Some((camera, transform, resolution)) = camera.iter().find(|(c, _, _)| c.is_active)
         && let Some(size) = resolution
@@ -881,63 +992,25 @@ fn update(
                 .last_plan_at
                 .is_none_or(|at| time.elapsed_secs_f64() - at >= PLAN_INTERVAL_SECONDS);
         if due && stream.last_plan.as_ref() != Some(&identity) {
-            let previous = stream.active.keys().map(|(k, _)| *k).collect();
-            let start = std::time::Instant::now();
-            let planned = lod::plan_cover_with_contacts(
-                roots,
-                &stream.metadata,
-                &previous,
-                &view,
-                info.cell_size as f64,
-                &config.settings,
-                &contacts.planning,
-            );
-            stats.plans += 1;
-            stats.replans = stream.replans;
-            stats.unmorphed_swaps = stream.unmorphed_swaps;
-            stats.plan_milliseconds = start.elapsed().as_secs_f64() * 1000.;
+            // Off the main thread: a full-budget plan took 6–9 ms of a 16.7 ms frame, ten
+            // times a second while moving. Inputs are snapshots; metadata is shared.
+            let previous: BTreeSet<_> = stream.active.keys().map(|(k, _)| *k).collect();
+            let roots = roots.clone();
+            let metadata = stream.metadata.clone();
+            let settings = config.settings.clone();
+            let regions = contacts.planning.clone();
+            let cell_size = info.cell_size as f64;
             stream.last_plan_at = Some(time.elapsed_secs_f64());
-            match planned {
-                Ok(plan) => {
-                    if plan.requests.is_empty() {
-                        stream.last_plan = Some(identity);
-                    }
-                    stats.maximum_visible_error = plan.stats.maximum_visible_error;
-                    stats.budget_limited = plan.stats.budget_limited;
-                    stats.contact_limited = plan.stats.contact_limited;
-                    let queued: BTreeSet<_> = stream
-                        .pending
-                        .values()
-                        .filter_map(|q| {
-                            if let TerrainQuery::Metadata(keys) = q {
-                                Some(keys.iter().copied())
-                            } else {
-                                None
-                            }
-                        })
-                        .flatten()
-                        .collect();
-                    // Every requested key, in batches. Refining a patch needs its four
-                    // children, so one batch a plan grew a cover by only ~100 patches per
-                    // plan and morph: a turned view took tens of seconds to sharpen.
-                    let keys: Vec<_> = plan
-                        .requests
-                        .iter()
-                        .filter(|k| !queued.contains(k))
-                        .copied()
-                        .take(MAX_METADATA.saturating_sub(stream.metadata.len() + queued.len()))
-                        .collect();
-                    for batch in keys.chunks(world_db::MAX_TERRAIN_NODE_QUERY) {
-                        stream.request(&worker, TerrainQuery::Metadata(batch.to_vec()));
-                    }
-                    if plan.balanced {
-                        stream.target = Some(plan);
-                    } else {
-                        stats.status = "balancing coarse terrain cover".into();
-                    }
-                }
-                Err(e) => stream.error = Some(e),
-            }
+            stream.planning = Some(PlanTask {
+                identity,
+                task: AsyncComputeTaskPool::get().spawn(async move {
+                    let start = std::time::Instant::now();
+                    let planned = lod::plan_cover_with_contacts(
+                        &roots, &metadata, &previous, &view, cell_size, &settings, &regions,
+                    );
+                    (planned, start.elapsed().as_secs_f64() * 1000.)
+                }),
+            });
         }
     }
     if let Some(plan) = &stream.target {
@@ -967,10 +1040,11 @@ fn update(
             {
                 stream.last_plan = None;
             }
+            // `patches` comes from an ordered map, so it is sorted.
             let remove: Vec<_> = stream
                 .active
                 .keys()
-                .filter(|p| !patches.contains(p))
+                .filter(|p| patches.binary_search(p).is_err())
                 .copied()
                 .collect();
             for p in remove {

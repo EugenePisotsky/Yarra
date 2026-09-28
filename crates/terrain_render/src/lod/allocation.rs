@@ -24,7 +24,7 @@ struct Candidate(Priority, std::cmp::Reverse<TerrainNodeKey>, u64);
 
 struct Demand<'a> {
     /// Strict ancestors of the previous cover: nodes refined last time.
-    previously_refined: HashSet<TerrainNodeKey>,
+    previously_refined: KeySet,
     view: &'a LodView,
     cell_size: f64,
     contacts: &'a [ContactRegion],
@@ -82,7 +82,7 @@ impl Demand<'_> {
             if !p.spend_selection() {
                 return Err(());
             }
-            neighbours::finer(&p.cover, &p.interior, key, edge, &mut finer);
+            neighbours::finer(&p.members, &p.interior, key, edge, &mut finer);
         }
         for fine in finer {
             if fine.level + 1 == key.level {
@@ -108,7 +108,7 @@ pub(super) fn refine(
         contacts,
     };
     let mut queue = BinaryHeap::new();
-    let mut versions = BTreeMap::<TerrainNodeKey, u64>::new();
+    let mut versions = KeyMap::<u64>::default();
     let mut changed = p.cover.clone();
     loop {
         for key in changed {
@@ -128,7 +128,7 @@ pub(super) fn refine(
         if !p.spend_selection() {
             break;
         }
-        if !p.cover.contains(&key) || versions.get(&key) != Some(&version) {
+        if !p.members.contains(&key) || versions.get(&key) != Some(&version) {
             continue;
         }
         let children = p.refine(key);
@@ -145,8 +145,8 @@ pub(super) fn refine(
                 if !p.spend_selection() {
                     return;
                 }
-                touching.extend(neighbours::coarser(&p.cover, child, edge));
-                neighbours::finer(&p.cover, &p.interior, child, edge, &mut touching);
+                touching.extend(neighbours::coarser(&p.members, &p.interior, child, edge));
+                neighbours::finer(&p.members, &p.interior, child, edge, &mut touching);
             }
             changed.extend(touching);
         }

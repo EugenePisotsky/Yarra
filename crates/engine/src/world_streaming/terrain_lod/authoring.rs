@@ -323,7 +323,7 @@ pub(super) fn update(
         }
         if stream.metadata.contains_key(key) {
             let d = descriptor(node);
-            stream.metadata.insert(
+            Arc::make_mut(&mut stream.metadata).insert(
                 *key,
                 PatchMetadata {
                     key: *key,
@@ -344,6 +344,8 @@ pub(super) fn update(
     }
     stream.metadata_revision = stream.metadata_revision.wrapping_add(1);
     stream.last_plan = None;
+    // A running plan read the previous heights and errors.
+    stream.planning = None;
     live.applied = Some(request.revision);
     live.commit = None;
 }

@@ -1,6 +1,6 @@
 //! A common refinement of two covers, with one shared morph weight. Integer grid
 //! collapse reproduces each endpoint's triangles, including stitched boundaries.
-use super::{StitchEdges, contains, stitch_indices};
+use super::{KeyMap, StitchEdges, neighbours::interior_of, stitch_indices};
 use bevy::{
     asset::RenderAssetUsages,
     mesh::{Indices, morph::MorphAttributes},
@@ -19,24 +19,44 @@ pub fn common_cover(
     for &key in old.keys().chain(new.keys()) {
         key.cell_bounds().map_err(|e| e.to_string())?;
     }
+    // Walk ancestors instead of testing every pair: two 2,048-patch covers took ~8 ms.
     for (a, b) in [(old, new), (new, old)] {
+        // Each node of `a` lies inside a node of `b`, or `b`'s nodes inside it tile it.
+        let top = |cover: &BTreeMap<TerrainNodeKey, _>| cover.keys().map(|k| k.level).max();
+        let (a_top, b_top) = (top(a).unwrap_or(0), top(b).unwrap_or(0));
+        let mut covered = KeyMap::<u128>::default();
+        for &key in b.keys() {
+            let mut node = key;
+            while node.level < a_top
+                && let Some(parent) = node.parent().ok().flatten()
+            {
+                *covered.entry(parent).or_default() += 1_u128 << (2 * key.level);
+                node = parent;
+            }
+        }
         for &key in a.keys() {
-            if !b.keys().any(|&other| contains(other, key)) {
-                let covered: u128 = b
-                    .keys()
-                    .filter(|&&other| contains(key, other))
-                    .map(|other| 1_u128 << (2 * other.level))
-                    .sum();
-                if covered != 1_u128 << (2 * key.level) {
-                    return Err("terrain morph covers have different domains".into());
+            let mut inside = false;
+            let mut node = Some(key);
+            while let Some(current) = node
+                && current.level <= b_top
+            {
+                if b.contains_key(&current) {
+                    inside = true;
+                    break;
                 }
+                node = current.parent().ok().flatten();
+            }
+            if !inside && covered.get(&key).copied().unwrap_or(0) != 1_u128 << (2 * key.level) {
+                return Err("terrain morph covers have different domains".into());
             }
         }
     }
     let keys: BTreeSet<_> = old.keys().chain(new.keys()).copied().collect();
+    // Leaves of the union: nodes with no finer node of either cover inside them.
+    let interior = interior_of(&keys);
     Ok(keys
         .iter()
-        .filter(|&&k| !keys.iter().any(|&other| other != k && contains(k, other)))
+        .filter(|&k| !interior.contains(k))
         .copied()
         .collect())
 }
