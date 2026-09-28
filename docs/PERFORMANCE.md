@@ -51,6 +51,13 @@ Disabled means different things: grass Disabled skips render preparation/compute
 
 `--timing-log`, `--gpu-timing-detail` and `--gpu-timing-off` require Full. The last disables both our GPU timestamps and the Bevy recorder; CPU system wrappers remain. Off rejects panel-opening flags, grass counters and input/native-timing logs. Explicit repro/profile routes, finite screenshots, native capture and their structured output remain available in every mode; Off is not a quiet-log switch. Ordinary renderer bookkeeping is retained. Record the mode in comparisons; no instrumentation-overhead improvement has been measured by this refactor.
 
+`YARRA_SPIKE_LOG=<ms>` (Full only) names the systems behind slow frames. It logs `FRAME_SPIKE` for:
+
+- every main- or render-world frame whose system time exceeds the threshold, with its time per group and its eight slowest systems;
+- every update interval more than 5% over an FPS cap.
+
+Render time is extraction, preparation and the render call. It excludes drawable acquisition, which only waits for presentation. On the island, render work is normally 5–6 ms, so start at 8 ms. It attributes CPU hitches but does not show whether a frame was presented late. For that, add `MTL_HUD_ENABLED=1 MTL_HUD_LOG_ENABLED=1` and read the `metal-HUD` intervals; a 120 Hz display logs each 60 FPS frame twice. Run both on a repro route, as in the [60 FPS frame-drop entry](EXPERIMENTS.md#frame-drops-at-the-60-fps-cap--september-28).
+
 ## Controlled runner
 
 Python 3.11+, the existing Rust toolchain, local assets and a cooked runtime are required. Build once before comparing. The runner snapshots the executable, runtime DB, shaders and canopy settings; other assets remain linked and must stay unchanged. It records actual physical surface/internal dimensions, hashes, commands and validity warnings.

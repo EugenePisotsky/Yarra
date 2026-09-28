@@ -160,6 +160,16 @@ impl Plugin for TimingPlugin {
             .add_systems(First, receive)
             .add_systems(Update, log_timings.run_if(move || logging))
             .add_systems(Last, collect_cpu.in_set(CollectTimings));
+        // YARRA_SPIKE_LOG=<ms> names the systems behind every slow frame.
+        if let Ok(value) = std::env::var("YARRA_SPIKE_LOG") {
+            match value.parse::<f64>() {
+                Ok(ms) if ms.is_finite() && ms >= 0.0 => {
+                    app.insert_resource(SpikeLog(ms))
+                        .add_systems(First, log_spikes.after(receive));
+                }
+                _ => warn!("YARRA_SPIKE_LOG expects milliseconds, got {value:?}"),
+            }
+        }
         let render = app.sub_app_mut(RenderApp);
         render
             .insert_resource(bridge)
@@ -402,6 +412,73 @@ pub(super) fn render_tail_ms(sample: &CpuSample) -> Option<f64> {
     let call = sample.work[Kind::RenderCall as usize];
     let graph = sample.work[Kind::Graph as usize];
     (call > 0.0 && graph > 0.0).then_some((call - graph).max(0.0))
+}
+
+#[derive(Resource)]
+struct SpikeLog(f64);
+
+/// Main- and render-world frames whose system time exceeds the threshold, with their slowest
+/// systems, and update intervals that overran the FPS cap. Samples cross the render bridge a
+/// frame or more late, so each is reported once, by frame number.
+fn log_spikes(
+    time: Res<Time<Real>>,
+    pacing: Option<Res<crate::frame_pacing::FramePacing>>,
+    history: Res<History>,
+    threshold: Res<SpikeLog>,
+    mut reported: Local<[Option<u32>; 2]>,
+) {
+    const SHORT: [&str; KINDS] = [
+        "stream", "terrain", "veg", "sim", "other", "extract", "prepare", "encode", "submit",
+        "acquire", "call", "graph",
+    ];
+    let now = time.elapsed_secs_f64();
+    // Update cadence, not presentation: the Metal HUD log shows frames actually shown late.
+    let fps = pacing.map_or(0, |p| p.rate.fps());
+    let interval = time.delta_secs_f64() * 1000.0;
+    if fps > 0 && interval > 1050.0 / f64::from(fps) {
+        warn!("FRAME_SPIKE kind=interval t={now:.3} ms={interval:.2}");
+    }
+    let mut newest = *reported;
+    for s in history.cpu.iter().rev().take(24) {
+        let slot = usize::from(s.render);
+        if reported[slot].is_some_and(|f| s.stamp.frame <= f) {
+            continue;
+        }
+        newest[slot] = Some(newest[slot].map_or(s.stamp.frame, |f| f.max(s.stamp.frame)));
+        // The render call contains graph encoding and submission; acquisition waits for a
+        // drawable, so it is idle time rather than work.
+        let total = if s.render {
+            s.work[Kind::Extract as usize]
+                + s.work[Kind::Prepare as usize]
+                + s.work[Kind::RenderCall as usize]
+        } else {
+            cpu_main_ms(s)
+        };
+        if total <= threshold.0 {
+            continue;
+        }
+        let work: Vec<_> = (0..KINDS)
+            .filter(|&k| s.work[k] >= 0.05)
+            .map(|k| format!("{}={:.2}", SHORT[k], s.work[k]))
+            .collect();
+        let systems: Vec<_> = s
+            .systems
+            .iter()
+            .map(|(name, ms)| {
+                let mut parts = name.rsplit("::");
+                let system = parts.next().unwrap_or_default();
+                format!("{}::{system}={ms:.2}", parts.next().unwrap_or_default())
+            })
+            .collect();
+        warn!(
+            "FRAME_SPIKE kind={} t={now:.3} frame={} total_ms={total:.2} work=[{}] top=[{}]",
+            if s.render { "render" } else { "main" },
+            s.stamp.frame,
+            work.join(" "),
+            systems.join(" ")
+        );
+    }
+    *reported = newest;
 }
 
 fn log_timings(time: Res<Time<Real>>, history: Res<History>, mut last: Local<f64>) {
