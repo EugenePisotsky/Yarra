@@ -20,6 +20,8 @@ use vegetation::{
 const HIGH_DETAIL_BUDGET_UTILIZATION: f32 = 0.5;
 const MAX_HIGH_DETAIL_RADIUS: f32 = 96.0;
 
+/// The reference packing, compared with the incremental page layout in tests.
+#[cfg(test)]
 pub(super) struct PackedScene {
     pub(super) work_items: Vec<WorkItemGpu>,
     pub(super) choices: Vec<SpeciesChoiceGpu>,
@@ -189,15 +191,105 @@ pub fn terrain_contact_radius(
 }
 
 #[cfg(test)]
+#[cfg(test)]
 pub(super) fn pack_scene(scene: &vegetation::VegetationScene) -> PackedScene {
     pack_scene_with_gate(scene, &default(), [0.; 2])
 }
 
+/// Where one page's samples live in the surface and coverage buffers: the surface offset and
+/// one coverage offset per field, in elements.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct PageLayout {
+    pub(super) surface: u32,
+    pub(super) coverage: Vec<u32>,
+}
+
+/// Everything except the page samples. Species budgets and work items depend on the whole
+/// resident scene, so these are rebuilt for every revision; they are small.
+pub(super) struct PackedItems {
+    pub(super) work_items: Vec<WorkItemGpu>,
+    pub(super) choices: Vec<SpeciesChoiceGpu>,
+    pub(super) species: Vec<SpeciesGpu>,
+    pub(super) maximum_candidate_count: u32,
+    pub(super) low_detail_capacities: [u32; 2],
+}
+
+/// A page's surface samples as uploaded. They do not depend on the render origin.
+pub(super) fn pack_surface(
+    page: &vegetation::VegetationFieldPage,
+) -> impl Iterator<Item = SurfaceSampleGpu> + '_ {
+    page.surface
+        .heights
+        .iter()
+        .zip(&page.surface.normals_oct)
+        .zip(&page.surface.validity)
+        .map(|((height, normal), validity)| {
+            let normal = decode_octahedral_normal(*normal);
+            SurfaceSampleGpu {
+                height_validity: [*height, f32::from(*validity) / 255.0, 0.0, 0.0],
+                normal: [normal[0], normal[1], normal[2], 0.0],
+            }
+        })
+}
+
+/// A field's coverage samples as uploaded.
+pub(super) fn pack_coverage(
+    field: &vegetation::VegetationPopulationField,
+) -> impl Iterator<Item = f32> + '_ {
+    field.coverage.iter().map(|value| f32::from(*value) / 255.0)
+}
+
+/// The reference packing: every page's samples in order, followed by its work items.
+#[cfg(test)]
 pub(super) fn pack_scene_with_gate(
     scene: &vegetation::VegetationScene,
     gate: &crate::VegetationTerrainGate,
     origin: [f64; 2],
 ) -> PackedScene {
+    let mut coverage = Vec::new();
+    let mut surfaces = Vec::new();
+    let layouts: Vec<_> = scene
+        .pages
+        .iter()
+        .map(|page| {
+            let surface = surfaces.len() as u32;
+            surfaces.extend(pack_surface(page));
+            let coverage_offsets = page
+                .fields
+                .iter()
+                .map(|field| {
+                    let offset = coverage.len() as u32;
+                    coverage.extend(pack_coverage(field));
+                    offset
+                })
+                .collect();
+            PageLayout {
+                surface,
+                coverage: coverage_offsets,
+            }
+        })
+        .collect();
+    let items = pack_items(scene, gate, origin, &layouts);
+    PackedScene {
+        work_items: items.work_items,
+        choices: items.choices,
+        coverage,
+        surfaces,
+        species: items.species,
+        maximum_candidate_count: items.maximum_candidate_count,
+        low_detail_capacities: items.low_detail_capacities,
+    }
+}
+
+/// Work items, species choices and species for `scene`, addressing each page's samples at
+/// `layouts[page]`.
+pub(super) fn pack_items(
+    scene: &vegetation::VegetationScene,
+    gate: &crate::VegetationTerrainGate,
+    origin: [f64; 2],
+    layouts: &[PageLayout],
+) -> PackedItems {
+    debug_assert_eq!(layouts.len(), scene.pages.len());
     let high_detail_radii = high_detail_radii(scene);
     let low_detail_capacities = low_detail_capacities(scene);
     let species_indices = scene
@@ -216,32 +308,16 @@ pub(super) fn pack_scene_with_gate(
 
     let mut work_items = Vec::new();
     let mut choices = Vec::new();
-    let mut coverage = Vec::new();
-    let mut surfaces = Vec::new();
     let mut maximum_candidate_count = 0;
-    for page in &scene.pages {
+    for (page, layout) in scene.pages.iter().zip(layouts) {
+        debug_assert_eq!(layout.coverage.len(), page.fields.len());
         let page_work_start = work_items.len() as u32;
         let page_work_count = page.fields.len() as u32;
-        let surface_offset = surfaces.len() as u32;
         let (minimum_surface_height, maximum_surface_height) = page.surface.heights.iter().fold(
             (f32::INFINITY, f32::NEG_INFINITY),
             |(minimum, maximum), height| (minimum.min(*height), maximum.max(*height)),
         );
-        surfaces.extend(
-            page.surface
-                .heights
-                .iter()
-                .zip(&page.surface.normals_oct)
-                .zip(&page.surface.validity)
-                .map(|((height, normal), validity)| {
-                    let normal = decode_octahedral_normal(*normal);
-                    SurfaceSampleGpu {
-                        height_validity: [*height, f32::from(*validity) / 255.0, 0.0, 0.0],
-                        normal: [normal[0], normal[1], normal[2], 0.0],
-                    }
-                }),
-        );
-        for field in &page.fields {
+        for (field, &coverage_offset) in page.fields.iter().zip(&layout.coverage) {
             let population = scene
                 .catalog
                 .population(field.population)
@@ -255,8 +331,6 @@ pub(super) fn pack_scene_with_gate(
                 population,
             );
             maximum_candidate_count = maximum_candidate_count.max(domain.candidate_count());
-            let coverage_offset = coverage.len() as u32;
-            coverage.extend(field.coverage.iter().map(|value| f32::from(*value) / 255.0));
             let choice_offset = choices.len() as u32;
             let total_weight = population
                 .species
@@ -394,7 +468,7 @@ pub(super) fn pack_scene_with_gate(
                 ],
                 peers: [page_work_start, page_work_count, pattern, grouping_source],
                 surface: [
-                    surface_offset,
+                    layout.surface,
                     u32::from(page.surface.resolution),
                     minimum_surface_height.to_bits(),
                     maximum_surface_height.to_bits(),
@@ -410,11 +484,9 @@ pub(super) fn pack_scene_with_gate(
     }
 
     apply_terrain_gate(&mut work_items, gate);
-    PackedScene {
+    PackedItems {
         work_items,
         choices,
-        coverage,
-        surfaces,
         species,
         maximum_candidate_count,
         low_detail_capacities,

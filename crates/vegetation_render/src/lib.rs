@@ -50,6 +50,7 @@ impl VegetationTerrainGate {
 pub const PROCEDURAL_DISTANCE_METERS: f32 = 96.0;
 
 static NEXT_SCENE_REVISION: AtomicU64 = AtomicU64::new(1);
+static NEXT_PAGE_KEY: AtomicU64 = AtomicU64::new(1);
 
 /// Installs the independent vegetation V2 render path.
 /// Timing instrumentation is an application choice; this plugin never installs GPU probes.
@@ -654,6 +655,8 @@ pub struct VegetationSceneState {
     revision: u64,
     // Page residency changes source packing, but not how stable blade seeds are animated.
     catalog_revision: u64,
+    /// One content key per page, or empty when the owner does not track page content.
+    page_keys: Arc<[u64]>,
 }
 
 impl VegetationSceneState {
@@ -664,6 +667,7 @@ impl VegetationSceneState {
             scene: Arc::new(scene),
             revision,
             catalog_revision: revision,
+            page_keys: Arc::new([]),
         })
     }
 
@@ -677,14 +681,37 @@ impl VegetationSceneState {
     }
 
     pub fn replace(&mut self, scene: VegetationScene) -> Result<(), SceneValidationError> {
+        self.replace_with_page_keys(scene, Vec::new())
+    }
+
+    /// Replaces the scene with one content key per page (from [`Self::new_page_key`]). An
+    /// unchanged key promises unchanged surface and coverage samples, though the page may
+    /// have moved with the render origin, so the renderer keeps those samples in place
+    /// instead of uploading them again. Without keys every page is uploaded.
+    pub fn replace_with_page_keys(
+        &mut self,
+        scene: VegetationScene,
+        page_keys: Vec<u64>,
+    ) -> Result<(), SceneValidationError> {
         scene.validate()?;
+        debug_assert!(page_keys.is_empty() || page_keys.len() == scene.pages.len());
         let revision = NEXT_SCENE_REVISION.fetch_add(1, Ordering::Relaxed);
         if scene.catalog != self.scene.catalog {
             self.catalog_revision = revision;
         }
         self.scene = Arc::new(scene);
         self.revision = revision;
+        self.page_keys = page_keys.into();
         Ok(())
+    }
+
+    /// A process-unique page content key for [`Self::replace_with_page_keys`].
+    pub fn new_page_key() -> u64 {
+        NEXT_PAGE_KEY.fetch_add(1, Ordering::Relaxed)
+    }
+
+    pub(crate) fn page_keys(&self) -> &[u64] {
+        &self.page_keys
     }
 
     pub fn revision(&self) -> u64 {

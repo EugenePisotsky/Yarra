@@ -7,6 +7,7 @@ use super::{
         LOW_DETAIL_CAPACITY, MAX_DIAGNOSTIC_INSTANCES, PROCEDURAL_INSTANCE_CAPACITY,
         ProceduralInstanceGpu, WorkItemGpu,
     },
+    page_slots,
     pipelines::VegetationPipelines,
     topology::build_topology_indices,
 };
@@ -36,6 +37,8 @@ pub(super) struct VegetationBuffers {
     pub(super) canopy_boundary: canopy_boundary::CanopyBoundary,
     pub(super) surfaces: Buffer,
     pub(super) surfaces_capacity: u64,
+    /// Which ranges of `surfaces` and `coverage` hold each resident page.
+    pub(super) page_slots: page_slots::PageSlots,
     pub(super) species: Buffer,
     pub(super) species_capacity: u64,
     pub(super) procedural_instances: Buffer,
@@ -193,6 +196,7 @@ impl FromWorld for VegetationBuffers {
             canopy_boundary,
             surfaces,
             surfaces_capacity: 16,
+            page_slots: default(),
             species,
             species_capacity: 16,
             procedural_instances,
@@ -357,6 +361,22 @@ pub(super) fn grow_storage(
         }),
         new_capacity,
     ))
+}
+
+/// An empty CPU-written storage buffer for at least `required` bytes, and its capacity.
+pub(super) fn writable_storage(
+    render_device: &RenderDevice,
+    label: &'static str,
+    required: u64,
+) -> (Buffer, u64) {
+    let capacity = storage_capacity_for(required);
+    let buffer = render_device.create_buffer(&BufferDescriptor {
+        label: Some(label),
+        size: capacity,
+        usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    (buffer, capacity)
 }
 
 fn storage_capacity_for(required: u64) -> u64 {

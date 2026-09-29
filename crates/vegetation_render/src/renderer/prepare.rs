@@ -3,15 +3,15 @@ use super::{
     blade_preparation,
     buffers::{
         VegetationBuffers, create_compute_bind_group, create_draw_bind_group,
-        create_schedule_bind_group, grow_storage, update_storage,
+        create_schedule_bind_group, grow_storage, update_storage, writable_storage,
     },
     candidate_cache,
     generation::GenerationInputs,
     gpu_types::{
         CameraGpu, DRAW_ARGS_SIZE, DebugConfigGpu, PROCEDURAL_INSTANCE_CAPACITY,
-        ProceduralInstanceGpu, SINGLE_HIGH_CAPACITY, SPLIT_HIGH_CAPACITY,
+        ProceduralInstanceGpu, SINGLE_HIGH_CAPACITY, SPLIT_HIGH_CAPACITY, SurfaceSampleGpu,
     },
-    packing::{apply_terrain_gate, pack_lod_focus, pack_scene_with_gate},
+    packing::{apply_terrain_gate, pack_coverage, pack_items, pack_lod_focus, pack_surface},
     pipelines::VegetationPipelines,
 };
 use crate::{
@@ -21,7 +21,7 @@ use crate::{
 use bevy::{
     prelude::*,
     render::{
-        render_resource::PipelineCache,
+        render_resource::{Buffer, PipelineCache},
         renderer::{RenderDevice, RenderQueue},
         view::ExtractedView,
     },
@@ -94,7 +94,68 @@ pub(super) fn prepare(
         || render_origin.world_xz != buffers.uploaded_origin
     {
         buffers.source_serial = buffers.source_serial.wrapping_add(1);
-        let packed = pack_scene_with_gate(scene.scene(), &terrain_gate, render_origin.world_xz);
+        let pages = &scene.scene().pages;
+        // Page samples stay in place while their content key is unchanged; only arriving
+        // or edited pages are packed and written. Work items and species are rebuilt.
+        let mut replaced_buffers = 0_u64;
+        let capacity = |buffers: &VegetationBuffers| {
+            let elements = |bytes: u64, size: usize| (bytes / size as u64).min(u64::from(u32::MAX));
+            (
+                elements(buffers.surfaces_capacity, size_of::<SurfaceSampleGpu>()) as u32,
+                elements(buffers.coverage_capacity, size_of::<f32>()) as u32,
+            )
+        };
+        let current = capacity(&buffers);
+        let plan = match buffers.page_slots.place(pages, scene.page_keys(), current) {
+            Ok(plan) => plan,
+            Err(regrow) => {
+                (buffers.surfaces, buffers.surfaces_capacity) = writable_storage(
+                    &render_device,
+                    "vegetation-v2 surface fields",
+                    regrow.surface_samples * size_of::<SurfaceSampleGpu>() as u64,
+                );
+                (buffers.coverage, buffers.coverage_capacity) = writable_storage(
+                    &render_device,
+                    "vegetation-v2 coverage fields",
+                    regrow.coverage_samples * size_of::<f32>() as u64,
+                );
+                replaced_buffers += 2;
+                let capacity = capacity(&buffers);
+                buffers.page_slots.reset(capacity);
+                buffers
+                    .page_slots
+                    .place(pages, scene.page_keys(), capacity)
+                    .expect("regrown page buffers hold the whole scene")
+            }
+        };
+        let mut uploaded_bytes = write_runs(
+            &render_queue,
+            &buffers.surfaces,
+            plan.uploads
+                .iter()
+                .map(|&page| (plan.layouts[page].surface, pack_surface(&pages[page])))
+                .collect(),
+        );
+        uploaded_bytes += write_runs(
+            &render_queue,
+            &buffers.coverage,
+            plan.uploads
+                .iter()
+                .flat_map(|&page| {
+                    plan.layouts[page]
+                        .coverage
+                        .iter()
+                        .zip(&pages[page].fields)
+                        .map(|(&offset, field)| (offset, pack_coverage(field)))
+                })
+                .collect(),
+        );
+        let packed = pack_items(
+            scene.scene(),
+            &terrain_gate,
+            render_origin.world_xz,
+            &plan.layouts,
+        );
         let schedule_layout = pipeline_cache.get_bind_group_layout(&pipelines.schedule_layout);
         let compute_layout = pipeline_cache.get_bind_group_layout(&pipelines.compute_layout);
         let draw_layout = pipeline_cache.get_bind_group_layout(&pipelines.draw_layout);
@@ -104,8 +165,7 @@ pub(super) fn prepare(
             .map_or(Vec3::ZERO, |(view, _)| view.world_from_view.translation());
         let cache_replaced =
             candidate_cache.prepare(&render_device, &render_queue, &packed.work_items, position);
-        let mut replaced_buffers = u64::from(cache_replaced);
-        let mut uploaded_bytes = 0_u64;
+        replaced_buffers += u64::from(cache_replaced);
 
         let work_items = bytemuck::cast_slice(&packed.work_items);
         uploaded_bytes += work_items.len() as u64;
@@ -144,36 +204,6 @@ pub(super) fn prepare(
         ) {
             buffers.choices = buffer;
             buffers.choices_capacity = capacity;
-            replaced_buffers += 1;
-        }
-
-        let coverage = bytemuck::cast_slice(&packed.coverage);
-        uploaded_bytes += coverage.len() as u64;
-        if let Some((buffer, capacity)) = update_storage(
-            &render_device,
-            &render_queue,
-            &buffers.coverage,
-            buffers.coverage_capacity,
-            "vegetation-v2 coverage fields",
-            coverage,
-        ) {
-            buffers.coverage = buffer;
-            buffers.coverage_capacity = capacity;
-            replaced_buffers += 1;
-        }
-
-        let surfaces = bytemuck::cast_slice(&packed.surfaces);
-        uploaded_bytes += surfaces.len() as u64;
-        if let Some((buffer, capacity)) = update_storage(
-            &render_device,
-            &render_queue,
-            &buffers.surfaces,
-            buffers.surfaces_capacity,
-            "vegetation-v2 surface fields",
-            surfaces,
-        ) {
-            buffers.surfaces = buffer;
-            buffers.surfaces_capacity = capacity;
             replaced_buffers += 1;
         }
 
@@ -393,4 +423,34 @@ pub(super) fn prepare(
         config_gpu,
     ));
     buffers.active = buffers.work_item_count > 0 && buffers.maximum_candidate_count > 0;
+}
+
+/// Writes `(element offset, samples)` ranges, merging adjacent ones into single uploads, and
+/// returns the bytes written. A regrown buffer is written in one upload.
+fn write_runs<T: bytemuck::Pod>(
+    queue: &RenderQueue,
+    buffer: &Buffer,
+    mut ranges: Vec<(u32, impl Iterator<Item = T>)>,
+) -> u64 {
+    ranges.sort_by_key(|&(offset, _)| offset);
+    let mut written = 0;
+    let mut flush = |start: u32, run: &mut Vec<T>| {
+        if !run.is_empty() {
+            let bytes: &[u8] = bytemuck::cast_slice(run);
+            queue.write_buffer(buffer, u64::from(start) * size_of::<T>() as u64, bytes);
+            written += bytes.len() as u64;
+            run.clear();
+        }
+    };
+    let mut start = 0;
+    let mut run = Vec::new();
+    for (offset, samples) in ranges {
+        if offset as usize != start as usize + run.len() {
+            flush(start, &mut run);
+            start = offset;
+        }
+        run.extend(samples);
+    }
+    flush(start, &mut run);
+    written
 }

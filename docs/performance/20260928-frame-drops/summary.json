@@ -6,37 +6,138 @@
     "attribution": "per-frame slow-system log over the existing CPU system wrappers (main world and render world)"
   },
   "still_scene_late_frames_per_second": {
-    "range": [0.3, 1.8],
+    "range": [
+      0.3,
+      1.8
+    ],
     "outlier": 15.4,
     "note": "Identical still view; HUD GPU time rose from about 7 ms to 13-15 ms partway through runs with an unchanged cover (GPU performance state). Late share by frame GPU time: about 5% below 10 ms, 23-33% at 12-14 ms."
   },
   "rejected": {
-    "qos_user_interactive_worker_and_render_threads": {"trivial_system_stalls_per_min_off": [5.6, 3.2], "on": [40.5, 4.8], "late_per_s_off": [0.57, 1.77], "on": [1.97, 3.33]},
-    "metal_minimum_duration_only_pacing": {"still_late_per_s_display_link": [0.30, 1.40], "metal_only": [2.04, 1.36], "turn_display_link": 0.43, "turn_metal_only": 0.33}
+    "qos_user_interactive_worker_and_render_threads": {
+      "trivial_system_stalls_per_min_off": [
+        5.6,
+        3.2
+      ],
+      "on": [
+        1.97,
+        3.33
+      ],
+      "late_per_s_off": [
+        0.57,
+        1.77
+      ]
+    },
+    "metal_minimum_duration_only_pacing": {
+      "still_late_per_s_display_link": [
+        0.3,
+        1.4
+      ],
+      "metal_only": [
+        2.04,
+        1.36
+      ],
+      "turn_display_link": 0.43,
+      "turn_metal_only": 0.33
+    }
   },
   "planner_probe_island_start_view": {
     "cover_patches": 2047,
-    "steady_plan_ms": {"before": 8.47, "after": 5.66},
-    "common_cover_ms": {"before": 7.9, "after": 0.38},
+    "steady_plan_ms": {
+      "before": 8.47,
+      "after": 5.66
+    },
+    "common_cover_ms": {
+      "before": 7.9,
+      "after": 0.38
+    },
     "handoff_index_ms": 1.15,
-    "identical_cover_hashes": ["a10a00600b908a7e", "9ac3e99ebb742589"],
+    "identical_cover_hashes": [
+      "a10a00600b908a7e",
+      "9ac3e99ebb742589"
+    ],
     "identical_common_cover_hash": "cfe49723fab91097"
   },
   "in_game_terrain_update": {
     "walk_actor_20mps_100s": {
-      "baseline": {"frames_ge_4ms": 1400, "frames_ge_8ms": 218, "frames_ge_12ms": 99, "p90_ms": 5.55, "max_ms": 20.26, "main_frames_over_10ms_per_s": 3.60},
-      "final": {"frames_ge_4ms": 42, "frames_ge_8ms": 2, "frames_ge_12ms": 2, "p90_ms": 2.66, "max_ms": 14.90, "main_frames_over_10ms_per_s": 0.43}
+      "baseline": {
+        "frames_ge_4ms": 1400,
+        "frames_ge_8ms": 218,
+        "frames_ge_12ms": 99,
+        "p90_ms": 5.55,
+        "max_ms": 20.26,
+        "main_frames_over_10ms_per_s": 3.6
+      },
+      "final": {
+        "frames_ge_4ms": 42,
+        "frames_ge_8ms": 2,
+        "frames_ge_12ms": 2,
+        "p90_ms": 2.66,
+        "max_ms": 14.9,
+        "main_frames_over_10ms_per_s": 0.43
+      }
     },
     "landscape_turn_55s": {
-      "baseline": {"frames_ge_4ms": 63, "frames_ge_8ms": 21, "frames_ge_12ms": 12, "max_ms": 20.59, "main_frames_over_10ms_per_s": 0.46},
-      "final": {"frames_ge_4ms": [7, 6, 7], "frames_ge_8ms": [1, 1, 1], "max_ms": [13.41, 14.17, 14.95], "main_frames_over_10ms_per_s": [1.49, 0.07, 0.35], "note": "the 1.49 run was bursts in Bevy transform/animation systems; they did not reproduce in two reruns"}
+      "baseline": {
+        "frames_ge_4ms": 63,
+        "frames_ge_8ms": 21,
+        "frames_ge_12ms": 12,
+        "max_ms": 20.59,
+        "main_frames_over_10ms_per_s": 0.46
+      },
+      "final": {
+        "frames_ge_4ms": [
+          7,
+          6,
+          7
+        ],
+        "frames_ge_8ms": [
+          1,
+          1,
+          1
+        ],
+        "max_ms": [
+          13.41,
+          14.17,
+          14.95
+        ],
+        "main_frames_over_10ms_per_s": [
+          1.49,
+          0.07,
+          0.35
+        ],
+        "note": "the 1.49 run was bursts in Bevy transform/animation systems; they did not reproduce in two reruns"
+      }
     },
     "note": "p90 over frames whose main-thread total exceeded 3 ms. HUD late frames stayed at 0-0.3/s for both binaries in these sessions (good GPU state), so this measures removed CPU spikes, not a proven change in visible misses."
   },
   "open": [
     "Bevy 0.19 compiles pipelines synchronously on macOS (60-230 ms per new variant)",
-    "grass page changes repack the whole grass scene; object pages spawn in bursts",
     "weather transitions keep wind strength in the grass placement key",
     "GPU performance state at the 60 cap leaves about 11-12 ms of GPU budget"
-  ]
+  ],
+  "grass_page_uploads_2026_09_29": {
+    "walk_actor_20mps_100s": {
+      "baseline": {
+        "upload_bytes_per_repack": 7802496,
+        "render_frames_over_8ms_work": 661,
+        "update_intervals_ge_20ms": 212,
+        "hud_late_per_s": 0.2,
+        "hud_gpu_p50_ms": 10.98
+      },
+      "incremental": {
+        "upload_bytes_per_repack": [
+          79968,
+          214016
+        ],
+        "render_frames_over_8ms_work": 19,
+        "update_intervals_ge_20ms": 31,
+        "hud_late_per_s": 0.09,
+        "hud_gpu_p50_ms": 8.24
+      },
+      "repacks_per_s": 10,
+      "note": "GPU p50 differed between runs; not attributed to the change."
+    },
+    "gpu_test": "keyed_page_uploads_match_a_fresh_upload: identical instance multisets; 1-3 of 65536 pixels differ (atomic append order)"
+  }
 }

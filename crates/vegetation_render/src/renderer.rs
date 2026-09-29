@@ -15,6 +15,7 @@ mod draw;
 mod generation;
 mod gpu_types;
 mod packing;
+mod page_slots;
 mod pipelines;
 #[cfg(test)]
 mod placement_gpu_tests;

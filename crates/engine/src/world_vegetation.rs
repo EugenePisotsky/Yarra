@@ -96,6 +96,9 @@ fn cell_key(key: PageKey) -> (WorldSpaceId, CellCoord, u8) {
 struct SourceState {
     pairs: Vec<(Entity, Entity)>,
     frame: Option<(WorldSpaceId, CellCoord)>,
+    /// Content key per field and terrain page, renewed when either changes. A rebase moves
+    /// pages without changing their samples, so it keeps their keys.
+    keys: HashMap<(Entity, Entity), u64>,
 }
 
 fn sync_scene(
@@ -160,12 +163,30 @@ fn sync_scene(
                 .vegetation_page(origin.cell(), &fields.get(field).unwrap().1.data)
         })
         .collect();
-    scene
-        .replace(VegetationScene {
-            catalog: source_catalog.clone(),
-            pages,
+    let mut keys = HashMap::with_capacity(pairs.len());
+    let page_keys = pairs
+        .iter()
+        .map(|&(field, surface)| {
+            let changed = fields.get(field).unwrap().1.is_changed()
+                || terrain.get(surface).unwrap().1.is_changed();
+            let key = match previous.keys.get(&(field, surface)) {
+                Some(&key) if !changed => key,
+                _ => VegetationSceneState::new_page_key(),
+            };
+            keys.insert((field, surface), key);
+            key
         })
+        .collect();
+    scene
+        .replace_with_page_keys(
+            VegetationScene {
+                catalog: source_catalog.clone(),
+                pages,
+            },
+            page_keys,
+        )
         .expect("published resident vegetation and terrain form a valid scene");
+    previous.keys = keys;
     previous.pairs = pairs;
     previous.frame = Some(frame);
 }

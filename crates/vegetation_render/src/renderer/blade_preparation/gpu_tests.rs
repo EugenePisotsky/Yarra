@@ -3,8 +3,11 @@ use super::{BLADE_BYTES, BladePreparation};
 use crate::renderer::{
     buffers::{VegetationBuffers, create_draw_bind_group},
     candidate_cache,
-    gpu_types::{DRAW_ARGS_SIZE, PROCEDURAL_INSTANCE_CAPACITY, ProceduralInstanceGpu},
-    packing::pack_species,
+    gpu_types::{
+        DRAW_ARGS_SIZE, PROCEDURAL_INSTANCE_CAPACITY, ProceduralInstanceGpu, SpeciesChoiceGpu,
+        SpeciesGpu, WorkItemGpu,
+    },
+    packing::{pack_scene, pack_species},
     pipelines::VegetationPipelines,
     topology::{
         SPLIT_HIGH_FIRST_INDEX, SPLIT_HIGH_INDEX_COUNT, SPLIT_LOW_FIRST_INDEX,
@@ -261,6 +264,86 @@ fn rebasing_preserves_placement_and_wind() {
             "grass placement/wind changed after rebase: {mean}, {changed}"
         );
     }
+}
+
+#[test]
+#[ignore = "requires a native GPU; validates incremental page uploads"]
+fn keyed_page_uploads_match_a_fresh_upload() {
+    let reference = vegetation::fixtures::reference_scene();
+    let (a, b) = (reference.pages[0].clone(), reference.pages[1].clone());
+    // Same place, different coverage: it must never reuse the samples of `a`.
+    let mut edited = a.clone();
+    for value in edited.fields[0].coverage.iter_mut().step_by(2) {
+        *value = 0;
+    }
+    let scene = |pages: Vec<vegetation::VegetationFieldPage>| vegetation::VegetationScene {
+        catalog: reference.catalog.clone(),
+        pages,
+    };
+    let [key_a, key_b, key_edited] = [(); 3].map(|_| VegetationSceneState::new_page_key());
+    let mut app = test_app();
+    app.world_mut()
+        .resource_mut::<VegetationWind>()
+        .set_phase_seconds(2.3);
+    // Arrive, leave, arrive edited into the freed range, then reorder.
+    for (pages, keys) in [
+        (vec![a.clone(), b.clone()], vec![key_a, key_b]),
+        (vec![b.clone()], vec![key_b]),
+        (vec![b.clone(), edited.clone()], vec![key_b, key_edited]),
+        (vec![edited.clone(), b.clone()], vec![key_edited, key_b]),
+    ] {
+        app.world_mut()
+            .resource_mut::<VegetationSceneState>()
+            .replace_with_page_keys(scene(pages), keys)
+            .unwrap();
+        settled_pixels(&mut app);
+    }
+    // Only work items, species choices and species are rebuilt: no page samples.
+    let items = pack_scene(&scene(vec![edited.clone(), b.clone()]));
+    let item_bytes = (items.work_items.len() * size_of::<WorkItemGpu>()
+        + items.choices.len() * size_of::<SpeciesChoiceGpu>()
+        + items.species.len() * size_of::<SpeciesGpu>()) as u64;
+    assert_eq!(
+        snapshot(&app).source_uploaded_bytes,
+        item_bytes,
+        "reordering resident pages re-uploaded samples"
+    );
+    let pixels = settled_pixels(&mut app);
+    let instances = generated_instances(&app);
+    assert!(instances.iter().map(Vec::len).sum::<usize>() > 100);
+    drop(app);
+
+    let mut fresh = test_app();
+    fresh
+        .world_mut()
+        .resource_mut::<VegetationWind>()
+        .set_phase_seconds(2.3);
+    fresh
+        .world_mut()
+        .resource_mut::<VegetationSceneState>()
+        .replace(scene(vec![edited, b]))
+        .unwrap();
+    let expected_pixels = settled_pixels(&mut fresh);
+    assert_eq!(
+        instances,
+        generated_instances(&fresh),
+        "incremental page uploads changed the generated population"
+    );
+    // Instances append in GPU atomic order, which picks between coincident blades; a
+    // changed surface or coverage would move whole blades, as the multisets above show.
+    let changed = pixels
+        .chunks_exact(4)
+        .zip(expected_pixels.chunks_exact(4))
+        .filter(|(a, b)| a != b)
+        .count();
+    eprintln!(
+        "keyed page uploads: {changed} of {} pixels differ",
+        pixels.len() / 4
+    );
+    assert!(
+        changed < 16,
+        "incremental page uploads changed the image: {changed}"
+    );
 }
 
 fn settled_pixels(app: &mut App) -> Vec<u8> {
