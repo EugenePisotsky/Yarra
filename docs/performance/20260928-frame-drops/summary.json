@@ -201,5 +201,44 @@
     },
     "msaa_off_delta_ms": -2.0,
     "shadows_off_delta_ms": -0.5
+  },
+  "terrain_gpu_anatomy_2026_09_29": {
+    "method": "Metal System Trace per-encoder intervals; variants cycled every 2 s in one process; GPU at Maximum",
+    "native_3456x2234_msaa4_opaque_fragment_ms": {
+      "production": 5.84,
+      "near_off": 4.8,
+      "unlit": 2.57,
+      "flat": 1.3,
+      "terrain_hidden": 1.87
+    },
+    "lighting_components_ms": {
+      "directional_shadow_lookup": 0.67,
+      "cluster_loops_and_cloud_shadow": 0.47,
+      "fog_and_puddles": 0.09,
+      "environment_and_ambient": 0.03
+    },
+    "opaque_pass_counters": {
+      "alu_limiter_pct": 59.9,
+      "texture_sample_limiter_pct": 17.1,
+      "fragment_occupancy_pct": 19.5,
+      "partial_renders": 0
+    },
+    "game_resolution_1728x971_ms": {
+      "opaque_fragment": 2.16,
+      "opaque_vertex": 1.02,
+      "metalfx": 0.51,
+      "sky_composite": 0.33,
+      "ui": 0.26
+    },
+    "patch_index_blocks_8x8": {
+      "opaque_vertex_ms_before": [
+        1.2,
+        1.24
+      ],
+      "after": [
+        1.11,
+        1.13
+      ]
+    }
   }
 }

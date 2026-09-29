@@ -39,20 +39,28 @@ pub fn stitch_indices(resolution: u16, edges: StitchEdges) -> Result<Vec<u32>, S
         z * n + x
     };
     let mut indices = Vec::with_capacity((end * end * 6) as usize);
-    for z in 0..end {
-        for x in 0..end {
-            let [a, b, c, d] = [
-                index(x, z),
-                index(x, z + 1),
-                index(x + 1, z + 1),
-                index(x + 1, z),
-            ];
-            for triangle in [[a, b, c], [a, c, d]] {
-                if triangle[0] != triangle[1]
-                    && triangle[1] != triangle[2]
-                    && triangle[0] != triangle[2]
-                {
-                    indices.extend(triangle);
+    // Quads in 8×8 blocks, row by row within each: consecutive rows then share vertices a
+    // small post-transform cache still holds. Rows across the whole patch shaded most
+    // vertices twice.
+    const BLOCK: u32 = 8;
+    for block_z in (0..end).step_by(BLOCK as usize) {
+        for block_x in (0..end).step_by(BLOCK as usize) {
+            for z in block_z..(block_z + BLOCK).min(end) {
+                for x in block_x..(block_x + BLOCK).min(end) {
+                    let [a, b, c, d] = [
+                        index(x, z),
+                        index(x, z + 1),
+                        index(x + 1, z + 1),
+                        index(x + 1, z),
+                    ];
+                    for triangle in [[a, b, c], [a, c, d]] {
+                        if triangle[0] != triangle[1]
+                            && triangle[1] != triangle[2]
+                            && triangle[0] != triangle[2]
+                        {
+                            indices.extend(triangle);
+                        }
+                    }
                 }
             }
         }
