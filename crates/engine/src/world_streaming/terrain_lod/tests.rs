@@ -1212,21 +1212,31 @@ fn settle_sources(app: &mut App, deadline: std::time::Instant) {
     }
 }
 /// Drawn patches carry the bounds Bevy would compute from their meshes, precomputed off the
-/// main thread, and Bevy must not recompute them.
+/// main thread, and Bevy must not recompute them. Uploaded meshes keep no main-world data.
 fn assert_patch_bounds(app: &App) {
-    use bevy::camera::{primitives::MeshAabb, visibility::NoAutoAabb};
+    use bevy::camera::visibility::NoAutoAabb;
     let world = app.world();
     let stream = world.resource::<TerrainLodStream>();
+    let catalog = world.resource::<WorldCatalog>();
     let meshes = world.resource::<Assets<Mesh>>();
-    for (patch, &entity) in &stream.active {
+    for (patch @ (key, edges), &entity) in &stream.active {
+        let size = catalog.world_space(key.space).unwrap().cell_size;
+        let field = stream.nodes[key]
+            .heightfield
+            .as_ref()
+            .expect("drawn patch samples");
+        let (_, expected) =
+            build_bounded_patch_mesh(field, size * (1_u32 << key.level) as f32, *edges).unwrap();
         let resident = &stream.meshes[patch];
-        let expected = meshes
-            .get(&resident.handle)
-            .and_then(|mesh| mesh.compute_aabb())
-            .expect("drawn patch mesh");
         assert_eq!(resident.bounds, expected, "{patch:?}");
         assert_eq!(world.get::<Aabb>(entity), Some(&expected), "{patch:?}");
         assert!(world.get::<NoAutoAabb>(entity).is_some());
+        assert!(
+            meshes
+                .get(&resident.handle)
+                .is_some_and(|mesh| mesh.try_attribute(Mesh::ATTRIBUTE_POSITION).is_err()),
+            "uploaded patch kept its main-world vertices: {patch:?}"
+        );
     }
 }
 

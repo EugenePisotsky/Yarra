@@ -137,8 +137,8 @@ struct Uploads {
     pause_acknowledgements: bool,
     #[cfg(test)]
     pause_material_acknowledgements: bool,
-    wanted: std::collections::HashSet<bevy::asset::AssetId<Mesh>>,
-    ready: std::collections::HashSet<bevy::asset::AssetId<Mesh>>,
+    wanted: bevy::platform::collections::HashSet<bevy::asset::AssetId<Mesh>>,
+    ready: bevy::platform::collections::HashSet<bevy::asset::AssetId<Mesh>>,
     probe: Option<Entity>,
     pipelines_ready: bool,
     entry_probe: Option<Entity>,
@@ -158,17 +158,21 @@ fn acknowledge_uploads(
     if tracker.pause_acknowledgements {
         return;
     }
-    tracker.ready = tracker
-        .wanted
-        .iter()
-        .copied()
-        .filter(|&id| {
-            meshes.get(id).is_some_and(|m| {
+    // Terrain meshes are never modified, and removing one drops it from both sets, so an
+    // uploaded mesh stays ready. Rebuilding the set from every wanted mesh took ~0.3 ms of
+    // each render frame, after the drawable was acquired.
+    let Uploads { wanted, ready, .. } = &mut *tracker;
+    for &id in wanted.iter() {
+        if !ready.contains(&id)
+            && meshes.get(id).is_some_and(|m| {
                 !m.has_morph_targets() || allocator.mesh_morph_target_slice(&id).is_some()
-            }) && allocator.mesh_vertex_slice(&id).is_some()
-                && allocator.mesh_index_slice(&id).is_some()
-        })
-        .collect();
+            })
+            && allocator.mesh_vertex_slice(&id).is_some()
+            && allocator.mesh_index_slice(&id).is_some()
+        {
+            ready.insert(id);
+        }
+    }
 }
 // Probe entities have zero-area triangles, but participate in specialization for
 // every applicable view. Wait for actual compiled pipelines, not a frame delay.
@@ -298,17 +302,20 @@ struct ResidentMesh {
     /// Bevy otherwise scanned every vertex of each new patch on the frame it appeared.
     bounds: Aabb,
 }
-/// A patch mesh and its bounds, built on a pool thread.
+/// A patch mesh and its bounds, built on a pool thread. The mesh moves to the render world
+/// on upload: nothing reads its vertices on the CPU, and keeping a main-world copy cloned
+/// every new patch during extraction and held a second copy of the resident cover.
 fn build_bounded_patch_mesh(
     field: &world::TerrainHeightfield,
     extent: f32,
     edges: StitchEdges,
 ) -> Result<(Mesh, Aabb), String> {
     use bevy::camera::primitives::MeshAabb;
-    let mesh = lod::build_patch_mesh(field, extent, edges)?;
+    let mut mesh = lod::build_patch_mesh(field, extent, edges)?;
     let bounds = mesh
         .compute_aabb()
         .ok_or("terrain patch without positions")?;
+    mesh.asset_usage = bevy::asset::RenderAssetUsages::RENDER_WORLD;
     Ok((mesh, bounds))
 }
 /// A cover plan running on the async compute pool, from snapshots of its inputs. Plans
