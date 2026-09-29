@@ -213,7 +213,7 @@ pub(super) fn update(
         if let Some(result) = check_ready(&mut stage.jobs[i].task) {
             let job = stage.jobs.remove(i);
             match result {
-                Ok(mesh) => {
+                Ok((mesh, bounds)) => {
                     let handle = meshes.add(mesh);
                     tracker.0.lock().unwrap().wanted.insert(handle.id());
                     stage.meshes.insert(
@@ -221,6 +221,7 @@ pub(super) fn update(
                         ResidentMesh {
                             handle,
                             bytes: job.bytes,
+                            bounds,
                         },
                     );
                 }
@@ -241,7 +242,7 @@ pub(super) fn update(
             patch,
             bytes,
             task: AsyncComputeTaskPool::get().spawn(async move {
-                lod::build_patch_mesh(
+                build_bounded_patch_mesh(
                     node.heightfield
                         .as_ref()
                         .ok_or("missing live terrain samples")?,
@@ -299,8 +300,7 @@ pub(super) fn update(
         let entity = stream.active[&patch];
         commands
             .entity(entity)
-            .insert(Mesh3d(mesh.handle.clone()))
-            .remove::<bevy::camera::primitives::Aabb>();
+            .insert((Mesh3d(mesh.handle.clone()), mesh.bounds));
         if let Some(old) = stream.meshes.insert(patch, mesh) {
             meshes.remove(old.handle.id());
             let mut t = tracker.0.lock().unwrap();

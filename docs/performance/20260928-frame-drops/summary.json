@@ -167,5 +167,39 @@
       }
     ],
     "long_walk_275s_auto_weather": "no pipelines compiled after startup, no compile stall after 12 s"
+  },
+  "terrain_patch_bounds_2026_09_29": {
+    "calculate_bounds_max_ms": {
+      "before": 4.72,
+      "after": 0.12
+    },
+    "calculate_bounds_total_ms_walk": {
+      "before": 54.3,
+      "after": 3.4
+    }
+  },
+  "terrain_budget_gpu_2026_09_29": {
+    "note": "uncapped start view, interleaved round 2, HUD GPU p50",
+    "patches_2048": {
+      "gpu_ms": 7.97,
+      "max_error_px": 9.3
+    },
+    "patches_1536": {
+      "gpu_ms": 7.68,
+      "max_error_px": 13.2
+    },
+    "patches_1024": {
+      "gpu_ms": 6.83,
+      "max_error_px": 23.7
+    },
+    "patches_768": {
+      "gpu_ms": 6.34,
+      "max_error_px": 32.1
+    },
+    "terrain_hidden": {
+      "gpu_ms": 3.97
+    },
+    "msaa_off_delta_ms": -2.0,
+    "shadows_off_delta_ms": -0.5
   }
 }

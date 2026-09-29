@@ -1158,6 +1158,7 @@ fn settle(app: &mut App, deadline: std::time::Instant) {
             stable_since = now;
         }
         if stable >= 8 && now - stable_since > PLAN_INTERVAL_SECONDS {
+            assert_patch_bounds(app);
             return;
         }
         std::thread::sleep(Duration::from_millis(5));
@@ -1210,6 +1211,25 @@ fn settle_sources(app: &mut App, deadline: std::time::Instant) {
         std::thread::sleep(Duration::from_millis(5));
     }
 }
+/// Drawn patches carry the bounds Bevy would compute from their meshes, precomputed off the
+/// main thread, and Bevy must not recompute them.
+fn assert_patch_bounds(app: &App) {
+    use bevy::camera::{primitives::MeshAabb, visibility::NoAutoAabb};
+    let world = app.world();
+    let stream = world.resource::<TerrainLodStream>();
+    let meshes = world.resource::<Assets<Mesh>>();
+    for (patch, &entity) in &stream.active {
+        let resident = &stream.meshes[patch];
+        let expected = meshes
+            .get(&resident.handle)
+            .and_then(|mesh| mesh.compute_aabb())
+            .expect("drawn patch mesh");
+        assert_eq!(resident.bounds, expected, "{patch:?}");
+        assert_eq!(world.get::<Aabb>(entity), Some(&expected), "{patch:?}");
+        assert!(world.get::<NoAutoAabb>(entity).is_some());
+    }
+}
+
 fn assert_valid_cover(app: &App) {
     let stream = app.world().resource::<TerrainLodStream>();
     if stream.active.is_empty() {

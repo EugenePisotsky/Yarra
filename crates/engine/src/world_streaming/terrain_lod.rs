@@ -294,6 +294,22 @@ struct PlanIdentity {
 struct ResidentMesh {
     handle: Handle<Mesh>,
     bytes: u64,
+    /// Computed with the mesh off the main thread. Patches spawn with it and `NoAutoAabb`;
+    /// Bevy otherwise scanned every vertex of each new patch on the frame it appeared.
+    bounds: Aabb,
+}
+/// A patch mesh and its bounds, built on a pool thread.
+fn build_bounded_patch_mesh(
+    field: &world::TerrainHeightfield,
+    extent: f32,
+    edges: StitchEdges,
+) -> Result<(Mesh, Aabb), String> {
+    use bevy::camera::primitives::MeshAabb;
+    let mesh = lod::build_patch_mesh(field, extent, edges)?;
+    let bounds = mesh
+        .compute_aabb()
+        .ok_or("terrain patch without positions")?;
+    Ok((mesh, bounds))
 }
 /// A cover plan running on the async compute pool, from snapshots of its inputs. Plans
 /// start only while no target is staged, so the drawn cover and the retained descriptors
@@ -305,7 +321,7 @@ struct PlanTask {
 struct MeshJob {
     patch: Patch,
     bytes: u64,
-    task: Task<Result<Mesh, String>>,
+    task: Task<Result<(Mesh, Aabb), String>>,
 }
 #[derive(Resource, Default)]
 pub(crate) struct TerrainLodStream {
@@ -536,7 +552,7 @@ impl TerrainLodStream {
             if let Some(result) = check_ready(&mut self.builds[i].task) {
                 let job = self.builds.remove(i);
                 match result {
-                    Ok(mesh) => {
+                    Ok((mesh, bounds)) => {
                         let handle = meshes.add(mesh);
                         tracker.0.lock().unwrap().wanted.insert(handle.id());
                         self.meshes.insert(
@@ -544,6 +560,7 @@ impl TerrainLodStream {
                             ResidentMesh {
                                 handle,
                                 bytes: job.bytes,
+                                bounds,
                             },
                         );
                     }
@@ -595,7 +612,7 @@ impl TerrainLodStream {
                     patch: *patch,
                     bytes,
                     task: AsyncComputeTaskPool::get()
-                        .spawn(async move { lod::build_patch_mesh(&field, extent, edges) }),
+                        .spawn(async move { build_bounded_patch_mesh(&field, extent, edges) }),
                 });
             } else if requests_open
                 && !self.decodes.contains_key(key)
@@ -1055,9 +1072,12 @@ fn update(
                 if stream.active.contains_key(&patch) {
                     continue;
                 }
+                let mesh = &stream.meshes[&patch];
                 let entity = commands
                     .spawn((
-                        Mesh3d(stream.meshes[&patch].handle.clone()),
+                        Mesh3d(mesh.handle.clone()),
+                        mesh.bounds,
+                        bevy::camera::visibility::NoAutoAabb,
                         MeshMaterial3d(stream.patch_material(key)),
                         patch_transform(key, origin.cell(), info.cell_size),
                         GlobalTransform::from(patch_transform(key, origin.cell(), info.cell_size)),

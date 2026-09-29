@@ -352,6 +352,9 @@ impl Transition {
                     patch_transform(key, origin, cell_size),
                     GlobalTransform::from(patch_transform(key, origin, cell_size)),
                     Aabb::from_min_max(mesh.bounds[0], mesh.bounds[1]),
+                    // Keep the swept bounds of both poses: Bevy would replace them with the
+                    // base mesh's bounds when `Mesh3d` is added.
+                    bevy::camera::visibility::NoAutoAabb,
                     Name::new(format!("Terrain morph {} ({},{})", key.level, key.x, key.z)),
                 ))
                 .id();
@@ -548,6 +551,7 @@ mod tests {
             ResidentMesh {
                 handle: Handle::default(),
                 bytes: MAX_MESH_BYTES,
+                bounds: Aabb::default(),
             },
         );
         Arc::make_mut(&mut stream.metadata).insert(
