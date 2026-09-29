@@ -54,7 +54,8 @@ Disabled means different things: grass Disabled skips render preparation/compute
 `YARRA_SPIKE_LOG=<ms>` (Full only) names the systems behind slow frames. It logs `FRAME_SPIKE` for:
 
 - every main- or render-world frame whose system time exceeds the threshold, with its time per group and its eight slowest systems;
-- every update interval more than 5% over an FPS cap.
+- every update interval more than 5% over an FPS cap;
+- every pipeline as it finishes compiling, with its label and shader definitions. On macOS, Bevy 0.19 compiles each new variant synchronously on the render thread, taking 10–230 ms.
 
 Render time is extraction, preparation and the render call. It excludes drawable acquisition, which only waits for presentation. On the island, render work is normally 5–6 ms, so start at 8 ms. It attributes CPU hitches but does not show whether a frame was presented late. For that, add `MTL_HUD_ENABLED=1 MTL_HUD_LOG_ENABLED=1` and read the `metal-HUD` intervals; a 120 Hz display logs each 60 FPS frame twice. Run both on a repro route, as in the [60 FPS frame-drop entry](EXPERIMENTS.md#frame-drops-at-the-60-fps-cap--september-28).
 

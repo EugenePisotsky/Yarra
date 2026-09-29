@@ -112,7 +112,6 @@
     "note": "p90 over frames whose main-thread total exceeded 3 ms. HUD late frames stayed at 0-0.3/s for both binaries in these sessions (good GPU state), so this measures removed CPU spikes, not a proven change in visible misses."
   },
   "open": [
-    "Bevy 0.19 compiles pipelines synchronously on macOS (60-230 ms per new variant)",
     "weather transitions keep wind strength in the grass placement key",
     "GPU performance state at the 60 cap leaves about 11-12 ms of GPU budget"
   ],
@@ -139,5 +138,34 @@
       "note": "GPU p50 differed between runs; not attributed to the change."
     },
     "gpu_test": "keyed_page_uploads_match_a_fresh_upload: identical instance multisets; 1-3 of 65536 pixels differ (atomic append order)"
+  },
+  "shader_compiles_2026_09_29": {
+    "pipelines_compiled_clear": 75,
+    "pipelines_compiled_storm": 75,
+    "differing_variants": 0,
+    "late_variants": [
+      {
+        "frame": 313,
+        "defines_added": [
+          "SKINNED",
+          "VERTEX_TANGENTS",
+          "VERTEX_UVS",
+          "VERTEX_UVS_A"
+        ],
+        "source": "character"
+      },
+      {
+        "frame": 514,
+        "defines_added": [
+          "MORPH_TARGETS"
+        ],
+        "source": "first terrain morph",
+        "stall_ms": [
+          20,
+          25
+        ]
+      }
+    ],
+    "long_walk_275s_auto_weather": "no pipelines compiled after startup, no compile stall after 12 s"
   }
 }

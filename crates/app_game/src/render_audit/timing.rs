@@ -166,6 +166,8 @@ impl Plugin for TimingPlugin {
                 Ok(ms) if ms.is_finite() && ms >= 0.0 => {
                     app.insert_resource(SpikeLog(ms))
                         .add_systems(First, log_spikes.after(receive));
+                    app.sub_app_mut(RenderApp)
+                        .add_systems(Render, log_pipelines.after(RenderSystems::Render));
                 }
                 _ => warn!("YARRA_SPIKE_LOG expects milliseconds, got {value:?}"),
             }
@@ -479,6 +481,55 @@ fn log_spikes(
         );
     }
     *reported = newest;
+}
+
+/// Pipelines that finished compiling this frame, with their shader definitions. Bevy
+/// compiles every new variant synchronously on macOS, which stalls the render thread.
+fn log_pipelines(
+    stamp: Res<Stamp>,
+    cache: Res<bevy::render::render_resource::PipelineCache>,
+    mut ready: Local<Vec<bool>>,
+) {
+    use bevy::render::render_resource::{CachedPipelineState, PipelineDescriptor};
+    use bevy::shader::ShaderDefVal;
+    let definition = |def: &ShaderDefVal| match def {
+        ShaderDefVal::Bool(name, true) => name.clone(),
+        ShaderDefVal::Bool(name, false) => format!("!{name}"),
+        ShaderDefVal::Int(name, value) => format!("{name}={value}"),
+        ShaderDefVal::UInt(name, value) => format!("{name}={value}"),
+    };
+    for (id, pipeline) in cache.pipelines().enumerate() {
+        if ready.len() <= id {
+            ready.resize(id + 1, false);
+        }
+        if ready[id] || !matches!(pipeline.state, CachedPipelineState::Ok(_)) {
+            continue;
+        }
+        ready[id] = true;
+        let (label, mut definitions) = match &pipeline.descriptor {
+            PipelineDescriptor::RenderPipelineDescriptor(d) => (
+                d.label.clone(),
+                d.vertex
+                    .shader_defs
+                    .iter()
+                    .chain(d.fragment.iter().flat_map(|f| &f.shader_defs))
+                    .map(definition)
+                    .collect::<Vec<_>>(),
+            ),
+            PipelineDescriptor::ComputePipelineDescriptor(d) => (
+                d.label.clone(),
+                d.shader_defs.iter().map(definition).collect(),
+            ),
+        };
+        definitions.sort();
+        definitions.dedup();
+        warn!(
+            "FRAME_SPIKE kind=pipeline frame={} id={id} label={} defs=[{}]",
+            stamp.frame,
+            label.as_deref().unwrap_or("unnamed"),
+            definitions.join(" ")
+        );
+    }
 }
 
 fn log_timings(time: Res<Time<Real>>, history: Res<History>, mut last: Local<f64>) {
