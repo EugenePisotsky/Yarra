@@ -15,6 +15,7 @@ mod conversation;
 pub use conversation::{ChoiceView, ConversationView, LineView};
 mod narrative;
 pub use narrative::*;
+#[cfg(any(test, feature = "fixtures"))]
 pub mod fixtures;
 mod runtime;
 mod script;

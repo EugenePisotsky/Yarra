@@ -10,3 +10,11 @@ serde.workspace = true
 serde_json.workspace = true
 blake3.workspace = true
 thiserror.workspace = true
+
+[features]
+# Example content and state for tests of this and other crates; not part of the game.
+fixtures = []
+
+[dev-dependencies]
+# This crate's own tests use the fixtures.
+yarra-gameplay = { path = ".", features = ["fixtures"] }

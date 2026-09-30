@@ -17,3 +17,6 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 unic-langid.workspace = true
+
+[dev-dependencies]
+gameplay = { workspace = true, features = ["fixtures"] }

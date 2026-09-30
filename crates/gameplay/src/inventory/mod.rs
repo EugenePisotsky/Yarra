@@ -5,6 +5,7 @@
 //! data before use. All commands validate their inputs and leave them unchanged
 //! on error. Persistence must commit all affected records together.
 mod catalog;
+#[cfg(any(test, feature = "fixtures"))]
 pub mod fixtures;
 mod items;
 mod loot;

@@ -8,3 +8,6 @@ publish.workspace = true
 game-types.workspace = true
 gameplay.workspace = true
 mlua = { version = "0.12", features = ["luau"] }
+
+[dev-dependencies]
+gameplay = { workspace = true, features = ["fixtures"] }
