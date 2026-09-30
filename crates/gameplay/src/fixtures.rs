@@ -3,7 +3,7 @@ use crate::actors::ActorTemplate;
 use crate::dialogue::{Dialogue, Node, NodeKind, Repeat, RepeatPolicy, Role, ScopeSelector};
 use crate::inventory::{Inventory, Money, Wallet, fixtures::*};
 use crate::rules::{
-    Class, Grants, Modifier, Operation, Periodic, Rules, Sheet, Skill, Stat, StatKind,
+    Ability, Class, Grants, Modifier, Operation, Periodic, Rules, Sheet, Skill, Stat, StatKind,
     StatusEffect, Use,
 };
 use crate::{
@@ -39,6 +39,7 @@ local rules = {}
 function rules.derive(c: Character): { [string]: number }
     return {
         ["max-health"] = 40 + c.stats.vitality * 5 + c.level * 10,
+        ["max-stamina"] = 10 + c.stats.vitality,
         attack = c.stats.strength + 2 * (c.skills.swordsmanship or 0),
     }
 end
@@ -50,24 +51,68 @@ end
 
 return rules
 "#;
+/// What the fixture's abilities do. The user is the scene's player, the target its speaker.
+pub const ABILITIES_LUAU: &str = r#"
+local abilities = {}
+
+function abilities.strike(game: Game, scene: Scene)
+    local damage = game.stat(scene.player, "attack") + game.random(6)
+    game.change_resource(scene.speaker, "health", -damage)
+end
+
+function abilities.power_strike(game: Game, scene: Scene)
+    game.change_resource(scene.speaker, "health", -2 * game.stat(scene.player, "attack"))
+end
+
+function abilities.second_wind(game: Game, scene: Scene)
+    game.change_resource(scene.player, "health", 25)
+end
+
+return abilities
+"#;
 pub struct FixtureFormulas;
 impl ScriptEngine for FixtureFormulas {
     fn exports(&self, name: &ScriptName) -> bool {
-        name.module.as_str() == "rules" && ["derive", "check"].contains(&name.function.as_str())
+        let functions: &[&str] = match name.module.as_str() {
+            "rules" => &["derive", "check"],
+            "abilities" => &["strike", "power_strike", "second_wind"],
+            _ => &[],
+        };
+        functions.contains(&name.function.as_str())
     }
     fn condition(&self, name: &ScriptName, _: &ReadScope) -> crate::Result<bool> {
         Err(Invalid(format!("{name} is not a condition")).into())
     }
-    fn action(&self, name: &ScriptName, _: &mut ActScope) -> crate::Result<()> {
-        Err(Invalid(format!("{name} is not an action")).into())
+    fn action(&self, name: &ScriptName, scope: &mut ActScope) -> crate::Result<()> {
+        let (user, target) = (scope.player, scope.speaker);
+        let health = |amount| Action::ChangeResource {
+            of: crate::Participant::Player,
+            resource: key("health"),
+            amount,
+        };
+        let attack = scope.read().stat(user, &key("attack"))?;
+        match name.function.as_str() {
+            "strike" => {
+                let damage = attack + scope.random(6)? as i32;
+                scope.apply(target, &health(-damage))
+            }
+            "power_strike" => scope.apply(target, &health(-2 * attack)),
+            "second_wind" => scope.apply(user, &health(25)),
+            _ => Err(Invalid(format!("{name} is not an action")).into()),
+        }
     }
     fn derive(&self, _: &ScriptName, c: &Sheet) -> crate::Result<BTreeMap<String, f64>> {
         let health = 40 + c.stats[&key("vitality")] * 5 + c.level as i32 * 10;
         let swordsmanship = i32::from(c.skills.get(&key("swordsmanship")).copied().unwrap_or(0));
         let attack = c.stats[&key("strength")] + 2 * swordsmanship;
-        Ok([("max-health", health), ("attack", attack)]
-            .map(|(stat, value)| (stat.to_owned(), f64::from(value)))
-            .into())
+        let stamina = 10 + c.stats[&key("vitality")];
+        Ok([
+            ("max-health", health),
+            ("max-stamina", stamina),
+            ("attack", attack),
+        ]
+        .map(|(stat, value)| (stat.to_owned(), f64::from(value)))
+        .into())
     }
     fn check(
         &self,
@@ -116,11 +161,18 @@ pub fn content() -> GameContent {
             ("wisdom", primary(1, 30)),
             ("vitality", primary(1, 30)),
             ("max-health", derived(1, 10_000)),
+            ("max-stamina", derived(0, 1000)),
             ("attack", derived(0, 1000)),
             (
                 "health",
                 StatKind::Resource {
                     maximum: key("max-health"),
+                },
+            ),
+            (
+                "stamina",
+                StatKind::Resource {
+                    maximum: key("max-stamina"),
                 },
             ),
         ]
@@ -165,11 +217,16 @@ pub fn content() -> GameContent {
             (
                 "adventurer",
                 [("persuasion", 3), ("swordsmanship", 2)].as_slice(),
+                ["strike", "power-strike", "second-wind"].as_slice(),
             ),
-            ("scholar", [("persuasion", 3)].as_slice()),
+            (
+                "scholar",
+                [("persuasion", 3)].as_slice(),
+                ["second-wind"].as_slice(),
+            ),
         ]
         .into_iter()
-        .map(|(id, skills)| Class {
+        .map(|(id, skills, abilities)| Class {
             id: key(id),
             name: text(&format!("class-{id}")),
             starting: ["strength", "wisdom", "vitality"]
@@ -180,13 +237,22 @@ pub fn content() -> GameContent {
                 learning_points: 3,
                 ..Default::default()
             },
-            at_level: [(
-                3,
-                Grants {
-                    bonuses: [(key("vitality"), 1)].into(),
-                    ..Default::default()
-                },
-            )]
+            at_level: [
+                (
+                    1,
+                    Grants {
+                        abilities: abilities.iter().map(|id| key(id)).collect(),
+                        ..Default::default()
+                    },
+                ),
+                (
+                    3,
+                    Grants {
+                        bonuses: [(key("vitality"), 1)].into(),
+                        ..Default::default()
+                    },
+                ),
+            ]
             .into(),
             skills: skills
                 .iter()
@@ -194,7 +260,27 @@ pub fn content() -> GameContent {
                 .collect(),
         })
         .collect(),
-        abilities: vec![],
+        abilities: [
+            ("strike", 1500, 0, None, true, "strike"),
+            ("power-strike", 1500, 6000, Some(10), true, "power_strike"),
+            ("second-wind", 500, 30_000, Some(5), false, "second_wind"),
+        ]
+        .into_iter()
+        .map(
+            |(id, duration_ms, cooldown_ms, stamina, targeted, function)| Ability {
+                id: key(id),
+                name: text(&format!("ability-{id}")),
+                duration_ms,
+                cooldown_ms,
+                costs: stamina
+                    .map(|cost| (key("stamina"), cost))
+                    .into_iter()
+                    .collect(),
+                targeted,
+                resolve: ScriptName::try_from(format!("abilities.{function}")).unwrap(),
+            },
+        )
+        .collect(),
         levels: vec![100, 300, 600],
         life: key("health"),
         party_size: 4,
@@ -302,10 +388,12 @@ pub fn content() -> GameContent {
                 initial: Value::Bool(false),
                 scope: Default::default(),
             }],
-            scripts: vec![ScriptModule {
-                name: key("rules"),
-                source: RULES_LUAU.into(),
-            }],
+            scripts: [("abilities", ABILITIES_LUAU), ("rules", RULES_LUAU)]
+                .map(|(name, source)| ScriptModule {
+                    name: key(name),
+                    source: source.into(),
+                })
+                .into(),
         },
     };
     content.game.dialogue_contracts = content

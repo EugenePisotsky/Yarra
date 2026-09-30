@@ -2,6 +2,7 @@
 pub mod actors;
 mod character;
 pub use character::teachable;
+mod combat;
 mod content;
 pub mod dialogue;
 pub mod inventory;
@@ -66,5 +67,15 @@ pub enum Rejection {
     NotEnoughLearningPoints { needed: u32, available: u32 },
     #[error("{needed} gold needed, {available} available")]
     NotEnoughGold { needed: u64, available: u64 },
+    #[error("{} is not known", .0.as_str())]
+    AbilityNotKnown(game_types::Key),
+    #[error("{} needs a target", .0.as_str())]
+    TargetRequired(game_types::Key),
+    #[error("{} has no target", .0.as_str())]
+    NoTarget(game_types::Key),
+    #[error("too much is lined up already")]
+    QueueFull,
+    #[error("not enough {}", .0.as_str())]
+    NotEnough(game_types::Key),
 }
 pub type Result<T> = std::result::Result<T, GameplayError>;

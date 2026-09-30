@@ -48,6 +48,17 @@ pub enum Command {
         actor: ActorId,
         stat: Key,
     },
+    /// A character lines up something to do, after what is lined up already or, with
+    /// `clear`, instead of it. What it is in the middle of goes on.
+    Intend {
+        actor: ActorId,
+        intent: actors::Intent,
+        clear: bool,
+    },
+    /// A character drops what it is doing and everything lined up.
+    Interrupt {
+        actor: ActorId,
+    },
     UseItem {
         actor: ActorId,
         item: ItemId,
@@ -173,6 +184,33 @@ pub enum GameEvent {
     },
     Paid {
         amount: u64,
+    },
+    /// A character began something; it takes effect at `completes_at`.
+    AbilityBegun {
+        actor: ActorId,
+        ability: Key,
+        target: Option<ActorId>,
+        completes_at: GameTime,
+    },
+    AbilityResolved {
+        actor: ActorId,
+        ability: Key,
+        target: Option<ActorId>,
+    },
+    /// Something lined up could not be begun, or what was begun came to nothing.
+    IntentDropped {
+        actor: ActorId,
+        ability: Key,
+        reason: Rejection,
+    },
+    /// The ability's script failed; nothing it did took effect.
+    AbilityFailed {
+        actor: ActorId,
+        ability: Key,
+        reason: String,
+    },
+    Interrupted {
+        actor: ActorId,
     },
     TimeAdvanced,
 }
@@ -685,6 +723,12 @@ fn apply(
         Command::SpendAttributePoint { actor, stat } => {
             character::spend_attribute_point(content, state, actor, &stat, events)?
         }
+        Command::Intend {
+            actor,
+            intent,
+            clear,
+        } => crate::combat::intend(content, state, actor, intent, clear, events)?,
+        Command::Interrupt { actor } => crate::combat::interrupt(state, actor, events)?,
         Command::UseItem { actor, item } => {
             character::require_alive(content, state.actor(actor)?)?;
             let bag = state.carried(actor)?;

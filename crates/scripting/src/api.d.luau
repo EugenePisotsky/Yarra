@@ -5,7 +5,9 @@
 
 type QuestStatus = "not_started" | "active" | "completed" | "failed"
 
--- The pair a rule is about: the character acting and the one spoken to.
+-- The pair a rule is about: the character acting and the one spoken to. For an ability,
+-- `player` is the character using it and `speaker` its target, or the user again when the
+-- ability has no target.
 type Scene = {
     player: string,
     speaker: string,

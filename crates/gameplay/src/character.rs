@@ -69,8 +69,11 @@ pub(crate) fn change_resource(
         now,
     });
     if resource == &rules.life && now == 0 {
-        // Nothing lingers on the dead.
-        tx.actor_mut(actor)?.effects.clear();
+        // Nothing lingers on the dead, and the dead do nothing.
+        let character = tx.actor_mut(actor)?;
+        character.effects.clear();
+        character.acting = None;
+        character.intents.clear();
         refresh(content, tx, actor)?;
         sync_timed(tx, actor)?;
         events.push(GameEvent::Died { actor });
@@ -133,7 +136,8 @@ pub(crate) fn remove_effect(
     Ok(())
 }
 /// Moves the clock, carrying out in order of time whatever falls due on the way: effects
-/// tick and end. Only characters with something pending are looked at.
+/// tick and end, actions take effect and the next ones begin. Only characters with
+/// something pending are looked at.
 pub(crate) fn advance_time(
     content: &GameContent,
     tx: &mut Tx,
@@ -212,6 +216,7 @@ fn happen(
     for effect in ended {
         remove_effect(content, tx, actor, &effect, events)?;
     }
+    crate::combat::proceed(content, tx, actor, events)?;
     sync_timed(tx, actor)
 }
 /// Adds to the party's shared experience; every member gains the levels it has earned.

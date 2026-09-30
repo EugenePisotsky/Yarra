@@ -2,7 +2,32 @@
 use crate::rules::{ActiveEffect, Rules, SkillRanks, Stats};
 use game_types::*;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+
+/// How many things a character can have lined up to do.
+pub const MAX_INTENTS: usize = 8;
+
+/// Something a character means to do.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Intent {
+    pub ability: Key,
+    /// Whom it is aimed at, for an ability that has a target.
+    #[serde(default)]
+    pub target: Option<ActorId>,
+    /// Lined up again each time it has been done: a basic attack that goes on until the
+    /// character is told to stop.
+    #[serde(default)]
+    pub repeat: bool,
+}
+/// What a character is in the middle of.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Acting {
+    pub intent: Intent,
+    /// When it takes effect.
+    pub completes_at: GameTime,
+}
 
 fn first_level() -> u32 {
     1
@@ -58,6 +83,12 @@ pub struct Actor {
     /// whenever something it depends on changes, so reading a stat is a lookup.
     #[serde(deserialize_with = "game_types::deserialize_key_map")]
     pub stats: Stats,
+    pub acting: Option<Acting>,
+    /// What the character means to do next, first first.
+    pub intents: VecDeque<Intent>,
+    /// When an ability that was used can be begun again.
+    #[serde(deserialize_with = "game_types::deserialize_key_map")]
+    pub cooldowns: BTreeMap<Key, GameTime>,
 }
 impl ActorTemplate {
     pub fn validate(&self, rules: &Rules) -> Result<()> {
@@ -107,6 +138,9 @@ impl Actor {
             effects: Vec::new(),
             resources: Stats::new(),
             stats: Stats::new(),
+            acting: None,
+            intents: VecDeque::new(),
+            cooldowns: BTreeMap::new(),
         };
         while actor.level < template.level {
             actor.gain_level(rules)?;
@@ -157,12 +191,19 @@ impl Actor {
                 .zip(&other.effects)
                 .all(|(a, b)| a.effect == b.effect)
     }
-    /// When something next happens to this character by itself: an effect ends or ticks.
+    /// When something next happens to this character by itself: an effect ends or ticks,
+    /// what it is doing takes effect, or the ability it is waiting to use is ready again.
     pub fn next_event(&self) -> Option<GameTime> {
+        let waiting = match (&self.acting, self.intents.front()) {
+            (None, Some(intent)) => self.cooldowns.get(&intent.ability).copied(),
+            _ => None,
+        };
         self.effects
             .iter()
             .flat_map(|e| [e.expires_at, e.next_tick])
             .flatten()
+            .chain(self.acting.as_ref().map(|a| a.completes_at))
+            .chain(waiting)
             .min()
     }
     /// The record's own shape. What it owns and what its stats should be is checked by
@@ -200,6 +241,25 @@ impl Actor {
         for ability in &self.abilities {
             rules.ability(ability)?;
         }
+        require(
+            self.intents.len() <= MAX_INTENTS && self.cooldowns.len() <= self.abilities.len(),
+            "actor exceeds limits",
+        )?;
+        let intents = self
+            .intents
+            .iter()
+            .chain(self.acting.as_ref().map(|a| &a.intent));
+        for intent in intents {
+            require(
+                self.abilities.contains(&intent.ability)
+                    && rules.ability(&intent.ability)?.targeted == intent.target.is_some(),
+                "intent does not fit the ability",
+            )?;
+        }
+        require(
+            self.alive(rules) || (self.acting.is_none() && self.intents.is_empty()),
+            "the dead do nothing",
+        )?;
         for slot in self.equipment.keys() {
             require(rules.slots.contains(slot), "unknown equipment slot")?;
         }

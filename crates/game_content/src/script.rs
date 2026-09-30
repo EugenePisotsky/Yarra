@@ -121,6 +121,19 @@ pub enum Step {
         actor: ActorId,
         stat: Key,
     },
+    /// Lines up an ability after what the actor already means to do.
+    Intend {
+        actor: ActorId,
+        ability: Key,
+        #[serde(default)]
+        target: Option<ActorId>,
+        #[serde(default)]
+        repeat: bool,
+    },
+    /// The actor drops what it is doing and everything lined up.
+    StopActing {
+        actor: ActorId,
+    },
     /// A stat after equipment and effects, or how much of a resource is left.
     ExpectStat {
         actor: ActorId,
@@ -207,6 +220,8 @@ impl Step {
             Self::Party { .. } => "Party",
             Self::Control { .. } => "Control",
             Self::SpendAttributePoint { .. } => "SpendAttributePoint",
+            Self::Intend { .. } => "Intend",
+            Self::StopActing { .. } => "StopActing",
             Self::ExpectStat { .. } => "ExpectStat",
             Self::ExpectLevel { .. } => "ExpectLevel",
             Self::ExpectSkill { .. } => "ExpectSkill",
@@ -440,6 +455,21 @@ impl Step {
                 actor: *actor,
                 stat: stat.clone(),
             },
+            Self::Intend {
+                actor,
+                ability,
+                target,
+                repeat,
+            } => Command::Intend {
+                actor: *actor,
+                intent: actors::Intent {
+                    ability: ability.clone(),
+                    target: *target,
+                    repeat: *repeat,
+                },
+                clear: false,
+            },
+            Self::StopActing { actor } => Command::Interrupt { actor: *actor },
             Self::ExpectStat { actor, stat, value } => {
                 let actual = session.stat(*actor, stat)?;
                 require(

@@ -42,6 +42,13 @@ end
 return gate
 "#;
 
+fn module<'a>(content: &'a mut GameContent, name: &str) -> &'a mut ScriptModule {
+    let modules = &mut content.game.scripts;
+    modules
+        .iter_mut()
+        .find(|m| m.name.as_str() == name)
+        .unwrap()
+}
 fn script(name: &str) -> ScriptName {
     ScriptName::try_from(name.to_owned()).unwrap()
 }
@@ -554,7 +561,7 @@ return gate
 fn formulas_that_do_not_answer_properly_are_errors() {
     let broken = |rules: &str| {
         let mut content = gameplay::fixtures::content();
-        content.game.scripts[0].source = rules.into();
+        module(&mut content, "rules").source = rules.into();
         content.scripts = LuauScripts::install(&content.game.scripts).unwrap();
         let mut state = gameplay::SessionState::empty(1);
         state
@@ -572,11 +579,11 @@ fn formulas_that_do_not_answer_properly_are_errors() {
     for (body, expected) in [
         ("return { attack = 1 }", "did not return max-health"),
         (
-            "return { attack = 1, [\"max-health\"] = 1, luck = 3 }",
+            "return { attack = 1, [\"max-health\"] = 1, [\"max-stamina\"] = 1, luck = 3 }",
             "not a derived stat",
         ),
         (
-            "return { attack = 0/0, [\"max-health\"] = 1 }",
+            "return { attack = 0/0, [\"max-health\"] = 1, [\"max-stamina\"] = 1 }",
             "bad attack",
         ),
         ("return 5", "rules.derive"),
@@ -588,7 +595,7 @@ fn formulas_that_do_not_answer_properly_are_errors() {
     }
     // A missing formula is found when the content is loaded, not at the first check.
     let mut content = gameplay::fixtures::content();
-    content.game.scripts[0].source =
+    module(&mut content, "rules").source =
         "local rules = {}\nfunction rules.derive(c) return {} end\nreturn rules".into();
     content.scripts = LuauScripts::install(&content.game.scripts).unwrap();
     let error = content.validate().unwrap_err().to_string();
@@ -618,4 +625,83 @@ fn working_out_a_whole_population_in_luau_stays_cheap() {
     );
     // An unoptimised build on a busy machine; the point is that it is not seconds.
     assert!(spawned.as_millis() < 5000 && checked.as_millis() < 5000);
+}
+
+fn strike(actor: game_types::ActorId, target: game_types::ActorId) -> Command {
+    Command::Intend {
+        actor,
+        intent: gameplay::actors::Intent {
+            ability: key("strike"),
+            target: Some(target),
+            repeat: true,
+        },
+        clear: false,
+    }
+}
+
+#[test]
+fn abilities_written_in_luau_fight_the_same_fight_as_the_fixture_ones() {
+    let start = state();
+    let fight = |content: GameContent| {
+        let mut session =
+            GameSession::new(ToolContent::new(content).unwrap(), start.clone()).unwrap();
+        session.apply(strike(HERO, MERCHANT)).unwrap();
+        session.apply(strike(MERCHANT, HERO)).unwrap();
+        for (ability, target) in [("power-strike", Some(MERCHANT)), ("second-wind", None)] {
+            session
+                .apply(Command::Intend {
+                    actor: COMPANION,
+                    intent: gameplay::actors::Intent {
+                        ability: key(ability),
+                        target,
+                        repeat: false,
+                    },
+                    clear: false,
+                })
+                .unwrap();
+        }
+        for _ in 0..80 {
+            session.apply(Command::AdvanceTime { millis: 100 }).unwrap();
+        }
+        session.state().clone()
+    };
+    let luau = fight(content(GATE, "gate.hand_over"));
+    assert!(luau == fight(gameplay::fixtures::content()));
+    // Blows were traded: this is not two idle states comparing equal.
+    assert!(luau.actors[&MERCHANT].resources[&key("health")] < 60);
+    assert!(luau.actors[&HERO].resources[&key("health")] < 50);
+}
+
+#[test]
+fn an_ability_script_that_fails_costs_the_action_and_nothing_else() {
+    let mut content = gameplay::fixtures::content();
+    module(&mut content, "abilities").source = r#"
+local abilities = {}
+function abilities.strike(game: Game, scene: Scene)
+    game.change_resource(scene.speaker, "health", -30)
+    error("the blade slips")
+end
+function abilities.power_strike(game: Game, scene: Scene) end
+function abilities.second_wind(game: Game, scene: Scene) end
+return abilities
+"#
+    .into();
+    content.scripts = LuauScripts::install(&content.game.scripts).unwrap();
+    let mut session = GameSession::new(ToolContent::new(content).unwrap(), state()).unwrap();
+    session.apply(strike(HERO, MERCHANT)).unwrap();
+    let outcome = session
+        .apply(Command::AdvanceTime { millis: 2000 })
+        .unwrap();
+    let failure = outcome.events.iter().find_map(|e| match e {
+        GameEvent::AbilityFailed { reason, .. } => Some(reason.clone()),
+        _ => None,
+    });
+    let reason = failure.expect("the failure is reported");
+    assert!(reason.contains("abilities.strike") && reason.contains("the blade slips"));
+    let state = session.state();
+    // The wound the script dealt before failing was taken back; time went on regardless,
+    // and the repeating strike was not lined up again.
+    assert_eq!(state.actors[&MERCHANT].resources[&key("health")], 100);
+    assert_eq!(state.time, game_types::GameTime(2000));
+    assert!(state.actors[&HERO].acting.is_none() && state.timed.is_empty());
 }
