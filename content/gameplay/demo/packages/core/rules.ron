@@ -1,28 +1,45 @@
-// Authored gameplay data; see docs/WORKFLOWS.md for validation and builds.
+// The rules of the demo: which stats exist, the classes and the levels. The formulas are in
+// scripts/rules.luau.
 (
-    attributes: [(
-        id: "max-health",
-        name: Message((resource: "core/text", key: "attribute-max-health")),
-        minimum: 1,
-        maximum: 1000,
-    ), (
-        id: "strength",
-        name: Message((resource: "core/text", key: "attribute-strength")),
-        minimum: 1,
-        maximum: 100,
-    ), (
-        id: "wisdom",
-        name: Message((resource: "core/text", key: "attribute-wisdom")),
-        minimum: 1,
-        maximum: 100,
-    )],
-    skills: [(
-        id: "persuasion",
-        name: Message((resource: "core/text", key: "skill-persuasion")),
-    ), (
-        id: "swordsmanship",
-        name: Message((resource: "core/text", key: "skill-swordsmanship")),
-    )],
+    stats: [
+        (id: "strength", name: Message((resource: "core/text", key: "attribute-strength")), kind: Primary(minimum: 1, maximum: 30)),
+        (id: "wisdom", name: Message((resource: "core/text", key: "attribute-wisdom")), kind: Primary(minimum: 1, maximum: 30)),
+        (id: "vitality", name: Message((resource: "core/text", key: "attribute-vitality")), kind: Primary(minimum: 1, maximum: 30)),
+        (id: "max-health", name: Message((resource: "core/text", key: "attribute-max-health")), kind: Derived(minimum: 1, maximum: 10000)),
+        (id: "attack", name: Message((resource: "core/text", key: "attribute-attack")), kind: Derived(minimum: 0, maximum: 1000)),
+        (id: "health", name: Message((resource: "core/text", key: "attribute-health")), kind: Resource(maximum: "max-health")),
+    ],
+    skills: [
+        (id: "persuasion", name: Message((resource: "core/text", key: "skill-persuasion")), ranks: [1, 2, 3]),
+        (id: "swordsmanship", name: Message((resource: "core/text", key: "skill-swordsmanship")), ranks: [1, 2, 3]),
+    ],
     slots: ["hand"],
-    health_attribute: "max-health",
+    effects: [
+        (id: "fortified", name: Message((resource: "core/text", key: "effect-fortified")), modifiers: [(stat: "strength", op: Add(3))]),
+        (id: "poisoned", name: Message((resource: "core/text", key: "effect-poisoned")), periodic: Some((resource: "health", amount: -5, period_ms: 1000))),
+    ],
+    classes: [
+        (
+            id: "adventurer",
+            name: Message((resource: "core/text", key: "class-adventurer")),
+            starting: {"strength": 10, "wisdom": 10, "vitality": 10},
+            per_level: (attribute_points: 2, learning_points: 3),
+            at_level: {3: (bonuses: {"vitality": 1})},
+            // Trainers take an adventurer to the second rank with a sword, no further.
+            skills: {"persuasion": 3, "swordsmanship": 2},
+        ),
+        (
+            id: "soldier",
+            name: Message((resource: "core/text", key: "class-soldier")),
+            starting: {"strength": 13, "wisdom": 8, "vitality": 12},
+            per_level: (attribute_points: 2, learning_points: 2),
+            skills: {"swordsmanship": 3},
+        ),
+    ],
+    // Total experience for levels 2 to 5.
+    levels: [100, 300, 600, 1000],
+    life: "health",
+    party_size: 4,
+    derive: "rules.derive",
+    check: "rules.check",
 )

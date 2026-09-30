@@ -1,6 +1,6 @@
 // Authored gameplay data; see docs/WORKFLOWS.md for validation and builds.
 (
-    format: 9,
+    format: 10,
     manifest: (
         id: "demo",
         revision: 1,

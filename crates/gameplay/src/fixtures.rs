@@ -1,13 +1,17 @@
 //! Standalone, deterministic authored scenario; runtime state needs no game assets.
-use crate::actors::{Actor, ActorRole, ActorTemplate};
+use crate::actors::ActorTemplate;
 use crate::dialogue::{Dialogue, Node, NodeKind, Repeat, RepeatPolicy, Role, ScopeSelector};
 use crate::inventory::{Inventory, Money, Wallet, fixtures::*};
-use crate::rules::{Attribute, Effect, Modifier, Rules, Skill};
+use crate::rules::{
+    Class, Grants, Modifier, Operation, Periodic, Rules, Sheet, Skill, Stat, StatKind,
+    StatusEffect, Use,
+};
 use crate::{
-    Action, Condition, ContentManifest, GameContent, GameDefinitions, SessionState, Test, Value,
-    VariableDefinition,
+    ActScope, Action, Condition, ContentManifest, GameContent, GameDefinitions, ReadScope,
+    ScriptEngine, ScriptModule, ScriptName, Scripts, SessionState, Test, Value, VariableDefinition,
 };
 use game_types::*;
+use std::collections::BTreeMap;
 
 pub const HERO: ActorId = ActorId::named("hero");
 pub const MERCHANT: ActorId = ActorId::named("merchant");
@@ -27,6 +31,58 @@ fn text(s: &str) -> TextRef {
     TextRef::message(TextResourceId::named("core/text"), s).unwrap()
 }
 
+/// The fixture's formulas as a game would author them. `FixtureFormulas` computes the same
+/// in Rust, so this crate's tests need no script engine.
+pub const RULES_LUAU: &str = r#"
+local rules = {}
+
+function rules.derive(c: Character): { [string]: number }
+    return {
+        ["max-health"] = 40 + c.stats.vitality * 5 + c.level * 10,
+        attack = c.stats.strength + 2 * (c.skills.swordsmanship or 0),
+    }
+end
+
+function rules.check(c: Character, skill: string, difficulty: number, roll: (sides: number) -> number): boolean
+    local rank = c.skills[skill] or 0
+    return rank * 2 + (c.stats.wisdom - 10) // 2 + roll(20) >= difficulty
+end
+
+return rules
+"#;
+pub struct FixtureFormulas;
+impl ScriptEngine for FixtureFormulas {
+    fn exports(&self, name: &ScriptName) -> bool {
+        name.module.as_str() == "rules" && ["derive", "check"].contains(&name.function.as_str())
+    }
+    fn condition(&self, name: &ScriptName, _: &ReadScope) -> crate::Result<bool> {
+        Err(Invalid(format!("{name} is not a condition")).into())
+    }
+    fn action(&self, name: &ScriptName, _: &mut ActScope) -> crate::Result<()> {
+        Err(Invalid(format!("{name} is not an action")).into())
+    }
+    fn derive(&self, _: &ScriptName, c: &Sheet) -> crate::Result<BTreeMap<String, f64>> {
+        let health = 40 + c.stats[&key("vitality")] * 5 + c.level as i32 * 10;
+        let swordsmanship = i32::from(c.skills.get(&key("swordsmanship")).copied().unwrap_or(0));
+        let attack = c.stats[&key("strength")] + 2 * swordsmanship;
+        Ok([("max-health", health), ("attack", attack)]
+            .map(|(stat, value)| (stat.to_owned(), f64::from(value)))
+            .into())
+    }
+    fn check(
+        &self,
+        _: &ScriptName,
+        c: &Sheet,
+        skill: &Key,
+        difficulty: u32,
+        roll: &mut dyn FnMut(u32) -> crate::Result<u32>,
+    ) -> crate::Result<bool> {
+        let rank = i64::from(c.skills.get(skill).copied().unwrap_or(0));
+        let wisdom = i64::from(c.stats[&key("wisdom")] - 10).div_euclid(2);
+        Ok(rank * 2 + wisdom + i64::from(roll(20)?) >= i64::from(difficulty))
+    }
+}
+
 pub fn content() -> GameContent {
     let mut items = example_catalog();
     for category in &mut items.categories {
@@ -42,25 +98,37 @@ pub fn content() -> GameContent {
         .find(|i| i.id == POTION)
         .unwrap()
         .mechanics
-        .on_use = vec![Effect::Heal(25)];
+        .on_use = vec![Use::Restore {
+        resource: key("health"),
+        amount: 25,
+    }];
     let sword = items.items.iter_mut().find(|i| i.id == SWORD).unwrap();
     sword.mechanics.slot = Some(key("hand"));
     sword.mechanics.modifiers = vec![Modifier {
-        attribute: key("strength"),
-        amount: 2,
+        stat: key("strength"),
+        op: Operation::Add(2),
     }];
+    let primary = |minimum, maximum| StatKind::Primary { minimum, maximum };
+    let derived = |minimum, maximum| StatKind::Derived { minimum, maximum };
     let rules = Rules {
-        attributes: [
-            ("max-health", 1, 1000),
-            ("strength", 1, 100),
-            ("wisdom", 1, 100),
+        stats: [
+            ("strength", primary(1, 30)),
+            ("wisdom", primary(1, 30)),
+            ("vitality", primary(1, 30)),
+            ("max-health", derived(1, 10_000)),
+            ("attack", derived(0, 1000)),
+            (
+                "health",
+                StatKind::Resource {
+                    maximum: key("max-health"),
+                },
+            ),
         ]
         .into_iter()
-        .map(|(id, minimum, maximum)| Attribute {
+        .map(|(id, kind)| Stat {
             id: key(id),
-            name: text(&format!("attribute-{id}")),
-            minimum,
-            maximum,
+            name: text(&format!("stat-{id}")),
+            kind,
         })
         .collect(),
         skills: ["persuasion", "swordsmanship"]
@@ -68,21 +136,79 @@ pub fn content() -> GameContent {
             .map(|id| Skill {
                 id: key(id),
                 name: text(&format!("skill-{id}")),
+                ranks: vec![1, 2, 3],
             })
             .collect(),
         slots: [key("hand")].into(),
-        health_attribute: key("max-health"),
+        effects: vec![
+            StatusEffect {
+                id: key("fortified"),
+                name: text("effect-fortified"),
+                modifiers: vec![Modifier {
+                    stat: key("strength"),
+                    op: Operation::Add(3),
+                }],
+                periodic: None,
+            },
+            StatusEffect {
+                id: key("poisoned"),
+                name: text("effect-poisoned"),
+                modifiers: vec![],
+                periodic: Some(Periodic {
+                    resource: key("health"),
+                    amount: -5,
+                    period_ms: 1000,
+                }),
+            },
+        ],
+        classes: [
+            (
+                "adventurer",
+                [("persuasion", 3), ("swordsmanship", 2)].as_slice(),
+            ),
+            ("scholar", [("persuasion", 3)].as_slice()),
+        ]
+        .into_iter()
+        .map(|(id, skills)| Class {
+            id: key(id),
+            name: text(&format!("class-{id}")),
+            starting: ["strength", "wisdom", "vitality"]
+                .map(|stat| (key(stat), 10))
+                .into(),
+            per_level: Grants {
+                attribute_points: 2,
+                learning_points: 3,
+                ..Default::default()
+            },
+            at_level: [(
+                3,
+                Grants {
+                    bonuses: [(key("vitality"), 1)].into(),
+                    ..Default::default()
+                },
+            )]
+            .into(),
+            skills: skills
+                .iter()
+                .map(|(skill, rank)| (key(skill), *rank))
+                .collect(),
+        })
+        .collect(),
+        abilities: vec![],
+        levels: vec![100, 300, 600],
+        life: key("health"),
+        party_size: 4,
+        derive: ScriptName::try_from("rules.derive".to_owned()).unwrap(),
+        check: ScriptName::try_from("rules.check".to_owned()).unwrap(),
     };
     let template = ActorTemplate {
         interaction: None,
         id: ActorTemplateId::named("traveller"),
         name: text("actor-traveller"),
-        base: [
-            (key("max-health"), 100),
-            (key("strength"), 10),
-            (key("wisdom"), 10),
-        ]
-        .into(),
+        class: key("adventurer"),
+        level: 1,
+        base: Default::default(),
+        skills: Default::default(),
     };
     let graph = Dialogue {
         id: GATE_DIALOGUE,
@@ -130,7 +256,7 @@ pub fn content() -> GameContent {
                         definition: KEY,
                         quantity: 1,
                     },
-                    Action::SkillCheck {
+                    Action::Check {
                         skill: key("persuasion"),
                         difficulty: 1,
                         success: vec![
@@ -138,10 +264,7 @@ pub fn content() -> GameContent {
                                 definition: SWORD,
                                 quantity: 1,
                             },
-                            Action::AwardExperience {
-                                skill: key("persuasion"),
-                                amount: 10,
-                            },
+                            Action::AwardExperience { amount: 10 },
                             Action::Set {
                                 variable: REWARDED,
                                 of: None,
@@ -163,7 +286,7 @@ pub fn content() -> GameContent {
             world_generation: "standalone-world-v1".into(),
         },
         items,
-        scripts: Default::default(),
+        scripts: Scripts::new(std::rc::Rc::new(FixtureFormulas)),
         game: GameDefinitions {
             world: Default::default(),
             dialogue_contracts: vec![],
@@ -179,7 +302,10 @@ pub fn content() -> GameContent {
                 initial: Value::Bool(false),
                 scope: Default::default(),
             }],
-            scripts: vec![],
+            scripts: vec![ScriptModule {
+                name: key("rules"),
+                source: RULES_LUAU.into(),
+            }],
         },
     };
     content.game.dialogue_contracts = content
@@ -202,20 +328,19 @@ pub fn content() -> GameContent {
 pub fn state() -> SessionState {
     let content = content();
     let mut state = SessionState::empty(42);
-    for (id, bag, role) in [
-        (HERO, HERO_BAG, ActorRole::Player),
-        (MERCHANT, MERCHANT_BAG, ActorRole::Npc),
-        (COMPANION, COMPANION_BAG, ActorRole::Companion),
+    for (id, bag) in [
+        (HERO, HERO_BAG),
+        (MERCHANT, MERCHANT_BAG),
+        (COMPANION, COMPANION_BAG),
     ] {
-        let mut actor =
-            Actor::from_template(&content.game.actors[0], &content.game.rules, role).unwrap();
-        actor.id = id;
+        let actor = state
+            .spawn(&content, content.game.actors[0].id, id)
+            .unwrap();
         if id == HERO {
-            actor.health = 50;
+            actor.resources.insert(key("health"), 50);
         } else if id == MERCHANT {
             actor.position.millimetres = [100000000, 0, 100000000];
         }
-        state.add_actor(actor);
         let mut inventory = Inventory::new(OwnerRef::actor(id), "carried").unwrap();
         inventory.id = bag;
         if id == HERO {
@@ -228,6 +353,10 @@ pub fn state() -> SessionState {
         }
         state.add_inventory(inventory);
     }
+    // The hero travels alone at first, with the party's purse.
+    state.party.members.insert(HERO);
+    state.party.controlled = Some(HERO);
+    state.party.wallet = Some(PARTY_WALLET);
     let chest = OwnerRef::new("chest", OwnerId([1; 16])).unwrap();
     let party = OwnerRef::new("party", OwnerId([1; 16])).unwrap();
     state.owners.extend([chest.clone(), party.clone()]);

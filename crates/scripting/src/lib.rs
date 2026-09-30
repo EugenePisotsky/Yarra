@@ -7,6 +7,7 @@
 //! survives to the next call. Calls run sandboxed, with a memory cap and a step budget.
 use game_types::{Invalid, Key};
 use gameplay::quests::{Status, Transition};
+use gameplay::rules::Sheet;
 use gameplay::{ActScope, Action, GameplayError, Participant, ReadScope, ScriptEngine};
 use gameplay::{ScriptModule, ScriptName, Scripts};
 use mlua::chunk::{ChunkMode, Compiler};
@@ -124,10 +125,43 @@ fn add_reads<'s, T: Reads + 's>(scope: &'s Scope<'s, '_>, game: &Table, on: T) -
         })?,
     )?;
     game.set(
-        "skill_experience",
+        "stat",
+        scope.create_function(move |_, (actor, stat): (String, String)| {
+            let (actor, stat) = (id(actor)?, key(stat)?);
+            on.read(|r| r.stat(actor, &stat)).map_err(host)
+        })?,
+    )?;
+    game.set(
+        "skill",
         scope.create_function(move |_, (actor, skill): (String, String)| {
             let (actor, skill) = (id(actor)?, key(skill)?);
-            on.read(|r| r.skill_experience(actor, &skill)).map_err(host)
+            on.read(|r| r.skill(actor, &skill)).map_err(host)
+        })?,
+    )?;
+    game.set(
+        "level",
+        scope.create_function(move |_, actor: String| {
+            let actor = id(actor)?;
+            on.read(|r| r.level(actor)).map_err(host)
+        })?,
+    )?;
+    game.set(
+        "class",
+        scope.create_function(move |_, actor: String| {
+            let actor = id(actor)?;
+            on.read(|r| r.class(actor).map(|class| class.as_str().to_owned()))
+                .map_err(host)
+        })?,
+    )?;
+    game.set(
+        "gold",
+        scope.create_function(move |_, ()| on.read(|r| r.gold()).map_err(host))?,
+    )?;
+    game.set(
+        "has_effect",
+        scope.create_function(move |_, (actor, effect): (String, String)| {
+            let (actor, effect) = (id(actor)?, key(effect)?);
+            on.read(|r| r.has_effect(actor, &effect)).map_err(host)
         })?,
     )?;
     game.set(
@@ -228,14 +262,83 @@ fn add_effects<'s>(
     )?;
     game.set(
         "award_experience",
-        scope.create_function(move |_, (actor, skill, amount): (String, String, i64)| {
+        scope.create_function(move |_, amount: i64| {
             apply(
-                id(actor)?,
+                player(),
                 Action::AwardExperience {
-                    skill: key(skill)?,
                     amount: u64::from(count(amount, "amount")?),
                 },
             )
+        })?,
+    )?;
+    game.set(
+        "teach",
+        scope.create_function(move |_, (actor, skill): (String, String)| {
+            apply(id(actor)?, Action::Teach { skill: key(skill)? })
+        })?,
+    )?;
+    game.set(
+        "pay",
+        scope.create_function(move |_, amount: i64| {
+            apply(
+                player(),
+                Action::Pay {
+                    amount: u64::from(count(amount, "amount")?),
+                },
+            )
+        })?,
+    )?;
+    game.set(
+        "change_resource",
+        scope.create_function(move |_, (actor, resource, amount): (String, String, i64)| {
+            let amount = i32::try_from(amount)
+                .map_err(|_| mlua::Error::runtime("amount is out of range"))?;
+            apply(
+                id(actor)?,
+                Action::ChangeResource {
+                    of: Participant::Player,
+                    resource: key(resource)?,
+                    amount,
+                },
+            )
+        })?,
+    )?;
+    game.set(
+        "apply_effect",
+        scope.create_function(
+            move |_, (actor, effect, duration_ms): (String, String, Option<i64>)| {
+                let duration_ms = duration_ms
+                    .map(u64::try_from)
+                    .transpose()
+                    .map_err(|_| mlua::Error::runtime("duration is out of range"))?;
+                apply(
+                    id(actor)?,
+                    Action::ApplyEffect {
+                        of: Participant::Player,
+                        effect: key(effect)?,
+                        duration_ms,
+                    },
+                )
+            },
+        )?,
+    )?;
+    game.set(
+        "remove_effect",
+        scope.create_function(move |_, (actor, effect): (String, String)| {
+            apply(
+                id(actor)?,
+                Action::RemoveEffect {
+                    of: Participant::Player,
+                    effect: key(effect)?,
+                },
+            )
+        })?,
+    )?;
+    game.set(
+        "random",
+        scope.create_function(move |_, sides: i64| {
+            let sides = count(sides, "sides")?;
+            on.borrow_mut().random(sides).map_err(host)
         })?,
     )?;
     game.set(
@@ -325,13 +428,13 @@ fn add_effects<'s>(
         })?,
     )?;
     game.set(
-        "roll",
+        "check",
         scope.create_function(
             move |_, (actor, skill, difficulty): (String, String, i64)| {
                 let (actor, skill) = (id(actor)?, key(skill)?);
                 let difficulty = count(difficulty, "difficulty")?;
                 on.borrow_mut()
-                    .roll(actor, &skill, difficulty)
+                    .check(actor, &skill, difficulty)
                     .map_err(host)
             },
         )?,
@@ -437,6 +540,23 @@ impl LuauScripts {
     fn function(&self, name: &ScriptName) -> mlua::Result<Function> {
         self.load(name.module.as_str())?.get(name.function.as_str())
     }
+    /// A character as the rules' formulas see it.
+    fn character(&self, sheet: &Sheet) -> mlua::Result<Table> {
+        let character = self.lua.create_table()?;
+        character.set("level", sheet.level)?;
+        character.set("class", sheet.class.as_str())?;
+        let stats = self.lua.create_table()?;
+        for (stat, value) in sheet.stats {
+            stats.set(stat.as_str(), *value)?;
+        }
+        character.set("stats", stats)?;
+        let skills = self.lua.create_table()?;
+        for (skill, rank) in sheet.skills {
+            skills.set(skill.as_str(), *rank)?;
+        }
+        character.set("skills", skills)?;
+        Ok(character)
+    }
     fn scene(&self, read: &ReadScope) -> mlua::Result<Table> {
         let scene = self.lua.create_table()?;
         scene.set("player", read.player.to_string())?;
@@ -477,6 +597,32 @@ impl ScriptEngine for LuauScripts {
             add_reads(scope, &game, &act)?;
             add_effects(scope, &game, &act)?;
             self.function(name)?.call::<()>((game, scene))
+        });
+        result.map_err(|e| failed(name, e))
+    }
+    fn derive(&self, name: &ScriptName, sheet: &Sheet) -> gameplay::Result<BTreeMap<String, f64>> {
+        let result = (|| -> mlua::Result<BTreeMap<String, f64>> {
+            let derived: Table = self.function(name)?.call(self.character(sheet)?)?;
+            derived.pairs::<String, f64>().collect()
+        })();
+        result.map_err(|e| failed(name, e))
+    }
+    fn check(
+        &self,
+        name: &ScriptName,
+        sheet: &Sheet,
+        skill: &Key,
+        difficulty: u32,
+        roll: &mut dyn FnMut(u32) -> gameplay::Result<u32>,
+    ) -> gameplay::Result<bool> {
+        let result = self.lua.scope(|scope| {
+            let dice = scope
+                .create_function_mut(|_, sides: i64| roll(count(sides, "sides")?).map_err(host))?;
+            let arguments = (self.character(sheet)?, skill.as_str(), difficulty, dice);
+            match self.function(name)?.call::<Value>(arguments)? {
+                Value::Boolean(passed) => Ok(passed),
+                _ => Err(mlua::Error::runtime("a check must return true or false")),
+            }
         });
         result.map_err(|e| failed(name, e))
     }

@@ -18,7 +18,11 @@ pub const SPEAKER: &str = "speaker";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ArgumentSource {
     ActorName(Key),
-    Attribute { role: Key, attribute: Key },
+    /// A stat of whoever fills the role, or how much of a resource they have.
+    Stat {
+        role: Key,
+        stat: Key,
+    },
     Text(TextRef),
     Number(i32),
     Select(String),
@@ -169,7 +173,7 @@ impl Dialogue {
                                 Some(ArgumentType::Text),
                             ) => true,
                             (
-                                ArgumentSource::Attribute { .. } | ArgumentSource::Number(_),
+                                ArgumentSource::Stat { .. } | ArgumentSource::Number(_),
                                 Some(ArgumentType::Number),
                             ) => true,
                             (ArgumentSource::Select(value), Some(ArgumentType::Select(values))) => {
@@ -257,7 +261,7 @@ impl Dialogue {
         for (name, value) in args {
             TextKey::new(name.clone())?;
             match value {
-                ArgumentSource::ActorName(role) | ArgumentSource::Attribute { role, .. } => {
+                ArgumentSource::ActorName(role) | ArgumentSource::Stat { role, .. } => {
                     // Text can only name roles that are certain to have an actor.
                     require(
                         self.roles.get(role) == Some(&Role::Required),

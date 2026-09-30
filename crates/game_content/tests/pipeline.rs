@@ -1,5 +1,4 @@
 use game_types::{CategoryId, Key, TextRef};
-use gameplay::actors::ActorRole;
 use gameplay::inventory::ItemCatalog;
 use gameplay::{actors, inventory, rules};
 use localization::Arguments;
@@ -15,16 +14,10 @@ fn failure(root: &Path) -> String {
         Err(error) => error.to_string(),
     }
 }
-fn player_health(project: &LoadedProject) -> u32 {
-    project
-        .run_scenario()
-        .unwrap()
-        .state()
-        .actors
-        .values()
-        .find(|a| a.role == ActorRole::Player)
-        .unwrap()
-        .health
+fn player_health(project: &LoadedProject) -> i32 {
+    let session = project.run_scenario().unwrap();
+    let hero = session.state().party.controlled.unwrap();
+    session.stat(hero, &Key::new("health").unwrap()).unwrap()
 }
 #[test]
 fn authored_source_and_sqlite_bundle_use_the_same_validated_content() {
@@ -95,7 +88,10 @@ fn editing_data_changes_mechanics_without_changing_rust_or_old_bundles() {
     let path = temp.0.join("pinned.sqlite");
     original.build(&path).unwrap();
     let mut items: ItemCatalog = read(root.join("packages/core/items.ron"));
-    items.items[0].mechanics.on_use = vec![rules::Effect::Heal(40)];
+    items.items[0].mechanics.on_use = vec![rules::Use::Restore {
+        resource: Key::new("health").unwrap(),
+        amount: 40,
+    }];
     write(root.join("packages/core/items.ron"), &items);
     let changed = LoadedProject::load_directory(&root).unwrap();
     assert_eq!(player_health(&changed), 90);
@@ -112,16 +108,10 @@ fn editing_data_changes_mechanics_without_changing_rust_or_old_bundles() {
     write(root.join("packages/core/actors.ron"), &templates);
     let project = LoadedProject::load_directory(&root).unwrap();
     let session = project.run_scenario().unwrap();
-    let player = session
-        .state()
-        .actors
-        .values()
-        .find(|a| a.role == ActorRole::Player)
-        .unwrap();
-    assert_eq!(
-        session.derived(player.id).unwrap()[&Key::new("strength").unwrap()],
-        17
-    );
+    let hero = session.state().party.controlled.unwrap();
+    let stat = |name: &str| session.stat(hero, &Key::new(name).unwrap()).unwrap();
+    // A template overrides its class's starting value, and derived stats follow.
+    assert_eq!((stat("strength"), stat("attack")), (17, 17));
 }
 #[test]
 fn translation_updates_do_not_change_mechanical_save_compatibility() {
@@ -158,9 +148,9 @@ fn category_mechanics_bindings_and_scenario_errors_are_rejected() {
     write(root.join("packages/core/items.ron"), &items);
     assert!(failure(&root).contains("category"));
     let mut items = original.clone();
-    items.items[1].mechanics.modifiers[0].attribute = Key::new("unknown-attribute").unwrap();
+    items.items[1].mechanics.modifiers[0].stat = Key::new("unknown-attribute").unwrap();
     write(root.join("packages/core/items.ron"), &items);
-    assert!(failure(&root).contains("unknown attribute"));
+    assert!(failure(&root).contains("unknown stat"));
     write(root.join("packages/core/items.ron"), &original);
     let path = root.join("packages/old_gate/conversations/gate/graph.ron");
     let original: gameplay::dialogue::Dialogue = read(&path);
@@ -386,7 +376,7 @@ fn cli_validates_builds_and_runs_from_bundle_with_locale_and_saves() {
         String::from_utf8_lossy(&output.stderr)
     );
     let text = String::from_utf8_lossy(&output.stdout);
-    assert!(text.contains("health 75"));
+    assert!(text.contains("Здоров’я 75"), "{text}");
     assert!(text.contains("Лікувальне зілля"));
     assert_eq!(
         SaveDirectory::new(&saves, 3).unwrap().list().unwrap().len(),
@@ -418,11 +408,11 @@ fn duplicate_action_and_attribute_keys_are_not_silently_replaced() {
     assert!(error.contains("duplicate semantic key player"));
     assert!(error.contains("packages/old_gate/conversations/gate/graph.ron"));
     fs::write(&path, original).unwrap();
-    let path = root.join("packages/core/actors.ron");
+    let path = root.join("packages/core/rules.ron");
     let original = fs::read_to_string(&path).unwrap();
     fs::write(
         &path,
-        original.replace("base: {", "base: {\"strength\": 20,"),
+        original.replace("starting: {", "starting: {\"strength\": 20,"),
     )
     .unwrap();
     assert!(failure(&root).contains("duplicate semantic key strength"));

@@ -249,16 +249,19 @@ fn demo(project: &LoadedProject, locale: &str, directory: Option<PathBuf>) -> Re
                 &args,
             )?
             .value;
+        let rules = &project.content().game.rules;
+        let named = |text: &game_types::TextRef| project.localization().format(locale, text, &args);
         summary.push(format!(
-            "{:?} {name} ({}): health {}",
-            actor.role, actor.id, actor.health
+            "{name} ({}): level {} {}, {} {}",
+            actor.id,
+            actor.level,
+            named(&rules.class(&actor.class)?.name)?.value,
+            named(&rules.stat(&rules.life)?.name)?.value,
+            actor.resources[&rules.life]
         ));
-        for (skill, xp) in &actor.skills {
-            let name = &project.content().game.rules.skill(skill)?.name;
-            summary.push(format!(
-                "  {}: {xp} XP",
-                project.localization().format(locale, name, &args)?.value
-            ));
+        for (skill, rank) in &actor.skills {
+            let name = &rules.skill(skill)?.name;
+            summary.push(format!("  {}: rank {rank}", named(name)?.value));
         }
         for entry in &state.carried(actor.id)?.entries {
             let name = &project.content().items.item(entry.definition)?.name;

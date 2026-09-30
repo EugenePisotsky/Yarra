@@ -15,7 +15,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-pub const SOURCE_FORMAT_VERSION: u32 = 9;
+pub const SOURCE_FORMAT_VERSION: u32 = 10;
 pub(crate) const MAX_DOCUMENT_BYTES: usize = 16 * 1024 * 1024;
 const MAX_PROJECT_BYTES: usize = 64 * 1024 * 1024;
 const MAX_TRANSLATION_BYTES: usize = 2 * 1024 * 1024;
@@ -345,6 +345,8 @@ impl LoadedProject {
         content.game.predicates.sort_by_key(|v| v.id);
         content.game.actors.sort_by_key(|v| v.id);
         content.game.dialogues.sort_by_key(|v| v.id);
+        content.game.variables.sort_by_key(|v| v.id);
+        content.game.scripts.sort_by(|a, b| a.name.cmp(&b.name));
         for contract in &content.text {
             require(
                 translations

@@ -15,12 +15,12 @@
             ])),
             actions: [
                 ConsumeItem(definition: "old_gate_key", quantity: 1),
-                SkillCheck(
+                Check(
                     skill: "persuasion",
                     difficulty: 1,
                     success: [
                         GrantItem(definition: "iron_sword", quantity: 1),
-                        AwardExperience(skill: "persuasion", amount: 10),
+                        AwardExperience(amount: 10),
                         Set(variable: "old_gate/rewarded", value: Bool(true)),
                     ],
                     failure: [],

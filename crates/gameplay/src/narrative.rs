@@ -5,8 +5,9 @@ use game_types::*;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Participant {
+    #[default]
     Player,
     Speaker,
     /// A named character, whoever is talking.
@@ -222,7 +223,7 @@ impl Action {
             *budget -= 1;
             f(a)?;
             match a {
-                Action::SkillCheck {
+                Action::Check {
                     success, failure, ..
                 } => {
                     for a in success.iter().chain(failure) {
@@ -303,8 +304,18 @@ impl GameContent {
                     };
                     require(fits, "test does not fit the variable's type")?
                 }
-                Condition::SkillExperience { skill, .. } => {
+                Condition::Stat { stat, .. } => {
+                    self.game.rules.stat(stat)?;
+                }
+                Condition::Skill { skill, .. } | Condition::CanLearn { skill } => {
                     self.game.rules.skill(skill)?;
+                }
+                Condition::Level { minimum } => require(
+                    (1..=self.game.rules.max_level()).contains(minimum),
+                    "level condition cannot be met",
+                )?,
+                Condition::Class(class) => {
+                    self.game.rules.class(class)?;
                 }
                 Condition::QuestStatus { quest, .. } => {
                     self.quest(*quest)?;
@@ -371,7 +382,7 @@ impl GameContent {
                     let present = *actor == pair.0
                         || *actor == pair.1
                         || pair.2.contains(actor)
-                        || state.party.contains(actor);
+                        || state.party.members.contains(actor);
                     (Observed::Boolean(present), present)
                 }
                 Condition::InsideArea { area } => {
@@ -447,8 +458,29 @@ impl GameContent {
                     };
                     (Observed::Value(value), matched)
                 }
-                Condition::SkillExperience { skill, minimum } => {
-                    let n = state.actor(pair.0)?.skills.get(skill).copied().unwrap_or(0);
+                Condition::Stat { stat, minimum } => {
+                    let n = state.stat(content, pair.0, stat)?;
+                    (Observed::Value(Value::Int(i64::from(n))), n >= *minimum)
+                }
+                Condition::Skill { skill, minimum } => {
+                    let n = state.actor(pair.0)?.skill(skill);
+                    (Observed::Quantity(u64::from(n)), n >= *minimum)
+                }
+                Condition::Level { minimum } => {
+                    let n = state.actor(pair.0)?.level;
+                    (Observed::Quantity(u64::from(n)), n >= *minimum)
+                }
+                Condition::Class(class) => {
+                    let matched = &state.actor(pair.0)?.class == class;
+                    (Observed::Boolean(matched), matched)
+                }
+                Condition::CanLearn { skill } => {
+                    let can =
+                        crate::teachable(&content.game.rules, state.actor(pair.0)?, skill)?.is_ok();
+                    (Observed::Boolean(can), can)
+                }
+                Condition::Gold { minimum } => {
+                    let n = state.gold()?;
                     (Observed::Quantity(n), n >= *minimum)
                 }
                 Condition::QuestStatus { quest, status } => {

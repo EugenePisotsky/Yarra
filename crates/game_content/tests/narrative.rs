@@ -74,7 +74,9 @@ fn guard_scenario_rewards_and_new_state_survive_checkpoint_restore() {
     assert!(state.quest(GATE).completed.contains(&key("deliver")));
     assert_eq!(state.quest(SUPPLIES).status, Status::Active);
     assert_eq!(state.relationship(ATTITUDE).attitude, 5);
-    assert_eq!(state.actor(HERO).unwrap().skills[&key("persuasion")], 10);
+    // The reward is enough experience for the hero's second level.
+    assert_eq!(state.party.experience, 120);
+    assert_eq!(state.actor(HERO).unwrap().level, 2);
     assert!(
         !state
             .carried(HERO)
@@ -432,7 +434,8 @@ fn scripts_are_checked_at_publication_and_run_from_the_published_bundle() {
 
     let (project, mut session) = setup(&temp);
     std::fs::remove_dir_all(temp.0.join("source")).unwrap();
-    assert_eq!(session.content().game.scripts.len(), 1);
+    // The rules' formulas and the guard's script.
+    assert_eq!(session.content().game.scripts.len(), 2);
     for step in &project.scenario().steps {
         step.apply(&mut session).unwrap();
     }

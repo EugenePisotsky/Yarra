@@ -1,7 +1,8 @@
 use crate::Result;
+use crate::character;
 use crate::dialogue::{RunStatus, Token};
 use crate::inventory::{TradeOffer, TradeParticipants, TradeQuote};
-use crate::rules::{ActiveEffect, Effect};
+use crate::rules::Use;
 use crate::tx::Tx;
 use crate::*;
 use game_types::*;
@@ -32,10 +33,20 @@ pub enum Command {
         key: actors::RelationshipKey,
         amount: i16,
     },
-    /// A character joins or leaves the group travelling with the player.
+    /// A character joins or leaves the party. One who joins gains the levels the party's
+    /// experience has already earned.
     Party {
         actor: ActorId,
         member: bool,
+    },
+    /// The player steers this party member from now on.
+    Control {
+        actor: ActorId,
+    },
+    /// A party member puts one attribute point into a primary stat.
+    SpendAttributePoint {
+        actor: ActorId,
+        stat: Key,
     },
     UseItem {
         actor: ActorId,
@@ -119,9 +130,49 @@ pub enum GameEvent {
     ChoiceAccepted {
         choice: Key,
     },
-    SkillChecked {
-        roll: u32,
+    /// A check by the rules' formula, with what it rolled.
+    Checked {
+        actor: ActorId,
+        skill: Key,
         passed: bool,
+        rolls: Vec<u32>,
+    },
+    ResourceChanged {
+        actor: ActorId,
+        resource: Key,
+        change: i32,
+        now: i32,
+    },
+    Died {
+        actor: ActorId,
+    },
+    EffectApplied {
+        actor: ActorId,
+        effect: Key,
+    },
+    EffectEnded {
+        actor: ActorId,
+        effect: Key,
+    },
+    ExperienceAwarded {
+        amount: u64,
+        total: u64,
+    },
+    LeveledUp {
+        actor: ActorId,
+        level: u32,
+    },
+    StatRaised {
+        actor: ActorId,
+        stat: Key,
+    },
+    SkillLearned {
+        actor: ActorId,
+        skill: Key,
+        rank: u8,
+    },
+    Paid {
+        amount: u64,
     },
     TimeAdvanced,
 }
@@ -220,8 +271,9 @@ impl<C: ContentSource> GameSession<C> {
         self.loaded.push_back(id);
         Ok(())
     }
-    pub fn derived(&self, actor: ActorId) -> Result<rules::Attributes> {
-        self.state.derived(&self.content, actor)
+    /// A stat after equipment and effects, or how much of a resource the actor has now.
+    pub fn stat(&self, actor: ActorId, stat: &Key) -> Result<i32> {
+        self.state.stat(&self.content, actor, stat)
     }
     pub fn quote_trade(
         &self,
@@ -503,7 +555,7 @@ fn finish(
 ) -> Result<()> {
     assign_item_ids(tx, events)?;
     check_changes(content, tx)?;
-    let signals: Vec<_> = crate::world_runtime::signals(tx)
+    let signals: Vec<_> = crate::world_runtime::signals(content, tx)
         .into_iter()
         .filter(|s| triggers.subscribed(s))
         .collect();
@@ -520,8 +572,8 @@ fn finish(
     }
     tx.bump_generation()
 }
-/// Re-checks only the records this command wrote, plus actors whose equipment or health
-/// depends on a changed inventory.
+/// Re-checks only the records this command wrote, plus actors whose equipment depends on a
+/// changed inventory. Stats are worked out again only for characters whose build changed.
 fn check_changes(content: &GameContent, tx: &Tx) -> Result<()> {
     let state: &SessionState = tx;
     let before = &tx.before;
@@ -536,7 +588,12 @@ fn check_changes(content: &GameContent, tx: &Tx) -> Result<()> {
     }
     for id in actors {
         if let Some(actor) = state.actors.get(&id) {
-            state.check_actor(content, actor)?;
+            let rebuilt = match before.actors.get(&id) {
+                Some(Some(old)) => !old.same_build(actor),
+                Some(None) => true,
+                None => false,
+            };
+            state.check_actor(content, actor, rebuilt)?;
         }
     }
     for id in before.wallets.keys() {
@@ -603,9 +660,33 @@ fn apply(
         }
         Command::Party { actor, member } => {
             state.actor(actor)?;
-            state.set_party(actor, member);
+            if member {
+                if !state.party.members.contains(&actor) {
+                    if state.party.members.len() >= content.game.rules.party_size {
+                        return Err(Rejection::PartyFull.into());
+                    }
+                    state.party_mut().members.insert(actor);
+                    character::catch_up(content, state, actor, events)?;
+                }
+            } else {
+                require(
+                    state.party.controlled != Some(actor),
+                    "choose another character to control first",
+                )?;
+                state.party_mut().members.remove(&actor);
+            }
+        }
+        Command::Control { actor } => {
+            if !state.party.members.contains(&actor) {
+                return Err(Rejection::NotInParty(actor).into());
+            }
+            state.party_mut().controlled = Some(actor);
+        }
+        Command::SpendAttributePoint { actor, stat } => {
+            character::spend_attribute_point(content, state, actor, &stat, events)?
         }
         Command::UseItem { actor, item } => {
+            character::require_alive(content, state.actor(actor)?)?;
             let bag = state.carried(actor)?;
             let inventory = bag.id;
             let definition = content.items.item(bag.entry(item)?.definition)?;
@@ -619,29 +700,30 @@ fn apply(
             )?;
             for effect in &definition.mechanics.on_use {
                 match effect {
-                    Effect::Heal(amount) => {
-                        let maximum = state.derived(content, actor)?
-                            [&content.game.rules.health_attribute]
-                            as u32;
-                        let actor = state.actor_mut(actor)?;
-                        actor.health = actor.health.saturating_add(*amount).min(maximum);
-                    }
-                    Effect::Buff {
-                        modifier,
+                    Use::Restore { resource, amount } => character::change_resource(
+                        content,
+                        state,
+                        actor,
+                        resource,
+                        i64::from(*amount),
+                        events,
+                    )?,
+                    Use::Apply {
+                        effect,
                         duration_ms,
-                    } => {
-                        let expires_at = state.time.advance(*duration_ms)?;
-                        state.actor_mut(actor)?.effects.push(ActiveEffect {
-                            modifier: modifier.clone(),
-                            expires_at,
-                        });
-                    }
+                    } => character::apply_effect(
+                        content,
+                        state,
+                        actor,
+                        effect,
+                        *duration_ms,
+                        events,
+                    )?,
                 }
             }
             state
                 .inventory_mut(inventory)?
                 .remove(&content.items, item, 1)?;
-            clamp_health(content, state, actor)?;
             events.push(GameEvent::ItemUsed { actor, item });
         }
         Command::Equip { actor, item } => {
@@ -654,7 +736,7 @@ fn apply(
                 .clone()
                 .ok_or_else(|| Invalid("item cannot be equipped".into()))?;
             state.actor_mut(actor)?.equipment.insert(slot, item);
-            clamp_health(content, state, actor)?;
+            character::refresh(content, state, actor)?;
             events.push(GameEvent::EquipmentChanged { actor });
         }
         Command::Unequip { actor, slot } => {
@@ -662,7 +744,7 @@ fn apply(
                 state.actor_mut(actor)?.equipment.remove(&slot).is_some(),
                 "slot is empty",
             )?;
-            clamp_health(content, state, actor)?;
+            character::refresh(content, state, actor)?;
             events.push(GameEvent::EquipmentChanged { actor });
         }
         Command::Transfer {
@@ -744,42 +826,7 @@ fn apply(
         Command::InterruptDialogue { key, expected } => {
             crate::conversation::interrupt(content, state, key, expected, events)?
         }
-        Command::AdvanceTime { millis } => {
-            let target = state.time.advance(millis)?;
-            require(
-                target.0 <= i64::MAX as u64,
-                "logical time exceeds storage range",
-            )?;
-            let expiring: Vec<ActorId> = state
-                .actors
-                .values()
-                .filter(|a| a.effects.iter().any(|e| e.expires_at <= target))
-                .map(|a| a.id)
-                .collect();
-            // Preserve intermediate health caps even when one step crosses several expirations.
-            for id in expiring {
-                let deadlines: BTreeSet<_> = state
-                    .actor(id)?
-                    .effects
-                    .iter()
-                    .map(|e| e.expires_at)
-                    .filter(|t| *t <= target)
-                    .collect();
-                for time in deadlines {
-                    state.actor_mut(id)?.effects.retain(|e| e.expires_at > time);
-                    clamp_health(content, state, id)?;
-                }
-            }
-            state.set_time(target);
-            events.push(GameEvent::TimeAdvanced);
-        }
-    }
-    Ok(())
-}
-fn clamp_health(content: &GameContent, state: &mut Tx, actor: ActorId) -> Result<()> {
-    let max = state.derived(content, actor)?[&content.game.rules.health_attribute] as u32;
-    if state.actor(actor)?.health > max {
-        state.actor_mut(actor)?.health = max;
+        Command::AdvanceTime { millis } => character::advance_time(content, state, millis, events)?,
     }
     Ok(())
 }
@@ -806,9 +853,10 @@ fn sync_equipment(
             .actor_mut(actor)?
             .equipment
             .retain(|_, id| owned.contains(id));
+        character::refresh(content, state, actor)?;
         events.push(GameEvent::EquipmentChanged { actor });
     }
-    clamp_health(content, state, actor)
+    Ok(())
 }
 pub(crate) fn run_action(
     content: &GameContent,
@@ -890,10 +938,37 @@ pub(crate) fn run_action(
             require(remaining == 0, "not enough items for dialogue action")?;
             sync_equipment(content, state, id, events)?;
         }
-        Action::AwardExperience { skill, amount } => {
-            state
-                .actor_mut(actor)?
-                .award_experience(&content.game.rules, skill, *amount)?
+        Action::AwardExperience { amount } => {
+            character::award_experience(content, state, *amount, events)?
+        }
+        Action::Teach { skill } => character::teach(content, state, actor, skill, events)?,
+        Action::Pay { amount } => character::pay(state, *amount, events)?,
+        Action::ChangeResource {
+            of,
+            resource,
+            amount,
+        } => character::change_resource(
+            content,
+            state,
+            of.resolve(actor, speaker),
+            resource,
+            i64::from(*amount),
+            events,
+        )?,
+        Action::ApplyEffect {
+            of,
+            effect,
+            duration_ms,
+        } => character::apply_effect(
+            content,
+            state,
+            of.resolve(actor, speaker),
+            effect,
+            *duration_ms,
+            events,
+        )?,
+        Action::RemoveEffect { of, effect } => {
+            character::remove_effect(content, state, of.resolve(actor, speaker), effect, events)?
         }
         Action::Move {
             actor: who,
@@ -958,16 +1033,13 @@ pub(crate) fn run_action(
                 .ok_or_else(|| Invalid("variable overflow".into()))?;
             state.set_variable(key, Value::Int(sum));
         }
-        Action::SkillCheck {
+        Action::Check {
             skill,
             difficulty,
             success,
             failure,
         } => {
-            let bonus = state.actor(actor)?.skills.get(skill).copied().unwrap_or(0) / 100;
-            let roll = state.random_mut().roll_d20();
-            let passed = bonus.saturating_add(u64::from(roll)) >= u64::from(*difficulty);
-            events.push(GameEvent::SkillChecked { roll, passed });
+            let passed = character::check(content, state, actor, skill, *difficulty, events)?;
             for action in if passed { success } else { failure } {
                 run_action(content, state, actor, speaker, action, events)?;
             }

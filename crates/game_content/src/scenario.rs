@@ -1,6 +1,6 @@
 use crate::{Result, Step, contextual};
 use game_types::*;
-use gameplay::actors::{Actor, ActorRole, Position};
+use gameplay::actors::Position;
 use gameplay::inventory;
 use gameplay::inventory::{Inventory, Money, Wallet};
 use gameplay::{GameContent, GameSession, SessionState, ToolContent};
@@ -18,10 +18,11 @@ pub struct ItemAmount {
 pub struct ActorSpawn {
     pub id: ActorId,
     pub template: ActorTemplateId,
-    pub role: ActorRole,
     pub position: Position,
     pub name: Option<TextRef>,
-    pub health: Option<u32>,
+    /// Resources that do not start full, e.g. `{"health": 50}`.
+    #[serde(default, deserialize_with = "game_types::deserialize_key_map")]
+    pub resources: std::collections::BTreeMap<Key, i32>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -39,7 +40,7 @@ pub struct WalletSeed {
     pub balance: Money,
 }
 /// Authored starting conditions, not a saved playthrough or a second actor model.
-/// Base attributes come from templates; entry/playthrough IDs are fresh each start.
+/// Characters are built from their templates; entry/playthrough IDs are fresh each start.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Scenario {
@@ -54,6 +55,12 @@ pub struct Scenario {
     /// Characters travelling together at the start.
     #[serde(default)]
     pub party: BTreeSet<ActorId>,
+    /// The party member the player steers.
+    #[serde(default)]
+    pub controlled: Option<ActorId>,
+    /// The wallet holding the party's shared gold.
+    #[serde(default)]
+    pub purse: Option<WalletId>,
     pub steps: Vec<Step>,
 }
 impl Scenario {
@@ -80,22 +87,36 @@ impl Scenario {
                 (key, value.clone())
             })
             .collect();
-        state.party = self.party.clone();
+        state.party = gameplay::Party {
+            members: self.party.clone(),
+            controlled: self.controlled,
+            experience: 0,
+            wallet: self.purse,
+        };
         for spawn in &self.actors {
-            let template = content.template(spawn.template).map_err(|_| {
+            content.template(spawn.template).map_err(|_| {
                 Invalid(format!(
                     "actor {}: unknown template {}",
                     spawn.id, spawn.template
                 ))
             })?;
-            let mut actor = Actor::from_template(template, &content.game.rules, spawn.role)?;
-            actor.id = spawn.id;
+            let actor = contextual(
+                format!("actor {}", spawn.id),
+                state.spawn(content, spawn.template, spawn.id),
+            )?;
             actor.position = spawn.position.clone();
             actor.name_override = spawn.name.clone();
-            if let Some(health) = spawn.health {
-                actor.health = health;
+            for (resource, amount) in &spawn.resources {
+                require(
+                    actor.resources.contains_key(resource),
+                    &format!(
+                        "actor {}: {} is not a resource",
+                        spawn.id,
+                        resource.as_str()
+                    ),
+                )?;
+                actor.resources.insert(resource.clone(), *amount);
             }
-            state.add_actor(actor);
         }
         for seed in &self.inventories {
             require(

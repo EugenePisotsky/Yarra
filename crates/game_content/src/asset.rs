@@ -176,12 +176,7 @@ impl Asset {
             Self::Category(v) => vec![&v.name],
             Self::Item(v) => vec![&v.name, &v.description],
             Self::Actor(v) => vec![&v.name],
-            Self::Rules(v) => v
-                .attributes
-                .iter()
-                .map(|a| &a.name)
-                .chain(v.skills.iter().map(|s| &s.name))
-                .collect(),
+            Self::Rules(v) => v.names().collect(),
             Self::Dialogue(v) => v
                 .messages()
                 .flat_map(|(t, args)| {
@@ -248,7 +243,7 @@ impl Asset {
                         QuestStarted(id) | QuestChanged(id) => Some(AssetId::Quest(*id)),
                         VariableChanged(id) => Some(AssetId::Variable(*id)),
                         DialogueCompleted(id) => Some(AssetId::DialogueContract(*id)),
-                        MoveFailed(_) => None,
+                        MoveFailed(_) | Died(_) | LeveledUp(_) => None,
                     });
                 }
                 for action in &v.actions {
@@ -275,6 +270,11 @@ impl Asset {
                         action_references(action, &mut refs)?;
                     }
                 }
+            }
+            Self::Rules(v) => {
+                let formulas = [&v.derive, &v.check].into_iter();
+                let scripts = formulas.chain(v.abilities.iter().map(|a| &a.resolve));
+                refs.extend(scripts.map(|name| AssetId::Script(name.module.clone())));
             }
             Self::Predicate(v) => condition_references(&v.condition, &mut refs)?,
             Self::Profile(v) => {
@@ -355,7 +355,11 @@ fn condition_references(condition: &Condition, refs: &mut BTreeSet<AssetId>) -> 
             }
             Condition::Named(id) => Some(AssetId::Predicate(*id)),
             Condition::Script(name) => Some(AssetId::Script(name.module.clone())),
-            Condition::SkillExperience { .. } => Some(AssetId::Rules),
+            Condition::Stat { .. }
+            | Condition::Skill { .. }
+            | Condition::Level { .. }
+            | Condition::Class(_)
+            | Condition::CanLearn { .. } => Some(AssetId::Rules),
             _ => None,
         });
         Ok(())
@@ -375,10 +379,16 @@ fn action_references(action: &Action, refs: &mut BTreeSet<AssetId>) -> Result<()
             Action::Set { variable, .. } | Action::Add { variable, .. } => {
                 Some(AssetId::Variable(*variable))
             }
-            Action::AwardExperience { .. } | Action::SkillCheck { .. } => Some(AssetId::Rules),
+            Action::Check { .. }
+            | Action::Teach { .. }
+            | Action::ChangeResource { .. }
+            | Action::ApplyEffect { .. }
+            | Action::RemoveEffect { .. } => Some(AssetId::Rules),
             Action::Move { to, .. } => Some(AssetId::Area(*to)),
             Action::StartDialogue { dialogue, .. } => Some(AssetId::DialogueContract(*dialogue)),
-            Action::Relationship { .. } => None,
+            Action::Relationship { .. } | Action::AwardExperience { .. } | Action::Pay { .. } => {
+                None
+            }
         });
         Ok(())
     })?;

@@ -111,8 +111,28 @@ pub enum Condition {
         of: Option<Participant>,
         test: Test,
     },
-    SkillExperience {
+    /// A stat of the player's after equipment and effects, or how much of a resource is
+    /// left.
+    Stat {
+        stat: Key,
+        minimum: i32,
+    },
+    /// The player's rank in a skill.
+    Skill {
         skill: Key,
+        minimum: u8,
+    },
+    Level {
+        minimum: u32,
+    },
+    Class(Key),
+    /// A trainer could teach the player the next rank: the class allows it and the
+    /// learning points are there.
+    CanLearn {
+        skill: Key,
+    },
+    /// The party's shared purse holds at least this much.
+    Gold {
         minimum: u64,
     },
 }
@@ -145,9 +165,36 @@ pub enum Action {
         definition: ItemDefinitionId,
         quantity: u32,
     },
+    /// Experience for the whole party; members gain the levels it earns.
     AwardExperience {
-        skill: Key,
         amount: u64,
+    },
+    /// A trainer teaches the player the next rank of a skill for learning points.
+    Teach {
+        skill: Key,
+    },
+    /// Gold leaves the party's shared purse.
+    Pay {
+        amount: u64,
+    },
+    /// Adds to a resource, or takes from it with a negative amount: healing, a trap.
+    ChangeResource {
+        #[serde(default)]
+        of: Participant,
+        resource: Key,
+        amount: i32,
+    },
+    ApplyEffect {
+        #[serde(default)]
+        of: Participant,
+        effect: Key,
+        #[serde(default)]
+        duration_ms: Option<u64>,
+    },
+    RemoveEffect {
+        #[serde(default)]
+        of: Participant,
+        effect: Key,
     },
     /// Asks the engine to walk an actor into an area. `Arrived` or `MoveFailed` follows.
     Move {
@@ -176,9 +223,10 @@ pub enum Action {
         of: Option<Participant>,
         amount: i64,
     },
-    /// A failed roll is an accepted outcome, with its own effects. Invalid effects
-    /// reject the entire command, restoring random state along with domain state.
-    SkillCheck {
+    /// A skill check by the rules' formula. Failing is an accepted outcome with its own
+    /// effects. Invalid effects reject the entire command, restoring the random state along
+    /// with everything else.
+    Check {
         skill: Key,
         difficulty: u32,
         success: Vec<Action>,
@@ -276,6 +324,12 @@ impl GameContent {
         self.validate_world()?;
         self.items.validate()?;
         self.game.rules.validate()?;
+        for name in [&self.game.rules.derive, &self.game.rules.check] {
+            self.scripts.engine(name)?;
+        }
+        for ability in &self.game.rules.abilities {
+            self.scripts.engine(&ability.resolve)?;
+        }
         require(
             self.game.actors.len() <= 10000
                 && self.game.dialogues.len() <= 1000
@@ -393,9 +447,32 @@ impl GameContent {
                 self.items.item(*definition)?;
                 require(*quantity > 0, "zero item action")?;
             }
-            Action::AwardExperience { skill, amount } => {
-                self.game.rules.skill(skill)?;
+            Action::AwardExperience { amount } => {
                 require(*amount > 0, "zero XP reward")?;
+            }
+            Action::Teach { skill } => {
+                self.game.rules.skill(skill)?;
+            }
+            Action::Pay { amount } => require(*amount > 0, "paying nothing")?,
+            Action::ChangeResource {
+                resource, amount, ..
+            } => {
+                self.game.rules.resource(resource)?;
+                require(*amount != 0, "changing a resource by nothing")?;
+            }
+            Action::ApplyEffect {
+                effect,
+                duration_ms,
+                ..
+            } => {
+                self.game.rules.effect(effect)?;
+                require(
+                    duration_ms.is_none_or(|ms| ms > 0),
+                    "effect duration must be positive",
+                )?;
+            }
+            Action::RemoveEffect { effect, .. } => {
+                self.game.rules.effect(effect)?;
             }
             Action::Move { to, timeout_ms, .. } => {
                 self.area(*to)?;
@@ -422,7 +499,7 @@ impl GameContent {
                 matches!(self.variable_use(*variable, of)?.initial, Value::Int(_)),
                 "only whole-number variables can be added to",
             )?,
-            Action::SkillCheck {
+            Action::Check {
                 skill,
                 difficulty,
                 success,
@@ -502,8 +579,7 @@ impl GameContent {
         }
         refs.extend(self.game.world.objects.iter().map(|o| &o.name));
         refs.extend(self.game.actors.iter().map(|a| &a.name));
-        refs.extend(self.game.rules.attributes.iter().map(|a| &a.name));
-        refs.extend(self.game.rules.skills.iter().map(|s| &s.name));
+        refs.extend(self.game.rules.names());
         for quest in &self.game.quests {
             refs.push(&quest.title);
             refs.extend(quest.objectives.iter().map(|o| &o.title));

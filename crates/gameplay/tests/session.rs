@@ -1,7 +1,7 @@
 use game_types::*;
 use yarra_gameplay::dialogue;
 use yarra_gameplay::inventory::{fixtures::*, *};
-use yarra_gameplay::rules::{Effect, Modifier};
+use yarra_gameplay::rules::Use;
 use yarra_gameplay::{fixtures::*, *};
 type Result<T> = yarra_gameplay::Result<T>;
 type TestSession = GameSession<ToolContent>;
@@ -66,7 +66,7 @@ fn use_equipment_transfer_and_trade_are_coordinated() {
             item: potion,
         })
         .unwrap();
-    assert_eq!(snapshot(&session).actor(HERO).unwrap().health, 75);
+    assert_eq!(session.stat(HERO, &key("health")).unwrap(), 75);
     assert_eq!(
         snapshot(&session)
             .inventory(HERO_BAG)
@@ -82,7 +82,7 @@ fn use_equipment_transfer_and_trade_are_coordinated() {
             item: sword,
         })
         .unwrap();
-    assert_eq!(session.derived(HERO).unwrap()[&key("strength")], 12);
+    assert_eq!(session.stat(HERO, &key("strength")).unwrap(), 12);
     session
         .apply(Command::Transfer {
             source: HERO_BAG,
@@ -92,7 +92,7 @@ fn use_equipment_transfer_and_trade_are_coordinated() {
         })
         .unwrap();
     assert!(snapshot(&session).actor(HERO).unwrap().equipment.is_empty());
-    assert_eq!(session.derived(HERO).unwrap()[&key("strength")], 10);
+    assert_eq!(session.stat(HERO, &key("strength")).unwrap(), 10);
     assert_eq!(
         snapshot(&session)
             .inventory(COMPANION_BAG)
@@ -168,7 +168,7 @@ fn dialogue_rewards_once_and_preview_does_not_roll() {
         events
             .events
             .iter()
-            .any(|e| matches!(e, GameEvent::SkillChecked { passed: true, .. }))
+            .any(|e| matches!(e, GameEvent::Checked { passed: true, .. }))
     );
     assert_eq!(
         session
@@ -177,10 +177,7 @@ fn dialogue_rewards_once_and_preview_does_not_roll() {
             .unwrap(),
         Value::Bool(true)
     );
-    assert_eq!(
-        snapshot(&session).actor(HERO).unwrap().skills[&key("persuasion")],
-        10
-    );
+    assert_eq!(session.state().party.experience, 10);
     assert!(
         !snapshot(&session)
             .carried(HERO)
@@ -207,7 +204,7 @@ fn dialogue_rewards_once_and_preview_does_not_roll() {
 fn failure_after_roll_restores_all_domains_and_rng() {
     let source = session();
     let mut content = content();
-    if let Action::SkillCheck { success, .. } = persuade(&mut content) {
+    if let Action::Check { success, .. } = persuade(&mut content) {
         success.insert(
             0,
             Action::GrantItem {
@@ -226,7 +223,7 @@ fn failure_after_roll_restores_all_domains_and_rng() {
 fn failed_skill_roll_is_a_committed_outcome() {
     let source = session();
     let mut content = content();
-    if let Action::SkillCheck { difficulty, .. } = persuade(&mut content) {
+    if let Action::Check { difficulty, .. } = persuade(&mut content) {
         *difficulty = 100;
     }
     let mut session = new(content, snapshot(&source)).unwrap();
@@ -237,7 +234,7 @@ fn failed_skill_roll_is_a_committed_outcome() {
         events
             .events
             .iter()
-            .any(|e| matches!(e, GameEvent::SkillChecked { passed: false, .. }))
+            .any(|e| matches!(e, GameEvent::Checked { passed: false, .. }))
     );
     assert_ne!(snapshot(&session).random, random);
     assert_eq!(
@@ -264,12 +261,9 @@ fn timed_effects_derive_from_explicit_time() {
         .unwrap()
         .mechanics
         .on_use
-        .push(Effect::Buff {
-            modifier: Modifier {
-                attribute: key("strength"),
-                amount: 3,
-            },
-            duration_ms: 1000,
+        .push(Use::Apply {
+            effect: key("fortified"),
+            duration_ms: Some(1000),
         });
     let mut session = new(content, snapshot(&source)).unwrap();
     let potion = item(&session, HERO_BAG, POTION);
@@ -279,11 +273,11 @@ fn timed_effects_derive_from_explicit_time() {
             item: potion,
         })
         .unwrap();
-    assert_eq!(session.derived(HERO).unwrap()[&key("strength")], 13);
+    assert_eq!(session.stat(HERO, &key("strength")).unwrap(), 13);
     session.apply(Command::AdvanceTime { millis: 999 }).unwrap();
-    assert_eq!(session.derived(HERO).unwrap()[&key("strength")], 13);
+    assert_eq!(session.stat(HERO, &key("strength")).unwrap(), 13);
     session.apply(Command::AdvanceTime { millis: 1 }).unwrap();
-    assert_eq!(session.derived(HERO).unwrap()[&key("strength")], 10);
+    assert_eq!(session.stat(HERO, &key("strength")).unwrap(), 10);
     assert!(snapshot(&session).actor(HERO).unwrap().effects.is_empty());
 }
 #[test]
@@ -402,16 +396,12 @@ fn command_cost_does_not_grow_with_the_population() {
     for n in 0..20_000u32 {
         let mut id = [7u8; 16];
         id[..4].copy_from_slice(&n.to_le_bytes());
-        let mut actor = actors::Actor::from_template(
-            &content.game.actors[0],
-            &content.game.rules,
-            actors::ActorRole::Npc,
-        )
-        .unwrap();
-        actor.id = ActorId(id);
-        let mut bag = Inventory::new(OwnerRef::actor(actor.id), "carried").unwrap();
+        let id = ActorId(id);
+        state
+            .spawn(&content, content.game.actors[0].id, id)
+            .unwrap();
+        let mut bag = Inventory::new(OwnerRef::actor(id), "carried").unwrap();
         bag.grant(&content.items, POTION, 5).unwrap();
-        state.add_actor(actor);
         state.add_inventory(bag);
     }
     let mut session = new(content, state).unwrap();
@@ -631,7 +621,7 @@ mod party {
             listen(&mut session),
             said(&[(MERCHANT, "greeting"), (STRANGER, "overheard")])
         );
-        assert!(session.state().party.is_empty());
+        assert_eq!(session.state().party.members, [HERO].into());
         // A named character cannot be supplied under someone else's role.
         let mut other = self::session(&[], true);
         assert!(

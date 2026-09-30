@@ -3,9 +3,5 @@
     interaction: None,
     id: "traveller",
     name: Message((resource: "core/text", key: "actor-traveller")),
-    base: {
-        "max-health": 100,
-        "strength": 10,
-        "wisdom": 10,
-    },
+    class: "adventurer",
 )]

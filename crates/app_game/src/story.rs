@@ -478,7 +478,7 @@ impl Story {
     /// Whether the rules follow where this actor is: the party, and anyone asked to walk.
     pub fn tracked(&self, actor: ActorId) -> bool {
         let state = self.session.state();
-        state.party.contains(&actor) || state.world.movements.contains_key(&actor)
+        state.party.members.contains(&actor) || state.world.movements.contains_key(&actor)
     }
     /// The content's identity for a named area, when the content refers to that name.
     pub fn area(&self, name: &str) -> Option<AreaId> {

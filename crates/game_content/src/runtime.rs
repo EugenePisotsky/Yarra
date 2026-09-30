@@ -48,6 +48,9 @@ impl ContentSource for ContentRepository {
 }
 impl ContentRepository {
     fn read_core(&mut self) -> Result<GameContent> {
+        let Asset::Rules(rules) = self.read(&AssetId::Rules)? else {
+            return Err(ContentError::MissingAsset(AssetId::Rules));
+        };
         let mut content = GameContent {
             text: vec![],
             manifest: self.manifest().content.clone(),
@@ -65,19 +68,13 @@ impl ContentRepository {
                 quests: vec![],
                 profiles: vec![],
                 predicates: vec![],
-                rules: gameplay::rules::Rules {
-                    attributes: vec![],
-                    skills: vec![],
-                    slots: Default::default(),
-                    health_attribute: game_types::Key::new("unset")?,
-                },
+                rules,
                 actors: vec![],
                 dialogues: vec![],
                 variables: vec![],
                 scripts: vec![],
             },
         };
-        let mut rules = false;
         for kind in CORE_KINDS {
             for asset in self.read_kind(kind)? {
                 match asset {
@@ -94,17 +91,12 @@ impl ContentRepository {
                     Asset::Category(v) => content.items.categories.push(v),
                     Asset::Item(v) => content.items.items.push(v),
                     Asset::Actor(v) => content.game.actors.push(v),
-                    Asset::Rules(v) => {
-                        content.game.rules = v;
-                        rules = true;
-                    }
                     Asset::Script(v) => content.game.scripts.push(v),
                     Asset::Variable(v) => content.game.variables.push(v),
-                    Asset::Dialogue(_) | Asset::Text(_) => {}
+                    Asset::Rules(_) | Asset::Dialogue(_) | Asset::Text(_) => {}
                 }
             }
         }
-        require(rules, "publication has no rules")?;
         content.scripts =
             scripting::LuauScripts::install(&content.game.scripts).map_err(Invalid)?;
         // Cross-references are checked here once; graphs are checked as they are loaded.

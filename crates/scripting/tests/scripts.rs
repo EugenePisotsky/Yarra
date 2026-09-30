@@ -19,9 +19,9 @@ function gate.hand_over(game: Game, scene: Scene)
     game.consume_item(scene.player, "old_gate_key", 1)
     -- A script sees its own changes straight away.
     assert(game.item_count(scene.player, "old_gate_key") == 0)
-    if game.roll(scene.player, "persuasion", 1) then
+    if game.check(scene.player, "persuasion", 1) then
         game.give_item(scene.player, "iron_sword", 1)
-        game.award_experience(scene.player, "persuasion", 10)
+        game.award_experience(10)
         game.adjust_relationship(scene.speaker, scene.player, 25)
         game.set("old_gate/rewarded", true)
         game.add("old_gate/visits", 2)
@@ -68,10 +68,11 @@ fn content(source: &str, action: &str) -> GameContent {
             scope: gameplay::VariableScope::Actor,
         });
     }
-    content.game.scripts = vec![ScriptModule {
+    // Beside the rules module the fixture already carries.
+    content.game.scripts.push(ScriptModule {
         name: key("gate"),
         source: source.into(),
-    }];
+    });
     content.scripts = LuauScripts::install(&content.game.scripts).unwrap();
     let choice = &mut content.game.dialogues[0].nodes[1];
     choice.condition = Some(Condition::Script(script("gate.has_key")));
@@ -132,7 +133,7 @@ fn a_scripted_choice_reads_state_and_changes_it_through_the_same_rules() {
         outcome
             .events
             .iter()
-            .any(|e| matches!(e, GameEvent::SkillChecked { passed: true, .. }))
+            .any(|e| matches!(e, GameEvent::Checked { passed: true, .. }))
     );
     let state = session.state();
     assert_eq!(keys(&session), 0);
@@ -151,7 +152,7 @@ fn a_scripted_choice_reads_state_and_changes_it_through_the_same_rules() {
     assert_eq!(remembered("old_gate/thanked", MERCHANT), Value::Bool(true));
     assert_eq!(remembered("old_gate/favours", MERCHANT), Value::Int(3));
     assert_eq!(remembered("old_gate/thanked", HERO), Value::Bool(false));
-    assert_eq!(state.actor(HERO).unwrap().skills[&key("persuasion")], 10);
+    assert_eq!(state.party.experience, 10);
     let attitude = state.relationship(gameplay::actors::RelationshipKey {
         from: MERCHANT,
         to: HERO,
@@ -416,4 +417,205 @@ return gate
     let error = choose(&mut session).unwrap_err().to_string();
     assert!(error.contains("script gate.hand_over"), "{error}");
     assert_eq!(session.state(), &before);
+}
+
+#[test]
+fn the_luau_rules_compute_what_the_fixture_formulas_do() {
+    use gameplay::ScriptEngine;
+    use gameplay::rules::Sheet;
+    // The fixture state was built with the Rust formulas. Opening it over the Luau engine
+    // works every character's stats out again and compares.
+    let content = content(GATE, "gate.hand_over");
+    let mut state = state();
+    // A character that is not the plain level-one template.
+    let hero = state.actors.get_mut(&HERO).unwrap();
+    hero.level = 3;
+    hero.base.insert(key("vitality"), 17);
+    hero.skills.insert(key("swordsmanship"), 2);
+    let luau = LuauScripts::new(&content.game.scripts).unwrap();
+    let rules = &content.game.rules;
+    let hero = state.actors[&HERO].clone();
+    let sheet = Sheet {
+        level: hero.level,
+        class: &hero.class,
+        stats: &hero.base,
+        skills: &hero.skills,
+    };
+    let derived = luau.derive(&rules.derive, &sheet).unwrap();
+    assert_eq!(
+        derived,
+        FixtureFormulas.derive(&rules.derive, &sheet).unwrap()
+    );
+    assert_eq!(derived["max-health"], 155.0);
+    assert_eq!(derived["attack"], 14.0);
+    for (wisdom, rank, difficulty) in [(10, 0, 10), (7, 0, 10), (13, 2, 16), (30, 3, 40)] {
+        let mut stats = hero.base.clone();
+        stats.insert(key("wisdom"), wisdom);
+        let mut skills = hero.skills.clone();
+        skills.insert(key("persuasion"), rank);
+        let sheet = Sheet {
+            stats: &stats,
+            skills: &skills,
+            ..sheet
+        };
+        for face in 1..=20 {
+            let check = |engine: &dyn ScriptEngine| {
+                let mut asked = Vec::new();
+                let passed = engine
+                    .check(
+                        &rules.check,
+                        &sheet,
+                        &key("persuasion"),
+                        difficulty,
+                        &mut |sides| {
+                            asked.push(sides);
+                            Ok(face)
+                        },
+                    )
+                    .unwrap();
+                (passed, asked)
+            };
+            assert_eq!(
+                check(&luau),
+                check(&FixtureFormulas),
+                "{wisdom} {rank} {face}"
+            );
+        }
+    }
+    GameSession::new(ToolContent::new(content).unwrap(), self::state()).unwrap();
+}
+
+#[test]
+fn a_script_works_with_stats_resources_effects_points_and_the_purse() {
+    let source = r#"
+local gate = {}
+function gate.has_key(game: Game, scene: Scene): boolean
+    return game.class(scene.player) == "adventurer"
+        and game.level(scene.player) == 1
+        and game.stat(scene.player, "max-health") == 100
+        and game.skill(scene.player, "persuasion") == 0
+        and game.gold() == 100
+        and not game.has_effect(scene.player, "fortified")
+end
+function gate.hand_over(game: Game, scene: Scene)
+    local hero = scene.player
+    game.award_experience(100)
+    assert(game.level(hero) == 2)
+    game.teach(hero, "swordsmanship")
+    assert(game.stat(hero, "attack") == 12)
+    game.pay(40)
+    assert(game.gold() == 60)
+    game.apply_effect(hero, "fortified", 5000)
+    assert(game.has_effect(hero, "fortified") and game.stat(hero, "strength") == 13)
+    game.remove_effect(hero, "fortified")
+    assert(game.stat(hero, "strength") == 10)
+    game.apply_effect(scene.speaker, "poisoned")
+    game.change_resource(hero, "health", -20)
+    game.change_resource(hero, "health", 5)
+    assert(game.stat(hero, "health") == 35)
+    local face = game.random(6)
+    assert(face >= 1 and face <= 6)
+    game.set("old_gate/visits", face)
+end
+function gate.broke(game: Game, scene: Scene)
+    game.award_experience(100)
+    game.pay(101)
+end
+return gate
+"#;
+    let mut session = at_choice(content(source, "gate.hand_over"));
+    choose(&mut session).unwrap();
+    let state = session.state();
+    let hero = state.actor(HERO).unwrap();
+    assert_eq!((hero.level, hero.skill(&key("swordsmanship"))), (2, 1));
+    assert_eq!(
+        (hero.learning_points, hero.resources[&key("health")]),
+        (2, 35)
+    );
+    assert!(hero.effects.is_empty());
+    assert_eq!(state.gold().unwrap(), 60);
+    // The merchant was poisoned without a time limit, so passing time has to visit him.
+    assert_eq!(state.timed, [MERCHANT].into());
+    assert!(matches!(
+        state.variable(session.content(), VariableId::named("old_gate/visits")),
+        Ok(Value::Int(1..=6))
+    ));
+
+    // A rejection raised by a rule reaches the caller as the script's error, and the
+    // script's earlier work is undone.
+    let mut session = at_choice(content(source, "gate.broke"));
+    let before = session.state().clone();
+    let error = choose(&mut session).unwrap_err().to_string();
+    assert!(error.contains("101 gold needed, 100 available"), "{error}");
+    assert_eq!(session.state(), &before);
+}
+
+#[test]
+fn formulas_that_do_not_answer_properly_are_errors() {
+    let broken = |rules: &str| {
+        let mut content = gameplay::fixtures::content();
+        content.game.scripts[0].source = rules.into();
+        content.scripts = LuauScripts::install(&content.game.scripts).unwrap();
+        let mut state = gameplay::SessionState::empty(1);
+        state
+            .spawn(&content, content.game.actors[0].id, HERO)
+            .map(|_| ())
+            .unwrap_err()
+            .to_string()
+    };
+    let with_derive = |body: &str| {
+        format!(
+            "local rules = {{}}\nfunction rules.derive(c) {body} end\n\
+             function rules.check(c, skill, difficulty, roll) return true end\nreturn rules"
+        )
+    };
+    for (body, expected) in [
+        ("return { attack = 1 }", "did not return max-health"),
+        (
+            "return { attack = 1, [\"max-health\"] = 1, luck = 3 }",
+            "not a derived stat",
+        ),
+        (
+            "return { attack = 0/0, [\"max-health\"] = 1 }",
+            "bad attack",
+        ),
+        ("return 5", "rules.derive"),
+        ("return { attack = c.stats.charm + 1 }", "rules.derive"),
+        ("while true do end", "step budget"),
+    ] {
+        let error = broken(&with_derive(body));
+        assert!(error.contains(expected), "{body}: {error}");
+    }
+    // A missing formula is found when the content is loaded, not at the first check.
+    let mut content = gameplay::fixtures::content();
+    content.game.scripts[0].source =
+        "local rules = {}\nfunction rules.derive(c) return {} end\nreturn rules".into();
+    content.scripts = LuauScripts::install(&content.game.scripts).unwrap();
+    let error = content.validate().unwrap_err().to_string();
+    assert!(error.contains("unknown script rules.check"), "{error}");
+}
+
+#[test]
+fn working_out_a_whole_population_in_luau_stays_cheap() {
+    let content = content(GATE, "gate.hand_over");
+    let mut state = gameplay::SessionState::empty(1);
+    let started = std::time::Instant::now();
+    const POPULATION: u32 = 20_000;
+    for n in 0..POPULATION {
+        let mut id = [9u8; 16];
+        id[..4].copy_from_slice(&n.to_le_bytes());
+        state
+            .spawn(&content, content.game.actors[0].id, game_types::ActorId(id))
+            .unwrap();
+    }
+    let spawned = started.elapsed();
+    let started = std::time::Instant::now();
+    state.validate(&content).unwrap();
+    let checked = started.elapsed();
+    println!(
+        "{POPULATION} characters: spawn {spawned:?}, full check {checked:?} ({:?} per derive)",
+        spawned / POPULATION
+    );
+    // An unoptimised build on a busy machine; the point is that it is not seconds.
+    assert!(spawned.as_millis() < 5000 && checked.as_millis() < 5000);
 }

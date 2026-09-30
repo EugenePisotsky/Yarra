@@ -35,7 +35,8 @@ macro_rules! journal {
             pending: Option<VecDeque<Pending>>,
             /// Signals raised directly by this scope; dropped with it if it is undone.
             pub signals: Vec<WorldSignal>,
-            party: Option<BTreeSet<ActorId>>,
+            party: Option<Party>,
+            timed: Option<BTreeSet<ActorId>>,
         }
         impl Before {
             fn new(state: &SessionState) -> Self {
@@ -46,6 +47,7 @@ macro_rules! journal {
                     pending: None,
                     signals: Vec::new(),
                     party: None,
+                    timed: None,
                 }
             }
             fn restore(self, state: &mut SessionState) {
@@ -64,6 +66,9 @@ macro_rules! journal {
                 if let Some(party) = self.party {
                     state.party = party;
                 }
+                if let Some(timed) = self.timed {
+                    state.timed = timed;
+                }
                 state.time = self.scalars.time;
                 state.random = self.scalars.random;
                 state.narrative_random = self.scalars.narrative_random;
@@ -80,6 +85,9 @@ macro_rules! journal {
                 outer.signals.extend(self.signals);
                 if outer.party.is_none() {
                     outer.party = self.party;
+                }
+                if outer.timed.is_none() {
+                    outer.timed = self.timed;
                 }
             }
         }
@@ -255,15 +263,18 @@ impl<'a> Tx<'a> {
         self.touch_variable(&key);
         self.state.variables.insert(key, value);
     }
-    pub fn set_party(&mut self, actor: ActorId, member: bool) {
+    pub fn party_mut(&mut self) -> &mut Party {
         if self.before.party.is_none() {
             self.before.party = Some(self.state.party.clone());
         }
-        if member {
-            self.state.party.insert(actor);
-        } else {
-            self.state.party.remove(&actor);
+        &mut self.state.party
+    }
+    /// Characters with an effect that will tick or end.
+    pub fn timed_mut(&mut self) -> &mut BTreeSet<ActorId> {
+        if self.before.timed.is_none() {
+            self.before.timed = Some(self.state.timed.clone());
         }
+        &mut self.state.timed
     }
     /// Claims are never withdrawn, so undoing one only ever removes it.
     pub fn claim(&mut self, key: ClaimKey) {

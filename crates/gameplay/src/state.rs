@@ -3,7 +3,7 @@
 use crate::actors::{Actor, Relationship, RelationshipKey};
 use crate::dialogue::{ClaimKey, Conversation, History, HistoryKey, Interaction, InteractionKey};
 use crate::inventory::{Inventory, Wallet};
-use crate::rules::{Attributes, RandomState};
+use crate::rules::{Modifier, RandomState, Stats};
 use crate::{
     ConversationKey, GameContent, LocationState, ObjectKind, ObjectState, Result, TriggerState,
     Value, quests,
@@ -122,11 +122,26 @@ pub struct SessionState {
     /// Variables that were set; the rest still have their initial value.
     #[serde(with = "pairs")]
     pub variables: BTreeMap<VariableKey, Value>,
-    /// Characters travelling together. They take part in every conversation any of them has.
-    pub party: BTreeSet<ActorId>,
+    pub party: Party,
+    /// Characters with an effect that will tick or end: the only ones passing time looks at.
+    pub timed: BTreeSet<ActorId>,
     pub world: crate::WorldState,
 }
 pub const CARRIED: &str = "carried";
+
+/// The characters travelling together. They take part in every conversation any of them
+/// has, and share their experience and their gold.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Party {
+    pub members: BTreeSet<ActorId>,
+    /// The member the player steers.
+    pub controlled: Option<ActorId>,
+    /// Every member is at least the level this has earned.
+    pub experience: u64,
+    /// The shared purse.
+    pub wallet: Option<WalletId>,
+}
 
 impl SessionState {
     pub fn empty(seed: u64) -> Self {
@@ -148,12 +163,32 @@ impl SessionState {
             claims: BTreeSet::new(),
             conversations: BTreeMap::new(),
             variables: BTreeMap::new(),
-            party: BTreeSet::new(),
+            party: Party::default(),
+            timed: BTreeSet::new(),
             world: Default::default(),
         }
     }
     pub fn add_actor(&mut self, actor: Actor) {
         self.actors.insert(actor.id, actor);
+    }
+    /// Adds a character as its template describes it, with its stats worked out and its
+    /// resources full.
+    pub fn spawn(
+        &mut self,
+        content: &GameContent,
+        template: ActorTemplateId,
+        id: ActorId,
+    ) -> Result<&mut Actor> {
+        let rules = &content.game.rules;
+        let mut actor = Actor::from_template(content.template(template)?, rules)?;
+        actor.id = id;
+        actor.stats = self.sheet(content, &actor)?;
+        for (resource, maximum) in rules.resources() {
+            let cap = actor.stats[maximum].max(0);
+            actor.resources.insert(resource.clone(), cap);
+        }
+        require(!self.actors.contains_key(&id), "actor spawned twice")?;
+        Ok(self.actors.entry(id).or_insert(actor))
     }
     pub fn add_inventory(&mut self, inventory: Inventory) {
         if inventory.owner.kind == "actor" && inventory.role == CARRIED {
@@ -262,28 +297,62 @@ impl SessionState {
             .cloned()
             .unwrap_or_else(|| TriggerState::initial(id))
     }
-    pub fn derived(&self, content: &GameContent, actor: ActorId) -> Result<Attributes> {
+    /// A stat after equipment and effects, or how much of a resource the actor has now.
+    pub fn stat(&self, content: &GameContent, actor: ActorId, stat: &Key) -> Result<i32> {
+        content.game.rules.stat(stat)?;
         let actor = self.actor(actor)?;
-        let carried = self.carried(actor.id)?;
+        actor
+            .resources
+            .get(stat)
+            .or_else(|| actor.stats.get(stat))
+            .copied()
+            .ok_or_else(|| Invalid(format!("{} has no {}", actor.id, stat.as_str())).into())
+    }
+    /// What is in the party's shared purse.
+    pub fn gold(&self) -> Result<u64> {
+        Ok(match self.party.wallet {
+            Some(wallet) => self.wallet(wallet)?.balance.units(),
+            None => 0,
+        })
+    }
+    /// What a character's equipment and effects do to its stats.
+    fn modifiers<'a>(&self, content: &'a GameContent, actor: &Actor) -> Result<Vec<&'a Modifier>> {
         let mut modifiers = Vec::new();
-        let mut ids = BTreeSet::new();
-        for (slot, item) in &actor.equipment {
-            require(ids.insert(*item), "item equipped more than once")?;
-            let definition = content.items.item(carried.entry(*item)?.definition)?;
-            require(
-                definition.mechanics.slot.as_ref() == Some(slot),
-                "incompatible equipment slot",
-            )?;
-            modifiers.extend(&definition.mechanics.modifiers);
+        if !actor.equipment.is_empty() {
+            let carried = self.carried(actor.id)?;
+            let mut ids = BTreeSet::new();
+            for (slot, item) in &actor.equipment {
+                require(ids.insert(*item), "item equipped more than once")?;
+                let definition = content.items.item(carried.entry(*item)?.definition)?;
+                require(
+                    definition.mechanics.slot.as_ref() == Some(slot),
+                    "incompatible equipment slot",
+                )?;
+                modifiers.extend(&definition.mechanics.modifiers);
+            }
         }
-        modifiers.extend(
-            actor
-                .effects
-                .iter()
-                .filter(|e| e.expires_at > self.time)
-                .map(|e| &e.modifier),
-        );
-        Ok(content.game.rules.derive(&actor.base, modifiers)?)
+        for effect in &actor.effects {
+            modifiers.extend(&content.game.rules.effect(&effect.effect)?.modifiers);
+        }
+        Ok(modifiers)
+    }
+    /// Every primary and derived stat of a character as it is built now: base values,
+    /// then equipment and effects, with the derived ones from the rules script.
+    pub fn sheet(&self, content: &GameContent, actor: &Actor) -> Result<Stats> {
+        let rules = &content.game.rules;
+        let modifiers = self.modifiers(content, actor)?;
+        let mut stats = rules.effective_primaries(&actor.base, modifiers.iter().copied())?;
+        let derived = content.scripts.engine(&rules.derive)?.derive(
+            &rules.derive,
+            &crate::rules::Sheet {
+                level: actor.level,
+                class: &actor.class,
+                stats: &stats,
+                skills: &actor.skills,
+            },
+        )?;
+        rules.add_derived(&mut stats, &derived, modifiers.iter().copied())?;
+        Ok(stats)
     }
     fn valid_owner(&self, owner: &OwnerRef) -> bool {
         if owner.kind == "actor" {
@@ -292,15 +361,35 @@ impl SessionState {
             self.owners.contains(owner)
         }
     }
-    pub(crate) fn check_actor(&self, content: &GameContent, actor: &Actor) -> Result<()> {
+    /// `deep` works the stats out again and compares; without it only their shape and
+    /// what they rest on is checked.
+    pub(crate) fn check_actor(
+        &self,
+        content: &GameContent,
+        actor: &Actor,
+        deep: bool,
+    ) -> Result<()> {
         content.template(actor.template)?;
         actor.validate(&content.game.rules)?;
-        let stats = self.derived(content, actor.id)?;
+        if deep {
+            require(
+                actor.stats == self.sheet(content, actor)?,
+                "stats do not match what the character is built of",
+            )?;
+        } else {
+            self.modifiers(content, actor)?;
+        }
         require(
-            actor.health <= stats[&content.game.rules.health_attribute] as u32,
-            "health exceeds derived maximum",
-        )
-        .map_err(Into::into)
+            self.timed.contains(&actor.id) == actor.next_event().is_some(),
+            "list of characters with pending effects is stale",
+        )?;
+        if self.party.members.contains(&actor.id) {
+            require(
+                actor.level >= content.game.rules.level_for(self.party.experience),
+                "party member below the level the party has earned",
+            )?;
+        }
+        Ok(())
     }
     pub(crate) fn check_inventory(&self, content: &GameContent, inv: &Inventory) -> Result<()> {
         inv.validate(&content.items)?;
@@ -475,8 +564,12 @@ impl SessionState {
         }
         for (id, actor) in &self.actors {
             require(*id == actor.id, "actor identity mismatch")?;
-            self.check_actor(content, actor)?;
+            self.check_actor(content, actor, true)?;
         }
+        require(
+            self.timed.iter().all(|id| self.actors.contains_key(id)),
+            "unknown character with pending effects",
+        )?;
         for wallet in self.wallets.values() {
             self.check_wallet(wallet)?;
         }
@@ -501,8 +594,15 @@ impl SessionState {
         for key in self.variables.keys() {
             self.check_variable(content, *key)?;
         }
+        let party = &self.party;
         require(
-            self.party.len() <= 16 && self.party.iter().all(|id| self.actors.contains_key(id)),
+            party.members.len() <= content.game.rules.party_size
+                && party.members.iter().all(|id| self.actors.contains_key(id))
+                && party
+                    .controlled
+                    .is_none_or(|id| party.members.contains(&id))
+                && party.experience <= i64::MAX as u64
+                && party.wallet.is_none_or(|id| self.wallets.contains_key(&id)),
             "invalid party",
         )?;
         self.world.validate(content, self)

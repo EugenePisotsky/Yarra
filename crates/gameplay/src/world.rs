@@ -51,6 +51,9 @@ pub enum WorldSignal {
     },
     /// A requested movement was given up or ran out of time.
     MoveFailed(ActorId),
+    Died(ActorId),
+    /// The character gained at least one level.
+    LeveledUp(ActorId),
     /// The actor carries more of the item than before.
     ItemAcquired {
         actor: ActorId,
@@ -67,7 +70,7 @@ impl WorldSignal {
             Self::Entered { area, .. } | Self::Exited { area, .. } | Self::Arrived { area, .. } => {
                 content.area(*area)?
             }
-            Self::MoveFailed(_) => {}
+            Self::MoveFailed(_) | Self::Died(_) | Self::LeveledUp(_) => {}
             Self::ItemAcquired { definition, .. } => {
                 content.items.item(*definition)?;
             }

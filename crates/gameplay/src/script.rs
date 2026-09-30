@@ -1,6 +1,7 @@
 //! The boundary scripts work through. `gameplay` defines what a script may read and do;
 //! an engine (Luau, in the `scripting` crate) only translates calls into these methods, so
 //! scripted and built-in rules go through the same checks and the same command journal.
+use crate::rules::Sheet;
 use crate::tx::Tx;
 use crate::{Action, GameContent, GameEvent, Result, SessionState, Value, quests};
 use game_types::*;
@@ -49,6 +50,22 @@ pub trait ScriptEngine {
     /// An error is an error, never a quiet `false`.
     fn condition(&self, name: &ScriptName, scope: &ReadScope) -> Result<bool>;
     fn action(&self, name: &ScriptName, scope: &mut ActScope) -> Result<()>;
+    /// The rules' formula for derived stats: a pure function of the character, returning
+    /// a value for every derived stat by name.
+    fn derive(
+        &self,
+        name: &ScriptName,
+        character: &Sheet,
+    ) -> Result<std::collections::BTreeMap<String, f64>>;
+    /// The rules' formula for a check. `roll(sides)` draws from the saved random stream.
+    fn check(
+        &self,
+        name: &ScriptName,
+        character: &Sheet,
+        skill: &Key,
+        difficulty: u32,
+        roll: &mut dyn FnMut(u32) -> Result<u32>,
+    ) -> Result<bool>;
 }
 /// The engine running a content set's scripts. It is not part of the content's value:
 /// two contents are equal when their definitions, including script sources, are equal.
@@ -128,7 +145,7 @@ impl ReadScope<'_> {
         actor == self.player
             || actor == self.speaker
             || self.others.contains(&actor)
-            || self.state.party.contains(&actor)
+            || self.state.party.members.contains(&actor)
     }
     /// `actor` names whose value, for a per-actor variable.
     pub fn variable(&self, variable: VariableId, actor: Option<ActorId>) -> Result<Value> {
@@ -140,15 +157,32 @@ impl ReadScope<'_> {
         self.state.actor(actor)?;
         Ok(self.state.areas(actor).contains(&area))
     }
-    pub fn skill_experience(&self, actor: ActorId, skill: &Key) -> Result<u64> {
+    /// A stat after equipment and effects, or how much of a resource the actor has now.
+    pub fn stat(&self, actor: ActorId, stat: &Key) -> Result<i32> {
+        self.state.stat(self.content, actor, stat)
+    }
+    pub fn skill(&self, actor: ActorId, skill: &Key) -> Result<u8> {
         self.content.game.rules.skill(skill)?;
+        Ok(self.state.actor(actor)?.skill(skill))
+    }
+    pub fn level(&self, actor: ActorId) -> Result<u32> {
+        Ok(self.state.actor(actor)?.level)
+    }
+    pub fn class(&self, actor: ActorId) -> Result<&Key> {
+        Ok(&self.state.actor(actor)?.class)
+    }
+    /// What is in the party's shared purse.
+    pub fn gold(&self) -> Result<u64> {
+        self.state.gold()
+    }
+    pub fn has_effect(&self, actor: ActorId, effect: &Key) -> Result<bool> {
+        self.content.game.rules.effect(effect)?;
         Ok(self
             .state
             .actor(actor)?
-            .skills
-            .get(skill)
-            .copied()
-            .unwrap_or(0))
+            .effects
+            .iter()
+            .any(|e| &e.effect == effect))
     }
     /// How often a line was acknowledged or a choice picked in a conversation between the pair.
     pub fn history_count(&self, dialogue: DialogueId, node: &Key) -> Result<u64> {
@@ -200,21 +234,14 @@ impl ActScope<'_, '_> {
             self.events,
         )
     }
-    /// A d20 check against the actor's skill, from the saved random stream.
-    pub fn roll(&mut self, actor: ActorId, skill: &Key, difficulty: u32) -> Result<bool> {
-        self.content.game.rules.skill(skill)?;
-        let bonus = self
-            .tx
-            .actor(actor)?
-            .skills
-            .get(skill)
-            .copied()
-            .unwrap_or(0)
-            / 100;
-        let roll = self.tx.random_mut().roll_d20();
-        let passed = bonus.saturating_add(u64::from(roll)) >= u64::from(difficulty);
-        self.events.push(GameEvent::SkillChecked { roll, passed });
-        Ok(passed)
+    /// A skill check by the rules' own formula. Whatever it rolls comes from the saved
+    /// random stream.
+    pub fn check(&mut self, actor: ActorId, skill: &Key, difficulty: u32) -> Result<bool> {
+        crate::character::check(self.content, self.tx, actor, skill, difficulty, self.events)
+    }
+    /// One of 1..=sides from the saved random stream.
+    pub fn random(&mut self, sides: u32) -> Result<u32> {
+        Ok(self.tx.random_mut().die(sides)?)
     }
     /// Takes a once-only claim. `false` means it was already taken and nothing should follow.
     pub fn claim(&mut self, claim: ClaimId) -> Result<bool> {

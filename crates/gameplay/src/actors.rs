@@ -1,23 +1,27 @@
-//! Players, companions and NPCs share the same durable actor model.
-use crate::rules::{ActiveEffect, Attributes, Rules, SkillExperience};
+//! Players, companions and NPCs share the same durable character model.
+use crate::rules::{ActiveEffect, Rules, SkillRanks, Stats};
 use game_types::*;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
+fn first_level() -> u32 {
+    1
+}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ActorTemplate {
     pub interaction: Option<InteractionProfileId>,
     pub id: ActorTemplateId,
     pub name: TextRef,
-    #[serde(deserialize_with = "game_types::deserialize_key_map")]
-    pub base: Attributes,
-}
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ActorRole {
-    Player,
-    Companion,
-    Npc,
+    pub class: Key,
+    #[serde(default = "first_level")]
+    pub level: u32,
+    /// Primary stats that differ from the class's starting values.
+    #[serde(default, deserialize_with = "game_types::deserialize_key_map")]
+    pub base: Stats,
+    /// Skill ranks the character starts with.
+    #[serde(default, deserialize_with = "game_types::deserialize_key_map")]
+    pub skills: SkillRanks,
 }
 /// Logical world coordinates in millimetres; never an ECS transform/handle.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -31,73 +35,197 @@ pub struct Actor {
     pub id: ActorId,
     pub template: ActorTemplateId,
     pub name_override: Option<TextRef>,
-    pub role: ActorRole,
     pub position: Position,
+    pub class: Key,
+    pub level: u32,
+    /// Primary stats before equipment and effects.
     #[serde(deserialize_with = "game_types::deserialize_key_map")]
-    pub base: Attributes,
-    pub health: u32,
+    pub base: Stats,
+    /// Points not spent yet.
+    pub attribute_points: u32,
+    pub learning_points: u32,
+    /// Skill ranks above zero.
     #[serde(deserialize_with = "game_types::deserialize_key_map")]
-    pub skills: SkillExperience,
+    pub skills: SkillRanks,
+    pub abilities: BTreeSet<Key>,
     #[serde(deserialize_with = "game_types::deserialize_key_map")]
     pub equipment: BTreeMap<Key, ItemId>,
     pub effects: Vec<ActiveEffect>,
+    /// How much of each resource the character has now.
+    #[serde(deserialize_with = "game_types::deserialize_key_map")]
+    pub resources: Stats,
+    /// Every primary and derived stat after equipment and effects. Worked out again
+    /// whenever something it depends on changes, so reading a stat is a lookup.
+    #[serde(deserialize_with = "game_types::deserialize_key_map")]
+    pub stats: Stats,
 }
 impl ActorTemplate {
     pub fn validate(&self, rules: &Rules) -> Result<()> {
         self.name.validate()?;
-        rules.validate_base(&self.base)
+        rules.class(&self.class)?;
+        require(
+            (1..=rules.max_level()).contains(&self.level),
+            "template level cannot be reached",
+        )?;
+        for (stat, value) in &self.base {
+            let (minimum, maximum) = rules.primary(stat)?;
+            require(
+                (minimum..=maximum).contains(value),
+                "template stat outside its bounds",
+            )?;
+        }
+        for (skill, rank) in &self.skills {
+            require(
+                *rank > 0 && usize::from(*rank) <= rules.skill(skill)?.ranks.len(),
+                "template skill rank out of range",
+            )?;
+        }
+        Ok(())
     }
 }
 impl Actor {
-    pub fn from_template(template: &ActorTemplate, rules: &Rules, role: ActorRole) -> Result<Self> {
-        rules.validate()?;
+    /// A character as its template and class describe it, levels included. Its stats and
+    /// resources are filled in by the state, which knows the formulas.
+    pub fn from_template(template: &ActorTemplate, rules: &Rules) -> Result<Self> {
         template.validate(rules)?;
-        Ok(Self {
+        let class = rules.class(&template.class)?;
+        let mut base = class.starting.clone();
+        base.extend(template.base.clone());
+        let mut actor = Self {
             id: ActorId::new(),
             template: template.id,
             name_override: None,
-            role,
             position: Position::default(),
-            base: template.base.clone(),
-            health: template.base[&rules.health_attribute] as u32,
-            skills: BTreeMap::new(),
+            class: template.class.clone(),
+            level: 0,
+            base,
+            attribute_points: 0,
+            learning_points: 0,
+            skills: template.skills.clone(),
+            abilities: BTreeSet::new(),
             equipment: BTreeMap::new(),
             effects: Vec::new(),
-        })
+            resources: Stats::new(),
+            stats: Stats::new(),
+        };
+        while actor.level < template.level {
+            actor.gain_level(rules)?;
+        }
+        Ok(actor)
     }
-    /// Cross-domain ownership and derived health bounds are checked by gameplay.
+    /// Reaches the next level and takes what the class grants for it.
+    pub fn gain_level(&mut self, rules: &Rules) -> Result<()> {
+        require(
+            self.level < rules.max_level(),
+            "already at the highest level",
+        )?;
+        self.level += 1;
+        let class = rules.class(&self.class)?;
+        for grants in rules.grants(class, self.level) {
+            self.attribute_points = self
+                .attribute_points
+                .saturating_add(grants.attribute_points);
+            self.learning_points = self.learning_points.saturating_add(grants.learning_points);
+            for (stat, bonus) in &grants.bonuses {
+                let (minimum, maximum) = rules.primary(stat)?;
+                let value = self.base.entry(stat.clone()).or_insert(minimum);
+                *value = value.saturating_add(*bonus).clamp(minimum, maximum);
+            }
+            self.abilities.extend(grants.abilities.iter().cloned());
+        }
+        Ok(())
+    }
+    pub fn alive(&self, rules: &Rules) -> bool {
+        self.resources
+            .get(&rules.life)
+            .is_some_and(|life| *life > 0)
+    }
+    pub fn skill(&self, skill: &Key) -> u8 {
+        self.skills.get(skill).copied().unwrap_or(0)
+    }
+    /// Whether everything the stats are worked out from is the same as in `other`.
+    pub fn same_build(&self, other: &Self) -> bool {
+        self.class == other.class
+            && self.level == other.level
+            && self.base == other.base
+            && self.skills == other.skills
+            && self.equipment == other.equipment
+            && self.effects.len() == other.effects.len()
+            && self
+                .effects
+                .iter()
+                .zip(&other.effects)
+                .all(|(a, b)| a.effect == b.effect)
+    }
+    /// When something next happens to this character by itself: an effect ends or ticks.
+    pub fn next_event(&self) -> Option<GameTime> {
+        self.effects
+            .iter()
+            .flat_map(|e| [e.expires_at, e.next_tick])
+            .flatten()
+            .min()
+    }
+    /// The record's own shape. What it owns and what its stats should be is checked by
+    /// the state.
     pub fn validate(&self, rules: &Rules) -> Result<()> {
-        rules.validate_base(&self.base)?;
         if let Some(name) = &self.name_override {
             name.validate()?;
         }
+        let class = rules.class(&self.class)?;
         require(
-            self.effects.len() <= 256
-                && self.equipment.len() <= rules.slots.len()
-                && self.skills.len() <= rules.skills.len(),
+            (1..=rules.max_level()).contains(&self.level),
+            "level cannot be reached",
+        )?;
+        require(
+            self.base.len() == class.starting.len(),
+            "base stats must be the primary stats",
+        )?;
+        for (stat, value) in &self.base {
+            let (minimum, maximum) = rules.primary(stat)?;
+            require(
+                (minimum..=maximum).contains(value),
+                "base stat outside its bounds",
+            )?;
+        }
+        require(
+            self.effects.len() <= rules.effects.len() && self.equipment.len() <= rules.slots.len(),
             "actor exceeds limits",
         )?;
-        for skill in self.skills.keys() {
-            rules.skill(skill)?;
+        for (skill, rank) in &self.skills {
+            require(
+                *rank > 0 && usize::from(*rank) <= rules.skill(skill)?.ranks.len(),
+                "skill rank out of range",
+            )?;
+        }
+        for ability in &self.abilities {
+            rules.ability(ability)?;
         }
         for slot in self.equipment.keys() {
             require(rules.slots.contains(slot), "unknown equipment slot")?;
         }
+        let mut effects = BTreeSet::new();
         for effect in &self.effects {
-            rules.attribute(&effect.modifier.attribute)?;
+            let definition = rules.effect(&effect.effect)?;
+            require(effects.insert(&effect.effect), "effect applied twice")?;
+            require(
+                effect.next_tick.is_some() == definition.periodic.is_some(),
+                "effect tick does not match its definition",
+            )?;
         }
-        Ok(())
-    }
-    pub fn award_experience(&mut self, rules: &Rules, skill: &Key, amount: u64) -> Result<()> {
-        rules.skill(skill)?;
-        let xp = self
-            .skills
-            .get(skill)
-            .copied()
-            .unwrap_or(0)
-            .checked_add(amount)
-            .ok_or_else(|| Invalid("skill XP overflow".into()))?;
-        self.skills.insert(skill.clone(), xp);
+        require(
+            self.resources.len() == rules.resources().count(),
+            "resources must be the rules' resources",
+        )?;
+        for (resource, maximum) in rules.resources() {
+            let (Some(amount), Some(cap)) = (self.resources.get(resource), self.stats.get(maximum))
+            else {
+                return Err(Invalid("missing resource or its cap".into()));
+            };
+            require(
+                (0..=(*cap).max(0)).contains(amount),
+                "resource outside zero and its cap",
+            )?;
+        }
         Ok(())
     }
 }

@@ -53,8 +53,8 @@ impl GameContent {
         })?;
         for (_, args) in graph.messages() {
             for source in args.values() {
-                if let ArgumentSource::Attribute { attribute, .. } = source {
-                    self.game.rules.attribute(attribute)?;
+                if let ArgumentSource::Stat { stat, .. } = source {
+                    self.game.rules.stat(stat)?;
                 }
             }
         }
@@ -71,8 +71,8 @@ impl GameContent {
                         None => self.template(actor.template)?.name.clone(),
                     })
                 }
-                ArgumentSource::Attribute { role, attribute } => {
-                    BoundArgument::Number(state.derived(self, c.bindings[role])?[attribute])
+                ArgumentSource::Stat { role, stat } => {
+                    BoundArgument::Number(state.stat(self, c.bindings[role], stat)?)
                 }
                 ArgumentSource::Text(text) => BoundArgument::Text(text.clone()),
                 ArgumentSource::Number(value) => BoundArgument::Number(*value),
@@ -269,7 +269,7 @@ pub(crate) fn start(
         key.participant,
         key.speaker,
         bindings,
-        &state.party,
+        &state.party.members,
         run,
     )?;
     for id in next.bindings.values() {

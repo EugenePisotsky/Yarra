@@ -4,30 +4,25 @@
     actors: [(
         id: "hero",
         template: "traveller",
-        role: Player,
         position: (
             millimetres: (0, 0, 0),
         ),
         name: None,
-        health: Some(50),
+        resources: {"health": 50},
     ), (
         id: "guard",
         template: "gate_guard",
-        role: Npc,
         position: (
             millimetres: (100000000, 0, 100000000),
         ),
         name: None,
-        health: Some(100),
     ), (
         id: "mira",
         template: "traveller",
-        role: Companion,
         position: (
             millimetres: (0, 0, 0),
         ),
         name: Some(Literal("Mira")),
-        health: Some(100),
     )],
     owners: [(
         kind: "object",
@@ -97,6 +92,8 @@
         balance: 100,
     )],
     party: ["hero", "mira"],
+    controlled: Some("hero"),
+    purse: Some("party"),
     // Starting conditions for the in-game slice: the quest is already running.
     steps: [
         Quest(quest: "guard/gate", transition: Start),

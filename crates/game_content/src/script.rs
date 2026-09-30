@@ -110,6 +110,32 @@ pub enum Step {
     AdvanceTime {
         millis: u64,
     },
+    Party {
+        actor: ActorId,
+        member: bool,
+    },
+    Control {
+        actor: ActorId,
+    },
+    SpendAttributePoint {
+        actor: ActorId,
+        stat: Key,
+    },
+    /// A stat after equipment and effects, or how much of a resource is left.
+    ExpectStat {
+        actor: ActorId,
+        stat: Key,
+        value: i32,
+    },
+    ExpectLevel {
+        actor: ActorId,
+        level: u32,
+    },
+    ExpectSkill {
+        actor: ActorId,
+        skill: Key,
+        rank: u8,
+    },
 }
 fn entry<C: ContentSource>(
     session: &GameSession<C>,
@@ -178,6 +204,12 @@ impl Step {
             Self::StartDialogue { .. } => "StartDialogue",
             Self::Choose { .. } => "Choose",
             Self::AdvanceTime { .. } => "AdvanceTime",
+            Self::Party { .. } => "Party",
+            Self::Control { .. } => "Control",
+            Self::SpendAttributePoint { .. } => "SpendAttributePoint",
+            Self::ExpectStat { .. } => "ExpectStat",
+            Self::ExpectLevel { .. } => "ExpectLevel",
+            Self::ExpectSkill { .. } => "ExpectSkill",
         }
     }
     pub fn apply<C: ContentSource>(&self, session: &mut GameSession<C>) -> Result<()> {
@@ -399,6 +431,39 @@ impl Step {
                 choice: choice.clone(),
             },
             Self::AdvanceTime { millis } => Command::AdvanceTime { millis: *millis },
+            Self::Party { actor, member } => Command::Party {
+                actor: *actor,
+                member: *member,
+            },
+            Self::Control { actor } => Command::Control { actor: *actor },
+            Self::SpendAttributePoint { actor, stat } => Command::SpendAttributePoint {
+                actor: *actor,
+                stat: stat.clone(),
+            },
+            Self::ExpectStat { actor, stat, value } => {
+                let actual = session.stat(*actor, stat)?;
+                require(
+                    actual == *value,
+                    &format!("{} of {actor} is {actual}, not {value}", stat.as_str()),
+                )?;
+                return Ok(());
+            }
+            Self::ExpectLevel { actor, level } => {
+                let actual = session.state().actor(*actor)?.level;
+                require(
+                    actual == *level,
+                    &format!("{actor} is level {actual}, not {level}"),
+                )?;
+                return Ok(());
+            }
+            Self::ExpectSkill { actor, skill, rank } => {
+                let actual = session.state().actor(*actor)?.skill(skill);
+                require(
+                    actual == *rank,
+                    &format!("{} of {actor} is rank {actual}, not {rank}", skill.as_str()),
+                )?;
+                return Ok(());
+            }
         };
         session.apply(command)?;
         Ok(())

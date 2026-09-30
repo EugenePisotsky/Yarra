@@ -34,7 +34,7 @@
         mechanics: (
             slot: None,
             modifiers: [],
-            on_use: [Heal(25)],
+            on_use: [Restore(resource: "health", amount: 25)],
         ),
     ), (
         id: "iron_sword",
@@ -55,8 +55,8 @@
         mechanics: (
             slot: Some("hand"),
             modifiers: [(
-                attribute: "strength",
-                amount: 2,
+                stat: "strength",
+                op: Add(2),
             )],
             on_use: [],
         ),

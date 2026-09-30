@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Signals for what an accepted command changed, however it changed it: a dialogue action,
 /// a script and a direct command all announce an acquired item the same way.
-pub(crate) fn signals(tx: &Tx) -> BTreeSet<WorldSignal> {
+pub(crate) fn signals(content: &GameContent, tx: &Tx) -> BTreeSet<WorldSignal> {
     let state: &SessionState = tx;
     let before = &tx.before;
     let mut signals: BTreeSet<WorldSignal> = before.signals.iter().cloned().collect();
@@ -32,6 +32,18 @@ pub(crate) fn signals(tx: &Tx) -> BTreeSet<WorldSignal> {
             if count > previous.get(&definition).copied().unwrap_or(0) {
                 signals.insert(WorldSignal::ItemAcquired { actor, definition });
             }
+        }
+    }
+    let rules = &content.game.rules;
+    for (id, old) in &before.actors {
+        let (Some(old), Some(new)) = (old, state.actors.get(id)) else {
+            continue;
+        };
+        if old.alive(rules) && !new.alive(rules) {
+            signals.insert(WorldSignal::Died(*id));
+        }
+        if new.level > old.level {
+            signals.insert(WorldSignal::LeveledUp(*id));
         }
     }
     for (id, old) in &before.quests {
@@ -95,10 +107,7 @@ pub(crate) fn request_move(
     events: &mut Vec<GameEvent>,
 ) -> Result<()> {
     content.area(to)?;
-    require(
-        tx.actor(actor)?.health > 0,
-        "a dead actor cannot be asked to move",
-    )?;
+    crate::character::require_alive(content, tx.actor(actor)?)?;
     if tx.areas(actor).contains(&to) {
         tx.remove_movement(actor);
         arrive(tx, actor, to, events);

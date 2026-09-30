@@ -108,14 +108,11 @@ fn reward_source(root: &std::path::Path, scope: ScopeSelector) {
     reward.condition = None;
     reward.actions = vec![Action::Claim {
         claim: CLAIM,
-        actions: vec![Action::SkillCheck {
+        actions: vec![Action::Check {
             skill: key("persuasion"),
             difficulty: 1,
             success: vec![
-                Action::AwardExperience {
-                    skill: key("persuasion"),
-                    amount: 10,
-                },
+                Action::AwardExperience { amount: 10 },
                 Action::GrantItem {
                     definition: inventory::fixtures::SWORD,
                     quantity: 1,
@@ -156,10 +153,7 @@ fn shared_claim_survives_reopening_other_graphs_npcs_and_restore() {
         choose(&mut session, k, "return-key");
     }
     assert!(claimed(&mut session, Scope::Playthrough));
-    assert_eq!(
-        session.state().actor(HERO).unwrap().skills[&key("persuasion")],
-        10
-    );
+    assert_eq!(session.state().party.experience, 10);
     assert_eq!(
         history(&mut session, &project, pair(REWARD)).count(&HistoryEvent::Node(key("return-key"))),
         2
@@ -179,7 +173,7 @@ fn shared_claim_survives_reopening_other_graphs_npcs_and_restore() {
     let outcome = choose(&mut restored, pair(REWARD), "return-key");
     assert!(!outcome.events.iter().any(|e| matches!(
         e,
-        GameEvent::SkillChecked { .. } | GameEvent::RewardClaimed { .. }
+        GameEvent::Checked { .. } | GameEvent::RewardClaimed { .. }
     )));
     assert_eq!(restored.state().carried(HERO).unwrap().entries, before);
 }
@@ -190,7 +184,7 @@ fn actor_scoped_claims_do_not_suppress_another_players_reward() {
     let root = temp.source();
     reward_source(&root, ScopeSelector::Player);
     let (_, mut session) = load(&temp, &root);
-    for player in [HERO, COMPANION] {
+    for (rewards, player) in [(1, HERO), (2, COMPANION)] {
         let k = ConversationKey {
             participant: player,
             ..pair(REWARD)
@@ -199,10 +193,8 @@ fn actor_scoped_claims_do_not_suppress_another_players_reward() {
         read_lines(&mut session, k);
         choose(&mut session, k, "return-key");
         assert!(claimed(&mut session, Scope::Actor(player)));
-        assert_eq!(
-            session.state().actor(player).unwrap().skills[&key("persuasion")],
-            10
-        );
+        // Each of them earns it; the experience goes to the party either way.
+        assert_eq!(session.state().party.experience, 10 * rewards);
     }
 }
 
@@ -318,9 +310,9 @@ fn three_roles_bind_localized_names_and_numeric_attributes_and_restore() {
     graph.roles.insert(key("companion"), Role::Required);
     node(&mut graph, "greeting").arguments.insert(
         "strength".into(),
-        ArgumentSource::Attribute {
+        ArgumentSource::Stat {
             role: key("companion"),
-            attribute: key("strength"),
+            stat: key("strength"),
         },
     );
     write(graph_path, &graph);
@@ -604,10 +596,7 @@ fn authored_refusal_exercise_runs_through_the_indexed_session() {
     let h = history(&mut session, &project, with_guard);
     assert_eq!((h.started, h.completed, h.interrupted), (3, 2, 1));
     assert!(claimed(&mut session, Scope::Playthrough));
-    assert_eq!(
-        session.state().actor(HERO).unwrap().skills[&key("persuasion")],
-        10
-    );
+    assert_eq!(session.state().party.experience, 120);
 }
 
 #[test]

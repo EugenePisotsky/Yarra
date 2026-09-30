@@ -1,42 +1,179 @@
-//! Pure mechanics. Callers supply source stats, time and controlled randomness.
+//! The rules of a game as data: which stats exist, what modifies them, how a character is
+//! built from a class and levels. The formulas themselves are two functions in the rules
+//! script the content names, so a game changes its numbers without changing this crate.
+use crate::ScriptName;
 use game_types::{GameTime, Invalid, Key, Result, TextRef, require};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+pub const MAX_STATS: usize = 128;
+pub const MAX_SKILL_RANK: usize = 20;
+pub const MAX_LEVEL: usize = 100;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StatKind {
+    /// Stored for each character and raised by spending attribute points.
+    Primary { minimum: i32, maximum: i32 },
+    /// Worked out from a character's primaries, level, class and skills by the rules script.
+    Derived { minimum: i32, maximum: i32 },
+    /// An amount that is spent and restored, between zero and another stat.
+    Resource { maximum: Key },
+}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Attribute {
+pub struct Stat {
     pub id: Key,
     pub name: TextRef,
-    pub minimum: i32,
-    pub maximum: i32,
+    pub kind: StatKind,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Skill {
     pub id: Key,
     pub name: TextRef,
+    /// Learning points each rank costs, the first rank first.
+    pub ranks: Vec<u32>,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Operation {
+    Add(i32),
+    /// Percent of the value: `Multiply(150)` is one and a half times. Several multipliers
+    /// add their differences from 100, so two of 150 make 200.
+    Multiply(i32),
+    /// The stat is exactly this, whatever else applies. The largest of several wins.
+    Override(i32),
+}
+/// A change to one stat. Where it comes from is where it is written: an item, an effect.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Modifier {
+    pub stat: Key,
+    pub op: Operation,
+}
+/// The value after modifiers, independent of the order they are listed in.
+pub fn modified(base: i64, operations: impl IntoIterator<Item = Operation>) -> i64 {
+    let (mut sum, mut percent, mut fixed) = (base, 100i64, None::<i64>);
+    for operation in operations {
+        match operation {
+            Operation::Add(amount) => sum = sum.saturating_add(i64::from(amount)),
+            Operation::Multiply(p) => percent = percent.saturating_add(i64::from(p) - 100),
+            Operation::Override(value) => {
+                fixed = Some(fixed.map_or(i64::from(value), |v| v.max(i64::from(value))))
+            }
+        }
+    }
+    fixed.unwrap_or_else(|| sum.saturating_mul(percent.max(0)).div_euclid(100))
+}
+/// A change to a resource at regular intervals while an effect lasts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Periodic {
+    pub resource: Key,
+    /// Negative takes away: poison. Positive gives back: regeneration.
+    pub amount: i32,
+    pub period_ms: u64,
+}
+/// A condition a character can be in: a blessing, a poison. At most one of each at a time;
+/// applying it again starts its time over.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StatusEffect {
+    pub id: Key,
+    pub name: TextRef,
+    #[serde(default)]
+    pub modifiers: Vec<Modifier>,
+    #[serde(default)]
+    pub periodic: Option<Periodic>,
+}
+/// What a character receives on reaching a level.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Grants {
+    /// Spent freely on primary stats.
+    #[serde(default)]
+    pub attribute_points: u32,
+    /// Spent with trainers on skill ranks.
+    #[serde(default)]
+    pub learning_points: u32,
+    /// Added to primary stats outright.
+    #[serde(default, deserialize_with = "game_types::deserialize_key_map")]
+    pub bonuses: BTreeMap<Key, i32>,
+    /// Abilities the character knows from then on.
+    #[serde(default)]
+    pub abilities: BTreeSet<Key>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Class {
+    pub id: Key,
+    pub name: TextRef,
+    /// Primary stats of a first-level character.
+    #[serde(deserialize_with = "game_types::deserialize_key_map")]
+    pub starting: Stats,
+    /// Granted at every level after the first.
+    #[serde(default)]
+    pub per_level: Grants,
+    /// Granted on reaching particular levels, level 1 included, on top of `per_level`.
+    #[serde(default)]
+    pub at_level: BTreeMap<u32, Grants>,
+    /// The highest rank of each skill a trainer can teach this class. A skill that is not
+    /// listed cannot be learned.
+    #[serde(default, deserialize_with = "game_types::deserialize_key_map")]
+    pub skills: BTreeMap<Key, u8>,
+}
+/// Something a character does that takes time: a strike, a spell. It takes effect
+/// `duration_ms` after it is begun, by running its script.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Ability {
+    pub id: Key,
+    pub name: TextRef,
+    pub duration_ms: u64,
+    /// Time after it takes effect before the same character can begin it again.
+    #[serde(default)]
+    pub cooldown_ms: u64,
+    /// Resources paid when it is begun.
+    #[serde(default, deserialize_with = "game_types::deserialize_key_map")]
+    pub costs: BTreeMap<Key, u32>,
+    /// Whether it is aimed at another character.
+    pub targeted: bool,
+    pub resolve: ScriptName,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Rules {
-    pub attributes: Vec<Attribute>,
+    pub stats: Vec<Stat>,
     pub skills: Vec<Skill>,
     pub slots: BTreeSet<Key>,
-    pub health_attribute: Key,
+    #[serde(default)]
+    pub effects: Vec<StatusEffect>,
+    pub classes: Vec<Class>,
+    #[serde(default)]
+    pub abilities: Vec<Ability>,
+    /// Total experience needed to reach level 2, then 3, and so on. Its length sets the
+    /// highest level.
+    pub levels: Vec<u64>,
+    /// The resource whose loss is death.
+    pub life: Key,
+    /// How many characters travel together at most.
+    pub party_size: usize,
+    /// `derive(character)` returns every derived stat of a character.
+    pub derive: ScriptName,
+    /// `check(character, skill, difficulty, roll)` says whether a check passes.
+    pub check: ScriptName,
 }
+/// What a consumable does.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Modifier {
-    pub attribute: Key,
-    pub amount: i32,
-}
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Effect {
-    Heal(u32),
-    Buff {
-        modifier: Modifier,
-        duration_ms: u64,
+pub enum Use {
+    Restore {
+        resource: Key,
+        amount: u32,
+    },
+    Apply {
+        effect: Key,
+        /// Without a duration the effect lasts until something removes it.
+        #[serde(default)]
+        duration_ms: Option<u64>,
     },
 }
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -44,66 +181,228 @@ pub enum Effect {
 pub struct ItemMechanics {
     pub slot: Option<Key>,
     pub modifiers: Vec<Modifier>,
-    pub on_use: Vec<Effect>,
+    pub on_use: Vec<Use>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ActiveEffect {
-    pub modifier: Modifier,
-    pub expires_at: GameTime,
+    pub effect: Key,
+    pub expires_at: Option<GameTime>,
+    /// When its periodic change next happens.
+    pub next_tick: Option<GameTime>,
 }
-pub type Attributes = BTreeMap<Key, i32>;
-pub type SkillExperience = BTreeMap<Key, u64>;
+pub type Stats = BTreeMap<Key, i32>;
+pub type SkillRanks = BTreeMap<Key, u8>;
 
-impl Rules {
-    pub fn validate(&self) -> Result<()> {
+/// What the rules script is told about a character.
+#[derive(Debug, Clone, Copy)]
+pub struct Sheet<'a> {
+    pub level: u32,
+    pub class: &'a Key,
+    pub stats: &'a Stats,
+    pub skills: &'a SkillRanks,
+}
+
+fn find<'a, T>(list: &'a [T], id: &Key, of: impl Fn(&T) -> &Key, what: &str) -> Result<&'a T> {
+    list.iter()
+        .find(|v| of(v) == id)
+        .ok_or_else(|| Invalid(format!("unknown {what} {}", id.as_str())))
+}
+fn unique<'a>(ids: impl Iterator<Item = &'a Key>, what: &str) -> Result<()> {
+    let mut seen = BTreeSet::new();
+    for id in ids {
         require(
-            !self.attributes.is_empty()
-                && self.attributes.len() <= 128
-                && self.skills.len() <= 256
-                && self.slots.len() <= 64,
-            "rules exceed limits",
+            seen.insert(id),
+            &format!("duplicate {what} {}", id.as_str()),
         )?;
-        let mut ids = BTreeSet::new();
-        for a in &self.attributes {
-            require(
-                ids.insert(&a.id) && a.minimum <= a.maximum,
-                "invalid/duplicate attribute",
-            )?;
-            a.name.validate()?;
+    }
+    Ok(())
+}
+impl Rules {
+    pub fn stat(&self, id: &Key) -> Result<&Stat> {
+        find(&self.stats, id, |v| &v.id, "stat")
+    }
+    pub fn skill(&self, id: &Key) -> Result<&Skill> {
+        find(&self.skills, id, |v| &v.id, "skill")
+    }
+    pub fn effect(&self, id: &Key) -> Result<&StatusEffect> {
+        find(&self.effects, id, |v| &v.id, "effect")
+    }
+    pub fn class(&self, id: &Key) -> Result<&Class> {
+        find(&self.classes, id, |v| &v.id, "class")
+    }
+    pub fn ability(&self, id: &Key) -> Result<&Ability> {
+        find(&self.abilities, id, |v| &v.id, "ability")
+    }
+    /// Every name the rules show to players.
+    pub fn names(&self) -> impl Iterator<Item = &TextRef> {
+        self.stats
+            .iter()
+            .map(|v| &v.name)
+            .chain(self.skills.iter().map(|v| &v.name))
+            .chain(self.effects.iter().map(|v| &v.name))
+            .chain(self.classes.iter().map(|v| &v.name))
+            .chain(self.abilities.iter().map(|v| &v.name))
+    }
+    /// The resource and the stat that caps it.
+    pub fn resource(&self, id: &Key) -> Result<&Key> {
+        match &self.stat(id)?.kind {
+            StatKind::Resource { maximum } => Ok(maximum),
+            _ => Err(Invalid(format!("{} is not a resource", id.as_str()))),
         }
-        let health = self.attribute(&self.health_attribute)?;
-        require(health.minimum >= 1, "maximum health must be positive")?;
-        let mut ids = BTreeSet::new();
-        for skill in &self.skills {
-            require(ids.insert(&skill.id), "duplicate skill")?;
-            skill.name.validate()?;
+    }
+    /// A primary stat's bounds.
+    pub fn primary(&self, id: &Key) -> Result<(i32, i32)> {
+        match self.stat(id)?.kind {
+            StatKind::Primary { minimum, maximum } => Ok((minimum, maximum)),
+            _ => Err(Invalid(format!("{} is not a primary stat", id.as_str()))),
+        }
+    }
+    pub fn primaries(&self) -> impl Iterator<Item = (&Key, i32, i32)> {
+        self.stats.iter().filter_map(|s| match s.kind {
+            StatKind::Primary { minimum, maximum } => Some((&s.id, minimum, maximum)),
+            _ => None,
+        })
+    }
+    pub fn resources(&self) -> impl Iterator<Item = (&Key, &Key)> {
+        self.stats.iter().filter_map(|s| match &s.kind {
+            StatKind::Resource { maximum } => Some((&s.id, maximum)),
+            _ => None,
+        })
+    }
+    pub fn max_level(&self) -> u32 {
+        self.levels.len() as u32 + 1
+    }
+    /// The level a total of experience has earned.
+    pub fn level_for(&self, experience: u64) -> u32 {
+        1 + self.levels.partition_point(|needed| *needed <= experience) as u32
+    }
+    /// What a class receives on reaching a level.
+    pub fn grants<'a>(&self, class: &'a Class, level: u32) -> impl Iterator<Item = &'a Grants> {
+        (level > 1)
+            .then_some(&class.per_level)
+            .into_iter()
+            .chain(class.at_level.get(&level))
+    }
+    fn validate_modifier(&self, modifier: &Modifier) -> Result<()> {
+        require(
+            !matches!(self.stat(&modifier.stat)?.kind, StatKind::Resource { .. }),
+            "a modifier changes a primary or derived stat, not a resource",
+        )?;
+        match modifier.op {
+            Operation::Multiply(percent) => {
+                require((0..=1000).contains(&percent), "multiplier outside 0..1000%")
+            }
+            _ => Ok(()),
+        }
+    }
+    fn validate_grants(&self, grants: &Grants) -> Result<()> {
+        require(
+            grants.attribute_points <= 100 && grants.learning_points <= 100,
+            "too many points in one grant",
+        )?;
+        for stat in grants.bonuses.keys() {
+            self.primary(stat)?;
+        }
+        for ability in &grants.abilities {
+            self.ability(ability)?;
         }
         Ok(())
     }
-    pub fn attribute(&self, id: &Key) -> Result<&Attribute> {
-        self.attributes
-            .iter()
-            .find(|a| &a.id == id)
-            .ok_or_else(|| Invalid(format!("unknown attribute {}", id.as_str())))
-    }
-    pub fn skill(&self, id: &Key) -> Result<&Skill> {
-        self.skills
-            .iter()
-            .find(|s| &s.id == id)
-            .ok_or_else(|| Invalid(format!("unknown skill {}", id.as_str())))
-    }
-    pub fn validate_base(&self, base: &Attributes) -> Result<()> {
+    pub fn validate(&self) -> Result<()> {
         require(
-            base.len() == self.attributes.len(),
-            "base attributes must match rules",
+            !self.stats.is_empty()
+                && self.stats.len() <= MAX_STATS
+                && self.skills.len() <= 256
+                && self.slots.len() <= 64
+                && self.effects.len() <= 1024
+                && !self.classes.is_empty()
+                && self.classes.len() <= 256
+                && self.abilities.len() <= 4096
+                && self.levels.len() < MAX_LEVEL
+                && (1..=16).contains(&self.party_size),
+            "rules exceed limits",
         )?;
-        for (id, value) in base {
-            let a = self.attribute(id)?;
+        unique(self.stats.iter().map(|v| &v.id), "stat")?;
+        unique(self.skills.iter().map(|v| &v.id), "skill")?;
+        unique(self.effects.iter().map(|v| &v.id), "effect")?;
+        unique(self.classes.iter().map(|v| &v.id), "class")?;
+        unique(self.abilities.iter().map(|v| &v.id), "ability")?;
+        for stat in &self.stats {
+            stat.name.validate()?;
+            match &stat.kind {
+                StatKind::Primary { minimum, maximum } | StatKind::Derived { minimum, maximum } => {
+                    require(minimum <= maximum, "stat minimum above its maximum")?
+                }
+                StatKind::Resource { maximum } => require(
+                    !matches!(self.stat(maximum)?.kind, StatKind::Resource { .. }),
+                    "a resource is capped by a primary or derived stat",
+                )?,
+            }
+        }
+        self.resource(&self.life)?;
+        for skill in &self.skills {
+            skill.name.validate()?;
             require(
-                (a.minimum..=a.maximum).contains(value),
-                "base attribute outside bounds",
+                (1..=MAX_SKILL_RANK).contains(&skill.ranks.len()),
+                "a skill has 1..20 ranks",
             )?;
+        }
+        for effect in &self.effects {
+            effect.name.validate()?;
+            require(effect.modifiers.len() <= 64, "too many effect modifiers")?;
+            for modifier in &effect.modifiers {
+                self.validate_modifier(modifier)?;
+            }
+            if let Some(periodic) = &effect.periodic {
+                self.resource(&periodic.resource)?;
+                require(
+                    periodic.period_ms > 0 && periodic.amount != 0,
+                    "a periodic change needs a period and an amount",
+                )?;
+            }
+        }
+        for ability in &self.abilities {
+            ability.name.validate()?;
+            require(
+                ability.duration_ms <= 3_600_000 && ability.cooldown_ms <= 86_400_000,
+                "ability timing out of range",
+            )?;
+            for resource in ability.costs.keys() {
+                self.resource(resource)?;
+            }
+        }
+        require(
+            self.levels.windows(2).all(|pair| pair[0] < pair[1]),
+            "experience thresholds must increase",
+        )?;
+        for class in &self.classes {
+            class.name.validate()?;
+            require(
+                class.starting.len() == self.primaries().count(),
+                "a class gives a starting value for every primary stat",
+            )?;
+            for (stat, value) in &class.starting {
+                let (minimum, maximum) = self.primary(stat)?;
+                require(
+                    (minimum..=maximum).contains(value),
+                    "class starting stat outside its bounds",
+                )?;
+            }
+            self.validate_grants(&class.per_level)?;
+            for (level, grants) in &class.at_level {
+                require(
+                    (1..=self.max_level()).contains(level),
+                    "class grant for a level that cannot be reached",
+                )?;
+                self.validate_grants(grants)?;
+            }
+            for (skill, rank) in &class.skills {
+                require(
+                    usize::from(*rank) <= self.skill(skill)?.ranks.len(),
+                    "class skill cap above the skill's ranks",
+                )?;
+            }
         }
         Ok(())
     }
@@ -112,45 +411,82 @@ impl Rules {
         if let Some(slot) = &mechanics.slot {
             require(self.slots.contains(slot), "unknown equipment slot")?;
         }
-        for m in &mechanics.modifiers {
-            self.attribute(&m.attribute)?;
+        for modifier in &mechanics.modifiers {
+            self.validate_modifier(modifier)?;
         }
         for effect in &mechanics.on_use {
-            if let Effect::Buff { modifier, .. } = effect {
-                self.attribute(&modifier.attribute)?;
+            match effect {
+                Use::Restore { resource, .. } => {
+                    self.resource(resource)?;
+                }
+                Use::Apply { effect, .. } => {
+                    self.effect(effect)?;
+                }
             }
         }
         Ok(())
     }
-    pub fn derive<'a>(
+    /// Primary stats after modifiers, within their bounds.
+    pub fn effective_primaries<'a>(
         &self,
-        base: &Attributes,
-        modifiers: impl IntoIterator<Item = &'a Modifier>,
-    ) -> Result<Attributes> {
-        self.validate_base(base)?;
-        // Sum first, then clamp once: results are independent of equipment order.
-        let mut totals: BTreeMap<_, i64> = base
-            .iter()
-            .map(|(k, v)| (k.clone(), i64::from(*v)))
-            .collect();
-        for m in modifiers {
-            let total = totals
-                .get_mut(&m.attribute)
-                .ok_or_else(|| Invalid("unknown modifier attribute".into()))?;
-            *total = total
-                .checked_add(i64::from(m.amount))
-                .ok_or_else(|| Invalid("attribute overflow".into()))?;
-        }
-        totals
-            .into_iter()
-            .map(|(id, value)| {
-                let a = self.attribute(&id)?;
+        base: &Stats,
+        modifiers: impl Iterator<Item = &'a Modifier> + Clone,
+    ) -> Result<Stats> {
+        self.primaries()
+            .map(|(id, minimum, maximum)| {
+                let base = base
+                    .get(id)
+                    .ok_or_else(|| Invalid(format!("no base value for {}", id.as_str())))?;
+                let operations = modifiers.clone().filter(|m| &m.stat == id).map(|m| m.op);
+                let value = modified(i64::from(*base), operations);
                 Ok((
-                    id,
-                    value.clamp(i64::from(a.minimum), i64::from(a.maximum)) as i32,
+                    id.clone(),
+                    value.clamp(i64::from(minimum), i64::from(maximum)) as i32,
                 ))
             })
             .collect()
+    }
+    /// Adds the derived stats the script returned, after modifiers, within their bounds.
+    pub fn add_derived<'a>(
+        &self,
+        stats: &mut Stats,
+        derived: &BTreeMap<String, f64>,
+        modifiers: impl Iterator<Item = &'a Modifier> + Clone,
+    ) -> Result<()> {
+        let mut expected = 0;
+        for stat in &self.stats {
+            let StatKind::Derived { minimum, maximum } = stat.kind else {
+                continue;
+            };
+            expected += 1;
+            let raw = derived.get(stat.id.as_str()).ok_or_else(|| {
+                Invalid(format!(
+                    "{} did not return {}",
+                    self.derive,
+                    stat.id.as_str()
+                ))
+            })?;
+            require(
+                raw.is_finite() && raw.abs() < 1e12,
+                &format!("{} returned a bad {}", self.derive, stat.id.as_str()),
+            )?;
+            let operations = modifiers
+                .clone()
+                .filter(|m| m.stat == stat.id)
+                .map(|m| m.op);
+            let value = modified(raw.floor() as i64, operations);
+            stats.insert(
+                stat.id.clone(),
+                value.clamp(i64::from(minimum), i64::from(maximum)) as i32,
+            );
+        }
+        require(
+            derived.len() == expected,
+            &format!(
+                "{} returned something that is not a derived stat",
+                self.derive
+            ),
+        )
     }
 }
 impl ItemMechanics {
@@ -165,10 +501,11 @@ impl ItemMechanics {
         )?;
         for effect in &self.on_use {
             match effect {
-                Effect::Heal(amount) => require(*amount > 0, "healing must be positive")?,
-                Effect::Buff { duration_ms, .. } => {
-                    require(*duration_ms > 0, "buff duration must be positive")?
-                }
+                Use::Restore { amount, .. } => require(*amount > 0, "restoring nothing")?,
+                Use::Apply { duration_ms, .. } => require(
+                    duration_ms.is_none_or(|ms| ms > 0),
+                    "effect duration must be positive",
+                )?,
             }
         }
         Ok(())
@@ -180,9 +517,6 @@ impl ItemMechanics {
 #[serde(deny_unknown_fields)]
 pub struct RandomState(pub u64);
 impl RandomState {
-    pub fn roll_d20(&mut self) -> u32 {
-        self.below(20).expect("nonzero die size") + 1
-    }
     /// Uniform draw in 0..upper, with rejection to avoid modulo bias.
     pub fn below(&mut self, upper: u32) -> Result<u32> {
         require(upper > 0, "empty random range")?;
@@ -196,5 +530,27 @@ impl RandomState {
                 return Ok((z % u64::from(upper)) as u32);
             }
         }
+    }
+    /// One of 1..=sides.
+    pub fn die(&mut self, sides: u32) -> Result<u32> {
+        Ok(self.below(sides)? + 1)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn modifiers_combine_the_same_in_any_order() {
+        use Operation::*;
+        assert_eq!(modified(10, []), 10);
+        assert_eq!(modified(10, [Add(2), Add(-5)]), 7);
+        assert_eq!(modified(10, [Multiply(150), Add(2)]), 18);
+        assert_eq!(modified(10, [Add(2), Multiply(150)]), 18);
+        // Two +50% make +100%, not +125%.
+        assert_eq!(modified(10, [Multiply(150), Multiply(150)]), 20);
+        assert_eq!(modified(10, [Multiply(50), Multiply(25)]), 0);
+        assert_eq!(modified(7, [Multiply(50)]), 3);
+        assert_eq!(modified(10, [Override(19), Add(5), Override(12)]), 19);
     }
 }

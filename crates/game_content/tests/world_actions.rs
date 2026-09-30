@@ -2,7 +2,7 @@ use game_types::*;
 use gameplay::actors::Position;
 use gameplay::dialogue::{self, Mode};
 use gameplay::{
-    fixtures::{COMPANION, HERO, key},
+    fixtures::{COMPANION, HERO},
     *,
 };
 use gameplay::{inventory, quests};
@@ -187,7 +187,7 @@ fn the_escort_runs_headlessly_from_entering_the_approach_to_an_open_gate() {
     }
     assert_eq!(driver.container_contents(CHEST).unwrap().entries.len(), 0);
     let state = driver.state();
-    assert_eq!(state.actor(HERO).unwrap().skills[&key("persuasion")], 10);
+    assert_eq!(state.party.experience, 120);
     assert_eq!(state.quest(QUEST).status, quests::Status::Completed);
     assert_eq!(state.trigger(OPEN_GATE).fired, 1);
     assert!(state.world.movements.is_empty() && state.world.pending.is_empty());
@@ -224,8 +224,7 @@ fn queued_work_and_a_pending_walk_resume_from_every_kind_of_slot() {
         assert!(walking(&restored).is_none());
         world(&mut restored, WorldCommand::Open { object: CHEST });
         assert!(restored.container_contents(CHEST).is_ok());
-        let hero = restored.state().actor(HERO).unwrap();
-        assert_eq!(hero.skills[&key("persuasion")], 10);
+        assert_eq!(restored.state().actor(HERO).unwrap().level, 2);
     }
 }
 #[test]
@@ -370,7 +369,7 @@ fn a_trigger_whose_actions_fail_changes_nothing_and_stays_armed() {
     // Nothing of the failed trigger stuck: no claim, no experience, the chest it would have
     // unlocked after the script is still locked. The guard did arrive.
     assert!(!rewarded(&session));
-    assert!(session.state().actor(HERO).unwrap().skills.is_empty());
+    assert_eq!(session.state().party.experience, 0);
     assert_eq!(session.state().trigger(OPEN_GATE).fired, 0);
     assert!(session.state().areas(GUARD).contains(&POST));
     locked(&mut session);

@@ -11,7 +11,7 @@ function guard.take_key(game: Game, scene: Scene)
     game.complete_objective("guard/gate", "deliver")
     game.complete_quest("guard/gate")
     game.adjust_relationship(scene.speaker, scene.player, 25)
-    game.award_experience(scene.player, "persuasion", 10)
+    game.award_experience(120)
     game.set_locked("guard/old_gate", false)
 end
 
