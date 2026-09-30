@@ -7,6 +7,11 @@ publish.workspace = true
 [dependencies]
 bevy = { workspace = true, features = ["debug"] }
 engine.workspace = true
+game-content.workspace = true
+game-types.workspace = true
+gameplay.workspace = true
+localization.workspace = true
+save.workspace = true
 world.workspace = true
 ron.workspace = true
 wgpu = { version = "29.0.4", default-features = false }

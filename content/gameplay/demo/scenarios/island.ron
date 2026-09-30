@@ -1,0 +1,104 @@
+// Authored gameplay data; see docs/WORKFLOWS.md for validation and builds.
+(
+    seed: 42,
+    actors: [(
+        id: "01010101-0101-0101-0101-010101010101",
+        template: "01010101-0101-0101-0101-010101010101",
+        role: Player,
+        position: (
+            millimetres: (0, 0, 0),
+        ),
+        name: None,
+        health: Some(50),
+    ), (
+        id: "02020202-0202-0202-0202-020202020202",
+        template: "24242424-2424-2424-2424-242424242424",
+        role: Npc,
+        position: (
+            millimetres: (100000000, 0, 100000000),
+        ),
+        name: None,
+        health: Some(100),
+    ), (
+        id: "03030303-0303-0303-0303-030303030303",
+        template: "01010101-0101-0101-0101-010101010101",
+        role: Companion,
+        position: (
+            millimetres: (0, 0, 0),
+        ),
+        name: None,
+        health: Some(100),
+    )],
+    owners: [(
+        kind: "object",
+        id: "52525252-5252-5252-5252-525252525252",
+    ), (
+        kind: "party",
+        id: "01010101-0101-0101-0101-010101010101",
+    )],
+    inventories: [(
+        id: "01010101-0101-0101-0101-010101010101",
+        owner: (
+            kind: "actor",
+            id: "01010101-0101-0101-0101-010101010101",
+        ),
+        role: "carried",
+        items: [(
+            definition: "01010101-0101-0101-0101-010101010101",
+            quantity: 3,
+        ), (
+            definition: "02020202-0202-0202-0202-020202020202",
+            quantity: 1,
+        ), (
+            definition: "03030303-0303-0303-0303-030303030303",
+            quantity: 1,
+        )],
+    ), (
+        id: "02020202-0202-0202-0202-020202020202",
+        owner: (
+            kind: "actor",
+            id: "02020202-0202-0202-0202-020202020202",
+        ),
+        role: "carried",
+        items: [(
+            definition: "01010101-0101-0101-0101-010101010101",
+            quantity: 10,
+        )],
+    ), (
+        id: "03030303-0303-0303-0303-030303030303",
+        owner: (
+            kind: "actor",
+            id: "03030303-0303-0303-0303-030303030303",
+        ),
+        role: "carried",
+        items: [],
+    ), (
+        id: "04040404-0404-0404-0404-040404040404",
+        owner: (
+            kind: "object",
+            id: "52525252-5252-5252-5252-525252525252",
+        ),
+        role: "contents",
+        items: [],
+    )],
+    wallets: [(
+        id: "01010101-0101-0101-0101-010101010101",
+        owner: (
+            kind: "party",
+            id: "01010101-0101-0101-0101-010101010101",
+        ),
+        balance: 100,
+    ), (
+        id: "02020202-0202-0202-0202-020202020202",
+        owner: (
+            kind: "actor",
+            id: "02020202-0202-0202-0202-020202020202",
+        ),
+        balance: 100,
+    )],
+    facts: [],
+    // Starting conditions for the in-game slice: the quest is already running.
+    steps: [
+        Quest(quest: "20202020-2020-2020-2020-202020202020", transition: Start),
+    ],
+)

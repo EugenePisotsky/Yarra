@@ -122,6 +122,14 @@ cargo run --offline -p yarra-game-content -- demo content/gameplay/demo --locale
 
 The demo loads definitions, actors, starting inventories/wallets, scenario actions and Fluent files from disk. It uses a potion, transfers equipped gear to a companion, stores an item in a chest, trades and completes a dialogue reward. It publishes and retains a content bundle, plays the scenario against that bundle, writes manual/quick/auto saves to a new temporary directory, reloads the manual slot and compares the complete state. It also reports how many dialogue graphs were loaded. Expected results are **75 player health**, **80 party gold**, **10 persuasion XP** and **3 saves**. Use `--locale en` for English, or `--save-dir /path/to/new-directory` to choose a fresh destination. Existing demo save directories are refused.
 
+### Playing the slice in the game
+
+```sh
+cargo run --release -p yarra-app-game -- --story content/gameplay/demo
+```
+
+A guard and a gate appear a few metres ahead of the start. Walk to the guard and press **E**; **Space** continues a line, **1–9** pick a reply, **Q** walks away. **F5** and **F9** quick save and load. Handing over the key completes the quest and opens the gate. The project is published to a private bundle under the system temp directory (`yarra-story/`), where the saves also live; a save made with different content is refused.
+
 ### Editing and validating gameplay content
 
 Copy `content/gameplay/demo` to start a project. Source format **6** uses explicit package manifests and one asset directory per conversation:

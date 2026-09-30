@@ -13,7 +13,7 @@ Target: a classic party RPG in the line of KOTOR / Dragon Age: Origins, Gothic a
 | Step | Deliverable | Status |
 | --- | --- | --- |
 | 1. In-memory state | Domain crates merged into `gameplay`; whole playthrough in memory with journaled commands; snapshot saves; content loaded once except dialogue graphs, which load on demand | Done |
-| 2. Thin slice in the game | Compose a session in `app_game`: stable world IDs for one NPC and one gate, talk to the guard, gate unlocks, save and reload | Next |
+| 2. Thin slice in the game | Opt-in `--story` in `app_game`: a guard and a gate near the start, talk to the guard, the gate unlocks, quick save and load | Done |
 | 3. Dialogue graph v2 | Flat node graph with a speaker, condition, actions and ordered children per node; any number of participants | |
 | 4. Lua adapter | `mlua` in a `scripting` crate behind a trait; script conditions and actions beside the built-in ones | |
 | 5. Events and areas | Event-driven triggers only; polygon areas painted in the editor; blocking and ambient dialogue modes | |
@@ -29,7 +29,15 @@ Dropped with the storage layer: tests that injected SQLite write failures and as
 
 Left for later steps: definition lookups are linear scans and inventory operations re-validate the catalog (index when content is restructured); effect expiry scans all actors per time advance.
 
-### Step 3: dialogue graph v2
+### Step 2: done
+
+`cargo run -p yarra-app-game -- --story content/gameplay/demo` publishes the project to a private bundle, starts `scenarios/island.ron` against it and adds a guard and a gate a few metres ahead of the start view. E talks, Space advances, 1–9 choose, Q leaves, F5/F9 quick save/load. Returning the key completes the quest and the gate swings open; loading an earlier save locks it again and resumes a conversation at its line. Without `--story` the game is unchanged.
+
+[`story.rs`](../crates/app_game/src/story.rs) holds the session and turns input into commands; [`story/scene.rs`](../crates/app_game/src/story/scene.rs) is the Bevy side. The engine gained three small public hooks: `standing_character`, `PlayerMovementSuspended`, and the `PlayerControlled`/`TerrainGrounded` markers.
+
+Deliberately not done here, because later steps replace them: the guard and gate are placed relative to the start instead of being authored in the world; positions are not reported to the session, so areas and the escort trigger do not run in the game; the gate is a visual with no collision; the HUD is plain text.
+
+
 
 The model used by BG3 and the Obsidian games. A dialogue is a flat set of nodes; each node has a speaker, text, an optional condition, actions and an ordered list of children.
 

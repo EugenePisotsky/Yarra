@@ -32,6 +32,38 @@ pub(super) fn spawn_player(mut commands: Commands, start_view: Res<WorldStartVie
     ));
 }
 
+/// A grounded, presented actor that stands where it is placed until something gives it a
+/// movement intent. For NPCs placed by a gameplay adapter.
+pub fn standing_character(translation: Vec3, name: &'static str) -> impl Bundle {
+    (
+        Transform::from_translation(translation),
+        Visibility::Inherited,
+        MoveIntent::default(),
+        CharacterMotor::default(),
+        CharacterMotion::default(),
+        CharacterPresentationRef::new(DEFAULT_CHARACTER_PRESENTATION_ID),
+        TerrainGrounded,
+        WorldRenderRoot,
+        Name::new(name),
+    )
+}
+
+/// While set, the player stands still whatever input says: a conversation or a scripted
+/// moment has the player's attention. Camera controls are unaffected.
+#[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
+pub struct PlayerMovementSuspended(pub bool);
+
+pub(super) fn hold_suspended_player(
+    suspended: Res<PlayerMovementSuspended>,
+    mut player: Query<&mut MoveIntent, With<PlayerControlled>>,
+) {
+    if suspended.0 {
+        for mut intent in &mut player {
+            *intent = MoveIntent::default();
+        }
+    }
+}
+
 /// Walks the player through world-space points in order, steered as input would: a scripted
 /// route for stress tests and profiling. Input is overridden while points remain.
 #[derive(Resource, Clone, Debug)]

@@ -61,7 +61,7 @@ The editor overlays unsaved source edits on the published runtime. Save changes 
 
 ## Standalone gameplay foundations
 
-The gameplay libraries run without Bevy, game/editor startup, cooked worlds or art assets. The game and editor do not depend on them yet. [The content CLI](../crates/game_content/src/main.rs) exercises inventory, trading, equipment, dialogue, quests, world triggers, Fluent and save/load together; [workflows](WORKFLOWS.md#standalone-gameplay-and-saves) has the commands. [The roadmap](REFACTORING.md#gameplay-roadmap) lists what changes next: several of the models below (dialogue graphs, triggers, character rules) are about to be replaced.
+The gameplay libraries run without Bevy, game/editor startup, cooked worlds or art assets. The game uses them only in the opt-in `--story` slice; the editor does not depend on them. [The content CLI](../crates/game_content/src/main.rs) exercises inventory, trading, equipment, dialogue, quests, world triggers, Fluent and save/load together; [workflows](WORKFLOWS.md#standalone-gameplay-and-saves) has the commands. [The roadmap](REFACTORING.md#gameplay-roadmap) lists what changes next: several of the models below (dialogue graphs, triggers, character rules) are about to be replaced.
 
 ```text
 game_types (IDs, keys, text references, logical time)
@@ -127,7 +127,7 @@ Text references are `(TextResourceId, TextKey)` with typed arguments (`Text`, `N
 
 - Item and other definition lookups are linear scans over lists; inventory operations re-validate the catalog. Fine for the demo, to be indexed when content is restructured.
 - Actor effect expiry scans all actors on each time advance.
-- Nothing here is connected to the engine: positions are reported by synthetic test adapters.
+- The game uses these crates only through the opt-in `--story` slice ([`app_game/src/story.rs`](../crates/app_game/src/story.rs)): conversation, quest, gate state and saves. World positions are not reported to the session yet, so areas and movement sequences run only in headless tests.
 
 ## Environment authoring
 

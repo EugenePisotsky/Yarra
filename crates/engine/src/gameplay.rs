@@ -3,7 +3,7 @@ pub(crate) mod actors;
 mod camera;
 mod input;
 mod target;
-pub use actors::PlayerRoute;
+pub use actors::{PlayerMovementSuspended, PlayerRoute, standing_character};
 pub(crate) use camera::CAMERA_FOCUS_HEIGHT;
 pub use camera::{GAME_DEPTH_PREPASS_ENABLED, GameCameraPlugin};
 pub use input::GameInputPlugin;
@@ -67,6 +67,7 @@ impl Plugin for GameplayPlugin {
             .add_message::<crate::WorldStartAdopted>()
             .init_resource::<GameInputEnabled>()
             .init_resource::<GamePointerInputBlocked>()
+            .init_resource::<PlayerMovementSuspended>()
             .configure_sets(
                 Update,
                 (
@@ -96,6 +97,9 @@ impl Plugin for GameplayPlugin {
                     // After input, which clears the intent when no key is held.
                     actors::steer_player_along_route
                         .after(GameplaySystems::MoveIntent)
+                        .before(GameplaySystems::Movement),
+                    actors::hold_suspended_player
+                        .after(actors::steer_player_along_route)
                         .before(GameplaySystems::Movement),
                     actors::ground_characters_to_streamed_terrain
                         .in_set(GameplaySystems::Grounding),

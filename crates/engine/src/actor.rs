@@ -6,8 +6,9 @@
 
 use bevy::prelude::*;
 
+/// Marks the actor driven by player input.
 #[derive(Component, Debug, Clone, Copy)]
-pub(crate) struct PlayerControlled;
+pub struct PlayerControlled;
 
 /// Marks the one actor followed by the gameplay camera.
 ///
@@ -27,7 +28,7 @@ pub(crate) struct WorldStreamFocus;
 /// This remains separate from locomotion: flying/swimming actors may use the same motor contract
 /// without receiving terrain grounding, while a later physics controller can replace this resolver.
 #[derive(Component, Debug, Clone, Copy)]
-pub(crate) struct TerrainGrounded;
+pub struct TerrainGrounded;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum CharacterGait {

@@ -11,6 +11,7 @@ pub(crate) struct LaunchOptions {
     pub help: bool,
     pub world_db: Option<PathBuf>,
     pub start_view: Option<PathBuf>,
+    pub story: Option<PathBuf>,
     pub fps: u32,
     pub upscaler: upscaling::UpscaleMethod,
     pub clouds: engine::CloudQuality,
@@ -76,6 +77,11 @@ const FLAGS: &[(&str, bool, &str)] = &[
     ),
     ("--world-db", true, "FILE: cooked runtime database"),
     ("--start-view", true, "FILE: logical camera bookmark"),
+    (
+        "--story",
+        true,
+        "DIR: authored gameplay project; adds a guard and gate near the start",
+    ),
     (
         "--fps",
         true,
@@ -544,6 +550,7 @@ impl LaunchOptions {
             help: false,
             world_db: path("--world-db"),
             start_view: path("--start-view"),
+            story: path("--story"),
             fps,
             upscaler,
             clouds,

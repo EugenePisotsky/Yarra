@@ -20,6 +20,7 @@ mod profile;
 mod render_audit;
 mod repro;
 mod runtime_settings;
+mod story;
 
 fn main() {
     if let Err(error) = run() {
@@ -170,6 +171,9 @@ fn run() -> Result<(), String> {
             .enabled = false;
     }
     app.insert_resource(options.clouds);
+    if let Some(source) = &options.story {
+        story::install(&mut app, source)?;
+    }
     app.add_plugins(runtime_settings::RuntimeSettingsPlugin);
     // Explicit precedence: launch defaults, reproduction, then profile settings.
     profile::install(&mut app);

@@ -5,5 +5,6 @@
         Quest(quest: "20202020-2020-2020-2020-202020202020", transition: Complete),
         Relationship(from: Speaker, to: Player, amount: 25),
         AwardExperience(skill: "persuasion", amount: 10),
+        SetLocked(object: "51515151-5151-5151-5151-515151515151", locked: false),
     ]),
 })
