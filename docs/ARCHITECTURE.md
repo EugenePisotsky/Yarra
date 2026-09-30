@@ -101,25 +101,26 @@ Read models (`state()`, `derived`, `conversation_view`, `preview_interaction`, `
 
 [The checked-in project](../content/gameplay/demo/project.ron) is authored as RON plus Fluent: a project lists packages; a package owns catalog fragments, actor templates, rules, quests, profiles, predicates, claims, world objects/areas/triggers and conversations; a conversation directory owns its graph, message contracts and locale files. Names such as `guard/gate`, not paths or package order, are identities; a name hashes to the 16-byte identity used at runtime. Cross-package references need a declared package dependency. RON and Fluent are the only authoring source; gameplay reads published SQLite only.
 
-`LoadedProject::build` publishes one immutable bundle (schema **10**): one checksummed JSON record per asset keyed by `(kind, id)`, a manifest with the mechanical fingerprint, and a tool-only scenario. `ContentRepository::open` reads the manifest; `read`/`read_kind` verify checksum and identity of what they return. Language packs (schema **1**) are published separately per locale, so wording fixes need no mechanical rebuild and do not affect saves. The mechanical fingerprint covers definitions, rules and world binding and excludes translations.
+`LoadedProject::build` publishes one immutable bundle (schema **11**): one checksummed JSON record per asset keyed by `(kind, id)`, a manifest with the mechanical fingerprint, and a tool-only scenario. `ContentRepository::open` reads the manifest; `read`/`read_kind` verify checksum and identity of what they return. Language packs (schema **1**) are published separately per locale, so wording fixes need no mechanical rebuild and do not affect saves. The mechanical fingerprint covers definitions, rules and world binding and excludes translations.
 
 Conditions and actions are closed enums in [`content.rs`](../crates/gameplay/src/content.rs), shared by dialogue choices, interaction profiles and triggers, with `All`/`Any`/`Not` and named predicates. They are written inline where they are used. `Script("module.function")` is one more variant of each, run by the Luau engine the content carries; see [the roadmap](REFACTORING.md#step-4-done) for the script rules.
 
 ### Saves
 
-A [save](../crates/save/src/slots.rs) is one file per slot: a one-line header (format, slot info, content identity) followed by the state as JSON. Listing slots reads only headers. Saving writes a sibling file, syncs it and renames it over the slot, so a failed save leaves the previous one intact. Loading checks the content identity, then the whole state against the content. Save format **11**; older formats are rejected, not migrated. `ContentLibrary` retains published bundles by fingerprint so a slot can be restored against the content it was saved with.
+A [save](../crates/save/src/slots.rs) is one file per slot: a one-line header (format, slot info, content identity) followed by the state as JSON. Listing slots reads only headers. Saving writes a sibling file, syncs it and renames it over the slot, so a failed save leaves the previous one intact. Loading checks the content identity, then the whole state against the content. Save format **12**; older formats are rejected, not migrated. `ContentLibrary` retains published bundles by fingerprint so a slot can be restored against the content it was saved with.
 
 A save is tied to an exact content fingerprint. That is deliberate while worlds and saves are disposable; patching content under existing saves is an open question for a shipped game.
 
 ### Current domain behaviour
 
-These work today and are covered by the headless scenarios and tests; the roadmap replaces the world and rules models.
+These work today and are covered by the headless scenarios and tests.
 
 - **Dialogue:** a flat graph of nodes, each with a speaker role, text, an inline condition and actions, and ordered children. After a node the first eligible child decides: a line plays, or the eligible choices are offered. Roles are required, optional or a named character who joins when in the party, so companion reactions, lines for particular combinations of companions and NPC replies to them are ordinary nodes. Runs are keyed by `(dialogue, participant, speaker)` and keep a cursor token; explicit repeat policies, scoped history and once-only reward claims carry over between runs.
 - **NPC interaction:** a profile's prioritized entry rules pick an opening, offer independent topics and choose weighted variants from a separate narrative random stream.
 - **World:** object lock/open/destroyed overlays; areas known by name; triggers that listen for signals (entering or leaving an area, a walk arriving or failing, an item acquired, a quest, variable or dialogue change) and run their actions as a unit; walks requested by `Move` and completed when the engine reports the actor inside the area. Dialogues are blocking or ambient.
-- **Rules:** attributes with additive modifiers, skills as XP counters, a hard-coded d20 check, heal/buff item effects.
-- **Inventory:** stacks, transfers, wallets and fixed-price trades with stale-quote detection.
+- **Characters:** stats declared by the rules as primary, derived or a resource; derived stats and skill checks are functions in the rules script, and a character's stats are stored and worked out again only when what it is built of changes. Classes grant points and abilities per level and cap what trainers teach; experience and gold belong to the party. Status effects carry modifiers and periodic changes.
+- **Actions in time:** abilities with durations, costs and cooldowns; each character has a queue of intents, begun one at a time and resolved by the ability's script. No turns: passing time visits only characters with something pending.
+- **Inventory:** stacks, transfers, wallets and fixed-price trades with stale-quote detection. NPC and container inventories are made from loot tables the first time a command needs them.
 
 ### Localization
 
@@ -127,9 +128,9 @@ Text references are `(TextResourceId, TextKey)` with typed arguments (`Text`, `N
 
 ### Known limits
 
-- Item and other definition lookups are linear scans over lists; inventory operations re-validate the catalog. Fine for the demo, to be indexed when content is restructured.
-- Actor effect expiry scans all actors on each time advance.
-- The game uses these crates only through the opt-in `--story` slice ([`app_game/src/story.rs`](../crates/app_game/src/story.rs)): conversation, quest, gate state, saves, area occupancy for the party, triggered walks and ambient lines. Walks are straight lines; there is no pathfinding.
+- Every character has a record in memory, about 1 KB each with stats kept as maps keyed by name. Only inventories are made lazily.
+- The rules know nothing of range or line of sight; the engine adapter decides who can reach whom before it sends an intent.
+- The game uses these crates only through the opt-in `--story` slice ([`app_game/src/story.rs`](../crates/app_game/src/story.rs)): conversation, quest, gate state, saves, area occupancy for the party, triggered walks, ambient lines, the character sheet, lessons and sparring with a dummy. Walks are straight lines; there is no pathfinding.
 
 ## Environment authoring
 

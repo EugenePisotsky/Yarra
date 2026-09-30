@@ -17,7 +17,7 @@ Target: a classic party RPG in the line of KOTOR / Dragon Age: Origins, Gothic a
 | 3. Dialogue graph v2 | Flat node graph with a speaker, condition, actions and ordered children per node; any number of participants | Done |
 | 4. Luau scripts and names | Names as identities in authored content; Luau in a `scripting` crate behind a trait; script conditions and actions beside the built-in ones | Done |
 | 5. Events and areas | Event-driven triggers only; polygon areas painted in the editor; blocking and ambient dialogue modes | Done |
-| 6. Character rules | Data-defined stats, classes, levels, skill ranks, modifiers, status effects; a fixed-tick action model for combat | |
+| 6. Character rules | Data-defined stats, classes, levels, skill ranks, modifiers, status effects; timed actions for combat | Done |
 
 ### Step 1: done
 
@@ -99,18 +99,44 @@ Not done:
 - A variable subscription is per variable, not per actor.
 - The Areas tool has no viewport labels; names are in the Areas window.
 
-### Step 6: character rules
+### Step 6: done
 
-One model covers player, companions and NPCs; BG3, DOS2 and Gothic differ mainly in how points are granted and spent, so that is data.
+One model covers the player, companions and NPCs. How a game grants and spends points is data; its numbers are two script functions.
 
-- Stats are declared in content as primary, derived or resource. Derived values are computed by the Lua rules module and cached until equipment, effects or level change.
-- A modifier has a source and an operation (add, multiply, override).
-- Progression is an XP-to-level table plus per-class, per-level grants: attribute points, learning points, abilities, flat bonuses.
-- Chosen defaults: attribute points spent freely on level-up; skill ranks bought with learning points from trainers through a `Teach` dialogue action; a class gives starting stats, per-level grants and gates what trainers teach.
-- Party: up to four, any member can be the controlled character, inventories per character, shared gold and XP.
-- Combat is not turn-based. Build a fixed logical tick with action durations, cooldowns and a per-character intent queue; that serves both a KOTOR/Dragon Age style and full real time, and leaves the choice open.
-- NPC and container inventories start as a reference to a loot/stock template and are instantiated when first opened, traded with or looted.
-- Rejections become typed reasons (not enough gold, slot occupied…) instead of strings, so UI can react.
+**Stats.** The rules declare each stat as `Primary` (stored per character, raised with attribute points), `Derived` (worked out by the rules script from primaries, level, class and skills) or a `Resource` capped by another stat. One resource is named as life. A modifier adds, multiplies or overrides, and lives where it comes from: an item or a status effect; `modifiers_of` lists them with their sources for a tooltip. A character's stats are worked out when what it is built of changes and stored with it, so reading one is a lookup and combat never calls a script to read a number ([`rules.rs`](../crates/gameplay/src/rules.rs), [`character.rs`](../crates/gameplay/src/character.rs)).
+
+**Formulas.** The rules name two Luau functions: `derive(character)` returns every derived stat, `check(character, skill, difficulty, roll)` decides a skill check with dice from the saved random stream. The fixed attributes, the health field, skill experience counters and the hard-coded d20 are gone.
+
+**Classes, levels, points.** A class gives starting stats, grants per level and at particular levels (attribute points, learning points, outright bonuses, abilities) and caps the rank a trainer can teach of each skill. Experience belongs to the party: every member is at least the level it has earned, and someone who joins catches up. Attribute points are spent freely (`SpendAttributePoint`); skill ranks are bought with learning points through the `Teach` action, which a dialogue puts behind a trainer; `Pay` and `Gold` take from and test the party's shared purse.
+
+**Party.** Up to `party_size` members (four in the demo), one of them steered (`Control`), inventories per character, gold and experience shared. Actor roles are gone: the party and who is steered say what they said.
+
+**Status effects.** Defined by the rules with modifiers and an optional periodic change to a resource. One of each per character; applying it again starts it over. Losing the last of the life resource is death: effects and actions end, and triggers can listen for `Died`.
+
+**Actions in time.** An ability has a duration, a cooldown, resource costs and a script. A character lines up intents; one at a time is begun (costs paid), takes its duration, then takes effect. A repeating intent lines itself up again, which is a basic attack. There are no turns, only points in time, so the same model serves a paused-queue game and a real-time one; the choice is still open. Passing time visits only characters with something pending. A failing ability script costs its user the action and nothing else ([`combat.rs`](../crates/gameplay/src/combat.rs)).
+
+**Lazy inventories.** A template names what the character wears and a loot table; a container names a table. Neither has an inventory until a command needs one. What is found depends on the playthrough and the owner only, from a random stream of its own, so the order of opening does not matter. Template equipment counts towards stats from the start.
+
+**Typed refusals.** What a player can run into is a `Rejection` a UI can match on (locked, not enough gold or learning points, party full, on a dead target…), and it keeps its type when it comes from inside a script. Mistakes in content or code stay plain errors.
+
+**Lookups.** Definition lists are kept in order of identity and found by bisection; item operations no longer re-check the whole catalog.
+
+Source format 10, bundle schema 11, save format 12.
+
+Evidence: 217 tests across the gameplay crates. New: 15 on characters (formula-driven stats, effects over time, death, shared experience and points, trainers and class caps, the purse, party size and control, checks, load validation, unopened inventories and containers, typed refusals), 7 on timed actions (durations, queues and repeats, cooldowns and costs, death, refusals, a fight resumed from a save ends the same, a skirmish among bystanders), 7 on Luau (the authored formulas and abilities give the same results as the fixtures' Rust ones, formula mistakes are errors, a failing ability script). The demo has a trainer scenario (`guard-training`) and the game slice shows the sheet, lessons, points, a potion and sparring with a dummy.
+
+Numbers, dev profile on this machine:
+- Deriving a character's stats in Luau: about 9 µs. Spawning 20,000 characters 175 ms; checking all of them on load 130 ms.
+- 200 characters trading blows among 20,000 idle ones: 0.23 ms per 100 ms step of game time.
+- Three item commands against 10,000 item definitions: 0.09 ms (9.5 ms before bisection).
+
+Not done, deliberately:
+- No combat in the engine beyond the slice's dummy: no range or line of sight in the rules (the adapter decides who can reach whom), no animation, no AI choosing intents.
+- Effects do not stack; a second application restarts the first.
+- Stats are maps keyed by name, about 1 KB per character. Dense arrays indexed by the rules' order would shrink that without changing content.
+- NPC levels are whatever their template says; only party members gain experience.
+- Scenarios cannot start a party with experience.
+- Variable subscriptions are still per variable, not per actor.
 
 ### Working method
 
