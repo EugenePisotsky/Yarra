@@ -81,10 +81,6 @@ pub enum Condition {
         event: dialogue::HistoryEvent,
         minimum: u64,
     },
-    Claimed {
-        claim: ClaimId,
-        value: bool,
-    },
     All(Vec<Condition>),
     Any(Vec<Condition>),
     Not(Box<Condition>),
@@ -146,9 +142,13 @@ pub enum Action {
         object: ObjectId,
         locked: bool,
     },
-    Claim {
-        claim: ClaimId,
-        actions: Vec<Action>,
+    /// `then` when the condition holds, otherwise `otherwise`. With a variable that the
+    /// actions set, it gives a reward once however often the choice is offered.
+    If {
+        condition: Condition,
+        then: Vec<Action>,
+        #[serde(default)]
+        otherwise: Vec<Action>,
     },
     Quest {
         quest: QuestId,
@@ -249,8 +249,6 @@ pub struct GameDefinitions {
     pub world: crate::WorldDefinitions,
     #[serde(with = "crate::keyed::list")]
     pub dialogue_contracts: BTreeMap<DialogueId, dialogue::DialogueContract>,
-    #[serde(with = "crate::keyed::list")]
-    pub claims: BTreeMap<ClaimId, dialogue::ClaimDefinition>,
     #[serde(with = "crate::keyed::list")]
     pub quests: BTreeMap<QuestId, quests::Quest>,
     #[serde(with = "crate::keyed::list")]
@@ -382,7 +380,6 @@ impl GameContent {
         for contract in self.game.dialogue_contracts.values() {
             contract.validate()?;
         }
-        filed(&self.game.claims, "claims")?;
         filed(&self.game.dialogues, "dialogues")?;
         for graph in self.game.dialogues.values() {
             graph.validate()?;
@@ -427,10 +424,17 @@ impl GameContent {
             Action::SetLocked { object, .. } => {
                 self.object(*object)?;
             }
-            Action::Claim { claim, actions } => {
-                self.claim(*claim)?;
-                require(!actions.is_empty(), "empty claimed action group")?;
-                for action in actions {
+            Action::If {
+                condition,
+                then,
+                otherwise,
+            } => {
+                self.validate_condition(condition)?;
+                require(
+                    !then.is_empty() || !otherwise.is_empty(),
+                    "a conditional action does nothing either way",
+                )?;
+                for action in then.iter().chain(otherwise) {
                     self.validate_action(action, depth + 1)?;
                 }
             }

@@ -219,6 +219,26 @@ fn a_step_of_time_carries_out_everything_due_in_it_however_much() {
     assert!(error.contains("takes 1 ms"), "{error}");
 }
 #[test]
+fn a_conditional_action_does_one_thing_or_the_other() {
+    let mut session = session();
+    let carries = |quantity| Condition::HasItem {
+        definition: KEY,
+        quantity,
+    };
+    let either = |condition, then, otherwise| Action::If {
+        condition,
+        then: vec![award(then)],
+        otherwise: vec![award(otherwise)],
+    };
+    // The hero carries one key, not two.
+    run(
+        &mut session,
+        vec![either(carries(1), 10, 1), either(carries(2), 100, 5)],
+    )
+    .unwrap();
+    assert_eq!(session.state().party.experience, 15);
+}
+#[test]
 fn losing_the_last_of_the_life_resource_is_death() {
     let mut content = content();
     // A trigger hears of the death like any other event.

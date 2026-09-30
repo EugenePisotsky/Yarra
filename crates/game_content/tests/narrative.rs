@@ -446,10 +446,14 @@ fn scripts_are_checked_at_publication_and_run_from_the_published_bundle() {
     for step in &project.scenario().steps {
         step.apply(&mut session).unwrap();
     }
-    // The scripted reward took the claim, the key and completed the quest.
+    // The scripted reward was given once, took the key and completed the quest.
     let state = session.state();
     assert_eq!(state.quest(GATE).status, Status::Completed);
-    assert_eq!(state.claims.len(), 1);
+    let rewarded = VariableId::named("guard/rewarded");
+    assert_eq!(
+        state.variable(session.content(), rewarded).unwrap(),
+        gameplay::Value::Bool(true)
+    );
     assert!(
         !state
             .object(session.content(), ObjectId::named("guard/old_gate"))

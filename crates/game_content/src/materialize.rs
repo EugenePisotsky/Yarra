@@ -41,7 +41,6 @@ impl LoadedProject {
         };
         let mut rules = None;
         let mut world = gameplay::WorldDefinitions::default();
-        let mut claims = BTreeMap::new();
         let mut dialogue_contracts = BTreeMap::new();
         let mut quests = BTreeMap::new();
         let mut profiles = BTreeMap::new();
@@ -65,9 +64,6 @@ impl LoadedProject {
                 }
                 Asset::Trigger(v) => {
                     world.triggers.add(v);
-                }
-                Asset::Claim(v) => {
-                    claims.add(v);
                 }
                 Asset::Quest(v) => {
                     quests.add(v);
@@ -115,7 +111,6 @@ impl LoadedProject {
             game: GameDefinitions {
                 world,
                 dialogue_contracts,
-                claims,
                 quests,
                 profiles,
                 predicates,

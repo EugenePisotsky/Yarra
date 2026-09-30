@@ -3,9 +3,9 @@ use game_types::*;
 use gameplay::actors::ActorTemplate;
 use gameplay::dialogue::Dialogue;
 use gameplay::inventory::ItemCatalog;
+use gameplay::quests;
 use gameplay::rules::Rules;
 use gameplay::{ContentManifest, GameContent, GameDefinitions, KeyedMap, keyed_map};
-use gameplay::{dialogue, quests};
 use localization::{LanguageResource, Localization, contract_hash};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{
@@ -37,7 +37,6 @@ pub struct PackageFile {
     /// Names of the world areas this package refers to.
     pub areas: BTreeSet<AreaId>,
     pub triggers: Vec<String>,
-    pub claims: Vec<String>,
     pub quests: Vec<String>,
     pub profiles: Vec<String>,
     pub predicates: Vec<String>,
@@ -126,7 +125,6 @@ impl LoadedProject {
         let mut actors: Vec<ActorTemplate> = Vec::new();
         let mut dialogues: Vec<Dialogue> = Vec::new();
         let mut world = gameplay::WorldDefinitions::default();
-        let mut claims = Vec::new();
         let mut quests = Vec::new();
         let mut profiles = Vec::new();
         let mut predicates = Vec::new();
@@ -161,11 +159,6 @@ impl LoadedProject {
                 let d: gameplay::TriggerDefinition = source.ron(path)?;
                 own!(AssetId::Trigger(d.id));
                 world.triggers.add(d);
-            }
-            for path in &package.claims {
-                let c: dialogue::ClaimDefinition = source.ron(path)?;
-                own!(AssetId::Claim(c.id));
-                claims.push(c);
             }
             for path in &package.quests {
                 let q: quests::Quest = source.ron(path)?;
@@ -324,7 +317,6 @@ impl LoadedProject {
             game: GameDefinitions {
                 world,
                 dialogue_contracts: keyed_map(dialogues.iter().map(Dialogue::contract)),
-                claims: keyed_map(claims),
                 quests: keyed_map(quests),
                 profiles: keyed_map(profiles),
                 predicates: keyed_map(predicates),

@@ -224,8 +224,10 @@ impl Action {
                         walk(a, depth + 1, budget, f)?;
                     }
                 }
-                Action::Claim { actions, .. } => {
-                    for a in actions {
+                Action::If {
+                    then, otherwise, ..
+                } => {
+                    for a in then.iter().chain(otherwise) {
                         walk(a, depth + 1, budget, f)?;
                     }
                 }
@@ -275,9 +277,6 @@ impl GameContent {
                     if let dialogue::HistoryEvent::Node(id) = event {
                         require(d.nodes.contains(id), "unknown history node")?
                     }
-                }
-                Condition::Claimed { claim, .. } => {
-                    self.claim(*claim)?;
                 }
 
                 Condition::HasItem {
@@ -388,11 +387,6 @@ impl GameContent {
                     let d = content.dialogue_contract(*dialogue)?;
                     let n = state.history(d.history_key(pair.0, pair.1)).count(event);
                     (Observed::Quantity(n), n >= *minimum)
-                }
-                Condition::Claimed { claim, value } => {
-                    let d = content.claim(*claim)?;
-                    let found = state.claimed(d.key(pair.0, pair.1));
-                    (Observed::Boolean(found), found == *value)
                 }
                 Condition::All(v) | Condition::Any(v) => {
                     let mut result = matches!(c, Condition::All(_));

@@ -19,7 +19,7 @@ const POST: AreaId = AreaId::named("guard/gate_post");
 const ESCORT: TriggerId = TriggerId::named("guard/escort");
 const OPEN_GATE: TriggerId = TriggerId::named("guard/open_gate");
 const QUEST: QuestId = QuestId::named("guard/gate");
-const CLAIM: ClaimId = ClaimId::named("guard/reward_claim");
+const REWARDED: VariableId = VariableId::named("guard/rewarded");
 const BANTER: DialogueId = DialogueId::named("guard/banter");
 const COUNTER: VariableId = VariableId::named("guard/entries");
 
@@ -115,10 +115,8 @@ fn give(session: &mut gameplay::GameSession, item: ItemId, from: ActorId, to: Ac
         .unwrap();
 }
 fn rewarded(session: &gameplay::GameSession) -> bool {
-    session.state().claimed(dialogue::ClaimKey {
-        claim: CLAIM,
-        scope: dialogue::Scope::Playthrough,
-    })
+    let value = session.state().variable(session.content(), REWARDED);
+    value.unwrap() == Value::Bool(true)
 }
 
 #[test]
@@ -354,7 +352,7 @@ fn a_trigger_whose_actions_fail_changes_nothing_and_stays_armed() {
     let (trigger, reason) = failure.expect("the arrival could not take the key");
     assert_eq!(*trigger, OPEN_GATE);
     assert!(reason.contains("guard.take_key"), "{reason}");
-    // Nothing of the failed trigger stuck: no claim, no experience, the chest it would have
+    // Nothing of the failed trigger stuck: no reward, no experience, the chest it would have
     // unlocked after the script is still locked. The guard did arrive.
     assert!(!rewarded(&session));
     assert_eq!(session.state().party.experience, 0);

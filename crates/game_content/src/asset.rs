@@ -22,7 +22,6 @@ pub enum AssetKind {
     Profile,
     Predicate,
     DialogueContract,
-    Claim,
     Object,
     Area,
     Trigger,
@@ -30,7 +29,7 @@ pub enum AssetKind {
     Loot,
 }
 impl AssetKind {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 16] = [
         Self::Category,
         Self::Item,
         Self::Actor,
@@ -42,7 +41,6 @@ impl AssetKind {
         Self::Profile,
         Self::Predicate,
         Self::DialogueContract,
-        Self::Claim,
         Self::Object,
         Self::Area,
         Self::Trigger,
@@ -64,7 +62,6 @@ pub enum AssetId {
     Profile(InteractionProfileId),
     Predicate(PredicateId),
     DialogueContract(DialogueId),
-    Claim(ClaimId),
     Object(ObjectId),
     Area(AreaId),
     Trigger(TriggerId),
@@ -85,7 +82,6 @@ impl AssetId {
             Self::Profile(_) => AssetKind::Profile,
             Self::Predicate(_) => AssetKind::Predicate,
             Self::DialogueContract(_) => AssetKind::DialogueContract,
-            Self::Claim(_) => AssetKind::Claim,
             Self::Object(_) => AssetKind::Object,
             Self::Area(_) => AssetKind::Area,
             Self::Trigger(_) => AssetKind::Trigger,
@@ -109,7 +105,6 @@ impl AssetId {
             Self::Profile(id) => id.raw(),
             Self::Predicate(id) => id.raw(),
             Self::DialogueContract(id) => id.raw(),
-            Self::Claim(id) => id.raw(),
             Self::Object(id) => id.raw(),
             Self::Area(id) => id.raw(),
             Self::Trigger(id) => id.raw(),
@@ -135,7 +130,6 @@ impl AssetId {
             AssetKind::Object => Self::Object(ObjectId::try_from(key.clone())?),
             AssetKind::Area => Self::Area(AreaId::try_from(key.clone())?),
             AssetKind::Trigger => Self::Trigger(TriggerId::try_from(key.clone())?),
-            AssetKind::Claim => Self::Claim(ClaimId::try_from(key.clone())?),
             AssetKind::Predicate => Self::Predicate(PredicateId::try_from(key.clone())?),
             AssetKind::Loot => Self::Loot(LootId::try_from(key.clone())?),
         };
@@ -165,7 +159,6 @@ pub enum Asset {
     Profile(gameplay::InteractionProfile),
     Predicate(gameplay::NamedPredicate),
     DialogueContract(dialogue::DialogueContract),
-    Claim(dialogue::ClaimDefinition),
     Object(gameplay::ObjectDefinition),
     Area(AreaId),
     Trigger(gameplay::TriggerDefinition),
@@ -224,7 +217,6 @@ impl Asset {
             Self::Profile(v) => AssetId::Profile(v.id),
             Self::Predicate(v) => AssetId::Predicate(v.id),
             Self::DialogueContract(v) => AssetId::DialogueContract(v.id),
-            Self::Claim(v) => AssetId::Claim(v.id),
             Self::Object(v) => AssetId::Object(v.id),
             Self::Area(id) => AssetId::Area(*id),
             Self::Trigger(v) => AssetId::Trigger(v.id),
@@ -364,7 +356,6 @@ fn condition_references(condition: &Condition, refs: &mut BTreeSet<AssetId>) -> 
         refs.extend(match c {
             Condition::InsideArea { area } => Some(AssetId::Area(*area)),
             Condition::History { dialogue, .. } => Some(AssetId::DialogueContract(*dialogue)),
-            Condition::Claimed { claim, .. } => Some(AssetId::Claim(*claim)),
             Condition::HasItem { definition, .. } => Some(AssetId::Item(*definition)),
             Condition::Variable { variable, .. } => Some(AssetId::Variable(*variable)),
             Condition::QuestStatus { quest, .. } | Condition::ObjectiveCompleted { quest, .. } => {
@@ -384,11 +375,15 @@ fn condition_references(condition: &Condition, refs: &mut BTreeSet<AssetId>) -> 
     Ok(())
 }
 fn action_references(action: &Action, refs: &mut BTreeSet<AssetId>) -> Result<()> {
+    let mut conditions = Vec::new();
     action.visit(&mut |a| {
         refs.extend(match a {
             Action::Script(name) => Some(AssetId::Script(name.module.clone())),
             Action::SetLocked { object, .. } => Some(AssetId::Object(*object)),
-            Action::Claim { claim, .. } => Some(AssetId::Claim(*claim)),
+            Action::If { condition, .. } => {
+                conditions.push(condition.clone());
+                None
+            }
             Action::Quest { quest, .. } => Some(AssetId::Quest(*quest)),
             Action::GrantItem { definition, .. } | Action::ConsumeItem { definition, .. } => {
                 Some(AssetId::Item(*definition))
@@ -409,5 +404,9 @@ fn action_references(action: &Action, refs: &mut BTreeSet<AssetId>) -> Result<()
         });
         Ok(())
     })?;
+    // What a conditional action tests refers to content too.
+    for condition in &conditions {
+        condition_references(condition, refs)?;
+    }
     Ok(())
 }

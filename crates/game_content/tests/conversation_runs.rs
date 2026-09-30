@@ -1,10 +1,9 @@
 use game_types::*;
-use gameplay::dialogue::{
-    ArgumentSource, Dialogue, HistoryEvent, Node, Repeat, Role, Scope, ScopeSelector, Token,
-};
+use gameplay::dialogue::{ArgumentSource, Dialogue, HistoryEvent, Node, Repeat, Role, Token};
 use gameplay::quests::Transition;
 use gameplay::{
-    Action, Command, ConversationKey, GameEvent,
+    Action, Command, Condition, ConversationKey, GameEvent, Participant, Test, Value,
+    VariableDefinition, VariableKey, VariableScope,
     fixtures::{COMPANION, HERO, MERCHANT, key},
 };
 use gameplay::{dialogue, inventory};
@@ -16,7 +15,10 @@ const REWARD: DialogueId = DialogueId::named("guard/reward");
 const DUTY: DialogueId = DialogueId::named("guard/duty");
 const A: DialogueId = DialogueId::named("guard/welcome_a");
 const B: DialogueId = DialogueId::named("guard/welcome_b");
-const CLAIM: ClaimId = ClaimId::named("guard/reward_claim");
+/// The reward the guard's own script gives once.
+const REWARDED: VariableId = VariableId::named("guard/rewarded");
+/// The reward `reward_source` gives once, for the playthrough or for each player.
+const THANKED: VariableId = VariableId::named("guard/thanked");
 const GATE: QuestId = QuestId::named("guard/gate");
 fn pair(dialogue: DialogueId) -> ConversationKey {
     ConversationKey {
@@ -87,43 +89,59 @@ fn history(
         .history_key(key.participant, key.speaker);
     session.state().history(key).clone()
 }
-fn claimed(session: &mut gameplay::GameSession, scope: Scope) -> bool {
-    let key = dialogue::ClaimKey {
-        claim: CLAIM,
-        scope,
-    };
-    session.state().claimed(key)
+fn given(session: &gameplay::GameSession, variable: VariableId, actor: Option<ActorId>) -> bool {
+    let key = VariableKey { variable, actor };
+    session.state().variable(session.content(), key).unwrap() == Value::Bool(true)
 }
 fn node<'a>(graph: &'a mut Dialogue, id: &str) -> &'a mut Node {
     graph.nodes.iter_mut().find(|n| n.id == key(id)).unwrap()
 }
-fn reward_source(root: &std::path::Path, scope: ScopeSelector) {
-    write(
-        root.join("packages/guard/reward.claim.ron"),
-        &dialogue::ClaimDefinition { id: CLAIM, scope },
-    );
+/// A reward given once, whether for the playthrough or for each player, however often the
+/// choice that gives it is picked.
+fn reward_source(root: &std::path::Path, scope: VariableScope) {
+    let package_path = root.join("packages/guard/package.ron");
+    let mut package: PackageFile = read(&package_path);
+    package.variables.push(VariableDefinition {
+        id: THANKED,
+        initial: Value::Bool(false),
+        scope,
+    });
+    write(&package_path, &package);
+    let of = (scope == VariableScope::Actor).then_some(Participant::Player);
     let graph_path = root.join("packages/guard/conversations/reward/graph.ron");
     let mut graph: dialogue::Dialogue = read(&graph_path);
     let reward = node(&mut graph, "return-key");
     reward.condition = None;
-    reward.actions = vec![Action::Claim {
-        claim: CLAIM,
-        actions: vec![Action::Check {
-            skill: key("persuasion"),
-            difficulty: 1,
-            success: vec![
-                Action::AwardExperience { amount: 10 },
-                Action::GrantItem {
-                    definition: inventory::fixtures::SWORD,
-                    quantity: 1,
-                },
-            ],
-            failure: vec![],
-        }],
+    reward.actions = vec![Action::If {
+        condition: Condition::Variable {
+            variable: THANKED,
+            of,
+            test: Test::Is(Value::Bool(false)),
+        },
+        then: vec![
+            Action::Set {
+                variable: THANKED,
+                of,
+                value: Value::Bool(true),
+            },
+            Action::Check {
+                skill: key("persuasion"),
+                difficulty: 1,
+                success: vec![
+                    Action::AwardExperience { amount: 10 },
+                    Action::GrantItem {
+                        definition: inventory::fixtures::SWORD,
+                        quantity: 1,
+                    },
+                ],
+                failure: vec![],
+            },
+        ],
+        otherwise: vec![],
     }];
     let reward = reward.clone();
     write(graph_path, &graph);
-    // The same durable claim can guard a reward offered by another graph/NPC.
+    // The same variable can guard a reward offered by another graph or NPC.
     let second = root.join("packages/guard/conversations/duty/graph.ron");
     let mut duty: dialogue::Dialogue = read(&second);
     node(&mut duty, "greeting")
@@ -134,10 +152,10 @@ fn reward_source(root: &std::path::Path, scope: ScopeSelector) {
 }
 
 #[test]
-fn shared_claim_survives_reopening_other_graphs_npcs_and_restore() {
+fn a_reward_given_once_stays_given_across_graphs_npcs_and_a_restore() {
     let temp = Temp::new();
     let root = temp.source();
-    reward_source(&root, ScopeSelector::Playthrough);
+    reward_source(&root, VariableScope::Playthrough);
     let (project, mut session) = load(&temp, &root);
     for k in [
         pair(REWARD),
@@ -152,7 +170,7 @@ fn shared_claim_survives_reopening_other_graphs_npcs_and_restore() {
         read_lines(&mut session, k);
         choose(&mut session, k, "return-key");
     }
-    assert!(claimed(&mut session, Scope::Playthrough));
+    assert!(given(&session, THANKED, None));
     assert_eq!(session.state().party.experience, 10);
     assert_eq!(
         history(&mut session, &project, pair(REWARD)).count(&HistoryEvent::Node(key("return-key"))),
@@ -171,18 +189,20 @@ fn shared_claim_survives_reopening_other_graphs_npcs_and_restore() {
     start(&mut restored, pair(REWARD));
     read_lines(&mut restored, pair(REWARD));
     let outcome = choose(&mut restored, pair(REWARD), "return-key");
-    assert!(!outcome.events.iter().any(|e| matches!(
-        e,
-        GameEvent::Checked { .. } | GameEvent::RewardClaimed { .. }
-    )));
+    assert!(
+        !outcome
+            .events
+            .iter()
+            .any(|e| matches!(e, GameEvent::Checked { .. }))
+    );
     assert_eq!(restored.state().carried(HERO).unwrap().entries, before);
 }
 
 #[test]
-fn actor_scoped_claims_do_not_suppress_another_players_reward() {
+fn a_reward_given_once_per_player_is_still_there_for_the_next() {
     let temp = Temp::new();
     let root = temp.source();
-    reward_source(&root, ScopeSelector::Player);
+    reward_source(&root, VariableScope::Actor);
     let (_, mut session) = load(&temp, &root);
     for (rewards, player) in [(1, HERO), (2, COMPANION)] {
         let k = ConversationKey {
@@ -192,14 +212,14 @@ fn actor_scoped_claims_do_not_suppress_another_players_reward() {
         start(&mut session, k);
         read_lines(&mut session, k);
         choose(&mut session, k, "return-key");
-        assert!(claimed(&mut session, Scope::Actor(player)));
+        assert!(given(&session, THANKED, Some(player)));
         // Each of them earns it; the experience goes to the party either way.
         assert_eq!(session.state().party.experience, 10 * rewards);
     }
 }
 
 #[test]
-fn interruption_and_previous_choices_drive_selection_without_claiming_rewards() {
+fn interruption_and_previous_choices_drive_selection_without_giving_rewards() {
     let temp = Temp::new();
     let root = temp.source();
     // Use the NPC template from the authored guard exercise.
@@ -268,7 +288,7 @@ fn interruption_and_previous_choices_drive_selection_without_claiming_rewards() 
         .unwrap();
     let h = history(&mut restored, &project, key);
     assert_eq!((h.started, h.completed, h.interrupted), (1, 0, 1));
-    assert!(!claimed(&mut restored, Scope::Playthrough));
+    assert!(!given(&restored, REWARDED, None));
     restored.apply(talk()).unwrap();
     assert_eq!(
         restored.conversation_view(key).unwrap().token,
@@ -298,7 +318,7 @@ fn interruption_and_previous_choices_drive_selection_without_claiming_rewards() 
     let h = history(&mut restored, &project, key);
     assert_eq!((h.started, h.completed, h.interrupted), (2, 1, 1));
     assert_eq!(h.count(&HistoryEvent::Node(key_fn("greeting"))), 2);
-    assert!(!claimed(&mut restored, Scope::Playthrough));
+    assert!(!given(&restored, REWARDED, None));
 }
 
 #[test]
@@ -595,7 +615,7 @@ fn authored_refusal_exercise_runs_through_the_indexed_session() {
     };
     let h = history(&mut session, &project, with_guard);
     assert_eq!((h.started, h.completed, h.interrupted), (3, 2, 1));
-    assert!(claimed(&mut session, Scope::Playthrough));
+    assert!(given(&session, REWARDED, None));
     assert_eq!(session.state().party.experience, 120);
 }
 

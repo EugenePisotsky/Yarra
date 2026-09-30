@@ -2,7 +2,7 @@
 //! and read as their defaults, so a save only contains what differs from the authored world.
 use crate::actors::{Actor, Relationship, RelationshipKey};
 use crate::dialogue::{
-    ClaimKey, Conversation, History, HistoryKey, Interaction, InteractionKey, Mode, RunStatus,
+    Conversation, History, HistoryKey, Interaction, InteractionKey, Mode, RunStatus,
 };
 use crate::inventory::{Inventory, InventoryRole, Wallet};
 use crate::rules::{Modifier, RandomState, Stats};
@@ -67,7 +67,6 @@ pub struct SessionState {
     pub interactions: BTreeMap<InteractionKey, Interaction>,
     #[serde(with = "crate::keyed::list")]
     pub histories: BTreeMap<HistoryKey, History>,
-    pub claims: BTreeSet<ClaimKey>,
     #[serde(with = "crate::keyed::list")]
     pub conversations: BTreeMap<ConversationKey, Conversation>,
     /// Variables that were set; the rest still have their initial value.
@@ -145,7 +144,6 @@ impl SessionState {
             relationships: BTreeMap::new(),
             interactions: BTreeMap::new(),
             histories: BTreeMap::new(),
-            claims: BTreeSet::new(),
             conversations: BTreeMap::new(),
             variables: BTreeMap::new(),
             party: Party::default(),
@@ -233,9 +231,6 @@ impl SessionState {
             .get(&key)
             .cloned()
             .unwrap_or_else(|| History::empty(key))
-    }
-    pub fn claimed(&self, key: ClaimKey) -> bool {
-        self.claims.contains(&key)
     }
     /// An untouched object is in its authored state, whether or not its region is loaded.
     pub fn object(&self, content: &GameContent, id: ObjectId) -> Result<ObjectState> {
@@ -535,21 +530,6 @@ impl SessionState {
         )
         .map_err(Into::into)
     }
-    pub(crate) fn check_claim(&self, content: &GameContent, key: ClaimKey) -> Result<()> {
-        key.scope.validate()?;
-        require(
-            content.claim(key.claim)?.scope.accepts(key.scope),
-            "invalid claim identity/scope",
-        )?;
-        require(
-            key.scope
-                .actors()
-                .iter()
-                .all(|id| self.actors.contains_key(id)),
-            "invalid claim actor",
-        )
-        .map_err(Into::into)
-    }
     pub(crate) fn check_relationship(&self, r: &Relationship) -> Result<()> {
         r.validate()?;
         require(
@@ -693,9 +673,6 @@ impl SessionState {
         }
         for h in self.histories.values() {
             self.check_history(content, h)?;
-        }
-        for key in &self.claims {
-            self.check_claim(content, *key)?;
         }
         for q in self.quests.values() {
             q.validate(content.quest(q.quest)?)?;

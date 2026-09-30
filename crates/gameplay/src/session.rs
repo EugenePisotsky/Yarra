@@ -113,9 +113,6 @@ pub enum GameEvent {
     DialogueInterrupted {
         key: ConversationKey,
     },
-    RewardClaimed {
-        key: dialogue::ClaimKey,
-    },
     QuestChanged {
         quest: QuestId,
         status: quests::Status,
@@ -657,9 +654,6 @@ fn check_changes(content: &GameContent, tx: &Tx) -> Result<()> {
     for key in before.histories.keys() {
         state.check_history(content, &state.history(*key))?;
     }
-    for key in &before.claims {
-        state.check_claim(content, *key)?;
-    }
     for key in before.conversations.keys() {
         state.check_conversation(content, state.conversation(*key)?)?;
         if state.conversation(*key)?.status == RunStatus::Active {
@@ -946,16 +940,15 @@ pub(crate) fn run_action(
             }
             events.push(GameEvent::World(WorldEvent::ObjectChanged(*object)));
         }
-        Action::Claim { claim, actions } => {
-            let key = content.claim(*claim)?.key(actor, speaker);
-            if state.claimed(key) {
-                return Ok(());
-            }
-            state.claim(key);
-            for action in actions {
+        Action::If {
+            condition,
+            then,
+            otherwise,
+        } => {
+            let holds = content.evaluate_among(condition, state, actor, speaker, others)?;
+            for action in if holds.matched { then } else { otherwise } {
                 run_action(content, state, actor, speaker, others, action, events)?;
             }
-            events.push(GameEvent::RewardClaimed { key });
         }
         Action::Quest { quest, transition } => {
             change_quest(content, state, *quest, transition, events)?

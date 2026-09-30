@@ -11,7 +11,7 @@ use std::{
 
 /// Asset kinds read once when a session opens. Dialogue graphs and text contracts are read
 /// only when a conversation or a formatter needs them.
-const CORE_KINDS: [AssetKind; 15] = [
+const CORE_KINDS: [AssetKind; 14] = [
     AssetKind::Category,
     AssetKind::Item,
     AssetKind::Actor,
@@ -21,7 +21,6 @@ const CORE_KINDS: [AssetKind; 15] = [
     AssetKind::Profile,
     AssetKind::Predicate,
     AssetKind::DialogueContract,
-    AssetKind::Claim,
     AssetKind::Object,
     AssetKind::Area,
     AssetKind::Trigger,
@@ -64,7 +63,6 @@ impl ContentRepository {
             game: GameDefinitions {
                 world: Default::default(),
                 dialogue_contracts: Default::default(),
-                claims: Default::default(),
                 quests: Default::default(),
                 profiles: Default::default(),
                 predicates: Default::default(),
@@ -90,9 +88,6 @@ impl ContentRepository {
                     }
                     Asset::DialogueContract(v) => {
                         content.game.dialogue_contracts.add(v);
-                    }
-                    Asset::Claim(v) => {
-                        content.game.claims.add(v);
                     }
                     Asset::Quest(v) => {
                         content.game.quests.add(v);

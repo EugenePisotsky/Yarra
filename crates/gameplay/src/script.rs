@@ -129,10 +129,6 @@ impl ReadScope<'_> {
             .relationship(crate::actors::RelationshipKey { from, to })
             .attitude)
     }
-    pub fn claimed(&self, claim: ClaimId) -> Result<bool> {
-        let key = self.content.claim(claim)?.key(self.player, self.speaker);
-        Ok(self.state.claimed(key))
-    }
     pub fn present(&self, actor: ActorId) -> bool {
         actor == self.player
             || actor == self.speaker
@@ -238,15 +234,5 @@ impl ActScope<'_, '_> {
     /// One of 1..=sides from the saved random stream.
     pub fn random(&mut self, sides: u32) -> Result<u32> {
         Ok(self.tx.random_mut().die(sides)?)
-    }
-    /// Takes a once-only claim. `false` means it was already taken and nothing should follow.
-    pub fn claim(&mut self, claim: ClaimId) -> Result<bool> {
-        let key = self.content.claim(claim)?.key(self.player, self.speaker);
-        if self.tx.claimed(key) {
-            return Ok(false);
-        }
-        self.tx.claim(key);
-        self.events.push(GameEvent::RewardClaimed { key });
-        Ok(true)
     }
 }

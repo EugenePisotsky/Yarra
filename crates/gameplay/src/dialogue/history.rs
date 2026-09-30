@@ -166,22 +166,3 @@ impl History {
         )
     }
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ClaimDefinition {
-    pub id: ClaimId,
-    pub scope: ScopeSelector,
-}
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct ClaimKey {
-    pub claim: ClaimId,
-    pub scope: Scope,
-}
-impl ClaimDefinition {
-    pub fn key(&self, player: ActorId, speaker: ActorId) -> ClaimKey {
-        ClaimKey {
-            claim: self.id,
-            scope: self.scope.resolve(player, speaker),
-        }
-    }
-}

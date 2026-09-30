@@ -2,7 +2,6 @@
     objects: [],
     areas: [],
     triggers: [],
-    claims: [],
     quests: [], profiles: [], predicates: [],
     id: "core",
     dependencies: [],

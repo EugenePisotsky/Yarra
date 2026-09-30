@@ -2,7 +2,7 @@
 //! rejected command restores the state exactly, and an accepted one knows precisely what it
 //! changed. Cost follows the records a command touches, not the size of the playthrough.
 use crate::actors::{Actor, Relationship, RelationshipKey};
-use crate::dialogue::{ClaimKey, Conversation, History, HistoryKey, Interaction, InteractionKey};
+use crate::dialogue::{Conversation, History, HistoryKey, Interaction, InteractionKey};
 use crate::inventory::{Inventory, Wallet};
 use crate::rules::RandomState;
 use crate::{Result, *};
@@ -31,7 +31,6 @@ macro_rules! journal {
         pub(crate) struct Before {
             scalars: Scalars,
             $(pub $name: BTreeMap<$key, Option<$value>>,)*
-            pub claims: BTreeSet<ClaimKey>,
             pending: Option<VecDeque<Pending>>,
             /// Signals raised directly by this scope; dropped with it if it is undone.
             pub signals: Vec<WorldSignal>,
@@ -44,7 +43,6 @@ macro_rules! journal {
                 Self {
                     scalars: Scalars::of(state),
                     $($name: BTreeMap::new(),)*
-                    claims: BTreeSet::new(),
                     pending: None,
                     signals: Vec::new(),
                     party: None,
@@ -59,9 +57,6 @@ macro_rules! journal {
                         None => state.$($path).+.remove(&key),
                     };
                 })*
-                for key in self.claims {
-                    state.claims.remove(&key);
-                }
                 if let Some(pending) = self.pending {
                     state.world.pending = pending;
                 }
@@ -83,7 +78,6 @@ macro_rules! journal {
                 $(for (key, value) in self.$name {
                     outer.$name.entry(key).or_insert(value);
                 })*
-                outer.claims.extend(self.claims);
                 if outer.pending.is_none() {
                     outer.pending = self.pending;
                 }
@@ -300,12 +294,6 @@ impl<'a> Tx<'a> {
             self.before.timed = Some(self.state.timed.clone());
         }
         &mut self.state.timed
-    }
-    /// Claims are never withdrawn, so undoing one only ever removes it.
-    pub fn claim(&mut self, key: ClaimKey) {
-        if self.state.claims.insert(key) {
-            self.before.claims.insert(key);
-        }
     }
     pub fn pending_mut(&mut self) -> &mut VecDeque<Pending> {
         if self.before.pending.is_none() {

@@ -10,7 +10,7 @@ use std::{
 };
 
 /// Bumped whenever saved state changes shape. Older saves are rejected, not migrated.
-pub const SAVE_FORMAT: u32 = 15;
+pub const SAVE_FORMAT: u32 = 16;
 const MAX_HEADER_BYTES: u64 = 64 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

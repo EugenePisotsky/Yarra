@@ -1,4 +1,4 @@
-//! Authored conversations, active runs, scoped history and claims; no game services.
+//! Authored conversations, active runs and scoped history; no game services.
 //!
 //! A conversation is a flat set of nodes. Each node is spoken by a role and lists its
 //! children in order. After a node, the first eligible child decides what happens: a line

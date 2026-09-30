@@ -31,7 +31,6 @@ type Reads = {
     quest_status: (quest: string) -> QuestStatus,
     objective_completed: (quest: string, objective: string) -> boolean,
     relationship: (from: string, to: string) -> number,
-    claimed: (claim: string) -> boolean,
     present: (actor: string) -> boolean,
     -- Pass the actor whose value you mean when the variable is per actor.
     get: (variable: string, actor: string?) -> boolean | number | string,
@@ -78,6 +77,4 @@ type Game = Reads & {
     start_dialogue: (dialogue: string, speaker: string?) -> (),
     -- A skill check by the rules' formula. True when it passes.
     check: (actor: string, skill: string, difficulty: number) -> boolean,
-    -- Takes a once-only claim. False when it was already taken.
-    claim: (claim: string) -> boolean,
 }

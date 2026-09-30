@@ -104,13 +104,6 @@ fn add_reads<'s, T: Reads + 's>(scope: &'s Scope<'s, '_>, game: &Table, on: T) -
         })?,
     )?;
     game.set(
-        "claimed",
-        scope.create_function(move |_, claim: String| {
-            let claim = id(claim)?;
-            on.read(|r| r.claimed(claim)).map_err(host)
-        })?,
-    )?;
-    game.set(
         "present",
         scope.create_function(move |_, actor: String| {
             let actor = id(actor)?;
@@ -449,13 +442,6 @@ fn add_effects<'s>(
                     .map_err(host)
             },
         )?,
-    )?;
-    game.set(
-        "claim",
-        scope.create_function(move |_, claim: String| {
-            let claim = id(claim)?;
-            on.borrow_mut().claim(claim).map_err(host)
-        })?,
     )?;
     Ok(())
 }

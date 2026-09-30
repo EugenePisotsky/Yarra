@@ -2,11 +2,12 @@
 local guard = {}
 
 function guard.take_key(game: Game, scene: Scene)
-    -- The same reward can be reached through the escort at the gate; whoever gets there
-    -- first takes the claim and the other finds it gone.
-    if not game.claim("guard/reward_claim") then
+    -- The same reward can be reached through the escort at the gate; whichever way comes
+    -- first gives it, and the other finds it given.
+    if game.get("guard/rewarded") then
         return
     end
+    game.set("guard/rewarded", true)
     game.consume_item(scene.player, "old_gate_key", 1)
     game.complete_objective("guard/gate", "deliver")
     game.complete_quest("guard/gate")

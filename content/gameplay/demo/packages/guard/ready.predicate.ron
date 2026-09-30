@@ -1,2 +1,2 @@
 (id: "guard/ready", condition: All([
-    Claimed(claim: "guard/reward_claim", value: false),QuestStatus(quest: "guard/gate", status: Active), HasItem(definition: "old_gate_key", quantity: 1)]))
+    Variable(variable: "guard/rewarded", test: Is(Bool(false))), QuestStatus(quest: "guard/gate", status: Active), HasItem(definition: "old_gate_key", quantity: 1)]))

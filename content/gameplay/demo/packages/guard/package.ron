@@ -2,7 +2,8 @@
     objects: ["packages/guard/world/gate.ron", "packages/guard/world/chest.ron"],
     areas: ["guard/approach", "guard/gate_post"],
     triggers: ["packages/guard/world/escort.ron", "packages/guard/world/arrival.ron", "packages/guard/world/banter.ron"],
-    claims: ["packages/guard/reward.claim.ron"],
+    // Set once the gate key has been rewarded, by whichever way came first.
+    variables: [(id: "guard/rewarded", initial: Bool(false))],
     id: "guard", dependencies: ["core"],
     quests: ["packages/guard/gate.quest.ron", "packages/guard/supplies.quest.ron"],
     profiles: ["packages/guard/profile.ron"], predicates: ["packages/guard/ready.predicate.ron"],

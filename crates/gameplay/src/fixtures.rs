@@ -376,7 +376,6 @@ pub fn content() -> GameContent {
         game: GameDefinitions {
             world: Default::default(),
             dialogue_contracts: keyed_map([graph.contract()]),
-            claims: Default::default(),
             quests: Default::default(),
             profiles: Default::default(),
             predicates: Default::default(),

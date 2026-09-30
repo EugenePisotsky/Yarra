@@ -2,8 +2,7 @@
 //! playthrough's state and the content's definitions alike.
 use crate::actors::{Actor, ActorTemplate, Relationship, RelationshipKey};
 use crate::dialogue::{
-    ClaimDefinition, Conversation, Dialogue, DialogueContract, History, HistoryKey, Interaction,
-    InteractionKey,
+    Conversation, Dialogue, DialogueContract, History, HistoryKey, Interaction, InteractionKey,
 };
 use crate::inventory::{Category, Inventory, ItemDefinition, LootTable, Wallet};
 use crate::*;
@@ -61,7 +60,6 @@ keyed! {
     ObjectDefinition => ObjectId, |v| v.id;
     TriggerDefinition => TriggerId, |v| v.id;
     DialogueContract => DialogueId, |v| v.id;
-    ClaimDefinition => ClaimId, |v| v.id;
     Dialogue => DialogueId, |v| v.id;
     quests::Quest => QuestId, |v| v.id;
     InteractionProfile => InteractionProfileId, |v| v.id;

@@ -131,7 +131,6 @@ ids!(
     ActorTemplateId,
     DialogueId,
     QuestId,
-    ClaimId,
     ObjectId,
     AreaId,
     TriggerId,
