@@ -117,6 +117,20 @@ fn stats_come_from_base_values_equipment_effects_and_the_rules_formula() {
     assert_eq!(stat(&session, HERO, "attack"), 12);
     run(&mut session, vec![effect("fortified", None)]).unwrap();
     assert_eq!(stat(&session, HERO, "attack"), 15);
+    // Each change to a stat can be traced to where it comes from.
+    let state = session.state();
+    assert_eq!(
+        state
+            .modifiers_of(session.content(), HERO, &key("strength"))
+            .unwrap(),
+        [
+            (ModifierSource::Item(SWORD), rules::Operation::Add(2)),
+            (
+                ModifierSource::Effect(key("fortified")),
+                rules::Operation::Add(3)
+            ),
+        ]
+    );
     session
         .apply(Command::Unequip {
             actor: HERO,

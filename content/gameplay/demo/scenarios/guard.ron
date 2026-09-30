@@ -84,6 +84,6 @@
         AdvanceLine(dialogue: "guard/reward", participant: "hero", speaker: "guard"), AdvanceLine(dialogue: "guard/reward", participant: "hero", speaker: "guard"), Choose(dialogue: "guard/reward", participant: "hero", speaker: "guard", choice: "return-key"),
         ExpectQuest(quest: "guard/gate", status: Completed),
         ExpectOpening(participant: "hero", speaker: "guard", rule: "welcome"),
-        ExpectTopics(participant: "hero", speaker: "guard", topics: ["supply-topic"]),
+        ExpectTopics(participant: "hero", speaker: "guard", topics: ["supply-topic", "training-topic"]),
     ],
 )

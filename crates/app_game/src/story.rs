@@ -23,6 +23,8 @@ const SCENARIO: &str = "scenarios/island.ron";
 const HERO: ActorId = ActorId::named("hero");
 const GUARD: ActorId = ActorId::named("guard");
 const MIRA: ActorId = ActorId::named("mira");
+const DUMMY: ActorId = ActorId::named("dummy");
+const POTION: ItemDefinitionId = ItemDefinitionId::named("healing_potion");
 const GATE: ObjectId = ObjectId::named("guard/old_gate");
 const GATE_QUEST: QuestId = QuestId::named("guard/gate");
 const GATE_KEY: ItemDefinitionId = ItemDefinitionId::named("old_gate_key");
@@ -309,15 +311,22 @@ impl Story {
         }
     }
 
-    /// Starts or resumes the conversation the guard's entry rules select.
-    pub fn talk(&mut self) {
+    /// Something the guard can be asked about now, with its label.
+    pub fn topic(&self) -> Option<(Key, String)> {
+        let preview = self.session.preview_interaction(HERO, GUARD).ok()?;
+        let entry = preview.topics().next()?;
+        Some((entry.rule.clone(), self.format(entry.topic.as_ref()?)))
+    }
+    /// Starts or resumes the conversation the guard's entry rules select, or the one
+    /// behind a topic.
+    pub fn talk(&mut self, topic: Option<Key>) {
         if self.conversation.is_some() {
             return;
         }
         let accepted = self.run(Command::Talk {
             participant: HERO,
             speaker: GUARD,
-            topic: None,
+            topic,
             bindings: Default::default(),
         });
         if accepted {
@@ -437,7 +446,10 @@ impl Story {
             self.unspent_seconds -= millis as f32 / 1000.;
             match self.session.apply(Command::AdvanceTime { millis }) {
                 Ok(outcome) => {
-                    if !outcome.events.is_empty() {
+                    // The clock alone changes nothing on screen, unless the hero is busy
+                    // with something whose progress is shown.
+                    let quiet = outcome.events.iter().all(|e| *e == GameEvent::TimeAdvanced);
+                    if !quiet || self.busy() {
                         self.revision += 1;
                     }
                     for event in outcome.events {
@@ -475,6 +487,143 @@ impl Story {
         }
     }
 
+    /// The hero's sheet in one line: level, experience, resources, attack and the purse.
+    pub fn character(&self) -> String {
+        let state = self.session.state();
+        let Ok(hero) = state.actor(HERO) else {
+            return String::new();
+        };
+        let rules = &self.session.content().game.rules;
+        let stat = |name: &str| Key::new(name).ok().and_then(|key| hero.stats.get(&key));
+        let left = |name: &str| Key::new(name).ok().and_then(|key| hero.resources.get(&key));
+        let mut line = format!(
+            "{}: level {}  |  {} XP",
+            self.actor_name(HERO),
+            hero.level,
+            state.party.experience
+        );
+        for (resource, maximum, label) in [
+            ("health", "max-health", "Health"),
+            ("stamina", "max-stamina", "Stamina"),
+        ] {
+            if let (Some(now), Some(cap)) = (left(resource), stat(maximum)) {
+                line.push_str(&format!("  |  {label} {now}/{cap}"));
+            }
+        }
+        if let Some(attack) = stat("attack") {
+            line.push_str(&format!("  |  Attack {attack}"));
+        }
+        for (skill, rank) in &hero.skills {
+            if let Ok(definition) = rules.skill(skill) {
+                line.push_str(&format!("  |  {} {rank}", self.format(&definition.name)));
+            }
+        }
+        line.push_str(&format!("  |  Gold {}", state.gold().unwrap_or(0)));
+        line
+    }
+    /// Attribute and learning points the hero has not spent.
+    pub fn points(&self) -> (u32, u32) {
+        let hero = self.session.state().actor(HERO);
+        hero.map_or((0, 0), |h| (h.attribute_points, h.learning_points))
+    }
+    /// Puts one attribute point into a primary stat.
+    pub fn spend(&mut self, stat: &str) {
+        if let Ok(stat) = Key::new(stat) {
+            self.run(Command::SpendAttributePoint { actor: HERO, stat });
+        }
+    }
+    /// Drinks a healing potion, if the hero carries one.
+    pub fn drink(&mut self) {
+        let carried = self.session.state().carried(HERO);
+        let potion = carried
+            .ok()
+            .and_then(|bag| bag.entries.iter().find(|e| e.definition == POTION))
+            .map(|e| e.id);
+        match potion {
+            Some(item) => {
+                self.run(Command::UseItem { actor: HERO, item });
+            }
+            None => self.notice = "No potions left.".into(),
+        }
+    }
+    fn intend(&mut self, ability: &str, repeat: bool) {
+        let Ok(ability) = Key::new(ability) else {
+            return;
+        };
+        self.run(Command::Intend {
+            actor: HERO,
+            intent: gameplay::actors::Intent {
+                ability,
+                target: Some(DUMMY),
+                repeat,
+            },
+            clear: false,
+        });
+    }
+    /// Strikes the training dummy, again and again until told to stop.
+    pub fn strike(&mut self) {
+        if !self.busy() {
+            self.intend("strike", true);
+        }
+    }
+    /// Lines up one power strike after what the hero is doing.
+    pub fn power_strike(&mut self) {
+        self.intend("power-strike", false);
+    }
+    pub fn stop(&mut self) {
+        if self.busy() {
+            self.run(Command::Interrupt { actor: HERO });
+        }
+    }
+    /// Whether the hero is doing something or has something lined up.
+    pub fn busy(&self) -> bool {
+        let hero = self.session.state().actor(HERO);
+        hero.is_ok_and(|h| h.acting.is_some() || !h.intents.is_empty())
+    }
+    /// The dummy's health, what the hero is in the middle of, and when the power strike is
+    /// ready again.
+    pub fn fight(&self) -> String {
+        let state = self.session.state();
+        let (Ok(hero), Ok(dummy)) = (state.actor(HERO), state.actor(DUMMY)) else {
+            return String::new();
+        };
+        let rules = &self.session.content().game.rules;
+        let seconds = |until: game_types::GameTime| {
+            format!(
+                "{:.1} s",
+                until.0.saturating_sub(state.time.0) as f32 / 1000.
+            )
+        };
+        let life = dummy.resources.get(&rules.life).copied().unwrap_or(0);
+        let cap = rules
+            .resource(&rules.life)
+            .ok()
+            .and_then(|max| dummy.stats.get(max));
+        let mut line = format!(
+            "{} {life}/{}",
+            self.actor_name(DUMMY),
+            cap.copied().unwrap_or(0)
+        );
+        if let Some(acting) = &hero.acting {
+            let name = rules
+                .ability(&acting.intent.ability)
+                .map(|a| self.format(&a.name));
+            line.push_str(&format!(
+                "  |  {} in {}",
+                name.unwrap_or_default(),
+                seconds(acting.completes_at)
+            ));
+        }
+        for (ability, ready) in &hero.cooldowns {
+            if *ready > state.time
+                && let Ok(definition) = rules.ability(ability)
+            {
+                let name = self.format(&definition.name);
+                line.push_str(&format!("  |  {name} ready in {}", seconds(*ready)));
+            }
+        }
+        line
+    }
     /// Whether the rules follow where this actor is: the party, and anyone asked to walk.
     pub fn tracked(&self, actor: ActorId) -> bool {
         let state = self.session.state();
@@ -610,7 +759,7 @@ mod tests {
         story.quicksave();
         assert_eq!(story.notice, "Saved.");
 
-        story.talk();
+        story.talk(None);
         let lines = read(&mut story);
         assert_eq!(lines[0].speaker, "Gate guard");
         assert_eq!(lines[0].text, "You found the gate key, Traveller!");
@@ -639,7 +788,7 @@ mod tests {
     fn a_save_made_mid_conversation_resumes_at_the_same_line() {
         let temp = Temp::new();
         let mut story = open(&temp);
-        story.talk();
+        story.talk(None);
         let first = story.panel().unwrap();
         story.advance();
         let second = story.panel().unwrap();
@@ -656,7 +805,7 @@ mod tests {
         story.leave();
         assert!(!story.in_conversation());
         assert!(story.gate_locked());
-        story.talk();
+        story.talk(None);
         assert!(story.in_conversation());
     }
     #[test]
@@ -669,7 +818,7 @@ mod tests {
         assert!(story.panel().is_none());
         story.quickload();
         assert!(story.notice.starts_with("Load failed"));
-        story.talk();
+        story.talk(None);
         // A choice cannot be picked while a line is still waiting to be read.
         let line = story.panel().unwrap();
         story.choose(0);
@@ -733,7 +882,7 @@ mod tests {
         let mut story = open(&temp);
         story.observe(HERO, [3., 0., 0.], [APPROACH].into(), false);
         let request = story.movement(GUARD).unwrap().request;
-        story.talk();
+        story.talk(None);
         assert!(story.in_conversation());
         for _ in 0..30 {
             story.tick(1.0);
@@ -779,5 +928,96 @@ mod tests {
         assert!(story.areas(HERO).contains(&APPROACH));
         assert_eq!(story.movement(GUARD).map(|m| m.to), Some(GATE_POST));
         assert!(story.gate_locked());
+    }
+    #[test]
+    fn the_reward_is_a_level_the_guard_gives_lessons_and_the_dummy_takes_blows() {
+        let temp = Temp::new();
+        let mut story = open(&temp);
+        assert!(story.character().starts_with("Traveller: level 1  |  0 XP"));
+        assert!(story.character().contains("Health 50/100"));
+        assert_eq!(
+            story.topic().map(|(_, label)| label).as_deref(),
+            Some("About the gate key")
+        );
+        // The escort: into the approach, the guard walks to the gate and takes the key.
+        story.observe(HERO, [3., 0., 0.], [APPROACH].into(), false);
+        story.observe(GUARD, [9.5, 0., -3.], [APPROACH, GATE_POST].into(), false);
+        assert!(!story.gate_locked());
+        let sheet = story.character();
+        assert!(
+            sheet.starts_with("Traveller: level 2  |  120 XP"),
+            "{sheet}"
+        );
+        assert!(
+            sheet.contains("Health 50/110") && sheet.contains("Gold 100"),
+            "{sheet}"
+        );
+        assert_eq!(story.points(), (2, 3));
+
+        // Now the guard has lessons to offer.
+        let (topic, label) = story.topic().unwrap();
+        assert_eq!(label, "About sword lessons");
+        story.talk(Some(topic));
+        assert!(
+            story
+                .panel()
+                .unwrap()
+                .text
+                .starts_with("You opened my gate.")
+        );
+        story.advance();
+        assert_eq!(
+            story.panel().unwrap().choices,
+            ["Teach me. (20 gold)", "Goodbye."]
+        );
+        story.choose(0);
+        story.advance();
+        story.choose(0);
+        story.advance();
+        // Two ranks is as far as an adventurer is taught: only the farewell is left.
+        assert_eq!(story.panel().unwrap().choices, ["Goodbye."]);
+        story.choose(0);
+        assert!(story.panel().is_none() && !story.in_conversation());
+        let sheet = story.character();
+        assert!(
+            sheet.contains("Attack 14") && sheet.contains("Swordsmanship 2"),
+            "{sheet}"
+        );
+        assert!(sheet.contains("Gold 60"), "{sheet}");
+        story.spend("strength");
+        assert!(story.character().contains("Attack 15"));
+        assert_eq!(story.points(), (1, 0));
+        story.drink();
+        assert!(story.character().contains("Health 75/110"));
+
+        // Sparring: a strike takes a second and a half, and goes on until told to stop.
+        assert_eq!(story.fight(), "Training dummy 200/200");
+        story.strike();
+        assert!(story.busy() && story.fight().contains("Strike in 1.5 s"));
+        for _ in 0..16 {
+            story.tick(0.1);
+        }
+        let after_one = story.fight();
+        assert!(
+            !after_one.starts_with("Training dummy 200/200"),
+            "{after_one}"
+        );
+        story.power_strike();
+        for _ in 0..30 {
+            story.tick(0.1);
+        }
+        assert!(
+            story.fight().contains("Power strike ready in"),
+            "{}",
+            story.fight()
+        );
+        assert!(
+            story.character().contains("Stamina 10/20"),
+            "{}",
+            story.character()
+        );
+        story.stop();
+        assert!(!story.busy());
+        assert_eq!(story.notice, "");
     }
 }

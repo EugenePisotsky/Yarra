@@ -2,7 +2,7 @@
 //! text on screen, and the engine's half of the world rules: telling them which named areas
 //! the party stands in and walking the actors they ask to move. Everything it decides is
 //! presentation; outcomes come from `Story`.
-use super::{Bark, GUARD, HERO, MIRA, Panel, Story};
+use super::{Bark, DUMMY, GUARD, HERO, MIRA, Panel, Story};
 use bevy::prelude::*;
 use engine::{
     GameplaySystems, MoveIntent, PlayerControlled, PlayerMovementSuspended, TerrainGrounded,
@@ -15,6 +15,9 @@ use std::sync::Arc;
 use world::{GameplayArea, GameplayAreaIndex};
 
 const TALK_RANGE: f32 = 3.0;
+/// How close the player stands to the dummy to hit it, and how far away gives it up.
+const STRIKE_RANGE: f32 = 2.5;
+const DISENGAGE_RANGE: f32 = 4.0;
 const GUARD_DISTANCE: f32 = 6.0;
 const GATE_DISTANCE: f32 = 11.0;
 /// Height given to a newly placed actor; terrain grounding replaces it once the ground is known.
@@ -68,6 +71,9 @@ struct Guard;
 /// follow yet.
 #[derive(Component)]
 struct Companion;
+/// Something to hit.
+#[derive(Component)]
+struct Dummy;
 #[derive(Component)]
 struct Gate;
 #[derive(Component)]
@@ -186,6 +192,9 @@ fn spawn(
     commands
         .spawn(engine::standing_character(hidden, "Companion"))
         .insert((Companion, Actor(MIRA)));
+    commands
+        .spawn(engine::standing_character(hidden, "Training dummy"))
+        .insert((Dummy, Actor(DUMMY)));
     let stone = materials.add(StandardMaterial {
         base_color: Color::srgb(0.45, 0.44, 0.42),
         perceptual_roughness: 0.95,
@@ -312,6 +321,16 @@ fn place(
     mut guard: Single<&mut Transform, (With<Guard>, Without<Gate>, Without<Companion>)>,
     mut gate: Single<&mut Transform, (With<Gate>, Without<Guard>, Without<Companion>)>,
     mut companion: Single<&mut Transform, (With<Companion>, Without<Guard>, Without<Gate>)>,
+    mut dummy: Single<
+        &mut Transform,
+        (
+            With<Dummy>,
+            Without<Guard>,
+            Without<Gate>,
+            Without<Companion>,
+            Without<PlayerControlled>,
+        ),
+    >,
 ) {
     // Read every frame: the world may name its start before the space is known here.
     if let Some(adopted) = adopted.read().last() {
@@ -326,7 +345,7 @@ fn place(
     // Taken before anything moves: a bearing is judged by where its actors came to rest.
     let heights = [guard.translation.y, gate.translation.y];
     let mut position = |placement: &Placement| {
-        [**guard, **gate, **companion] = stand(placement, &origin, &catalog);
+        [**guard, **gate, **companion, **dummy] = stand(placement, &origin, &catalog);
     };
     if placement.anchor.is_none() {
         placement.waited += 1;
@@ -369,7 +388,7 @@ fn place(
 }
 
 /// Where the guard, the gate and the companion stand for the bearing being tried.
-fn stand(placement: &Placement, origin: &WorldOrigin, catalog: &WorldCatalog) -> [Transform; 3] {
+fn stand(placement: &Placement, origin: &WorldOrigin, catalog: &WorldCatalog) -> [Transform; 4] {
     let at = |along: f32, across: f32| {
         let [x, z] = placement.ground(along, across);
         origin
@@ -384,6 +403,8 @@ fn stand(placement: &Placement, origin: &WorldOrigin, catalog: &WorldCatalog) ->
         Transform::from_translation(at(GUARD_DISTANCE, -2.6)).with_rotation(facing(-direction)),
         Transform::from_translation(at(GATE_DISTANCE, 0.0)).with_rotation(facing(direction)),
         Transform::from_translation(at(1.0, 1.8)).with_rotation(facing(direction)),
+        // The dummy stands off the path on the other side from the guard.
+        Transform::from_translation(at(7.0, 4.5)).with_rotation(facing(-direction)),
     ]
 }
 
@@ -522,6 +543,9 @@ fn restore(
 fn near_guard(player: &Transform, guard: &Transform) -> bool {
     player.translation.distance(guard.translation) < TALK_RANGE
 }
+fn within(player: &Transform, other: &Transform, range: f32) -> bool {
+    player.translation.distance(other.translation) < range
+}
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn input(
@@ -533,6 +557,7 @@ fn input(
     catalog: Res<WorldCatalog>,
     player: Single<&Transform, (With<PlayerControlled>, Without<Guard>)>,
     guard: Single<&Transform, With<Guard>>,
+    dummy: Single<&Transform, With<Dummy>>,
     actors: Query<(&Actor, &Transform)>,
 ) {
     // Saves hold where everyone stands, so both wait until the scene is in place.
@@ -547,8 +572,44 @@ fn input(
         story.quickload();
     }
     if !story.in_conversation() {
-        if keys.just_pressed(KeyCode::KeyE) && placement.settled && near_guard(&player, &guard) {
-            story.talk();
+        if !placement.settled {
+            return;
+        }
+        if near_guard(&player, &guard) {
+            if keys.just_pressed(KeyCode::KeyE) {
+                story.talk(None);
+            } else if keys.just_pressed(KeyCode::KeyT)
+                && let Some((topic, _)) = story.topic()
+            {
+                story.talk(Some(topic));
+            }
+        }
+        // Walking away from the dummy gives the fight up.
+        if story.busy() && !within(&player, &dummy, DISENGAGE_RANGE) {
+            story.stop();
+        }
+        if within(&player, &dummy, STRIKE_RANGE) {
+            if keys.just_pressed(KeyCode::KeyF) {
+                story.strike();
+            }
+            if keys.just_pressed(KeyCode::KeyG) {
+                story.power_strike();
+            }
+        }
+        if keys.just_pressed(KeyCode::KeyV) {
+            story.stop();
+        }
+        if keys.just_pressed(KeyCode::KeyH) {
+            story.drink();
+        }
+        for (key, stat) in [
+            (KeyCode::KeyZ, "strength"),
+            (KeyCode::KeyX, "wisdom"),
+            (KeyCode::KeyC, "vitality"),
+        ] {
+            if keys.just_pressed(key) && story.points().0 > 0 {
+                story.spend(stat);
+            }
         }
         return;
     }
@@ -582,6 +643,7 @@ fn present(
     mut suspended: ResMut<PlayerMovementSuspended>,
     player: Single<&Transform, (With<PlayerControlled>, Without<Guard>, Without<GateHinge>)>,
     guard: Single<&Transform, (With<Guard>, Without<GateHinge>)>,
+    dummy: Single<&Transform, (With<Dummy>, Without<GateHinge>)>,
     mut hinge: Single<&mut Transform, With<GateHinge>>,
     mut panel_box: Single<&mut Visibility, With<PanelBox>>,
     mut texts: ParamSet<(
@@ -590,7 +652,7 @@ fn present(
         Single<&mut Text, With<SummaryText>>,
         Single<&mut Text, With<BarkText>>,
     )>,
-    mut shown: Local<Option<(u64, bool)>>,
+    mut shown: Local<Option<(u64, bool, bool)>>,
 ) {
     story.tick(time.delta_secs());
     suspended.0 = story.in_conversation();
@@ -605,7 +667,8 @@ fn present(
 
     // Text is rebuilt only after a command, a load, or crossing the talk range.
     let near = placement.settled && near_guard(&player, &guard);
-    let current = (story.revision(), near);
+    let sparring = placement.settled && within(&player, &dummy, STRIKE_RANGE);
+    let current = (story.revision(), near, sparring);
     if *shown == Some(current) {
         return;
     }
@@ -626,7 +689,17 @@ fn present(
                 .collect();
             (speaker, list.join("\n"))
         }
-        None if near => (String::new(), format!("[E] Talk to {}", story.guard_name())),
+        None if near => {
+            let mut hint = format!("[E] Talk to {}", story.guard_name());
+            if let Some((_, topic)) = story.topic() {
+                hint.push_str(&format!("    [T] {topic}"));
+            }
+            (String::new(), hint)
+        }
+        None if sparring => (
+            String::new(),
+            "[F] Strike    [G] Power strike    [V] Stop".into(),
+        ),
         None => (String::new(), String::new()),
     };
     // A conversation that just ended releases the player.
@@ -638,13 +711,31 @@ fn present(
     };
     let mut summary = story.summary();
     summary.push_str("    [F5] Save  [F9] Load");
+    summary.push('\n');
+    summary.push_str(&story.character());
+    summary.push_str("    [H] Potion");
+    let (attribute, learning) = story.points();
+    if attribute + learning > 0 {
+        summary.push_str(&format!(
+            "\nUnspent: {attribute} attribute [Z] Strength [X] Wisdom [C] Vitality, \
+             {learning} learning (ask the guard about lessons)"
+        ));
+    }
+    if sparring || story.busy() {
+        summary.push('\n');
+        summary.push_str(&story.fight());
+    }
     if !story.notice.is_empty() {
         summary = format!("{}\n{summary}", story.notice);
     }
     texts.p0().0 = speaker;
     texts.p1().0 = body;
     if texts.p2().0 != summary {
-        info!("Story status: {}", summary.replace('\n', " / "));
+        // The log follows the quest line; the sheet and the fight change many times a second.
+        let headline = |text: &str| text.lines().next().unwrap_or_default().to_owned();
+        if headline(&texts.p2().0) != headline(&summary) {
+            info!("Story status: {}", headline(&summary));
+        }
         texts.p2().0 = summary;
     }
     let bark = match story.bark() {

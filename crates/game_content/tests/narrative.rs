@@ -434,8 +434,8 @@ fn scripts_are_checked_at_publication_and_run_from_the_published_bundle() {
 
     let (project, mut session) = setup(&temp);
     std::fs::remove_dir_all(temp.0.join("source")).unwrap();
-    // The rules' formulas and the guard's script.
-    assert_eq!(session.content().game.scripts.len(), 2);
+    // The rules' formulas, the abilities and the guard's script.
+    assert_eq!(session.content().game.scripts.len(), 3);
     for step in &project.scenario().steps {
         step.apply(&mut session).unwrap();
     }
@@ -461,7 +461,7 @@ fn the_analyzer_reports_type_errors_at_their_authored_lines() {
         eprintln!("luau-analyze not available; skipped");
         return;
     };
-    assert_eq!((modules, warnings), (1, vec![]));
+    assert_eq!((modules, warnings), (3, vec![]));
     let path = root.join("packages/guard/scripts/guard.luau");
     let source = std::fs::read_to_string(&path).unwrap();
     // Still compiles and still exports take_key, so only the analyzer can object.

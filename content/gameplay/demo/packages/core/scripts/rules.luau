@@ -5,6 +5,7 @@ local rules = {}
 function rules.derive(c: Character): { [string]: number }
     return {
         ["max-health"] = 40 + c.stats.vitality * 5 + c.level * 10,
+        ["max-stamina"] = 10 + c.stats.vitality,
         attack = c.stats.strength + 2 * (c.skills.swordsmanship or 0),
     }
 end

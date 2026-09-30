@@ -1,0 +1,17 @@
+// Once the gate is open the guard teaches swordsmanship. A lesson costs gold and learning
+// points, and an adventurer's trainers stop at the second rank.
+(
+    id: "guard/training",
+    roles: {"player": Required, "speaker": Required},
+    history_scope: Interaction, repeat: Always,
+    start: ["offer"],
+    nodes: [
+        (id: "offer", kind: Line, speaker: "speaker", text: Message((resource: "guard/text", key: "training-offer")), children: ["learn", "leave"]),
+        (id: "learn", kind: Choice, speaker: "player", text: Message((resource: "guard/text", key: "training-learn")),
+            condition: Some(All([CanLearn(skill: "swordsmanship"), Gold(minimum: 20)])),
+            actions: [Pay(amount: 20), Teach(skill: "swordsmanship")],
+            children: ["taught"]),
+        (id: "taught", kind: Line, speaker: "speaker", text: Message((resource: "guard/text", key: "training-taught")), children: ["learn", "leave"]),
+        (id: "leave", kind: Choice, speaker: "player", text: Message((resource: "guard/text", key: "leave"))),
+    ],
+)

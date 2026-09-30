@@ -11,5 +11,5 @@
     actors: ["packages/core/actors.ron"],
     conversations: [],
     resources: ["packages/core/messages.ron"],
-    scripts: ["packages/core/scripts/rules.luau"],
+    scripts: ["packages/core/scripts/rules.luau", "packages/core/scripts/abilities.luau"],
 )

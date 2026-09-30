@@ -1,1 +1,3 @@
-[(id: "gate_guard", interaction: Some("guard/profile"), name: Message((resource: "guard/text", key: "guard-name")), class: "soldier", level: 3, skills: {"swordsmanship": 2}, equipment: ["iron_sword"], loot: Some("guard/pouch"))]
+[(id: "gate_guard", interaction: Some("guard/profile"), name: Message((resource: "guard/text", key: "guard-name")), class: "soldier", level: 3, skills: {"swordsmanship": 2}, equipment: ["iron_sword"], loot: Some("guard/pouch")),
+ // Something to hit: it takes blows and gives none back.
+ (id: "training_dummy", interaction: None, name: Message((resource: "guard/text", key: "dummy-name")), class: "soldier", base: {"vitality": 30})]

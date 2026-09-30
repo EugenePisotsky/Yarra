@@ -1,0 +1,101 @@
+// Authored gameplay data; see docs/WORKFLOWS.md for validation and builds.
+(
+    seed: 42,
+    actors: [(
+        id: "hero",
+        template: "traveller",
+        position: (
+            millimetres: (0, 0, 0),
+        ),
+        name: None,
+        resources: {"health": 50},
+    ), (
+        id: "guard",
+        template: "gate_guard",
+        position: (
+            millimetres: (100000000, 0, 100000000),
+        ),
+        name: None,
+    ), (
+        id: "mira",
+        template: "traveller",
+        position: (
+            millimetres: (0, 0, 0),
+        ),
+        name: None,
+    )],
+    owners: [(
+        kind: "party",
+        id: "party",
+    )],
+    inventories: [(
+        id: "hero",
+        owner: (
+            kind: "actor",
+            id: "hero",
+        ),
+        role: "carried",
+        items: [(
+            definition: "healing_potion",
+            quantity: 3,
+        ), (
+            definition: "iron_sword",
+            quantity: 1,
+        ), (
+            definition: "old_gate_key",
+            quantity: 1,
+        )],
+    ), (
+        id: "mira",
+        owner: (
+            kind: "actor",
+            id: "mira",
+        ),
+        role: "carried",
+        items: [],
+    )],
+    wallets: [(
+        id: "party",
+        owner: (
+            kind: "party",
+            id: "party",
+        ),
+        balance: 100,
+    ), (
+        id: "guard",
+        owner: (
+            kind: "actor",
+            id: "guard",
+        ),
+        balance: 100,
+    )],
+    party: ["hero"],
+    controlled: Some("hero"),
+    purse: Some("party"),
+    steps: [
+        Quest(quest: "guard/gate", transition: Start),
+        Talk(bindings: {}, participant: "hero", speaker: "guard", topic: None),
+        AdvanceLine(dialogue: "guard/reward", participant: "hero", speaker: "guard"),
+        AdvanceLine(dialogue: "guard/reward", participant: "hero", speaker: "guard"),
+        Choose(dialogue: "guard/reward", participant: "hero", speaker: "guard", choice: "return-key"),
+        ExpectQuest(quest: "guard/gate", status: Completed),
+        ExpectTopics(participant: "hero", speaker: "guard", topics: ["training-topic"]),
+        // The reward was enough experience for a second level, and with it learning points.
+        ExpectLevel(actor: "hero", level: 2),
+        ExpectStat(actor: "hero", stat: "attack", value: 10),
+        // The guard, grateful, now teaches for gold: one rank costs 20 gold and a learning point.
+        Talk(bindings: {}, participant: "hero", speaker: "guard", topic: Some("training-topic")),
+        AdvanceLine(dialogue: "guard/training", participant: "hero", speaker: "guard"),
+        Choose(dialogue: "guard/training", participant: "hero", speaker: "guard", choice: "learn"),
+        ExpectSkill(actor: "hero", skill: "swordsmanship", rank: 1),
+        ExpectStat(actor: "hero", stat: "attack", value: 12),
+        AdvanceLine(dialogue: "guard/training", participant: "hero", speaker: "guard"),
+        Choose(dialogue: "guard/training", participant: "hero", speaker: "guard", choice: "learn"),
+        ExpectSkill(actor: "hero", skill: "swordsmanship", rank: 2),
+        AdvanceLine(dialogue: "guard/training", participant: "hero", speaker: "guard"),
+        Choose(dialogue: "guard/training", participant: "hero", speaker: "guard", choice: "leave"),
+        // Spending the level's attribute points.
+        SpendAttributePoint(actor: "hero", stat: "strength"),
+        ExpectStat(actor: "hero", stat: "attack", value: 15),
+    ],
+)

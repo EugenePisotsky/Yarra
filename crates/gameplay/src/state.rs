@@ -129,6 +129,14 @@ pub struct SessionState {
 }
 pub const CARRIED: &str = "carried";
 
+/// Where a change to a stat comes from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ModifierSource {
+    /// Something worn or wielded.
+    Item(ItemDefinitionId),
+    /// A status effect, by its name in the rules.
+    Effect(Key),
+}
 /// The characters travelling together. They take part in every conversation any of them
 /// has, and share their experience and their gold.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -315,39 +323,69 @@ impl SessionState {
             None => 0,
         })
     }
-    /// What a character's equipment and effects do to its stats.
-    fn modifiers<'a>(&self, content: &'a GameContent, actor: &Actor) -> Result<Vec<&'a Modifier>> {
+    /// What a character's equipment and effects do to its stats, each with where it comes
+    /// from.
+    fn modifiers<'a>(
+        &self,
+        content: &'a GameContent,
+        actor: &Actor,
+    ) -> Result<Vec<(ModifierSource, &'a Modifier)>> {
         let mut modifiers = Vec::new();
+        let wear = |item: ItemDefinitionId| -> Result<&'a crate::rules::ItemMechanics> {
+            Ok(&content.items.item(item)?.mechanics)
+        };
         if !self.carried.contains_key(&actor.id) {
             // Nobody has looked into this character's inventory yet. What its template
             // says it wears counts all the same.
             for item in &content.template(actor.template)?.equipment {
-                modifiers.extend(&content.items.item(*item)?.mechanics.modifiers);
+                let source = ModifierSource::Item(*item);
+                modifiers.extend(wear(*item)?.modifiers.iter().map(|m| (source.clone(), m)));
             }
         } else if !actor.equipment.is_empty() {
             let carried = self.carried(actor.id)?;
             let mut ids = BTreeSet::new();
             for (slot, item) in &actor.equipment {
                 require(ids.insert(*item), "item equipped more than once")?;
-                let definition = content.items.item(carried.entry(*item)?.definition)?;
+                let definition = carried.entry(*item)?.definition;
+                let mechanics = wear(definition)?;
                 require(
-                    definition.mechanics.slot.as_ref() == Some(slot),
+                    mechanics.slot.as_ref() == Some(slot),
                     "incompatible equipment slot",
                 )?;
-                modifiers.extend(&definition.mechanics.modifiers);
+                let source = ModifierSource::Item(definition);
+                modifiers.extend(mechanics.modifiers.iter().map(|m| (source.clone(), m)));
             }
         }
         for effect in &actor.effects {
-            modifiers.extend(&content.game.rules.effect(&effect.effect)?.modifiers);
+            let source = ModifierSource::Effect(effect.effect.clone());
+            let definition = content.game.rules.effect(&effect.effect)?;
+            modifiers.extend(definition.modifiers.iter().map(|m| (source.clone(), m)));
         }
         Ok(modifiers)
+    }
+    /// What changes one of a character's stats, and where each change comes from: for a
+    /// tooltip that explains a number.
+    pub fn modifiers_of(
+        &self,
+        content: &GameContent,
+        actor: ActorId,
+        stat: &Key,
+    ) -> Result<Vec<(ModifierSource, crate::rules::Operation)>> {
+        content.game.rules.stat(stat)?;
+        let modifiers = self.modifiers(content, self.actor(actor)?)?;
+        Ok(modifiers
+            .into_iter()
+            .filter(|(_, modifier)| &modifier.stat == stat)
+            .map(|(source, modifier)| (source, modifier.op))
+            .collect())
     }
     /// Every primary and derived stat of a character as it is built now: base values,
     /// then equipment and effects, with the derived ones from the rules script.
     pub fn sheet(&self, content: &GameContent, actor: &Actor) -> Result<Stats> {
         let rules = &content.game.rules;
         let modifiers = self.modifiers(content, actor)?;
-        let mut stats = rules.effective_primaries(&actor.base, modifiers.iter().copied())?;
+        let modifiers = modifiers.iter().map(|(_, modifier)| *modifier);
+        let mut stats = rules.effective_primaries(&actor.base, modifiers.clone())?;
         let derived = content.scripts.engine(&rules.derive)?.derive(
             &rules.derive,
             &crate::rules::Sheet {
@@ -357,7 +395,7 @@ impl SessionState {
                 skills: &actor.skills,
             },
         )?;
-        rules.add_derived(&mut stats, &derived, modifiers.iter().copied())?;
+        rules.add_derived(&mut stats, &derived, modifiers)?;
         Ok(stats)
     }
     fn valid_owner(&self, content: &GameContent, owner: &OwnerRef) -> bool {

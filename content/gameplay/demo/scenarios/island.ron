@@ -23,6 +23,13 @@
             millimetres: (0, 0, 0),
         ),
         name: Some(Literal("Mira")),
+    ), (
+        id: "dummy",
+        template: "training_dummy",
+        position: (
+            millimetres: (0, 0, 0),
+        ),
+        name: None,
     )],
     owners: [(
         kind: "party",
