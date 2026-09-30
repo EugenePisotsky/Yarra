@@ -319,6 +319,63 @@ fn the_fingerprint_does_not_depend_on_which_names_were_parsed() {
     assert_eq!(content.fingerprint().unwrap(), before);
 }
 
+#[test]
+fn conversations_keep_their_turns_through_a_save_and_hold_the_world_still() {
+    let mut session = session();
+    let talk = |participant| ConversationKey {
+        dialogue: GATE_DIALOGUE,
+        participant,
+        speaker: MERCHANT,
+    };
+    // Started in the opposite order to the one their keys sort in.
+    let (first, second) = if talk(HERO) > talk(COMPANION) {
+        (HERO, COMPANION)
+    } else {
+        (COMPANION, HERO)
+    };
+    for participant in [first, second] {
+        session
+            .apply(Command::StartDialogue {
+                bindings: Default::default(),
+                dialogue: GATE_DIALOGUE,
+                participant,
+                speaker: MERCHANT,
+            })
+            .unwrap();
+    }
+    let floor = session.state().floor.blocking.clone();
+    assert_eq!(floor, [talk(first), talk(second)]);
+    // The world waits while a conversation is on screen.
+    let time = session.state().time;
+    session
+        .apply(Command::AdvanceTime { millis: 1000 })
+        .unwrap();
+    assert_eq!(session.state().time, time);
+    // A save keeps whose turn it is, and a save that loses a turn is refused.
+    let json = serde_json::to_string(session.state()).unwrap();
+    let saved: SessionState = serde_json::from_str(&json).unwrap();
+    let mut lost = saved.clone();
+    lost.floor.blocking.pop_back();
+    assert!(new(content(), lost).is_err());
+    let mut session = new(content(), saved).unwrap();
+    assert_eq!(session.state().floor.blocking, floor);
+    // Leaving one hands the floor to the next; with both over, time moves on.
+    for (key, next) in [(talk(first), Some(talk(second))), (talk(second), None)] {
+        let expected = session.conversation_view(key).unwrap().token;
+        session
+            .apply(Command::InterruptDialogue { key, expected })
+            .unwrap();
+        assert_eq!(
+            session.state().floor.current(dialogue::Mode::Blocking),
+            next
+        );
+    }
+    session
+        .apply(Command::AdvanceTime { millis: 1000 })
+        .unwrap();
+    assert_eq!(session.state().time, GameTime(time.0 + 1000));
+}
+
 /// Counts graph reads so tests can show which commands touch dialogue content.
 struct Counting {
     inner: ToolContent,

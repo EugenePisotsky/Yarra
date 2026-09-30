@@ -157,7 +157,8 @@ fn run_trigger(content: &GameContent, tx: &mut Tx, id: TriggerId, events: &mut V
             return Ok(false);
         }
         for action in &d.actions {
-            crate::session::run_action(content, tx, d.player, d.speaker(), action, events)?;
+            let (player, speaker, nobody) = (d.player, d.speaker(), &crate::script::NOBODY);
+            crate::session::run_action(content, tx, player, speaker, nobody, action, events)?;
         }
         progress.fired = progress
             .fired
@@ -184,68 +185,78 @@ fn run_trigger(content: &GameContent, tx: &mut Tx, id: TriggerId, events: &mut V
         }
     }
 }
-pub(crate) fn apply(
+/// Carries out the oldest queued work, or fails a walk whose time ran out.
+pub(crate) fn process_next(
     content: &GameContent,
     triggers: &TriggerIndex,
     tx: &mut Tx,
-    command: WorldCommand,
     // Why the graph of the conversation at the head of the queue could not be loaded.
     unloadable: Option<String>,
     events: &mut Vec<GameEvent>,
-) -> Result<()> {
-    match command {
-        WorldCommand::ProcessNext => {
-            if let Some(actor) = timed_out(tx) {
-                fail_move(tx, actor, events);
-                return Ok(());
+) {
+    if let Some(actor) = timed_out(tx) {
+        fail_move(tx, actor, events);
+        return;
+    }
+    // The work is taken off the queue first: whatever it leads to, the queue moves on.
+    let Some(work) = tx.pending_mut().pop_front() else {
+        return;
+    };
+    match work {
+        Pending::Signal(signal) => {
+            let ids: Vec<TriggerId> = triggers.subscribers(&signal).collect();
+            for id in ids {
+                run_trigger(content, tx, id, events);
             }
-            // The work is taken off the queue first: whatever it leads to, the queue moves on.
-            let Some(work) = tx.pending_mut().pop_front() else {
-                return Ok(());
+        }
+        Pending::Start {
+            dialogue,
+            participant,
+            speaker,
+        } => {
+            let savepoint = tx.savepoint();
+            let mark = events.len();
+            let key = ConversationKey {
+                dialogue,
+                participant,
+                speaker,
             };
-            match work {
-                Pending::Signal(signal) => {
-                    let ids: Vec<TriggerId> = triggers.subscribers(&signal).collect();
-                    for id in ids {
-                        run_trigger(content, tx, id, events);
-                    }
-                }
-                Pending::Start {
-                    dialogue,
-                    participant,
-                    speaker,
-                } => {
-                    let savepoint = tx.savepoint();
-                    let mark = events.len();
-                    let key = ConversationKey {
+            let started = match unloadable {
+                Some(reason) => Err(Invalid(reason).into()),
+                None => crate::conversation::start(content, tx, key, &Default::default(), events),
+            };
+            match started {
+                Ok(()) => tx.release(savepoint),
+                Err(error) => {
+                    tx.rollback_to(savepoint);
+                    events.truncate(mark);
+                    events.push(GameEvent::World(WorldEvent::DialogueRefused {
                         dialogue,
-                        participant,
-                        speaker,
-                    };
-                    let started = match unloadable {
-                        Some(reason) => Err(Invalid(reason).into()),
-                        None => crate::conversation::start(
-                            content,
-                            tx,
-                            key,
-                            &Default::default(),
-                            events,
-                        ),
-                    };
-                    match started {
-                        Ok(()) => tx.release(savepoint),
-                        Err(error) => {
-                            tx.rollback_to(savepoint);
-                            events.truncate(mark);
-                            events.push(GameEvent::World(WorldEvent::DialogueRefused {
-                                dialogue,
-                                reason: error.to_string(),
-                            }));
-                        }
-                    }
+                        reason: error.to_string(),
+                    }));
                 }
             }
         }
+    }
+}
+/// Drops the work `process_next` would carry out, when carrying it out failed.
+pub(crate) fn drop_next(tx: &mut Tx) {
+    match timed_out(tx) {
+        Some(actor) => {
+            tx.remove_movement(actor);
+        }
+        None => {
+            tx.pending_mut().pop_front();
+        }
+    }
+}
+pub(crate) fn apply(
+    content: &GameContent,
+    tx: &mut Tx,
+    command: WorldCommand,
+    events: &mut Vec<GameEvent>,
+) -> Result<()> {
+    match command {
         WorldCommand::Observe {
             actor,
             position,
@@ -276,6 +287,13 @@ pub(crate) fn apply(
                 let area = movement.to;
                 tx.remove_movement(actor);
                 arrive(tx, actor, area, events);
+            }
+        }
+        WorldCommand::Record { positions } => {
+            for (actor, position) in positions {
+                if tx.actor(actor)?.position != position {
+                    tx.actor_mut(actor)?.position = position;
+                }
             }
         }
         WorldCommand::MoveFailed { actor, request } => {

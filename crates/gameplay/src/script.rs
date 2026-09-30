@@ -193,6 +193,9 @@ impl ReadScope<'_> {
     }
 }
 
+/// No one besides the pair a rule is about.
+pub(crate) static NOBODY: BTreeSet<ActorId> = BTreeSet::new();
+
 /// What an action script may do, on top of everything it may read. Changes go through the
 /// command's journal: the script sees them at once, and they are undone with the command if
 /// it fails.
@@ -201,17 +204,17 @@ pub struct ActScope<'a, 'tx> {
     pub(crate) tx: &'a mut Tx<'tx>,
     pub player: ActorId,
     pub speaker: ActorId,
+    pub(crate) others: &'a BTreeSet<ActorId>,
     pub(crate) events: &'a mut Vec<GameEvent>,
 }
 impl ActScope<'_, '_> {
     pub fn read(&self) -> ReadScope<'_> {
-        static NOBODY: BTreeSet<ActorId> = BTreeSet::new();
         ReadScope {
             content: self.content,
             state: self.tx,
             player: self.player,
             speaker: self.speaker,
-            others: &NOBODY,
+            others: self.others,
         }
     }
     /// Runs a built-in action on behalf of `actor`, exactly as authored content would.
@@ -222,6 +225,7 @@ impl ActScope<'_, '_> {
             self.tx,
             actor,
             self.speaker,
+            self.others,
             action,
             self.events,
         )

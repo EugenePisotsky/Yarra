@@ -31,11 +31,10 @@ fn load(temp: &Temp, root: &std::path::Path) -> (LoadedProject, RuntimeSession) 
     (project, session)
 }
 fn world(session: &mut RuntimeSession, command: WorldCommand) -> Vec<WorldEvent> {
-    world_events(session.apply(Command::World(command)).unwrap())
+    world_events(session.apply(Command::World(command)).unwrap().events)
 }
-fn world_events(outcome: CommandOutcome) -> Vec<WorldEvent> {
-    outcome
-        .events
+fn world_events(events: Vec<GameEvent>) -> Vec<WorldEvent> {
+    events
         .into_iter()
         .filter_map(|e| match e {
             GameEvent::World(event) => Some(event),
@@ -43,32 +42,22 @@ fn world_events(outcome: CommandOutcome) -> Vec<WorldEvent> {
         })
         .collect()
 }
-/// Carries out all pending work and returns everything that happened.
-fn pump(session: &mut RuntimeSession) -> Vec<GameEvent> {
-    let mut events = Vec::new();
-    for _ in 0..256 {
-        if !session.world_work_pending() {
-            return events;
-        }
-        let outcome = session
-            .apply(Command::World(WorldCommand::ProcessNext))
-            .unwrap();
-        events.extend(outcome.events);
-    }
-    panic!("queue did not drain");
-}
-/// The engine's report of where an actor stands.
-fn observe(session: &mut RuntimeSession, actor: ActorId, areas: &[AreaId]) -> Vec<WorldEvent> {
-    world(
-        session,
-        WorldCommand::Observe {
-            actor,
-            position: Position {
-                millimetres: [areas.len() as i64 * 1000, 0, 0],
-            },
-            areas: areas.iter().copied().collect(),
+/// The engine's report of where an actor stands, and everything it set off.
+fn report(session: &mut RuntimeSession, actor: ActorId, areas: &[AreaId]) -> Vec<GameEvent> {
+    let command = WorldCommand::Observe {
+        actor,
+        position: Position {
+            millimetres: [areas.len() as i64 * 1000, 0, 0],
         },
-    )
+        areas: areas.iter().copied().collect(),
+    };
+    let events = session.apply(Command::World(command)).unwrap().events;
+    // Whatever the report set off was carried out before the command returned.
+    assert!(!session.world_work_pending());
+    events
+}
+fn observe(session: &mut RuntimeSession, actor: ActorId, areas: &[AreaId]) -> Vec<WorldEvent> {
+    world_events(report(session, actor, areas))
 }
 fn activate(session: &mut RuntimeSession) {
     session
@@ -85,7 +74,6 @@ fn walking(session: &RuntimeSession) -> Option<&Movement> {
 fn prepare(session: &mut RuntimeSession) -> Movement {
     activate(session);
     observe(session, HERO, &[APPROACH]);
-    pump(session);
     walking(session).expect("guard is walking").clone()
 }
 fn locked(session: &mut RuntimeSession) {
@@ -133,7 +121,7 @@ fn rewarded(session: &RuntimeSession) -> bool {
 fn the_escort_runs_headlessly_from_entering_the_approach_to_an_open_gate() {
     let temp = Temp::new();
     let (project, session) = load(&temp, &temp.source());
-    let mut driver = HeadlessDriver::new(session, 50, 64).unwrap();
+    let mut driver = Driver::new(session, 50, 64).unwrap();
     driver
         .submit(Command::Quest {
             quest: QUEST,
@@ -150,14 +138,17 @@ fn the_escort_runs_headlessly_from_entering_the_approach_to_an_open_gate() {
             areas: approach.clone(),
         }))
         .unwrap();
+    // Entering sets off the escort before the command returns.
+    let entered = world_events(entered.events);
     assert_eq!(
-        world_events(entered),
-        [WorldEvent::Entered {
+        entered[0],
+        WorldEvent::Entered {
             actor: HERO,
             area: APPROACH
-        }]
+        }
     );
-    assert!(driver.pump_world(256).unwrap());
+    assert!(matches!(entered[1], WorldEvent::MoveRequested(_)));
+    assert_eq!(entered[2], WorldEvent::TriggerFired(ESCORT));
     let state = driver.state();
     let movement = &state.world.movements[&GUARD];
     assert_eq!(movement.to, POST);
@@ -175,11 +166,12 @@ fn the_escort_runs_headlessly_from_entering_the_approach_to_an_open_gate() {
             areas: [POST].into(),
         }))
         .unwrap();
-    assert!(world_events(arrived).contains(&WorldEvent::Arrived {
+    let arrived = world_events(arrived.events);
+    assert!(arrived.contains(&WorldEvent::Arrived {
         actor: GUARD,
         area: POST
     }));
-    assert!(driver.pump_world(256).unwrap());
+    assert!(arrived.contains(&WorldEvent::TriggerFired(OPEN_GATE)));
     for object in [GATE, CHEST] {
         driver
             .submit(Command::World(WorldCommand::Open { object }))
@@ -200,18 +192,17 @@ fn the_escort_runs_headlessly_from_entering_the_approach_to_an_open_gate() {
     project.run_scenario().unwrap();
 }
 #[test]
-fn queued_work_and_a_pending_walk_resume_from_every_kind_of_slot() {
+fn a_pending_walk_resumes_from_every_kind_of_slot() {
     let temp = Temp::new();
     let (_, mut session) = load(&temp, &temp.source());
     let saves = SaveDirectory::new(temp.0.join("saves"), 2).unwrap();
     let library = ContentLibrary::new(temp.0.join("retained")).unwrap();
     library.retain(temp.0.join("content.sqlite")).unwrap();
     activate(&mut session);
-    observe(&mut session, HERO, &[APPROACH]);
     saves
-        .save(SaveSlot::Manual(1), &session, "before dispatch")
+        .save(SaveSlot::Manual(1), &session, "before entering")
         .unwrap();
-    pump(&mut session);
+    observe(&mut session, HERO, &[APPROACH]);
     let movement = walking(&session).unwrap().clone();
     saves.quicksave(&session).unwrap();
     let auto = saves.autosave(&session).unwrap();
@@ -219,13 +210,12 @@ fn queued_work_and_a_pending_walk_resume_from_every_kind_of_slot() {
     for slot in [SaveSlot::Manual(1), SaveSlot::Quick, auto.slot] {
         let mut restored = library.load(&saves, slot).unwrap();
         locked(&mut restored);
-        // Standing where the save left the hero is not entering the area again.
-        assert!(observe(&mut restored, HERO, &[APPROACH]).is_empty());
-        pump(&mut restored);
-        // The manual slot was saved before the walk was asked for; it is asked for again.
+        let entered = observe(&mut restored, HERO, &[APPROACH]);
+        // Standing where the save left the hero is not entering the area again; the manual
+        // slot was saved outside it, so the walk is asked for now.
+        assert_eq!(entered.is_empty(), slot != SaveSlot::Manual(1));
         assert_eq!(walking(&restored).map(|m| m.to), Some(movement.to));
         observe(&mut restored, GUARD, &[POST]);
-        pump(&mut restored);
         assert!(walking(&restored).is_none());
         world(&mut restored, WorldCommand::Open { object: CHEST });
         assert!(restored.container_contents(CHEST).is_ok());
@@ -241,9 +231,8 @@ fn a_walk_that_fails_or_runs_out_of_time_is_announced_and_can_be_asked_for_again
         let events = if timed_out {
             session
                 .apply(Command::AdvanceTime { millis: 10_000 })
-                .unwrap();
-            assert!(session.world_work_pending());
-            pump(&mut session)
+                .unwrap()
+                .events
         } else {
             let failed = session
                 .apply(Command::World(WorldCommand::MoveFailed {
@@ -266,17 +255,14 @@ fn a_walk_that_fails_or_runs_out_of_time_is_announced_and_can_be_asked_for_again
                 .is_err()
         );
         assert_eq!(session.state(), &before);
-        pump(&mut session);
         locked(&mut session);
         assert!(!rewarded(&session));
         // Walking out and back in asks the guard again.
         observe(&mut session, HERO, &[]);
         observe(&mut session, HERO, &[APPROACH]);
-        pump(&mut session);
         let second = walking(&session).unwrap().clone();
         assert!(second.request > first.request);
         observe(&mut session, GUARD, &[POST]);
-        pump(&mut session);
         world(&mut session, WorldCommand::Open { object: GATE });
         assert!(rewarded(&session));
     }
@@ -287,10 +273,8 @@ fn whichever_listened_event_comes_last_sets_the_guard_walking() {
     let temp = Temp::new();
     let (_, mut session) = load(&temp, &temp.source());
     observe(&mut session, HERO, &[APPROACH]);
-    pump(&mut session);
     assert!(walking(&session).is_none());
     activate(&mut session);
-    pump(&mut session);
     assert!(walking(&session).is_some());
 
     // Inside with the quest running, but the key arrives later.
@@ -300,10 +284,8 @@ fn whichever_listened_event_comes_last_sets_the_guard_walking() {
     give(&mut session, item, HERO, COMPANION);
     activate(&mut session);
     observe(&mut session, HERO, &[APPROACH]);
-    pump(&mut session);
     assert!(walking(&session).is_none());
     give(&mut session, item, COMPANION, HERO);
-    pump(&mut session);
     assert!(walking(&session).is_some());
 }
 #[test]
@@ -344,12 +326,11 @@ fn occupancy_is_reported_by_the_engine_and_changes_only_on_edges() {
     // An actor already standing in the area it is sent to has arrived at once.
     activate(&mut session);
     observe(&mut session, GUARD, &[POST]);
-    observe(&mut session, HERO, &[APPROACH]);
-    let events = pump(&mut session);
-    assert!(events.contains(&GameEvent::World(WorldEvent::Arrived {
+    let events = observe(&mut session, HERO, &[APPROACH]);
+    assert!(events.contains(&WorldEvent::Arrived {
         actor: GUARD,
         area: POST
-    })));
+    }));
     assert!(walking(&session).is_none());
     assert!(rewarded(&session));
 }
@@ -361,11 +342,9 @@ fn a_trigger_whose_actions_fail_changes_nothing_and_stays_armed() {
     // The hero hands the key away while the guard is walking.
     let item = key_item(&session, HERO).unwrap();
     give(&mut session, item, HERO, COMPANION);
-    pump(&mut session);
-    observe(&mut session, GUARD, &[POST]);
-    let events = pump(&mut session);
+    let events = observe(&mut session, GUARD, &[POST]);
     let failure = events.iter().find_map(|e| match e {
-        GameEvent::World(WorldEvent::TriggerFailed { trigger, reason }) => Some((trigger, reason)),
+        WorldEvent::TriggerFailed { trigger, reason } => Some((trigger, reason)),
         _ => None,
     });
     let (trigger, reason) = failure.expect("the arrival could not take the key");
@@ -381,7 +360,6 @@ fn a_trigger_whose_actions_fail_changes_nothing_and_stays_armed() {
     assert!(session.state().world.pending.is_empty());
     // Getting the key back asks the guard again; being at the gate already, he has arrived.
     give(&mut session, item, COMPANION, HERO);
-    pump(&mut session);
     assert!(rewarded(&session));
     assert_eq!(session.state().trigger(OPEN_GATE).fired, 1);
     world(&mut session, WorldCommand::Open { object: CHEST });
@@ -466,14 +444,12 @@ fn triggers_repeat_once_always_or_after_a_cooldown_and_one_failure_does_not_stop
     };
     let mut failures = 0;
     for visit in 0..3 {
-        observe(&mut session, HERO, &[APPROACH]);
-        let events = pump(&mut session);
+        let events = observe(&mut session, HERO, &[APPROACH]);
         failures += events
             .iter()
-            .filter(|e| matches!(e, GameEvent::World(WorldEvent::TriggerFailed { .. })))
+            .filter(|e| matches!(e, WorldEvent::TriggerFailed { .. }))
             .count();
         observe(&mut session, HERO, &[]);
-        pump(&mut session);
         if visit == 1 {
             session
                 .apply(Command::AdvanceTime { millis: 5000 })
@@ -501,34 +477,105 @@ fn triggers_repeat_once_always_or_after_a_cooldown_and_one_failure_does_not_stop
         )
         .unwrap();
     observe(&mut restored, HERO, &[APPROACH]);
-    pump(&mut restored);
     assert_eq!(count(&restored, "cooldown"), Value::Int(2));
     assert_eq!(count(&restored, "always"), Value::Int(4));
 }
 #[test]
-fn a_full_queue_rejects_the_command_that_would_add_to_it() {
+fn triggers_that_keep_setting_each_other_off_are_cut_short_and_the_game_goes_on() {
     let temp = Temp::new();
-    let (_, session) = load(&temp, &temp.source());
-    let mut seed = session.state().clone();
-    seed.world.pending = (0..MAX_PENDING_EVENTS)
-        .map(|_| Pending::Signal(WorldSignal::QuestChanged(QUEST)))
-        .collect();
-    let mut full = GameSession::new(
-        ContentRepository::open(temp.0.join("content.sqlite")).unwrap(),
-        seed.clone(),
-    )
-    .unwrap();
-    assert!(
-        full.apply(Command::Quest {
-            quest: QUEST,
-            transition: quests::Transition::Start
-        })
-        .is_err()
-    );
-    assert_eq!(full.state(), &seed);
-    world(&mut full, WorldCommand::ProcessNext);
-    activate(&mut full);
-    assert_eq!(full.state().world.pending.len(), MAX_PENDING_EVENTS);
+    let root = temp.source();
+    let mut package: PackageFile = read(root.join("packages/guard/package.ron"));
+    let echoes = VariableId::try_from("guard/echoes".to_owned()).unwrap();
+    package.variables.push(VariableDefinition {
+        id: echoes,
+        initial: Value::Int(0),
+        scope: Default::default(),
+    });
+    // Each echo changes what it listens for.
+    let echo = |actor| TriggerDefinition {
+        id: TriggerId::try_from("guard/echo".to_owned()).unwrap(),
+        player: HERO,
+        speaker: None,
+        on: [
+            WorldSignal::Entered {
+                actor,
+                area: APPROACH,
+            },
+            WorldSignal::VariableChanged(echoes),
+        ]
+        .into(),
+        condition: None,
+        actions: vec![Action::Add {
+            variable: echoes,
+            of: None,
+            amount: 1,
+        }],
+        repeat: TriggerRepeat::Always,
+    };
+    let path = root.join("packages/guard/world/echo.ron");
+    write(&path, &echo(HERO));
+    package
+        .triggers
+        .push("packages/guard/world/echo.ron".into());
+    write(root.join("packages/guard/package.ron"), &package);
+    // A scenario that sets it off fails the build.
+    let error = LoadedProject::load_directory_with_scenario(&root, "scenarios/guard-gate.ron")
+        .err()
+        .expect("looping content accepted")
+        .to_string();
+    assert!(error.contains("kept setting each other off"), "{error}");
+    // Set off by someone the scenario leaves alone, it reaches the game.
+    write(&path, &echo(COMPANION));
+    let (_, mut session) = load(&temp, &root);
+    let count = |session: &RuntimeSession| match session.state().variable(session.content(), echoes)
+    {
+        Ok(Value::Int(count)) => count,
+        other => panic!("{other:?}"),
+    };
+    // The command is accepted and returns; the rest waits for the next one.
+    let command = WorldCommand::Observe {
+        actor: COMPANION,
+        position: Position::default(),
+        areas: [APPROACH].into(),
+    };
+    // Watched by a trigger, the companion is observed without being in the party.
+    assert!(session.observed(COMPANION) && !session.state().party.members.contains(&COMPANION));
+    session.apply(Command::World(command)).unwrap();
+    let first = count(&session);
+    assert!(first > 1 && session.world_work_pending());
+    session.apply(Command::AdvanceTime { millis: 100 }).unwrap();
+    assert!(count(&session) > first);
+    assert_eq!(session.state().world.pending.len(), 1);
+}
+#[test]
+fn the_engine_reports_the_party_walkers_and_whoever_a_trigger_watches() {
+    let temp = Temp::new();
+    let (_, mut session) = load(&temp, &temp.source());
+    assert!(session.observed(HERO));
+    assert!(!session.observed(COMPANION) && !session.observed(GUARD));
+    prepare(&mut session);
+    assert!(session.observed(GUARD));
+    observe(&mut session, GUARD, &[POST]);
+    assert!(!session.observed(GUARD));
+    join(&mut session, COMPANION);
+    assert!(session.observed(COMPANION));
+}
+#[test]
+fn recording_where_everyone_stands_moves_no_one_into_an_area() {
+    let temp = Temp::new();
+    let (_, mut session) = load(&temp, &temp.source());
+    activate(&mut session);
+    let at = Position {
+        millimetres: [6000, 250, -2600],
+    };
+    let positions = [(HERO, at.clone()), (GUARD, at.clone())].into();
+    assert!(world(&mut session, WorldCommand::Record { positions }).is_empty());
+    let state = session.state();
+    assert_eq!(state.actor(GUARD).unwrap().position, at);
+    assert!(state.areas(HERO).is_empty() && walking(&session).is_none());
+    let positions = [(ActorId::named("nobody"), at)].into();
+    let command = Command::World(WorldCommand::Record { positions });
+    assert!(session.apply(command).is_err());
 }
 #[test]
 fn unknown_and_destroyed_objects_fail_explicitly() {
@@ -602,25 +649,22 @@ fn walking_into_an_area_starts_an_ambient_conversation_with_a_companion() {
     let temp = Temp::new();
     let (_, mut session) = load(&temp, &temp.source());
     // Without the companion in the party nothing is said.
-    observe(&mut session, HERO, &[APPROACH]);
     assert!(
-        !pump(&mut session)
+        !report(&mut session, HERO, &[APPROACH])
             .iter()
             .any(|e| matches!(e, GameEvent::DialogueStarted { .. }))
     );
     assert!(session.content().game.dialogues.is_empty());
     observe(&mut session, HERO, &[]);
-    pump(&mut session);
 
     join(&mut session, HERO);
     join(&mut session, COMPANION);
-    observe(&mut session, HERO, &[APPROACH]);
     let banter = ConversationKey {
         dialogue: BANTER,
         participant: HERO,
         speaker: COMPANION,
     };
-    let events = pump(&mut session);
+    let events = report(&mut session, HERO, &[APPROACH]);
     assert!(events.contains(&GameEvent::DialogueStarted {
         key: banter,
         mode: Mode::Ambient
@@ -647,9 +691,8 @@ fn walking_into_an_area_starts_an_ambient_conversation_with_a_companion() {
     assert_eq!(run.status, dialogue::RunStatus::Completed);
     // Said once: coming back does not start it again.
     observe(&mut session, HERO, &[]);
-    observe(&mut session, HERO, &[APPROACH]);
     assert!(
-        !pump(&mut session)
+        !report(&mut session, HERO, &[APPROACH])
             .iter()
             .any(|e| matches!(e, GameEvent::DialogueStarted { .. }))
     );
@@ -674,8 +717,7 @@ fn a_conversation_that_cannot_start_is_refused_and_the_queue_moves_on() {
     join(&mut session, HERO);
     join(&mut session, COMPANION);
     activate(&mut session);
-    observe(&mut session, HERO, &[APPROACH]);
-    let events = pump(&mut session);
+    let events = report(&mut session, HERO, &[APPROACH]);
     let refused = events.iter().any(|e| {
         matches!(e, GameEvent::World(WorldEvent::DialogueRefused { dialogue, reason })
             if *dialogue == BANTER && reason.contains("checksum"))
@@ -730,12 +772,14 @@ fn authoring_rejects_ambient_choices_undeclared_areas_and_unknown_dialogues() {
 fn asking_again_for_a_walk_under_way_changes_nothing() {
     let temp = Temp::new();
     let (_, mut session) = load(&temp, &temp.source());
-    // Both the quest start and the entry satisfy the escort; the guard is asked once.
     activate(&mut session);
-    observe(&mut session, HERO, &[APPROACH]);
-    let requests = pump(&mut session)
+    // Entering twice while the guard walks satisfies the escort twice; he is asked once.
+    let mut events = observe(&mut session, HERO, &[APPROACH]);
+    observe(&mut session, HERO, &[]);
+    events.extend(observe(&mut session, HERO, &[APPROACH]));
+    let requests = events
         .iter()
-        .filter(|e| matches!(e, GameEvent::World(WorldEvent::MoveRequested(_))))
+        .filter(|e| matches!(e, WorldEvent::MoveRequested(_)))
         .count();
     assert_eq!(requests, 1);
     assert_eq!(session.state().trigger(ESCORT).fired, 2);

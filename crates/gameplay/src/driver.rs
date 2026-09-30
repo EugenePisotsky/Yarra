@@ -1,34 +1,48 @@
-//! The same commands and read models used by application adapters, with an explicit test clock.
+//! Moves a session through time for the game and for headless runs alike: game time passes
+//! in fixed steps, and a bounded trace keeps what the last commands did.
 use crate::*;
 use game_types::require;
 use std::collections::VecDeque;
+use std::time::Duration;
+
+/// Real time turned into game time at once at most: a long hitch does not fast-forward the
+/// world.
+const MAX_ELAPSED: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone)]
 pub struct TraceEntry {
     pub generation: u64,
     pub events: Vec<GameEvent>,
 }
-pub struct HeadlessDriver<C: ContentSource> {
+pub struct Driver<C: ContentSource> {
     session: GameSession<C>,
     step_ms: u64,
+    /// Real time not yet turned into game time.
+    unspent: Duration,
     trace: VecDeque<TraceEntry>,
     trace_capacity: usize,
 }
-impl<C: ContentSource> HeadlessDriver<C> {
+impl<C: ContentSource> Driver<C> {
+    /// A trace capacity of zero keeps no trace.
     pub fn new(session: GameSession<C>, step_ms: u64, trace_capacity: usize) -> Result<Self> {
         require(
-            (1..=60_000).contains(&step_ms) && (1..=1024).contains(&trace_capacity),
-            "invalid headless driver budgets",
+            (1..=60_000).contains(&step_ms) && trace_capacity <= 1024,
+            "invalid driver step or trace capacity",
         )?;
         Ok(Self {
             session,
             step_ms,
+            unspent: Duration::ZERO,
             trace: VecDeque::new(),
             trace_capacity,
         })
     }
     pub fn session(&self) -> &GameSession<C> {
         &self.session
+    }
+    /// For read models that load a dialogue graph. Commands go through `submit`.
+    pub fn session_mut(&mut self) -> &mut GameSession<C> {
+        &mut self.session
     }
     pub fn state(&self) -> &SessionState {
         self.session.state()
@@ -38,25 +52,16 @@ impl<C: ContentSource> HeadlessDriver<C> {
     }
     pub fn submit(&mut self, command: Command) -> Result<CommandOutcome> {
         let outcome = self.session.apply(command)?;
-        if self.trace.len() == self.trace_capacity {
-            self.trace.pop_front();
-        }
-        self.trace.push_back(TraceEntry {
-            generation: outcome.header.generation,
-            events: outcome.events.clone(),
-        });
-        Ok(outcome)
-    }
-    /// Drain a bounded number of committed deliveries; false means work remains for a later tick.
-    pub fn pump_world(&mut self, max_deliveries: usize) -> Result<bool> {
-        require(max_deliveries <= 10000, "headless delivery budget exceeded")?;
-        for _ in 0..max_deliveries {
-            if !self.session.world_work_pending() {
-                return Ok(true);
+        if self.trace_capacity > 0 {
+            if self.trace.len() == self.trace_capacity {
+                self.trace.pop_front();
             }
-            self.submit(Command::World(WorldCommand::ProcessNext))?;
+            self.trace.push_back(TraceEntry {
+                generation: outcome.header.generation,
+                events: outcome.events.clone(),
+            });
         }
-        Ok(!self.session.world_work_pending())
+        Ok(outcome)
     }
     pub fn container_contents(
         &self,
@@ -64,10 +69,23 @@ impl<C: ContentSource> HeadlessDriver<C> {
     ) -> Result<&inventory::Inventory> {
         self.session.container_contents(object)
     }
+    /// One step of game time.
     pub fn step(&mut self) -> Result<CommandOutcome> {
         self.submit(Command::AdvanceTime {
             millis: self.step_ms,
         })
+    }
+    /// Lets real time pass. Game time moves on in whole steps; what is left over counts
+    /// towards the next call. `None` while less than a step has built up.
+    pub fn elapse(&mut self, real: Duration) -> Result<Option<CommandOutcome>> {
+        self.unspent += real.min(MAX_ELAPSED);
+        let steps = (self.unspent.as_millis() / u128::from(self.step_ms)) as u64;
+        if steps == 0 {
+            return Ok(None);
+        }
+        let millis = steps * self.step_ms;
+        self.unspent -= Duration::from_millis(millis);
+        self.submit(Command::AdvanceTime { millis }).map(Some)
     }
     /// Includes a check before stepping. Timeout is an error; accepted steps remain accepted.
     pub fn advance_until(
@@ -88,6 +106,13 @@ impl<C: ContentSource> HeadlessDriver<C> {
             "condition not reached in {max_steps} simulation steps"
         ))
         .into())
+    }
+    /// Carries on with another playthrough, e.g. one just loaded. Real time not yet spent
+    /// and the trace go with the old one.
+    pub fn replace(&mut self, session: GameSession<C>) {
+        self.session = session;
+        self.unspent = Duration::ZERO;
+        self.trace.clear();
     }
     pub fn into_session(self) -> GameSession<C> {
         self.session

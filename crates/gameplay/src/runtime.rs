@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 
 /// Dialogue graphs kept loaded at once. Older graphs are reloaded on demand.
 pub const MAX_LOADED_DIALOGUES: usize = 32;
-pub const MAX_EVENTS_PER_COMMAND: usize = 256;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

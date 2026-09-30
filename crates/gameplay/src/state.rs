@@ -1,7 +1,9 @@
 //! The whole mutable playthrough, held in memory. Records that were never changed are absent
 //! and read as their defaults, so a save only contains what differs from the authored world.
 use crate::actors::{Actor, Relationship, RelationshipKey};
-use crate::dialogue::{ClaimKey, Conversation, History, HistoryKey, Interaction, InteractionKey};
+use crate::dialogue::{
+    ClaimKey, Conversation, History, HistoryKey, Interaction, InteractionKey, Mode, RunStatus,
+};
 use crate::inventory::{Inventory, Wallet};
 use crate::rules::{Modifier, RandomState, Stats};
 use crate::{
@@ -11,7 +13,7 @@ use crate::{
 use crate::{VariableKey, VariableScope};
 use game_types::*;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 /// A record stored in a map under an identity it also carries.
 pub trait Keyed {
@@ -123,6 +125,7 @@ pub struct SessionState {
     #[serde(with = "pairs")]
     pub variables: BTreeMap<VariableKey, Value>,
     pub party: Party,
+    pub floor: Floor,
     /// Characters with an effect that will tick or end: the only ones passing time looks at.
     pub timed: BTreeSet<ActorId>,
     pub world: crate::WorldState,
@@ -150,6 +153,32 @@ pub struct Party {
     /// The shared purse.
     pub wallet: Option<WalletId>,
 }
+/// Conversations under way, in the order they started. The first blocking one is on screen
+/// and holds the world still; the first ambient one is being spoken. The rest wait their turn.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Floor {
+    pub blocking: VecDeque<ConversationKey>,
+    pub ambient: VecDeque<ConversationKey>,
+}
+impl Floor {
+    pub fn queue(&self, mode: Mode) -> &VecDeque<ConversationKey> {
+        match mode {
+            Mode::Blocking => &self.blocking,
+            Mode::Ambient => &self.ambient,
+        }
+    }
+    pub(crate) fn queue_mut(&mut self, mode: Mode) -> &mut VecDeque<ConversationKey> {
+        match mode {
+            Mode::Blocking => &mut self.blocking,
+            Mode::Ambient => &mut self.ambient,
+        }
+    }
+    /// The conversation of this kind that has the floor.
+    pub fn current(&self, mode: Mode) -> Option<ConversationKey> {
+        self.queue(mode).front().copied()
+    }
+}
 
 impl SessionState {
     pub fn empty(seed: u64) -> Self {
@@ -172,6 +201,7 @@ impl SessionState {
             conversations: BTreeMap::new(),
             variables: BTreeMap::new(),
             party: Party::default(),
+            floor: Floor::default(),
             timed: BTreeSet::new(),
             world: Default::default(),
         }
@@ -623,6 +653,18 @@ impl SessionState {
         )
         .map_err(Into::into)
     }
+    /// A conversation waiting for its turn is under way, in the queue of its kind.
+    pub(crate) fn check_floor(&self, content: &GameContent, key: ConversationKey) -> Result<()> {
+        let mode = content.dialogue_contract(key.dialogue)?.mode;
+        require(
+            self.conversations
+                .get(&key)
+                .is_some_and(|c| c.status == RunStatus::Active)
+                && self.floor.queue(mode).contains(&key),
+            "conversation waits for a turn it does not have",
+        )
+        .map_err(Into::into)
+    }
     pub(crate) fn check_object(&self, content: &GameContent, o: &ObjectState) -> Result<()> {
         let definition = content.object(o.id)?;
         if let ObjectKind::Container { inventory, .. } = definition.kind
@@ -723,6 +765,19 @@ impl SessionState {
         for c in self.conversations.values() {
             self.check_conversation(content, c)?;
         }
+        let mut waiting = BTreeSet::new();
+        for mode in [Mode::Blocking, Mode::Ambient] {
+            for key in self.floor.queue(mode) {
+                require(waiting.insert(*key), "conversation waits twice")?;
+                self.check_floor(content, *key)?;
+            }
+        }
+        require(
+            self.conversations
+                .iter()
+                .all(|(key, c)| c.status != RunStatus::Active || waiting.contains(key)),
+            "conversation under way without a turn",
+        )?;
         for key in self.variables.keys() {
             self.check_variable(content, *key)?;
         }

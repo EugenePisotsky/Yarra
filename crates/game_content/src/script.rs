@@ -10,9 +10,6 @@ use serde::{Deserialize, Serialize};
 #[serde(deny_unknown_fields)]
 pub enum Step {
     World(gameplay::WorldCommand),
-    PumpWorld {
-        limit: usize,
-    },
     ExpectObject {
         object: ObjectId,
         locked: bool,
@@ -196,7 +193,6 @@ impl Step {
     pub(crate) fn kind(&self) -> &'static str {
         match self {
             Self::World(_) => "World",
-            Self::PumpWorld { .. } => "PumpWorld",
             Self::ExpectObject { .. } => "ExpectObject",
             Self::ExpectMovement { .. } => "ExpectMovement",
             Self::ExpectContainer { .. } => "ExpectContainer",
@@ -230,20 +226,6 @@ impl Step {
     pub fn apply<C: ContentSource>(&self, session: &mut GameSession<C>) -> Result<()> {
         let command = match self {
             Self::World(command) => Command::World(command.clone()),
-            Self::PumpWorld { limit } => {
-                require(*limit <= 10000, "scenario delivery budget exceeded")?;
-                for _ in 0..*limit {
-                    if !session.world_work_pending() {
-                        return Ok(());
-                    }
-                    session.apply(Command::World(gameplay::WorldCommand::ProcessNext))?;
-                }
-                require(
-                    !session.world_work_pending(),
-                    "scenario delivery budget exhausted; work remains pending",
-                )?;
-                return Ok(());
-            }
             Self::ExpectObject {
                 object,
                 locked,
@@ -496,6 +478,10 @@ impl Step {
             }
         };
         session.apply(command)?;
-        Ok(())
+        require(
+            !session.world_work_pending(),
+            "triggers kept setting each other off; work was left for the next command",
+        )
+        .map_err(Into::into)
     }
 }

@@ -233,11 +233,8 @@ fn losing_the_last_of_the_life_resource_is_death() {
         item: potion,
     });
     assert_eq!(rejected(refused), Rejection::Dead(HERO));
-    while session.world_work_pending() {
-        session
-            .apply(Command::World(WorldCommand::ProcessNext))
-            .unwrap();
-    }
+    // The trigger listening for the death ran as part of the command that caused it.
+    assert!(!session.world_work_pending());
     assert_eq!(
         session
             .state()

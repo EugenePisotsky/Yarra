@@ -8,6 +8,9 @@ use crate::*;
 use game_types::*;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
+/// Pieces of queued work one command carries out at most; see `GameSession::settle`.
+const SETTLE_STEPS: usize = 256;
+
 #[derive(Debug, Clone)]
 pub enum Command {
     World(WorldCommand),
@@ -373,9 +376,18 @@ impl<C: ContentSource> GameSession<C> {
             .interaction
             .ok_or_else(|| Rejection::NothingToSay(speaker).into())
     }
+    /// Whether work was left for the next command, which only content whose triggers keep
+    /// setting each other off leaves.
     pub fn world_work_pending(&self) -> bool {
         !self.state.world.pending.is_empty()
             || crate::world_runtime::timed_out(&self.state).is_some()
+    }
+    /// Whether the engine should report where this actor is: party members, anyone asked to
+    /// walk, and anyone whose comings and goings a trigger listens for.
+    pub fn observed(&self, actor: ActorId) -> bool {
+        self.state.party.members.contains(&actor)
+            || self.state.world.movements.contains_key(&actor)
+            || self.triggers.watches(actor)
     }
     /// Ordinary container access enforces durable lock/open/destruction state.
     pub fn container_contents(&self, object: ObjectId) -> Result<&inventory::Inventory> {
@@ -443,22 +455,12 @@ impl<C: ContentSource> GameSession<C> {
         })
     }
     /// Accepts the command as a whole or leaves state, clock and random streams untouched.
+    /// Then carries out the work it gave rise to (triggers listening for what it changed, the
+    /// conversations they start, walks whose time ran out), each piece on its own, so the
+    /// outcome is the settled state.
     pub fn apply(&mut self, command: Command) -> Result<CommandOutcome> {
         // Reads and graph loading happen first; nothing below performs I/O.
-        let mut unloadable = None;
         let talk = match &command {
-            // A conversation queued by an action starts now; its graph must be in memory.
-            Command::World(WorldCommand::ProcessNext)
-                if crate::world_runtime::timed_out(&self.state).is_none() =>
-            {
-                if let Some(Pending::Start { dialogue, .. }) = self.state.world.pending.front() {
-                    unloadable = self
-                        .ensure_dialogue(*dialogue)
-                        .err()
-                        .map(|error| error.to_string());
-                }
-                None
-            }
             Command::Talk {
                 participant,
                 speaker,
@@ -481,50 +483,84 @@ impl<C: ContentSource> GameSession<C> {
             }
             _ => None,
         };
-        let content = &self.content;
-        let triggers = &self.triggers;
+        let mut events = self.transact(|content, _, tx, events| match command {
+            Command::World(command) => crate::world_runtime::apply(content, tx, command, events),
+            Command::Talk {
+                participant,
+                speaker,
+                topic,
+                bindings,
+            } => start_talk(
+                content,
+                tx,
+                participant,
+                speaker,
+                topic,
+                bindings,
+                talk.expect("planned above"),
+                events,
+            ),
+            command => apply(content, tx, command, events),
+        })?;
+        self.settle(&mut events);
+        Ok(CommandOutcome {
+            header: self.header(),
+            events,
+        })
+    }
+    /// Runs `work` as one step: all of it takes effect and the generation moves on, or none
+    /// of it does.
+    fn transact(
+        &mut self,
+        work: impl FnOnce(&GameContent, &TriggerIndex, &mut Tx, &mut Vec<GameEvent>) -> Result<()>,
+    ) -> Result<Vec<GameEvent>> {
+        let (content, triggers) = (&self.content, &self.triggers);
         let mut tx = Tx::begin(&mut self.state);
         let mut events = Vec::new();
-        let result = (|| {
-            match command {
-                Command::World(command) => crate::world_runtime::apply(
-                    content,
-                    triggers,
-                    &mut tx,
-                    command,
-                    unloadable,
-                    &mut events,
-                )?,
-                Command::Talk {
-                    participant,
-                    speaker,
-                    topic,
-                    bindings,
-                } => {
-                    let plan = talk.expect("planned above");
-                    start_talk(
-                        content,
-                        &mut tx,
-                        participant,
-                        speaker,
-                        topic,
-                        bindings,
-                        plan,
-                        &mut events,
-                    )?
-                }
-                command => apply(content, &mut tx, command, &mut events)?,
-            }
-            finish(content, triggers, &mut tx, &mut events)
-        })();
+        let result = work(content, triggers, &mut tx, &mut events)
+            .and_then(|()| finish(content, triggers, &mut tx, &mut events));
         match result {
-            Ok(()) => Ok(CommandOutcome {
-                header: SessionHeader::capture(&self.state),
-                events,
-            }),
+            Ok(()) => Ok(events),
             Err(error) => {
                 tx.rollback();
                 Err(error)
+            }
+        }
+    }
+    /// Carries out queued work until none is left. Content whose triggers keep setting each
+    /// other off is cut short after `SETTLE_STEPS`; the rest waits for the next command, so
+    /// the game goes on and the events show what repeats.
+    fn settle(&mut self, events: &mut Vec<GameEvent>) {
+        for _ in 0..SETTLE_STEPS {
+            let timed_out = crate::world_runtime::timed_out(&self.state).is_some();
+            // A queued conversation starts now; its graph must be in memory.
+            let unloadable = match self.state.world.pending.front() {
+                _ if timed_out => None,
+                None => return,
+                Some(Pending::Start { dialogue, .. }) => {
+                    let dialogue = *dialogue;
+                    self.ensure_dialogue(dialogue).err().map(|e| e.to_string())
+                }
+                Some(Pending::Signal(_)) => None,
+            };
+            let step = self.transact(|content, triggers, tx, events| {
+                crate::world_runtime::process_next(content, triggers, tx, unloadable, events);
+                Ok(())
+            });
+            match step {
+                Ok(more) => events.extend(more),
+                Err(error) => {
+                    events.push(GameEvent::World(WorldEvent::WorkFailed {
+                        reason: error.to_string(),
+                    }));
+                    let dropped = self.transact(|_, _, tx, _| {
+                        crate::world_runtime::drop_next(tx);
+                        Ok(())
+                    });
+                    if dropped.is_err() {
+                        return;
+                    }
+                }
             }
         }
     }
@@ -587,8 +623,9 @@ fn start_talk(
     }
     Ok(())
 }
-/// Completes an accepted command: stable identities for new items, checks of what changed,
-/// notifications for subscribed triggers, and the next generation.
+/// Completes an accepted command: stable identities for new items, turns for conversations
+/// that started or ended, checks of what changed, notifications for subscribed triggers,
+/// and the next generation.
 fn finish(
     content: &GameContent,
     triggers: &TriggerIndex,
@@ -596,23 +633,37 @@ fn finish(
     events: &mut [GameEvent],
 ) -> Result<()> {
     assign_item_ids(tx, events)?;
+    take_turns(content, tx)?;
     check_changes(content, tx)?;
     let signals: Vec<_> = crate::world_runtime::signals(content, tx)
         .into_iter()
         .filter(|s| triggers.subscribed(s))
         .collect();
-    require(
-        signals.len() <= MAX_EVENTS_PER_COMMAND,
-        "command event budget exceeded",
-    )?;
-    require(
-        tx.world.pending.len() + signals.len() <= MAX_PENDING_EVENTS,
-        "pending event queue full; process work before accepting more",
-    )?;
     for signal in signals {
         tx.pending_mut().push_back(Pending::Signal(signal));
     }
     tx.bump_generation()
+}
+/// A conversation that started waits for its turn behind those of its kind already under
+/// way; one that ended gives its turn up.
+fn take_turns(content: &GameContent, tx: &mut Tx) -> Result<()> {
+    let touched: Vec<ConversationKey> = tx.before.conversations.keys().copied().collect();
+    for key in touched {
+        let mode = content.dialogue_contract(key.dialogue)?.mode;
+        let active = tx
+            .conversations
+            .get(&key)
+            .is_some_and(|c| c.status == RunStatus::Active);
+        if active != tx.floor.queue(mode).contains(&key) {
+            let queue = tx.floor_mut().queue_mut(mode);
+            if active {
+                queue.push_back(key);
+            } else {
+                queue.retain(|k| *k != key);
+            }
+        }
+    }
+    Ok(())
 }
 /// Re-checks only the records this command wrote, plus actors whose equipment depends on a
 /// changed inventory. Stats are worked out again only for characters whose build changed.
@@ -655,6 +706,9 @@ fn check_changes(content: &GameContent, tx: &Tx) -> Result<()> {
     }
     for key in before.conversations.keys() {
         state.check_conversation(content, state.conversation(*key)?)?;
+        if state.conversation(*key)?.status == RunStatus::Active {
+            state.check_floor(content, *key)?;
+        }
     }
     for key in before.interactions.keys() {
         if let Some(i) = state.interactions.get(key) {
@@ -869,7 +923,12 @@ fn apply(
         Command::InterruptDialogue { key, expected } => {
             crate::conversation::interrupt(content, state, key, expected, events)?
         }
-        Command::AdvanceTime { millis } => character::advance_time(content, state, millis, events)?,
+        // A conversation on screen holds the world still.
+        Command::AdvanceTime { millis } => {
+            if state.floor.blocking.is_empty() {
+                character::advance_time(content, state, millis, events)?
+            }
+        }
     }
     Ok(())
 }
@@ -906,6 +965,8 @@ pub(crate) fn run_action(
     state: &mut Tx,
     actor: ActorId,
     speaker: ActorId,
+    // Everyone else taking part in the conversation the action belongs to.
+    others: &BTreeSet<ActorId>,
     action: &Action,
     events: &mut Vec<GameEvent>,
 ) -> Result<()> {
@@ -917,6 +978,7 @@ pub(crate) fn run_action(
                 tx: state,
                 player: actor,
                 speaker,
+                others,
                 events,
             },
         )?,
@@ -936,7 +998,7 @@ pub(crate) fn run_action(
             }
             state.claim(key);
             for action in actions {
-                run_action(content, state, actor, speaker, action, events)?;
+                run_action(content, state, actor, speaker, others, action, events)?;
             }
             events.push(GameEvent::RewardClaimed { key });
         }
@@ -1088,7 +1150,7 @@ pub(crate) fn run_action(
         } => {
             let passed = character::check(content, state, actor, skill, *difficulty, events)?;
             for action in if passed { success } else { failure } {
-                run_action(content, state, actor, speaker, action, events)?;
+                run_action(content, state, actor, speaker, others, action, events)?;
             }
         }
     }

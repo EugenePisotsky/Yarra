@@ -163,6 +163,7 @@ pub(crate) fn proceed(
                         tx,
                         player: actor,
                         speaker: target.unwrap_or(actor),
+                        others: &crate::script::NOBODY,
                         events,
                     },
                 )

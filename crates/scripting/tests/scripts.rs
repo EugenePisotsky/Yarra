@@ -324,6 +324,56 @@ fn nothing_a_script_keeps_survives_to_the_next_call() {
     );
 }
 #[test]
+fn an_action_script_sees_everyone_taking_part_in_the_conversation() {
+    let source = r#"
+local gate = {}
+function gate.has_key(game: Game, scene: Scene): boolean
+    return game.present("mira")
+end
+function gate.hand_over(game: Game, scene: Scene)
+    if game.present("mira") then
+        game.set("old_gate/visits", 1)
+    end
+end
+return gate
+"#;
+    // Mira is not in the party; she is there as a witness.
+    let mut content = content(source, "gate.hand_over");
+    let witness = gameplay::dialogue::Role::Optional;
+    content.game.dialogues[0]
+        .roles
+        .insert(key("witness"), witness);
+    content.game.dialogue_contracts = content
+        .game
+        .dialogues
+        .iter()
+        .map(|d| d.contract())
+        .collect();
+    let mut session = GameSession::new(ToolContent::new(content).unwrap(), state()).unwrap();
+    session
+        .apply(Command::StartDialogue {
+            bindings: [(key("witness"), COMPANION)].into(),
+            dialogue: GATE_DIALOGUE,
+            participant: HERO,
+            speaker: MERCHANT,
+        })
+        .unwrap();
+    let expected = session.conversation_view(TALK).unwrap().token;
+    session
+        .apply(Command::AdvanceLine {
+            key: TALK,
+            expected,
+        })
+        .unwrap();
+    choose(&mut session).unwrap();
+    let visits = VariableId::named("old_gate/visits");
+    let content = session.content();
+    assert_eq!(
+        session.state().variable(content, visits).unwrap(),
+        Value::Int(1)
+    );
+}
+#[test]
 fn publication_rejects_broken_modules_and_missing_functions() {
     let module = |source: &str| {
         vec![ScriptModule {
@@ -438,7 +488,7 @@ fn variables_keep_their_type() {
 
 #[test]
 fn a_script_sends_an_actor_walking_and_queues_a_conversation() {
-    use gameplay::{Movement, Pending};
+    use gameplay::Movement;
     const POST: game_types::AreaId = game_types::AreaId::named("old_gate/post");
     let source = r#"
 local gate = {}
@@ -453,7 +503,7 @@ return gate
     content.game.world.areas.insert(POST);
     content.validate().unwrap();
     let mut session = at_choice(content);
-    choose(&mut session).unwrap();
+    let outcome = choose(&mut session).unwrap();
     let world = &session.state().world;
     assert!(matches!(
         world.movements.get(&MERCHANT),
@@ -463,11 +513,21 @@ return gate
             ..
         })
     ));
-    assert!(world.pending.contains(&Pending::Start {
-        dialogue: GATE_DIALOGUE,
-        participant: HERO,
-        speaker: MERCHANT,
-    }));
+    // The conversation was queued and tried as soon as the choice was done: the gate
+    // dialogue, just completed, is said only once.
+    let refused = outcome.events.iter().find_map(|e| match e {
+        GameEvent::World(gameplay::WorldEvent::DialogueRefused { dialogue, reason })
+            if *dialogue == GATE_DIALOGUE =>
+        {
+            Some(reason.clone())
+        }
+        _ => None,
+    });
+    assert_eq!(
+        refused.as_deref(),
+        Some("dialogue repeat policy blocks start")
+    );
+    assert!(world.pending.is_empty());
 
     // An area nobody declared is an error in the script, and the choice leaves nothing behind.
     let source = source.replace("old_gate/post", "old_gate/nowhere");

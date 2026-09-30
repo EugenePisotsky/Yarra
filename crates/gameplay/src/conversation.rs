@@ -222,8 +222,23 @@ fn take(
     node: &Node,
     events: &mut Vec<GameEvent>,
 ) -> Result<()> {
+    let others: BTreeSet<ActorId> = state
+        .conversation(key)?
+        .bindings
+        .values()
+        .copied()
+        .collect();
     for action in &node.actions {
-        run_action(content, state, key.participant, key.speaker, action, events)?;
+        let (participant, speaker) = (key.participant, key.speaker);
+        run_action(
+            content,
+            state,
+            participant,
+            speaker,
+            &others,
+            action,
+            events,
+        )?;
     }
     let c = state.conversation_mut(key)?;
     c.bump()?;

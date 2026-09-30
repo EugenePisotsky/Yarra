@@ -1,5 +1,5 @@
 use game_types::*;
-use gameplay::{Command, GameSession, HeadlessDriver};
+use gameplay::{Command, Driver, GameSession};
 use save::{SaveDirectory, SaveSlot};
 use yarra_game_content::*;
 mod support;
@@ -46,7 +46,7 @@ fn authored_operations_run_through_published_content_and_the_shared_driver() {
         step.apply(&mut session).unwrap();
     }
     let time = session.header().time;
-    let mut driver = HeadlessDriver::new(session, 20, 3).unwrap();
+    let mut driver = Driver::new(session, 20, 3).unwrap();
     assert_eq!(
         driver
             .advance_until(10, |s| s.time.0 >= time.0 + 100)

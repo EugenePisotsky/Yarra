@@ -36,6 +36,7 @@ macro_rules! journal {
             /// Signals raised directly by this scope; dropped with it if it is undone.
             pub signals: Vec<WorldSignal>,
             party: Option<Party>,
+            floor: Option<Floor>,
             timed: Option<BTreeSet<ActorId>>,
         }
         impl Before {
@@ -47,6 +48,7 @@ macro_rules! journal {
                     pending: None,
                     signals: Vec::new(),
                     party: None,
+                    floor: None,
                     timed: None,
                 }
             }
@@ -65,6 +67,9 @@ macro_rules! journal {
                 }
                 if let Some(party) = self.party {
                     state.party = party;
+                }
+                if let Some(floor) = self.floor {
+                    state.floor = floor;
                 }
                 if let Some(timed) = self.timed {
                     state.timed = timed;
@@ -85,6 +90,9 @@ macro_rules! journal {
                 outer.signals.extend(self.signals);
                 if outer.party.is_none() {
                     outer.party = self.party;
+                }
+                if outer.floor.is_none() {
+                    outer.floor = self.floor;
                 }
                 if outer.timed.is_none() {
                     outer.timed = self.timed;
@@ -280,6 +288,12 @@ impl<'a> Tx<'a> {
             self.before.party = Some(self.state.party.clone());
         }
         &mut self.state.party
+    }
+    pub fn floor_mut(&mut self) -> &mut Floor {
+        if self.before.floor.is_none() {
+            self.before.floor = Some(self.state.floor.clone());
+        }
+        &mut self.state.floor
     }
     /// Characters with an effect that will tick or end.
     pub fn timed_mut(&mut self) -> &mut BTreeSet<ActorId> {

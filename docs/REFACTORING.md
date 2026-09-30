@@ -145,11 +145,15 @@ A review of the branch after step 6 found the core sound (the playthrough in mem
 
 **Bugs in the rules crates: done.** A script's step budget now covers the rules it calls; each module load gets its own environment, so globals no longer survive between calls; a failed ability script no longer stalls its user's queue; the content fingerprint hashes identities as bytes, not as whichever names the process has met; a slot this build cannot read no longer stops saving or listing. Each has a regression test.
 
-**One driver.** Several rules exist only in [`story.rs`](../crates/app_game/src/story.rs), so scenarios cannot reproduce them: the world waiting during a blocking conversation, which conversation has the floor and the queues behind it (not saved; their order is lost on load), the fixed time step, and which actors are observed (party and walkers only, so `Entered(actor: "guard")` never fires unless the guard is walking). Move them into `gameplay` so the game and the headless runs share one driver, and let a command settle the trigger work it queued, each trigger in its own savepoint, instead of waiting to be pumped. On the way:
-- F5 records positions only; today it sends full observations, so saving can move an actor into an area and run a trigger before the snapshot.
-- A walk for an actor the engine cannot drive fails instead of never ending.
-- Occupancy is cleared when an actor stops being tracked, so a later walk cannot arrive without moving.
-- Action scripts see conversation bystanders like conditions do.
+**One driver: done.** Rules that lived only in [`story.rs`](../crates/app_game/src/story.rs) are in `gameplay`, so scenarios reproduce them:
+- A command carries out the work it gave rise to before it returns: triggers, the conversations they start, walks whose time ran out, each piece a step of its own. `ProcessNext`, the pumping in the game and the scenarios' `PumpWorld` are gone, and so are the caps on queued and per-command events that could refuse every command. Content whose triggers keep setting each other off is cut short after 256 steps and carries on with the next command; a scenario that does this fails.
+- Conversations wait their turn in `state().floor`, one queue per mode, saved in the order they started. While a blocking one is on screen, `AdvanceTime` changes nothing.
+- `Driver` (formerly `HeadlessDriver`) keeps the fixed time step for the game as well.
+- `observed(actor)` says whom the engine reports: the party, walkers, and anyone a trigger's `Entered`/`Exited` names.
+
+Fixed on the way: F5 sends `Record { positions }`, which leaves occupancy alone, instead of full observations that could set off a trigger before the snapshot; the game fails a walk it has nobody to carry out; it keeps reporting an actor the engine is still walking, so what the rules last heard stays true; action scripts see conversation bystanders; a conversation stops the player on the frame it opens. Save format 13.
+
+Evidence: new tests for turns kept through a save and the world held still, runaway triggers, the observed set, recording positions and bystanders in action scripts; the world-action tests now check the events of the command itself. 164 tests across the gameplay crates, 7 on the story slice.
 
 **Cuts.**
 - Limits that refuse commands go: the pending-event and events-per-command caps can stop every command, and caps like 1,000 dialogues or 2,048 text resources are too small for the target game. Kept: recursion depth of conditions and actions, script memory and steps, sizes of files read.

@@ -9,7 +9,7 @@ use engine::{
     WorldCatalog, WorldOrigin, WorldRenderRoot, WorldStartAdopted, WorldStartView,
 };
 use game_types::{ActorId, AreaId};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 use world::{GameplayArea, GameplayAreaIndex};
@@ -416,7 +416,6 @@ fn report(
     catalog: &WorldCatalog,
     actor: ActorId,
     at: Vec3,
-    record: bool,
 ) {
     let Some((space, position)) = origin.to_world(catalog, at) else {
         return;
@@ -436,26 +435,29 @@ fn report(
         let names: Vec<String> = areas.iter().map(AreaId::to_string).collect();
         info!("Story: {actor} is now in [{}]", names.join(", "));
     }
-    story.observe(actor, position, areas, record);
+    story.observe(actor, position, areas);
 }
 
-/// Keeps the rules informed about the actors they follow. They hear about it only when an
-/// actor crosses into or out of an area.
+/// Keeps the rules informed about the actors they follow, and about anyone the engine is
+/// still walking: a walk the rules saw arrive goes on to the middle of its area, and what
+/// the rules last heard must stay true. They hear about it only when an actor crosses into
+/// or out of an area.
 fn observe(
     mut story: NonSendMut<Story>,
     placement: Res<Placement>,
     places: Res<Places>,
     origin: Res<WorldOrigin>,
     catalog: Res<WorldCatalog>,
-    actors: Query<(&Actor, &Transform)>,
+    actors: Query<(&Actor, &Transform, Option<&MoveIntent>)>,
 ) {
     if !placement.settled {
         return;
     }
-    for (actor, transform) in &actors {
-        if story.tracked(actor.0) && transform.translation.y != UNGROUNDED {
+    for (actor, transform, intent) in &actors {
+        let walking = intent.is_some_and(|intent| intent.destination().is_some());
+        if (walking || story.observed(actor.0)) && transform.translation.y != UNGROUNDED {
             let at = transform.translation;
-            report(&mut story, &places, &origin, &catalog, actor.0, at, false);
+            report(&mut story, &places, &origin, &catalog, actor.0, at);
         }
     }
 }
@@ -473,6 +475,17 @@ fn walk(
 ) {
     if !placement.settled {
         return;
+    }
+    // A walk for an actor the scene has no body for, or for the player, cannot happen.
+    let drivable: HashSet<ActorId> = actors.iter().map(|(actor, _)| actor.0).collect();
+    let stranded: Vec<(ActorId, u64)> = story
+        .movements()
+        .filter(|m| !drivable.contains(&m.actor))
+        .map(|m| (m.actor, m.request))
+        .collect();
+    for (actor, request) in stranded {
+        info!("Story: nothing here can walk {actor}");
+        story.move_failed(actor, request);
     }
     for (actor, mut intent) in &mut actors {
         let Some((to, request)) = story.movement(actor.0).map(|m| (m.to, m.request)) else {
@@ -550,9 +563,9 @@ fn within(player: &Transform, other: &Transform, range: f32) -> bool {
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn input(
     mut story: NonSendMut<Story>,
+    mut suspended: ResMut<PlayerMovementSuspended>,
     keys: Res<ButtonInput<KeyCode>>,
     placement: Res<Placement>,
-    places: Res<Places>,
     origin: Res<WorldOrigin>,
     catalog: Res<WorldCatalog>,
     player: Single<&Transform, (With<PlayerControlled>, Without<Guard>)>,
@@ -562,20 +575,37 @@ fn input(
 ) {
     // Saves hold where everyone stands, so both wait until the scene is in place.
     if keys.just_pressed(KeyCode::F5) && placement.settled {
-        for (actor, transform) in &actors {
-            let at = transform.translation;
-            report(&mut story, &places, &origin, &catalog, actor.0, at, true);
-        }
+        let positions: BTreeMap<ActorId, [f64; 3]> = actors
+            .iter()
+            .filter_map(|(actor, transform)| {
+                let (_, position) = origin.to_world(&catalog, transform.translation)?;
+                Some((actor.0, position))
+            })
+            .collect();
+        story.record(positions);
         story.quicksave();
     }
     if keys.just_pressed(KeyCode::F9) && placement.settled {
         story.quickload();
     }
+    handle(&mut story, &keys, &placement, &player, &guard, &dummy);
+    // Before movement runs, so a conversation holds the player on the frame it opens.
+    suspended.0 = story.in_conversation();
+}
+
+fn handle(
+    story: &mut Story,
+    keys: &ButtonInput<KeyCode>,
+    placement: &Placement,
+    player: &Transform,
+    guard: &Transform,
+    dummy: &Transform,
+) {
     if !story.in_conversation() {
         if !placement.settled {
             return;
         }
-        if near_guard(&player, &guard) {
+        if near_guard(player, guard) {
             if keys.just_pressed(KeyCode::KeyE) {
                 story.talk(None);
             } else if keys.just_pressed(KeyCode::KeyT)
@@ -585,10 +615,10 @@ fn input(
             }
         }
         // Walking away from the dummy gives the fight up.
-        if story.busy() && !within(&player, &dummy, DISENGAGE_RANGE) {
+        if story.busy() && !within(player, dummy, DISENGAGE_RANGE) {
             story.stop();
         }
-        if within(&player, &dummy, STRIKE_RANGE) {
+        if within(player, dummy, STRIKE_RANGE) {
             if keys.just_pressed(KeyCode::KeyF) {
                 story.strike();
             }

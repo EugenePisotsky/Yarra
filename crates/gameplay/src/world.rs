@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 pub const MAX_AREA_OVERLAP: usize = 32;
-pub const MAX_PENDING_EVENTS: usize = 4096;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -207,11 +206,11 @@ impl TriggerState {
         }
     }
 }
-/// Work accepted by a command and carried out by a later `ProcessNext`.
+/// Work a command gave rise to, carried out straight after it, each piece on its own.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Pending {
     Signal(WorldSignal),
-    /// A conversation asked for by an action. Starting it later lets its graph be loaded.
+    /// A conversation asked for by an action. Starting it afterwards lets its graph be loaded.
     Start {
         dialogue: DialogueId,
         participant: ActorId,
@@ -245,6 +244,11 @@ pub enum WorldCommand {
         actor: ActorId,
         request: u64,
     },
+    /// The engine records where actors stand, e.g. for a save. Which areas they are in is
+    /// left alone: that changes only with `Observe`, so recording never sets off a trigger.
+    Record {
+        positions: BTreeMap<ActorId, Position>,
+    },
     Open {
         object: ObjectId,
     },
@@ -258,9 +262,6 @@ pub enum WorldCommand {
     Destroy {
         object: ObjectId,
     },
-    /// Carries out the oldest pending work, or a movement whose time ran out. Call again
-    /// while work remains.
-    ProcessNext,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorldEvent {
@@ -289,6 +290,10 @@ pub enum WorldEvent {
     },
     DialogueRefused {
         dialogue: DialogueId,
+        reason: String,
+    },
+    /// Queued work could not be carried out and was dropped, so the queue moves on.
+    WorkFailed {
         reason: String,
     },
 }
@@ -338,31 +343,43 @@ impl GameContent {
 }
 /// Which triggers listen for which signal, built once from the loaded definitions.
 #[derive(Debug, Default)]
-pub struct TriggerIndex(BTreeMap<WorldSignal, BTreeSet<TriggerId>>);
+pub struct TriggerIndex {
+    subscribers: BTreeMap<WorldSignal, BTreeSet<TriggerId>>,
+    /// Actors whose comings and goings some trigger listens for.
+    watched: BTreeSet<ActorId>,
+}
 impl TriggerIndex {
     pub fn build(content: &GameContent) -> Self {
-        let mut index = BTreeMap::<_, BTreeSet<_>>::new();
+        let mut index = Self::default();
         for d in &content.game.world.triggers {
             for signal in &d.on {
-                index.entry(signal.clone()).or_default().insert(d.id);
+                if let WorldSignal::Entered { actor, .. } | WorldSignal::Exited { actor, .. } =
+                    signal
+                {
+                    index.watched.insert(*actor);
+                }
+                index
+                    .subscribers
+                    .entry(signal.clone())
+                    .or_default()
+                    .insert(d.id);
             }
         }
-        Self(index)
+        index
     }
     pub fn subscribed(&self, signal: &WorldSignal) -> bool {
-        self.0.contains_key(signal)
+        self.subscribers.contains_key(signal)
     }
     /// In identity order, so the same event always runs its triggers in the same order.
     pub fn subscribers(&self, signal: &WorldSignal) -> impl Iterator<Item = TriggerId> + '_ {
-        self.0.get(signal).into_iter().flatten().copied()
+        self.subscribers.get(signal).into_iter().flatten().copied()
+    }
+    pub fn watches(&self, actor: ActorId) -> bool {
+        self.watched.contains(&actor)
     }
 }
 impl WorldState {
     pub(crate) fn validate(&self, content: &GameContent, state: &SessionState) -> Result<()> {
-        require(
-            self.pending.len() <= MAX_PENDING_EVENTS,
-            "world state budget exceeded",
-        )?;
         for work in &self.pending {
             match work {
                 Pending::Signal(signal) => signal.validate(content)?,

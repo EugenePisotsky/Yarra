@@ -77,17 +77,14 @@
         Quest(quest: "guard/gate", transition: Start),
         // The engine reports the hero inside the approach; the guard is asked to walk.
         World(Observe(actor: "hero", position: (millimetres: (1500, 0, 0)), areas: ["guard/approach"])),
-        PumpWorld(limit: 256),
         ExpectMovement(actor: "guard", to: "guard/gate_post"),
         ExpectObject(object: "guard/old_gate", locked: true, open: false),
         // The engine reports the guard at the gate; the arrival hands over the key.
         World(Observe(actor: "guard", position: (millimetres: (1800, 0, 0)), areas: ["guard/gate_post"])),
-        PumpWorld(limit: 256),
         World(Open(object: "guard/old_gate")),
         World(Open(object: "guard/chest")),
         ExpectObject(object: "guard/old_gate", locked: false, open: true),
         ExpectContainer(object: "guard/chest", entries: 1),
         ExpectQuest(quest: "guard/gate", status: Completed),
-        PumpWorld(limit: 256),
     ],
 )

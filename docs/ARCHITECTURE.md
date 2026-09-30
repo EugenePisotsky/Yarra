@@ -93,9 +93,11 @@ Two decisions shape the runtime:
 - re-check only the records it wrote (plus actors whose equipment depends on a changed inventory);
 - derive notifications (item acquired, quest changed, area entered…) and queue those a trigger subscribes to.
 
+The queued work is then carried out before `apply` returns, one piece per step, each a transaction of its own, so a command's outcome is settled state.
+
 Cost therefore follows the records a command touches, not the size of the playthrough: three item commands against 20,000 actors take about 0.1 ms in the dev profile. Nested scopes (`savepoint`/`rollback_to`) let a failed trigger plan be undone on its own while the rest of the command is kept. The full-state check runs when a playthrough is created or loaded.
 
-Read models (`state()`, `derived`, `conversation_view`, `preview_interaction`, `quote_trade`, `container_contents`, `next_movement`) never consume randomness. `HeadlessDriver` wraps the same commands with a fixed logical step, a bounded event trace and `advance_until`.
+Read models (`state()`, `derived`, `conversation_view`, `preview_interaction`, `quote_trade`, `container_contents`, `next_movement`) never consume randomness. [`Driver`](../crates/gameplay/src/driver.rs) wraps the same commands with a fixed time step for the game and headless runs alike, an optional event trace and `advance_until`.
 
 ### Content and publication
 

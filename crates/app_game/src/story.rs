@@ -2,18 +2,19 @@
 //! start, a conversation, triggers that react to where the party walks, and quick save/load.
 //! The rules run in `gameplay`; this module only publishes the authored project, forwards
 //! input and what the engine observes as commands, and shows read models.
-use game_content::{ContentRepository, LoadedProject, RuntimeSession};
+use game_content::{ContentRepository, LoadedProject};
 use game_types::{ActorId, AreaId, BoundText, ItemDefinitionId, Key, ObjectId, QuestId, TextRef};
 use gameplay::actors::Position;
-use gameplay::dialogue::{Mode, RunStatus};
+use gameplay::dialogue::{Mode, Token};
 use gameplay::{
-    Command, ConversationKey, ConversationView, GameEvent, GameSession, Movement, WorldCommand,
-    WorldEvent, quests,
+    Command, ConversationKey, ConversationView, Driver, GameEvent, GameSession, Movement,
+    WorldCommand, WorldEvent, quests,
 };
 use localization::Arguments;
 use save::{SaveDirectory, SaveSlot};
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 mod scene;
 pub(crate) use scene::install;
@@ -28,10 +29,14 @@ const POTION: ItemDefinitionId = ItemDefinitionId::named("healing_potion");
 const GATE: ObjectId = ObjectId::named("guard/old_gate");
 const GATE_QUEST: QuestId = QuestId::named("guard/gate");
 const GATE_KEY: ItemDefinitionId = ItemDefinitionId::named("old_gate_key");
-/// Queued work carried out after one command; anything beyond it waits for the next.
-const PUMP_LIMIT: usize = 64;
 /// Game time moves in steps of this many milliseconds.
 const TIME_STEP_MS: u64 = 100;
+
+fn millimetres(metres: [f64; 3]) -> Position {
+    Position {
+        millimetres: metres.map(|metres| (metres * 1000.).round() as i64),
+    }
+}
 
 /// Fluent wraps inserted values in directional isolation marks; the UI font has no glyphs
 /// for them and the slice shows left-to-right text only.
@@ -56,21 +61,15 @@ pub(crate) struct Bark {
 
 pub(crate) struct Story {
     project: LoadedProject,
-    session: RuntimeSession,
+    driver: Driver<ContentRepository>,
     bundle: PathBuf,
     saves: SaveDirectory,
     locale: String,
-    /// The blocking conversation on screen, and others that started meanwhile.
-    conversation: Option<ConversationKey>,
-    waiting: VecDeque<ConversationKey>,
-    /// The ambient conversation being spoken, and others waiting their turn.
-    ambient: Option<ConversationKey>,
-    ambient_waiting: VecDeque<ConversationKey>,
-    /// Seconds the ambient line has been up, and how long it stays once that is worked out.
+    /// The ambient line being spoken, how many seconds it has been up, and how long it stays
+    /// once that is worked out.
+    ambient_line: Option<(ConversationKey, Token)>,
     ambient_shown: f32,
     ambient_duration: Option<f32>,
-    /// Real time not yet turned into game time.
-    unspent_seconds: f32,
     /// Counts loads, so the scene moves actors to where the save left them.
     loads: u64,
     guard_name: String,
@@ -103,27 +102,22 @@ impl Story {
         }
         let saves = SaveDirectory::new(work.join("saves"), 3).map_err(|e| text(&e))?;
         let locale = project.source_locale().to_owned();
+        let driver = Driver::new(session, TIME_STEP_MS, 0).map_err(|e| text(&e))?;
         let mut story = Self {
             project,
-            session,
+            driver,
             bundle,
             saves,
             locale,
-            conversation: None,
-            waiting: VecDeque::new(),
-            ambient: None,
-            ambient_waiting: VecDeque::new(),
+            ambient_line: None,
             ambient_shown: 0.,
             ambient_duration: None,
-            unspent_seconds: 0.,
             loads: 0,
             guard_name: String::new(),
             revision: 0,
             notice: String::new(),
         };
         story.guard_name = story.actor_name(GUARD);
-        story.resume();
-        story.pump();
         Ok(story)
     }
     fn format(&self, text: &TextRef) -> String {
@@ -143,7 +137,7 @@ impl Story {
         }
     }
     fn actor_name(&self, id: ActorId) -> String {
-        let state = self.session.state();
+        let state = self.driver.state();
         let Ok(actor) = state.actor(id) else {
             return String::new();
         };
@@ -164,18 +158,19 @@ impl Story {
     }
     /// Whether a conversation has the player's attention. The world waits while one does.
     pub fn in_conversation(&self) -> bool {
-        self.conversation.is_some()
+        self.driver.state().floor.current(Mode::Blocking).is_some()
     }
     pub fn gate_locked(&self) -> bool {
-        self.session
+        let session = self.driver.session();
+        session
             .state()
-            .object(self.session.content(), GATE)
+            .object(session.content(), GATE)
             .is_ok_and(|gate| gate.locked)
     }
     /// One line for the corner of the screen: the quest, what the player carries for it and
     /// the named areas the player stands in.
     pub fn summary(&self) -> String {
-        let state = self.session.state();
+        let state = self.driver.state();
         let title = self
             .project
             .content()
@@ -208,15 +203,9 @@ impl Story {
         summary
     }
 
-    /// Applies a command, then carries out whatever the rules queued because of it.
     fn run(&mut self, command: Command) -> bool {
         self.revision += 1;
-        let accepted = self.apply(command);
-        self.pump();
-        accepted
-    }
-    fn apply(&mut self, command: Command) -> bool {
-        match self.session.apply(command) {
+        match self.driver.submit(command) {
             Ok(outcome) => {
                 for event in outcome.events {
                     self.note(event);
@@ -231,96 +220,44 @@ impl Story {
     }
     fn note(&mut self, event: GameEvent) {
         match event {
-            GameEvent::DialogueStarted { key, mode } => self.enqueue(key, mode),
             GameEvent::World(WorldEvent::TriggerFailed { trigger, reason }) => {
                 self.notice = format!("Trigger {trigger} failed: {reason}");
             }
             GameEvent::World(WorldEvent::DialogueRefused { dialogue, reason }) => {
                 self.notice = format!("Conversation {dialogue} did not start: {reason}");
             }
+            GameEvent::World(WorldEvent::WorkFailed { reason }) => {
+                self.notice = format!("Queued work failed: {reason}");
+            }
             _ => {}
         }
     }
-    /// Triggers reacting to what happened, conversations they start and walks that ran out
-    /// of time.
-    fn pump(&mut self) {
-        for _ in 0..PUMP_LIMIT {
-            if !self.session.world_work_pending() {
-                break;
-            }
-            self.revision += 1;
-            if !self.apply(Command::World(WorldCommand::ProcessNext)) {
-                break;
-            }
-        }
-    }
-    fn enqueue(&mut self, key: ConversationKey, mode: Mode) {
-        let (current, waiting) = match mode {
-            Mode::Blocking => (&mut self.conversation, &mut self.waiting),
-            Mode::Ambient => (&mut self.ambient, &mut self.ambient_waiting),
-        };
-        if current.is_none() {
-            *current = Some(key);
-        } else if *current != Some(key) && !waiting.contains(&key) {
-            waiting.push_back(key);
-        }
-    }
-    /// Picks up the conversations a new or loaded playthrough is in the middle of.
-    fn resume(&mut self) {
-        self.conversation = None;
-        self.waiting.clear();
-        self.ambient = None;
-        self.ambient_waiting.clear();
-        self.ambient_shown = 0.;
-        self.ambient_duration = None;
-        self.unspent_seconds = 0.;
-        let content = self.session.content();
-        let active: Vec<(ConversationKey, Mode)> = self
-            .session
-            .state()
-            .conversations
-            .iter()
-            .filter(|(_, run)| run.status == RunStatus::Active)
-            .filter_map(|(key, _)| Some((*key, content.dialogue_contract(key.dialogue).ok()?.mode)))
-            .collect();
-        for (key, mode) in active {
-            self.enqueue(key, mode);
-        }
-    }
-    /// The conversation of one kind being shown, moving on to the next waiting one when it
-    /// has ended.
+    /// The conversation of one kind that has the floor, as it stands now.
     fn current(&mut self, mode: Mode) -> Option<ConversationView> {
-        loop {
-            let key = match mode {
-                Mode::Blocking => self.conversation,
-                Mode::Ambient => self.ambient,
-            }?;
-            match self.session.conversation_view(key) {
-                Ok(view) if view.status == RunStatus::Active => return Some(view),
-                Ok(_) => {}
-                Err(error) => self.notice = error.to_string(),
-            }
-            match mode {
-                Mode::Blocking => self.conversation = self.waiting.pop_front(),
-                Mode::Ambient => {
-                    self.ambient = self.ambient_waiting.pop_front();
-                    self.ambient_shown = 0.;
-                    self.ambient_duration = None;
-                }
+        let key = self.driver.state().floor.current(mode)?;
+        match self.driver.session_mut().conversation_view(key) {
+            Ok(view) => Some(view),
+            Err(error) => {
+                self.notice = error.to_string();
+                None
             }
         }
     }
 
     /// Something the guard can be asked about now, with its label.
     pub fn topic(&self) -> Option<(Key, String)> {
-        let preview = self.session.preview_interaction(HERO, GUARD).ok()?;
+        let preview = self
+            .driver
+            .session()
+            .preview_interaction(HERO, GUARD)
+            .ok()?;
         let entry = preview.topics().next()?;
         Some((entry.rule.clone(), self.format(entry.topic.as_ref()?)))
     }
     /// Starts or resumes the conversation the guard's entry rules select, or the one
     /// behind a topic.
     pub fn talk(&mut self, topic: Option<Key>) {
-        if self.conversation.is_some() {
+        if self.in_conversation() {
             return;
         }
         let accepted = self.run(Command::Talk {
@@ -331,27 +268,7 @@ impl Story {
         });
         if accepted {
             self.notice.clear();
-            // A conversation that was already under way announces nothing; pick it up.
-            if self.conversation.is_none() {
-                self.conversation = self.active_conversation();
-            }
         }
-    }
-    fn active_conversation(&self) -> Option<ConversationKey> {
-        let state = self.session.state();
-        let selection = state.selection(gameplay::dialogue::InteractionKey {
-            participant: HERO,
-            speaker: GUARD,
-        })?;
-        let key = ConversationKey {
-            dialogue: selection.dialogue,
-            participant: HERO,
-            speaker: GUARD,
-        };
-        state
-            .conversation(key)
-            .is_ok_and(|c| c.status == RunStatus::Active)
-            .then_some(key)
     }
     /// The current line or choices, or `None` once the conversation has ended.
     pub fn panel(&mut self) -> Option<Panel> {
@@ -380,31 +297,26 @@ impl Story {
     }
     /// Acknowledge the line being shown.
     pub fn advance(&mut self) {
-        let Some(key) = self.conversation else {
+        let Some(view) = self.current(Mode::Blocking) else {
             return;
         };
-        if let Ok(view) = self.session.conversation_view(key)
-            && view.line.is_some()
-        {
+        if view.line.is_some() {
             self.run(Command::AdvanceLine {
-                key,
+                key: view.key,
                 expected: view.token,
             });
         }
     }
     /// Pick the choice at this position in the list the panel showed.
     pub fn choose(&mut self, index: usize) {
-        let Some(key) = self.conversation else {
-            return;
-        };
-        let Ok(view) = self.session.conversation_view(key) else {
+        let Some(view) = self.current(Mode::Blocking) else {
             return;
         };
         if view.line.is_some() {
             return;
         }
         if let Some(choice) = view.choices.get(index) {
-            let choice: Key = choice.id.clone();
+            let (key, choice) = (view.key, choice.id.clone());
             self.run(Command::Choose {
                 expected: view.token,
                 dialogue: key.dialogue,
@@ -416,51 +328,48 @@ impl Story {
     }
     /// Walk away mid-conversation. The guard remembers that it was interrupted.
     pub fn leave(&mut self) {
-        let Some(key) = self.conversation else {
-            return;
-        };
-        if let Ok(view) = self.session.conversation_view(key)
-            && view.status == RunStatus::Active
-        {
+        if let Some(view) = self.current(Mode::Blocking) {
             self.run(Command::InterruptDialogue {
-                key,
+                key: view.key,
                 expected: view.token,
             });
         }
-        self.revision += 1;
-        self.current(Mode::Blocking);
     }
 
     /// Lets `seconds` of play pass: game time moves on, a walk can run out of time and an
-    /// ambient line gives way to the next. A blocking conversation pauses all of it.
+    /// ambient line gives way to the next. The rules hold the world still while a blocking
+    /// conversation is on screen; the ambient line waits with it.
     pub fn tick(&mut self, seconds: f32) {
-        if self.current(Mode::Blocking).is_some() {
+        let seconds = seconds.clamp(0., 1.);
+        match self.driver.elapse(Duration::from_secs_f32(seconds)) {
+            Ok(Some(outcome)) => {
+                // The clock alone changes nothing on screen, unless the hero is busy with
+                // something whose progress is shown.
+                let quiet = outcome.events.iter().all(|e| *e == GameEvent::TimeAdvanced);
+                if !quiet || self.busy() {
+                    self.revision += 1;
+                }
+                for event in outcome.events {
+                    self.note(event);
+                }
+            }
+            Ok(None) => {}
+            Err(error) => self.notice = error.to_string(),
+        }
+        if self.in_conversation() {
             return;
         }
-        // A long hitch does not fast-forward the world.
-        let seconds = seconds.clamp(0., 1.);
-        self.unspent_seconds += seconds;
-        let steps = (self.unspent_seconds * 1000.) as u64 / TIME_STEP_MS;
-        if steps > 0 {
-            let millis = steps * TIME_STEP_MS;
-            self.unspent_seconds -= millis as f32 / 1000.;
-            match self.session.apply(Command::AdvanceTime { millis }) {
-                Ok(outcome) => {
-                    // The clock alone changes nothing on screen, unless the hero is busy
-                    // with something whose progress is shown.
-                    let quiet = outcome.events.iter().all(|e| *e == GameEvent::TimeAdvanced);
-                    if !quiet || self.busy() {
-                        self.revision += 1;
-                    }
-                    for event in outcome.events {
-                        self.note(event);
-                    }
-                }
-                Err(error) => self.notice = error.to_string(),
-            }
-            self.pump();
+        let state = self.driver.state();
+        let line = state
+            .floor
+            .current(Mode::Ambient)
+            .and_then(|key| Some((key, state.conversation(key).ok()?.token)));
+        if self.ambient_line != line {
+            self.ambient_line = line;
+            self.ambient_shown = 0.;
+            self.ambient_duration = None;
         }
-        let Some(view) = self.current(Mode::Ambient) else {
+        let Some((key, token)) = line else {
             return;
         };
         self.ambient_shown += seconds;
@@ -468,9 +377,9 @@ impl Story {
             Some(duration) => duration,
             None => {
                 // Long enough to read: a moment, plus time for each character.
-                let length = view
-                    .line
-                    .as_ref()
+                let length = self
+                    .current(Mode::Ambient)
+                    .and_then(|view| view.line)
                     .map_or(0, |line| self.bound(&line.text).chars().count());
                 *self
                     .ambient_duration
@@ -478,22 +387,20 @@ impl Story {
             }
         };
         if self.ambient_shown >= duration {
-            self.ambient_shown = 0.;
-            self.ambient_duration = None;
             self.run(Command::AdvanceLine {
-                key: view.key,
-                expected: view.token,
+                key,
+                expected: token,
             });
         }
     }
 
     /// The hero's sheet in one line: level, experience, resources, attack and the purse.
     pub fn character(&self) -> String {
-        let state = self.session.state();
+        let state = self.driver.state();
         let Ok(hero) = state.actor(HERO) else {
             return String::new();
         };
-        let rules = &self.session.content().game.rules;
+        let rules = &self.driver.session().content().game.rules;
         let stat = |name: &str| Key::new(name).ok().and_then(|key| hero.stats.get(&key));
         let left = |name: &str| Key::new(name).ok().and_then(|key| hero.resources.get(&key));
         let mut line = format!(
@@ -523,7 +430,7 @@ impl Story {
     }
     /// Attribute and learning points the hero has not spent.
     pub fn points(&self) -> (u32, u32) {
-        let hero = self.session.state().actor(HERO);
+        let hero = self.driver.state().actor(HERO);
         hero.map_or((0, 0), |h| (h.attribute_points, h.learning_points))
     }
     /// Puts one attribute point into a primary stat.
@@ -534,7 +441,7 @@ impl Story {
     }
     /// Drinks a healing potion, if the hero carries one.
     pub fn drink(&mut self) {
-        let carried = self.session.state().carried(HERO);
+        let carried = self.driver.state().carried(HERO);
         let potion = carried
             .ok()
             .and_then(|bag| bag.entries.iter().find(|e| e.definition == POTION))
@@ -577,17 +484,17 @@ impl Story {
     }
     /// Whether the hero is doing something or has something lined up.
     pub fn busy(&self) -> bool {
-        let hero = self.session.state().actor(HERO);
+        let hero = self.driver.state().actor(HERO);
         hero.is_ok_and(|h| h.acting.is_some() || !h.intents.is_empty())
     }
     /// The dummy's health, what the hero is in the middle of, and when the power strike is
     /// ready again.
     pub fn fight(&self) -> String {
-        let state = self.session.state();
+        let state = self.driver.state();
         let (Ok(hero), Ok(dummy)) = (state.actor(HERO), state.actor(DUMMY)) else {
             return String::new();
         };
-        let rules = &self.session.content().game.rules;
+        let rules = &self.driver.session().content().game.rules;
         let seconds = |until: game_types::GameTime| {
             format!(
                 "{:.1} s",
@@ -624,15 +531,16 @@ impl Story {
         }
         line
     }
-    /// Whether the rules follow where this actor is: the party, and anyone asked to walk.
-    pub fn tracked(&self, actor: ActorId) -> bool {
-        let state = self.session.state();
-        state.party.members.contains(&actor) || state.world.movements.contains_key(&actor)
+    /// Whether the rules follow where this actor is: the party, anyone asked to walk, and
+    /// anyone a trigger watches.
+    pub fn observed(&self, actor: ActorId) -> bool {
+        self.driver.session().observed(actor)
     }
     /// The content's identity for a named area, when the content refers to that name.
     pub fn area(&self, name: &str) -> Option<AreaId> {
         let id = AreaId::try_from(name.to_owned()).ok()?;
-        self.session
+        self.driver
+            .session()
             .content()
             .game
             .world
@@ -642,37 +550,41 @@ impl Story {
     }
     /// The areas the rules last heard the actor was inside.
     pub fn areas(&self, actor: ActorId) -> &BTreeSet<AreaId> {
-        self.session.state().areas(actor)
+        self.driver.state().areas(actor)
     }
     /// Tells the rules where an actor is, in metres. Nothing is sent while the actor stays
-    /// in the same areas, unless the position is to be `record`ed for a save.
-    pub fn observe(
-        &mut self,
-        actor: ActorId,
-        position: [f64; 3],
-        areas: BTreeSet<AreaId>,
-        record: bool,
-    ) {
-        if !record && self.areas(actor) == &areas {
+    /// in the same areas.
+    pub fn observe(&mut self, actor: ActorId, position: [f64; 3], areas: BTreeSet<AreaId>) {
+        if self.areas(actor) == &areas {
             return;
         }
-        let position = Position {
-            millimetres: position.map(|metres| (metres * 1000.).round() as i64),
-        };
         self.run(Command::World(WorldCommand::Observe {
             actor,
-            position,
+            position: millimetres(position),
             areas,
         }));
     }
+    /// Records where actors stand, in metres, for a save. Which areas they are in stays as
+    /// the rules last heard it.
+    pub fn record(&mut self, positions: BTreeMap<ActorId, [f64; 3]>) {
+        let positions = positions
+            .into_iter()
+            .map(|(actor, position)| (actor, millimetres(position)))
+            .collect();
+        self.run(Command::World(WorldCommand::Record { positions }));
+    }
     /// Where the rules last recorded the actor, in metres.
     pub fn position(&self, actor: ActorId) -> Option<[f64; 3]> {
-        let actor = self.session.state().actor(actor).ok()?;
+        let actor = self.driver.state().actor(actor).ok()?;
         Some(actor.position.millimetres.map(|mm| mm as f64 / 1000.))
+    }
+    /// Every walk the rules asked for and are waiting on.
+    pub fn movements(&self) -> impl Iterator<Item = &Movement> {
+        self.driver.state().world.movements.values()
     }
     /// The walk the rules asked of an actor, until it arrives or is given up.
     pub fn movement(&self, actor: ActorId) -> Option<&Movement> {
-        self.session.state().world.movements.get(&actor)
+        self.driver.state().world.movements.get(&actor)
     }
     /// The engine cannot carry out the walk it was asked for.
     pub fn move_failed(&mut self, actor: ActorId, request: u64) {
@@ -684,7 +596,7 @@ impl Story {
     }
     pub fn quicksave(&mut self) {
         self.revision += 1;
-        self.notice = match self.saves.quicksave(&self.session) {
+        self.notice = match self.saves.quicksave(self.driver.session()) {
             Ok(_) => "Saved.".into(),
             Err(error) => format!("Save failed: {error}"),
         };
@@ -701,9 +613,9 @@ impl Story {
         self.revision += 1;
         self.notice = match loaded {
             Ok(session) => {
-                self.session = session;
+                self.driver.replace(session);
                 self.loads += 1;
-                self.resume();
+                self.ambient_line = None;
                 "Loaded.".into()
             }
             Err(error) => format!("Load failed: {error}"),
@@ -844,15 +756,15 @@ mod tests {
     fn walking_up_starts_the_banter_and_sends_the_guard_to_open_the_gate() {
         let temp = Temp::new();
         let mut story = open(&temp);
-        assert!(story.tracked(HERO) && story.tracked(MIRA) && !story.tracked(GUARD));
+        assert!(story.observed(HERO) && story.observed(MIRA) && !story.observed(GUARD));
         assert_eq!(story.area("guard/approach"), Some(APPROACH));
         assert_eq!(story.area("somewhere/else"), None);
         // Standing outside every area is nothing to report.
         let revision = story.revision();
-        story.observe(HERO, [0., 0., 0.], BTreeSet::new(), false);
+        story.observe(HERO, [0., 0., 0.], BTreeSet::new());
         assert_eq!(story.revision(), revision);
 
-        story.observe(HERO, [3., 0.5, -2.], [APPROACH].into(), false);
+        story.observe(HERO, [3., 0.5, -2.], [APPROACH].into());
         assert!(story.summary().ends_with("|  In: guard/approach"));
         // Mira remarks on it while the player keeps control.
         assert!(!story.in_conversation());
@@ -864,9 +776,9 @@ mod tests {
 
         // The guard was asked to the gate, so the rules follow him until he gets there.
         assert_eq!(story.movement(GUARD).map(|m| m.to), Some(GATE_POST));
-        assert!(story.tracked(GUARD) && story.gate_locked());
-        story.observe(GUARD, [9.5, 0.5, -3.], [APPROACH, GATE_POST].into(), false);
-        assert!(story.movement(GUARD).is_none() && !story.tracked(GUARD));
+        assert!(story.observed(GUARD) && story.gate_locked());
+        story.observe(GUARD, [9.5, 0.5, -3.], [APPROACH, GATE_POST].into());
+        assert!(story.movement(GUARD).is_none() && !story.observed(GUARD));
         assert!(story.areas(GUARD).contains(&GATE_POST));
         assert!(!story.gate_locked());
         assert!(
@@ -880,7 +792,7 @@ mod tests {
     fn a_walk_runs_out_of_time_but_not_while_a_conversation_holds_the_world() {
         let temp = Temp::new();
         let mut story = open(&temp);
-        story.observe(HERO, [3., 0., 0.], [APPROACH].into(), false);
+        story.observe(HERO, [3., 0., 0.], [APPROACH].into());
         let request = story.movement(GUARD).unwrap().request;
         story.talk(None);
         assert!(story.in_conversation());
@@ -911,13 +823,13 @@ mod tests {
     fn a_load_brings_back_the_spoken_line_the_walk_and_where_everyone_stood() {
         let temp = Temp::new();
         let mut story = open(&temp);
-        story.observe(HERO, [3.25, 0.5, -2.], [APPROACH].into(), false);
+        story.observe(HERO, [3.25, 0.5, -2.], [APPROACH].into());
         let remark = story.bark().unwrap();
-        story.observe(GUARD, [6., 0.25, -2.6], [APPROACH].into(), true);
+        story.observe(GUARD, [6., 0.25, -2.6], [APPROACH].into());
         story.quicksave();
         assert_eq!(hear_next(&mut story).unwrap().speaker, "Traveller");
-        story.observe(HERO, [40., 0., 0.], BTreeSet::new(), false);
-        story.observe(GUARD, [9.5, 0.5, -3.], [GATE_POST].into(), false);
+        story.observe(HERO, [40., 0., 0.], BTreeSet::new());
+        story.observe(GUARD, [9.5, 0.5, -3.], [GATE_POST].into());
         assert!(!story.gate_locked());
 
         story.quickload();
@@ -940,8 +852,8 @@ mod tests {
             Some("About the gate key")
         );
         // The escort: into the approach, the guard walks to the gate and takes the key.
-        story.observe(HERO, [3., 0., 0.], [APPROACH].into(), false);
-        story.observe(GUARD, [9.5, 0., -3.], [APPROACH, GATE_POST].into(), false);
+        story.observe(HERO, [3., 0., 0.], [APPROACH].into());
+        story.observe(GUARD, [9.5, 0., -3.], [APPROACH, GATE_POST].into());
         assert!(!story.gate_locked());
         let sheet = story.character();
         assert!(
