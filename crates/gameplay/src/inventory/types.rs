@@ -29,12 +29,13 @@ impl Money {
                 .ok_or(InventoryError::Overflow)?,
         )
     }
+    /// What is left after paying `other` out of this.
     pub fn checked_sub(self, other: Self) -> Result<Self> {
-        Ok(Self(
-            self.0
-                .checked_sub(other.0)
-                .ok_or(InventoryError::InsufficientFunds)?,
-        ))
+        let left = self.0.checked_sub(other.0);
+        Ok(Self(left.ok_or(InventoryError::InsufficientFunds {
+            needed: other.0,
+            available: self.0,
+        })?))
     }
     pub fn checked_mul(self, quantity: u32) -> Result<Self> {
         Self::new(
@@ -84,8 +85,8 @@ pub enum InventoryError {
     IncompatibleStack,
     #[error("source and destination must differ")]
     SameParticipant,
-    #[error("insufficient funds")]
-    InsufficientFunds,
+    #[error("{needed} needed, {available} available")]
+    InsufficientFunds { needed: u64, available: u64 },
     #[error("price is unavailable for this trade direction")]
     NotForTrade,
     #[error("trade quote is stale")]

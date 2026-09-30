@@ -40,7 +40,7 @@ pub enum GameplayError {
     #[error(transparent)]
     Invalid(#[from] game_types::Invalid),
     #[error(transparent)]
-    Inventory(#[from] inventory::InventoryError),
+    Inventory(inventory::InventoryError),
     #[error(transparent)]
     Rejected(#[from] Rejection),
     /// A rule refused something a script asked for.
@@ -114,6 +114,31 @@ pub enum Rejection {
     ConversationMoved,
     #[error("{} cannot be said now", .0.as_str())]
     ChoiceUnavailable(game_types::Key),
+    #[error("there is no room for more")]
+    NoRoom,
+    #[error("the item cannot be given away, sold or dropped")]
+    ItemRestricted,
+    #[error("the item is not traded here")]
+    NotForTrade,
+    #[error("the prices have changed since the offer was made")]
+    QuoteStale,
+}
+/// What a player can run into in an inventory becomes a `Rejection`; the rest are mistakes.
+impl From<inventory::InventoryError> for GameplayError {
+    fn from(error: inventory::InventoryError) -> Self {
+        use inventory::InventoryError as E;
+        let rejection = match error {
+            E::Capacity => Rejection::NoRoom,
+            E::Restricted => Rejection::ItemRestricted,
+            E::InsufficientFunds { needed, available } => {
+                Rejection::NotEnoughGold { needed, available }
+            }
+            E::NotForTrade => Rejection::NotForTrade,
+            E::StaleQuote => Rejection::QuoteStale,
+            error => return Self::Inventory(error),
+        };
+        Self::Rejected(rejection)
+    }
 }
 impl GameplayError {
     /// The reason, when the command was refused by a rule rather than by a mistake.

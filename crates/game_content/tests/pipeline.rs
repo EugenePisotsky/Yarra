@@ -178,7 +178,7 @@ fn category_mechanics_bindings_and_scenario_errors_are_rejected() {
     write(root.join("scenario.ron"), &scenario);
     let error = failure(&root);
     assert!(error.contains("scenario step 5 (Trade)"), "{error}");
-    assert!(error.contains("funds"));
+    assert!(error.contains("gold needed, 0 available"), "{error}");
 }
 #[test]
 fn malformed_ron_unknown_fields_invalid_uuid_and_versions_have_diagnostics() {

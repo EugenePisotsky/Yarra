@@ -129,8 +129,23 @@ fn use_equipment_transfer_and_trade_are_coordinated() {
         80
     );
     let before = snapshot(&session);
-    assert!(session.apply(Command::Trade(quote)).is_err());
+    let again = session.apply(Command::Trade(quote)).unwrap_err();
+    assert_eq!(again.rejection(), Some(&Rejection::QuoteStale));
     assert_eq!(snapshot(&session), before);
+    // What a player runs into when trading comes back as refusals a UI can match on.
+    let refusal = |purchases, sales| {
+        let offer = TradeOffer { purchases, sales };
+        let error = session.quote_trade(participants, offer).unwrap_err();
+        error.rejection().cloned()
+    };
+    let line = |entry, quantity| vec![TradeLine { entry, quantity }];
+    let potions = line(item(&session, MERCHANT_BAG, POTION), 9);
+    assert!(matches!(
+        refusal(potions, vec![]),
+        Some(Rejection::NotEnoughGold { available: 80, .. })
+    ));
+    let key = line(item(&session, HERO_BAG, KEY), 1);
+    assert_eq!(refusal(vec![], key), Some(Rejection::ItemRestricted));
 }
 #[test]
 fn rejected_use_restores_health_and_consumption() {

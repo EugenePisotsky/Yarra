@@ -211,7 +211,10 @@ fn wallet_transfers_are_atomic_and_check_overflow() {
     assert_eq!((from.clone(), to.clone()), before);
     assert_eq!(
         transfer_money(&mut from, &mut to, money(11)),
-        Err(InventoryError::InsufficientFunds)
+        Err(InventoryError::InsufficientFunds {
+            needed: 11,
+            available: 10
+        })
     );
     assert_eq!((from, to), before);
     assert!(Money::new(u64::MAX).is_err());
@@ -357,7 +360,10 @@ fn trade_rejects_duplicate_lines_missing_prices_and_insufficient_funds() {
     assert_eq!(fixture.quote(), Err(InventoryError::Duplicate));
     fixture.offer.purchases.pop();
     fixture.offer.sales.clear();
-    assert_eq!(fixture.quote(), Err(InventoryError::InsufficientFunds));
+    assert!(matches!(
+        fixture.quote(),
+        Err(InventoryError::InsufficientFunds { .. })
+    ));
     fixture.customer_wallet.credit(money(100)).unwrap();
     fixture.catalog.items[0].merchant_sell_price = None;
     assert_eq!(fixture.quote(), Err(InventoryError::NotForTrade));

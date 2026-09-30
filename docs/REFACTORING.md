@@ -164,7 +164,7 @@ Evidence: new tests for turns kept through a save and the world held still, runa
 - Owner kind and inventory role are enums instead of strings compared in 19 places: done.
 - New items take identities from a counter in the inventory that makes them, instead of being renamed at commit: done. The count is part of the inventory record, so a replay makes the same items and an undone command gives the numbers back. The renaming, with its patching of equipment and events, is gone.
 - Identities lose `Default`, which made a random UUID: done. Nothing relied on it; `new()` is now `random()`, which says what it does.
-- Inventory refusals a player can meet (money, restrictions, stale quotes, capacity) become `Rejection`s, so a UI matches one vocabulary.
+- Inventory refusals a player can meet are `Rejection`s, so a UI matches one vocabulary: done. Not enough money is `NotEnoughGold` with the amounts, as paying a trainer is; no room, an item that cannot be given up, an item not traded here and a stale offer have their own. The conversion happens where inventory errors enter gameplay; the rest stay mistakes.
 - Per-command validation of changed records runs in debug builds only; it works a character's stats out a second time on every equip. A loaded save is still validated in full.
 - Definitions are stored as maps by identity, which removes the sort lists kept in five places and the "listed in order" failure.
 - Scenarios share a base start; test fixtures move behind a feature.
