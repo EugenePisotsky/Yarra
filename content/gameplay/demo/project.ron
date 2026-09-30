@@ -2,7 +2,7 @@
 (
     format: 7,
     manifest: (
-        id: "01010101-0101-0101-0101-010101010101",
+        id: "demo",
         revision: 1,
         world_generation: "standalone-world-v1",
     ),

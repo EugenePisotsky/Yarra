@@ -4,26 +4,27 @@ use gameplay::dialogue::InteractionKey;
 use gameplay::quests::{Status, Transition};
 use gameplay::{
     Command, GameEvent, GameSession,
-    fixtures::{HERO, MERCHANT, key},
+    fixtures::{HERO, key},
 };
 use gameplay::{dialogue, inventory};
 use rusqlite::{Connection, params};
 use save::{SaveDirectory, SaveSlot};
 use yarra_game_content::*;
+const GUARD: ActorId = ActorId::named("guard");
 mod support;
 use support::{Temp, read, write};
 
-const GATE: QuestId = QuestId([0x20; 16]);
-const SUPPLIES: QuestId = QuestId([0x21; 16]);
-const READY: PredicateId = PredicateId([0x23; 16]);
-const REWARD: DialogueId = DialogueId([0x30; 16]);
-const DUTY: DialogueId = DialogueId([0x31; 16]);
+const GATE: QuestId = QuestId::named("guard/gate");
+const SUPPLIES: QuestId = QuestId::named("guard/supplies");
+const READY: PredicateId = PredicateId::named("guard/ready");
+const REWARD: DialogueId = DialogueId::named("guard/reward");
+const DUTY: DialogueId = DialogueId::named("guard/duty");
 const INTERACTION: InteractionKey = InteractionKey {
     participant: HERO,
-    speaker: MERCHANT,
+    speaker: GUARD,
 };
 const ATTITUDE: RelationshipKey = RelationshipKey {
-    from: MERCHANT,
+    from: GUARD,
     to: HERO,
 };
 fn setup(temp: &Temp) -> (LoadedProject, RuntimeSession) {
@@ -36,7 +37,7 @@ fn talk(topic: Option<&str>) -> Command {
     Command::Talk {
         bindings: Default::default(),
         participant: HERO,
-        speaker: MERCHANT,
+        speaker: GUARD,
         topic: topic.map(key),
     }
 }
@@ -45,7 +46,7 @@ fn choose() -> Command {
         expected: dialogue::Token { run: 1, step: 2 },
         dialogue: REWARD,
         participant: HERO,
-        speaker: MERCHANT,
+        speaker: GUARD,
         choice: key("return-key"),
     }
 }
@@ -97,7 +98,7 @@ fn guard_scenario_rewards_and_new_state_survive_checkpoint_restore() {
     assert_eq!(loaded.state(), &state);
     assert_eq!(
         loaded
-            .preview_interaction(HERO, MERCHANT)
+            .preview_interaction(HERO, GUARD)
             .unwrap()
             .opening()
             .unwrap()
@@ -111,7 +112,7 @@ fn preview_reports_quest_priority_and_independent_topics_without_writing_or_roll
     let temp = Temp::new();
     let (_, mut session) = setup(&temp);
     let before = session.state().clone();
-    let preview = session.preview_interaction(HERO, MERCHANT).unwrap();
+    let preview = session.preview_interaction(HERO, GUARD).unwrap();
     assert_eq!(preview.opening().unwrap().rule, key("welcome"));
     assert_eq!(preview.topics().count(), 0);
     let reward = preview
@@ -143,7 +144,7 @@ fn preview_reports_quest_priority_and_independent_topics_without_writing_or_roll
         .unwrap();
     assert_eq!(
         session
-            .preview_interaction(HERO, MERCHANT)
+            .preview_interaction(HERO, GUARD)
             .unwrap()
             .opening()
             .unwrap()
@@ -153,7 +154,7 @@ fn preview_reports_quest_priority_and_independent_topics_without_writing_or_roll
     start_quest(&mut session, GATE);
     start_quest(&mut session, SUPPLIES);
     let header = session.header();
-    let preview = session.preview_interaction(HERO, MERCHANT).unwrap();
+    let preview = session.preview_interaction(HERO, GUARD).unwrap();
     assert_eq!(preview.opening().unwrap().rule, key("reward"));
     assert_eq!(
         preview
@@ -179,7 +180,13 @@ fn weighted_selection_replays_after_restore_and_active_conversation_resumes() {
     let after = session.header();
     assert_ne!(before.narrative_random, after.narrative_random);
     assert_eq!(before.random, after.random);
-    assert!([DialogueId([0x32; 16]), DialogueId([0x33; 16])].contains(&chosen.dialogue));
+    assert!(
+        [
+            DialogueId::named("guard/welcome_a"),
+            DialogueId::named("guard/welcome_b")
+        ]
+        .contains(&chosen.dialogue)
+    );
     let mut replay = saves
         .load(
             SaveSlot::Quick,
@@ -224,7 +231,7 @@ fn directed_relationships_have_explicit_neutral_defaults_and_clamp_adjustments()
     let (_, mut session) = setup(&temp);
     let inverse = RelationshipKey {
         from: HERO,
-        to: MERCHANT,
+        to: GUARD,
     };
     // Reads of records that were never written return defaults and store nothing.
     assert_eq!(session.state().relationship(ATTITUDE).attitude, 0);
@@ -279,7 +286,7 @@ fn only_the_selected_dialogue_graph_is_read() {
     let db = Connection::open(&bundle).unwrap();
     db.execute(
         "UPDATE assets SET hash=zeroblob(32) WHERE kind=?1 AND id=?2",
-        params![AssetKind::Dialogue as i64, REWARD.to_string()],
+        params![AssetKind::Dialogue as i64, REWARD.raw()],
     )
     .unwrap();
     let open = || {
@@ -290,7 +297,7 @@ fn only_the_selected_dialogue_graph_is_read() {
         .unwrap()
     };
     let mut session = open();
-    session.preview_interaction(HERO, MERCHANT).unwrap();
+    session.preview_interaction(HERO, GUARD).unwrap();
     assert!(session.content().game.dialogues.is_empty());
     session.apply(talk(None)).unwrap();
     assert_eq!(selection(&session).rule, key("welcome"));
@@ -390,7 +397,7 @@ fn opening_checks_references_between_always_loaded_definitions() {
             payload.len() as i64,
             blake3::hash(&payload).as_bytes().as_slice(),
             AssetKind::Predicate as i64,
-            READY.to_string()
+            READY.raw()
         ],
     )
     .unwrap();

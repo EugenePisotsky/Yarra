@@ -1,6 +1,6 @@
 (
     contract: (
-        id: "08080808-0808-0808-0808-080808080808",
+        id: "core/text",
         imports: [],
         messages: {
         "category-keys": (arguments: {}),

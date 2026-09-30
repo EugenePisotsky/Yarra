@@ -1,6 +1,6 @@
 (
     contract: (
-        id: "09090909-0909-0909-0909-090909090909",
+        id: "old_gate/gate/text",
         imports: [],
         messages: {
         "greeting": (arguments: {}),

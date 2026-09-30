@@ -11,6 +11,7 @@ members = [
     "crates/localization",
     "crates/gameplay",
     "crates/save",
+    "crates/scripting",
     "crates/terrain_render",
     "crates/upscaling",
     "crates/vegetation",

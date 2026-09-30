@@ -14,11 +14,11 @@ pub(crate) use scene::install;
 
 /// Starting conditions for the slice, relative to the project directory.
 const SCENARIO: &str = "scenarios/island.ron";
-const HERO: ActorId = ActorId([0x01; 16]);
-const GUARD: ActorId = ActorId([0x02; 16]);
-const GATE: ObjectId = ObjectId([0x51; 16]);
-const GATE_QUEST: QuestId = QuestId([0x20; 16]);
-const GATE_KEY: ItemDefinitionId = ItemDefinitionId([0x03; 16]);
+const HERO: ActorId = ActorId::named("hero");
+const GUARD: ActorId = ActorId::named("guard");
+const GATE: ObjectId = ObjectId::named("guard/old_gate");
+const GATE_QUEST: QuestId = QuestId::named("guard/gate");
+const GATE_KEY: ItemDefinitionId = ItemDefinitionId::named("old_gate_key");
 
 /// Fluent wraps inserted values in directional isolation marks; the UI font has no glyphs
 /// for them and the slice shows left-to-right text only.

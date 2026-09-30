@@ -2,26 +2,26 @@
 (
     attributes: [(
         id: "max-health",
-        name: Message((resource: "08080808-0808-0808-0808-080808080808", key: "attribute-max-health")),
+        name: Message((resource: "core/text", key: "attribute-max-health")),
         minimum: 1,
         maximum: 1000,
     ), (
         id: "strength",
-        name: Message((resource: "08080808-0808-0808-0808-080808080808", key: "attribute-strength")),
+        name: Message((resource: "core/text", key: "attribute-strength")),
         minimum: 1,
         maximum: 100,
     ), (
         id: "wisdom",
-        name: Message((resource: "08080808-0808-0808-0808-080808080808", key: "attribute-wisdom")),
+        name: Message((resource: "core/text", key: "attribute-wisdom")),
         minimum: 1,
         maximum: 100,
     )],
     skills: [(
         id: "persuasion",
-        name: Message((resource: "08080808-0808-0808-0808-080808080808", key: "skill-persuasion")),
+        name: Message((resource: "core/text", key: "skill-persuasion")),
     ), (
         id: "swordsmanship",
-        name: Message((resource: "08080808-0808-0808-0808-080808080808", key: "skill-swordsmanship")),
+        name: Message((resource: "core/text", key: "skill-swordsmanship")),
     )],
     slots: ["hand"],
     health_attribute: "max-health",

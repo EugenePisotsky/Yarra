@@ -1,25 +1,25 @@
 (
-    id: "01010101-0101-0101-0101-010101010101",
+    id: "old_gate/gate",
     roles: {"player": Required, "speaker": Required},
     history_scope: Interaction,
     repeat: OnceCompleted,
     start: ["greeting"],
     nodes: [
-        (id: "greeting", kind: Line, speaker: "speaker", text: Message((resource: "09090909-0909-0909-0909-090909090909", key: "greeting")), children: ["return-key"]),
+        (id: "greeting", kind: Line, speaker: "speaker", text: Message((resource: "old_gate/gate/text", key: "greeting")), children: ["return-key"]),
         (
-            id: "return-key", kind: Choice, speaker: "player", text: Message((resource: "09090909-0909-0909-0909-090909090909", key: "return-key")),
+            id: "return-key", kind: Choice, speaker: "player", text: Message((resource: "old_gate/gate/text", key: "return-key")),
             repeat: OnceEver,
             condition: Some(All([
-                HasItem(definition: "03030303-0303-0303-0303-030303030303", quantity: 1),
+                HasItem(definition: "old_gate_key", quantity: 1),
                 Fact(key: "gate-rewarded", value: false),
             ])),
             actions: [
-                ConsumeItem(definition: "03030303-0303-0303-0303-030303030303", quantity: 1),
+                ConsumeItem(definition: "old_gate_key", quantity: 1),
                 SkillCheck(
                     skill: "persuasion",
                     difficulty: 1,
                     success: [
-                        GrantItem(definition: "02020202-0202-0202-0202-020202020202", quantity: 1),
+                        GrantItem(definition: "iron_sword", quantity: 1),
                         AwardExperience(skill: "persuasion", amount: 10),
                         SetFact(key: "gate-rewarded", value: true),
                     ],

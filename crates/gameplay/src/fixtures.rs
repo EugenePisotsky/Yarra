@@ -6,21 +6,21 @@ use crate::rules::{Attribute, Effect, Modifier, Rules, Skill};
 use crate::{Action, Condition, ContentManifest, GameContent, GameDefinitions, SessionState};
 use game_types::*;
 
-pub const HERO: ActorId = ActorId([1; 16]);
-pub const MERCHANT: ActorId = ActorId([2; 16]);
-pub const COMPANION: ActorId = ActorId([3; 16]);
-pub const HERO_BAG: InventoryId = InventoryId([1; 16]);
-pub const MERCHANT_BAG: InventoryId = InventoryId([2; 16]);
-pub const COMPANION_BAG: InventoryId = InventoryId([3; 16]);
-pub const CHEST: InventoryId = InventoryId([4; 16]);
-pub const PARTY_WALLET: WalletId = WalletId([1; 16]);
-pub const MERCHANT_WALLET: WalletId = WalletId([2; 16]);
-pub const GATE_DIALOGUE: DialogueId = DialogueId([1; 16]);
+pub const HERO: ActorId = ActorId::named("hero");
+pub const MERCHANT: ActorId = ActorId::named("merchant");
+pub const COMPANION: ActorId = ActorId::named("mira");
+pub const HERO_BAG: InventoryId = InventoryId::named("hero");
+pub const MERCHANT_BAG: InventoryId = InventoryId::named("merchant");
+pub const COMPANION_BAG: InventoryId = InventoryId::named("mira");
+pub const CHEST: InventoryId = InventoryId::named("chest");
+pub const PARTY_WALLET: WalletId = WalletId::named("party");
+pub const MERCHANT_WALLET: WalletId = WalletId::named("merchant");
+pub const GATE_DIALOGUE: DialogueId = DialogueId::named("old_gate/gate");
 pub fn key(s: &str) -> Key {
     Key::new(s).unwrap()
 }
 fn text(s: &str) -> TextRef {
-    TextRef::message(TextResourceId([8; 16]), s).unwrap()
+    TextRef::message(TextResourceId::named("core/text"), s).unwrap()
 }
 
 pub fn content() -> GameContent {
@@ -71,7 +71,7 @@ pub fn content() -> GameContent {
     };
     let template = ActorTemplate {
         interaction: None,
-        id: ActorTemplateId([1; 16]),
+        id: ActorTemplateId::named("traveller"),
         name: text("actor-traveller"),
         base: [
             (key("max-health"), 100),
@@ -176,7 +176,7 @@ pub fn content() -> GameContent {
         .map(Dialogue::contract)
         .collect();
     content.text.push(TextContract {
-        id: TextResourceId([8; 16]),
+        id: TextResourceId::named("core/text"),
         imports: Default::default(),
         messages: content
             .text_keys()

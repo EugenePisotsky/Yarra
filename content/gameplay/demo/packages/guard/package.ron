@@ -3,7 +3,7 @@
     areas: ["packages/guard/world/approach.ron"],
     triggers: ["packages/guard/world/escort.ron"],
     claims: ["packages/guard/reward.claim.ron"],
-    id: "26262626-2626-2626-2626-262626262626", dependencies: ["10101010-1010-1010-1010-101010101010"],
+    id: "guard", dependencies: ["core"],
     quests: ["packages/guard/gate.quest.ron", "packages/guard/supplies.quest.ron"],
     profiles: ["packages/guard/profile.ron"], predicates: ["packages/guard/ready.predicate.ron"],
     catalogs: [], rules: None, actors: ["packages/guard/actors.ron"],

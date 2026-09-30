@@ -1,13 +1,13 @@
 //! Small deterministic catalog for standalone examples and contract tests.
 use super::*;
 
-pub const POTION: ItemDefinitionId = ItemDefinitionId([1; 16]);
-pub const SWORD: ItemDefinitionId = ItemDefinitionId([2; 16]);
-pub const KEY: ItemDefinitionId = ItemDefinitionId([3; 16]);
-pub const KEYS: CategoryId = CategoryId([11; 16]);
-pub const WEAPONS: CategoryId = CategoryId([12; 16]);
-pub const ARMOUR: CategoryId = CategoryId([13; 16]);
-pub const POTIONS: CategoryId = CategoryId([14; 16]);
+pub const POTION: ItemDefinitionId = ItemDefinitionId::named("healing_potion");
+pub const SWORD: ItemDefinitionId = ItemDefinitionId::named("iron_sword");
+pub const KEY: ItemDefinitionId = ItemDefinitionId::named("old_gate_key");
+pub const KEYS: CategoryId = CategoryId::named("keys");
+pub const WEAPONS: CategoryId = CategoryId::named("weapons");
+pub const ARMOUR: CategoryId = CategoryId::named("armour");
+pub const POTIONS: CategoryId = CategoryId::named("potions");
 
 pub fn example_catalog() -> ItemCatalog {
     let mut catalog = ItemCatalog {

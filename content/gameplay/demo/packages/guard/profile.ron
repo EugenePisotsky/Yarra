@@ -1,9 +1,9 @@
-(id: "22222222-2222-2222-2222-222222222222", rules: [
-    (id: "refused", priority: 110, order: 0, topic: None, condition: All([QuestStatus(quest: "20202020-2020-2020-2020-202020202020", status: Active), History(dialogue: "30303030-3030-3030-3030-303030303030", event: Node("refuse"), minimum: 1)]), variants: [(dialogue: "31313131-3131-3131-3131-313131313131", weight: 1)]),
-    (id: "reward", priority: 100, order: 0, topic: None, condition: Named("23232323-2323-2323-2323-232323232323"), variants: [(dialogue: "30303030-3030-3030-3030-303030303030", weight: 1)]),
-    (id: "duty", priority: 80, order: 0, topic: None, condition: QuestStatus(quest: "20202020-2020-2020-2020-202020202020", status: Active), variants: [(dialogue: "31313131-3131-3131-3131-313131313131", weight: 1)]),
-    (id: "hostile", priority: 20, order: 0, topic: None, condition: Not(Relationship(from: Speaker, to: Player, minimum: 0)), variants: [(dialogue: "34343434-3434-3434-3434-343434343434", weight: 1)]),
-    (id: "welcome", priority: 0, order: 0, topic: None, condition: Relationship(from: Speaker, to: Player, minimum: 0), variants: [(dialogue: "32323232-3232-3232-3232-323232323232", weight: 1), (dialogue: "33333333-3333-3333-3333-333333333333", weight: 3)]),
-    (id: "gate-topic", priority: 10, order: 0, topic: Some(Message((resource: "25252525-2525-2525-2525-252525252525", key: "gate-topic"))), condition: QuestStatus(quest: "20202020-2020-2020-2020-202020202020", status: Active), variants: [(dialogue: "30303030-3030-3030-3030-303030303030", weight: 1)]),
-    (id: "supply-topic", priority: 10, order: 1, topic: Some(Message((resource: "25252525-2525-2525-2525-252525252525", key: "supply-topic"))), condition: QuestStatus(quest: "21212121-2121-2121-2121-212121212121", status: Active), variants: [(dialogue: "31313131-3131-3131-3131-313131313131", weight: 1)])
+(id: "guard/profile", rules: [
+    (id: "refused", priority: 110, order: 0, topic: None, condition: All([QuestStatus(quest: "guard/gate", status: Active), History(dialogue: "guard/reward", event: Node("refuse"), minimum: 1)]), variants: [(dialogue: "guard/duty", weight: 1)]),
+    (id: "reward", priority: 100, order: 0, topic: None, condition: Named("guard/ready"), variants: [(dialogue: "guard/reward", weight: 1)]),
+    (id: "duty", priority: 80, order: 0, topic: None, condition: QuestStatus(quest: "guard/gate", status: Active), variants: [(dialogue: "guard/duty", weight: 1)]),
+    (id: "hostile", priority: 20, order: 0, topic: None, condition: Not(Relationship(from: Speaker, to: Player, minimum: 0)), variants: [(dialogue: "guard/hostile", weight: 1)]),
+    (id: "welcome", priority: 0, order: 0, topic: None, condition: Relationship(from: Speaker, to: Player, minimum: 0), variants: [(dialogue: "guard/welcome_a", weight: 1), (dialogue: "guard/welcome_b", weight: 3)]),
+    (id: "gate-topic", priority: 10, order: 0, topic: Some(Message((resource: "guard/text", key: "gate-topic"))), condition: QuestStatus(quest: "guard/gate", status: Active), variants: [(dialogue: "guard/reward", weight: 1)]),
+    (id: "supply-topic", priority: 10, order: 1, topic: Some(Message((resource: "guard/text", key: "supply-topic"))), condition: QuestStatus(quest: "guard/supplies", status: Active), variants: [(dialogue: "guard/duty", weight: 1)])
 ])

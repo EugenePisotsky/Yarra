@@ -280,7 +280,10 @@ fn package_dependencies_import_cycles_and_hidden_fluent_errors_fail_publication(
     let resource_path = root.join(CORE);
     let original: ResourceFile = read(&resource_path);
     let mut resource = original.clone();
-    resource.contract.imports.insert(TextResourceId([9; 16]));
+    resource
+        .contract
+        .imports
+        .insert(TextResourceId::named("old_gate/gate/text"));
     write(&resource_path, &resource);
     assert!(error(&root).contains("package dependency"));
     write(&resource_path, &original);
@@ -306,21 +309,21 @@ fn language_packs_are_indexed_lazy_and_reject_requested_corruption() {
     let plan: String = db
         .query_row(
             "EXPLAIN QUERY PLAN SELECT payload FROM resources WHERE id=?1",
-            [TextResourceId([8; 16]).to_string()],
+            [TextResourceId::named("core/text").raw()],
             |r| r.get(3),
         )
         .unwrap();
     assert!(plan.contains("PRIMARY KEY"));
     db.execute(
         "UPDATE resources SET hash=zeroblob(32) WHERE id=?1",
-        [TextResourceId([9; 16]).to_string()],
+        [TextResourceId::named("old_gate/gate/text").raw()],
     )
     .unwrap();
     drop(db);
     let mut pack = LanguageRepository::open(&path).unwrap();
     assert_eq!(pack.stats(), &LanguageStats::default());
     assert!(
-        pack.load(TextResourceId([8; 16]))
+        pack.load(TextResourceId::named("core/text"))
             .unwrap()
             .unwrap()
             .source
@@ -328,7 +331,7 @@ fn language_packs_are_indexed_lazy_and_reject_requested_corruption() {
     );
     assert_eq!(pack.stats().decoded_resources, 1);
     assert!(
-        pack.load(TextResourceId([9; 16]))
+        pack.load(TextResourceId::named("old_gate/gate/text"))
             .unwrap_err()
             .to_string()
             .contains("checksum")

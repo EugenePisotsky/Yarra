@@ -1,4 +1,4 @@
-(contract: (id: "25252525-2525-2525-2525-252525252525", imports: [], messages: {
+(contract: (id: "guard/text", imports: [], messages: {
     "gate-title": (arguments: {}),
     "gate-objective": (arguments: {}),
     "supplies-title": (arguments: {}),

@@ -1,9 +1,9 @@
 (
-    id: "33333333-3333-3333-3333-333333333333",
+    id: "guard/welcome_b",
     roles: {"player": Required, "speaker": Required}, history_scope: Interaction, repeat: Always,
     start: ["greeting"],
     nodes: [
-        (id: "greeting", kind: Line, speaker: "speaker", text: Message((resource: "25252525-2525-2525-2525-252525252525", key: "welcome-b")), children: ["leave"]),
-        (id: "leave", kind: Choice, speaker: "player", text: Message((resource: "25252525-2525-2525-2525-252525252525", key: "leave"))),
+        (id: "greeting", kind: Line, speaker: "speaker", text: Message((resource: "guard/text", key: "welcome-b")), children: ["leave"]),
+        (id: "leave", kind: Choice, speaker: "player", text: Message((resource: "guard/text", key: "leave"))),
     ],
 )

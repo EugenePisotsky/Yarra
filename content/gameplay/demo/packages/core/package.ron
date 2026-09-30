@@ -4,7 +4,7 @@
     triggers: [],
     claims: [],
     quests: [], profiles: [], predicates: [],
-    id: "10101010-1010-1010-1010-101010101010",
+    id: "core",
     dependencies: [],
     catalogs: ["packages/core/items.ron"],
     rules: Some("packages/core/rules.ron"),

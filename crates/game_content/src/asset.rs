@@ -85,23 +85,25 @@ impl AssetId {
             Self::Trigger(_) => AssetKind::Trigger,
         }
     }
+    /// Storage key: the identity bytes, never the name, so lookups do not depend on which
+    /// names this process has seen.
     pub fn key(&self) -> String {
         match self {
-            Self::Category(id) => id.to_string(),
-            Self::Item(id) => id.to_string(),
-            Self::Actor(id) => id.to_string(),
+            Self::Category(id) => id.raw(),
+            Self::Item(id) => id.raw(),
+            Self::Actor(id) => id.raw(),
             Self::Rules => "rules".into(),
-            Self::Dialogue(id) => id.to_string(),
+            Self::Dialogue(id) => id.raw(),
             Self::Fact(key) => key.as_str().into(),
-            Self::Text(resource) => resource.to_string(),
-            Self::Quest(id) => id.to_string(),
-            Self::Profile(id) => id.to_string(),
-            Self::Predicate(id) => id.to_string(),
-            Self::DialogueContract(id) => id.to_string(),
-            Self::Claim(id) => id.to_string(),
-            Self::Object(id) => id.to_string(),
-            Self::Area(id) => id.to_string(),
-            Self::Trigger(id) => id.to_string(),
+            Self::Text(resource) => resource.raw(),
+            Self::Quest(id) => id.raw(),
+            Self::Profile(id) => id.raw(),
+            Self::Predicate(id) => id.raw(),
+            Self::DialogueContract(id) => id.raw(),
+            Self::Claim(id) => id.raw(),
+            Self::Object(id) => id.raw(),
+            Self::Area(id) => id.raw(),
+            Self::Trigger(id) => id.raw(),
         }
     }
     pub(crate) fn from_key(kind: AssetKind, key: String) -> Result<Self> {

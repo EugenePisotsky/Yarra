@@ -1,1 +1,1 @@
-(id: "21212121-2121-2121-2121-212121212121", title: Message((resource: "25252525-2525-2525-2525-252525252525", key: "supplies-title")), objectives: [(id: "deliver", title: Message((resource: "25252525-2525-2525-2525-252525252525", key: "supplies-objective")), required: true)])
+(id: "guard/supplies", title: Message((resource: "guard/text", key: "supplies-title")), objectives: [(id: "deliver", title: Message((resource: "guard/text", key: "supplies-objective")), required: true)])

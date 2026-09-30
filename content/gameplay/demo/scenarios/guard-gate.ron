@@ -2,8 +2,8 @@
 (
     seed: 42,
     actors: [(
-        id: "01010101-0101-0101-0101-010101010101",
-        template: "01010101-0101-0101-0101-010101010101",
+        id: "hero",
+        template: "traveller",
         role: Player,
         position: (
             millimetres: (0, 0, 0),
@@ -11,8 +11,8 @@
         name: None,
         health: Some(50),
     ), (
-        id: "02020202-0202-0202-0202-020202020202",
-        template: "24242424-2424-2424-2424-242424242424",
+        id: "guard",
+        template: "gate_guard",
         role: Npc,
         position: (
             millimetres: (100000000, 0, 100000000),
@@ -20,8 +20,8 @@
         name: None,
         health: Some(100),
     ), (
-        id: "03030303-0303-0303-0303-030303030303",
-        template: "01010101-0101-0101-0101-010101010101",
+        id: "mira",
+        template: "traveller",
         role: Companion,
         position: (
             millimetres: (0, 0, 0),
@@ -31,87 +31,87 @@
     )],
     owners: [(
         kind: "object",
-        id: "52525252-5252-5252-5252-525252525252",
+        id: "guard/chest",
     ), (
         kind: "party",
-        id: "01010101-0101-0101-0101-010101010101",
+        id: "party",
     )],
     inventories: [(
-        id: "01010101-0101-0101-0101-010101010101",
+        id: "hero",
         owner: (
             kind: "actor",
-            id: "01010101-0101-0101-0101-010101010101",
+            id: "hero",
         ),
         role: "carried",
         items: [(
-            definition: "01010101-0101-0101-0101-010101010101",
+            definition: "healing_potion",
             quantity: 3,
         ), (
-            definition: "02020202-0202-0202-0202-020202020202",
+            definition: "iron_sword",
             quantity: 1,
         ), (
-            definition: "03030303-0303-0303-0303-030303030303",
+            definition: "old_gate_key",
             quantity: 1,
         )],
     ), (
-        id: "02020202-0202-0202-0202-020202020202",
+        id: "guard",
         owner: (
             kind: "actor",
-            id: "02020202-0202-0202-0202-020202020202",
+            id: "guard",
         ),
         role: "carried",
         items: [(
-            definition: "01010101-0101-0101-0101-010101010101",
+            definition: "healing_potion",
             quantity: 10,
         )],
     ), (
-        id: "03030303-0303-0303-0303-030303030303",
+        id: "mira",
         owner: (
             kind: "actor",
-            id: "03030303-0303-0303-0303-030303030303",
+            id: "mira",
         ),
         role: "carried",
         items: [],
     ), (
-        id: "04040404-0404-0404-0404-040404040404",
+        id: "chest",
         owner: (
             kind: "object",
-            id: "52525252-5252-5252-5252-525252525252",
+            id: "guard/chest",
         ),
         role: "contents",
         items: [],
     )],
     wallets: [(
-        id: "01010101-0101-0101-0101-010101010101",
+        id: "party",
         owner: (
             kind: "party",
-            id: "01010101-0101-0101-0101-010101010101",
+            id: "party",
         ),
         balance: 100,
     ), (
-        id: "02020202-0202-0202-0202-020202020202",
+        id: "guard",
         owner: (
             kind: "actor",
-            id: "02020202-0202-0202-0202-020202020202",
+            id: "guard",
         ),
         balance: 100,
     )],
     facts: [],
     steps: [
-        ExpectObject(object: "51515151-5151-5151-5151-515151515151", locked: true, open: false),
-        Quest(quest: "20202020-2020-2020-2020-202020202020", transition: Start),
-        World(ObservePosition(actor: "01010101-0101-0101-0101-010101010101", observation: 1, position: (millimetres: (1500, 0, 0)))),
+        ExpectObject(object: "guard/old_gate", locked: true, open: false),
+        Quest(quest: "guard/gate", transition: Start),
+        World(ObservePosition(actor: "hero", observation: 1, position: (millimetres: (1500, 0, 0)))),
         PumpWorld(limit: 256),
-        ExpectMovement(trigger: "54545454-5454-5454-5454-545454545454", phase: Accepted),
-        ExpectObject(object: "51515151-5151-5151-5151-515151515151", locked: true, open: false),
-        World(StartMove(id: (trigger: "54545454-5454-5454-5454-545454545454", run: 1, step: 0))),
-        ExpectMovement(trigger: "54545454-5454-5454-5454-545454545454", phase: Running),
-        World(FinishMove(id: (trigger: "54545454-5454-5454-5454-545454545454", run: 1, step: 0), result: Arrived(position: (millimetres: (1800, 0, 0))))),
-        World(Open(object: "51515151-5151-5151-5151-515151515151")),
-        World(Open(object: "52525252-5252-5252-5252-525252525252")),
-        ExpectObject(object: "51515151-5151-5151-5151-515151515151", locked: false, open: true),
-        ExpectContainer(object: "52525252-5252-5252-5252-525252525252", entries: 0),
-        ExpectQuest(quest: "20202020-2020-2020-2020-202020202020", status: Completed),
+        ExpectMovement(trigger: "guard/escort", phase: Accepted),
+        ExpectObject(object: "guard/old_gate", locked: true, open: false),
+        World(StartMove(id: (trigger: "guard/escort", run: 1, step: 0))),
+        ExpectMovement(trigger: "guard/escort", phase: Running),
+        World(FinishMove(id: (trigger: "guard/escort", run: 1, step: 0), result: Arrived(position: (millimetres: (1800, 0, 0))))),
+        World(Open(object: "guard/old_gate")),
+        World(Open(object: "guard/chest")),
+        ExpectObject(object: "guard/old_gate", locked: false, open: true),
+        ExpectContainer(object: "guard/chest", entries: 0),
+        ExpectQuest(quest: "guard/gate", status: Completed),
         PumpWorld(limit: 256),
     ],
 )

@@ -14,23 +14,93 @@ pub fn require(condition: bool, message: &str) -> Result<()> {
     }
 }
 
+/// Identities are 16 bytes. Authored content names things (`guard/gate`) and the name is
+/// hashed into those bytes; things created at runtime get random bytes. A name therefore
+/// *is* the identity: renaming something makes it a different thing.
+pub mod names {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+
+    /// FNV-1a over 128 bits. Usable in constants, so code can name content it relies on.
+    pub const fn hash(name: &str) -> [u8; 16] {
+        let bytes = name.as_bytes();
+        let mut hash: u128 = 0x6c62272e07bb014262b821756295c58d;
+        let mut i = 0;
+        while i < bytes.len() {
+            hash ^= bytes[i] as u128;
+            hash = hash.wrapping_mul(0x0000000001000000000000000000013b);
+            i += 1;
+        }
+        hash.to_be_bytes()
+    }
+    pub fn valid(name: &str) -> bool {
+        !name.is_empty()
+            && name.len() <= 96
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"_-/.".contains(&b))
+    }
+    fn table() -> &'static Mutex<HashMap<[u8; 16], Box<str>>> {
+        static TABLE: OnceLock<Mutex<HashMap<[u8; 16], Box<str>>>> = OnceLock::new();
+        TABLE.get_or_init(Default::default)
+    }
+    /// Remembers which name produced an identity, so messages and saved files can show it.
+    /// Two different names with the same hash are reported instead of silently merging.
+    pub fn remember(name: &str) -> Result<[u8; 16], String> {
+        if !valid(name) {
+            return Err(format!("invalid name or UUID: {name}"));
+        }
+        let id = hash(name);
+        let mut table = table().lock().unwrap_or_else(|e| e.into_inner());
+        match table.get(&id) {
+            Some(known) if &**known != name => {
+                Err(format!("names {known} and {name} have the same identity"))
+            }
+            Some(_) => Ok(id),
+            None => {
+                table.insert(id, name.into());
+                Ok(id)
+            }
+        }
+    }
+    pub fn lookup(id: &[u8; 16]) -> Option<String> {
+        let table = table().lock().unwrap_or_else(|e| e.into_inner());
+        table.get(id).map(|name| name.to_string())
+    }
+}
+
 macro_rules! ids {
     ($($name:ident),+ $(,)?) => {$ (
         #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
         #[serde(try_from = "String", into = "String")]
         pub struct $name(pub [u8; 16]);
-        impl $name { pub fn new() -> Self { Self(*uuid::Uuid::new_v4().as_bytes()) } }
+        impl $name {
+            /// A fresh identity for something created while playing.
+            pub fn new() -> Self { Self(*uuid::Uuid::new_v4().as_bytes()) }
+            /// The identity of authored content with this name.
+            pub const fn named(name: &str) -> Self { Self(names::hash(name)) }
+            /// The bytes in UUID form, whether or not a name is known for them.
+            pub fn raw(&self) -> String { uuid::Uuid::from_bytes(self.0).to_string() }
+        }
         impl Default for $name { fn default() -> Self { Self::new() } }
         impl TryFrom<String> for $name {
             type Error = Invalid;
+            /// Accepts a name, or the UUID form used for identities without one.
             fn try_from(value: String) -> Result<Self> {
-                uuid::Uuid::parse_str(&value).map(|id| Self(*id.as_bytes()))
-                    .map_err(|_| Invalid(format!("invalid {} UUID: {value}", stringify!($name))))
+                if let Ok(id) = uuid::Uuid::parse_str(&value) {
+                    return Ok(Self(*id.as_bytes()));
+                }
+                names::remember(&value).map(Self).map_err(Invalid)
             }
         }
-        impl From<$name> for String { fn from(value: $name) -> Self { uuid::Uuid::from_bytes(value.0).to_string() } }
+        impl From<$name> for String { fn from(value: $name) -> Self { value.to_string() } }
         impl std::fmt::Display for $name {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { uuid::Uuid::from_bytes(self.0).fmt(f) }
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                match names::lookup(&self.0) {
+                    Some(name) => f.write_str(&name),
+                    None => uuid::Uuid::from_bytes(self.0).fmt(f),
+                }
+            }
         }
     )+};
 }
@@ -330,4 +400,37 @@ pub enum BoundArgument {
 pub struct BoundText {
     pub text: TextRef,
     pub arguments: std::collections::BTreeMap<String, BoundArgument>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn a_name_is_an_identity_and_is_shown_as_written() {
+        const GATE: QuestId = QuestId::named("guard/gate");
+        let parsed = QuestId::try_from("guard/gate".to_owned()).unwrap();
+        assert_eq!(parsed, GATE);
+        assert_eq!(parsed.to_string(), "guard/gate");
+        assert_eq!(serde_json::to_string(&parsed).unwrap(), "\"guard/gate\"");
+        assert_ne!(GATE, QuestId::named("guard/gates"));
+        // The same name means the same bytes for every kind of identity.
+        assert_eq!(ActorId::named("hero").0, OwnerId::named("hero").0);
+    }
+    #[test]
+    fn identities_without_a_name_keep_their_uuid_form() {
+        let text = "0a0b0c0d-0102-0304-0506-0708090a0b0c";
+        let id = ItemId::try_from(text.to_owned()).unwrap();
+        assert_eq!(id.to_string(), text);
+        assert_eq!(id.raw(), text);
+        let fresh = ItemId::new();
+        assert_eq!(ItemId::try_from(fresh.to_string()).unwrap(), fresh);
+        assert_eq!(QuestId::named("guard/gate").raw().len(), 36);
+    }
+    #[test]
+    fn malformed_names_are_rejected() {
+        for bad in ["", "Bad Id", "UPPER", "spaced name", &"x".repeat(97)] {
+            let error = QuestId::try_from(bad.to_owned()).unwrap_err().to_string();
+            assert!(error.contains("invalid name or UUID"), "{error}");
+        }
+    }
 }

@@ -74,7 +74,13 @@ fn authored_source_and_sqlite_bundle_use_the_same_validated_content() {
     let first = project.start().unwrap();
     let second = project.start().unwrap();
     assert_ne!(first.state().playthrough, second.state().playthrough);
-    let first_item = |s: &ToolSession| s.state().inventories.values().next().unwrap().entries[0].id;
+    let first_item = |s: &ToolSession| {
+        s.state()
+            .inventory(gameplay::fixtures::HERO_BAG)
+            .unwrap()
+            .entries[0]
+            .id
+    };
     assert_ne!(first_item(&first), first_item(&second));
     assert_eq!(
         first.state().actors.keys().collect::<Vec<_>>(),
@@ -192,11 +198,7 @@ fn malformed_ron_unknown_fields_invalid_uuid_and_versions_have_diagnostics() {
     let error = failure(&root);
     assert!(error.contains("packages/core/items.ron"));
     assert!(error.contains("wieght_grams"));
-    fs::write(
-        &path,
-        original.replacen("01010101-0101-0101-0101-010101010101", "bad-id", 1),
-    )
-    .unwrap();
+    fs::write(&path, original.replacen("core/items", "Bad Id", 1)).unwrap();
     assert!(failure(&root).contains("UUID"));
     fs::write(&path, "(broken syntax").unwrap();
     let error = failure(&root);
@@ -250,8 +252,13 @@ fn partial_translations_report_fallback_and_starting_names_are_validated() {
     assert_eq!(project.warnings().len(), 1);
     assert!(project.warnings()[0].contains("category-keys"));
     let mut scenario: Scenario = read(root.join("scenario.ron"));
-    scenario.actors[0].name =
-        Some(TextRef::message(game_types::TextResourceId([8; 16]), "missing-actor-name").unwrap());
+    scenario.actors[0].name = Some(
+        TextRef::message(
+            game_types::TextResourceId::named("core/text"),
+            "missing-actor-name",
+        )
+        .unwrap(),
+    );
     write(root.join("scenario.ron"), &scenario);
     assert!(failure(&root).contains("missing-actor-name"));
 }

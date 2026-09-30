@@ -12,12 +12,12 @@ use save::{SaveDirectory, SaveSlot};
 use yarra_game_content::*;
 mod support;
 use support::{Temp, read, write};
-const REWARD: DialogueId = DialogueId([0x30; 16]);
-const DUTY: DialogueId = DialogueId([0x31; 16]);
-const A: DialogueId = DialogueId([0x32; 16]);
-const B: DialogueId = DialogueId([0x33; 16]);
-const CLAIM: ClaimId = ClaimId([0x40; 16]);
-const GATE: QuestId = QuestId([0x20; 16]);
+const REWARD: DialogueId = DialogueId::named("guard/reward");
+const DUTY: DialogueId = DialogueId::named("guard/duty");
+const A: DialogueId = DialogueId::named("guard/welcome_a");
+const B: DialogueId = DialogueId::named("guard/welcome_b");
+const CLAIM: ClaimId = ClaimId::named("guard/reward_claim");
+const GATE: QuestId = QuestId::named("guard/gate");
 fn pair(dialogue: DialogueId) -> ConversationKey {
     ConversationKey {
         dialogue,
@@ -217,7 +217,7 @@ fn interruption_and_previous_choices_drive_selection_without_claiming_rewards() 
         .iter_mut()
         .find(|a| a.id == MERCHANT)
         .unwrap()
-        .template = ActorTemplateId([0x24; 16]);
+        .template = ActorTemplateId::named("gate_guard");
     source.steps.clear();
     write(root.join("scenario.ron"), &source);
     let (project, mut session) = load(&temp, &root);
@@ -493,7 +493,7 @@ fn repeat_contracts_filter_variants_and_cooldowns_use_saved_logical_time() {
         .iter_mut()
         .find(|a| a.id == MERCHANT)
         .unwrap()
-        .template = ActorTemplateId([0x24; 16]);
+        .template = ActorTemplateId::named("gate_guard");
     source.steps.clear();
     write(root.join("scenario.ron"), &source);
     let (_, mut session) = load(&temp, &root);
@@ -597,7 +597,11 @@ fn authored_refusal_exercise_runs_through_the_indexed_session() {
     for step in &project.scenario().steps {
         step.apply(&mut session).unwrap();
     }
-    let h = history(&mut session, &project, pair(REWARD));
+    let with_guard = ConversationKey {
+        speaker: ActorId::named("guard"),
+        ..pair(REWARD)
+    };
+    let h = history(&mut session, &project, with_guard);
     assert_eq!((h.started, h.completed, h.interrupted), (3, 2, 1));
     assert!(claimed(&mut session, Scope::Playthrough));
     assert_eq!(

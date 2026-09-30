@@ -2,8 +2,8 @@
 (
     seed: 42,
     actors: [(
-        id: "01010101-0101-0101-0101-010101010101",
-        template: "01010101-0101-0101-0101-010101010101",
+        id: "hero",
+        template: "traveller",
         role: Player,
         position: (
             millimetres: (0, 0, 0),
@@ -11,8 +11,8 @@
         name: None,
         health: Some(50),
     ), (
-        id: "02020202-0202-0202-0202-020202020202",
-        template: "01010101-0101-0101-0101-010101010101",
+        id: "merchant",
+        template: "traveller",
         role: Npc,
         position: (
             millimetres: (100000000, 0, 100000000),
@@ -20,8 +20,8 @@
         name: None,
         health: Some(100),
     ), (
-        id: "03030303-0303-0303-0303-030303030303",
-        template: "01010101-0101-0101-0101-010101010101",
+        id: "mira",
+        template: "traveller",
         role: Companion,
         position: (
             millimetres: (0, 0, 0),
@@ -31,112 +31,112 @@
     )],
     owners: [(
         kind: "object",
-        id: "52525252-5252-5252-5252-525252525252",
+        id: "guard/chest",
     ), (
         kind: "party",
-        id: "01010101-0101-0101-0101-010101010101",
+        id: "party",
     )],
     inventories: [(
-        id: "01010101-0101-0101-0101-010101010101",
+        id: "hero",
         owner: (
             kind: "actor",
-            id: "01010101-0101-0101-0101-010101010101",
+            id: "hero",
         ),
         role: "carried",
         items: [(
-            definition: "01010101-0101-0101-0101-010101010101",
+            definition: "healing_potion",
             quantity: 3,
         ), (
-            definition: "02020202-0202-0202-0202-020202020202",
+            definition: "iron_sword",
             quantity: 1,
         ), (
-            definition: "03030303-0303-0303-0303-030303030303",
+            definition: "old_gate_key",
             quantity: 1,
         )],
     ), (
-        id: "02020202-0202-0202-0202-020202020202",
+        id: "merchant",
         owner: (
             kind: "actor",
-            id: "02020202-0202-0202-0202-020202020202",
+            id: "merchant",
         ),
         role: "carried",
         items: [(
-            definition: "01010101-0101-0101-0101-010101010101",
+            definition: "healing_potion",
             quantity: 10,
         )],
     ), (
-        id: "03030303-0303-0303-0303-030303030303",
+        id: "mira",
         owner: (
             kind: "actor",
-            id: "03030303-0303-0303-0303-030303030303",
+            id: "mira",
         ),
         role: "carried",
         items: [],
     ), (
-        id: "04040404-0404-0404-0404-040404040404",
+        id: "chest",
         owner: (
             kind: "object",
-            id: "52525252-5252-5252-5252-525252525252",
+            id: "guard/chest",
         ),
         role: "contents",
         items: [],
     )],
     wallets: [(
-        id: "01010101-0101-0101-0101-010101010101",
+        id: "party",
         owner: (
             kind: "party",
-            id: "01010101-0101-0101-0101-010101010101",
+            id: "party",
         ),
         balance: 100,
     ), (
-        id: "02020202-0202-0202-0202-020202020202",
+        id: "merchant",
         owner: (
             kind: "actor",
-            id: "02020202-0202-0202-0202-020202020202",
+            id: "merchant",
         ),
         balance: 100,
     )],
     facts: [],
     steps: [UseItem(
-        actor: "01010101-0101-0101-0101-010101010101",
-        definition: "01010101-0101-0101-0101-010101010101",
+        actor: "hero",
+        definition: "healing_potion",
     ), Equip(
-        actor: "01010101-0101-0101-0101-010101010101",
-        definition: "02020202-0202-0202-0202-020202020202",
+        actor: "hero",
+        definition: "iron_sword",
     ), Transfer(
-        source: "01010101-0101-0101-0101-010101010101",
-        destination: "03030303-0303-0303-0303-030303030303",
+        source: "hero",
+        destination: "mira",
         item: (
-            definition: "02020202-0202-0202-0202-020202020202",
+            definition: "iron_sword",
             quantity: 1,
         ),
     ), Transfer(
-        source: "01010101-0101-0101-0101-010101010101",
-        destination: "04040404-0404-0404-0404-040404040404",
+        source: "hero",
+        destination: "chest",
         item: (
-            definition: "01010101-0101-0101-0101-010101010101",
+            definition: "healing_potion",
             quantity: 1,
         ),
     ), Trade(
         participants: (
-            merchant_inventory: "02020202-0202-0202-0202-020202020202",
-            customer_inventory: "01010101-0101-0101-0101-010101010101",
-            merchant_wallet: "02020202-0202-0202-0202-020202020202",
-            customer_wallet: "01010101-0101-0101-0101-010101010101",
+            merchant_inventory: "merchant",
+            customer_inventory: "hero",
+            merchant_wallet: "merchant",
+            customer_wallet: "party",
         ),
         purchases: [(
-            definition: "01010101-0101-0101-0101-010101010101",
+            definition: "healing_potion",
             quantity: 1,
         )],
         sales: [],
     ), StartDialogue(bindings: {},
-        dialogue: "01010101-0101-0101-0101-010101010101",
-        participant: "01010101-0101-0101-0101-010101010101",
-        speaker: "02020202-0202-0202-0202-020202020202",
-    ), AdvanceLine(dialogue: "01010101-0101-0101-0101-010101010101", participant: "01010101-0101-0101-0101-010101010101", speaker: "02020202-0202-0202-0202-020202020202"), Choose(
-        dialogue: "01010101-0101-0101-0101-010101010101",
-        participant: "01010101-0101-0101-0101-010101010101",
-        speaker: "02020202-0202-0202-0202-020202020202",
+        dialogue: "old_gate/gate",
+        participant: "hero",
+        speaker: "merchant",
+    ), AdvanceLine(dialogue: "old_gate/gate", participant: "hero", speaker: "merchant"), Choose(
+        dialogue: "old_gate/gate",
+        participant: "hero",
+        speaker: "merchant",
         choice: "return-key",
     )],
 )

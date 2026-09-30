@@ -69,7 +69,7 @@ impl LanguageRepository {
     pub fn load(&mut self, id: TextResourceId) -> Result<Option<LanguageResource>> {
         self.stats.payload_queries += 1;
         let row: Option<(Vec<u8>,Vec<u8>)> = self.connection.query_row(
-            "SELECT CASE WHEN length(payload)<=2097152 THEN payload END, hash FROM resources WHERE id=?1", [id.to_string()], |r| Ok((r.get(0)?,r.get(1)?))).optional()?;
+            "SELECT CASE WHEN length(payload)<=2097152 THEN payload END, hash FROM resources WHERE id=?1", [id.raw()], |r| Ok((r.get(0)?,r.get(1)?))).optional()?;
         let Some((payload, hash)) = row else {
             return Ok(None);
         };
@@ -199,7 +199,7 @@ impl LoadedProject {
                 tx.execute(
                     "INSERT INTO resources VALUES(?1,?2,?3)",
                     params![
-                        resource.id.to_string(),
+                        resource.id.raw(),
                         &payload,
                         blake3::hash(&payload).as_bytes()
                     ],

@@ -2,18 +2,19 @@ use game_types::*;
 use gameplay::actors::Position;
 use gameplay::{dialogue, inventory, quests};
 use gameplay::{
-    fixtures::{COMPANION, HERO, MERCHANT, key},
+    fixtures::{COMPANION, HERO, key},
     *,
 };
 use save::{SaveDirectory, SaveSlot};
 use yarra_game_content::*;
+const GUARD: ActorId = ActorId::named("guard");
 mod support;
 use support::{Temp, read, write};
-const GATE: ObjectId = ObjectId([0x51; 16]);
-const CHEST: ObjectId = ObjectId([0x52; 16]);
-const AREA: AreaId = AreaId([0x53; 16]);
-const TRIGGER: TriggerId = TriggerId([0x54; 16]);
-const QUEST: QuestId = QuestId([0x20; 16]);
+const GATE: ObjectId = ObjectId::named("guard/old_gate");
+const CHEST: ObjectId = ObjectId::named("guard/chest");
+const AREA: AreaId = AreaId::named("guard/approach");
+const TRIGGER: TriggerId = TriggerId::named("guard/escort");
+const QUEST: QuestId = QuestId::named("guard/gate");
 fn point(x: i64) -> Position {
     Position {
         millimetres: [x, 0, 0],
@@ -127,7 +128,7 @@ fn authored_guard_gate_runs_through_the_same_headless_commands_and_normal_access
     let m = driver.next_movement(None).unwrap();
     assert_eq!(m.phase, MovementPhase::Accepted);
     assert_eq!(
-        driver.state().actor(MERCHANT).unwrap().position,
+        driver.state().actor(GUARD).unwrap().position,
         Position {
             millimetres: [100000000, 0, 100000000]
         }
@@ -153,7 +154,7 @@ fn authored_guard_gate_runs_through_the_same_headless_commands_and_normal_access
     assert_eq!(driver.container_contents(CHEST).unwrap().entries.len(), 0);
     let s = driver.state();
     assert_eq!(s.actor(HERO).unwrap().skills[&key("persuasion")], 10);
-    assert_eq!(s.actor(MERCHANT).unwrap().position, m.destination);
+    assert_eq!(s.actor(GUARD).unwrap().position, m.destination);
     assert_eq!(s.quest(QUEST).status, quests::Status::Completed);
     assert_eq!(s.trigger(TRIGGER).successes, 1);
     assert!(driver.pump_world(256).unwrap());
@@ -278,7 +279,7 @@ fn maintained_conditions_reconcile_existing_items_inside_area_and_later_acquisit
             session
                 .apply(Command::Transfer {
                     source: InventoryId(HERO.0),
-                    destination: InventoryId(MERCHANT.0),
+                    destination: InventoryId(GUARD.0),
                     item: id,
                     quantity: 1,
                 })
@@ -293,7 +294,7 @@ fn maintained_conditions_reconcile_existing_items_inside_area_and_later_acquisit
             assert!(session.next_movement(None).is_none());
             session
                 .apply(Command::Transfer {
-                    source: InventoryId(MERCHANT.0),
+                    source: InventoryId(GUARD.0),
                     destination: InventoryId(HERO.0),
                     item: id,
                     quantity: 1,
@@ -449,10 +450,10 @@ fn arrival_continuation_failure_preserves_arrival_but_rolls_back_the_reward_grou
     assert!(matches!(t.status, SequenceStatus::Failed { .. }));
     assert!(t.diagnostic.is_some());
     assert!(t.movement.is_none());
-    assert_eq!(state.actor(MERCHANT).unwrap().position, m.destination);
+    assert_eq!(state.actor(GUARD).unwrap().position, m.destination);
     assert!(state.actor(HERO).unwrap().skills.is_empty());
     assert!(!state.claimed(dialogue::ClaimKey {
-        claim: ClaimId([0x40; 16]),
+        claim: ClaimId::named("guard/reward_claim"),
         scope: dialogue::Scope::Playthrough
     }));
     locked(&mut session);
@@ -478,7 +479,7 @@ fn immediate_plan_failure_has_bounded_retries_and_does_not_claim_partial_rewards
     let path = root.join("packages/guard/world/escort.ron");
     let mut trigger: TriggerDefinition = read(&path);
     trigger.steps = vec![SequenceStep::Apply(vec![Action::Claim {
-        claim: ClaimId([0x40; 16]),
+        claim: ClaimId::named("guard/reward_claim"),
         actions: vec![
             Action::AwardExperience {
                 skill: key("persuasion"),
@@ -526,7 +527,8 @@ fn movement_has_exclusive_ownership_and_explicit_retry_after_cancellation() {
     let root = temp.source();
     let mut package: PackageFile = read(root.join("packages/guard/package.ron"));
     let mut trigger: TriggerDefinition = read(root.join("packages/guard/world/escort.ron"));
-    trigger.id = TriggerId([0x55; 16]);
+    // Subscribers are visited in identity order; this one comes after the authored trigger.
+    trigger.id = TriggerId([0xff; 16]);
     write(root.join("packages/guard/world/second.ron"), &trigger);
     package
         .triggers
@@ -699,7 +701,7 @@ fn acquisition_edges_require_new_items_even_when_possession_was_already_satisfie
     session
         .apply(Command::Transfer {
             source: InventoryId(HERO.0),
-            destination: InventoryId(MERCHANT.0),
+            destination: InventoryId(GUARD.0),
             item,
             quantity: 1,
         })
@@ -708,7 +710,7 @@ fn acquisition_edges_require_new_items_even_when_possession_was_already_satisfie
     assert!(session.next_movement(None).is_none());
     session
         .apply(Command::Transfer {
-            source: InventoryId(MERCHANT.0),
+            source: InventoryId(GUARD.0),
             destination: InventoryId(HERO.0),
             item,
             quantity: 1,
