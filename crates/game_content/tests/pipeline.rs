@@ -47,7 +47,7 @@ fn authored_source_and_sqlite_bundle_use_the_same_validated_content() {
     let name = &bundle
         .content()
         .items
-        .item_by_key("healing_potion")
+        .item(game_types::ItemDefinitionId::named("healing_potion"))
         .unwrap()
         .name;
     assert_eq!(

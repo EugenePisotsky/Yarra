@@ -9,6 +9,14 @@ pub const WEAPONS: CategoryId = CategoryId::named("weapons");
 pub const ARMOUR: CategoryId = CategoryId::named("armour");
 pub const POTIONS: CategoryId = CategoryId::named("potions");
 
+/// Parses the name so the process knows it, and checks it is the constant's identity.
+fn named<T: TryFrom<String, Error = game_types::Invalid> + PartialEq + Copy>(
+    id: T,
+    name: &str,
+) -> T {
+    assert!(T::try_from(name.to_owned()).is_ok_and(|parsed| parsed == id));
+    id
+}
 pub fn example_catalog() -> ItemCatalog {
     let mut catalog = ItemCatalog {
         id: CatalogId([1; 16]),
@@ -21,8 +29,7 @@ pub fn example_catalog() -> ItemCatalog {
         ]
         .into_iter()
         .map(|(id, key, name)| Category {
-            id,
-            key: key.into(),
+            id: named(id, key),
             name: name.into(),
         })
         .collect(),
@@ -43,8 +50,7 @@ pub fn example_catalog() -> ItemCatalog {
         (KEY, "old_gate_key", "Old gate key", KEYS, 1, 50, 0, 0),
     ] {
         catalog.items.push(ItemDefinition {
-            id,
-            key: key.into(),
+            id: named(id, key),
             name: name.into(),
             category,
             description: "".into(),

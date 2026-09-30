@@ -26,11 +26,11 @@ fn text(s: &str) -> TextRef {
 pub fn content() -> GameContent {
     let mut items = example_catalog();
     for category in &mut items.categories {
-        category.name = text(&format!("category-{}", category.key));
+        category.name = text(&format!("category-{}", category.id));
     }
     for item in &mut items.items {
-        item.name = text(&format!("item-{}", item.key));
-        item.description = text(&format!("item-{}-description", item.key));
+        item.name = text(&format!("item-{}", item.id));
+        item.description = text(&format!("item-{}-description", item.id));
     }
     items
         .items

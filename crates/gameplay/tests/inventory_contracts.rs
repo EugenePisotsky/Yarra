@@ -26,9 +26,6 @@ fn wallet(balance: u64) -> Wallet {
 fn catalog_edits_validate_identity_categories_and_limits_atomically() {
     let mut catalog = example_catalog();
     let before = catalog.clone();
-    let mut duplicate = catalog.item(POTION).unwrap().clone();
-    duplicate.id = ItemDefinitionId::new();
-    assert_eq!(catalog.put_item(duplicate), Err(InventoryError::Duplicate));
     assert_eq!(
         catalog.remove_category(POTIONS),
         Err(InventoryError::CategoryInUse(POTIONS))
@@ -47,28 +44,18 @@ fn catalog_edits_validate_identity_categories_and_limits_atomically() {
 }
 
 #[test]
-fn category_identity_survives_key_and_title_edits() {
+fn category_identity_survives_title_edits() {
     let mut catalog = example_catalog();
     let item_before = catalog.item(POTION).unwrap().clone();
     catalog
         .put_category(Category {
             id: POTIONS,
-            key: "alchemy".into(),
             name: "Alchemical supplies".into(),
         })
         .unwrap();
     assert_eq!(catalog.item(POTION).unwrap(), &item_before);
-    assert_eq!(catalog.category_by_key("alchemy").unwrap().id, POTIONS);
-    assert!(catalog.category_by_key("potions").is_none());
+    assert_eq!(catalog.categories.len(), 4);
     let before = catalog.clone();
-    assert_eq!(
-        catalog.put_category(Category {
-            id: CategoryId::new(),
-            key: "alchemy".into(),
-            name: "Duplicate".into()
-        }),
-        Err(InventoryError::Duplicate)
-    );
     assert_eq!(
         catalog.remove_category(POTIONS),
         Err(InventoryError::CategoryInUse(POTIONS))
@@ -337,7 +324,6 @@ fn stale_inventory_wallet_or_catalog_rejects_quote_without_mutation() {
                 .catalog
                 .put_category(Category {
                     id: CategoryId::new(),
-                    key: "food".into(),
                     name: "Food".into(),
                 })
                 .unwrap(),

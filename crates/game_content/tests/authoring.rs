@@ -184,7 +184,7 @@ fn independent_language_updates_work_with_retained_content_and_saved_state() {
     let name = project
         .content()
         .items
-        .item_by_key("healing_potion")
+        .item(ItemDefinitionId::named("healing_potion"))
         .unwrap()
         .name
         .clone();

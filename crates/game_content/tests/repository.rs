@@ -97,7 +97,6 @@ fn a_session_over_a_large_catalog_loads_definitions_once_and_graphs_on_demand() 
     for i in items.items.len()..5_000 {
         let mut item = items.items[0].clone();
         item.id = ItemDefinitionId((100_000 + i as u128).to_be_bytes());
-        item.key = format!("generated_{i:05}");
         items.items.push(item);
     }
     write(source.join("packages/core/items.ron"), &items);

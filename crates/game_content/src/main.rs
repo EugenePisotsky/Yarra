@@ -110,7 +110,7 @@ fn run() -> Result<()> {
             );
             for id in &roots {
                 match repository.read(id)? {
-                    Asset::Item(item) => println!("Item {}: {}", item.id, item.key),
+                    Asset::Item(item) => println!("Item {}: {} g", item.id, item.weight_grams),
                     Asset::Dialogue(graph) => {
                         println!("Dialogue {}: {} nodes", graph.id, graph.nodes.len())
                     }

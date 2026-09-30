@@ -11,9 +11,8 @@ pub const MAX_STACK_LIMIT: u32 = 1_000_000;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Category {
-    /// Identity survives key and display-name changes.
+    /// Identity survives display-name changes.
     pub id: CategoryId,
-    pub key: String,
     pub name: TextRef,
 }
 
@@ -38,7 +37,6 @@ impl Default for ItemPermissions {
 #[serde(deny_unknown_fields)]
 pub struct ItemDefinition {
     pub id: ItemDefinitionId,
-    pub key: String,
     pub name: TextRef,
     pub description: TextRef,
     pub category: CategoryId,
@@ -56,7 +54,6 @@ pub struct ItemDefinition {
 }
 impl ItemDefinition {
     pub fn validate(&self) -> Result<()> {
-        validate_key(&self.key)?;
         self.name.validate()?;
         self.description.validate()?;
         self.mechanics.validate()?;
@@ -111,19 +108,16 @@ impl ItemCatalog {
             return Err(InventoryError::Invalid("catalog exceeds limits".into()));
         }
         let mut categories = BTreeSet::new();
-        let mut category_keys = BTreeSet::new();
         for category in &self.categories {
-            validate_key(&category.key)?;
             category.name.validate()?;
-            if !categories.insert(category.id) || !category_keys.insert(&category.key) {
+            if !categories.insert(category.id) {
                 return Err(InventoryError::Duplicate);
             }
         }
         let mut ids = BTreeSet::new();
-        let mut keys = BTreeSet::new();
         for item in &self.items {
             item.validate()?;
-            if !ids.insert(item.id) || !keys.insert(&item.key) {
+            if !ids.insert(item.id) {
                 return Err(InventoryError::Duplicate);
             }
             if !categories.contains(&item.category) {
@@ -138,19 +132,13 @@ impl ItemCatalog {
             .find(|item| item.id == id)
             .ok_or(InventoryError::UnknownDefinition(id))
     }
-    pub fn item_by_key(&self, key: &str) -> Option<&ItemDefinition> {
-        self.items.iter().find(|item| item.key == key)
-    }
     pub fn category(&self, id: CategoryId) -> Result<&Category> {
         self.categories
             .iter()
             .find(|category| category.id == id)
             .ok_or(InventoryError::UnknownCategory(id))
     }
-    pub fn category_by_key(&self, key: &str) -> Option<&Category> {
-        self.categories.iter().find(|category| category.key == key)
-    }
-    /// Add or replace by stable ID. Renaming a key/title preserves item references.
+    /// Add or replace by identity. Changing the title preserves item references.
     pub fn put_category(&mut self, category: Category) -> Result<()> {
         let mut next = self.clone();
         if let Some(existing) = next.categories.iter_mut().find(|c| c.id == category.id) {
@@ -160,7 +148,7 @@ impl ItemCatalog {
         }
         self.replace(next)
     }
-    /// Add or update by stable ID. Keys remain unique across definitions.
+    /// Add or update by identity.
     pub fn put_item(&mut self, item: ItemDefinition) -> Result<()> {
         let mut next = self.clone();
         if let Some(existing) = next.items.iter_mut().find(|i| i.id == item.id) {
