@@ -5,16 +5,11 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
-quests.workspace = true
-actors.workspace = true
 blake3.workspace = true
-dialogue.workspace = true
 game-types.workspace = true
 gameplay.workspace = true
-inventory.workspace = true
 localization.workspace = true
 ron.workspace = true
-rules.workspace = true
 rusqlite.workspace = true
 save.workspace = true
 serde.workspace = true

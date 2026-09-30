@@ -1,10 +1,10 @@
 use crate::Result;
+use crate::dialogue::{RunStatus, Token};
+use crate::inventory::{TradeOffer, TradeParticipants, TradeQuote};
 use crate::resolution::{resolve, resolve_with};
+use crate::rules::{ActiveEffect, Effect};
 use crate::*;
-use dialogue::{RunStatus, Token};
 use game_types::*;
-use inventory::{TradeOffer, TradeParticipants, TradeQuote};
-use rules::{ActiveEffect, Effect};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone)]

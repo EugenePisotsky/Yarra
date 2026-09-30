@@ -1,9 +1,0 @@
-[package]
-name = "yarra-dialogue"
-version.workspace = true
-edition.workspace = true
-publish.workspace = true
-
-[dependencies]
-game-types.workspace = true
-serde.workspace = true

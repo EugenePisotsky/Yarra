@@ -1,7 +1,7 @@
 //! Conversation execution and locale-independent read models.
+use crate::dialogue::{ArgumentSource, ChoiceRepeat, HistoryEvent, RunStatus, Token};
 use crate::session::{conditions_met, run_action};
 use crate::{Result, *};
-use dialogue::{ArgumentSource, ChoiceRepeat, HistoryEvent, RunStatus, Token};
 use game_types::*;
 use std::collections::BTreeMap;
 #[derive(Debug, Clone, PartialEq, Eq)]

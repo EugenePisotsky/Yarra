@@ -1,8 +1,8 @@
 //! Storage/content ports. Implementations own I/O; domain operations receive resolved records.
 use crate::Result;
+use crate::rules::RandomState;
 use crate::*;
 use game_types::*;
-use rules::RandomState;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 

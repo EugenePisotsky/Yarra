@@ -2,8 +2,9 @@
 //! then uses the same session commands a future UI will use.
 use crate::{ItemAmount, Result};
 use game_types::*;
+use gameplay::inventory::{TradeLine, TradeOffer, TradeParticipants};
 use gameplay::{Command, ContentSource, GameSession, StateRequest, StateStore};
-use inventory::{TradeLine, TradeOffer, TradeParticipants};
+use gameplay::{actors, inventory, quests};
 use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

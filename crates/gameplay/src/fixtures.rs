@@ -1,10 +1,10 @@
 //! Standalone, deterministic authored scenario; runtime state needs no game assets.
+use crate::actors::{Actor, ActorRole, ActorTemplate};
+use crate::dialogue::{Choice, ChoiceRepeat, Dialogue, Line, Node, RepeatPolicy, ScopeSelector};
+use crate::inventory::{Inventory, Money, Wallet, fixtures::*};
+use crate::rules::{Attribute, Effect, Modifier, Rules, Skill};
 use crate::{Action, Condition, ContentManifest, GameContent, GameDefinitions, SessionState};
-use actors::{Actor, ActorRole, ActorTemplate};
-use dialogue::{Choice, ChoiceRepeat, Dialogue, Line, Node, RepeatPolicy, ScopeSelector};
 use game_types::*;
-use inventory::{Inventory, Money, Wallet, fixtures::*};
-use rules::{Attribute, Effect, Modifier, Rules, Skill};
 
 pub const HERO: ActorId = ActorId([1; 16]);
 pub const MERCHANT: ActorId = ActorId([2; 16]);

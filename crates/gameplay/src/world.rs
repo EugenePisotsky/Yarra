@@ -1,7 +1,7 @@
 //! Durable logical world contracts. Engine adapters own navigation and physical realization.
 use crate::Result;
+use crate::actors::Position;
 use crate::*;
-use actors::Position;
 use game_types::*;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;

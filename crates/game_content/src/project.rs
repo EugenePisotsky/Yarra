@@ -1,11 +1,12 @@
 use crate::{Asset, AssetId, ContentError, Result, Scenario, contextual};
-use actors::ActorTemplate;
-use dialogue::Dialogue;
 use game_types::*;
+use gameplay::actors::ActorTemplate;
+use gameplay::dialogue::Dialogue;
+use gameplay::inventory::ItemCatalog;
+use gameplay::rules::Rules;
 use gameplay::{Action, Condition, ContentManifest, GameContent, GameDefinitions};
-use inventory::ItemCatalog;
+use gameplay::{dialogue, quests};
 use localization::{LanguageResource, Localization, contract_hash};
-use rules::Rules;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{
     collections::{BTreeMap, BTreeSet},

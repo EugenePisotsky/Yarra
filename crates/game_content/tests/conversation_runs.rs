@@ -1,10 +1,11 @@
-use dialogue::{ArgumentSource, ChoiceRepeat, HistoryEvent, Scope, ScopeSelector, Token};
 use game_types::*;
+use gameplay::dialogue::{ArgumentSource, ChoiceRepeat, HistoryEvent, Scope, ScopeSelector, Token};
+use gameplay::quests::Transition;
 use gameplay::{
     Action, Command, ConversationKey, GameEvent, GameSession, StateRequest,
     fixtures::{COMPANION, HERO, MERCHANT, key},
 };
-use quests::Transition;
+use gameplay::{dialogue, inventory};
 use save::{SaveDirectory, SaveSlot, WorkingStore};
 use yarra_game_content::*;
 mod support;

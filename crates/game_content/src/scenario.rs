@@ -1,8 +1,9 @@
 use crate::{Result, Step, contextual};
-use actors::{Actor, ActorRole, Position};
 use game_types::*;
+use gameplay::actors::{Actor, ActorRole, Position};
+use gameplay::inventory;
+use gameplay::inventory::{Inventory, Money, Wallet};
 use gameplay::{GameContent, GameSession, SessionState, ToolContent};
-use inventory::{Inventory, Money, Wallet};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 

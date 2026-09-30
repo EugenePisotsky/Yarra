@@ -1,7 +1,8 @@
 use game_types::*;
+use gameplay::dialogue;
+use gameplay::inventory::{fixtures::*, *};
+use gameplay::rules::{Effect, Modifier};
 use gameplay::{fixtures::*, *};
-use inventory::{fixtures::*, *};
-use rules::{Effect, Modifier};
 use yarra_save::WorkingStore;
 type TestSession = gameplay::GameSession<WorkingStore, ToolContent>;
 fn new(content: GameContent, state: SessionState) -> yarra_save::Result<TestSession> {

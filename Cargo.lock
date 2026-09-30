@@ -6454,15 +6454,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
-name = "yarra-actors"
-version = "0.1.0"
-dependencies = [
- "serde",
- "yarra-game-types",
- "yarra-rules",
-]
-
-[[package]]
 name = "yarra-app-editor"
 version = "0.1.0"
 dependencies = [
@@ -6516,14 +6507,6 @@ dependencies = [
  "bevy",
  "bytemuck",
  "yarra-world",
-]
-
-[[package]]
-name = "yarra-dialogue"
-version = "0.1.0"
-dependencies = [
- "serde",
- "yarra-game-types",
 ]
 
 [[package]]
@@ -6582,14 +6565,9 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.20",
  "unic-langid",
- "yarra-actors",
- "yarra-dialogue",
  "yarra-game-types",
  "yarra-gameplay",
- "yarra-inventory",
  "yarra-localization",
- "yarra-quests",
- "yarra-rules",
  "yarra-save",
 ]
 
@@ -6610,33 +6588,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
- "yarra-actors",
- "yarra-dialogue",
  "yarra-game-types",
- "yarra-inventory",
- "yarra-quests",
- "yarra-rules",
-]
-
-[[package]]
-name = "yarra-inventory"
-version = "0.1.0"
-dependencies = [
- "serde",
- "thiserror 2.0.20",
- "yarra-game-types",
- "yarra-rules",
-]
-
-[[package]]
-name = "yarra-inventory-db"
-version = "0.1.0"
-dependencies = [
- "rusqlite",
- "serde",
- "serde_json",
- "thiserror 2.0.20",
- "yarra-inventory",
 ]
 
 [[package]]
@@ -6654,22 +6606,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "yarra-quests"
-version = "0.1.0"
-dependencies = [
- "serde",
- "yarra-game-types",
-]
-
-[[package]]
-name = "yarra-rules"
-version = "0.1.0"
-dependencies = [
- "serde",
- "yarra-game-types",
-]
-
-[[package]]
 name = "yarra-save"
 version = "0.1.0"
 dependencies = [
@@ -6678,13 +6614,8 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
- "yarra-actors",
- "yarra-dialogue",
  "yarra-game-types",
  "yarra-gameplay",
- "yarra-inventory",
- "yarra-quests",
- "yarra-rules",
 ]
 
 [[package]]

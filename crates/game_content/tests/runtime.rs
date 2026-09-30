@@ -1,6 +1,7 @@
 use game_types::*;
+use gameplay::actors;
+use gameplay::inventory::{Inventory, ItemCatalog};
 use gameplay::{Command, ContentSource, GameSession, HeadlessDriver, StateRequest};
-use inventory::{Inventory, ItemCatalog};
 use save::{SaveDirectory, SaveSlot, StateStats, WorkingStore};
 use yarra_game_content::*;
 mod support;

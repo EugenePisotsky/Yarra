@@ -1,4 +1,5 @@
 use game_types::PredicateId;
+use yarra_gameplay::inventory;
 use yarra_gameplay::{Condition, NamedPredicate, fixtures::*};
 
 #[test]

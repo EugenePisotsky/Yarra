@@ -1,5 +1,5 @@
 //! Small deterministic catalog for standalone examples and contract tests.
-use crate::*;
+use super::*;
 
 pub const POTION: ItemDefinitionId = ItemDefinitionId([1; 16]);
 pub const SWORD: ItemDefinitionId = ItemDefinitionId([2; 16]);

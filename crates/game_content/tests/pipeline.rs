@@ -1,6 +1,7 @@
-use actors::ActorRole;
 use game_types::{CategoryId, Key, TextRef};
-use inventory::ItemCatalog;
+use gameplay::actors::ActorRole;
+use gameplay::inventory::ItemCatalog;
+use gameplay::{actors, inventory, rules};
 use localization::Arguments;
 use rusqlite::Connection;
 use save::{SaveDirectory, SaveSlot};

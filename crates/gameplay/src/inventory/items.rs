@@ -1,4 +1,4 @@
-use crate::{ItemCatalog, types::*};
+use super::{ItemCatalog, types::*};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 

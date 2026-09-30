@@ -1,9 +1,10 @@
+use crate::actors::ActorTemplate;
+use crate::dialogue::Dialogue;
+use crate::inventory::ItemCatalog;
+use crate::rules::Rules;
 use crate::{InteractionProfile, NamedPredicate, Participant, Result};
-use actors::ActorTemplate;
-use dialogue::Dialogue;
+use crate::{dialogue, quests};
 use game_types::*;
-use inventory::ItemCatalog;
-use rules::Rules;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 

@@ -1,5 +1,10 @@
 //! Bevy/SQLite-free coordination. Only accepted commands replace live state.
+pub mod actors;
 mod content;
+pub mod dialogue;
+pub mod inventory;
+pub mod quests;
+pub mod rules;
 mod world;
 mod world_runtime;
 pub use world::*;

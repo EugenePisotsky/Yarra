@@ -3,6 +3,7 @@ use gameplay::{
     Command, Condition,
     fixtures::{GATE_DIALOGUE, HERO, MERCHANT},
 };
+use gameplay::{dialogue, inventory};
 use localization::{Arguments, Localization, LocalizationLimits};
 use std::{fs, path::Path};
 use yarra_game_content::*;

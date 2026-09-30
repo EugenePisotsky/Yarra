@@ -1,5 +1,6 @@
 //! Authored RON/Fluent projects and immutable SQLite content bundles.
 //! Domain crates never depend on this filesystem/composition layer.
+use gameplay::inventory;
 mod asset;
 mod bundle;
 mod languages;

@@ -1,6 +1,6 @@
-use crate::{CatalogId, ItemDefinitionId, Money, types::*};
+use super::{CatalogId, ItemDefinitionId, Money, types::*};
+use crate::rules::ItemMechanics;
 use game_types::TextRef;
-use rules::ItemMechanics;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 

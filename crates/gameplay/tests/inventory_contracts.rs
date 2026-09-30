@@ -1,4 +1,4 @@
-use yarra_inventory::{fixtures::*, *};
+use yarra_gameplay::inventory::{fixtures::*, *};
 
 fn owner() -> OwnerRef {
     OwnerRef::new("character", OwnerId::new()).unwrap()

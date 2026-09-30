@@ -1,11 +1,12 @@
-use actors::RelationshipKey;
-use dialogue::InteractionKey;
 use game_types::*;
+use gameplay::actors::RelationshipKey;
+use gameplay::dialogue::InteractionKey;
+use gameplay::quests::{Status, Transition};
 use gameplay::{
     Command, GameEvent, GameSession, StateRequest, StateStore, StateTransaction,
     fixtures::{HERO, MERCHANT, key},
 };
-use quests::{Status, Transition};
+use gameplay::{dialogue, inventory};
 use rusqlite::{Connection, params};
 use save::{SaveDirectory, SaveSlot, WorkingStore};
 use yarra_game_content::*;

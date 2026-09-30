@@ -1,6 +1,7 @@
 use game_types::*;
+use gameplay::inventory::fixtures::*;
+use gameplay::{dialogue, rules};
 use gameplay::{fixtures::*, *};
-use inventory::fixtures::*;
 use rusqlite::Connection;
 use yarra_save::*;
 type Session = StoredSession<ToolContent>;

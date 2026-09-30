@@ -2,6 +2,7 @@
 use crate::{Result, SaveError};
 use game_types::*;
 use gameplay::*;
+use gameplay::{actors, dialogue, inventory, quests};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use serde::{Serialize, de::DeserializeOwned};
 use std::{

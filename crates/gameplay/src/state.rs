@@ -1,9 +1,10 @@
+use crate::actors::Actor;
+use crate::dialogue::Conversation;
+use crate::inventory::{Inventory, Wallet};
+use crate::rules::{Attributes, RandomState};
 use crate::{GameContent, Result};
-use actors::Actor;
-use dialogue::Conversation;
+use crate::{actors, dialogue, quests};
 use game_types::*;
-use inventory::{Inventory, Wallet};
-use rules::{Attributes, RandomState};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 

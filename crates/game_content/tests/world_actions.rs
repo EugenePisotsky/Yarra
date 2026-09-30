@@ -1,5 +1,6 @@
-use actors::Position;
 use game_types::*;
+use gameplay::actors::Position;
+use gameplay::{dialogue, inventory, quests};
 use gameplay::{
     fixtures::{COMPANION, HERO, MERCHANT, key},
     *,

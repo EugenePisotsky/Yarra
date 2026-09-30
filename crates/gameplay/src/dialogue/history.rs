@@ -1,4 +1,4 @@
-use crate::DialogueContract;
+use super::DialogueContract;
 use game_types::*;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;

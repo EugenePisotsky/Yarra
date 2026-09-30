@@ -1,6 +1,7 @@
 //! Explicit eager tool import. Never used by ContentRepository::open/load.
 use crate::{asset::*, bundle::publication_hash, *};
 use game_types::{Invalid, require};
+use gameplay::inventory;
 use gameplay::{GameContent, GameDefinitions};
 use std::{
     collections::{BTreeMap, BTreeSet},

@@ -1,5 +1,5 @@
 use game_types::{ItemDefinitionId, TextResourceId};
-use inventory::ItemCatalog;
+use gameplay::inventory::ItemCatalog;
 use rusqlite::{Connection, params};
 use std::{collections::BTreeSet, fs, path::Path};
 use yarra_game_content::*;

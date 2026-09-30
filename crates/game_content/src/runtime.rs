@@ -2,6 +2,7 @@
 use crate::*;
 use game_types::{AreaId, Invalid, OwnerId, TriggerId, require};
 use gameplay::{ContentIdentity, ContentRequest, ContentSource, GameContent, GameDefinitions};
+use gameplay::{actors, inventory};
 use rusqlite::{OptionalExtension, params};
 use std::collections::BTreeSet;
 use std::{

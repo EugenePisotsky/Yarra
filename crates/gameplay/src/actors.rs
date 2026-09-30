@@ -1,6 +1,6 @@
 //! Players, companions and NPCs share the same durable actor model.
+use crate::rules::{ActiveEffect, Attributes, Rules, SkillExperience};
 use game_types::*;
-use rules::{ActiveEffect, Attributes, Rules, SkillExperience};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
