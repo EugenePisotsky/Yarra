@@ -1,0 +1,2 @@
+(id: "23232323-2323-2323-2323-232323232323", condition: All([
+    Claimed(claim: "40404040-4040-4040-4040-404040404040", value: false),QuestStatus(quest: "20202020-2020-2020-2020-202020202020", status: Active), HasItem(definition: "03030303-0303-0303-0303-030303030303", quantity: 1)]))

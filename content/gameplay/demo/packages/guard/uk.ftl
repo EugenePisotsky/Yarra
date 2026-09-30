@@ -1,0 +1,15 @@
+gate-title = Стара брама
+gate-objective = Повернути ключ від брами
+supplies-title = Припаси для вартового
+supplies-objective = Доставити припаси
+guard-name = Вартовий біля брами
+reward = Ви знайшли ключ від брами, { $player }!
+duty = Вартовий досі чекає.
+welcome-a = Вітаю, мандрівнику.
+welcome-b = Радий вас бачити.
+hostile = Кажіть швидше.
+return-key = Ось ваш ключ.
+leave = До побачення.
+gate-topic = Про ключ від брами
+supply-topic = Про припаси
+refuse = Поки що я залишу ключ собі.

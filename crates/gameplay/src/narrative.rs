@@ -1,0 +1,552 @@
+//! Reusable predicates and NPC entry profiles. All evaluation uses an already-resolved snapshot.
+use crate::Result;
+use crate::*;
+use game_types::*;
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Participant {
+    Player,
+    Speaker,
+}
+impl Participant {
+    pub fn resolve(self, player: ActorId, speaker: ActorId) -> ActorId {
+        match self {
+            Self::Player => player,
+            Self::Speaker => speaker,
+        }
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NamedPredicate {
+    pub id: PredicateId,
+    pub condition: Condition,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DialogueVariant {
+    pub dialogue: DialogueId,
+    pub weight: u32,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EntryRule {
+    pub id: Key,
+    pub priority: i32,
+    /// Explicit tie order within a priority tier. Duplicate (priority, order) pairs are errors.
+    pub order: u16,
+    /// Topics are independently discoverable; opening selection considers non-topic rules.
+    pub topic: Option<TextRef>,
+    pub condition: Condition,
+    pub variants: Vec<DialogueVariant>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InteractionProfile {
+    pub id: InteractionProfileId,
+    pub rules: Vec<EntryRule>,
+}
+impl InteractionProfile {
+    pub fn validate(&self) -> Result<()> {
+        require(
+            !self.rules.is_empty() && self.rules.len() <= 64,
+            "profile requires 1..64 rules",
+        )?;
+        let mut ids = BTreeSet::new();
+        let mut precedence = BTreeSet::new();
+        for rule in &self.rules {
+            require(
+                ids.insert(&rule.id) && precedence.insert((rule.priority, rule.order)),
+                "duplicate rule or ambiguous interaction precedence",
+            )?;
+            if let Some(text) = &rule.topic {
+                text.validate()?;
+            }
+            require(
+                !rule.variants.is_empty() && rule.variants.len() <= 16,
+                "rule requires 1..16 variants",
+            )?;
+            let mut dialogues = BTreeSet::new();
+            let mut weight = 0u32;
+            for variant in &rule.variants {
+                require(
+                    variant.weight > 0 && dialogues.insert(variant.dialogue),
+                    "duplicate or zero-weight variant",
+                )?;
+                weight = weight
+                    .checked_add(variant.weight)
+                    .ok_or_else(|| Invalid("variant weight overflow".into()))?;
+            }
+            rule.condition.visit(&mut |_| Ok(()))?;
+        }
+        Ok(())
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Observed {
+    Boolean(bool),
+    Quantity(u64),
+    Attitude(i16),
+    Quest(quests::Status),
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConditionCheck {
+    pub predicate: Condition,
+    pub observed: Observed,
+    pub matched: bool,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Evaluation {
+    pub matched: bool,
+    pub checks: Vec<ConditionCheck>,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EntryPreview {
+    pub rule: Key,
+    pub priority: i32,
+    pub order: u16,
+    pub topic: Option<TextRef>,
+    pub evaluation: Evaluation,
+    /// Variants excluded by their scoped repeat/cooldown policy.
+    pub unavailable_variants: Vec<DialogueId>,
+    pub variants: Vec<DialogueVariant>,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InteractionPreview {
+    pub profile: InteractionProfileId,
+    pub candidates: Vec<EntryPreview>,
+}
+impl InteractionPreview {
+    pub fn opening(&self) -> Option<&EntryPreview> {
+        self.candidates
+            .iter()
+            .find(|r| r.topic.is_none() && r.evaluation.matched)
+    }
+    pub fn topics(&self) -> impl Iterator<Item = &EntryPreview> {
+        self.candidates
+            .iter()
+            .filter(|r| r.topic.is_some() && r.evaluation.matched)
+    }
+    pub(crate) fn selected(&self, topic: Option<&Key>) -> Result<&EntryPreview> {
+        match topic {
+            None => self.opening(),
+            Some(id) => self.topics().find(|r| &r.rule == id),
+        }
+        .ok_or_else(|| Invalid("no eligible conversation entry".into()).into())
+    }
+}
+impl Condition {
+    /// Visit a bounded authored tree. Named references are reported; the content source loads them.
+    pub fn visit(&self, visitor: &mut impl FnMut(&Condition) -> Result<()>) -> Result<()> {
+        fn walk(
+            c: &Condition,
+            depth: usize,
+            budget: &mut usize,
+            f: &mut impl FnMut(&Condition) -> Result<()>,
+        ) -> Result<()> {
+            require(depth <= 16 && *budget > 0, "condition complexity exceeded")?;
+            *budget -= 1;
+            f(c)?;
+            match c {
+                Condition::All(v) | Condition::Any(v) => {
+                    require(!v.is_empty(), "empty condition group")?;
+                    for c in v {
+                        walk(c, depth + 1, budget, f)?;
+                    }
+                }
+                Condition::Not(c) => walk(c, depth + 1, budget, f)?,
+                _ => {}
+            }
+            Ok(())
+        }
+        walk(self, 0, &mut 256, visitor)
+    }
+    /// Shared traversal for publication and runtime validation. Named expansions use the
+    /// same total depth/work budget as evaluation, while each authored tree stays bounded.
+    pub fn visit_resolved<'a>(
+        &'a self,
+        resolve: &impl Fn(PredicateId) -> Result<&'a Condition>,
+        visitor: &mut impl FnMut(&Condition) -> Result<()>,
+    ) -> Result<()> {
+        fn walk<'a>(
+            c: &'a Condition,
+            resolve: &impl Fn(PredicateId) -> Result<&'a Condition>,
+            visitor: &mut impl FnMut(&Condition) -> Result<()>,
+            active: &mut BTreeSet<PredicateId>,
+            depth: usize,
+            budget: &mut usize,
+        ) -> Result<()> {
+            require(
+                depth <= 32 && *budget > 0,
+                "resolved predicate complexity exceeded",
+            )?;
+            *budget -= 1;
+            visitor(c)?;
+            match c {
+                Condition::All(children) | Condition::Any(children) => {
+                    for child in children {
+                        walk(child, resolve, visitor, active, depth + 1, budget)?;
+                    }
+                }
+                Condition::Not(child) => walk(child, resolve, visitor, active, depth + 1, budget)?,
+                Condition::Named(id) => {
+                    require(active.insert(*id), "named predicate cycle")?;
+                    let child = resolve(*id)?;
+                    child.visit(&mut |_| Ok(()))?;
+                    walk(child, resolve, visitor, active, depth + 1, budget)?;
+                    active.remove(id);
+                }
+                _ => {}
+            }
+            Ok(())
+        }
+        self.visit(&mut |_| Ok(()))?;
+        walk(self, resolve, visitor, &mut BTreeSet::new(), 0, &mut 1024)
+    }
+    pub fn content_dependencies(&self, request: &mut ContentRequest) -> Result<()> {
+        self.visit(&mut |c| {
+            match c {
+                Condition::InsideArea { area } => {
+                    request.areas.insert(*area);
+                }
+                Condition::History { dialogue, .. } => {
+                    request.dialogue_contracts.insert(*dialogue);
+                }
+                Condition::Claimed { claim, .. } => {
+                    request.claims.insert(*claim);
+                }
+                Condition::HasItem { definition, .. } => {
+                    request.items.insert(*definition);
+                }
+                Condition::Fact { key, .. } => {
+                    request.facts.insert(key.clone());
+                }
+                Condition::QuestStatus { quest, .. }
+                | Condition::ObjectiveCompleted { quest, .. } => {
+                    request.quests.insert(*quest);
+                }
+                Condition::Named(id) => {
+                    request.predicates.insert(*id);
+                }
+                _ => {}
+            };
+            Ok(())
+        })
+    }
+}
+impl Action {
+    pub fn visit(&self, visitor: &mut impl FnMut(&Action) -> Result<()>) -> Result<()> {
+        fn walk(
+            a: &Action,
+            depth: usize,
+            budget: &mut usize,
+            f: &mut impl FnMut(&Action) -> Result<()>,
+        ) -> Result<()> {
+            require(depth <= 8 && *budget > 0, "action complexity exceeded")?;
+            *budget -= 1;
+            f(a)?;
+            match a {
+                Action::SkillCheck {
+                    success, failure, ..
+                } => {
+                    for a in success.iter().chain(failure) {
+                        walk(a, depth + 1, budget, f)?;
+                    }
+                }
+                Action::Claim { actions, .. } => {
+                    for a in actions {
+                        walk(a, depth + 1, budget, f)?;
+                    }
+                }
+                _ => {}
+            }
+            Ok(())
+        }
+        walk(self, 0, &mut 1024, visitor)
+    }
+    pub fn content_dependencies(&self, request: &mut ContentRequest) -> Result<()> {
+        self.visit(&mut |a| {
+            match a {
+                Action::SetLocked { object, .. } => {
+                    request.objects.insert(*object);
+                }
+                Action::Claim { claim, .. } => {
+                    request.claims.insert(*claim);
+                }
+                Action::ConsumeItem { definition, .. } | Action::GrantItem { definition, .. } => {
+                    request.items.insert(*definition);
+                }
+                Action::SetFact { key, .. } => {
+                    request.facts.insert(key.clone());
+                }
+                Action::Quest { quest, .. } => {
+                    request.quests.insert(*quest);
+                }
+                _ => {}
+            };
+            Ok(())
+        })
+    }
+}
+impl GameContent {
+    pub fn quest(&self, id: QuestId) -> Result<&quests::Quest> {
+        self.game
+            .quests
+            .iter()
+            .find(|q| q.id == id)
+            .ok_or_else(|| Invalid("unknown quest".into()).into())
+    }
+    pub fn profile(&self, id: InteractionProfileId) -> Result<&InteractionProfile> {
+        self.game
+            .profiles
+            .iter()
+            .find(|p| p.id == id)
+            .ok_or_else(|| Invalid("unknown interaction profile".into()).into())
+    }
+    pub fn predicate(&self, id: PredicateId) -> Result<&Condition> {
+        self.game
+            .predicates
+            .iter()
+            .find(|p| p.id == id)
+            .map(|p| &p.condition)
+            .ok_or_else(|| Invalid("unknown named predicate".into()).into())
+    }
+    pub fn validate_condition(&self, condition: &Condition) -> Result<()> {
+        condition.visit_resolved(&|id| self.predicate(id), &mut |c| {
+            match c {
+                Condition::InsideArea { area } => {
+                    self.area(*area)?;
+                }
+                Condition::History {
+                    dialogue,
+                    event,
+                    minimum,
+                } => {
+                    require(*minimum > 0, "zero history threshold")?;
+                    let d = self.dialogue_contract(*dialogue)?;
+                    match event {
+                        dialogue::HistoryEvent::Line(id) => {
+                            require(d.lines.contains(id), "unknown history line")?
+                        }
+                        dialogue::HistoryEvent::Choice(id) => {
+                            require(d.choices.contains(id), "unknown history choice")?
+                        }
+                        _ => {}
+                    }
+                }
+                Condition::Claimed { claim, .. } => {
+                    self.claim(*claim)?;
+                }
+
+                Condition::HasItem {
+                    definition,
+                    quantity,
+                } => {
+                    self.items.item(*definition)?;
+                    require(*quantity > 0, "zero item condition")?;
+                }
+                Condition::Fact { key, .. } => {
+                    require(self.game.facts.contains(key), "unknown fact")?
+                }
+                Condition::SkillExperience { skill, .. } => {
+                    self.game.rules.skill(skill)?;
+                }
+                Condition::QuestStatus { quest, .. } => {
+                    self.quest(*quest)?;
+                }
+                Condition::ObjectiveCompleted { quest, objective } => {
+                    self.quest(*quest)?.objective(objective)?;
+                }
+                Condition::Relationship { from, to, minimum } => require(
+                    from != to && (-100..=100).contains(minimum),
+                    "invalid relationship condition",
+                )?,
+                _ => {}
+            }
+            Ok(())
+        })
+    }
+    pub fn evaluate(
+        &self,
+        condition: &Condition,
+        state: &SessionState,
+        player: ActorId,
+        speaker: ActorId,
+    ) -> Result<Evaluation> {
+        fn eval(
+            content: &GameContent,
+            c: &Condition,
+            state: &SessionState,
+            pair: (ActorId, ActorId),
+            checks: &mut Vec<ConditionCheck>,
+            budget: &mut usize,
+            depth: usize,
+        ) -> Result<bool> {
+            require(
+                depth <= 32 && *budget > 0,
+                "predicate evaluation budget exceeded",
+            )?;
+            *budget -= 1;
+            let (observed, matched) = match c {
+                Condition::InsideArea { area } => {
+                    let inside = state.world.location(pair.0)?.areas.contains(area);
+                    (Observed::Boolean(inside), inside)
+                }
+                Condition::History {
+                    dialogue,
+                    event,
+                    minimum,
+                } => {
+                    let d = content.dialogue_contract(*dialogue)?;
+                    let n = state.history(d.history_key(pair.0, pair.1))?.count(event);
+                    (Observed::Quantity(n), n >= *minimum)
+                }
+                Condition::Claimed { claim, value } => {
+                    let d = content.claim(*claim)?;
+                    let found = state.claim(d.key(pair.0, pair.1))?.claimed;
+                    (Observed::Boolean(found), found == *value)
+                }
+                Condition::All(v) | Condition::Any(v) => {
+                    let mut result = matches!(c, Condition::All(_));
+                    for child in v {
+                        let value = eval(content, child, state, pair, checks, budget, depth + 1)?;
+                        if matches!(c, Condition::All(_)) {
+                            result &= value;
+                        } else {
+                            result |= value;
+                        }
+                    }
+                    return Ok(result);
+                }
+                Condition::Not(v) => {
+                    return Ok(!eval(content, v, state, pair, checks, budget, depth + 1)?);
+                }
+                Condition::Named(id) => {
+                    return eval(
+                        content,
+                        content.predicate(*id)?,
+                        state,
+                        pair,
+                        checks,
+                        budget,
+                        depth + 1,
+                    );
+                }
+                Condition::HasItem {
+                    definition,
+                    quantity,
+                } => {
+                    let n = state
+                        .carried(pair.0)?
+                        .entries
+                        .iter()
+                        .filter(|e| e.definition == *definition)
+                        .map(|e| u64::from(e.quantity))
+                        .sum();
+                    (Observed::Quantity(n), n >= u64::from(*quantity))
+                }
+                Condition::Fact { key, value } => {
+                    let found = state.facts.contains(key);
+                    (Observed::Boolean(found), found == *value)
+                }
+                Condition::SkillExperience { skill, minimum } => {
+                    let n = state.actor(pair.0)?.skills.get(skill).copied().unwrap_or(0);
+                    (Observed::Quantity(n), n >= *minimum)
+                }
+                Condition::QuestStatus { quest, status } => {
+                    let actual = state.quest(*quest)?.status;
+                    (Observed::Quest(actual), actual == *status)
+                }
+                Condition::ObjectiveCompleted { quest, objective } => {
+                    let found = state.quest(*quest)?.completed.contains(objective);
+                    (Observed::Boolean(found), found)
+                }
+                Condition::Relationship { from, to, minimum } => {
+                    let value = state
+                        .relationship(actors::RelationshipKey {
+                            from: from.resolve(pair.0, pair.1),
+                            to: to.resolve(pair.0, pair.1),
+                        })?
+                        .attitude;
+                    (Observed::Attitude(value), value >= *minimum)
+                }
+            };
+            checks.push(ConditionCheck {
+                predicate: c.clone(),
+                observed,
+                matched,
+            });
+            Ok(matched)
+        }
+        let mut checks = Vec::new();
+        let matched = eval(
+            self,
+            condition,
+            state,
+            (player, speaker),
+            &mut checks,
+            &mut 1024,
+            0,
+        )?;
+        Ok(Evaluation { matched, checks })
+    }
+    pub fn preview(
+        &self,
+        profile: InteractionProfileId,
+        state: &SessionState,
+        player: ActorId,
+        speaker: ActorId,
+    ) -> Result<InteractionPreview> {
+        let mut candidates = Vec::new();
+        for rule in &self.profile(profile)?.rules {
+            let mut variants = Vec::new();
+            let mut unavailable_variants = Vec::new();
+            for variant in &rule.variants {
+                let contract = self.dialogue_contract(variant.dialogue)?;
+                if contract.repeat.eligible(
+                    state.history(contract.history_key(player, speaker))?,
+                    state.time,
+                ) {
+                    variants.push(variant.clone());
+                } else {
+                    unavailable_variants.push(variant.dialogue);
+                }
+            }
+            let mut evaluation = self.evaluate(&rule.condition, state, player, speaker)?;
+            evaluation.matched &= !variants.is_empty();
+            candidates.push(EntryPreview {
+                rule: rule.id.clone(),
+                priority: rule.priority,
+                order: rule.order,
+                topic: rule.topic.clone(),
+                evaluation,
+                variants,
+                unavailable_variants,
+            });
+        }
+        candidates.sort_by_key(|c| (std::cmp::Reverse(c.priority), c.order));
+        Ok(InteractionPreview {
+            profile,
+            candidates,
+        })
+    }
+    /// Links used for selection are validated at publication, but are deliberately not eager
+    /// runtime dependencies: inspecting an NPC must not load every potential conversation.
+    pub fn validate_selection_links(&self) -> Result<()> {
+        for actor in &self.game.actors {
+            if let Some(id) = actor.interaction {
+                self.profile(id)?;
+            }
+        }
+        for profile in &self.game.profiles {
+            for rule in &profile.rules {
+                for variant in &rule.variants {
+                    self.dialogue(variant.dialogue)?;
+                }
+            }
+        }
+        Ok(())
+    }
+}

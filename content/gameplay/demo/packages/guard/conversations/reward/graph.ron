@@ -1,0 +1,11 @@
+(
+    id: "30303030-3030-3030-3030-303030303030", roles: ["player", "speaker"], history_scope: Interaction, repeat: Always,
+    start: "start", nodes: [(id: "start", lines: [
+        (id: "greeting", speaker: "speaker", text: Message((resource: "25252525-2525-2525-2525-252525252525", key: "reward")), arguments: {"player": ActorName("player")}),
+        (id: "answer", speaker: "player", text: Message((resource: "25252525-2525-2525-2525-252525252525", key: "return-key")), arguments: {}),
+    ], choices: [
+        (id: "return-key", text: Message((resource: "25252525-2525-2525-2525-252525252525", key: "return-key")), arguments: {}, repeat: Always, conditions: ["ready"], actions: ["reward"], next: None),
+        (id: "refuse", text: Message((resource: "25252525-2525-2525-2525-252525252525", key: "refuse")), arguments: {}, repeat: Always, conditions: [], actions: [], next: None),
+        (id: "leave", text: Message((resource: "25252525-2525-2525-2525-252525252525", key: "leave")), arguments: {}, repeat: Always, conditions: [], actions: [], next: None),
+    ])],
+)

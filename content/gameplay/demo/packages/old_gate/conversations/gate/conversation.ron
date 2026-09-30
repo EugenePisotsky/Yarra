@@ -1,0 +1,5 @@
+(
+    graph: "packages/old_gate/conversations/gate/graph.ron",
+    bindings: "packages/old_gate/conversations/gate/bindings.ron",
+    resources: ["packages/old_gate/conversations/gate/messages.ron"],
+)

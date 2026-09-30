@@ -1,0 +1,92 @@
+// Authored gameplay data; see docs/WORKFLOWS.md for validation and builds.
+(
+    id: "01010101-0101-0101-0101-010101010101",
+    revision: 1,
+    categories: [(
+        id: "0b0b0b0b-0b0b-0b0b-0b0b-0b0b0b0b0b0b",
+        key: "keys",
+        name: Message((resource: "08080808-0808-0808-0808-080808080808", key: "category-keys")),
+    ), (
+        id: "0c0c0c0c-0c0c-0c0c-0c0c-0c0c0c0c0c0c",
+        key: "weapons",
+        name: Message((resource: "08080808-0808-0808-0808-080808080808", key: "category-weapons")),
+    ), (
+        id: "0d0d0d0d-0d0d-0d0d-0d0d-0d0d0d0d0d0d",
+        key: "armour",
+        name: Message((resource: "08080808-0808-0808-0808-080808080808", key: "category-armour")),
+    ), (
+        id: "0e0e0e0e-0e0e-0e0e-0e0e-0e0e0e0e0e0e",
+        key: "potions",
+        name: Message((resource: "08080808-0808-0808-0808-080808080808", key: "category-potions")),
+    )],
+    items: [(
+        id: "01010101-0101-0101-0101-010101010101",
+        key: "healing_potion",
+        name: Message((resource: "08080808-0808-0808-0808-080808080808", key: "item-healing_potion")),
+        description: Message((resource: "08080808-0808-0808-0808-080808080808", key: "item-healing_potion-description")),
+        category: "0e0e0e0e-0e0e-0e0e-0e0e-0e0e0e0e0e0e",
+        tags: [],
+        icon: None,
+        weight_grams: 250,
+        stack_limit: 10,
+        merchant_sell_price: Some(20),
+        merchant_buy_price: Some(8),
+        permissions: (
+            transferable: true,
+            sellable: true,
+            discardable: true,
+        ),
+        mechanics: (
+            slot: None,
+            modifiers: [],
+            on_use: [Heal(25)],
+        ),
+    ), (
+        id: "02020202-0202-0202-0202-020202020202",
+        key: "iron_sword",
+        name: Message((resource: "08080808-0808-0808-0808-080808080808", key: "item-iron_sword")),
+        description: Message((resource: "08080808-0808-0808-0808-080808080808", key: "item-iron_sword-description")),
+        category: "0c0c0c0c-0c0c-0c0c-0c0c-0c0c0c0c0c0c",
+        tags: [],
+        icon: None,
+        weight_grams: 2000,
+        stack_limit: 1,
+        merchant_sell_price: Some(100),
+        merchant_buy_price: Some(40),
+        permissions: (
+            transferable: true,
+            sellable: true,
+            discardable: true,
+        ),
+        mechanics: (
+            slot: Some("hand"),
+            modifiers: [(
+                attribute: "strength",
+                amount: 2,
+            )],
+            on_use: [],
+        ),
+    ), (
+        id: "03030303-0303-0303-0303-030303030303",
+        key: "old_gate_key",
+        name: Message((resource: "08080808-0808-0808-0808-080808080808", key: "item-old_gate_key")),
+        description: Message((resource: "08080808-0808-0808-0808-080808080808", key: "item-old_gate_key-description")),
+        category: "0b0b0b0b-0b0b-0b0b-0b0b-0b0b0b0b0b0b",
+        tags: ["quest"],
+        icon: None,
+        weight_grams: 50,
+        stack_limit: 1,
+        merchant_sell_price: None,
+        merchant_buy_price: None,
+        permissions: (
+            transferable: true,
+            sellable: false,
+            discardable: false,
+        ),
+        mechanics: (
+            slot: None,
+            modifiers: [],
+            on_use: [],
+        ),
+    )],
+)

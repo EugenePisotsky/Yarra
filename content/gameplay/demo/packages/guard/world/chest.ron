@@ -1,0 +1,6 @@
+(
+    id: "52525252-5252-5252-5252-525252525252",
+    name: Message((resource: "25252525-2525-2525-2525-252525252525", key: "supplies-title")),
+    kind: Container(inventory: "04040404-0404-0404-0404-040404040404"),
+    locked: true,
+)

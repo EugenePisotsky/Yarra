@@ -1,0 +1,9 @@
+(facts: [], conditions: {"ready": Named("23232323-2323-2323-2323-232323232323")}, actions: {
+    "reward": Claim(claim: "40404040-4040-4040-4040-404040404040", actions: [
+        ConsumeItem(definition: "03030303-0303-0303-0303-030303030303", quantity: 1),
+        Quest(quest: "20202020-2020-2020-2020-202020202020", transition: CompleteObjective("deliver")),
+        Quest(quest: "20202020-2020-2020-2020-202020202020", transition: Complete),
+        Relationship(from: Speaker, to: Player, amount: 25),
+        AwardExperience(skill: "persuasion", amount: 10),
+    ]),
+})

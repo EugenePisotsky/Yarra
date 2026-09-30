@@ -1,0 +1,14 @@
+(
+    objects: [],
+    areas: [],
+    triggers: [],
+    claims: [],
+    quests: [], profiles: [], predicates: [],
+    id: "10101010-1010-1010-1010-101010101010",
+    dependencies: [],
+    catalogs: ["packages/core/items.ron"],
+    rules: Some("packages/core/rules.ron"),
+    actors: ["packages/core/actors.ron"],
+    conversations: [],
+    resources: ["packages/core/messages.ron"],
+)

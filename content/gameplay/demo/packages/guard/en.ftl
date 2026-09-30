@@ -1,0 +1,15 @@
+gate-title = The old gate
+gate-objective = Return the gate key
+supplies-title = Supplies for the guard
+supplies-objective = Deliver the supplies
+guard-name = Gate guard
+reward = You found the gate key, { $player }!
+duty = The guard is still waiting.
+welcome-a = Welcome, traveller.
+welcome-b = Good to see you.
+hostile = Make it quick.
+return-key = Here is your key.
+leave = Goodbye.
+gate-topic = About the gate key
+supply-topic = About the supplies
+refuse = I will keep the key for now.

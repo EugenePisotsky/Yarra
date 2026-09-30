@@ -1,0 +1,14 @@
+(
+    objects: [],
+    areas: [],
+    triggers: [],
+    claims: [],
+    quests: [], profiles: [], predicates: [],
+    id: "11111111-1111-1111-1111-111111111111",
+    dependencies: ["10101010-1010-1010-1010-101010101010"],
+    catalogs: [],
+    rules: None,
+    actors: [],
+    conversations: ["packages/old_gate/conversations/gate/conversation.ron"],
+    resources: [],
+)

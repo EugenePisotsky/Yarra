@@ -6,6 +6,17 @@ members = [
     "crates/engine",
     "crates/environment",
     "crates/environment_compile",
+    "crates/game_content",
+    "crates/game_types",
+    "crates/localization",
+    "crates/rules",
+    "crates/quests",
+    "crates/actors",
+    "crates/dialogue",
+    "crates/gameplay",
+    "crates/save",
+    "crates/inventory",
+    "crates/inventory_db",
     "crates/terrain_render",
     "crates/upscaling",
     "crates/vegetation",
@@ -27,6 +38,19 @@ edition = "2024"
 publish = false
 
 [workspace.dependencies]
+game-content = { package = "yarra-game-content", path = "crates/game_content" }
+game-types = { package = "yarra-game-types", path = "crates/game_types" }
+localization = { package = "yarra-localization", path = "crates/localization" }
+quests = { package = "yarra-quests", path = "crates/quests" }
+rules = { package = "yarra-rules", path = "crates/rules" }
+actors = { package = "yarra-actors", path = "crates/actors" }
+dialogue = { package = "yarra-dialogue", path = "crates/dialogue" }
+gameplay = { package = "yarra-gameplay", path = "crates/gameplay" }
+save = { package = "yarra-save", path = "crates/save" }
+fluent-bundle = "0.16"
+fluent-syntax = { version = "0.12", features = ["serde"] }
+unic-langid = "0.9"
+
 anyhow = "1"
 atmosphere = { package = "yarra-atmosphere", path = "crates/atmosphere" }
 bevy = { version = "0.19", default-features = false, features = ["3d", "basis-universal", "ktx2", "png", "ui", "zstd_rust"] }
@@ -39,6 +63,8 @@ engine = { package = "yarra-engine", path = "crates/engine" }
 environment = { package = "yarra-environment", path = "crates/environment" }
 environment-compile = { package = "yarra-environment-compile", path = "crates/environment_compile" }
 glam = "0.32"
+inventory = { package = "yarra-inventory", path = "crates/inventory" }
+inventory-db = { package = "yarra-inventory-db", path = "crates/inventory_db" }
 terrain-render = { package = "yarra-terrain-render", path = "crates/terrain_render" }
 upscaling = { package = "yarra-upscaling", path = "crates/upscaling" }
 vegetation = { package = "yarra-vegetation", path = "crates/vegetation" }
@@ -47,7 +73,7 @@ vegetation-render = { package = "yarra-vegetation-render", path = "crates/vegeta
 world = { package = "yarra-world", path = "crates/world" }
 log = { version = "0.4", features = ["max_level_debug", "release_max_level_warn"] }
 naga = { version = "29", features = ["wgsl-in"] }
-rusqlite = { version = "0.40.1", features = ["bundled"] }
+rusqlite = { version = "0.40.1", features = ["bundled", "backup"] }
 ron = "0.12"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

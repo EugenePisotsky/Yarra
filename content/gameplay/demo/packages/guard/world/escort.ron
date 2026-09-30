@@ -1,0 +1,25 @@
+(
+    id: "54545454-5454-5454-5454-545454545454",
+    participant: "01010101-0101-0101-0101-010101010101",
+    speaker: "02020202-0202-0202-0202-020202020202",
+    activation: Maintained,
+    condition: All([
+        QuestStatus(quest: "20202020-2020-2020-2020-202020202020", status: Active),
+        HasItem(definition: "03030303-0303-0303-0303-030303030303", quantity: 1),
+        InsideArea(area: "53535353-5353-5353-5353-535353535353"),
+    ]),
+    repeat: OnceSucceeded,
+    steps: [
+        Move(actor: Speaker, destination: (millimetres: (1800, 0, 0)), timeout_ms: 10000),
+        Apply([
+            Claim(claim: "40404040-4040-4040-4040-404040404040", actions: [
+                ConsumeItem(definition: "03030303-0303-0303-0303-030303030303", quantity: 1),
+                Quest(quest: "20202020-2020-2020-2020-202020202020", transition: CompleteObjective("deliver")),
+                Quest(quest: "20202020-2020-2020-2020-202020202020", transition: Complete),
+                AwardExperience(skill: "persuasion", amount: 10),
+            ]),
+            SetLocked(object: "51515151-5151-5151-5151-515151515151", locked: false),
+            SetLocked(object: "52525252-5252-5252-5252-525252525252", locked: false),
+        ]),
+    ],
+)

@@ -1,0 +1,8 @@
+(
+    id: "33333333-3333-3333-3333-333333333333", roles: ["player", "speaker"], history_scope: Interaction, repeat: Always,
+    start: "start", nodes: [(id: "start", lines: [
+        (id: "greeting", speaker: "speaker", text: Message((resource: "25252525-2525-2525-2525-252525252525", key: "welcome-b")), arguments: {}),
+    ], choices: [
+        (id: "leave", text: Message((resource: "25252525-2525-2525-2525-252525252525", key: "leave")), arguments: {}, repeat: Always, conditions: [], actions: [], next: None),
+    ])],
+)

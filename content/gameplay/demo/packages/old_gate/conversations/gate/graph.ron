@@ -1,0 +1,19 @@
+(
+    id: "01010101-0101-0101-0101-010101010101",
+    roles: ["player", "speaker"],
+    history_scope: Interaction,
+    repeat: OnceCompleted,
+    start: "gate",
+    nodes: [(
+        id: "gate",
+        lines: [(id: "greeting", speaker: "speaker", text: Message((resource: "09090909-0909-0909-0909-090909090909", key: "greeting")), arguments: {})],
+        choices: [(
+            id: "return-key",
+            text: Message((resource: "09090909-0909-0909-0909-090909090909", key: "return-key")),
+            arguments: {}, repeat: OnceEver,
+            conditions: ["has-key", "not-rewarded"],
+            actions: ["consume-key", "persuade"],
+            next: None,
+        )],
+    )],
+)

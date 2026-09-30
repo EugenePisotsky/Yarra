@@ -1,0 +1,11 @@
+// Authored gameplay data; see docs/WORKFLOWS.md for validation and builds.
+[(
+    interaction: None,
+    id: "01010101-0101-0101-0101-010101010101",
+    name: Message((resource: "08080808-0808-0808-0808-080808080808", key: "actor-traveller")),
+    base: {
+        "max-health": 100,
+        "strength": 10,
+        "wisdom": 10,
+    },
+)]

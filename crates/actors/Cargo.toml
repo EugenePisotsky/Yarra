@@ -1,0 +1,10 @@
+[package]
+name = "yarra-actors"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+game-types.workspace = true
+rules.workspace = true
+serde.workspace = true

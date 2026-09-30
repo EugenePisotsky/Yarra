@@ -1,0 +1,418 @@
+use crate::{InteractionProfile, NamedPredicate, Participant, Result};
+use actors::ActorTemplate;
+use dialogue::Dialogue;
+use game_types::*;
+use inventory::ItemCatalog;
+use rules::Rules;
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Condition {
+    InsideArea {
+        area: AreaId,
+    },
+    History {
+        dialogue: DialogueId,
+        event: dialogue::HistoryEvent,
+        minimum: u64,
+    },
+    Claimed {
+        claim: ClaimId,
+        value: bool,
+    },
+    All(Vec<Condition>),
+    Any(Vec<Condition>),
+    Not(Box<Condition>),
+    Named(PredicateId),
+    QuestStatus {
+        quest: QuestId,
+        status: quests::Status,
+    },
+    ObjectiveCompleted {
+        quest: QuestId,
+        objective: Key,
+    },
+    Relationship {
+        from: Participant,
+        to: Participant,
+        minimum: i16,
+    },
+    HasItem {
+        definition: ItemDefinitionId,
+        quantity: u32,
+    },
+    Fact {
+        key: Key,
+        value: bool,
+    },
+    SkillExperience {
+        skill: Key,
+        minimum: u64,
+    },
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Action {
+    SetLocked {
+        object: ObjectId,
+        locked: bool,
+    },
+    Claim {
+        claim: ClaimId,
+        actions: Vec<Action>,
+    },
+    Quest {
+        quest: QuestId,
+        transition: quests::Transition,
+    },
+    Relationship {
+        from: Participant,
+        to: Participant,
+        amount: i16,
+    },
+    ConsumeItem {
+        definition: ItemDefinitionId,
+        quantity: u32,
+    },
+    GrantItem {
+        definition: ItemDefinitionId,
+        quantity: u32,
+    },
+    AwardExperience {
+        skill: Key,
+        amount: u64,
+    },
+    SetFact {
+        key: Key,
+        value: bool,
+    },
+    /// A failed roll is an accepted outcome, with its own effects. Invalid effects
+    /// reject the entire command, restoring random state along with domain state.
+    SkillCheck {
+        skill: Key,
+        difficulty: u32,
+        success: Vec<Action>,
+        failure: Vec<Action>,
+    },
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContentManifest {
+    pub id: ContentId,
+    pub revision: u64,
+    /// Immutable world publication identifier supplied by the composition layer.
+    pub world_generation: String,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GameDefinitions {
+    pub world: crate::WorldDefinitions,
+    pub dialogue_contracts: Vec<dialogue::DialogueContract>,
+    pub claims: Vec<dialogue::ClaimDefinition>,
+    pub quests: Vec<quests::Quest>,
+    pub profiles: Vec<InteractionProfile>,
+    pub predicates: Vec<NamedPredicate>,
+    pub rules: Rules,
+    pub actors: Vec<ActorTemplate>,
+    pub dialogues: Vec<Dialogue>,
+    pub facts: BTreeSet<Key>,
+    #[serde(deserialize_with = "game_types::deserialize_unique_map")]
+    pub conditions: BTreeMap<BindingId, Condition>,
+    #[serde(deserialize_with = "game_types::deserialize_unique_map")]
+    pub actions: BTreeMap<BindingId, Action>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GameContent {
+    pub text: Vec<TextContract>,
+    pub manifest: ContentManifest,
+    pub items: ItemCatalog,
+    pub game: GameDefinitions,
+}
+impl GameContent {
+    pub fn validate(&self) -> Result<()> {
+        require(
+            self.manifest.revision > 0
+                && !self.manifest.world_generation.is_empty()
+                && self.manifest.world_generation.len() <= 256,
+            "invalid content manifest",
+        )?;
+        let mut text_ids = BTreeSet::new();
+        for contract in &self.text {
+            contract.validate()?;
+            require(text_ids.insert(contract.id), "duplicate text resource")?;
+        }
+        require(self.text.len() <= 2048, "too many text resources")?;
+        let contracts: BTreeMap<_, _> = self.text.iter().map(|c| (c.id, c)).collect();
+        fn visit_text(
+            id: TextResourceId,
+            contracts: &BTreeMap<TextResourceId, &TextContract>,
+            active: &mut BTreeSet<TextResourceId>,
+            visited: &mut BTreeSet<TextResourceId>,
+        ) -> Result<()> {
+            require(!active.contains(&id), "text import cycle")?;
+            if visited.contains(&id) {
+                return Ok(());
+            }
+            require(active.len() < 256, "text import depth exceeds limit")?;
+            let contract = contracts
+                .get(&id)
+                .ok_or_else(|| Invalid("unknown text import".into()))?;
+            active.insert(id);
+            for import in &contract.imports {
+                visit_text(*import, contracts, active, visited)?;
+            }
+            active.remove(&id);
+            visited.insert(id);
+            Ok(())
+        }
+        let mut visited = BTreeSet::new();
+        for id in contracts.keys() {
+            visit_text(*id, &contracts, &mut BTreeSet::new(), &mut visited)?;
+        }
+        self.validate_world()?;
+        self.items.validate()?;
+        self.game.rules.validate()?;
+        require(
+            self.game.actors.len() <= 10000
+                && self.game.dialogues.len() <= 1000
+                && self.game.facts.len() <= 10000
+                && self.game.conditions.len() <= 10000
+                && self.game.actions.len() <= 10000,
+            "content exceeds limits",
+        )?;
+        for item in &self.items.items {
+            self.game.rules.validate_mechanics(&item.mechanics)?;
+        }
+        let mut actors = BTreeSet::new();
+        for actor in &self.game.actors {
+            require(actors.insert(actor.id), "duplicate actor template")?;
+            actor.validate(&self.game.rules)?;
+        }
+        let mut contracts = BTreeSet::new();
+        require(
+            self.game.dialogue_contracts.len() <= 1000 && self.game.claims.len() <= 10000,
+            "dialogue declaration limit",
+        )?;
+        for contract in &self.game.dialogue_contracts {
+            contract.validate()?;
+            require(contracts.insert(contract.id), "duplicate dialogue contract")?;
+        }
+        let mut claims = BTreeSet::new();
+        for claim in &self.game.claims {
+            require(claims.insert(claim.id), "duplicate claim definition")?;
+        }
+        let mut graphs = BTreeSet::new();
+        for graph in &self.game.dialogues {
+            require(graphs.insert(graph.id), "duplicate dialogue")?;
+            graph.validate()?;
+            require(
+                self.dialogue_contract(graph.id)? == &graph.contract(),
+                "dialogue contract mismatch",
+            )?;
+            self.validate_dialogue_text(graph)?;
+            for node in &graph.nodes {
+                for choice in &node.choices {
+                    for condition in &choice.conditions {
+                        require(
+                            self.game
+                                .conditions
+                                .contains_key(&BindingId::new(graph.id, condition.clone())),
+                            &format!(
+                                "unknown dialogue condition {} in dialogue {} choice {}",
+                                condition.as_str(),
+                                graph.id,
+                                choice.id.as_str()
+                            ),
+                        )?;
+                    }
+                    for action in &choice.actions {
+                        require(
+                            self.game
+                                .actions
+                                .contains_key(&BindingId::new(graph.id, action.clone())),
+                            &format!(
+                                "unknown dialogue action {} in dialogue {} choice {}",
+                                action.as_str(),
+                                graph.id,
+                                choice.id.as_str()
+                            ),
+                        )?;
+                    }
+                }
+            }
+        }
+        let mut quests = BTreeSet::new();
+        let mut profiles = BTreeSet::new();
+        let mut predicates = BTreeSet::new();
+        require(
+            self.game.quests.len() <= 10000
+                && self.game.profiles.len() <= 10000
+                && self.game.predicates.len() <= 10000,
+            "narrative content exceeds limits",
+        )?;
+        for quest in &self.game.quests {
+            require(quests.insert(quest.id), "duplicate quest")?;
+            quest.validate()?;
+        }
+        for rule in &self.game.predicates {
+            require(predicates.insert(rule.id), "duplicate named predicate")?;
+            self.validate_condition(&rule.condition)?;
+        }
+        for profile in &self.game.profiles {
+            require(profiles.insert(profile.id), "duplicate interaction profile")?;
+            profile.validate()?;
+            for rule in &profile.rules {
+                self.validate_condition(&rule.condition)?;
+            }
+        }
+        for condition in self.game.conditions.values() {
+            self.validate_condition(condition)?;
+        }
+        for action in self.game.actions.values() {
+            let mut budget = 1024;
+            self.validate_action(action, 0, &mut budget)?;
+        }
+        Ok(())
+    }
+    pub(crate) fn validate_action(
+        &self,
+        action: &Action,
+        depth: usize,
+        budget: &mut usize,
+    ) -> Result<()> {
+        require(
+            depth <= 8 && *budget > 0,
+            "dialogue action complexity exceeded",
+        )?;
+        *budget -= 1;
+        match action {
+            Action::SetLocked { object, .. } => {
+                self.object(*object)?;
+            }
+            Action::Claim { claim, actions } => {
+                self.claim(*claim)?;
+                require(!actions.is_empty(), "empty claimed action group")?;
+                for action in actions {
+                    self.validate_action(action, depth + 1, budget)?;
+                }
+            }
+            Action::Quest { quest, transition } => {
+                let q = self.quest(*quest)?;
+                if let quests::Transition::CompleteObjective(id) = transition {
+                    q.objective(id)?;
+                }
+            }
+            Action::Relationship { from, to, .. } => {
+                require(from != to, "relationship needs two roles")?
+            }
+            Action::GrantItem {
+                definition,
+                quantity,
+            }
+            | Action::ConsumeItem {
+                definition,
+                quantity,
+            } => {
+                self.items.item(*definition)?;
+                require(*quantity > 0, "zero item action")?;
+            }
+            Action::AwardExperience { skill, amount } => {
+                self.game.rules.skill(skill)?;
+                require(*amount > 0, "zero XP reward")?;
+            }
+            Action::SetFact { key, .. } => require(self.game.facts.contains(key), "unknown fact")?,
+            Action::SkillCheck {
+                skill,
+                difficulty,
+                success,
+                failure,
+            } => {
+                self.game.rules.skill(skill)?;
+                require(*difficulty > 0, "zero check difficulty")?;
+                for action in success.iter().chain(failure) {
+                    self.validate_action(action, depth + 1, budget)?;
+                }
+            }
+        }
+        Ok(())
+    }
+    pub fn dialogue(&self, id: DialogueId) -> Result<&Dialogue> {
+        self.game
+            .dialogues
+            .iter()
+            .find(|d| d.id == id)
+            .ok_or_else(|| Invalid("unknown dialogue".into()).into())
+    }
+    /// Stable fingerprint of definitions, rules and world binding; excludes .ftl resources.
+    pub fn fingerprint(&self) -> Result<[u8; 32]> {
+        self.validate()?;
+        self.validate_selection_links()?;
+        let mut canonical = self.clone();
+        canonical.game.world.objects.sort_by_key(|v| v.id);
+        canonical.game.world.areas.sort_by_key(|v| v.id);
+        canonical.game.world.triggers.sort_by_key(|v| v.id);
+        canonical.text.sort_by_key(|t| t.id);
+        canonical.items.categories.sort_by_key(|v| v.id);
+        canonical.items.items.sort_by_key(|v| v.id);
+        canonical.game.dialogue_contracts.sort_by_key(|v| v.id);
+        canonical.game.claims.sort_by_key(|v| v.id);
+        canonical.game.quests.sort_by_key(|v| v.id);
+        canonical.game.profiles.sort_by_key(|v| v.id);
+        canonical.game.predicates.sort_by_key(|v| v.id);
+        canonical.game.actors.sort_by_key(|v| v.id);
+        canonical.game.dialogues.sort_by_key(|v| v.id);
+        let bytes = serde_json::to_vec(&canonical).map_err(|e| Invalid(e.to_string()))?;
+        Ok(*blake3::hash(&bytes).as_bytes())
+    }
+    pub fn text_keys(&self) -> Vec<&MessageRef> {
+        let mut refs: Vec<&TextRef> = self.items.categories.iter().map(|c| &c.name).collect();
+        for item in &self.items.items {
+            refs.extend([&item.name, &item.description]);
+        }
+        refs.extend(self.game.world.objects.iter().map(|o| &o.name));
+        refs.extend(self.game.actors.iter().map(|a| &a.name));
+        refs.extend(self.game.rules.attributes.iter().map(|a| &a.name));
+        refs.extend(self.game.rules.skills.iter().map(|s| &s.name));
+        for quest in &self.game.quests {
+            refs.push(&quest.title);
+            refs.extend(quest.objectives.iter().map(|o| &o.title));
+        }
+        for profile in &self.game.profiles {
+            refs.extend(profile.rules.iter().filter_map(|r| r.topic.as_ref()));
+        }
+        for graph in &self.game.dialogues {
+            for node in &graph.nodes {
+                for line in &node.lines {
+                    refs.push(&line.text);
+                    refs.extend(line.arguments.values().filter_map(|a| {
+                        if let dialogue::ArgumentSource::Text(t) = a {
+                            Some(t)
+                        } else {
+                            None
+                        }
+                    }));
+                }
+                for choice in &node.choices {
+                    refs.extend(choice.arguments.values().filter_map(|a| {
+                        if let dialogue::ArgumentSource::Text(t) = a {
+                            Some(t)
+                        } else {
+                            None
+                        }
+                    }));
+                }
+                refs.extend(node.choices.iter().map(|c| &c.text));
+            }
+        }
+        refs.into_iter()
+            .filter_map(|r| {
+                if let TextRef::Message(k) = r {
+                    Some(k)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+}
