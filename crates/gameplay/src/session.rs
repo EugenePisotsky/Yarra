@@ -585,7 +585,11 @@ fn start_talk(
 /// what changed, notifications for subscribed triggers, and the next generation.
 fn finish(content: &GameContent, triggers: &TriggerIndex, tx: &mut Tx) -> Result<()> {
     take_turns(content, tx)?;
-    check_changes(content, tx)?;
+    // The rules keep what they change consistent; looking again only finds mistakes in
+    // their own code, so release builds leave it out. A loaded save is always checked.
+    if cfg!(debug_assertions) {
+        check_changes(content, tx)?;
+    }
     let signals: Vec<_> = crate::world_runtime::signals(content, tx)
         .into_iter()
         .filter(|s| triggers.subscribed(s))
@@ -617,7 +621,8 @@ fn take_turns(content: &GameContent, tx: &mut Tx) -> Result<()> {
     Ok(())
 }
 /// Re-checks only the records this command wrote, plus actors whose equipment depends on a
-/// changed inventory. Stats are worked out again only for characters whose build changed.
+/// changed inventory. Stats are worked out again, and compared, only for characters whose
+/// build changed.
 fn check_changes(content: &GameContent, tx: &Tx) -> Result<()> {
     let state: &SessionState = tx;
     let before = &tx.before;

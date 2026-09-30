@@ -89,7 +89,7 @@ Two decisions shape the runtime:
 
 [`GameSession::apply`](../crates/gameplay/src/session.rs) accepts a command as a whole or leaves state, clock and both random streams untouched. It runs the command against a [`Tx`](../crates/gameplay/src/tx.rs): every write first remembers the record it replaces. A rejected command is undone from that journal; an accepted one uses it to
 
-- re-check only the records it wrote (plus actors whose equipment depends on a changed inventory);
+- in debug builds, re-check the records it wrote (plus actors whose equipment depends on a changed inventory), which only finds mistakes in the rules' own code; release builds leave it out;
 - derive notifications (item acquired, quest changed, area entered…) and queue those a trigger subscribes to.
 
 New items take identities from the inventory that makes them: its own identity and how many entries it has made before, a count kept in the inventory record. A replay after loading makes the same items, and an undone command gives the numbers back with the rest of the record.
