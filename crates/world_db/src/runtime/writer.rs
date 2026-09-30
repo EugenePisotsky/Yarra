@@ -50,14 +50,15 @@ fn write_runtime_header(
     transaction.execute(
         "INSERT INTO runtime_metadata( \
             singleton, schema_version, generation_id, content_hash, header_hash, \
-            default_world_space_id, start_view \
-         ) VALUES (1, ?1, ?2, ?3, ?3, ?4, ?5)",
+            default_world_space_id, start_view, gameplay_areas \
+         ) VALUES (1, ?1, ?2, ?3, ?3, ?4, ?5, ?6)",
         params![
             manifest.schema_version,
             manifest.generation_id,
             manifest.content_hash.as_slice(),
             manifest.default_world_space.0,
-            crate::storage::encode_start_view(manifest.start_view.as_ref())?
+            crate::storage::encode_start_view(manifest.start_view.as_ref())?,
+            crate::gameplay_areas::encode(&manifest.gameplay_areas)?
         ],
     )?;
     write_vegetation_catalog(transaction, manifest.vegetation_catalog.as_ref())?;
@@ -272,6 +273,14 @@ impl RuntimeCookWriter {
         self.connection.execute(
             "UPDATE runtime_metadata SET start_view=?1 WHERE singleton=1",
             [crate::storage::encode_start_view(view)?],
+        )?;
+        Ok(())
+    }
+    /// Replaces the gameplay areas of a continued publication; they are not part of any hash.
+    pub fn set_gameplay_areas(&self, areas: &[world::GameplayArea]) -> Result<(), WorldDbError> {
+        self.connection.execute(
+            "UPDATE runtime_metadata SET gameplay_areas=?1 WHERE singleton=1",
+            [crate::gameplay_areas::encode(areas)?],
         )?;
         Ok(())
     }

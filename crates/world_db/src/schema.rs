@@ -31,6 +31,15 @@ CREATE TABLE project_settings (
     start_view BLOB CHECK(start_view IS NULL OR length(start_view) BETWEEN 1 AND 65536)
 ) STRICT;
 
+-- Named places gameplay reacts to (an encoded GameplayArea list). One record for the whole
+-- project: names are global and the set is small enough to write whole.
+CREATE TABLE gameplay_areas (
+    singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+    revision INTEGER NOT NULL CHECK(revision > 0),
+    payload BLOB NOT NULL CHECK(length(payload) BETWEEN 1 AND 4194304)
+) STRICT;
+INSERT INTO gameplay_areas VALUES (1, 1, x'00');
+
 CREATE TABLE source_cells (
     world_space_id INTEGER NOT NULL REFERENCES world_spaces(id),
     cell_x INTEGER NOT NULL,
@@ -293,7 +302,7 @@ CREATE TABLE road_junction_cells (
 ) STRICT;
 CREATE INDEX road_junction_cells_id ON road_junction_cells(junction_id);
 
-PRAGMA user_version = 26;
+PRAGMA user_version = 27;
 "#;
 
 pub const RUNTIME_SCHEMA: &str = r#"
@@ -321,7 +330,9 @@ CREATE TABLE runtime_metadata (
     default_world_space_id INTEGER NOT NULL REFERENCES world_spaces(id),
     -- Where play starts without an explicit start view. Not part of the content hash: moving
     -- the start never recooks the world.
-    start_view BLOB CHECK(start_view IS NULL OR length(start_view) BETWEEN 1 AND 65536)
+    start_view BLOB CHECK(start_view IS NULL OR length(start_view) BETWEEN 1 AND 65536),
+    -- Named places gameplay reacts to (an encoded GameplayArea list), also outside the hash.
+    gameplay_areas BLOB NOT NULL CHECK(length(gameplay_areas) BETWEEN 1 AND 4194304)
 ) STRICT;
 
 CREATE TABLE vegetation_catalog (
@@ -533,5 +544,5 @@ CREATE TABLE terrain_cores (
     PRIMARY KEY(world_space_id,level,node_x,node_z),
     FOREIGN KEY(world_space_id,level,node_x,node_z) REFERENCES terrain_nodes(world_space_id,level,node_x,node_z)
 ) STRICT, WITHOUT ROWID;
-PRAGMA user_version = 25;
+PRAGMA user_version = 26;
 "#;

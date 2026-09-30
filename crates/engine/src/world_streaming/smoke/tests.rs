@@ -102,6 +102,7 @@ fn opt_in_smoke_transitions_after_streaming_and_emits_success_only_once() {
                 default_world_space: WorldSpaceId(1),
                 vegetation_catalog: None,
                 start_view: None,
+                gameplay_areas: Default::default(),
                 world_spaces: catalog
                     .world_spaces
                     .iter()

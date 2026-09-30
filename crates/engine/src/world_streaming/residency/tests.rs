@@ -89,6 +89,7 @@ fn attachment_app(resident_bytes: u64) -> App {
                 world_spaces: vec![space(8.)],
                 vegetation_catalog: None,
                 start_view: None,
+                gameplay_areas: Default::default(),
             }),
             ..default()
         })

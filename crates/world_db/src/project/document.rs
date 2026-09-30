@@ -59,6 +59,7 @@ fn write_project_document(
             crate::storage::encode_start_view(document.start_view.as_ref())?
         ],
     )?;
+    crate::gameplay_areas::store(transaction, 1, &document.gameplay_areas)?;
     write_vegetation_catalog(transaction, document.vegetation_catalog.as_ref())?;
     for cell in &document.cells {
         transaction.execute(
@@ -180,6 +181,7 @@ pub fn read_project_database(path: &Path) -> Result<ProjectDocument, WorldDbErro
         |row| Ok((WorldSpaceId(row.get(0)?), row.get::<_, Option<Vec<u8>>>(1)?)),
     )?;
     let start_view = crate::storage::decode_start_view(start_view)?;
+    let gameplay_areas = crate::gameplay_areas::read(&connection)?.areas;
     let vegetation_catalog = read_vegetation_catalog(&connection)?;
     let mut statement = connection.prepare(
         "SELECT world_space_id, cell_x, cell_z, height, source_revision \
@@ -257,6 +259,7 @@ pub fn read_project_database(path: &Path) -> Result<ProjectDocument, WorldDbErro
     Ok(ProjectDocument {
         default_world_space,
         start_view,
+        gameplay_areas,
         world_spaces,
         vegetation_catalog,
         cells,

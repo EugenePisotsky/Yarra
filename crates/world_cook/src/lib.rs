@@ -802,6 +802,8 @@ fn build_compiled_runtime(
             vegetation_catalog: environment.catalog,
             // Not hashed: moving the start never recooks the world.
             start_view: project.start_view,
+            // Not hashed either: repainting an area never recooks the world.
+            gameplay_areas: project.gameplay_areas,
         },
         cells,
         pages,
@@ -1236,6 +1238,7 @@ fn demo_project_document() -> ProjectDocument {
     ProjectDocument {
         default_world_space: overworld.id,
         start_view: None,
+        gameplay_areas: Default::default(),
         world_spaces: vec![overworld, interior],
         vegetation_catalog: Some(vegetation::fixtures::reference_catalog()),
         cells,

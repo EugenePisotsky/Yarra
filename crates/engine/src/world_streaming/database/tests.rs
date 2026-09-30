@@ -31,6 +31,7 @@ impl EmptyRuntime {
                     }],
                     vegetation_catalog: None,
                     start_view: None,
+                    gameplay_areas: Default::default(),
                 },
                 cells: vec![],
                 pages: vec![],

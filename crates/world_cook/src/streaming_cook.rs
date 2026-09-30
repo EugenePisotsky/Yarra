@@ -265,6 +265,7 @@ fn continue_publication(
     }
     // Outside the header hash, so a moved start does not recook anything.
     writer.set_start_view(header.manifest.start_view.as_ref())?;
+    writer.set_gameplay_areas(&header.manifest.gameplay_areas)?;
     Ok(Some(writer))
 }
 
@@ -410,6 +411,37 @@ mod tests {
         let fresh = RuntimeReader::open_immutable(&fixture.runtime()).unwrap();
         assert_eq!(fresh.manifest().default_world_space().atmosphere, profile);
         assert_eq!(old.manifest().generation_id, first.manifest.generation_id);
+    }
+
+    #[test]
+    fn repainting_an_area_reaches_the_runtime_without_recooking_a_cell() {
+        let fixture = Fixture::new(&terrain_fixture::mountain_project(1));
+        let first = cook_project_with_report(&fixture.source(), &fixture.runtime()).unwrap();
+        assert!(first.manifest.gameplay_areas.is_empty());
+        let areas = [world::GameplayArea {
+            name: "camp/fire".into(),
+            space: first.manifest.default_world_space,
+            points: vec![[0., 0.], [6., 0.], [6., 6.]],
+            height: None,
+        }];
+        assert!(matches!(
+            ProjectWriter::open(&fixture.source())
+                .unwrap()
+                .write_gameplay_areas(1, &areas)
+                .unwrap(),
+            world_db::GameplayAreasWriteResult::Committed(_)
+        ));
+        let second = cook_project_with_report(&fixture.source(), &fixture.runtime()).unwrap();
+        assert!(second.stats.incremental);
+        assert_eq!(second.stats.terrain_cells, 0);
+        assert_eq!(second.manifest.content_hash, first.manifest.content_hash);
+        let reader = RuntimeReader::open_immutable(&fixture.runtime()).unwrap();
+        assert_eq!(&*reader.manifest().gameplay_areas, &areas[..]);
+        // A cook from scratch carries them too.
+        let full = fixture.dir.join("full.sqlite");
+        cook_project_fresh(&fixture.source(), &full, None).unwrap();
+        let reader = RuntimeReader::open_immutable(&full).unwrap();
+        assert_eq!(&*reader.manifest().gameplay_areas, &areas[..]);
     }
 
     fn assert_pages(reference: &RuntimeBuild, reader: &RuntimeReader) {

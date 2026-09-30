@@ -289,8 +289,9 @@ pub(crate) fn read_runtime_manifest(
 ) -> Result<RuntimeManifest, WorldDbError> {
     let world_spaces = query_world_spaces(connection)?;
     let vegetation_catalog = read_vegetation_catalog(connection)?;
-    let (mut manifest, start_view) = connection.query_row(
-        "SELECT schema_version, generation_id, content_hash, default_world_space_id, start_view \
+    let (mut manifest, start_view, gameplay_areas) = connection.query_row(
+        "SELECT schema_version, generation_id, content_hash, default_world_space_id, start_view, \
+                gameplay_areas \
          FROM runtime_metadata WHERE singleton = 1",
         [],
         |row| {
@@ -303,12 +304,15 @@ pub(crate) fn read_runtime_manifest(
                     world_spaces,
                     vegetation_catalog,
                     start_view: None,
+                    gameplay_areas: Default::default(),
                 },
                 row.get::<_, Option<Vec<u8>>>(4)?,
+                row.get::<_, Vec<u8>>(5)?,
             ))
         },
     )?;
     manifest.start_view = crate::storage::decode_start_view(start_view)?;
+    manifest.gameplay_areas = crate::gameplay_areas::decode(&gameplay_areas)?;
     if manifest.world_space(manifest.default_world_space).is_none() {
         return Err(WorldDbError::UnknownDefaultWorldSpace(
             manifest.default_world_space,

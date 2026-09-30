@@ -10,6 +10,8 @@ mod terrain_preview;
 pub use terrain_preview::TerrainPreviewProducts;
 mod view_bookmark;
 pub use view_bookmark::WorldViewBookmark;
+mod gameplay_area;
+pub use gameplay_area::*;
 
 use std::{error::Error, fmt};
 
@@ -23,8 +25,8 @@ pub const DEFAULT_RUNTIME_DATABASE: &str = "generated/world.runtime.sqlite";
 
 pub const DEFAULT_CELL_SIZE: f32 = 32.0;
 pub const MAX_DECODED_PAGE_BYTES: u64 = 64 * 1024 * 1024;
-pub const PROJECT_SCHEMA_VERSION: i64 = 26;
-pub const RUNTIME_SCHEMA_VERSION: i64 = 25;
+pub const PROJECT_SCHEMA_VERSION: i64 = 27;
+pub const RUNTIME_SCHEMA_VERSION: i64 = 26;
 pub const PAGE_PAYLOAD_VERSION: u16 = 9;
 pub const MAX_TERRAIN_SURFACES_PER_CELL: usize = 8;
 pub const MAX_TERRAIN_WEIGHT_PAGES: usize = 2;

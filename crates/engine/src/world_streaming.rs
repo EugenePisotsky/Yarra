@@ -219,6 +219,39 @@ impl WorldOrigin {
     pub fn cell(&self) -> CellCoord {
         self.cell
     }
+
+    fn offset(&self, catalog: &WorldCatalog) -> Option<(WorldSpaceId, [f64; 2])> {
+        let space = self.space?;
+        let size = catalog.world_space(space)?.cell_size;
+        Some((space, self.cell.origin(size)))
+    }
+
+    /// The world position of a render-space one, once a world is open.
+    pub fn to_world(
+        &self,
+        catalog: &WorldCatalog,
+        render: Vec3,
+    ) -> Option<(WorldSpaceId, [f64; 3])> {
+        let (space, [x, z]) = self.offset(catalog)?;
+        Some((
+            space,
+            [
+                f64::from(render.x) + x,
+                f64::from(render.y),
+                f64::from(render.z) + z,
+            ],
+        ))
+    }
+
+    /// Where a world position of the current space is in render space.
+    pub fn to_render(&self, catalog: &WorldCatalog, world: [f64; 3]) -> Option<Vec3> {
+        let (_, [x, z]) = self.offset(catalog)?;
+        Some(Vec3::new(
+            (world[0] - x) as f32,
+            world[1] as f32,
+            (world[2] - z) as f32,
+        ))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -238,6 +271,7 @@ pub struct WorldCatalog {
     default_world_space: Option<WorldSpaceId>,
     world_spaces: Vec<WorldSpaceInfo>,
     vegetation: Option<VegetationCatalog>,
+    gameplay_areas: world::GameplayAreaIndex,
 }
 
 /// Explicit handshake for replacing the streamer's immutable SQLite snapshot.
@@ -303,6 +337,11 @@ impl WorldCatalog {
 
     pub fn vegetation(&self) -> Option<&VegetationCatalog> {
         self.vegetation.as_ref()
+    }
+
+    /// The named places gameplay reacts to, published with the world.
+    pub fn gameplay_areas(&self) -> &world::GameplayAreaIndex {
+        &self.gameplay_areas
     }
 }
 
@@ -490,6 +529,8 @@ fn receive_database_results(
                         })
                         .collect();
                     catalog.vegetation = manifest.vegetation_catalog.clone();
+                    catalog.gameplay_areas =
+                        world::GameplayAreaIndex::new(manifest.gameplay_areas.clone());
                     if viewpoint.position.is_none() {
                         // An explicit start view wins; otherwise play starts where the
                         // world says.
@@ -623,6 +664,7 @@ fn adopt_runtime_manifest(
         })
         .collect();
     catalog.vegetation = manifest.vegetation_catalog.clone();
+    catalog.gameplay_areas = world::GameplayAreaIndex::new(manifest.gameplay_areas.clone());
     if viewpoint
         .position
         .is_none_or(|position| position.space != active)
@@ -1099,6 +1141,7 @@ pub(crate) fn test_world_resources(
                 sea_level: None,
             }],
             vegetation,
+            gameplay_areas: default(),
         },
         WorldOrigin {
             space: Some(space),
@@ -1127,6 +1170,21 @@ impl ActiveWorldSpace {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn world_and_render_positions_convert_through_the_origin_cell() {
+        // 16 m cells, so the render origin sits at world (32, -16).
+        let (catalog, origin) =
+            test_world_resources(WorldSpaceId(7), CellCoord { x: 2, z: -1 }, None);
+        let render = Vec3::new(1.0, 5.0, 2.0);
+        let (space, world) = origin.to_world(&catalog, render).unwrap();
+        assert_eq!((space, world), (WorldSpaceId(7), [33.0, 5.0, -14.0]));
+        assert_eq!(origin.to_render(&catalog, world), Some(render));
+        // Before a world is open there is nothing to convert against.
+        let unopened = WorldOrigin::default();
+        assert!(unopened.to_world(&catalog, render).is_none());
+        assert!(origin.to_render(&WorldCatalog::default(), world).is_none());
+    }
 
     #[test]
     fn resident_terrain_sampling_converts_from_rebased_render_space() {

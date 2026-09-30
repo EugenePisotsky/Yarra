@@ -30,6 +30,13 @@ fn project_and_runtime_databases_are_distinct_and_readable() {
             fog_visibility: 20_000.,
             route: Vec::new(),
         }),
+        gameplay_areas: vec![world::GameplayArea {
+            name: "camp/fire".into(),
+            space: space.id,
+            points: vec![[0., 0.], [6., 0.], [6., 6.5]],
+            height: Some([-1., 4.]),
+        }]
+        .into(),
         world_spaces: vec![space.clone()],
         vegetation_catalog: Some(vegetation_catalog.clone()),
         cells: vec![SourceCellRecord {
@@ -56,6 +63,7 @@ fn project_and_runtime_databases_are_distinct_and_readable() {
     let read_project = read_project_database(&project_path).unwrap();
     assert_eq!(read_project.default_world_space, space.id);
     assert_eq!(read_project.start_view, project.start_view);
+    assert_eq!(read_project.gameplay_areas, project.gameplay_areas);
     assert_eq!(read_project.cells.len(), 1);
     assert_eq!(
         read_project
@@ -116,6 +124,7 @@ fn project_and_runtime_databases_are_distinct_and_readable() {
             world_spaces: vec![space],
             vegetation_catalog: Some(vegetation_catalog.clone()),
             start_view: project.start_view.clone(),
+            gameplay_areas: project.gameplay_areas.clone(),
         },
         cells: Vec::new(),
         pages: Vec::new(),
@@ -133,6 +142,7 @@ fn project_and_runtime_databases_are_distinct_and_readable() {
     let reader = RuntimeReader::open_immutable(&runtime_path).unwrap();
     assert_eq!(reader.manifest().generation_id, "test-generation");
     assert_eq!(reader.manifest().start_view, project.start_view);
+    assert_eq!(reader.manifest().gameplay_areas, project.gameplay_areas);
     assert_eq!(
         reader
             .manifest()

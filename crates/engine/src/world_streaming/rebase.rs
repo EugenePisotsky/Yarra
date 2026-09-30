@@ -118,6 +118,7 @@ mod tests {
                     default_world_space: space,
                     vegetation_catalog: None,
                     start_view: None,
+                    gameplay_areas: Default::default(),
                     world_spaces: vec![world_db::WorldSpaceRecord {
                         atmosphere: Default::default(),
                         atmosphere_revision: 1,

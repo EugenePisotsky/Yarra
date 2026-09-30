@@ -58,6 +58,7 @@ impl ProjectCookSnapshot {
         let catalog = ProjectDocument {
             default_world_space,
             start_view: crate::storage::decode_start_view(start_view)?,
+            gameplay_areas: crate::gameplay_areas::read(&connection)?.areas,
             world_spaces: query_world_spaces(&connection)?,
             vegetation_catalog: read_vegetation_catalog(&connection)?,
             terrain_surfaces: query_all_terrain_surfaces(&connection)?,
@@ -330,6 +331,7 @@ fn check_catalog_budget(c: &Connection) -> Result<(), WorldDbError> {
             "length(CAST(name AS BLOB))+length(atmosphere)",
         ),
         ("vegetation_catalog", "length(payload)"),
+        ("gameplay_areas", "length(payload)"),
         (
             "terrain_surfaces",
             "length(CAST(surface_key AS BLOB))+length(CAST(display_name AS BLOB))",

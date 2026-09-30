@@ -196,6 +196,14 @@ mod tests {
             }],
             vegetation_catalog: None,
             start_view: None,
+            // One area named after the generation, to see which set the catalog holds.
+            gameplay_areas: vec![world::GameplayArea {
+                name: generation.into(),
+                space: WorldSpaceId(1),
+                points: vec![[0., 0.], [4., 0.], [0., 4.]],
+                height: None,
+            }]
+            .into(),
         }
     }
 
@@ -291,6 +299,8 @@ mod tests {
         fn assert_old(&self) {
             let w = self.app.world();
             assert_eq!(w.resource::<WorldCatalog>().generation_id(), "old");
+            let areas = w.resource::<WorldCatalog>().gameplay_areas();
+            assert!(areas.find("old").is_some() && areas.find("next").is_none());
             assert_eq!(
                 w.resource::<WorldStream>()
                     .manifest
@@ -344,6 +354,8 @@ mod tests {
             h.app.world().resource::<WorldCatalog>().generation_id(),
             "next"
         );
+        let areas = h.app.world().resource::<WorldCatalog>().gameplay_areas();
+        assert!(areas.find("next").is_some() && areas.find("old").is_none());
         assert!(h.app.world().get_entity(h.resident).is_err());
         assert!(h.app.world().resource::<SourceResidency>().pages.is_empty());
         assert_eq!(

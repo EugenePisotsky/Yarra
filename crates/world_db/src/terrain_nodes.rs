@@ -657,6 +657,7 @@ mod tests {
                     }],
                     vegetation_catalog: None,
                     start_view: None,
+                    gameplay_areas: Default::default(),
                 },
                 cells: (0..count)
                     .map(|x| RuntimeCellRecord {

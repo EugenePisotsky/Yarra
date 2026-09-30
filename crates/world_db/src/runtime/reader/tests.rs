@@ -31,6 +31,7 @@ fn runtime_cell_windows_are_bounded_and_seek_both_spatial_axes() {
             world_spaces: vec![],
             vegetation_catalog: None,
             start_view: None,
+            gameplay_areas: Default::default(),
         },
     };
     let rows = reader
