@@ -92,14 +92,19 @@ impl SaveDirectory {
     pub fn path(&self, slot: SaveSlot) -> PathBuf {
         self.root.join(slot.filename())
     }
+    /// What a slot holds; `None` when it is empty or holds nothing this build can load: an
+    /// older format, a foreign or damaged file. Saving treats such a slot as empty, and
+    /// loading it still says what is wrong.
     fn info(&self, slot: SaveSlot) -> Result<Option<SaveInfo>> {
         let path = self.path(slot);
         if !path.try_exists()? {
             return Ok(None);
         }
-        let info = read_header(&path)?.0.info;
-        require(info.slot == slot, "slot filename differs from metadata")?;
-        Ok(Some(info))
+        match read_header(&path) {
+            Ok((header, _)) => Ok((header.info.slot == slot).then_some(header.info)),
+            Err(SaveError::Format(_) | SaveError::NotASave | SaveError::Json(_)) => Ok(None),
+            Err(error) => Err(error),
+        }
     }
     pub fn list(&self) -> Result<Vec<SaveInfo>> {
         let mut result = Vec::new();

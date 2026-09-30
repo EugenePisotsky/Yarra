@@ -3,8 +3,9 @@
 //! whose functions are thin translations onto `gameplay`'s script scopes, so a script can do
 //! nothing the built-in rules cannot.
 //!
-//! Each call loads its module afresh from bytecode: nothing a script keeps in a variable
-//! survives to the next call. Calls run sandboxed, with a memory cap and a step budget.
+//! Each call loads its module afresh from bytecode into an environment of its own: nothing a
+//! script keeps in a variable, local or global, survives to the next call. Calls run
+//! sandboxed, with a memory cap and a step budget.
 use game_types::{Invalid, Key};
 use gameplay::quests::{Status, Transition};
 use gameplay::rules::Sheet;
@@ -29,7 +30,12 @@ struct Module {
 pub struct LuauScripts {
     lua: Lua,
     modules: BTreeMap<String, Module>,
+    /// Metatable of every loaded module's environment: reads fall through to the read-only
+    /// globals, writes stay in the environment and go with it.
+    environment: Table,
     steps: Rc<Cell<u64>>,
+    /// Calls in progress, counting a script's calls back into the rules.
+    depth: Cell<u32>,
 }
 /// A rule's refusal keeps its type on the way through the script, so whoever sent the
 /// command can still tell why; anything else becomes the script's error message.
@@ -470,6 +476,12 @@ impl LuauScripts {
             Ok(())
         })()
         .map_err(|e| e.to_string())?;
+        let environment = (|| -> mlua::Result<Table> {
+            let environment = lua.create_table()?;
+            environment.set("__index", lua.globals())?;
+            Ok(environment)
+        })()
+        .map_err(|e| e.to_string())?;
         lua.sandbox(true).map_err(|e| e.to_string())?;
         lua.set_memory_limit(MEMORY_LIMIT)
             .map_err(|e| e.to_string())?;
@@ -486,7 +498,9 @@ impl LuauScripts {
         let mut engine = Self {
             lua,
             modules: BTreeMap::new(),
+            environment,
             steps,
+            depth: Cell::new(0),
         };
         for module in modules {
             let name = module.name.as_str().to_owned();
@@ -501,7 +515,7 @@ impl LuauScripts {
                 },
             );
             let table = engine
-                .load(&name)
+                .call(|| engine.load(&name))
                 .map_err(|e| format!("script {name}: {e}"))?;
             let mut exports = BTreeSet::new();
             for pair in table.pairs::<String, Value>() {
@@ -523,17 +537,31 @@ impl LuauScripts {
     pub fn install(modules: &[ScriptModule]) -> Result<Scripts, String> {
         Ok(Scripts::new(Rc::new(Self::new(modules)?)))
     }
+    /// Runs one call from the host. The step budget covers everything the call does,
+    /// including the rules it asks for on the way, so only the outermost call refills it.
+    fn call<T>(&self, run: impl FnOnce() -> mlua::Result<T>) -> mlua::Result<T> {
+        let depth = self.depth.get();
+        if depth == 0 {
+            self.steps.set(STEP_BUDGET);
+        }
+        self.depth.set(depth + 1);
+        let result = run();
+        self.depth.set(depth);
+        result
+    }
     fn load(&self, module: &str) -> mlua::Result<Table> {
         let compiled = self
             .modules
             .get(module)
             .ok_or_else(|| mlua::Error::runtime(format!("unknown script module {module}")))?;
-        self.steps.set(STEP_BUDGET);
+        let environment = self.lua.create_table()?;
+        environment.set_metatable(Some(self.environment.clone()))?;
         match self
             .lua
             .load(&compiled.bytecode[..])
             .set_name(format!("={module}"))
             .set_mode(ChunkMode::Binary)
+            .set_environment(environment)
             .eval::<Value>()?
         {
             Value::Table(table) => Ok(table),
@@ -585,37 +613,41 @@ impl ScriptEngine for LuauScripts {
             .is_some_and(|m| m.exports.contains(name.function.as_str()))
     }
     fn condition(&self, name: &ScriptName, read: &ReadScope) -> gameplay::Result<bool> {
-        let result = self.lua.scope(|scope| {
-            let game = self.lua.create_table()?;
-            add_reads(scope, &game, read)?;
-            match self
-                .function(name)?
-                .call::<Value>((game, self.scene(read)?))?
-            {
-                Value::Boolean(value) => Ok(value),
-                _ => Err(mlua::Error::runtime(
-                    "a condition must return true or false",
-                )),
-            }
+        let result = self.call(|| {
+            self.lua.scope(|scope| {
+                let game = self.lua.create_table()?;
+                add_reads(scope, &game, read)?;
+                match self
+                    .function(name)?
+                    .call::<Value>((game, self.scene(read)?))?
+                {
+                    Value::Boolean(value) => Ok(value),
+                    _ => Err(mlua::Error::runtime(
+                        "a condition must return true or false",
+                    )),
+                }
+            })
         });
         result.map_err(|e| failed(name, e))
     }
     fn action(&self, name: &ScriptName, act: &mut ActScope) -> gameplay::Result<()> {
         let scene = self.scene(&act.read()).map_err(|e| failed(name, e))?;
         let act = RefCell::new(act);
-        let result = self.lua.scope(|scope| {
-            let game = self.lua.create_table()?;
-            add_reads(scope, &game, &act)?;
-            add_effects(scope, &game, &act)?;
-            self.function(name)?.call::<()>((game, scene))
+        let result = self.call(|| {
+            self.lua.scope(|scope| {
+                let game = self.lua.create_table()?;
+                add_reads(scope, &game, &act)?;
+                add_effects(scope, &game, &act)?;
+                self.function(name)?.call::<()>((game, scene))
+            })
         });
         result.map_err(|e| failed(name, e))
     }
     fn derive(&self, name: &ScriptName, sheet: &Sheet) -> gameplay::Result<BTreeMap<String, f64>> {
-        let result = (|| -> mlua::Result<BTreeMap<String, f64>> {
+        let result = self.call(|| {
             let derived: Table = self.function(name)?.call(self.character(sheet)?)?;
             derived.pairs::<String, f64>().collect()
-        })();
+        });
         result.map_err(|e| failed(name, e))
     }
     fn check(
@@ -626,14 +658,17 @@ impl ScriptEngine for LuauScripts {
         difficulty: u32,
         roll: &mut dyn FnMut(u32) -> gameplay::Result<u32>,
     ) -> gameplay::Result<bool> {
-        let result = self.lua.scope(|scope| {
-            let dice = scope
-                .create_function_mut(|_, sides: i64| roll(count(sides, "sides")?).map_err(host))?;
-            let arguments = (self.character(sheet)?, skill.as_str(), difficulty, dice);
-            match self.function(name)?.call::<Value>(arguments)? {
-                Value::Boolean(passed) => Ok(passed),
-                _ => Err(mlua::Error::runtime("a check must return true or false")),
-            }
+        let result = self.call(|| {
+            self.lua.scope(|scope| {
+                let dice = scope.create_function_mut(|_, sides: i64| {
+                    roll(count(sides, "sides")?).map_err(host)
+                })?;
+                let arguments = (self.character(sheet)?, skill.as_str(), difficulty, dice);
+                match self.function(name)?.call::<Value>(arguments)? {
+                    Value::Boolean(passed) => Ok(passed),
+                    _ => Err(mlua::Error::runtime("a check must return true or false")),
+                }
+            })
         });
         result.map_err(|e| failed(name, e))
     }

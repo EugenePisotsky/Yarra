@@ -175,3 +175,38 @@ fn wrong_content_foreign_files_and_damaged_state_are_explicit_errors() {
         .collect();
     assert_eq!(names, vec!["quick.save"]);
 }
+#[test]
+fn slots_this_build_cannot_read_do_not_stop_saving() {
+    let temp = Temp::new();
+    let saves = SaveDirectory::new(&temp.0, 2).unwrap();
+    let session = session();
+    saves.save(SaveSlot::Manual(1), &session, "Kept").unwrap();
+    // What a format bump leaves behind, and a stray file.
+    for slot in [SaveSlot::Quick, SaveSlot::Auto(0), SaveSlot::Manual(2)] {
+        std::fs::write(saves.path(slot), b"{\"yarra_save\":1}\n{}").unwrap();
+    }
+    std::fs::write(saves.path(SaveSlot::Auto(1)), b"not a save").unwrap();
+    assert!(matches!(
+        saves.load(SaveSlot::Quick, source()),
+        Err(SaveError::Format(1))
+    ));
+    let listed = |saves: &SaveDirectory| -> Vec<SaveSlot> {
+        saves.list().unwrap().into_iter().map(|i| i.slot).collect()
+    };
+    assert_eq!(listed(&saves), [SaveSlot::Manual(1)]);
+    assert_eq!(saves.quicksave(&session).unwrap().sequence, 1);
+    // Unreadable autosaves are the first to be replaced.
+    assert_eq!(saves.autosave(&session).unwrap().slot, SaveSlot::Auto(0));
+    let second = saves.autosave(&session).unwrap();
+    assert_eq!((second.slot, second.sequence), (SaveSlot::Auto(1), 2));
+    assert_eq!(
+        listed(&saves),
+        [
+            SaveSlot::Manual(1),
+            SaveSlot::Quick,
+            SaveSlot::Auto(0),
+            SaveSlot::Auto(1)
+        ]
+    );
+    saves.load(SaveSlot::Quick, source()).unwrap();
+}

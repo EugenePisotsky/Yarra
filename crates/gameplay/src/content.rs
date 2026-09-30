@@ -623,7 +623,10 @@ impl GameContent {
         canonical.game.variables.sort_by_key(|v| v.id);
         canonical.game.loot.sort_by_key(|v| v.id);
         canonical.game.scripts.sort_by(|a, b| a.name.cmp(&b.name));
-        let bytes = serde_json::to_vec(&canonical).map_err(|e| Invalid(e.to_string()))?;
+        // Identities as bytes: a name shows only once something has parsed it, and the
+        // fingerprint must not depend on that.
+        let bytes =
+            names::raw(|| serde_json::to_vec(&canonical)).map_err(|e| Invalid(e.to_string()))?;
         Ok(*blake3::hash(&bytes).as_bytes())
     }
     pub fn text_keys(&self) -> Vec<&MessageRef> {

@@ -302,6 +302,22 @@ fn cross_domain_validation_rejects_bad_ownership_equipment_and_content() {
     };
     assert!(content.validate().is_err());
 }
+#[test]
+fn the_fingerprint_does_not_depend_on_which_names_were_parsed() {
+    // Named in code only, so nothing has told the process this name yet.
+    const NAMED: &str = "fingerprint/named_in_code";
+    let mut content = content();
+    content.game.variables.push(VariableDefinition {
+        id: VariableId::named(NAMED),
+        initial: Value::Bool(false),
+        scope: Default::default(),
+    });
+    content.sort();
+    let before = content.fingerprint().unwrap();
+    VariableId::try_from(NAMED.to_owned()).unwrap();
+    assert_eq!(VariableId::named(NAMED).to_string(), NAMED);
+    assert_eq!(content.fingerprint().unwrap(), before);
+}
 
 /// Counts graph reads so tests can show which commands touch dialogue content.
 struct Counting {

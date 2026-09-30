@@ -18,6 +18,7 @@ pub fn require(condition: bool, message: &str) -> Result<()> {
 /// hashed into those bytes; things created at runtime get random bytes. A name therefore
 /// *is* the identity: renaming something makes it a different thing.
 pub mod names {
+    use std::cell::Cell;
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
 
@@ -63,7 +64,22 @@ pub mod names {
             }
         }
     }
+    thread_local! {
+        static RAW: Cell<bool> = const { Cell::new(false) };
+    }
+    /// Runs `work` with every identity written in UUID form, for output that must come out
+    /// the same whichever names this process happens to have met.
+    pub fn raw<T>(work: impl FnOnce() -> T) -> T {
+        let before = RAW.replace(true);
+        let result = work();
+        RAW.set(before);
+        result
+    }
+    /// The name behind an identity, if one is known and names are being shown.
     pub fn lookup(id: &[u8; 16]) -> Option<String> {
+        if RAW.get() {
+            return None;
+        }
         let table = table().lock().unwrap_or_else(|e| e.into_inner());
         table.get(id).map(|name| name.to_string())
     }
@@ -417,6 +433,13 @@ mod tests {
         assert_ne!(GATE, QuestId::named("guard/gates"));
         // The same name means the same bytes for every kind of identity.
         assert_eq!(ActorId::named("hero").0, OwnerId::named("hero").0);
+    }
+    #[test]
+    fn raw_output_shows_bytes_even_for_known_names() {
+        let id = QuestId::try_from("guard/raw".to_owned()).unwrap();
+        let raw = names::raw(|| serde_json::to_string(&id).unwrap());
+        assert_eq!(raw, format!("\"{}\"", id.raw()));
+        assert_eq!(id.to_string(), "guard/raw");
     }
     #[test]
     fn identities_without_a_name_keep_their_uuid_form() {

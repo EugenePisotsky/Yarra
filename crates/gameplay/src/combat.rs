@@ -151,7 +151,8 @@ pub(crate) fn proceed(
         } else {
             // In the script the user is the scene's player and the target its speaker.
             // What it does takes effect as a whole or not at all, and a script that fails
-            // costs its user the action without stopping time for everyone.
+            // costs its user the action, not the rest of the queue, and does not stop time
+            // for everyone.
             let savepoint = tx.savepoint();
             let mark = events.len();
             let outcome = content.scripts.engine(&ability.resolve).and_then(|engine| {
@@ -166,35 +167,33 @@ pub(crate) fn proceed(
                     },
                 )
             });
-            match outcome {
-                Ok(()) => tx.release(savepoint),
-                Err(error) => {
-                    tx.rollback_to(savepoint);
-                    events.truncate(mark);
-                    events.push(GameEvent::AbilityFailed {
-                        actor,
-                        ability: intent.ability.clone(),
-                        reason: error.to_string(),
-                    });
-                    return Ok(());
+            if let Err(error) = outcome {
+                tx.rollback_to(savepoint);
+                events.truncate(mark);
+                events.push(GameEvent::AbilityFailed {
+                    actor,
+                    ability: intent.ability.clone(),
+                    reason: error.to_string(),
+                });
+            } else {
+                tx.release(savepoint);
+                if ability.cooldown_ms > 0 {
+                    let ready = now.advance(ability.cooldown_ms)?;
+                    tx.actor_mut(actor)?
+                        .cooldowns
+                        .insert(intent.ability.clone(), ready);
                 }
-            }
-            if ability.cooldown_ms > 0 {
-                let ready = now.advance(ability.cooldown_ms)?;
-                tx.actor_mut(actor)?
-                    .cooldowns
-                    .insert(intent.ability.clone(), ready);
-            }
-            events.push(GameEvent::AbilityResolved {
-                actor,
-                ability: intent.ability.clone(),
-                target,
-            });
-            let alive = |id: ActorId| tx.actors.get(&id).is_some_and(|a| a.alive(rules));
-            if intent.repeat && alive(actor) && target.is_none_or(alive) {
-                let character = tx.actor_mut(actor)?;
-                if character.intents.len() < MAX_INTENTS {
-                    character.intents.push_back(intent);
+                events.push(GameEvent::AbilityResolved {
+                    actor,
+                    ability: intent.ability.clone(),
+                    target,
+                });
+                let alive = |id: ActorId| tx.actors.get(&id).is_some_and(|a| a.alive(rules));
+                if intent.repeat && alive(actor) && target.is_none_or(alive) {
+                    let character = tx.actor_mut(actor)?;
+                    if character.intents.len() < MAX_INTENTS {
+                        character.intents.push_back(intent);
+                    }
                 }
             }
         }

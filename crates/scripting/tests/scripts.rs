@@ -270,21 +270,41 @@ fn conditions_are_read_only_strict_and_bounded() {
     }
 }
 #[test]
+fn a_script_asking_the_rules_in_a_loop_still_runs_out_of_steps() {
+    // Every check runs the rules module; its calls count against the script's budget.
+    let source = r#"
+        local gate = {}
+        function gate.has_key(game, scene) return true end
+        function gate.hand_over(game, scene)
+            while true do game.check(scene.player, "persuasion", 1) end
+        end
+        return gate
+    "#;
+    let mut session = at_choice(content(source, "gate.hand_over"));
+    let before = session.state().clone();
+    let error = choose(&mut session).unwrap_err().to_string();
+    assert!(error.contains("step budget"), "{error}");
+    assert_eq!(session.state(), &before);
+}
+#[test]
 fn nothing_a_script_keeps_survives_to_the_next_call() {
     let source = r#"
         local calls = 0
         local gate = {}
         function gate.has_key(game, scene)
             calls += 1
-            return calls == 1
+            seen = (seen or 0) + 1
+            return calls == 1 and seen == 1 and left_by_hand_over == nil
         end
-        function gate.hand_over(game, scene) end
+        function gate.hand_over(game, scene)
+            left_by_hand_over = true
+        end
         return gate
     "#;
     let content = content(source, "gate.hand_over");
     let state = state();
+    let condition = Condition::Script(script("gate.has_key"));
     for _ in 0..3 {
-        let condition = Condition::Script(script("gate.has_key"));
         assert!(
             content
                 .evaluate(&condition, &state, HERO, MERCHANT)
@@ -292,6 +312,16 @@ fn nothing_a_script_keeps_survives_to_the_next_call() {
                 .matched
         );
     }
+    // Nor does a global set by another call reach the next one.
+    let mut session = at_choice(content);
+    choose(&mut session).unwrap();
+    assert!(
+        session
+            .content()
+            .evaluate(&condition, session.state(), HERO, MERCHANT)
+            .unwrap()
+            .matched
+    );
 }
 #[test]
 fn publication_rejects_broken_modules_and_missing_functions() {
@@ -711,6 +741,17 @@ return abilities
     content.scripts = LuauScripts::install(&content.game.scripts).unwrap();
     let mut session = GameSession::new(ToolContent::new(content).unwrap(), state()).unwrap();
     session.apply(strike(HERO, MERCHANT)).unwrap();
+    session
+        .apply(Command::Intend {
+            actor: HERO,
+            intent: gameplay::actors::Intent {
+                ability: key("second-wind"),
+                target: None,
+                repeat: false,
+            },
+            clear: false,
+        })
+        .unwrap();
     let outcome = session
         .apply(Command::AdvanceTime { millis: 2000 })
         .unwrap();
@@ -725,5 +766,12 @@ return abilities
     // and the repeating strike was not lined up again.
     assert_eq!(state.actors[&MERCHANT].resources[&key("health")], 100);
     assert_eq!(state.time, game_types::GameTime(2000));
-    assert!(state.actors[&HERO].acting.is_none() && state.timed.is_empty());
+    // What the hero meant to do next still happened, straight after the failed strike.
+    assert!(outcome.events.iter().any(|e| matches!(
+        e,
+        GameEvent::AbilityResolved { actor: HERO, ability, .. } if ability == &key("second-wind")
+    )));
+    let hero = &state.actors[&HERO];
+    assert!(hero.acting.is_none() && hero.intents.is_empty());
+    assert!(hero.cooldowns.contains_key(&key("second-wind")));
 }
