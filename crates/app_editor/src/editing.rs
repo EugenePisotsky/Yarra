@@ -730,6 +730,11 @@ enum EditorCommand {
         before: Vec<crate::road_authoring::working::RoadChange>,
         after: Vec<crate::road_authoring::working::RoadChange>,
     },
+    /// The whole set before and after: it is one small record.
+    Areas {
+        before: std::sync::Arc<[world::GameplayArea]>,
+        after: std::sync::Arc<[world::GameplayArea]>,
+    },
     Presets {
         before: Box<environment::PresetLibrary>,
         after: Box<environment::PresetLibrary>,
@@ -763,6 +768,15 @@ impl EditorCommand {
                     2 * std::mem::size_of::<world::atmosphere::AtmosphereProfile>()
                 }
                 Self::Roads { before, after } => (before.len() + after.len()) * 4096,
+                Self::Areas { before, after } => before
+                    .iter()
+                    .chain(after.iter())
+                    .map(|area| {
+                        std::mem::size_of::<world::GameplayArea>()
+                            + area.name.len()
+                            + std::mem::size_of_val(&area.points[..])
+                    })
+                    .sum(),
                 Self::Presets { before, after } => {
                     crate::domain_editing::library_bytes(before)
                         + crate::domain_editing::library_bytes(after)
@@ -801,6 +815,7 @@ impl EditorCommand {
         match self {
             Self::Atmosphere { space, after, .. } => dense.atmospheres.apply(*space, after),
             Self::Roads { before, after } => dense.roads.replay(before, after).is_ok(),
+            Self::Areas { after, .. } => dense.areas.apply(after.clone()).is_ok(),
             Self::Presets { before, after } => merge_preset_changes(dense.presets(), before, after)
                 .is_ok_and(|p| dense.apply_presets(&p).is_ok()),
             Self::Definition {
@@ -831,6 +846,7 @@ impl EditorCommand {
         match self {
             Self::Atmosphere { space, before, .. } => dense.atmospheres.apply(*space, before),
             Self::Roads { before, after } => dense.roads.replay(after, before).is_ok(),
+            Self::Areas { before, .. } => dense.areas.apply(before.clone()).is_ok(),
             Self::Presets { before, after } => merge_preset_changes(dense.presets(), after, before)
                 .is_ok_and(|p| dense.apply_presets(&p).is_ok()),
             Self::Definition {
@@ -941,6 +957,16 @@ impl EditorHistory {
                 before: Box::new(before),
                 after: Box::new(after),
             });
+        }
+    }
+
+    pub(crate) fn record_areas(
+        &mut self,
+        before: std::sync::Arc<[world::GameplayArea]>,
+        after: std::sync::Arc<[world::GameplayArea]>,
+    ) {
+        if before != after {
+            self.record(EditorCommand::Areas { before, after });
         }
     }
 

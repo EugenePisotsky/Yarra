@@ -65,6 +65,7 @@ pub(crate) struct DirtyDenseSnapshot {
 #[derive(Resource, Default)]
 pub(crate) struct DenseDomainWorkingSets {
     pub(crate) atmospheres: crate::atmosphere_authoring::working::WorkingSet,
+    pub(crate) areas: crate::area_authoring::working::WorkingSet,
     pub(crate) roads: crate::road_authoring::working::RoadWorkingSet,
     definitions: BTreeMap<WorldSpaceId, DefinitionEntry>,
     presets: Option<DefinitionEntry<environment::PresetLibrary>>,
@@ -251,6 +252,7 @@ impl DenseDomainWorkingSets {
 
     pub(crate) fn dirty_count(&self) -> usize {
         self.atmospheres.dirty_count()
+            + self.areas.dirty_count()
             + self.roads.dirty_count()
             + self.definition_dirty_count()
             + self.entries.values().filter(|entry| entry.dirty()).count()
@@ -258,6 +260,7 @@ impl DenseDomainWorkingSets {
 
     pub(crate) fn saving(&self) -> bool {
         self.atmospheres.saving.is_some()
+            || self.areas.saving.is_some()
             || self.roads.saving.is_some()
             || self.definitions_saving()
             || self
@@ -268,6 +271,7 @@ impl DenseDomainWorkingSets {
 
     pub(crate) fn has_any_conflict(&self) -> bool {
         self.atmospheres.conflict.is_some()
+            || self.areas.conflict.is_some()
             || self.roads.conflict
             || self.definition_conflict_count() > 0
             || self
@@ -278,6 +282,7 @@ impl DenseDomainWorkingSets {
 
     pub(crate) fn conflict_count(&self) -> usize {
         usize::from(self.atmospheres.conflict.is_some())
+            + usize::from(self.areas.conflict.is_some())
             + usize::from(self.roads.conflict)
             + self.definition_conflict_count()
             + self

@@ -3,7 +3,9 @@ use crate::{
     editing::{EditorObjectWorkingSet, EditorSelection},
     project_store::{ProjectEditorStore, ProjectQueryWindow},
     shell::EditorWindowRegistry,
-    tools::{ENVIRONMENT_TOOL, EditorToolRegistry, OBJECT_TOOL, ROAD_TOOL, VEGETATION_TOOL},
+    tools::{
+        AREA_TOOL, ENVIRONMENT_TOOL, EditorToolRegistry, OBJECT_TOOL, ROAD_TOOL, VEGETATION_TOOL,
+    },
     vegetation_authoring::VEGETATION_WINDOW,
     workspaces::{EditorWorkspace, world::ui::WorldWorkspaceUiState},
 };
@@ -73,6 +75,14 @@ pub(super) fn draw_world_hierarchy(
     {
         tools.set_active(EditorWorkspace::World, VEGETATION_TOOL.id);
         windows.set_open(VEGETATION_WINDOW.id, true);
+    }
+    if ui
+        .selectable_label(active_tool.is_some_and(|t| t.id == AREA_TOOL.id), "Areas")
+        .on_hover_text("Named places the game's rules react to")
+        .clicked()
+    {
+        tools.set_active(EditorWorkspace::World, AREA_TOOL.id);
+        windows.set_open(crate::area_authoring::WINDOW.id, true);
     }
     let mut visible_assets = visible_asset_records(project, objects);
     let visible_count = visible_assets.len();

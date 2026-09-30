@@ -2,6 +2,7 @@
 
 use std::{
     path::PathBuf,
+    sync::Arc,
     thread::{self, JoinHandle},
 };
 
@@ -252,6 +253,10 @@ pub(crate) struct ProjectEditorStore {
     atmosphere_save_in_flight: Option<u64>,
     pub(crate) atmosphere_completion:
         Option<(u64, Result<world_db::AtmosphereWriteResult, String>)>,
+    gameplay_areas: Option<world_db::GameplayAreasRecord>,
+    pending_area_save: Option<(u64, i64, Arc<[world::GameplayArea]>)>,
+    area_save_in_flight: Option<u64>,
+    pub(crate) area_completion: Option<(u64, Result<world_db::GameplayAreasWriteResult, String>)>,
 }
 
 impl ProjectEditorStore {
@@ -264,6 +269,24 @@ impl ProjectEditorStore {
         }
         self.next_save_request_id = self.next_save_request_id.wrapping_add(1).max(1);
         self.pending_atmosphere_save = Some((self.next_save_request_id, writes));
+        Some(self.next_save_request_id)
+    }
+
+    /// The project's gameplay areas as last read or saved.
+    pub(crate) fn gameplay_areas(&self) -> Option<&world_db::GameplayAreasRecord> {
+        self.gameplay_areas.as_ref()
+    }
+
+    pub(crate) fn queue_gameplay_areas(
+        &mut self,
+        expected_revision: i64,
+        areas: Arc<[world::GameplayArea]>,
+    ) -> Option<u64> {
+        if self.save_in_flight() || self.write_error.is_some() {
+            return None;
+        }
+        self.next_save_request_id = self.next_save_request_id.wrapping_add(1).max(1);
+        self.pending_area_save = Some((self.next_save_request_id, expected_revision, areas));
         Some(self.next_save_request_id)
     }
 
@@ -393,6 +416,8 @@ impl ProjectEditorStore {
             || self.vegetation_save_in_flight.is_some()
             || self.pending_atmosphere_save.is_some()
             || self.atmosphere_save_in_flight.is_some()
+            || self.pending_area_save.is_some()
+            || self.area_save_in_flight.is_some()
     }
 
     pub(crate) fn queue_object_transaction(
@@ -491,6 +516,7 @@ enum ProjectRequest {
         domains: ProjectSourceDomains,
     },
     SaveAtmospheres(u64, Vec<world_db::AtmosphereWrite>),
+    SaveGameplayAreas(u64, i64, Arc<[world::GameplayArea]>),
     SaveObjectTransaction(PendingObjectSave),
     SaveDenseTransaction(PendingDenseSave),
     SaveVegetationCatalog(PendingVegetationSave),
@@ -500,6 +526,7 @@ enum ProjectRequest {
 enum ProjectResult {
     // Boxed: a conflict carries a whole atmosphere profile, including authored weather.
     SaveAtmospheres(u64, Box<Result<world_db::AtmosphereWriteResult, String>>),
+    SaveGameplayAreas(u64, Result<world_db::GameplayAreasWriteResult, String>),
     Opened(Result<ProjectOpenSnapshot, String>),
     Query {
         revision: u64,
@@ -529,6 +556,7 @@ struct ProjectOpenSnapshot {
     presets: Option<environment::PresetLibrary>,
     terrain_resources: Vec<world_db::TerrainRenderResources>,
     height_steps: std::collections::BTreeMap<WorldSpaceId, f32>,
+    gameplay_areas: world_db::GameplayAreasRecord,
     write_error: Option<String>,
 }
 
@@ -613,8 +641,18 @@ fn project_worker(
             return;
         }
     };
+    let gameplay_areas = match reader.read_gameplay_areas() {
+        Ok(areas) => areas,
+        Err(e) => {
+            let _ = results.send(ProjectResult::Opened(Err(format!(
+                "could not read gameplay areas: {e}"
+            ))));
+            return;
+        }
+    };
     if results
         .send(ProjectResult::Opened(Ok(ProjectOpenSnapshot {
+            gameplay_areas,
             manifest: reader.manifest().clone(),
             vegetation_catalog,
             environments,
@@ -790,6 +828,20 @@ fn project_worker(
                     return;
                 }
             }
+            ProjectRequest::SaveGameplayAreas(id, expected_revision, areas) => {
+                let result = match writer.as_mut() {
+                    Ok(writer) => writer
+                        .write_gameplay_areas(expected_revision, &areas)
+                        .map_err(|e| e.to_string()),
+                    Err(e) => Err(e.clone()),
+                };
+                if results
+                    .send(ProjectResult::SaveGameplayAreas(id, result))
+                    .is_err()
+                {
+                    return;
+                }
+            }
             ProjectRequest::Shutdown => return,
         }
     }
@@ -826,8 +878,22 @@ fn receive_project_results(
                 store.atmosphere_completion = Some((id, result));
             }
 
+            Ok(ProjectResult::SaveGameplayAreas(id, result)) => {
+                if store.area_save_in_flight != Some(id) {
+                    continue;
+                }
+                store.area_save_in_flight = None;
+                if let Ok(world_db::GameplayAreasWriteResult::Committed(record)) = &result {
+                    // Publishing compares epochs to know the source moved on.
+                    store.source_epoch = store.source_epoch.wrapping_add(1).max(1);
+                    store.gameplay_areas = Some(record.clone());
+                }
+                store.area_completion = Some((id, result));
+            }
+
             Ok(ProjectResult::Opened(result)) => match result {
                 Ok(opened) => {
+                    store.gameplay_areas = Some(opened.gameplay_areas);
                     store.manifest = Some(opened.manifest);
                     store.vegetation_catalog = opened.vegetation_catalog;
                     store.environments = opened.environments;
@@ -1126,12 +1192,30 @@ fn dispatch_project_save(
         || store.dense_save_in_flight.is_some()
         || store.vegetation_save_in_flight.is_some()
         || store.atmosphere_save_in_flight.is_some()
+        || store.area_save_in_flight.is_some()
     {
         return;
     }
     let Some(worker) = worker else {
         return;
     };
+
+    if let Some((id, revision, areas)) = store.pending_area_save.clone() {
+        match worker
+            .requests
+            .try_send(ProjectRequest::SaveGameplayAreas(id, revision, areas))
+        {
+            Ok(()) => {
+                store.pending_area_save = None;
+                store.area_save_in_flight = Some(id);
+            }
+            Err(TrySendError::Full(_)) => {}
+            Err(TrySendError::Disconnected(_)) => {
+                store.write_error = Some("Project writer stopped".into());
+            }
+        }
+        return;
+    }
 
     if let Some((id, writes)) = store.pending_atmosphere_save.clone() {
         match worker

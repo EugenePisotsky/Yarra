@@ -143,6 +143,12 @@ pub(crate) fn drive_editor_save(
         }
         return;
     }
+    if dense.areas.dirty_count() > 0 {
+        if !dense.areas.queue_save(&mut project) {
+            coordinator.finish();
+        }
+        return;
+    }
 
     match next_save_domain(
         objects.dirty_count(),

@@ -20,7 +20,7 @@ use crate::{
     workspaces::{
         EditorWorkspace,
         world::{
-            camera::{EditorCameraDrag, EditorCameraFocusRequest, setup_world_workspace},
+            camera::{EditorCameraDrag, setup_world_workspace},
             gizmo::{
                 GizmoEditTransaction, apply_promoted_gizmo, configure_transform_gizmo,
                 editor_gizmo_enabled, prepare_builtin_transform_gizmo_renderer,
@@ -45,7 +45,7 @@ use bevy::{
 };
 use bevy_egui::EguiPrimaryContextPass;
 
-pub(crate) use camera::{EditorCamera, update_editor_camera};
+pub(crate) use camera::{EditorCamera, EditorCameraFocusRequest, update_editor_camera};
 pub(crate) use input::handle_editor_shortcuts;
 pub(crate) use overlay::EditorOverlayGizmos;
 mod camera;
@@ -71,6 +71,9 @@ impl Plugin for WorldWorkspacePlugin {
         app.world_mut()
             .resource_mut::<EditorToolRegistry>()
             .register(crate::tools::ROAD_TOOL, false);
+        app.world_mut()
+            .resource_mut::<EditorToolRegistry>()
+            .register(crate::tools::AREA_TOOL, false);
         for window in [
             WORLD_WINDOW,
             INSPECTOR_WINDOW,
@@ -80,6 +83,7 @@ impl Plugin for WorldWorkspacePlugin {
             VEGETATION_WINDOW,
             crate::canopy::CANOPY_WINDOW,
             crate::atmosphere_authoring::WINDOW,
+            crate::area_authoring::WINDOW,
         ] {
             app.world_mut()
                 .resource_mut::<EditorWindowRegistry>()
@@ -106,6 +110,7 @@ impl Plugin for WorldWorkspacePlugin {
                 crate::road_authoring::RoadAuthoringPlugin,
                 crate::canopy::EditorCanopyPlugin,
                 crate::atmosphere_authoring::AtmosphereAuthoringPlugin,
+                crate::area_authoring::AreaAuthoringPlugin,
             ))
             .configure_sets(
                 PostUpdate,

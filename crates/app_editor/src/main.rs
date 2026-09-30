@@ -1,5 +1,6 @@
 //! Yarra editor executable composition root.
 
+mod area_authoring;
 mod atmosphere_authoring;
 
 mod canopy;

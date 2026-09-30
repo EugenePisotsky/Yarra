@@ -26,6 +26,7 @@ pub(crate) enum EditorSourceDomain {
     ObjectDefinitions,
     EnvironmentCoverage,
     RoadRecords,
+    GameplayAreas,
     VegetationCatalog,
     VegetationFields,
     Navigation,
@@ -57,6 +58,7 @@ pub(crate) enum EditorCommandKind {
     DeletePlacement,
     PaintEnvironment,
     EditRoad,
+    EditGameplayArea,
     EditVegetationProfile,
 }
 
@@ -67,6 +69,7 @@ pub(crate) enum EditorPreviewOverlay {
     TransformGizmo,
     CellPatch,
     RoadCurve,
+    AreaOutline,
     ProceduralVegetation,
     VegetationGroups,
 }
@@ -260,6 +263,21 @@ pub(crate) const ROAD_TOOL: EditorToolDescriptor = EditorToolDescriptor {
         DerivedProduct::Navigation,
         DerivedProduct::Overview,
     ],
+    failure_policy: OBJECT_TOOL.failure_policy,
+};
+
+/// Named places gameplay reacts to. The whole set is one small project record, so the tool
+/// asks for no spatial window and invalidates nothing that is cooked per cell.
+pub(crate) const AREA_TOOL: EditorToolDescriptor = EditorToolDescriptor {
+    id: EditorToolId("world.areas"),
+    label: "Areas",
+    workspace: EditorWorkspace::World,
+    source_domains: &[EditorSourceDomain::GameplayAreas],
+    spatial_query: SpatialQueryPolicy::ExplicitSelection,
+    pinning: PinningPolicy::None,
+    commands: &[EditorCommandKind::EditGameplayArea],
+    overlays: &[EditorPreviewOverlay::AreaOutline],
+    invalidates: &[],
     failure_policy: OBJECT_TOOL.failure_policy,
 };
 
