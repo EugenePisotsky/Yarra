@@ -222,7 +222,7 @@ fn demo(project: &LoadedProject, locale: &str, directory: Option<PathBuf>) -> Re
             .format(locale, &game_types::TextRef::Message(key.clone()), &args)?;
     }
     let directory = directory.unwrap_or_else(|| {
-        env::temp_dir().join(format!("yarra-gameplay-{}", PlaythroughId::new()))
+        env::temp_dir().join(format!("yarra-gameplay-{}", PlaythroughId::random()))
     });
     std::fs::create_dir(&directory)?;
     let publication = directory.join("published.sqlite");

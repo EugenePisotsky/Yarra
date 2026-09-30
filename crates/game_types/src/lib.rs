@@ -91,14 +91,13 @@ macro_rules! ids {
         #[serde(try_from = "String", into = "String")]
         pub struct $name(pub [u8; 16]);
         impl $name {
-            /// A fresh identity for something created while playing.
-            pub fn new() -> Self { Self(*uuid::Uuid::new_v4().as_bytes()) }
+            /// A random identity, for something created while playing.
+            pub fn random() -> Self { Self(*uuid::Uuid::new_v4().as_bytes()) }
             /// The identity of authored content with this name.
             pub const fn named(name: &str) -> Self { Self(names::hash(name)) }
             /// The bytes in UUID form, whether or not a name is known for them.
             pub fn raw(&self) -> String { uuid::Uuid::from_bytes(self.0).to_string() }
         }
-        impl Default for $name { fn default() -> Self { Self::new() } }
         impl TryFrom<String> for $name {
             type Error = Invalid;
             /// Accepts a name, or the UUID form used for identities without one.
@@ -448,7 +447,7 @@ mod tests {
         let id = ItemId::try_from(text.to_owned()).unwrap();
         assert_eq!(id.to_string(), text);
         assert_eq!(id.raw(), text);
-        let fresh = ItemId::new();
+        let fresh = ItemId::random();
         assert_eq!(ItemId::try_from(fresh.to_string()).unwrap(), fresh);
         assert_eq!(QuestId::named("guard/gate").raw().len(), 36);
     }

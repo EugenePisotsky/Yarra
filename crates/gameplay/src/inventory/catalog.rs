@@ -91,7 +91,7 @@ impl Default for ItemCatalog {
 impl ItemCatalog {
     pub fn new() -> Self {
         Self {
-            id: CatalogId::new(),
+            id: CatalogId::random(),
             revision: 1,
             categories: Vec::new(),
             items: Vec::new(),

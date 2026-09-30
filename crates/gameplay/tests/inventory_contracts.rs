@@ -1,7 +1,7 @@
 use yarra_gameplay::inventory::{fixtures::*, *};
 
 fn owner() -> OwnerRef {
-    OwnerRef::actor(ActorId::new())
+    OwnerRef::actor(ActorId::random())
 }
 fn bag() -> Inventory {
     Inventory::new(owner(), InventoryRole::Carried)
@@ -323,7 +323,7 @@ fn stale_inventory_wallet_or_catalog_rejects_quote_without_mutation() {
             _ => fixture
                 .catalog
                 .put_category(Category {
-                    id: CategoryId::new(),
+                    id: CategoryId::random(),
                     name: "Food".into(),
                 })
                 .unwrap(),

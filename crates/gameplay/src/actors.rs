@@ -130,7 +130,7 @@ impl Actor {
         let mut base = class.starting.clone();
         base.extend(template.base.clone());
         let mut actor = Self {
-            id: ActorId::new(),
+            id: ActorId::random(),
             template: template.id,
             name_override: None,
             position: Position::default(),

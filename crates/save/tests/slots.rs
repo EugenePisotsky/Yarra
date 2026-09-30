@@ -5,8 +5,10 @@ use yarra_save::{SaveDirectory, SaveError, SaveSlot};
 struct Temp(std::path::PathBuf);
 impl Temp {
     fn new() -> Self {
-        let path =
-            std::env::temp_dir().join(format!("yarra-save-{}", game_types::PlaythroughId::new()));
+        let path = std::env::temp_dir().join(format!(
+            "yarra-save-{}",
+            game_types::PlaythroughId::random()
+        ));
         std::fs::create_dir(&path).unwrap();
         Self(path)
     }

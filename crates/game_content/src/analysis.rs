@@ -24,7 +24,7 @@ impl LoadedProject {
         let analyzer = std::env::var_os(ANALYZER_VARIABLE).unwrap_or_else(|| "luau-analyze".into());
         let directory = std::env::temp_dir().join(format!(
             "yarra-script-check-{}",
-            game_types::PackageId::new().raw()
+            game_types::PackageId::random().raw()
         ));
         std::fs::create_dir(&directory)?;
         let result = (|| -> Result<ScriptAnalysis> {

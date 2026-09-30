@@ -163,7 +163,7 @@ Evidence: new tests for turns kept through a save and the world held still, runa
 **Types and small refactors.**
 - Owner kind and inventory role are enums instead of strings compared in 19 places: done.
 - New items take identities from a counter in the inventory that makes them, instead of being renamed at commit: done. The count is part of the inventory record, so a replay makes the same items and an undone command gives the numbers back. The renaming, with its patching of equipment and events, is gone.
-- Identities lose `Default`, which made a random UUID.
+- Identities lose `Default`, which made a random UUID: done. Nothing relied on it; `new()` is now `random()`, which says what it does.
 - Inventory refusals a player can meet (money, restrictions, stale quotes, capacity) become `Rejection`s, so a UI matches one vocabulary.
 - Per-command validation of changed records runs in debug builds only; it works a character's stats out a second time on every equip. A loaded save is still validated in full.
 - Definitions are stored as maps by identity, which removes the sort lists kept in five places and the "listed in order" failure.

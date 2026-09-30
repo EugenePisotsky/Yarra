@@ -636,7 +636,7 @@ mod tests {
         fn new() -> Self {
             Self(std::env::temp_dir().join(format!(
                 "yarra-story-test-{}",
-                game_types::PlaythroughId::new()
+                game_types::PlaythroughId::random()
             )))
         }
     }

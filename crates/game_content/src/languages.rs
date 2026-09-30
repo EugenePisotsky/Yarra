@@ -164,7 +164,7 @@ impl LoadedProject {
             .parent()
             .filter(|p| !p.as_os_str().is_empty())
             .unwrap_or_else(|| Path::new("."));
-        let stage = parent.join(format!(".language-{}.building", ContentId::new()));
+        let stage = parent.join(format!(".language-{}.building", ContentId::random()));
         OpenOptions::new()
             .write(true)
             .create_new(true)

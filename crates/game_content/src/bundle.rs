@@ -91,7 +91,7 @@ impl LoadedProject {
             .unwrap_or_else(|| Path::new("."));
         let stage = parent.join(format!(
             ".game-content-{}.sqlite.building",
-            ContentId::new()
+            ContentId::random()
         ));
         OpenOptions::new()
             .write(true)

@@ -182,7 +182,7 @@ impl Floor {
 impl SessionState {
     pub fn empty(seed: u64) -> Self {
         Self {
-            playthrough: PlaythroughId::new(),
+            playthrough: PlaythroughId::random(),
             generation: 1,
             time: GameTime::default(),
             random: RandomState(seed),

@@ -41,7 +41,7 @@ pub struct ItemFilter<'a> {
 impl Inventory {
     pub fn new(owner: OwnerRef, role: InventoryRole) -> Self {
         Self {
-            id: InventoryId::new(),
+            id: InventoryId::random(),
             owner,
             role,
             revision: 1,
@@ -336,7 +336,7 @@ pub struct Wallet {
 impl Wallet {
     pub fn new(owner: OwnerRef) -> Self {
         Self {
-            id: WalletId::new(),
+            id: WalletId::random(),
             owner,
             revision: 1,
             balance: Money::ZERO,

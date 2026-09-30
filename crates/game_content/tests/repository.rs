@@ -48,7 +48,7 @@ fn opening_reads_the_manifest_only_and_damage_is_reported_by_the_read_that_meets
         Err(ContentError::CorruptAsset { .. })
     ));
     assert!(matches!(
-        repo.read(&AssetId::Item(ItemDefinitionId::new())),
+        repo.read(&AssetId::Item(ItemDefinitionId::random())),
         Err(ContentError::MissingAsset(_))
     ));
     // Items are always-loaded definitions, so a session refuses the damaged bundle.
@@ -148,7 +148,7 @@ fn text_contracts_have_stable_ids_and_are_read_explicitly() {
         matches!(repo.read(&AssetId::Text(resource)).unwrap(), Asset::Text(t) if t.id == resource)
     );
     assert!(matches!(
-        repo.read(&AssetId::Text(TextResourceId::new())),
+        repo.read(&AssetId::Text(TextResourceId::random())),
         Err(ContentError::MissingAsset(_))
     ));
     // Sessions never load text contracts; formatting asks for them separately.

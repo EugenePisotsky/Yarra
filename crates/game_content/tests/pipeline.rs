@@ -145,7 +145,7 @@ fn category_mechanics_bindings_and_scenario_errors_are_rejected() {
     let root = temp.source();
     let original: ItemCatalog = read(root.join("packages/core/items.ron"));
     let mut items = original.clone();
-    items.items[0].category = CategoryId::new();
+    items.items[0].category = CategoryId::random();
     write(root.join("packages/core/items.ron"), &items);
     assert!(failure(&root).contains("category"));
     let mut items = original.clone();

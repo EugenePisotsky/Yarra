@@ -7,7 +7,7 @@ use std::{
 pub struct Temp(pub PathBuf);
 impl Temp {
     pub fn new() -> Self {
-        let path = std::env::temp_dir().join(format!("yarra-content-test-{}", ContentId::new()));
+        let path = std::env::temp_dir().join(format!("yarra-content-test-{}", ContentId::random()));
         fs::create_dir(&path).unwrap();
         Self(path)
     }

@@ -156,7 +156,7 @@ impl SaveDirectory {
             content: session.identity().clone(),
         };
         // Write beside the slot, then rename: readers see the old save or the new one.
-        let stage = self.root.join(format!(".saving-{}", OwnerId::new()));
+        let stage = self.root.join(format!(".saving-{}", OwnerId::random()));
         let written = (|| -> Result<()> {
             let mut file = fs::OpenOptions::new()
                 .write(true)

@@ -139,7 +139,9 @@ impl ContentLibrary {
             self.open(&id)?;
             return Ok(id);
         }
-        let stage = self.root.join(format!(".retain-{}.sqlite", OwnerId::new()));
+        let stage = self
+            .root
+            .join(format!(".retain-{}.sqlite", OwnerId::random()));
         fs::OpenOptions::new()
             .write(true)
             .create_new(true)
