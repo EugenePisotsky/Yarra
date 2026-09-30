@@ -683,10 +683,6 @@ impl SessionState {
     }
     pub(crate) fn check_location(&self, content: &GameContent, l: &LocationState) -> Result<()> {
         self.actor(l.actor)?;
-        require(
-            l.areas.len() <= crate::MAX_AREA_OVERLAP,
-            "area overlap budget exceeded",
-        )?;
         for id in &l.areas {
             content.area(*id)?;
         }

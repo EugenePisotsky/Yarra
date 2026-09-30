@@ -376,6 +376,26 @@ fn conversations_keep_their_turns_through_a_save_and_hold_the_world_still() {
     assert_eq!(session.state().time, GameTime(time.0 + 1000));
 }
 
+#[test]
+fn an_actor_can_stand_in_any_number_of_areas_at_once() {
+    let mut content = content();
+    let areas: std::collections::BTreeSet<AreaId> = (0..40)
+        .map(|n| AreaId::try_from(format!("overlap/{n}")).unwrap())
+        .collect();
+    content.game.world.areas.extend(areas.iter().copied());
+    let mut session = new(content.clone(), state()).unwrap();
+    session
+        .apply(Command::World(WorldCommand::Observe {
+            actor: HERO,
+            position: Default::default(),
+            areas: areas.clone(),
+        }))
+        .unwrap();
+    assert_eq!(session.state().areas(HERO), &areas);
+    let saved = session.state().clone();
+    assert_eq!(new(content, saved).unwrap().state().areas(HERO), &areas);
+}
+
 /// Counts graph reads so tests can show which commands touch dialogue content.
 struct Counting {
     inner: ToolContent,

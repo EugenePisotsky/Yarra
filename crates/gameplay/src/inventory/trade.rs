@@ -7,8 +7,6 @@ use super::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-pub const MAX_TRADE_LINES: usize = 256;
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TradeLine {
@@ -75,10 +73,8 @@ pub fn quote_trade(
     if merchant_wallet.id == customer_wallet.id {
         return Err(InventoryError::SameParticipant);
     }
-    if offer.purchases.len() + offer.sales.len() == 0
-        || offer.purchases.len() + offer.sales.len() > MAX_TRADE_LINES
-    {
-        return Err(InventoryError::Invalid("empty or oversized trade".into()));
+    if offer.purchases.len() + offer.sales.len() == 0 {
+        return Err(InventoryError::Invalid("empty trade".into()));
     }
     let quote = TradeQuote {
         participants: TradeParticipants {

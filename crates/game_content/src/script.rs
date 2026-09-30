@@ -4,7 +4,7 @@ use crate::{ItemAmount, Result};
 use game_types::*;
 use gameplay::inventory::{TradeLine, TradeOffer, TradeParticipants};
 use gameplay::{Command, ContentSource, GameSession};
-use gameplay::{actors, inventory, quests};
+use gameplay::{actors, quests};
 use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -166,10 +166,6 @@ fn trade_lines<C: ContentSource>(
     inventory: InventoryId,
     amounts: &[ItemAmount],
 ) -> Result<Vec<TradeLine>> {
-    require(
-        amounts.len() <= inventory::MAX_TRADE_LINES,
-        "too many trade requests",
-    )?;
     let mut lines = Vec::new();
     for amount in amounts {
         require(amount.quantity > 0, "trade quantity must be positive")?;

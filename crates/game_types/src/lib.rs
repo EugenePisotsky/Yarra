@@ -351,22 +351,14 @@ pub struct TextContract {
 impl TextContract {
     pub fn validate(&self) -> Result<()> {
         require(
-            self.imports.len() <= 32 && !self.imports.contains(&self.id),
-            "invalid text imports",
-        )?;
-        require(
-            self.messages.len() <= 4096,
-            "too many messages in text resource",
+            !self.imports.contains(&self.id),
+            "a text resource imports itself",
         )?;
         for contract in self.messages.values() {
-            require(contract.arguments.len() <= 32, "too many message arguments")?;
             for (name, kind) in &contract.arguments {
                 TextKey::new(name)?;
                 if let ArgumentType::Select(values) = kind {
-                    require(
-                        !values.is_empty() && values.len() <= 64,
-                        "invalid selector values",
-                    )?;
+                    require(!values.is_empty(), "a selector has values")?;
                     for value in values {
                         TextKey::new(value)?;
                     }

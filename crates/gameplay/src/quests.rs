@@ -41,10 +41,7 @@ pub enum Transition {
 impl Quest {
     pub fn validate(&self) -> Result<()> {
         self.title.validate()?;
-        require(
-            !self.objectives.is_empty() && self.objectives.len() <= 128,
-            "quest requires 1..128 objectives",
-        )?;
+        require(!self.objectives.is_empty(), "a quest has objectives")?;
         let mut ids = BTreeSet::new();
         for objective in &self.objectives {
             require(ids.insert(&objective.id), "duplicate quest objective")?;

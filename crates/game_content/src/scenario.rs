@@ -66,14 +66,6 @@ pub struct Scenario {
 impl Scenario {
     pub fn instantiate(&self, content: &GameContent) -> Result<crate::ToolSession> {
         content.validate()?;
-        require(
-            self.actors.len() <= 10000
-                && self.owners.len() <= 10000
-                && self.inventories.len() <= 20000
-                && self.wallets.len() <= 20000
-                && self.steps.len() <= 1024,
-            "scenario exceeds limits",
-        )?;
         let mut state = SessionState::empty(self.seed);
         state.owners = self.owners.iter().cloned().collect();
         state.variables = self

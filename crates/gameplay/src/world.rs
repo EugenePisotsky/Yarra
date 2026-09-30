@@ -8,8 +8,6 @@ use game_types::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-pub const MAX_AREA_OVERLAP: usize = 32;
-
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorldDefinitions {
@@ -127,14 +125,8 @@ impl TriggerDefinition {
             self.speaker != Some(self.player),
             "trigger speaker must differ from its player",
         )?;
-        require(
-            !self.on.is_empty() && self.on.len() <= 32,
-            "trigger listens for 1..32 events",
-        )?;
-        require(
-            !self.actions.is_empty() && self.actions.len() <= 64,
-            "trigger has 1..64 actions",
-        )?;
+        require(!self.on.is_empty(), "a trigger listens for something")?;
+        require(!self.actions.is_empty(), "a trigger does something")?;
         if let TriggerRepeat::Cooldown { millis } = self.repeat {
             require(
                 millis > 0 && millis <= i64::MAX as u64,
@@ -316,10 +308,6 @@ impl GameContent {
     }
     pub(crate) fn validate_world(&self) -> Result<()> {
         let w = &self.game.world;
-        require(
-            w.objects.len() <= 10000 && w.areas.len() <= 10000 && w.triggers.len() <= 10000,
-            "world definition budget exceeded",
-        )?;
         crate::content::ordered(&w.objects, |v| v.id, "objects")?;
         for d in &w.objects {
             d.name.validate()?;
@@ -333,9 +321,8 @@ impl GameContent {
             if let Some(condition) = &d.condition {
                 self.validate_condition(condition)?;
             }
-            let mut budget = 1024;
             for action in &d.actions {
-                self.validate_action(action, 0, &mut budget)?;
+                self.validate_action(action, 0)?;
             }
         }
         Ok(())

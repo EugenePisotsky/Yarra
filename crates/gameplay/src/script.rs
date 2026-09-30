@@ -219,7 +219,7 @@ impl ActScope<'_, '_> {
     }
     /// Runs a built-in action on behalf of `actor`, exactly as authored content would.
     pub fn apply(&mut self, actor: ActorId, action: &Action) -> Result<()> {
-        self.content.validate_action(action, 0, &mut 64)?;
+        self.content.validate_action(action, 0)?;
         crate::session::run_action(
             self.content,
             self.tx,

@@ -296,7 +296,6 @@ impl GameContent {
             contract.validate()?;
             require(text_ids.insert(contract.id), "duplicate text resource")?;
         }
-        require(self.text.len() <= 2048, "too many text resources")?;
         let contracts: BTreeMap<_, _> = self.text.iter().map(|c| (c.id, c)).collect();
         fn visit_text(
             id: TextResourceId,
@@ -330,10 +329,7 @@ impl GameContent {
         }
         let mut modules = BTreeSet::new();
         for module in &self.game.scripts {
-            require(
-                modules.insert(&module.name) && module.source.len() <= 1024 * 1024,
-                "duplicate or oversized script module",
-            )?;
+            require(modules.insert(&module.name), "duplicate script module")?;
         }
         self.validate_world()?;
         self.items.validate()?;
@@ -344,16 +340,9 @@ impl GameContent {
         for ability in &self.game.rules.abilities {
             self.scripts.engine(&ability.resolve)?;
         }
-        require(
-            self.game.actors.len() <= 10000
-                && self.game.dialogues.len() <= 1000
-                && self.game.variables.len() <= 10000,
-            "content exceeds limits",
-        )?;
         for item in &self.items.items {
             self.game.rules.validate_mechanics(&item.mechanics)?;
         }
-        require(self.game.loot.len() <= 10000, "too many loot tables")?;
         ordered(&self.game.loot, |v| v.id, "loot tables")?;
         for table in &self.game.loot {
             table.validate(&self.items)?;
@@ -384,10 +373,6 @@ impl GameContent {
                 self.loot(loot)?;
             }
         }
-        require(
-            self.game.dialogue_contracts.len() <= 1000 && self.game.claims.len() <= 10000,
-            "dialogue declaration limit",
-        )?;
         ordered(
             &self.game.dialogue_contracts,
             |v| v.id,
@@ -410,18 +395,11 @@ impl GameContent {
                 if let Some(condition) = &node.condition {
                     self.validate_condition(condition)?;
                 }
-                let mut budget = 1024;
                 for action in &node.actions {
-                    self.validate_action(action, 0, &mut budget)?;
+                    self.validate_action(action, 0)?;
                 }
             }
         }
-        require(
-            self.game.quests.len() <= 10000
-                && self.game.profiles.len() <= 10000
-                && self.game.predicates.len() <= 10000,
-            "narrative content exceeds limits",
-        )?;
         ordered(&self.game.quests, |v| v.id, "quests")?;
         ordered(&self.game.predicates, |v| v.id, "named predicates")?;
         ordered(&self.game.profiles, |v| v.id, "interaction profiles")?;
@@ -439,17 +417,9 @@ impl GameContent {
         }
         Ok(())
     }
-    pub(crate) fn validate_action(
-        &self,
-        action: &Action,
-        depth: usize,
-        budget: &mut usize,
-    ) -> Result<()> {
-        require(
-            depth <= 8 && *budget > 0,
-            "dialogue action complexity exceeded",
-        )?;
-        *budget -= 1;
+    /// Actions nest only so deep, so running them cannot exhaust the stack.
+    pub(crate) fn validate_action(&self, action: &Action, depth: usize) -> Result<()> {
+        require(depth <= 8, "actions nested too deeply")?;
         match action {
             Action::Script(name) => {
                 self.scripts.engine(name)?;
@@ -461,7 +431,7 @@ impl GameContent {
                 self.claim(*claim)?;
                 require(!actions.is_empty(), "empty claimed action group")?;
                 for action in actions {
-                    self.validate_action(action, depth + 1, budget)?;
+                    self.validate_action(action, depth + 1)?;
                 }
             }
             Action::Quest { quest, transition } => {
@@ -545,7 +515,7 @@ impl GameContent {
                 self.game.rules.skill(skill)?;
                 require(*difficulty > 0, "zero check difficulty")?;
                 for action in success.iter().chain(failure) {
-                    self.validate_action(action, depth + 1, budget)?;
+                    self.validate_action(action, depth + 1)?;
                 }
             }
         }

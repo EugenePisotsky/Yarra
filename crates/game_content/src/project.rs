@@ -17,7 +17,6 @@ use std::{
 
 pub const SOURCE_FORMAT_VERSION: u32 = 10;
 pub(crate) const MAX_DOCUMENT_BYTES: usize = 16 * 1024 * 1024;
-const MAX_PROJECT_BYTES: usize = 64 * 1024 * 1024;
 const MAX_TRANSLATION_BYTES: usize = 2 * 1024 * 1024;
 const MAX_SCRIPT_BYTES: usize = 1024 * 1024;
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -120,10 +119,7 @@ impl LoadedProject {
         }
         let project: ProjectFile =
             ron::from_str(&text).map_err(|e| source_error(&root.join("project.ron"), e))?;
-        require(
-            !project.packages.is_empty() && project.packages.len() <= 256,
-            "project requires 1..256 packages",
-        )?;
+        require(!project.packages.is_empty(), "a project has packages")?;
         let mut packages = BTreeMap::new();
         let mut items: Option<ItemCatalog> = None;
         let mut rules: Option<Rules> = None;
@@ -249,7 +245,6 @@ impl LoadedProject {
                 own!(AssetId::Variable(variable.id));
                 variables.push(variable.clone());
             }
-            require(resource_paths.len() <= 2048, "too many package resources")?;
             for path in resource_paths {
                 let resource: ResourceFile = source.ron(&path)?;
                 let id = resource.contract.id;
@@ -258,10 +253,7 @@ impl LoadedProject {
                     resource_owners.insert(id, package.id).is_none(),
                     "duplicate text resource identity",
                 )?;
-                require(
-                    !resource.locales.is_empty() && resource.locales.len() <= 64,
-                    "resource requires 1..64 locales",
-                )?;
+                require(!resource.locales.is_empty(), "a text resource has locales")?;
                 let hash = contract_hash(&resource.contract)?;
                 for entry in resource.locales {
                     require(
@@ -428,17 +420,7 @@ impl LoadedProject {
         contextual("game content", content.validate())?;
         content.validate_selection_links()?;
         crate::asset::validate_locale(&source_locale)?;
-        require(
-            serde_json::to_vec(&content)?.len() <= 2 * MAX_DOCUMENT_BYTES,
-            "content exceeds 32 MiB",
-        )?;
-        require(
-            serde_json::to_vec(&scenario)?.len() <= MAX_DOCUMENT_BYTES,
-            "scenario exceeds 16 MiB",
-        )?;
-        require(translations.len() <= 2048, "too many translation resources")?;
         let mut locales = BTreeSet::new();
-        let mut bytes = 0;
         for translation in &translations {
             crate::asset::validate_locale(&translation.locale)?;
             locales.insert(translation.locale.clone());
@@ -446,8 +428,6 @@ impl LoadedProject {
                 translation.source.len() <= MAX_TRANSLATION_BYTES,
                 "translation exceeds 2 MiB",
             )?;
-            bytes += translation.source.len();
-            require(bytes <= MAX_DOCUMENT_BYTES, "translations exceed 16 MiB")?;
             let contract = content
                 .text
                 .iter()
@@ -467,7 +447,6 @@ impl LoadedProject {
                 )?;
             }
         }
-        require(locales.len() <= 64, "too many locales")?;
         let localization =
             Localization::new(&source_locale, content.text.clone(), translations.clone())?;
         let mut warnings = Vec::new();
@@ -588,7 +567,6 @@ impl LoadedProject {
 
 struct SourceReader {
     root: PathBuf,
-    bytes: usize,
 }
 impl SourceReader {
     fn new(root: &Path) -> Result<Self> {
@@ -596,7 +574,7 @@ impl SourceReader {
             .canonicalize()
             .map_err(|error| source_error(root, error))?;
         require(root.is_dir(), "source project must be a directory")?;
-        Ok(Self { root, bytes: 0 })
+        Ok(Self { root })
     }
     fn ron<T: DeserializeOwned>(&mut self, path: &str) -> Result<T> {
         let text = self.text(path, MAX_DOCUMENT_BYTES)?;
@@ -627,11 +605,6 @@ impl SourceReader {
         if text.len() > limit {
             return Err(source_error(&full, format!("file exceeds {limit} bytes")));
         }
-        self.bytes += text.len();
-        require(
-            self.bytes <= MAX_PROJECT_BYTES,
-            "source project exceeds 64 MiB",
-        )?;
         Ok(text)
     }
 }

@@ -220,10 +220,6 @@ impl Dialogue {
         }
     }
     pub fn validate(&self) -> Result<()> {
-        require(
-            !self.nodes.is_empty() && self.nodes.len() <= 4096,
-            "dialogue node limit",
-        )?;
         self.contract().validate()?;
         let mut ids = BTreeSet::new();
         for node in &self.nodes {
@@ -236,17 +232,10 @@ impl Dialogue {
                 self.roles.contains_key(&node.speaker),
                 "node speaker is not a declared role",
             )?;
-            require(
-                node.children.len() <= 128 && node.actions.len() <= 64,
-                "oversized dialogue node",
-            )?;
             node.text.validate()?;
             self.validate_arguments(&node.arguments)?;
         }
-        require(
-            !self.start.is_empty() && self.start.len() <= 128,
-            "dialogue needs 1..128 entry nodes",
-        )?;
+        require(!self.start.is_empty(), "a dialogue has entry nodes")?;
         for id in self
             .start
             .iter()
@@ -257,7 +246,6 @@ impl Dialogue {
         Ok(())
     }
     fn validate_arguments(&self, args: &ArgumentSources) -> Result<()> {
-        require(args.len() <= 32, "too many message arguments")?;
         for (name, value) in args {
             TextKey::new(name.clone())?;
             match value {
@@ -324,15 +312,11 @@ impl Dialogue {
 impl DialogueContract {
     pub fn validate(&self) -> Result<()> {
         require(
-            self.roles.len() <= 16
-                && self.roles.get(&key(PLAYER)) == Some(&Role::Required)
+            self.roles.get(&key(PLAYER)) == Some(&Role::Required)
                 && self.roles.get(&key(SPEAKER)) == Some(&Role::Required),
-            "dialogue requires player/speaker roles, at most 16 total",
+            "dialogue requires player/speaker roles",
         )?;
-        require(
-            !self.nodes.is_empty() && self.nodes.len() <= 4096,
-            "dialogue history key budget exceeded",
-        )?;
+        require(!self.nodes.is_empty(), "a dialogue has nodes")?;
         self.repeat.validate()
     }
     pub fn history_key(&self, player: ActorId, speaker: ActorId) -> HistoryKey {

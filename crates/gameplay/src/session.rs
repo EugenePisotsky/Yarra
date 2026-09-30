@@ -621,7 +621,6 @@ fn start_talk(
             events.push(GameEvent::DialogueResumed { dialogue });
         }
         Talk::Start { selection, random } => {
-            require(bindings.len() <= 14, "too many role bindings")?;
             let key = dialogue::InteractionKey {
                 participant,
                 speaker,

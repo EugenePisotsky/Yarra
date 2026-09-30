@@ -89,18 +89,14 @@ impl LanguageRepository {
     fn all_for_tools(&mut self) -> Result<Vec<LanguageResource>> {
         let ids: Vec<String> = self
             .connection
-            .prepare("SELECT id FROM resources ORDER BY id LIMIT 2049")?
+            .prepare("SELECT id FROM resources ORDER BY id")?
             .query_map([], |r| r.get(0))?
             .collect::<std::result::Result<_, _>>()?;
-        require(ids.len() <= 2048, "too many language resources")?;
         let mut result = Vec::new();
-        let mut bytes = 0;
         for id in ids {
             let resource = self
                 .load(TextResourceId::try_from(id)?)?
                 .ok_or_else(|| game_types::Invalid("missing language resource".into()))?;
-            bytes += resource.source.len();
-            require(bytes <= 16 * 1024 * 1024, "tool language budget exceeded")?;
             result.push(resource);
         }
         Ok(result)
@@ -113,7 +109,6 @@ pub struct LanguageSource {
 impl LanguageSource {
     pub fn new(content: ContentRepository, languages: Vec<LanguageRepository>) -> Result<Self> {
         let mut by_locale = BTreeMap::new();
-        require(languages.len() <= 64, "too many language packs")?;
         for language in languages {
             require(
                 language.manifest.content == content.manifest().content.id
@@ -224,7 +219,6 @@ impl LoadedProject {
     ) -> Result<Self> {
         let content = Self::materialize_bundle_for_tools(path)?;
         let mut translations = Vec::new();
-        require(languages.len() <= 64, "too many language packs")?;
         for path in languages {
             let mut language = LanguageRepository::open(path)?;
             require(

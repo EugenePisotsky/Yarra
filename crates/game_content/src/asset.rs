@@ -333,10 +333,7 @@ impl Asset {
                 .validate()?;
             }
             Self::Item(v) => v.validate()?,
-            Self::Actor(v) => {
-                v.name.validate()?;
-                require(v.base.len() <= 128, "actor attributes exceed limit")?;
-            }
+            Self::Actor(v) => v.name.validate()?,
             Self::Rules(v) => v.validate()?,
             Self::Dialogue(v) => v.validate()?,
             Self::Text(v) => {

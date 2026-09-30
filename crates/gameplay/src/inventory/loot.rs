@@ -6,8 +6,6 @@ use crate::rules::RandomState;
 use game_types::LootId;
 use serde::{Deserialize, Serialize};
 
-pub const MAX_LOOT_ENTRIES: usize = 256;
-
 fn always() -> u8 {
     100
 }
@@ -29,9 +27,6 @@ pub struct LootTable {
 }
 impl LootTable {
     pub fn validate(&self, catalog: &ItemCatalog) -> Result<()> {
-        if self.entries.len() > MAX_LOOT_ENTRIES {
-            return Err(InventoryError::Invalid("loot table exceeds limits".into()));
-        }
         for entry in &self.entries {
             catalog.item(entry.item)?;
             let (least, most) = entry.quantity;

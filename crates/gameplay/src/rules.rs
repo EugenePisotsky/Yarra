@@ -6,10 +6,6 @@ use game_types::{GameTime, Invalid, Key, Result, TextRef, require};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const MAX_STATS: usize = 128;
-pub const MAX_SKILL_RANK: usize = 20;
-pub const MAX_LEVEL: usize = 100;
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StatKind {
     /// Stored for each character and raised by spending attribute points.
@@ -311,17 +307,12 @@ impl Rules {
     }
     pub fn validate(&self) -> Result<()> {
         require(
-            !self.stats.is_empty()
-                && self.stats.len() <= MAX_STATS
-                && self.skills.len() <= 256
-                && self.slots.len() <= 64
-                && self.effects.len() <= 1024
-                && !self.classes.is_empty()
-                && self.classes.len() <= 256
-                && self.abilities.len() <= 4096
-                && self.levels.len() < MAX_LEVEL
-                && (1..=16).contains(&self.party_size),
-            "rules exceed limits",
+            !self.stats.is_empty() && !self.classes.is_empty(),
+            "rules need stats and classes",
+        )?;
+        require(
+            (1..=16).contains(&self.party_size),
+            "a party has 1..16 members",
         )?;
         unique(self.stats.iter().map(|v| &v.id), "stat")?;
         unique(self.skills.iter().map(|v| &v.id), "skill")?;
@@ -343,14 +334,14 @@ impl Rules {
         self.resource(&self.life)?;
         for skill in &self.skills {
             skill.name.validate()?;
+            // Ranks are counted in a byte.
             require(
-                (1..=MAX_SKILL_RANK).contains(&skill.ranks.len()),
-                "a skill has 1..20 ranks",
+                (1..=usize::from(u8::MAX)).contains(&skill.ranks.len()),
+                "a skill has 1..255 ranks",
             )?;
         }
         for effect in &self.effects {
             effect.name.validate()?;
-            require(effect.modifiers.len() <= 64, "too many effect modifiers")?;
             for modifier in &effect.modifiers {
                 self.validate_modifier(modifier)?;
             }
@@ -364,9 +355,10 @@ impl Rules {
         }
         for ability in &self.abilities {
             ability.name.validate()?;
+            // Taking no time at all, a repeating ability would go on forever at one instant.
             require(
-                ability.duration_ms <= 3_600_000 && ability.cooldown_ms <= 86_400_000,
-                "ability timing out of range",
+                (1..=3_600_000).contains(&ability.duration_ms) && ability.cooldown_ms <= 86_400_000,
+                "an ability takes 1 ms to an hour, and cools down within a day",
             )?;
             for resource in ability.costs.keys() {
                 self.resource(resource)?;
@@ -491,10 +483,6 @@ impl Rules {
 }
 impl ItemMechanics {
     pub fn validate(&self) -> Result<()> {
-        require(
-            self.modifiers.len() <= 64 && self.on_use.len() <= 64,
-            "too many item effects",
-        )?;
         require(
             self.slot.is_some() || self.modifiers.is_empty(),
             "equipment modifiers need a slot",

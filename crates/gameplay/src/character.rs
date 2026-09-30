@@ -8,9 +8,6 @@ use crate::tx::Tx;
 use crate::{GameContent, GameEvent, Rejection, Result};
 use game_types::*;
 
-/// The most that may happen by itself within one step of time.
-const MAX_EVENTS_PER_STEP: usize = 10_000;
-
 /// Works the character's stats out again and keeps its resources within their caps.
 /// A resource the character did not have yet starts full.
 pub(crate) fn refresh(content: &GameContent, tx: &mut Tx, actor: ActorId) -> Result<()> {
@@ -167,7 +164,8 @@ pub(crate) fn advance_time(
         target.0 <= i64::MAX as u64,
         "logical time exceeds storage range",
     )?;
-    for _ in 0..MAX_EVENTS_PER_STEP {
+    // Everything due takes time to happen again, so this ends.
+    loop {
         let due = tx
             .timed
             .iter()
@@ -182,7 +180,6 @@ pub(crate) fn advance_time(
         tx.set_time(time);
         happen(content, tx, actor, events)?;
     }
-    Err(Invalid("too much falls due in one step of time".into()).into())
 }
 /// Carries out what is due for one character at the current time.
 fn happen(
@@ -409,7 +406,6 @@ pub(crate) fn check(
         skill,
         difficulty,
         &mut |sides| {
-            require(rolls.len() < 64, "a check rolls at most 64 dice")?;
             let roll = random.die(sides)?;
             rolls.push(roll);
             Ok(roll)

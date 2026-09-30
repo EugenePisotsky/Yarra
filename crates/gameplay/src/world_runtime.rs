@@ -262,10 +262,6 @@ pub(crate) fn apply(
             position,
             areas,
         } => {
-            require(
-                areas.len() <= MAX_AREA_OVERLAP,
-                "area overlap budget exceeded",
-            )?;
             for area in &areas {
                 content.area(*area)?;
             }

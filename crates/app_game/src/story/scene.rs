@@ -30,8 +30,6 @@ const STAND_INS: [(&str, [f32; 2], [f32; 2]); 2] = [
     ("guard/approach", [2.5, 10.0], [-6.0, 5.0]),
     ("guard/gate_post", [9.2, 11.6], [-4.6, -2.4]),
 ];
-/// The rules accept an actor in at most this many areas at once.
-const MAX_AREAS_AT_ONCE: usize = 32;
 
 pub(crate) fn install(app: &mut App, source: &Path) -> Result<(), String> {
     let work = std::env::temp_dir().join("yarra-story");
@@ -428,7 +426,6 @@ fn report(
                 places.ids.get(name).is_some_and(|id| inside.contains(id))
             })
             .filter_map(|area| places.ids.get(&area.name).copied())
-            .take(MAX_AREAS_AT_ONCE)
             .collect()
     };
     if story.areas(actor) != &areas {

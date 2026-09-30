@@ -130,6 +130,7 @@ Text references are `(TextResourceId, TextKey)` with typed arguments (`Text`, `N
 
 ### Known limits
 
+- Caps on how many of something content or a playthrough may have are gone. What bounds remain guard against endless or exponential work (nesting depth of conditions and actions, the predicate expansion budget, script steps and memory, 256 queued steps per command), against one mistake exhausting memory (the size of each file read, 4,096 stacks per inventory), or are rules of the game (party size, eight lined-up intents).
 - Every character has a record in memory, about 1 KB each with stats kept as maps keyed by name. Only inventories are made lazily.
 - The rules know nothing of range or line of sight; the engine adapter decides who can reach whom before it sends an intent.
 - The game uses these crates only through the opt-in `--story` slice ([`app_game/src/story.rs`](../crates/app_game/src/story.rs)): conversation, quest, gate state, saves, area occupancy for the party, triggered walks, ambient lines, the character sheet, lessons and sparring with a dummy. Walks are straight lines; there is no pathfinding.

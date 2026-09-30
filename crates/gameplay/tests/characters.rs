@@ -191,6 +191,35 @@ fn effects_tick_and_end_in_order_of_time_and_only_their_bearers_are_looked_at() 
 }
 
 #[test]
+fn a_step_of_time_carries_out_everything_due_in_it_however_much() {
+    // A salve that heals every millisecond: twenty seconds are 20,000 ticks in one step.
+    let mut healing = offering(vec![effect("poisoned", None)]);
+    let effects = &mut healing.game.rules.effects;
+    let salve = effects
+        .iter_mut()
+        .find(|e| e.id == key("poisoned"))
+        .unwrap();
+    salve.periodic = Some(rules::Periodic {
+        resource: key("health"),
+        amount: 1,
+        period_ms: 1,
+    });
+    let mut session = new(healing);
+    pick(&mut session).unwrap();
+    let time = session.state().time;
+    session
+        .apply(Command::AdvanceTime { millis: 20_000 })
+        .unwrap();
+    assert_eq!(session.state().time, GameTime(time.0 + 20_000));
+    assert_eq!(stat(&session, HERO, "health"), 100);
+    // Only something that takes no time at all could keep a step from ending, and the
+    // rules refuse it.
+    let mut content = content();
+    content.game.rules.abilities[0].duration_ms = 0;
+    let error = ToolContent::new(content).err().unwrap().to_string();
+    assert!(error.contains("takes 1 ms"), "{error}");
+}
+#[test]
 fn losing_the_last_of_the_life_resource_is_death() {
     let mut content = content();
     // A trigger hears of the death like any other event.

@@ -4,8 +4,6 @@ use game_types::TextRef;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-pub const MAX_CATALOG_ITEMS: usize = 10_000;
-pub const MAX_CATEGORIES: usize = 256;
 pub const MAX_STACK_LIMIT: u32 = 1_000_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -62,9 +60,6 @@ impl ItemDefinition {
                 "equipment must be individually identified".into(),
             ));
         }
-        if self.tags.len() > 64 {
-            return Err(InventoryError::Invalid("oversized item definition".into()));
-        }
         for tag in &self.tags {
             validate_key(tag)?;
         }
@@ -104,9 +99,6 @@ impl ItemCatalog {
     }
     pub fn validate(&self) -> Result<()> {
         validate_revision(self.revision)?;
-        if self.categories.len() > MAX_CATEGORIES || self.items.len() > MAX_CATALOG_ITEMS {
-            return Err(InventoryError::Invalid("catalog exceeds limits".into()));
-        }
         // Both lists are kept in order of identity, which also shows each is there once,
         // so a definition is found by bisection.
         let ordered = self.categories.windows(2).all(|w| w[0].id < w[1].id)

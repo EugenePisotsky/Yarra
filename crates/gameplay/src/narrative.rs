@@ -54,10 +54,7 @@ pub struct InteractionProfile {
 }
 impl InteractionProfile {
     pub fn validate(&self) -> Result<()> {
-        require(
-            !self.rules.is_empty() && self.rules.len() <= 64,
-            "profile requires 1..64 rules",
-        )?;
+        require(!self.rules.is_empty(), "a profile has entry rules")?;
         let mut ids = BTreeSet::new();
         let mut precedence = BTreeSet::new();
         for rule in &self.rules {
@@ -68,10 +65,7 @@ impl InteractionProfile {
             if let Some(text) = &rule.topic {
                 text.validate()?;
             }
-            require(
-                !rule.variants.is_empty() && rule.variants.len() <= 16,
-                "rule requires 1..16 variants",
-            )?;
+            require(!rule.variants.is_empty(), "an entry rule has variants")?;
             let mut dialogues = BTreeSet::new();
             let mut weight = 0u32;
             for variant in &rule.variants {

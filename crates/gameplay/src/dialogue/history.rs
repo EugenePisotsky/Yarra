@@ -131,10 +131,6 @@ impl History {
             HistoryEvent::Completed => self.completed = count,
             HistoryEvent::Interrupted => self.interrupted = count,
             HistoryEvent::Node(id) => {
-                require(
-                    self.nodes.contains_key(id) || self.nodes.len() < 4096,
-                    "dialogue history budget exceeded",
-                )?;
                 self.nodes.insert(id.clone(), count);
             }
         }
