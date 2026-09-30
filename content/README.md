@@ -34,14 +34,14 @@ the current world database. Use `cargo run --offline -p yarra-game-content -- va
 content/gameplay/demo` to validate it; see the [gameplay workflow](../docs/WORKFLOWS.md#standalone-gameplay-and-saves)
 for running the scenario, publishing SQLite bundles and save/load checks.
 
-Gameplay source format 6 uses explicitly declared packages and one conversation per
-asset directory: graph, local bindings, message contracts and translations are grouped
-together. Text references contain a stable resource UUID and a local key. `build`
-publishes an immutable SQLite bundle (schema 7) with one checksummed record per asset;
+Gameplay source format 7 uses explicitly declared packages and one conversation per
+asset directory: the graph (with its conditions and actions inline), message contracts
+and translations are grouped together. Text references contain a stable resource UUID and a local key. `build`
+publishes an immutable SQLite bundle (schema 8) with one checksummed record per asset;
 language packs are published separately and hold the wording and review metadata.
 
 At runtime the whole playthrough state is held in memory and saved as one snapshot file
-per slot (save format 8). A session loads the always-needed definitions once and each
+per slot (save format 9). A session loads the always-needed definitions once and each
 dialogue graph when a conversation needs it. Saves are tied to the content they were
 made with; wording updates do not affect them. Old bundles and saves are rebuilt, not
 migrated.

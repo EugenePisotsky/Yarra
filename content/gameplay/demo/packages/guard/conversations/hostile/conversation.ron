@@ -1,1 +1,1 @@
-(graph: "packages/guard/conversations/hostile/graph.ron", bindings: "packages/guard/conversations/hostile/bindings.ron", resources: [])
+(graph: "packages/guard/conversations/hostile/graph.ron", resources: [])

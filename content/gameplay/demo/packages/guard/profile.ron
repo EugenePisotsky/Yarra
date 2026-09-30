@@ -1,5 +1,5 @@
 (id: "22222222-2222-2222-2222-222222222222", rules: [
-    (id: "refused", priority: 110, order: 0, topic: None, condition: All([QuestStatus(quest: "20202020-2020-2020-2020-202020202020", status: Active), History(dialogue: "30303030-3030-3030-3030-303030303030", event: Choice("refuse"), minimum: 1)]), variants: [(dialogue: "31313131-3131-3131-3131-313131313131", weight: 1)]),
+    (id: "refused", priority: 110, order: 0, topic: None, condition: All([QuestStatus(quest: "20202020-2020-2020-2020-202020202020", status: Active), History(dialogue: "30303030-3030-3030-3030-303030303030", event: Node("refuse"), minimum: 1)]), variants: [(dialogue: "31313131-3131-3131-3131-313131313131", weight: 1)]),
     (id: "reward", priority: 100, order: 0, topic: None, condition: Named("23232323-2323-2323-2323-232323232323"), variants: [(dialogue: "30303030-3030-3030-3030-303030303030", weight: 1)]),
     (id: "duty", priority: 80, order: 0, topic: None, condition: QuestStatus(quest: "20202020-2020-2020-2020-202020202020", status: Active), variants: [(dialogue: "31313131-3131-3131-3131-313131313131", weight: 1)]),
     (id: "hostile", priority: 20, order: 0, topic: None, condition: Not(Relationship(from: Speaker, to: Player, minimum: 0)), variants: [(dialogue: "34343434-3434-3434-3434-343434343434", weight: 1)]),

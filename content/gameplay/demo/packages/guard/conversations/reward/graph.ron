@@ -1,11 +1,30 @@
+// The guard takes the key back. A companion travelling with the player comments first,
+// and the guard answers her before the player gets a word in.
 (
-    id: "30303030-3030-3030-3030-303030303030", roles: ["player", "speaker"], history_scope: Interaction, repeat: Always,
-    start: "start", nodes: [(id: "start", lines: [
-        (id: "greeting", speaker: "speaker", text: Message((resource: "25252525-2525-2525-2525-252525252525", key: "reward")), arguments: {"player": ActorName("player")}),
-        (id: "answer", speaker: "player", text: Message((resource: "25252525-2525-2525-2525-252525252525", key: "return-key")), arguments: {}),
-    ], choices: [
-        (id: "return-key", text: Message((resource: "25252525-2525-2525-2525-252525252525", key: "return-key")), arguments: {}, repeat: Always, conditions: ["ready"], actions: ["reward"], next: None),
-        (id: "refuse", text: Message((resource: "25252525-2525-2525-2525-252525252525", key: "refuse")), arguments: {}, repeat: Always, conditions: [], actions: [], next: None),
-        (id: "leave", text: Message((resource: "25252525-2525-2525-2525-252525252525", key: "leave")), arguments: {}, repeat: Always, conditions: [], actions: [], next: None),
-    ])],
+    id: "30303030-3030-3030-3030-303030303030",
+    roles: {
+        "player": Required,
+        "speaker": Required,
+        "companion": Actor("03030303-0303-0303-0303-030303030303"),
+    },
+    history_scope: Interaction, repeat: Always,
+    start: ["greeting"],
+    nodes: [
+        (id: "greeting", kind: Line, speaker: "speaker", text: Message((resource: "25252525-2525-2525-2525-252525252525", key: "reward")), arguments: {"player": ActorName("player")}, children: ["companion-aside", "answer"]),
+        (id: "companion-aside", kind: Line, speaker: "companion", text: Message((resource: "25252525-2525-2525-2525-252525252525", key: "companion-aside")), children: ["guard-reply"]),
+        (id: "guard-reply", kind: Line, speaker: "speaker", text: Message((resource: "25252525-2525-2525-2525-252525252525", key: "guard-reply")), children: ["answer"]),
+        (id: "answer", kind: Line, speaker: "player", text: Message((resource: "25252525-2525-2525-2525-252525252525", key: "return-key")), children: ["return-key", "refuse", "leave"]),
+        (id: "return-key", kind: Choice, speaker: "player", text: Message((resource: "25252525-2525-2525-2525-252525252525", key: "return-key")),
+            condition: Some(Named("23232323-2323-2323-2323-232323232323")),
+            actions: [Claim(claim: "40404040-4040-4040-4040-404040404040", actions: [
+                ConsumeItem(definition: "03030303-0303-0303-0303-030303030303", quantity: 1),
+                Quest(quest: "20202020-2020-2020-2020-202020202020", transition: CompleteObjective("deliver")),
+                Quest(quest: "20202020-2020-2020-2020-202020202020", transition: Complete),
+                Relationship(from: Speaker, to: Player, amount: 25),
+                AwardExperience(skill: "persuasion", amount: 10),
+                SetLocked(object: "51515151-5151-5151-5151-515151515151", locked: false),
+            ])]),
+        (id: "refuse", kind: Choice, speaker: "player", text: Message((resource: "25252525-2525-2525-2525-252525252525", key: "refuse"))),
+        (id: "leave", kind: Choice, speaker: "player", text: Message((resource: "25252525-2525-2525-2525-252525252525", key: "leave"))),
+    ],
 )

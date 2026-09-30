@@ -14,7 +14,7 @@ mod script;
 pub use asset::{Asset, AssetHeader, AssetId, AssetKind, MAX_ASSET_BYTES};
 pub use bundle::{BUNDLE_APPLICATION_ID, BUNDLE_SCHEMA_VERSION, BundleManifest};
 pub use project::{
-    Bindings, ConversationFile, LoadedProject, LocaleFile, PackageFile, ProjectFile, ResourceFile,
+    ConversationFile, LoadedProject, LocaleFile, PackageFile, ProjectFile, ResourceFile,
     SOURCE_FORMAT_VERSION, TranslationReview,
 };
 pub use repository::ContentRepository;

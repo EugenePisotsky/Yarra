@@ -23,27 +23,9 @@ impl ContentSource for ToolContent {
         let mut core = self.content.clone();
         core.text.clear();
         core.game.dialogues.clear();
-        core.game.conditions.clear();
-        core.game.actions.clear();
         Ok(core)
     }
-    fn dialogue(&mut self, id: DialogueId) -> Result<DialoguePack> {
-        let game = &self.content.game;
-        let local = |k: &&BindingId| k.dialogue == id;
-        Ok(DialoguePack {
-            graph: self.content.dialogue(id)?.clone(),
-            conditions: game
-                .conditions
-                .iter()
-                .filter(|(k, _)| local(k))
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect(),
-            actions: game
-                .actions
-                .iter()
-                .filter(|(k, _)| local(k))
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect(),
-        })
+    fn dialogue(&mut self, id: DialogueId) -> Result<dialogue::Dialogue> {
+        Ok(self.content.dialogue(id)?.clone())
     }
 }

@@ -3,10 +3,7 @@ use crate::{asset::*, bundle::publication_hash, *};
 use game_types::require;
 use gameplay::inventory;
 use gameplay::{GameContent, GameDefinitions};
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    path::Path,
-};
+use std::{collections::BTreeSet, path::Path};
 
 impl LoadedProject {
     /// Full validation/demo tool only: reads every mechanical asset and executes the scenario.
@@ -51,8 +48,6 @@ impl LoadedProject {
         let mut actors = Vec::new();
         let mut dialogues = Vec::new();
         let mut facts = BTreeSet::new();
-        let mut conditions = BTreeMap::new();
-        let mut actions = BTreeMap::new();
         let mut text = Vec::new();
         for record in records {
             match record {
@@ -69,12 +64,6 @@ impl LoadedProject {
                 Asset::Actor(v) => actors.push(v),
                 Asset::Rules(v) => rules = Some(v),
                 Asset::Dialogue(v) => dialogues.push(v),
-                Asset::Condition { id, value } => {
-                    conditions.insert(id, value);
-                }
-                Asset::Action { id, value } => {
-                    actions.insert(id, value);
-                }
                 Asset::Fact(v) => {
                     facts.insert(v);
                 }
@@ -96,8 +85,6 @@ impl LoadedProject {
                 actors,
                 dialogues,
                 facts,
-                conditions,
-                actions,
             },
         };
         require(

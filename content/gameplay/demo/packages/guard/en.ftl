@@ -13,3 +13,5 @@ leave = Goodbye.
 gate-topic = About the gate key
 supply-topic = About the supplies
 refuse = I will keep the key for now.
+companion-aside = So this is the gate everyone talks about.
+guard-reply = It was, before the key went missing.

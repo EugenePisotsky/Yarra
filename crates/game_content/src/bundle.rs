@@ -10,14 +10,14 @@ use std::{
 };
 
 pub const BUNDLE_APPLICATION_ID: i64 = 0x59474342;
-pub const BUNDLE_SCHEMA_VERSION: i64 = 7;
+pub const BUNDLE_SCHEMA_VERSION: i64 = 8;
 const SCHEMA: &str = "
 CREATE TABLE bundle_manifest (
  singleton INTEGER PRIMARY KEY CHECK(singleton=1),
  payload BLOB NOT NULL CHECK(length(payload)<=65536)
 ) STRICT;
 CREATE TABLE assets (
- kind INTEGER NOT NULL CHECK(kind BETWEEN 1 AND 17),
+ kind INTEGER NOT NULL CHECK(kind BETWEEN 1 AND 15),
  id TEXT NOT NULL CHECK(length(CAST(id AS BLOB)) BETWEEN 1 AND 192),
  position INTEGER NOT NULL CHECK(position>=0),
  byte_len INTEGER NOT NULL CHECK(byte_len BETWEEN 1 AND 2097152),
@@ -62,7 +62,7 @@ pub(crate) fn publication_hash(
     headers: &[AssetHeader],
 ) -> Result<[u8; 32]> {
     let mut hasher = blake3::Hasher::new();
-    hasher.update(b"yarra-game-content-v6\0");
+    hasher.update(b"yarra-game-content-v8\0");
     hasher.update(&serde_json::to_vec(&(
         &manifest.content,
         manifest.catalog_id,
@@ -196,26 +196,6 @@ impl LoadedProject {
                 .map(Asset::Dialogue)
         );
         append!(self.content.game.facts.iter().cloned().map(Asset::Fact));
-        append!(
-            self.content
-                .game
-                .conditions
-                .iter()
-                .map(|(id, value)| Asset::Condition {
-                    id: id.clone(),
-                    value: value.clone()
-                })
-        );
-        append!(
-            self.content
-                .game
-                .actions
-                .iter()
-                .map(|(id, value)| Asset::Action {
-                    id: id.clone(),
-                    value: value.clone()
-                })
-        );
         append!(self.content.text.iter().cloned().map(Asset::Text));
         append!(
             self.content

@@ -26,7 +26,7 @@
         position: (
             millimetres: (0, 0, 0),
         ),
-        name: None,
+        name: Some(Literal("Mira")),
         health: Some(100),
     )],
     owners: [(
@@ -97,6 +97,7 @@
         balance: 100,
     )],
     facts: [],
+    party: ["01010101-0101-0101-0101-010101010101", "03030303-0303-0303-0303-030303030303"],
     // Starting conditions for the in-game slice: the quest is already running.
     steps: [
         Quest(quest: "20202020-2020-2020-2020-202020202020", transition: Start),

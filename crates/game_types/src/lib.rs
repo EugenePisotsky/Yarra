@@ -319,38 +319,6 @@ where
     deserializer.deserialize_map(Unique(std::marker::PhantomData))
 }
 
-/// An action/condition name is local to its stable conversation identity.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(try_from = "String", into = "String")]
-pub struct BindingId {
-    pub dialogue: DialogueId,
-    pub key: Key,
-}
-impl BindingId {
-    pub fn new(dialogue: DialogueId, key: Key) -> Self {
-        Self { dialogue, key }
-    }
-}
-impl From<BindingId> for String {
-    fn from(id: BindingId) -> Self {
-        format!("{}/{}", id.dialogue, id.key.as_str())
-    }
-}
-impl TryFrom<String> for BindingId {
-    type Error = Invalid;
-    fn try_from(value: String) -> Result<Self> {
-        let (dialogue, key) = value
-            .split_once('/')
-            .ok_or_else(|| Invalid("invalid binding identity".into()))?;
-        let id = Self::new(DialogueId::try_from(dialogue.to_owned())?, Key::new(key)?);
-        require(
-            String::from(id.clone()) == value,
-            "noncanonical binding identity",
-        )?;
-        Ok(id)
-    }
-}
-
 /// Presentation-ready references and typed values. Mechanics never render a locale.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BoundArgument {

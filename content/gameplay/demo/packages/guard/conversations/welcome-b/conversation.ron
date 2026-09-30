@@ -1,1 +1,1 @@
-(graph: "packages/guard/conversations/welcome-b/graph.ron", bindings: "packages/guard/conversations/welcome-b/bindings.ron", resources: [])
+(graph: "packages/guard/conversations/welcome-b/graph.ron", resources: [])

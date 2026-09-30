@@ -1,6 +1,6 @@
 //! Standalone, deterministic authored scenario; runtime state needs no game assets.
 use crate::actors::{Actor, ActorRole, ActorTemplate};
-use crate::dialogue::{Choice, ChoiceRepeat, Dialogue, Line, Node, RepeatPolicy, ScopeSelector};
+use crate::dialogue::{Dialogue, Node, NodeKind, Repeat, RepeatPolicy, Role, ScopeSelector};
 use crate::inventory::{Inventory, Money, Wallet, fixtures::*};
 use crate::rules::{Attribute, Effect, Modifier, Rules, Skill};
 use crate::{Action, Condition, ContentManifest, GameContent, GameDefinitions, SessionState};
@@ -82,28 +82,71 @@ pub fn content() -> GameContent {
     };
     let graph = Dialogue {
         id: GATE_DIALOGUE,
-        roles: [key("player"), key("speaker")].into(),
+        roles: [
+            (key("player"), Role::Required),
+            (key("speaker"), Role::Required),
+        ]
+        .into(),
         history_scope: ScopeSelector::Interaction,
         repeat: RepeatPolicy::OnceCompleted,
-        start: key("gate"),
-        nodes: vec![Node {
-            id: key("gate"),
-            lines: vec![Line {
+        start: vec![key("greeting")],
+        nodes: vec![
+            Node {
                 id: key("greeting"),
+                kind: NodeKind::Line,
                 speaker: key("speaker"),
                 text: text("dialogue-gate"),
                 arguments: Default::default(),
-            }],
-            choices: vec![Choice {
+                repeat: Repeat::Always,
+                condition: None,
+                actions: vec![],
+                children: vec![key("return-key")],
+            },
+            Node {
                 id: key("return-key"),
+                kind: NodeKind::Choice,
+                speaker: key("player"),
                 text: text("dialogue-return-key"),
                 arguments: Default::default(),
-                repeat: ChoiceRepeat::OnceEver,
-                conditions: vec![key("has-key"), key("not-rewarded")],
-                actions: vec![key("consume-key"), key("persuade")],
-                next: None,
-            }],
-        }],
+                repeat: Repeat::OnceEver,
+                condition: Some(Condition::All(vec![
+                    Condition::HasItem {
+                        definition: KEY,
+                        quantity: 1,
+                    },
+                    Condition::Fact {
+                        key: key("gate-rewarded"),
+                        value: false,
+                    },
+                ])),
+                actions: vec![
+                    Action::ConsumeItem {
+                        definition: KEY,
+                        quantity: 1,
+                    },
+                    Action::SkillCheck {
+                        skill: key("persuasion"),
+                        difficulty: 1,
+                        success: vec![
+                            Action::GrantItem {
+                                definition: SWORD,
+                                quantity: 1,
+                            },
+                            Action::AwardExperience {
+                                skill: key("persuasion"),
+                                amount: 10,
+                            },
+                            Action::SetFact {
+                                key: key("gate-rewarded"),
+                                value: true,
+                            },
+                        ],
+                        failure: vec![],
+                    },
+                ],
+                children: vec![],
+            },
+        ],
     };
     let mut content = GameContent {
         text: vec![],
@@ -124,55 +167,6 @@ pub fn content() -> GameContent {
             actors: vec![template],
             dialogues: vec![graph],
             facts: [key("gate-rewarded")].into(),
-            conditions: [
-                (
-                    binding("has-key"),
-                    Condition::HasItem {
-                        definition: KEY,
-                        quantity: 1,
-                    },
-                ),
-                (
-                    binding("not-rewarded"),
-                    Condition::Fact {
-                        key: key("gate-rewarded"),
-                        value: false,
-                    },
-                ),
-            ]
-            .into(),
-            actions: [
-                (
-                    binding("consume-key"),
-                    Action::ConsumeItem {
-                        definition: KEY,
-                        quantity: 1,
-                    },
-                ),
-                (
-                    binding("persuade"),
-                    Action::SkillCheck {
-                        skill: key("persuasion"),
-                        difficulty: 1,
-                        success: vec![
-                            Action::GrantItem {
-                                definition: SWORD,
-                                quantity: 1,
-                            },
-                            Action::AwardExperience {
-                                skill: key("persuasion"),
-                                amount: 10,
-                            },
-                            Action::SetFact {
-                                key: key("gate-rewarded"),
-                                value: true,
-                            },
-                        ],
-                        failure: vec![],
-                    },
-                ),
-            ]
-            .into(),
         },
     };
     content.game.dialogue_contracts = content
@@ -240,6 +234,7 @@ pub fn state() -> SessionState {
     state
 }
 
-pub fn binding(name: &str) -> BindingId {
-    BindingId::new(GATE_DIALOGUE, key(name))
+/// The persuasion check behind the gate conversation's only choice.
+pub fn persuade(content: &mut GameContent) -> &mut Action {
+    &mut content.game.dialogues[0].nodes[1].actions[1]
 }

@@ -1,9 +1,19 @@
 //! Authored conversations, active runs, scoped history and claims; no game services.
+//!
+//! A conversation is a flat set of nodes. Each node is spoken by a role and lists its
+//! children in order. After a node, the first eligible child decides what happens: a line
+//! plays; a choice means every eligible choice among the children is offered to the player.
+//! A reaction from whoever happens to be present is therefore just an earlier child that is
+//! only eligible when its speaker is there.
 mod history;
+use crate::{Action, Condition};
 use game_types::*;
 pub use history::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+
+pub const PLAYER: &str = "player";
+pub const SPEAKER: &str = "speaker";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ArgumentSource {
@@ -14,61 +24,73 @@ pub enum ArgumentSource {
     Select(String),
 }
 pub type ArgumentSources = BTreeMap<String, ArgumentSource>;
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ChoiceRepeat {
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Repeat {
+    #[default]
     Always,
     OncePerRun,
     OnceEver,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Choice {
-    pub id: Key,
-    pub text: TextRef,
-    #[serde(deserialize_with = "game_types::deserialize_unique_map")]
-    pub arguments: ArgumentSources,
-    pub repeat: ChoiceRepeat,
-    pub conditions: Vec<Key>,
-    pub actions: Vec<Key>,
-    /// None completes this run. Reopening is governed independently by the graph policy.
-    pub next: Option<Key>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NodeKind {
+    /// Spoken by its role and acknowledged by the player.
+    Line,
+    /// Offered to the player together with its eligible sibling choices.
+    Choice,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Line {
-    pub id: Key,
-    pub speaker: Key,
-    pub text: TextRef,
-    #[serde(deserialize_with = "game_types::deserialize_unique_map")]
-    pub arguments: ArgumentSources,
+/// How a role gets its actor when a conversation starts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Role {
+    /// Must be supplied. `player` and `speaker` are always required.
+    Required,
+    /// May be supplied; its nodes are skipped otherwise.
+    Optional,
+    /// A named character, taking part only when present.
+    Actor(ActorId),
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Node {
     pub id: Key,
-    pub lines: Vec<Line>,
-    pub choices: Vec<Choice>,
+    pub kind: NodeKind,
+    pub speaker: Key,
+    pub text: TextRef,
+    #[serde(default, deserialize_with = "game_types::deserialize_unique_map")]
+    pub arguments: ArgumentSources,
+    #[serde(default)]
+    pub repeat: Repeat,
+    #[serde(default)]
+    pub condition: Option<Condition>,
+    /// Run when the line is acknowledged or the choice is picked.
+    #[serde(default)]
+    pub actions: Vec<Action>,
+    /// Tried in order. With none eligible the conversation is complete.
+    #[serde(default)]
+    pub children: Vec<Key>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Dialogue {
     pub id: DialogueId,
-    pub roles: BTreeSet<Key>,
+    #[serde(deserialize_with = "game_types::deserialize_key_map")]
+    pub roles: BTreeMap<Key, Role>,
     pub history_scope: ScopeSelector,
     pub repeat: RepeatPolicy,
-    pub start: Key,
+    /// Entry nodes, tried in order like any node's children.
+    pub start: Vec<Key>,
     pub nodes: Vec<Node>,
 }
-/// A derived, independently indexed contract. Selection/history queries need no graph payload.
+/// The part of a conversation that is always loaded: enough to select it, to check saved
+/// history and to validate references, without the graph.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DialogueContract {
     pub id: DialogueId,
-    pub roles: BTreeSet<Key>,
+    #[serde(deserialize_with = "game_types::deserialize_key_map")]
+    pub roles: BTreeMap<Key, Role>,
     pub history_scope: ScopeSelector,
     pub repeat: RepeatPolicy,
-    pub lines: BTreeSet<Key>,
-    pub choices: BTreeSet<Key>,
+    pub nodes: BTreeSet<Key>,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RunStatus {
@@ -82,29 +104,35 @@ pub struct Token {
     pub run: u64,
     pub step: u64,
 }
+/// Where a run is waiting.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Position {
+    /// This line is being shown and waits to be acknowledged.
+    Line(Key),
+    /// The player picks among the choices under this node (`None`: the entry nodes).
+    Choices(Option<Key>),
+}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Conversation {
     pub dialogue: DialogueId,
     pub participant: ActorId,
     pub speaker: ActorId,
+    /// Roles that have an actor in this run.
     #[serde(deserialize_with = "game_types::deserialize_unique_map")]
     pub bindings: BTreeMap<Key, ActorId>,
     pub token: Token,
-    pub node: Key,
-    /// Next unacknowledged line. Choices become available after every line is acknowledged.
-    pub line: usize,
+    pub position: Position,
     pub status: RunStatus,
-    pub accepted: BTreeSet<Key>,
+    /// Nodes acknowledged or picked during this run.
+    pub visited: BTreeSet<Key>,
+}
+fn key(name: &str) -> Key {
+    Key::new(name).expect("static role name")
 }
 impl Dialogue {
     pub fn messages(&self) -> impl Iterator<Item = (&TextRef, &ArgumentSources)> {
-        self.nodes.iter().flat_map(|n| {
-            n.lines
-                .iter()
-                .map(|l| (&l.text, &l.arguments))
-                .chain(n.choices.iter().map(|c| (&c.text, &c.arguments)))
-        })
+        self.nodes.iter().map(|n| (&n.text, &n.arguments))
     }
     pub fn validate_messages<'a>(
         &self,
@@ -158,22 +186,20 @@ impl Dialogue {
             .find(|n| &n.id == id)
             .ok_or_else(|| Invalid("unknown dialogue node".into()))
     }
+    /// The nodes that can follow `after`, or the entry nodes.
+    pub fn children(&self, after: Option<&Key>) -> Result<&[Key]> {
+        Ok(match after {
+            Some(id) => &self.node(id)?.children,
+            None => &self.start,
+        })
+    }
     pub fn contract(&self) -> DialogueContract {
         DialogueContract {
             id: self.id,
             roles: self.roles.clone(),
             history_scope: self.history_scope,
             repeat: self.repeat,
-            lines: self
-                .nodes
-                .iter()
-                .flat_map(|n| n.lines.iter().map(|l| l.id.clone()))
-                .collect(),
-            choices: self
-                .nodes
-                .iter()
-                .flat_map(|n| n.choices.iter().map(|c| c.id.clone()))
-                .collect(),
+            nodes: self.nodes.iter().map(|n| n.id.clone()).collect(),
         }
     }
     pub fn validate(&self) -> Result<()> {
@@ -182,40 +208,31 @@ impl Dialogue {
             "dialogue node limit",
         )?;
         self.contract().validate()?;
-        let mut nodes = BTreeSet::new();
-        let mut choices = BTreeSet::new();
-        let mut lines = BTreeSet::new();
+        let mut ids = BTreeSet::new();
         for node in &self.nodes {
+            require(ids.insert(&node.id), "duplicate dialogue node")?;
             require(
-                nodes.insert(&node.id)
-                    && !node.lines.is_empty()
-                    && node.lines.len() <= 64
-                    && node.choices.len() <= 128,
-                "duplicate/oversized node",
+                self.roles.contains_key(&node.speaker),
+                "node speaker is not a declared role",
             )?;
-            for line in &node.lines {
-                require(
-                    lines.insert(&line.id) && self.roles.contains(&line.speaker),
-                    "duplicate line or undeclared speaker",
-                )?;
-                line.text.validate()?;
-                self.validate_arguments(&line.arguments)?;
-            }
-            for choice in &node.choices {
-                require(
-                    choices.insert(&choice.id)
-                        && choice.conditions.len() <= 64
-                        && choice.actions.len() <= 64,
-                    "duplicate/oversized choice",
-                )?;
-                choice.text.validate()?;
-                self.validate_arguments(&choice.arguments)?;
-                if let Some(next) = &choice.next {
-                    self.node(next)?;
-                }
-            }
+            require(
+                node.children.len() <= 128 && node.actions.len() <= 64,
+                "oversized dialogue node",
+            )?;
+            node.text.validate()?;
+            self.validate_arguments(&node.arguments)?;
         }
-        self.node(&self.start)?;
+        require(
+            !self.start.is_empty() && self.start.len() <= 128,
+            "dialogue needs 1..128 entry nodes",
+        )?;
+        for id in self
+            .start
+            .iter()
+            .chain(self.nodes.iter().flat_map(|n| &n.children))
+        {
+            require(ids.contains(id), "unknown dialogue node")?;
+        }
         Ok(())
     }
     fn validate_arguments(&self, args: &ArgumentSources) -> Result<()> {
@@ -224,9 +241,10 @@ impl Dialogue {
             TextKey::new(name.clone())?;
             match value {
                 ArgumentSource::ActorName(role) | ArgumentSource::Attribute { role, .. } => {
+                    // Text can only name roles that are certain to have an actor.
                     require(
-                        self.roles.contains(role),
-                        "argument references undeclared role",
+                        self.roles.get(role) == Some(&Role::Required),
+                        "argument needs a required role",
                     )?
                 }
                 ArgumentSource::Text(text) => text.validate()?,
@@ -239,30 +257,44 @@ impl Dialogue {
         }
         Ok(())
     }
+    /// Binds roles for a new run. `supplied` fills required and optional roles; named
+    /// characters join when they are among `present`.
     pub fn start(
         &self,
         participant: ActorId,
         speaker: ActorId,
-        extra: &BTreeMap<Key, ActorId>,
+        supplied: &BTreeMap<Key, ActorId>,
+        present: &BTreeSet<ActorId>,
         run: u64,
     ) -> Result<Conversation> {
-        require(
-            !extra.contains_key(&Key::new("player")?) && !extra.contains_key(&Key::new("speaker")?),
-            "reserved role override",
-        )?;
-        let mut bindings = extra.clone();
-        bindings.insert(Key::new("player")?, participant);
-        bindings.insert(Key::new("speaker")?, speaker);
+        let mut bindings = BTreeMap::from([(key(PLAYER), participant), (key(SPEAKER), speaker)]);
+        for (role, actor) in supplied {
+            require(
+                !bindings.contains_key(role)
+                    && matches!(self.roles.get(role), Some(Role::Required | Role::Optional)),
+                "role cannot be supplied",
+            )?;
+            bindings.insert(role.clone(), *actor);
+        }
+        for (role, binding) in &self.roles {
+            match binding {
+                Role::Required => require(bindings.contains_key(role), "required role is unbound")?,
+                Role::Actor(actor) if present.contains(actor) => {
+                    bindings.insert(role.clone(), *actor);
+                }
+                _ => {}
+            }
+        }
         let conversation = Conversation {
             dialogue: self.id,
             participant,
             speaker,
             bindings,
             token: Token { run, step: 0 },
-            node: self.start.clone(),
-            line: 0,
+            // Replaced by the first resolved position before the run is stored.
+            position: Position::Choices(None),
             status: RunStatus::Active,
-            accepted: BTreeSet::new(),
+            visited: BTreeSet::new(),
         };
         conversation.validate(self)?;
         Ok(conversation)
@@ -271,14 +303,13 @@ impl Dialogue {
 impl DialogueContract {
     pub fn validate(&self) -> Result<()> {
         require(
-            self.roles.len() >= 2
-                && self.roles.len() <= 16
-                && self.roles.contains(&Key::new("player")?)
-                && self.roles.contains(&Key::new("speaker")?),
+            self.roles.len() <= 16
+                && self.roles.get(&key(PLAYER)) == Some(&Role::Required)
+                && self.roles.get(&key(SPEAKER)) == Some(&Role::Required),
             "dialogue requires player/speaker roles, at most 16 total",
         )?;
         require(
-            !self.lines.is_empty() && self.lines.len() <= 4096 && self.choices.len() <= 4096,
+            !self.nodes.is_empty() && self.nodes.len() <= 4096,
             "dialogue history key budget exceeded",
         )?;
         self.repeat.validate()
@@ -299,24 +330,42 @@ impl Conversation {
         )?;
         require(self.token.run > 0, "invalid conversation cursor")?;
         require(
-            self.bindings.keys().cloned().collect::<BTreeSet<_>>() == contract.roles
-                && self.bindings.get(&Key::new("player")?) == Some(&self.participant)
-                && self.bindings.get(&Key::new("speaker")?) == Some(&self.speaker),
+            self.bindings.get(&key(PLAYER)) == Some(&self.participant)
+                && self.bindings.get(&key(SPEAKER)) == Some(&self.speaker),
             "invalid conversation role bindings",
         )?;
+        for (role, binding) in &contract.roles {
+            let bound = self.bindings.get(role);
+            let valid = match binding {
+                Role::Required => bound.is_some(),
+                Role::Optional => true,
+                Role::Actor(actor) => bound.is_none_or(|b| b == actor),
+            };
+            require(valid, "invalid conversation role bindings")?;
+        }
         require(
-            self.accepted.is_subset(&contract.choices),
-            "unknown accepted choice",
+            self.bindings.keys().all(|r| contract.roles.contains_key(r)),
+            "invalid conversation role bindings",
+        )?;
+        let known = |id: &Key| contract.nodes.contains(id);
+        require(
+            self.visited.iter().all(known)
+                && match &self.position {
+                    Position::Line(id) | Position::Choices(Some(id)) => known(id),
+                    Position::Choices(None) => true,
+                },
+            "unknown dialogue node in saved run",
         )
     }
     pub fn validate(&self, graph: &Dialogue) -> Result<()> {
         self.validate_contract(&graph.contract())?;
-        let node = graph.node(&self.node)?;
-        require(
-            self.status != RunStatus::Completed || self.line == node.lines.len(),
-            "completed conversation has unread lines",
-        )?;
-        require(self.line <= node.lines.len(), "invalid conversation cursor")
+        if let Position::Line(id) = &self.position {
+            require(
+                graph.node(id)?.kind == NodeKind::Line,
+                "saved line position is not a line",
+            )?;
+        }
+        Ok(())
     }
     pub fn check(&self, token: Token) -> Result<()> {
         require(
@@ -324,43 +373,12 @@ impl Conversation {
             "stale or inactive conversation cursor",
         )
     }
-    pub fn choice<'a>(&self, graph: &'a Dialogue, id: &Key) -> Result<&'a Choice> {
-        self.validate(graph)?;
-        require(
-            self.status == RunStatus::Active && self.line == graph.node(&self.node)?.lines.len(),
-            "dialogue lines must be acknowledged before choosing",
-        )?;
-        let choice = graph
-            .node(&self.node)?
-            .choices
-            .iter()
-            .find(|c| &c.id == id)
-            .ok_or_else(|| Invalid("choice not at current node".into()))?;
-        require(
-            choice.repeat != ChoiceRepeat::OncePerRun || !self.accepted.contains(id),
-            "choice already accepted this run",
-        )?;
-        Ok(choice)
-    }
     pub fn bump(&mut self) -> Result<()> {
         self.token.step = self
             .token
             .step
             .checked_add(1)
             .ok_or_else(|| Invalid("dialogue step overflow".into()))?;
-        Ok(())
-    }
-    pub fn advance(&mut self, graph: &Dialogue, id: &Key) -> Result<()> {
-        let next = self.choice(graph, id)?.next.clone();
-        self.bump()?;
-        self.accepted.insert(id.clone());
-        match next {
-            Some(node) => {
-                self.node = node;
-                self.line = 0;
-            }
-            None => self.status = RunStatus::Completed,
-        }
         Ok(())
     }
 }

@@ -1,8 +1,9 @@
 //! Runtime composition: published content read through SQLite, independent of authored sources.
 use crate::*;
 use game_types::{DialogueId, Invalid, OwnerId, require};
+use gameplay::dialogue::Dialogue;
 use gameplay::inventory;
-use gameplay::{ContentIdentity, ContentSource, DialoguePack, GameContent, GameDefinitions};
+use gameplay::{ContentIdentity, ContentSource, GameContent, GameDefinitions};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -10,8 +11,8 @@ use std::{
 
 pub type RuntimeSession = gameplay::GameSession<ContentRepository>;
 pub type ToolSession = gameplay::GameSession<gameplay::ToolContent>;
-/// Asset kinds read once when a session opens. Dialogue graphs, their local conditions and
-/// actions, and text contracts are read only when a conversation or a formatter needs them.
+/// Asset kinds read once when a session opens. Dialogue graphs and text contracts are read
+/// only when a conversation or a formatter needs them.
 const CORE_KINDS: [AssetKind; 13] = [
     AssetKind::Category,
     AssetKind::Item,
@@ -40,7 +41,7 @@ impl ContentSource for ContentRepository {
     fn core(&mut self) -> gameplay::Result<GameContent> {
         self.read_core().map_err(runtime_error)
     }
-    fn dialogue(&mut self, id: DialogueId) -> gameplay::Result<DialoguePack> {
+    fn dialogue(&mut self, id: DialogueId) -> gameplay::Result<Dialogue> {
         self.read_dialogue(id).map_err(runtime_error)
     }
 }
@@ -71,8 +72,6 @@ impl ContentRepository {
                 actors: vec![],
                 dialogues: vec![],
                 facts: Default::default(),
-                conditions: Default::default(),
-                actions: Default::default(),
             },
         };
         let mut rules = false;
@@ -97,10 +96,7 @@ impl ContentRepository {
                     Asset::Fact(v) => {
                         content.game.facts.insert(v);
                     }
-                    Asset::Dialogue(_)
-                    | Asset::Condition { .. }
-                    | Asset::Action { .. }
-                    | Asset::Text(_) => {}
+                    Asset::Dialogue(_) | Asset::Text(_) => {}
                 }
             }
         }
@@ -109,33 +105,11 @@ impl ContentRepository {
         content.validate()?;
         Ok(content)
     }
-    fn read_dialogue(&mut self, id: DialogueId) -> Result<DialoguePack> {
-        let key = id.to_string();
-        let graph = match self
-            .read_range(AssetKind::Dialogue, &key, &format!("{key}\0"))?
-            .pop()
-        {
-            Some(Asset::Dialogue(graph)) => graph,
-            _ => return Err(ContentError::MissingAsset(AssetId::Dialogue(id))),
-        };
-        // Binding keys are "<dialogue>/<name>"; '0' is the character after '/'.
-        let (from, to) = (format!("{key}/"), format!("{key}0"));
-        let mut pack = DialoguePack {
-            graph,
-            conditions: Default::default(),
-            actions: Default::default(),
-        };
-        for asset in self.read_range(AssetKind::Condition, &from, &to)? {
-            if let Asset::Condition { id, value } = asset {
-                pack.conditions.insert(id, value);
-            }
+    fn read_dialogue(&mut self, id: DialogueId) -> Result<Dialogue> {
+        match self.read(&AssetId::Dialogue(id))? {
+            Asset::Dialogue(graph) => Ok(graph),
+            _ => Err(ContentError::MissingAsset(AssetId::Dialogue(id))),
         }
-        for asset in self.read_range(AssetKind::Action, &from, &to)? {
-            if let Asset::Action { id, value } = asset {
-                pack.actions.insert(id, value);
-            }
-        }
-        Ok(pack)
     }
 }
 /// Retains immutable mechanical generations independently of slots and authored source files.

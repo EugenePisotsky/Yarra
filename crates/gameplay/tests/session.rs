@@ -201,9 +201,7 @@ fn dialogue_rewards_once_and_preview_does_not_roll() {
 fn failure_after_roll_restores_all_domains_and_rng() {
     let source = session();
     let mut content = content();
-    if let Action::SkillCheck { success, .. } =
-        content.game.actions.get_mut(&binding("persuade")).unwrap()
-    {
+    if let Action::SkillCheck { success, .. } = persuade(&mut content) {
         success.insert(
             0,
             Action::GrantItem {
@@ -222,9 +220,7 @@ fn failure_after_roll_restores_all_domains_and_rng() {
 fn failed_skill_roll_is_a_committed_outcome() {
     let source = session();
     let mut content = content();
-    if let Action::SkillCheck { difficulty, .. } =
-        content.game.actions.get_mut(&binding("persuade")).unwrap()
-    {
+    if let Action::SkillCheck { difficulty, .. } = persuade(&mut content) {
         *difficulty = 100;
     }
     let mut session = new(content, snapshot(&source)).unwrap();
@@ -299,7 +295,10 @@ fn cross_domain_validation_rejects_bad_ownership_equipment_and_content() {
         .insert(key("hand"), item(&source, MERCHANT_BAG, POTION));
     assert!(new(content(), state).is_err());
     let mut content = content();
-    content.game.actions.remove(&binding("consume-key"));
+    *persuade(&mut content) = Action::SetFact {
+        key: key("undeclared"),
+        value: true,
+    };
     assert!(content.validate().is_err());
 }
 
@@ -315,7 +314,7 @@ impl ContentSource for Counting {
     fn core(&mut self) -> Result<GameContent> {
         self.inner.core()
     }
-    fn dialogue(&mut self, id: DialogueId) -> Result<DialoguePack> {
+    fn dialogue(&mut self, id: DialogueId) -> Result<dialogue::Dialogue> {
         self.graphs.set(self.graphs.get() + 1);
         self.inner.dialogue(id)
     }
@@ -435,4 +434,256 @@ fn command_cost_does_not_grow_with_the_population() {
     // Generous bound: a whole-state copy or check per command would take far longer in
     // this unoptimised test build. Three commands normally finish in well under 1 ms.
     assert!(elapsed.as_millis() < 20, "commands took {elapsed:?}");
+}
+
+mod party {
+    use super::*;
+    use yarra_gameplay::dialogue::{Dialogue, Node, NodeKind, Repeat, Role};
+
+    const BANTER: DialogueId = DialogueId([9; 16]);
+    const STRANGER: ActorId = ActorId([77; 16]);
+    fn node(id: &str, kind: NodeKind, speaker: &str, children: &[&str]) -> Node {
+        Node {
+            id: key(id),
+            kind,
+            speaker: key(speaker),
+            text: TextRef::from(id),
+            arguments: Default::default(),
+            repeat: Repeat::Always,
+            condition: None,
+            actions: vec![],
+            children: children.iter().map(|c| key(c)).collect(),
+        }
+    }
+    /// The merchant greets; whoever travels with the hero may cut in before the hero answers.
+    /// Two named characters together get a line neither has alone, and the merchant answers
+    /// a companion directly.
+    fn banter() -> Dialogue {
+        let line = NodeKind::Line;
+        let mut pair = node("pair", line, "companion", &["retort"]);
+        pair.condition = Some(Condition::Present(STRANGER));
+        let mut counted = node("counted", NodeKind::Choice, "player", &[]);
+        counted.repeat = Repeat::OncePerRun;
+        Dialogue {
+            id: BANTER,
+            roles: [
+                (key("player"), Role::Required),
+                (key("speaker"), Role::Required),
+                (key("companion"), Role::Actor(COMPANION)),
+                (key("stranger"), Role::Actor(STRANGER)),
+                (key("witness"), Role::Optional),
+            ]
+            .into(),
+            history_scope: dialogue::ScopeSelector::Interaction,
+            repeat: dialogue::RepeatPolicy::Always,
+            start: vec![key("greeting")],
+            nodes: vec![
+                node(
+                    "greeting",
+                    line,
+                    "speaker",
+                    &["pair", "aside", "overheard", "ask", "bye"],
+                ),
+                pair,
+                node("retort", line, "stranger", &["reply"]),
+                node("aside", line, "companion", &["reply"]),
+                node("reply", line, "speaker", &["ask", "bye"]),
+                node("overheard", line, "witness", &["ask", "bye"]),
+                node("ask", NodeKind::Choice, "player", &["answer"]),
+                node("answer", line, "speaker", &["counted", "ask", "bye"]),
+                counted,
+                node("bye", NodeKind::Choice, "player", &[]),
+            ],
+        }
+    }
+    fn session(party: &[ActorId], stranger: bool) -> TestSession {
+        let mut content = content();
+        let graph = banter();
+        content.game.dialogue_contracts.push(graph.contract());
+        content.game.dialogues.push(graph);
+        let mut state = state();
+        if stranger {
+            let mut actor = state.actors[&COMPANION].clone();
+            actor.id = STRANGER;
+            let mut bag = Inventory::new(OwnerRef::actor(STRANGER), "carried").unwrap();
+            bag.id = InventoryId([77; 16]);
+            state.add_actor(actor);
+            state.add_inventory(bag);
+        }
+        let mut session = new(content, state).unwrap();
+        for actor in party {
+            session
+                .apply(Command::Party {
+                    actor: *actor,
+                    member: true,
+                })
+                .unwrap();
+        }
+        session
+    }
+    const KEY: ConversationKey = ConversationKey {
+        dialogue: BANTER,
+        participant: HERO,
+        speaker: MERCHANT,
+    };
+    fn start(session: &mut TestSession, bindings: &[(&str, ActorId)]) {
+        session
+            .apply(Command::StartDialogue {
+                bindings: bindings.iter().map(|(r, a)| (key(r), *a)).collect(),
+                dialogue: BANTER,
+                participant: HERO,
+                speaker: MERCHANT,
+            })
+            .unwrap();
+    }
+    /// Acknowledges lines until the player has to choose; returns who said what.
+    fn listen(session: &mut TestSession) -> Vec<(ActorId, String)> {
+        let mut heard = Vec::new();
+        loop {
+            let view = session.conversation_view(KEY).unwrap();
+            let Some(line) = view.line else {
+                return heard;
+            };
+            heard.push((line.speaker, line.id.as_str().to_owned()));
+            session
+                .apply(Command::AdvanceLine {
+                    key: KEY,
+                    expected: view.token,
+                })
+                .unwrap();
+        }
+    }
+    fn choices(session: &mut TestSession) -> Vec<String> {
+        let view = session.conversation_view(KEY).unwrap();
+        view.choices
+            .iter()
+            .map(|c| c.id.as_str().to_owned())
+            .collect()
+    }
+    fn pick(session: &mut TestSession, choice: &str) {
+        let expected = session.conversation_view(KEY).unwrap().token;
+        session
+            .apply(Command::Choose {
+                expected,
+                dialogue: BANTER,
+                participant: HERO,
+                speaker: MERCHANT,
+                choice: key(choice),
+            })
+            .unwrap();
+    }
+    fn said(lines: &[(ActorId, &str)]) -> Vec<(ActorId, String)> {
+        lines.iter().map(|(a, l)| (*a, l.to_string())).collect()
+    }
+
+    #[test]
+    fn nobody_cuts_in_when_the_hero_is_alone() {
+        let mut session = session(&[], true);
+        start(&mut session, &[]);
+        assert_eq!(listen(&mut session), said(&[(MERCHANT, "greeting")]));
+        assert_eq!(choices(&mut session), ["ask", "bye"]);
+    }
+    #[test]
+    fn a_companion_in_the_party_reacts_and_the_speaker_answers_them() {
+        let mut session = session(&[HERO, COMPANION], false);
+        start(&mut session, &[]);
+        assert_eq!(
+            listen(&mut session),
+            said(&[
+                (MERCHANT, "greeting"),
+                (COMPANION, "aside"),
+                (MERCHANT, "reply")
+            ])
+        );
+        assert_eq!(choices(&mut session), ["ask", "bye"]);
+    }
+    #[test]
+    fn two_companions_together_get_their_own_exchange() {
+        let mut session = session(&[HERO, COMPANION, STRANGER], true);
+        start(&mut session, &[]);
+        assert_eq!(
+            listen(&mut session),
+            said(&[
+                (MERCHANT, "greeting"),
+                (COMPANION, "pair"),
+                (STRANGER, "retort"),
+                (MERCHANT, "reply")
+            ])
+        );
+        // The stranger alone has no line of their own here.
+        let mut session = self::session(&[HERO, STRANGER], true);
+        start(&mut session, &[]);
+        assert_eq!(listen(&mut session), said(&[(MERCHANT, "greeting")]));
+    }
+    #[test]
+    fn a_bystander_bound_for_this_conversation_speaks_without_joining_the_party() {
+        let mut session = session(&[], true);
+        start(&mut session, &[("witness", STRANGER)]);
+        assert_eq!(
+            listen(&mut session),
+            said(&[(MERCHANT, "greeting"), (STRANGER, "overheard")])
+        );
+        assert!(session.state().party.is_empty());
+        // A named character cannot be supplied under someone else's role.
+        let mut other = self::session(&[], true);
+        assert!(
+            other
+                .apply(Command::StartDialogue {
+                    bindings: [(key("companion"), STRANGER)].into(),
+                    dialogue: BANTER,
+                    participant: HERO,
+                    speaker: MERCHANT,
+                })
+                .is_err()
+        );
+    }
+    #[test]
+    fn hubs_loop_and_per_run_choices_disappear_once_taken() {
+        let mut session = session(&[], false);
+        start(&mut session, &[]);
+        listen(&mut session);
+        pick(&mut session, "ask");
+        assert_eq!(listen(&mut session), said(&[(MERCHANT, "answer")]));
+        assert_eq!(choices(&mut session), ["counted", "ask", "bye"]);
+        pick(&mut session, "counted");
+        assert_eq!(
+            session.state().conversation(KEY).unwrap().status,
+            dialogue::RunStatus::Completed
+        );
+        // Every acknowledged line and picked choice is remembered for later conditions.
+        let history = session.state().histories.values().next().unwrap().clone();
+        assert_eq!(history.completed, 1);
+        assert_eq!(history.count(&dialogue::HistoryEvent::Node(key("ask"))), 1);
+        assert_eq!(
+            history.count(&dialogue::HistoryEvent::Node(key("answer"))),
+            1
+        );
+        start(&mut session, &[]);
+        listen(&mut session);
+        pick(&mut session, "ask");
+        listen(&mut session);
+        assert_eq!(choices(&mut session), ["counted", "ask", "bye"]);
+    }
+    #[test]
+    fn leaving_the_party_mid_game_removes_the_reaction_and_a_failed_command_keeps_the_party() {
+        let mut session = session(&[HERO, COMPANION], false);
+        let before = snapshot(&session);
+        assert!(
+            session
+                .apply(Command::Party {
+                    actor: ActorId([200; 16]),
+                    member: true
+                })
+                .is_err()
+        );
+        assert_eq!(snapshot(&session), before);
+        session
+            .apply(Command::Party {
+                actor: COMPANION,
+                member: false,
+            })
+            .unwrap();
+        start(&mut session, &[]);
+        assert_eq!(listen(&mut session), said(&[(MERCHANT, "greeting")]));
+    }
 }

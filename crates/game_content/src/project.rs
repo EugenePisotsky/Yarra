@@ -4,7 +4,7 @@ use gameplay::actors::ActorTemplate;
 use gameplay::dialogue::Dialogue;
 use gameplay::inventory::ItemCatalog;
 use gameplay::rules::Rules;
-use gameplay::{Action, Condition, ContentManifest, GameContent, GameDefinitions};
+use gameplay::{ContentManifest, GameContent, GameDefinitions};
 use gameplay::{dialogue, quests};
 use localization::{LanguageResource, Localization, contract_hash};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -15,7 +15,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-pub const SOURCE_FORMAT_VERSION: u32 = 6;
+pub const SOURCE_FORMAT_VERSION: u32 = 7;
 pub(crate) const MAX_DOCUMENT_BYTES: usize = 16 * 1024 * 1024;
 const MAX_PROJECT_BYTES: usize = 64 * 1024 * 1024;
 const MAX_TRANSLATION_BYTES: usize = 2 * 1024 * 1024;
@@ -47,12 +47,14 @@ pub struct PackageFile {
     pub actors: Vec<String>,
     pub conversations: Vec<String>,
     pub resources: Vec<String>,
+    /// Campaign facts this package introduces.
+    #[serde(default)]
+    pub facts: BTreeSet<Key>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConversationFile {
     pub graph: String,
-    pub bindings: String,
     pub resources: Vec<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,15 +70,6 @@ pub struct LocaleFile {
     pub path: String,
     #[serde(deserialize_with = "game_types::deserialize_unique_map")]
     pub reviewed: BTreeMap<TextKey, String>,
-}
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Bindings {
-    pub facts: BTreeSet<Key>,
-    #[serde(deserialize_with = "game_types::deserialize_key_map")]
-    pub conditions: BTreeMap<Key, Condition>,
-    #[serde(deserialize_with = "game_types::deserialize_key_map")]
-    pub actions: BTreeMap<Key, Action>,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TranslationReview {
@@ -134,8 +127,6 @@ impl LoadedProject {
         let mut profiles = Vec::new();
         let mut predicates = Vec::new();
         let mut facts = BTreeSet::new();
-        let mut conditions = BTreeMap::new();
-        let mut actions = BTreeMap::new();
         let mut contracts = Vec::new();
         let mut translations = Vec::new();
         let mut resource_owners = BTreeMap::new();
@@ -221,37 +212,14 @@ impl LoadedProject {
             for path in &package.conversations {
                 let conversation: ConversationFile = source.ron(path)?;
                 let graph: Dialogue = source.ron(&conversation.graph)?;
-                let dialogue = graph.id;
-                own!(AssetId::Dialogue(dialogue));
-                own!(AssetId::DialogueContract(dialogue));
+                own!(AssetId::Dialogue(graph.id));
+                own!(AssetId::DialogueContract(graph.id));
                 dialogues.push(graph);
-                let local: Bindings = source.ron(&conversation.bindings)?;
-                for fact in local.facts {
-                    let existing = owners
-                        .entry(AssetId::Fact(fact.clone()))
-                        .or_insert(package.id);
-                    require(*existing == package.id, "fact has multiple owning packages")?;
-                    facts.insert(fact);
-                }
-                for (id, value) in local.conditions {
-                    own!(AssetId::Condition(BindingId::new(dialogue, id.clone())));
-                    require(
-                        conditions
-                            .insert(BindingId::new(dialogue, id), value)
-                            .is_none(),
-                        "duplicate condition identity across conversations",
-                    )?;
-                }
-                for (id, value) in local.actions {
-                    own!(AssetId::Action(BindingId::new(dialogue, id.clone())));
-                    require(
-                        actions
-                            .insert(BindingId::new(dialogue, id), value)
-                            .is_none(),
-                        "duplicate action identity across conversations",
-                    )?;
-                }
                 resource_paths.extend(conversation.resources);
+            }
+            for fact in &package.facts {
+                own!(AssetId::Fact(fact.clone()));
+                facts.insert(fact.clone());
             }
             require(resource_paths.len() <= 2048, "too many package resources")?;
             for path in resource_paths {
@@ -343,8 +311,6 @@ impl LoadedProject {
                 actors,
                 dialogues,
                 facts,
-                conditions,
-                actions,
             },
         };
         // Canonical identities, not manifest/file traversal order, determine publication hashes.

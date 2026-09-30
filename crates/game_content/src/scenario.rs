@@ -49,6 +49,9 @@ pub struct Scenario {
     pub inventories: Vec<InventorySeed>,
     pub wallets: Vec<WalletSeed>,
     pub facts: BTreeSet<Key>,
+    /// Characters travelling together at the start.
+    #[serde(default)]
+    pub party: BTreeSet<ActorId>,
     pub steps: Vec<Step>,
 }
 impl Scenario {
@@ -65,6 +68,7 @@ impl Scenario {
         let mut state = SessionState::empty(self.seed);
         state.owners = self.owners.iter().cloned().collect();
         state.facts = self.facts.clone();
+        state.party = self.party.clone();
         for spawn in &self.actors {
             let template = content.template(spawn.template).map_err(|_| {
                 Invalid(format!(

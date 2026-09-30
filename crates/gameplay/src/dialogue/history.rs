@@ -88,8 +88,8 @@ pub enum HistoryEvent {
     Started,
     Completed,
     Interrupted,
-    Line(Key),
-    Choice(Key),
+    /// A line acknowledged or a choice picked.
+    Node(Key),
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -100,9 +100,7 @@ pub struct History {
     pub interrupted: u64,
     pub last_started: Option<GameTime>,
     #[serde(deserialize_with = "game_types::deserialize_unique_map")]
-    pub lines: BTreeMap<Key, u64>,
-    #[serde(deserialize_with = "game_types::deserialize_unique_map")]
-    pub choices: BTreeMap<Key, u64>,
+    pub nodes: BTreeMap<Key, u64>,
 }
 impl History {
     pub fn empty(key: HistoryKey) -> Self {
@@ -112,8 +110,7 @@ impl History {
             completed: 0,
             interrupted: 0,
             last_started: None,
-            lines: BTreeMap::new(),
-            choices: BTreeMap::new(),
+            nodes: BTreeMap::new(),
         }
     }
     pub fn count(&self, event: &HistoryEvent) -> u64 {
@@ -121,8 +118,7 @@ impl History {
             HistoryEvent::Started => self.started,
             HistoryEvent::Completed => self.completed,
             HistoryEvent::Interrupted => self.interrupted,
-            HistoryEvent::Line(id) => self.lines.get(id).copied().unwrap_or(0),
-            HistoryEvent::Choice(id) => self.choices.get(id).copied().unwrap_or(0),
+            HistoryEvent::Node(id) => self.nodes.get(id).copied().unwrap_or(0),
         }
     }
     pub fn record(&mut self, event: &HistoryEvent, time: GameTime) -> Result<()> {
@@ -134,19 +130,12 @@ impl History {
             HistoryEvent::Started => self.started = count,
             HistoryEvent::Completed => self.completed = count,
             HistoryEvent::Interrupted => self.interrupted = count,
-            HistoryEvent::Line(id) => {
+            HistoryEvent::Node(id) => {
                 require(
-                    self.lines.contains_key(id) || self.lines.len() < 4096,
-                    "line history budget exceeded",
+                    self.nodes.contains_key(id) || self.nodes.len() < 4096,
+                    "dialogue history budget exceeded",
                 )?;
-                self.lines.insert(id.clone(), count);
-            }
-            HistoryEvent::Choice(id) => {
-                require(
-                    self.choices.contains_key(id) || self.choices.len() < 4096,
-                    "choice history budget exceeded",
-                )?;
-                self.choices.insert(id.clone(), count);
+                self.nodes.insert(id.clone(), count);
             }
         }
         if matches!(event, HistoryEvent::Started) {
@@ -169,20 +158,14 @@ impl History {
                 && self.last_started.is_none_or(|t| t <= now),
             "invalid history time",
         )?;
-        for (key, count) in &self.lines {
+        for (key, count) in &self.nodes {
             require(
-                *count > 0 && contract.lines.contains(key),
-                "invalid line history",
-            )?;
-        }
-        for (key, count) in &self.choices {
-            require(
-                *count > 0 && contract.choices.contains(key),
-                "invalid choice history",
+                *count > 0 && contract.nodes.contains(key),
+                "invalid node history",
             )?;
         }
         require(
-            self.started > 0 || (self.lines.is_empty() && self.choices.is_empty()),
+            self.started > 0 || self.nodes.is_empty(),
             "unstarted history has events",
         )
     }

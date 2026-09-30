@@ -32,6 +32,11 @@ pub enum Command {
         key: actors::RelationshipKey,
         amount: i16,
     },
+    /// A character joins or leaves the group travelling with the player.
+    Party {
+        actor: ActorId,
+        member: bool,
+    },
     UseItem {
         actor: ActorId,
         item: ItemId,
@@ -197,37 +202,18 @@ impl<C: ContentSource> GameSession<C> {
             return Ok(());
         }
         let contract = self.content.dialogue_contract(id)?;
-        let pack = self.source.dialogue(id)?;
-        pack.graph.validate()?;
+        let graph = self.source.dialogue(id)?;
+        graph.validate()?;
         require(
-            pack.graph.id == id && &pack.graph.contract() == contract,
+            graph.id == id && &graph.contract() == contract,
             "dialogue contract mismatch",
         )?;
-        for choice in pack.graph.nodes.iter().flat_map(|n| &n.choices) {
-            require(
-                choice
-                    .conditions
-                    .iter()
-                    .all(|k| pack.conditions.contains_key(&BindingId::new(id, k.clone())))
-                    && choice
-                        .actions
-                        .iter()
-                        .all(|k| pack.actions.contains_key(&BindingId::new(id, k.clone()))),
-                "dialogue binding missing",
-            )?;
-        }
         if self.loaded.len() == MAX_LOADED_DIALOGUES
             && let Some(old) = self.loaded.pop_front()
         {
-            let game = &mut self.content.game;
-            game.dialogues.retain(|d| d.id != old);
-            game.conditions.retain(|k, _| k.dialogue != old);
-            game.actions.retain(|k, _| k.dialogue != old);
+            self.content.game.dialogues.retain(|d| d.id != old);
         }
-        let game = &mut self.content.game;
-        game.dialogues.push(pack.graph);
-        game.conditions.extend(pack.conditions);
-        game.actions.extend(pack.actions);
+        self.content.game.dialogues.push(graph);
         self.loaded.push_back(id);
         Ok(())
     }
@@ -605,6 +591,10 @@ fn apply(
             state.actor(key.to)?;
             change_relationship(state, key, amount, events)?
         }
+        Command::Party { actor, member } => {
+            state.actor(actor)?;
+            state.set_party(actor, member);
+        }
         Command::UseItem { actor, item } => {
             let bag = state.carried(actor)?;
             let inventory = bag.id;
@@ -809,29 +799,6 @@ fn sync_equipment(
         events.push(GameEvent::EquipmentChanged { actor });
     }
     clamp_health(content, state, actor)
-}
-pub(crate) fn conditions_met(
-    content: &GameContent,
-    state: &SessionState,
-    actor: ActorId,
-    speaker: ActorId,
-    dialogue: DialogueId,
-    conditions: &[Key],
-) -> Result<bool> {
-    for id in conditions {
-        if !content
-            .evaluate(
-                &content.game.conditions[&BindingId::new(dialogue, id.clone())],
-                state,
-                actor,
-                speaker,
-            )?
-            .matched
-        {
-            return Ok(false);
-        }
-    }
-    Ok(true)
 }
 pub(crate) fn run_action(
     content: &GameContent,

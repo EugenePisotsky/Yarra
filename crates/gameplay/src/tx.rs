@@ -34,6 +34,7 @@ macro_rules! journal {
             pub facts: BTreeMap<Key, bool>,
             pub claims: BTreeSet<ClaimKey>,
             pending: Option<VecDeque<PendingEvent>>,
+            party: Option<BTreeSet<ActorId>>,
         }
         impl Before {
             fn new(state: &SessionState) -> Self {
@@ -43,6 +44,7 @@ macro_rules! journal {
                     facts: BTreeMap::new(),
                     claims: BTreeSet::new(),
                     pending: None,
+                    party: None,
                 }
             }
             fn restore(self, state: &mut SessionState) {
@@ -65,6 +67,9 @@ macro_rules! journal {
                 if let Some(pending) = self.pending {
                     state.world.pending = pending;
                 }
+                if let Some(party) = self.party {
+                    state.party = party;
+                }
                 state.time = self.scalars.time;
                 state.random = self.scalars.random;
                 state.narrative_random = self.scalars.narrative_random;
@@ -80,6 +85,9 @@ macro_rules! journal {
                 outer.claims.extend(self.claims);
                 if outer.pending.is_none() {
                     outer.pending = self.pending;
+                }
+                if outer.party.is_none() {
+                    outer.party = self.party;
                 }
             }
         }
@@ -246,6 +254,16 @@ impl<'a> Tx<'a> {
             self.state.facts.insert(key.clone());
         } else {
             self.state.facts.remove(key);
+        }
+    }
+    pub fn set_party(&mut self, actor: ActorId, member: bool) {
+        if self.before.party.is_none() {
+            self.before.party = Some(self.state.party.clone());
+        }
+        if member {
+            self.state.party.insert(actor);
+        } else {
+            self.state.party.remove(&actor);
         }
     }
     /// Claims are never withdrawn, so undoing one only ever removes it.

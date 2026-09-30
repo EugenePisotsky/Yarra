@@ -1,5 +1,7 @@
 use game_types::*;
-use gameplay::dialogue::{ArgumentSource, ChoiceRepeat, HistoryEvent, Scope, ScopeSelector, Token};
+use gameplay::dialogue::{
+    ArgumentSource, Dialogue, HistoryEvent, Node, Repeat, Role, Scope, ScopeSelector, Token,
+};
 use gameplay::quests::Transition;
 use gameplay::{
     Action, Command, ConversationKey, GameEvent,
@@ -92,6 +94,9 @@ fn claimed(session: &mut RuntimeSession, scope: Scope) -> bool {
     };
     session.state().claimed(key)
 }
+fn node<'a>(graph: &'a mut Dialogue, id: &str) -> &'a mut Node {
+    graph.nodes.iter_mut().find(|n| n.id == key(id)).unwrap()
+}
 fn reward_source(root: &std::path::Path, scope: ScopeSelector) {
     write(
         root.join("packages/guard/reward.claim.ron"),
@@ -99,43 +104,36 @@ fn reward_source(root: &std::path::Path, scope: ScopeSelector) {
     );
     let graph_path = root.join("packages/guard/conversations/reward/graph.ron");
     let mut graph: dialogue::Dialogue = read(&graph_path);
-    graph.nodes[0].choices[0].conditions.clear();
+    let reward = node(&mut graph, "return-key");
+    reward.condition = None;
+    reward.actions = vec![Action::Claim {
+        claim: CLAIM,
+        actions: vec![Action::SkillCheck {
+            skill: key("persuasion"),
+            difficulty: 1,
+            success: vec![
+                Action::AwardExperience {
+                    skill: key("persuasion"),
+                    amount: 10,
+                },
+                Action::GrantItem {
+                    definition: inventory::fixtures::SWORD,
+                    quantity: 1,
+                },
+            ],
+            failure: vec![],
+        }],
+    }];
+    let reward = reward.clone();
     write(graph_path, &graph);
-    let binding_path = root.join("packages/guard/conversations/reward/bindings.ron");
-    let mut bindings: Bindings = read(&binding_path);
-    bindings.actions.insert(
-        key("reward"),
-        Action::Claim {
-            claim: CLAIM,
-            actions: vec![Action::SkillCheck {
-                skill: key("persuasion"),
-                difficulty: 1,
-                success: vec![
-                    Action::AwardExperience {
-                        skill: key("persuasion"),
-                        amount: 10,
-                    },
-                    Action::GrantItem {
-                        definition: inventory::fixtures::SWORD,
-                        quantity: 1,
-                    },
-                ],
-                failure: vec![],
-            }],
-        },
-    );
-    write(&binding_path, &bindings);
     // The same durable claim can guard a reward offered by another graph/NPC.
     let second = root.join("packages/guard/conversations/duty/graph.ron");
     let mut duty: dialogue::Dialogue = read(&second);
-    duty.nodes[0]
-        .choices
-        .insert(0, graph.nodes[0].choices[0].clone());
+    node(&mut duty, "greeting")
+        .children
+        .insert(0, reward.id.clone());
+    duty.nodes.push(reward);
     write(second, &duty);
-    write(
-        root.join("packages/guard/conversations/duty/bindings.ron"),
-        &bindings,
-    );
 }
 
 #[test]
@@ -163,8 +161,7 @@ fn shared_claim_survives_reopening_other_graphs_npcs_and_restore() {
         10
     );
     assert_eq!(
-        history(&mut session, &project, pair(REWARD))
-            .count(&HistoryEvent::Choice(key("return-key"))),
+        history(&mut session, &project, pair(REWARD)).count(&HistoryEvent::Node(key("return-key"))),
         2
     );
     assert_eq!(history(&mut session, &project, pair(REWARD)).completed, 2);
@@ -308,7 +305,7 @@ fn interruption_and_previous_choices_drive_selection_without_claiming_rewards() 
     );
     let h = history(&mut restored, &project, key);
     assert_eq!((h.started, h.completed, h.interrupted), (2, 1, 1));
-    assert_eq!(h.count(&HistoryEvent::Line(key_fn("greeting"))), 2);
+    assert_eq!(h.count(&HistoryEvent::Node(key_fn("greeting"))), 2);
     assert!(!claimed(&mut restored, Scope::Playthrough));
 }
 
@@ -318,9 +315,8 @@ fn three_roles_bind_localized_names_and_numeric_attributes_and_restore() {
     let root = temp.source();
     let graph_path = root.join("packages/guard/conversations/reward/graph.ron");
     let mut graph: dialogue::Dialogue = read(&graph_path);
-    graph.roles.insert(key("companion"));
-    graph.nodes[0].lines[1].speaker = key("companion");
-    graph.nodes[0].lines[0].arguments.insert(
+    graph.roles.insert(key("companion"), Role::Required);
+    node(&mut graph, "greeting").arguments.insert(
         "strength".into(),
         ArgumentSource::Attribute {
             role: key("companion"),
@@ -423,15 +419,15 @@ fn hub_choices_repeat_per_run_or_history_and_npc_instances_stay_independent() {
     let root = temp.source();
     let path = root.join("packages/guard/conversations/welcome-a/graph.ron");
     let mut graph: dialogue::Dialogue = read(&path);
-    for (id, repeat) in [
-        ("run", ChoiceRepeat::OncePerRun),
-        ("ever", ChoiceRepeat::OnceEver),
-    ] {
-        let mut choice = graph.nodes[0].choices[0].clone();
+    for (id, repeat) in [("run", Repeat::OncePerRun), ("ever", Repeat::OnceEver)] {
+        let mut choice = node(&mut graph, "leave").clone();
         choice.id = key(id);
         choice.repeat = repeat;
-        choice.next = Some(key("start"));
-        graph.nodes[0].choices.push(choice);
+        choice.children = vec![key("greeting")];
+        node(&mut graph, "greeting")
+            .children
+            .push(choice.id.clone());
+        graph.nodes.push(choice);
     }
     write(path, &graph);
     let (project, mut session) = load(&temp, &root);
@@ -470,7 +466,7 @@ fn hub_choices_repeat_per_run_or_history_and_npc_instances_stay_independent() {
             .contains(&key("ever"))
     );
     assert_eq!(
-        history(&mut session, &project, other).count(&HistoryEvent::Choice(key("ever"))),
+        history(&mut session, &project, other).count(&HistoryEvent::Node(key("ever"))),
         0
     );
 }
@@ -558,16 +554,16 @@ fn invalid_speakers_message_bindings_and_history_references_fail_publication() {
     for change in 0..4 {
         let mut graph = original.clone();
         match change {
-            0 => graph.nodes[0].lines[0].speaker = key("unknown"),
+            0 => node(&mut graph, "greeting").speaker = key("unknown"),
             1 => {
-                graph.nodes[0].lines[0].arguments.clear();
+                node(&mut graph, "greeting").arguments.clear();
             }
             2 => {
-                graph.nodes[0].lines[0]
+                node(&mut graph, "greeting")
                     .arguments
                     .insert("player".into(), ArgumentSource::Number(1));
             }
-            _ => graph.nodes[0].lines[1].id = graph.nodes[0].lines[0].id.clone(),
+            _ => graph.nodes[1].id = graph.nodes[0].id.clone(),
         }
         write(&path, &graph);
         assert!(LoadedProject::load_directory(&root).is_err());
@@ -577,7 +573,7 @@ fn invalid_speakers_message_bindings_and_history_references_fail_publication() {
     let mut profile: gameplay::InteractionProfile = read(&path);
     profile.rules[0].condition = gameplay::Condition::History {
         dialogue: REWARD,
-        event: HistoryEvent::Choice(key("missing")),
+        event: HistoryEvent::Node(key("missing")),
         minimum: 1,
     };
     write(path, &profile);
@@ -586,7 +582,7 @@ fn invalid_speakers_message_bindings_and_history_references_fail_publication() {
             .err()
             .unwrap()
             .to_string()
-            .contains("unknown history choice")
+            .contains("unknown history node")
     );
 }
 
@@ -616,7 +612,7 @@ fn final_line_completes_a_choice_free_scene_exactly_once() {
     let root = temp.source();
     let path = root.join("packages/guard/conversations/welcome-a/graph.ron");
     let mut graph: dialogue::Dialogue = read(&path);
-    graph.nodes[0].choices.clear();
+    node(&mut graph, "greeting").children.clear();
     graph.repeat = dialogue::RepeatPolicy::OnceCompleted;
     write(path, &graph);
     let (project, mut session) = load(&temp, &root);

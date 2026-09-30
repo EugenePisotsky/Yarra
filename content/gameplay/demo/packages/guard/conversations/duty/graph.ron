@@ -1,8 +1,9 @@
 (
-    id: "31313131-3131-3131-3131-313131313131", roles: ["player", "speaker"], history_scope: Interaction, repeat: Always,
-    start: "start", nodes: [(id: "start", lines: [
-        (id: "greeting", speaker: "speaker", text: Message((resource: "25252525-2525-2525-2525-252525252525", key: "duty")), arguments: {}),
-    ], choices: [
-        (id: "leave", text: Message((resource: "25252525-2525-2525-2525-252525252525", key: "leave")), arguments: {}, repeat: Always, conditions: [], actions: [], next: None),
-    ])],
+    id: "31313131-3131-3131-3131-313131313131",
+    roles: {"player": Required, "speaker": Required}, history_scope: Interaction, repeat: Always,
+    start: ["greeting"],
+    nodes: [
+        (id: "greeting", kind: Line, speaker: "speaker", text: Message((resource: "25252525-2525-2525-2525-252525252525", key: "duty")), children: ["leave"]),
+        (id: "leave", kind: Choice, speaker: "player", text: Message((resource: "25252525-2525-2525-2525-252525252525", key: "leave"))),
+    ],
 )

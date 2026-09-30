@@ -41,6 +41,10 @@ pub(crate) fn install(app: &mut App, source: &Path) -> Result<(), String> {
 
 #[derive(Component)]
 struct Guard;
+/// The party member who waits with the player; she speaks in conversations but does not
+/// follow yet.
+#[derive(Component)]
+struct Companion;
 #[derive(Component)]
 struct Gate;
 #[derive(Component)]
@@ -75,6 +79,9 @@ fn spawn(
     commands
         .spawn(engine::standing_character(hidden, "Gate guard"))
         .insert(Guard);
+    commands
+        .spawn(engine::standing_character(hidden, "Companion"))
+        .insert(Companion);
     let stone = materials.add(StandardMaterial {
         base_color: Color::srgb(0.45, 0.44, 0.42),
         perceptual_roughness: 0.95,
@@ -176,9 +183,18 @@ fn place(
     mut adopted: MessageReader<WorldStartAdopted>,
     origin: Res<WorldOrigin>,
     catalog: Res<WorldCatalog>,
-    player: Single<&Transform, (With<PlayerControlled>, Without<Guard>, Without<Gate>)>,
-    mut guard: Single<&mut Transform, (With<Guard>, Without<Gate>)>,
-    mut gate: Single<&mut Transform, (With<Gate>, Without<Guard>)>,
+    player: Single<
+        &Transform,
+        (
+            With<PlayerControlled>,
+            Without<Guard>,
+            Without<Gate>,
+            Without<Companion>,
+        ),
+    >,
+    mut guard: Single<&mut Transform, (With<Guard>, Without<Gate>, Without<Companion>)>,
+    mut gate: Single<&mut Transform, (With<Gate>, Without<Guard>, Without<Companion>)>,
+    mut companion: Single<&mut Transform, (With<Companion>, Without<Guard>, Without<Gate>)>,
 ) {
     // Read every frame: the world may name its start before the space is known here.
     if let Some(adopted) = adopted.read().last() {
@@ -204,7 +220,7 @@ fn place(
         // The camera sits at +(sin yaw, cos yaw) from the player and looks back at it.
         placement.anchor = Some((player.translation, -Vec2::new(yaw.sin(), yaw.cos())));
         placement.attempt = 0;
-        position(&placement, &mut guard, &mut gate);
+        position(&placement, &mut guard, &mut gate, &mut companion);
         return;
     }
     if guard.translation.y == UNGROUNDED || gate.translation.y == UNGROUNDED {
@@ -218,10 +234,15 @@ fn place(
         placement.settled = true;
     } else {
         placement.attempt += 1;
-        position(&placement, &mut guard, &mut gate);
+        position(&placement, &mut guard, &mut gate, &mut companion);
     }
 }
-fn position(placement: &Placement, guard: &mut Transform, gate: &mut Transform) {
+fn position(
+    placement: &Placement,
+    guard: &mut Transform,
+    gate: &mut Transform,
+    companion: &mut Transform,
+) {
     let (anchor, forward) = placement.anchor.expect("anchor known");
     let direction = Vec2::from_angle(BEARINGS[placement.attempt].to_radians()).rotate(forward);
     let side = direction.perp();
@@ -235,6 +256,7 @@ fn position(placement: &Placement, guard: &mut Transform, gate: &mut Transform) 
     *guard =
         Transform::from_translation(at(GUARD_DISTANCE, -2.6)).with_rotation(facing(-direction));
     *gate = Transform::from_translation(at(GATE_DISTANCE, 0.0)).with_rotation(facing(direction));
+    *companion = Transform::from_translation(at(1.0, 1.8)).with_rotation(facing(direction));
 }
 
 fn near_guard(player: &Transform, guard: &Transform) -> bool {

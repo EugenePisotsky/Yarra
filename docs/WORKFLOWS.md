@@ -132,7 +132,7 @@ A guard and a gate appear a few metres ahead of the start. Walk to the guard and
 
 ### Editing and validating gameplay content
 
-Copy `content/gameplay/demo` to start a project. Source format **6** uses explicit package manifests and one asset directory per conversation:
+Copy `content/gameplay/demo` to start a project. Source format **7** uses explicit package manifests and one asset directory per conversation:
 
 ```text
 project.ron                         # content/world identity, packages, locale policy
@@ -145,9 +145,8 @@ packages/core/
 packages/old_gate/
   package.ron
   conversations/gate/
-    conversation.ron                # graph/bindings/resource paths
+    conversation.ron                # graph and resource paths
     graph.ron                       # exactly one conversation
-    bindings.ron                    # local conditions/actions; campaign fact declarations
     messages.ron
     en.ftl, uk.ftl
 ```
@@ -177,7 +176,7 @@ cargo run --offline -p yarra-game-content -- validate tmp/game-content/mechanics
 cargo run --offline -p yarra-game-content -- demo tmp/game-content/mechanics-v6.sqlite --language tmp/game-content/en-v1.sqlite --language tmp/game-content/uk-v1.sqlite --locale uk
 ```
 
-Content schema **7** contains one checksummed record per mechanical asset, text contracts and the tool-only scenario. It contains **no FTL**. Language-pack schema **1** stores one locale's resources, their contract hashes and review metadata. A wording fix uses `build-language` with a fresh pack path and requires no mechanical rebuild and does not affect saves. The caller explicitly selects packs; nothing is discovered implicitly.
+Content schema **8** contains one checksummed record per mechanical asset, text contracts and the tool-only scenario. It contains **no FTL**. Language-pack schema **1** stores one locale's resources, their contract hashes and review metadata. A wording fix uses `build-language` with a fresh pack path and requires no mechanical rebuild and does not affect saves. The caller explicitly selects packs; nothing is discovered implicitly.
 
 `ContentRepository::open(path)` reads the manifest only. `headers(kind)` lists identities and checksums without payloads; `read(&AssetId::Item(id))` and `read_kind(kind)` return verified assets. A session uses it through the `ContentSource` port: `core()` once, then `dialogue(id)` per conversation. Text **contracts** are read explicitly with `AssetId::Text(resource_id)`; commands never read or parse wording.
 
@@ -208,7 +207,7 @@ The guard package owns two quests, a reusable readiness predicate, one interacti
 
 An actor template's `interaction: Some(profile_id)` attaches a profile; `None` explicitly declares no selector. A profile has 1–64 rules with a local ID, priority, tie order, optional topic label, condition and 1–16 positively weighted dialogue variants. Higher priority wins, then lower `order`; duplicate `(priority, order)` pairs are rejected. Automatic opening considers only rules without a topic. Every eligible topic is returned independently, keeping concurrent quests discoverable. Weights select within the winning rule. Derived `DialogueContract` records contain role declarations, history scope, repeat policy and line/choice IDs. Profile previews read these contracts and scoped history to filter ineligible variants; `unavailable_variants` explains repeat/cooldown exclusions. Full graphs remain outside the preview dependency closure.
 
-Conditions support `All`, `Any`, `Not`, UUID-addressed `Named`, quest status, objective completion, directed attitude, items, facts, skill XP, scoped `History` counts and `Claimed`. History conditions reference a dialogue and an event (`Started`, `Completed`, `Interrupted`, `Line(id)` or `Choice(id)`); the dialogue contract supplies the scope and validates referenced IDs. Each tree is bounded; resolved named expansions are cycle-checked and share evaluation's depth/work budget. `Participant::Player` is the interacting actor and `Speaker` is the addressed NPC. Relationships are directed, clamped to −100…100, and resolve to neutral only after an indexed absence lookup. Quest progress similarly resolves to `NotStarted` only for a requested, defined quest. An unrequested record remains unavailable in a read model. Neither default is written by inspection.
+Conditions support `All`, `Any`, `Not`, UUID-addressed `Named`, `Present(actor)`, quest status, objective completion, directed attitude, items, facts, skill XP, scoped `History` counts and `Claimed`. History conditions reference a dialogue and an event (`Started`, `Completed`, `Interrupted` or `Node(id)`); the dialogue contract supplies the scope and validates the node ID. `Relationship` conditions and actions name `Player`, `Speaker` or `Actor(id)`. Each tree is bounded; named predicates are expanded with a shared depth and work budget.
 
 Use `preview_interaction(participant, speaker)` for sorted candidates, observed leaf values and eligibility, `opening()` for the chosen rule, and `topics()` for available topics. Preview does not change state, generation or either RNG stream. Submit `Command::Talk { participant, speaker, topic: None, bindings: Default::default() }` to choose an opening or `Some(rule_id)` to request an eligible topic. Only the selected graph loads. The committed outcome includes `InteractionSelected`; its profile/rule/dialogue are persisted separately from graph progress. An active conversation resumes without rerolling or rebinding, including after save/load; a topic request during it is rejected. Greeting variation uses a saved narrative RNG separate from skill rolls.
 
@@ -216,13 +215,25 @@ Use `preview_interaction(participant, speaker)` for sorted candidates, observed 
 
 ### Conversation runs, history and rewards
 
-Graphs declare `roles` (including `player` and `speaker`), `history_scope`, `repeat`, a start node and nodes containing ordered `lines`. A line has a graph-wide stable ID, speaker role, text reference and argument sources. Choices likewise have explicit arguments and repeat policy. `Talk` and `StartDialogue` automatically bind the two reserved roles; their `bindings` map supplies exactly the remaining declared roles. Missing/extra roles, reserved overrides and unknown actors reject the start atomically. At most 16 roles, 64 lines per node and 4,096 distinct line/choice IDs per graph are supported.
+A conversation is one `graph.ron`: `roles`, `history_scope`, `repeat`, ordered entry nodes in `start`, and a flat list of `nodes`. Conditions and actions are written in the node that uses them; a package lists the campaign `facts` it introduces.
 
-Use `conversation_view(ConversationKey)` for status, node, token, current line and available choices. A line includes the bound actor ID and `BoundText`; gameplay returns references and typed values, never rendered strings. Argument sources are `ActorName(role)`, `Attribute { role, attribute }` (derived attributes), static `Text`, integer `Number` and declared `Select`. Publication and bounded graph loading validate exact message argument names/types and declared roles. A `Text` argument must reference static text. `Localization::format_bound(locale, &line.text)` resolves actor-name/static references through the central Fluent service. Reading or formatting a line records nothing.
+```ron
+(id: "greeting", kind: Line, speaker: "speaker", text: Message((resource: "...", key: "reward")),
+    arguments: {"player": ActorName("player")}, children: ["companion-aside", "answer"]),
+(id: "companion-aside", kind: Line, speaker: "companion", text: ..., children: ["guard-reply"]),
+(id: "return-key", kind: Choice, speaker: "player", text: ...,
+    condition: Some(Named("...")), actions: [Claim(claim: "...", actions: [...])]),
+```
 
-After presentation, submit `AdvanceLine { key, expected: view.token }`. This commits the line-history count and saved cursor. Choices appear only after every line at the node is acknowledged. A node with no choices completes at its last line. `Choose` also requires the view's `expected` token; use it when the input was shown, rather than fetching a new token just to retry an old input. Tokens contain run and step counters, rejecting duplicate/stale input across node loops and reopened runs. `InterruptDialogue` takes the same token, marks that run interrupted and records no completion or reward. A later start begins a fresh run if policy allows; an active saved run resumes at its saved line. The scenario steps `AdvanceLine`, `ExpectLine` and `Interrupt` use these same APIs.
+Every node has an `id`, a `kind`, a `speaker` role and `text`; `arguments`, `repeat`, `condition`, `actions` and `children` are optional. After a node (or at the start), its children are tried in order and the first eligible one decides what happens: a `Line` is shown and waits to be acknowledged; a `Choice` means every eligible choice among those children is offered. With no eligible child the conversation is complete. A node is eligible when its speaker is taking part, its `repeat` allows it (`Always`, `OncePerRun`, `OnceEver`) and its condition holds.
 
-Graph repeat policies are `Always`, `OnceCompleted` and `Cooldown { millis }` measured from the last committed start using saved logical time. An interrupted introduction with `OnceCompleted` can restart. Choices independently declare `Always`, `OncePerRun` or `OnceEver`. Graph history scope is `Playthrough`, `Player`, `Speaker` or `Interaction` (the ordered player/NPC pair). The state keeps bounded summaries of starts, lines, choices, completions, interruptions and last-start time; it never scans or saves an unlimited transcript. Scope applies to repeat eligibility and history predicates. Reusable graphs on different NPCs remain independent with `Interaction` scope. New starts replace the latest run record, preserve durable history, and increment the run token.
+Roles say who can speak. `player` and `speaker` are always `Required` and are bound by `Talk`/`StartDialogue`. Further roles are `Required` or `Optional` (supplied in the command's `bindings`) or `Actor("uuid")`, a named character who takes part whenever they are in the party. Nodes of a role nobody fills are skipped, so a companion's reaction is simply an earlier child spoken by that companion, and a line for two companions together adds `condition: Some(Present("other-uuid"))`. `Command::Party { actor, member }` changes who travels with the player; a scenario can start with a `party`.
+
+Use `conversation_view(ConversationKey)` for status, token, the current line and the available choices. A line includes the speaking actor's ID and `BoundText`; gameplay returns references and typed values, never rendered strings. Argument sources are `ActorName(role)`, `Attribute { role, attribute }` (derived attributes; both need a `Required` role), static `Text`, integer `Number` and declared `Select`.
+
+Submit `AdvanceLine { key, expected: view.token }` once a line has been presented: it runs the line's actions and records it. `Choose` likewise takes the token of the view the player saw; a stale token is rejected rather than consuming another step.
+
+Graph repeat policies are `Always`, `OnceCompleted` and `Cooldown { millis }` measured from the last committed start using saved logical time. An interrupted introduction with `OnceCompleted` can restart. History scope is `Playthrough`, `Player`, `Speaker` or `Interaction` (the ordered player/NPC pair) and counts starts, completions, interruptions and each node taken.
 
 Package-owned `ClaimDefinition { id, scope }` assets use the same scope selectors and a stable UUID independent of dialogue identity. Wrap an atomic reward group in `Action::Claim { claim, actions }`. The first accepted group executes its actions and records the claim in the same transaction as inventory, quest, XP, history, cursor and RNG changes. Later attempts skip that group, including its random rolls; ordinary conversation choices can still repeat. Different graphs/NPCs can reference one shared playthrough claim, or use an actor/pair scope. `Condition::Claimed` can also hide a claimed offer. Nested claim groups share the action complexity budget. All effects and claims roll back on failure; previews never claim rewards. Inventory/rule conditions remain separate from the claim guard, so reopening a conversation need not grant the reward again.
 
@@ -236,7 +247,7 @@ Package-owned `ClaimDefinition { id, scope }` assets use the same scope selector
 
 Before gameplay uses a published bundle, create `ContentLibrary::new(retention_directory)`, call `retain(bundle_path)` and open its returned identity through `library.open(&identity)`. Retained bundles are independent of source files and are not removed automatically. Saves reference mechanics; language packs are selected independently and are not part of save identity.
 
-`SaveDirectory` supports manual slots, quicksave and autosave retention (1–32). A save is one `.save` file: a header line and the state as JSON, written beside the slot and renamed into place. Save format **8** rejects other formats; regenerate fixtures rather than migrate them. Restore with `library.load(&saves, slot)`, or resolve `saves.content_identity(slot)` yourself and call `saves.load(slot, content_source)`.
+`SaveDirectory` supports manual slots, quicksave and autosave retention (1–32). A save is one `.save` file: a header line and the state as JSON, written beside the slot and renamed into place. Save format **9** rejects other formats; regenerate fixtures rather than migrate them. Restore with `library.load(&saves, slot)`, or resolve `saves.content_identity(slot)` yourself and call `saves.load(slot, content_source)`.
 
 `HeadlessDriver::new(session, step_ms, trace_capacity)` shares the session's commands and read models. `submit`, `step` and `advance_until(max_steps, predicate)` use explicit logical time and a bounded event trace; no real-time sleeps are required. Failed commands add nothing to the trace. An unmet predicate returns an error after its step budget; steps already accepted stay accepted.
 

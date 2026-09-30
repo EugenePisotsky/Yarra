@@ -9,12 +9,15 @@ use std::collections::BTreeSet;
 pub enum Participant {
     Player,
     Speaker,
+    /// A named character, whoever is talking.
+    Actor(ActorId),
 }
 impl Participant {
     pub fn resolve(self, player: ActorId, speaker: ActorId) -> ActorId {
         match self {
             Self::Player => player,
             Self::Speaker => speaker,
+            Self::Actor(actor) => actor,
         }
     }
 }
@@ -273,14 +276,8 @@ impl GameContent {
                 } => {
                     require(*minimum > 0, "zero history threshold")?;
                     let d = self.dialogue_contract(*dialogue)?;
-                    match event {
-                        dialogue::HistoryEvent::Line(id) => {
-                            require(d.lines.contains(id), "unknown history line")?
-                        }
-                        dialogue::HistoryEvent::Choice(id) => {
-                            require(d.choices.contains(id), "unknown history choice")?
-                        }
-                        _ => {}
+                    if let dialogue::HistoryEvent::Node(id) = event {
+                        require(d.nodes.contains(id), "unknown history node")?
                     }
                 }
                 Condition::Claimed { claim, .. } => {
@@ -322,11 +319,22 @@ impl GameContent {
         player: ActorId,
         speaker: ActorId,
     ) -> Result<Evaluation> {
+        self.evaluate_among(condition, state, player, speaker, &BTreeSet::new())
+    }
+    /// `others` are further actors taking part, beyond the pair and the party.
+    pub fn evaluate_among(
+        &self,
+        condition: &Condition,
+        state: &SessionState,
+        player: ActorId,
+        speaker: ActorId,
+        others: &BTreeSet<ActorId>,
+    ) -> Result<Evaluation> {
         fn eval(
             content: &GameContent,
             c: &Condition,
             state: &SessionState,
-            pair: (ActorId, ActorId),
+            pair: (ActorId, ActorId, &BTreeSet<ActorId>),
             checks: &mut Vec<ConditionCheck>,
             budget: &mut usize,
             depth: usize,
@@ -337,6 +345,13 @@ impl GameContent {
             )?;
             *budget -= 1;
             let (observed, matched) = match c {
+                Condition::Present(actor) => {
+                    let present = *actor == pair.0
+                        || *actor == pair.1
+                        || pair.2.contains(actor)
+                        || state.party.contains(actor);
+                    (Observed::Boolean(present), present)
+                }
                 Condition::InsideArea { area } => {
                     let inside = state.location(content, pair.0)?.areas.contains(area);
                     (Observed::Boolean(inside), inside)
@@ -432,7 +447,7 @@ impl GameContent {
             self,
             condition,
             state,
-            (player, speaker),
+            (player, speaker, others),
             &mut checks,
             &mut 1024,
             0,

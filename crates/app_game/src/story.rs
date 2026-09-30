@@ -359,7 +359,10 @@ mod tests {
         let lines = read(&mut story);
         assert_eq!(lines[0].speaker, "Gate guard");
         assert_eq!(lines[0].text, "You found the gate key, Traveller!");
-        assert_eq!(lines[1].speaker, "Traveller");
+        // Mira travels with the player: she cuts in and the guard answers her.
+        assert_eq!(lines[1].speaker, "Mira");
+        assert_eq!(lines[2].speaker, "Gate guard");
+        assert_eq!(lines[3].speaker, "Traveller");
         let choices = story.panel().unwrap().choices;
         assert_eq!(choices[0], "Here is your key.");
         assert_eq!(choices.len(), 3);
@@ -387,7 +390,7 @@ mod tests {
         let second = story.panel().unwrap();
         assert_ne!(first, second);
         story.quicksave();
-        story.advance();
+        read(&mut story);
         story.choose(2);
         assert!(story.panel().is_none());
 

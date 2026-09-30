@@ -10,6 +10,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Condition {
+    /// The actor takes part in the conversation or travels with the party.
+    Present(ActorId),
     InsideArea {
         area: AreaId,
     },
@@ -117,10 +119,6 @@ pub struct GameDefinitions {
     pub actors: Vec<ActorTemplate>,
     pub dialogues: Vec<Dialogue>,
     pub facts: BTreeSet<Key>,
-    #[serde(deserialize_with = "game_types::deserialize_unique_map")]
-    pub conditions: BTreeMap<BindingId, Condition>,
-    #[serde(deserialize_with = "game_types::deserialize_unique_map")]
-    pub actions: BTreeMap<BindingId, Action>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -177,9 +175,7 @@ impl GameContent {
         require(
             self.game.actors.len() <= 10000
                 && self.game.dialogues.len() <= 1000
-                && self.game.facts.len() <= 10000
-                && self.game.conditions.len() <= 10000
-                && self.game.actions.len() <= 10000,
+                && self.game.facts.len() <= 10000,
             "content exceeds limits",
         )?;
         for item in &self.items.items {
@@ -213,33 +209,12 @@ impl GameContent {
             )?;
             self.validate_dialogue_text(graph)?;
             for node in &graph.nodes {
-                for choice in &node.choices {
-                    for condition in &choice.conditions {
-                        require(
-                            self.game
-                                .conditions
-                                .contains_key(&BindingId::new(graph.id, condition.clone())),
-                            &format!(
-                                "unknown dialogue condition {} in dialogue {} choice {}",
-                                condition.as_str(),
-                                graph.id,
-                                choice.id.as_str()
-                            ),
-                        )?;
-                    }
-                    for action in &choice.actions {
-                        require(
-                            self.game
-                                .actions
-                                .contains_key(&BindingId::new(graph.id, action.clone())),
-                            &format!(
-                                "unknown dialogue action {} in dialogue {} choice {}",
-                                action.as_str(),
-                                graph.id,
-                                choice.id.as_str()
-                            ),
-                        )?;
-                    }
+                if let Some(condition) = &node.condition {
+                    self.validate_condition(condition)?;
+                }
+                let mut budget = 1024;
+                for action in &node.actions {
+                    self.validate_action(action, 0, &mut budget)?;
                 }
             }
         }
@@ -266,13 +241,6 @@ impl GameContent {
             for rule in &profile.rules {
                 self.validate_condition(&rule.condition)?;
             }
-        }
-        for condition in self.game.conditions.values() {
-            self.validate_condition(condition)?;
-        }
-        for action in self.game.actions.values() {
-            let mut budget = 1024;
-            self.validate_action(action, 0, &mut budget)?;
         }
         Ok(())
     }
@@ -391,27 +359,12 @@ impl GameContent {
             refs.extend(profile.rules.iter().filter_map(|r| r.topic.as_ref()));
         }
         for graph in &self.game.dialogues {
-            for node in &graph.nodes {
-                for line in &node.lines {
-                    refs.push(&line.text);
-                    refs.extend(line.arguments.values().filter_map(|a| {
-                        if let dialogue::ArgumentSource::Text(t) = a {
-                            Some(t)
-                        } else {
-                            None
-                        }
-                    }));
-                }
-                for choice in &node.choices {
-                    refs.extend(choice.arguments.values().filter_map(|a| {
-                        if let dialogue::ArgumentSource::Text(t) = a {
-                            Some(t)
-                        } else {
-                            None
-                        }
-                    }));
-                }
-                refs.extend(node.choices.iter().map(|c| &c.text));
+            for (text, arguments) in graph.messages() {
+                refs.push(text);
+                refs.extend(arguments.values().filter_map(|a| match a {
+                    dialogue::ArgumentSource::Text(t) => Some(t),
+                    _ => None,
+                }));
             }
         }
         refs.into_iter()

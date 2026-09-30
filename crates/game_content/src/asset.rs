@@ -16,8 +16,6 @@ pub enum AssetKind {
     Actor,
     Rules,
     Dialogue,
-    Condition,
-    Action,
     Fact,
     Text,
     Quest,
@@ -30,14 +28,12 @@ pub enum AssetKind {
     Trigger,
 }
 impl AssetKind {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 15] = [
         Self::Category,
         Self::Item,
         Self::Actor,
         Self::Rules,
         Self::Dialogue,
-        Self::Condition,
-        Self::Action,
         Self::Fact,
         Self::Text,
         Self::Quest,
@@ -58,8 +54,6 @@ pub enum AssetId {
     Actor(ActorTemplateId),
     Rules,
     Dialogue(DialogueId),
-    Condition(BindingId),
-    Action(BindingId),
     Fact(Key),
     Text(TextResourceId),
     Quest(QuestId),
@@ -79,8 +73,6 @@ impl AssetId {
             Self::Actor(_) => AssetKind::Actor,
             Self::Rules => AssetKind::Rules,
             Self::Dialogue(_) => AssetKind::Dialogue,
-            Self::Condition(_) => AssetKind::Condition,
-            Self::Action(_) => AssetKind::Action,
             Self::Fact(_) => AssetKind::Fact,
             Self::Text(_) => AssetKind::Text,
             Self::Quest(_) => AssetKind::Quest,
@@ -100,7 +92,6 @@ impl AssetId {
             Self::Actor(id) => id.to_string(),
             Self::Rules => "rules".into(),
             Self::Dialogue(id) => id.to_string(),
-            Self::Condition(key) | Self::Action(key) => key.clone().into(),
             Self::Fact(key) => key.as_str().into(),
             Self::Text(resource) => resource.to_string(),
             Self::Quest(id) => id.to_string(),
@@ -121,8 +112,6 @@ impl AssetId {
             AssetKind::Actor => Self::Actor(ActorTemplateId::try_from(key.clone())?),
             AssetKind::Rules => Self::Rules,
             AssetKind::Dialogue => Self::Dialogue(DialogueId::try_from(key.clone())?),
-            AssetKind::Condition => Self::Condition(BindingId::try_from(key.clone())?),
-            AssetKind::Action => Self::Action(BindingId::try_from(key.clone())?),
             AssetKind::Fact => Self::Fact(Key::new(&key)?),
             AssetKind::Text => Self::Text(TextResourceId::try_from(key.clone())?),
             AssetKind::Quest => Self::Quest(QuestId::try_from(key.clone())?),
@@ -156,8 +145,6 @@ pub enum Asset {
     Actor(actors::ActorTemplate),
     Rules(rules::Rules),
     Dialogue(dialogue::Dialogue),
-    Condition { id: BindingId, value: Condition },
-    Action { id: BindingId, value: Action },
     Fact(Key),
     Text(TextContract),
     Quest(quests::Quest),
@@ -187,14 +174,7 @@ impl Asset {
                 .chain(v.skills.iter().map(|s| &s.name))
                 .collect(),
             Self::Dialogue(v) => v
-                .nodes
-                .iter()
-                .flat_map(|n| {
-                    n.lines
-                        .iter()
-                        .map(|l| (&l.text, &l.arguments))
-                        .chain(n.choices.iter().map(|c| (&c.text, &c.arguments)))
-                })
+                .messages()
                 .flat_map(|(t, args)| {
                     std::iter::once(t).chain(args.values().filter_map(|a| {
                         if let dialogue::ArgumentSource::Text(t) = a {
@@ -226,8 +206,6 @@ impl Asset {
             Self::Actor(v) => AssetId::Actor(v.id),
             Self::Rules(_) => AssetId::Rules,
             Self::Dialogue(v) => AssetId::Dialogue(v.id),
-            Self::Condition { id, .. } => AssetId::Condition(id.clone()),
-            Self::Action { id, .. } => AssetId::Action(id.clone()),
             Self::Fact(id) => AssetId::Fact(id.clone()),
             Self::Text(v) => AssetId::Text(v.id),
             Self::Quest(v) => AssetId::Quest(v.id),
@@ -284,18 +262,15 @@ impl Asset {
             Self::Dialogue(v) => {
                 refs.insert(AssetId::DialogueContract(v.id));
                 refs.insert(AssetId::Rules);
-                for choice in v.nodes.iter().flat_map(|n| &n.choices) {
-                    let binding = |key: &Key| BindingId::new(v.id, key.clone());
-                    refs.extend(
-                        choice
-                            .conditions
-                            .iter()
-                            .map(|k| AssetId::Condition(binding(k))),
-                    );
-                    refs.extend(choice.actions.iter().map(|k| AssetId::Action(binding(k))));
+                for node in &v.nodes {
+                    if let Some(condition) = &node.condition {
+                        condition_references(condition, &mut refs)?;
+                    }
+                    for action in &node.actions {
+                        action_references(action, &mut refs)?;
+                    }
                 }
             }
-            Self::Condition { value, .. } => condition_references(value, &mut refs)?,
             Self::Predicate(v) => condition_references(&v.condition, &mut refs)?,
             Self::Profile(v) => {
                 for rule in &v.rules {
@@ -306,7 +281,6 @@ impl Asset {
                     condition_references(&rule.condition, &mut refs)?;
                 }
             }
-            Self::Action { value, .. } => action_references(value, &mut refs)?,
             _ => {}
         }
         refs.extend(

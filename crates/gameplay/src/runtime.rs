@@ -4,7 +4,6 @@ use crate::*;
 use game_types::*;
 use rules::RandomState;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 
 /// Dialogue graphs kept loaded at once. Older graphs are reloaded on demand.
 pub const MAX_LOADED_DIALOGUES: usize = 32;
@@ -52,18 +51,11 @@ impl ConversationKey {
         }
     }
 }
-/// One conversation graph with the conditions and actions local to it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DialoguePack {
-    pub graph: dialogue::Dialogue,
-    pub conditions: BTreeMap<BindingId, Condition>,
-    pub actions: BTreeMap<BindingId, Action>,
-}
 /// Published content. `core` is read once per session; dialogue graphs are read when a
 /// conversation needs them, so opening a game never loads every conversation.
 pub trait ContentSource {
     fn identity(&self) -> ContentIdentity;
-    /// Every definition except dialogue graphs, their local bindings and text contracts.
+    /// Every definition except dialogue graphs and text contracts.
     fn core(&mut self) -> Result<GameContent>;
-    fn dialogue(&mut self, id: DialogueId) -> Result<DialoguePack>;
+    fn dialogue(&mut self, id: DialogueId) -> Result<dialogue::Dialogue>;
 }

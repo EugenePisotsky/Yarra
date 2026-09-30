@@ -18,27 +18,23 @@ fn error(path: &Path) -> String {
         .to_string()
 }
 #[test]
-fn conversations_reuse_text_and_binding_names_without_sharing_logic() {
+fn conversations_reuse_text_keys_and_node_names_without_sharing_logic() {
     let temp = Temp::new();
     let root = temp.source();
     let second_id = DialogueId([2; 16]);
     let text_id = TextResourceId([10; 16]);
     let mut graph: dialogue::Dialogue = read(root.join(format!("{GATE}/graph.ron")));
     graph.id = second_id;
-    graph.nodes[0].lines[0].text = TextRef::message(text_id, "greeting").unwrap();
-    graph.nodes[0].choices[0].text = TextRef::message(text_id, "return-key").unwrap();
+    graph.nodes[0].text = TextRef::message(text_id, "greeting").unwrap();
+    graph.nodes[1].text = TextRef::message(text_id, "return-key").unwrap();
+    // Same node names as the first conversation, a stricter condition.
+    graph.nodes[1].condition = Some(Condition::HasItem {
+        definition: inventory::fixtures::KEY,
+        quantity: 2,
+    });
     let folder = "packages/old_gate/conversations/second";
     fs::create_dir_all(root.join(folder)).unwrap();
     write(root.join(format!("{folder}/graph.ron")), &graph);
-    let mut bindings: Bindings = read(root.join(format!("{GATE}/bindings.ron")));
-    bindings.conditions.insert(
-        Key::new("has-key").unwrap(),
-        Condition::HasItem {
-            definition: inventory::fixtures::KEY,
-            quantity: 2,
-        },
-    );
-    write(root.join(format!("{folder}/bindings.ron")), &bindings);
     let mut resource: ResourceFile = read(root.join(format!("{GATE}/messages.ron")));
     resource.contract.id = text_id;
     for locale in &mut resource.locales {
@@ -53,7 +49,6 @@ fn conversations_reuse_text_and_binding_names_without_sharing_logic() {
         root.join(format!("{folder}/conversation.ron")),
         &ConversationFile {
             graph: format!("{folder}/graph.ron"),
-            bindings: format!("{folder}/bindings.ron"),
             resources: vec![format!("{folder}/messages.ron")],
         },
     );
@@ -101,24 +96,20 @@ fn conversations_reuse_text_and_binding_names_without_sharing_logic() {
     assert_eq!(
         project
             .localization()
-            .format("en", &graph.nodes[0].lines[0].text, &Arguments::new())
+            .format("en", &graph.nodes[0].text, &Arguments::new())
             .unwrap()
             .value,
         "I need two keys."
     );
     let path = temp.0.join("mechanics.sqlite");
     project.build(&path).unwrap();
-    // Each conversation is published with exactly its own bindings.
+    // Each conversation is published whole, with its own conditions.
     let mut repo = ContentRepository::open(path).unwrap();
-    let pack = gameplay::ContentSource::dialogue(&mut repo, second_id).unwrap();
-    let has_key = |dialogue| BindingId::new(dialogue, Key::new("has-key").unwrap());
-    assert!(pack.conditions.contains_key(&has_key(second_id)));
-    assert!(!pack.conditions.contains_key(&has_key(GATE_DIALOGUE)));
+    let second = gameplay::ContentSource::dialogue(&mut repo, second_id).unwrap();
     let first = gameplay::ContentSource::dialogue(&mut repo, GATE_DIALOGUE).unwrap();
-    assert_ne!(
-        first.conditions[&has_key(GATE_DIALOGUE)],
-        pack.conditions[&has_key(second_id)]
-    );
+    assert_eq!(second, graph);
+    assert_eq!(first.nodes[1].id, second.nodes[1].id);
+    assert_ne!(first.nodes[1].condition, second.nodes[1].condition);
 }
 #[test]
 fn moving_conversation_and_reordering_packages_preserves_publication_identity() {

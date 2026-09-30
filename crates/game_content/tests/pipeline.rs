@@ -156,18 +156,20 @@ fn category_mechanics_bindings_and_scenario_errors_are_rejected() {
     write(root.join("packages/core/items.ron"), &items);
     assert!(failure(&root).contains("unknown attribute"));
     write(root.join("packages/core/items.ron"), &original);
-    let original: Bindings = read(root.join("packages/old_gate/conversations/gate/bindings.ron"));
-    let mut bindings = original.clone();
-    bindings.actions.remove(&Key::new("consume-key").unwrap());
-    write(
-        root.join("packages/old_gate/conversations/gate/bindings.ron"),
-        &bindings,
-    );
-    assert!(failure(&root).contains("unknown dialogue action"));
-    write(
-        root.join("packages/old_gate/conversations/gate/bindings.ron"),
-        &original,
-    );
+    let path = root.join("packages/old_gate/conversations/gate/graph.ron");
+    let original: gameplay::dialogue::Dialogue = read(&path);
+    let mut graph = original.clone();
+    graph.nodes[1].actions[0] = gameplay::Action::SetFact {
+        key: Key::new("undeclared").unwrap(),
+        value: true,
+    };
+    write(&path, &graph);
+    assert!(failure(&root).contains("unknown fact"));
+    let mut graph = original.clone();
+    graph.nodes[0].children.push(Key::new("nowhere").unwrap());
+    write(&path, &graph);
+    assert!(failure(&root).contains("unknown dialogue node"));
+    write(&path, &original);
     let mut scenario: Scenario = read(root.join("scenario.ron"));
     scenario
         .wallets
@@ -397,19 +399,16 @@ fn cli_validates_builds_and_runs_from_bundle_with_locale_and_saves() {
 fn duplicate_action_and_attribute_keys_are_not_silently_replaced() {
     let temp = Temp::new();
     let root = temp.source();
-    let path = root.join("packages/old_gate/conversations/gate/bindings.ron");
+    let path = root.join("packages/old_gate/conversations/gate/graph.ron");
     let original = fs::read_to_string(&path).unwrap();
     fs::write(
         &path,
-        original.replace(
-            "actions: {",
-            "actions: {\n\"consume-key\": SetFact(key: \"gate-rewarded\", value: false),",
-        ),
+        original.replace("roles: {", "roles: {\"player\": Optional, "),
     )
     .unwrap();
     let error = failure(&root);
-    assert!(error.contains("duplicate semantic key consume-key"));
-    assert!(error.contains("packages/old_gate/conversations/gate/bindings.ron"));
+    assert!(error.contains("duplicate semantic key player"));
+    assert!(error.contains("packages/old_gate/conversations/gate/graph.ron"));
     fs::write(&path, original).unwrap();
     let path = root.join("packages/core/actors.ron");
     let original = fs::read_to_string(&path).unwrap();

@@ -11,4 +11,5 @@
     actors: [],
     conversations: ["packages/old_gate/conversations/gate/conversation.ron"],
     resources: [],
+    facts: ["gate-rewarded"],
 )

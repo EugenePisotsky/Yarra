@@ -92,6 +92,8 @@ pub struct SessionState {
     #[serde(with = "keyed")]
     pub conversations: BTreeMap<ConversationKey, Conversation>,
     pub facts: BTreeSet<Key>,
+    /// Characters travelling together. They take part in every conversation any of them has.
+    pub party: BTreeSet<ActorId>,
     pub world: crate::WorldState,
 }
 pub const CARRIED: &str = "carried";
@@ -116,6 +118,7 @@ impl SessionState {
             claims: BTreeSet::new(),
             conversations: BTreeMap::new(),
             facts: BTreeSet::new(),
+            party: BTreeSet::new(),
             world: Default::default(),
         }
     }
@@ -436,6 +439,10 @@ impl SessionState {
         require(
             self.facts.is_subset(&content.game.facts),
             "unknown saved fact",
+        )?;
+        require(
+            self.party.len() <= 16 && self.party.iter().all(|id| self.actors.contains_key(id)),
+            "invalid party",
         )?;
         self.world.validate(content, self)
     }
