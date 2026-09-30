@@ -1,18 +1,18 @@
--- The host API available to gameplay scripts. Generated names are checked against the
--- engine by a test; use this file with luau-analyze for type checking.
+-- The host API available to gameplay scripts. A test keeps these names equal to what the
+-- engine provides. Type checking places this text in front of each script.
 --
 -- Identities are names as written in content: "hero", "old_gate_key", "guard/gate".
 
-export type QuestStatus = "not_started" | "active" | "completed" | "failed"
+type QuestStatus = "not_started" | "active" | "completed" | "failed"
 
 -- The pair a rule is about: the character acting and the one spoken to.
-export type Scene = {
+type Scene = {
     player: string,
     speaker: string,
 }
 
 -- Passed to every script. Condition scripts get only the functions of `Reads`.
-export type Reads = {
+type Reads = {
     item_count: (actor: string, item: string) -> number,
     quest_status: (quest: string) -> QuestStatus,
     objective_completed: (quest: string, objective: string) -> boolean,
@@ -27,7 +27,7 @@ export type Reads = {
     time: () -> number,
 }
 
-export type Game = Reads & {
+type Game = Reads & {
     give_item: (actor: string, item: string, quantity: number) -> (),
     consume_item: (actor: string, item: string, quantity: number) -> (),
     start_quest: (quest: string) -> (),

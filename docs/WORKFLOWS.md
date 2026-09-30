@@ -148,9 +148,11 @@ end
 return guard
 ```
 
-Use it as `actions: [Script("guard.take_key")]` or `condition: Some(Script("guard.ready"))`. A condition function returns a boolean and can only read. `cargo run --offline -p yarra-game-content -- script-api` prints the full typed API. `validate` compiles every script and rejects references to missing functions.
+Use it as `actions: [Script("guard.take_key")]` or `condition: Some(Script("guard.ready"))`. A condition function returns a boolean and can only read. `cargo run --offline -p yarra-game-content -- script-api` prints the full typed API. `validate` compiles every script and rejects references to missing functions. With [Luau](https://github.com/luau-lang/luau/releases) installed (`luau-analyze` on `PATH`, or its path in `YARRA_LUAU_ANALYZE`) it also type-checks them in strict mode against that API, so a misspelled function or a wrong argument type fails validation with the script's own line number.
 
-Copy `content/gameplay/demo` to start a project. Source format **7** uses explicit package manifests and one asset directory per conversation:
+A package declares the variables it introduces: `variables: [(id: "old_gate/rewarded", initial: Bool(false))]`. A variable keeps the type of its initial value (`Bool`, `Int` or `Text`). Test one with `Variable(variable: "...", test: Is(Bool(true)))` (also `AtLeast(n)`, `AtMost(n)`), change it with `Set(variable: "...", value: ...)` and `Add(variable: "...", amount: n)`, or from a script with `game.get`, `game.set` and `game.add`. A scenario can start with `variables: {"name": Int(3)}`.
+
+Copy `content/gameplay/demo` to start a project. Source format **8** uses explicit package manifests and one asset directory per conversation:
 
 ```text
 project.ron                         # content/world identity, packages, locale policy
@@ -194,7 +196,7 @@ cargo run --offline -p yarra-game-content -- validate tmp/game-content/mechanics
 cargo run --offline -p yarra-game-content -- demo tmp/game-content/mechanics-v6.sqlite --language tmp/game-content/en-v1.sqlite --language tmp/game-content/uk-v1.sqlite --locale uk
 ```
 
-Content schema **8** contains one checksummed record per mechanical asset, text contracts and the tool-only scenario. It contains **no FTL**. Language-pack schema **1** stores one locale's resources, their contract hashes and review metadata. A wording fix uses `build-language` with a fresh pack path and requires no mechanical rebuild and does not affect saves. The caller explicitly selects packs; nothing is discovered implicitly.
+Content schema **9** contains one checksummed record per mechanical asset, text contracts and the tool-only scenario. It contains **no FTL**. Language-pack schema **1** stores one locale's resources, their contract hashes and review metadata. A wording fix uses `build-language` with a fresh pack path and requires no mechanical rebuild and does not affect saves. The caller explicitly selects packs; nothing is discovered implicitly.
 
 `ContentRepository::open(path)` reads the manifest only. `headers(kind)` lists identities and checksums without payloads; `read(&AssetId::Item(id))` and `read_kind(kind)` return verified assets. A session uses it through the `ContentSource` port: `core()` once, then `dialogue(id)` per conversation. Text **contracts** are read explicitly with `AssetId::Text(resource_id)`; commands never read or parse wording.
 
@@ -225,7 +227,7 @@ The guard package owns two quests, a reusable readiness predicate, one interacti
 
 An actor template's `interaction: Some(profile_id)` attaches a profile; `None` explicitly declares no selector. A profile has 1–64 rules with a local ID, priority, tie order, optional topic label, condition and 1–16 positively weighted dialogue variants. Higher priority wins, then lower `order`; duplicate `(priority, order)` pairs are rejected. Automatic opening considers only rules without a topic. Every eligible topic is returned independently, keeping concurrent quests discoverable. Weights select within the winning rule. Derived `DialogueContract` records contain role declarations, history scope, repeat policy and line/choice IDs. Profile previews read these contracts and scoped history to filter ineligible variants; `unavailable_variants` explains repeat/cooldown exclusions. Full graphs remain outside the preview dependency closure.
 
-Conditions support `All`, `Any`, `Not`, UUID-addressed `Named`, `Present(actor)`, quest status, objective completion, directed attitude, items, facts, skill XP, scoped `History` counts and `Claimed`. History conditions reference a dialogue and an event (`Started`, `Completed`, `Interrupted` or `Node(id)`); the dialogue contract supplies the scope and validates the node ID. `Relationship` conditions and actions name `Player`, `Speaker` or `Actor(id)`. Each tree is bounded; named predicates are expanded with a shared depth and work budget.
+Conditions support `All`, `Any`, `Not`, UUID-addressed `Named`, `Present(actor)`, quest status, objective completion, directed attitude, items, variables, skill XP, scoped `History` counts and `Claimed`. History conditions reference a dialogue and an event (`Started`, `Completed`, `Interrupted` or `Node(id)`); the dialogue contract supplies the scope and validates the node ID. `Relationship` conditions and actions name `Player`, `Speaker` or `Actor(id)`. Each tree is bounded; named predicates are expanded with a shared depth and work budget.
 
 Use `preview_interaction(participant, speaker)` for sorted candidates, observed leaf values and eligibility, `opening()` for the chosen rule, and `topics()` for available topics. Preview does not change state, generation or either RNG stream. Submit `Command::Talk { participant, speaker, topic: None, bindings: Default::default() }` to choose an opening or `Some(rule_id)` to request an eligible topic. Only the selected graph loads. The committed outcome includes `InteractionSelected`; its profile/rule/dialogue are persisted separately from graph progress. An active conversation resumes without rerolling or rebinding, including after save/load; a topic request during it is rejected. Greeting variation uses a saved narrative RNG separate from skill rolls.
 
@@ -233,7 +235,7 @@ Use `preview_interaction(participant, speaker)` for sorted candidates, observed 
 
 ### Conversation runs, history and rewards
 
-A conversation is one `graph.ron`: `roles`, `history_scope`, `repeat`, ordered entry nodes in `start`, and a flat list of `nodes`. Conditions and actions are written in the node that uses them; a package lists the campaign `facts` it introduces.
+A conversation is one `graph.ron`: `roles`, `history_scope`, `repeat`, ordered entry nodes in `start`, and a flat list of `nodes`. Conditions and actions are written in the node that uses them; a package lists the `variables` it introduces.
 
 ```ron
 (id: "greeting", kind: Line, speaker: "speaker", text: Message((resource: "...", key: "reward")),
@@ -265,7 +267,7 @@ Package-owned `ClaimDefinition { id, scope }` assets use the same scope selector
 
 Before gameplay uses a published bundle, create `ContentLibrary::new(retention_directory)`, call `retain(bundle_path)` and open its returned identity through `library.open(&identity)`. Retained bundles are independent of source files and are not removed automatically. Saves reference mechanics; language packs are selected independently and are not part of save identity.
 
-`SaveDirectory` supports manual slots, quicksave and autosave retention (1–32). A save is one `.save` file: a header line and the state as JSON, written beside the slot and renamed into place. Save format **9** rejects other formats; regenerate fixtures rather than migrate them. Restore with `library.load(&saves, slot)`, or resolve `saves.content_identity(slot)` yourself and call `saves.load(slot, content_source)`.
+`SaveDirectory` supports manual slots, quicksave and autosave retention (1–32). A save is one `.save` file: a header line and the state as JSON, written beside the slot and renamed into place. Save format **10** rejects other formats; regenerate fixtures rather than migrate them. Restore with `library.load(&saves, slot)`, or resolve `saves.content_identity(slot)` yourself and call `saves.load(slot, content_source)`.
 
 `HeadlessDriver::new(session, step_ms, trace_capacity)` shares the session's commands and read models. `submit`, `step` and `advance_until(max_steps, predicate)` use explicit logical time and a bounded event trace; no real-time sleeps are required. Failed commands add nothing to the trace. An unmet predicate returns an error after its step budget; steps already accepted stay accepted.
 

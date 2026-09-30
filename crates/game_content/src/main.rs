@@ -6,7 +6,9 @@ use std::{
     path::{Path, PathBuf},
     process::ExitCode,
 };
-use yarra_game_content::{Asset, AssetId, ContentRepository, LoadedProject, Result};
+use yarra_game_content::{
+    ANALYZER_VARIABLE, Asset, AssetId, ContentRepository, LoadedProject, Result, ScriptAnalysis,
+};
 const USAGE: &str = "Usage:
   yarra-game-content validate SOURCE_DIR|BUNDLE.sqlite [--language PACK.sqlite]...
   yarra-game-content scenario SOURCE_DIR SCENARIO.ron
@@ -58,6 +60,18 @@ fn report(project: &LoadedProject) -> Result<()> {
     println!("Content fingerprint: {fingerprint}");
     for warning in project.warnings() {
         eprintln!("warning: {warning}");
+    }
+    match project.analyze_scripts()? {
+        ScriptAnalysis::Unavailable => eprintln!(
+            "note: luau-analyze not found; scripts were compiled but not type-checked \
+             (install Luau or set {ANALYZER_VARIABLE})"
+        ),
+        ScriptAnalysis::Checked { modules, warnings } => {
+            println!("Scripts type-checked: {modules}");
+            for warning in warnings {
+                eprintln!("warning: {warning}");
+            }
+        }
     }
     Ok(())
 }

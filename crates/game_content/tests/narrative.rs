@@ -447,3 +447,41 @@ fn scripts_are_checked_at_publication_and_run_from_the_published_bundle() {
             .locked
     );
 }
+
+/// Runs only where the analyzer is available; set YARRA_LUAU_ANALYZE or install Luau.
+#[test]
+fn the_analyzer_reports_type_errors_at_their_authored_lines() {
+    let temp = Temp::new();
+    let root = temp.source();
+    let project = LoadedProject::load_directory(&root).unwrap();
+    let ScriptAnalysis::Checked { modules, warnings } = project.analyze_scripts().unwrap() else {
+        eprintln!("luau-analyze not available; skipped");
+        return;
+    };
+    assert_eq!((modules, warnings), (1, vec![]));
+    let path = root.join("packages/guard/scripts/guard.luau");
+    let source = std::fs::read_to_string(&path).unwrap();
+    // Still compiles and still exports take_key, so only the analyzer can object.
+    let broken = source.replace(
+        "game.complete_quest(\"guard/gate\")",
+        "game.complete_qest(\"guard/gate\")\n    game.consume_item(scene.playr, \"old_gate_key\", \"one\")",
+    );
+    assert_ne!(broken, source);
+    std::fs::write(&path, &broken).unwrap();
+    let line = broken
+        .lines()
+        .position(|l| l.contains("complete_qest"))
+        .unwrap()
+        + 1;
+    let error = LoadedProject::load_directory(&root)
+        .unwrap()
+        .analyze_scripts()
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains(&format!("guard.luau({line},")), "{error}");
+    assert!(error.contains("complete_qest"), "{error}");
+    assert!(
+        error.contains(&format!("guard.luau({},", line + 1)) && error.contains("playr"),
+        "{error}"
+    );
+}

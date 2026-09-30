@@ -316,9 +316,9 @@ fn the_type_definitions_list_exactly_the_functions_scripts_are_given() {
         names.sort();
         names
     };
-    assert_eq!(reads, declared("export type Reads = {"));
-    let mut everything = declared("export type Reads = {");
-    everything.extend(declared("export type Game = Reads & {"));
+    assert_eq!(reads, declared("type Reads = {"));
+    let mut everything = declared("type Reads = {");
+    everything.extend(declared("type Game = Reads & {"));
     everything.sort();
     assert_eq!(all, everything);
 }

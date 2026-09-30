@@ -15,7 +15,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
-/// Type definitions of the host API, for `luau-analyze` and editors.
+/// Type definitions of the host API. Prepended to a script, they let `luau-analyze` check it.
 pub const API_DEFINITIONS: &str = include_str!("api.d.luau");
 const MEMORY_LIMIT: usize = 16 * 1024 * 1024;
 /// Interrupt checks allowed per call. Luau raises one at loop back-edges and calls.

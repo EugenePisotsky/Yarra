@@ -65,11 +65,14 @@ Deviations from the plan, all deliberate:
 
 Evidence: the guard's reward is a script in the demo project and all five scenarios pass through it, from source and from a published bundle. Seven tests cover reads and effects, rollback with script and line in the error, read-only and bounded conditions, no state between calls, publication checks and the definitions file. The game builds for iOS with Luau included (compiled, not run on a device).
 
-Not done:
-- `luau-analyze` is not run by `validate`; it is not installed here. The definitions file is ready for it.
-- Typed variables replacing boolean facts. Scripts read and set facts for now.
-- Derived-stat and check formulas in Luau belong to step 6.
-- Item definitions still carry a `key` beside their name; the two are now the same string.
+**Finished afterwards.**
+- *Type checking.* `validate` and `build` run `luau-analyze` in strict mode when it is on `PATH` or named by `YARRA_LUAU_ANALYZE`, with the API definitions placed in front of each script and reported lines moved back to the authored file. Type errors fail; lints are warnings. Without the tool a note says scripts were only compiled. The stock analyzer has no option for a separate definitions file, hence the prefix.
+- *Typed variables.* Boolean facts are gone. A package declares `variables` with an initial value (true/false, whole number or text) and a variable keeps that type. Content uses `Variable(variable, test: Is/AtLeast/AtMost)`, `Set` and `Add`; scripts use `game.get`, `game.set` and `game.add`. Only variables that were set are stored. They are scoped to the playthrough; per-actor variables are not built.
+- *Item keys.* Items and categories no longer carry a `key` beside their name.
+
+Source format 8, bundle schema 9, save format 10.
+
+Still open: derived-stat and check formulas in Luau belong to step 6.
 
 ### Step 5: events and areas
 
