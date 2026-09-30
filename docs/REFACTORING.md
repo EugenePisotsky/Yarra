@@ -18,6 +18,7 @@ Target: a classic party RPG in the line of KOTOR / Dragon Age: Origins, Gothic a
 | 4. Luau scripts and names | Names as identities in authored content; Luau in a `scripting` crate behind a trait; script conditions and actions beside the built-in ones | Done |
 | 5. Events and areas | Event-driven triggers only; polygon areas painted in the editor; blocking and ambient dialogue modes | Done |
 | 6. Character rules | Data-defined stats, classes, levels, skill ranks, modifiers, status effects; timed actions for combat | Done |
+| 7. Consolidation | Fixes and cuts from a review of the branch: one driver in `gameplay`, limits only where they prevent real failure, saves that survive content edits, simpler types | In progress |
 
 ### Step 1: done
 
@@ -137,6 +138,36 @@ Not done, deliberately:
 - NPC levels are whatever their template says; only party members gain experience.
 - Scenarios cannot start a party with experience.
 - Variable subscriptions are still per variable, not per actor.
+
+### Step 7: consolidation
+
+A review of the branch after step 6 found the core sound (the playthrough in memory, commands against a journal, names as identities, Luau effects running through the built-in actions, the Bevy-free session) and three kinds of debt: bugs, leftovers of the bounded SQLite-era design, and rules that live only in the game adapter. This step pays them before more content or engine work is built on top.
+
+**Bugs in the rules crates: done.** A script's step budget now covers the rules it calls; each module load gets its own environment, so globals no longer survive between calls; a failed ability script no longer stalls its user's queue; the content fingerprint hashes identities as bytes, not as whichever names the process has met; a slot this build cannot read no longer stops saving or listing. Each has a regression test.
+
+**One driver.** Several rules exist only in [`story.rs`](../crates/app_game/src/story.rs), so scenarios cannot reproduce them: the world waiting during a blocking conversation, which conversation has the floor and the queues behind it (not saved; their order is lost on load), the fixed time step, and which actors are observed (party and walkers only, so `Entered(actor: "guard")` never fires unless the guard is walking). Move them into `gameplay` so the game and the headless runs share one driver, and let a command settle the trigger work it queued, each trigger in its own savepoint, instead of waiting to be pumped. On the way:
+- F5 records positions only; today it sends full observations, so saving can move an actor into an area and run a trigger before the snapshot.
+- A walk for an actor the engine cannot drive fails instead of never ending.
+- Occupancy is cleared when an actor stops being tracked, so a later walk cannot arrive without moving.
+- Action scripts see conversation bystanders like conditions do.
+
+**Cuts.**
+- Limits that refuse commands go: the pending-event and events-per-command caps can stop every command, and caps like 1,000 dialogues or 2,048 text resources are too small for the target game. Kept: recursion depth of conditions and actions, script memory and steps, sizes of files read.
+- A save records the content fingerprint and warns on a mismatch instead of refusing; loading validates the state against the content and works stats out again instead of comparing them, so a formula change does not break old saves. Only a save-format bump refuses.
+- Dialogue graphs still load on demand, but behind `GameContent`: the first command or read model that needs a graph reads it. The pre-pass in `GameSession::apply`, the `unloadable` workaround for queued conversations and `&mut self` on read models go.
+
+**Types and small refactors.**
+- Owner kind and inventory role become enums instead of strings compared in 19 places.
+- New items take identities from a counter in the state, restored on rollback, instead of being renamed at commit.
+- Identities lose `Default`, which made a random UUID.
+- Inventory refusals a player can meet (money, restrictions, stale quotes, capacity) become `Rejection`s, so a UI matches one vocabulary.
+- Per-command validation of changed records runs in debug builds only; it works a character's stats out a second time on every equip. A loaded save is still validated in full.
+- Definitions are stored as maps by identity, which removes the sort lists kept in five places and the "listed in order" failure.
+- Scenarios share a base start; test fixtures move behind a feature.
+
+**Decided.** Claims fold into variables with a pair scope. Interaction profiles stay while graphs load on demand: they pick an opening without reading any graph.
+
+**Later, with the next feature step.** The story adapter becomes app-side plugins (an `ActorId` to entity index, commands in as messages, `GameEvent`s out as messages, the HUD on its own) before companions follow or combat reaches the engine. Named characters become content, so a typo in a trigger fails the build. Localization infers message contracts from the source-language FTL, drops review hashes and stops parsing Fluent on every `format()`. The bundle keeps the `ContentSource` port but loses the hardening one author does not need. Rule names are interned into indices. `PlayerMovementSuspended` takes reasons instead of one owner, `to_render` takes the world space, and an areas-only publish changes the runtime generation.
 
 ### Working method
 
