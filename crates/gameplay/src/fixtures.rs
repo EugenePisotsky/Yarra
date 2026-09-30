@@ -295,6 +295,8 @@ pub fn content() -> GameContent {
         level: 1,
         base: Default::default(),
         skills: Default::default(),
+        equipment: vec![],
+        loot: None,
     };
     let graph = Dialogue {
         id: GATE_DIALOGUE,
@@ -394,6 +396,7 @@ pub fn content() -> GameContent {
                     source: source.into(),
                 })
                 .into(),
+            loot: vec![],
         },
     };
     content.game.dialogue_contracts = content

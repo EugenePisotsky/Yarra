@@ -10,4 +10,5 @@
     conversations: ["packages/guard/conversations/reward/conversation.ron", "packages/guard/conversations/duty/conversation.ron", "packages/guard/conversations/welcome-a/conversation.ron", "packages/guard/conversations/welcome-b/conversation.ron", "packages/guard/conversations/hostile/conversation.ron", "packages/guard/conversations/banter/conversation.ron"],
     resources: ["packages/guard/messages.ron"],
     scripts: ["packages/guard/scripts/guard.luau"],
+    loot: ["packages/guard/loot.ron"],
 )

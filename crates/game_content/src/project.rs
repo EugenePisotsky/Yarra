@@ -55,6 +55,9 @@ pub struct PackageFile {
     /// Variables this package introduces, each with its initial value.
     #[serde(default)]
     pub variables: Vec<gameplay::VariableDefinition>,
+    /// Files listing loot and stock tables.
+    #[serde(default)]
+    pub loot: Vec<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -133,6 +136,7 @@ impl LoadedProject {
         let mut predicates = Vec::new();
         let mut variables = Vec::new();
         let mut scripts = Vec::new();
+        let mut loot = Vec::new();
         let mut contracts = Vec::new();
         let mut translations = Vec::new();
         let mut resource_owners = BTreeMap::new();
@@ -206,6 +210,13 @@ impl LoadedProject {
                 own!(AssetId::Rules);
                 require(rules.is_none(), "multiple rules definitions")?;
                 rules = Some(source.ron(path)?);
+            }
+            for path in &package.loot {
+                let tables = source.ron::<Vec<gameplay::inventory::LootTable>>(path)?;
+                for v in &tables {
+                    own!(AssetId::Loot(v.id));
+                }
+                loot.extend(tables);
             }
             for path in &package.actors {
                 let templates = source.ron::<Vec<ActorTemplate>>(path)?;
@@ -329,6 +340,7 @@ impl LoadedProject {
                 dialogues,
                 variables,
                 scripts,
+                loot,
             },
             scripts: Default::default(),
         };
@@ -347,6 +359,7 @@ impl LoadedProject {
         content.game.dialogues.sort_by_key(|v| v.id);
         content.game.variables.sort_by_key(|v| v.id);
         content.game.scripts.sort_by(|a, b| a.name.cmp(&b.name));
+        content.game.loot.sort_by_key(|v| v.id);
         for contract in &content.text {
             require(
                 translations

@@ -433,13 +433,7 @@ impl GameContent {
                     definition,
                     quantity,
                 } => {
-                    let n = state
-                        .carried(pair.0)?
-                        .entries
-                        .iter()
-                        .filter(|e| e.definition == *definition)
-                        .map(|e| u64::from(e.quantity))
-                        .sum();
+                    let n = state.item_count(content, pair.0, *definition)?;
                     (Observed::Quantity(n), n >= u64::from(*quantity))
                 }
                 Condition::Variable { variable, of, test } => {

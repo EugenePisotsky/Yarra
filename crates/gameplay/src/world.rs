@@ -22,7 +22,12 @@ pub struct WorldDefinitions {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ObjectKind {
     Door,
-    Container { inventory: InventoryId },
+    Container {
+        inventory: InventoryId,
+        /// What is inside the first time it is opened.
+        #[serde(default)]
+        loot: Option<LootId>,
+    },
 }
 /// Stable placed-object identity, independent of whether its region is currently loaded.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -13,7 +13,7 @@ pub type RuntimeSession = gameplay::GameSession<ContentRepository>;
 pub type ToolSession = gameplay::GameSession<gameplay::ToolContent>;
 /// Asset kinds read once when a session opens. Dialogue graphs and text contracts are read
 /// only when a conversation or a formatter needs them.
-const CORE_KINDS: [AssetKind; 14] = [
+const CORE_KINDS: [AssetKind; 15] = [
     AssetKind::Category,
     AssetKind::Item,
     AssetKind::Actor,
@@ -28,6 +28,7 @@ const CORE_KINDS: [AssetKind; 14] = [
     AssetKind::Area,
     AssetKind::Trigger,
     AssetKind::Script,
+    AssetKind::Loot,
 ];
 fn runtime_error(error: ContentError) -> gameplay::GameplayError {
     gameplay::GameplayError::Runtime(error.to_string())
@@ -73,6 +74,7 @@ impl ContentRepository {
                 dialogues: vec![],
                 variables: vec![],
                 scripts: vec![],
+                loot: vec![],
             },
         };
         for kind in CORE_KINDS {
@@ -92,6 +94,7 @@ impl ContentRepository {
                     Asset::Item(v) => content.items.items.push(v),
                     Asset::Actor(v) => content.game.actors.push(v),
                     Asset::Script(v) => content.game.scripts.push(v),
+                    Asset::Loot(v) => content.game.loot.push(v),
                     Asset::Variable(v) => content.game.variables.push(v),
                     Asset::Rules(_) | Asset::Dialogue(_) | Asset::Text(_) => {}
                 }

@@ -298,6 +298,7 @@ pub(crate) fn apply(
                 WorldCommand::Open { .. } => {
                     require(!o.locked, "object is locked")?;
                     o.open = true;
+                    crate::character::fill_container(content, tx, object)?;
                 }
                 WorldCommand::Close { .. } => o.open = false,
                 WorldCommand::SetLocked { locked, .. } => {

@@ -27,9 +27,10 @@ pub enum AssetKind {
     Area,
     Trigger,
     Script,
+    Loot,
 }
 impl AssetKind {
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 17] = [
         Self::Category,
         Self::Item,
         Self::Actor,
@@ -46,6 +47,7 @@ impl AssetKind {
         Self::Area,
         Self::Trigger,
         Self::Script,
+        Self::Loot,
     ];
 }
 
@@ -67,6 +69,7 @@ pub enum AssetId {
     Area(AreaId),
     Trigger(TriggerId),
     Script(Key),
+    Loot(LootId),
 }
 impl AssetId {
     pub fn kind(&self) -> AssetKind {
@@ -87,6 +90,7 @@ impl AssetId {
             Self::Area(_) => AssetKind::Area,
             Self::Trigger(_) => AssetKind::Trigger,
             Self::Script(_) => AssetKind::Script,
+            Self::Loot(_) => AssetKind::Loot,
         }
     }
     /// Storage key: the identity bytes, never the name, so lookups do not depend on which
@@ -109,6 +113,7 @@ impl AssetId {
             Self::Object(id) => id.raw(),
             Self::Area(id) => id.raw(),
             Self::Trigger(id) => id.raw(),
+            Self::Loot(id) => id.raw(),
         }
     }
     pub(crate) fn from_key(kind: AssetKind, key: String) -> Result<Self> {
@@ -132,6 +137,7 @@ impl AssetId {
             AssetKind::Trigger => Self::Trigger(TriggerId::try_from(key.clone())?),
             AssetKind::Claim => Self::Claim(ClaimId::try_from(key.clone())?),
             AssetKind::Predicate => Self::Predicate(PredicateId::try_from(key.clone())?),
+            AssetKind::Loot => Self::Loot(LootId::try_from(key.clone())?),
         };
         require(id.key() == key, "noncanonical asset key")?;
         Ok(id)
@@ -164,6 +170,7 @@ pub enum Asset {
     Area(AreaId),
     Trigger(gameplay::TriggerDefinition),
     Script(gameplay::ScriptModule),
+    Loot(inventory::LootTable),
 }
 impl Asset {
     pub(crate) fn text_references(&self) -> Vec<&MessageRef> {
@@ -221,6 +228,7 @@ impl Asset {
             Self::Object(v) => AssetId::Object(v.id),
             Self::Area(id) => AssetId::Area(*id),
             Self::Trigger(v) => AssetId::Trigger(v.id),
+            Self::Loot(v) => AssetId::Loot(v.id),
         }
     }
     /// Other assets this one refers to. Authoring uses it to check that a package declares
@@ -258,7 +266,19 @@ impl Asset {
             Self::Actor(v) => {
                 refs.insert(AssetId::Rules);
                 refs.extend(v.interaction.map(AssetId::Profile));
+                refs.extend(v.loot.map(AssetId::Loot));
+                refs.extend(v.equipment.iter().copied().map(AssetId::Item));
             }
+            Self::Object(gameplay::ObjectDefinition {
+                kind:
+                    gameplay::ObjectKind::Container {
+                        loot: Some(loot), ..
+                    },
+                ..
+            }) => {
+                refs.insert(AssetId::Loot(*loot));
+            }
+            Self::Loot(v) => refs.extend(v.entries.iter().map(|e| AssetId::Item(e.item))),
             Self::Dialogue(v) => {
                 refs.insert(AssetId::DialogueContract(v.id));
                 refs.insert(AssetId::Rules);

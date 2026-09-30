@@ -256,6 +256,8 @@ pub struct GameDefinitions {
     pub variables: Vec<VariableDefinition>,
     #[serde(default)]
     pub scripts: Vec<ScriptModule>,
+    #[serde(default)]
+    pub loot: Vec<crate::inventory::LootTable>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -339,10 +341,38 @@ impl GameContent {
         for item in &self.items.items {
             self.game.rules.validate_mechanics(&item.mechanics)?;
         }
+        require(self.game.loot.len() <= 10000, "too many loot tables")?;
+        let mut tables = BTreeSet::new();
+        for table in &self.game.loot {
+            require(tables.insert(table.id), "duplicate loot table")?;
+            table.validate(&self.items)?;
+        }
         let mut actors = BTreeSet::new();
         for actor in &self.game.actors {
             require(actors.insert(actor.id), "duplicate actor template")?;
             actor.validate(&self.game.rules)?;
+            if let Some(loot) = actor.loot {
+                self.loot(loot)?;
+            }
+            let mut slots = BTreeSet::new();
+            for item in &actor.equipment {
+                let slot = self.items.item(*item)?.mechanics.slot.as_ref();
+                require(
+                    slot.is_some_and(|slot| slots.insert(slot)),
+                    &format!(
+                        "template {}: {item} is not equipment or its slot is taken",
+                        actor.id
+                    ),
+                )?;
+            }
+        }
+        for object in &self.game.world.objects {
+            if let crate::ObjectKind::Container {
+                loot: Some(loot), ..
+            } = object.kind
+            {
+                self.loot(loot)?;
+            }
         }
         let mut contracts = BTreeSet::new();
         require(
@@ -543,6 +573,13 @@ impl GameContent {
         )?;
         Ok(definition)
     }
+    pub fn loot(&self, id: LootId) -> Result<&crate::inventory::LootTable> {
+        self.game
+            .loot
+            .iter()
+            .find(|t| t.id == id)
+            .ok_or_else(|| Invalid(format!("unknown loot table {id}")).into())
+    }
     pub fn template(&self, id: ActorTemplateId) -> Result<&ActorTemplate> {
         self.game
             .actors
@@ -568,6 +605,7 @@ impl GameContent {
         canonical.game.actors.sort_by_key(|v| v.id);
         canonical.game.dialogues.sort_by_key(|v| v.id);
         canonical.game.variables.sort_by_key(|v| v.id);
+        canonical.game.loot.sort_by_key(|v| v.id);
         canonical.game.scripts.sort_by(|a, b| a.name.cmp(&b.name));
         let bytes = serde_json::to_vec(&canonical).map_err(|e| Invalid(e.to_string()))?;
         Ok(*blake3::hash(&bytes).as_bytes())

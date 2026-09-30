@@ -49,6 +49,7 @@ impl LoadedProject {
         let mut dialogues = Vec::new();
         let mut variables = Vec::new();
         let mut scripts = Vec::new();
+        let mut loot = Vec::new();
         let mut text = Vec::new();
         for record in records {
             match record {
@@ -68,6 +69,7 @@ impl LoadedProject {
                 Asset::Rules(v) => rules = Some(v),
                 Asset::Dialogue(v) => dialogues.push(v),
                 Asset::Script(v) => scripts.push(v),
+                Asset::Loot(v) => loot.push(v),
                 Asset::Variable(v) => variables.push(v),
                 Asset::Text(v) => text.push(v),
             }
@@ -89,6 +91,7 @@ impl LoadedProject {
                 dialogues,
                 variables,
                 scripts,
+                loot,
             },
         };
         require(

@@ -126,7 +126,8 @@ ids!(
     PackageId,
     ContentId,
     PlaythroughId,
-    VariableId
+    VariableId,
+    LootId
 );
 
 /// A stable semantic key, independent of translated labels.

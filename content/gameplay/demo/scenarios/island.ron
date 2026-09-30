@@ -25,9 +25,6 @@
         name: Some(Literal("Mira")),
     )],
     owners: [(
-        kind: "object",
-        id: "guard/chest",
-    ), (
         kind: "party",
         id: "party",
     )],
@@ -49,31 +46,12 @@
             quantity: 1,
         )],
     ), (
-        id: "guard",
-        owner: (
-            kind: "actor",
-            id: "guard",
-        ),
-        role: "carried",
-        items: [(
-            definition: "healing_potion",
-            quantity: 10,
-        )],
-    ), (
         id: "mira",
         owner: (
             kind: "actor",
             id: "mira",
         ),
         role: "carried",
-        items: [],
-    ), (
-        id: "chest",
-        owner: (
-            kind: "object",
-            id: "guard/chest",
-        ),
-        role: "contents",
         items: [],
     )],
     wallets: [(

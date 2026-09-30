@@ -185,7 +185,12 @@ fn the_escort_runs_headlessly_from_entering_the_approach_to_an_open_gate() {
             .submit(Command::World(WorldCommand::Open { object }))
             .unwrap();
     }
-    assert_eq!(driver.container_contents(CHEST).unwrap().entries.len(), 0);
+    // The chest is filled from its loot table the first time it is opened: two potions.
+    let contents = driver.container_contents(CHEST).unwrap();
+    assert_eq!(
+        (contents.entries.len(), contents.entries[0].quantity),
+        (1, 2)
+    );
     let state = driver.state();
     assert_eq!(state.party.experience, 120);
     assert_eq!(state.quest(QUEST).status, quests::Status::Completed);

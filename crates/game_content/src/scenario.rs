@@ -123,7 +123,18 @@ impl Scenario {
                 seed.items.len() <= inventory::MAX_INVENTORY_ENTRIES,
                 "too many starting inventory lines",
             )?;
-            let mut inventory = Inventory::new(seed.owner.clone(), &seed.role)?;
+            // A character's own inventory starts from what its template wears and carries;
+            // the scenario adds to it.
+            let mut inventory = if seed.owner.kind == "actor" && seed.role == gameplay::CARRIED {
+                let id = ActorId(seed.owner.id.0);
+                let (inventory, equipment) = state.unopened_inventory(content, state.actor(id)?)?;
+                if let Some(actor) = state.actors.get_mut(&id) {
+                    actor.equipment = equipment;
+                }
+                inventory
+            } else {
+                Inventory::new(seed.owner.clone(), &seed.role)?
+            };
             inventory.id = seed.id;
             for item in &seed.items {
                 contextual(

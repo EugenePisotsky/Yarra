@@ -105,6 +105,7 @@ macro_rules! journal {
 journal! {
     actors / touch_actor: ActorId => Actor, actors;
     inventories / touch_inventory: InventoryId => Inventory, inventories;
+    carried / touch_carried: ActorId => InventoryId, carried;
     wallets / touch_wallet: WalletId => Wallet, wallets;
     quests / touch_quest: QuestId => quests::Progress, quests;
     relationships / touch_relationship: RelationshipKey => Relationship, relationships;
@@ -183,6 +184,17 @@ impl<'a> Tx<'a> {
             .inventories
             .get_mut(&id)
             .expect("checked inventory"))
+    }
+    /// Adds an inventory that did not exist: one opened for the first time.
+    pub fn put_inventory(&mut self, inventory: Inventory) {
+        let id = inventory.id;
+        self.touch_inventory(&id);
+        if inventory.owner.kind == "actor" && inventory.role == CARRIED {
+            let actor = ActorId(inventory.owner.id.0);
+            self.touch_carried(&actor);
+            self.state.carried.insert(actor, id);
+        }
+        self.state.inventories.insert(id, inventory);
     }
     pub fn wallet_mut(&mut self, id: WalletId) -> Result<&mut Wallet> {
         self.state.wallet(id)?;

@@ -537,3 +537,224 @@ fn a_saved_character_is_checked_against_the_rules_on_load() {
     let saved = serde_json::to_string(&good).unwrap();
     assert_eq!(serde_json::from_str::<SessionState>(&saved).unwrap(), good);
 }
+
+mod unopened {
+    use super::*;
+    use yarra_gameplay::inventory::{LootEntry, LootTable};
+
+    const STOCK: LootId = LootId::named("merchant/stock");
+    const GUARD: ActorTemplateId = ActorTemplateId::named("armed_guard");
+    const TRUNK: ObjectId = ObjectId::named("old_gate/trunk");
+    const TRUNK_BAG: InventoryId = InventoryId::named("old_gate/trunk");
+    fn armed() -> GameContent {
+        let mut content = content();
+        content.game.loot.push(LootTable {
+            id: STOCK,
+            entries: vec![
+                LootEntry {
+                    item: POTION,
+                    quantity: (2, 12),
+                    chance: 100,
+                },
+                LootEntry {
+                    item: KEY,
+                    quantity: (1, 1),
+                    chance: 50,
+                },
+            ],
+        });
+        let mut guard = content.game.actors[0].clone();
+        guard.id = GUARD;
+        guard.equipment = vec![SWORD];
+        guard.loot = Some(STOCK);
+        content.game.actors.push(guard);
+        content.game.world.objects.push(ObjectDefinition {
+            id: TRUNK,
+            name: "Trunk".into(),
+            kind: ObjectKind::Container {
+                inventory: TRUNK_BAG,
+                loot: Some(STOCK),
+            },
+            locked: false,
+        });
+        content
+    }
+    fn start(count: u8) -> (SessionState, Vec<ActorId>) {
+        let content = armed();
+        let mut state = state();
+        let ids: Vec<ActorId> = (1..=count).map(|n| ActorId([n; 16])).collect();
+        for id in &ids {
+            state.spawn(&content, GUARD, *id).unwrap();
+        }
+        (state, ids)
+    }
+    fn open(state: SessionState) -> TestSession {
+        GameSession::new(ToolContent::new(armed()).unwrap(), state).unwrap()
+    }
+    fn guards(count: u8) -> (TestSession, Vec<ActorId>) {
+        let (state, ids) = start(count);
+        (open(state), ids)
+    }
+    fn potions(session: &TestSession, actor: ActorId) -> u64 {
+        let state = session.state();
+        state.item_count(session.content(), actor, POTION).unwrap()
+    }
+
+    #[test]
+    fn an_inventory_is_made_when_it_is_first_needed_and_is_what_was_promised() {
+        let (mut session, ids) = guards(3);
+        let guard = ids[0];
+        let before = session.state().inventories.len();
+        // No inventory yet, but the sword the template wields already counts, and what the
+        // inventory will hold can be asked.
+        assert!(session.state().carried(guard).is_err());
+        assert_eq!(stat(&session, guard, "strength"), 12);
+        let promised = potions(&session, guard);
+        assert!((2..=12).contains(&promised));
+
+        session
+            .apply(Command::OpenInventory { actor: guard })
+            .unwrap();
+        assert_eq!(session.state().inventories.len(), before + 1);
+        assert_eq!(potions(&session, guard), promised);
+        let state = session.state();
+        let bag = state.carried(guard).unwrap();
+        let worn = state.actor(guard).unwrap().equipment[&key("hand")];
+        assert_eq!(bag.entry(worn).unwrap().definition, SWORD);
+        assert_eq!(stat(&session, guard, "strength"), 12);
+        // Opening again changes nothing.
+        let opened = session.state().clone();
+        session
+            .apply(Command::OpenInventory { actor: guard })
+            .unwrap();
+        assert_eq!(session.state().inventories, opened.inventories);
+
+        // Taking the sword off works like any equipment.
+        session
+            .apply(Command::Unequip {
+                actor: guard,
+                slot: key("hand"),
+            })
+            .unwrap();
+        assert_eq!(stat(&session, guard, "strength"), 10);
+    }
+
+    #[test]
+    fn what_is_found_does_not_depend_on_the_order_of_opening() {
+        let (state, ids) = start(3);
+        let found = |order: [usize; 3], trunk_first: bool| {
+            let mut session = open(state.clone());
+            let trunk = Command::World(WorldCommand::Open { object: TRUNK });
+            if trunk_first {
+                session.apply(trunk.clone()).unwrap();
+            }
+            for index in order {
+                let actor = ids[index];
+                session.apply(Command::OpenInventory { actor }).unwrap();
+            }
+            if !trunk_first {
+                session.apply(trunk).unwrap();
+            }
+            let state = session.state();
+            let list = |bag: &inventory::Inventory| -> Vec<(ItemDefinitionId, u32)> {
+                let entries = bag.entries.iter();
+                entries.map(|e| (e.definition, e.quantity)).collect()
+            };
+            let mut found: Vec<_> = ids
+                .iter()
+                .map(|id| list(state.carried(*id).unwrap()))
+                .collect();
+            found.push(list(state.inventory(TRUNK_BAG).unwrap()));
+            // Loot has its own stream: the one checks and abilities roll from is untouched.
+            assert_eq!(state.random, self::state().random);
+            found
+        };
+        let forwards = found([0, 1, 2], false);
+        assert_eq!(found([2, 0, 1], true), forwards);
+        // Four owners with the same table do not all find the same.
+        let potions: std::collections::BTreeSet<u32> = forwards
+            .iter()
+            .flat_map(|list| list.iter().filter(|(item, _)| *item == POTION))
+            .map(|(_, quantity)| *quantity)
+            .collect();
+        assert!(potions.len() > 1, "{forwards:?}");
+    }
+
+    #[test]
+    fn trading_needs_the_stock_opened_and_a_failed_command_leaves_it_unopened() {
+        let (mut session, ids) = guards(1);
+        let guard = ids[0];
+        let promised = potions(&session, guard);
+        session
+            .apply(Command::OpenInventory { actor: guard })
+            .unwrap();
+        let stock = session.state().carried(guard).unwrap();
+        let participants = inventory::TradeParticipants {
+            merchant_inventory: stock.id,
+            customer_inventory: HERO_BAG,
+            merchant_wallet: MERCHANT_WALLET,
+            customer_wallet: PARTY_WALLET,
+        };
+        let potion = stock.entries.iter().find(|e| e.definition == POTION);
+        let offer = inventory::TradeOffer {
+            purchases: vec![inventory::TradeLine {
+                entry: potion.unwrap().id,
+                quantity: 1,
+            }],
+            sales: vec![],
+        };
+        let quote = session.quote_trade(participants, offer).unwrap();
+        session.apply(Command::Trade(quote)).unwrap();
+        assert_eq!(potions(&session, guard), promised - 1);
+
+        // A command that opens an inventory and then fails leaves it unopened.
+        let (mut session, ids) = guards(1);
+        let before = session.state().clone();
+        let bad = Command::UseItem {
+            actor: ids[0],
+            item: ItemId([0; 16]),
+        };
+        assert!(session.apply(bad).is_err());
+        assert_eq!(session.state(), &before);
+        assert!(session.state().carried(ids[0]).is_err());
+    }
+
+    #[test]
+    fn a_container_is_filled_the_first_time_it_is_opened() {
+        let (mut session, _) = guards(0);
+        assert!(session.state().inventory(TRUNK_BAG).is_err());
+        assert!(session.container_contents(TRUNK).is_err());
+        let open = Command::World(WorldCommand::Open { object: TRUNK });
+        session.apply(open.clone()).unwrap();
+        let first = session.container_contents(TRUNK).unwrap().clone();
+        assert!(first.entries.iter().any(|e| e.definition == POTION));
+        // Emptied and opened again, it stays empty: it is filled once.
+        let entries: Vec<(ItemId, u32)> =
+            first.entries.iter().map(|e| (e.id, e.quantity)).collect();
+        for (item, quantity) in entries {
+            session
+                .apply(Command::Transfer {
+                    source: TRUNK_BAG,
+                    destination: HERO_BAG,
+                    item,
+                    quantity,
+                })
+                .unwrap();
+        }
+        session
+            .apply(Command::World(WorldCommand::Close { object: TRUNK }))
+            .unwrap();
+        session.apply(open).unwrap();
+        assert!(
+            session
+                .container_contents(TRUNK)
+                .unwrap()
+                .entries
+                .is_empty()
+        );
+        // The save holds the opened inventory like any other.
+        let saved = serde_json::to_string(session.state()).unwrap();
+        let restored: SessionState = serde_json::from_str(&saved).unwrap();
+        GameSession::new(ToolContent::new(armed()).unwrap(), restored).unwrap();
+    }
+}

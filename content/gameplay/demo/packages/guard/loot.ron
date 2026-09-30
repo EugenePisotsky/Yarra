@@ -1,0 +1,13 @@
+// What is found in inventories nobody has looked into yet. They are made the first time
+// something needs them.
+[
+    // The guard's own pouch.
+    (id: "guard/pouch", entries: [
+        (item: "healing_potion", quantity: (1, 3)),
+        (item: "old_gate_key", quantity: (1, 1), chance: 10),
+    ]),
+    // The chest the guard unlocks.
+    (id: "guard/supplies", entries: [
+        (item: "healing_potion", quantity: (2, 2)),
+    ]),
+]

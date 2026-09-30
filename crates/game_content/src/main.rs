@@ -263,7 +263,8 @@ fn demo(project: &LoadedProject, locale: &str, directory: Option<PathBuf>) -> Re
             let name = &rules.skill(skill)?.name;
             summary.push(format!("  {}: rank {rank}", named(name)?.value));
         }
-        for entry in &state.carried(actor.id)?.entries {
+        // An inventory nobody has looked into is not listed.
+        for entry in state.carried(actor.id).iter().flat_map(|bag| &bag.entries) {
             let name = &project.content().items.item(entry.definition)?.name;
             summary.push(format!(
                 "  {} × {}",

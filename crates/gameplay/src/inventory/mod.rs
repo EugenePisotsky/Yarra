@@ -7,10 +7,12 @@
 mod catalog;
 pub mod fixtures;
 mod items;
+mod loot;
 mod trade;
 mod types;
 
 pub use catalog::*;
 pub use items::*;
+pub use loot::*;
 pub use trade::*;
 pub use types::*;

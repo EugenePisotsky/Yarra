@@ -47,6 +47,13 @@ pub struct ActorTemplate {
     /// Skill ranks the character starts with.
     #[serde(default, deserialize_with = "game_types::deserialize_key_map")]
     pub skills: SkillRanks,
+    /// What the character wears and wields. It counts towards the stats from the start and
+    /// is in the inventory once that is opened.
+    #[serde(default)]
+    pub equipment: Vec<ItemDefinitionId>,
+    /// What else the inventory holds when it is first opened: loot, or a merchant's stock.
+    #[serde(default)]
+    pub loot: Option<LootId>,
 }
 /// Logical world coordinates in millimetres; never an ECS transform/handle.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]

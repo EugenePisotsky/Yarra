@@ -318,7 +318,13 @@ impl SessionState {
     /// What a character's equipment and effects do to its stats.
     fn modifiers<'a>(&self, content: &'a GameContent, actor: &Actor) -> Result<Vec<&'a Modifier>> {
         let mut modifiers = Vec::new();
-        if !actor.equipment.is_empty() {
+        if !self.carried.contains_key(&actor.id) {
+            // Nobody has looked into this character's inventory yet. What its template
+            // says it wears counts all the same.
+            for item in &content.template(actor.template)?.equipment {
+                modifiers.extend(&content.items.item(*item)?.mechanics.modifiers);
+            }
+        } else if !actor.equipment.is_empty() {
             let carried = self.carried(actor.id)?;
             let mut ids = BTreeSet::new();
             for (slot, item) in &actor.equipment {
@@ -354,12 +360,100 @@ impl SessionState {
         rules.add_derived(&mut stats, &derived, modifiers.iter().copied())?;
         Ok(stats)
     }
-    fn valid_owner(&self, owner: &OwnerRef) -> bool {
-        if owner.kind == "actor" {
-            self.actors.contains_key(&ActorId(owner.id.0))
-        } else {
-            self.owners.contains(owner)
+    fn valid_owner(&self, content: &GameContent, owner: &OwnerRef) -> bool {
+        match owner.kind.as_str() {
+            "actor" => self.actors.contains_key(&ActorId(owner.id.0)),
+            // A container's contents belong to the authored object.
+            "object" => content.object(ObjectId(owner.id.0)).is_ok() || self.owners.contains(owner),
+            _ => self.owners.contains(owner),
         }
+    }
+    fn loot_random(&self, owner: [u8; 16]) -> RandomState {
+        // Its own stream per owner, so what is found does not depend on what was opened
+        // before it or on anything else that rolled.
+        let mut hash = blake3::Hasher::new();
+        hash.update(b"yarra-loot-v1");
+        hash.update(&self.playthrough.0);
+        hash.update(&owner);
+        let bytes = hash.finalize();
+        RandomState(u64::from_le_bytes(
+            bytes.as_bytes()[..8].try_into().expect("eight bytes"),
+        ))
+    }
+    /// The carried inventory a character will have once something first needs it: what its
+    /// template wears, equipped, and what its loot table yields. The same whenever asked.
+    pub fn unopened_inventory(
+        &self,
+        content: &GameContent,
+        actor: &Actor,
+    ) -> Result<(Inventory, BTreeMap<Key, ItemId>)> {
+        let template = content.template(actor.template)?;
+        let mut inventory = Inventory::new(OwnerRef::actor(actor.id), CARRIED)?;
+        let mut id = blake3::Hasher::new();
+        id.update(b"yarra-carried-v1");
+        id.update(&actor.id.0);
+        inventory
+            .id
+            .0
+            .copy_from_slice(&id.finalize().as_bytes()[..16]);
+        let mut equipment = BTreeMap::new();
+        for definition in &template.equipment {
+            let slot = content.items.item(*definition)?.mechanics.slot.clone();
+            let slot = slot.ok_or_else(|| Invalid("template equipment has no slot".into()))?;
+            let ids = inventory.grant(&content.items, *definition, 1)?;
+            equipment.insert(slot, ids[0]);
+        }
+        if let Some(loot) = template.loot {
+            let mut random = self.loot_random(actor.id.0);
+            content
+                .loot(loot)?
+                .roll(&content.items, &mut random, &mut inventory)?;
+        }
+        Ok((inventory, equipment))
+    }
+    /// How many of an item a character carries, whether or not anything has looked into
+    /// its inventory yet: what an unopened one will hold is already decided.
+    pub fn item_count(
+        &self,
+        content: &GameContent,
+        actor: ActorId,
+        item: ItemDefinitionId,
+    ) -> Result<u64> {
+        content.items.item(item)?;
+        let count = |inventory: &Inventory| {
+            inventory
+                .entries
+                .iter()
+                .filter(|e| e.definition == item)
+                .map(|e| u64::from(e.quantity))
+                .sum()
+        };
+        match self.carried.contains_key(&actor) {
+            true => Ok(count(self.carried(actor)?)),
+            false => Ok(count(
+                &self.unopened_inventory(content, self.actor(actor)?)?.0,
+            )),
+        }
+    }
+    /// What a container holds the first time it is opened.
+    pub fn unopened_container(&self, content: &GameContent, object: ObjectId) -> Result<Inventory> {
+        let ObjectKind::Container {
+            inventory: id,
+            loot,
+        } = content.object(object)?.kind
+        else {
+            return Err(Invalid("object is not a container".into()).into());
+        };
+        let mut inventory =
+            Inventory::new(OwnerRef::new("object", OwnerId(object.0))?, "contents")?;
+        inventory.id = id;
+        if let Some(loot) = loot {
+            let mut random = self.loot_random(object.0);
+            content
+                .loot(loot)?
+                .roll(&content.items, &mut random, &mut inventory)?;
+        }
+        Ok(inventory)
     }
     /// `deep` works the stats out again and compares; without it only their shape and
     /// what they rest on is checked.
@@ -394,7 +488,7 @@ impl SessionState {
     pub(crate) fn check_inventory(&self, content: &GameContent, inv: &Inventory) -> Result<()> {
         inv.validate(&content.items)?;
         require(
-            self.valid_owner(&inv.owner),
+            self.valid_owner(content, &inv.owner),
             "invalid inventory identity/owner/role",
         )?;
         if inv.owner.kind == "actor" && inv.role == CARRIED {
@@ -405,10 +499,10 @@ impl SessionState {
         }
         Ok(())
     }
-    pub(crate) fn check_wallet(&self, wallet: &Wallet) -> Result<()> {
+    pub(crate) fn check_wallet(&self, content: &GameContent, wallet: &Wallet) -> Result<()> {
         wallet.validate()?;
         require(
-            self.valid_owner(&wallet.owner),
+            self.valid_owner(content, &wallet.owner),
             "invalid wallet identity/owner",
         )
         .map_err(Into::into)
@@ -493,7 +587,7 @@ impl SessionState {
     }
     pub(crate) fn check_object(&self, content: &GameContent, o: &ObjectState) -> Result<()> {
         let definition = content.object(o.id)?;
-        if let ObjectKind::Container { inventory } = definition.kind
+        if let ObjectKind::Container { inventory, .. } = definition.kind
             && let Some(bag) = self.inventories.get(&inventory)
         {
             require(
@@ -571,7 +665,7 @@ impl SessionState {
             "unknown character with pending effects",
         )?;
         for wallet in self.wallets.values() {
-            self.check_wallet(wallet)?;
+            self.check_wallet(content, wallet)?;
         }
         for h in self.histories.values() {
             self.check_history(content, h)?;

@@ -43,6 +43,11 @@ pub enum Command {
     Control {
         actor: ActorId,
     },
+    /// Someone looks into a character's inventory: to trade, to loot, to pick a pocket.
+    /// An inventory nothing needed before is made now from the character's template.
+    OpenInventory {
+        actor: ActorId,
+    },
     /// A party member puts one attribute point into a primary stat.
     SpendAttributePoint {
         actor: ActorId,
@@ -379,7 +384,7 @@ impl<C: ContentSource> GameSession<C> {
             !o.locked && o.open && !o.destroyed,
             "container is not accessible",
         )?;
-        let ObjectKind::Container { inventory } = self.content.object(object)?.kind else {
+        let ObjectKind::Container { inventory, .. } = self.content.object(object)?.kind else {
             return Err(Invalid("object is not a container".into()).into());
         };
         self.state.inventory(inventory)
@@ -635,7 +640,7 @@ fn check_changes(content: &GameContent, tx: &Tx) -> Result<()> {
         }
     }
     for id in before.wallets.keys() {
-        state.check_wallet(state.wallet(*id)?)?;
+        state.check_wallet(content, state.wallet(*id)?)?;
     }
     for id in before.quests.keys() {
         state.quest(*id).validate(content.quest(*id)?)?;
@@ -720,6 +725,9 @@ fn apply(
             }
             state.party_mut().controlled = Some(actor);
         }
+        Command::OpenInventory { actor } => {
+            character::carried(content, state, actor)?;
+        }
         Command::SpendAttributePoint { actor, stat } => {
             character::spend_attribute_point(content, state, actor, &stat, events)?
         }
@@ -731,6 +739,7 @@ fn apply(
         Command::Interrupt { actor } => crate::combat::interrupt(state, actor, events)?,
         Command::UseItem { actor, item } => {
             character::require_alive(content, state.actor(actor)?)?;
+            character::carried(content, state, actor)?;
             let bag = state.carried(actor)?;
             let inventory = bag.id;
             let definition = content.items.item(bag.entry(item)?.definition)?;
@@ -771,6 +780,7 @@ fn apply(
             events.push(GameEvent::ItemUsed { actor, item });
         }
         Command::Equip { actor, item } => {
+            character::carried(content, state, actor)?;
             let entry = state.carried(actor)?.entry(item)?;
             let slot = content
                 .items
@@ -957,7 +967,7 @@ pub(crate) fn run_action(
             definition,
             quantity,
         } => {
-            let id = state.carried(actor)?.id;
+            let id = character::carried(content, state, actor)?;
             state
                 .inventory_mut(id)?
                 .grant(&content.items, *definition, *quantity)?;
@@ -966,7 +976,7 @@ pub(crate) fn run_action(
             definition,
             quantity,
         } => {
-            let id = state.carried(actor)?.id;
+            let id = character::carried(content, state, actor)?;
             let mut remaining = *quantity;
             let entries = state.inventory(id)?.entries.clone();
             for entry in entries.iter().filter(|e| e.definition == *definition) {
@@ -1122,6 +1132,27 @@ fn assign_item_ids(tx: &mut Tx, events: &mut [GameEvent]) -> Result<()> {
                 replacements.insert(entry.id, ItemId(bytes));
                 entry.id = ItemId(bytes);
                 ordinal += 1;
+            }
+        }
+    }
+    // Equipment that came with a newly opened inventory refers to the new identities.
+    let wearers: Vec<ActorId> = tx
+        .before
+        .actors
+        .keys()
+        .filter(|id| {
+            tx.actors.get(id).is_some_and(|a| {
+                a.equipment
+                    .values()
+                    .any(|item| replacements.contains_key(item))
+            })
+        })
+        .copied()
+        .collect();
+    for actor in wearers {
+        for item in tx.actor_mut(actor)?.equipment.values_mut() {
+            if let Some(new) = replacements.get(item) {
+                *item = *new;
             }
         }
     }

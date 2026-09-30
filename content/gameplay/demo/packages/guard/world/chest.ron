@@ -1,6 +1,6 @@
 (
     id: "guard/chest",
     name: Message((resource: "guard/text", key: "supplies-title")),
-    kind: Container(inventory: "chest"),
+    kind: Container(inventory: "chest", loot: Some("guard/supplies")),
     locked: true,
 )

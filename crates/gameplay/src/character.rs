@@ -36,6 +36,30 @@ pub(crate) fn sync_timed(tx: &mut Tx, actor: ActorId) -> Result<()> {
     }
     Ok(())
 }
+/// The actor's carried inventory, made now if nothing needed it before: what its template
+/// wears, equipped, and what its loot table yields.
+pub(crate) fn carried(content: &GameContent, tx: &mut Tx, actor: ActorId) -> Result<InventoryId> {
+    if let Some(id) = tx.carried.get(&actor) {
+        return Ok(*id);
+    }
+    let (inventory, equipment) = tx.unopened_inventory(content, tx.actor(actor)?)?;
+    let id = inventory.id;
+    tx.put_inventory(inventory);
+    if !equipment.is_empty() {
+        tx.actor_mut(actor)?.equipment = equipment;
+    }
+    Ok(id)
+}
+/// Makes a container's contents the first time it is opened.
+pub(crate) fn fill_container(content: &GameContent, tx: &mut Tx, object: ObjectId) -> Result<()> {
+    if let crate::ObjectKind::Container { inventory, .. } = content.object(object)?.kind
+        && !tx.inventories.contains_key(&inventory)
+    {
+        let contents = tx.unopened_container(content, object)?;
+        tx.put_inventory(contents);
+    }
+    Ok(())
+}
 pub(crate) fn require_alive(content: &GameContent, actor: &Actor) -> Result<()> {
     if actor.alive(&content.game.rules) {
         Ok(())

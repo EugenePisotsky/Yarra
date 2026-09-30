@@ -111,15 +111,7 @@ pub struct ReadScope<'a> {
 }
 impl ReadScope<'_> {
     pub fn item_count(&self, actor: ActorId, item: ItemDefinitionId) -> Result<u64> {
-        self.content.items.item(item)?;
-        Ok(self
-            .state
-            .carried(actor)?
-            .entries
-            .iter()
-            .filter(|e| e.definition == item)
-            .map(|e| u64::from(e.quantity))
-            .sum())
+        self.state.item_count(self.content, actor, item)
     }
     pub fn quest_status(&self, quest: QuestId) -> Result<quests::Status> {
         self.content.quest(quest)?;

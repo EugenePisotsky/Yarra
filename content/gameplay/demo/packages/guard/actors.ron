@@ -1,1 +1,1 @@
-[(id: "gate_guard", interaction: Some("guard/profile"), name: Message((resource: "guard/text", key: "guard-name")), class: "soldier", level: 3, skills: {"swordsmanship": 2})]
+[(id: "gate_guard", interaction: Some("guard/profile"), name: Message((resource: "guard/text", key: "guard-name")), class: "soldier", level: 3, skills: {"swordsmanship": 2}, equipment: ["iron_sword"], loot: Some("guard/pouch"))]
