@@ -161,8 +161,8 @@ Evidence: new tests for turns kept through a save and the world held still, runa
 - Dialogue graphs behind `GameContent`: done. They still load on demand and stay in a cache of the 32 used most recently, but the content reads them itself: the first command or read model that needs a graph reads it, and one that cannot be read fails what needed it. The pre-pass in `GameSession::apply`, the `unloadable` workaround for queued conversations and `&mut self` on read models are gone, and so is the session's type parameter: `GameSession` and `Driver` are plain types.
 
 **Types and small refactors.**
-- Owner kind and inventory role become enums instead of strings compared in 19 places.
-- New items take identities from a counter in the state, restored on rollback, instead of being renamed at commit.
+- Owner kind and inventory role are enums instead of strings compared in 19 places: done.
+- New items take identities from a counter in the inventory that makes them, instead of being renamed at commit: done. The count is part of the inventory record, so a replay makes the same items and an undone command gives the numbers back. The renaming, with its patching of equipment and events, is gone.
 - Identities lose `Default`, which made a random UUID.
 - Inventory refusals a player can meet (money, restrictions, stale quotes, capacity) become `Rejection`s, so a UI matches one vocabulary.
 - Per-command validation of changed records runs in debug builds only; it works a character's stats out a second time on every equip. A loaded save is still validated in full.

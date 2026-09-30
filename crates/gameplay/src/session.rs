@@ -466,7 +466,7 @@ impl GameSession {
         let mut tx = Tx::begin(&mut self.state);
         let mut events = Vec::new();
         let result = work(content, triggers, &mut tx, &mut events)
-            .and_then(|()| finish(content, triggers, &mut tx, &mut events));
+            .and_then(|()| finish(content, triggers, &mut tx));
         match result {
             Ok(()) => Ok(events),
             Err(error) => {
@@ -581,16 +581,9 @@ fn start_talk(
     }
     Ok(())
 }
-/// Completes an accepted command: stable identities for new items, turns for conversations
-/// that started or ended, checks of what changed, notifications for subscribed triggers,
-/// and the next generation.
-fn finish(
-    content: &GameContent,
-    triggers: &TriggerIndex,
-    tx: &mut Tx,
-    events: &mut [GameEvent],
-) -> Result<()> {
-    assign_item_ids(tx, events)?;
+/// Completes an accepted command: turns for conversations that started or ended, checks of
+/// what changed, notifications for subscribed triggers, and the next generation.
+fn finish(content: &GameContent, triggers: &TriggerIndex, tx: &mut Tx) -> Result<()> {
     take_turns(content, tx)?;
     check_changes(content, tx)?;
     let signals: Vec<_> = crate::world_runtime::signals(content, tx)
@@ -1108,72 +1101,6 @@ pub(crate) fn run_action(
             let passed = character::check(content, state, actor, skill, *difficulty, events)?;
             for action in if passed { success } else { failure } {
                 run_action(content, state, actor, speaker, others, action, events)?;
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Items created by a command get identities derived from the playthrough and generation,
-/// so replaying the same command after a load produces the same items.
-fn assign_item_ids(tx: &mut Tx, events: &mut [GameEvent]) -> Result<()> {
-    let existing: BTreeSet<ItemId> = tx
-        .before
-        .inventories
-        .values()
-        .flatten()
-        .flat_map(|i| i.entries.iter().map(|e| e.id))
-        .collect();
-    let touched: Vec<InventoryId> = tx.before.inventories.keys().copied().collect();
-    let (playthrough, generation) = (tx.playthrough, tx.generation);
-    let mut replacements = BTreeMap::new();
-    let mut ordinal = 0u64;
-    for id in touched {
-        if !tx.inventories.contains_key(&id) {
-            continue;
-        }
-        for entry in &mut tx.inventory_mut(id)?.entries {
-            if !existing.contains(&entry.id) {
-                let mut hash = blake3::Hasher::new();
-                hash.update(b"yarra-item-v1");
-                hash.update(&playthrough.0);
-                hash.update(&generation.to_le_bytes());
-                hash.update(&ordinal.to_le_bytes());
-                let mut bytes = [0u8; 16];
-                bytes.copy_from_slice(&hash.finalize().as_bytes()[..16]);
-                replacements.insert(entry.id, ItemId(bytes));
-                entry.id = ItemId(bytes);
-                ordinal += 1;
-            }
-        }
-    }
-    // Equipment that came with a newly opened inventory refers to the new identities.
-    let wearers: Vec<ActorId> = tx
-        .before
-        .actors
-        .keys()
-        .filter(|id| {
-            tx.actors.get(id).is_some_and(|a| {
-                a.equipment
-                    .values()
-                    .any(|item| replacements.contains_key(item))
-            })
-        })
-        .copied()
-        .collect();
-    for actor in wearers {
-        for item in tx.actor_mut(actor)?.equipment.values_mut() {
-            if let Some(new) = replacements.get(item) {
-                *item = *new;
-            }
-        }
-    }
-    for event in events {
-        if let GameEvent::ItemsTransferred { entries } = event {
-            for id in entries {
-                if let Some(new) = replacements.get(id) {
-                    *id = *new;
-                }
             }
         }
     }

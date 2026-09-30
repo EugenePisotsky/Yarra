@@ -89,9 +89,10 @@ Two decisions shape the runtime:
 
 [`GameSession::apply`](../crates/gameplay/src/session.rs) accepts a command as a whole or leaves state, clock and both random streams untouched. It runs the command against a [`Tx`](../crates/gameplay/src/tx.rs): every write first remembers the record it replaces. A rejected command is undone from that journal; an accepted one uses it to
 
-- give new items identities derived from playthrough and generation, so a replay after loading produces the same items;
 - re-check only the records it wrote (plus actors whose equipment depends on a changed inventory);
 - derive notifications (item acquired, quest changed, area entered…) and queue those a trigger subscribes to.
+
+New items take identities from the inventory that makes them: its own identity and how many entries it has made before, a count kept in the inventory record. A replay after loading makes the same items, and an undone command gives the numbers back with the rest of the record.
 
 The queued work is then carried out before `apply` returns, one piece per step, each a transaction of its own, so a command's outcome is settled state.
 
@@ -109,7 +110,7 @@ Conditions and actions are closed enums in [`content.rs`](../crates/gameplay/src
 
 ### Saves
 
-A [save](../crates/save/src/slots.rs) is one file per slot: a one-line header (format, slot info, content identity) followed by the state as JSON. Listing slots reads only headers. Saving writes a sibling file, syncs it and renames it over the slot, so a failed save leaves the previous one intact. Loading does not require the content the slot was saved with. It brings the state in line with the content at hand (every character's stats worked out again with the current formulas, resources kept within their caps, party members raised to the level the party's experience now earns), then checks the whole state against it and refuses, with the reason, what still does not fit. The header's content identity lets the game tell the player the content has changed. Save format **14**; other formats are rejected, not migrated. `ContentLibrary` retains published bundles by fingerprint so a slot can also be restored against the exact content it was saved with.
+A [save](../crates/save/src/slots.rs) is one file per slot: a one-line header (format, slot info, content identity) followed by the state as JSON. Listing slots reads only headers. Saving writes a sibling file, syncs it and renames it over the slot, so a failed save leaves the previous one intact. Loading does not require the content the slot was saved with. It brings the state in line with the content at hand (every character's stats worked out again with the current formulas, resources kept within their caps, party members raised to the level the party's experience now earns), then checks the whole state against it and refuses, with the reason, what still does not fit. The header's content identity lets the game tell the player the content has changed. Save format **15**; other formats are rejected, not migrated. `ContentLibrary` retains published bundles by fingerprint so a slot can also be restored against the exact content it was saved with.
 
 Changes the load cannot account for (a removed item, class or quest the save refers to, a new primary stat) refuse the save. That is enough while worlds and saves are disposable; a shipped game patching content under existing saves would need more.
 

@@ -74,7 +74,8 @@ fn authored_source_and_sqlite_bundle_use_the_same_validated_content() {
             .entries[0]
             .id
     };
-    assert_ne!(first_item(&first), first_item(&second));
+    // Items are numbered by the inventory that made them, so the same start makes the same.
+    assert_eq!(first_item(&first), first_item(&second));
     assert_eq!(
         first.state().actors.keys().collect::<Vec<_>>(),
         second.state().actors.keys().collect::<Vec<_>>()

@@ -27,6 +27,8 @@ pub struct Inventory {
     pub owner: OwnerRef,
     pub role: InventoryRole,
     pub revision: u64,
+    /// Entries this inventory has created, which numbers the next one; see `mint`.
+    pub minted: u64,
     pub entries: Vec<ItemEntry>,
 }
 
@@ -43,8 +45,22 @@ impl Inventory {
             owner,
             role,
             revision: 1,
+            minted: 0,
             entries: Vec::new(),
         }
+    }
+    /// An identity for an entry this inventory creates, from the inventory's own and how
+    /// many it created before. A command replayed after a load makes the same items, and
+    /// one that is undone gives the numbers back with the rest of the inventory.
+    fn mint(&mut self) -> ItemId {
+        let mut hash = blake3::Hasher::new();
+        hash.update(b"yarra-item-v2");
+        hash.update(&self.id.0);
+        hash.update(&self.minted.to_le_bytes());
+        self.minted += 1;
+        let mut id = [0; 16];
+        id.copy_from_slice(&hash.finalize().as_bytes()[..16]);
+        ItemId(id)
     }
     /// The character this is the carried inventory of, if it is one.
     pub fn carried_by(&self) -> Option<ActorId> {
@@ -114,15 +130,12 @@ impl Inventory {
         }
         catalog.item(definition)?;
         let mut next = self.clone();
-        let ids = deposit(
-            catalog,
-            &mut next,
-            ItemEntry {
-                id: ItemId::new(),
-                definition,
-                quantity,
-            },
-        )?;
+        let entry = ItemEntry {
+            id: next.mint(),
+            definition,
+            quantity,
+        };
+        let ids = deposit(catalog, &mut next, entry)?;
         next.revision = next_revision(self.revision)?;
         *self = next;
         Ok(ids)
@@ -261,9 +274,10 @@ pub(crate) fn withdraw(inventory: &mut Inventory, id: ItemId, quantity: u32) -> 
         return Ok(inventory.entries.remove(index));
     }
     entry.quantity -= quantity;
+    let definition = entry.definition;
     Ok(ItemEntry {
-        id: ItemId::new(),
-        definition: entry.definition,
+        id: inventory.mint(),
+        definition,
         quantity,
     })
 }
@@ -304,7 +318,9 @@ pub(crate) fn deposit(
             ..incoming.clone()
         });
         incoming.quantity -= quantity;
-        incoming.id = ItemId::new();
+        if incoming.quantity > 0 {
+            incoming.id = inventory.mint();
+        }
     }
     Ok(ids)
 }
