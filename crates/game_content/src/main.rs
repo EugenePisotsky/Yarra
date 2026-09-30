@@ -292,7 +292,7 @@ fn demo(project: &LoadedProject, locale: &str, directory: Option<PathBuf>) -> Re
     )?;
     println!(
         "Dialogue graphs loaded: {} of {}",
-        session.content().game.dialogues.len(),
+        session.content().graphs.loaded(),
         project.content().game.dialogues.len()
     );
     for line in summary {

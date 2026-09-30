@@ -3,7 +3,7 @@
 use crate::{ItemAmount, Result};
 use game_types::*;
 use gameplay::inventory::{TradeLine, TradeOffer, TradeParticipants};
-use gameplay::{Command, ContentSource, GameSession};
+use gameplay::{Command, GameSession};
 use gameplay::{actors, quests};
 use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -147,8 +147,8 @@ pub enum Step {
         rank: u8,
     },
 }
-fn entry<C: ContentSource>(
-    session: &GameSession<C>,
+fn entry(
+    session: &GameSession,
     inventory: InventoryId,
     definition: ItemDefinitionId,
 ) -> Result<ItemId> {
@@ -161,8 +161,8 @@ fn entry<C: ContentSource>(
         .map(|e| e.id)
         .ok_or_else(|| Invalid(format!("inventory {inventory} has no item {definition}")).into())
 }
-fn trade_lines<C: ContentSource>(
-    session: &GameSession<C>,
+fn trade_lines(
+    session: &GameSession,
     inventory: InventoryId,
     amounts: &[ItemAmount],
 ) -> Result<Vec<TradeLine>> {
@@ -219,7 +219,7 @@ impl Step {
             Self::ExpectSkill { .. } => "ExpectSkill",
         }
     }
-    pub fn apply<C: ContentSource>(&self, session: &mut GameSession<C>) -> Result<()> {
+    pub fn apply(&self, session: &mut GameSession) -> Result<()> {
         let command = match self {
             Self::World(command) => Command::World(command.clone()),
             Self::ExpectObject {

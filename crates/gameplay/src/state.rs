@@ -644,7 +644,7 @@ impl SessionState {
             "invalid conversation participants/identity",
         )?;
         match content.loaded_dialogue(c.dialogue) {
-            Some(graph) => c.validate(graph)?,
+            Some(graph) => c.validate(&graph)?,
             None => c.validate_contract(content.dialogue_contract(c.dialogue)?)?,
         }
         require(

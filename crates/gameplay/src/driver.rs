@@ -14,17 +14,17 @@ pub struct TraceEntry {
     pub generation: u64,
     pub events: Vec<GameEvent>,
 }
-pub struct Driver<C: ContentSource> {
-    session: GameSession<C>,
+pub struct Driver {
+    session: GameSession,
     step_ms: u64,
     /// Real time not yet turned into game time.
     unspent: Duration,
     trace: VecDeque<TraceEntry>,
     trace_capacity: usize,
 }
-impl<C: ContentSource> Driver<C> {
+impl Driver {
     /// A trace capacity of zero keeps no trace.
-    pub fn new(session: GameSession<C>, step_ms: u64, trace_capacity: usize) -> Result<Self> {
+    pub fn new(session: GameSession, step_ms: u64, trace_capacity: usize) -> Result<Self> {
         require(
             (1..=60_000).contains(&step_ms) && trace_capacity <= 1024,
             "invalid driver step or trace capacity",
@@ -37,12 +37,8 @@ impl<C: ContentSource> Driver<C> {
             trace_capacity,
         })
     }
-    pub fn session(&self) -> &GameSession<C> {
+    pub fn session(&self) -> &GameSession {
         &self.session
-    }
-    /// For read models that load a dialogue graph. Commands go through `submit`.
-    pub fn session_mut(&mut self) -> &mut GameSession<C> {
-        &mut self.session
     }
     pub fn state(&self) -> &SessionState {
         self.session.state()
@@ -109,12 +105,12 @@ impl<C: ContentSource> Driver<C> {
     }
     /// Carries on with another playthrough, e.g. one just loaded. Real time not yet spent
     /// and the trace go with the old one.
-    pub fn replace(&mut self, session: GameSession<C>) {
+    pub fn replace(&mut self, session: GameSession) {
         self.session = session;
         self.unspent = Duration::ZERO;
         self.trace.clear();
     }
-    pub fn into_session(self) -> GameSession<C> {
+    pub fn into_session(self) -> GameSession {
         self.session
     }
 }

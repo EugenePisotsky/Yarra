@@ -335,6 +335,7 @@ impl LoadedProject {
                 loot,
             },
             scripts: Default::default(),
+            graphs: Default::default(),
         };
         // Canonical identities, not manifest/file traversal order, determine publication hashes.
         content.sort();
@@ -401,10 +402,10 @@ impl LoadedProject {
     pub fn translation_reviews(&self) -> &[TranslationReview] {
         &self.reviews
     }
-    pub fn start(&self) -> Result<crate::ToolSession> {
+    pub fn start(&self) -> Result<gameplay::GameSession> {
         self.scenario.instantiate(&self.content)
     }
-    pub fn run_scenario(&self) -> Result<crate::ToolSession> {
+    pub fn run_scenario(&self) -> Result<gameplay::GameSession> {
         self.scenario.run(&self.content)
     }
     pub(crate) fn from_parts(

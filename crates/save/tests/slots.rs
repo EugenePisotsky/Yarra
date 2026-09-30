@@ -16,14 +16,13 @@ impl Drop for Temp {
         let _ = std::fs::remove_dir_all(&self.0);
     }
 }
-type Session = GameSession<ToolContent>;
-fn session() -> Session {
+fn session() -> GameSession {
     GameSession::new(ToolContent::new(content()).unwrap(), state()).unwrap()
 }
 fn source() -> ToolContent {
     ToolContent::new(content()).unwrap()
 }
-fn use_potion(session: &mut Session) {
+fn use_potion(session: &mut GameSession) {
     let item = session
         .state()
         .carried(HERO)

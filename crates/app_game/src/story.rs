@@ -61,7 +61,7 @@ pub(crate) struct Bark {
 
 pub(crate) struct Story {
     project: LoadedProject,
-    driver: Driver<ContentRepository>,
+    driver: Driver,
     bundle: PathBuf,
     saves: SaveDirectory,
     locale: String,
@@ -235,7 +235,7 @@ impl Story {
     /// The conversation of one kind that has the floor, as it stands now.
     fn current(&mut self, mode: Mode) -> Option<ConversationView> {
         let key = self.driver.state().floor.current(mode)?;
-        match self.driver.session_mut().conversation_view(key) {
+        match self.driver.session().conversation_view(key) {
             Ok(view) => Some(view),
             Err(error) => {
                 self.notice = error.to_string();

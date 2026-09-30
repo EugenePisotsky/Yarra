@@ -67,7 +67,7 @@ fn authored_source_and_sqlite_bundle_use_the_same_validated_content() {
     let first = project.start().unwrap();
     let second = project.start().unwrap();
     assert_ne!(first.state().playthrough, second.state().playthrough);
-    let first_item = |s: &ToolSession| {
+    let first_item = |s: &gameplay::GameSession| {
         s.state()
             .inventory(gameplay::fixtures::HERO_BAG)
             .unwrap()

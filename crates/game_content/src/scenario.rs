@@ -64,7 +64,7 @@ pub struct Scenario {
     pub steps: Vec<Step>,
 }
 impl Scenario {
-    pub fn instantiate(&self, content: &GameContent) -> Result<crate::ToolSession> {
+    pub fn instantiate(&self, content: &GameContent) -> Result<gameplay::GameSession> {
         content.validate()?;
         let mut state = SessionState::empty(self.seed);
         state.owners = self.owners.iter().cloned().collect();
@@ -148,7 +148,7 @@ impl Scenario {
         )
     }
     /// Run in a new isolated session. Failure never mutates an existing playthrough.
-    pub fn run(&self, content: &GameContent) -> Result<crate::ToolSession> {
+    pub fn run(&self, content: &GameContent) -> Result<gameplay::GameSession> {
         let mut session = self.instantiate(content)?;
         for (index, step) in self.steps.iter().enumerate() {
             contextual(

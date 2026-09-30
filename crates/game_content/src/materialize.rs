@@ -79,6 +79,7 @@ impl LoadedProject {
             manifest: manifest.content,
             items,
             scripts: scripting::LuauScripts::install(&scripts).map_err(game_types::Invalid)?,
+            graphs: Default::default(),
             game: GameDefinitions {
                 world,
                 dialogue_contracts,

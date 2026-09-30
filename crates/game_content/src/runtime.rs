@@ -9,8 +9,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub type RuntimeSession = gameplay::GameSession<ContentRepository>;
-pub type ToolSession = gameplay::GameSession<gameplay::ToolContent>;
 /// Asset kinds read once when a session opens. Dialogue graphs and text contracts are read
 /// only when a conversation or a formatter needs them.
 const CORE_KINDS: [AssetKind; 15] = [
@@ -62,6 +60,7 @@ impl ContentRepository {
                 items: vec![],
             },
             scripts: Default::default(),
+            graphs: Default::default(),
             game: GameDefinitions {
                 world: Default::default(),
                 dialogue_contracts: vec![],
@@ -182,7 +181,7 @@ impl ContentLibrary {
         &self,
         saves: &save::SaveDirectory,
         slot: save::SaveSlot,
-    ) -> Result<RuntimeSession> {
+    ) -> Result<gameplay::GameSession> {
         let identity = saves.content_identity(slot)?;
         Ok(saves.load(slot, self.open(&identity)?)?)
     }

@@ -190,8 +190,6 @@ pub(crate) fn process_next(
     content: &GameContent,
     triggers: &TriggerIndex,
     tx: &mut Tx,
-    // Why the graph of the conversation at the head of the queue could not be loaded.
-    unloadable: Option<String>,
     events: &mut Vec<GameEvent>,
 ) {
     if let Some(actor) = timed_out(tx) {
@@ -221,11 +219,8 @@ pub(crate) fn process_next(
                 participant,
                 speaker,
             };
-            let started = match unloadable {
-                Some(reason) => Err(Invalid(reason).into()),
-                None => crate::conversation::start(content, tx, key, &Default::default(), events),
-            };
-            match started {
+            // A graph that cannot be read refuses the conversation like any other reason.
+            match crate::conversation::start(content, tx, key, &Default::default(), events) {
                 Ok(()) => tx.release(savepoint),
                 Err(error) => {
                     tx.rollback_to(savepoint);

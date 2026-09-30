@@ -23,14 +23,14 @@ const CLAIM: ClaimId = ClaimId::named("guard/reward_claim");
 const BANTER: DialogueId = DialogueId::named("guard/banter");
 const COUNTER: VariableId = VariableId::named("guard/entries");
 
-fn load(temp: &Temp, root: &std::path::Path) -> (LoadedProject, RuntimeSession) {
+fn load(temp: &Temp, root: &std::path::Path) -> (LoadedProject, gameplay::GameSession) {
     let project =
         LoadedProject::load_directory_with_scenario(root, "scenarios/guard-gate.ron").unwrap();
     let session = support::runtime(temp, &project);
-    assert!(session.content().game.dialogues.is_empty());
+    assert!(session.content().graphs.loaded() == 0);
     (project, session)
 }
-fn world(session: &mut RuntimeSession, command: WorldCommand) -> Vec<WorldEvent> {
+fn world(session: &mut gameplay::GameSession, command: WorldCommand) -> Vec<WorldEvent> {
     world_events(session.apply(Command::World(command)).unwrap().events)
 }
 fn world_events(events: Vec<GameEvent>) -> Vec<WorldEvent> {
@@ -43,7 +43,7 @@ fn world_events(events: Vec<GameEvent>) -> Vec<WorldEvent> {
         .collect()
 }
 /// The engine's report of where an actor stands, and everything it set off.
-fn report(session: &mut RuntimeSession, actor: ActorId, areas: &[AreaId]) -> Vec<GameEvent> {
+fn report(session: &mut gameplay::GameSession, actor: ActorId, areas: &[AreaId]) -> Vec<GameEvent> {
     let command = WorldCommand::Observe {
         actor,
         position: Position {
@@ -56,10 +56,14 @@ fn report(session: &mut RuntimeSession, actor: ActorId, areas: &[AreaId]) -> Vec
     assert!(!session.world_work_pending());
     events
 }
-fn observe(session: &mut RuntimeSession, actor: ActorId, areas: &[AreaId]) -> Vec<WorldEvent> {
+fn observe(
+    session: &mut gameplay::GameSession,
+    actor: ActorId,
+    areas: &[AreaId],
+) -> Vec<WorldEvent> {
     world_events(report(session, actor, areas))
 }
-fn activate(session: &mut RuntimeSession) {
+fn activate(session: &mut gameplay::GameSession) {
     session
         .apply(Command::Quest {
             quest: QUEST,
@@ -67,16 +71,16 @@ fn activate(session: &mut RuntimeSession) {
         })
         .unwrap();
 }
-fn walking(session: &RuntimeSession) -> Option<&Movement> {
+fn walking(session: &gameplay::GameSession) -> Option<&Movement> {
     session.state().world.movements.get(&GUARD)
 }
 /// Quest running, hero in the approach, guard asked to walk.
-fn prepare(session: &mut RuntimeSession) -> Movement {
+fn prepare(session: &mut gameplay::GameSession) -> Movement {
     activate(session);
     observe(session, HERO, &[APPROACH]);
     walking(session).expect("guard is walking").clone()
 }
-fn locked(session: &mut RuntimeSession) {
+fn locked(session: &mut gameplay::GameSession) {
     for object in [GATE, CHEST] {
         assert!(
             session
@@ -93,14 +97,14 @@ fn locked(session: &mut RuntimeSession) {
     }
     assert!(session.container_contents(CHEST).is_err());
 }
-fn key_item(session: &RuntimeSession, actor: ActorId) -> Option<ItemId> {
+fn key_item(session: &gameplay::GameSession, actor: ActorId) -> Option<ItemId> {
     let bag = session.state().carried(actor).unwrap();
     bag.entries
         .iter()
         .find(|i| i.definition == inventory::fixtures::KEY)
         .map(|i| i.id)
 }
-fn give(session: &mut RuntimeSession, item: ItemId, from: ActorId, to: ActorId) {
+fn give(session: &mut gameplay::GameSession, item: ItemId, from: ActorId, to: ActorId) {
     session
         .apply(Command::Transfer {
             source: InventoryId(from.0),
@@ -110,7 +114,7 @@ fn give(session: &mut RuntimeSession, item: ItemId, from: ActorId, to: ActorId) 
         })
         .unwrap();
 }
-fn rewarded(session: &RuntimeSession) -> bool {
+fn rewarded(session: &gameplay::GameSession) -> bool {
     session.state().claimed(dialogue::ClaimKey {
         claim: CLAIM,
         scope: dialogue::Scope::Playthrough,
@@ -438,7 +442,7 @@ fn triggers_repeat_once_always_or_after_a_cooldown_and_one_failure_does_not_stop
     let root = temp.source();
     counting_source(&root);
     let (_, mut session) = load(&temp, &root);
-    let count = |session: &RuntimeSession, name: &str| {
+    let count = |session: &gameplay::GameSession, name: &str| {
         let id = VariableId::try_from(format!("guard/entries_{name}")).unwrap();
         session.state().variable(session.content(), id).unwrap()
     };
@@ -527,11 +531,12 @@ fn triggers_that_keep_setting_each_other_off_are_cut_short_and_the_game_goes_on(
     // Set off by someone the scenario leaves alone, it reaches the game.
     write(&path, &echo(COMPANION));
     let (_, mut session) = load(&temp, &root);
-    let count = |session: &RuntimeSession| match session.state().variable(session.content(), echoes)
-    {
-        Ok(Value::Int(count)) => count,
-        other => panic!("{other:?}"),
-    };
+    let count =
+        |session: &gameplay::GameSession| match session.state().variable(session.content(), echoes)
+        {
+            Ok(Value::Int(count)) => count,
+            other => panic!("{other:?}"),
+        };
     // The command is accepted and returns; the rest waits for the next one.
     let command = WorldCommand::Observe {
         actor: COMPANION,
@@ -636,7 +641,7 @@ fn a_large_catalog_of_unrelated_triggers_does_not_disturb_dispatch() {
     assert!(session.state().trigger(ESCORT).fired >= 1);
     assert!(walking(&session).is_some());
 }
-fn join(session: &mut RuntimeSession, actor: ActorId) {
+fn join(session: &mut gameplay::GameSession, actor: ActorId) {
     session
         .apply(Command::Party {
             actor,
@@ -654,7 +659,7 @@ fn walking_into_an_area_starts_an_ambient_conversation_with_a_companion() {
             .iter()
             .any(|e| matches!(e, GameEvent::DialogueStarted { .. }))
     );
-    assert!(session.content().game.dialogues.is_empty());
+    assert!(session.content().graphs.loaded() == 0);
     observe(&mut session, HERO, &[]);
 
     join(&mut session, HERO);
@@ -670,7 +675,7 @@ fn walking_into_an_area_starts_an_ambient_conversation_with_a_companion() {
         mode: Mode::Ambient
     }));
     // The graph was read when the conversation started, not before.
-    assert_eq!(session.content().game.dialogues.len(), 1);
+    assert_eq!(session.content().graphs.loaded(), 1);
     let mut speakers = Vec::new();
     loop {
         let view = session.conversation_view(banter).unwrap();

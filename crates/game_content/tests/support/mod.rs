@@ -48,10 +48,7 @@ pub fn read<T: serde::de::DeserializeOwned>(path: impl AsRef<Path>) -> T {
     ron::from_str(&fs::read_to_string(path).unwrap()).unwrap()
 }
 /// Publish the project and start its scenario against the published bundle.
-pub fn runtime(
-    temp: &Temp,
-    project: &yarra_game_content::LoadedProject,
-) -> yarra_game_content::RuntimeSession {
+pub fn runtime(temp: &Temp, project: &yarra_game_content::LoadedProject) -> gameplay::GameSession {
     let bundle = temp.0.join("content.sqlite");
     project.build(&bundle).unwrap();
     gameplay::GameSession::new(

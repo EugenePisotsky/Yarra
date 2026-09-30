@@ -4,17 +4,16 @@ use yarra_gameplay::inventory::{fixtures::*, *};
 use yarra_gameplay::rules::Use;
 use yarra_gameplay::{fixtures::*, *};
 type Result<T> = yarra_gameplay::Result<T>;
-type TestSession = GameSession<ToolContent>;
-fn new(content: GameContent, state: SessionState) -> Result<TestSession> {
+fn new(content: GameContent, state: SessionState) -> Result<GameSession> {
     GameSession::new(ToolContent::new(content)?, state)
 }
-fn session() -> TestSession {
+fn session() -> GameSession {
     new(content(), state()).unwrap()
 }
-fn snapshot(session: &TestSession) -> SessionState {
+fn snapshot(session: &GameSession) -> SessionState {
     session.state().clone()
 }
-fn item(session: &TestSession, bag: InventoryId, definition: ItemDefinitionId) -> ItemId {
+fn item(session: &GameSession, bag: InventoryId, definition: ItemDefinitionId) -> ItemId {
     session
         .state()
         .inventory(bag)
@@ -34,7 +33,7 @@ fn choose() -> Command {
         choice: key("return-key"),
     }
 }
-fn start(session: &mut TestSession) {
+fn start(session: &mut GameSession) {
     session
         .apply(Command::StartDialogue {
             bindings: Default::default(),
@@ -587,7 +586,7 @@ mod party {
             ],
         }
     }
-    fn session(party: &[ActorId], stranger: bool) -> TestSession {
+    fn session(party: &[ActorId], stranger: bool) -> GameSession {
         let mut content = content();
         let graph = banter();
         content.game.dialogue_contracts.push(graph.contract());
@@ -617,7 +616,7 @@ mod party {
         participant: HERO,
         speaker: MERCHANT,
     };
-    fn start(session: &mut TestSession, bindings: &[(&str, ActorId)]) {
+    fn start(session: &mut GameSession, bindings: &[(&str, ActorId)]) {
         session
             .apply(Command::StartDialogue {
                 bindings: bindings.iter().map(|(r, a)| (key(r), *a)).collect(),
@@ -628,7 +627,7 @@ mod party {
             .unwrap();
     }
     /// Acknowledges lines until the player has to choose; returns who said what.
-    fn listen(session: &mut TestSession) -> Vec<(ActorId, String)> {
+    fn listen(session: &mut GameSession) -> Vec<(ActorId, String)> {
         let mut heard = Vec::new();
         loop {
             let view = session.conversation_view(KEY).unwrap();
@@ -644,14 +643,14 @@ mod party {
                 .unwrap();
         }
     }
-    fn choices(session: &mut TestSession) -> Vec<String> {
+    fn choices(session: &mut GameSession) -> Vec<String> {
         let view = session.conversation_view(KEY).unwrap();
         view.choices
             .iter()
             .map(|c| c.id.as_str().to_owned())
             .collect()
     }
-    fn pick(session: &mut TestSession, choice: &str) {
+    fn pick(session: &mut GameSession, choice: &str) {
         let expected = session.conversation_view(KEY).unwrap().token;
         session
             .apply(Command::Choose {
@@ -801,7 +800,7 @@ mod variables {
             amount,
         }
     }
-    fn holds(session: &TestSession, test: Test) -> bool {
+    fn holds(session: &GameSession, test: Test) -> bool {
         let condition = Condition::Variable {
             variable: VISITS,
             of: None,
@@ -896,7 +895,7 @@ mod variables {
         content.sort();
         content
     }
-    fn offered(session: &mut TestSession, speaker: ActorId) -> bool {
+    fn offered(session: &mut GameSession, speaker: ActorId) -> bool {
         let key = ConversationKey {
             dialogue: GATE_DIALOGUE,
             participant: HERO,

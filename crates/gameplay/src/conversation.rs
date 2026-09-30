@@ -106,7 +106,7 @@ impl GameContent {
                 });
             }
             Position::Choices(after) => {
-                for node in choices(self, state, c, graph, after.as_ref())? {
+                for node in choices(self, state, c, &graph, after.as_ref())? {
                     view.choices.push(ChoiceView {
                         id: node.id.clone(),
                         text: self.bind_text(state, c, node)?,
@@ -303,7 +303,8 @@ pub(crate) fn present(
     let Position::Line(id) = &c.position else {
         return Err(Invalid("no pending dialogue line".into()).into());
     };
-    let node = content.dialogue(key.dialogue)?.node(id)?;
+    let graph = content.dialogue(key.dialogue)?;
+    let node = graph.node(id)?;
     take(content, state, key, node, events)?;
     events.push(GameEvent::LinePresented {
         key,
@@ -326,7 +327,7 @@ pub(crate) fn choose(
         return Err(Invalid("dialogue lines must be acknowledged before choosing".into()).into());
     };
     let graph = content.dialogue(key.dialogue)?;
-    let node = choices(content, state, c, graph, after.as_ref())?
+    let node = choices(content, state, c, &graph, after.as_ref())?
         .into_iter()
         .find(|n| &n.id == choice)
         .ok_or_else(|| Rejection::ChoiceUnavailable(choice.clone()))?;

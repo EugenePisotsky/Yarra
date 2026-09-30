@@ -108,11 +108,11 @@ fn a_session_over_a_large_catalog_loads_definitions_once_and_graphs_on_demand() 
     fs::remove_dir_all(source).unwrap();
     let mut session = GameSession::new(open(&bundle), seed).unwrap();
     assert_eq!(session.content().items.items.len(), 5_000);
-    assert!(session.content().game.dialogues.is_empty());
+    assert!(session.content().graphs.loaded() == 0);
     for step in &project.scenario().steps {
         step.apply(&mut session).unwrap();
     }
-    assert_eq!(session.content().game.dialogues.len(), 1);
+    assert_eq!(session.content().graphs.loaded(), 1);
     assert!(project.content().game.dialogues.len() > 1);
 }
 

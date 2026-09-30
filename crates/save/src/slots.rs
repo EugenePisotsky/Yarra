@@ -119,10 +119,10 @@ impl SaveDirectory {
         result.sort_by_key(|i| i.slot);
         Ok(result)
     }
-    pub fn save<C: ContentSource>(
+    pub fn save(
         &self,
         slot: SaveSlot,
-        session: &GameSession<C>,
+        session: &GameSession,
         title: impl Into<String>,
     ) -> Result<SaveInfo> {
         if let SaveSlot::Auto(index) = slot {
@@ -179,11 +179,11 @@ impl SaveDirectory {
         written?;
         Ok(header.info)
     }
-    pub fn quicksave<C: ContentSource>(&self, session: &GameSession<C>) -> Result<SaveInfo> {
+    pub fn quicksave(&self, session: &GameSession) -> Result<SaveInfo> {
         self.save(SaveSlot::Quick, session, "Quicksave")
     }
     /// Rotate only autosaves. Manual and quick slots never participate in retention.
-    pub fn autosave<C: ContentSource>(&self, session: &GameSession<C>) -> Result<SaveInfo> {
+    pub fn autosave(&self, session: &GameSession) -> Result<SaveInfo> {
         let mut oldest = None;
         for index in 0..self.autosave_slots {
             let slot = SaveSlot::Auto(index);
@@ -208,7 +208,11 @@ impl SaveDirectory {
     /// Restores the slot against the supplied content, whichever content it was saved with:
     /// the state is brought in line with the content and checked against it in full, and
     /// refused with the reason when it no longer fits.
-    pub fn load<C: ContentSource>(&self, slot: SaveSlot, content: C) -> Result<GameSession<C>> {
+    pub fn load(
+        &self,
+        slot: SaveSlot,
+        content: impl ContentSource + 'static,
+    ) -> Result<GameSession> {
         let (header, reader) = read_header(&self.path(slot))?;
         require(header.info.slot == slot, "slot metadata mismatch")?;
         let state: SessionState = serde_json::from_reader(reader)?;

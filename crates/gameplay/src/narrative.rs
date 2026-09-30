@@ -550,7 +550,8 @@ impl GameContent {
         for profile in &self.game.profiles {
             for rule in &profile.rules {
                 for variant in &rule.variants {
-                    self.dialogue(variant.dialogue)?;
+                    self.authored(variant.dialogue)
+                        .ok_or_else(|| Invalid(format!("unknown dialogue {}", variant.dialogue)))?;
                 }
             }
         }

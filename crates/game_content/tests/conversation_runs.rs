@@ -25,12 +25,12 @@ fn pair(dialogue: DialogueId) -> ConversationKey {
         speaker: MERCHANT,
     }
 }
-fn load(temp: &Temp, root: &std::path::Path) -> (LoadedProject, RuntimeSession) {
+fn load(temp: &Temp, root: &std::path::Path) -> (LoadedProject, gameplay::GameSession) {
     let project = LoadedProject::load_directory(root).unwrap();
     let session = support::runtime(temp, &project);
     (project, session)
 }
-fn start(session: &mut RuntimeSession, key: ConversationKey) {
+fn start(session: &mut gameplay::GameSession, key: ConversationKey) {
     session
         .apply(Command::StartDialogue {
             dialogue: key.dialogue,
@@ -40,7 +40,7 @@ fn start(session: &mut RuntimeSession, key: ConversationKey) {
         })
         .unwrap();
 }
-fn read_lines(session: &mut RuntimeSession, key: ConversationKey) {
+fn read_lines(session: &mut gameplay::GameSession, key: ConversationKey) {
     for _ in 0..64 {
         let view = session.conversation_view(key).unwrap();
         if view.line.is_none() {
@@ -56,7 +56,7 @@ fn read_lines(session: &mut RuntimeSession, key: ConversationKey) {
     panic!("line budget exhausted");
 }
 fn choose(
-    session: &mut RuntimeSession,
+    session: &mut gameplay::GameSession,
     key: ConversationKey,
     id: &str,
 ) -> gameplay::CommandOutcome {
@@ -76,7 +76,7 @@ fn key_fn(s: &str) -> Key {
     key(s)
 }
 fn history(
-    session: &mut RuntimeSession,
+    session: &mut gameplay::GameSession,
     project: &LoadedProject,
     key: ConversationKey,
 ) -> dialogue::History {
@@ -87,7 +87,7 @@ fn history(
         .history_key(key.participant, key.speaker);
     session.state().history(key).clone()
 }
-fn claimed(session: &mut RuntimeSession, scope: Scope) -> bool {
+fn claimed(session: &mut gameplay::GameSession, scope: Scope) -> bool {
     let key = dialogue::ClaimKey {
         claim: CLAIM,
         scope,
@@ -393,7 +393,7 @@ fn three_roles_bind_localized_names_and_numeric_attributes_and_restore() {
     );
     let saves = SaveDirectory::new(temp.0.join("slots"), 1).unwrap();
     saves.quicksave(&session).unwrap();
-    let mut restored = saves
+    let restored = saves
         .load(
             SaveSlot::Quick,
             ContentRepository::open(temp.0.join("content.sqlite")).unwrap(),

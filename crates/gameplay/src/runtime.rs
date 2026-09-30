@@ -5,9 +5,6 @@ use game_types::*;
 use rules::RandomState;
 use serde::{Deserialize, Serialize};
 
-/// Dialogue graphs kept loaded at once. Older graphs are reloaded on demand.
-pub const MAX_LOADED_DIALOGUES: usize = 32;
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ContentIdentity {

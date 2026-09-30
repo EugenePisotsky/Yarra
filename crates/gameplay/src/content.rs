@@ -9,6 +9,7 @@ use crate::{dialogue, quests};
 use game_types::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+use std::rc::Rc;
 
 /// What a variable can hold. A variable keeps the type of its initial value.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -269,6 +270,9 @@ pub struct GameContent {
     /// The engine running `game.scripts`, installed by whoever loaded the content.
     #[serde(skip)]
     pub scripts: Scripts,
+    /// Where dialogue graphs not in `game.dialogues` are read from; see `dialogue`.
+    #[serde(skip)]
+    pub graphs: crate::Graphs,
 }
 /// Finds a definition in a list kept in order of identity.
 pub(crate) fn find<T, K: Ord + Copy>(list: &[T], id: K, of: impl Fn(&T) -> K) -> Option<&T> {
@@ -521,13 +525,41 @@ impl GameContent {
         }
         Ok(())
     }
-    /// At runtime only recently used graphs are present; sessions load them on demand.
-    pub fn loaded_dialogue(&self, id: DialogueId) -> Option<&Dialogue> {
-        self.game.dialogues.iter().find(|d| d.id == id)
+    /// A dialogue graph. Content assembled by a tool holds them all; a session's content
+    /// reads one from its source the first time it is needed and keeps the most recently
+    /// used. A graph that cannot be read, or that does not match its contract, is an error
+    /// for whatever needed it.
+    pub fn dialogue(&self, id: DialogueId) -> Result<Rc<Dialogue>> {
+        if let Some(graph) = self.graphs.cached(id) {
+            return Ok(graph);
+        }
+        let graph = match self.authored(id) {
+            Some(graph) => graph.clone(),
+            None => {
+                let contract = self.dialogue_contract(id)?;
+                let graph = self
+                    .graphs
+                    .read(id)
+                    .ok_or_else(|| Invalid(format!("unknown dialogue {id}")))??;
+                graph.validate()?;
+                require(
+                    graph.id == id && &graph.contract() == contract,
+                    "dialogue contract mismatch",
+                )?;
+                graph
+            }
+        };
+        Ok(self.graphs.keep(graph))
     }
-    pub fn dialogue(&self, id: DialogueId) -> Result<&Dialogue> {
-        self.loaded_dialogue(id)
-            .ok_or_else(|| Invalid("unknown dialogue".into()).into())
+    /// The graph if it is in memory already; nothing is read.
+    pub fn loaded_dialogue(&self, id: DialogueId) -> Option<Rc<Dialogue>> {
+        self.graphs
+            .cached(id)
+            .or_else(|| Some(self.graphs.keep(self.authored(id)?.clone())))
+    }
+    /// A graph the content was assembled with.
+    pub(crate) fn authored(&self, id: DialogueId) -> Option<&Dialogue> {
+        self.game.dialogues.iter().find(|d| d.id == id)
     }
     pub fn variable(&self, id: VariableId) -> Result<&VariableDefinition> {
         find(&self.game.variables, id, |v| v.id)

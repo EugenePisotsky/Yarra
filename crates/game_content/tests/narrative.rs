@@ -27,7 +27,7 @@ const ATTITUDE: RelationshipKey = RelationshipKey {
     from: GUARD,
     to: HERO,
 };
-fn setup(temp: &Temp) -> (LoadedProject, RuntimeSession) {
+fn setup(temp: &Temp) -> (LoadedProject, gameplay::GameSession) {
     let project =
         LoadedProject::load_directory_with_scenario(temp.source(), "scenarios/guard.ron").unwrap();
     let session = support::runtime(temp, &project);
@@ -50,10 +50,10 @@ fn choose() -> Command {
         choice: key("return-key"),
     }
 }
-fn selection(session: &RuntimeSession) -> dialogue::Selection {
+fn selection(session: &gameplay::GameSession) -> dialogue::Selection {
     session.state().selection(INTERACTION).unwrap().clone()
 }
-fn start_quest(session: &mut RuntimeSession, quest: QuestId) {
+fn start_quest(session: &mut gameplay::GameSession, quest: QuestId) {
     session
         .apply(Command::Quest {
             quest,
@@ -96,7 +96,7 @@ fn guard_scenario_rewards_and_new_state_survive_checkpoint_restore() {
     std::fs::remove_dir_all(temp.0.join("source")).unwrap();
     let loaded = library.load(&saves, SaveSlot::Quick).unwrap();
     // Restoring reads no dialogue graph: the saved conversation had finished.
-    assert!(loaded.content().game.dialogues.is_empty());
+    assert!(loaded.content().graphs.loaded() == 0);
     assert_eq!(loaded.state(), &state);
     assert_eq!(
         loaded
@@ -300,10 +300,10 @@ fn only_the_selected_dialogue_graph_is_read() {
     };
     let mut session = open();
     session.preview_interaction(HERO, GUARD).unwrap();
-    assert!(session.content().game.dialogues.is_empty());
+    assert!(session.content().graphs.loaded() == 0);
     session.apply(talk(None)).unwrap();
     assert_eq!(selection(&session).rule, key("welcome"));
-    assert_eq!(session.content().game.dialogues.len(), 1);
+    assert_eq!(session.content().graphs.loaded(), 1);
     // The damaged graph fails only when the quest selects it, and nothing is changed.
     let mut fresh = open();
     start_quest(&mut fresh, GATE);

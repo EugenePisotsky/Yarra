@@ -4,12 +4,11 @@ use yarra_gameplay::actors::Intent;
 use yarra_gameplay::{fixtures::*, *};
 
 type Result<T> = yarra_gameplay::Result<T>;
-type TestSession = GameSession<ToolContent>;
 
-fn open(state: SessionState) -> TestSession {
+fn open(state: SessionState) -> GameSession {
     GameSession::new(ToolContent::new(content()).unwrap(), state).unwrap()
 }
-fn session() -> TestSession {
+fn session() -> GameSession {
     open(state())
 }
 fn intent(ability: &str, target: Option<ActorId>, repeat: bool) -> Intent {
@@ -19,7 +18,7 @@ fn intent(ability: &str, target: Option<ActorId>, repeat: bool) -> Intent {
         repeat,
     }
 }
-fn intend(session: &mut TestSession, actor: ActorId, intent: Intent) -> Result<CommandOutcome> {
+fn intend(session: &mut GameSession, actor: ActorId, intent: Intent) -> Result<CommandOutcome> {
     session.apply(Command::Intend {
         actor,
         intent,
@@ -29,13 +28,13 @@ fn intend(session: &mut TestSession, actor: ActorId, intent: Intent) -> Result<C
 fn strike(target: ActorId) -> Intent {
     intent("strike", Some(target), false)
 }
-fn pass(session: &mut TestSession, millis: u64) -> Vec<GameEvent> {
+fn pass(session: &mut GameSession, millis: u64) -> Vec<GameEvent> {
     session
         .apply(Command::AdvanceTime { millis })
         .unwrap()
         .events
 }
-fn stat(session: &TestSession, actor: ActorId, name: &str) -> i32 {
+fn stat(session: &GameSession, actor: ActorId, name: &str) -> i32 {
     session.stat(actor, &key(name)).unwrap()
 }
 fn resolved(events: &[GameEvent]) -> Vec<(ActorId, &str)> {
@@ -223,7 +222,7 @@ fn what_cannot_be_asked_for_is_refused_with_a_reason() {
     hero.abilities.remove(&key("power-strike"));
     let mut session = open(state);
     let before = session.state().clone();
-    let ask = |session: &mut TestSession, intent| rejected(intend(session, HERO, intent));
+    let ask = |session: &mut GameSession, intent| rejected(intend(session, HERO, intent));
     assert_eq!(
         ask(&mut session, intent("power-strike", Some(MERCHANT), false)),
         Rejection::AbilityNotKnown(key("power-strike"))

@@ -93,7 +93,7 @@ const TALK: ConversationKey = ConversationKey {
     participant: HERO,
     speaker: MERCHANT,
 };
-fn at_choice(content: GameContent) -> GameSession<ToolContent> {
+fn at_choice(content: GameContent) -> GameSession {
     let mut session = GameSession::new(ToolContent::new(content).unwrap(), state()).unwrap();
     session
         .apply(Command::StartDialogue {
@@ -112,7 +112,7 @@ fn at_choice(content: GameContent) -> GameSession<ToolContent> {
         .unwrap();
     session
 }
-fn choose(session: &mut GameSession<ToolContent>) -> gameplay::Result<gameplay::CommandOutcome> {
+fn choose(session: &mut GameSession) -> gameplay::Result<gameplay::CommandOutcome> {
     let expected = session.conversation_view(TALK)?.token;
     session.apply(Command::Choose {
         expected,
@@ -122,7 +122,7 @@ fn choose(session: &mut GameSession<ToolContent>) -> gameplay::Result<gameplay::
         choice: key("return-key"),
     })
 }
-fn keys(session: &GameSession<ToolContent>) -> usize {
+fn keys(session: &GameSession) -> usize {
     let bag = session.state().carried(HERO).unwrap();
     bag.entries.iter().filter(|e| e.definition == KEY).count()
 }

@@ -6,7 +6,7 @@ use crate::rules::Use;
 use crate::tx::Tx;
 use crate::*;
 use game_types::*;
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Pieces of queued work one command carries out at most; see `GameSession::settle`.
 const SETTLE_STEPS: usize = 256;
@@ -228,15 +228,12 @@ pub struct CommandOutcome {
     pub events: Vec<GameEvent>,
 }
 /// One authoritative playthrough: the whole mutable state in memory, the always-loaded
-/// definitions, and dialogue graphs loaded when a conversation needs them.
+/// definitions, and dialogue graphs the content reads when a conversation needs them.
 /// Application adapters separately authorize player control, distance and access.
-pub struct GameSession<C: ContentSource> {
-    source: C,
+pub struct GameSession {
     identity: ContentIdentity,
     content: GameContent,
     triggers: TriggerIndex,
-    /// Loaded graphs, least recently used first.
-    loaded: VecDeque<DialogueId>,
     state: SessionState,
 }
 /// What `Talk` will do, decided from a read-only look at the state before anything changes.
@@ -247,77 +244,43 @@ enum Talk {
         random: rules::RandomState,
     },
 }
-impl<C: ContentSource> GameSession<C> {
+impl GameSession {
     /// Starts or restores a playthrough. The state is brought in line with the content (see
     /// `adopt`), then checked against it in full.
-    pub fn new(mut source: C, mut state: SessionState) -> Result<Self> {
+    pub fn new(mut source: impl ContentSource + 'static, mut state: SessionState) -> Result<Self> {
         let identity = source.identity();
-        let content = source.core()?;
+        let mut content = source.core()?;
         require(
             content.manifest == identity.manifest && content.game.dialogues.is_empty(),
             "session content identity mismatch",
         )?;
+        content.graphs = Graphs::reading(move |id| source.dialogue(id));
         adopt(&content, &mut state)?;
-        let triggers = TriggerIndex::build(&content);
-        let mut session = Self {
-            source,
-            identity,
-            content,
-            triggers,
-            loaded: VecDeque::new(),
-            state,
-        };
-        let active: Vec<_> = session
-            .state
-            .conversations
-            .values()
-            .filter(|c| c.status == RunStatus::Active)
-            .map(|c| c.dialogue)
-            .take(MAX_LOADED_DIALOGUES)
-            .collect();
-        for id in active {
-            session.ensure_dialogue(id)?;
+        // Conversations under way are checked against their graphs.
+        let active = state.conversations.values();
+        let active = active.filter(|c| c.status == RunStatus::Active);
+        for conversation in active.take(MAX_LOADED_DIALOGUES) {
+            content.dialogue(conversation.dialogue)?;
         }
-        session.state.validate(&session.content)?;
-        Ok(session)
+        state.validate(&content)?;
+        Ok(Self {
+            identity,
+            triggers: TriggerIndex::build(&content),
+            content,
+            state,
+        })
     }
     pub fn state(&self) -> &SessionState {
         &self.state
     }
-    /// Always-loaded definitions plus the dialogue graphs currently in memory.
     pub fn content(&self) -> &GameContent {
         &self.content
-    }
-    pub fn content_source(&self) -> &C {
-        &self.source
     }
     pub fn header(&self) -> SessionHeader {
         SessionHeader::capture(&self.state)
     }
     pub fn identity(&self) -> &ContentIdentity {
         &self.identity
-    }
-    fn ensure_dialogue(&mut self, id: DialogueId) -> Result<()> {
-        if let Some(position) = self.loaded.iter().position(|d| *d == id) {
-            self.loaded.remove(position);
-            self.loaded.push_back(id);
-            return Ok(());
-        }
-        let contract = self.content.dialogue_contract(id)?;
-        let graph = self.source.dialogue(id)?;
-        graph.validate()?;
-        require(
-            graph.id == id && &graph.contract() == contract,
-            "dialogue contract mismatch",
-        )?;
-        if self.loaded.len() == MAX_LOADED_DIALOGUES
-            && let Some(old) = self.loaded.pop_front()
-        {
-            self.content.game.dialogues.retain(|d| d.id != old);
-        }
-        self.content.game.dialogues.push(graph);
-        self.loaded.push_back(id);
-        Ok(())
     }
     /// A stat after equipment and effects, or how much of a resource the actor has now.
     pub fn stat(&self, actor: ActorId, stat: &Key) -> Result<i32> {
@@ -339,7 +302,7 @@ impl<C: ContentSource> GameSession<C> {
         )?)
     }
     pub fn available_choices(
-        &mut self,
+        &self,
         dialogue: DialogueId,
         participant: ActorId,
         speaker: ActorId,
@@ -355,9 +318,7 @@ impl<C: ContentSource> GameSession<C> {
             .map(|c| c.id)
             .collect())
     }
-    pub fn conversation_view(&mut self, key: ConversationKey) -> Result<ConversationView> {
-        self.state.conversation(key)?;
-        self.ensure_dialogue(key.dialogue)?;
+    pub fn conversation_view(&self, key: ConversationKey) -> Result<ConversationView> {
         self.content.conversation_view(&self.state, key)
     }
     /// No random state is consumed and no graph is loaded.
@@ -461,28 +422,13 @@ impl<C: ContentSource> GameSession<C> {
     /// conversations they start, walks whose time ran out), each piece on its own, so the
     /// outcome is the settled state.
     pub fn apply(&mut self, command: Command) -> Result<CommandOutcome> {
-        // Reads and graph loading happen first; nothing below performs I/O.
         let talk = match &command {
             Command::Talk {
                 participant,
                 speaker,
                 topic,
                 ..
-            } => {
-                let plan = self.plan_talk(*participant, *speaker, topic.as_ref())?;
-                if let Talk::Start { selection, .. } = &plan {
-                    self.ensure_dialogue(selection.dialogue)?;
-                }
-                Some(plan)
-            }
-            Command::StartDialogue { dialogue, .. } | Command::Choose { dialogue, .. } => {
-                self.ensure_dialogue(*dialogue)?;
-                None
-            }
-            Command::AdvanceLine { key, .. } | Command::InterruptDialogue { key, .. } => {
-                self.ensure_dialogue(key.dialogue)?;
-                None
-            }
+            } => Some(self.plan_talk(*participant, *speaker, topic.as_ref())?),
             _ => None,
         };
         let mut events = self.transact(|content, _, tx, events| match command {
@@ -534,19 +480,11 @@ impl<C: ContentSource> GameSession<C> {
     /// the game goes on and the events show what repeats.
     fn settle(&mut self, events: &mut Vec<GameEvent>) {
         for _ in 0..SETTLE_STEPS {
-            let timed_out = crate::world_runtime::timed_out(&self.state).is_some();
-            // A queued conversation starts now; its graph must be in memory.
-            let unloadable = match self.state.world.pending.front() {
-                _ if timed_out => None,
-                None => return,
-                Some(Pending::Start { dialogue, .. }) => {
-                    let dialogue = *dialogue;
-                    self.ensure_dialogue(dialogue).err().map(|e| e.to_string())
-                }
-                Some(Pending::Signal(_)) => None,
-            };
+            if !self.world_work_pending() {
+                return;
+            }
             let step = self.transact(|content, triggers, tx, events| {
-                crate::world_runtime::process_next(content, triggers, tx, unloadable, events);
+                crate::world_runtime::process_next(content, triggers, tx, events);
                 Ok(())
             });
             match step {

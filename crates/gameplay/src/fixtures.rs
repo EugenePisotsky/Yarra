@@ -375,6 +375,7 @@ pub fn content() -> GameContent {
         },
         items,
         scripts: Scripts::new(std::rc::Rc::new(FixtureFormulas)),
+        graphs: Default::default(),
         game: GameDefinitions {
             world: Default::default(),
             dialogue_contracts: vec![],

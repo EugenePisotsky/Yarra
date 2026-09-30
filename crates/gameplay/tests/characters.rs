@@ -4,16 +4,15 @@ use yarra_gameplay::inventory::fixtures::*;
 use yarra_gameplay::{fixtures::*, *};
 
 type Result<T> = yarra_gameplay::Result<T>;
-type TestSession = GameSession<ToolContent>;
 const TALK: ConversationKey = ConversationKey {
     dialogue: GATE_DIALOGUE,
     participant: HERO,
     speaker: MERCHANT,
 };
-fn new(content: GameContent) -> TestSession {
+fn new(content: GameContent) -> GameSession {
     GameSession::new(ToolContent::new(content).unwrap(), state()).unwrap()
 }
-fn session() -> TestSession {
+fn session() -> GameSession {
     new(content())
 }
 /// The fixture conversation with its one choice doing `actions`, always on offer.
@@ -29,7 +28,7 @@ fn offering(actions: Vec<Action>) -> GameContent {
     content
 }
 /// Talks to the merchant and picks the choice, running its actions for the hero.
-fn pick(session: &mut TestSession) -> Result<CommandOutcome> {
+fn pick(session: &mut GameSession) -> Result<CommandOutcome> {
     // A choice that was refused is still on offer; otherwise the conversation starts over.
     let waiting = session
         .state()
@@ -59,12 +58,12 @@ fn pick(session: &mut TestSession) -> Result<CommandOutcome> {
     })
 }
 /// Runs actions for the hero through a conversation choice.
-fn run(session: &mut TestSession, actions: Vec<Action>) -> Result<CommandOutcome> {
+fn run(session: &mut GameSession, actions: Vec<Action>) -> Result<CommandOutcome> {
     let state = session.state().clone();
     *session = GameSession::new(ToolContent::new(offering(actions)).unwrap(), state).unwrap();
     pick(session)
 }
-fn stat(session: &TestSession, actor: ActorId, name: &str) -> i32 {
+fn stat(session: &GameSession, actor: ActorId, name: &str) -> i32 {
     session.stat(actor, &key(name)).unwrap()
 }
 fn rejected(result: Result<CommandOutcome>) -> Rejection {
@@ -83,7 +82,7 @@ fn effect(name: &str, duration_ms: Option<u64>) -> Action {
 fn award(amount: u64) -> Action {
     Action::AwardExperience { amount }
 }
-fn join(session: &mut TestSession, actor: ActorId) -> Result<CommandOutcome> {
+fn join(session: &mut GameSession, actor: ActorId) -> Result<CommandOutcome> {
     session.apply(Command::Party {
         actor,
         member: true,
@@ -303,7 +302,7 @@ fn experience_is_shared_and_levels_grant_points_and_bonuses() {
     assert_eq!(session.state().actor(MERCHANT).unwrap().level, 3);
     assert_eq!(stat(&session, MERCHANT, "health"), 100);
 
-    let spend = |session: &mut TestSession, actor, name: &str| {
+    let spend = |session: &mut GameSession, actor, name: &str| {
         session.apply(Command::SpendAttributePoint {
             actor,
             stat: key(name),
@@ -340,7 +339,7 @@ fn experience_is_shared_and_levels_grant_points_and_bonuses() {
 #[test]
 fn a_trainer_teaches_what_the_class_allows_for_learning_points() {
     let teach = |skill: &str| Action::Teach { skill: key(skill) };
-    let can_learn = |session: &TestSession, skill: &str| {
+    let can_learn = |session: &GameSession, skill: &str| {
         session
             .content()
             .evaluate(
@@ -413,7 +412,7 @@ fn a_trainer_teaches_what_the_class_allows_for_learning_points() {
 #[test]
 fn gold_is_paid_from_the_party_purse() {
     let mut session = session();
-    let gold = |session: &TestSession, minimum| {
+    let gold = |session: &GameSession, minimum| {
         session
             .content()
             .evaluate(
@@ -476,7 +475,7 @@ fn the_party_holds_four_and_one_of_them_is_steered() {
         Rejection::NotInParty(MERCHANT)
     );
     // The steered character cannot be sent away; anyone else can.
-    let leave = |session: &mut TestSession, actor| {
+    let leave = |session: &mut GameSession, actor| {
         session.apply(Command::Party {
             actor,
             member: false,
@@ -594,7 +593,7 @@ fn a_saved_character_is_brought_in_line_with_the_rules_or_refused_on_load() {
 #[test]
 fn what_a_player_runs_into_is_refused_with_a_reason_a_ui_can_match() {
     let mut session = session();
-    let item = |session: &TestSession, definition| {
+    let item = |session: &GameSession, definition| {
         let bag = session.state().carried(HERO).unwrap();
         bag.entries
             .iter()
@@ -729,14 +728,14 @@ mod unopened {
         }
         (state, ids)
     }
-    fn open(state: SessionState) -> TestSession {
+    fn open(state: SessionState) -> GameSession {
         GameSession::new(ToolContent::new(armed()).unwrap(), state).unwrap()
     }
-    fn guards(count: u8) -> (TestSession, Vec<ActorId>) {
+    fn guards(count: u8) -> (GameSession, Vec<ActorId>) {
         let (state, ids) = start(count);
         (open(state), ids)
     }
-    fn potions(session: &TestSession, actor: ActorId) -> u64 {
+    fn potions(session: &GameSession, actor: ActorId) -> u64 {
         let state = session.state();
         state.item_count(session.content(), actor, POTION).unwrap()
     }
@@ -866,7 +865,7 @@ mod unopened {
         assert!(session.state().inventory(TRUNK_BAG).is_err());
         let open = Command::World(WorldCommand::Open { object: TRUNK });
         // Shut and locked containers say which of the two they are.
-        let contents = |session: &TestSession| {
+        let contents = |session: &GameSession| {
             let refused = session.container_contents(TRUNK).unwrap_err();
             refused.rejection().cloned()
         };

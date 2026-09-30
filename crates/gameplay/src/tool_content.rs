@@ -28,6 +28,9 @@ impl ContentSource for ToolContent {
         Ok(core)
     }
     fn dialogue(&mut self, id: DialogueId) -> Result<dialogue::Dialogue> {
-        Ok(self.content.dialogue(id)?.clone())
+        let graph = self.content.authored(id);
+        graph
+            .cloned()
+            .ok_or_else(|| Invalid(format!("unknown dialogue {id}")).into())
     }
 }
