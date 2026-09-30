@@ -18,7 +18,7 @@ Target: a classic party RPG in the line of KOTOR / Dragon Age: Origins, Gothic a
 | 4. Luau scripts and names | Names as identities in authored content; Luau in a `scripting` crate behind a trait; script conditions and actions beside the built-in ones | Done |
 | 5. Events and areas | Event-driven triggers only; polygon areas painted in the editor; blocking and ambient dialogue modes | Done |
 | 6. Character rules | Data-defined stats, classes, levels, skill ranks, modifiers, status effects; timed actions for combat | Done |
-| 7. Consolidation | Fixes and cuts from a review of the branch: one driver in `gameplay`, limits only where they prevent real failure, saves that survive content edits, simpler types | In progress |
+| 7. Consolidation | Fixes and cuts from a review of the branch: one driver in `gameplay`, limits only where they prevent real failure, saves that survive content edits, simpler types | Done |
 
 ### Step 1: done
 
@@ -139,7 +139,7 @@ Not done, deliberately:
 - Scenarios cannot start a party with experience.
 - Variable subscriptions are still per variable, not per actor.
 
-### Step 7: consolidation
+### Step 7: done
 
 A review of the branch after step 6 found the core sound (the playthrough in memory, commands against a journal, names as identities, Luau effects running through the built-in actions, the Bevy-free session) and three kinds of debt: bugs, leftovers of the bounded SQLite-era design, and rules that live only in the game adapter. This step pays them before more content or engine work is built on top.
 
@@ -171,6 +171,8 @@ Evidence: new tests for turns kept through a save and the world held still, runa
 - Test fixtures behind a feature: done. `gameplay::fixtures` and `inventory::fixtures` exist only with the `fixtures` feature, which the tests of `gameplay`, `scripting`, `save` and `game_content` turn on as a dev-dependency; the game does not get them.
 
 **Claims folded into variables: done.** A once-only reward is a boolean variable and the new `If { condition, then, otherwise }` action, a general branch built on the existing conditions. Claim definitions, the claims set in the state and its journal entry, `Claimed`, `game.claim`, `RewardClaimed` and the claim asset kind are gone; the guard's reward is `guard/rewarded`. The pair scope claims had was used nowhere and was not carried over. Bundle schema 12, save format 16. Interaction profiles stay while graphs load on demand: they pick an opening without reading any graph.
+
+Evidence: 232 tests across the gameplay crates and the game, clippy clean, the six demo scenarios pass. Each fix above has a regression test; the per-command checks were also run switched off. Bundle schema 12, save format 16.
 
 **Later, with the next feature step.** The story adapter becomes app-side plugins (an `ActorId` to entity index, commands in as messages, `GameEvent`s out as messages, the HUD on its own) before companions follow or combat reaches the engine. Named characters become content, so a typo in a trigger fails the build. Localization infers message contracts from the source-language FTL, drops review hashes and stops parsing Fluent on every `format()`. The bundle keeps the `ContentSource` port but loses the hardening one author does not need. Rule names are interned into indices. `PlayerMovementSuspended` takes reasons instead of one owner, `to_render` takes the world space, and an areas-only publish changes the runtime generation.
 
