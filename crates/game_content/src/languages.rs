@@ -138,13 +138,10 @@ fn presentation_error(error: ContentError) -> LocalizationError {
 }
 impl ResourceSource for LanguageSource {
     fn contract(&mut self, id: TextResourceId) -> localization::Result<TextContract> {
-        let assets = self
-            .content
-            .load(&[AssetId::Text(id)])
-            .map_err(presentation_error)?;
-        match assets.get(&AssetId::Text(id)) {
-            Ok(Asset::Text(contract)) => Ok(contract.clone()),
-            _ => Err(LocalizationError::Resource("missing text contract".into())),
+        match self.content.read(&AssetId::Text(id)) {
+            Ok(Asset::Text(contract)) => Ok(contract),
+            Ok(_) => Err(LocalizationError::Resource("missing text contract".into())),
+            Err(error) => Err(presentation_error(error)),
         }
     }
     fn resource(

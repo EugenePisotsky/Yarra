@@ -3,7 +3,7 @@
 use crate::{ItemAmount, Result};
 use game_types::*;
 use gameplay::inventory::{TradeLine, TradeOffer, TradeParticipants};
-use gameplay::{Command, ContentSource, GameSession, StateRequest, StateStore};
+use gameplay::{Command, ContentSource, GameSession};
 use gameplay::{actors, inventory, quests};
 use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -110,16 +110,13 @@ pub enum Step {
         millis: u64,
     },
 }
-fn entry<S: StateStore, C: ContentSource>(
-    session: &mut GameSession<S, C>,
+fn entry<C: ContentSource>(
+    session: &GameSession<C>,
     inventory: InventoryId,
     definition: ItemDefinitionId,
 ) -> Result<ItemId> {
     session
-        .query(StateRequest {
-            inventories: [inventory].into(),
-            ..Default::default()
-        })?
+        .state()
         .inventory(inventory)?
         .entries
         .iter()
@@ -127,8 +124,8 @@ fn entry<S: StateStore, C: ContentSource>(
         .map(|e| e.id)
         .ok_or_else(|| Invalid(format!("inventory {inventory} has no item {definition}")).into())
 }
-fn trade_lines<S: StateStore, C: ContentSource>(
-    session: &mut GameSession<S, C>,
+fn trade_lines<C: ContentSource>(
+    session: &GameSession<C>,
     inventory: InventoryId,
     amounts: &[ItemAmount],
 ) -> Result<Vec<TradeLine>> {
@@ -140,14 +137,7 @@ fn trade_lines<S: StateStore, C: ContentSource>(
     for amount in amounts {
         require(amount.quantity > 0, "trade quantity must be positive")?;
         let mut remaining = amount.quantity;
-        for entry in &session
-            .query(StateRequest {
-                inventories: [inventory].into(),
-                ..Default::default()
-            })?
-            .inventory(inventory)?
-            .entries
-        {
+        for entry in &session.state().inventory(inventory)?.entries {
             if entry.definition != amount.definition || remaining == 0 {
                 continue;
             }
@@ -189,22 +179,19 @@ impl Step {
             Self::AdvanceTime { .. } => "AdvanceTime",
         }
     }
-    pub fn apply<S: StateStore, C: ContentSource>(
-        &self,
-        session: &mut GameSession<S, C>,
-    ) -> Result<()> {
+    pub fn apply<C: ContentSource>(&self, session: &mut GameSession<C>) -> Result<()> {
         let command = match self {
             Self::World(command) => Command::World(command.clone()),
             Self::PumpWorld { limit } => {
                 require(*limit <= 10000, "scenario delivery budget exceeded")?;
                 for _ in 0..*limit {
-                    if !session.world_work_pending()? {
+                    if !session.world_work_pending() {
                         return Ok(());
                     }
                     session.apply(Command::World(gameplay::WorldCommand::ProcessNext))?;
                 }
                 require(
-                    !session.world_work_pending()?,
+                    !session.world_work_pending(),
                     "scenario delivery budget exhausted; work remains pending",
                 )?;
                 return Ok(());
@@ -214,11 +201,7 @@ impl Step {
                 locked,
                 open,
             } => {
-                let state = session.query(StateRequest {
-                    objects: [*object].into(),
-                    ..Default::default()
-                })?;
-                let o = state.world.object(*object)?;
+                let o = session.state().object(session.content(), *object)?;
                 require(
                     o.locked == *locked && o.open == *open && !o.destroyed,
                     "unexpected object state",
@@ -226,14 +209,10 @@ impl Step {
                 return Ok(());
             }
             Self::ExpectMovement { trigger, phase } => {
-                let state = session.query(StateRequest {
-                    triggers: [*trigger].into(),
-                    ..Default::default()
-                })?;
                 require(
-                    state
-                        .world
-                        .trigger(*trigger)?
+                    session
+                        .state()
+                        .trigger(*trigger)
                         .movement
                         .as_ref()
                         .is_some_and(|m| m.phase == *phase),
@@ -335,41 +314,19 @@ impl Step {
                 return Ok(());
             }
             Self::ExpectQuest { quest, status } => {
-                let state = session.query(StateRequest {
-                    quests: [*quest].into(),
-                    ..Default::default()
-                })?;
                 require(
-                    state.quest(*quest)?.status == *status,
+                    session.state().quest(*quest).status == *status,
                     "unexpected quest status",
                 )?;
                 return Ok(());
             }
             Self::UseItem { actor, definition } => Command::UseItem {
                 actor: *actor,
-                item: {
-                    let bag = session
-                        .query(StateRequest {
-                            actors: [*actor].into(),
-                            ..Default::default()
-                        })?
-                        .carried(*actor)?
-                        .id;
-                    entry(session, bag, *definition)?
-                },
+                item: entry(session, session.state().carried(*actor)?.id, *definition)?,
             },
             Self::Equip { actor, definition } => Command::Equip {
                 actor: *actor,
-                item: {
-                    let bag = session
-                        .query(StateRequest {
-                            actors: [*actor].into(),
-                            ..Default::default()
-                        })?
-                        .carried(*actor)?
-                        .id;
-                    entry(session, bag, *definition)?
-                },
+                item: entry(session, session.state().carried(*actor)?.id, *definition)?,
             },
             Self::Unequip { actor, slot } => Command::Unequip {
                 actor: *actor,
@@ -385,10 +342,7 @@ impl Step {
                 while remaining > 0 {
                     let id = entry(session, *source, item.definition)?;
                     let quantity = session
-                        .query(StateRequest {
-                            inventories: [*source].into(),
-                            ..Default::default()
-                        })?
+                        .state()
                         .inventory(*source)?
                         .entry(id)?
                         .quantity

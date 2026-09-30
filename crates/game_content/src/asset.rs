@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 pub const MAX_ASSET_BYTES: usize = 2 * 1024 * 1024;
-pub const MAX_ASSET_DEPENDENCIES: usize = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[repr(i64)]
@@ -241,103 +240,81 @@ impl Asset {
             Self::Trigger(v) => AssetId::Trigger(v.id),
         }
     }
-    /// Mechanical dependencies only. Presentation explicitly requests a locale/resource.
-    pub fn dependencies(&self) -> Result<BTreeSet<AssetId>> {
-        let mut deps = BTreeSet::new();
+    /// Other assets this one refers to. Authoring uses it to check that a package declares
+    /// the packages it draws from; the runtime never follows these.
+    pub(crate) fn references(&self) -> Result<BTreeSet<AssetId>> {
+        let mut refs = BTreeSet::new();
         match self {
             Self::Trigger(v) => {
-                condition_dependencies(&v.condition, &mut deps)?;
-                deps.insert(AssetId::Rules);
-                let mut request = gameplay::ContentRequest::default();
-                v.content_dependencies(&mut request)?;
-                deps.extend(request.items.into_iter().map(AssetId::Item));
-                deps.extend(request.areas.into_iter().map(AssetId::Area));
-                deps.extend(request.quests.into_iter().map(AssetId::Quest));
-                deps.extend(
-                    request
-                        .dialogue_contracts
-                        .into_iter()
-                        .map(AssetId::DialogueContract),
-                );
-                deps.extend(request.claims.into_iter().map(AssetId::Claim));
-                deps.extend(request.facts.into_iter().map(AssetId::Fact));
+                refs.insert(AssetId::Rules);
+                condition_references(&v.condition, &mut refs)?;
+                if let gameplay::TriggerActivation::Events(signals) = &v.activation {
+                    for signal in signals {
+                        use gameplay::WorldSignal::*;
+                        refs.extend(match signal {
+                            Entered { area, .. } | Exited { area, .. } => {
+                                Some(AssetId::Area(*area))
+                            }
+                            ItemAcquired { definition, .. } => Some(AssetId::Item(*definition)),
+                            QuestStarted(id) | Quest(id) => Some(AssetId::Quest(*id)),
+                            Fact(key) => Some(AssetId::Fact(key.clone())),
+                            History(key) => Some(AssetId::DialogueContract(key.dialogue)),
+                            Claim(key) => Some(AssetId::Claim(key.claim)),
+                            Actor(_) | Relationship(_) => None,
+                        });
+                    }
+                }
                 for step in &v.steps {
                     if let gameplay::SequenceStep::Apply(actions) = step {
                         for action in actions {
-                            action_dependencies(action, 0, &mut 1024, &mut deps)?;
+                            action_references(action, &mut refs)?;
                         }
                     }
                 }
             }
-            Self::Text(v) => {
-                deps.extend(v.imports.iter().copied().map(AssetId::Text));
-            }
+            Self::Text(v) => refs.extend(v.imports.iter().copied().map(AssetId::Text)),
             Self::Item(v) => {
-                deps.insert(AssetId::Category(v.category));
-                deps.insert(AssetId::Rules);
+                refs.insert(AssetId::Category(v.category));
+                refs.insert(AssetId::Rules);
             }
-            Self::Actor(_) => {
-                deps.insert(AssetId::Rules);
+            Self::Actor(v) => {
+                refs.insert(AssetId::Rules);
+                refs.extend(v.interaction.map(AssetId::Profile));
             }
             Self::Dialogue(v) => {
-                deps.insert(AssetId::DialogueContract(v.id));
-                deps.insert(AssetId::Rules);
-                deps.extend(
-                    self.text_references()
-                        .iter()
-                        .map(|r| AssetId::Text(r.resource)),
-                );
-                for node in &v.nodes {
-                    for choice in &node.choices {
-                        deps.extend(
-                            choice
-                                .conditions
-                                .iter()
-                                .cloned()
-                                .map(|key| AssetId::Condition(BindingId::new(v.id, key))),
-                        );
-                        deps.extend(
-                            choice
-                                .actions
-                                .iter()
-                                .cloned()
-                                .map(|key| AssetId::Action(BindingId::new(v.id, key))),
-                        );
-                    }
+                refs.insert(AssetId::DialogueContract(v.id));
+                refs.insert(AssetId::Rules);
+                for choice in v.nodes.iter().flat_map(|n| &n.choices) {
+                    let binding = |key: &Key| BindingId::new(v.id, key.clone());
+                    refs.extend(
+                        choice
+                            .conditions
+                            .iter()
+                            .map(|k| AssetId::Condition(binding(k))),
+                    );
+                    refs.extend(choice.actions.iter().map(|k| AssetId::Action(binding(k))));
                 }
             }
-            Self::Condition { value, .. } => condition_dependencies(value, &mut deps)?,
-            Self::Predicate(v) => condition_dependencies(&v.condition, &mut deps)?,
+            Self::Condition { value, .. } => condition_references(value, &mut refs)?,
+            Self::Predicate(v) => condition_references(&v.condition, &mut refs)?,
             Self::Profile(v) => {
                 for rule in &v.rules {
-                    deps.extend(
-                        rule.variants
-                            .iter()
-                            .map(|v| AssetId::DialogueContract(v.dialogue)),
-                    );
-                    condition_dependencies(&rule.condition, &mut deps)?;
+                    for variant in &rule.variants {
+                        refs.insert(AssetId::DialogueContract(variant.dialogue));
+                        refs.insert(AssetId::Dialogue(variant.dialogue));
+                    }
+                    condition_references(&rule.condition, &mut refs)?;
                 }
             }
-            Self::Action { value, .. } => action_dependencies(value, 0, &mut 1024, &mut deps)?,
+            Self::Action { value, .. } => action_references(value, &mut refs)?,
             _ => {}
         }
-        require(
-            deps.len() <= MAX_ASSET_DEPENDENCIES,
-            "asset dependency limit exceeded",
-        )?;
-        Ok(deps)
-    }
-    /// Published references checked independently of the demand-loaded dependency closure.
-    pub(crate) fn selection_links(&self) -> Vec<AssetId> {
-        match self {
-            Self::Actor(v) => v.interaction.map(AssetId::Profile).into_iter().collect(),
-            Self::Profile(v) => v
-                .rules
+        refs.extend(
+            self.text_references()
                 .iter()
-                .flat_map(|r| r.variants.iter().map(|v| AssetId::Dialogue(v.dialogue)))
-                .collect(),
-            _ => vec![],
-        }
+                .map(|r| AssetId::Text(r.resource)),
+        );
+        Ok(refs)
     }
     pub(crate) fn validate_local(&self) -> Result<()> {
         match self {
@@ -369,69 +346,9 @@ impl Asset {
             }
             _ => {}
         }
-        self.dependencies()?;
         Ok(())
     }
 }
-fn action_dependencies(
-    action: &Action,
-    depth: usize,
-    budget: &mut usize,
-    deps: &mut BTreeSet<AssetId>,
-) -> Result<()> {
-    require(depth <= 8 && *budget > 0, "action complexity exceeded")?;
-    *budget -= 1;
-    match action {
-        Action::SetLocked { object, .. } => {
-            deps.insert(AssetId::Object(*object));
-        }
-        Action::Claim { claim, actions } => {
-            require(!actions.is_empty(), "empty claimed action group")?;
-            deps.insert(AssetId::Claim(*claim));
-            for action in actions {
-                action_dependencies(action, depth + 1, budget, deps)?;
-            }
-        }
-        Action::Quest { quest, .. } => {
-            deps.insert(AssetId::Quest(*quest));
-        }
-        Action::Relationship { from, to, .. } => {
-            require(from != to, "relationship needs two roles")?
-        }
-        Action::GrantItem {
-            definition,
-            quantity,
-        }
-        | Action::ConsumeItem {
-            definition,
-            quantity,
-        } => {
-            require(*quantity > 0, "zero item action")?;
-            deps.insert(AssetId::Item(*definition));
-        }
-        Action::AwardExperience { amount, .. } => {
-            require(*amount > 0, "zero XP reward")?;
-            deps.insert(AssetId::Rules);
-        }
-        Action::SetFact { key, .. } => {
-            deps.insert(AssetId::Fact(key.clone()));
-        }
-        Action::SkillCheck {
-            difficulty,
-            success,
-            failure,
-            ..
-        } => {
-            require(*difficulty > 0, "zero check difficulty")?;
-            deps.insert(AssetId::Rules);
-            for child in success.iter().chain(failure) {
-                action_dependencies(child, depth + 1, budget, deps)?;
-            }
-        }
-    }
-    Ok(())
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AssetHeader {
     pub id: AssetId,
@@ -447,34 +364,38 @@ pub(crate) fn corrupt(id: &AssetId, message: impl Into<String>) -> ContentError 
     }
 }
 
-fn condition_dependencies(condition: &Condition, deps: &mut BTreeSet<AssetId>) -> Result<()> {
-    let mut request = gameplay::ContentRequest::default();
-    condition.content_dependencies(&mut request)?;
-    deps.extend(request.areas.into_iter().map(AssetId::Area));
-    deps.extend(request.claims.into_iter().map(AssetId::Claim));
-    deps.extend(
-        request
-            .dialogue_contracts
-            .into_iter()
-            .map(AssetId::DialogueContract),
-    );
-    deps.extend(request.items.into_iter().map(AssetId::Item));
-    deps.extend(request.facts.into_iter().map(AssetId::Fact));
-    deps.extend(request.quests.into_iter().map(AssetId::Quest));
-    deps.extend(request.predicates.into_iter().map(AssetId::Predicate));
+fn condition_references(condition: &Condition, refs: &mut BTreeSet<AssetId>) -> Result<()> {
     condition.visit(&mut |c| {
-        match c {
-            Condition::SkillExperience { .. } => {
-                deps.insert(AssetId::Rules);
+        refs.extend(match c {
+            Condition::InsideArea { area } => Some(AssetId::Area(*area)),
+            Condition::History { dialogue, .. } => Some(AssetId::DialogueContract(*dialogue)),
+            Condition::Claimed { claim, .. } => Some(AssetId::Claim(*claim)),
+            Condition::HasItem { definition, .. } => Some(AssetId::Item(*definition)),
+            Condition::Fact { key, .. } => Some(AssetId::Fact(key.clone())),
+            Condition::QuestStatus { quest, .. } | Condition::ObjectiveCompleted { quest, .. } => {
+                Some(AssetId::Quest(*quest))
             }
-            Condition::History { minimum, .. } => require(*minimum > 0, "zero history threshold")?,
-            Condition::HasItem { quantity, .. } => require(*quantity > 0, "zero item condition")?,
-            Condition::Relationship { from, to, minimum } => require(
-                from != to && (-100..=100).contains(minimum),
-                "invalid relationship condition",
-            )?,
-            _ => {}
-        };
+            Condition::Named(id) => Some(AssetId::Predicate(*id)),
+            Condition::SkillExperience { .. } => Some(AssetId::Rules),
+            _ => None,
+        });
+        Ok(())
+    })?;
+    Ok(())
+}
+fn action_references(action: &Action, refs: &mut BTreeSet<AssetId>) -> Result<()> {
+    action.visit(&mut |a| {
+        refs.extend(match a {
+            Action::SetLocked { object, .. } => Some(AssetId::Object(*object)),
+            Action::Claim { claim, .. } => Some(AssetId::Claim(*claim)),
+            Action::Quest { quest, .. } => Some(AssetId::Quest(*quest)),
+            Action::GrantItem { definition, .. } | Action::ConsumeItem { definition, .. } => {
+                Some(AssetId::Item(*definition))
+            }
+            Action::SetFact { key, .. } => Some(AssetId::Fact(key.clone())),
+            Action::AwardExperience { .. } | Action::SkillCheck { .. } => Some(AssetId::Rules),
+            Action::Relationship { .. } => None,
+        });
         Ok(())
     })?;
     Ok(())

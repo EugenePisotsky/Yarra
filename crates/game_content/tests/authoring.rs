@@ -108,21 +108,16 @@ fn conversations_reuse_text_and_binding_names_without_sharing_logic() {
     );
     let path = temp.0.join("mechanics.sqlite");
     project.build(&path).unwrap();
-    let mut repo = ContentRepository::open(path, Default::default()).unwrap();
-    let set = repo.load(&[AssetId::Dialogue(second_id)]).unwrap();
-    assert!(
-        set.get(&AssetId::Condition(BindingId::new(
-            second_id,
-            Key::new("has-key").unwrap()
-        )))
-        .is_ok()
-    );
-    assert!(
-        set.get(&AssetId::Condition(BindingId::new(
-            GATE_DIALOGUE,
-            Key::new("has-key").unwrap()
-        )))
-        .is_err()
+    // Each conversation is published with exactly its own bindings.
+    let mut repo = ContentRepository::open(path).unwrap();
+    let pack = gameplay::ContentSource::dialogue(&mut repo, second_id).unwrap();
+    let has_key = |dialogue| BindingId::new(dialogue, Key::new("has-key").unwrap());
+    assert!(pack.conditions.contains_key(&has_key(second_id)));
+    assert!(!pack.conditions.contains_key(&has_key(GATE_DIALOGUE)));
+    let first = gameplay::ContentSource::dialogue(&mut repo, GATE_DIALOGUE).unwrap();
+    assert_ne!(
+        first.conditions[&has_key(GATE_DIALOGUE)],
+        pack.conditions[&has_key(second_id)]
     );
 }
 #[test]
@@ -161,8 +156,8 @@ fn moving_conversation_and_reordering_packages_preserves_publication_identity() 
         before.content().fingerprint().unwrap(),
         after.content().fingerprint().unwrap()
     );
-    let a = ContentRepository::open(first, Default::default()).unwrap();
-    let b = ContentRepository::open(second, Default::default()).unwrap();
+    let a = ContentRepository::open(first).unwrap();
+    let b = ContentRepository::open(second).unwrap();
     assert_eq!(a.manifest().publication_hash, b.manifest().publication_hash);
 }
 #[test]
@@ -176,7 +171,7 @@ fn independent_language_updates_work_with_retained_content_and_saved_state() {
     project.build_language_pack("en", &en).unwrap();
     let uk1 = temp.0.join("uk1.sqlite");
     project.build_language_pack("uk", &uk1).unwrap();
-    let library = ContentLibrary::new(temp.0.join("library"), Default::default()).unwrap();
+    let library = ContentLibrary::new(temp.0.join("library")).unwrap();
     let identity = library.retain(&content).unwrap();
     let saves = save::SaveDirectory::new(temp.0.join("saves"), 1).unwrap();
     saves.quicksave(&project.run_scenario().unwrap()).unwrap();
@@ -233,13 +228,7 @@ fn independent_language_updates_work_with_retained_content_and_saved_state() {
         "Лікувальне зілля"
     );
     assert_eq!(new.cached_scopes(), 1);
-    library
-        .load(
-            &saves,
-            save::SaveSlot::Quick,
-            temp.0.join("restored.sqlite"),
-        )
-        .unwrap();
+    library.load(&saves, save::SaveSlot::Quick).unwrap();
 }
 #[test]
 fn source_revisions_mark_only_affected_translations_and_shipping_requires_review() {

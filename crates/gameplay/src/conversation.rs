@@ -1,6 +1,7 @@
 //! Conversation execution and locale-independent read models.
 use crate::dialogue::{ArgumentSource, ChoiceRepeat, HistoryEvent, RunStatus, Token};
 use crate::session::{conditions_met, run_action};
+use crate::tx::Tx;
 use crate::{Result, *};
 use game_types::*;
 use std::collections::BTreeMap;
@@ -68,12 +69,7 @@ impl GameContent {
             let value = match source {
                 ArgumentSource::ActorName(role) => {
                     let actor = state.actor(c.bindings[role])?;
-                    let template = self
-                        .game
-                        .actors
-                        .iter()
-                        .find(|t| t.id == actor.template)
-                        .ok_or_else(|| Invalid("missing name template".into()))?;
+                    let template = self.template(actor.template)?;
                     BoundArgument::Text(
                         actor
                             .name_override
@@ -100,7 +96,7 @@ impl GameContent {
         state: &SessionState,
         key: ConversationKey,
     ) -> Result<ConversationView> {
-        let c = conversation(state, key)?;
+        let c = state.conversation(key)?;
         let graph = self.dialogue(key.dialogue)?;
         let node = graph.node(&c.node)?;
         let line = if c.status == RunStatus::Active {
@@ -138,26 +134,9 @@ impl GameContent {
         })
     }
 }
-pub(crate) fn conversation(
-    state: &SessionState,
-    key: ConversationKey,
-) -> Result<&dialogue::Conversation> {
-    state
-        .conversations
-        .iter()
-        .find(|c| ConversationKey::of(c) == key)
-        .ok_or_else(|| Invalid("conversation has not started".into()).into())
-}
-fn index(state: &SessionState, key: ConversationKey) -> Result<usize> {
-    state
-        .conversations
-        .iter()
-        .position(|c| ConversationKey::of(c) == key)
-        .ok_or_else(|| Invalid("conversation has not started".into()).into())
-}
 fn record(
     content: &GameContent,
-    state: &mut SessionState,
+    state: &mut Tx,
     key: ConversationKey,
     event: HistoryEvent,
 ) -> Result<()> {
@@ -165,12 +144,7 @@ fn record(
         .dialogue_contract(key.dialogue)?
         .history_key(key.participant, key.speaker);
     let time = state.time;
-    state
-        .histories
-        .iter_mut()
-        .find(|v| v.key == h)
-        .ok_or_else(|| Invalid("history not resolved".into()))?
-        .record(&event, time)?;
+    state.history_mut(h).record(&event, time)?;
     Ok(())
 }
 fn choice_available(
@@ -183,7 +157,7 @@ fn choice_available(
         content
             .dialogue_contract(c.dialogue)?
             .history_key(c.participant, c.speaker),
-    )?;
+    );
     let repeat = match choice.repeat {
         ChoiceRepeat::Always => true,
         ChoiceRepeat::OncePerRun => !c.accepted.contains(&choice.id),
@@ -201,32 +175,29 @@ fn choice_available(
 }
 pub(crate) fn start(
     content: &GameContent,
-    state: &mut SessionState,
+    state: &mut Tx,
     key: ConversationKey,
     bindings: &BTreeMap<Key, ActorId>,
     events: &mut Vec<GameEvent>,
 ) -> Result<()> {
-    let previous = state
-        .conversations
-        .iter()
-        .position(|c| ConversationKey::of(c) == key);
-    let run = if let Some(i) = previous {
-        require(
-            state.conversations[i].status != RunStatus::Active,
-            "conversation already active",
-        )?;
-        state.conversations[i]
-            .token
-            .run
-            .checked_add(1)
-            .ok_or_else(|| Invalid("dialogue run overflow".into()))?
-    } else {
-        1
+    let run = match state.conversations.get(&key) {
+        Some(previous) => {
+            require(
+                previous.status != RunStatus::Active,
+                "conversation already active",
+            )?;
+            previous
+                .token
+                .run
+                .checked_add(1)
+                .ok_or_else(|| Invalid("dialogue run overflow".into()))?
+        }
+        None => 1,
     };
     let contract = content.dialogue_contract(key.dialogue)?;
     require(
         contract.repeat.eligible(
-            state.history(contract.history_key(key.participant, key.speaker))?,
+            &state.history(contract.history_key(key.participant, key.speaker)),
             state.time,
         ),
         "dialogue repeat policy blocks start",
@@ -239,22 +210,18 @@ pub(crate) fn start(
         state.actor(*id)?;
     }
     record(content, state, key, HistoryEvent::Started)?;
-    match previous {
-        Some(i) => state.conversations[i] = next,
-        None => state.conversations.push(next),
-    };
+    state.put_conversation(next);
     events.push(GameEvent::DialogueStarted);
     Ok(())
 }
 pub(crate) fn present(
     content: &GameContent,
-    state: &mut SessionState,
+    state: &mut Tx,
     key: ConversationKey,
     expected: Token,
     events: &mut Vec<GameEvent>,
 ) -> Result<()> {
-    let i = index(state, key)?;
-    let c = &state.conversations[i];
+    let c = state.conversation(key)?;
     c.check(expected)?;
     let node = content.dialogue(key.dialogue)?.node(&c.node)?;
     let line = node
@@ -262,11 +229,15 @@ pub(crate) fn present(
         .get(c.line)
         .ok_or_else(|| Invalid("no pending dialogue line".into()))?;
     let id = line.id.clone();
-    state.conversations[i].bump()?;
-    state.conversations[i].line += 1;
+    let c = state.conversation_mut(key)?;
+    c.bump()?;
+    c.line += 1;
+    let completed = c.line == node.lines.len() && node.choices.is_empty();
+    if completed {
+        c.status = RunStatus::Completed;
+    }
     record(content, state, key, HistoryEvent::Line(id.clone()))?;
-    if state.conversations[i].line == node.lines.len() && node.choices.is_empty() {
-        state.conversations[i].status = RunStatus::Completed;
+    if completed {
         record(content, state, key, HistoryEvent::Completed)?;
     }
     events.push(GameEvent::LinePresented { key, line: id });
@@ -274,14 +245,13 @@ pub(crate) fn present(
 }
 pub(crate) fn choose(
     content: &GameContent,
-    state: &mut SessionState,
+    state: &mut Tx,
     key: ConversationKey,
     choice: &Key,
     expected: Token,
     events: &mut Vec<GameEvent>,
 ) -> Result<()> {
-    let i = index(state, key)?;
-    let c = &state.conversations[i];
+    let c = state.conversation(key)?;
     c.check(expected)?;
     let graph = content.dialogue(key.dialogue)?;
     let selected = c.choice(graph, choice)?;
@@ -299,9 +269,11 @@ pub(crate) fn choose(
             events,
         )?;
     }
-    state.conversations[i].advance(graph, choice)?;
+    let c = state.conversation_mut(key)?;
+    c.advance(graph, choice)?;
+    let completed = c.status == RunStatus::Completed;
     record(content, state, key, HistoryEvent::Choice(choice.clone()))?;
-    if state.conversations[i].status == RunStatus::Completed {
+    if completed {
         record(content, state, key, HistoryEvent::Completed)?;
     }
     events.push(GameEvent::ChoiceAccepted {
@@ -311,15 +283,15 @@ pub(crate) fn choose(
 }
 pub(crate) fn interrupt(
     content: &GameContent,
-    state: &mut SessionState,
+    state: &mut Tx,
     key: ConversationKey,
     expected: Token,
     events: &mut Vec<GameEvent>,
 ) -> Result<()> {
-    let i = index(state, key)?;
-    state.conversations[i].check(expected)?;
-    state.conversations[i].bump()?;
-    state.conversations[i].status = RunStatus::Interrupted;
+    let c = state.conversation_mut(key)?;
+    c.check(expected)?;
+    c.bump()?;
+    c.status = RunStatus::Interrupted;
     record(content, state, key, HistoryEvent::Interrupted)?;
     events.push(GameEvent::DialogueInterrupted { key });
     Ok(())

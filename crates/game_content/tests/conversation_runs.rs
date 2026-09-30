@@ -2,11 +2,11 @@ use game_types::*;
 use gameplay::dialogue::{ArgumentSource, ChoiceRepeat, HistoryEvent, Scope, ScopeSelector, Token};
 use gameplay::quests::Transition;
 use gameplay::{
-    Action, Command, ConversationKey, GameEvent, GameSession, StateRequest,
+    Action, Command, ConversationKey, GameEvent,
     fixtures::{COMPANION, HERO, MERCHANT, key},
 };
 use gameplay::{dialogue, inventory};
-use save::{SaveDirectory, SaveSlot, WorkingStore};
+use save::{SaveDirectory, SaveSlot};
 use yarra_game_content::*;
 mod support;
 use support::{Temp, read, write};
@@ -25,19 +25,7 @@ fn pair(dialogue: DialogueId) -> ConversationKey {
 }
 fn load(temp: &Temp, root: &std::path::Path) -> (LoadedProject, RuntimeSession) {
     let project = LoadedProject::load_directory(root).unwrap();
-    let seed = project
-        .start()
-        .unwrap()
-        .store()
-        .export_for_tools(100_000)
-        .unwrap();
-    project.build(temp.0.join("content.sqlite")).unwrap();
-    let store = WorkingStore::create(temp.0.join("live.sqlite"), project.content(), &seed).unwrap();
-    let session = GameSession::new(
-        store,
-        ContentRepository::open(temp.0.join("content.sqlite"), Default::default()).unwrap(),
-    )
-    .unwrap();
+    let session = support::runtime(temp, &project);
     (project, session)
 }
 fn start(session: &mut RuntimeSession, key: ConversationKey) {
@@ -95,30 +83,14 @@ fn history(
         .dialogue_contract(key.dialogue)
         .unwrap()
         .history_key(key.participant, key.speaker);
-    session
-        .query(StateRequest {
-            histories: [key].into(),
-            ..Default::default()
-        })
-        .unwrap()
-        .history(key)
-        .unwrap()
-        .clone()
+    session.state().history(key).clone()
 }
 fn claimed(session: &mut RuntimeSession, scope: Scope) -> bool {
     let key = dialogue::ClaimKey {
         claim: CLAIM,
         scope,
     };
-    session
-        .query(StateRequest {
-            claims: [key].into(),
-            ..Default::default()
-        })
-        .unwrap()
-        .claim(key)
-        .unwrap()
-        .claimed
+    session.state().claimed(key)
 }
 fn reward_source(root: &std::path::Path, scope: ScopeSelector) {
     write(
@@ -187,15 +159,7 @@ fn shared_claim_survives_reopening_other_graphs_npcs_and_restore() {
     }
     assert!(claimed(&mut session, Scope::Playthrough));
     assert_eq!(
-        session
-            .query(StateRequest {
-                actors: [HERO].into(),
-                ..Default::default()
-            })
-            .unwrap()
-            .actor(HERO)
-            .unwrap()
-            .skills[&key("persuasion")],
+        session.state().actor(HERO).unwrap().skills[&key("persuasion")],
         10
     );
     assert_eq!(
@@ -209,20 +173,10 @@ fn shared_claim_survives_reopening_other_graphs_npcs_and_restore() {
     let mut restored = saves
         .load(
             SaveSlot::Quick,
-            ContentRepository::open(temp.0.join("content.sqlite"), Default::default()).unwrap(),
-            temp.0.join("restored.sqlite"),
+            ContentRepository::open(temp.0.join("content.sqlite")).unwrap(),
         )
         .unwrap();
-    let before = restored
-        .query(StateRequest {
-            actors: [HERO].into(),
-            ..Default::default()
-        })
-        .unwrap()
-        .carried(HERO)
-        .unwrap()
-        .entries
-        .clone();
+    let before = restored.state().carried(HERO).unwrap().entries.clone();
     start(&mut restored, pair(REWARD));
     read_lines(&mut restored, pair(REWARD));
     let outcome = choose(&mut restored, pair(REWARD), "return-key");
@@ -230,18 +184,7 @@ fn shared_claim_survives_reopening_other_graphs_npcs_and_restore() {
         e,
         GameEvent::SkillChecked { .. } | GameEvent::RewardClaimed { .. }
     )));
-    assert_eq!(
-        restored
-            .query(StateRequest {
-                actors: [HERO].into(),
-                ..Default::default()
-            })
-            .unwrap()
-            .carried(HERO)
-            .unwrap()
-            .entries,
-        before
-    );
+    assert_eq!(restored.state().carried(HERO).unwrap().entries, before);
 }
 
 #[test]
@@ -260,52 +203,10 @@ fn actor_scoped_claims_do_not_suppress_another_players_reward() {
         choose(&mut session, k, "return-key");
         assert!(claimed(&mut session, Scope::Actor(player)));
         assert_eq!(
-            session
-                .query(StateRequest {
-                    actors: [player].into(),
-                    ..Default::default()
-                })
-                .unwrap()
-                .actor(player)
-                .unwrap()
-                .skills[&key("persuasion")],
+            session.state().actor(player).unwrap().skills[&key("persuasion")],
             10
         );
     }
-}
-
-#[test]
-fn claim_write_failure_rolls_back_effects_history_cursor_and_random_state() {
-    let temp = Temp::new();
-    let root = temp.source();
-    reward_source(&root, ScopeSelector::Playthrough);
-    let (_, mut session) = load(&temp, &root);
-    start(&mut session, pair(REWARD));
-    read_lines(&mut session, pair(REWARD));
-    let expected = session.conversation_view(pair(REWARD)).unwrap().token;
-    let db = rusqlite::Connection::open(temp.0.join("live.sqlite")).unwrap();
-    db.execute_batch("CREATE TRIGGER reject_claim BEFORE INSERT ON records WHEN NEW.kind=9 BEGIN SELECT RAISE(ABORT,'claim write failure'); END;").unwrap();
-    let before = session.store().export_for_tools(100_000).unwrap();
-    let command = || Command::Choose {
-        dialogue: REWARD,
-        participant: HERO,
-        speaker: MERCHANT,
-        choice: key("return-key"),
-        expected,
-    };
-    assert!(
-        session
-            .apply(command())
-            .unwrap_err()
-            .to_string()
-            .contains("claim write failure")
-    );
-    assert_eq!(session.store().export_for_tools(100_000).unwrap(), before);
-    db.execute_batch("DROP TRIGGER reject_claim;").unwrap();
-    session.apply(command()).unwrap();
-    let after = session.store().export_for_tools(100_000).unwrap();
-    assert!(session.apply(command()).is_err());
-    assert_eq!(session.store().export_for_tools(100_000).unwrap(), after);
 }
 
 #[test]
@@ -340,7 +241,7 @@ fn interruption_and_previous_choices_drive_selection_without_claiming_rewards() 
     let first = session.conversation_view(key).unwrap();
     assert_eq!(first.line.unwrap().speaker, MERCHANT);
     assert!(first.choices.is_empty());
-    let before = session.store().export_for_tools(100_000).unwrap();
+    let before = session.state().clone();
     assert!(
         session
             .apply(Command::Choose {
@@ -352,7 +253,7 @@ fn interruption_and_previous_choices_drive_selection_without_claiming_rewards() 
             })
             .is_err()
     );
-    assert_eq!(session.store().export_for_tools(100_000).unwrap(), before);
+    assert_eq!(session.state().clone(), before);
     session
         .apply(Command::AdvanceLine {
             key,
@@ -366,8 +267,7 @@ fn interruption_and_previous_choices_drive_selection_without_claiming_rewards() 
     let mut restored = saves
         .load(
             SaveSlot::Quick,
-            ContentRepository::open(temp.0.join("content.sqlite"), Default::default()).unwrap(),
-            temp.0.join("restored.sqlite"),
+            ContentRepository::open(temp.0.join("content.sqlite")).unwrap(),
         )
         .unwrap();
     assert_eq!(restored.conversation_view(key).unwrap(), second);
@@ -385,7 +285,7 @@ fn interruption_and_previous_choices_drive_selection_without_claiming_rewards() 
         restored.conversation_view(key).unwrap().token,
         Token { run: 2, step: 0 }
     );
-    let before = restored.header().unwrap();
+    let before = restored.header();
     assert!(
         restored
             .apply(Command::AdvanceLine {
@@ -394,7 +294,7 @@ fn interruption_and_previous_choices_drive_selection_without_claiming_rewards() 
             })
             .is_err()
     );
-    assert_eq!(restored.header().unwrap(), before);
+    assert_eq!(restored.header(), before);
     read_lines(&mut restored, key);
     choose(&mut restored, key, "refuse");
     assert_eq!(
@@ -463,7 +363,7 @@ fn three_roles_bind_localized_names_and_numeric_attributes_and_restore() {
     write(root.join("scenario.ron"), &scenario);
     let (project, mut session) = load(&temp, &root);
     let k = pair(REWARD);
-    let before = session.store().export_for_tools(100_000).unwrap();
+    let before = session.state().clone();
     assert!(
         session
             .apply(Command::StartDialogue {
@@ -474,7 +374,7 @@ fn three_roles_bind_localized_names_and_numeric_attributes_and_restore() {
             })
             .is_err()
     );
-    assert_eq!(session.store().export_for_tools(100_000).unwrap(), before);
+    assert_eq!(session.state().clone(), before);
     session
         .apply(Command::StartDialogue {
             dialogue: REWARD,
@@ -483,7 +383,7 @@ fn three_roles_bind_localized_names_and_numeric_attributes_and_restore() {
             bindings: [(key("companion"), COMPANION)].into(),
         })
         .unwrap();
-    let before = session.header().unwrap();
+    let before = session.header();
     let view = session.conversation_view(k).unwrap();
     let text = &view.line.as_ref().unwrap().text;
     assert_eq!(text.arguments["strength"], BoundArgument::Number(10));
@@ -492,7 +392,7 @@ fn three_roles_bind_localized_names_and_numeric_attributes_and_restore() {
         assert!(formatted.value.contains("Ada") && formatted.value.contains("10"));
         assert_eq!(formatted.locale.as_deref(), Some(locale));
     }
-    assert_eq!(session.header().unwrap(), before);
+    assert_eq!(session.header(), before);
     session
         .apply(Command::AdvanceLine {
             key: k,
@@ -508,8 +408,7 @@ fn three_roles_bind_localized_names_and_numeric_attributes_and_restore() {
     let mut restored = saves
         .load(
             SaveSlot::Quick,
-            ContentRepository::open(temp.0.join("content.sqlite"), Default::default()).unwrap(),
-            temp.0.join("restored.sqlite"),
+            ContentRepository::open(temp.0.join("content.sqlite")).unwrap(),
         )
         .unwrap();
     assert_eq!(
@@ -614,7 +513,7 @@ fn repeat_contracts_filter_variants_and_cooldowns_use_saved_logical_time() {
             .opening()
             .is_none()
     );
-    let before = session.header().unwrap();
+    let before = session.header();
     assert!(
         session
             .apply(Command::Talk {
@@ -625,14 +524,13 @@ fn repeat_contracts_filter_variants_and_cooldowns_use_saved_logical_time() {
             })
             .is_err()
     );
-    assert_eq!(session.header().unwrap(), before);
+    assert_eq!(session.header(), before);
     let saves = SaveDirectory::new(temp.0.join("slots"), 1).unwrap();
     saves.quicksave(&session).unwrap();
     let mut session = saves
         .load(
             SaveSlot::Quick,
-            ContentRepository::open(temp.0.join("content.sqlite"), Default::default()).unwrap(),
-            temp.0.join("restored.sqlite"),
+            ContentRepository::open(temp.0.join("content.sqlite")).unwrap(),
         )
         .unwrap();
     session.apply(Command::AdvanceTime { millis: 499 }).unwrap();
@@ -707,15 +605,7 @@ fn authored_refusal_exercise_runs_through_the_indexed_session() {
     assert_eq!((h.started, h.completed, h.interrupted), (3, 2, 1));
     assert!(claimed(&mut session, Scope::Playthrough));
     assert_eq!(
-        session
-            .query(StateRequest {
-                actors: [HERO].into(),
-                ..Default::default()
-            })
-            .unwrap()
-            .actor(HERO)
-            .unwrap()
-            .skills[&key("persuasion")],
+        session.state().actor(HERO).unwrap().skills[&key("persuasion")],
         10
     );
 }
@@ -743,9 +633,9 @@ fn final_line_completes_a_choice_free_scene_exactly_once() {
         dialogue::RunStatus::Completed
     );
     assert_eq!(history(&mut session, &project, k).completed, 1);
-    let before = session.store().export_for_tools(100_000).unwrap();
+    let before = session.state().clone();
     assert!(session.apply(advance()).is_err());
-    assert_eq!(session.store().export_for_tools(100_000).unwrap(), before);
+    assert_eq!(session.state().clone(), before);
     assert!(
         session
             .apply(Command::StartDialogue {

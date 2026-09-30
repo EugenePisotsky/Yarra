@@ -375,17 +375,7 @@ impl LoadedProject {
             let owner = owners[&asset.id()];
             let mut reachable = BTreeSet::new();
             dependencies(owner, &packages, &mut BTreeSet::new(), &mut reachable)?;
-            let references = asset
-                .dependencies()?
-                .into_iter()
-                .chain(asset.selection_links())
-                .chain(
-                    asset
-                        .text_references()
-                        .into_iter()
-                        .map(|r| AssetId::Text(r.resource)),
-                );
-            for dependency in references {
+            for dependency in asset.references()? {
                 let target = owners
                     .get(&dependency)
                     .ok_or_else(|| Invalid(format!("missing package asset {dependency:?}")))?;

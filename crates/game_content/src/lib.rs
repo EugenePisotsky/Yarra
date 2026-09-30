@@ -11,13 +11,13 @@ mod repository;
 mod runtime;
 mod scenario;
 mod script;
-pub use asset::{Asset, AssetHeader, AssetId, AssetKind, MAX_ASSET_BYTES, MAX_ASSET_DEPENDENCIES};
+pub use asset::{Asset, AssetHeader, AssetId, AssetKind, MAX_ASSET_BYTES};
 pub use bundle::{BUNDLE_APPLICATION_ID, BUNDLE_SCHEMA_VERSION, BundleManifest};
 pub use project::{
     Bindings, ConversationFile, LoadedProject, LocaleFile, PackageFile, ProjectFile, ResourceFile,
     SOURCE_FORMAT_VERSION, TranslationReview,
 };
-pub use repository::{AssetSet, ContentRepository, RepositoryLimits, RepositoryStats};
+pub use repository::ContentRepository;
 pub use runtime::{ContentLibrary, RuntimeSession, ToolSession};
 pub use scenario::{ActorSpawn, InventorySeed, ItemAmount, Scenario, WalletSeed};
 pub use script::Step;
@@ -52,8 +52,6 @@ pub enum ContentError {
     BundleVersion(i64),
     #[error("file is not a Yarra gameplay content bundle")]
     WrongDatabase,
-    #[error("content budget exceeded: {0}")]
-    Budget(String),
     #[error("asset not found: {0:?}")]
     MissingAsset(AssetId),
     #[error("corrupt asset {id:?}: {message}")]

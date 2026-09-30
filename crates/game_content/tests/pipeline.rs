@@ -19,11 +19,9 @@ fn player_health(project: &LoadedProject) -> u32 {
     project
         .run_scenario()
         .unwrap()
-        .store()
-        .export_for_tools(100_000)
-        .unwrap()
+        .state()
         .actors
-        .iter()
+        .values()
         .find(|a| a.role == ActorRole::Player)
         .unwrap()
         .health
@@ -67,38 +65,20 @@ fn authored_source_and_sqlite_bundle_use_the_same_validated_content() {
         saves
             .load(
                 SaveSlot::Quick,
-                gameplay::ToolContent::new(project.content().clone()).unwrap(),
-                temp.0.join("working.sqlite")
+                gameplay::ToolContent::new(project.content().clone()).unwrap()
             )
             .unwrap()
-            .store()
-            .export_for_tools(100_000)
-            .unwrap(),
-        session.store().export_for_tools(100_000).unwrap()
+            .state(),
+        session.state()
     );
     let first = project.start().unwrap();
     let second = project.start().unwrap();
-    assert_ne!(
-        first.store().export_for_tools(100_000).unwrap().playthrough,
-        second
-            .store()
-            .export_for_tools(100_000)
-            .unwrap()
-            .playthrough
-    );
-    assert_ne!(
-        first.store().export_for_tools(100_000).unwrap().inventories[0].entries[0].id,
-        second
-            .store()
-            .export_for_tools(100_000)
-            .unwrap()
-            .inventories[0]
-            .entries[0]
-            .id
-    );
+    assert_ne!(first.state().playthrough, second.state().playthrough);
+    let first_item = |s: &ToolSession| s.state().inventories.values().next().unwrap().entries[0].id;
+    assert_ne!(first_item(&first), first_item(&second));
     assert_eq!(
-        first.store().export_for_tools(100_000).unwrap().actors[0].id,
-        second.store().export_for_tools(100_000).unwrap().actors[0].id
+        first.state().actors.keys().collect::<Vec<_>>(),
+        second.state().actors.keys().collect::<Vec<_>>()
     );
 }
 #[test]
@@ -126,19 +106,14 @@ fn editing_data_changes_mechanics_without_changing_rust_or_old_bundles() {
     write(root.join("packages/core/actors.ron"), &templates);
     let project = LoadedProject::load_directory(&root).unwrap();
     let session = project.run_scenario().unwrap();
-    let state = session.store().export_for_tools(100_000).unwrap();
-    let player = state
+    let player = session
+        .state()
         .actors
-        .iter()
+        .values()
         .find(|a| a.role == ActorRole::Player)
         .unwrap();
     assert_eq!(
-        session
-            .store()
-            .export_for_tools(100_000)
-            .unwrap()
-            .derived(project.content(), player.id)
-            .unwrap()[&Key::new("strength").unwrap()],
+        session.derived(player.id).unwrap()[&Key::new("strength").unwrap()],
         17
     );
 }
@@ -162,8 +137,7 @@ fn translation_updates_do_not_change_mechanical_save_compatibility() {
         saves
             .load(
                 SaveSlot::Quick,
-                gameplay::ToolContent::new(after.content().clone()).unwrap(),
-                temp.0.join("working.sqlite")
+                gameplay::ToolContent::new(after.content().clone()).unwrap()
             )
             .is_ok()
     );

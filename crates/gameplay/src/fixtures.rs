@@ -208,7 +208,7 @@ pub fn state() -> SessionState {
         } else if id == MERCHANT {
             actor.position.millimetres = [100000000, 0, 100000000];
         }
-        state.actors.push(actor);
+        state.add_actor(actor);
         let mut inventory = Inventory::new(OwnerRef::actor(id), "carried").unwrap();
         inventory.id = bag;
         if id == HERO {
@@ -219,14 +219,14 @@ pub fn state() -> SessionState {
         if id == MERCHANT {
             inventory.grant(&content.items, POTION, 10).unwrap();
         }
-        state.inventories.push(inventory);
+        state.add_inventory(inventory);
     }
     let chest = OwnerRef::new("chest", OwnerId([1; 16])).unwrap();
     let party = OwnerRef::new("party", OwnerId([1; 16])).unwrap();
     state.owners.extend([chest.clone(), party.clone()]);
     let mut inventory = Inventory::new(chest, "contents").unwrap();
     inventory.id = CHEST;
-    state.inventories.push(inventory);
+    state.add_inventory(inventory);
     for (id, owner) in [
         (PARTY_WALLET, party),
         (MERCHANT_WALLET, OwnerRef::actor(MERCHANT)),
@@ -234,7 +234,7 @@ pub fn state() -> SessionState {
         let mut wallet = Wallet::new(owner).unwrap();
         wallet.id = id;
         wallet.credit(Money::new(100).unwrap()).unwrap();
-        state.wallets.push(wallet);
+        state.add_wallet(wallet);
     }
     state.validate(&content).unwrap();
     state

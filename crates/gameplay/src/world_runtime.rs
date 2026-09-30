@@ -1,125 +1,126 @@
+//! Trigger dispatch, movement sequences and object commands.
 use crate::Result;
-use crate::resolution::{resolve, resolve_with};
+use crate::tx::Tx;
 use crate::*;
 use game_types::*;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
-/// All durable notifications are derived from accepted changes, including dialogue actions.
-pub(crate) fn stage<T: StateTransaction, C: ContentSource>(
-    tx: &mut T,
-    source: &mut C,
-    before: &WorkingSet,
-    after: &SessionState,
-) -> Result<()> {
-    let old = &before.state;
+/// Notifications derived from what an accepted command actually changed, including changes
+/// made by dialogue actions and trigger sequences.
+pub(crate) fn signals(content: &GameContent, tx: &Tx) -> Result<BTreeSet<WorldSignal>> {
+    let state: &SessionState = tx;
+    let before = &tx.before;
     let mut signals = BTreeSet::new();
-    for a in &after.actors {
-        let quantities = |bag: &inventory::Inventory| {
-            let mut totals = std::collections::BTreeMap::new();
-            for entry in &bag.entries {
-                *totals.entry(entry.definition).or_insert(0u64) += u64::from(entry.quantity);
-            }
-            totals
+    let quantities = |bag: Option<&inventory::Inventory>| {
+        let mut totals = BTreeMap::new();
+        for entry in bag.into_iter().flat_map(|b| &b.entries) {
+            *totals.entry(entry.definition).or_insert(0u64) += u64::from(entry.quantity);
+        }
+        totals
+    };
+    for (id, old) in &before.inventories {
+        let new = state.inventories.get(id);
+        let Some(owner) = new.or(old.as_ref()).map(|i| &i.owner) else {
+            continue;
         };
-        let before_items = quantities(old.carried(a.id)?);
-        for (definition, count) in quantities(after.carried(a.id)?) {
-            if count > before_items.get(&definition).copied().unwrap_or(0) {
-                signals.insert(WorldSignal::ItemAcquired {
-                    actor: a.id,
-                    definition,
-                });
-            }
+        if owner.kind != "actor" || old.as_ref() == new {
+            continue;
         }
-        if old.actor(a.id)? != a {
-            signals.insert(WorldSignal::Actor(a.id));
-        }
-    }
-    for i in &after.inventories {
-        if old.inventory(i.id)? != i && i.owner.kind == "actor" {
-            signals.insert(WorldSignal::Actor(ActorId(i.owner.id.0)));
-        }
-    }
-    for q in &after.quests {
-        if old.quest(q.quest)? != q {
-            signals.insert(WorldSignal::Quest(q.quest));
-            if old.quest(q.quest)?.status == quests::Status::NotStarted
-                && q.status == quests::Status::Active
-            {
-                signals.insert(WorldSignal::QuestStarted(q.quest));
+        let actor = ActorId(owner.id.0);
+        signals.insert(WorldSignal::Actor(actor));
+        if new.is_some_and(|i| i.role == CARRIED) {
+            let previous = quantities(old.as_ref());
+            for (definition, count) in quantities(new) {
+                if count > previous.get(&definition).copied().unwrap_or(0) {
+                    signals.insert(WorldSignal::ItemAcquired { actor, definition });
+                }
             }
         }
     }
-    for h in &after.histories {
-        if old.history(h.key)? != h {
-            signals.insert(WorldSignal::History(h.key));
+    for (id, old) in &before.actors {
+        if old.as_ref() != state.actors.get(id) {
+            signals.insert(WorldSignal::Actor(*id));
         }
     }
-    for c in &after.claims {
-        if old.claim(c.key)? != c {
-            signals.insert(WorldSignal::Claim(c.key));
+    for (id, old) in &before.quests {
+        let old = old.clone().unwrap_or_else(|| quests::Progress::new(*id));
+        let new = state.quest(*id);
+        if old != new {
+            signals.insert(WorldSignal::Quest(*id));
+            if old.status == quests::Status::NotStarted && new.status == quests::Status::Active {
+                signals.insert(WorldSignal::QuestStarted(*id));
+            }
         }
     }
-    for r in &after.relationships {
-        if old.relationship(r.key)? != r {
-            signals.insert(WorldSignal::Relationship(r.key));
+    for (key, old) in &before.histories {
+        if old.as_ref() != state.histories.get(key) {
+            signals.insert(WorldSignal::History(*key));
         }
     }
-    for key in old.facts.symmetric_difference(&after.facts) {
-        signals.insert(WorldSignal::Fact(key.clone()));
+    for key in &before.claims {
+        signals.insert(WorldSignal::Claim(*key));
     }
-    for l in &after.world.locations {
-        let previous = old.world.location(l.actor)?;
-        for area in l.areas.difference(&previous.areas) {
+    for (key, old) in &before.relationships {
+        let old = old
+            .clone()
+            .unwrap_or_else(|| actors::Relationship::neutral(*key));
+        if old != state.relationship(*key) {
+            signals.insert(WorldSignal::Relationship(*key));
+        }
+    }
+    for (key, present) in &before.facts {
+        if *present != state.facts.contains(key) {
+            signals.insert(WorldSignal::Fact(key.clone()));
+        }
+    }
+    for (actor, old) in &before.locations {
+        // Before its first record, occupancy followed the actor's position at that time.
+        let previous = match old {
+            Some(location) => location.areas.clone(),
+            None => {
+                let position = match before.actors.get(actor) {
+                    Some(Some(old)) => &old.position,
+                    _ => &state.actor(*actor)?.position,
+                };
+                content.areas_at(position)?
+            }
+        };
+        let current = state.location(content, *actor)?.areas;
+        for area in current.difference(&previous) {
             signals.insert(WorldSignal::Entered {
-                actor: l.actor,
+                actor: *actor,
                 area: *area,
             });
         }
-        for area in previous.areas.difference(&l.areas) {
+        for area in previous.difference(&current) {
             signals.insert(WorldSignal::Exited {
-                actor: l.actor,
+                actor: *actor,
                 area: *area,
             });
         }
     }
-    let mut subscribed = BTreeSet::new();
-    for signal in signals {
-        if source.next_trigger(&signal, None)?.is_some() {
-            subscribed.insert(signal);
-        }
-    }
-    tx.stage(before, after)?;
-    tx.enqueue(&subscribed)
+    Ok(signals)
 }
-fn save<T: StateTransaction, C: ContentSource>(
-    tx: &mut T,
-    source: &mut C,
+/// The pending movement whose deadline passed first, if any.
+pub(crate) fn timed_out(state: &SessionState) -> Option<TriggerId> {
+    state
+        .world
+        .triggers
+        .values()
+        .filter_map(|t| Some((t.movement.as_ref()?.deadline, t.id)))
+        .filter(|(deadline, _)| *deadline <= state.time)
+        .min()
+        .map(|(_, id)| id)
+}
+fn position(
     content: &GameContent,
-    before: &WorkingSet,
-    next: &mut SessionState,
-    header: &mut SessionHeader,
-    events: &mut [GameEvent],
-) -> Result<()> {
-    crate::session::assign_item_ids(&before.state, next, events);
-    next.validate(content)?;
-    stage(tx, source, before, next)?;
-    header.random = next.random;
-    Ok(())
-}
-fn position<C: ContentSource>(
-    source: &mut C,
-    state: &mut SessionState,
+    tx: &mut Tx,
     actor: ActorId,
     p: actors::Position,
     events: &mut Vec<GameEvent>,
 ) -> Result<()> {
-    let areas = source.areas_at(&p)?;
-    let loc = state
-        .world
-        .locations
-        .iter_mut()
-        .find(|l| l.actor == actor)
-        .ok_or_else(|| Invalid("location not resolved".into()))?;
+    let areas = content.areas_at(&p)?;
+    let loc = tx.location_mut(content, actor)?;
     for area in areas.difference(&loc.areas) {
         events.push(GameEvent::World(WorldEvent::Entered { actor, area: *area }));
     }
@@ -127,13 +128,12 @@ fn position<C: ContentSource>(
         events.push(GameEvent::World(WorldEvent::Exited { actor, area: *area }));
     }
     loc.areas = areas;
-    state.actor_mut(actor)?.position = p;
+    tx.actor_mut(actor)?.position = p;
     Ok(())
 }
-fn sequence<T: StateTransaction>(
-    tx: &mut T,
+fn sequence(
     content: &GameContent,
-    state: &mut SessionState,
+    tx: &mut Tx,
     mut progress: TriggerState,
     events: &mut Vec<GameEvent>,
 ) -> Result<()> {
@@ -144,7 +144,7 @@ fn sequence<T: StateTransaction>(
                 for action in actions {
                     crate::session::run_action(
                         content,
-                        state,
+                        tx,
                         d.participant,
                         d.speaker,
                         action,
@@ -160,12 +160,12 @@ fn sequence<T: StateTransaction>(
             } => {
                 let actor = actor.resolve(d.participant, d.speaker);
                 require(
-                    tx.movement_owner(actor)?
+                    tx.movement_owner(actor)
                         .is_none_or(|owner| owner == progress.id),
                     "actor movement is owned by another sequence",
                 )?;
                 require(
-                    state.actor(actor)?.health > 0,
+                    tx.actor(actor)?.health > 0,
                     "dead actor cannot accept movement",
                 )?;
                 let movement = MoveRequest {
@@ -176,7 +176,7 @@ fn sequence<T: StateTransaction>(
                     },
                     actor,
                     destination: destination.clone(),
-                    deadline: state.time.advance(*timeout_ms)?,
+                    deadline: tx.time.advance(*timeout_ms)?,
                     phase: MovementPhase::Accepted,
                 };
                 events.push(GameEvent::World(WorldEvent::MoveRequested(
@@ -200,32 +200,31 @@ fn sequence<T: StateTransaction>(
         trigger: progress.id,
         status: progress.status.clone(),
     }));
-    let trigger_id = progress.id;
-    *state
-        .world
-        .triggers
-        .iter_mut()
-        .find(|t| t.id == trigger_id)
-        .ok_or_else(|| Invalid("trigger not resolved".into()))? = progress;
+    tx.put_trigger(progress);
     Ok(())
 }
 
-/// Failed immediate plans publish a bounded diagnostic, without consuming claims or partial effects.
-/// Storage failures still reject the whole command; the delivery remains pending for explicit retry.
-fn run_sequence<T: StateTransaction>(
-    tx: &mut T,
+/// A plan that fails is undone on its own and recorded with a bounded diagnostic: it consumes
+/// no claims and leaves no partial effects, while earlier work of the command is kept.
+fn run_sequence(
     content: &GameContent,
-    state: &mut SessionState,
+    tx: &mut Tx,
     mut progress: TriggerState,
     events: &mut Vec<GameEvent>,
 ) -> Result<()> {
-    let before = state.clone();
+    let savepoint = tx.savepoint();
     let event_count = events.len();
-    match sequence(tx, content, state, progress.clone(), events) {
-        Ok(()) => Ok(()),
-        Err(error @ GameplayError::Runtime(_)) => Err(error),
+    match sequence(content, tx, progress.clone(), events) {
+        Ok(()) => {
+            tx.release(savepoint);
+            Ok(())
+        }
+        Err(error @ GameplayError::Runtime(_)) => {
+            tx.release(savepoint);
+            Err(error)
+        }
         Err(error) => {
-            *state = before;
+            tx.rollback_to(savepoint);
             events.truncate(event_count);
             progress.status = SequenceStatus::Failed {
                 reason: Key::new("invalid-plan")?,
@@ -237,55 +236,44 @@ fn run_sequence<T: StateTransaction>(
                 trigger: progress.id,
                 status: progress.status.clone(),
             }));
-            let id = progress.id;
-            *state
-                .world
-                .triggers
-                .iter_mut()
-                .find(|t| t.id == id)
-                .unwrap() = progress;
+            tx.put_trigger(progress);
             Ok(())
         }
     }
 }
-
-fn trigger_context<T: StateTransaction, C: ContentSource>(
-    tx: &mut T,
-    source: &mut C,
-    id: TriggerId,
-) -> Result<(WorkingSet, GameContent)> {
-    resolve(
-        tx,
-        source,
-        &StateRequest {
-            triggers: [id].into(),
-            ..Default::default()
-        },
-    )
+fn restart(progress: &mut TriggerState, now: GameTime) -> Result<()> {
+    progress.run = progress
+        .run
+        .checked_add(1)
+        .ok_or_else(|| Invalid("sequence run overflow".into()))?;
+    progress.step = 0;
+    progress.status = SequenceStatus::Running;
+    progress.last_started = Some(now);
+    progress.receipts.clear();
+    progress.diagnostic = None;
+    Ok(())
 }
-fn complete<T: StateTransaction, C: ContentSource>(
-    tx: &mut T,
-    source: &mut C,
+fn complete(
+    content: &GameContent,
+    tx: &mut Tx,
     id: ActionId,
     result: MoveResult,
-    header: &mut SessionHeader,
     events: &mut Vec<GameEvent>,
 ) -> Result<()> {
-    let (batch, mut content) = trigger_context(tx, source, id.trigger)?;
-    let mut next = batch.state.clone();
-    let mut progress = next.world.trigger(id.trigger)?.clone();
+    content.trigger(id.trigger)?;
+    let mut progress = tx.trigger(id.trigger);
     if let Some((_, receipt)) = progress.receipts.iter().find(|(a, _)| *a == id) {
         require(receipt == &result, "conflicting movement result")?;
         return Ok(());
     }
     let pending = progress
         .movement
-        .as_ref()
+        .clone()
         .ok_or_else(|| Invalid("movement is not pending".into()))?;
     require(pending.id == id, "stale movement result")?;
     if !matches!(result, MoveResult::TimedOut) {
         require(
-            header.time < pending.deadline,
+            tx.time < pending.deadline,
             "movement deadline elapsed; process timeout first",
         )?;
     }
@@ -296,26 +284,10 @@ fn complete<T: StateTransaction, C: ContentSource>(
                 "arrival differs from requested destination",
             )?;
             require(
-                next.actor(pending.actor)?.health > 0,
+                tx.actor(pending.actor)?.health > 0,
                 "dead actor cannot arrive",
             )?;
-            let ids = source.areas_at(p)?;
-            if !ids.is_empty() {
-                let (_, extended) = resolve_with(
-                    tx,
-                    source,
-                    &StateRequest {
-                        triggers: [id.trigger].into(),
-                        ..Default::default()
-                    },
-                    &ContentRequest {
-                        areas: ids,
-                        ..Default::default()
-                    },
-                )?;
-                content = extended;
-            }
-            position(source, &mut next, pending.actor, p.clone(), events)?;
+            position(content, tx, pending.actor, p.clone(), events)?;
             progress.step += 1;
         }
         MoveResult::Failed { reason } => {
@@ -325,10 +297,7 @@ fn complete<T: StateTransaction, C: ContentSource>(
         }
         MoveResult::Cancelled => progress.status = SequenceStatus::Cancelled,
         MoveResult::TimedOut => {
-            require(
-                header.time >= pending.deadline,
-                "movement has not timed out",
-            )?;
+            require(tx.time >= pending.deadline, "movement has not timed out")?;
             progress.status = SequenceStatus::Failed {
                 reason: Key::new("timeout")?,
             };
@@ -342,81 +311,63 @@ fn complete<T: StateTransaction, C: ContentSource>(
     progress.receipts.push((id, result.clone()));
     events.push(GameEvent::World(WorldEvent::MoveFinished { id, result }));
     if progress.status == SequenceStatus::Running {
-        run_sequence(tx, &content, &mut next, progress, events)?;
+        run_sequence(content, tx, progress, events)
     } else {
         events.push(GameEvent::World(WorldEvent::SequenceChanged {
             trigger: progress.id,
             status: progress.status.clone(),
         }));
-        *next
-            .world
-            .triggers
-            .iter_mut()
-            .find(|t| t.id == id.trigger)
-            .unwrap() = progress;
+        tx.put_trigger(progress);
+        Ok(())
     }
-    save(tx, source, &content, &batch, &mut next, header, events)
 }
-pub(crate) fn apply<T: StateTransaction, C: ContentSource>(
-    tx: &mut T,
-    source: &mut C,
+pub(crate) fn apply(
+    content: &GameContent,
+    triggers: &TriggerIndex,
+    tx: &mut Tx,
     command: WorldCommand,
-    header: &mut SessionHeader,
     events: &mut Vec<GameEvent>,
 ) -> Result<()> {
     match command {
         WorldCommand::ProcessNext => {
-            if let Some(id) = tx.next_movement(None, Some(header.time))? {
-                let (batch, _) = trigger_context(tx, source, id)?;
-                let action = batch
-                    .state
-                    .world
-                    .trigger(id)?
+            if let Some(id) = timed_out(tx) {
+                let action = tx
+                    .trigger(id)
                     .movement
-                    .as_ref()
                     .ok_or_else(|| Invalid("movement index mismatch".into()))?
                     .id;
-                return complete(tx, source, action, MoveResult::TimedOut, header, events);
+                return complete(content, tx, action, MoveResult::TimedOut, events);
             }
-            let Some(event) = tx.next_event()? else {
+            let Some(event) = tx.world.pending.front().cloned() else {
                 return Ok(());
             };
-            let candidate = source.next_trigger(&event.signal, event.after)?;
+            let candidate = triggers.next(&event.signal, event.after);
             if let Some(id) = candidate {
-                let (batch, content) = trigger_context(tx, source, id)?;
                 let d = content.trigger(id)?;
-                require(
-                    d.subscriptions(&content)?.contains(&event.signal),
-                    "trigger subscription index mismatch",
-                )?;
-                let mut next = batch.state.clone();
-                let mut progress = next.world.trigger(id)?.clone();
-                if progress.eligible(d, next.time)
+                let mut progress = tx.trigger(id);
+                if progress.eligible(d, tx.time)
                     && content
-                        .evaluate(&d.condition, &next, d.participant, d.speaker)?
+                        .evaluate(&d.condition, tx, d.participant, d.speaker)?
                         .matched
                 {
-                    progress.run = progress
-                        .run
-                        .checked_add(1)
-                        .ok_or_else(|| Invalid("sequence run overflow".into()))?;
-                    progress.step = 0;
-                    progress.status = SequenceStatus::Running;
-                    progress.last_started = Some(next.time);
-                    progress.receipts.clear();
-                    progress.diagnostic = None;
-                    run_sequence(tx, &content, &mut next, progress, events)?;
-                    save(tx, source, &content, &batch, &mut next, header, events)?;
+                    restart(&mut progress, tx.time)?;
+                    run_sequence(content, tx, progress, events)?;
                 }
             }
-            tx.advance_event(&event, candidate)?;
+            // The event stays at the head until every subscriber has been visited.
+            let pending = tx.pending_mut();
+            pending.pop_front();
+            if let Some(id) = candidate {
+                pending.push_front(PendingEvent {
+                    after: Some(id),
+                    ..event.clone()
+                });
+            }
             events.push(GameEvent::World(WorldEvent::DeliveryProcessed(event.id)));
         }
         WorldCommand::RetryTrigger { trigger } => {
-            let (batch, content) = trigger_context(tx, source, trigger)?;
             let d = content.trigger(trigger)?;
-            let mut next = batch.state.clone();
-            let mut progress = next.world.trigger(trigger)?.clone();
+            let mut progress = tx.trigger(trigger);
             require(
                 matches!(
                     progress.status,
@@ -426,50 +377,21 @@ pub(crate) fn apply<T: StateTransaction, C: ContentSource>(
             )?;
             progress.consecutive_failures = 0;
             require(
-                progress.eligible(d, next.time)
+                progress.eligible(d, tx.time)
                     && content
-                        .evaluate(&d.condition, &next, d.participant, d.speaker)?
+                        .evaluate(&d.condition, tx, d.participant, d.speaker)?
                         .matched,
                 "trigger retry is ineligible",
             )?;
-            progress.run = progress
-                .run
-                .checked_add(1)
-                .ok_or_else(|| Invalid("sequence run overflow".into()))?;
-            progress.step = 0;
-            progress.status = SequenceStatus::Running;
-            progress.last_started = Some(next.time);
-            progress.receipts.clear();
-            progress.diagnostic = None;
-            run_sequence(tx, &content, &mut next, progress, events)?;
-            save(tx, source, &content, &batch, &mut next, header, events)?;
+            restart(&mut progress, tx.time)?;
+            run_sequence(content, tx, progress, events)?;
         }
         WorldCommand::ObservePosition {
             actor,
             observation,
             position: p,
         } => {
-            let ids = source.areas_at(&p)?;
-            let (batch, content) = resolve_with(
-                tx,
-                source,
-                &StateRequest {
-                    actors: [actor].into(),
-                    locations: [actor].into(),
-                    ..Default::default()
-                },
-                &ContentRequest {
-                    areas: ids,
-                    ..Default::default()
-                },
-            )?;
-            let mut next = batch.state.clone();
-            let loc = next
-                .world
-                .locations
-                .iter_mut()
-                .find(|l| l.actor == actor)
-                .unwrap();
+            let loc = tx.location(content, actor)?;
             if observation == loc.observation {
                 require(
                     loc.last_observed.as_ref() == Some(&p),
@@ -485,56 +407,31 @@ pub(crate) fn apply<T: StateTransaction, C: ContentSource>(
                         .ok_or_else(|| Invalid("observation overflow".into()))?,
                 "out-of-order position observation",
             )?;
+            let loc = tx.location_mut(content, actor)?;
             loc.observation = observation;
             loc.last_observed = Some(p.clone());
-            position(source, &mut next, actor, p, events)?;
-            save(tx, source, &content, &batch, &mut next, header, events)?;
+            position(content, tx, actor, p, events)?;
         }
-        WorldCommand::FinishMove { id, result } => {
-            complete(tx, source, id, result, header, events)?
-        }
+        WorldCommand::FinishMove { id, result } => complete(content, tx, id, result, events)?,
         WorldCommand::StartMove { id } => {
-            let (batch, content) = trigger_context(tx, source, id.trigger)?;
-            let mut next = batch.state.clone();
-            let p = next
-                .world
-                .triggers
-                .iter_mut()
-                .find(|t| t.id == id.trigger)
-                .unwrap();
-            if p.receipts.iter().any(|(a, _)| *a == id) {
+            content.trigger(id.trigger)?;
+            let mut progress = tx.trigger(id.trigger);
+            if progress.receipts.iter().any(|(a, _)| *a == id) {
                 return Ok(());
             }
-            let m = p
+            let m = progress
                 .movement
                 .as_mut()
                 .ok_or_else(|| Invalid("movement not pending".into()))?;
-            require(
-                m.id == id && header.time < m.deadline,
-                "stale movement start",
-            )?;
+            require(m.id == id && tx.time < m.deadline, "stale movement start")?;
             m.phase = MovementPhase::Running;
-            save(tx, source, &content, &batch, &mut next, header, events)?;
+            tx.put_trigger(progress);
         }
         WorldCommand::Open { object }
         | WorldCommand::Close { object }
         | WorldCommand::SetLocked { object, .. }
         | WorldCommand::Destroy { object } => {
-            let (batch, content) = resolve(
-                tx,
-                source,
-                &StateRequest {
-                    objects: [object].into(),
-                    ..Default::default()
-                },
-            )?;
-            let mut next = batch.state.clone();
-            let o = next
-                .world
-                .objects
-                .iter_mut()
-                .find(|o| o.id == object)
-                .unwrap();
+            let o = tx.object_mut(content, object)?;
             require(!o.destroyed, "object destroyed")?;
             match command {
                 WorldCommand::Open { .. } => {
@@ -555,7 +452,6 @@ pub(crate) fn apply<T: StateTransaction, C: ContentSource>(
                 _ => unreachable!(),
             }
             events.push(GameEvent::World(WorldEvent::ObjectChanged(object)));
-            save(tx, source, &content, &batch, &mut next, header, events)?;
         }
     }
     Ok(())

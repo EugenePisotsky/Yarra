@@ -198,12 +198,6 @@ pub struct ClaimKey {
     pub claim: ClaimId,
     pub scope: Scope,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Claim {
-    pub key: ClaimKey,
-    pub claimed: bool,
-}
 impl ClaimDefinition {
     pub fn key(&self, player: ActorId, speaker: ActorId) -> ClaimKey {
         ClaimKey {

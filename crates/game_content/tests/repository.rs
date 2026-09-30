@@ -1,7 +1,8 @@
 use game_types::{ItemDefinitionId, TextResourceId};
 use gameplay::inventory::ItemCatalog;
+use gameplay::{ContentSource, GameSession};
 use rusqlite::{Connection, params};
-use std::{collections::BTreeSet, fs, path::Path};
+use std::{fs, path::Path};
 use yarra_game_content::*;
 mod support;
 use support::{Temp, read, sample, write};
@@ -15,76 +16,19 @@ fn build(temp: &Temp) -> std::path::PathBuf {
     path
 }
 fn open(path: &Path) -> ContentRepository {
-    ContentRepository::open(path, RepositoryLimits::default()).unwrap()
+    ContentRepository::open(path).unwrap()
 }
 fn item_ids(path: &Path) -> Vec<AssetId> {
     open(path)
-        .list(AssetKind::Item, None, 128)
+        .headers(AssetKind::Item)
         .unwrap()
         .into_iter()
         .map(|h| h.id)
         .collect()
 }
-fn large_project(temp: &Temp, count: usize) -> std::path::PathBuf {
-    let source = temp.source();
-    let mut items: ItemCatalog = read(source.join("packages/core/items.ron"));
-    for i in items.items.len()..count {
-        let mut item = items.items[0].clone();
-        item.id = ItemDefinitionId((100_000 + i as u128).to_be_bytes());
-        item.key = format!("generated_{i:05}");
-        items.items.push(item);
-    }
-    write(source.join("packages/core/items.ron"), &items);
-    let output = temp.0.join("large.sqlite");
-    LoadedProject::load_directory(&source)
-        .unwrap()
-        .build(&output)
-        .unwrap();
-    // Runtime cannot accidentally fall back to reading authored files.
-    fs::remove_dir_all(source).unwrap();
-    output
-}
 
 #[test]
-fn fixed_inventory_working_set_is_independent_of_catalog_size() {
-    let small = Temp::new();
-    let large = Temp::new();
-    let small_path = large_project(&small, 16);
-    let large_path = large_project(&large, 10_000);
-    let authored = LoadedProject::load_directory(sample()).unwrap();
-    let roots: Vec<_> = authored.content().items.items[..2]
-        .iter()
-        .map(|i| AssetId::Item(i.id))
-        .collect();
-    let mut small = open(&small_path);
-    let mut large = open(&large_path);
-    assert_eq!(small.stats(), RepositoryStats::default());
-    assert_eq!(large.stats(), RepositoryStats::default());
-    let small_set = small.load(&roots).unwrap();
-    let large_set = large.load(&roots).unwrap();
-    assert_eq!(small_set.len(), 5); // two definitions, two categories and the bounded common rules
-    assert_eq!(small_set.len(), large_set.len());
-    assert_eq!(small.stats(), large.stats());
-    assert_eq!(large.stats().decoded_assets, 5);
-    assert_eq!(large.stats().payload_queries, 5);
-    assert!(large.stats().payload_bytes_read < 16 * 1024);
-    assert!(
-        large_set
-            .iter()
-            .all(|(_, a)| !matches!(a, Asset::Text(_) | Asset::Dialogue(_)))
-    );
-    eprintln!(
-        "16 vs 10,000 definitions, same inventory: {:?}",
-        large.stats()
-    );
-    let warm = large.load(&roots).unwrap();
-    assert_eq!(warm.len(), 5);
-    assert_eq!(large.stats().payload_queries, 5);
-    assert_eq!(large.stats().cache_hits, 5);
-}
-
-#[test]
-fn runtime_open_ignores_scenario_and_unrequested_corruption() {
+fn opening_reads_the_manifest_only_and_damage_is_reported_by_the_read_that_meets_it() {
     let temp = Temp::new();
     let path = build(&temp);
     let ids = item_ids(&path);
@@ -96,168 +40,28 @@ fn runtime_open_ignores_scenario_and_unrequested_corruption() {
         params![ids[1].kind() as i64, ids[1].key()],
     )
     .unwrap();
+    // The runtime never reads the tool scenario, and opening decodes no asset.
     let mut repo = open(&path);
-    assert_eq!(repo.stats().decoded_assets, 0);
-    repo.load(&ids[..1]).unwrap();
+    assert!(matches!(repo.read(&ids[0]).unwrap(), Asset::Item(_)));
     assert!(matches!(
-        repo.load(&ids[1..2]),
+        repo.read(&ids[1]),
         Err(ContentError::CorruptAsset { .. })
     ));
+    assert!(matches!(
+        repo.read(&AssetId::Item(ItemDefinitionId::new())),
+        Err(ContentError::MissingAsset(_))
+    ));
+    // Items are always-loaded definitions, so a session refuses the damaged bundle.
+    assert!(repo.core().is_err());
     assert!(LoadedProject::materialize_bundle_for_tools(path).is_err());
 }
 
 #[test]
-fn dialogue_resolves_only_its_mechanical_dependency_closure() {
-    let temp = Temp::new();
-    let path = build(&temp);
-    let mut repo = open(&path);
-    let dialogue = repo.list(AssetKind::Dialogue, None, 1).unwrap()[0]
-        .id
-        .clone();
-    assert_eq!(repo.stats().decoded_assets, 0);
-    let set = repo.load(&[dialogue.clone(), dialogue.clone()]).unwrap();
-    let kinds: BTreeSet<_> = set.iter().map(|(id, _)| id.kind()).collect();
-    assert!(kinds.contains(&AssetKind::Action) && kinds.contains(&AssetKind::Condition));
-    assert!(kinds.contains(&AssetKind::Text) && kinds.contains(&AssetKind::DialogueContract));
-    assert!(!kinds.contains(&AssetKind::Actor));
-    assert!(repo.stats().decoded_assets < 20);
-    if let AssetId::Dialogue(id) = dialogue {
-        assert_eq!(set.dialogue(id).unwrap().id, id);
-    }
-}
-
-#[test]
-fn paging_is_bounded_and_indexed_without_loading_payloads() {
-    let temp = Temp::new();
-    let path = build(&temp);
-    let mut repo = open(&path);
-    let mut cursor = None;
-    let mut ids = BTreeSet::new();
-    loop {
-        let page = repo.list(AssetKind::Item, cursor.as_deref(), 1).unwrap();
-        if page.is_empty() {
-            break;
-        }
-        assert!(ids.insert(page[0].id.clone()));
-        cursor = Some(page[0].id.key());
-    }
-    assert_eq!(ids.len(), 3);
-    assert_eq!(repo.stats().decoded_assets, 0);
-    assert!(repo.list(AssetKind::Item, None, 129).is_err());
-    let db = Connection::open(&path).unwrap();
-    for query in [
-        "EXPLAIN QUERY PLAN SELECT position,byte_len,hash FROM assets WHERE kind=2 AND id='x'",
-        "EXPLAIN QUERY PLAN SELECT id,position,byte_len,hash FROM assets WHERE kind=2 AND id>'x' ORDER BY id LIMIT 128",
-        "EXPLAIN QUERY PLAN SELECT dependency FROM asset_dependencies WHERE kind=2 AND id='x' ORDER BY dependency LIMIT 257",
-    ] {
-        let plan = db
-            .prepare(query)
-            .unwrap()
-            .query_map([], |r| r.get::<_, String>(3))
-            .unwrap()
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .unwrap()
-            .join("\n");
-        assert!(
-            plan.contains("SEARCH") && plan.contains("PRIMARY KEY"),
-            "{plan}"
-        );
-        assert!(
-            !plan.contains("SCAN") && !plan.contains("TEMP B-TREE"),
-            "{plan}"
-        );
-    }
-}
-
-#[test]
-fn leases_pin_cache_entries_and_release_them_for_eviction() {
-    let temp = Temp::new();
-    let path = build(&temp);
-    let ids = item_ids(&path);
-    let limits = RepositoryLimits {
-        max_cached_assets: 3,
-        ..Default::default()
-    };
-    let mut repo = ContentRepository::open(&path, limits).unwrap();
-    let held = repo.load(&ids[..1]).unwrap();
-    assert_eq!(held.len(), 3);
-    assert!(matches!(
-        repo.load(&ids[1..2]),
-        Err(ContentError::Budget(_))
-    ));
-    assert!(held.get(&ids[0]).is_ok());
-    assert_eq!(repo.stats().cached_assets, 3);
-    drop(held);
-    let next = repo.load(&ids[1..2]).unwrap();
-    assert_eq!(next.len(), 3);
-    assert!(repo.stats().cache_evictions > 0);
-    assert!(
-        repo.stats().peak_charged_cache_bytes <= RepositoryLimits::default().cache_charge_bytes
-    );
-}
-
-#[test]
-fn root_closure_payload_and_cache_byte_budgets_are_enforced() {
-    let temp = Temp::new();
-    let path = build(&temp);
-    let ids = item_ids(&path);
-    for limits in [
-        RepositoryLimits {
-            max_roots: 1,
-            ..Default::default()
-        },
-        RepositoryLimits {
-            max_resolved_assets: 1,
-            ..Default::default()
-        },
-        RepositoryLimits {
-            max_asset_bytes: 16,
-            ..Default::default()
-        },
-        RepositoryLimits {
-            cache_charge_bytes: 4096,
-            ..Default::default()
-        },
-    ] {
-        let budget = limits.cache_charge_bytes;
-        let mut repo = ContentRepository::open(&path, limits).unwrap();
-        assert!(matches!(repo.load(&ids[..2]), Err(ContentError::Budget(_))));
-        assert!(repo.stats().peak_charged_cache_bytes <= budget);
-    }
-}
-
-#[test]
-fn missing_dependencies_and_tampered_dependency_indexes_fail_explicitly() {
-    let temp = Temp::new();
-    let path = build(&temp);
-    let id = item_ids(&path)[0].clone();
-    let db = Connection::open(&path).unwrap();
-    db.pragma_update(None, "foreign_keys", false).unwrap();
-    db.execute("DELETE FROM assets WHERE kind=4", []).unwrap();
-    let mut repo = open(&path);
-    assert!(matches!(
-        repo.load(std::slice::from_ref(&id)),
-        Err(ContentError::MissingAsset(AssetId::Rules))
-    ));
-    drop(repo);
-    db.execute(
-        "DELETE FROM asset_dependencies WHERE kind=?1 AND id=?2",
-        params![id.kind() as i64, id.key()],
-    )
-    .unwrap();
-    assert!(matches!(
-        open(&path).load(&[id]),
-        Err(ContentError::CorruptAsset { .. })
-    ));
-}
-
-#[test]
-fn identity_and_length_checks_precede_returning_corrupt_assets() {
+fn a_record_under_the_wrong_identity_is_rejected_even_with_a_valid_checksum() {
     let temp = Temp::new();
     let path = build(&temp);
     let ids = item_ids(&path);
     let db = Connection::open(&path).unwrap();
-    // A correctly checksummed payload under the wrong ID must still fail.
     let payload: Vec<u8> = db
         .query_row(
             "SELECT payload FROM assets WHERE kind=2 AND id=?1",
@@ -277,28 +81,44 @@ fn identity_and_length_checks_precede_returning_corrupt_assets() {
     .unwrap();
     assert!(
         open(&path)
-            .load(&ids[..1])
+            .read(&ids[0])
             .err()
             .unwrap()
             .to_string()
             .contains("identity mismatch")
     );
-    db.execute_batch(
-        "PRAGMA ignore_check_constraints=ON; UPDATE assets SET byte_len=1 WHERE kind=2;",
-    )
-    .unwrap();
-    assert!(
-        open(&path)
-            .load(&ids[1..2])
-            .err()
-            .unwrap()
-            .to_string()
-            .contains("length mismatch")
-    );
 }
 
 #[test]
-fn text_contracts_have_stable_ids_and_are_loaded_explicitly() {
+fn a_session_over_a_large_catalog_loads_definitions_once_and_graphs_on_demand() {
+    let temp = Temp::new();
+    let source = temp.source();
+    let mut items: ItemCatalog = read(source.join("packages/core/items.ron"));
+    for i in items.items.len()..5_000 {
+        let mut item = items.items[0].clone();
+        item.id = ItemDefinitionId((100_000 + i as u128).to_be_bytes());
+        item.key = format!("generated_{i:05}");
+        items.items.push(item);
+    }
+    write(source.join("packages/core/items.ron"), &items);
+    let project = LoadedProject::load_directory(&source).unwrap();
+    let bundle = temp.0.join("large.sqlite");
+    project.build(&bundle).unwrap();
+    // The runtime cannot fall back to reading authored files.
+    let seed = project.start().unwrap().into_state();
+    fs::remove_dir_all(source).unwrap();
+    let mut session = GameSession::new(open(&bundle), seed).unwrap();
+    assert_eq!(session.content().items.items.len(), 5_000);
+    assert!(session.content().game.dialogues.is_empty());
+    for step in &project.scenario().steps {
+        step.apply(&mut session).unwrap();
+    }
+    assert_eq!(session.content().game.dialogues.len(), 1);
+    assert!(project.content().game.dialogues.len() > 1);
+}
+
+#[test]
+fn text_contracts_have_stable_ids_and_are_read_explicitly() {
     let temp = Temp::new();
     let source = temp.source();
     let original = temp.0.join("original.sqlite");
@@ -324,20 +144,20 @@ fn text_contracts_have_stable_ids_and_are_loaded_explicitly() {
         open(&original).manifest().publication_hash,
         open(&renamed).manifest().publication_hash
     );
-    let text_id = AssetId::Text(resource);
     let mut repo = open(&original);
-    let set = repo.load(std::slice::from_ref(&text_id)).unwrap();
-    assert_eq!(set.len(), 1);
-    assert!(matches!(set.get(&text_id).unwrap(), Asset::Text(t) if t.id == resource));
-    assert_eq!(repo.stats().decoded_assets, 1);
+    assert!(
+        matches!(repo.read(&AssetId::Text(resource)).unwrap(), Asset::Text(t) if t.id == resource)
+    );
     assert!(matches!(
-        repo.load(&[AssetId::Text(TextResourceId::new())]),
+        repo.read(&AssetId::Text(TextResourceId::new())),
         Err(ContentError::MissingAsset(_))
     ));
+    // Sessions never load text contracts; formatting asks for them separately.
+    assert!(repo.core().unwrap().text.is_empty());
 }
 
 #[test]
-fn separate_publications_never_share_stale_cached_assets() {
+fn separate_publications_are_read_independently() {
     let temp = Temp::new();
     let source = temp.source();
     let first = temp.0.join("first.sqlite");
@@ -355,29 +175,21 @@ fn separate_publications_never_share_stale_cached_assets() {
         .unwrap()
         .build(&second)
         .unwrap();
-    let mut a = open(&first);
-    let mut b = open(&second);
+    let (a, b) = (open(&first), open(&second));
     assert_ne!(a.manifest().publication_hash, b.manifest().publication_hash);
-    let a_set = a.load(&[AssetId::Item(id)]).unwrap();
-    let b_set = b.load(&[AssetId::Item(id)]).unwrap();
-    assert_ne!(a_set.publication_hash(), b_set.publication_hash());
-    assert_eq!(a_set.item(id).unwrap().weight_grams, original_weight);
-    assert_eq!(b_set.item(id).unwrap().weight_grams, original_weight + 10);
-    assert_eq!(a_set.item(id).unwrap().weight_grams, original_weight);
+    let weight = |repo: &ContentRepository| match repo.read(&AssetId::Item(id)).unwrap() {
+        Asset::Item(item) => item.weight_grams,
+        _ => unreachable!(),
+    };
+    assert_eq!(weight(&a), original_weight);
+    assert_eq!(weight(&b), original_weight + 10);
 }
 
 #[test]
-fn cli_inspect_opens_without_decoding_and_fetches_a_requested_item() {
+fn cli_inspect_reads_a_requested_item() {
     let temp = Temp::new();
     let path = build(&temp);
     let executable = env!("CARGO_BIN_EXE_yarra-game-content");
-    let output = std::process::Command::new(executable)
-        .arg("inspect")
-        .arg(&path)
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    assert!(String::from_utf8_lossy(&output.stdout).contains("decoded_assets: 0"));
     let id = item_ids(&path)[0].key();
     let output = std::process::Command::new(executable)
         .arg("inspect")
@@ -390,7 +202,8 @@ fn cli_inspect_opens_without_decoding_and_fetches_a_requested_item() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(String::from_utf8_lossy(&output.stdout).contains("decoded_assets: 3"));
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("Publication:") && text.contains(&format!("Item {id}")));
 }
 
 #[test]
@@ -408,7 +221,7 @@ fn source_and_bundle_versions_are_replaced_without_compatibility_loading() {
     let db = Connection::open(&path).unwrap();
     db.pragma_update(None, "user_version", 1).unwrap();
     assert!(matches!(
-        ContentRepository::open(path, Default::default()),
+        ContentRepository::open(path),
         Err(ContentError::BundleVersion(1))
     ));
 }

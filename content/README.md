@@ -35,32 +35,26 @@ content/gameplay/demo` to validate it; see the [gameplay workflow](../docs/WORKF
 for running the scenario, publishing SQLite bundles and save/load checks.
 
 Gameplay source format 6 uses explicitly declared packages and one conversation per
-asset directory. Graphs, local bindings, message contracts and source/translations
-are grouped together. Text references contain a stable resource UUID and local key.
-Mechanical SQLite schema 6 contains indexed definitions/contracts; separately
-published language packs contain wording and review metadata. Both runtime readers
-open without decoding all records. Fluent scopes and locale resources load on demand.
+asset directory: graph, local bindings, message contracts and translations are grouped
+together. Text references contain a stable resource UUID and a local key. `build`
+publishes an immutable SQLite bundle (schema 7) with one checksummed record per asset;
+language packs are published separately and hold the wording and review metadata.
 
-Runtime sessions resolve bounded content/state sets. Save schema 7 stores mutable
-state and references a retained mechanical generation; independent wording updates
-preserve save compatibility. The demo keeps mechanics beside its manual/quick/auto
-slots. See the workflow for `build-language`, shipping-locale review checks and
-explicit pack selection.
+At runtime the whole playthrough state is held in memory and saved as one snapshot file
+per slot (save format 8). A session loads the always-needed definitions once and each
+dialogue graph when a conversation needs it. Saves are tied to the content they were
+made with; wording updates do not affect them. Old bundles and saves are rebuilt, not
+migrated.
 
-The guard package adds separate quest, named-predicate and NPC interaction-profile
-assets. Run `cargo run --offline -p yarra-game-content -- scenario
-content/gameplay/demo scenarios/guard.ron` for quest/attitude selection, concurrent
-topics and atomic rewards. Runtime profiles fetch only condition dependencies and
-the selected conversation. Selection and both RNG streams survive save/load.
-Conversations now have role-bound lines, typed Fluent arguments, saved cursors,
-explicit repeat policies and separate scoped history/reward claims. The additional
-`scenarios/guard-refusal.ron` exercise demonstrates interruption, remembered refusal
-and returning through a quest topic. Rebuild old publications and regenerate old
-save fixtures; format compatibility layers are intentionally absent.
+The guard package adds quest, named-predicate, interaction-profile and `world/` object,
+area and trigger assets. Three scenarios exercise them through the same commands the
+game will use:
 
-The guard package also owns `world/` object, area and trigger definitions. Run
-`cargo run --offline -p yarra-game-content -- scenario content/gameplay/demo scenarios/guard-gate.ron`
-for an area-triggered escort, pending movement and gate/container access after arrival.
-Triggers and area bounds have SQLite indexes; saved pending events and sequences
-survive checkpoints. Movement reports in this exercise are synthetic adapter inputs;
-production navigation and graphical integration remain separate work.
+```sh
+cargo run --offline -p yarra-game-content -- scenario content/gameplay/demo scenarios/guard.ron
+cargo run --offline -p yarra-game-content -- scenario content/gameplay/demo scenarios/guard-refusal.ron
+cargo run --offline -p yarra-game-content -- scenario content/gameplay/demo scenarios/guard-gate.ron
+```
+
+Movement reports in these exercises are synthetic adapter inputs; engine integration is
+the next step in the [roadmap](../docs/REFACTORING.md#gameplay-roadmap).

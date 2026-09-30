@@ -338,12 +338,20 @@ impl GameContent {
         }
         Ok(())
     }
+    /// At runtime only recently used graphs are present; sessions load them on demand.
+    pub fn loaded_dialogue(&self, id: DialogueId) -> Option<&Dialogue> {
+        self.game.dialogues.iter().find(|d| d.id == id)
+    }
     pub fn dialogue(&self, id: DialogueId) -> Result<&Dialogue> {
-        self.game
-            .dialogues
-            .iter()
-            .find(|d| d.id == id)
+        self.loaded_dialogue(id)
             .ok_or_else(|| Invalid("unknown dialogue".into()).into())
+    }
+    pub fn template(&self, id: ActorTemplateId) -> Result<&ActorTemplate> {
+        self.game
+            .actors
+            .iter()
+            .find(|t| t.id == id)
+            .ok_or_else(|| Invalid("unknown actor template".into()).into())
     }
     /// Stable fingerprint of definitions, rules and world binding; excludes .ftl resources.
     pub fn fingerprint(&self) -> Result<[u8; 32]> {

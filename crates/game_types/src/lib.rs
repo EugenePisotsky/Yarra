@@ -156,7 +156,7 @@ impl From<&str> for TextRef {
 }
 
 /// An owner can be an actor, chest, party or another registered world object.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct OwnerRef {
     pub kind: String,
     pub id: OwnerId,

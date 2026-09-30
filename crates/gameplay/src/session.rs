@@ -1,11 +1,11 @@
 use crate::Result;
 use crate::dialogue::{RunStatus, Token};
 use crate::inventory::{TradeOffer, TradeParticipants, TradeQuote};
-use crate::resolution::{resolve, resolve_with};
 use crate::rules::{ActiveEffect, Effect};
+use crate::tx::Tx;
 use crate::*;
 use game_types::*;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 #[derive(Debug, Clone)]
 pub enum Command {
@@ -122,61 +122,126 @@ pub struct CommandOutcome {
     pub header: SessionHeader,
     pub events: Vec<GameEvent>,
 }
-/// One authoritative session. Storage transactions publish state/RNG/events together.
+/// One authoritative playthrough: the whole mutable state in memory, the always-loaded
+/// definitions, and dialogue graphs loaded when a conversation needs them.
 /// Application adapters separately authorize player control, distance and access.
-pub struct GameSession<S: StateStore, C: ContentSource> {
-    store: S,
-    content: C,
+pub struct GameSession<C: ContentSource> {
+    source: C,
+    identity: ContentIdentity,
+    content: GameContent,
+    triggers: TriggerIndex,
+    /// Loaded graphs, least recently used first.
+    loaded: VecDeque<DialogueId>,
+    state: SessionState,
 }
-impl<S: StateStore, C: ContentSource> GameSession<S, C> {
-    pub fn new(store: S, content: C) -> Result<Self> {
+/// What `Talk` will do, decided from a read-only look at the state before anything changes.
+enum Talk {
+    Resume(DialogueId),
+    Start {
+        selection: dialogue::Selection,
+        random: rules::RandomState,
+    },
+}
+impl<C: ContentSource> GameSession<C> {
+    /// Starts or restores a playthrough. The state is checked in full against the content.
+    pub fn new(mut source: C, state: SessionState) -> Result<Self> {
+        let identity = source.identity();
+        let content = source.core()?;
         require(
-            store.identity() == &content.identity(),
+            content.manifest == identity.manifest && content.game.dialogues.is_empty(),
             "session content identity mismatch",
         )?;
-        store.header()?.validate()?;
-        Ok(Self { store, content })
+        let triggers = TriggerIndex::build(&content)?;
+        let mut session = Self {
+            source,
+            identity,
+            content,
+            triggers,
+            loaded: VecDeque::new(),
+            state,
+        };
+        let active: Vec<_> = session
+            .state
+            .conversations
+            .values()
+            .filter(|c| c.status == RunStatus::Active)
+            .map(|c| c.dialogue)
+            .take(MAX_LOADED_DIALOGUES)
+            .collect();
+        for id in active {
+            session.ensure_dialogue(id)?;
+        }
+        session.state.validate(&session.content)?;
+        Ok(session)
     }
-    pub fn store(&self) -> &S {
-        &self.store
+    pub fn state(&self) -> &SessionState {
+        &self.state
     }
-    pub fn content_source(&self) -> &C {
+    /// Always-loaded definitions plus the dialogue graphs currently in memory.
+    pub fn content(&self) -> &GameContent {
         &self.content
     }
-    pub fn header(&self) -> Result<SessionHeader> {
-        self.store.header()
+    pub fn content_source(&self) -> &C {
+        &self.source
+    }
+    pub fn header(&self) -> SessionHeader {
+        SessionHeader::capture(&self.state)
     }
     pub fn identity(&self) -> &ContentIdentity {
-        self.store.identity()
+        &self.identity
     }
-    /// A bounded read model from a single storage snapshot. No random state is consumed.
-    pub fn query(&mut self, request: StateRequest) -> Result<SessionState> {
-        let mut tx = self.store.begin()?;
-        let (batch, _) = resolve(&mut tx, &mut self.content, &request)?;
-        Ok(batch.state)
-    }
-    pub fn derived(&mut self, actor: ActorId) -> Result<rules::Attributes> {
-        let mut tx = self.store.begin()?;
-        let (batch, content) = resolve(
-            &mut tx,
-            &mut self.content,
-            &StateRequest {
-                actors: [actor].into(),
-                ..Default::default()
-            },
+    fn ensure_dialogue(&mut self, id: DialogueId) -> Result<()> {
+        if let Some(position) = self.loaded.iter().position(|d| *d == id) {
+            self.loaded.remove(position);
+            self.loaded.push_back(id);
+            return Ok(());
+        }
+        let contract = self.content.dialogue_contract(id)?;
+        let pack = self.source.dialogue(id)?;
+        pack.graph.validate()?;
+        require(
+            pack.graph.id == id && &pack.graph.contract() == contract,
+            "dialogue contract mismatch",
         )?;
-        batch.state.derived(&content, actor)
+        for choice in pack.graph.nodes.iter().flat_map(|n| &n.choices) {
+            require(
+                choice
+                    .conditions
+                    .iter()
+                    .all(|k| pack.conditions.contains_key(&BindingId::new(id, k.clone())))
+                    && choice
+                        .actions
+                        .iter()
+                        .all(|k| pack.actions.contains_key(&BindingId::new(id, k.clone()))),
+                "dialogue binding missing",
+            )?;
+        }
+        if self.loaded.len() == MAX_LOADED_DIALOGUES
+            && let Some(old) = self.loaded.pop_front()
+        {
+            let game = &mut self.content.game;
+            game.dialogues.retain(|d| d.id != old);
+            game.conditions.retain(|k, _| k.dialogue != old);
+            game.actions.retain(|k, _| k.dialogue != old);
+        }
+        let game = &mut self.content.game;
+        game.dialogues.push(pack.graph);
+        game.conditions.extend(pack.conditions);
+        game.actions.extend(pack.actions);
+        self.loaded.push_back(id);
+        Ok(())
+    }
+    pub fn derived(&self, actor: ActorId) -> Result<rules::Attributes> {
+        self.state.derived(&self.content, actor)
     }
     pub fn quote_trade(
-        &mut self,
+        &self,
         participants: TradeParticipants,
         offer: TradeOffer,
     ) -> Result<TradeQuote> {
-        let mut tx = self.store.begin()?;
-        let (batch, content) = resolve(&mut tx, &mut self.content, &trade_request(participants))?;
-        let state = &batch.state;
+        let state = &self.state;
         Ok(inventory::quote_trade(
-            &content.items,
+            &self.content.items,
             state.inventory(participants.merchant_inventory)?,
             state.inventory(participants.customer_inventory)?,
             state.wallet(participants.merchant_wallet)?,
@@ -202,343 +267,342 @@ impl<S: StateStore, C: ContentSource> GameSession<S, C> {
             .collect())
     }
     pub fn conversation_view(&mut self, key: ConversationKey) -> Result<ConversationView> {
-        let mut tx = self.store.begin()?;
-        let (batch, content) = resolve(
-            &mut tx,
-            &mut self.content,
-            &conversation_request(key.dialogue, key.participant, key.speaker),
-        )?;
-        content.conversation_view(&batch.state, key)
+        self.state.conversation(key)?;
+        self.ensure_dialogue(key.dialogue)?;
+        self.content.conversation_view(&self.state, key)
     }
+    /// No random state is consumed and no graph is loaded.
     pub fn preview_interaction(
-        &mut self,
+        &self,
         participant: ActorId,
         speaker: ActorId,
     ) -> Result<InteractionPreview> {
-        let mut tx = self.store.begin()?;
-        let (batch, content, profile) =
-            interaction_context(&mut tx, &mut self.content, participant, speaker)?;
-        content.preview(profile, &batch.state, participant, speaker)
+        let profile = self.profile(participant, speaker)?;
+        self.content
+            .preview(profile, &self.state, participant, speaker)
     }
-    /// Adapter polling is indexed and survives loading a checkpoint. Starting is idempotent.
-    pub fn next_movement(&mut self, after: Option<TriggerId>) -> Result<Option<MoveRequest>> {
-        let mut tx = self.store.begin()?;
-        let Some(id) = tx.next_movement(after, None)? else {
-            return Ok(None);
-        };
-        let (batch, _) = resolve(
-            &mut tx,
-            &mut self.content,
-            &StateRequest {
-                triggers: [id].into(),
-                ..Default::default()
-            },
-        )?;
-        Ok(batch.state.world.trigger(id)?.movement.clone())
+    fn profile(&self, participant: ActorId, speaker: ActorId) -> Result<InteractionProfileId> {
+        require(participant != speaker, "interaction needs two actors")?;
+        self.state.actor(participant)?;
+        self.content
+            .template(self.state.actor(speaker)?.template)?
+            .interaction
+            .ok_or_else(|| Invalid("NPC has no interaction profile".into()).into())
     }
-    pub fn world_work_pending(&mut self) -> Result<bool> {
-        let mut tx = self.store.begin()?;
-        let time = tx.header().time;
-        Ok(tx.next_event()?.is_some() || tx.next_movement(None, Some(time))?.is_some())
+    /// Movements awaiting the adapter, in trigger order. Starting one is idempotent.
+    pub fn next_movement(&self, after: Option<TriggerId>) -> Option<MoveRequest> {
+        self.state
+            .world
+            .triggers
+            .values()
+            .filter(|t| after.is_none_or(|a| t.id > a))
+            .find_map(|t| t.movement.clone())
+    }
+    pub fn world_work_pending(&self) -> bool {
+        !self.state.world.pending.is_empty()
+            || crate::world_runtime::timed_out(&self.state).is_some()
     }
     /// Ordinary container access enforces durable lock/open/destruction state.
-    pub fn container_contents(&mut self, object: ObjectId) -> Result<inventory::Inventory> {
-        let mut tx = self.store.begin()?;
-        let (batch, content) = resolve(
-            &mut tx,
-            &mut self.content,
-            &StateRequest {
-                objects: [object].into(),
-                ..Default::default()
-            },
-        )?;
-        let o = batch.state.world.object(object)?;
+    pub fn container_contents(&self, object: ObjectId) -> Result<&inventory::Inventory> {
+        let o = self.state.object(&self.content, object)?;
         require(
             !o.locked && o.open && !o.destroyed,
             "container is not accessible",
         )?;
-        let ObjectKind::Container { inventory } = content.object(object)?.kind else {
+        let ObjectKind::Container { inventory } = self.content.object(object)?.kind else {
             return Err(Invalid("object is not a container".into()).into());
         };
-        // Keep lock queries and unloaded-object mutations independent of inventory contents.
-        let (contents, _) = resolve(
-            &mut tx,
-            &mut self.content,
-            &StateRequest {
-                objects: [object].into(),
-                inventories: [inventory].into(),
-                ..Default::default()
-            },
-        )?;
-        Ok(contents.state.inventory(inventory)?.clone())
+        self.state.inventory(inventory)
     }
-    pub fn apply(&mut self, command: Command) -> Result<CommandOutcome> {
-        let mut tx = self.store.begin()?;
-        let mut header = tx.header().clone();
-        let mut events = Vec::new();
-        if let Command::World(command) = command {
-            crate::world_runtime::apply(
-                &mut tx,
-                &mut self.content,
-                command,
-                &mut header,
-                &mut events,
-            )?;
-        } else if let Command::AdvanceTime { millis } = command {
-            header.time = header.time.advance(millis)?;
-            header.validate()?;
-            let mut processed = 0;
-            while let Some(actor) = tx.next_expiring_actor(header.time)? {
-                require(
-                    processed < MAX_EXPIRATIONS_PER_COMMAND,
-                    "expiration work budget exceeded",
-                )?;
-                let request = StateRequest {
-                    actors: [actor].into(),
-                    ..Default::default()
-                };
-                let (batch, content) = resolve(&mut tx, &mut self.content, &request)?;
-                let mut next = batch.state.clone();
-                apply(
-                    &content,
-                    &mut next,
-                    Command::AdvanceTime { millis },
-                    &mut Vec::new(),
-                )?;
-                next.validate(&content)?;
-                crate::world_runtime::stage(&mut tx, &mut self.content, &batch, &next)?;
-                processed += 1;
-            }
-            events.push(GameEvent::TimeAdvanced);
-        } else if let Command::Talk {
+    fn plan_talk(
+        &self,
+        participant: ActorId,
+        speaker: ActorId,
+        topic: Option<&Key>,
+    ) -> Result<Talk> {
+        let profile = self.profile(participant, speaker)?;
+        let state = &self.state;
+        let key = dialogue::InteractionKey {
             participant,
             speaker,
-            topic,
-            bindings,
-        } = command
-        {
-            let (batch, content, profile) =
-                interaction_context(&mut tx, &mut self.content, participant, speaker)?;
+        };
+        if let Some(active) = state.selection(key).filter(|selection| {
+            state
+                .conversations
+                .get(&ConversationKey {
+                    dialogue: selection.dialogue,
+                    participant,
+                    speaker,
+                })
+                .is_some_and(|c| c.status == RunStatus::Active)
+        }) {
+            return Ok(Talk::Resume(active.dialogue));
+        }
+        let preview = self.content.preview(profile, state, participant, speaker)?;
+        let rule = preview.selected(topic)?;
+        let mut random = state.narrative_random;
+        let total: u32 = rule.variants.iter().map(|v| v.weight).sum();
+        let mut roll = if rule.variants.len() == 1 {
+            0
+        } else {
+            random.below(total)?
+        };
+        let selected = rule
+            .variants
+            .iter()
+            .find(|v| {
+                if roll < v.weight {
+                    true
+                } else {
+                    roll -= v.weight;
+                    false
+                }
+            })
+            .ok_or_else(|| Invalid("empty variant selection".into()))?;
+        Ok(Talk::Start {
+            selection: dialogue::Selection {
+                profile,
+                rule: rule.rule.clone(),
+                dialogue: selected.dialogue,
+            },
+            random,
+        })
+    }
+    /// Accepts the command as a whole or leaves state, clock and random streams untouched.
+    pub fn apply(&mut self, command: Command) -> Result<CommandOutcome> {
+        // Reads and graph loading happen first; nothing below performs I/O.
+        let talk = match &command {
+            Command::Talk {
+                participant,
+                speaker,
+                topic,
+                ..
+            } => {
+                let plan = self.plan_talk(*participant, *speaker, topic.as_ref())?;
+                if let Talk::Start { selection, .. } = &plan {
+                    self.ensure_dialogue(selection.dialogue)?;
+                }
+                Some(plan)
+            }
+            Command::StartDialogue { dialogue, .. } | Command::Choose { dialogue, .. } => {
+                self.ensure_dialogue(*dialogue)?;
+                None
+            }
+            Command::AdvanceLine { key, .. } | Command::InterruptDialogue { key, .. } => {
+                self.ensure_dialogue(key.dialogue)?;
+                None
+            }
+            _ => None,
+        };
+        let content = &self.content;
+        let triggers = &self.triggers;
+        let mut tx = Tx::begin(&mut self.state);
+        let mut events = Vec::new();
+        let result = (|| {
+            match command {
+                Command::World(command) => {
+                    crate::world_runtime::apply(content, triggers, &mut tx, command, &mut events)?
+                }
+                Command::Talk {
+                    participant,
+                    speaker,
+                    topic,
+                    bindings,
+                } => {
+                    let plan = talk.expect("planned above");
+                    start_talk(
+                        content,
+                        &mut tx,
+                        participant,
+                        speaker,
+                        topic,
+                        bindings,
+                        plan,
+                        &mut events,
+                    )?
+                }
+                command => apply(content, &mut tx, command, &mut events)?,
+            }
+            finish(content, triggers, &mut tx, &mut events)
+        })();
+        match result {
+            Ok(()) => Ok(CommandOutcome {
+                header: SessionHeader::capture(&self.state),
+                events,
+            }),
+            Err(error) => {
+                tx.rollback();
+                Err(error)
+            }
+        }
+    }
+    /// Release the state, e.g. to hand a finished tool run to another session.
+    pub fn into_state(self) -> SessionState {
+        self.state
+    }
+}
+#[allow(clippy::too_many_arguments)]
+fn start_talk(
+    content: &GameContent,
+    tx: &mut Tx,
+    participant: ActorId,
+    speaker: ActorId,
+    topic: Option<Key>,
+    bindings: BTreeMap<Key, ActorId>,
+    plan: Talk,
+    events: &mut Vec<GameEvent>,
+) -> Result<()> {
+    match plan {
+        Talk::Resume(dialogue) => {
+            let current = tx.conversation(ConversationKey {
+                dialogue,
+                participant,
+                speaker,
+            })?;
+            require(
+                bindings
+                    .iter()
+                    .all(|(r, id)| current.bindings.get(r) == Some(id)),
+                "cannot rebind active conversation",
+            )?;
+            require(
+                topic.is_none(),
+                "finish the active conversation before choosing a topic",
+            )?;
+            events.push(GameEvent::DialogueResumed { dialogue });
+        }
+        Talk::Start { selection, random } => {
+            require(bindings.len() <= 14, "too many role bindings")?;
             let key = dialogue::InteractionKey {
                 participant,
                 speaker,
             };
-            let active = batch
-                .state
-                .interaction(key)?
-                .current
-                .as_ref()
-                .filter(|selection| {
-                    batch.state.conversations.iter().any(|c| {
-                        c.dialogue == selection.dialogue
-                            && c.participant == participant
-                            && c.speaker == speaker
-                            && c.status == RunStatus::Active
-                    })
-                });
-            if let Some(active) = active {
-                let current = crate::conversation::conversation(
-                    &batch.state,
-                    ConversationKey {
-                        dialogue: active.dialogue,
-                        participant,
-                        speaker,
-                    },
-                )?;
-                require(
-                    bindings
-                        .iter()
-                        .all(|(r, id)| current.bindings.get(r) == Some(id)),
-                    "cannot rebind active conversation",
-                )?;
-                require(
-                    topic.is_none(),
-                    "finish the active conversation before choosing a topic",
-                )?;
-                events.push(GameEvent::DialogueResumed {
-                    dialogue: active.dialogue,
-                });
-            } else {
-                let preview = content.preview(profile, &batch.state, participant, speaker)?;
-                let rule = preview.selected(topic.as_ref())?;
-                let mut random = batch.state.narrative_random;
-                let total: u32 = rule.variants.iter().map(|v| v.weight).sum();
-                let mut roll = if rule.variants.len() == 1 {
-                    0
-                } else {
-                    random.below(total)?
-                };
-                let selected = rule
-                    .variants
-                    .iter()
-                    .find(|v| {
-                        if roll < v.weight {
-                            true
-                        } else {
-                            roll -= v.weight;
-                            false
-                        }
-                    })
-                    .ok_or_else(|| Invalid("empty variant selection".into()))?;
-                let selection = dialogue::Selection {
-                    profile,
-                    rule: rule.rule.clone(),
-                    dialogue: selected.dialogue,
-                };
-                // Load only the chosen graph. All state reads use the same transaction; failures
-                // before commit preserve narrative RNG, active selection and gameplay effects.
-                let mut request = conversation_request(selection.dialogue, participant, speaker);
-                request.interactions.insert(key);
-                require(bindings.len() <= 14, "too many role bindings")?;
-                request.actors.extend(bindings.values());
-                let (batch, content) = resolve_with(
-                    &mut tx,
-                    &mut self.content,
-                    &request,
-                    &ContentRequest {
-                        profiles: [profile].into(),
-                        ..Default::default()
-                    },
-                )?;
-                let mut next = batch.state.clone();
-                apply(
-                    &content,
-                    &mut next,
-                    Command::StartDialogue {
-                        dialogue: selection.dialogue,
-                        participant,
-                        speaker,
-                        bindings,
-                    },
-                    &mut events,
-                )?;
-                next.interactions
-                    .iter_mut()
-                    .find(|i| i.key == key)
-                    .unwrap()
-                    .current = Some(selection.clone());
-                next.narrative_random = random;
-                next.validate(&content)?;
-                header.narrative_random = random;
-                crate::world_runtime::stage(&mut tx, &mut self.content, &batch, &next)?;
-                events.push(GameEvent::InteractionSelected { key, selection });
+            crate::conversation::start(
+                content,
+                tx,
+                ConversationKey {
+                    dialogue: selection.dialogue,
+                    participant,
+                    speaker,
+                },
+                &bindings,
+                events,
+            )?;
+            tx.interaction_mut(key).current = Some(selection.clone());
+            tx.set_narrative_random(random);
+            events.push(GameEvent::InteractionSelected { key, selection });
+        }
+    }
+    Ok(())
+}
+/// Completes an accepted command: stable identities for new items, checks of what changed,
+/// notifications for subscribed triggers, and the next generation.
+fn finish(
+    content: &GameContent,
+    triggers: &TriggerIndex,
+    tx: &mut Tx,
+    events: &mut [GameEvent],
+) -> Result<()> {
+    assign_item_ids(tx, events)?;
+    check_changes(content, tx)?;
+    let signals: Vec<_> = crate::world_runtime::signals(content, tx)?
+        .into_iter()
+        .filter(|s| triggers.subscribed(s))
+        .collect();
+    require(
+        signals.len() <= MAX_EVENTS_PER_COMMAND,
+        "command event budget exceeded",
+    )?;
+    require(
+        tx.world.pending.len() + signals.len() <= MAX_PENDING_EVENTS,
+        "pending event queue full; process work before accepting more",
+    )?;
+    let generation = tx.generation;
+    for (ordinal, signal) in signals.into_iter().enumerate() {
+        tx.pending_mut().push_back(PendingEvent {
+            id: EventId {
+                generation,
+                ordinal: ordinal as u32,
+            },
+            signal,
+            after: None,
+        });
+    }
+    tx.bump_generation()
+}
+/// Re-checks only the records this command wrote, plus actors whose equipment or health
+/// depends on a changed inventory.
+fn check_changes(content: &GameContent, tx: &Tx) -> Result<()> {
+    let state: &SessionState = tx;
+    let before = &tx.before;
+    let mut actors: BTreeSet<ActorId> = before.actors.keys().copied().collect();
+    for id in before.inventories.keys() {
+        if let Some(inv) = state.inventories.get(id) {
+            state.check_inventory(content, inv)?;
+            if inv.owner.kind == "actor" {
+                actors.insert(ActorId(inv.owner.id.0));
             }
-        } else {
-            let request = command_request(&command);
-            let (batch, content) = resolve(&mut tx, &mut self.content, &request)?;
-            let mut next = batch.state.clone();
-            apply(&content, &mut next, command, &mut events)?;
-            assign_item_ids(&batch.state, &mut next, &mut events);
-            next.validate(&content)?;
-            header.random = next.random;
-            header.narrative_random = next.narrative_random;
-            crate::world_runtime::stage(&mut tx, &mut self.content, &batch, &next)?;
         }
-        header.generation = header
-            .generation
-            .checked_add(1)
-            .ok_or_else(|| Invalid("session generation overflow".into()))?;
-        header.validate()?;
-        tx.commit(&header)?;
-        Ok(CommandOutcome { header, events })
     }
-}
-fn trade_request(p: TradeParticipants) -> StateRequest {
-    StateRequest {
-        inventories: [p.merchant_inventory, p.customer_inventory].into(),
-        wallets: [p.merchant_wallet, p.customer_wallet].into(),
-        ..Default::default()
-    }
-}
-fn conversation_request(
-    dialogue: DialogueId,
-    participant: ActorId,
-    speaker: ActorId,
-) -> StateRequest {
-    StateRequest {
-        conversations: [ConversationKey {
-            dialogue,
-            participant,
-            speaker,
-        }]
-        .into(),
-        ..Default::default()
-    }
-}
-fn command_request(command: &Command) -> StateRequest {
-    match command {
-        Command::World(_) => StateRequest::default(),
-        Command::AdvanceLine { key, .. } | Command::InterruptDialogue { key, .. } => {
-            conversation_request(key.dialogue, key.participant, key.speaker)
+    for id in actors {
+        if let Some(actor) = state.actors.get(&id) {
+            state.check_actor(content, actor)?;
         }
-        Command::Talk {
-            participant,
-            speaker,
-            ..
-        } => StateRequest {
-            interactions: [dialogue::InteractionKey {
-                participant: *participant,
-                speaker: *speaker,
-            }]
-            .into(),
-            ..Default::default()
-        },
-        Command::Quest { quest, .. } => StateRequest {
-            quests: [*quest].into(),
-            ..Default::default()
-        },
-        Command::AdjustRelationship { key, .. } => StateRequest {
-            relationships: [*key].into(),
-            ..Default::default()
-        },
-        Command::UseItem { actor, .. }
-        | Command::Equip { actor, .. }
-        | Command::Unequip { actor, .. } => StateRequest {
-            actors: [*actor].into(),
-            ..Default::default()
-        },
-        Command::Transfer {
-            source,
-            destination,
-            ..
-        } => StateRequest {
-            inventories: [*source, *destination].into(),
-            ..Default::default()
-        },
-        Command::Trade(q) => trade_request(q.participants()),
-        Command::StartDialogue {
-            dialogue,
-            participant,
-            speaker,
-            bindings,
-        } => {
-            let mut request = conversation_request(*dialogue, *participant, *speaker);
-            request.actors.extend(bindings.values());
-            request
-        }
-        Command::Choose {
-            dialogue,
-            participant,
-            speaker,
-            ..
-        } => conversation_request(*dialogue, *participant, *speaker),
-        Command::AdvanceTime { .. } => StateRequest::default(),
     }
+    for id in before.wallets.keys() {
+        state.check_wallet(state.wallet(*id)?)?;
+    }
+    for id in before.quests.keys() {
+        state.quest(*id).validate(content.quest(*id)?)?;
+    }
+    for key in before.relationships.keys() {
+        state.check_relationship(&state.relationship(*key))?;
+    }
+    for key in before.histories.keys() {
+        state.check_history(content, &state.history(*key))?;
+    }
+    for key in &before.claims {
+        state.check_claim(content, *key)?;
+    }
+    for key in before.conversations.keys() {
+        state.check_conversation(content, state.conversation(*key)?)?;
+    }
+    for key in before.interactions.keys() {
+        if let Some(i) = state.interactions.get(key) {
+            state.check_interaction(content, i)?;
+        }
+    }
+    for id in before.objects.keys() {
+        state.check_object(content, &state.object(content, *id)?)?;
+    }
+    for actor in before.locations.keys() {
+        state.check_location(content, &state.location(content, *actor)?)?;
+    }
+    for id in before.triggers.keys() {
+        state.trigger(*id).validate(content, state)?;
+    }
+    require(
+        before.facts.keys().all(|k| content.game.facts.contains(k)),
+        "unknown saved fact",
+    )?;
+    Ok(())
 }
 fn apply(
     content: &GameContent,
-    state: &mut SessionState,
+    state: &mut Tx,
     command: Command,
     events: &mut Vec<GameEvent>,
 ) -> Result<()> {
     match command {
         Command::World(_) | Command::Talk { .. } => {
-            return Err(Invalid("Talk requires session selection".into()).into());
+            return Err(Invalid("command requires session selection".into()).into());
         }
         Command::Quest { quest, transition } => {
             change_quest(content, state, quest, &transition, events)?
         }
         Command::AdjustRelationship { key, amount } => {
+            state.actor(key.from)?;
+            state.actor(key.to)?;
             change_relationship(state, key, amount, events)?
         }
         Command::UseItem { actor, item } => {
@@ -577,7 +641,7 @@ fn apply(
             state
                 .inventory_mut(inventory)?
                 .remove(&content.items, item, 1)?;
-            state.clamp_health(content)?;
+            clamp_health(content, state, actor)?;
             events.push(GameEvent::ItemUsed { actor, item });
         }
         Command::Equip { actor, item } => {
@@ -590,7 +654,7 @@ fn apply(
                 .clone()
                 .ok_or_else(|| Invalid("item cannot be equipped".into()))?;
             state.actor_mut(actor)?.equipment.insert(slot, item);
-            state.clamp_health(content)?;
+            clamp_health(content, state, actor)?;
             events.push(GameEvent::EquipmentChanged { actor });
         }
         Command::Unequip { actor, slot } => {
@@ -598,7 +662,7 @@ fn apply(
                 state.actor_mut(actor)?.equipment.remove(&slot).is_some(),
                 "slot is empty",
             )?;
-            state.clamp_health(content)?;
+            clamp_health(content, state, actor)?;
             events.push(GameEvent::EquipmentChanged { actor });
         }
         Command::Transfer {
@@ -612,7 +676,9 @@ fn apply(
             let entries = inventory::transfer(&content.items, &mut from, &mut to, item, quantity)?;
             *state.inventory_mut(source)? = from;
             *state.inventory_mut(destination)? = to;
-            remove_missing_equipment(content, state, events)?;
+            for id in [source, destination] {
+                sync_equipment(content, state, id, events)?;
+            }
             events.push(GameEvent::ItemsTransferred { entries });
         }
         Command::Trade(quote) => {
@@ -631,14 +697,11 @@ fn apply(
             )?;
             *state.inventory_mut(p.merchant_inventory)? = merchant;
             *state.inventory_mut(p.customer_inventory)? = customer;
-            for wallet in &mut state.wallets {
-                if wallet.id == merchant_wallet.id {
-                    *wallet = merchant_wallet.clone();
-                } else if wallet.id == customer_wallet.id {
-                    *wallet = customer_wallet.clone();
-                }
+            *state.wallet_mut(p.merchant_wallet)? = merchant_wallet;
+            *state.wallet_mut(p.customer_wallet)? = customer_wallet;
+            for id in [p.merchant_inventory, p.customer_inventory] {
+                sync_equipment(content, state, id, events)?;
             }
-            remove_missing_equipment(content, state, events)?;
             events.push(GameEvent::TradeCompleted);
         }
         Command::StartDialogue {
@@ -683,43 +746,69 @@ fn apply(
         }
         Command::AdvanceTime { millis } => {
             let target = state.time.advance(millis)?;
-            // Preserve intermediate health caps even when one step crosses several expirations.
-            let deadlines: std::collections::BTreeSet<_> = state
+            require(
+                target.0 <= i64::MAX as u64,
+                "logical time exceeds storage range",
+            )?;
+            let expiring: Vec<ActorId> = state
                 .actors
-                .iter()
-                .flat_map(|a| a.effects.iter())
-                .map(|e| e.expires_at)
-                .filter(|t| *t > state.time && *t <= target)
+                .values()
+                .filter(|a| a.effects.iter().any(|e| e.expires_at <= target))
+                .map(|a| a.id)
                 .collect();
-            for time in deadlines.into_iter().chain(std::iter::once(target)) {
-                state.time = time;
-                for actor in &mut state.actors {
-                    actor.effects.retain(|e| e.expires_at > time);
+            // Preserve intermediate health caps even when one step crosses several expirations.
+            for id in expiring {
+                let deadlines: BTreeSet<_> = state
+                    .actor(id)?
+                    .effects
+                    .iter()
+                    .map(|e| e.expires_at)
+                    .filter(|t| *t <= target)
+                    .collect();
+                for time in deadlines {
+                    state.actor_mut(id)?.effects.retain(|e| e.expires_at > time);
+                    clamp_health(content, state, id)?;
                 }
-                state.clamp_health(content)?;
             }
+            state.set_time(target);
             events.push(GameEvent::TimeAdvanced);
         }
     }
     Ok(())
 }
-fn remove_missing_equipment(
+fn clamp_health(content: &GameContent, state: &mut Tx, actor: ActorId) -> Result<()> {
+    let max = state.derived(content, actor)?[&content.game.rules.health_attribute] as u32;
+    if state.actor(actor)?.health > max {
+        state.actor_mut(actor)?.health = max;
+    }
+    Ok(())
+}
+/// After items leave a carried inventory, drop equipment that is no longer owned.
+fn sync_equipment(
     content: &GameContent,
-    state: &mut SessionState,
+    state: &mut Tx,
+    inventory: InventoryId,
     events: &mut Vec<GameEvent>,
 ) -> Result<()> {
-    for index in 0..state.actors.len() {
-        let actor = state.actors[index].id;
-        let owned: std::collections::BTreeSet<_> =
-            state.carried(actor)?.entries.iter().map(|e| e.id).collect();
-        let equipment = &mut state.actors[index].equipment;
-        let previous = equipment.len();
-        equipment.retain(|_, id| owned.contains(id));
-        if previous != equipment.len() {
-            events.push(GameEvent::EquipmentChanged { actor });
-        }
+    let bag = state.inventory(inventory)?;
+    if bag.owner.kind != "actor" || bag.role != CARRIED {
+        return Ok(());
     }
-    state.clamp_health(content)
+    let actor = ActorId(bag.owner.id.0);
+    let owned: BTreeSet<_> = bag.entries.iter().map(|e| e.id).collect();
+    if state
+        .actor(actor)?
+        .equipment
+        .values()
+        .any(|id| !owned.contains(id))
+    {
+        state
+            .actor_mut(actor)?
+            .equipment
+            .retain(|_, id| owned.contains(id));
+        events.push(GameEvent::EquipmentChanged { actor });
+    }
+    clamp_health(content, state, actor)
 }
 pub(crate) fn conditions_met(
     content: &GameContent,
@@ -746,7 +835,7 @@ pub(crate) fn conditions_met(
 }
 pub(crate) fn run_action(
     content: &GameContent,
-    state: &mut SessionState,
+    state: &mut Tx,
     actor: ActorId,
     speaker: ActorId,
     action: &Action,
@@ -754,12 +843,7 @@ pub(crate) fn run_action(
 ) -> Result<()> {
     match action {
         Action::SetLocked { object, locked } => {
-            let o = state
-                .world
-                .objects
-                .iter_mut()
-                .find(|o| o.id == *object)
-                .ok_or_else(|| Invalid("object state not resolved".into()))?;
+            let o = state.object_mut(content, *object)?;
             require(!o.destroyed, "object destroyed")?;
             o.locked = *locked;
             if *locked {
@@ -769,15 +853,10 @@ pub(crate) fn run_action(
         }
         Action::Claim { claim, actions } => {
             let key = content.claim(*claim)?.key(actor, speaker);
-            if state.claim(key)?.claimed {
+            if state.claimed(key) {
                 return Ok(());
             }
-            state
-                .claims
-                .iter_mut()
-                .find(|c| c.key == key)
-                .unwrap()
-                .claimed = true;
+            state.claim(key);
             for action in actions {
                 run_action(content, state, actor, speaker, action, events)?;
             }
@@ -822,20 +901,14 @@ pub(crate) fn run_action(
                 remaining -= amount;
             }
             require(remaining == 0, "not enough items for dialogue action")?;
-            remove_missing_equipment(content, state, events)?;
+            sync_equipment(content, state, id, events)?;
         }
         Action::AwardExperience { skill, amount } => {
             state
                 .actor_mut(actor)?
                 .award_experience(&content.game.rules, skill, *amount)?
         }
-        Action::SetFact { key, value } => {
-            if *value {
-                state.facts.insert(key.clone());
-            } else {
-                state.facts.remove(key);
-            }
-        }
+        Action::SetFact { key, value } => state.set_fact(key, *value),
         Action::SkillCheck {
             skill,
             difficulty,
@@ -843,7 +916,7 @@ pub(crate) fn run_action(
             failure,
         } => {
             let bonus = state.actor(actor)?.skills.get(skill).copied().unwrap_or(0) / 100;
-            let roll = state.random.roll_d20();
+            let roll = state.random_mut().roll_d20();
             let passed = bonus.saturating_add(u64::from(roll)) >= u64::from(*difficulty);
             events.push(GameEvent::SkillChecked { roll, passed });
             for action in if passed { success } else { failure } {
@@ -854,34 +927,37 @@ pub(crate) fn run_action(
     Ok(())
 }
 
-/// Runtime-created identities are derived from the accepted command, independently of narrative RNG.
-pub(crate) fn assign_item_ids(
-    before: &SessionState,
-    after: &mut SessionState,
-    events: &mut [GameEvent],
-) {
-    use std::collections::{BTreeMap, BTreeSet};
-    let existing: BTreeSet<_> = before
+/// Items created by a command get identities derived from the playthrough and generation,
+/// so replaying the same command after a load produces the same items.
+fn assign_item_ids(tx: &mut Tx, events: &mut [GameEvent]) -> Result<()> {
+    let existing: BTreeSet<ItemId> = tx
+        .before
         .inventories
-        .iter()
+        .values()
+        .flatten()
         .flat_map(|i| i.entries.iter().map(|e| e.id))
         .collect();
+    let touched: Vec<InventoryId> = tx.before.inventories.keys().copied().collect();
+    let (playthrough, generation) = (tx.playthrough, tx.generation);
     let mut replacements = BTreeMap::new();
     let mut ordinal = 0u64;
-    after.inventories.sort_by_key(|i| i.id);
-    for entry in after.inventories.iter_mut().flat_map(|i| &mut i.entries) {
-        if !existing.contains(&entry.id) {
-            let mut hash = blake3::Hasher::new();
-            hash.update(b"yarra-item-v1");
-            hash.update(&before.playthrough.0);
-            hash.update(&before.generation.to_le_bytes());
-            hash.update(&ordinal.to_le_bytes());
-            let mut bytes = [0u8; 16];
-            bytes.copy_from_slice(&hash.finalize().as_bytes()[..16]);
-            let id = ItemId(bytes);
-            replacements.insert(entry.id, id);
-            entry.id = id;
-            ordinal += 1;
+    for id in touched {
+        if !tx.inventories.contains_key(&id) {
+            continue;
+        }
+        for entry in &mut tx.inventory_mut(id)?.entries {
+            if !existing.contains(&entry.id) {
+                let mut hash = blake3::Hasher::new();
+                hash.update(b"yarra-item-v1");
+                hash.update(&playthrough.0);
+                hash.update(&generation.to_le_bytes());
+                hash.update(&ordinal.to_le_bytes());
+                let mut bytes = [0u8; 16];
+                bytes.copy_from_slice(&hash.finalize().as_bytes()[..16]);
+                replacements.insert(entry.id, ItemId(bytes));
+                entry.id = ItemId(bytes);
+                ordinal += 1;
+            }
         }
     }
     for event in events {
@@ -893,21 +969,19 @@ pub(crate) fn assign_item_ids(
             }
         }
     }
+    Ok(())
 }
 
 fn change_quest(
     content: &GameContent,
-    state: &mut SessionState,
+    state: &mut Tx,
     id: QuestId,
     transition: &quests::Transition,
     events: &mut Vec<GameEvent>,
 ) -> Result<()> {
-    let progress = state
-        .quests
-        .iter_mut()
-        .find(|q| q.quest == id)
-        .ok_or_else(|| Invalid("quest state not resolved".into()))?;
-    progress.apply(content.quest(id)?, transition)?;
+    let definition = content.quest(id)?;
+    let progress = state.quest_mut(id);
+    progress.apply(definition, transition)?;
     events.push(GameEvent::QuestChanged {
         quest: id,
         status: progress.status,
@@ -915,55 +989,16 @@ fn change_quest(
     Ok(())
 }
 fn change_relationship(
-    state: &mut SessionState,
+    state: &mut Tx,
     key: actors::RelationshipKey,
     amount: i16,
     events: &mut Vec<GameEvent>,
 ) -> Result<()> {
-    let relationship = state
-        .relationships
-        .iter_mut()
-        .find(|r| r.key == key)
-        .ok_or_else(|| Invalid("relationship state not resolved".into()))?;
+    let relationship = state.relationship_mut(key);
     relationship.adjust(amount)?;
     events.push(GameEvent::RelationshipChanged {
         key,
         attitude: relationship.attitude,
     });
     Ok(())
-}
-fn interaction_context<T: StateTransaction, C: ContentSource>(
-    tx: &mut T,
-    source: &mut C,
-    participant: ActorId,
-    speaker: ActorId,
-) -> Result<(WorkingSet, GameContent, InteractionProfileId)> {
-    require(participant != speaker, "interaction needs two actors")?;
-    let request = StateRequest {
-        interactions: [dialogue::InteractionKey {
-            participant,
-            speaker,
-        }]
-        .into(),
-        ..Default::default()
-    };
-    let (batch, content) = resolve(tx, source, &request)?;
-    let template = batch.state.actor(speaker)?.template;
-    let profile = content
-        .game
-        .actors
-        .iter()
-        .find(|t| t.id == template)
-        .and_then(|t| t.interaction)
-        .ok_or_else(|| Invalid("NPC has no interaction profile".into()))?;
-    let (batch, content) = resolve_with(
-        tx,
-        source,
-        &request,
-        &ContentRequest {
-            profiles: [profile].into(),
-            ..Default::default()
-        },
-    )?;
-    Ok((batch, content, profile))
 }

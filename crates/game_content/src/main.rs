@@ -6,9 +6,7 @@ use std::{
     path::{Path, PathBuf},
     process::ExitCode,
 };
-use yarra_game_content::{
-    Asset, AssetId, ContentRepository, LoadedProject, RepositoryLimits, Result,
-};
+use yarra_game_content::{Asset, AssetId, ContentRepository, LoadedProject, Result};
 const USAGE: &str = "Usage:
   yarra-game-content validate SOURCE_DIR|BUNDLE.sqlite [--language PACK.sqlite]...
   yarra-game-content scenario SOURCE_DIR SCENARIO.ron
@@ -19,7 +17,7 @@ const USAGE: &str = "Usage:
 
 Source directories declare packages, conversations, message contracts and Fluent files.
 Validation and builds run the scenario in isolation. Demo writes fresh save slots.
-Inspect uses the bounded runtime reader; it never runs a scenario or loads translations.
+Inspect reads only the requested assets; it never runs a scenario or loads translations.
 Existing bundle paths and demo save directories are never overwritten.";
 fn main() -> ExitCode {
     match run() {
@@ -98,20 +96,21 @@ fn run() -> Result<()> {
                     _ => return Err(Invalid(format!("unknown inspect option {flag:?}")).into()),
                 });
             }
-            let mut repository = ContentRepository::open(input, RepositoryLimits::default())?;
+            let repository = ContentRepository::open(input)?;
             println!(
                 "Publication: {} revision {}",
                 repository.manifest().content.id,
                 repository.manifest().content.revision
             );
-            let resolved = repository.load(&roots)?;
-            for (id, asset) in resolved.iter() {
-                match asset {
+            for id in &roots {
+                match repository.read(id)? {
                     Asset::Item(item) => println!("Item {}: {}", item.id, item.key),
+                    Asset::Dialogue(graph) => {
+                        println!("Dialogue {}: {} nodes", graph.id, graph.nodes.len())
+                    }
                     _ => println!("Resolved {id:?}"),
                 }
             }
-            println!("Runtime reads: {:?}", repository.stats());
             Ok(())
         }
         Some("validate") => {
@@ -208,30 +207,20 @@ fn demo(project: &LoadedProject, locale: &str, directory: Option<PathBuf>) -> Re
     std::fs::create_dir(&directory)?;
     let publication = directory.join("published.sqlite");
     project.build(&publication)?;
-    let library = yarra_game_content::ContentLibrary::new(
-        directory.join("content"),
-        RepositoryLimits::default(),
-    )?;
+    let library = yarra_game_content::ContentLibrary::new(directory.join("content"))?;
     let identity = library.retain(&publication)?;
     std::fs::remove_file(publication)?;
-    let seed = project.start()?.store().export_for_tools(100_000)?;
-    let store =
-        save::WorkingStore::create(directory.join("working.sqlite"), project.content(), &seed)?;
-    let mut session = gameplay::GameSession::new(store, library.open(&identity)?)?;
+    // Play the scenario against the published bundle, not the authored sources.
+    let seed = project.start()?.into_state();
+    let mut session = gameplay::GameSession::new(library.open(&identity)?, seed)?;
     for step in &project.scenario().steps {
         step.apply(&mut session)?;
     }
-    let state = session.store().export_for_tools(100_000)?;
+    let state = session.state();
     // Resolve all presentation before writing files, including invalid locale errors.
     let mut summary = Vec::new();
-    for actor in &state.actors {
-        let template = project
-            .content()
-            .game
-            .actors
-            .iter()
-            .find(|t| t.id == actor.template)
-            .ok_or_else(|| Invalid("actor template missing".into()))?;
+    for actor in state.actors.values() {
+        let template = project.content().template(actor.template)?;
         let name = project
             .localization()
             .format(
@@ -260,7 +249,7 @@ fn demo(project: &LoadedProject, locale: &str, directory: Option<PathBuf>) -> Re
             ));
         }
     }
-    for wallet in &state.wallets {
+    for wallet in state.wallets.values() {
         summary.push(format!(
             "{} wallet {}: {} gold",
             wallet.owner.kind,
@@ -272,26 +261,19 @@ fn demo(project: &LoadedProject, locale: &str, directory: Option<PathBuf>) -> Re
     saves.save(SaveSlot::Manual(1), &session, "Authored scenario")?;
     saves.quicksave(&session)?;
     saves.autosave(&session)?;
-    let loaded = library.load(
-        &saves,
-        SaveSlot::Manual(1),
-        directory.join("restored.sqlite"),
-    )?;
+    let loaded = library.load(&saves, SaveSlot::Manual(1))?;
     require(
-        loaded.store().export_for_tools(100_000)? == state,
+        loaded.state() == state,
         "save roundtrip differs from authored scenario result",
     )?;
-    println!("Runtime state reads: {:?}", session.store().stats());
     println!(
-        "Runtime content reads: {:?}",
-        session.content_source().stats()
+        "Dialogue graphs loaded: {} of {}",
+        session.content().game.dialogues.len(),
+        project.content().game.dialogues.len()
     );
     for line in summary {
         println!("{line}");
     }
-    println!(
-        "Complete checkpoint reopened; 3 saves in {}",
-        directory.display()
-    );
+    println!("Save reopened; 3 saves in {}", directory.display());
     Ok(())
 }

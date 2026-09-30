@@ -5,7 +5,7 @@ use gameplay::{
     fixtures::{COMPANION, HERO, MERCHANT, key},
     *,
 };
-use save::{SaveDirectory, SaveSlot, WorkingStore};
+use save::{SaveDirectory, SaveSlot};
 use yarra_game_content::*;
 mod support;
 use support::{Temp, read, write};
@@ -22,20 +22,8 @@ fn point(x: i64) -> Position {
 fn load(temp: &Temp, root: &std::path::Path) -> (LoadedProject, RuntimeSession) {
     let project =
         LoadedProject::load_directory_with_scenario(root, "scenarios/guard-gate.ron").unwrap();
-    let seed = project
-        .start()
-        .unwrap()
-        .store()
-        .export_for_tools(100_000)
-        .unwrap();
-    project.build(temp.0.join("content.sqlite")).unwrap();
-    let session = GameSession::new(
-        WorkingStore::create(temp.0.join("live.sqlite"), project.content(), &seed).unwrap(),
-        ContentRepository::open(temp.0.join("content.sqlite"), Default::default()).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(session.store().stats().decoded_records, 0);
-    assert_eq!(session.content_source().stats().decoded_assets, 0);
+    let session = support::runtime(temp, &project);
+    assert!(session.content().game.dialogues.is_empty());
     (project, session)
 }
 fn world(session: &mut RuntimeSession, cmd: WorldCommand) -> CommandOutcome {
@@ -43,7 +31,7 @@ fn world(session: &mut RuntimeSession, cmd: WorldCommand) -> CommandOutcome {
 }
 fn pump(session: &mut RuntimeSession) {
     for _ in 0..256 {
-        if !session.world_work_pending().unwrap() {
+        if !session.world_work_pending() {
             return;
         }
         world(session, WorldCommand::ProcessNext);
@@ -69,7 +57,7 @@ fn activate(session: &mut RuntimeSession) {
         .unwrap();
 }
 fn pending(session: &mut RuntimeSession) -> MoveRequest {
-    session.next_movement(None).unwrap().unwrap()
+    session.next_movement(None).unwrap()
 }
 fn prepare(session: &mut RuntimeSession) -> MoveRequest {
     activate(session);
@@ -81,13 +69,8 @@ fn locked(session: &mut RuntimeSession) {
     for object in [GATE, CHEST] {
         assert!(
             session
-                .query(StateRequest {
-                    objects: [object].into(),
-                    ..Default::default()
-                })
-                .unwrap()
-                .world
-                .object(object)
+                .state()
+                .object(session.content(), object)
                 .unwrap()
                 .locked
         );
@@ -100,12 +83,7 @@ fn locked(session: &mut RuntimeSession) {
     assert!(session.container_contents(CHEST).is_err());
 }
 fn no_reward(session: &mut RuntimeSession) {
-    let s = session
-        .query(StateRequest {
-            actors: [HERO].into(),
-            ..Default::default()
-        })
-        .unwrap();
+    let s = session.state();
     assert_eq!(s.actor(HERO).unwrap().skills.get(&key("persuasion")), None);
     assert!(
         s.carried(HERO)
@@ -146,18 +124,10 @@ fn authored_guard_gate_runs_through_the_same_headless_commands_and_normal_access
         .unwrap();
     assert!(!driver.pump_world(1).unwrap());
     assert!(driver.pump_world(256).unwrap());
-    let m = driver.next_movement(None).unwrap().unwrap();
+    let m = driver.next_movement(None).unwrap();
     assert_eq!(m.phase, MovementPhase::Accepted);
     assert_eq!(
-        driver
-            .query(StateRequest {
-                actors: [MERCHANT].into(),
-                ..Default::default()
-            })
-            .unwrap()
-            .actor(MERCHANT)
-            .unwrap()
-            .position,
+        driver.state().actor(MERCHANT).unwrap().position,
         Position {
             millimetres: [100000000, 0, 100000000]
         }
@@ -181,20 +151,13 @@ fn authored_guard_gate_runs_through_the_same_headless_commands_and_normal_access
         .submit(Command::World(WorldCommand::Open { object: CHEST }))
         .unwrap();
     assert_eq!(driver.container_contents(CHEST).unwrap().entries.len(), 0);
-    let s = driver
-        .query(StateRequest {
-            actors: [HERO, MERCHANT].into(),
-            quests: [QUEST].into(),
-            triggers: [TRIGGER].into(),
-            ..Default::default()
-        })
-        .unwrap();
+    let s = driver.state();
     assert_eq!(s.actor(HERO).unwrap().skills[&key("persuasion")], 10);
     assert_eq!(s.actor(MERCHANT).unwrap().position, m.destination);
-    assert_eq!(s.quest(QUEST).unwrap().status, quests::Status::Completed);
-    assert_eq!(s.world.trigger(TRIGGER).unwrap().successes, 1);
+    assert_eq!(s.quest(QUEST).status, quests::Status::Completed);
+    assert_eq!(s.trigger(TRIGGER).successes, 1);
     assert!(driver.pump_world(256).unwrap());
-    assert!(driver.next_movement(None).unwrap().is_none());
+    assert!(driver.next_movement(None).is_none());
     // The source exercise is also validated independently of synthetic Rust observations.
     project.run_scenario().unwrap();
 }
@@ -203,7 +166,7 @@ fn queued_events_and_running_actions_resume_from_all_slot_types_without_sources(
     let temp = Temp::new();
     let (_, mut session) = load(&temp, &temp.source());
     let saves = SaveDirectory::new(temp.0.join("saves"), 2).unwrap();
-    let library = ContentLibrary::new(temp.0.join("retained"), Default::default()).unwrap();
+    let library = ContentLibrary::new(temp.0.join("retained")).unwrap();
     library.retain(temp.0.join("content.sqlite")).unwrap();
     activate(&mut session);
     enter(&mut session, 1, 1500);
@@ -216,15 +179,8 @@ fn queued_events_and_running_actions_resume_from_all_slot_types_without_sources(
     world(&mut session, WorldCommand::StartMove { id: m.id });
     let auto = saves.autosave(&session).unwrap();
     std::fs::remove_dir_all(temp.0.join("source")).unwrap();
-    for (n, slot) in [SaveSlot::Manual(1), SaveSlot::Quick, auto.slot]
-        .into_iter()
-        .enumerate()
-    {
-        let mut restored = library
-            .load(&saves, slot, temp.0.join(format!("restored-{n}.sqlite")))
-            .unwrap();
-        assert_eq!(restored.store().stats().decoded_records, 0);
-        assert_eq!(restored.content_source().stats().decoded_assets, 0);
+    for slot in [SaveSlot::Manual(1), SaveSlot::Quick, auto.slot] {
+        let mut restored = library.load(&saves, slot).unwrap();
         locked(&mut restored);
         pump(&mut restored);
         assert_eq!(pending(&mut restored).id, m.id);
@@ -240,12 +196,7 @@ fn queued_events_and_running_actions_resume_from_all_slot_types_without_sources(
         );
         world(&mut restored, WorldCommand::Open { object: CHEST });
         assert!(restored.container_contents(CHEST).is_ok());
-        let s = restored
-            .query(StateRequest {
-                actors: [HERO].into(),
-                ..Default::default()
-            })
-            .unwrap();
+        let s = restored.state();
         assert_eq!(s.actor(HERO).unwrap().skills[&key("persuasion")], 10);
     }
 }
@@ -288,7 +239,7 @@ fn failed_cancelled_and_timed_out_moves_stop_before_rewards_and_allow_fresh_atte
             .events
             .is_empty()
         );
-        assert!(session.next_movement(None).unwrap().is_none());
+        assert!(session.next_movement(None).is_none());
         locked(&mut session);
         no_reward(&mut session);
         enter(&mut session, 2, 0);
@@ -315,11 +266,7 @@ fn maintained_conditions_reconcile_existing_items_inside_area_and_later_acquisit
         let temp = Temp::new();
         let (_, mut session) = load(&temp, &temp.source());
         let id = session
-            .query(StateRequest {
-                actors: [HERO].into(),
-                ..Default::default()
-            })
-            .unwrap()
+            .state()
             .carried(HERO)
             .unwrap()
             .entries
@@ -339,11 +286,11 @@ fn maintained_conditions_reconcile_existing_items_inside_area_and_later_acquisit
         }
         enter(&mut session, 1, 1500);
         pump(&mut session);
-        assert!(session.next_movement(None).unwrap().is_none());
+        assert!(session.next_movement(None).is_none());
         activate(&mut session);
         pump(&mut session);
         if acquire_later {
-            assert!(session.next_movement(None).unwrap().is_none());
+            assert!(session.next_movement(None).is_none());
             session
                 .apply(Command::Transfer {
                     source: InventoryId(MERCHANT.0),
@@ -364,9 +311,9 @@ fn ordered_position_observations_are_idempotent_and_use_half_open_area_bounds() 
     activate(&mut session);
     enter(&mut session, 1, 2000);
     pump(&mut session);
-    assert!(session.next_movement(None).unwrap().is_none());
+    assert!(session.next_movement(None).is_none());
     enter(&mut session, 2, 1000);
-    let before = session.store().export_for_tools(100_000).unwrap();
+    let before = session.state().clone();
     assert!(
         world(
             &mut session,
@@ -397,7 +344,7 @@ fn ordered_position_observations_are_idempotent_and_use_half_open_area_bounds() 
             }))
             .is_err()
     );
-    let after = session.store().export_for_tools(100_000).unwrap();
+    let after = session.state().clone();
     assert_eq!(before.world, after.world);
     pump(&mut session);
     let m = pending(&mut session);
@@ -414,35 +361,7 @@ fn ordered_position_observations_are_idempotent_and_use_half_open_area_bounds() 
     locked(&mut session);
 }
 #[test]
-fn storage_failure_rolls_back_arrival_rewards_claim_objects_and_pending_action_together() {
-    let temp = Temp::new();
-    let (_, mut session) = load(&temp, &temp.source());
-    let m = prepare(&mut session);
-    let before = session.store().export_for_tools(100_000).unwrap();
-    let db = rusqlite::Connection::open(temp.0.join("live.sqlite")).unwrap();
-    db.execute_batch("CREATE TRIGGER reject_claim BEFORE INSERT ON records WHEN NEW.kind=9 BEGIN SELECT RAISE(ABORT,'test rejection'); END;").unwrap();
-    assert!(
-        session
-            .apply(Command::World(WorldCommand::FinishMove {
-                id: m.id,
-                result: MoveResult::Arrived {
-                    position: m.destination.clone()
-                }
-            }))
-            .is_err()
-    );
-    assert_eq!(session.store().export_for_tools(100_000).unwrap(), before);
-    db.execute_batch("DROP TRIGGER reject_claim").unwrap();
-    arrive(&mut session, &m);
-    locked_state_false(&mut session);
-}
-fn locked_state_false(session: &mut RuntimeSession) {
-    for object in [GATE, CHEST] {
-        world(session, WorldCommand::Open { object });
-    }
-}
-#[test]
-fn unknown_destroyed_objects_and_corrupt_pending_records_fail_explicitly() {
+fn unknown_and_destroyed_objects_fail_explicitly() {
     let temp = Temp::new();
     let (_, mut session) = load(&temp, &temp.source());
     assert!(
@@ -462,20 +381,17 @@ fn unknown_destroyed_objects_and_corrupt_pending_records_fail_explicitly() {
             .is_err()
     );
     assert!(session.container_contents(CHEST).is_err());
-    activate(&mut session);
-    let db = rusqlite::Connection::open(temp.0.join("live.sqlite")).unwrap();
-    db.execute("UPDATE pending_events SET hash=zeroblob(32)", [])
-        .unwrap();
-    let generation = session.header().unwrap().generation;
+    // A rejected command leaves the generation where it was.
+    let generation = session.header().generation;
     assert!(
         session
-            .apply(Command::World(WorldCommand::ProcessNext))
+            .apply(Command::World(WorldCommand::Open { object: CHEST }))
             .is_err()
     );
-    assert_eq!(session.header().unwrap().generation, generation);
+    assert_eq!(session.header().generation, generation);
 }
 #[test]
-fn indexed_dispatch_does_not_load_unrelated_trigger_catalog() {
+fn a_large_catalog_of_unrelated_triggers_does_not_disturb_dispatch() {
     let temp = Temp::new();
     let root = temp.source();
     let mut package: PackageFile = read(root.join("packages/guard/package.ron"));
@@ -497,9 +413,12 @@ fn indexed_dispatch_does_not_load_unrelated_trigger_catalog() {
     }
     write(root.join("packages/guard/package.ron"), &package);
     let (_, mut session) = load(&temp, &root);
-    prepare(&mut session);
-    assert!(session.content_source().stats().decoded_assets < 40);
-    assert!(session.store().stats().peak_working_records < 32);
+    let started = std::time::Instant::now();
+    let m = prepare(&mut session);
+    // Dispatch consults the subscription index; it never evaluates the unrelated triggers.
+    assert!(started.elapsed().as_millis() < 250);
+    assert_eq!(m.id.trigger, TRIGGER);
+    assert_eq!(session.state().world.triggers.len(), 1);
 }
 
 #[test]
@@ -508,11 +427,7 @@ fn arrival_continuation_failure_preserves_arrival_but_rolls_back_the_reward_grou
     let (_, mut session) = load(&temp, &temp.source());
     let m = prepare(&mut session);
     let item = session
-        .query(StateRequest {
-            actors: [HERO].into(),
-            ..Default::default()
-        })
-        .unwrap()
+        .state()
         .carried(HERO)
         .unwrap()
         .entries
@@ -529,27 +444,17 @@ fn arrival_continuation_failure_preserves_arrival_but_rolls_back_the_reward_grou
         })
         .unwrap();
     arrive(&mut session, &m);
-    let state = session
-        .query(StateRequest {
-            triggers: [TRIGGER].into(),
-            ..Default::default()
-        })
-        .unwrap();
-    let t = state.world.trigger(TRIGGER).unwrap();
+    let state = session.state();
+    let t = state.trigger(TRIGGER);
     assert!(matches!(t.status, SequenceStatus::Failed { .. }));
     assert!(t.diagnostic.is_some());
     assert!(t.movement.is_none());
     assert_eq!(state.actor(MERCHANT).unwrap().position, m.destination);
     assert!(state.actor(HERO).unwrap().skills.is_empty());
-    assert!(
-        !state
-            .claim(dialogue::ClaimKey {
-                claim: ClaimId([0x40; 16]),
-                scope: dialogue::Scope::Playthrough
-            })
-            .unwrap()
-            .claimed
-    );
+    assert!(!state.claimed(dialogue::ClaimKey {
+        claim: ClaimId([0x40; 16]),
+        scope: dialogue::Scope::Playthrough
+    }));
     locked(&mut session);
     assert!(arrive(&mut session, &m).events.is_empty());
     session
@@ -598,13 +503,8 @@ fn immediate_plan_failure_has_bounded_retries_and_does_not_claim_partial_rewards
         enter(&mut session, n, 1500 + n as i64);
         pump(&mut session);
     }
-    let state = session
-        .query(StateRequest {
-            triggers: [TRIGGER].into(),
-            ..Default::default()
-        })
-        .unwrap();
-    let t = state.world.trigger(TRIGGER).unwrap();
+    let state = session.state();
+    let t = state.trigger(TRIGGER);
     assert_eq!(t.run, 3);
     assert_eq!(t.consecutive_failures, 3);
     assert_eq!(t.successes, 0);
@@ -615,17 +515,9 @@ fn immediate_plan_failure_has_bounded_retries_and_does_not_claim_partial_rewards
         &mut session,
         WorldCommand::RetryTrigger { trigger: TRIGGER },
     );
-    let state = session
-        .query(StateRequest {
-            triggers: [TRIGGER].into(),
-            ..Default::default()
-        })
-        .unwrap();
-    assert_eq!(state.world.trigger(TRIGGER).unwrap().run, 4);
-    assert_eq!(
-        state.world.trigger(TRIGGER).unwrap().consecutive_failures,
-        1
-    );
+    let state = session.state();
+    assert_eq!(state.trigger(TRIGGER).run, 4);
+    assert_eq!(state.trigger(TRIGGER).consecutive_failures, 1);
 }
 
 #[test]
@@ -642,17 +534,12 @@ fn movement_has_exclusive_ownership_and_explicit_retry_after_cancellation() {
     write(root.join("packages/guard/package.ron"), &package);
     let (_, mut session) = load(&temp, &root);
     let first = prepare(&mut session);
-    let state = session
-        .query(StateRequest {
-            triggers: [trigger.id].into(),
-            ..Default::default()
-        })
-        .unwrap();
+    let state = session.state();
     assert!(matches!(
-        state.world.trigger(trigger.id).unwrap().status,
+        state.trigger(trigger.id).status,
         SequenceStatus::Failed { .. }
     ));
-    assert!(session.next_movement(Some(TRIGGER)).unwrap().is_none());
+    assert!(session.next_movement(Some(TRIGGER)).is_none());
     world(
         &mut session,
         WorldCommand::FinishMove {
@@ -673,7 +560,7 @@ fn movement_has_exclusive_ownership_and_explicit_retry_after_cancellation() {
 }
 
 #[test]
-fn event_triggers_keep_edge_semantics_and_content_indexes_are_validated_on_read() {
+fn event_triggers_keep_edge_semantics() {
     let temp = Temp::new();
     let root = temp.source();
     let path = root.join("packages/guard/world/escort.ron");
@@ -691,55 +578,19 @@ fn event_triggers_keep_edge_semantics_and_content_indexes_are_validated_on_read(
     pump(&mut session);
     activate(&mut session);
     pump(&mut session);
-    assert!(session.next_movement(None).unwrap().is_none());
+    assert!(session.next_movement(None).is_none());
     enter(&mut session, 2, 0);
     pump(&mut session);
     enter(&mut session, 3, 1500);
     pump(&mut session);
     assert_eq!(pending(&mut session).id.run, 1);
-    drop(session);
-    let db = rusqlite::Connection::open(temp.0.join("content.sqlite")).unwrap();
-    db.execute(
-        "UPDATE area_bounds SET max_x=1999 WHERE id=?1",
-        [AREA.to_string()],
-    )
-    .unwrap();
-    let mut repo =
-        ContentRepository::open(temp.0.join("content.sqlite"), Default::default()).unwrap();
-    assert!(
-        repo.resolve(&ContentRequest {
-            areas: [AREA].into(),
-            ..Default::default()
-        })
-        .is_err()
-    );
-    drop(repo);
-    db.execute(
-        "UPDATE area_bounds SET max_x=2000 WHERE id=?1",
-        [AREA.to_string()],
-    )
-    .unwrap();
-    db.execute(
-        "DELETE FROM trigger_subscriptions WHERE trigger=?1",
-        [TRIGGER.to_string()],
-    )
-    .unwrap();
-    let mut repo =
-        ContentRepository::open(temp.0.join("content.sqlite"), Default::default()).unwrap();
-    assert!(
-        repo.resolve(&ContentRequest {
-            triggers: [TRIGGER].into(),
-            ..Default::default()
-        })
-        .is_err()
-    );
 }
 
 #[test]
 fn queue_backpressure_rolls_back_the_source_command_and_processing_makes_room() {
     let temp = Temp::new();
-    let (project, session) = load(&temp, &temp.source());
-    let mut seed = session.store().export_for_tools(100_000).unwrap();
+    let (_, session) = load(&temp, &temp.source());
+    let mut seed = session.state().clone();
     seed.generation = 5000;
     seed.world.pending = (1..=MAX_PENDING_EVENTS as u64)
         .map(|generation| PendingEvent {
@@ -752,8 +603,8 @@ fn queue_backpressure_rolls_back_the_source_command_and_processing_makes_room() 
         })
         .collect();
     let mut full = GameSession::new(
-        WorkingStore::in_memory(project.content(), &seed).unwrap(),
-        ContentRepository::open(temp.0.join("content.sqlite"), Default::default()).unwrap(),
+        ContentRepository::open(temp.0.join("content.sqlite")).unwrap(),
+        seed.clone(),
     )
     .unwrap();
     assert!(
@@ -763,19 +614,11 @@ fn queue_backpressure_rolls_back_the_source_command_and_processing_makes_room() 
         })
         .is_err()
     );
-    assert_eq!(full.store().export_for_tools(100_000).unwrap(), seed);
+    assert_eq!(full.state(), &seed);
     world(&mut full, WorldCommand::ProcessNext);
     world(&mut full, WorldCommand::ProcessNext);
     activate(&mut full);
-    assert_eq!(
-        full.store()
-            .export_for_tools(100_000)
-            .unwrap()
-            .world
-            .pending
-            .len(),
-        MAX_PENDING_EVENTS
-    );
+    assert_eq!(full.state().world.pending.len(), MAX_PENDING_EVENTS);
 }
 
 #[test]
@@ -803,14 +646,13 @@ fn cooldown_uses_saved_time_and_throttles_new_events_after_success() {
     enter(&mut session, 2, 0);
     enter(&mut session, 3, 1500);
     pump(&mut session);
-    assert!(session.next_movement(None).unwrap().is_none());
+    assert!(session.next_movement(None).is_none());
     let saves = SaveDirectory::new(temp.0.join("saves"), 1).unwrap();
     saves.quicksave(&session).unwrap();
     let mut restored = saves
         .load(
             SaveSlot::Quick,
-            ContentRepository::open(temp.0.join("content.sqlite"), Default::default()).unwrap(),
-            temp.0.join("cooldown.sqlite"),
+            ContentRepository::open(temp.0.join("content.sqlite")).unwrap(),
         )
         .unwrap();
     restored
@@ -844,13 +686,9 @@ fn acquisition_edges_require_new_items_even_when_possession_was_already_satisfie
     activate(&mut session);
     enter(&mut session, 1, 1500);
     pump(&mut session);
-    assert!(session.next_movement(None).unwrap().is_none());
+    assert!(session.next_movement(None).is_none());
     let item = session
-        .query(StateRequest {
-            actors: [HERO].into(),
-            ..Default::default()
-        })
-        .unwrap()
+        .state()
         .carried(HERO)
         .unwrap()
         .entries
@@ -867,7 +705,7 @@ fn acquisition_edges_require_new_items_even_when_possession_was_already_satisfie
         })
         .unwrap();
     pump(&mut session);
-    assert!(session.next_movement(None).unwrap().is_none());
+    assert!(session.next_movement(None).is_none());
     session
         .apply(Command::Transfer {
             source: InventoryId(MERCHANT.0),
@@ -878,34 +716,4 @@ fn acquisition_edges_require_new_items_even_when_possession_was_already_satisfie
         .unwrap();
     pump(&mut session);
     assert_eq!(pending(&mut session).id.run, 1);
-}
-
-#[test]
-fn unloaded_container_lock_operations_do_not_read_inventory_payloads() {
-    let temp = Temp::new();
-    let (_, mut session) = load(&temp, &temp.source());
-    let db = rusqlite::Connection::open(temp.0.join("live.sqlite")).unwrap();
-    db.execute(
-        "UPDATE records SET hash=zeroblob(32) WHERE kind=2 AND id=?1",
-        [InventoryId([4; 16]).to_string()],
-    )
-    .unwrap();
-    let before = session.store().stats().decoded_records;
-    let state = session
-        .query(StateRequest {
-            objects: [CHEST].into(),
-            ..Default::default()
-        })
-        .unwrap();
-    assert!(state.inventories.is_empty());
-    assert_eq!(session.store().stats().decoded_records, before);
-    world(
-        &mut session,
-        WorldCommand::SetLocked {
-            object: CHEST,
-            locked: false,
-        },
-    );
-    world(&mut session, WorldCommand::Open { object: CHEST });
-    assert!(session.container_contents(CHEST).is_err());
 }

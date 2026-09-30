@@ -1,4 +1,4 @@
-//! Bevy/SQLite-free coordination. Only accepted commands replace live state.
+//! Bevy/SQLite-free gameplay: domain rules, the in-memory playthrough and its commands.
 pub mod actors;
 mod content;
 pub mod dialogue;
@@ -13,11 +13,11 @@ pub use conversation::{ChoiceView, ConversationView, LineView};
 mod narrative;
 pub use narrative::*;
 pub mod fixtures;
-mod resolution;
 mod runtime;
 mod session;
 mod state;
 mod tool_content;
+mod tx;
 pub use tool_content::ToolContent;
 mod driver;
 pub use content::*;

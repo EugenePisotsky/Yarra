@@ -291,31 +291,32 @@ impl DialogueContract {
     }
 }
 impl Conversation {
-    pub fn validate(&self, graph: &Dialogue) -> Result<()> {
+    /// Checks that need only the always-loaded contract, not the graph.
+    pub fn validate_contract(&self, contract: &DialogueContract) -> Result<()> {
         require(
-            self.dialogue == graph.id && self.participant != self.speaker,
+            self.dialogue == contract.id && self.participant != self.speaker,
             "invalid conversation identity",
         )?;
-        let node = graph.node(&self.node)?;
+        require(self.token.run > 0, "invalid conversation cursor")?;
         require(
-            self.status != RunStatus::Completed || self.line == node.lines.len(),
-            "completed conversation has unread lines",
-        )?;
-        require(
-            self.token.run > 0 && self.line <= node.lines.len(),
-            "invalid conversation cursor",
-        )?;
-        require(
-            self.bindings.keys().cloned().collect::<BTreeSet<_>>() == graph.roles
+            self.bindings.keys().cloned().collect::<BTreeSet<_>>() == contract.roles
                 && self.bindings.get(&Key::new("player")?) == Some(&self.participant)
                 && self.bindings.get(&Key::new("speaker")?) == Some(&self.speaker),
             "invalid conversation role bindings",
         )?;
         require(
-            self.accepted.is_subset(&graph.contract().choices),
+            self.accepted.is_subset(&contract.choices),
             "unknown accepted choice",
+        )
+    }
+    pub fn validate(&self, graph: &Dialogue) -> Result<()> {
+        self.validate_contract(&graph.contract())?;
+        let node = graph.node(&self.node)?;
+        require(
+            self.status != RunStatus::Completed || self.line == node.lines.len(),
+            "completed conversation has unread lines",
         )?;
-        Ok(())
+        require(self.line <= node.lines.len(), "invalid conversation cursor")
     }
     pub fn check(&self, token: Token) -> Result<()> {
         require(

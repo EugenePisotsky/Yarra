@@ -205,36 +205,6 @@ impl Condition {
         self.visit(&mut |_| Ok(()))?;
         walk(self, resolve, visitor, &mut BTreeSet::new(), 0, &mut 1024)
     }
-    pub fn content_dependencies(&self, request: &mut ContentRequest) -> Result<()> {
-        self.visit(&mut |c| {
-            match c {
-                Condition::InsideArea { area } => {
-                    request.areas.insert(*area);
-                }
-                Condition::History { dialogue, .. } => {
-                    request.dialogue_contracts.insert(*dialogue);
-                }
-                Condition::Claimed { claim, .. } => {
-                    request.claims.insert(*claim);
-                }
-                Condition::HasItem { definition, .. } => {
-                    request.items.insert(*definition);
-                }
-                Condition::Fact { key, .. } => {
-                    request.facts.insert(key.clone());
-                }
-                Condition::QuestStatus { quest, .. }
-                | Condition::ObjectiveCompleted { quest, .. } => {
-                    request.quests.insert(*quest);
-                }
-                Condition::Named(id) => {
-                    request.predicates.insert(*id);
-                }
-                _ => {}
-            };
-            Ok(())
-        })
-    }
 }
 impl Action {
     pub fn visit(&self, visitor: &mut impl FnMut(&Action) -> Result<()>) -> Result<()> {
@@ -265,29 +235,6 @@ impl Action {
             Ok(())
         }
         walk(self, 0, &mut 1024, visitor)
-    }
-    pub fn content_dependencies(&self, request: &mut ContentRequest) -> Result<()> {
-        self.visit(&mut |a| {
-            match a {
-                Action::SetLocked { object, .. } => {
-                    request.objects.insert(*object);
-                }
-                Action::Claim { claim, .. } => {
-                    request.claims.insert(*claim);
-                }
-                Action::ConsumeItem { definition, .. } | Action::GrantItem { definition, .. } => {
-                    request.items.insert(*definition);
-                }
-                Action::SetFact { key, .. } => {
-                    request.facts.insert(key.clone());
-                }
-                Action::Quest { quest, .. } => {
-                    request.quests.insert(*quest);
-                }
-                _ => {}
-            };
-            Ok(())
-        })
     }
 }
 impl GameContent {
@@ -391,7 +338,7 @@ impl GameContent {
             *budget -= 1;
             let (observed, matched) = match c {
                 Condition::InsideArea { area } => {
-                    let inside = state.world.location(pair.0)?.areas.contains(area);
+                    let inside = state.location(content, pair.0)?.areas.contains(area);
                     (Observed::Boolean(inside), inside)
                 }
                 Condition::History {
@@ -400,12 +347,12 @@ impl GameContent {
                     minimum,
                 } => {
                     let d = content.dialogue_contract(*dialogue)?;
-                    let n = state.history(d.history_key(pair.0, pair.1))?.count(event);
+                    let n = state.history(d.history_key(pair.0, pair.1)).count(event);
                     (Observed::Quantity(n), n >= *minimum)
                 }
                 Condition::Claimed { claim, value } => {
                     let d = content.claim(*claim)?;
-                    let found = state.claim(d.key(pair.0, pair.1))?.claimed;
+                    let found = state.claimed(d.key(pair.0, pair.1));
                     (Observed::Boolean(found), found == *value)
                 }
                 Condition::All(v) | Condition::Any(v) => {
@@ -456,11 +403,11 @@ impl GameContent {
                     (Observed::Quantity(n), n >= *minimum)
                 }
                 Condition::QuestStatus { quest, status } => {
-                    let actual = state.quest(*quest)?.status;
+                    let actual = state.quest(*quest).status;
                     (Observed::Quest(actual), actual == *status)
                 }
                 Condition::ObjectiveCompleted { quest, objective } => {
-                    let found = state.quest(*quest)?.completed.contains(objective);
+                    let found = state.quest(*quest).completed.contains(objective);
                     (Observed::Boolean(found), found)
                 }
                 Condition::Relationship { from, to, minimum } => {
@@ -468,7 +415,7 @@ impl GameContent {
                         .relationship(actors::RelationshipKey {
                             from: from.resolve(pair.0, pair.1),
                             to: to.resolve(pair.0, pair.1),
-                        })?
+                        })
                         .attitude;
                     (Observed::Attitude(value), value >= *minimum)
                 }
@@ -506,7 +453,7 @@ impl GameContent {
             for variant in &rule.variants {
                 let contract = self.dialogue_contract(variant.dialogue)?;
                 if contract.repeat.eligible(
-                    state.history(contract.history_key(player, speaker))?,
+                    &state.history(contract.history_key(player, speaker)),
                     state.time,
                 ) {
                     variants.push(variant.clone());

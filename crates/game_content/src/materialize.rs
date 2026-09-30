@@ -1,6 +1,6 @@
 //! Explicit eager tool import. Never used by ContentRepository::open/load.
 use crate::{asset::*, bundle::publication_hash, *};
-use game_types::{Invalid, require};
+use game_types::require;
 use gameplay::inventory;
 use gameplay::{GameContent, GameDefinitions};
 use std::{
@@ -12,41 +12,18 @@ impl LoadedProject {
     /// Full validation/demo tool only: reads every mechanical asset and executes the scenario.
     /// Runtime clients use ContentRepository instead. No old bundle schemas are accepted.
     pub fn materialize_bundle_for_tools(path: impl AsRef<Path>) -> Result<Self> {
-        let mut repository = ContentRepository::open(
-            path,
-            RepositoryLimits {
-                cache_charge_bytes: 64 * 1024 * 1024,
-                ..Default::default()
-            },
-        )?;
+        let repository = ContentRepository::open(path)?;
         let manifest = repository.manifest().clone();
         let mut records = Vec::new();
         let mut headers = Vec::new();
-        let mut bytes = 0usize;
         for kind in AssetKind::ALL {
-            let mut cursor = None;
-            loop {
-                let page = repository.list(kind, cursor.as_deref(), 128)?;
-                if page.is_empty() {
-                    break;
-                }
-                for header in &page {
-                    bytes = bytes
-                        .checked_add(header.payload_bytes)
-                        .ok_or_else(|| Invalid("tool byte budget overflow".into()))?;
-                    require(
-                        bytes <= 64 * 1024 * 1024 && headers.len() < 100_000,
-                        "tool materialization budget exceeded",
-                    )?;
-                    records.push((
-                        header.position,
-                        repository.fetch(&header.id)?.as_ref().clone(),
-                    ));
-                    headers.push(header.clone());
-                }
-                cursor = page.last().map(|h| h.id.key());
-            }
+            headers.extend(repository.headers(kind)?);
+            records.extend(repository.read_kind(kind)?);
         }
+        require(
+            headers.len() == records.len(),
+            "publication asset count mismatch",
+        )?;
         require(
             publication_hash(&manifest, &headers)? == manifest.publication_hash,
             "publication fingerprint mismatch",
@@ -58,8 +35,6 @@ impl LoadedProject {
             "scenario checksum mismatch",
         )?;
         let scenario = serde_json::from_slice(&scenario)?;
-        // Restore canonical asset order; meaningful order inside each asset is preserved.
-        records.sort_by_key(|(position, asset)| (asset.id().kind(), *position));
         let mut items = inventory::ItemCatalog {
             id: manifest.catalog_id,
             revision: manifest.catalog_revision,
@@ -79,7 +54,7 @@ impl LoadedProject {
         let mut conditions = BTreeMap::new();
         let mut actions = BTreeMap::new();
         let mut text = Vec::new();
-        for (_, record) in records {
+        for record in records {
             match record {
                 Asset::DialogueContract(v) => dialogue_contracts.push(v),
                 Asset::Object(v) => world.objects.push(v),

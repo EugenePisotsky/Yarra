@@ -1,116 +1,216 @@
-use crate::actors::Actor;
-use crate::dialogue::Conversation;
+//! The whole mutable playthrough, held in memory. Records that were never changed are absent
+//! and read as their defaults, so a save only contains what differs from the authored world.
+use crate::actors::{Actor, Relationship, RelationshipKey};
+use crate::dialogue::{ClaimKey, Conversation, History, HistoryKey, Interaction, InteractionKey};
 use crate::inventory::{Inventory, Wallet};
 use crate::rules::{Attributes, RandomState};
-use crate::{GameContent, Result};
-use crate::{actors, dialogue, quests};
+use crate::{
+    ConversationKey, GameContent, LocationState, ObjectKind, ObjectState, Result, TriggerState,
+    quests,
+};
 use game_types::*;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
-/// Resolved operation state, or an explicitly eager authoring seed/export.
-/// Runtime sessions keep only a bounded working set; storage owns nonresident records.
+/// A record stored in a map under an identity it also carries.
+pub trait Keyed {
+    type Key: Ord + Clone;
+    fn key(&self) -> Self::Key;
+}
+macro_rules! keyed {
+    ($($value:ty => $key:ty, |$v:ident| $expr:expr;)*) => {$(
+        impl Keyed for $value {
+            type Key = $key;
+            fn key(&self) -> $key { let $v = self; $expr }
+        }
+    )*};
+}
+keyed! {
+    Actor => ActorId, |v| v.id;
+    Inventory => InventoryId, |v| v.id;
+    Wallet => WalletId, |v| v.id;
+    quests::Progress => QuestId, |v| v.quest;
+    Relationship => RelationshipKey, |v| v.key;
+    Interaction => InteractionKey, |v| v.key;
+    History => HistoryKey, |v| v.key;
+    Conversation => ConversationKey, |v| ConversationKey::of(v);
+    ObjectState => ObjectId, |v| v.id;
+    LocationState => ActorId, |v| v.actor;
+    TriggerState => TriggerId, |v| v.id;
+}
+/// Saved as a plain list of records; duplicate identities are rejected on load.
+pub(crate) mod keyed {
+    use super::Keyed;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error};
+    use std::collections::BTreeMap;
+    pub fn serialize<S: Serializer, K, V: Serialize>(
+        map: &BTreeMap<K, V>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        serializer.collect_seq(map.values())
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>, V: Keyed + Deserialize<'de>>(
+        deserializer: D,
+    ) -> Result<BTreeMap<V::Key, V>, D::Error> {
+        let mut map = BTreeMap::new();
+        for value in Vec::<V>::deserialize(deserializer)? {
+            if map.insert(value.key(), value).is_some() {
+                return Err(D::Error::custom("duplicate record identity"));
+            }
+        }
+        Ok(map)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SessionState {
-    pub world: crate::WorldState,
-    pub histories: Vec<dialogue::History>,
-    pub claims: Vec<dialogue::Claim>,
-    pub narrative_random: RandomState,
-    pub quests: Vec<quests::Progress>,
-    pub relationships: Vec<actors::Relationship>,
-    pub interactions: Vec<dialogue::Interaction>,
     pub playthrough: PlaythroughId,
     pub generation: u64,
     pub time: GameTime,
     pub random: RandomState,
-    pub actors: Vec<Actor>,
-    pub owners: Vec<OwnerRef>,
-    pub inventories: Vec<Inventory>,
-    pub wallets: Vec<Wallet>,
-    pub conversations: Vec<Conversation>,
+    pub narrative_random: RandomState,
+    #[serde(with = "keyed")]
+    pub actors: BTreeMap<ActorId, Actor>,
+    /// Inventory and wallet owners that are not actors, e.g. a party or a chest.
+    pub owners: BTreeSet<OwnerRef>,
+    #[serde(with = "keyed")]
+    pub inventories: BTreeMap<InventoryId, Inventory>,
+    /// Each actor's carried inventory. Maintained by `add_inventory`, checked by `validate`.
+    pub carried: BTreeMap<ActorId, InventoryId>,
+    #[serde(with = "keyed")]
+    pub wallets: BTreeMap<WalletId, Wallet>,
+    #[serde(with = "keyed")]
+    pub quests: BTreeMap<QuestId, quests::Progress>,
+    #[serde(with = "keyed")]
+    pub relationships: BTreeMap<RelationshipKey, Relationship>,
+    #[serde(with = "keyed")]
+    pub interactions: BTreeMap<InteractionKey, Interaction>,
+    #[serde(with = "keyed")]
+    pub histories: BTreeMap<HistoryKey, History>,
+    pub claims: BTreeSet<ClaimKey>,
+    #[serde(with = "keyed")]
+    pub conversations: BTreeMap<ConversationKey, Conversation>,
     pub facts: BTreeSet<Key>,
+    pub world: crate::WorldState,
 }
+pub const CARRIED: &str = "carried";
+
 impl SessionState {
     pub fn empty(seed: u64) -> Self {
         Self {
-            world: Default::default(),
             playthrough: PlaythroughId::new(),
             generation: 1,
             time: GameTime::default(),
             random: RandomState(seed),
             narrative_random: RandomState(seed ^ 0xd1b54a32d192ed03),
-            histories: vec![],
-            claims: vec![],
-            quests: vec![],
-            relationships: vec![],
-            interactions: vec![],
-            actors: Vec::new(),
-            owners: Vec::new(),
-            inventories: Vec::new(),
-            wallets: Vec::new(),
-            conversations: Vec::new(),
+            actors: BTreeMap::new(),
+            owners: BTreeSet::new(),
+            inventories: BTreeMap::new(),
+            carried: BTreeMap::new(),
+            wallets: BTreeMap::new(),
+            quests: BTreeMap::new(),
+            relationships: BTreeMap::new(),
+            interactions: BTreeMap::new(),
+            histories: BTreeMap::new(),
+            claims: BTreeSet::new(),
+            conversations: BTreeMap::new(),
             facts: BTreeSet::new(),
+            world: Default::default(),
         }
     }
-    pub fn history(&self, key: dialogue::HistoryKey) -> Result<&dialogue::History> {
-        self.histories
-            .iter()
-            .find(|v| v.key == key)
-            .ok_or_else(|| Invalid("history not resolved".into()).into())
+    pub fn add_actor(&mut self, actor: Actor) {
+        self.actors.insert(actor.id, actor);
     }
-    pub fn claim(&self, key: dialogue::ClaimKey) -> Result<&dialogue::Claim> {
-        self.claims
-            .iter()
-            .find(|v| v.key == key)
-            .ok_or_else(|| Invalid("claim not resolved".into()).into())
+    pub fn add_inventory(&mut self, inventory: Inventory) {
+        if inventory.owner.kind == "actor" && inventory.role == CARRIED {
+            self.carried
+                .insert(ActorId(inventory.owner.id.0), inventory.id);
+        }
+        self.inventories.insert(inventory.id, inventory);
     }
-    pub fn quest(&self, id: QuestId) -> Result<&quests::Progress> {
-        self.quests
-            .iter()
-            .find(|q| q.quest == id)
-            .ok_or_else(|| Invalid("quest state not resolved".into()).into())
-    }
-    pub fn relationship(&self, key: actors::RelationshipKey) -> Result<&actors::Relationship> {
-        self.relationships
-            .iter()
-            .find(|r| r.key == key)
-            .ok_or_else(|| Invalid("relationship state not resolved".into()).into())
-    }
-    pub fn interaction(&self, key: dialogue::InteractionKey) -> Result<&dialogue::Interaction> {
-        self.interactions
-            .iter()
-            .find(|r| r.key == key)
-            .ok_or_else(|| Invalid("interaction state not resolved".into()).into())
+    pub fn add_wallet(&mut self, wallet: Wallet) {
+        self.wallets.insert(wallet.id, wallet);
     }
     pub fn actor(&self, id: ActorId) -> Result<&Actor> {
         self.actors
-            .iter()
-            .find(|a| a.id == id)
+            .get(&id)
             .ok_or_else(|| Invalid("unknown actor".into()).into())
     }
     pub fn inventory(&self, id: InventoryId) -> Result<&Inventory> {
         self.inventories
-            .iter()
-            .find(|i| i.id == id)
+            .get(&id)
             .ok_or_else(|| Invalid("unknown inventory".into()).into())
     }
     pub fn wallet(&self, id: WalletId) -> Result<&Wallet> {
         self.wallets
-            .iter()
-            .find(|w| w.id == id)
+            .get(&id)
             .ok_or_else(|| Invalid("unknown wallet".into()).into())
     }
     pub fn carried(&self, actor: ActorId) -> Result<&Inventory> {
-        self.inventories
-            .iter()
-            .find(|i| i.owner == OwnerRef::actor(actor) && i.role == "carried")
+        self.carried
+            .get(&actor)
+            .and_then(|id| self.inventories.get(id))
             .ok_or_else(|| Invalid("actor has no carried inventory".into()).into())
+    }
+    pub fn conversation(&self, key: ConversationKey) -> Result<&Conversation> {
+        self.conversations
+            .get(&key)
+            .ok_or_else(|| Invalid("conversation has not started".into()).into())
+    }
+    /// An unstarted quest has no record.
+    pub fn quest(&self, id: QuestId) -> quests::Progress {
+        self.quests
+            .get(&id)
+            .cloned()
+            .unwrap_or_else(|| quests::Progress::new(id))
+    }
+    /// Actors who never interacted are neutral.
+    pub fn relationship(&self, key: RelationshipKey) -> Relationship {
+        self.relationships
+            .get(&key)
+            .cloned()
+            .unwrap_or_else(|| Relationship::neutral(key))
+    }
+    pub fn selection(&self, key: InteractionKey) -> Option<&crate::dialogue::Selection> {
+        self.interactions.get(&key)?.current.as_ref()
+    }
+    pub fn history(&self, key: HistoryKey) -> History {
+        self.histories
+            .get(&key)
+            .cloned()
+            .unwrap_or_else(|| History::empty(key))
+    }
+    pub fn claimed(&self, key: ClaimKey) -> bool {
+        self.claims.contains(&key)
+    }
+    /// An untouched object is in its authored state, whether or not its region is loaded.
+    pub fn object(&self, content: &GameContent, id: ObjectId) -> Result<ObjectState> {
+        match self.world.objects.get(&id) {
+            Some(state) => Ok(state.clone()),
+            None => Ok(ObjectState::initial(content.object(id)?)),
+        }
+    }
+    /// Before the first reported observation, occupancy follows the actor's saved position.
+    pub fn location(&self, content: &GameContent, actor: ActorId) -> Result<LocationState> {
+        match self.world.locations.get(&actor) {
+            Some(state) => Ok(state.clone()),
+            None => Ok(LocationState {
+                areas: content.areas_at(&self.actor(actor)?.position)?,
+                ..LocationState::initial(actor)
+            }),
+        }
+    }
+    pub fn trigger(&self, id: TriggerId) -> TriggerState {
+        self.world
+            .triggers
+            .get(&id)
+            .cloned()
+            .unwrap_or_else(|| TriggerState::initial(id))
     }
     pub fn derived(&self, content: &GameContent, actor: ActorId) -> Result<Attributes> {
         let actor = self.actor(actor)?;
         let carried = self.carried(actor.id)?;
-        content.game.rules.validate()?;
         let mut modifiers = Vec::new();
         let mut ids = BTreeSet::new();
         for (slot, item) in &actor.equipment {
@@ -131,187 +231,212 @@ impl SessionState {
         );
         Ok(content.game.rules.derive(&actor.base, modifiers)?)
     }
+    fn valid_owner(&self, owner: &OwnerRef) -> bool {
+        if owner.kind == "actor" {
+            self.actors.contains_key(&ActorId(owner.id.0))
+        } else {
+            self.owners.contains(owner)
+        }
+    }
+    pub(crate) fn check_actor(&self, content: &GameContent, actor: &Actor) -> Result<()> {
+        content.template(actor.template)?;
+        actor.validate(&content.game.rules)?;
+        let stats = self.derived(content, actor.id)?;
+        require(
+            actor.health <= stats[&content.game.rules.health_attribute] as u32,
+            "health exceeds derived maximum",
+        )
+        .map_err(Into::into)
+    }
+    pub(crate) fn check_inventory(&self, content: &GameContent, inv: &Inventory) -> Result<()> {
+        inv.validate(&content.items)?;
+        require(
+            self.valid_owner(&inv.owner),
+            "invalid inventory identity/owner/role",
+        )?;
+        if inv.owner.kind == "actor" && inv.role == CARRIED {
+            require(
+                self.carried.get(&ActorId(inv.owner.id.0)) == Some(&inv.id),
+                "carried inventory index is stale",
+            )?;
+        }
+        Ok(())
+    }
+    pub(crate) fn check_wallet(&self, wallet: &Wallet) -> Result<()> {
+        wallet.validate()?;
+        require(
+            self.valid_owner(&wallet.owner),
+            "invalid wallet identity/owner",
+        )
+        .map_err(Into::into)
+    }
+    pub(crate) fn check_history(&self, content: &GameContent, h: &History) -> Result<()> {
+        h.validate(content.dialogue_contract(h.key.dialogue)?, self.time)?;
+        require(
+            h.key
+                .scope
+                .actors()
+                .iter()
+                .all(|id| self.actors.contains_key(id)),
+            "invalid history actor",
+        )
+        .map_err(Into::into)
+    }
+    pub(crate) fn check_claim(&self, content: &GameContent, key: ClaimKey) -> Result<()> {
+        key.scope.validate()?;
+        require(
+            content.claim(key.claim)?.scope.accepts(key.scope),
+            "invalid claim identity/scope",
+        )?;
+        require(
+            key.scope
+                .actors()
+                .iter()
+                .all(|id| self.actors.contains_key(id)),
+            "invalid claim actor",
+        )
+        .map_err(Into::into)
+    }
+    pub(crate) fn check_relationship(&self, r: &Relationship) -> Result<()> {
+        r.validate()?;
+        require(
+            self.actors.contains_key(&r.key.from) && self.actors.contains_key(&r.key.to),
+            "invalid relationship actors/identity",
+        )
+        .map_err(Into::into)
+    }
+    pub(crate) fn check_interaction(&self, content: &GameContent, i: &Interaction) -> Result<()> {
+        require(
+            i.key.participant != i.key.speaker
+                && self.actors.contains_key(&i.key.participant)
+                && self.actors.contains_key(&i.key.speaker),
+            "invalid interaction actors/identity",
+        )?;
+        if let Some(selection) = &i.current {
+            let profile = content.profile(selection.profile)?;
+            require(
+                profile.rules.iter().any(|r| {
+                    r.id == selection.rule
+                        && r.variants.iter().any(|v| v.dialogue == selection.dialogue)
+                }),
+                "invalid saved interaction selection",
+            )?;
+            require(
+                self.conversations.contains_key(&ConversationKey {
+                    dialogue: selection.dialogue,
+                    participant: i.key.participant,
+                    speaker: i.key.speaker,
+                }),
+                "selected conversation is missing",
+            )?;
+        }
+        Ok(())
+    }
+    /// A graph that is not loaded is checked against its always-present contract.
+    pub(crate) fn check_conversation(&self, content: &GameContent, c: &Conversation) -> Result<()> {
+        require(
+            self.actors.contains_key(&c.participant) && self.actors.contains_key(&c.speaker),
+            "invalid conversation participants/identity",
+        )?;
+        match content.loaded_dialogue(c.dialogue) {
+            Some(graph) => c.validate(graph)?,
+            None => c.validate_contract(content.dialogue_contract(c.dialogue)?)?,
+        }
+        require(
+            c.bindings.values().all(|id| self.actors.contains_key(id)),
+            "unknown bound actor",
+        )
+        .map_err(Into::into)
+    }
+    pub(crate) fn check_object(&self, content: &GameContent, o: &ObjectState) -> Result<()> {
+        let definition = content.object(o.id)?;
+        if let ObjectKind::Container { inventory } = definition.kind
+            && let Some(bag) = self.inventories.get(&inventory)
+        {
+            require(
+                bag.owner == OwnerRef::new("object", OwnerId(o.id.0))? && bag.role == "contents",
+                "container inventory ownership mismatch",
+            )?;
+        }
+        require(
+            !(o.open && (o.locked || o.destroyed)),
+            "invalid object state",
+        )
+        .map_err(Into::into)
+    }
+    pub(crate) fn check_location(&self, content: &GameContent, l: &LocationState) -> Result<()> {
+        self.actor(l.actor)?;
+        require(
+            l.areas.len() <= crate::MAX_AREA_OVERLAP
+                && l.observation <= i64::MAX as u64
+                && (l.observation == 0) == l.last_observed.is_none(),
+            "invalid location state",
+        )?;
+        for id in &l.areas {
+            content.area(*id)?;
+        }
+        Ok(())
+    }
+    /// Checks every record and the invariants that span records. Used when a playthrough is
+    /// created or loaded; commands only re-check the records they changed.
     pub fn validate(&self, content: &GameContent) -> Result<()> {
-        content.validate()?;
-        self.world.validate(content, self)?;
         require(
             self.generation > 0 && self.generation <= i64::MAX as u64,
             "invalid session generation",
         )?;
-        require(
-            self.actors.len() <= 10000
-                && self.owners.len() <= 10000
-                && self.inventories.len() <= 20000
-                && self.wallets.len() <= 20000
-                && self.conversations.len() <= 10000,
-            "session exceeds limits",
-        )?;
-        let mut actors = BTreeSet::new();
-        for actor in &self.actors {
-            require(actors.insert(actor.id), "duplicate actor")?;
-            require(
-                content.game.actors.iter().any(|t| t.id == actor.template),
-                "unknown actor template",
-            )?;
-            actor.validate(&content.game.rules)?;
-        }
-        let mut owners = BTreeSet::new();
         for owner in &self.owners {
             owner.validate()?;
-            require(
-                owner.kind != "actor" && owners.insert((owner.kind.clone(), owner.id)),
-                "invalid/duplicate external owner",
-            )?;
+            require(owner.kind != "actor", "invalid external owner")?;
         }
-        let valid_owner = |owner: &OwnerRef| {
-            if owner.kind == "actor" {
-                actors.contains(&ActorId(owner.id.0))
-            } else {
-                owners.contains(&(owner.kind.clone(), owner.id))
-            }
-        };
-        let mut inventories = BTreeSet::new();
         let mut roles = BTreeSet::new();
         let mut entries = BTreeSet::new();
-        for inv in &self.inventories {
-            inv.validate(&content.items)?;
+        for (id, inv) in &self.inventories {
+            require(*id == inv.id, "inventory identity mismatch")?;
+            self.check_inventory(content, inv)?;
             require(
-                inventories.insert(inv.id)
-                    && roles.insert((&inv.owner.kind, inv.owner.id, &inv.role))
-                    && valid_owner(&inv.owner),
+                roles.insert((&inv.owner, &inv.role)),
                 "invalid inventory identity/owner/role",
             )?;
             for item in &inv.entries {
                 require(entries.insert(item.id), "duplicate global item identity")?;
             }
         }
-        let mut wallets = BTreeSet::new();
-        for wallet in &self.wallets {
-            wallet.validate()?;
+        for (actor, id) in &self.carried {
+            let inv = self.inventory(*id)?;
             require(
-                wallets.insert(wallet.id) && valid_owner(&wallet.owner),
-                "invalid wallet identity/owner",
+                inv.owner == OwnerRef::actor(*actor) && inv.role == CARRIED,
+                "carried inventory index is stale",
             )?;
         }
-        for actor in &self.actors {
-            let stats = self.derived(content, actor.id)?;
-            require(
-                actor.health <= stats[&content.game.rules.health_attribute] as u32,
-                "health exceeds derived maximum",
-            )?;
+        for (id, actor) in &self.actors {
+            require(*id == actor.id, "actor identity mismatch")?;
+            self.check_actor(content, actor)?;
         }
-        require(
-            self.quests.len() <= 10000
-                && self.relationships.len() <= 10000
-                && self.interactions.len() <= 10000,
-            "narrative state exceeds limits",
-        )?;
-        require(
-            self.histories.len() <= 10000 && self.claims.len() <= 10000,
-            "history/claim state budget exceeded",
-        )?;
-        let mut histories = BTreeSet::new();
-        let mut claims = BTreeSet::new();
-        for h in &self.histories {
-            require(histories.insert(h.key), "duplicate history")?;
-            h.validate(content.dialogue_contract(h.key.dialogue)?, self.time)?;
-            require(
-                h.key.scope.actors().iter().all(|id| actors.contains(id)),
-                "invalid history actor",
-            )?;
+        for wallet in self.wallets.values() {
+            self.check_wallet(wallet)?;
         }
-        for c in &self.claims {
-            c.key.scope.validate()?;
-            require(
-                claims.insert(c.key) && content.claim(c.key.claim)?.scope.accepts(c.key.scope),
-                "invalid claim identity/scope",
-            )?;
-            require(
-                c.key.scope.actors().iter().all(|id| actors.contains(id)),
-                "invalid claim actor",
-            )?;
+        for h in self.histories.values() {
+            self.check_history(content, h)?;
         }
-        let mut quests = BTreeSet::new();
-        let mut relationships = BTreeSet::new();
-        let mut interactions = BTreeSet::new();
-        for q in &self.quests {
-            require(quests.insert(q.quest), "duplicate quest state")?;
+        for key in &self.claims {
+            self.check_claim(content, *key)?;
+        }
+        for q in self.quests.values() {
             q.validate(content.quest(q.quest)?)?;
         }
-        for r in &self.relationships {
-            r.validate()?;
-            require(
-                relationships.insert(r.key)
-                    && actors.contains(&r.key.from)
-                    && actors.contains(&r.key.to),
-                "invalid relationship actors/identity",
-            )?;
+        for r in self.relationships.values() {
+            self.check_relationship(r)?;
         }
-        for i in &self.interactions {
-            require(
-                interactions.insert(i.key)
-                    && i.key.participant != i.key.speaker
-                    && actors.contains(&i.key.participant)
-                    && actors.contains(&i.key.speaker),
-                "invalid interaction actors/identity",
-            )?;
-            if let Some(selection) = &i.current {
-                let profile = content.profile(selection.profile)?;
-                require(
-                    profile.rules.iter().any(|r| {
-                        r.id == selection.rule
-                            && r.variants.iter().any(|v| v.dialogue == selection.dialogue)
-                    }),
-                    "invalid saved interaction selection",
-                )?;
-                require(
-                    self.conversations.iter().any(|c| {
-                        c.dialogue == selection.dialogue
-                            && c.participant == i.key.participant
-                            && c.speaker == i.key.speaker
-                    }),
-                    "selected conversation is not resolved",
-                )?;
-            }
+        for i in self.interactions.values() {
+            self.check_interaction(content, i)?;
         }
-        let mut conversations = BTreeSet::new();
-        for state in &self.conversations {
-            require(
-                conversations.insert((state.dialogue, state.participant, state.speaker))
-                    && actors.contains(&state.participant)
-                    && actors.contains(&state.speaker),
-                "invalid conversation participants/identity",
-            )?;
-            state.validate(content.dialogue(state.dialogue)?)?;
-            require(
-                state.bindings.values().all(|id| actors.contains(id)),
-                "unknown bound actor",
-            )?;
+        for c in self.conversations.values() {
+            self.check_conversation(content, c)?;
         }
         require(
             self.facts.is_subset(&content.game.facts),
             "unknown saved fact",
         )?;
-        Ok(())
-    }
-    pub(crate) fn actor_mut(&mut self, id: ActorId) -> Result<&mut Actor> {
-        self.actors
-            .iter_mut()
-            .find(|a| a.id == id)
-            .ok_or_else(|| Invalid("unknown actor".into()).into())
-    }
-    pub(crate) fn inventory_mut(&mut self, id: InventoryId) -> Result<&mut Inventory> {
-        self.inventories
-            .iter_mut()
-            .find(|i| i.id == id)
-            .ok_or_else(|| Invalid("unknown inventory".into()).into())
-    }
-    pub(crate) fn clamp_health(&mut self, content: &GameContent) -> Result<()> {
-        for index in 0..self.actors.len() {
-            let max = self.derived(content, self.actors[index].id)?
-                [&content.game.rules.health_attribute] as u32;
-            self.actors[index].health = self.actors[index].health.min(max);
-        }
-        Ok(())
+        self.world.validate(content, self)
     }
 }

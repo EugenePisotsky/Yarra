@@ -4,7 +4,7 @@ use crate::actors::Position;
 use crate::*;
 use game_types::*;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 pub const MAX_AREA_OVERLAP: usize = 32;
 pub const MAX_PENDING_EVENTS: usize = 4096;
@@ -184,42 +184,6 @@ impl TriggerDefinition {
                             Ok(())
                         })?;
                     }
-                }
-            }
-        }
-        Ok(())
-    }
-    pub fn content_dependencies(&self, request: &mut ContentRequest) -> Result<()> {
-        self.condition.content_dependencies(request)?;
-        if let TriggerActivation::Events(signals) = &self.activation {
-            for signal in signals {
-                match signal {
-                    WorldSignal::Entered { area, .. } | WorldSignal::Exited { area, .. } => {
-                        request.areas.insert(*area);
-                    }
-                    WorldSignal::ItemAcquired { definition, .. } => {
-                        request.items.insert(*definition);
-                    }
-                    WorldSignal::QuestStarted(id) | WorldSignal::Quest(id) => {
-                        request.quests.insert(*id);
-                    }
-                    WorldSignal::Fact(id) => {
-                        request.facts.insert(id.clone());
-                    }
-                    WorldSignal::History(key) => {
-                        request.dialogue_contracts.insert(key.dialogue);
-                    }
-                    WorldSignal::Claim(key) => {
-                        request.claims.insert(key.claim);
-                    }
-                    _ => {}
-                }
-            }
-        }
-        for step in &self.steps {
-            if let SequenceStep::Apply(actions) = step {
-                for action in actions {
-                    action.content_dependencies(request)?;
                 }
             }
         }
@@ -412,11 +376,14 @@ pub struct PendingEvent {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorldState {
-    pub objects: Vec<ObjectState>,
-    pub locations: Vec<LocationState>,
-    pub triggers: Vec<TriggerState>,
-    /// Tool import/export only. Runtime commands use the transaction queue port.
-    pub pending: Vec<PendingEvent>,
+    #[serde(with = "crate::state::keyed")]
+    pub objects: BTreeMap<ObjectId, ObjectState>,
+    #[serde(with = "crate::state::keyed")]
+    pub locations: BTreeMap<ActorId, LocationState>,
+    #[serde(with = "crate::state::keyed")]
+    pub triggers: BTreeMap<TriggerId, TriggerState>,
+    /// Committed notifications awaiting trigger dispatch, oldest first.
+    pub pending: VecDeque<PendingEvent>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WorldCommand {
@@ -533,31 +500,55 @@ impl GameContent {
         Ok(())
     }
 }
+impl GameContent {
+    pub fn areas_at(&self, position: &Position) -> Result<BTreeSet<AreaId>> {
+        let ids: BTreeSet<_> = self
+            .game
+            .world
+            .areas
+            .iter()
+            .filter(|a| a.contains(position))
+            .map(|a| a.id)
+            .collect();
+        require(
+            ids.len() <= MAX_AREA_OVERLAP,
+            "area overlap budget exceeded",
+        )?;
+        Ok(ids)
+    }
+}
+/// Which triggers listen to which signal, built once from the loaded definitions.
+#[derive(Debug, Default)]
+pub struct TriggerIndex(BTreeMap<WorldSignal, BTreeSet<TriggerId>>);
+impl TriggerIndex {
+    pub fn build(content: &GameContent) -> Result<Self> {
+        let mut index = BTreeMap::<_, BTreeSet<_>>::new();
+        for d in &content.game.world.triggers {
+            for signal in d.subscriptions(content)? {
+                index.entry(signal).or_default().insert(d.id);
+            }
+        }
+        Ok(Self(index))
+    }
+    pub fn subscribed(&self, signal: &WorldSignal) -> bool {
+        self.0.contains_key(signal)
+    }
+    /// Subscribers are visited in identity order; `after` resumes a partly delivered event.
+    pub fn next(&self, signal: &WorldSignal, after: Option<TriggerId>) -> Option<TriggerId> {
+        let ids = self.0.get(signal)?;
+        match after {
+            Some(after) => ids
+                .range((std::ops::Bound::Excluded(after), std::ops::Bound::Unbounded))
+                .next(),
+            None => ids.first(),
+        }
+        .copied()
+    }
+}
 impl WorldState {
-    pub fn object(&self, id: ObjectId) -> Result<&ObjectState> {
-        self.objects
-            .iter()
-            .find(|v| v.id == id)
-            .ok_or_else(|| Invalid("object state not resolved".into()).into())
-    }
-    pub fn location(&self, actor: ActorId) -> Result<&LocationState> {
-        self.locations
-            .iter()
-            .find(|v| v.actor == actor)
-            .ok_or_else(|| Invalid("location not resolved".into()).into())
-    }
-    pub fn trigger(&self, id: TriggerId) -> Result<&TriggerState> {
-        self.triggers
-            .iter()
-            .find(|v| v.id == id)
-            .ok_or_else(|| Invalid("trigger state not resolved".into()).into())
-    }
     pub(crate) fn validate(&self, content: &GameContent, state: &SessionState) -> Result<()> {
         require(
-            self.objects.len() <= 10000
-                && self.locations.len() <= 10000
-                && self.triggers.len() <= 10000
-                && self.pending.len() <= MAX_PENDING_EVENTS,
+            self.pending.len() <= MAX_PENDING_EVENTS,
             "world state budget exceeded",
         )?;
         let mut events = BTreeSet::new();
@@ -565,7 +556,7 @@ impl WorldState {
             require(
                 event.id.generation > 0
                     && event.id.generation < state.generation
-                    && event.id.ordinal < 256
+                    && (event.id.ordinal as usize) < MAX_EVENTS_PER_COMMAND
                     && events.insert(event.id),
                 "invalid pending event identity",
             )?;
@@ -573,114 +564,90 @@ impl WorldState {
                 content.trigger(id)?;
             }
         }
-        let mut ids = BTreeSet::new();
-        for o in &self.objects {
-            let definition = content.object(o.id)?;
-            if let ObjectKind::Container { inventory } = definition.kind
-                && let Some(bag) = state.inventories.iter().find(|i| i.id == inventory)
-            {
-                require(
-                    bag.owner == OwnerRef::new("object", OwnerId(o.id.0))?
-                        && bag.role == "contents",
-                    "container inventory ownership mismatch",
-                )?;
-            }
+        for o in self.objects.values() {
+            state.check_object(content, o)?;
+        }
+        for l in self.locations.values() {
+            state.check_location(content, l)?;
+        }
+        for t in self.triggers.values() {
+            t.validate(content, state)?;
+        }
+        Ok(())
+    }
+}
+impl TriggerState {
+    pub(crate) fn validate(&self, content: &GameContent, state: &SessionState) -> Result<()> {
+        let t = self;
+        let d = content.trigger(t.id)?;
+        state.actor(d.participant)?;
+        state.actor(d.speaker)?;
+        require(
+            t.run <= i64::MAX as u64
+                && t.successes <= t.run
+                && usize::from(t.step) <= d.steps.len()
+                && t.receipts.len() <= 32
+                && t.consecutive_failures <= 3
+                && t.diagnostic.as_ref().is_none_or(|d| d.len() <= 2048)
+                && t.last_started.is_none_or(|time| time <= state.time),
+            "invalid sequence progress",
+        )?;
+        require(
+            (t.run == 0) == (t.status == SequenceStatus::Idle)
+                && (t.run == 0) == t.last_started.is_none(),
+            "invalid sequence run/status",
+        )?;
+        if t.status == SequenceStatus::Idle {
             require(
-                ids.insert(o.id) && !(o.open && (o.locked || o.destroyed)),
-                "invalid object state",
+                t.step == 0 && t.receipts.is_empty() && t.successes == 0,
+                "invalid idle sequence",
             )?;
         }
-        let mut ids = BTreeSet::new();
-        for l in &self.locations {
-            state.actor(l.actor)?;
+        if t.status == SequenceStatus::Succeeded {
             require(
-                ids.insert(l.actor)
-                    && l.areas.len() <= MAX_AREA_OVERLAP
-                    && l.observation <= i64::MAX as u64
-                    && (l.observation == 0) == l.last_observed.is_none(),
-                "invalid location state",
+                usize::from(t.step) == d.steps.len() && t.successes > 0,
+                "invalid successful sequence",
             )?;
-            for id in &l.areas {
-                content.area(*id)?;
+        }
+        let mut receipts = BTreeSet::new();
+        for (id, result) in &t.receipts {
+            require(
+                id.trigger == t.id && id.run == t.run && id.step <= t.step && receipts.insert(*id),
+                "invalid movement receipt",
+            )?;
+            let Some(SequenceStep::Move { destination, .. }) = d.steps.get(usize::from(id.step))
+            else {
+                return Err(Invalid("receipt is not a movement step".into()).into());
+            };
+            if let MoveResult::Arrived { position } = result {
+                require(position == destination, "invalid arrival receipt")?;
             }
         }
-        let mut ids = BTreeSet::new();
-        for t in &self.triggers {
-            let d = content.trigger(t.id)?;
-            state.actor(d.participant)?;
-            state.actor(d.speaker)?;
+        require(
+            (t.status == SequenceStatus::Running) == t.movement.is_some(),
+            "running sequence must await movement",
+        )?;
+        if let Some(m) = &t.movement {
             require(
-                ids.insert(t.id)
-                    && t.run <= i64::MAX as u64
-                    && t.successes <= t.run
-                    && usize::from(t.step) <= d.steps.len()
-                    && t.receipts.len() <= 32
-                    && t.consecutive_failures <= 3
-                    && t.diagnostic.as_ref().is_none_or(|d| d.len() <= 2048)
-                    && t.last_started.is_none_or(|time| time <= state.time),
-                "invalid sequence progress",
+                !receipts.contains(&m.id)
+                    && m.id
+                        == ActionId {
+                            trigger: t.id,
+                            run: t.run,
+                            step: t.step,
+                        }
+                    && m.deadline.0 <= i64::MAX as u64,
+                "invalid pending movement identity",
             )?;
-            require(
-                (t.run == 0) == (t.status == SequenceStatus::Idle)
-                    && (t.run == 0) == t.last_started.is_none(),
-                "invalid sequence run/status",
-            )?;
-            if t.status == SequenceStatus::Idle {
-                require(
-                    t.step == 0 && t.receipts.is_empty() && t.successes == 0,
-                    "invalid idle sequence",
-                )?;
-            }
-            if t.status == SequenceStatus::Succeeded {
-                require(
-                    usize::from(t.step) == d.steps.len() && t.successes > 0,
-                    "invalid successful sequence",
-                )?;
-            }
-            let mut receipts = BTreeSet::new();
-            for (id, result) in &t.receipts {
-                require(
-                    id.trigger == t.id
-                        && id.run == t.run
-                        && id.step <= t.step
-                        && receipts.insert(*id),
-                    "invalid movement receipt",
-                )?;
-                let Some(SequenceStep::Move { destination, .. }) =
-                    d.steps.get(usize::from(id.step))
-                else {
-                    return Err(Invalid("receipt is not a movement step".into()).into());
-                };
-                if let MoveResult::Arrived { position } = result {
-                    require(position == destination, "invalid arrival receipt")?;
-                }
-            }
-            require(
-                (t.status == SequenceStatus::Running) == t.movement.is_some(),
-                "running sequence must await movement",
-            )?;
-            if let Some(m) = &t.movement {
-                require(
-                    !receipts.contains(&m.id)
-                        && m.id
-                            == ActionId {
-                                trigger: t.id,
-                                run: t.run,
-                                step: t.step,
-                            }
-                        && m.deadline.0 <= i64::MAX as u64,
-                    "invalid pending movement identity",
-                )?;
-                match d.steps.get(usize::from(t.step)) {
-                    Some(SequenceStep::Move {
-                        actor, destination, ..
-                    }) => require(
-                        m.actor == actor.resolve(d.participant, d.speaker)
-                            && &m.destination == destination,
-                        "movement plan mismatch",
-                    )?,
-                    _ => return Err(Invalid("movement step missing".into()).into()),
-                }
+            match d.steps.get(usize::from(t.step)) {
+                Some(SequenceStep::Move {
+                    actor, destination, ..
+                }) => require(
+                    m.actor == actor.resolve(d.participant, d.speaker)
+                        && &m.destination == destination,
+                    "movement plan mismatch",
+                )?,
+                _ => return Err(Invalid("movement step missing".into()).into()),
             }
         }
         Ok(())

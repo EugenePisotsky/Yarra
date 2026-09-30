@@ -1,24 +1,22 @@
 use game_types::*;
-use gameplay::dialogue;
-use gameplay::inventory::{fixtures::*, *};
-use gameplay::rules::{Effect, Modifier};
-use gameplay::{fixtures::*, *};
-use yarra_save::WorkingStore;
-type TestSession = gameplay::GameSession<WorkingStore, ToolContent>;
-fn new(content: GameContent, state: SessionState) -> yarra_save::Result<TestSession> {
-    Ok(GameSession::new(
-        WorkingStore::in_memory(&content, &state)?,
-        ToolContent::new(content)?,
-    )?)
+use yarra_gameplay::dialogue;
+use yarra_gameplay::inventory::{fixtures::*, *};
+use yarra_gameplay::rules::{Effect, Modifier};
+use yarra_gameplay::{fixtures::*, *};
+type Result<T> = yarra_gameplay::Result<T>;
+type TestSession = GameSession<ToolContent>;
+fn new(content: GameContent, state: SessionState) -> Result<TestSession> {
+    GameSession::new(ToolContent::new(content)?, state)
 }
 fn session() -> TestSession {
     new(content(), state()).unwrap()
 }
 fn snapshot(session: &TestSession) -> SessionState {
-    session.store().export_for_tools(100_000).unwrap()
+    session.state().clone()
 }
 fn item(session: &TestSession, bag: InventoryId, definition: ItemDefinitionId) -> ItemId {
-    snapshot(session)
+    session
+        .state()
         .inventory(bag)
         .unwrap()
         .entries
@@ -139,12 +137,7 @@ fn use_equipment_transfer_and_trade_are_coordinated() {
 fn rejected_use_restores_health_and_consumption() {
     let source = session();
     let mut state = snapshot(&source);
-    state
-        .inventories
-        .iter_mut()
-        .find(|i| i.id == HERO_BAG)
-        .unwrap()
-        .revision = i64::MAX as u64;
+    state.inventories.get_mut(&HERO_BAG).unwrap().revision = i64::MAX as u64;
     let mut session = new(content(), state).unwrap();
     let before = snapshot(&session);
     let potion = item(&session, HERO_BAG, POTION);
@@ -246,7 +239,13 @@ fn failed_skill_roll_is_a_committed_outcome() {
     );
     assert_ne!(snapshot(&session).random, random);
     assert_eq!(
-        snapshot(&session).conversations[0].status,
+        session
+            .state()
+            .conversations
+            .values()
+            .next()
+            .unwrap()
+            .status,
         dialogue::RunStatus::Completed
     );
     assert!(!snapshot(&session).facts.contains(&key("gate-rewarded")));
@@ -289,14 +288,151 @@ fn timed_effects_derive_from_explicit_time() {
 fn cross_domain_validation_rejects_bad_ownership_equipment_and_content() {
     let source = session();
     let mut state = snapshot(&source);
-    state.inventories[0].owner = OwnerRef::actor(ActorId([99; 16]));
+    state.inventories.get_mut(&HERO_BAG).unwrap().owner = OwnerRef::actor(ActorId([99; 16]));
     assert!(new(content(), state).is_err());
     let mut state = snapshot(&source);
-    state.actors[0]
+    state
+        .actors
+        .get_mut(&HERO)
+        .unwrap()
         .equipment
         .insert(key("hand"), item(&source, MERCHANT_BAG, POTION));
     assert!(new(content(), state).is_err());
     let mut content = content();
     content.game.actions.remove(&binding("consume-key"));
     assert!(content.validate().is_err());
+}
+
+/// Counts graph reads so tests can show which commands touch dialogue content.
+struct Counting {
+    inner: ToolContent,
+    graphs: std::rc::Rc<std::cell::Cell<usize>>,
+}
+impl ContentSource for Counting {
+    fn identity(&self) -> ContentIdentity {
+        self.inner.identity()
+    }
+    fn core(&mut self) -> Result<GameContent> {
+        self.inner.core()
+    }
+    fn dialogue(&mut self, id: DialogueId) -> Result<DialoguePack> {
+        self.graphs.set(self.graphs.get() + 1);
+        self.inner.dialogue(id)
+    }
+}
+#[test]
+fn dialogue_graphs_load_on_first_use_and_stay_cached() {
+    let graphs = std::rc::Rc::new(std::cell::Cell::new(0));
+    let source = Counting {
+        inner: ToolContent::new(content()).unwrap(),
+        graphs: graphs.clone(),
+    };
+    let mut session = GameSession::new(source, state()).unwrap();
+    assert!(session.content().game.dialogues.is_empty());
+    let potion = session.state().carried(HERO).unwrap().entries[0].id;
+    session
+        .apply(Command::UseItem {
+            actor: HERO,
+            item: potion,
+        })
+        .unwrap();
+    assert_eq!(graphs.get(), 0);
+    session
+        .apply(Command::StartDialogue {
+            bindings: Default::default(),
+            dialogue: GATE_DIALOGUE,
+            participant: HERO,
+            speaker: MERCHANT,
+        })
+        .unwrap();
+    session
+        .available_choices(GATE_DIALOGUE, HERO, MERCHANT)
+        .unwrap();
+    assert_eq!(graphs.get(), 1);
+    // A restored playthrough reloads the graph of its active conversation only.
+    let saved = serde_json::to_vec(session.state()).unwrap();
+    let restored: SessionState = serde_json::from_slice(&saved).unwrap();
+    assert_eq!(&restored, session.state());
+    let again = std::rc::Rc::new(std::cell::Cell::new(0));
+    let source = Counting {
+        inner: ToolContent::new(content()).unwrap(),
+        graphs: again.clone(),
+    };
+    GameSession::new(source, restored).unwrap();
+    assert_eq!(again.get(), 1);
+}
+#[test]
+fn untouched_records_stay_absent_and_read_as_defaults() {
+    let mut session = session();
+    let key = actors::RelationshipKey {
+        from: MERCHANT,
+        to: HERO,
+    };
+    assert_eq!(session.state().relationship(key).attitude, 0);
+    assert!(session.state().relationships.is_empty());
+    session
+        .apply(Command::AdjustRelationship { key, amount: 250 })
+        .unwrap();
+    assert_eq!(session.state().relationship(key).attitude, 100);
+    assert_eq!(session.state().relationships.len(), 1);
+    let before = snapshot(&session);
+    assert!(
+        session
+            .apply(Command::AdjustRelationship {
+                key: actors::RelationshipKey {
+                    from: HERO,
+                    to: HERO
+                },
+                amount: 1
+            })
+            .is_err()
+    );
+    assert_eq!(snapshot(&session), before);
+}
+#[test]
+fn command_cost_does_not_grow_with_the_population() {
+    let content = content();
+    let mut state = state();
+    for n in 0..20_000u32 {
+        let mut id = [7u8; 16];
+        id[..4].copy_from_slice(&n.to_le_bytes());
+        let mut actor = actors::Actor::from_template(
+            &content.game.actors[0],
+            &content.game.rules,
+            actors::ActorRole::Npc,
+        )
+        .unwrap();
+        actor.id = ActorId(id);
+        let mut bag = Inventory::new(OwnerRef::actor(actor.id), "carried").unwrap();
+        bag.grant(&content.items, POTION, 5).unwrap();
+        state.add_actor(actor);
+        state.add_inventory(bag);
+    }
+    let mut session = new(content, state).unwrap();
+    let potion = item(&session, HERO_BAG, POTION);
+    let started = std::time::Instant::now();
+    for _ in 0..2 {
+        session
+            .apply(Command::UseItem {
+                actor: HERO,
+                item: potion,
+            })
+            .unwrap();
+    }
+    let mut elapsed = started.elapsed();
+    let before = snapshot(&session);
+    let started = std::time::Instant::now();
+    assert!(
+        session
+            .apply(Command::UseItem {
+                actor: HERO,
+                item: ItemId([0; 16])
+            })
+            .is_err()
+    );
+    elapsed += started.elapsed();
+    assert_eq!(snapshot(&session), before);
+    // Generous bound: a whole-state copy or check per command would take far longer in
+    // this unoptimised test build. Three commands normally finish in well under 1 ms.
+    assert!(elapsed.as_millis() < 20, "commands took {elapsed:?}");
 }

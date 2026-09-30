@@ -1,0 +1,272 @@
+//! One command's view of the state. Every write first remembers the record it replaces, so a
+//! rejected command restores the state exactly, and an accepted one knows precisely what it
+//! changed. Cost follows the records a command touches, not the size of the playthrough.
+use crate::actors::{Actor, Relationship, RelationshipKey};
+use crate::dialogue::{ClaimKey, Conversation, History, HistoryKey, Interaction, InteractionKey};
+use crate::inventory::{Inventory, Wallet};
+use crate::rules::RandomState;
+use crate::{Result, *};
+use game_types::*;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+
+#[derive(Clone, Copy)]
+struct Scalars {
+    time: GameTime,
+    random: RandomState,
+    narrative_random: RandomState,
+}
+impl Scalars {
+    fn of(state: &SessionState) -> Self {
+        Self {
+            time: state.time,
+            random: state.random,
+            narrative_random: state.narrative_random,
+        }
+    }
+}
+/// The single list of journaled record maps: `name / touch: Key => Value, state path`.
+macro_rules! journal {
+    ($($name:ident / $touch:ident: $key:ty => $value:ty, $($path:ident).+;)*) => {
+        /// Values as they were before this command first touched them. `None` means absent.
+        pub(crate) struct Before {
+            scalars: Scalars,
+            $(pub $name: BTreeMap<$key, Option<$value>>,)*
+            pub facts: BTreeMap<Key, bool>,
+            pub claims: BTreeSet<ClaimKey>,
+            pending: Option<VecDeque<PendingEvent>>,
+        }
+        impl Before {
+            fn new(state: &SessionState) -> Self {
+                Self {
+                    scalars: Scalars::of(state),
+                    $($name: BTreeMap::new(),)*
+                    facts: BTreeMap::new(),
+                    claims: BTreeSet::new(),
+                    pending: None,
+                }
+            }
+            fn restore(self, state: &mut SessionState) {
+                $(for (key, value) in self.$name {
+                    match value {
+                        Some(value) => state.$($path).+.insert(key, value),
+                        None => state.$($path).+.remove(&key),
+                    };
+                })*
+                for (key, present) in self.facts {
+                    if present {
+                        state.facts.insert(key);
+                    } else {
+                        state.facts.remove(&key);
+                    }
+                }
+                for key in self.claims {
+                    state.claims.remove(&key);
+                }
+                if let Some(pending) = self.pending {
+                    state.world.pending = pending;
+                }
+                state.time = self.scalars.time;
+                state.random = self.scalars.random;
+                state.narrative_random = self.scalars.narrative_random;
+            }
+            /// Fold a finished nested scope into the enclosing one; the earliest value wins.
+            fn merge_into(self, outer: &mut Before) {
+                $(for (key, value) in self.$name {
+                    outer.$name.entry(key).or_insert(value);
+                })*
+                for (key, present) in self.facts {
+                    outer.facts.entry(key).or_insert(present);
+                }
+                outer.claims.extend(self.claims);
+                if outer.pending.is_none() {
+                    outer.pending = self.pending;
+                }
+            }
+        }
+        impl Tx<'_> {
+            $(fn $touch(&mut self, key: &$key) {
+                let state = &*self.state;
+                self.before
+                    .$name
+                    .entry(key.clone())
+                    .or_insert_with(|| state.$($path).+.get(key).cloned());
+            })*
+        }
+    };
+}
+journal! {
+    actors / touch_actor: ActorId => Actor, actors;
+    inventories / touch_inventory: InventoryId => Inventory, inventories;
+    wallets / touch_wallet: WalletId => Wallet, wallets;
+    quests / touch_quest: QuestId => quests::Progress, quests;
+    relationships / touch_relationship: RelationshipKey => Relationship, relationships;
+    interactions / touch_interaction: InteractionKey => Interaction, interactions;
+    histories / touch_history: HistoryKey => History, histories;
+    conversations / touch_conversation: ConversationKey => Conversation, conversations;
+    objects / touch_object: ObjectId => ObjectState, world.objects;
+    locations / touch_location: ActorId => LocationState, world.locations;
+    triggers / touch_trigger: TriggerId => TriggerState, world.triggers;
+}
+
+pub(crate) struct Tx<'a> {
+    state: &'a mut SessionState,
+    pub(crate) before: Before,
+}
+impl std::ops::Deref for Tx<'_> {
+    type Target = SessionState;
+    fn deref(&self) -> &SessionState {
+        self.state
+    }
+}
+/// An enclosing scope set aside while a nested one runs; see `Tx::savepoint`.
+pub(crate) struct Savepoint(Before);
+
+impl<'a> Tx<'a> {
+    pub fn begin(state: &'a mut SessionState) -> Self {
+        let before = Before::new(state);
+        Self { state, before }
+    }
+    pub fn rollback(self) {
+        self.before.restore(self.state);
+    }
+    /// Start a nested scope that can be undone on its own, keeping earlier work of the command.
+    pub fn savepoint(&mut self) -> Savepoint {
+        let fresh = Before::new(self.state);
+        Savepoint(std::mem::replace(&mut self.before, fresh))
+    }
+    pub fn release(&mut self, savepoint: Savepoint) {
+        let nested = std::mem::replace(&mut self.before, savepoint.0);
+        nested.merge_into(&mut self.before);
+    }
+    pub fn rollback_to(&mut self, savepoint: Savepoint) {
+        let nested = std::mem::replace(&mut self.before, savepoint.0);
+        nested.restore(self.state);
+    }
+    pub fn set_time(&mut self, time: GameTime) {
+        self.state.time = time;
+    }
+    pub fn random_mut(&mut self) -> &mut RandomState {
+        &mut self.state.random
+    }
+    pub fn set_narrative_random(&mut self, random: RandomState) {
+        self.state.narrative_random = random;
+    }
+    pub fn bump_generation(&mut self) -> Result<()> {
+        self.state.generation = self
+            .state
+            .generation
+            .checked_add(1)
+            .filter(|g| *g <= i64::MAX as u64)
+            .ok_or_else(|| Invalid("session generation overflow".into()))?;
+        Ok(())
+    }
+    pub fn actor_mut(&mut self, id: ActorId) -> Result<&mut Actor> {
+        self.state.actor(id)?;
+        self.touch_actor(&id);
+        Ok(self.state.actors.get_mut(&id).expect("checked actor"))
+    }
+    pub fn inventory_mut(&mut self, id: InventoryId) -> Result<&mut Inventory> {
+        self.state.inventory(id)?;
+        self.touch_inventory(&id);
+        Ok(self
+            .state
+            .inventories
+            .get_mut(&id)
+            .expect("checked inventory"))
+    }
+    pub fn wallet_mut(&mut self, id: WalletId) -> Result<&mut Wallet> {
+        self.state.wallet(id)?;
+        self.touch_wallet(&id);
+        Ok(self.state.wallets.get_mut(&id).expect("checked wallet"))
+    }
+    pub fn quest_mut(&mut self, id: QuestId) -> &mut quests::Progress {
+        self.touch_quest(&id);
+        self.state
+            .quests
+            .entry(id)
+            .or_insert_with(|| quests::Progress::new(id))
+    }
+    pub fn relationship_mut(&mut self, key: RelationshipKey) -> &mut Relationship {
+        self.touch_relationship(&key);
+        self.state
+            .relationships
+            .entry(key)
+            .or_insert_with(|| Relationship::neutral(key))
+    }
+    pub fn interaction_mut(&mut self, key: InteractionKey) -> &mut Interaction {
+        self.touch_interaction(&key);
+        self.state
+            .interactions
+            .entry(key)
+            .or_insert(Interaction { key, current: None })
+    }
+    pub fn history_mut(&mut self, key: HistoryKey) -> &mut History {
+        self.touch_history(&key);
+        self.state
+            .histories
+            .entry(key)
+            .or_insert_with(|| History::empty(key))
+    }
+    pub fn conversation_mut(&mut self, key: ConversationKey) -> Result<&mut Conversation> {
+        self.state.conversation(key)?;
+        self.touch_conversation(&key);
+        Ok(self
+            .state
+            .conversations
+            .get_mut(&key)
+            .expect("checked conversation"))
+    }
+    pub fn put_conversation(&mut self, conversation: Conversation) {
+        let key = ConversationKey::of(&conversation);
+        self.touch_conversation(&key);
+        self.state.conversations.insert(key, conversation);
+    }
+    pub fn object_mut(&mut self, content: &GameContent, id: ObjectId) -> Result<&mut ObjectState> {
+        let current = self.state.object(content, id)?;
+        self.touch_object(&id);
+        Ok(self.state.world.objects.entry(id).or_insert(current))
+    }
+    pub fn location_mut(
+        &mut self,
+        content: &GameContent,
+        actor: ActorId,
+    ) -> Result<&mut LocationState> {
+        let current = self.state.location(content, actor)?;
+        self.touch_location(&actor);
+        Ok(self.state.world.locations.entry(actor).or_insert(current))
+    }
+    pub fn put_trigger(&mut self, progress: TriggerState) {
+        self.touch_trigger(&progress.id);
+        self.state.world.triggers.insert(progress.id, progress);
+    }
+    pub fn set_fact(&mut self, key: &Key, value: bool) {
+        let present = self.state.facts.contains(key);
+        self.before.facts.entry(key.clone()).or_insert(present);
+        if value {
+            self.state.facts.insert(key.clone());
+        } else {
+            self.state.facts.remove(key);
+        }
+    }
+    /// Claims are never withdrawn, so undoing one only ever removes it.
+    pub fn claim(&mut self, key: ClaimKey) {
+        if self.state.claims.insert(key) {
+            self.before.claims.insert(key);
+        }
+    }
+    pub fn pending_mut(&mut self) -> &mut VecDeque<PendingEvent> {
+        if self.before.pending.is_none() {
+            self.before.pending = Some(self.state.world.pending.clone());
+        }
+        &mut self.state.world.pending
+    }
+    /// The trigger whose pending movement currently controls this actor.
+    pub fn movement_owner(&self, actor: ActorId) -> Option<TriggerId> {
+        self.state
+            .world
+            .triggers
+            .values()
+            .find(|t| t.movement.as_ref().is_some_and(|m| m.actor == actor))
+            .map(|t| t.id)
+    }
+}

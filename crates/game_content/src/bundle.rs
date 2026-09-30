@@ -10,7 +10,7 @@ use std::{
 };
 
 pub const BUNDLE_APPLICATION_ID: i64 = 0x59474342;
-pub const BUNDLE_SCHEMA_VERSION: i64 = 6;
+pub const BUNDLE_SCHEMA_VERSION: i64 = 7;
 const SCHEMA: &str = "
 CREATE TABLE bundle_manifest (
  singleton INTEGER PRIMARY KEY CHECK(singleton=1),
@@ -25,26 +25,6 @@ CREATE TABLE assets (
  payload BLOB NOT NULL CHECK(length(payload)=byte_len),
  PRIMARY KEY(kind,id), UNIQUE(kind,position)
 ) STRICT, WITHOUT ROWID;
-CREATE TABLE asset_dependencies (
- kind INTEGER NOT NULL, id TEXT NOT NULL,
- dependency TEXT NOT NULL CHECK(length(CAST(dependency AS BLOB))<=512),
- target_kind INTEGER NOT NULL, target_id TEXT NOT NULL,
- PRIMARY KEY(kind,id,dependency),
- FOREIGN KEY(kind,id) REFERENCES assets(kind,id),
- FOREIGN KEY(target_kind,target_id) REFERENCES assets(kind,id)
-) STRICT, WITHOUT ROWID;
-CREATE INDEX dependency_targets ON asset_dependencies(target_kind,target_id);
-CREATE TABLE asset_links (
- kind INTEGER NOT NULL, id TEXT NOT NULL, target_kind INTEGER NOT NULL, target_id TEXT NOT NULL,
- PRIMARY KEY(kind,id,target_kind,target_id),
- FOREIGN KEY(kind,id) REFERENCES assets(kind,id),
- FOREIGN KEY(target_kind,target_id) REFERENCES assets(kind,id)
-) STRICT, WITHOUT ROWID;
-CREATE INDEX link_targets ON asset_links(target_kind,target_id);
-CREATE TABLE trigger_subscriptions(signal TEXT NOT NULL, trigger TEXT NOT NULL, kind INTEGER NOT NULL DEFAULT 17 CHECK(kind=17), PRIMARY KEY(signal,trigger), FOREIGN KEY(kind,trigger) REFERENCES assets(kind,id)) STRICT, WITHOUT ROWID;
-CREATE INDEX subscriptions_by_trigger ON trigger_subscriptions(trigger,signal);
-CREATE TABLE area_bounds(id TEXT PRIMARY KEY, min_x INTEGER NOT NULL, max_x INTEGER NOT NULL, min_y INTEGER NOT NULL, max_y INTEGER NOT NULL, min_z INTEGER NOT NULL, max_z INTEGER NOT NULL, kind INTEGER NOT NULL DEFAULT 16 CHECK(kind=16), FOREIGN KEY(kind,id) REFERENCES assets(kind,id)) STRICT, WITHOUT ROWID;
-CREATE INDEX areas_by_x ON area_bounds(min_x,max_x);
 CREATE TABLE tool_scenario (
  singleton INTEGER PRIMARY KEY CHECK(singleton=1),
  payload BLOB NOT NULL CHECK(length(payload)<=16777216)
@@ -155,34 +135,6 @@ impl LoadedProject {
                 )?;
                 headers.push(header);
             }
-            for (_, asset) in &assets {
-                let id = asset.id();
-                for target in asset.selection_links() {
-                    require(ids.contains(&target), "missing selection target")?;
-                    tx.execute(
-                        "INSERT OR IGNORE INTO asset_links VALUES (?1,?2,?3,?4)",
-                        params![
-                            id.kind() as i64,
-                            id.key(),
-                            target.kind() as i64,
-                            target.key()
-                        ],
-                    )?;
-                }
-                for dependency in asset.dependencies()? {
-                    require(ids.contains(&dependency), "missing published dependency")?;
-                    tx.execute(
-                        "INSERT INTO asset_dependencies VALUES (?1,?2,?3,?4,?5)",
-                        params![
-                            id.kind() as i64,
-                            id.key(),
-                            serde_json::to_string(&dependency)?,
-                            dependency.kind() as i64,
-                            dependency.key()
-                        ],
-                    )?;
-                }
-            }
             let scenario = serde_json::to_vec(&self.scenario)?;
             require(
                 scenario.len() <= MAX_DOCUMENT_BYTES,
@@ -205,19 +157,6 @@ impl LoadedProject {
             )?;
             tx.execute("INSERT INTO tool_scenario VALUES (1,?1)", [scenario])?;
             tx.pragma_update(None, "application_id", BUNDLE_APPLICATION_ID)?;
-            for d in &self.content.game.world.triggers {
-                for signal in d.subscriptions(&self.content)? {
-                    tx.execute(
-                        "INSERT INTO trigger_subscriptions(signal,trigger) VALUES(?1,?2)",
-                        params![serde_json::to_string(&signal)?, d.id.to_string()],
-                    )?;
-                }
-            }
-            for a in &self.content.game.world.areas {
-                let lo = a.min.millimetres;
-                let hi = a.max.millimetres;
-                tx.execute("INSERT INTO area_bounds(id,min_x,max_x,min_y,max_y,min_z,max_z) VALUES(?1,?2,?3,?4,?5,?6,?7)", params![a.id.to_string(),lo[0],hi[0],lo[1],hi[1],lo[2],hi[2]])?;
-            }
             tx.pragma_update(None, "user_version", BUNDLE_SCHEMA_VERSION)?;
             tx.commit()?;
             connection.close().map_err(|(_, error)| error)?;

@@ -1,27 +1,22 @@
-//! One transaction owner for complete, synchronous RPG checkpoints.
-mod working;
-pub use working::{StateStats, StoredSession, WorkingStore};
+//! Named saves. Each slot is one file holding the whole playthrough state, written whole and
+//! published atomically, so a failed save never damages the slot it replaces.
 mod slots;
-mod storage;
-pub use slots::{SaveDirectory, SaveInfo, SaveSlot};
+pub use slots::{SAVE_FORMAT, SaveDirectory, SaveInfo, SaveSlot};
 use thiserror::Error;
-pub use working::{APPLICATION_ID, SCHEMA_VERSION};
 #[derive(Debug, Error)]
 pub enum SaveError {
     #[error(transparent)]
     Io(#[from] std::io::Error),
-    #[error(transparent)]
-    Sqlite(#[from] rusqlite::Error),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
     #[error(transparent)]
     Gameplay(#[from] gameplay::GameplayError),
     #[error(transparent)]
     Invalid(#[from] game_types::Invalid),
-    #[error("unsupported save schema: {0}")]
-    Schema(i64),
+    #[error("unsupported save format: {0}")]
+    Format(u32),
     #[error("file is not a Yarra save")]
-    WrongDatabase,
+    NotASave,
     #[error("save requires different gameplay content or world publication")]
     ContentMismatch,
 }

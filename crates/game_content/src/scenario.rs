@@ -63,20 +63,15 @@ impl Scenario {
             "scenario exceeds limits",
         )?;
         let mut state = SessionState::empty(self.seed);
-        state.owners = self.owners.clone();
+        state.owners = self.owners.iter().cloned().collect();
         state.facts = self.facts.clone();
         for spawn in &self.actors {
-            let template = content
-                .game
-                .actors
-                .iter()
-                .find(|t| t.id == spawn.template)
-                .ok_or_else(|| {
-                    Invalid(format!(
-                        "actor {}: unknown template {}",
-                        spawn.id, spawn.template
-                    ))
-                })?;
+            let template = content.template(spawn.template).map_err(|_| {
+                Invalid(format!(
+                    "actor {}: unknown template {}",
+                    spawn.id, spawn.template
+                ))
+            })?;
             let mut actor = Actor::from_template(template, &content.game.rules, spawn.role)?;
             actor.id = spawn.id;
             actor.position = spawn.position.clone();
@@ -84,7 +79,7 @@ impl Scenario {
             if let Some(health) = spawn.health {
                 actor.health = health;
             }
-            state.actors.push(actor);
+            state.add_actor(actor);
         }
         for seed in &self.inventories {
             require(
@@ -99,20 +94,17 @@ impl Scenario {
                     inventory.grant(&content.items, item.definition, item.quantity),
                 )?;
             }
-            state.inventories.push(inventory);
+            state.add_inventory(inventory);
         }
         for seed in &self.wallets {
             let mut wallet = Wallet::new(seed.owner.clone())?;
             wallet.id = seed.id;
             wallet.credit(seed.balance)?;
-            state.wallets.push(wallet);
+            state.add_wallet(wallet);
         }
         contextual(
             "scenario starting state",
-            GameSession::new(
-                save::WorkingStore::in_memory(content, &state)?,
-                ToolContent::new(content.clone())?,
-            ),
+            GameSession::new(ToolContent::new(content.clone())?, state),
         )
     }
     /// Run in a new isolated session. Failure never mutates an existing playthrough.
