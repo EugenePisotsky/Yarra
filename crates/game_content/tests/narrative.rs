@@ -410,3 +410,40 @@ fn opening_checks_references_between_always_loaded_definitions() {
     .to_string();
     assert!(error.contains("unknown quest objective"), "{error}");
 }
+
+#[test]
+fn scripts_are_checked_at_publication_and_run_from_the_published_bundle() {
+    let temp = Temp::new();
+    let root = temp.source();
+    let path = root.join("packages/guard/scripts/guard.luau");
+    let original = std::fs::read_to_string(&path).unwrap();
+    let failure = |source: &str| {
+        std::fs::write(&path, source).unwrap();
+        LoadedProject::load_directory(&root)
+            .err()
+            .unwrap()
+            .to_string()
+    };
+    // A syntax error, a missing function and a module that is not a table all stop the build.
+    assert!(failure("local guard = {").contains("script guard"));
+    assert!(failure("return {}").contains("unknown script guard.take_key"));
+    assert!(failure("return 1").contains("table of functions"));
+    std::fs::write(&path, &original).unwrap();
+
+    let (project, mut session) = setup(&temp);
+    std::fs::remove_dir_all(temp.0.join("source")).unwrap();
+    assert_eq!(session.content().game.scripts.len(), 1);
+    for step in &project.scenario().steps {
+        step.apply(&mut session).unwrap();
+    }
+    // The scripted reward took the claim, the key and completed the quest.
+    let state = session.state();
+    assert_eq!(state.quest(GATE).status, Status::Completed);
+    assert_eq!(state.claims.len(), 1);
+    assert!(
+        !state
+            .object(session.content(), ObjectId::named("guard/old_gate"))
+            .unwrap()
+            .locked
+    );
+}

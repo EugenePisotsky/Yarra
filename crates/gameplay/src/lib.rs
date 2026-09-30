@@ -14,6 +14,8 @@ mod narrative;
 pub use narrative::*;
 pub mod fixtures;
 mod runtime;
+mod script;
+pub use script::*;
 mod session;
 mod state;
 mod tool_content;

@@ -6621,6 +6621,7 @@ dependencies = [
  "yarra-gameplay",
  "yarra-localization",
  "yarra-save",
+ "yarra-scripting",
 ]
 
 [[package]]
@@ -6674,6 +6675,8 @@ name = "yarra-scripting"
 version = "0.1.0"
 dependencies = [
  "mlua",
+ "yarra-game-types",
+ "yarra-gameplay",
 ]
 
 [[package]]

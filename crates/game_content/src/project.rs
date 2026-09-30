@@ -19,6 +19,7 @@ pub const SOURCE_FORMAT_VERSION: u32 = 7;
 pub(crate) const MAX_DOCUMENT_BYTES: usize = 16 * 1024 * 1024;
 const MAX_PROJECT_BYTES: usize = 64 * 1024 * 1024;
 const MAX_TRANSLATION_BYTES: usize = 2 * 1024 * 1024;
+const MAX_SCRIPT_BYTES: usize = 1024 * 1024;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectFile {
@@ -47,6 +48,9 @@ pub struct PackageFile {
     pub actors: Vec<String>,
     pub conversations: Vec<String>,
     pub resources: Vec<String>,
+    /// Luau files; each is a module named after its file.
+    #[serde(default)]
+    pub scripts: Vec<String>,
     /// Campaign facts this package introduces.
     #[serde(default)]
     pub facts: BTreeSet<Key>,
@@ -127,6 +131,7 @@ impl LoadedProject {
         let mut profiles = Vec::new();
         let mut predicates = Vec::new();
         let mut facts = BTreeSet::new();
+        let mut scripts = Vec::new();
         let mut contracts = Vec::new();
         let mut translations = Vec::new();
         let mut resource_owners = BTreeMap::new();
@@ -216,6 +221,18 @@ impl LoadedProject {
                 own!(AssetId::DialogueContract(graph.id));
                 dialogues.push(graph);
                 resource_paths.extend(conversation.resources);
+            }
+            for path in &package.scripts {
+                let name = Path::new(path)
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .ok_or_else(|| Invalid(format!("script path {path} has no name")))?;
+                let name = contextual(path.as_str(), Key::new(name))?;
+                own!(AssetId::Script(name.clone()));
+                scripts.push(gameplay::ScriptModule {
+                    name,
+                    source: source.text(path, MAX_SCRIPT_BYTES)?,
+                });
             }
             for fact in &package.facts {
                 own!(AssetId::Fact(fact.clone()));
@@ -311,7 +328,9 @@ impl LoadedProject {
                 actors,
                 dialogues,
                 facts,
+                scripts,
             },
+            scripts: Default::default(),
         };
         // Canonical identities, not manifest/file traversal order, determine publication hashes.
         content.game.world.objects.sort_by_key(|v| v.id);
@@ -396,11 +415,15 @@ impl LoadedProject {
         self.scenario.run(&self.content)
     }
     pub(crate) fn from_parts(
-        content: GameContent,
+        mut content: GameContent,
         scenario: Scenario,
         source_locale: String,
         translations: Vec<LanguageResource>,
     ) -> Result<Self> {
+        content.scripts = contextual(
+            "scripts",
+            scripting::LuauScripts::install(&content.game.scripts),
+        )?;
         contextual("game content", content.validate())?;
         content.validate_selection_links()?;
         crate::asset::validate_locale(&source_locale)?;

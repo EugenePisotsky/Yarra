@@ -12,7 +12,8 @@ const USAGE: &str = "Usage:
   yarra-game-content scenario SOURCE_DIR SCENARIO.ron
   yarra-game-content build SOURCE_DIR NEW_BUNDLE.sqlite
   yarra-game-content build-language SOURCE_DIR LOCALE NEW_PACK.sqlite
-  yarra-game-content inspect BUNDLE.sqlite [--item UUID]... [--dialogue UUID]...
+  yarra-game-content inspect BUNDLE.sqlite [--item NAME]... [--dialogue NAME]...
+  yarra-game-content script-api
   yarra-game-content demo SOURCE_DIR|BUNDLE.sqlite [--language PACK.sqlite]... [--locale LOCALE] [--save-dir NEW_DIR]
 
 Source directories declare packages, conversations, message contracts and Fluent files.
@@ -65,6 +66,11 @@ fn run() -> Result<()> {
     let command = args.next().ok_or_else(|| Invalid(USAGE.into()))?;
     if command == "--help" || command == "-h" {
         println!("{USAGE}");
+        return Ok(());
+    }
+    if command == "script-api" {
+        // Type definitions of the host API, for luau-analyze and editors.
+        print!("{}", scripting::API_DEFINITIONS);
         return Ok(());
     }
     let input = PathBuf::from(args.next().ok_or_else(|| Invalid(USAGE.into()))?);

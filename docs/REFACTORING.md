@@ -15,7 +15,7 @@ Target: a classic party RPG in the line of KOTOR / Dragon Age: Origins, Gothic a
 | 1. In-memory state | Domain crates merged into `gameplay`; whole playthrough in memory with journaled commands; snapshot saves; content loaded once except dialogue graphs, which load on demand | Done |
 | 2. Thin slice in the game | Opt-in `--story` in `app_game`: a guard and a gate near the start, talk to the guard, the gate unlocks, quick save and load | Done |
 | 3. Dialogue graph v2 | Flat node graph with a speaker, condition, actions and ordered children per node; any number of participants | Done |
-| 4. Lua adapter | `mlua` in a `scripting` crate behind a trait; script conditions and actions beside the built-in ones | |
+| 4. Luau scripts and names | Names as identities in authored content; Luau in a `scripting` crate behind a trait; script conditions and actions beside the built-in ones | Done |
 | 5. Events and areas | Event-driven triggers only; polygon areas painted in the editor; blocking and ambient dialogue modes | |
 | 6. Character rules | Data-defined stats, classes, levels, skill ranks, modifiers, status effects; a fixed-tick action model for combat | |
 
@@ -51,15 +51,25 @@ Deviations from the plan, all deliberate:
 - The compiler does not resolve symbolic names yet: graphs still spell out UUIDs.
 - Reactions are authored in the dialogue that hosts them; attaching them from a companion's package is not built.
 
-### Step 4: Lua
+### Step 4: done
 
-- Built-in conditions and actions stay for the common cases; the editor can display, validate and explain them.
-- `Script(name)` is one more condition variant and one more action variant. Script files live beside the asset that owns them and are published into the bundle.
-- A condition script gets a read-only view and returns a boolean; an error is an error, not `false`.
-- An action script calls host functions that buffer typed effects. They are applied through the same command journal only if the script finishes, so a failing script changes nothing.
-- No Lua state is saved. Persistent values are typed variables (bool/int/string) scoped to the playthrough, a quest or an actor; these replace boolean-only facts. Time and randomness come from the host.
-- `mlua` lives in its own crate behind a trait injected into the session; `gameplay` does not depend on it.
-- Derived-stat and check formulas (step 6) are functions in one Lua rules module.
+**Names.** Authored content names things (`guard/gate`, `old_gate_key`) and the name is the identity: it hashes to the same 16 bytes the runtime already used, so state, saves and ID types did not change. Things created while playing keep random identities in UUID form. Names are remembered per process for messages and written back into saves; bundle storage keys use the raw bytes. `X::named("...")` is a `const fn`, so code and tests name the content they rely on. Renaming is find-and-replace, and it changes the identity.
+
+**Scripts.** Luau rather than Lua, for its type annotations and sandbox. A module is a `.luau` file listed in its package and returning a table of functions; content uses `Script("module.function")` as a condition or an action. [`gameplay/src/script.rs`](../crates/gameplay/src/script.rs) defines what scripts may read (`ReadScope`) and do (`ActScope`); [`scripting`](../crates/scripting/src/lib.rs) translates Luau calls onto those, mostly by building the built-in `Action` and running it, so scripted and authored rules share one implementation.
+
+- Conditions get read functions only and must return a boolean; an error fails the command and names the script and line.
+- Effects apply at once through the command journal, so a script sees its own changes and a failure undoes everything.
+- Each call reloads its module from bytecode: nothing kept in a script variable survives to the next call. Calls are sandboxed with a 16 MiB cap and a step budget; `math.random` and the `os` clock are removed, and chance comes from `game.roll`.
+- Publication compiles every module and rejects references to functions that do not exist. Modules are part of the content fingerprint.
+- `cargo run -p yarra-game-content -- script-api` prints the type definitions; a test keeps them equal to what scripts are actually given.
+
+Evidence: the guard's reward is a script in the demo project and all five scenarios pass through it, from source and from a published bundle. Seven tests cover reads and effects, rollback with script and line in the error, read-only and bounded conditions, no state between calls, publication checks and the definitions file. The game builds for iOS with Luau included (compiled, not run on a device).
+
+Not done:
+- `luau-analyze` is not run by `validate`; it is not installed here. The definitions file is ready for it.
+- Typed variables replacing boolean facts. Scripts read and set facts for now.
+- Derived-stat and check formulas in Luau belong to step 6.
+- Item definitions still carry a `key` beside their name; the two are now the same string.
 
 ### Step 5: events and areas
 

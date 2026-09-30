@@ -13,7 +13,7 @@ pub type RuntimeSession = gameplay::GameSession<ContentRepository>;
 pub type ToolSession = gameplay::GameSession<gameplay::ToolContent>;
 /// Asset kinds read once when a session opens. Dialogue graphs and text contracts are read
 /// only when a conversation or a formatter needs them.
-const CORE_KINDS: [AssetKind; 13] = [
+const CORE_KINDS: [AssetKind; 14] = [
     AssetKind::Category,
     AssetKind::Item,
     AssetKind::Actor,
@@ -27,6 +27,7 @@ const CORE_KINDS: [AssetKind; 13] = [
     AssetKind::Object,
     AssetKind::Area,
     AssetKind::Trigger,
+    AssetKind::Script,
 ];
 fn runtime_error(error: ContentError) -> gameplay::GameplayError {
     gameplay::GameplayError::Runtime(error.to_string())
@@ -56,6 +57,7 @@ impl ContentRepository {
                 categories: vec![],
                 items: vec![],
             },
+            scripts: Default::default(),
             game: GameDefinitions {
                 world: Default::default(),
                 dialogue_contracts: vec![],
@@ -72,6 +74,7 @@ impl ContentRepository {
                 actors: vec![],
                 dialogues: vec![],
                 facts: Default::default(),
+                scripts: vec![],
             },
         };
         let mut rules = false;
@@ -93,6 +96,7 @@ impl ContentRepository {
                         content.game.rules = v;
                         rules = true;
                     }
+                    Asset::Script(v) => content.game.scripts.push(v),
                     Asset::Fact(v) => {
                         content.game.facts.insert(v);
                     }
@@ -101,6 +105,8 @@ impl ContentRepository {
             }
         }
         require(rules, "publication has no rules")?;
+        content.scripts =
+            scripting::LuauScripts::install(&content.game.scripts).map_err(Invalid)?;
         // Cross-references are checked here once; graphs are checked as they are loaded.
         content.validate()?;
         Ok(content)

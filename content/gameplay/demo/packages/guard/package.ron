@@ -9,4 +9,5 @@
     catalogs: [], rules: None, actors: ["packages/guard/actors.ron"],
     conversations: ["packages/guard/conversations/reward/conversation.ron", "packages/guard/conversations/duty/conversation.ron", "packages/guard/conversations/welcome-a/conversation.ron", "packages/guard/conversations/welcome-b/conversation.ron", "packages/guard/conversations/hostile/conversation.ron"],
     resources: ["packages/guard/messages.ron"],
+    scripts: ["packages/guard/scripts/guard.luau"],
 )

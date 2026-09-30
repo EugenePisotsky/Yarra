@@ -17,7 +17,7 @@ CREATE TABLE bundle_manifest (
  payload BLOB NOT NULL CHECK(length(payload)<=65536)
 ) STRICT;
 CREATE TABLE assets (
- kind INTEGER NOT NULL CHECK(kind BETWEEN 1 AND 15),
+ kind INTEGER NOT NULL CHECK(kind BETWEEN 1 AND 16),
  id TEXT NOT NULL CHECK(length(CAST(id AS BLOB)) BETWEEN 1 AND 192),
  position INTEGER NOT NULL CHECK(position>=0),
  byte_len INTEGER NOT NULL CHECK(byte_len BETWEEN 1 AND 2097152),
@@ -197,6 +197,7 @@ impl LoadedProject {
         );
         append!(self.content.game.facts.iter().cloned().map(Asset::Fact));
         append!(self.content.text.iter().cloned().map(Asset::Text));
+        append!(self.content.game.scripts.iter().cloned().map(Asset::Script));
         append!(
             self.content
                 .game

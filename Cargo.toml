@@ -38,6 +38,7 @@ game-types = { package = "yarra-game-types", path = "crates/game_types" }
 localization = { package = "yarra-localization", path = "crates/localization" }
 gameplay = { package = "yarra-gameplay", path = "crates/gameplay" }
 save = { package = "yarra-save", path = "crates/save" }
+scripting = { package = "yarra-scripting", path = "crates/scripting" }
 fluent-bundle = "0.16"
 fluent-syntax = { version = "0.12", features = ["serde"] }
 unic-langid = "0.9"

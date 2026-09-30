@@ -156,6 +156,7 @@ pub fn content() -> GameContent {
             world_generation: "standalone-world-v1".into(),
         },
         items,
+        scripts: Default::default(),
         game: GameDefinitions {
             world: Default::default(),
             dialogue_contracts: vec![],
@@ -167,6 +168,7 @@ pub fn content() -> GameContent {
             actors: vec![template],
             dialogues: vec![graph],
             facts: [key("gate-rewarded")].into(),
+            scripts: vec![],
         },
     };
     content.game.dialogue_contracts = content

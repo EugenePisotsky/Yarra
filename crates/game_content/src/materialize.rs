@@ -48,6 +48,7 @@ impl LoadedProject {
         let mut actors = Vec::new();
         let mut dialogues = Vec::new();
         let mut facts = BTreeSet::new();
+        let mut scripts = Vec::new();
         let mut text = Vec::new();
         for record in records {
             match record {
@@ -64,6 +65,7 @@ impl LoadedProject {
                 Asset::Actor(v) => actors.push(v),
                 Asset::Rules(v) => rules = Some(v),
                 Asset::Dialogue(v) => dialogues.push(v),
+                Asset::Script(v) => scripts.push(v),
                 Asset::Fact(v) => {
                     facts.insert(v);
                 }
@@ -74,6 +76,7 @@ impl LoadedProject {
             text,
             manifest: manifest.content,
             items,
+            scripts: scripting::LuauScripts::install(&scripts).map_err(game_types::Invalid)?,
             game: GameDefinitions {
                 world,
                 dialogue_contracts,
@@ -85,6 +88,7 @@ impl LoadedProject {
                 actors,
                 dialogues,
                 facts,
+                scripts,
             },
         };
         require(

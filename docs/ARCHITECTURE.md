@@ -20,6 +20,7 @@ Current implementation; gameplay foundations simplified September 30, 2026. Use 
 | `gameplay` | Bevy/SQLite-free rules, actors, inventory, quests, dialogue, world triggers, the in-memory playthrough, commands and the headless driver |
 | `game_content` | RON/Fluent compilation, published SQLite bundles and language packs, runtime content reader, validation/scenario tools |
 | `save` | Snapshot save files and manual/quick/auto slots |
+| `scripting` | Luau engine for gameplay scripts: sandbox, limits and the translation onto `gameplay`'s script scopes |
 | `localization` | Fluent bundles, explicit locale selection/fallback and formatting diagnostics |
 | `vegetation` | Renderer-independent species/population/field contracts and deterministic sampling |
 | `vegetation_compile` | CPU mask compiler and reference placement used as a test oracle |
@@ -67,7 +68,8 @@ The gameplay libraries run without Bevy, game/editor startup, cooked worlds or a
 game_types (IDs, keys, text references, logical time)
     ↑ gameplay (rules, actors, inventory, quests, dialogue, world, session)
     ↑ save (snapshot files)          localization → game_types + Fluent
-    ↑ game_content (RON/Fluent → SQLite, runtime reader, tools)
+    ↑ scripting (Luau engine behind gameplay's script trait)
+    ↑ game_content (RON/Fluent/Luau → SQLite, runtime reader, tools)
 
 engine/apps (future): compose session, saves and localization with Bevy/UI
 ```
@@ -79,7 +81,7 @@ engine/apps (future): compose session, saves and localization with Bevy/UI
 Two decisions shape the runtime:
 
 - **The whole mutable playthrough is in memory** ([`SessionState`](../crates/gameplay/src/state.rs)): actors, inventories, wallets, quests, relationships, dialogue history, claims, conversations, object/location/trigger state, pending events, facts, clock and random streams. Records are keyed maps. A record that was never changed is absent and reads as its default (an unstarted quest, a neutral relationship, an object in its authored state), so state and saves contain only what differs from the authored world. Quests, triggers and scripts can ask about any actor at any time; there is no "not loaded" state to handle.
-- **Content is split by how it is used.** Definitions that commands consult constantly are loaded once when a session opens: rules, item catalog, actor templates, quests, interaction profiles, named predicates, dialogue *contracts* (roles, line/choice IDs, repeat policy), claims, objects, areas and triggers. Dialogue graphs are loaded when a conversation needs them and kept in a small least-recently-used cache (`MAX_LOADED_DIALOGUES`, 32). Text contracts and wording are never loaded by a session; the formatter asks for them.
+- **Content is split by how it is used.** Definitions that commands consult constantly are loaded once when a session opens: rules, item catalog, actor templates, scripts, quests, interaction profiles, named predicates, dialogue *contracts* (roles, line/choice IDs, repeat policy), claims, objects, areas and triggers. Dialogue graphs are loaded when a conversation needs them and kept in a small least-recently-used cache (`MAX_LOADED_DIALOGUES`, 32). Text contracts and wording are never loaded by a session; the formatter asks for them.
 
 [`ContentSource`](../crates/gameplay/src/runtime.rs) is the one port: `identity`, `core` and `dialogue(id)`. `ContentRepository` implements it over a published bundle; `ToolContent` implements it over a complete in-memory project for tests and authoring tools.
 
@@ -97,11 +99,11 @@ Read models (`state()`, `derived`, `conversation_view`, `preview_interaction`, `
 
 ### Content and publication
 
-[The checked-in project](../content/gameplay/demo/project.ron) is authored as RON plus Fluent: a project lists packages; a package owns catalog fragments, actor templates, rules, quests, profiles, predicates, claims, world objects/areas/triggers and conversations; a conversation directory owns its graph, message contracts and locale files. Stable UUIDs, not paths or package order, are identities. Cross-package references need a declared package dependency. RON and Fluent are the only authoring source; gameplay reads published SQLite only.
+[The checked-in project](../content/gameplay/demo/project.ron) is authored as RON plus Fluent: a project lists packages; a package owns catalog fragments, actor templates, rules, quests, profiles, predicates, claims, world objects/areas/triggers and conversations; a conversation directory owns its graph, message contracts and locale files. Names such as `guard/gate`, not paths or package order, are identities; a name hashes to the 16-byte identity used at runtime. Cross-package references need a declared package dependency. RON and Fluent are the only authoring source; gameplay reads published SQLite only.
 
 `LoadedProject::build` publishes one immutable bundle (schema **8**): one checksummed JSON record per asset keyed by `(kind, id)`, a manifest with the mechanical fingerprint, and a tool-only scenario. `ContentRepository::open` reads the manifest; `read`/`read_kind` verify checksum and identity of what they return. Language packs (schema **1**) are published separately per locale, so wording fixes need no mechanical rebuild and do not affect saves. The mechanical fingerprint covers definitions, rules and world binding and excludes translations.
 
-Conditions and actions are closed enums in [`content.rs`](../crates/gameplay/src/content.rs), shared by dialogue choices, interaction profiles and triggers, with `All`/`Any`/`Not` and named predicates. They are written inline where they are used.
+Conditions and actions are closed enums in [`content.rs`](../crates/gameplay/src/content.rs), shared by dialogue choices, interaction profiles and triggers, with `All`/`Any`/`Not` and named predicates. They are written inline where they are used. `Script("module.function")` is one more variant of each, run by the Luau engine the content carries; see [the roadmap](REFACTORING.md#step-4-done) for the script rules.
 
 ### Saves
 

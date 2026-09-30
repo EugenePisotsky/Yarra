@@ -203,7 +203,10 @@ fn cli_inspect_reads_a_requested_item() {
         String::from_utf8_lossy(&output.stderr)
     );
     let text = String::from_utf8_lossy(&output.stdout);
-    assert!(text.contains("Publication: demo") && text.contains("Item "), "{text}");
+    assert!(
+        text.contains("Publication: demo") && text.contains("Item "),
+        "{text}"
+    );
 }
 
 #[test]

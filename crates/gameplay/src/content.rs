@@ -2,7 +2,9 @@ use crate::actors::ActorTemplate;
 use crate::dialogue::Dialogue;
 use crate::inventory::ItemCatalog;
 use crate::rules::Rules;
-use crate::{InteractionProfile, NamedPredicate, Participant, Result};
+use crate::{
+    InteractionProfile, NamedPredicate, Participant, Result, ScriptModule, ScriptName, Scripts,
+};
 use crate::{dialogue, quests};
 use game_types::*;
 use serde::{Deserialize, Serialize};
@@ -10,6 +12,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Condition {
+    /// A script function returning a boolean.
+    Script(ScriptName),
     /// The actor takes part in the conversation or travels with the party.
     Present(ActorId),
     InsideArea {
@@ -56,6 +60,8 @@ pub enum Condition {
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Action {
+    /// A script function making changes through the script API.
+    Script(ScriptName),
     SetLocked {
         object: ObjectId,
         locked: bool,
@@ -119,6 +125,8 @@ pub struct GameDefinitions {
     pub actors: Vec<ActorTemplate>,
     pub dialogues: Vec<Dialogue>,
     pub facts: BTreeSet<Key>,
+    #[serde(default)]
+    pub scripts: Vec<ScriptModule>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -127,6 +135,9 @@ pub struct GameContent {
     pub manifest: ContentManifest,
     pub items: ItemCatalog,
     pub game: GameDefinitions,
+    /// The engine running `game.scripts`, installed by whoever loaded the content.
+    #[serde(skip)]
+    pub scripts: Scripts,
 }
 impl GameContent {
     pub fn validate(&self) -> Result<()> {
@@ -168,6 +179,13 @@ impl GameContent {
         let mut visited = BTreeSet::new();
         for id in contracts.keys() {
             visit_text(*id, &contracts, &mut BTreeSet::new(), &mut visited)?;
+        }
+        let mut modules = BTreeSet::new();
+        for module in &self.game.scripts {
+            require(
+                modules.insert(&module.name) && module.source.len() <= 1024 * 1024,
+                "duplicate or oversized script module",
+            )?;
         }
         self.validate_world()?;
         self.items.validate()?;
@@ -256,6 +274,9 @@ impl GameContent {
         )?;
         *budget -= 1;
         match action {
+            Action::Script(name) => {
+                self.scripts.engine(name)?;
+            }
             Action::SetLocked { object, .. } => {
                 self.object(*object)?;
             }
@@ -339,6 +360,7 @@ impl GameContent {
         canonical.game.predicates.sort_by_key(|v| v.id);
         canonical.game.actors.sort_by_key(|v| v.id);
         canonical.game.dialogues.sort_by_key(|v| v.id);
+        canonical.game.scripts.sort_by(|a, b| a.name.cmp(&b.name));
         let bytes = serde_json::to_vec(&canonical).map_err(|e| Invalid(e.to_string()))?;
         Ok(*blake3::hash(&bytes).as_bytes())
     }

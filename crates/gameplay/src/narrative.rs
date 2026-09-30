@@ -266,6 +266,9 @@ impl GameContent {
     pub fn validate_condition(&self, condition: &Condition) -> Result<()> {
         condition.visit_resolved(&|id| self.predicate(id), &mut |c| {
             match c {
+                Condition::Script(name) => {
+                    self.scripts.engine(name)?;
+                }
                 Condition::InsideArea { area } => {
                     self.area(*area)?;
                 }
@@ -345,6 +348,19 @@ impl GameContent {
             )?;
             *budget -= 1;
             let (observed, matched) = match c {
+                Condition::Script(name) => {
+                    let matched = content.scripts.engine(name)?.condition(
+                        name,
+                        &ReadScope {
+                            content,
+                            state,
+                            player: pair.0,
+                            speaker: pair.1,
+                            others: pair.2,
+                        },
+                    )?;
+                    (Observed::Boolean(matched), matched)
+                }
                 Condition::Present(actor) => {
                     let present = *actor == pair.0
                         || *actor == pair.1

@@ -26,9 +26,10 @@ pub enum AssetKind {
     Object,
     Area,
     Trigger,
+    Script,
 }
 impl AssetKind {
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 16] = [
         Self::Category,
         Self::Item,
         Self::Actor,
@@ -44,6 +45,7 @@ impl AssetKind {
         Self::Object,
         Self::Area,
         Self::Trigger,
+        Self::Script,
     ];
 }
 
@@ -64,6 +66,7 @@ pub enum AssetId {
     Object(ObjectId),
     Area(AreaId),
     Trigger(TriggerId),
+    Script(Key),
 }
 impl AssetId {
     pub fn kind(&self) -> AssetKind {
@@ -83,6 +86,7 @@ impl AssetId {
             Self::Object(_) => AssetKind::Object,
             Self::Area(_) => AssetKind::Area,
             Self::Trigger(_) => AssetKind::Trigger,
+            Self::Script(_) => AssetKind::Script,
         }
     }
     /// Storage key: the identity bytes, never the name, so lookups do not depend on which
@@ -94,7 +98,7 @@ impl AssetId {
             Self::Actor(id) => id.raw(),
             Self::Rules => "rules".into(),
             Self::Dialogue(id) => id.raw(),
-            Self::Fact(key) => key.as_str().into(),
+            Self::Fact(key) | Self::Script(key) => key.as_str().into(),
             Self::Text(resource) => resource.raw(),
             Self::Quest(id) => id.raw(),
             Self::Profile(id) => id.raw(),
@@ -115,6 +119,7 @@ impl AssetId {
             AssetKind::Rules => Self::Rules,
             AssetKind::Dialogue => Self::Dialogue(DialogueId::try_from(key.clone())?),
             AssetKind::Fact => Self::Fact(Key::new(&key)?),
+            AssetKind::Script => Self::Script(Key::new(&key)?),
             AssetKind::Text => Self::Text(TextResourceId::try_from(key.clone())?),
             AssetKind::Quest => Self::Quest(QuestId::try_from(key.clone())?),
             AssetKind::Profile => Self::Profile(InteractionProfileId::try_from(key.clone())?),
@@ -157,6 +162,7 @@ pub enum Asset {
     Object(gameplay::ObjectDefinition),
     Area(gameplay::AreaDefinition),
     Trigger(gameplay::TriggerDefinition),
+    Script(gameplay::ScriptModule),
 }
 impl Asset {
     pub(crate) fn text_references(&self) -> Vec<&MessageRef> {
@@ -209,6 +215,7 @@ impl Asset {
             Self::Rules(_) => AssetId::Rules,
             Self::Dialogue(v) => AssetId::Dialogue(v.id),
             Self::Fact(id) => AssetId::Fact(id.clone()),
+            Self::Script(v) => AssetId::Script(v.name.clone()),
             Self::Text(v) => AssetId::Text(v.id),
             Self::Quest(v) => AssetId::Quest(v.id),
             Self::Profile(v) => AssetId::Profile(v.id),
@@ -352,6 +359,7 @@ fn condition_references(condition: &Condition, refs: &mut BTreeSet<AssetId>) -> 
                 Some(AssetId::Quest(*quest))
             }
             Condition::Named(id) => Some(AssetId::Predicate(*id)),
+            Condition::Script(name) => Some(AssetId::Script(name.module.clone())),
             Condition::SkillExperience { .. } => Some(AssetId::Rules),
             _ => None,
         });
@@ -362,6 +370,7 @@ fn condition_references(condition: &Condition, refs: &mut BTreeSet<AssetId>) -> 
 fn action_references(action: &Action, refs: &mut BTreeSet<AssetId>) -> Result<()> {
     action.visit(&mut |a| {
         refs.extend(match a {
+            Action::Script(name) => Some(AssetId::Script(name.module.clone())),
             Action::SetLocked { object, .. } => Some(AssetId::Object(*object)),
             Action::Claim { claim, .. } => Some(AssetId::Claim(*claim)),
             Action::Quest { quest, .. } => Some(AssetId::Quest(*quest)),

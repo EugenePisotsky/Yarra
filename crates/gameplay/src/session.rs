@@ -809,6 +809,16 @@ pub(crate) fn run_action(
     events: &mut Vec<GameEvent>,
 ) -> Result<()> {
     match action {
+        Action::Script(name) => content.scripts.engine(name)?.action(
+            name,
+            &mut ActScope {
+                content,
+                tx: state,
+                player: actor,
+                speaker,
+                events,
+            },
+        )?,
         Action::SetLocked { object, locked } => {
             let o = state.object_mut(content, *object)?;
             require(!o.destroyed, "object destroyed")?;

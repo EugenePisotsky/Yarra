@@ -132,6 +132,24 @@ A guard and a gate appear a few metres ahead of the start. Walk to the guard and
 
 ### Editing and validating gameplay content
 
+Content refers to things by name: `id: "guard/gate"` in the file that defines a quest, `quest: "guard/gate"` wherever it is used. A name is lowercase letters, digits, `_`, `-`, `/` and `.`, and it is the identity: renaming it makes a different thing. By convention a name starts with its package. In Rust, `QuestId::named("guard/gate")` gives the same identity.
+
+Scripts are Luau files listed under `scripts` in a package; the file name is the module name.
+
+```lua
+-- packages/guard/scripts/guard.luau
+local guard = {}
+function guard.take_key(game: Game, scene: Scene)
+    if not game.claim("guard/reward_claim") then return end
+    game.consume_item(scene.player, "old_gate_key", 1)
+    game.complete_quest("guard/gate")
+    game.set_locked("guard/old_gate", false)
+end
+return guard
+```
+
+Use it as `actions: [Script("guard.take_key")]` or `condition: Some(Script("guard.ready"))`. A condition function returns a boolean and can only read. `cargo run --offline -p yarra-game-content -- script-api` prints the full typed API. `validate` compiles every script and rejects references to missing functions.
+
 Copy `content/gameplay/demo` to start a project. Source format **7** uses explicit package manifests and one asset directory per conversation:
 
 ```text
@@ -153,7 +171,7 @@ packages/old_gate/
 
 Every path is relative to the **project root**, including paths inside conversation/resource manifests. Paths must remain inside that root after symlink resolution. Package manifests list catalog fragments, actor collections, an optional rules definition, conversations, resources and `quests`/`profiles`/`predicates`/`claims`/`objects`/`areas`/`triggers` file lists. Each quest/profile/named-predicate/claim/object/area/trigger file contains one definition; use empty lists when a package owns none. Shared catalog fragments use the same catalog ID/revision. The project has one rules definition. Cross-package mechanical/text references require a declared dependency (transitive dependencies are allowed). Missing dependencies, cycles, duplicate identities and ambiguous Fluent imports are errors. A conversation's action/condition keys are local: published `BindingId` combines the dialogue UUID and local `Key`. Facts remain explicitly shared campaign keys.
 
-Keep IDs when moving/renaming files. Package/file enumeration order does not change fingerprints; choice display order remains meaningful. Authored text references use `Message((resource: "08080808-0808-0808-0808-080808080808", key: "item-healing_potion"))`; user names can use `Literal("Player name")`. Fluent keys only need to be unique within their resource/import scope. The editor will write these same RON/Fluent sources; no editor integration is installed yet.
+Names stay with a thing when its file moves. Package and file enumeration order does not change fingerprints; the order of a node's children remains meaningful. Authored text references use `Message((resource: "core/text", key: "item-healing_potion"))`; user-entered names can use `Literal("Player name")`. Fluent keys only need to be unique within their resource and its imports.
 
 `messages.ron` declares a `TextContract` with `id`, explicit `imports` and `messages`. Each message declares an `arguments` map whose values are `Text`, `Number` or `Select(["friendly", "hostile"])`. `locales` entries contain a canonical locale, FTL path and `reviewed` map. Source wording is required for every message contract. Static item/category/template/rule/quest/objective/topic/object/starting-name labels cannot require arguments. UI/dynamic text calls supply typed `localization::Arguments`. Dialogue read models supply `BoundText`; use `Localization::format_bound` to resolve localized actor names/text arguments and render the message in the requested locale.
 
@@ -185,7 +203,7 @@ Content schema **8** contains one checksummed record per mechanical asset, text 
 Inspect mechanics without instantiating a session, executing a scenario or reading packs:
 
 ```sh
-cargo run --offline -p yarra-game-content -- inspect tmp/game-content/mechanics-v6.sqlite --item 01010101-0101-0101-0101-010101010101
+cargo run --offline -p yarra-game-content -- inspect tmp/game-content/mechanics-v6.sqlite --item healing_potion
 ```
 
 `inspect` accepts repeated `--item` and `--dialogue` flags and prints each requested asset.
