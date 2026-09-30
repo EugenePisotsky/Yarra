@@ -25,16 +25,16 @@
         name: None,
     )],
     owners: [(
-        kind: "party",
+        kind: Party,
         id: "party",
     )],
     inventories: [(
         id: "hero",
         owner: (
-            kind: "actor",
+            kind: Actor,
             id: "hero",
         ),
-        role: "carried",
+        role: Carried,
         items: [(
             definition: "healing_potion",
             quantity: 3,
@@ -48,23 +48,23 @@
     ), (
         id: "mira",
         owner: (
-            kind: "actor",
+            kind: Actor,
             id: "mira",
         ),
-        role: "carried",
+        role: Carried,
         items: [],
     )],
     wallets: [(
         id: "party",
         owner: (
-            kind: "party",
+            kind: Party,
             id: "party",
         ),
         balance: 100,
     ), (
         id: "guard",
         owner: (
-            kind: "actor",
+            kind: Actor,
             id: "guard",
         ),
         balance: 100,

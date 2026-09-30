@@ -197,8 +197,7 @@ impl<'a> Tx<'a> {
     pub fn put_inventory(&mut self, inventory: Inventory) {
         let id = inventory.id;
         self.touch_inventory(&id);
-        if inventory.owner.kind == "actor" && inventory.role == CARRIED {
-            let actor = ActorId(inventory.owner.id.0);
+        if let Some(actor) = inventory.carried_by() {
             self.touch_carried(&actor);
             self.state.carried.insert(actor, id);
         }

@@ -12,13 +12,20 @@ pub struct ItemEntry {
     pub quantity: u32,
 }
 
+/// What an inventory is to its owner. An owner has at most one of each.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum InventoryRole {
+    /// What a character carries, what it wears included.
+    Carried,
+    /// What a container holds.
+    Contents,
+}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Inventory {
     pub id: InventoryId,
     pub owner: OwnerRef,
-    /// An owner may have several inventories, e.g. "carried" and "shop_stock".
-    pub role: String,
+    pub role: InventoryRole,
     pub revision: u64,
     pub entries: Vec<ItemEntry>,
 }
@@ -30,22 +37,23 @@ pub struct ItemFilter<'a> {
 }
 
 impl Inventory {
-    pub fn new(owner: OwnerRef, role: impl Into<String>) -> Result<Self> {
-        owner.validate()?;
-        let role = role.into();
-        validate_key(&role)?;
-        Ok(Self {
+    pub fn new(owner: OwnerRef, role: InventoryRole) -> Self {
+        Self {
             id: InventoryId::new(),
             owner,
             role,
             revision: 1,
             entries: Vec::new(),
-        })
+        }
+    }
+    /// The character this is the carried inventory of, if it is one.
+    pub fn carried_by(&self) -> Option<ActorId> {
+        self.owner
+            .as_actor()
+            .filter(|_| self.role == InventoryRole::Carried)
     }
     /// Checks the inventory against a catalog that was itself checked when it was loaded.
     pub fn validate(&self, catalog: &ItemCatalog) -> Result<()> {
-        self.owner.validate()?;
-        validate_key(&self.role)?;
         validate_revision(self.revision)?;
         if self.entries.len() > MAX_INVENTORY_ENTRIES {
             return Err(InventoryError::Capacity);
@@ -310,17 +318,15 @@ pub struct Wallet {
     pub balance: Money,
 }
 impl Wallet {
-    pub fn new(owner: OwnerRef) -> Result<Self> {
-        owner.validate()?;
-        Ok(Self {
+    pub fn new(owner: OwnerRef) -> Self {
+        Self {
             id: WalletId::new(),
             owner,
             revision: 1,
             balance: Money::ZERO,
-        })
+        }
     }
     pub fn validate(&self) -> Result<()> {
-        self.owner.validate()?;
         validate_revision(self.revision)
     }
     /// Authoritative currency creation, such as a quest reward.

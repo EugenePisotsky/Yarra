@@ -1,10 +1,10 @@
 use yarra_gameplay::inventory::{fixtures::*, *};
 
 fn owner() -> OwnerRef {
-    OwnerRef::new("character", OwnerId::new()).unwrap()
+    OwnerRef::actor(ActorId::new())
 }
 fn bag() -> Inventory {
-    Inventory::new(owner(), "carried").unwrap()
+    Inventory::new(owner(), InventoryRole::Carried)
 }
 fn money(n: u64) -> Money {
     Money::new(n).unwrap()
@@ -17,7 +17,7 @@ fn count(bag: &Inventory, definition: ItemDefinitionId) -> u32 {
         .sum()
 }
 fn wallet(balance: u64) -> Wallet {
-    let mut wallet = Wallet::new(owner()).unwrap();
+    let mut wallet = Wallet::new(owner());
     wallet.credit(money(balance)).unwrap();
     wallet
 }

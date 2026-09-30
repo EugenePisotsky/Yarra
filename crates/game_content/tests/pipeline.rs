@@ -171,7 +171,7 @@ fn category_mechanics_bindings_and_scenario_errors_are_rejected() {
     scenario
         .wallets
         .iter_mut()
-        .find(|w| w.owner.kind == "party")
+        .find(|w| w.owner.kind == gameplay::inventory::OwnerKind::Party)
         .unwrap()
         .balance = inventory::Money::ZERO;
     write(root.join("scenario.ron"), &scenario);

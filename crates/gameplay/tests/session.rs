@@ -492,7 +492,7 @@ fn command_cost_does_not_grow_with_the_population() {
         state
             .spawn(&content, content.game.actors[0].id, id)
             .unwrap();
-        let mut bag = Inventory::new(OwnerRef::actor(id), "carried").unwrap();
+        let mut bag = Inventory::new(OwnerRef::actor(id), InventoryRole::Carried);
         bag.grant(&content.items, POTION, 5).unwrap();
         state.add_inventory(bag);
     }
@@ -595,7 +595,7 @@ mod party {
         if stranger {
             let mut actor = state.actors[&COMPANION].clone();
             actor.id = STRANGER;
-            let mut bag = Inventory::new(OwnerRef::actor(STRANGER), "carried").unwrap();
+            let mut bag = Inventory::new(OwnerRef::actor(STRANGER), InventoryRole::Carried);
             bag.id = InventoryId([77; 16]);
             state.add_actor(actor);
             state.add_inventory(bag);

@@ -243,29 +243,38 @@ impl From<&str> for TextRef {
     }
 }
 
-/// An owner can be an actor, chest, party or another registered world object.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+/// What kind of thing owns an inventory or a wallet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum OwnerKind {
+    /// A character; the owner's identity is the actor's.
+    Actor,
+    /// A placed world object such as a chest; the owner's identity is the object's.
+    Object,
+    /// The party, which shares a purse.
+    Party,
+}
+/// Whoever owns an inventory or a wallet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct OwnerRef {
-    pub kind: String,
+    pub kind: OwnerKind,
     pub id: OwnerId,
 }
 impl OwnerRef {
-    pub fn new(kind: impl Into<String>, id: OwnerId) -> Result<Self> {
-        let value = Self {
-            kind: kind.into(),
-            id,
-        };
-        value.validate()?;
-        Ok(value)
-    }
     pub fn actor(id: ActorId) -> Self {
         Self {
-            kind: "actor".into(),
+            kind: OwnerKind::Actor,
             id: OwnerId(id.0),
         }
     }
-    pub fn validate(&self) -> Result<()> {
-        Key::new(self.kind.clone()).map(|_| ())
+    pub fn object(id: ObjectId) -> Self {
+        Self {
+            kind: OwnerKind::Object,
+            id: OwnerId(id.0),
+        }
+    }
+    /// The actor, when an actor is the owner.
+    pub fn as_actor(&self) -> Option<ActorId> {
+        (self.kind == OwnerKind::Actor).then_some(ActorId(self.id.0))
     }
 }
 

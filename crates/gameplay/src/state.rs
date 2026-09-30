@@ -4,7 +4,7 @@ use crate::actors::{Actor, Relationship, RelationshipKey};
 use crate::dialogue::{
     ClaimKey, Conversation, History, HistoryKey, Interaction, InteractionKey, Mode, RunStatus,
 };
-use crate::inventory::{Inventory, Wallet};
+use crate::inventory::{Inventory, InventoryRole, Wallet};
 use crate::rules::{Modifier, RandomState, Stats};
 use crate::{
     ConversationKey, GameContent, LocationState, ObjectKind, ObjectState, Result, TriggerState,
@@ -130,7 +130,6 @@ pub struct SessionState {
     pub timed: BTreeSet<ActorId>,
     pub world: crate::WorldState,
 }
-pub const CARRIED: &str = "carried";
 
 /// Where a change to a stat comes from.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -229,9 +228,8 @@ impl SessionState {
         Ok(self.actors.entry(id).or_insert(actor))
     }
     pub fn add_inventory(&mut self, inventory: Inventory) {
-        if inventory.owner.kind == "actor" && inventory.role == CARRIED {
-            self.carried
-                .insert(ActorId(inventory.owner.id.0), inventory.id);
+        if let Some(actor) = inventory.carried_by() {
+            self.carried.insert(actor, inventory.id);
         }
         self.inventories.insert(inventory.id, inventory);
     }
@@ -429,11 +427,13 @@ impl SessionState {
         Ok(stats)
     }
     fn valid_owner(&self, content: &GameContent, owner: &OwnerRef) -> bool {
-        match owner.kind.as_str() {
-            "actor" => self.actors.contains_key(&ActorId(owner.id.0)),
+        match owner.kind {
+            OwnerKind::Actor => self.actors.contains_key(&ActorId(owner.id.0)),
             // A container's contents belong to the authored object.
-            "object" => content.object(ObjectId(owner.id.0)).is_ok() || self.owners.contains(owner),
-            _ => self.owners.contains(owner),
+            OwnerKind::Object => {
+                content.object(ObjectId(owner.id.0)).is_ok() || self.owners.contains(owner)
+            }
+            OwnerKind::Party => self.owners.contains(owner),
         }
     }
     fn loot_random(&self, owner: [u8; 16]) -> RandomState {
@@ -456,7 +456,7 @@ impl SessionState {
         actor: &Actor,
     ) -> Result<(Inventory, BTreeMap<Key, ItemId>)> {
         let template = content.template(actor.template)?;
-        let mut inventory = Inventory::new(OwnerRef::actor(actor.id), CARRIED)?;
+        let mut inventory = Inventory::new(OwnerRef::actor(actor.id), InventoryRole::Carried);
         let mut id = blake3::Hasher::new();
         id.update(b"yarra-carried-v1");
         id.update(&actor.id.0);
@@ -512,8 +512,7 @@ impl SessionState {
         else {
             return Err(Invalid("object is not a container".into()).into());
         };
-        let mut inventory =
-            Inventory::new(OwnerRef::new("object", OwnerId(object.0))?, "contents")?;
+        let mut inventory = Inventory::new(OwnerRef::object(object), InventoryRole::Contents);
         inventory.id = id;
         if let Some(loot) = loot {
             let mut random = self.loot_random(object.0);
@@ -559,9 +558,9 @@ impl SessionState {
             self.valid_owner(content, &inv.owner),
             "invalid inventory identity/owner/role",
         )?;
-        if inv.owner.kind == "actor" && inv.role == CARRIED {
+        if let Some(actor) = inv.carried_by() {
             require(
-                self.carried.get(&ActorId(inv.owner.id.0)) == Some(&inv.id),
+                self.carried.get(&actor) == Some(&inv.id),
                 "carried inventory index is stale",
             )?;
         }
@@ -671,7 +670,7 @@ impl SessionState {
             && let Some(bag) = self.inventories.get(&inventory)
         {
             require(
-                bag.owner == OwnerRef::new("object", OwnerId(o.id.0))? && bag.role == "contents",
+                bag.owner == OwnerRef::object(o.id) && bag.role == InventoryRole::Contents,
                 "container inventory ownership mismatch",
             )?;
         }
@@ -710,8 +709,7 @@ impl SessionState {
             "invalid session generation",
         )?;
         for owner in &self.owners {
-            owner.validate()?;
-            require(owner.kind != "actor", "invalid external owner")?;
+            require(owner.kind != OwnerKind::Actor, "invalid external owner")?;
         }
         let mut roles = BTreeSet::new();
         let mut entries = BTreeSet::new();
@@ -729,7 +727,7 @@ impl SessionState {
         for (actor, id) in &self.carried {
             let inv = self.inventory(*id)?;
             require(
-                inv.owner == OwnerRef::actor(*actor) && inv.role == CARRIED,
+                inv.carried_by() == Some(*actor),
                 "carried inventory index is stale",
             )?;
         }

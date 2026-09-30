@@ -23,10 +23,9 @@ pub(crate) fn signals(content: &GameContent, tx: &Tx) -> BTreeSet<WorldSignal> {
         let Some(new) = state.inventories.get(id) else {
             continue;
         };
-        if new.owner.kind != "actor" || new.role != CARRIED {
+        let Some(actor) = new.carried_by() else {
             continue;
-        }
-        let actor = ActorId(new.owner.id.0);
+        };
         let previous = quantities(old.as_ref());
         for (definition, count) in quantities(Some(new)) {
             if count > previous.get(&definition).copied().unwrap_or(0) {

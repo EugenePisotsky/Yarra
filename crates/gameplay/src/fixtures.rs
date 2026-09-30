@@ -1,7 +1,7 @@
 //! Standalone, deterministic authored scenario; runtime state needs no game assets.
 use crate::actors::ActorTemplate;
 use crate::dialogue::{Dialogue, Node, NodeKind, Repeat, RepeatPolicy, Role, ScopeSelector};
-use crate::inventory::{Inventory, Money, Wallet, fixtures::*};
+use crate::inventory::{Inventory, InventoryRole, Money, Wallet, fixtures::*};
 use crate::rules::{
     Ability, Class, Grants, Modifier, Operation, Periodic, Rules, Sheet, Skill, Stat, StatKind,
     StatusEffect, Use,
@@ -434,7 +434,7 @@ pub fn state() -> SessionState {
         } else if id == MERCHANT {
             actor.position.millimetres = [100000000, 0, 100000000];
         }
-        let mut inventory = Inventory::new(OwnerRef::actor(id), "carried").unwrap();
+        let mut inventory = Inventory::new(OwnerRef::actor(id), InventoryRole::Carried);
         inventory.id = bag;
         if id == HERO {
             inventory.grant(&content.items, POTION, 3).unwrap();
@@ -450,17 +450,20 @@ pub fn state() -> SessionState {
     state.party.members.insert(HERO);
     state.party.controlled = Some(HERO);
     state.party.wallet = Some(PARTY_WALLET);
-    let chest = OwnerRef::new("chest", OwnerId([1; 16])).unwrap();
-    let party = OwnerRef::new("party", OwnerId([1; 16])).unwrap();
-    state.owners.extend([chest.clone(), party.clone()]);
-    let mut inventory = Inventory::new(chest, "contents").unwrap();
+    let owner = |kind| OwnerRef {
+        kind,
+        id: OwnerId([1; 16]),
+    };
+    let (chest, party) = (owner(OwnerKind::Object), owner(OwnerKind::Party));
+    state.owners.extend([chest, party]);
+    let mut inventory = Inventory::new(chest, InventoryRole::Contents);
     inventory.id = CHEST;
     state.add_inventory(inventory);
     for (id, owner) in [
         (PARTY_WALLET, party),
         (MERCHANT_WALLET, OwnerRef::actor(MERCHANT)),
     ] {
-        let mut wallet = Wallet::new(owner).unwrap();
+        let mut wallet = Wallet::new(owner);
         wallet.id = id;
         wallet.credit(Money::new(100).unwrap()).unwrap();
         state.add_wallet(wallet);

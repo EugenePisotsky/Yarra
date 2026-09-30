@@ -2,7 +2,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub use game_types::{
-    CatalogId, CategoryId, InventoryId, ItemDefinitionId, ItemId, OwnerId, OwnerRef, WalletId,
+    ActorId, CatalogId, CategoryId, InventoryId, ItemDefinitionId, ItemId, OwnerId, OwnerKind,
+    OwnerRef, WalletId,
 };
 
 /// Integer units of the one configured currency, within SQLite's integer range.

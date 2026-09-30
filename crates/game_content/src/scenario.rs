@@ -29,7 +29,7 @@ pub struct ActorSpawn {
 pub struct InventorySeed {
     pub id: InventoryId,
     pub owner: OwnerRef,
-    pub role: String,
+    pub role: inventory::InventoryRole,
     pub items: Vec<ItemAmount>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -117,15 +117,16 @@ impl Scenario {
             )?;
             // A character's own inventory starts from what its template wears and carries;
             // the scenario adds to it.
-            let mut inventory = if seed.owner.kind == "actor" && seed.role == gameplay::CARRIED {
-                let id = ActorId(seed.owner.id.0);
+            let carried = seed.owner.as_actor();
+            let carried = carried.filter(|_| seed.role == inventory::InventoryRole::Carried);
+            let mut inventory = if let Some(id) = carried {
                 let (inventory, equipment) = state.unopened_inventory(content, state.actor(id)?)?;
                 if let Some(actor) = state.actors.get_mut(&id) {
                     actor.equipment = equipment;
                 }
                 inventory
             } else {
-                Inventory::new(seed.owner.clone(), &seed.role)?
+                Inventory::new(seed.owner, seed.role)
             };
             inventory.id = seed.id;
             for item in &seed.items {
@@ -137,7 +138,7 @@ impl Scenario {
             state.add_inventory(inventory);
         }
         for seed in &self.wallets {
-            let mut wallet = Wallet::new(seed.owner.clone())?;
+            let mut wallet = Wallet::new(seed.owner);
             wallet.id = seed.id;
             wallet.credit(seed.balance)?;
             state.add_wallet(wallet);

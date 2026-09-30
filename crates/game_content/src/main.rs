@@ -275,7 +275,7 @@ fn demo(project: &LoadedProject, locale: &str, directory: Option<PathBuf>) -> Re
     }
     for wallet in state.wallets.values() {
         summary.push(format!(
-            "{} wallet {}: {} gold",
+            "{:?} wallet {}: {} gold",
             wallet.owner.kind,
             wallet.id,
             wallet.balance.units()

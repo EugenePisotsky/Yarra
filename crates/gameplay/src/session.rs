@@ -632,8 +632,8 @@ fn check_changes(content: &GameContent, tx: &Tx) -> Result<()> {
     for id in before.inventories.keys() {
         if let Some(inv) = state.inventories.get(id) {
             state.check_inventory(content, inv)?;
-            if inv.owner.kind == "actor" {
-                actors.insert(ActorId(inv.owner.id.0));
+            if let Some(actor) = inv.owner.as_actor() {
+                actors.insert(actor);
             }
         }
     }
@@ -898,10 +898,9 @@ fn sync_equipment(
     events: &mut Vec<GameEvent>,
 ) -> Result<()> {
     let bag = state.inventory(inventory)?;
-    if bag.owner.kind != "actor" || bag.role != CARRIED {
+    let Some(actor) = bag.carried_by() else {
         return Ok(());
-    }
-    let actor = ActorId(bag.owner.id.0);
+    };
     let owned: BTreeSet<_> = bag.entries.iter().map(|e| e.id).collect();
     if state
         .actor(actor)?
