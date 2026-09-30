@@ -49,7 +49,8 @@ migrated.
 The core package holds the rules: stats, classes, levels, status effects and abilities in
 `rules.ron`, with their formulas in `scripts/rules.luau` and what the abilities do in
 `scripts/abilities.luau`. The guard package adds quest, named-predicate,
-interaction-profile, loot and `world/` object, area and trigger assets. Four scenarios
+interaction-profile, loot and `world/` object, area and trigger assets. Four scenarios,
+sharing the start in `scenarios/guard-start.ron`,
 exercise them through the same commands the game uses:
 
 ```sh

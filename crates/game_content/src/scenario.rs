@@ -39,15 +39,25 @@ pub struct WalletSeed {
     pub owner: OwnerRef,
     pub balance: Money,
 }
-/// Authored starting conditions, not a saved playthrough or a second actor model.
-/// Characters are built from their templates; entry/playthrough IDs are fresh each start.
+/// Authored starting conditions and the steps played from them; not a saved playthrough or
+/// a second actor model. Characters are built from their templates; the playthrough ID is
+/// fresh each start.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Scenario {
+    /// Another scenario, relative to the project, whose starting conditions this one plays
+    /// from. A scenario with a base has only steps of its own; the base has only a start.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<String>,
+    #[serde(default)]
     pub seed: u64,
+    #[serde(default)]
     pub actors: Vec<ActorSpawn>,
+    #[serde(default)]
     pub owners: Vec<OwnerRef>,
+    #[serde(default)]
     pub inventories: Vec<InventorySeed>,
+    #[serde(default)]
     pub wallets: Vec<WalletSeed>,
     /// Variables that start away from their initial value.
     #[serde(default)]
@@ -61,9 +71,35 @@ pub struct Scenario {
     /// The wallet holding the party's shared gold.
     #[serde(default)]
     pub purse: Option<WalletId>,
+    #[serde(default)]
     pub steps: Vec<Step>,
 }
 impl Scenario {
+    /// This scenario's steps played from `base`'s starting conditions.
+    pub fn starting_from(self, base: Scenario) -> Result<Self> {
+        let start_of_its_own = self.seed != 0
+            || !self.actors.is_empty()
+            || !self.owners.is_empty()
+            || !self.inventories.is_empty()
+            || !self.wallets.is_empty()
+            || !self.variables.is_empty()
+            || !self.party.is_empty()
+            || self.controlled.is_some()
+            || self.purse.is_some();
+        require(
+            !start_of_its_own,
+            "a scenario with a base takes its whole start from it",
+        )?;
+        require(
+            base.base.is_none() && base.steps.is_empty(),
+            "a base scenario is a start only: no base or steps of its own",
+        )?;
+        Ok(Self {
+            base: None,
+            steps: self.steps,
+            ..base
+        })
+    }
     pub fn instantiate(&self, content: &GameContent) -> Result<gameplay::GameSession> {
         content.validate()?;
         let mut state = SessionState::empty(self.seed);
@@ -164,5 +200,28 @@ impl Scenario {
             Some(TextRef::Message(key)) => Some(key),
             _ => None,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn scenario(text: &str) -> Scenario {
+        ron::from_str(text).unwrap()
+    }
+    #[test]
+    fn a_scenario_with_a_base_takes_its_start_and_keeps_its_own_steps() {
+        let base = scenario(r#"(seed: 7, party: ["hero"])"#);
+        let steps = r#"steps: [ExpectLevel(actor: "hero", level: 1)]"#;
+        let played = scenario(&format!(r#"(base: Some("start.ron"), {steps})"#));
+        let played = played.starting_from(base.clone()).unwrap();
+        assert_eq!((played.seed, played.steps.len()), (7, 1));
+        assert!(played.base.is_none() && played.party.len() == 1);
+        // A start of its own as well would be ambiguous, and a base plays no steps.
+        let both = scenario(&format!(r#"(base: Some("start.ron"), seed: 1, {steps})"#));
+        assert!(both.starting_from(base).is_err());
+        let with_steps = scenario(&format!("({steps})"));
+        let bare = scenario(r#"(base: Some("start.ron"))"#);
+        assert!(bare.starting_from(with_steps).is_err());
     }
 }

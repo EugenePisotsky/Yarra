@@ -346,7 +346,13 @@ impl LoadedProject {
                 "text resource has no source-locale counterpart",
             )?;
         }
-        let scenario = source.ron(exercise.unwrap_or(&project.scenario))?;
+        let mut scenario: Scenario = source.ron(exercise.unwrap_or(&project.scenario))?;
+        if let Some(base) = scenario.base.clone() {
+            scenario = contextual(
+                format!("scenario base {base}"),
+                scenario.starting_from(source.ron(&base)?),
+            )?;
+        }
         let loaded = Self::from_parts(content, scenario, project.source_locale, translations)?;
         for (_, asset) in loaded.assets() {
             let owner = owners[&asset.id()];
