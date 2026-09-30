@@ -59,7 +59,7 @@ struct MovementDestination {
 /// follower or NPC can use the same component without depending on player
 /// input, the camera, or character presentation.
 #[derive(Component, Clone, Copy, Debug, Default)]
-pub(crate) struct MoveIntent {
+pub struct MoveIntent {
     direction: Vec2,
     strength: f32,
     requested_gait: Option<CharacterGait>,
@@ -94,7 +94,14 @@ impl MoveIntent {
         self.requested_gait = None;
     }
 
-    pub(crate) fn destination(&self) -> Option<Vec3> {
+    /// Walks to a render-space position and stops there: for NPCs and scripted movement.
+    /// World rebasing keeps the destination in place.
+    pub fn walk_to(&mut self, position: Vec3) {
+        self.set_destination(position, CharacterGait::Walk);
+    }
+
+    /// The render-space position the actor is heading for, if it was given one.
+    pub fn destination(&self) -> Option<Vec3> {
         self.destination.map(|destination| destination.position)
     }
 
@@ -104,7 +111,8 @@ impl MoveIntent {
         }
     }
 
-    pub(crate) fn clear(&mut self) {
+    /// Drops the destination and any direct input; the actor comes to rest.
+    pub fn clear(&mut self) {
         self.direction = Vec2::ZERO;
         self.strength = 0.0;
         self.requested_gait = None;

@@ -50,7 +50,7 @@ pub use ocean::{OceanPlugin, OceanSurface};
 mod start_view;
 pub use start_view::{WORLD_VIEW_DISTANCE, WorldStartAdopted, WorldStartView};
 mod gameplay;
-pub use actor::{PlayerControlled, TerrainGrounded};
+pub use actor::{MoveIntent, PlayerControlled, TerrainGrounded};
 pub use gameplay::{
     GAME_DEPTH_PREPASS_ENABLED, GameCameraPlugin, GameInputEnabled, GameInputPlugin,
     GamePointerInputBlocked, GameplayPlugin, GameplayPlugins, GameplaySystems, MinimalGamePlugin,

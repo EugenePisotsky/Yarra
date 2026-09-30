@@ -1,12 +1,18 @@
-//! Bevy side of the story slice: where the guard and gate stand, which keys do what, and
-//! the text on screen. Everything it decides is presentation; outcomes come from `Story`.
-use super::{Panel, Story};
+//! Bevy side of the story slice: where the guard and gate stand, which keys do what, the
+//! text on screen, and the engine's half of the world rules: telling them which named areas
+//! the party stands in and walking the actors they ask to move. Everything it decides is
+//! presentation; outcomes come from `Story`.
+use super::{Bark, GUARD, HERO, MIRA, Panel, Story};
 use bevy::prelude::*;
 use engine::{
-    GameplaySystems, PlayerControlled, PlayerMovementSuspended, TerrainGrounded, WorldCatalog,
-    WorldOrigin, WorldRenderRoot, WorldStartAdopted, WorldStartView,
+    GameplaySystems, MoveIntent, PlayerControlled, PlayerMovementSuspended, TerrainGrounded,
+    WorldCatalog, WorldOrigin, WorldRenderRoot, WorldStartAdopted, WorldStartView,
 };
+use game_types::{ActorId, AreaId};
+use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
+use std::sync::Arc;
+use world::{GameplayArea, GameplayAreaIndex};
 
 const TALK_RANGE: f32 = 3.0;
 const GUARD_DISTANCE: f32 = 6.0;
@@ -15,6 +21,14 @@ const GATE_DISTANCE: f32 = 11.0;
 const UNGROUNDED: f32 = -5000.0;
 /// Bearings tried around the start, nearest to the view direction first.
 const BEARINGS: [f32; 8] = [0.0, 45.0, -45.0, 90.0, -90.0, 135.0, -135.0, 180.0];
+/// Shapes for the areas the demo content names, used while the world has none painted under
+/// those names: metres along the path from the start, then across it.
+const STAND_INS: [(&str, [f32; 2], [f32; 2]); 2] = [
+    ("guard/approach", [2.5, 10.0], [-6.0, 5.0]),
+    ("guard/gate_post", [9.2, 11.6], [-4.6, -2.4]),
+];
+/// The rules accept an actor in at most this many areas at once.
+const MAX_AREAS_AT_ONCE: usize = 32;
 
 pub(crate) fn install(app: &mut App, source: &Path) -> Result<(), String> {
     let work = std::env::temp_dir().join("yarra-story");
@@ -26,19 +40,28 @@ pub(crate) fn install(app: &mut App, source: &Path) -> Result<(), String> {
     );
     app.world_mut().insert_non_send(story);
     app.init_resource::<Placement>()
+        .init_resource::<Places>()
         .add_systems(Startup, spawn)
         .add_systems(
             Update,
             (
-                place.after(GameplaySystems::Grounding),
                 // Before movement, so a conversation stops the player on the frame it opens.
-                input.before(GameplaySystems::MoveIntent),
-                present.after(GameplaySystems::Grounding),
+                (adopt_player, input, restore)
+                    .chain()
+                    .before(GameplaySystems::MoveIntent),
+                walk.after(GameplaySystems::MoveIntent)
+                    .before(GameplaySystems::Movement),
+                (place, observe, present)
+                    .chain()
+                    .after(GameplaySystems::Grounding),
             ),
         );
     Ok(())
 }
 
+/// Which actor of the playthrough an entity is.
+#[derive(Component)]
+struct Actor(ActorId);
 #[derive(Component)]
 struct Guard;
 /// The party member who waits with the player; she speaks in conversations but does not
@@ -57,17 +80,98 @@ struct PanelBox;
 struct SpeakerText;
 #[derive(Component)]
 struct BodyText;
+#[derive(Component)]
+struct BarkText;
 
 #[derive(Resource, Default)]
 struct Placement {
-    /// Player position when the start became known, and the ground direction the view faces.
-    anchor: Option<(Vec3, Vec2)>,
+    /// World position of the player when the start became known, and the ground direction
+    /// the view faces.
+    anchor: Option<([f64; 3], Vec2)>,
     /// Yaw of the start view the world supplied, once it has.
     yaw: Option<f32>,
     attempt: usize,
     /// Frames since the world opened without the world naming a start of its own.
     waited: u32,
     settled: bool,
+}
+impl Placement {
+    /// The world ground position a distance along the path from the start and across it.
+    fn ground(&self, along: f32, across: f32) -> [f64; 2] {
+        let (anchor, _) = self.anchor.expect("anchor known");
+        let direction = self.direction();
+        let offset = direction * along + direction.perp() * across;
+        [
+            anchor[0] + f64::from(offset.x),
+            anchor[2] + f64::from(offset.y),
+        ]
+    }
+    fn direction(&self) -> Vec2 {
+        let (_, forward) = self.anchor.expect("anchor known");
+        Vec2::from_angle(BEARINGS[self.attempt].to_radians()).rotate(forward)
+    }
+}
+
+/// The shapes behind the area names the content uses: those painted in the world, and
+/// stand-ins beside the guard for the demo's names the world does not have.
+#[derive(Resource, Default)]
+struct Places {
+    index: GameplayAreaIndex,
+    ids: HashMap<String, AreaId>,
+    /// Where an actor sent to an area walks to.
+    targets: HashMap<AreaId, [f64; 2]>,
+}
+impl Places {
+    fn new(story: &Story, catalog: &WorldCatalog, origin: &WorldOrigin, at: &Placement) -> Self {
+        let mut areas: Vec<GameplayArea> = catalog
+            .gameplay_areas()
+            .areas()
+            .iter()
+            .filter(|area| story.area(&area.name).is_some())
+            .cloned()
+            .collect();
+        let painted = areas.len();
+        if let Some(space) = origin.space() {
+            for (name, along, across) in STAND_INS {
+                if story.area(name).is_none() || areas.iter().any(|area| area.name == name) {
+                    continue;
+                }
+                let corners = [(0, 0), (1, 0), (1, 1), (0, 1)];
+                areas.push(GameplayArea {
+                    name: name.into(),
+                    space,
+                    points: corners.map(|(i, j)| at.ground(along[i], across[j])).into(),
+                    height: None,
+                });
+            }
+        }
+        info!(
+            "Story areas: {painted} painted in the world, {} stand-ins",
+            areas.len() - painted
+        );
+        let ids: HashMap<String, AreaId> = areas
+            .iter()
+            .filter_map(|area| Some((area.name.clone(), story.area(&area.name)?)))
+            .collect();
+        let targets = areas
+            .iter()
+            .map(|area| (ids[&area.name], area.interior_point()))
+            .collect();
+        Self {
+            index: GameplayAreaIndex::new(Arc::from(areas)),
+            ids,
+            targets,
+        }
+    }
+}
+
+fn adopt_player(
+    mut commands: Commands,
+    player: Query<Entity, (With<PlayerControlled>, Without<Actor>)>,
+) {
+    for player in &player {
+        commands.entity(player).insert(Actor(HERO));
+    }
 }
 
 fn spawn(
@@ -78,10 +182,10 @@ fn spawn(
     let hidden = Vec3::new(0.0, UNGROUNDED, 0.0);
     commands
         .spawn(engine::standing_character(hidden, "Gate guard"))
-        .insert(Guard);
+        .insert((Guard, Actor(GUARD)));
     commands
         .spawn(engine::standing_character(hidden, "Companion"))
-        .insert(Companion);
+        .insert((Companion, Actor(MIRA)));
     let stone = materials.add(StandardMaterial {
         base_color: Color::srgb(0.45, 0.44, 0.42),
         perceptual_roughness: 0.95,
@@ -142,6 +246,17 @@ fn spawn(
             GlobalZIndex(50),
         ))
         .with_children(|root| {
+            // Lines spoken while play goes on; nothing waits for them.
+            root.spawn((
+                Text::new(""),
+                font(17.0),
+                TextColor(Color::srgb(0.95, 0.93, 0.85)),
+                TextShadow {
+                    offset: Vec2::splat(1.5),
+                    color: Color::BLACK.with_alpha(0.85),
+                },
+                BarkText,
+            ));
             root.spawn((
                 PanelBox,
                 Visibility::Hidden,
@@ -178,7 +293,9 @@ fn spawn(
 /// bearing. The engine keeps grounded actors hidden until the terrain under them is ready.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn place(
+    story: NonSend<Story>,
     mut placement: ResMut<Placement>,
+    mut places: ResMut<Places>,
     start_view: Res<WorldStartView>,
     mut adopted: MessageReader<WorldStartAdopted>,
     origin: Res<WorldOrigin>,
@@ -206,6 +323,11 @@ fn place(
     let Some(space) = origin.space() else {
         return;
     };
+    // Taken before anything moves: a bearing is judged by where its actors came to rest.
+    let heights = [guard.translation.y, gate.translation.y];
+    let mut position = |placement: &Placement| {
+        [**guard, **gate, **companion] = stand(placement, &origin, &catalog);
+    };
     if placement.anchor.is_none() {
         placement.waited += 1;
         let yaw = placement
@@ -217,63 +339,211 @@ fn place(
             None if placement.waited > 240 => 0.0,
             None => return,
         };
+        let Some((_, anchor)) = origin.to_world(&catalog, player.translation) else {
+            return;
+        };
         // The camera sits at +(sin yaw, cos yaw) from the player and looks back at it.
-        placement.anchor = Some((player.translation, -Vec2::new(yaw.sin(), yaw.cos())));
+        placement.anchor = Some((anchor, -Vec2::new(yaw.sin(), yaw.cos())));
         placement.attempt = 0;
-        position(&placement, &mut guard, &mut gate, &mut companion);
+        position(&placement);
         return;
     }
-    if guard.translation.y == UNGROUNDED || gate.translation.y == UNGROUNDED {
+    if heights.contains(&UNGROUNDED) {
         return; // terrain under them has not streamed in yet
     }
     let sea = catalog.world_space(space).and_then(|s| s.sea_level);
-    let anchor = placement.anchor.expect("anchor set above").0;
-    let usable = |y: f32| sea.is_none_or(|sea| y > sea + 0.3) && (y - anchor.y).abs() < 8.0;
+    let anchor = placement.anchor.expect("anchor set above").0[1] as f32;
+    let usable = |y: f32| sea.is_none_or(|sea| y > sea + 0.3) && (y - anchor).abs() < 8.0;
     let last = placement.attempt + 1 == BEARINGS.len();
-    if usable(guard.translation.y) && usable(gate.translation.y) || last {
+    if heights.into_iter().all(usable) || last {
         placement.settled = true;
+        info!(
+            "Story scene placed {}° from the start view's heading",
+            BEARINGS[placement.attempt]
+        );
+        *places = Places::new(&story, &catalog, &origin, &placement);
     } else {
         placement.attempt += 1;
-        position(&placement, &mut guard, &mut gate, &mut companion);
+        position(&placement);
     }
 }
-fn position(
-    placement: &Placement,
-    guard: &mut Transform,
-    gate: &mut Transform,
-    companion: &mut Transform,
-) {
-    let (anchor, forward) = placement.anchor.expect("anchor known");
-    let direction = Vec2::from_angle(BEARINGS[placement.attempt].to_radians()).rotate(forward);
-    let side = direction.perp();
+
+/// Where the guard, the gate and the companion stand for the bearing being tried.
+fn stand(placement: &Placement, origin: &WorldOrigin, catalog: &WorldCatalog) -> [Transform; 3] {
     let at = |along: f32, across: f32| {
-        let ground = Vec2::new(anchor.x, anchor.z) + direction * along + side * across;
-        Vec3::new(ground.x, UNGROUNDED, ground.y)
+        let [x, z] = placement.ground(along, across);
+        origin
+            .to_render(catalog, [x, f64::from(UNGROUNDED), z])
+            .unwrap_or(Vec3::new(0., UNGROUNDED, 0.))
     };
+    let direction = placement.direction();
     let facing = |toward: Vec2| Quat::from_rotation_y(f32::atan2(toward.x, toward.y));
-    // The guard waits beside the path, clear of the door's swing, and looks back at the
-    // player; the gate spans the path.
-    *guard =
-        Transform::from_translation(at(GUARD_DISTANCE, -2.6)).with_rotation(facing(-direction));
-    *gate = Transform::from_translation(at(GATE_DISTANCE, 0.0)).with_rotation(facing(direction));
-    *companion = Transform::from_translation(at(1.0, 1.8)).with_rotation(facing(direction));
+    [
+        // The guard waits beside the path, clear of the door's swing, and looks back at the
+        // player; the gate spans the path.
+        Transform::from_translation(at(GUARD_DISTANCE, -2.6)).with_rotation(facing(-direction)),
+        Transform::from_translation(at(GATE_DISTANCE, 0.0)).with_rotation(facing(direction)),
+        Transform::from_translation(at(1.0, 1.8)).with_rotation(facing(direction)),
+    ]
+}
+
+/// Tells the rules where an actor is: its position and the named areas it stands in.
+fn report(
+    story: &mut Story,
+    places: &Places,
+    origin: &WorldOrigin,
+    catalog: &WorldCatalog,
+    actor: ActorId,
+    at: Vec3,
+    record: bool,
+) {
+    let Some((space, position)) = origin.to_world(catalog, at) else {
+        return;
+    };
+    let areas: BTreeSet<AreaId> = {
+        let inside = story.areas(actor);
+        places
+            .index
+            .at(space, position, |name| {
+                places.ids.get(name).is_some_and(|id| inside.contains(id))
+            })
+            .filter_map(|area| places.ids.get(&area.name).copied())
+            .take(MAX_AREAS_AT_ONCE)
+            .collect()
+    };
+    if story.areas(actor) != &areas {
+        let names: Vec<String> = areas.iter().map(AreaId::to_string).collect();
+        info!("Story: {actor} is now in [{}]", names.join(", "));
+    }
+    story.observe(actor, position, areas, record);
+}
+
+/// Keeps the rules informed about the actors they follow. They hear about it only when an
+/// actor crosses into or out of an area.
+fn observe(
+    mut story: NonSendMut<Story>,
+    placement: Res<Placement>,
+    places: Res<Places>,
+    origin: Res<WorldOrigin>,
+    catalog: Res<WorldCatalog>,
+    actors: Query<(&Actor, &Transform)>,
+) {
+    if !placement.settled {
+        return;
+    }
+    for (actor, transform) in &actors {
+        if story.tracked(actor.0) && transform.translation.y != UNGROUNDED {
+            let at = transform.translation;
+            report(&mut story, &places, &origin, &catalog, actor.0, at, false);
+        }
+    }
+}
+
+/// Walks the actors the rules asked to move towards the middle of their area. The rules
+/// decide when they have arrived, from the reports `observe` sends.
+fn walk(
+    mut story: NonSendMut<Story>,
+    placement: Res<Placement>,
+    places: Res<Places>,
+    origin: Res<WorldOrigin>,
+    catalog: Res<WorldCatalog>,
+    mut actors: Query<(&Actor, &mut MoveIntent), Without<PlayerControlled>>,
+    mut walking: Local<HashMap<ActorId, AreaId>>,
+) {
+    if !placement.settled {
+        return;
+    }
+    for (actor, mut intent) in &mut actors {
+        let Some((to, request)) = story.movement(actor.0).map(|m| (m.to, m.request)) else {
+            // A walk that arrived carries on to the middle of its area; one that was given
+            // up stops where it is.
+            if let Some(to) = walking.remove(&actor.0) {
+                let arrived = story.areas(actor.0).contains(&to);
+                info!(
+                    "Story: {} {} {to}",
+                    actor.0,
+                    if arrived { "reached" } else { "gave up on" }
+                );
+                if !arrived {
+                    intent.clear();
+                }
+            }
+            continue;
+        };
+        let target = places
+            .targets
+            .get(&to)
+            .and_then(|&[x, z]| origin.to_render(&catalog, [x, 0., z]));
+        let Some(target) = target else {
+            // Nobody painted the place the content sends this actor to.
+            story.move_failed(actor.0, request);
+            continue;
+        };
+        if walking.insert(actor.0, to) != Some(to) {
+            info!("Story: {} walks to {to}", actor.0);
+        }
+        if story.in_conversation() {
+            // The world waits for a conversation.
+            if intent.destination().is_some() {
+                intent.clear();
+            }
+        } else if intent
+            .destination()
+            .is_none_or(|current| current.xz().distance(target.xz()) > 0.05)
+        {
+            intent.walk_to(target);
+        }
+    }
+}
+
+/// After a load, stands every actor where the save recorded it.
+fn restore(
+    story: NonSend<Story>,
+    origin: Res<WorldOrigin>,
+    catalog: Res<WorldCatalog>,
+    mut actors: Query<(&Actor, &mut Transform, &mut MoveIntent)>,
+    mut seen: Local<u64>,
+) {
+    if *seen == story.loads() {
+        return;
+    }
+    *seen = story.loads();
+    for (actor, mut transform, mut intent) in &mut actors {
+        let saved = story
+            .position(actor.0)
+            .and_then(|position| origin.to_render(&catalog, position));
+        if let Some(position) = saved {
+            transform.translation = position;
+            intent.clear();
+        }
+    }
 }
 
 fn near_guard(player: &Transform, guard: &Transform) -> bool {
     player.translation.distance(guard.translation) < TALK_RANGE
 }
 
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn input(
     mut story: NonSendMut<Story>,
     keys: Res<ButtonInput<KeyCode>>,
     placement: Res<Placement>,
+    places: Res<Places>,
+    origin: Res<WorldOrigin>,
+    catalog: Res<WorldCatalog>,
     player: Single<&Transform, (With<PlayerControlled>, Without<Guard>)>,
     guard: Single<&Transform, With<Guard>>,
+    actors: Query<(&Actor, &Transform)>,
 ) {
-    if keys.just_pressed(KeyCode::F5) {
+    // Saves hold where everyone stands, so both wait until the scene is in place.
+    if keys.just_pressed(KeyCode::F5) && placement.settled {
+        for (actor, transform) in &actors {
+            let at = transform.translation;
+            report(&mut story, &places, &origin, &catalog, actor.0, at, true);
+        }
         story.quicksave();
     }
-    if keys.just_pressed(KeyCode::F9) {
+    if keys.just_pressed(KeyCode::F9) && placement.settled {
         story.quickload();
     }
     if !story.in_conversation() {
@@ -318,9 +588,11 @@ fn present(
         Single<&mut Text, With<SpeakerText>>,
         Single<&mut Text, With<BodyText>>,
         Single<&mut Text, With<SummaryText>>,
+        Single<&mut Text, With<BarkText>>,
     )>,
     mut shown: Local<Option<(u64, bool)>>,
 ) {
+    story.tick(time.delta_secs());
     suspended.0 = story.in_conversation();
 
     // An unlocked gate swings open; a reload that locks it again swings it shut.
@@ -371,5 +643,18 @@ fn present(
     }
     texts.p0().0 = speaker;
     texts.p1().0 = body;
-    texts.p2().0 = summary;
+    if texts.p2().0 != summary {
+        info!("Story status: {}", summary.replace('\n', " / "));
+        texts.p2().0 = summary;
+    }
+    let bark = match story.bark() {
+        Some(Bark { speaker, text }) => format!("{speaker}: {text}"),
+        None => String::new(),
+    };
+    if texts.p3().0 != bark {
+        if !bark.is_empty() {
+            info!("Story bark: {bark}");
+        }
+        texts.p3().0 = bark;
+    }
 }
