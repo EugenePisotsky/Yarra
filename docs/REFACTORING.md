@@ -16,7 +16,7 @@ Target: a classic party RPG in the line of KOTOR / Dragon Age: Origins, Gothic a
 | 2. Thin slice in the game | Opt-in `--story` in `app_game`: a guard and a gate near the start, talk to the guard, the gate unlocks, quick save and load | Done |
 | 3. Dialogue graph v2 | Flat node graph with a speaker, condition, actions and ordered children per node; any number of participants | Done |
 | 4. Luau scripts and names | Names as identities in authored content; Luau in a `scripting` crate behind a trait; script conditions and actions beside the built-in ones | Done |
-| 5. Events and areas | Event-driven triggers only; polygon areas painted in the editor; blocking and ambient dialogue modes | |
+| 5. Events and areas | Event-driven triggers only; polygon areas painted in the editor; blocking and ambient dialogue modes | Done |
 | 6. Character rules | Data-defined stats, classes, levels, skill ranks, modifiers, status effects; a fixed-tick action model for combat | |
 
 ### Step 1: done
@@ -35,7 +35,7 @@ Left for later steps: definition lookups are linear scans and inventory operatio
 
 [`story.rs`](../crates/app_game/src/story.rs) holds the session and turns input into commands; [`story/scene.rs`](../crates/app_game/src/story/scene.rs) is the Bevy side. The engine gained three small public hooks: `standing_character`, `PlayerMovementSuspended`, and the `PlayerControlled`/`TerrainGrounded` markers.
 
-Deliberately not done here, because later steps replace them: the guard and gate are placed relative to the start instead of being authored in the world; positions are not reported to the session, so areas and the escort trigger do not run in the game; the gate is a visual with no collision; the HUD is plain text.
+Deliberately not done here: the guard and gate are placed relative to the start instead of being authored in the world; the gate is a visual with no collision; the HUD is plain text. Reporting positions to the session came with step 5.
 
 ### Step 3: done
 
@@ -74,12 +74,30 @@ Source format 8, bundle schema 9, save format 10.
 
 Still open: derived-stat and check formulas in Luau belong to step 6.
 
-### Step 5: events and areas
+### Step 5: done
 
-- A trigger is `on` (area entered/exited, item acquired, quest changed, dialogue ended…), an optional condition, actions or a script, and a repeat policy. "Maintained" triggers that re-evaluate on dependency changes are removed; a quest-start event re-checks explicitly where needed.
-- Areas are polygons with a height range, painted in the editor and stored with the world data; gameplay refers to them by stable ID.
-- The engine tests containment for party members only and reports enter/exit. Occupancy is saved, so a reload does not fire again.
-- A dialogue declares whether it is blocking or ambient, so banter and background lines use the same graphs.
+**Triggers.** A trigger listens for world signals: an actor entering or leaving an area, a requested walk arriving or failing, an item acquired, a quest starting or changing, a variable changing, a dialogue completing. When one happens and the condition holds, its actions run as a unit: all take effect or none do, and a failure is reported and leaves the trigger free to fire later. Repeat is `Once`, `Always` or `Cooldown`. Nothing is polled: the command journal already knows what a command changed, so signals are derived from it and only those some trigger subscribes to are queued. "Maintained" triggers and scripted sequences are gone; a walk followed by an effect is two triggers, the second listening for `Arrived`.
+
+**Areas.** Gameplay knows an area only by name ([`world.rs`](../crates/gameplay/src/world.rs)). Its shape is a ground polygon with an optional height range ([`gameplay_area.rs`](../crates/world/src/gameplay_area.rs)), painted with the editor's Areas tool and stored as one revisioned record in the world project. Publishing copies the set into the runtime outside the content hash, so repainting an area never recooks terrain. The engine hands the set to the game as `WorldCatalog::gameplay_areas()`.
+
+**The engine's half.** The adapter reports `Observe { actor, position, areas }` for party members and for anyone asked to walk, and only when the set of areas changes, so standing still costs nothing. An actor on an edge stays inside until 0.25 m beyond it. `Move` asks the engine to walk an actor into an area; the walk ends when the actor is reported inside it, when the engine gives up, or when its time runs out. Occupancy, walks and queued work are part of the save.
+
+**Dialogue modes.** A graph is `Blocking` (the panel; the world waits) or `Ambient` (spoken while play goes on; no choices allowed). `StartDialogue` as an action queues a conversation, so a trigger can start companion banter.
+
+**In the game.** The `--story` slice reports occupancy, carries out queued work, walks the guard with the engine's `MoveIntent`, shows ambient lines above the panel and advances them on a timer, and keeps game time running except during a blocking conversation. Quick save records where everyone stands and quick load puts them back. The demo's two areas get stand-in shapes beside the guard until areas with those names are painted in the world.
+
+Scripts gained `game.move_to` and `game.start_dialogue`. Source format 9, bundle schema 10, save format 11; world source schema 27, runtime schema 26, editor journal 15.
+
+Evidence: 16 tests in `game_content/tests/world_actions.rs` (escort headless and from a published bundle, save mid-walk, failed and timed-out walks, signal order, repeat policies, a failing trigger staying armed, ambient banter with a companion); six story tests including the escort, the pause during a conversation and a load that restores the spoken line, the walk and positions; storage, cook and editor tests for areas (a save conflict changes nothing, an areas-only publish is incremental and recompiles no cell, a corner drag is one undo step across a save).
+
+Costs: containment is a bounds check per area, about a microsecond per thousand areas per tracked actor, run only for the party and walking actors. The editor draws outlines for areas within 800 m of the camera.
+
+Not done:
+- Walking is a straight line to a point inside the area; there is no pathfinding. A walk without a timeout that gets stuck never ends.
+- Companions do not follow the player yet, so only the player crosses areas in the slice.
+- The guard, gate and companion are still placed relative to the start, not authored in the world.
+- A variable subscription is per variable, not per actor.
+- The Areas tool has no viewport labels; names are in the Areas window.
 
 ### Step 6: character rules
 

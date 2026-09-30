@@ -34,14 +34,14 @@ the current world database. Use `cargo run --offline -p yarra-game-content -- va
 content/gameplay/demo` to validate it; see the [gameplay workflow](../docs/WORKFLOWS.md#standalone-gameplay-and-saves)
 for running the scenario, publishing SQLite bundles and save/load checks.
 
-Gameplay source format 8 uses explicitly declared packages and one conversation per
+Gameplay source format 9 uses explicitly declared packages and one conversation per
 asset directory: the graph (with its conditions and actions inline), message contracts
 and translations are grouped together. Text references contain a stable resource UUID and a local key. `build`
-publishes an immutable SQLite bundle (schema 9) with one checksummed record per asset;
+publishes an immutable SQLite bundle (schema 10) with one checksummed record per asset;
 language packs are published separately and hold the wording and review metadata.
 
 At runtime the whole playthrough state is held in memory and saved as one snapshot file
-per slot (save format 10). A session loads the always-needed definitions once and each
+per slot (save format 11). A session loads the always-needed definitions once and each
 dialogue graph when a conversation needs it. Saves are tied to the content they were
 made with; wording updates do not affect them. Old bundles and saves are rebuilt, not
 migrated.
@@ -56,5 +56,7 @@ cargo run --offline -p yarra-game-content -- scenario content/gameplay/demo scen
 cargo run --offline -p yarra-game-content -- scenario content/gameplay/demo scenarios/guard-gate.ron
 ```
 
-Movement reports in these exercises are synthetic adapter inputs; engine integration is
-the next step in the [roadmap](../docs/REFACTORING.md#gameplay-roadmap).
+Occupancy reports in these exercises are written into the scenario. In the game they come
+from the engine: `cargo run --release -p yarra-app-game -- --story content/gameplay/demo`
+plays the same triggers with shapes for `guard/approach` and `guard/gate_post`, painted in
+the editor's Areas tool or stood in beside the guard.

@@ -77,6 +77,8 @@ For grass streaming/history regression, run `cargo test -p yarra-vegetation-rend
 
 **Atmosphere:** open World → Atmosphere for the active space's profile and preview time/weather. **Weather** edits each preset (clouds, visibility, fog and skylight grey, exposure, wind, rain) and the random sequence (change and hold durations, next-state weights); the preview row shows any preset with a chosen wetness, without saving. Apply authored profile edits through normal undo/save/publication. Preview transport and temporary quality controls do not rewrite startup time/weather merely by being adjusted. Clouds Off removes rendering/shadows, not the weather's ambient response.
 
+**Areas:** choose Areas in the World window to paint the named places gameplay reacts to. **Draw new area**, click corners on the terrain, then click the first corner or press Enter to close the shape; Backspace takes the last corner back and Esc cancels. Click an area to select it, drag a corner to move it, click an edge to add a corner there, and press Delete to remove the corner clicked last. The Areas window renames the selected area (lowercase letters, digits and `_ - / .`, the name gameplay content uses, e.g. `guard/gate_post`), optionally limits it to a height range for places under a bridge or on one floor, and deletes it. Areas save with everything else and have ordinary undo; publishing them recompiles no terrain. Outlines are drawn within 800 m of the camera.
+
 Save conflicts indicate newer source revisions: resolve/reload the draft rather than forcing a stale overwrite. Recovery data under `.editor` is separate from saved source. Generated preview failures must remain visible as stale/error state; they are not publication success.
 
 ## Vegetation and animation studies
@@ -128,7 +130,9 @@ The demo loads definitions, actors, starting inventories/wallets, scenario actio
 cargo run --release -p yarra-app-game -- --story content/gameplay/demo
 ```
 
-A guard and a gate appear a few metres ahead of the start. Walk to the guard and press **E**; **Space** continues a line, **1–9** pick a reply, **Q** walks away. **F5** and **F9** quick save and load. Handing over the key completes the quest and opens the gate. The project is published to a private bundle under the system temp directory (`yarra-story/`), where the saves also live; a save made with different content is refused.
+A guard and a gate appear a few metres ahead of the start. Walking up to them enters the `guard/approach` area: your companion remarks on the path (an ambient conversation, shown above the panel while you keep moving) and, because you carry the key, the guard walks to the gate, takes the key and opens it. You can also walk to the guard and press **E**; **Space** continues a line, **1–9** pick a reply, **Q** walks away. The world waits during that conversation. **F5** and **F9** quick save and load, including where everyone stands. The corner text shows which named areas you are in.
+
+The two areas use stand-in shapes beside the guard until the world has areas painted under the names `guard/approach` and `guard/gate_post`; painted ones win. The project is published to a private bundle under the system temp directory (`yarra-story/`), where the saves also live; a save made with different content is refused.
 
 ### Editing and validating gameplay content
 
@@ -237,7 +241,7 @@ Use `preview_interaction(participant, speaker)` for sorted candidates, observed 
 
 ### Conversation runs, history and rewards
 
-A conversation is one `graph.ron`: `roles`, `history_scope`, `repeat`, ordered entry nodes in `start`, and a flat list of `nodes`. Conditions and actions are written in the node that uses them; a package lists the `variables` it introduces.
+A conversation is one `graph.ron`: `roles`, `history_scope`, `repeat`, an optional `mode`, ordered entry nodes in `start`, and a flat list of `nodes`. `mode: Ambient` marks lines spoken while play goes on, such as companion banter started by a trigger: the engine shows each line for a while and acknowledges it itself, and the graph may not contain choices. The default, `Blocking`, has the player's attention. Conditions and actions are written in the node that uses them; a package lists the `variables` it introduces.
 
 ```ron
 (id: "greeting", kind: Line, speaker: "speaker", text: Message((resource: "...", key: "reward")),
@@ -259,11 +263,11 @@ Graph repeat policies are `Always`, `OnceCompleted` and `Cooldown { millis }` me
 
 Package-owned `ClaimDefinition { id, scope }` assets use the same scope selectors and a stable UUID independent of dialogue identity. Wrap an atomic reward group in `Action::Claim { claim, actions }`. The first accepted group executes its actions and records the claim in the same transaction as inventory, quest, XP, history, cursor and RNG changes. Later attempts skip that group, including its random rolls; ordinary conversation choices can still repeat. Different graphs/NPCs can reference one shared playthrough claim, or use an actor/pair scope. `Condition::Claimed` can also hide a claimed offer. Nested claim groups share the action complexity budget. All effects and claims roll back on failure; previews never claim rewards. Inventory/rule conditions remain separate from the claim guard, so reopening a conversation need not grant the reward again.
 
-[`conversation_runs.rs`](../crates/game_content/tests/conversation_runs.rs) exercises hub loops, scoped claims across graphs/NPCs, three-role localization, mid-line restore, remembered refusals, saved cooldowns, and stale inputs. These are standalone domain contracts. Spatial reach/access, proximity scheduling, recent-variant avoidance, background barks and role selection from the live party remain application/world follow-ups.
+[`conversation_runs.rs`](../crates/game_content/tests/conversation_runs.rs) exercises hub loops, scoped claims across graphs/NPCs, three-role localization, mid-line restore, remembered refusals, saved cooldowns, and stale inputs. These are standalone domain contracts. Spatial reach/access, proximity scheduling, recent-variant avoidance and role selection from the live party remain application/world follow-ups.
 
 ### Session and save APIs
 
-`GameSession::new(content_source, state)` reads the always-loaded definitions, checks the state in full and loads the graphs of conversations that are in progress. Production uses `ContentRepository`; tools and tests use `ToolContent` over a loaded project. `apply(Command)` returns `CommandOutcome { header, events }`, or an error with state, clock and random streams unchanged. `state()` is the whole playthrough; `derived`, `conversation_view`, `preview_interaction`, `quote_trade`, `container_contents` and `next_movement` are read models. Absent records read as defaults through the state accessors (`quest`, `relationship`, `history`, `object`, `location`, `trigger`).
+`GameSession::new(content_source, state)` reads the always-loaded definitions, checks the state in full and loads the graphs of conversations that are in progress. Production uses `ContentRepository`; tools and tests use `ToolContent` over a loaded project. `apply(Command)` returns `CommandOutcome { header, events }`, or an error with state, clock and random streams unchanged. `state()` is the whole playthrough; `derived`, `conversation_view`, `preview_interaction`, `quote_trade` and `container_contents` are read models. Absent records read as defaults through the state accessors (`quest`, `relationship`, `history`, `object`, `areas`, `trigger`).
 
 `LoadedProject::start` builds the authored starting state in a tool session and `run_scenario` also plays the scenario steps. To play against published content, take `project.start()?.into_state()` and open a session over a `ContentRepository`.
 
@@ -319,8 +323,28 @@ cargo run --offline -p yarra-game-content -- scenario content/gameplay/demo scen
 cargo test --offline -p yarra-game-content --test world_actions
 ```
 
-The guard package's `world/` directory declares separate gate/container, approach area and escort trigger assets. Publish the source to SQLite before runtime use, as above.
+A package lists the `areas` it refers to by name and its `objects` and `triggers` as files under `world/`. A trigger names who it is about, what it listens for, an optional condition and its actions:
 
-Use `Command::World` for logical object operations, position observations and movement reports. Call `world_work_pending`/`ProcessNext` from the coordinator or `HeadlessDriver::pump_world(limit)` in automation. A false pump result leaves queued work for the next tick. `next_movement(after_trigger)` polls one pending request at a time; send `StartMove` using its action ID and later `FinishMove` with an explicit outcome. The test adapter supplies these outcomes; real movement/pathfinding is separate. After loading, resume polling using saved IDs rather than creating replacement requests. `AdvanceTime` advances the logical clock; pumping processes overdue movement failures.
+```ron
+(
+    id: "guard/escort",
+    player: "hero",
+    speaker: Some("guard"),
+    on: [Entered(actor: "hero", area: "guard/approach"), QuestStarted("guard/gate")],
+    condition: Some(All([QuestStatus(quest: "guard/gate", status: Active), InsideArea(area: "guard/approach")])),
+    actions: [Move(actor: Speaker, to: "guard/gate_post", timeout_ms: Some(10000))],
+    repeat: Always,
+)
+```
 
-For normal object access, `Open` checks lock/destruction state, then `container_contents` exposes the bound inventory. Use `state().object(content, id)`, `.location(content, actor)` and `.trigger(id)` for read models, saved sequence status and diagnostics. Failed immediate effects do not partially consume rewards. Three consecutive failures suspend automatic attempts; `RetryTrigger` is an explicit recovery command after correcting the cause. Engine adapters must authorize access/control and report movement interruption. These APIs are not wired into graphical play yet.
+`on` takes `Entered`, `Exited`, `Arrived`, `MoveFailed`, `ItemAcquired`, `QuestStarted`, `QuestChanged`, `VariableChanged` and `DialogueCompleted`. Conditions are checked when the signal is processed, so when several things must all be true, listen for each of them and test them all. `repeat` is `Once` (the default), `Always` or `Cooldown(millis: …)`. The actions take effect together or not at all; a failure is reported as `TriggerFailed` and the trigger can fire another time. Two trigger-only actions: `Move(actor, to, timeout_ms)` asks the engine to walk an actor into an area, and `StartDialogue(dialogue, speaker)` queues a conversation with the trigger's player. What should happen on arrival is a second trigger listening for `Arrived`.
+
+The engine's side is three commands under `Command::World`:
+
+- `Observe { actor, position, areas }` reports where an actor is and which named areas contain it. Send it when the set of areas changes. It produces `Entered`/`Exited`, and `Arrived` when the actor was walking to one of them.
+- `MoveFailed { actor, request }` gives up the walk in `state().world.movements` with that request number.
+- `ProcessNext` carries out the oldest queued work: the triggers subscribed to one signal, a queued conversation, or a walk whose time ran out. Call it while `world_work_pending()`; `HeadlessDriver::pump_world(limit)` does that in automation.
+
+Occupancy, walks and queued work are saved; after a load the engine continues from `state().world.movements` instead of expecting new requests. `AdvanceTime` moves the clock that walk timeouts and cooldowns use.
+
+For normal object access, `Open` checks lock/destruction state, then `container_contents` exposes the bound inventory. Use `state().object(content, id)`, `.areas(actor)` and `.trigger(id)` for read models and diagnostics. Engine adapters must authorize access and control. The `--story` slice in the game is one such adapter ([`story/scene.rs`](../crates/app_game/src/story/scene.rs)).
