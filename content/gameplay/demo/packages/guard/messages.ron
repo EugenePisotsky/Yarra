@@ -14,6 +14,8 @@
     "refuse": (arguments: {}),
     "companion-aside": (arguments: {}),
     "guard-reply": (arguments: {}),
+    "banter-remark": (arguments: {}),
+    "banter-reply": (arguments: {}),
     "gate-topic": (arguments: {}),
     "supply-topic": (arguments: {}),
 }), locales: [
@@ -22,6 +24,8 @@
         "refuse": "c22a3ae2c7ccb0184994c51ca627537bec2343b37dc0431d50f9f2a29e29c787",
         "companion-aside": "6a8e1a6ca84946097203c53a02eb49ffce79e0fd7483d9d080a007ca6555ac22",
         "guard-reply": "af0dbea3ca10c99d8a71dd5a02786b1fd69c7a2e4afe6c5f90df77eed7f97d7b",
+        "banter-remark": "50f23b9df9f70bc45bbf3633036fbdf3bff9130591eac9fe0078a71f51daf4f4",
+        "banter-reply": "a15ca5d35dbbf2d765ed9a2e6e5d4f650c1fb5653631ae5d609a391de6567ecb",
         "duty": "f166f156c192311093cbab454df7b1a1f2a4c2387c7e52769bfe394f5443b626",
         "gate-objective": "9f035cb70676b07f427078ba4dfa2701f1686d8e752b3e9c15e7fd96e6c81420",
         "gate-title": "051dace7f5d3469878b6c4482199f6268377db36fcf3d2a757976140de23007c",

@@ -149,6 +149,20 @@ pub enum Action {
         skill: Key,
         amount: u64,
     },
+    /// Asks the engine to walk an actor into an area. `Arrived` or `MoveFailed` follows.
+    Move {
+        actor: Participant,
+        to: AreaId,
+        #[serde(default)]
+        timeout_ms: Option<u64>,
+    },
+    /// Starts a conversation with the player once the current command is done. Without a
+    /// speaker named, it is the speaker of the rule this action belongs to.
+    StartDialogue {
+        dialogue: DialogueId,
+        #[serde(default)]
+        speaker: Option<Participant>,
+    },
     Set {
         variable: VariableId,
         #[serde(default)]
@@ -383,6 +397,16 @@ impl GameContent {
                 self.game.rules.skill(skill)?;
                 require(*amount > 0, "zero XP reward")?;
             }
+            Action::Move { to, timeout_ms, .. } => {
+                self.area(*to)?;
+                require(
+                    timeout_ms.is_none_or(|ms| ms > 0 && ms <= 86_400_000),
+                    "movement timeout must be 1ms..1 day",
+                )?;
+            }
+            Action::StartDialogue { dialogue, .. } => {
+                self.dialogue_contract(*dialogue)?;
+            }
             Action::Set {
                 variable,
                 of,
@@ -455,7 +479,6 @@ impl GameContent {
         self.validate_selection_links()?;
         let mut canonical = self.clone();
         canonical.game.world.objects.sort_by_key(|v| v.id);
-        canonical.game.world.areas.sort_by_key(|v| v.id);
         canonical.game.world.triggers.sort_by_key(|v| v.id);
         canonical.text.sort_by_key(|t| t.id);
         canonical.items.categories.sort_by_key(|v| v.id);

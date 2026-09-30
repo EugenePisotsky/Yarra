@@ -40,6 +40,10 @@ type Game = Reads & {
     set: (variable: string, value: boolean | number | string, actor: string?) -> (),
     add: (variable: string, amount: number, actor: string?) -> (),
     set_locked: (object: string, locked: boolean) -> (),
+    -- Asks the engine to walk the actor into an area. Triggers hear Arrived or MoveFailed.
+    move_to: (actor: string, area: string, timeout_ms: number?) -> (),
+    -- Starts a conversation with the scene's player once the current command is done.
+    start_dialogue: (dialogue: string, speaker: string?) -> (),
     -- A d20 check from the saved random stream. True when it passes.
     roll: (actor: string, skill: string, difficulty: number) -> boolean,
     -- Takes a once-only claim. False when it was already taken.

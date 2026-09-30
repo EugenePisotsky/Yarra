@@ -161,7 +161,7 @@ pub enum Asset {
     DialogueContract(dialogue::DialogueContract),
     Claim(dialogue::ClaimDefinition),
     Object(gameplay::ObjectDefinition),
-    Area(gameplay::AreaDefinition),
+    Area(AreaId),
     Trigger(gameplay::TriggerDefinition),
     Script(gameplay::ScriptModule),
 }
@@ -224,7 +224,7 @@ impl Asset {
             Self::DialogueContract(v) => AssetId::DialogueContract(v.id),
             Self::Claim(v) => AssetId::Claim(v.id),
             Self::Object(v) => AssetId::Object(v.id),
-            Self::Area(v) => AssetId::Area(v.id),
+            Self::Area(id) => AssetId::Area(*id),
             Self::Trigger(v) => AssetId::Trigger(v.id),
         }
     }
@@ -235,29 +235,24 @@ impl Asset {
         match self {
             Self::Trigger(v) => {
                 refs.insert(AssetId::Rules);
-                condition_references(&v.condition, &mut refs)?;
-                if let gameplay::TriggerActivation::Events(signals) = &v.activation {
-                    for signal in signals {
-                        use gameplay::WorldSignal::*;
-                        refs.extend(match signal {
-                            Entered { area, .. } | Exited { area, .. } => {
-                                Some(AssetId::Area(*area))
-                            }
-                            ItemAcquired { definition, .. } => Some(AssetId::Item(*definition)),
-                            QuestStarted(id) | Quest(id) => Some(AssetId::Quest(*id)),
-                            Variable(id) => Some(AssetId::Variable(*id)),
-                            History(key) => Some(AssetId::DialogueContract(key.dialogue)),
-                            Claim(key) => Some(AssetId::Claim(key.claim)),
-                            Actor(_) | Relationship(_) => None,
-                        });
-                    }
+                if let Some(condition) = &v.condition {
+                    condition_references(condition, &mut refs)?;
                 }
-                for step in &v.steps {
-                    if let gameplay::SequenceStep::Apply(actions) = step {
-                        for action in actions {
-                            action_references(action, &mut refs)?;
+                for signal in &v.on {
+                    use gameplay::WorldSignal::*;
+                    refs.extend(match signal {
+                        Entered { area, .. } | Exited { area, .. } | Arrived { area, .. } => {
+                            Some(AssetId::Area(*area))
                         }
-                    }
+                        ItemAcquired { definition, .. } => Some(AssetId::Item(*definition)),
+                        QuestStarted(id) | QuestChanged(id) => Some(AssetId::Quest(*id)),
+                        VariableChanged(id) => Some(AssetId::Variable(*id)),
+                        DialogueCompleted(id) => Some(AssetId::DialogueContract(*id)),
+                        MoveFailed(_) => None,
+                    });
+                }
+                for action in &v.actions {
+                    action_references(action, &mut refs)?;
                 }
             }
             Self::Text(v) => refs.extend(v.imports.iter().copied().map(AssetId::Text)),
@@ -303,7 +298,6 @@ impl Asset {
     pub(crate) fn validate_local(&self) -> Result<()> {
         match self {
             Self::Object(v) => v.name.validate()?,
-            Self::Area(v) => v.validate()?,
             Self::Trigger(v) => v.validate()?,
             Self::DialogueContract(v) => v.validate()?,
             Self::Quest(v) => v.validate()?,
@@ -382,6 +376,8 @@ fn action_references(action: &Action, refs: &mut BTreeSet<AssetId>) -> Result<()
                 Some(AssetId::Variable(*variable))
             }
             Action::AwardExperience { .. } | Action::SkillCheck { .. } => Some(AssetId::Rules),
+            Action::Move { to, .. } => Some(AssetId::Area(*to)),
+            Action::StartDialogue { dialogue, .. } => Some(AssetId::DialogueContract(*dialogue)),
             Action::Relationship { .. } => None,
         });
         Ok(())

@@ -58,7 +58,7 @@ fn conversations_reuse_text_keys_and_node_names_without_sharing_logic() {
         .push(format!("{folder}/conversation.ron"));
     write(root.join("packages/old_gate/package.ron"), &package);
     let project = LoadedProject::load_directory(&root).unwrap();
-    assert_eq!(project.content().game.dialogues.len(), 7);
+    assert_eq!(project.content().game.dialogues.len(), 8);
     let mut session = project.start().unwrap();
     for dialogue in [GATE_DIALOGUE, second_id] {
         session

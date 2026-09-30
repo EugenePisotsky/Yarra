@@ -15,7 +15,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-pub const SOURCE_FORMAT_VERSION: u32 = 8;
+pub const SOURCE_FORMAT_VERSION: u32 = 9;
 pub(crate) const MAX_DOCUMENT_BYTES: usize = 16 * 1024 * 1024;
 const MAX_PROJECT_BYTES: usize = 64 * 1024 * 1024;
 const MAX_TRANSLATION_BYTES: usize = 2 * 1024 * 1024;
@@ -35,7 +35,8 @@ pub struct ProjectFile {
 #[serde(deny_unknown_fields)]
 pub struct PackageFile {
     pub objects: Vec<String>,
-    pub areas: Vec<String>,
+    /// Names of the world areas this package refers to.
+    pub areas: BTreeSet<AreaId>,
     pub triggers: Vec<String>,
     pub claims: Vec<String>,
     pub quests: Vec<String>,
@@ -152,10 +153,9 @@ impl LoadedProject {
                 own!(AssetId::Object(d.id));
                 world.objects.push(d);
             }
-            for path in &package.areas {
-                let d: gameplay::AreaDefinition = source.ron(path)?;
-                own!(AssetId::Area(d.id));
-                world.areas.push(d);
+            for area in &package.areas {
+                own!(AssetId::Area(*area));
+                world.areas.insert(*area);
             }
             for path in &package.triggers {
                 let d: gameplay::TriggerDefinition = source.ron(path)?;
@@ -334,7 +334,6 @@ impl LoadedProject {
         };
         // Canonical identities, not manifest/file traversal order, determine publication hashes.
         content.game.world.objects.sort_by_key(|v| v.id);
-        content.game.world.areas.sort_by_key(|v| v.id);
         content.game.world.triggers.sort_by_key(|v| v.id);
         content.text.sort_by_key(|v| v.id);
         content.items.categories.sort_by_key(|v| v.id);

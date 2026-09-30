@@ -38,6 +38,15 @@ pub enum NodeKind {
     /// Offered to the player together with its eligible sibling choices.
     Choice,
 }
+/// How a conversation is presented. The run itself works the same either way.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Mode {
+    /// Takes the player's attention: lines wait to be acknowledged and choices are offered.
+    #[default]
+    Blocking,
+    /// Plays alongside the game, e.g. companions talking while walking. Lines only.
+    Ambient,
+}
 /// How a role gets its actor when a conversation starts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Role {
@@ -76,6 +85,8 @@ pub struct Dialogue {
     pub roles: BTreeMap<Key, Role>,
     pub history_scope: ScopeSelector,
     pub repeat: RepeatPolicy,
+    #[serde(default)]
+    pub mode: Mode,
     /// Entry nodes, tried in order like any node's children.
     pub start: Vec<Key>,
     pub nodes: Vec<Node>,
@@ -90,6 +101,7 @@ pub struct DialogueContract {
     pub roles: BTreeMap<Key, Role>,
     pub history_scope: ScopeSelector,
     pub repeat: RepeatPolicy,
+    pub mode: Mode,
     pub nodes: BTreeSet<Key>,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -199,6 +211,7 @@ impl Dialogue {
             roles: self.roles.clone(),
             history_scope: self.history_scope,
             repeat: self.repeat,
+            mode: self.mode,
             nodes: self.nodes.iter().map(|n| n.id.clone()).collect(),
         }
     }
@@ -211,6 +224,10 @@ impl Dialogue {
         let mut ids = BTreeSet::new();
         for node in &self.nodes {
             require(ids.insert(&node.id), "duplicate dialogue node")?;
+            require(
+                self.mode == Mode::Blocking || node.kind == NodeKind::Line,
+                "an ambient conversation cannot offer choices",
+            )?;
             require(
                 self.roles.contains_key(&node.speaker),
                 "node speaker is not a declared role",

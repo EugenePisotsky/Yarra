@@ -1,4 +1,6 @@
-//! Durable logical world contracts. Engine adapters own navigation and physical realization.
+//! The logical world: objects and their locks, which areas actors are in, movement the
+//! engine carries out, and triggers that react to what happens. Shapes and positions belong
+//! to the engine; gameplay knows areas only by name and is told who is inside them.
 use crate::Result;
 use crate::actors::Position;
 use crate::*;
@@ -13,7 +15,8 @@ pub const MAX_PENDING_EVENTS: usize = 4096;
 #[serde(deny_unknown_fields)]
 pub struct WorldDefinitions {
     pub objects: Vec<ObjectDefinition>,
-    pub areas: Vec<AreaDefinition>,
+    /// Areas this content refers to. The world supplies their shapes under the same names.
+    pub areas: BTreeSet<AreaId>,
     pub triggers: Vec<TriggerDefinition>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -30,42 +33,9 @@ pub struct ObjectDefinition {
     pub kind: ObjectKind,
     pub locked: bool,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AreaDefinition {
-    pub id: AreaId,
-    pub min: Position,
-    pub max: Position,
-}
-impl AreaDefinition {
-    pub fn validate(&self) -> Result<()> {
-        require(
-            (0..3).all(|i| self.min.millimetres[i] < self.max.millimetres[i]),
-            "empty area bounds",
-        )?;
-        Ok(())
-    }
-    /// Half-open bounds give adjacent areas an unambiguous shared boundary.
-    pub fn contains(&self, p: &Position) -> bool {
-        (0..3).all(|i| {
-            self.min.millimetres[i] <= p.millimetres[i]
-                && p.millimetres[i] < self.max.millimetres[i]
-        })
-    }
-}
+/// Something that happened, which triggers can listen for.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum WorldSignal {
-    ItemAcquired {
-        actor: ActorId,
-        definition: ItemDefinitionId,
-    },
-    QuestStarted(QuestId),
-    Quest(QuestId),
-    Actor(ActorId),
-    Variable(VariableId),
-    History(dialogue::HistoryKey),
-    Claim(dialogue::ClaimKey),
-    Relationship(actors::RelationshipKey),
     Entered {
         actor: ActorId,
         area: AreaId,
@@ -74,178 +44,97 @@ pub enum WorldSignal {
         actor: ActorId,
         area: AreaId,
     },
+    /// A movement requested with `Move` reached its area.
+    Arrived {
+        actor: ActorId,
+        area: AreaId,
+    },
+    /// A requested movement was given up or ran out of time.
+    MoveFailed(ActorId),
+    /// The actor carries more of the item than before.
+    ItemAcquired {
+        actor: ActorId,
+        definition: ItemDefinitionId,
+    },
+    QuestStarted(QuestId),
+    QuestChanged(QuestId),
+    VariableChanged(VariableId),
+    DialogueCompleted(DialogueId),
 }
 impl WorldSignal {
     fn validate(&self, content: &GameContent) -> Result<()> {
         match self {
+            Self::Entered { area, .. } | Self::Exited { area, .. } | Self::Arrived { area, .. } => {
+                content.area(*area)?
+            }
+            Self::MoveFailed(_) => {}
             Self::ItemAcquired { definition, .. } => {
                 content.items.item(*definition)?;
             }
-            Self::QuestStarted(id) | Self::Quest(id) => {
+            Self::QuestStarted(id) | Self::QuestChanged(id) => {
                 content.quest(*id)?;
             }
-            Self::Variable(id) => {
+            Self::VariableChanged(id) => {
                 content.variable(*id)?;
             }
-            Self::Entered { area, .. } | Self::Exited { area, .. } => {
-                content.area(*area)?;
+            Self::DialogueCompleted(id) => {
+                content.dialogue_contract(*id)?;
             }
-            Self::History(key) => {
-                key.scope.validate()?;
-                require(
-                    content
-                        .dialogue_contract(key.dialogue)?
-                        .history_scope
-                        .accepts(key.scope),
-                    "trigger history scope mismatch",
-                )?;
-            }
-            Self::Claim(key) => {
-                key.scope.validate()?;
-                require(
-                    content.claim(key.claim)?.scope.accepts(key.scope),
-                    "trigger claim scope mismatch",
-                )?;
-            }
-            Self::Relationship(key) => actors::Relationship::neutral(*key).validate()?,
-            Self::Actor(_) => {}
         }
         Ok(())
     }
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum TriggerActivation {
-    /// Reconcile current state whenever any condition dependency changes.
-    Maintained,
-    /// Edge semantics: only these observations can initiate a sequence.
-    Events(BTreeSet<WorldSignal>),
-}
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TriggerRepeat {
-    OnceSucceeded,
+    #[default]
+    Once,
     Always,
-    Cooldown { millis: u64 },
-}
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SequenceStep {
-    Apply(Vec<Action>),
-    Move {
-        actor: Participant,
-        destination: Position,
-        timeout_ms: u64,
+    Cooldown {
+        millis: u64,
     },
 }
+/// When any of `on` happens and the condition holds, the actions run as one unit: either
+/// all of them take effect or none do.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TriggerDefinition {
     pub id: TriggerId,
-    /// Placed actor bindings. Spawned/dynamic instances can get a separate binding layer later.
-    pub participant: ActorId,
-    pub speaker: ActorId,
-    pub activation: TriggerActivation,
-    pub condition: Condition,
+    /// Who the condition and actions are about.
+    pub player: ActorId,
+    /// The other party, for rules that name `Speaker`.
+    #[serde(default)]
+    pub speaker: Option<ActorId>,
+    pub on: BTreeSet<WorldSignal>,
+    #[serde(default)]
+    pub condition: Option<Condition>,
+    pub actions: Vec<Action>,
+    #[serde(default)]
     pub repeat: TriggerRepeat,
-    pub steps: Vec<SequenceStep>,
 }
 impl TriggerDefinition {
+    pub fn speaker(&self) -> ActorId {
+        self.speaker.unwrap_or(self.player)
+    }
     pub fn validate(&self) -> Result<()> {
         require(
-            self.participant != self.speaker,
-            "trigger requires distinct actors",
+            self.speaker != Some(self.player),
+            "trigger speaker must differ from its player",
         )?;
         require(
-            !self.steps.is_empty() && self.steps.len() <= 32,
-            "sequence requires 1..32 steps",
+            !self.on.is_empty() && self.on.len() <= 32,
+            "trigger listens for 1..32 events",
         )?;
-        self.condition.visit(&mut |_| Ok(()))?;
-        if let TriggerActivation::Events(v) = &self.activation {
-            require(
-                !v.is_empty() && v.len() <= 32,
-                "event trigger requires 1..32 subscriptions",
-            )?;
-        }
+        require(
+            !self.actions.is_empty() && self.actions.len() <= 64,
+            "trigger has 1..64 actions",
+        )?;
         if let TriggerRepeat::Cooldown { millis } = self.repeat {
             require(
                 millis > 0 && millis <= i64::MAX as u64,
                 "invalid trigger cooldown",
             )?;
         }
-        let mut count = 0;
-        for step in &self.steps {
-            match step {
-                SequenceStep::Move { timeout_ms, .. } => require(
-                    *timeout_ms > 0 && *timeout_ms <= 86_400_000,
-                    "movement timeout must be 1ms..1 day",
-                )?,
-                SequenceStep::Apply(actions) => {
-                    require(!actions.is_empty(), "empty sequence step")?;
-                    for action in actions {
-                        action.visit(&mut |_| {
-                            count += 1;
-                            require(count <= 1024, "sequence action budget exceeded")?;
-                            Ok(())
-                        })?;
-                    }
-                }
-            }
-        }
         Ok(())
-    }
-    pub fn subscriptions(&self, content: &GameContent) -> Result<BTreeSet<WorldSignal>> {
-        if let TriggerActivation::Events(v) = &self.activation {
-            return Ok(v.clone());
-        }
-        let mut out = BTreeSet::new();
-        self.condition
-            .visit_resolved(&|id| content.predicate(id), &mut |c| {
-                match c {
-                    Condition::InsideArea { area } => {
-                        out.insert(WorldSignal::Entered {
-                            actor: self.participant,
-                            area: *area,
-                        });
-                        out.insert(WorldSignal::Exited {
-                            actor: self.participant,
-                            area: *area,
-                        });
-                    }
-                    Condition::HasItem { .. } | Condition::SkillExperience { .. } => {
-                        out.insert(WorldSignal::Actor(self.participant));
-                    }
-                    Condition::QuestStatus { quest, .. }
-                    | Condition::ObjectiveCompleted { quest, .. } => {
-                        out.insert(WorldSignal::Quest(*quest));
-                    }
-                    Condition::Variable { variable, .. } => {
-                        out.insert(WorldSignal::Variable(*variable));
-                    }
-                    Condition::History { dialogue, .. } => {
-                        out.insert(WorldSignal::History(
-                            content
-                                .dialogue_contract(*dialogue)?
-                                .history_key(self.participant, self.speaker),
-                        ));
-                    }
-                    Condition::Claimed { claim, .. } => {
-                        out.insert(WorldSignal::Claim(
-                            content.claim(*claim)?.key(self.participant, self.speaker),
-                        ));
-                    }
-                    Condition::Relationship { from, to, .. } => {
-                        out.insert(WorldSignal::Relationship(actors::RelationshipKey {
-                            from: from.resolve(self.participant, self.speaker),
-                            to: to.resolve(self.participant, self.speaker),
-                        }));
-                    }
-                    _ => {}
-                }
-                Ok(())
-            })?;
-        require(
-            !out.is_empty() && out.len() <= 64,
-            "maintained trigger needs 1..64 dependencies",
-        )?;
-        Ok(out)
     }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -266,114 +155,60 @@ impl ObjectState {
         }
     }
 }
+/// The areas an actor was last reported inside. Kept so that loading a save does not
+/// announce entering them again.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LocationState {
     pub actor: ActorId,
-    /// Adapter observations are ordered per actor and retried with the same sequence/position.
-    pub observation: u64,
-    pub last_observed: Option<Position>,
     pub areas: BTreeSet<AreaId>,
 }
-impl LocationState {
-    pub fn initial(actor: ActorId) -> Self {
-        Self {
-            actor,
-            observation: 0,
-            last_observed: None,
-            areas: BTreeSet::new(),
-        }
-    }
-}
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct ActionId {
-    pub trigger: TriggerId,
-    pub run: u64,
-    pub step: u16,
-}
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum MovementPhase {
-    Accepted,
-    Running,
-}
+/// A request for the engine to walk an actor into an area. It ends when the actor is
+/// reported inside that area, when the engine gives up, or when its time runs out.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct MoveRequest {
-    pub id: ActionId,
+pub struct Movement {
     pub actor: ActorId,
-    pub destination: Position,
-    pub deadline: GameTime,
-    pub phase: MovementPhase,
-}
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum MoveResult {
-    Arrived { position: Position },
-    Failed { reason: Key },
-    Cancelled,
-    TimedOut,
-}
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SequenceStatus {
-    Idle,
-    Running,
-    Succeeded,
-    Failed { reason: Key },
-    Cancelled,
+    pub to: AreaId,
+    /// Tells this request apart from an earlier one for the same actor.
+    pub request: u64,
+    pub deadline: Option<GameTime>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TriggerState {
     pub id: TriggerId,
-    pub run: u64,
-    pub step: u16,
-    pub status: SequenceStatus,
-    pub last_started: Option<GameTime>,
-    pub successes: u64,
-    pub consecutive_failures: u8,
-    pub diagnostic: Option<String>,
-    pub movement: Option<MoveRequest>,
-    /// Only the current run's bounded receipts are retained; older run IDs are rejected.
-    pub receipts: Vec<(ActionId, MoveResult)>,
+    pub fired: u64,
+    pub last_fired: Option<GameTime>,
 }
 impl TriggerState {
     pub fn initial(id: TriggerId) -> Self {
         Self {
             id,
-            run: 0,
-            step: 0,
-            status: SequenceStatus::Idle,
-            last_started: None,
-            successes: 0,
-            consecutive_failures: 0,
-            diagnostic: None,
-            movement: None,
-            receipts: vec![],
+            fired: 0,
+            last_fired: None,
         }
     }
     pub fn eligible(&self, d: &TriggerDefinition, now: GameTime) -> bool {
-        if self.status == SequenceStatus::Running || self.consecutive_failures >= 3 {
-            return false;
-        }
         match d.repeat {
-            TriggerRepeat::OnceSucceeded => self.successes == 0,
+            TriggerRepeat::Once => self.fired == 0,
             TriggerRepeat::Always => true,
             TriggerRepeat::Cooldown { millis } => self
-                .last_started
+                .last_fired
                 .is_none_or(|t| now.0.saturating_sub(t.0) >= millis),
         }
     }
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct EventId {
-    pub generation: u64,
-    pub ordinal: u32,
-}
+/// Work accepted by a command and carried out by a later `ProcessNext`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PendingEvent {
-    pub id: EventId,
-    pub signal: WorldSignal,
-    pub after: Option<TriggerId>,
+pub enum Pending {
+    Signal(WorldSignal),
+    /// A conversation asked for by an action. Starting it later lets its graph be loaded.
+    Start {
+        dialogue: DialogueId,
+        participant: ActorId,
+        speaker: ActorId,
+    },
 }
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -384,15 +219,23 @@ pub struct WorldState {
     pub locations: BTreeMap<ActorId, LocationState>,
     #[serde(with = "crate::state::keyed")]
     pub triggers: BTreeMap<TriggerId, TriggerState>,
-    /// Committed notifications awaiting trigger dispatch, oldest first.
-    pub pending: VecDeque<PendingEvent>,
+    #[serde(with = "crate::state::keyed")]
+    pub movements: BTreeMap<ActorId, Movement>,
+    /// Oldest first.
+    pub pending: VecDeque<Pending>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WorldCommand {
-    ObservePosition {
+    /// The engine reports where an actor is and which areas contain it.
+    Observe {
         actor: ActorId,
-        observation: u64,
         position: Position,
+        areas: BTreeSet<AreaId>,
+    },
+    /// The engine could not complete the movement it was asked for.
+    MoveFailed {
+        actor: ActorId,
+        request: u64,
     },
     Open {
         object: ObjectId,
@@ -407,18 +250,9 @@ pub enum WorldCommand {
     Destroy {
         object: ObjectId,
     },
-    /// One trigger delivery (or timeout) per commit. Call again while work remains.
+    /// Carries out the oldest pending work, or a movement whose time ran out. Call again
+    /// while work remains.
     ProcessNext,
-    RetryTrigger {
-        trigger: TriggerId,
-    },
-    StartMove {
-        id: ActionId,
-    },
-    FinishMove {
-        id: ActionId,
-        result: MoveResult,
-    },
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorldEvent {
@@ -431,16 +265,24 @@ pub enum WorldEvent {
         area: AreaId,
     },
     ObjectChanged(ObjectId),
-    MoveRequested(MoveRequest),
-    MoveFinished {
-        id: ActionId,
-        result: MoveResult,
+    MoveRequested(Movement),
+    Arrived {
+        actor: ActorId,
+        area: AreaId,
     },
-    SequenceChanged {
+    MoveFailed {
+        actor: ActorId,
+    },
+    TriggerFired(TriggerId),
+    /// The trigger's actions could not all be applied; none of them were.
+    TriggerFailed {
         trigger: TriggerId,
-        status: SequenceStatus,
+        reason: String,
     },
-    DeliveryProcessed(EventId),
+    DialogueRefused {
+        dialogue: DialogueId,
+        reason: String,
+    },
 }
 impl GameContent {
     pub fn object(&self, id: ObjectId) -> Result<&ObjectDefinition> {
@@ -451,13 +293,13 @@ impl GameContent {
             .find(|d| d.id == id)
             .ok_or_else(|| Invalid("unknown object".into()).into())
     }
-    pub fn area(&self, id: AreaId) -> Result<&AreaDefinition> {
-        self.game
-            .world
-            .areas
-            .iter()
-            .find(|d| d.id == id)
-            .ok_or_else(|| Invalid("unknown area".into()).into())
+    /// Checks that the content declares the area.
+    pub fn area(&self, id: AreaId) -> Result<()> {
+        require(
+            self.game.world.areas.contains(&id),
+            &format!("unknown area {id}"),
+        )
+        .map_err(Into::into)
     }
     pub fn trigger(&self, id: TriggerId) -> Result<&TriggerDefinition> {
         self.game
@@ -479,72 +321,42 @@ impl GameContent {
             d.name.validate()?;
         }
         let mut ids = BTreeSet::new();
-        for d in &w.areas {
-            require(ids.insert(d.id), "duplicate area")?;
-            d.validate()?;
-        }
-        let mut ids = BTreeSet::new();
         for d in &w.triggers {
             require(ids.insert(d.id), "duplicate trigger")?;
             d.validate()?;
-            self.validate_condition(&d.condition)?;
-            for signal in d.subscriptions(self)? {
+            for signal in &d.on {
                 signal.validate(self)?;
             }
-            for step in &d.steps {
-                if let SequenceStep::Apply(actions) = step {
-                    for action in actions {
-                        self.validate_action(action, 0, &mut 1024)?;
-                    }
-                }
+            if let Some(condition) = &d.condition {
+                self.validate_condition(condition)?;
+            }
+            let mut budget = 1024;
+            for action in &d.actions {
+                self.validate_action(action, 0, &mut budget)?;
             }
         }
         Ok(())
     }
 }
-impl GameContent {
-    pub fn areas_at(&self, position: &Position) -> Result<BTreeSet<AreaId>> {
-        let ids: BTreeSet<_> = self
-            .game
-            .world
-            .areas
-            .iter()
-            .filter(|a| a.contains(position))
-            .map(|a| a.id)
-            .collect();
-        require(
-            ids.len() <= MAX_AREA_OVERLAP,
-            "area overlap budget exceeded",
-        )?;
-        Ok(ids)
-    }
-}
-/// Which triggers listen to which signal, built once from the loaded definitions.
+/// Which triggers listen for which signal, built once from the loaded definitions.
 #[derive(Debug, Default)]
 pub struct TriggerIndex(BTreeMap<WorldSignal, BTreeSet<TriggerId>>);
 impl TriggerIndex {
-    pub fn build(content: &GameContent) -> Result<Self> {
+    pub fn build(content: &GameContent) -> Self {
         let mut index = BTreeMap::<_, BTreeSet<_>>::new();
         for d in &content.game.world.triggers {
-            for signal in d.subscriptions(content)? {
-                index.entry(signal).or_default().insert(d.id);
+            for signal in &d.on {
+                index.entry(signal.clone()).or_default().insert(d.id);
             }
         }
-        Ok(Self(index))
+        Self(index)
     }
     pub fn subscribed(&self, signal: &WorldSignal) -> bool {
         self.0.contains_key(signal)
     }
-    /// Subscribers are visited in identity order; `after` resumes a partly delivered event.
-    pub fn next(&self, signal: &WorldSignal, after: Option<TriggerId>) -> Option<TriggerId> {
-        let ids = self.0.get(signal)?;
-        match after {
-            Some(after) => ids
-                .range((std::ops::Bound::Excluded(after), std::ops::Bound::Unbounded))
-                .next(),
-            None => ids.first(),
-        }
-        .copied()
+    /// In identity order, so the same event always runs its triggers in the same order.
+    pub fn subscribers(&self, signal: &WorldSignal) -> impl Iterator<Item = TriggerId> + '_ {
+        self.0.get(signal).into_iter().flatten().copied()
     }
 }
 impl WorldState {
@@ -553,17 +365,18 @@ impl WorldState {
             self.pending.len() <= MAX_PENDING_EVENTS,
             "world state budget exceeded",
         )?;
-        let mut events = BTreeSet::new();
-        for event in &self.pending {
-            require(
-                event.id.generation > 0
-                    && event.id.generation < state.generation
-                    && (event.id.ordinal as usize) < MAX_EVENTS_PER_COMMAND
-                    && events.insert(event.id),
-                "invalid pending event identity",
-            )?;
-            if let Some(id) = event.after {
-                content.trigger(id)?;
+        for work in &self.pending {
+            match work {
+                Pending::Signal(signal) => signal.validate(content)?,
+                Pending::Start {
+                    dialogue,
+                    participant,
+                    speaker,
+                } => {
+                    content.dialogue_contract(*dialogue)?;
+                    state.actor(*participant)?;
+                    state.actor(*speaker)?;
+                }
             }
         }
         for o in self.objects.values() {
@@ -573,84 +386,10 @@ impl WorldState {
             state.check_location(content, l)?;
         }
         for t in self.triggers.values() {
-            t.validate(content, state)?;
+            state.check_trigger(content, t)?;
         }
-        Ok(())
-    }
-}
-impl TriggerState {
-    pub(crate) fn validate(&self, content: &GameContent, state: &SessionState) -> Result<()> {
-        let t = self;
-        let d = content.trigger(t.id)?;
-        state.actor(d.participant)?;
-        state.actor(d.speaker)?;
-        require(
-            t.run <= i64::MAX as u64
-                && t.successes <= t.run
-                && usize::from(t.step) <= d.steps.len()
-                && t.receipts.len() <= 32
-                && t.consecutive_failures <= 3
-                && t.diagnostic.as_ref().is_none_or(|d| d.len() <= 2048)
-                && t.last_started.is_none_or(|time| time <= state.time),
-            "invalid sequence progress",
-        )?;
-        require(
-            (t.run == 0) == (t.status == SequenceStatus::Idle)
-                && (t.run == 0) == t.last_started.is_none(),
-            "invalid sequence run/status",
-        )?;
-        if t.status == SequenceStatus::Idle {
-            require(
-                t.step == 0 && t.receipts.is_empty() && t.successes == 0,
-                "invalid idle sequence",
-            )?;
-        }
-        if t.status == SequenceStatus::Succeeded {
-            require(
-                usize::from(t.step) == d.steps.len() && t.successes > 0,
-                "invalid successful sequence",
-            )?;
-        }
-        let mut receipts = BTreeSet::new();
-        for (id, result) in &t.receipts {
-            require(
-                id.trigger == t.id && id.run == t.run && id.step <= t.step && receipts.insert(*id),
-                "invalid movement receipt",
-            )?;
-            let Some(SequenceStep::Move { destination, .. }) = d.steps.get(usize::from(id.step))
-            else {
-                return Err(Invalid("receipt is not a movement step".into()).into());
-            };
-            if let MoveResult::Arrived { position } = result {
-                require(position == destination, "invalid arrival receipt")?;
-            }
-        }
-        require(
-            (t.status == SequenceStatus::Running) == t.movement.is_some(),
-            "running sequence must await movement",
-        )?;
-        if let Some(m) = &t.movement {
-            require(
-                !receipts.contains(&m.id)
-                    && m.id
-                        == ActionId {
-                            trigger: t.id,
-                            run: t.run,
-                            step: t.step,
-                        }
-                    && m.deadline.0 <= i64::MAX as u64,
-                "invalid pending movement identity",
-            )?;
-            match d.steps.get(usize::from(t.step)) {
-                Some(SequenceStep::Move {
-                    actor, destination, ..
-                }) => require(
-                    m.actor == actor.resolve(d.participant, d.speaker)
-                        && &m.destination == destination,
-                    "movement plan mismatch",
-                )?,
-                _ => return Err(Invalid("movement step missing".into()).into()),
-            }
+        for m in self.movements.values() {
+            state.check_movement(content, m)?;
         }
         Ok(())
     }

@@ -1,0 +1,11 @@
+// The guard reaches the gate: take the key, finish the quest, open up.
+(
+    id: "guard/open_gate",
+    player: "hero",
+    speaker: Some("guard"),
+    on: [Arrived(actor: "guard", area: "guard/gate_post")],
+    actions: [
+        Script("guard.take_key"),
+        SetLocked(object: "guard/chest", locked: false),
+    ],
+)

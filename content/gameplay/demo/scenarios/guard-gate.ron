@@ -99,13 +99,14 @@
     steps: [
         ExpectObject(object: "guard/old_gate", locked: true, open: false),
         Quest(quest: "guard/gate", transition: Start),
-        World(ObservePosition(actor: "hero", observation: 1, position: (millimetres: (1500, 0, 0)))),
+        // The engine reports the hero inside the approach; the guard is asked to walk.
+        World(Observe(actor: "hero", position: (millimetres: (1500, 0, 0)), areas: ["guard/approach"])),
         PumpWorld(limit: 256),
-        ExpectMovement(trigger: "guard/escort", phase: Accepted),
+        ExpectMovement(actor: "guard", to: "guard/gate_post"),
         ExpectObject(object: "guard/old_gate", locked: true, open: false),
-        World(StartMove(id: (trigger: "guard/escort", run: 1, step: 0))),
-        ExpectMovement(trigger: "guard/escort", phase: Running),
-        World(FinishMove(id: (trigger: "guard/escort", run: 1, step: 0), result: Arrived(position: (millimetres: (1800, 0, 0))))),
+        // The engine reports the guard at the gate; the arrival hands over the key.
+        World(Observe(actor: "guard", position: (millimetres: (1800, 0, 0)), areas: ["guard/gate_post"])),
+        PumpWorld(limit: 256),
         World(Open(object: "guard/old_gate")),
         World(Open(object: "guard/chest")),
         ExpectObject(object: "guard/old_gate", locked: false, open: true),

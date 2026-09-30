@@ -54,7 +54,9 @@ impl LoadedProject {
             match record {
                 Asset::DialogueContract(v) => dialogue_contracts.push(v),
                 Asset::Object(v) => world.objects.push(v),
-                Asset::Area(v) => world.areas.push(v),
+                Asset::Area(v) => {
+                    world.areas.insert(v);
+                }
                 Asset::Trigger(v) => world.triggers.push(v),
                 Asset::Claim(v) => claims.push(v),
                 Asset::Quest(v) => quests.push(v),

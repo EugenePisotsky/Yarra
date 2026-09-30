@@ -93,6 +93,7 @@ pub fn content() -> GameContent {
         .into(),
         history_scope: ScopeSelector::Interaction,
         repeat: RepeatPolicy::OnceCompleted,
+        mode: Default::default(),
         start: vec![key("greeting")],
         nodes: vec![
             Node {

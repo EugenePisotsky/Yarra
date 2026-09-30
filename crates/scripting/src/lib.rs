@@ -294,6 +294,37 @@ fn add_effects<'s>(
         })?,
     )?;
     game.set(
+        "move_to",
+        scope.create_function(
+            move |_, (actor, area, timeout_ms): (String, String, Option<i64>)| {
+                let timeout_ms = timeout_ms
+                    .map(u64::try_from)
+                    .transpose()
+                    .map_err(|_| mlua::Error::runtime("timeout is out of range"))?;
+                apply(
+                    player(),
+                    Action::Move {
+                        actor: Participant::Actor(id(actor)?),
+                        to: id(area)?,
+                        timeout_ms,
+                    },
+                )
+            },
+        )?,
+    )?;
+    game.set(
+        "start_dialogue",
+        scope.create_function(move |_, (dialogue, speaker): (String, Option<String>)| {
+            apply(
+                player(),
+                Action::StartDialogue {
+                    dialogue: id(dialogue)?,
+                    speaker: speaker.map(id).transpose()?.map(Participant::Actor),
+                },
+            )
+        })?,
+    )?;
+    game.set(
         "roll",
         scope.create_function(
             move |_, (actor, skill, difficulty): (String, String, i64)| {

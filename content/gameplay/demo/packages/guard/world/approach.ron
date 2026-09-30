@@ -1,5 +1,0 @@
-(
-    id: "guard/approach",
-    min: (millimetres: (1000, -1000, -1000)),
-    max: (millimetres: (2000, 1000, 1000)),
-)

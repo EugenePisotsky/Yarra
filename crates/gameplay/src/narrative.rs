@@ -375,7 +375,7 @@ impl GameContent {
                     (Observed::Boolean(present), present)
                 }
                 Condition::InsideArea { area } => {
-                    let inside = state.location(content, pair.0)?.areas.contains(area);
+                    let inside = state.areas(pair.0).contains(area);
                     (Observed::Boolean(inside), inside)
                 }
                 Condition::History {

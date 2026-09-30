@@ -112,7 +112,10 @@ pub enum GameEvent {
         entries: Vec<ItemId>,
     },
     TradeCompleted,
-    DialogueStarted,
+    DialogueStarted {
+        key: ConversationKey,
+        mode: dialogue::Mode,
+    },
     ChoiceAccepted {
         choice: Key,
     },
@@ -156,7 +159,7 @@ impl<C: ContentSource> GameSession<C> {
             content.manifest == identity.manifest && content.game.dialogues.is_empty(),
             "session content identity mismatch",
         )?;
-        let triggers = TriggerIndex::build(&content)?;
+        let triggers = TriggerIndex::build(&content);
         let mut session = Self {
             source,
             identity,
@@ -275,15 +278,6 @@ impl<C: ContentSource> GameSession<C> {
             .interaction
             .ok_or_else(|| Invalid("NPC has no interaction profile".into()).into())
     }
-    /// Movements awaiting the adapter, in trigger order. Starting one is idempotent.
-    pub fn next_movement(&self, after: Option<TriggerId>) -> Option<MoveRequest> {
-        self.state
-            .world
-            .triggers
-            .values()
-            .filter(|t| after.is_none_or(|a| t.id > a))
-            .find_map(|t| t.movement.clone())
-    }
     pub fn world_work_pending(&self) -> bool {
         !self.state.world.pending.is_empty()
             || crate::world_runtime::timed_out(&self.state).is_some()
@@ -357,7 +351,20 @@ impl<C: ContentSource> GameSession<C> {
     /// Accepts the command as a whole or leaves state, clock and random streams untouched.
     pub fn apply(&mut self, command: Command) -> Result<CommandOutcome> {
         // Reads and graph loading happen first; nothing below performs I/O.
+        let mut unloadable = None;
         let talk = match &command {
+            // A conversation queued by an action starts now; its graph must be in memory.
+            Command::World(WorldCommand::ProcessNext)
+                if crate::world_runtime::timed_out(&self.state).is_none() =>
+            {
+                if let Some(Pending::Start { dialogue, .. }) = self.state.world.pending.front() {
+                    unloadable = self
+                        .ensure_dialogue(*dialogue)
+                        .err()
+                        .map(|error| error.to_string());
+                }
+                None
+            }
             Command::Talk {
                 participant,
                 speaker,
@@ -386,9 +393,14 @@ impl<C: ContentSource> GameSession<C> {
         let mut events = Vec::new();
         let result = (|| {
             match command {
-                Command::World(command) => {
-                    crate::world_runtime::apply(content, triggers, &mut tx, command, &mut events)?
-                }
+                Command::World(command) => crate::world_runtime::apply(
+                    content,
+                    triggers,
+                    &mut tx,
+                    command,
+                    unloadable,
+                    &mut events,
+                )?,
                 Command::Talk {
                     participant,
                     speaker,
@@ -491,7 +503,7 @@ fn finish(
 ) -> Result<()> {
     assign_item_ids(tx, events)?;
     check_changes(content, tx)?;
-    let signals: Vec<_> = crate::world_runtime::signals(content, tx)?
+    let signals: Vec<_> = crate::world_runtime::signals(tx)
         .into_iter()
         .filter(|s| triggers.subscribed(s))
         .collect();
@@ -503,16 +515,8 @@ fn finish(
         tx.world.pending.len() + signals.len() <= MAX_PENDING_EVENTS,
         "pending event queue full; process work before accepting more",
     )?;
-    let generation = tx.generation;
-    for (ordinal, signal) in signals.into_iter().enumerate() {
-        tx.pending_mut().push_back(PendingEvent {
-            id: EventId {
-                generation,
-                ordinal: ordinal as u32,
-            },
-            signal,
-            after: None,
-        });
+    for signal in signals {
+        tx.pending_mut().push_back(Pending::Signal(signal));
     }
     tx.bump_generation()
 }
@@ -562,10 +566,17 @@ fn check_changes(content: &GameContent, tx: &Tx) -> Result<()> {
         state.check_object(content, &state.object(content, *id)?)?;
     }
     for actor in before.locations.keys() {
-        state.check_location(content, &state.location(content, *actor)?)?;
+        if let Some(location) = state.world.locations.get(actor) {
+            state.check_location(content, location)?;
+        }
     }
     for id in before.triggers.keys() {
-        state.trigger(*id).validate(content, state)?;
+        state.check_trigger(content, &state.trigger(*id))?;
+    }
+    for actor in before.movements.keys() {
+        if let Some(movement) = state.world.movements.get(actor) {
+            state.check_movement(content, movement)?;
+        }
     }
     for key in before.variables.keys() {
         state.check_variable(content, *key)?;
@@ -883,6 +894,32 @@ pub(crate) fn run_action(
             state
                 .actor_mut(actor)?
                 .award_experience(&content.game.rules, skill, *amount)?
+        }
+        Action::Move {
+            actor: who,
+            to,
+            timeout_ms,
+        } => crate::world_runtime::request_move(
+            content,
+            state,
+            who.resolve(actor, speaker),
+            *to,
+            *timeout_ms,
+            events,
+        )?,
+        Action::StartDialogue {
+            dialogue,
+            speaker: with,
+        } => {
+            content.dialogue_contract(*dialogue)?;
+            let speaker = with.map_or(speaker, |p| p.resolve(actor, speaker));
+            require(speaker != actor, "a conversation needs two actors")?;
+            state.actor(speaker)?;
+            state.pending_mut().push_back(Pending::Start {
+                dialogue: *dialogue,
+                participant: actor,
+                speaker,
+            });
         }
         Action::Set {
             variable,

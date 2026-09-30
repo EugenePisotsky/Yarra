@@ -1,25 +1,20 @@
+// With the quest running and the key in hand, stepping into the approach sends the guard
+// to the gate. Any of the three can happen last, so all three are listened for.
 (
     id: "guard/escort",
-    participant: "hero",
-    speaker: "guard",
-    activation: Maintained,
-    condition: All([
+    player: "hero",
+    speaker: Some("guard"),
+    on: [
+        Entered(actor: "hero", area: "guard/approach"),
+        QuestStarted("guard/gate"),
+        ItemAcquired(actor: "hero", definition: "old_gate_key"),
+    ],
+    condition: Some(All([
         QuestStatus(quest: "guard/gate", status: Active),
         HasItem(definition: "old_gate_key", quantity: 1),
         InsideArea(area: "guard/approach"),
-    ]),
-    repeat: OnceSucceeded,
-    steps: [
-        Move(actor: Speaker, destination: (millimetres: (1800, 0, 0)), timeout_ms: 10000),
-        Apply([
-            Claim(claim: "guard/reward_claim", actions: [
-                ConsumeItem(definition: "old_gate_key", quantity: 1),
-                Quest(quest: "guard/gate", transition: CompleteObjective("deliver")),
-                Quest(quest: "guard/gate", transition: Complete),
-                AwardExperience(skill: "persuasion", amount: 10),
-            ]),
-            SetLocked(object: "guard/old_gate", locked: false),
-            SetLocked(object: "guard/chest", locked: false),
-        ]),
-    ],
+    ])),
+    actions: [Move(actor: Speaker, to: "guard/gate_post", timeout_ms: Some(10000))],
+    // A walk that fails can be asked for again; the conditions stop holding once the key is returned.
+    repeat: Always,
 )

@@ -37,6 +37,7 @@ keyed! {
     Conversation => ConversationKey, |v| ConversationKey::of(v);
     ObjectState => ObjectId, |v| v.id;
     LocationState => ActorId, |v| v.actor;
+    crate::Movement => ActorId, |v| v.actor;
     TriggerState => TriggerId, |v| v.id;
 }
 /// Saved as a plain list of records; duplicate identities are rejected on load.
@@ -223,15 +224,10 @@ impl SessionState {
             None => Ok(ObjectState::initial(content.object(id)?)),
         }
     }
-    /// Before the first reported observation, occupancy follows the actor's saved position.
-    pub fn location(&self, content: &GameContent, actor: ActorId) -> Result<LocationState> {
-        match self.world.locations.get(&actor) {
-            Some(state) => Ok(state.clone()),
-            None => Ok(LocationState {
-                areas: content.areas_at(&self.actor(actor)?.position)?,
-                ..LocationState::initial(actor)
-            }),
-        }
+    /// The areas the actor was last reported inside; none until the engine has reported.
+    pub fn areas(&self, actor: ActorId) -> &BTreeSet<AreaId> {
+        static NONE: BTreeSet<AreaId> = BTreeSet::new();
+        self.world.locations.get(&actor).map_or(&NONE, |l| &l.areas)
     }
     /// A variable nobody has set still has its initial value, for every actor.
     pub fn variable(&self, content: &GameContent, key: impl Into<VariableKey>) -> Result<Value> {
@@ -425,15 +421,26 @@ impl SessionState {
     pub(crate) fn check_location(&self, content: &GameContent, l: &LocationState) -> Result<()> {
         self.actor(l.actor)?;
         require(
-            l.areas.len() <= crate::MAX_AREA_OVERLAP
-                && l.observation <= i64::MAX as u64
-                && (l.observation == 0) == l.last_observed.is_none(),
-            "invalid location state",
+            l.areas.len() <= crate::MAX_AREA_OVERLAP,
+            "area overlap budget exceeded",
         )?;
         for id in &l.areas {
             content.area(*id)?;
         }
         Ok(())
+    }
+    pub(crate) fn check_trigger(&self, content: &GameContent, t: &TriggerState) -> Result<()> {
+        content.trigger(t.id)?;
+        require(
+            (t.fired == 0) == t.last_fired.is_none()
+                && t.last_fired.is_none_or(|time| time <= self.time),
+            "invalid trigger progress",
+        )
+        .map_err(Into::into)
+    }
+    pub(crate) fn check_movement(&self, content: &GameContent, m: &crate::Movement) -> Result<()> {
+        self.actor(m.actor)?;
+        content.area(m.to)
     }
     /// Checks every record and the invariants that span records. Used when a playthrough is
     /// created or loaded; commands only re-check the records they changed.

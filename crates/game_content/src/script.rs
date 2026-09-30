@@ -18,9 +18,10 @@ pub enum Step {
         locked: bool,
         open: bool,
     },
+    /// The actor has been asked to walk to this area and has not arrived yet.
     ExpectMovement {
-        trigger: TriggerId,
-        phase: gameplay::MovementPhase,
+        actor: ActorId,
+        to: AreaId,
     },
     ExpectContainer {
         object: ObjectId,
@@ -208,14 +209,14 @@ impl Step {
                 )?;
                 return Ok(());
             }
-            Self::ExpectMovement { trigger, phase } => {
+            Self::ExpectMovement { actor, to } => {
                 require(
                     session
                         .state()
-                        .trigger(*trigger)
-                        .movement
-                        .as_ref()
-                        .is_some_and(|m| m.phase == *phase),
+                        .world
+                        .movements
+                        .get(actor)
+                        .is_some_and(|m| m.to == *to),
                     "unexpected pending movement",
                 )?;
                 return Ok(());

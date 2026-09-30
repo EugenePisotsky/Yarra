@@ -137,11 +137,8 @@ impl ReadScope<'_> {
     }
     pub fn inside_area(&self, actor: ActorId, area: AreaId) -> Result<bool> {
         self.content.area(area)?;
-        Ok(self
-            .state
-            .location(self.content, actor)?
-            .areas
-            .contains(&area))
+        self.state.actor(actor)?;
+        Ok(self.state.areas(actor).contains(&area))
     }
     pub fn skill_experience(&self, actor: ActorId, skill: &Key) -> Result<u64> {
         self.content.game.rules.skill(skill)?;

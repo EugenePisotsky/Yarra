@@ -1,0 +1,8 @@
+// A companion remarks on the path the first time the party walks up to the gate.
+(
+    id: "guard/approach_banter",
+    player: "hero",
+    on: [Entered(actor: "hero", area: "guard/approach")],
+    condition: Some(Present("mira")),
+    actions: [StartDialogue(dialogue: "guard/banter", speaker: Some(Actor("mira")))],
+)

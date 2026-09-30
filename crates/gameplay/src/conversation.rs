@@ -278,7 +278,10 @@ pub(crate) fn start(
     record(content, state, key, HistoryEvent::Started)?;
     state.put_conversation(next);
     proceed(content, state, key, None)?;
-    events.push(GameEvent::DialogueStarted);
+    events.push(GameEvent::DialogueStarted {
+        key,
+        mode: contract.mode,
+    });
     Ok(())
 }
 pub(crate) fn present(

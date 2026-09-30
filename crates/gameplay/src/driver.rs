@@ -58,9 +58,6 @@ impl<C: ContentSource> HeadlessDriver<C> {
         }
         Ok(!self.session.world_work_pending())
     }
-    pub fn next_movement(&self, after: Option<game_types::TriggerId>) -> Option<MoveRequest> {
-        self.session.next_movement(after)
-    }
     pub fn container_contents(
         &self,
         object: game_types::ObjectId,

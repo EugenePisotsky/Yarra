@@ -15,3 +15,5 @@ supply-topic = About the supplies
 refuse = I will keep the key for now.
 companion-aside = So this is the gate everyone talks about.
 guard-reply = It was, before the key went missing.
+banter-remark = Someone keeps this path clear. We are expected.
+banter-reply = Then let us not keep them waiting.

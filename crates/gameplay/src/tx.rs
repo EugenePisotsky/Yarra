@@ -32,7 +32,9 @@ macro_rules! journal {
             scalars: Scalars,
             $(pub $name: BTreeMap<$key, Option<$value>>,)*
             pub claims: BTreeSet<ClaimKey>,
-            pending: Option<VecDeque<PendingEvent>>,
+            pending: Option<VecDeque<Pending>>,
+            /// Signals raised directly by this scope; dropped with it if it is undone.
+            pub signals: Vec<WorldSignal>,
             party: Option<BTreeSet<ActorId>>,
         }
         impl Before {
@@ -42,6 +44,7 @@ macro_rules! journal {
                     $($name: BTreeMap::new(),)*
                     claims: BTreeSet::new(),
                     pending: None,
+                    signals: Vec::new(),
                     party: None,
                 }
             }
@@ -74,6 +77,7 @@ macro_rules! journal {
                 if outer.pending.is_none() {
                     outer.pending = self.pending;
                 }
+                outer.signals.extend(self.signals);
                 if outer.party.is_none() {
                     outer.party = self.party;
                 }
@@ -102,6 +106,7 @@ journal! {
     objects / touch_object: ObjectId => ObjectState, world.objects;
     locations / touch_location: ActorId => LocationState, world.locations;
     triggers / touch_trigger: TriggerId => TriggerState, world.triggers;
+    movements / touch_movement: ActorId => Movement, world.movements;
     variables / touch_variable: VariableKey => Value, variables;
 }
 
@@ -223,14 +228,24 @@ impl<'a> Tx<'a> {
         self.touch_object(&id);
         Ok(self.state.world.objects.entry(id).or_insert(current))
     }
-    pub fn location_mut(
-        &mut self,
-        content: &GameContent,
-        actor: ActorId,
-    ) -> Result<&mut LocationState> {
-        let current = self.state.location(content, actor)?;
+    pub fn set_areas(&mut self, actor: ActorId, areas: BTreeSet<AreaId>) {
         self.touch_location(&actor);
-        Ok(self.state.world.locations.entry(actor).or_insert(current))
+        self.state
+            .world
+            .locations
+            .insert(actor, LocationState { actor, areas });
+    }
+    pub fn set_movement(&mut self, movement: Movement) {
+        self.touch_movement(&movement.actor);
+        self.state.world.movements.insert(movement.actor, movement);
+    }
+    pub fn remove_movement(&mut self, actor: ActorId) -> Option<Movement> {
+        self.touch_movement(&actor);
+        self.state.world.movements.remove(&actor)
+    }
+    /// Announces something the changed records alone do not show, such as an arrival.
+    pub fn signal(&mut self, signal: WorldSignal) {
+        self.before.signals.push(signal);
     }
     pub fn put_trigger(&mut self, progress: TriggerState) {
         self.touch_trigger(&progress.id);
@@ -256,19 +271,10 @@ impl<'a> Tx<'a> {
             self.before.claims.insert(key);
         }
     }
-    pub fn pending_mut(&mut self) -> &mut VecDeque<PendingEvent> {
+    pub fn pending_mut(&mut self) -> &mut VecDeque<Pending> {
         if self.before.pending.is_none() {
             self.before.pending = Some(self.state.world.pending.clone());
         }
         &mut self.state.world.pending
-    }
-    /// The trigger whose pending movement currently controls this actor.
-    pub fn movement_owner(&self, actor: ActorId) -> Option<TriggerId> {
-        self.state
-            .world
-            .triggers
-            .values()
-            .find(|t| t.movement.as_ref().is_some_and(|m| m.actor == actor))
-            .map(|t| t.id)
     }
 }

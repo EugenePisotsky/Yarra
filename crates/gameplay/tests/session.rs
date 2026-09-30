@@ -483,6 +483,7 @@ mod party {
             .into(),
             history_scope: dialogue::ScopeSelector::Interaction,
             repeat: dialogue::RepeatPolicy::Always,
+            mode: Default::default(),
             start: vec![key("greeting")],
             nodes: vec![
                 node(

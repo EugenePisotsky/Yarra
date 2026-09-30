@@ -375,3 +375,45 @@ fn variables_keep_their_type() {
         assert_eq!(session.state(), &before);
     }
 }
+
+#[test]
+fn a_script_sends_an_actor_walking_and_queues_a_conversation() {
+    use gameplay::{Movement, Pending};
+    const POST: game_types::AreaId = game_types::AreaId::named("old_gate/post");
+    let source = r#"
+local gate = {}
+function gate.has_key(game: Game, scene: Scene): boolean return true end
+function gate.hand_over(game: Game, scene: Scene)
+    game.move_to(scene.speaker, "old_gate/post", 5000)
+    game.start_dialogue("old_gate/gate")
+end
+return gate
+"#;
+    let mut content = content(source, "gate.hand_over");
+    content.game.world.areas.insert(POST);
+    content.validate().unwrap();
+    let mut session = at_choice(content);
+    choose(&mut session).unwrap();
+    let world = &session.state().world;
+    assert!(matches!(
+        world.movements.get(&MERCHANT),
+        Some(Movement {
+            to: POST,
+            deadline: Some(_),
+            ..
+        })
+    ));
+    assert!(world.pending.contains(&Pending::Start {
+        dialogue: GATE_DIALOGUE,
+        participant: HERO,
+        speaker: MERCHANT,
+    }));
+
+    // An area nobody declared is an error in the script, and the choice leaves nothing behind.
+    let source = source.replace("old_gate/post", "old_gate/nowhere");
+    let mut session = at_choice(self::content(&source, "gate.hand_over"));
+    let before = session.state().clone();
+    let error = choose(&mut session).unwrap_err().to_string();
+    assert!(error.contains("script gate.hand_over"), "{error}");
+    assert_eq!(session.state(), &before);
+}

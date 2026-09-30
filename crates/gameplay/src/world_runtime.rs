@@ -1,16 +1,17 @@
-//! Trigger dispatch, movement sequences and object commands.
+//! What happens in the world as commands are accepted: occupancy reports, movement, object
+//! commands, and running the triggers that listen for the resulting signals.
 use crate::Result;
 use crate::tx::Tx;
 use crate::*;
 use game_types::*;
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Notifications derived from what an accepted command actually changed, including changes
-/// made by dialogue actions and trigger sequences.
-pub(crate) fn signals(content: &GameContent, tx: &Tx) -> Result<BTreeSet<WorldSignal>> {
+/// Signals for what an accepted command changed, however it changed it: a dialogue action,
+/// a script and a direct command all announce an acquired item the same way.
+pub(crate) fn signals(tx: &Tx) -> BTreeSet<WorldSignal> {
     let state: &SessionState = tx;
     let before = &tx.before;
-    let mut signals = BTreeSet::new();
+    let mut signals: BTreeSet<WorldSignal> = before.signals.iter().cloned().collect();
     let quantities = |bag: Option<&inventory::Inventory>| {
         let mut totals = BTreeMap::new();
         for entry in bag.into_iter().flat_map(|b| &b.entries) {
@@ -19,306 +20,159 @@ pub(crate) fn signals(content: &GameContent, tx: &Tx) -> Result<BTreeSet<WorldSi
         totals
     };
     for (id, old) in &before.inventories {
-        let new = state.inventories.get(id);
-        let Some(owner) = new.or(old.as_ref()).map(|i| &i.owner) else {
+        let Some(new) = state.inventories.get(id) else {
             continue;
         };
-        if owner.kind != "actor" || old.as_ref() == new {
+        if new.owner.kind != "actor" || new.role != CARRIED {
             continue;
         }
-        let actor = ActorId(owner.id.0);
-        signals.insert(WorldSignal::Actor(actor));
-        if new.is_some_and(|i| i.role == CARRIED) {
-            let previous = quantities(old.as_ref());
-            for (definition, count) in quantities(new) {
-                if count > previous.get(&definition).copied().unwrap_or(0) {
-                    signals.insert(WorldSignal::ItemAcquired { actor, definition });
-                }
+        let actor = ActorId(new.owner.id.0);
+        let previous = quantities(old.as_ref());
+        for (definition, count) in quantities(Some(new)) {
+            if count > previous.get(&definition).copied().unwrap_or(0) {
+                signals.insert(WorldSignal::ItemAcquired { actor, definition });
             }
-        }
-    }
-    for (id, old) in &before.actors {
-        if old.as_ref() != state.actors.get(id) {
-            signals.insert(WorldSignal::Actor(*id));
         }
     }
     for (id, old) in &before.quests {
         let old = old.clone().unwrap_or_else(|| quests::Progress::new(*id));
         let new = state.quest(*id);
         if old != new {
-            signals.insert(WorldSignal::Quest(*id));
+            signals.insert(WorldSignal::QuestChanged(*id));
             if old.status == quests::Status::NotStarted && new.status == quests::Status::Active {
                 signals.insert(WorldSignal::QuestStarted(*id));
             }
         }
     }
     for (key, old) in &before.histories {
-        if old.as_ref() != state.histories.get(key) {
-            signals.insert(WorldSignal::History(*key));
-        }
-    }
-    for key in &before.claims {
-        signals.insert(WorldSignal::Claim(*key));
-    }
-    for (key, old) in &before.relationships {
-        let old = old
-            .clone()
-            .unwrap_or_else(|| actors::Relationship::neutral(*key));
-        if old != state.relationship(*key) {
-            signals.insert(WorldSignal::Relationship(*key));
+        let completed = old.as_ref().map_or(0, |h| h.completed);
+        if state.history(*key).completed > completed {
+            signals.insert(WorldSignal::DialogueCompleted(key.dialogue));
         }
     }
     for (key, old) in &before.variables {
         if old.as_ref() != state.variables.get(key) {
-            signals.insert(WorldSignal::Variable(key.variable));
+            signals.insert(WorldSignal::VariableChanged(key.variable));
         }
     }
     for (actor, old) in &before.locations {
-        // Before its first record, occupancy followed the actor's position at that time.
-        let previous = match old {
-            Some(location) => location.areas.clone(),
-            None => {
-                let position = match before.actors.get(actor) {
-                    Some(Some(old)) => &old.position,
-                    _ => &state.actor(*actor)?.position,
-                };
-                content.areas_at(position)?
-            }
-        };
-        let current = state.location(content, *actor)?.areas;
-        for area in current.difference(&previous) {
+        let none = BTreeSet::new();
+        let previous = old.as_ref().map_or(&none, |l| &l.areas);
+        let current = state.areas(*actor);
+        for area in current.difference(previous) {
             signals.insert(WorldSignal::Entered {
                 actor: *actor,
                 area: *area,
             });
         }
-        for area in previous.difference(&current) {
+        for area in previous.difference(current) {
             signals.insert(WorldSignal::Exited {
                 actor: *actor,
                 area: *area,
             });
         }
     }
-    Ok(signals)
+    signals
 }
-/// The pending movement whose deadline passed first, if any.
-pub(crate) fn timed_out(state: &SessionState) -> Option<TriggerId> {
+/// The movement whose time ran out first, if any.
+pub(crate) fn timed_out(state: &SessionState) -> Option<ActorId> {
     state
         .world
-        .triggers
+        .movements
         .values()
-        .filter_map(|t| Some((t.movement.as_ref()?.deadline, t.id)))
+        .filter_map(|m| Some((m.deadline?, m.actor)))
         .filter(|(deadline, _)| *deadline <= state.time)
         .min()
-        .map(|(_, id)| id)
+        .map(|(_, actor)| actor)
 }
-fn position(
+/// Starts a movement, or completes it on the spot when the actor is already there.
+pub(crate) fn request_move(
     content: &GameContent,
     tx: &mut Tx,
     actor: ActorId,
-    p: actors::Position,
+    to: AreaId,
+    timeout_ms: Option<u64>,
     events: &mut Vec<GameEvent>,
 ) -> Result<()> {
-    let areas = content.areas_at(&p)?;
-    let loc = tx.location_mut(content, actor)?;
-    for area in areas.difference(&loc.areas) {
-        events.push(GameEvent::World(WorldEvent::Entered { actor, area: *area }));
+    content.area(to)?;
+    require(
+        tx.actor(actor)?.health > 0,
+        "a dead actor cannot be asked to move",
+    )?;
+    if tx.areas(actor).contains(&to) {
+        tx.remove_movement(actor);
+        arrive(tx, actor, to, events);
+        return Ok(());
     }
-    for area in loc.areas.difference(&areas) {
-        events.push(GameEvent::World(WorldEvent::Exited { actor, area: *area }));
+    // Asking again for a walk that is already under way changes nothing.
+    if tx.world.movements.get(&actor).is_some_and(|m| m.to == to) {
+        return Ok(());
     }
-    loc.areas = areas;
-    tx.actor_mut(actor)?.position = p;
+    let deadline = timeout_ms.map(|ms| tx.time.advance(ms)).transpose()?;
+    let movement = Movement {
+        actor,
+        to,
+        // A later request for the same actor replaces this one and gets a larger number.
+        request: tx.generation,
+        deadline,
+    };
+    tx.set_movement(movement.clone());
+    events.push(GameEvent::World(WorldEvent::MoveRequested(movement)));
     Ok(())
 }
-fn sequence(
-    content: &GameContent,
-    tx: &mut Tx,
-    mut progress: TriggerState,
-    events: &mut Vec<GameEvent>,
-) -> Result<()> {
-    let d = content.trigger(progress.id)?;
-    while let Some(step) = d.steps.get(usize::from(progress.step)) {
-        match step {
-            SequenceStep::Apply(actions) => {
-                for action in actions {
-                    crate::session::run_action(
-                        content,
-                        tx,
-                        d.participant,
-                        d.speaker,
-                        action,
-                        events,
-                    )?;
-                }
-                progress.step += 1;
-            }
-            SequenceStep::Move {
-                actor,
-                destination,
-                timeout_ms,
-            } => {
-                let actor = actor.resolve(d.participant, d.speaker);
-                require(
-                    tx.movement_owner(actor)
-                        .is_none_or(|owner| owner == progress.id),
-                    "actor movement is owned by another sequence",
-                )?;
-                require(
-                    tx.actor(actor)?.health > 0,
-                    "dead actor cannot accept movement",
-                )?;
-                let movement = MoveRequest {
-                    id: ActionId {
-                        trigger: progress.id,
-                        run: progress.run,
-                        step: progress.step,
-                    },
-                    actor,
-                    destination: destination.clone(),
-                    deadline: tx.time.advance(*timeout_ms)?,
-                    phase: MovementPhase::Accepted,
-                };
-                events.push(GameEvent::World(WorldEvent::MoveRequested(
-                    movement.clone(),
-                )));
-                progress.movement = Some(movement);
-                break;
-            }
-        }
-    }
-    if usize::from(progress.step) == d.steps.len() {
-        progress.consecutive_failures = 0;
-        progress.diagnostic = None;
-        progress.status = SequenceStatus::Succeeded;
-        progress.successes = progress
-            .successes
-            .checked_add(1)
-            .ok_or_else(|| Invalid("sequence success overflow".into()))?;
-    }
-    events.push(GameEvent::World(WorldEvent::SequenceChanged {
-        trigger: progress.id,
-        status: progress.status.clone(),
-    }));
-    tx.put_trigger(progress);
-    Ok(())
+fn arrive(tx: &mut Tx, actor: ActorId, area: AreaId, events: &mut Vec<GameEvent>) {
+    tx.signal(WorldSignal::Arrived { actor, area });
+    events.push(GameEvent::World(WorldEvent::Arrived { actor, area }));
 }
-
-/// A plan that fails is undone on its own and recorded with a bounded diagnostic: it consumes
-/// no claims and leaves no partial effects, while earlier work of the command is kept.
-fn run_sequence(
-    content: &GameContent,
-    tx: &mut Tx,
-    mut progress: TriggerState,
-    events: &mut Vec<GameEvent>,
-) -> Result<()> {
+fn fail_move(tx: &mut Tx, actor: ActorId, events: &mut Vec<GameEvent>) {
+    tx.remove_movement(actor);
+    tx.signal(WorldSignal::MoveFailed(actor));
+    events.push(GameEvent::World(WorldEvent::MoveFailed { actor }));
+}
+/// Runs one trigger if it may fire. Its actions take effect together or not at all; a
+/// failure is reported and leaves the trigger free to fire another time.
+fn run_trigger(content: &GameContent, tx: &mut Tx, id: TriggerId, events: &mut Vec<GameEvent>) {
     let savepoint = tx.savepoint();
-    let event_count = events.len();
-    match sequence(content, tx, progress.clone(), events) {
-        Ok(()) => {
-            tx.release(savepoint);
-            Ok(())
+    let mark = events.len();
+    let result = (|| -> Result<bool> {
+        let d = content.trigger(id)?;
+        let mut progress = tx.trigger(id);
+        if !progress.eligible(d, tx.time) {
+            return Ok(false);
         }
-        Err(error @ GameplayError::Runtime(_)) => {
+        if let Some(condition) = &d.condition
+            && !content
+                .evaluate(condition, tx, d.player, d.speaker())?
+                .matched
+        {
+            return Ok(false);
+        }
+        for action in &d.actions {
+            crate::session::run_action(content, tx, d.player, d.speaker(), action, events)?;
+        }
+        progress.fired = progress
+            .fired
+            .checked_add(1)
+            .ok_or_else(|| Invalid("trigger count overflow".into()))?;
+        progress.last_fired = Some(tx.time);
+        tx.put_trigger(progress);
+        Ok(true)
+    })();
+    match result {
+        Ok(fired) => {
             tx.release(savepoint);
-            Err(error)
+            if fired {
+                events.push(GameEvent::World(WorldEvent::TriggerFired(id)));
+            }
         }
         Err(error) => {
             tx.rollback_to(savepoint);
-            events.truncate(event_count);
-            progress.status = SequenceStatus::Failed {
-                reason: Key::new("invalid-plan")?,
-            };
-            progress.consecutive_failures = progress.consecutive_failures.saturating_add(1).min(3);
-            progress.diagnostic = Some(error.to_string().chars().take(512).collect());
-            progress.movement = None;
-            events.push(GameEvent::World(WorldEvent::SequenceChanged {
-                trigger: progress.id,
-                status: progress.status.clone(),
+            events.truncate(mark);
+            events.push(GameEvent::World(WorldEvent::TriggerFailed {
+                trigger: id,
+                reason: error.to_string(),
             }));
-            tx.put_trigger(progress);
-            Ok(())
         }
-    }
-}
-fn restart(progress: &mut TriggerState, now: GameTime) -> Result<()> {
-    progress.run = progress
-        .run
-        .checked_add(1)
-        .ok_or_else(|| Invalid("sequence run overflow".into()))?;
-    progress.step = 0;
-    progress.status = SequenceStatus::Running;
-    progress.last_started = Some(now);
-    progress.receipts.clear();
-    progress.diagnostic = None;
-    Ok(())
-}
-fn complete(
-    content: &GameContent,
-    tx: &mut Tx,
-    id: ActionId,
-    result: MoveResult,
-    events: &mut Vec<GameEvent>,
-) -> Result<()> {
-    content.trigger(id.trigger)?;
-    let mut progress = tx.trigger(id.trigger);
-    if let Some((_, receipt)) = progress.receipts.iter().find(|(a, _)| *a == id) {
-        require(receipt == &result, "conflicting movement result")?;
-        return Ok(());
-    }
-    let pending = progress
-        .movement
-        .clone()
-        .ok_or_else(|| Invalid("movement is not pending".into()))?;
-    require(pending.id == id, "stale movement result")?;
-    if !matches!(result, MoveResult::TimedOut) {
-        require(
-            tx.time < pending.deadline,
-            "movement deadline elapsed; process timeout first",
-        )?;
-    }
-    match &result {
-        MoveResult::Arrived { position: p } => {
-            require(
-                p == &pending.destination,
-                "arrival differs from requested destination",
-            )?;
-            require(
-                tx.actor(pending.actor)?.health > 0,
-                "dead actor cannot arrive",
-            )?;
-            position(content, tx, pending.actor, p.clone(), events)?;
-            progress.step += 1;
-        }
-        MoveResult::Failed { reason } => {
-            progress.status = SequenceStatus::Failed {
-                reason: reason.clone(),
-            }
-        }
-        MoveResult::Cancelled => progress.status = SequenceStatus::Cancelled,
-        MoveResult::TimedOut => {
-            require(tx.time >= pending.deadline, "movement has not timed out")?;
-            progress.status = SequenceStatus::Failed {
-                reason: Key::new("timeout")?,
-            };
-        }
-    }
-    if let SequenceStatus::Failed { reason } = &progress.status {
-        progress.consecutive_failures = progress.consecutive_failures.saturating_add(1).min(3);
-        progress.diagnostic = Some(reason.as_str().to_owned());
-    }
-    progress.movement = None;
-    progress.receipts.push((id, result.clone()));
-    events.push(GameEvent::World(WorldEvent::MoveFinished { id, result }));
-    if progress.status == SequenceStatus::Running {
-        run_sequence(content, tx, progress, events)
-    } else {
-        events.push(GameEvent::World(WorldEvent::SequenceChanged {
-            trigger: progress.id,
-            status: progress.status.clone(),
-        }));
-        tx.put_trigger(progress);
-        Ok(())
     }
 }
 pub(crate) fn apply(
@@ -326,106 +180,104 @@ pub(crate) fn apply(
     triggers: &TriggerIndex,
     tx: &mut Tx,
     command: WorldCommand,
+    // Why the graph of the conversation at the head of the queue could not be loaded.
+    unloadable: Option<String>,
     events: &mut Vec<GameEvent>,
 ) -> Result<()> {
     match command {
         WorldCommand::ProcessNext => {
-            if let Some(id) = timed_out(tx) {
-                let action = tx
-                    .trigger(id)
-                    .movement
-                    .ok_or_else(|| Invalid("movement index mismatch".into()))?
-                    .id;
-                return complete(content, tx, action, MoveResult::TimedOut, events);
+            if let Some(actor) = timed_out(tx) {
+                fail_move(tx, actor, events);
+                return Ok(());
             }
-            let Some(event) = tx.world.pending.front().cloned() else {
+            // The work is taken off the queue first: whatever it leads to, the queue moves on.
+            let Some(work) = tx.pending_mut().pop_front() else {
                 return Ok(());
             };
-            let candidate = triggers.next(&event.signal, event.after);
-            if let Some(id) = candidate {
-                let d = content.trigger(id)?;
-                let mut progress = tx.trigger(id);
-                if progress.eligible(d, tx.time)
-                    && content
-                        .evaluate(&d.condition, tx, d.participant, d.speaker)?
-                        .matched
-                {
-                    restart(&mut progress, tx.time)?;
-                    run_sequence(content, tx, progress, events)?;
+            match work {
+                Pending::Signal(signal) => {
+                    let ids: Vec<TriggerId> = triggers.subscribers(&signal).collect();
+                    for id in ids {
+                        run_trigger(content, tx, id, events);
+                    }
+                }
+                Pending::Start {
+                    dialogue,
+                    participant,
+                    speaker,
+                } => {
+                    let savepoint = tx.savepoint();
+                    let mark = events.len();
+                    let key = ConversationKey {
+                        dialogue,
+                        participant,
+                        speaker,
+                    };
+                    let started = match unloadable {
+                        Some(reason) => Err(Invalid(reason).into()),
+                        None => crate::conversation::start(
+                            content,
+                            tx,
+                            key,
+                            &Default::default(),
+                            events,
+                        ),
+                    };
+                    match started {
+                        Ok(()) => tx.release(savepoint),
+                        Err(error) => {
+                            tx.rollback_to(savepoint);
+                            events.truncate(mark);
+                            events.push(GameEvent::World(WorldEvent::DialogueRefused {
+                                dialogue,
+                                reason: error.to_string(),
+                            }));
+                        }
+                    }
                 }
             }
-            // The event stays at the head until every subscriber has been visited.
-            let pending = tx.pending_mut();
-            pending.pop_front();
-            if let Some(id) = candidate {
-                pending.push_front(PendingEvent {
-                    after: Some(id),
-                    ..event.clone()
-                });
-            }
-            events.push(GameEvent::World(WorldEvent::DeliveryProcessed(event.id)));
         }
-        WorldCommand::RetryTrigger { trigger } => {
-            let d = content.trigger(trigger)?;
-            let mut progress = tx.trigger(trigger);
-            require(
-                matches!(
-                    progress.status,
-                    SequenceStatus::Failed { .. } | SequenceStatus::Cancelled
-                ),
-                "only failed or cancelled sequences can retry",
-            )?;
-            progress.consecutive_failures = 0;
-            require(
-                progress.eligible(d, tx.time)
-                    && content
-                        .evaluate(&d.condition, tx, d.participant, d.speaker)?
-                        .matched,
-                "trigger retry is ineligible",
-            )?;
-            restart(&mut progress, tx.time)?;
-            run_sequence(content, tx, progress, events)?;
-        }
-        WorldCommand::ObservePosition {
+        WorldCommand::Observe {
             actor,
-            observation,
-            position: p,
+            position,
+            areas,
         } => {
-            let loc = tx.location(content, actor)?;
-            if observation == loc.observation {
-                require(
-                    loc.last_observed.as_ref() == Some(&p),
-                    "conflicting position observation",
-                )?;
-                return Ok(());
-            }
             require(
-                observation
-                    == loc
-                        .observation
-                        .checked_add(1)
-                        .ok_or_else(|| Invalid("observation overflow".into()))?,
-                "out-of-order position observation",
+                areas.len() <= MAX_AREA_OVERLAP,
+                "area overlap budget exceeded",
             )?;
-            let loc = tx.location_mut(content, actor)?;
-            loc.observation = observation;
-            loc.last_observed = Some(p.clone());
-            position(content, tx, actor, p, events)?;
-        }
-        WorldCommand::FinishMove { id, result } => complete(content, tx, id, result, events)?,
-        WorldCommand::StartMove { id } => {
-            content.trigger(id.trigger)?;
-            let mut progress = tx.trigger(id.trigger);
-            if progress.receipts.iter().any(|(a, _)| *a == id) {
-                return Ok(());
+            for area in &areas {
+                content.area(*area)?;
             }
-            let m = progress
-                .movement
-                .as_mut()
-                .ok_or_else(|| Invalid("movement not pending".into()))?;
-            require(m.id == id && tx.time < m.deadline, "stale movement start")?;
-            m.phase = MovementPhase::Running;
-            tx.put_trigger(progress);
+            if tx.actor(actor)?.position != position {
+                tx.actor_mut(actor)?.position = position;
+            }
+            if tx.areas(actor) != &areas {
+                for area in areas.difference(tx.areas(actor)) {
+                    events.push(GameEvent::World(WorldEvent::Entered { actor, area: *area }));
+                }
+                for area in tx.areas(actor).difference(&areas) {
+                    events.push(GameEvent::World(WorldEvent::Exited { actor, area: *area }));
+                }
+                tx.set_areas(actor, areas);
+            }
+            if let Some(movement) = tx.world.movements.get(&actor)
+                && tx.areas(actor).contains(&movement.to)
+            {
+                let area = movement.to;
+                tx.remove_movement(actor);
+                arrive(tx, actor, area, events);
+            }
+        }
+        WorldCommand::MoveFailed { actor, request } => {
+            require(
+                tx.world
+                    .movements
+                    .get(&actor)
+                    .is_some_and(|m| m.request == request),
+                "report is for a movement that is no longer requested",
+            )?;
+            fail_move(tx, actor, events);
         }
         WorldCommand::Open { object }
         | WorldCommand::Close { object }

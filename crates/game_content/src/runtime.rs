@@ -82,7 +82,9 @@ impl ContentRepository {
             for asset in self.read_kind(kind)? {
                 match asset {
                     Asset::Object(v) => content.game.world.objects.push(v),
-                    Asset::Area(v) => content.game.world.areas.push(v),
+                    Asset::Area(v) => {
+                        content.game.world.areas.insert(v);
+                    }
                     Asset::Trigger(v) => content.game.world.triggers.push(v),
                     Asset::DialogueContract(v) => content.game.dialogue_contracts.push(v),
                     Asset::Claim(v) => content.game.claims.push(v),
