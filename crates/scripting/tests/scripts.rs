@@ -26,6 +26,10 @@ function gate.hand_over(game: Game, scene: Scene)
         game.set("old_gate/rewarded", true)
         game.add("old_gate/visits", 2)
         game.set("old_gate/password", "mellon")
+        -- What this particular NPC remembers.
+        assert(game.get("old_gate/thanked", scene.speaker) == false)
+        game.set("old_gate/thanked", true, scene.speaker)
+        game.add("old_gate/favours", 3, scene.speaker)
     end
 end
 
@@ -51,6 +55,17 @@ fn content(source: &str, action: &str) -> GameContent {
         content.game.variables.push(VariableDefinition {
             id: VariableId::try_from(name.to_owned()).unwrap(),
             initial,
+            scope: Default::default(),
+        });
+    }
+    for (name, initial) in [
+        ("old_gate/thanked", Value::Bool(false)),
+        ("old_gate/favours", Value::Int(0)),
+    ] {
+        content.game.variables.push(VariableDefinition {
+            id: VariableId::try_from(name.to_owned()).unwrap(),
+            initial,
+            scope: gameplay::VariableScope::Actor,
         });
     }
     content.game.scripts = vec![ScriptModule {
@@ -126,6 +141,16 @@ fn a_scripted_choice_reads_state_and_changes_it_through_the_same_rules() {
     assert_eq!(variable("old_gate/rewarded"), Value::Bool(true));
     assert_eq!(variable("old_gate/visits"), Value::Int(2));
     assert_eq!(variable("old_gate/password"), Value::Text("mellon".into()));
+    let remembered = |name: &str, actor| {
+        let key = gameplay::VariableKey {
+            variable: VariableId::named(name),
+            actor: Some(actor),
+        };
+        state.variable(content, key).unwrap()
+    };
+    assert_eq!(remembered("old_gate/thanked", MERCHANT), Value::Bool(true));
+    assert_eq!(remembered("old_gate/favours", MERCHANT), Value::Int(3));
+    assert_eq!(remembered("old_gate/thanked", HERO), Value::Bool(false));
     assert_eq!(state.actor(HERO).unwrap().skills[&key("persuasion")], 10);
     let attitude = state.relationship(gameplay::actors::RelationshipKey {
         from: MERCHANT,
@@ -331,6 +356,12 @@ fn variables_keep_their_type() {
         ("game.set('old_gate/visits', {})", "whole number"),
         ("game.add('old_gate/rewarded', 1)", "whole-number"),
         ("game.set('old_gate/nothing', true)", "unknown variable"),
+        ("game.set('old_gate/thanked', true)", "per actor"),
+        (
+            "game.set('old_gate/rewarded', true, scene.speaker)",
+            "per actor",
+        ),
+        ("game.get('old_gate/thanked')", "scope mismatch"),
     ];
     for (body, expected) in cases {
         let source = format!(

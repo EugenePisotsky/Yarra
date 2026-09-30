@@ -107,9 +107,9 @@ fn add_reads<'s, T: Reads + 's>(scope: &'s Scope<'s, '_>, game: &Table, on: T) -
     )?;
     game.set(
         "get",
-        scope.create_function(move |lua, variable: String| {
-            let variable = id(variable)?;
-            match on.read(|r| r.variable(variable)).map_err(host)? {
+        scope.create_function(move |lua, (variable, actor): (String, Option<String>)| {
+            let (variable, actor) = (id(variable)?, actor.map(id).transpose()?);
+            match on.read(|r| r.variable(variable, actor)).map_err(host)? {
                 gameplay::Value::Bool(value) => value.into_lua(lua),
                 gameplay::Value::Int(value) => value.into_lua(lua),
                 gameplay::Value::Text(value) => value.into_lua(lua),
@@ -240,40 +240,46 @@ fn add_effects<'s>(
     )?;
     game.set(
         "set",
-        scope.create_function(move |_, (variable, value): (String, Value)| {
-            let value = match value {
-                Value::Boolean(value) => gameplay::Value::Bool(value),
-                Value::Integer(value) => gameplay::Value::Int(value),
-                Value::Number(value) if value.fract() == 0.0 && value.abs() < 9e15 => {
-                    gameplay::Value::Int(value as i64)
-                }
-                Value::String(value) => gameplay::Value::Text(value.to_str()?.to_owned()),
-                _ => {
-                    return Err(mlua::Error::runtime(
-                        "a variable holds true/false, a whole number or text",
-                    ));
-                }
-            };
-            apply(
-                player(),
-                Action::Set {
-                    variable: id(variable)?,
-                    value,
-                },
-            )
-        })?,
+        scope.create_function(
+            move |_, (variable, value, actor): (String, Value, Option<String>)| {
+                let value = match value {
+                    Value::Boolean(value) => gameplay::Value::Bool(value),
+                    Value::Integer(value) => gameplay::Value::Int(value),
+                    Value::Number(value) if value.fract() == 0.0 && value.abs() < 9e15 => {
+                        gameplay::Value::Int(value as i64)
+                    }
+                    Value::String(value) => gameplay::Value::Text(value.to_str()?.to_owned()),
+                    _ => {
+                        return Err(mlua::Error::runtime(
+                            "a variable holds true/false, a whole number or text",
+                        ));
+                    }
+                };
+                apply(
+                    player(),
+                    Action::Set {
+                        variable: id(variable)?,
+                        of: actor.map(id).transpose()?.map(Participant::Actor),
+                        value,
+                    },
+                )
+            },
+        )?,
     )?;
     game.set(
         "add",
-        scope.create_function(move |_, (variable, amount): (String, i64)| {
-            apply(
-                player(),
-                Action::Add {
-                    variable: id(variable)?,
-                    amount,
-                },
-            )
-        })?,
+        scope.create_function(
+            move |_, (variable, amount, actor): (String, i64, Option<String>)| {
+                apply(
+                    player(),
+                    Action::Add {
+                        variable: id(variable)?,
+                        of: actor.map(id).transpose()?.map(Participant::Actor),
+                        amount,
+                    },
+                )
+            },
+        )?,
     )?;
     game.set(
         "set_locked",

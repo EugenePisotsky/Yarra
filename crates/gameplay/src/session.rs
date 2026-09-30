@@ -567,8 +567,8 @@ fn check_changes(content: &GameContent, tx: &Tx) -> Result<()> {
     for id in before.triggers.keys() {
         state.trigger(*id).validate(content, state)?;
     }
-    for id in before.variables.keys() {
-        state.check_variable(content, *id)?;
+    for key in before.variables.keys() {
+        state.check_variable(content, *key)?;
     }
     Ok(())
 }
@@ -884,21 +884,42 @@ pub(crate) fn run_action(
                 .actor_mut(actor)?
                 .award_experience(&content.game.rules, skill, *amount)?
         }
-        Action::Set { variable, value } => {
+        Action::Set {
+            variable,
+            of,
+            value,
+        } => {
             require(
-                content.variable(*variable)?.initial.same_type(value),
+                content
+                    .variable_use(*variable, of)?
+                    .initial
+                    .same_type(value),
                 "value has a different type than the variable",
             )?;
-            state.set_variable(*variable, value.clone());
+            let key = VariableKey {
+                variable: *variable,
+                actor: of.map(|p| p.resolve(actor, speaker)),
+            };
+            state.check_variable(content, key)?;
+            state.set_variable(key, value.clone());
         }
-        Action::Add { variable, amount } => {
-            let Value::Int(current) = state.variable(content, *variable)? else {
+        Action::Add {
+            variable,
+            of,
+            amount,
+        } => {
+            content.variable_use(*variable, of)?;
+            let key = VariableKey {
+                variable: *variable,
+                actor: of.map(|p| p.resolve(actor, speaker)),
+            };
+            let Value::Int(current) = state.variable(content, key)? else {
                 return Err(Invalid("only whole-number variables can be added to".into()).into());
             };
             let sum = current
                 .checked_add(*amount)
                 .ok_or_else(|| Invalid("variable overflow".into()))?;
-            state.set_variable(*variable, Value::Int(sum));
+            state.set_variable(key, Value::Int(sum));
         }
         Action::SkillCheck {
             skill,

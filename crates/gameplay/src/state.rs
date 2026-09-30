@@ -8,6 +8,7 @@ use crate::{
     ConversationKey, GameContent, LocationState, ObjectKind, ObjectState, Result, TriggerState,
     Value, quests,
 };
+use crate::{VariableKey, VariableScope};
 use game_types::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -62,6 +63,32 @@ pub(crate) mod keyed {
     }
 }
 
+/// A map whose keys are not plain text, saved as a list of key/value pairs.
+mod pairs {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error};
+    use std::collections::BTreeMap;
+    pub fn serialize<S: Serializer, K: Serialize, V: Serialize>(
+        map: &BTreeMap<K, V>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        serializer.collect_seq(map.iter())
+    }
+    pub fn deserialize<'de, D, K, V>(deserializer: D) -> Result<BTreeMap<K, V>, D::Error>
+    where
+        D: Deserializer<'de>,
+        K: Deserialize<'de> + Ord,
+        V: Deserialize<'de>,
+    {
+        let mut map = BTreeMap::new();
+        for (key, value) in Vec::<(K, V)>::deserialize(deserializer)? {
+            if map.insert(key, value).is_some() {
+                return Err(D::Error::custom("duplicate record identity"));
+            }
+        }
+        Ok(map)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SessionState {
@@ -92,7 +119,8 @@ pub struct SessionState {
     #[serde(with = "keyed")]
     pub conversations: BTreeMap<ConversationKey, Conversation>,
     /// Variables that were set; the rest still have their initial value.
-    pub variables: BTreeMap<VariableId, Value>,
+    #[serde(with = "pairs")]
+    pub variables: BTreeMap<VariableKey, Value>,
     /// Characters travelling together. They take part in every conversation any of them has.
     pub party: BTreeSet<ActorId>,
     pub world: crate::WorldState,
@@ -205,19 +233,27 @@ impl SessionState {
             }),
         }
     }
-    pub fn variable(&self, content: &GameContent, id: VariableId) -> Result<Value> {
-        let definition = content.variable(id)?;
-        Ok(self
-            .variables
-            .get(&id)
-            .unwrap_or(&definition.initial)
-            .clone())
+    /// A variable nobody has set still has its initial value, for every actor.
+    pub fn variable(&self, content: &GameContent, key: impl Into<VariableKey>) -> Result<Value> {
+        let key = key.into();
+        self.check_variable(content, key)?;
+        Ok(match self.variables.get(&key) {
+            Some(value) => value.clone(),
+            None => content.variable(key.variable)?.initial.clone(),
+        })
     }
-    pub(crate) fn check_variable(&self, content: &GameContent, id: VariableId) -> Result<()> {
-        let definition = content.variable(id)?;
+    pub(crate) fn check_variable(&self, content: &GameContent, key: VariableKey) -> Result<()> {
+        let definition = content.variable(key.variable)?;
+        require(
+            (definition.scope == VariableScope::Actor) == key.actor.is_some(),
+            "variable scope mismatch",
+        )?;
+        if let Some(actor) = key.actor {
+            self.actor(actor)?;
+        }
         require(
             self.variables
-                .get(&id)
+                .get(&key)
                 .is_none_or(|value| value.same_type(&definition.initial)),
             "saved variable has the wrong type",
         )
@@ -455,8 +491,8 @@ impl SessionState {
         for c in self.conversations.values() {
             self.check_conversation(content, c)?;
         }
-        for id in self.variables.keys() {
-            self.check_variable(content, *id)?;
+        for key in self.variables.keys() {
+            self.check_variable(content, *key)?;
         }
         require(
             self.party.len() <= 16 && self.party.iter().all(|id| self.actors.contains_key(id)),

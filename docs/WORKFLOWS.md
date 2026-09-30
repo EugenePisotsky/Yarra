@@ -152,6 +152,8 @@ Use it as `actions: [Script("guard.take_key")]` or `condition: Some(Script("guar
 
 A package declares the variables it introduces: `variables: [(id: "old_gate/rewarded", initial: Bool(false))]`. A variable keeps the type of its initial value (`Bool`, `Int` or `Text`). Test one with `Variable(variable: "...", test: Is(Bool(true)))` (also `AtLeast(n)`, `AtMost(n)`), change it with `Set(variable: "...", value: ...)` and `Add(variable: "...", amount: n)`, or from a script with `game.get`, `game.set` and `game.add`. A scenario can start with `variables: {"name": Int(3)}`.
 
+Add `scope: Actor` to a declaration and every actor has its own value, for things one character remembers: `(id: "guard/insulted", initial: Bool(false), scope: Actor)`. Content then says whose value it means with `of: Some(Speaker)` (or `Player`, or `Actor("name")`), and scripts pass the actor last: `game.set("guard/insulted", true, scene.speaker)`, `game.get("guard/insulted", scene.speaker)`. Leaving the actor out, or naming one for a playthrough variable, is an error.
+
 Copy `content/gameplay/demo` to start a project. Source format **8** uses explicit package manifests and one asset directory per conversation:
 
 ```text

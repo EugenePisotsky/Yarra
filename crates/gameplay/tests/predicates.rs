@@ -42,6 +42,7 @@ fn composite_diagnostics_include_all_branches_without_changing_state() {
         },
         Condition::Not(Box::new(Condition::Variable {
             variable: REWARDED,
+            of: None,
             test: yarra_gameplay::Test::Is(yarra_gameplay::Value::Bool(true)),
         })),
     ]);

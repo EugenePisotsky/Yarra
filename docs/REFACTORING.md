@@ -67,7 +67,7 @@ Evidence: the guard's reward is a script in the demo project and all five scenar
 
 **Finished afterwards.**
 - *Type checking.* `validate` and `build` run `luau-analyze` in strict mode when it is on `PATH` or named by `YARRA_LUAU_ANALYZE`, with the API definitions placed in front of each script and reported lines moved back to the authored file. Type errors fail; lints are warnings. Without the tool a note says scripts were only compiled. The stock analyzer has no option for a separate definitions file, hence the prefix.
-- *Typed variables.* Boolean facts are gone. A package declares `variables` with an initial value (true/false, whole number or text) and a variable keeps that type. Content uses `Variable(variable, test: Is/AtLeast/AtMost)`, `Set` and `Add`; scripts use `game.get`, `game.set` and `game.add`. Only variables that were set are stored. They are scoped to the playthrough; per-actor variables are not built.
+- *Typed variables.* Boolean facts are gone. A package declares `variables` with an initial value (true/false, whole number or text) and a variable keeps that type. Content uses `Variable(variable, test: Is/AtLeast/AtMost)`, `Set` and `Add`; scripts use `game.get`, `game.set` and `game.add`. Only variables that were set are stored. A variable is scoped to the playthrough, or declared `scope: Actor` so that every actor has its own value: content names whose with `of: Some(Speaker)` and scripts pass the actor as the last argument.
 - *Item keys.* Items and categories no longer carry a `key` beside their name.
 
 Source format 8, bundle schema 9, save format 10.

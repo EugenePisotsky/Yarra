@@ -130,8 +130,10 @@ impl ReadScope<'_> {
             || self.others.contains(&actor)
             || self.state.party.contains(&actor)
     }
-    pub fn variable(&self, id: VariableId) -> Result<Value> {
-        self.state.variable(self.content, id)
+    /// `actor` names whose value, for a per-actor variable.
+    pub fn variable(&self, variable: VariableId, actor: Option<ActorId>) -> Result<Value> {
+        self.state
+            .variable(self.content, crate::VariableKey { variable, actor })
     }
     pub fn inside_area(&self, actor: ActorId, area: AreaId) -> Result<bool> {
         self.content.area(area)?;

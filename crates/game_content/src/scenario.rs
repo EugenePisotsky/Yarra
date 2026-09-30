@@ -69,7 +69,17 @@ impl Scenario {
         )?;
         let mut state = SessionState::empty(self.seed);
         state.owners = self.owners.iter().cloned().collect();
-        state.variables = self.variables.clone();
+        state.variables = self
+            .variables
+            .iter()
+            .map(|(variable, value)| {
+                let key = gameplay::VariableKey {
+                    variable: *variable,
+                    actor: None,
+                };
+                (key, value.clone())
+            })
+            .collect();
         state.party = self.party.clone();
         for spawn in &self.actors {
             let template = content.template(spawn.template).map_err(|_| {

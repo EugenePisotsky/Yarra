@@ -303,6 +303,7 @@ fn cross_domain_validation_rejects_bad_ownership_equipment_and_content() {
     let mut content = content();
     *persuade(&mut content) = Action::Set {
         variable: VariableId::named("undeclared"),
+        of: None,
         value: Value::Bool(true),
     };
     assert!(content.validate().is_err());
@@ -702,6 +703,7 @@ mod variables {
         content.game.variables.push(VariableDefinition {
             id: VISITS,
             initial: Value::Int(0),
+            scope: Default::default(),
         });
         let choice = &mut content.game.dialogues[0].nodes[1];
         choice.actions = actions;
@@ -710,12 +712,14 @@ mod variables {
     fn add(amount: i64) -> Action {
         Action::Add {
             variable: VISITS,
+            of: None,
             amount,
         }
     }
     fn holds(session: &TestSession, test: Test) -> bool {
         let condition = Condition::Variable {
             variable: VISITS,
+            of: None,
             test,
         };
         session
@@ -731,7 +735,7 @@ mod variables {
         assert!(holds(&session, Test::Is(Value::Int(0))));
         start(&mut session);
         session.apply(choose()).unwrap();
-        assert_eq!(session.state().variables[&VISITS], Value::Int(-3));
+        assert_eq!(session.state().variables[&VISITS.into()], Value::Int(-3));
         assert!(holds(&session, Test::AtMost(-3)) && !holds(&session, Test::AtLeast(0)));
         // The untouched flag is still absent and still reads as false.
         assert_eq!(session.state().variables.len(), 1);
@@ -759,23 +763,143 @@ mod variables {
     fn tests_and_values_must_fit_the_variable_type() {
         let wrong_value = Action::Set {
             variable: VISITS,
+            of: None,
             value: Value::Text("many".into()),
         };
         assert!(with_counter(vec![wrong_value]).validate().is_err());
         let not_a_number = Action::Add {
             variable: REWARDED,
+            of: None,
             amount: 1,
         };
         assert!(with_counter(vec![not_a_number]).validate().is_err());
         let content = with_counter(vec![]);
         let at_least = Condition::Variable {
             variable: REWARDED,
+            of: None,
             test: Test::AtLeast(1),
         };
         assert!(content.validate_condition(&at_least).is_err());
         // Saved state with a value of the wrong type is rejected when loaded.
         let mut state = state();
-        state.variables.insert(VISITS, Value::Bool(true));
+        state.variables.insert(VISITS.into(), Value::Bool(true));
         assert!(new(content, state).is_err());
+    }
+    const INSULTED: VariableId = VariableId::named("old_gate/insulted");
+    /// The gate choice insults whoever is spoken to, and is only offered to those not yet
+    /// insulted.
+    fn insulting() -> GameContent {
+        let mut content = with_counter(vec![Action::Set {
+            variable: INSULTED,
+            of: Some(Participant::Speaker),
+            value: Value::Bool(true),
+        }]);
+        content.game.variables.push(VariableDefinition {
+            id: INSULTED,
+            initial: Value::Bool(false),
+            scope: VariableScope::Actor,
+        });
+        let graph = &mut content.game.dialogues[0];
+        graph.repeat = dialogue::RepeatPolicy::Always;
+        graph.nodes[1].repeat = dialogue::Repeat::Always;
+        graph.nodes[1].condition = Some(Condition::Variable {
+            variable: INSULTED,
+            of: Some(Participant::Speaker),
+            test: Test::Is(Value::Bool(false)),
+        });
+        content.game.dialogue_contracts = vec![graph.contract()];
+        content
+    }
+    fn offered(session: &mut TestSession, speaker: ActorId) -> bool {
+        let key = ConversationKey {
+            dialogue: GATE_DIALOGUE,
+            participant: HERO,
+            speaker,
+        };
+        session
+            .apply(Command::StartDialogue {
+                bindings: Default::default(),
+                dialogue: GATE_DIALOGUE,
+                participant: HERO,
+                speaker,
+            })
+            .unwrap();
+        let expected = session.conversation_view(key).unwrap().token;
+        session
+            .apply(Command::AdvanceLine { key, expected })
+            .unwrap();
+        let view = session.conversation_view(key).unwrap();
+        let Some(choice) = view.choices.first() else {
+            return false;
+        };
+        session
+            .apply(Command::Choose {
+                expected: view.token,
+                dialogue: GATE_DIALOGUE,
+                participant: HERO,
+                speaker,
+                choice: choice.id.clone(),
+            })
+            .unwrap();
+        true
+    }
+    #[test]
+    fn each_actor_has_its_own_value_of_a_per_actor_variable() {
+        let mut session = new(insulting(), state()).unwrap();
+        assert!(offered(&mut session, MERCHANT));
+        // The merchant remembers; the companion was never insulted.
+        assert!(!offered(&mut session, MERCHANT));
+        assert!(offered(&mut session, COMPANION));
+        let state = session.state();
+        let of = |actor| VariableKey {
+            variable: INSULTED,
+            actor: Some(actor),
+        };
+        assert_eq!(state.variables.len(), 2);
+        let value = |actor| state.variable(session.content(), of(actor)).unwrap();
+        assert_eq!(value(MERCHANT), Value::Bool(true));
+        assert_eq!(value(HERO), Value::Bool(false));
+        // The values survive a save.
+        let saved = serde_json::to_vec(state).unwrap();
+        assert_eq!(
+            &serde_json::from_slice::<SessionState>(&saved).unwrap(),
+            state
+        );
+        // A per-actor variable cannot be read without saying whose.
+        assert!(state.variable(session.content(), INSULTED).is_err());
+        assert!(
+            state
+                .variable(session.content(), of(ActorId::named("nobody")))
+                .is_err()
+        );
+    }
+    #[test]
+    fn content_must_name_an_actor_exactly_for_per_actor_variables() {
+        let mut content = insulting();
+        content.game.dialogues[0].nodes[1].condition = Some(Condition::Variable {
+            variable: INSULTED,
+            of: None,
+            test: Test::Is(Value::Bool(false)),
+        });
+        assert!(
+            content
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("per actor")
+        );
+        let mut content = insulting();
+        content.game.dialogues[0].nodes[1].actions = vec![Action::Add {
+            variable: VISITS,
+            of: Some(Participant::Player),
+            amount: 1,
+        }];
+        assert!(
+            content
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("per actor")
+        );
     }
 }

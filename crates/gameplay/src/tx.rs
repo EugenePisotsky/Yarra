@@ -102,7 +102,7 @@ journal! {
     objects / touch_object: ObjectId => ObjectState, world.objects;
     locations / touch_location: ActorId => LocationState, world.locations;
     triggers / touch_trigger: TriggerId => TriggerState, world.triggers;
-    variables / touch_variable: VariableId => Value, variables;
+    variables / touch_variable: VariableKey => Value, variables;
 }
 
 pub(crate) struct Tx<'a> {
@@ -236,9 +236,9 @@ impl<'a> Tx<'a> {
         self.touch_trigger(&progress.id);
         self.state.world.triggers.insert(progress.id, progress);
     }
-    pub fn set_variable(&mut self, id: VariableId, value: Value) {
-        self.touch_variable(&id);
-        self.state.variables.insert(id, value);
+    pub fn set_variable(&mut self, key: VariableKey, value: Value) {
+        self.touch_variable(&key);
+        self.state.variables.insert(key, value);
     }
     pub fn set_party(&mut self, actor: ActorId, member: bool) {
         if self.before.party.is_none() {

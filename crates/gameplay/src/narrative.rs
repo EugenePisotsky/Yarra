@@ -295,8 +295,8 @@ impl GameContent {
                     self.items.item(*definition)?;
                     require(*quantity > 0, "zero item condition")?;
                 }
-                Condition::Variable { variable, test } => {
-                    let initial = &self.variable(*variable)?.initial;
+                Condition::Variable { variable, of, test } => {
+                    let initial = &self.variable_use(*variable, of)?.initial;
                     let fits = match test {
                         Test::Is(value) => initial.same_type(value),
                         Test::AtLeast(_) | Test::AtMost(_) => matches!(initial, Value::Int(_)),
@@ -431,8 +431,14 @@ impl GameContent {
                         .sum();
                     (Observed::Quantity(n), n >= u64::from(*quantity))
                 }
-                Condition::Variable { variable, test } => {
-                    let value = state.variable(content, *variable)?;
+                Condition::Variable { variable, of, test } => {
+                    let value = state.variable(
+                        content,
+                        VariableKey {
+                            variable: *variable,
+                            actor: of.map(|p| p.resolve(pair.0, pair.1)),
+                        },
+                    )?;
                     let matched = match (test, &value) {
                         (Test::Is(expected), value) => expected == value,
                         (Test::AtLeast(n), Value::Int(value)) => value >= n,

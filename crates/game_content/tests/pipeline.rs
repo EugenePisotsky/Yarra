@@ -167,6 +167,7 @@ fn category_mechanics_bindings_and_scenario_errors_are_rejected() {
     let mut graph = original.clone();
     graph.nodes[1].actions[0] = gameplay::Action::Set {
         variable: game_types::VariableId::named("undeclared"),
+        of: None,
         value: gameplay::Value::Bool(true),
     };
     write(&path, &graph);

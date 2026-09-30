@@ -120,6 +120,7 @@ pub fn content() -> GameContent {
                     },
                     Condition::Variable {
                         variable: REWARDED,
+                        of: None,
                         test: Test::Is(Value::Bool(false)),
                     },
                 ])),
@@ -142,6 +143,7 @@ pub fn content() -> GameContent {
                             },
                             Action::Set {
                                 variable: REWARDED,
+                                of: None,
                                 value: Value::Bool(true),
                             },
                         ],
@@ -174,6 +176,7 @@ pub fn content() -> GameContent {
             variables: vec![VariableDefinition {
                 id: REWARDED,
                 initial: Value::Bool(false),
+                scope: Default::default(),
             }],
             scripts: vec![],
         },

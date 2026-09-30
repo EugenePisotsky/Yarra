@@ -34,6 +34,30 @@ impl Value {
 pub struct VariableDefinition {
     pub id: VariableId,
     pub initial: Value,
+    #[serde(default)]
+    pub scope: VariableScope,
+}
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VariableScope {
+    /// One value for the playthrough.
+    #[default]
+    Playthrough,
+    /// Every actor has a value of its own, e.g. what one NPC remembers.
+    Actor,
+}
+/// Which stored value: the variable, and whose it is when the variable is per actor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct VariableKey {
+    pub variable: VariableId,
+    pub actor: Option<ActorId>,
+}
+impl From<VariableId> for VariableKey {
+    fn from(variable: VariableId) -> Self {
+        Self {
+            variable,
+            actor: None,
+        }
+    }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Test {
@@ -82,6 +106,9 @@ pub enum Condition {
     },
     Variable {
         variable: VariableId,
+        /// Whose value, for a per-actor variable.
+        #[serde(default)]
+        of: Option<Participant>,
         test: Test,
     },
     SkillExperience {
@@ -124,11 +151,15 @@ pub enum Action {
     },
     Set {
         variable: VariableId,
+        #[serde(default)]
+        of: Option<Participant>,
         value: Value,
     },
     /// Adds to a whole-number variable; the amount may be negative.
     Add {
         variable: VariableId,
+        #[serde(default)]
+        of: Option<Participant>,
         amount: i64,
     },
     /// A failed roll is an accepted outcome, with its own effects. Invalid effects
@@ -352,15 +383,19 @@ impl GameContent {
                 self.game.rules.skill(skill)?;
                 require(*amount > 0, "zero XP reward")?;
             }
-            Action::Set { variable, value } => {
+            Action::Set {
+                variable,
+                of,
+                value,
+            } => {
                 value.validate()?;
                 require(
-                    self.variable(*variable)?.initial.same_type(value),
+                    self.variable_use(*variable, of)?.initial.same_type(value),
                     "value has a different type than the variable",
                 )?
             }
-            Action::Add { variable, .. } => require(
-                matches!(self.variable(*variable)?.initial, Value::Int(_)),
+            Action::Add { variable, of, .. } => require(
+                matches!(self.variable_use(*variable, of)?.initial, Value::Int(_)),
                 "only whole-number variables can be added to",
             )?,
             Action::SkillCheck {
@@ -392,6 +427,20 @@ impl GameContent {
             .iter()
             .find(|v| v.id == id)
             .ok_or_else(|| Invalid(format!("unknown variable {id}")).into())
+    }
+    /// The definition, after checking that an actor is named exactly when the variable is
+    /// per actor.
+    pub fn variable_use(
+        &self,
+        id: VariableId,
+        of: &Option<Participant>,
+    ) -> Result<&VariableDefinition> {
+        let definition = self.variable(id)?;
+        require(
+            (definition.scope == VariableScope::Actor) == of.is_some(),
+            &format!("variable {id} is per actor exactly when `of` names one"),
+        )?;
+        Ok(definition)
     }
     pub fn template(&self, id: ActorTemplateId) -> Result<&ActorTemplate> {
         self.game
