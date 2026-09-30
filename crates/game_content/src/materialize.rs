@@ -74,7 +74,7 @@ impl LoadedProject {
                 Asset::Text(v) => text.push(v),
             }
         }
-        let content = GameContent {
+        let mut content = GameContent {
             text,
             manifest: manifest.content,
             items,
@@ -94,6 +94,8 @@ impl LoadedProject {
                 loot,
             },
         };
+        content.sort();
+        content.game.dialogues.sort_by_key(|v| v.id);
         require(
             content.fingerprint()? == manifest.mechanical_fingerprint,
             "mechanical fingerprint mismatch",

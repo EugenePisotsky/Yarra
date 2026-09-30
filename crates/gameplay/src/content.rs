@@ -270,6 +270,19 @@ pub struct GameContent {
     #[serde(skip)]
     pub scripts: Scripts,
 }
+/// Finds a definition in a list kept in order of identity.
+pub(crate) fn find<T, K: Ord + Copy>(list: &[T], id: K, of: impl Fn(&T) -> K) -> Option<&T> {
+    let index = list.binary_search_by_key(&id, of).ok()?;
+    Some(&list[index])
+}
+/// Each identity once and in order, which is what `find` relies on.
+pub(crate) fn ordered<T, K: Ord>(list: &[T], of: impl Fn(&T) -> K, what: &str) -> Result<()> {
+    require(
+        list.windows(2).all(|pair| of(&pair[0]) < of(&pair[1])),
+        &format!("{what} must be listed once each in order of identity; see GameContent::sort"),
+    )
+    .map_err(Into::into)
+}
 impl GameContent {
     pub fn validate(&self) -> Result<()> {
         require(
@@ -311,10 +324,9 @@ impl GameContent {
         for id in contracts.keys() {
             visit_text(*id, &contracts, &mut BTreeSet::new(), &mut visited)?;
         }
-        let mut variables = BTreeSet::new();
+        ordered(&self.game.variables, |v| v.id, "variables")?;
         for variable in &self.game.variables {
             variable.initial.validate()?;
-            require(variables.insert(variable.id), "duplicate variable")?;
         }
         let mut modules = BTreeSet::new();
         for module in &self.game.scripts {
@@ -342,14 +354,12 @@ impl GameContent {
             self.game.rules.validate_mechanics(&item.mechanics)?;
         }
         require(self.game.loot.len() <= 10000, "too many loot tables")?;
-        let mut tables = BTreeSet::new();
+        ordered(&self.game.loot, |v| v.id, "loot tables")?;
         for table in &self.game.loot {
-            require(tables.insert(table.id), "duplicate loot table")?;
             table.validate(&self.items)?;
         }
-        let mut actors = BTreeSet::new();
+        ordered(&self.game.actors, |v| v.id, "actor templates")?;
         for actor in &self.game.actors {
-            require(actors.insert(actor.id), "duplicate actor template")?;
             actor.validate(&self.game.rules)?;
             if let Some(loot) = actor.loot {
                 self.loot(loot)?;
@@ -374,19 +384,19 @@ impl GameContent {
                 self.loot(loot)?;
             }
         }
-        let mut contracts = BTreeSet::new();
         require(
             self.game.dialogue_contracts.len() <= 1000 && self.game.claims.len() <= 10000,
             "dialogue declaration limit",
         )?;
+        ordered(
+            &self.game.dialogue_contracts,
+            |v| v.id,
+            "dialogue contracts",
+        )?;
         for contract in &self.game.dialogue_contracts {
             contract.validate()?;
-            require(contracts.insert(contract.id), "duplicate dialogue contract")?;
         }
-        let mut claims = BTreeSet::new();
-        for claim in &self.game.claims {
-            require(claims.insert(claim.id), "duplicate claim definition")?;
-        }
+        ordered(&self.game.claims, |v| v.id, "claims")?;
         let mut graphs = BTreeSet::new();
         for graph in &self.game.dialogues {
             require(graphs.insert(graph.id), "duplicate dialogue")?;
@@ -406,25 +416,22 @@ impl GameContent {
                 }
             }
         }
-        let mut quests = BTreeSet::new();
-        let mut profiles = BTreeSet::new();
-        let mut predicates = BTreeSet::new();
         require(
             self.game.quests.len() <= 10000
                 && self.game.profiles.len() <= 10000
                 && self.game.predicates.len() <= 10000,
             "narrative content exceeds limits",
         )?;
+        ordered(&self.game.quests, |v| v.id, "quests")?;
+        ordered(&self.game.predicates, |v| v.id, "named predicates")?;
+        ordered(&self.game.profiles, |v| v.id, "interaction profiles")?;
         for quest in &self.game.quests {
-            require(quests.insert(quest.id), "duplicate quest")?;
             quest.validate()?;
         }
         for rule in &self.game.predicates {
-            require(predicates.insert(rule.id), "duplicate named predicate")?;
             self.validate_condition(&rule.condition)?;
         }
         for profile in &self.game.profiles {
-            require(profiles.insert(profile.id), "duplicate interaction profile")?;
             profile.validate()?;
             for rule in &profile.rules {
                 self.validate_condition(&rule.condition)?;
@@ -553,10 +560,7 @@ impl GameContent {
             .ok_or_else(|| Invalid("unknown dialogue".into()).into())
     }
     pub fn variable(&self, id: VariableId) -> Result<&VariableDefinition> {
-        self.game
-            .variables
-            .iter()
-            .find(|v| v.id == id)
+        find(&self.game.variables, id, |v| v.id)
             .ok_or_else(|| Invalid(format!("unknown variable {id}")).into())
     }
     /// The definition, after checking that an actor is named exactly when the variable is
@@ -573,18 +577,30 @@ impl GameContent {
         )?;
         Ok(definition)
     }
+    /// Puts every list of definitions in order of identity. Lookups bisect, so content is
+    /// sorted once when it is loaded or built and checked to be so by `validate`.
+    pub fn sort(&mut self) {
+        self.items.sort();
+        self.text.sort_by_key(|v| v.id);
+        let game = &mut self.game;
+        game.world.objects.sort_by_key(|v| v.id);
+        game.world.triggers.sort_by_key(|v| v.id);
+        game.dialogue_contracts.sort_by_key(|v| v.id);
+        game.claims.sort_by_key(|v| v.id);
+        game.quests.sort_by_key(|v| v.id);
+        game.profiles.sort_by_key(|v| v.id);
+        game.predicates.sort_by_key(|v| v.id);
+        game.actors.sort_by_key(|v| v.id);
+        game.variables.sort_by_key(|v| v.id);
+        game.loot.sort_by_key(|v| v.id);
+        game.scripts.sort_by(|a, b| a.name.cmp(&b.name));
+    }
     pub fn loot(&self, id: LootId) -> Result<&crate::inventory::LootTable> {
-        self.game
-            .loot
-            .iter()
-            .find(|t| t.id == id)
+        find(&self.game.loot, id, |v| v.id)
             .ok_or_else(|| Invalid(format!("unknown loot table {id}")).into())
     }
     pub fn template(&self, id: ActorTemplateId) -> Result<&ActorTemplate> {
-        self.game
-            .actors
-            .iter()
-            .find(|t| t.id == id)
+        find(&self.game.actors, id, |v| v.id)
             .ok_or_else(|| Invalid("unknown actor template".into()).into())
     }
     /// Stable fingerprint of definitions, rules and world binding; excludes .ftl resources.

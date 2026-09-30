@@ -414,6 +414,7 @@ pub fn content() -> GameContent {
             .map(|m| (m.key.clone(), MessageContract::default()))
             .collect(),
     });
+    content.sort();
     content
 }
 pub fn state() -> SessionState {

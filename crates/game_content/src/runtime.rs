@@ -102,6 +102,7 @@ impl ContentRepository {
         }
         content.scripts =
             scripting::LuauScripts::install(&content.game.scripts).map_err(Invalid)?;
+        content.sort();
         // Cross-references are checked here once; graphs are checked as they are loaded.
         content.validate()?;
         Ok(content)

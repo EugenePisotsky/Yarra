@@ -345,21 +345,8 @@ impl LoadedProject {
             scripts: Default::default(),
         };
         // Canonical identities, not manifest/file traversal order, determine publication hashes.
-        content.game.world.objects.sort_by_key(|v| v.id);
-        content.game.world.triggers.sort_by_key(|v| v.id);
-        content.text.sort_by_key(|v| v.id);
-        content.items.categories.sort_by_key(|v| v.id);
-        content.items.items.sort_by_key(|v| v.id);
-        content.game.claims.sort_by_key(|v| v.id);
-        content.game.dialogue_contracts.sort_by_key(|v| v.id);
-        content.game.quests.sort_by_key(|v| v.id);
-        content.game.profiles.sort_by_key(|v| v.id);
-        content.game.predicates.sort_by_key(|v| v.id);
-        content.game.actors.sort_by_key(|v| v.id);
+        content.sort();
         content.game.dialogues.sort_by_key(|v| v.id);
-        content.game.variables.sort_by_key(|v| v.id);
-        content.game.scripts.sort_by(|a, b| a.name.cmp(&b.name));
-        content.game.loot.sort_by_key(|v| v.id);
         for contract in &content.text {
             require(
                 translations

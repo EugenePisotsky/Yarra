@@ -42,8 +42,8 @@ impl Inventory {
             entries: Vec::new(),
         })
     }
+    /// Checks the inventory against a catalog that was itself checked when it was loaded.
     pub fn validate(&self, catalog: &ItemCatalog) -> Result<()> {
-        catalog.validate()?;
         self.owner.validate()?;
         validate_key(&self.role)?;
         validate_revision(self.revision)?;

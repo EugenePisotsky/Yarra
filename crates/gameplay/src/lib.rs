@@ -41,6 +41,12 @@ pub enum GameplayError {
     Inventory(#[from] inventory::InventoryError),
     #[error(transparent)]
     Rejected(#[from] Rejection),
+    /// A rule refused something a script asked for.
+    #[error("script {script}: {rejection}")]
+    RejectedInScript {
+        script: String,
+        rejection: Rejection,
+    },
 }
 /// Why a command that made sense was not carried out: something a player runs into, as
 /// opposed to a mistake in content or code. A UI can match on these and say it its own way.
@@ -77,5 +83,48 @@ pub enum Rejection {
     QueueFull,
     #[error("not enough {}", .0.as_str())]
     NotEnough(game_types::Key),
+    #[error("{0} is locked")]
+    Locked(game_types::ObjectId),
+    #[error("{0} is closed")]
+    Closed(game_types::ObjectId),
+    #[error("{0} is destroyed")]
+    Destroyed(game_types::ObjectId),
+    #[error("the item cannot be used")]
+    NotUsable,
+    #[error("the item cannot be equipped")]
+    NotEquippable,
+    #[error("take the item off first")]
+    Equipped,
+    #[error("nothing is in the {} slot", .0.as_str())]
+    SlotEmpty(game_types::Key),
+    #[error("{missing} more of {definition} needed")]
+    NotEnoughItems {
+        definition: game_types::ItemDefinitionId,
+        missing: u32,
+    },
+    #[error("{0} is the character being steered")]
+    Controlled(game_types::ActorId),
+    #[error("{0} has nothing to say")]
+    NothingToSay(game_types::ActorId),
+    #[error("already in this conversation")]
+    AlreadyTalking,
+    #[error("the conversation has moved on")]
+    ConversationMoved,
+    #[error("{} cannot be said now", .0.as_str())]
+    ChoiceUnavailable(game_types::Key),
+}
+impl GameplayError {
+    /// The reason, when the command was refused by a rule rather than by a mistake.
+    pub fn rejection(&self) -> Option<&Rejection> {
+        match self {
+            Self::Rejected(rejection) | Self::RejectedInScript { rejection, .. } => Some(rejection),
+            _ => None,
+        }
+    }
+}
+impl Rejection {
+    pub(crate) fn unless(self, holds: bool) -> Result<()> {
+        if holds { Ok(()) } else { Err(self.into()) }
+    }
 }
 pub type Result<T> = std::result::Result<T, GameplayError>;

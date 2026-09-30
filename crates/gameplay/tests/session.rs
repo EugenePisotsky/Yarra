@@ -698,6 +698,7 @@ mod variables {
         });
         let choice = &mut content.game.dialogues[0].nodes[1];
         choice.actions = actions;
+        content.sort();
         content
     }
     fn add(amount: i64) -> Action {
@@ -799,6 +800,7 @@ mod variables {
             test: Test::Is(Value::Bool(false)),
         });
         content.game.dialogue_contracts = vec![graph.contract()];
+        content.sort();
         content
     }
     fn offered(session: &mut TestSession, speaker: ActorId) -> bool {

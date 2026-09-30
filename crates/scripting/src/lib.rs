@@ -31,8 +31,13 @@ pub struct LuauScripts {
     modules: BTreeMap<String, Module>,
     steps: Rc<Cell<u64>>,
 }
+/// A rule's refusal keeps its type on the way through the script, so whoever sent the
+/// command can still tell why; anything else becomes the script's error message.
 fn host(error: GameplayError) -> mlua::Error {
-    mlua::Error::runtime(error.to_string())
+    match error.rejection() {
+        Some(rejection) => mlua::Error::external(rejection.clone()),
+        None => mlua::Error::runtime(error.to_string()),
+    }
 }
 fn id<T: TryFrom<String, Error = Invalid>>(name: String) -> mlua::Result<T> {
     T::try_from(name).map_err(|e| mlua::Error::runtime(e.to_string()))
@@ -565,7 +570,13 @@ impl LuauScripts {
     }
 }
 fn failed(name: &ScriptName, error: mlua::Error) -> GameplayError {
-    Invalid(format!("script {name}: {error}")).into()
+    match error.downcast_ref::<gameplay::Rejection>() {
+        Some(rejection) => GameplayError::RejectedInScript {
+            script: name.to_string(),
+            rejection: rejection.clone(),
+        },
+        None => Invalid(format!("script {name}: {error}")).into(),
+    }
 }
 impl ScriptEngine for LuauScripts {
     fn exports(&self, name: &ScriptName) -> bool {

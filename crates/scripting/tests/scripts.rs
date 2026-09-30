@@ -80,6 +80,7 @@ fn content(source: &str, action: &str) -> GameContent {
         name: key("gate"),
         source: source.into(),
     });
+    content.sort();
     content.scripts = LuauScripts::install(&content.game.scripts).unwrap();
     let choice = &mut content.game.dialogues[0].nodes[1];
     choice.condition = Some(Condition::Script(script("gate.has_key")));
@@ -188,14 +189,35 @@ fn a_scripted_choice_reads_state_and_changes_it_through_the_same_rules() {
 fn a_script_that_fails_part_way_leaves_nothing_behind_and_says_where() {
     let mut session = at_choice(content(GATE, "gate.greedy"));
     let before = session.state().clone();
-    let error = choose(&mut session).unwrap_err().to_string();
-    assert!(error.contains("script gate.greedy"), "{error}");
+    let error = choose(&mut session).unwrap_err();
+    // A rule's refusal keeps its type through the script, and the script is named.
+    assert_eq!(
+        error.rejection(),
+        Some(&gameplay::Rejection::NotEnoughItems {
+            definition: KEY,
+            missing: 4,
+        })
+    );
     assert!(
-        error.contains("not enough items") && error.contains("in function 'greedy'"),
-        "{error}"
+        error
+            .to_string()
+            .starts_with("script gate.greedy: 4 more of")
     );
     assert_eq!(session.state(), &before);
     assert_eq!(keys(&session), 1);
+    // A mistake in the script itself says where it happened.
+    let broken = GATE.replace(
+        "game.consume_item(scene.player, \"old_gate_key\", 5)",
+        "game.consume_item(scene.player, \"no_such_item\", 5)",
+    );
+    let mut session = at_choice(content(&broken, "gate.greedy"));
+    let error = choose(&mut session).unwrap_err();
+    assert!(error.rejection().is_none());
+    let error = error.to_string();
+    assert!(
+        error.contains("script gate.greedy") && error.contains("in function 'greedy'"),
+        "{error}"
+    );
 }
 #[test]
 fn conditions_are_read_only_strict_and_bounded() {

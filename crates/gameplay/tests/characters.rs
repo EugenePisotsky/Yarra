@@ -538,6 +538,93 @@ fn a_saved_character_is_checked_against_the_rules_on_load() {
     assert_eq!(serde_json::from_str::<SessionState>(&saved).unwrap(), good);
 }
 
+#[test]
+fn what_a_player_runs_into_is_refused_with_a_reason_a_ui_can_match() {
+    let mut session = session();
+    let item = |session: &TestSession, definition| {
+        let bag = session.state().carried(HERO).unwrap();
+        bag.entries
+            .iter()
+            .find(|e| e.definition == definition)
+            .unwrap()
+            .id
+    };
+    let (potion, sword) = (item(&session, POTION), item(&session, SWORD));
+    let before = session.state().clone();
+    let mut refused = |command| rejected(session.apply(command));
+    let hand = key("hand");
+    assert_eq!(
+        refused(Command::Unequip {
+            actor: HERO,
+            slot: hand.clone()
+        }),
+        Rejection::SlotEmpty(hand)
+    );
+    assert_eq!(
+        refused(Command::Equip {
+            actor: HERO,
+            item: potion
+        }),
+        Rejection::NotEquippable
+    );
+    assert_eq!(
+        refused(Command::UseItem {
+            actor: HERO,
+            item: sword
+        }),
+        Rejection::NotUsable
+    );
+    assert_eq!(
+        refused(Command::Talk {
+            participant: HERO,
+            speaker: MERCHANT,
+            topic: None,
+            bindings: Default::default()
+        }),
+        Rejection::NothingToSay(MERCHANT)
+    );
+    assert_eq!(
+        refused(Command::Party {
+            actor: HERO,
+            member: false
+        }),
+        Rejection::Controlled(HERO)
+    );
+    assert_eq!(session.state(), &before);
+
+    // A conversation refuses what no longer fits where it is.
+    let start = Command::StartDialogue {
+        bindings: Default::default(),
+        dialogue: GATE_DIALOGUE,
+        participant: HERO,
+        speaker: MERCHANT,
+    };
+    session.apply(start.clone()).unwrap();
+    assert_eq!(rejected(session.apply(start)), Rejection::AlreadyTalking);
+    let token = session.conversation_view(TALK).unwrap().token;
+    let advance = Command::AdvanceLine {
+        key: TALK,
+        expected: token,
+    };
+    session.apply(advance.clone()).unwrap();
+    assert_eq!(
+        rejected(session.apply(advance)),
+        Rejection::ConversationMoved
+    );
+    let expected = session.conversation_view(TALK).unwrap().token;
+    let choose = Command::Choose {
+        expected,
+        dialogue: GATE_DIALOGUE,
+        participant: HERO,
+        speaker: MERCHANT,
+        choice: key("bribe"),
+    };
+    assert_eq!(
+        rejected(session.apply(choose)),
+        Rejection::ChoiceUnavailable(key("bribe"))
+    );
+}
+
 mod unopened {
     use super::*;
     use yarra_gameplay::inventory::{LootEntry, LootTable};
@@ -577,6 +664,7 @@ mod unopened {
             },
             locked: false,
         });
+        content.sort();
         content
     }
     fn start(count: u8) -> (SessionState, Vec<ActorId>) {
@@ -723,8 +811,26 @@ mod unopened {
     fn a_container_is_filled_the_first_time_it_is_opened() {
         let (mut session, _) = guards(0);
         assert!(session.state().inventory(TRUNK_BAG).is_err());
-        assert!(session.container_contents(TRUNK).is_err());
         let open = Command::World(WorldCommand::Open { object: TRUNK });
+        // Shut and locked containers say which of the two they are.
+        let contents = |session: &TestSession| {
+            let refused = session.container_contents(TRUNK).unwrap_err();
+            refused.rejection().cloned()
+        };
+        assert_eq!(contents(&session), Some(Rejection::Closed(TRUNK)));
+        let lock = |locked| {
+            Command::World(WorldCommand::SetLocked {
+                object: TRUNK,
+                locked,
+            })
+        };
+        session.apply(lock(true)).unwrap();
+        assert_eq!(contents(&session), Some(Rejection::Locked(TRUNK)));
+        assert_eq!(
+            rejected(session.apply(open.clone())),
+            Rejection::Locked(TRUNK)
+        );
+        session.apply(lock(false)).unwrap();
         session.apply(open.clone()).unwrap();
         let first = session.container_contents(TRUNK).unwrap().clone();
         assert!(first.entries.iter().any(|e| e.definition == POTION));
@@ -757,4 +863,34 @@ mod unopened {
         let restored: SessionState = serde_json::from_str(&saved).unwrap();
         GameSession::new(ToolContent::new(armed()).unwrap(), restored).unwrap();
     }
+}
+
+#[test]
+fn item_commands_cost_the_same_in_a_large_catalog() {
+    let mut content = content();
+    let template = content.items.items[0].clone();
+    // As many as a catalog may hold.
+    for n in 0..9_997u32 {
+        let mut item = template.clone();
+        let mut id = [3u8; 16];
+        id[..4].copy_from_slice(&n.to_le_bytes());
+        item.id = ItemDefinitionId(id);
+        content.items.items.push(item);
+    }
+    content.sort();
+    let mut session = GameSession::new(ToolContent::new(content).unwrap(), state()).unwrap();
+    let potion = session.state().carried(HERO).unwrap().entries[0].id;
+    let started = std::time::Instant::now();
+    for _ in 0..3 {
+        let use_item = Command::UseItem {
+            actor: HERO,
+            item: potion,
+        };
+        session.apply(use_item).unwrap();
+    }
+    let elapsed = started.elapsed();
+    println!("three item commands against 10,000 item definitions: {elapsed:?}");
+    // Checking the whole catalog on every item operation took about 3 ms per command in
+    // this unoptimised build; with definitions found by bisection it is tens of microseconds.
+    assert!(elapsed.as_millis() < 5, "{elapsed:?}");
 }

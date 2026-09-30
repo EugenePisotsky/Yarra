@@ -294,11 +294,7 @@ pub enum WorldEvent {
 }
 impl GameContent {
     pub fn object(&self, id: ObjectId) -> Result<&ObjectDefinition> {
-        self.game
-            .world
-            .objects
-            .iter()
-            .find(|d| d.id == id)
+        crate::content::find(&self.game.world.objects, id, |v| v.id)
             .ok_or_else(|| Invalid("unknown object".into()).into())
     }
     /// Checks that the content declares the area.
@@ -310,11 +306,7 @@ impl GameContent {
         .map_err(Into::into)
     }
     pub fn trigger(&self, id: TriggerId) -> Result<&TriggerDefinition> {
-        self.game
-            .world
-            .triggers
-            .iter()
-            .find(|d| d.id == id)
+        crate::content::find(&self.game.world.triggers, id, |v| v.id)
             .ok_or_else(|| Invalid("unknown trigger".into()).into())
     }
     pub(crate) fn validate_world(&self) -> Result<()> {
@@ -323,14 +315,12 @@ impl GameContent {
             w.objects.len() <= 10000 && w.areas.len() <= 10000 && w.triggers.len() <= 10000,
             "world definition budget exceeded",
         )?;
-        let mut ids = BTreeSet::new();
+        crate::content::ordered(&w.objects, |v| v.id, "objects")?;
         for d in &w.objects {
-            require(ids.insert(d.id), "duplicate object")?;
             d.name.validate()?;
         }
-        let mut ids = BTreeSet::new();
+        crate::content::ordered(&w.triggers, |v| v.id, "triggers")?;
         for d in &w.triggers {
-            require(ids.insert(d.id), "duplicate trigger")?;
             d.validate()?;
             for signal in &d.on {
                 signal.validate(self)?;

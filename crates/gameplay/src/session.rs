@@ -371,7 +371,7 @@ impl<C: ContentSource> GameSession<C> {
         self.content
             .template(self.state.actor(speaker)?.template)?
             .interaction
-            .ok_or_else(|| Invalid("NPC has no interaction profile".into()).into())
+            .ok_or_else(|| Rejection::NothingToSay(speaker).into())
     }
     pub fn world_work_pending(&self) -> bool {
         !self.state.world.pending.is_empty()
@@ -380,10 +380,9 @@ impl<C: ContentSource> GameSession<C> {
     /// Ordinary container access enforces durable lock/open/destruction state.
     pub fn container_contents(&self, object: ObjectId) -> Result<&inventory::Inventory> {
         let o = self.state.object(&self.content, object)?;
-        require(
-            !o.locked && o.open && !o.destroyed,
-            "container is not accessible",
-        )?;
+        Rejection::Destroyed(object).unless(!o.destroyed)?;
+        Rejection::Locked(object).unless(!o.locked)?;
+        Rejection::Closed(object).unless(o.open)?;
         let ObjectKind::Container { inventory, .. } = self.content.object(object)?.kind else {
             return Err(Invalid("object is not a container".into()).into());
         };
@@ -712,10 +711,7 @@ fn apply(
                     character::catch_up(content, state, actor, events)?;
                 }
             } else {
-                require(
-                    state.party.controlled != Some(actor),
-                    "choose another character to control first",
-                )?;
+                Rejection::Controlled(actor).unless(state.party.controlled != Some(actor))?;
                 state.party_mut().members.remove(&actor);
             }
         }
@@ -743,14 +739,9 @@ fn apply(
             let bag = state.carried(actor)?;
             let inventory = bag.id;
             let definition = content.items.item(bag.entry(item)?.definition)?;
-            require(
-                !definition.mechanics.on_use.is_empty(),
-                "item cannot be used",
-            )?;
-            require(
-                !state.actor(actor)?.equipment.values().any(|id| *id == item),
-                "unequip before consuming an item",
-            )?;
+            Rejection::NotUsable.unless(!definition.mechanics.on_use.is_empty())?;
+            let worn = state.actor(actor)?.equipment.values().any(|id| *id == item);
+            Rejection::Equipped.unless(!worn)?;
             for effect in &definition.mechanics.on_use {
                 match effect {
                     Use::Restore { resource, amount } => character::change_resource(
@@ -788,16 +779,14 @@ fn apply(
                 .mechanics
                 .slot
                 .clone()
-                .ok_or_else(|| Invalid("item cannot be equipped".into()))?;
+                .ok_or(Rejection::NotEquippable)?;
             state.actor_mut(actor)?.equipment.insert(slot, item);
             character::refresh(content, state, actor)?;
             events.push(GameEvent::EquipmentChanged { actor });
         }
         Command::Unequip { actor, slot } => {
-            require(
-                state.actor_mut(actor)?.equipment.remove(&slot).is_some(),
-                "slot is empty",
-            )?;
+            let removed = state.actor_mut(actor)?.equipment.remove(&slot);
+            Rejection::SlotEmpty(slot).unless(removed.is_some())?;
             character::refresh(content, state, actor)?;
             events.push(GameEvent::EquipmentChanged { actor });
         }
@@ -933,7 +922,7 @@ pub(crate) fn run_action(
         )?,
         Action::SetLocked { object, locked } => {
             let o = state.object_mut(content, *object)?;
-            require(!o.destroyed, "object destroyed")?;
+            Rejection::Destroyed(*object).unless(!o.destroyed)?;
             o.locked = *locked;
             if *locked {
                 o.open = false;
@@ -989,7 +978,11 @@ pub(crate) fn run_action(
                     .remove(&content.items, entry.id, amount)?;
                 remaining -= amount;
             }
-            require(remaining == 0, "not enough items for dialogue action")?;
+            Rejection::NotEnoughItems {
+                definition: *definition,
+                missing: remaining,
+            }
+            .unless(remaining == 0)?;
             sync_equipment(content, state, id, events)?;
         }
         Action::AwardExperience { amount } => {

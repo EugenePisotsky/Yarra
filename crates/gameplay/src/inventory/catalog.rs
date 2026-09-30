@@ -107,36 +107,38 @@ impl ItemCatalog {
         if self.categories.len() > MAX_CATEGORIES || self.items.len() > MAX_CATALOG_ITEMS {
             return Err(InventoryError::Invalid("catalog exceeds limits".into()));
         }
-        let mut categories = BTreeSet::new();
+        // Both lists are kept in order of identity, which also shows each is there once,
+        // so a definition is found by bisection.
+        let ordered = self.categories.windows(2).all(|w| w[0].id < w[1].id)
+            && self.items.windows(2).all(|w| w[0].id < w[1].id);
+        if !ordered {
+            return Err(InventoryError::Duplicate);
+        }
         for category in &self.categories {
             category.name.validate()?;
-            if !categories.insert(category.id) {
-                return Err(InventoryError::Duplicate);
-            }
         }
-        let mut ids = BTreeSet::new();
         for item in &self.items {
             item.validate()?;
-            if !ids.insert(item.id) {
-                return Err(InventoryError::Duplicate);
-            }
-            if !categories.contains(&item.category) {
-                return Err(InventoryError::UnknownCategory(item.category));
-            }
+            self.category(item.category)?;
         }
         Ok(())
     }
+    /// Puts the definitions in the order lookups rely on.
+    pub fn sort(&mut self) {
+        self.categories.sort_by_key(|v| v.id);
+        self.items.sort_by_key(|v| v.id);
+    }
     pub fn item(&self, id: ItemDefinitionId) -> Result<&ItemDefinition> {
         self.items
-            .iter()
-            .find(|item| item.id == id)
-            .ok_or(InventoryError::UnknownDefinition(id))
+            .binary_search_by_key(&id, |item| item.id)
+            .map(|index| &self.items[index])
+            .map_err(|_| InventoryError::UnknownDefinition(id))
     }
     pub fn category(&self, id: CategoryId) -> Result<&Category> {
         self.categories
-            .iter()
-            .find(|category| category.id == id)
-            .ok_or(InventoryError::UnknownCategory(id))
+            .binary_search_by_key(&id, |category| category.id)
+            .map(|index| &self.categories[index])
+            .map_err(|_| InventoryError::UnknownCategory(id))
     }
     /// Add or replace by identity. Changing the title preserves item references.
     pub fn put_category(&mut self, category: Category) -> Result<()> {
@@ -174,6 +176,7 @@ impl ItemCatalog {
         self.replace(next)
     }
     fn replace(&mut self, mut next: Self) -> Result<()> {
+        next.sort();
         next.revision = next_revision(self.revision)?;
         next.validate()?;
         *self = next;

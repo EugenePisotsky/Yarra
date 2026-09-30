@@ -244,24 +244,15 @@ impl Action {
 }
 impl GameContent {
     pub fn quest(&self, id: QuestId) -> Result<&quests::Quest> {
-        self.game
-            .quests
-            .iter()
-            .find(|q| q.id == id)
+        crate::content::find(&self.game.quests, id, |v| v.id)
             .ok_or_else(|| Invalid("unknown quest".into()).into())
     }
     pub fn profile(&self, id: InteractionProfileId) -> Result<&InteractionProfile> {
-        self.game
-            .profiles
-            .iter()
-            .find(|p| p.id == id)
+        crate::content::find(&self.game.profiles, id, |v| v.id)
             .ok_or_else(|| Invalid("unknown interaction profile".into()).into())
     }
     pub fn predicate(&self, id: PredicateId) -> Result<&Condition> {
-        self.game
-            .predicates
-            .iter()
-            .find(|p| p.id == id)
+        crate::content::find(&self.game.predicates, id, |v| v.id)
             .map(|p| &p.condition)
             .ok_or_else(|| Invalid("unknown named predicate".into()).into())
     }

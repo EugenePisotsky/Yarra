@@ -293,10 +293,10 @@ pub(crate) fn apply(
         | WorldCommand::SetLocked { object, .. }
         | WorldCommand::Destroy { object } => {
             let o = tx.object_mut(content, object)?;
-            require(!o.destroyed, "object destroyed")?;
+            Rejection::Destroyed(object).unless(!o.destroyed)?;
             match command {
                 WorldCommand::Open { .. } => {
-                    require(!o.locked, "object is locked")?;
+                    Rejection::Locked(object).unless(!o.locked)?;
                     o.open = true;
                     crate::character::fill_container(content, tx, object)?;
                 }

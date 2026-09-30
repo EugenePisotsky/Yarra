@@ -70,5 +70,6 @@ pub fn example_catalog() -> ItemCatalog {
     key.permissions.discardable = false;
     key.merchant_buy_price = None;
     key.merchant_sell_price = None;
+    catalog.sort();
     catalog
 }

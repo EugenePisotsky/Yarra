@@ -30,17 +30,11 @@ pub struct ConversationView {
 }
 impl GameContent {
     pub fn dialogue_contract(&self, id: DialogueId) -> Result<&dialogue::DialogueContract> {
-        self.game
-            .dialogue_contracts
-            .iter()
-            .find(|v| v.id == id)
+        crate::content::find(&self.game.dialogue_contracts, id, |v| v.id)
             .ok_or_else(|| Invalid("unknown dialogue contract".into()).into())
     }
     pub fn claim(&self, id: ClaimId) -> Result<&dialogue::ClaimDefinition> {
-        self.game
-            .claims
-            .iter()
-            .find(|v| v.id == id)
+        crate::content::find(&self.game.claims, id, |v| v.id)
             .ok_or_else(|| Invalid("unknown claim definition".into()).into())
     }
     pub(crate) fn validate_dialogue_text(&self, graph: &Dialogue) -> Result<()> {
@@ -246,10 +240,7 @@ pub(crate) fn start(
 ) -> Result<()> {
     let run = match state.conversations.get(&key) {
         Some(previous) => {
-            require(
-                previous.status != RunStatus::Active,
-                "conversation already active",
-            )?;
+            Rejection::AlreadyTalking.unless(previous.status != RunStatus::Active)?;
             previous
                 .token
                 .run
@@ -292,7 +283,8 @@ pub(crate) fn present(
     events: &mut Vec<GameEvent>,
 ) -> Result<()> {
     let c = state.conversation(key)?;
-    c.check(expected)?;
+    c.check(expected)
+        .map_err(|_| Rejection::ConversationMoved)?;
     let Position::Line(id) = &c.position else {
         return Err(Invalid("no pending dialogue line".into()).into());
     };
@@ -313,7 +305,8 @@ pub(crate) fn choose(
     events: &mut Vec<GameEvent>,
 ) -> Result<()> {
     let c = state.conversation(key)?;
-    c.check(expected)?;
+    c.check(expected)
+        .map_err(|_| Rejection::ConversationMoved)?;
     let Position::Choices(after) = &c.position else {
         return Err(Invalid("dialogue lines must be acknowledged before choosing".into()).into());
     };
@@ -321,7 +314,7 @@ pub(crate) fn choose(
     let node = choices(content, state, c, graph, after.as_ref())?
         .into_iter()
         .find(|n| &n.id == choice)
-        .ok_or_else(|| Invalid("choice is not available here".into()))?;
+        .ok_or_else(|| Rejection::ChoiceUnavailable(choice.clone()))?;
     take(content, state, key, node, events)?;
     events.push(GameEvent::ChoiceAccepted {
         choice: choice.clone(),
@@ -336,7 +329,8 @@ pub(crate) fn interrupt(
     events: &mut Vec<GameEvent>,
 ) -> Result<()> {
     let c = state.conversation_mut(key)?;
-    c.check(expected)?;
+    c.check(expected)
+        .map_err(|_| Rejection::ConversationMoved)?;
     c.bump()?;
     c.status = RunStatus::Interrupted;
     record(content, state, key, HistoryEvent::Interrupted)?;
