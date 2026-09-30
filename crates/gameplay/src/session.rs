@@ -248,14 +248,16 @@ enum Talk {
     },
 }
 impl<C: ContentSource> GameSession<C> {
-    /// Starts or restores a playthrough. The state is checked in full against the content.
-    pub fn new(mut source: C, state: SessionState) -> Result<Self> {
+    /// Starts or restores a playthrough. The state is brought in line with the content (see
+    /// `adopt`), then checked against it in full.
+    pub fn new(mut source: C, mut state: SessionState) -> Result<Self> {
         let identity = source.identity();
         let content = source.core()?;
         require(
             content.manifest == identity.manifest && content.game.dialogues.is_empty(),
             "session content identity mismatch",
         )?;
+        adopt(&content, &mut state)?;
         let triggers = TriggerIndex::build(&content);
         let mut session = Self {
             source,
@@ -568,6 +570,25 @@ impl<C: ContentSource> GameSession<C> {
     pub fn into_state(self) -> SessionState {
         self.state
     }
+}
+/// Brings a playthrough, perhaps saved with other content, in line with this content:
+/// every character's stats are worked out again with the current formulas and its
+/// resources kept within their caps, and party members reach the level the party's
+/// experience now earns. What cannot be brought in line fails the check that follows.
+fn adopt(content: &GameContent, state: &mut SessionState) -> Result<()> {
+    let rules = &content.game.rules;
+    let actors: Vec<ActorId> = state.actors.keys().copied().collect();
+    for id in actors {
+        let stats = state.sheet(content, &state.actors[&id])?;
+        let actor = state.actors.get_mut(&id).expect("listed above");
+        actor.set_stats(stats, rules);
+    }
+    let members: Vec<ActorId> = state.party.members.iter().copied().collect();
+    let mut tx = Tx::begin(state);
+    for member in members {
+        character::catch_up(content, &mut tx, member, &mut Vec::new())?;
+    }
+    Ok(())
 }
 #[allow(clippy::too_many_arguments)]
 fn start_talk(

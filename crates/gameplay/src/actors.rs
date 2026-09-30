@@ -184,6 +184,18 @@ impl Actor {
     pub fn skill(&self, skill: &Key) -> u8 {
         self.skills.get(skill).copied().unwrap_or(0)
     }
+    /// Takes stats just worked out and keeps every resource within its cap. A resource the
+    /// rules have gained starts full; one they no longer have is dropped.
+    pub(crate) fn set_stats(&mut self, stats: Stats, rules: &Rules) {
+        self.stats = stats;
+        self.resources
+            .retain(|resource, _| rules.resources().any(|(known, _)| known == resource));
+        for (resource, maximum) in rules.resources() {
+            let cap = self.stats[maximum].max(0);
+            let amount = self.resources.entry(resource.clone()).or_insert(cap);
+            *amount = (*amount).clamp(0, cap);
+        }
+    }
     /// Whether everything the stats are worked out from is the same as in `other`.
     pub fn same_build(&self, other: &Self) -> bool {
         self.class == other.class

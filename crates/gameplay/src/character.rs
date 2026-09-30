@@ -15,13 +15,7 @@ const MAX_EVENTS_PER_STEP: usize = 10_000;
 /// A resource the character did not have yet starts full.
 pub(crate) fn refresh(content: &GameContent, tx: &mut Tx, actor: ActorId) -> Result<()> {
     let stats = tx.sheet(content, tx.actor(actor)?)?;
-    let character = tx.actor_mut(actor)?;
-    character.stats = stats;
-    for (resource, maximum) in content.game.rules.resources() {
-        let cap = character.stats[maximum].max(0);
-        let amount = character.resources.entry(resource.clone()).or_insert(cap);
-        *amount = (*amount).clamp(0, cap);
-    }
+    tx.actor_mut(actor)?.set_stats(stats, &content.game.rules);
     Ok(())
 }
 /// Keeps the list of characters with something pending in step with this character.

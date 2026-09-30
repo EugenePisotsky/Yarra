@@ -200,17 +200,17 @@ impl SaveDirectory {
             "Autosave",
         )
     }
-    /// Identify the published content needed to restore this slot.
+    /// The content this slot was saved with. When it differs from the content at hand, the
+    /// slot still loads; this tells the player the content has changed since.
     pub fn content_identity(&self, slot: SaveSlot) -> Result<ContentIdentity> {
         Ok(read_header(&self.path(slot))?.0.content)
     }
-    /// The restored state is checked in full against the supplied content.
+    /// Restores the slot against the supplied content, whichever content it was saved with:
+    /// the state is brought in line with the content and checked against it in full, and
+    /// refused with the reason when it no longer fits.
     pub fn load<C: ContentSource>(&self, slot: SaveSlot, content: C) -> Result<GameSession<C>> {
         let (header, reader) = read_header(&self.path(slot))?;
         require(header.info.slot == slot, "slot metadata mismatch")?;
-        if header.content != content.identity() {
-            return Err(SaveError::ContentMismatch);
-        }
         let state: SessionState = serde_json::from_reader(reader)?;
         require(
             state.playthrough == header.info.playthrough

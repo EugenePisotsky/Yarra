@@ -130,31 +130,43 @@ fn autosaves_rotate_by_sequence_and_leave_other_slots_alone() {
     assert_eq!(saves.list().unwrap()[0].title, "Keep");
 }
 #[test]
-fn wrong_content_foreign_files_and_damaged_state_are_explicit_errors() {
+fn other_content_loads_while_foreign_files_and_state_that_does_not_fit_are_errors() {
     let temp = Temp::new();
     let saves = SaveDirectory::new(&temp.0, 1).unwrap();
     let session = session();
     saves.quicksave(&session).unwrap();
 
+    // Another publication of the content loads; the slot tells the game it changed.
     let mut other = content();
     other.manifest.revision += 1;
-    assert!(matches!(
-        saves.load(SaveSlot::Quick, ToolContent::new(other).unwrap()),
-        Err(SaveError::ContentMismatch)
-    ));
-    assert_eq!(
-        saves.content_identity(SaveSlot::Quick).unwrap(),
-        *session.identity()
-    );
+    let restored = saves
+        .load(SaveSlot::Quick, ToolContent::new(other).unwrap())
+        .unwrap();
+    assert_eq!(restored.state(), session.state());
+    let saved_with = saves.content_identity(SaveSlot::Quick).unwrap();
+    assert_eq!(saved_with, *session.identity());
+    assert_ne!(saved_with, *restored.identity());
 
     let path = saves.path(SaveSlot::Quick);
     let good = std::fs::read(&path).unwrap();
-    // Saved state that no longer satisfies the rules is rejected when loaded.
     let text = String::from_utf8(good.clone()).unwrap();
+    // A resource beyond what the rules allow is brought back within its cap...
     let damaged = text.replacen("\"health\":50", "\"health\":5000", 1);
     assert_ne!(damaged, text);
     std::fs::write(&path, damaged).unwrap();
-    assert!(saves.load(SaveSlot::Quick, source()).is_err());
+    let restored = saves.load(SaveSlot::Quick, source()).unwrap();
+    for actor in restored.state().actors.values() {
+        assert!(actor.resources[&key("health")] <= actor.stats[&key("max-health")]);
+    }
+    // ...while state the rules cannot bring in line is refused with the reason.
+    let damaged = text.replacen("\"level\":1,", "\"level\":1000,", 1);
+    assert_ne!(damaged, text);
+    std::fs::write(&path, damaged).unwrap();
+    let error = saves.load(SaveSlot::Quick, source()).err().unwrap();
+    assert!(
+        error.to_string().contains("level cannot be reached"),
+        "{error}"
+    );
 
     std::fs::write(&path, b"not a save\n{}").unwrap();
     assert!(matches!(
@@ -209,4 +221,21 @@ fn slots_this_build_cannot_read_do_not_stop_saving() {
         ]
     );
     saves.load(SaveSlot::Quick, source()).unwrap();
+}
+#[test]
+fn a_save_is_brought_in_line_with_rules_that_changed_since() {
+    let temp = Temp::new();
+    let saves = SaveDirectory::new(&temp.0, 1).unwrap();
+    saves.quicksave(&session()).unwrap();
+    // Level 2 now takes no experience at all.
+    let mut changed = content();
+    changed.game.rules.levels[0] = 0;
+    let restored = saves
+        .load(SaveSlot::Quick, ToolContent::new(changed).unwrap())
+        .unwrap();
+    let hero = restored.state().actor(HERO).unwrap();
+    assert_eq!(hero.level, 2);
+    // Worked out again for the new level; what the hero had left stays.
+    assert_eq!(hero.stats[&key("max-health")], 110);
+    assert_eq!(hero.resources[&key("health")], 50);
 }

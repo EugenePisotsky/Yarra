@@ -7,8 +7,8 @@ use game_types::{ActorId, AreaId, BoundText, ItemDefinitionId, Key, ObjectId, Qu
 use gameplay::actors::Position;
 use gameplay::dialogue::{Mode, Token};
 use gameplay::{
-    Command, ConversationKey, ConversationView, Driver, GameEvent, GameSession, Movement,
-    WorldCommand, WorldEvent, quests,
+    Command, ContentSource, ConversationKey, ConversationView, Driver, GameEvent, GameSession,
+    Movement, WorldCommand, WorldEvent, quests,
 };
 use localization::Arguments;
 use save::{SaveDirectory, SaveSlot};
@@ -606,17 +606,22 @@ impl Story {
         let loaded = ContentRepository::open(&self.bundle)
             .map_err(|e| e.to_string())
             .and_then(|content| {
-                self.saves
-                    .load(SaveSlot::Quick, content)
-                    .map_err(|e| e.to_string())
+                let saved_with = self.saves.content_identity(SaveSlot::Quick);
+                let changed = saved_with.is_ok_and(|saved| saved != content.identity());
+                let session = self.saves.load(SaveSlot::Quick, content);
+                session.map(|s| (s, changed)).map_err(|e| e.to_string())
             });
         self.revision += 1;
         self.notice = match loaded {
-            Ok(session) => {
+            Ok((session, changed)) => {
                 self.driver.replace(session);
                 self.loads += 1;
                 self.ambient_line = None;
-                "Loaded.".into()
+                if changed {
+                    "Loaded. The content has changed since this save.".into()
+                } else {
+                    "Loaded.".into()
+                }
             }
             Err(error) => format!("Load failed: {error}"),
         };

@@ -706,7 +706,8 @@ impl SessionState {
         content.area(m.to)
     }
     /// Checks every record and the invariants that span records. Used when a playthrough is
-    /// created or loaded; commands only re-check the records they changed.
+    /// created or loaded, after its stats were worked out again; commands only re-check the
+    /// records they changed.
     pub fn validate(&self, content: &GameContent) -> Result<()> {
         require(
             self.generation > 0 && self.generation <= i64::MAX as u64,
@@ -738,7 +739,7 @@ impl SessionState {
         }
         for (id, actor) in &self.actors {
             require(*id == actor.id, "actor identity mismatch")?;
-            self.check_actor(content, actor, true)?;
+            self.check_actor(content, actor, false)?;
         }
         require(
             self.timed.iter().all(|id| self.actors.contains_key(id)),

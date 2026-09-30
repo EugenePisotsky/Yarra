@@ -508,43 +508,56 @@ fn a_check_is_decided_by_the_rules_formula_and_reports_what_it_rolled() {
 }
 
 #[test]
-fn a_saved_character_is_checked_against_the_rules_on_load() {
+fn a_saved_character_is_brought_in_line_with_the_rules_or_refused_on_load() {
     let content = content();
     let good = state();
-    let broken = |change: fn(&mut actors::Actor)| {
+    let open = |change: fn(&mut actors::Actor)| {
         let mut state = good.clone();
         change(state.actors.get_mut(&HERO).unwrap());
-        GameSession::new(ToolContent::new(content.clone()).unwrap(), state).is_err()
+        GameSession::new(ToolContent::new(content.clone()).unwrap(), state)
     };
-    assert!(broken(|a| a
-        .stats
-        .insert(key("attack"), 99)
-        .map(|_| ())
-        .unwrap()));
-    assert!(broken(|a| a.level = 9));
-    assert!(broken(|a| a.class = key("paladin")));
-    assert!(broken(|a| a
-        .resources
-        .insert(key("health"), 101)
-        .map(|_| ())
-        .unwrap()));
-    assert!(broken(|a| a
-        .skills
-        .insert(key("persuasion"), 4)
-        .map_or((), |_| ())));
-    assert!(broken(|a| a
-        .base
-        .insert(key("strength"), 31)
-        .map(|_| ())
-        .unwrap()));
-    assert!(broken(|a| a.effects.push(rules::ActiveEffect {
-        effect: key("fortified"),
-        expires_at: Some(GameTime(5)),
-        next_tick: None,
-    })));
+    // What follows from the rules is worked out again...
+    let hero = &good.actors[&HERO];
+    let restored = open(|a| {
+        a.stats.insert(key("attack"), 99);
+    })
+    .unwrap();
+    assert_eq!(restored.state().actors[&HERO].stats, hero.stats);
+    let restored = open(|a| {
+        a.resources.insert(key("health"), 101);
+    })
+    .unwrap();
+    assert_eq!(
+        restored.state().actors[&HERO].resources[&key("health")],
+        100
+    );
     let mut state = good.clone();
     state.party.experience = 100;
-    assert!(GameSession::new(ToolContent::new(content.clone()).unwrap(), state).is_err());
+    let restored = GameSession::new(ToolContent::new(content.clone()).unwrap(), state).unwrap();
+    assert_eq!(restored.state().actors[&HERO].level, 2);
+    // ...and what the rules cannot account for is refused.
+    assert!(open(|a| a.level = 9).is_err());
+    assert!(open(|a| a.class = key("paladin")).is_err());
+    assert!(
+        open(|a| {
+            a.skills.insert(key("persuasion"), 4);
+        })
+        .is_err()
+    );
+    assert!(
+        open(|a| {
+            a.base.insert(key("strength"), 31);
+        })
+        .is_err()
+    );
+    assert!(
+        open(|a| a.effects.push(rules::ActiveEffect {
+            effect: key("fortified"),
+            expires_at: Some(GameTime(5)),
+            next_tick: None,
+        }))
+        .is_err()
+    );
     let saved = serde_json::to_string(&good).unwrap();
     assert_eq!(serde_json::from_str::<SessionState>(&saved).unwrap(), good);
 }

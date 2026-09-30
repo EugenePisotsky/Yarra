@@ -17,7 +17,5 @@ pub enum SaveError {
     Format(u32),
     #[error("file is not a Yarra save")]
     NotASave,
-    #[error("save requires different gameplay content or world publication")]
-    ContentMismatch,
 }
 pub type Result<T> = std::result::Result<T, SaveError>;

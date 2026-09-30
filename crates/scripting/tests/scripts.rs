@@ -670,6 +670,22 @@ return gate
 }
 
 #[test]
+fn a_playthrough_opened_with_changed_formulas_takes_them_up() {
+    let mut content = gameplay::fixtures::content();
+    let rules = module(&mut content, "rules");
+    let before = "40 + c.stats.vitality * 5";
+    assert!(rules.source.contains(before));
+    rules.source = rules.source.replace(before, "10 + c.stats.vitality * 2");
+    content.scripts = LuauScripts::install(&content.game.scripts).unwrap();
+    // The fixture state was worked out with the old formula, as a save made before the
+    // change would have been.
+    let session = GameSession::new(ToolContent::new(content).unwrap(), state()).unwrap();
+    let hero = session.state().actor(HERO).unwrap();
+    assert_eq!(hero.stats[&key("max-health")], 40);
+    assert_eq!(hero.resources[&key("health")], 40);
+}
+
+#[test]
 fn formulas_that_do_not_answer_properly_are_errors() {
     let broken = |rules: &str| {
         let mut content = gameplay::fixtures::content();

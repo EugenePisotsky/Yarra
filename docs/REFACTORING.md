@@ -157,7 +157,7 @@ Evidence: new tests for turns kept through a save and the world held still, runa
 
 **Cuts.**
 - Limits that refuse commands go: the pending-event and events-per-command caps can stop every command, and caps like 1,000 dialogues or 2,048 text resources are too small for the target game. Kept: recursion depth of conditions and actions, script memory and steps, sizes of files read.
-- A save records the content fingerprint and warns on a mismatch instead of refusing; loading validates the state against the content and works stats out again instead of comparing them, so a formula change does not break old saves. Only a save-format bump refuses.
+- Saves survive content edits: done. A slot loads with whatever content is at hand. Loading works every character's stats out again with the current formulas instead of comparing them, keeps resources within their caps and raises party members to the level the party's experience now earns; then the whole state is checked, and what still does not fit (a removed item or class, an unreachable level) is refused with the reason. The game says when the content has changed since the save. A format bump still refuses.
 - Dialogue graphs still load on demand, but behind `GameContent`: the first command or read model that needs a graph reads it. The pre-pass in `GameSession::apply`, the `unloadable` workaround for queued conversations and `&mut self` on read models go.
 
 **Types and small refactors.**
