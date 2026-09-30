@@ -14,7 +14,7 @@ Target: a classic party RPG in the line of KOTOR / Dragon Age: Origins, Gothic a
 | --- | --- | --- |
 | 1. In-memory state | Domain crates merged into `gameplay`; whole playthrough in memory with journaled commands; snapshot saves; content loaded once except dialogue graphs, which load on demand | Done |
 | 2. Thin slice in the game | Opt-in `--story` in `app_game`: a guard and a gate near the start, talk to the guard, the gate unlocks, quick save and load | Done |
-| 3. Dialogue graph v2 | Flat node graph with a speaker, condition, actions and ordered children per node; any number of participants | |
+| 3. Dialogue graph v2 | Flat node graph with a speaker, condition, actions and ordered children per node; any number of participants | Done |
 | 4. Lua adapter | `mlua` in a `scripting` crate behind a trait; script conditions and actions beside the built-in ones | |
 | 5. Events and areas | Event-driven triggers only; polygon areas painted in the editor; blocking and ambient dialogue modes | |
 | 6. Character rules | Data-defined stats, classes, levels, skill ranks, modifiers, status effects; a fixed-tick action model for combat | |
@@ -37,19 +37,19 @@ Left for later steps: definition lookups are linear scans and inventory operatio
 
 Deliberately not done here, because later steps replace them: the guard and gate are placed relative to the start instead of being authored in the world; positions are not reported to the session, so areas and the escort trigger do not run in the game; the gate is a visual with no collision; the HUD is plain text.
 
+### Step 3: done
 
+A dialogue is a flat set of nodes, the model used by BG3 and the Obsidian games. Each node has a speaker role, text, an optional inline condition, actions and ordered children ([`dialogue/mod.rs`](../crates/gameplay/src/dialogue/mod.rs), [`conversation.rs`](../crates/gameplay/src/conversation.rs)). After a node the first eligible child decides: a line plays, or every eligible choice is offered. Roles are `Required`, `Optional` or `Actor(id)`; named characters take part when they are in `SessionState::party`, and `Present(actor)` tests for a particular companion. `Relationship` conditions and actions can name `Actor(id)` besides `Player` and `Speaker`.
 
-The model used by BG3 and the Obsidian games. A dialogue is a flat set of nodes; each node has a speaker, text, an optional condition, actions and an ordered list of children.
+Conditions and actions moved into the nodes: `bindings.ron`, the per-dialogue binding maps, `BindingId` and the separate condition/action assets are gone; packages declare facts. Source format 7, bundle schema 8, save format 9.
 
-- After a node, the first eligible non-player child plays. If the eligible children are player choices, all of them are offered.
-- A speaker is a named actor or a role bound when the conversation starts (for a generic guard). The fixed `Player`/`Speaker` pair goes away; conditions refer to roles and to `Present(actor)`.
-- A companion reaction is a child guarded by `Present(companion)`. A two-companion combination is `All[Present(a), Present(b)]` placed before the single-companion nodes. An NPC answering a companion is simply a child of that node.
-- A conversation is keyed by its own instance ID, not by a participant pair.
-- The character who started the conversation makes skill checks.
-- Later, if main dialogues fill up with companion checks: let a companion's package attach reactions to a tagged node.
-- Authoring: the compiler resolves symbolic names to IDs, conditions and actions can be written inline in the graph, and a short conversation can live in one file.
+Evidence: six tests in `gameplay/tests/session.rs` cover no reaction when alone, a companion reaction with the NPC answering it, a two-companion exchange, a bystander bound for one conversation, hub loops with per-run choices, and leaving the party. The authored reward conversation has a companion aside; the game slice starts with Mira in the party and she speaks it. All five authored scenarios pass.
 
-Keep from today: repeat policies, scoped history, reward claims, entry-rule selection, cursor tokens, typed message arguments.
+Deviations from the plan, all deliberate:
+- A run is still keyed by `(dialogue, participant, speaker)`, not an instance ID. It did not get in the way of multi-party conversations, and changing it would have touched every command and scenario step.
+- `Player`/`Speaker` remain as participant names next to `Actor(id)`; conditions do not refer to arbitrary role names.
+- The compiler does not resolve symbolic names yet: graphs still spell out UUIDs.
+- Reactions are authored in the dialogue that hosts them; attaching them from a companion's package is not built.
 
 ### Step 4: Lua
 
