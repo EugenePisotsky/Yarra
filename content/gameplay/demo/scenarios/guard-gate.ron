@@ -96,7 +96,6 @@
         ),
         balance: 100,
     )],
-    facts: [],
     steps: [
         ExpectObject(object: "guard/old_gate", locked: true, open: false),
         Quest(quest: "guard/gate", transition: Start),

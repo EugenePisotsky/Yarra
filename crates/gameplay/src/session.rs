@@ -567,10 +567,9 @@ fn check_changes(content: &GameContent, tx: &Tx) -> Result<()> {
     for id in before.triggers.keys() {
         state.trigger(*id).validate(content, state)?;
     }
-    require(
-        before.facts.keys().all(|k| content.game.facts.contains(k)),
-        "unknown saved fact",
-    )?;
+    for id in before.variables.keys() {
+        state.check_variable(content, *id)?;
+    }
     Ok(())
 }
 fn apply(
@@ -885,7 +884,22 @@ pub(crate) fn run_action(
                 .actor_mut(actor)?
                 .award_experience(&content.game.rules, skill, *amount)?
         }
-        Action::SetFact { key, value } => state.set_fact(key, *value),
+        Action::Set { variable, value } => {
+            require(
+                content.variable(*variable)?.initial.same_type(value),
+                "value has a different type than the variable",
+            )?;
+            state.set_variable(*variable, value.clone());
+        }
+        Action::Add { variable, amount } => {
+            let Value::Int(current) = state.variable(content, *variable)? else {
+                return Err(Invalid("only whole-number variables can be added to".into()).into());
+            };
+            let sum = current
+                .checked_add(*amount)
+                .ok_or_else(|| Invalid("variable overflow".into()))?;
+            state.set_variable(*variable, Value::Int(sum));
+        }
         Action::SkillCheck {
             skill,
             difficulty,

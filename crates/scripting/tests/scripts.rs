@@ -1,8 +1,9 @@
+use game_types::VariableId;
 use gameplay::dialogue::HistoryEvent;
 use gameplay::inventory::fixtures::{KEY, SWORD};
 use gameplay::{
     Action, Command, Condition, ConversationKey, GameContent, GameEvent, GameSession, ScriptModule,
-    ScriptName, ToolContent, fixtures::*,
+    ScriptName, ToolContent, Value, VariableDefinition, fixtures::*,
 };
 use yarra_scripting::{API_DEFINITIONS, LuauScripts};
 
@@ -11,7 +12,7 @@ local gate = {}
 
 function gate.has_key(game: Game, scene: Scene): boolean
     return game.item_count(scene.player, "old_gate_key") >= 1
-        and not game.fact("gate-rewarded")
+        and game.get("old_gate/rewarded") == false
 end
 
 function gate.hand_over(game: Game, scene: Scene)
@@ -22,12 +23,14 @@ function gate.hand_over(game: Game, scene: Scene)
         game.give_item(scene.player, "iron_sword", 1)
         game.award_experience(scene.player, "persuasion", 10)
         game.adjust_relationship(scene.speaker, scene.player, 25)
-        game.set_fact("gate-rewarded", true)
+        game.set("old_gate/rewarded", true)
+        game.add("old_gate/visits", 2)
+        game.set("old_gate/password", "mellon")
     end
 end
 
 function gate.greedy(game: Game, scene: Scene)
-    game.set_fact("gate-rewarded", true)
+    game.set("old_gate/rewarded", true)
     game.give_item(scene.player, "iron_sword", 1)
     game.consume_item(scene.player, "old_gate_key", 5)
 end
@@ -41,6 +44,15 @@ fn script(name: &str) -> ScriptName {
 /// The fixture conversation, with its choice decided and carried out by scripts.
 fn content(source: &str, action: &str) -> GameContent {
     let mut content = gameplay::fixtures::content();
+    for (name, initial) in [
+        ("old_gate/visits", Value::Int(0)),
+        ("old_gate/password", Value::Text(String::new())),
+    ] {
+        content.game.variables.push(VariableDefinition {
+            id: VariableId::try_from(name.to_owned()).unwrap(),
+            initial,
+        });
+    }
     content.game.scripts = vec![ScriptModule {
         name: key("gate"),
         source: source.into(),
@@ -109,7 +121,11 @@ fn a_scripted_choice_reads_state_and_changes_it_through_the_same_rules() {
     );
     let state = session.state();
     assert_eq!(keys(&session), 0);
-    assert!(state.facts.contains(&key("gate-rewarded")));
+    let content = session.content();
+    let variable = |name: &str| state.variable(content, VariableId::named(name)).unwrap();
+    assert_eq!(variable("old_gate/rewarded"), Value::Bool(true));
+    assert_eq!(variable("old_gate/visits"), Value::Int(2));
+    assert_eq!(variable("old_gate/password"), Value::Text("mellon".into()));
     assert_eq!(state.actor(HERO).unwrap().skills[&key("persuasion")], 10);
     let attitude = state.relationship(gameplay::actors::RelationshipKey {
         from: MERCHANT,
@@ -142,7 +158,7 @@ fn a_script_that_fails_part_way_leaves_nothing_behind_and_says_where() {
     let error = choose(&mut session).unwrap_err().to_string();
     assert!(error.contains("script gate.greedy"), "{error}");
     assert!(
-        error.contains("not enough items") && error.contains("gate:24"),
+        error.contains("not enough items") && error.contains("in function 'greedy'"),
         "{error}"
     );
     assert_eq!(session.state(), &before);
@@ -168,6 +184,10 @@ fn conditions_are_read_only_strict_and_bounded() {
         ),
         ("return math.random() > 0.5", "nil value"),
         ("return os.time() > 0", "nil value"),
+        (
+            "return game.get('old_gate/missing') == true",
+            "unknown variable",
+        ),
     ];
     for (body, expected) in cases {
         let source = format!(
@@ -301,4 +321,26 @@ fn the_type_definitions_list_exactly_the_functions_scripts_are_given() {
     everything.extend(declared("export type Game = Reads & {"));
     everything.sort();
     assert_eq!(all, everything);
+}
+
+#[test]
+fn variables_keep_their_type() {
+    let cases = [
+        ("game.set('old_gate/rewarded', 1)", "different type"),
+        ("game.set('old_gate/visits', 1.5)", "whole number"),
+        ("game.set('old_gate/visits', {})", "whole number"),
+        ("game.add('old_gate/rewarded', 1)", "whole-number"),
+        ("game.set('old_gate/nothing', true)", "unknown variable"),
+    ];
+    for (body, expected) in cases {
+        let source = format!(
+            "local gate = {{}}\nfunction gate.has_key(game, scene) return true end\n\
+             function gate.hand_over(game, scene)\n{body}\nend\nreturn gate"
+        );
+        let mut session = at_choice(content(&source, "gate.hand_over"));
+        let before = session.state().clone();
+        let error = choose(&mut session).unwrap_err().to_string();
+        assert!(error.contains(expected), "{body}: {error}");
+        assert_eq!(session.state(), &before);
+    }
 }

@@ -96,7 +96,6 @@
         ),
         balance: 100,
     )],
-    facts: [],
     party: ["hero", "mira"],
     // Starting conditions for the in-game slice: the quest is already running.
     steps: [

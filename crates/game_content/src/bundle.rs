@@ -10,7 +10,7 @@ use std::{
 };
 
 pub const BUNDLE_APPLICATION_ID: i64 = 0x59474342;
-pub const BUNDLE_SCHEMA_VERSION: i64 = 8;
+pub const BUNDLE_SCHEMA_VERSION: i64 = 9;
 const SCHEMA: &str = "
 CREATE TABLE bundle_manifest (
  singleton INTEGER PRIMARY KEY CHECK(singleton=1),
@@ -62,7 +62,7 @@ pub(crate) fn publication_hash(
     headers: &[AssetHeader],
 ) -> Result<[u8; 32]> {
     let mut hasher = blake3::Hasher::new();
-    hasher.update(b"yarra-game-content-v8\0");
+    hasher.update(b"yarra-game-content-v9\0");
     hasher.update(&serde_json::to_vec(&(
         &manifest.content,
         manifest.catalog_id,
@@ -195,7 +195,14 @@ impl LoadedProject {
                 .cloned()
                 .map(Asset::Dialogue)
         );
-        append!(self.content.game.facts.iter().cloned().map(Asset::Fact));
+        append!(
+            self.content
+                .game
+                .variables
+                .iter()
+                .cloned()
+                .map(Asset::Variable)
+        );
         append!(self.content.text.iter().cloned().map(Asset::Text));
         append!(self.content.game.scripts.iter().cloned().map(Asset::Script));
         append!(

@@ -3,7 +3,7 @@ use crate::{asset::*, bundle::publication_hash, *};
 use game_types::require;
 use gameplay::inventory;
 use gameplay::{GameContent, GameDefinitions};
-use std::{collections::BTreeSet, path::Path};
+use std::path::Path;
 
 impl LoadedProject {
     /// Full validation/demo tool only: reads every mechanical asset and executes the scenario.
@@ -47,7 +47,7 @@ impl LoadedProject {
         let mut predicates = Vec::new();
         let mut actors = Vec::new();
         let mut dialogues = Vec::new();
-        let mut facts = BTreeSet::new();
+        let mut variables = Vec::new();
         let mut scripts = Vec::new();
         let mut text = Vec::new();
         for record in records {
@@ -66,9 +66,7 @@ impl LoadedProject {
                 Asset::Rules(v) => rules = Some(v),
                 Asset::Dialogue(v) => dialogues.push(v),
                 Asset::Script(v) => scripts.push(v),
-                Asset::Fact(v) => {
-                    facts.insert(v);
-                }
+                Asset::Variable(v) => variables.push(v),
                 Asset::Text(v) => text.push(v),
             }
         }
@@ -87,7 +85,7 @@ impl LoadedProject {
                 rules: rules.ok_or(ContentError::MissingAsset(AssetId::Rules))?,
                 actors,
                 dialogues,
-                facts,
+                variables,
                 scripts,
             },
         };

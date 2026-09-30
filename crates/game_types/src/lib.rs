@@ -125,7 +125,8 @@ ids!(
     TextResourceId,
     PackageId,
     ContentId,
-    PlaythroughId
+    PlaythroughId,
+    VariableId
 );
 
 /// A stable semantic key, independent of translated labels.

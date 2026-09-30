@@ -3,7 +3,10 @@ use crate::actors::{Actor, ActorRole, ActorTemplate};
 use crate::dialogue::{Dialogue, Node, NodeKind, Repeat, RepeatPolicy, Role, ScopeSelector};
 use crate::inventory::{Inventory, Money, Wallet, fixtures::*};
 use crate::rules::{Attribute, Effect, Modifier, Rules, Skill};
-use crate::{Action, Condition, ContentManifest, GameContent, GameDefinitions, SessionState};
+use crate::{
+    Action, Condition, ContentManifest, GameContent, GameDefinitions, SessionState, Test, Value,
+    VariableDefinition,
+};
 use game_types::*;
 
 pub const HERO: ActorId = ActorId::named("hero");
@@ -15,6 +18,7 @@ pub const COMPANION_BAG: InventoryId = InventoryId::named("mira");
 pub const CHEST: InventoryId = InventoryId::named("chest");
 pub const PARTY_WALLET: WalletId = WalletId::named("party");
 pub const MERCHANT_WALLET: WalletId = WalletId::named("merchant");
+pub const REWARDED: VariableId = VariableId::named("old_gate/rewarded");
 pub const GATE_DIALOGUE: DialogueId = DialogueId::named("old_gate/gate");
 pub fn key(s: &str) -> Key {
     Key::new(s).unwrap()
@@ -114,9 +118,9 @@ pub fn content() -> GameContent {
                         definition: KEY,
                         quantity: 1,
                     },
-                    Condition::Fact {
-                        key: key("gate-rewarded"),
-                        value: false,
+                    Condition::Variable {
+                        variable: REWARDED,
+                        test: Test::Is(Value::Bool(false)),
                     },
                 ])),
                 actions: vec![
@@ -136,9 +140,9 @@ pub fn content() -> GameContent {
                                 skill: key("persuasion"),
                                 amount: 10,
                             },
-                            Action::SetFact {
-                                key: key("gate-rewarded"),
-                                value: true,
+                            Action::Set {
+                                variable: REWARDED,
+                                value: Value::Bool(true),
                             },
                         ],
                         failure: vec![],
@@ -167,7 +171,10 @@ pub fn content() -> GameContent {
             rules,
             actors: vec![template],
             dialogues: vec![graph],
-            facts: [key("gate-rewarded")].into(),
+            variables: vec![VariableDefinition {
+                id: REWARDED,
+                initial: Value::Bool(false),
+            }],
             scripts: vec![],
         },
     };

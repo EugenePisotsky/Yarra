@@ -96,7 +96,6 @@
         ),
         balance: 100,
     )],
-    facts: [],
     steps: [
         ExpectOpening(participant: "hero", speaker: "guard", rule: "welcome"),
         AdjustRelationship(key: (from: "guard", to: "hero"), amount: -20),

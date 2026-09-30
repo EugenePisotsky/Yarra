@@ -68,9 +68,9 @@ pub(crate) fn signals(content: &GameContent, tx: &Tx) -> Result<BTreeSet<WorldSi
             signals.insert(WorldSignal::Relationship(*key));
         }
     }
-    for (key, present) in &before.facts {
-        if *present != state.facts.contains(key) {
-            signals.insert(WorldSignal::Fact(key.clone()));
+    for (id, old) in &before.variables {
+        if old.as_ref() != state.variables.get(id) {
+            signals.insert(WorldSignal::Variable(*id));
         }
     }
     for (actor, old) in &before.locations {

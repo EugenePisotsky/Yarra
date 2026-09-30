@@ -11,5 +11,5 @@
     actors: [],
     conversations: ["packages/old_gate/conversations/gate/conversation.ron"],
     resources: [],
-    facts: ["gate-rewarded"],
+    variables: [(id: "old_gate/rewarded", initial: Bool(false))],
 )

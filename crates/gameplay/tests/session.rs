@@ -170,7 +170,13 @@ fn dialogue_rewards_once_and_preview_does_not_roll() {
             .iter()
             .any(|e| matches!(e, GameEvent::SkillChecked { passed: true, .. }))
     );
-    assert!(snapshot(&session).facts.contains(&key("gate-rewarded")));
+    assert_eq!(
+        session
+            .state()
+            .variable(session.content(), REWARDED)
+            .unwrap(),
+        Value::Bool(true)
+    );
     assert_eq!(
         snapshot(&session).actor(HERO).unwrap().skills[&key("persuasion")],
         10
@@ -244,7 +250,7 @@ fn failed_skill_roll_is_a_committed_outcome() {
             .status,
         dialogue::RunStatus::Completed
     );
-    assert!(!snapshot(&session).facts.contains(&key("gate-rewarded")));
+    assert!(session.state().variables.is_empty());
 }
 #[test]
 fn timed_effects_derive_from_explicit_time() {
@@ -295,9 +301,9 @@ fn cross_domain_validation_rejects_bad_ownership_equipment_and_content() {
         .insert(key("hand"), item(&source, MERCHANT_BAG, POTION));
     assert!(new(content(), state).is_err());
     let mut content = content();
-    *persuade(&mut content) = Action::SetFact {
-        key: key("undeclared"),
-        value: true,
+    *persuade(&mut content) = Action::Set {
+        variable: VariableId::named("undeclared"),
+        value: Value::Bool(true),
     };
     assert!(content.validate().is_err());
 }
@@ -685,5 +691,91 @@ mod party {
             .unwrap();
         start(&mut session, &[]);
         assert_eq!(listen(&mut session), said(&[(MERCHANT, "greeting")]));
+    }
+}
+
+mod variables {
+    use super::*;
+    const VISITS: VariableId = VariableId::named("old_gate/visits");
+    fn with_counter(actions: Vec<Action>) -> GameContent {
+        let mut content = content();
+        content.game.variables.push(VariableDefinition {
+            id: VISITS,
+            initial: Value::Int(0),
+        });
+        let choice = &mut content.game.dialogues[0].nodes[1];
+        choice.actions = actions;
+        content
+    }
+    fn add(amount: i64) -> Action {
+        Action::Add {
+            variable: VISITS,
+            amount,
+        }
+    }
+    fn holds(session: &TestSession, test: Test) -> bool {
+        let condition = Condition::Variable {
+            variable: VISITS,
+            test,
+        };
+        session
+            .content()
+            .evaluate(&condition, session.state(), HERO, MERCHANT)
+            .unwrap()
+            .matched
+    }
+    #[test]
+    fn an_unset_variable_reads_as_its_initial_value_and_counts_from_there() {
+        let mut session = new(with_counter(vec![add(2), add(-5)]), state()).unwrap();
+        assert!(session.state().variables.is_empty());
+        assert!(holds(&session, Test::Is(Value::Int(0))));
+        start(&mut session);
+        session.apply(choose()).unwrap();
+        assert_eq!(session.state().variables[&VISITS], Value::Int(-3));
+        assert!(holds(&session, Test::AtMost(-3)) && !holds(&session, Test::AtLeast(0)));
+        // The untouched flag is still absent and still reads as false.
+        assert_eq!(session.state().variables.len(), 1);
+        assert_eq!(
+            session
+                .state()
+                .variable(session.content(), REWARDED)
+                .unwrap(),
+            Value::Bool(false)
+        );
+    }
+    #[test]
+    fn a_later_failure_undoes_earlier_variable_changes() {
+        let failing = Action::ConsumeItem {
+            definition: KEY,
+            quantity: 9,
+        };
+        let mut session = new(with_counter(vec![add(1), failing]), state()).unwrap();
+        start(&mut session);
+        let before = snapshot(&session);
+        assert!(session.apply(choose()).is_err());
+        assert_eq!(snapshot(&session), before);
+    }
+    #[test]
+    fn tests_and_values_must_fit_the_variable_type() {
+        let wrong_value = Action::Set {
+            variable: VISITS,
+            value: Value::Text("many".into()),
+        };
+        assert!(with_counter(vec![wrong_value]).validate().is_err());
+        let not_a_number = Action::Add {
+            variable: REWARDED,
+            amount: 1,
+        };
+        assert!(with_counter(vec![not_a_number]).validate().is_err());
+        let content = with_counter(vec![]);
+        let at_least = Condition::Variable {
+            variable: REWARDED,
+            test: Test::AtLeast(1),
+        };
+        assert!(content.validate_condition(&at_least).is_err());
+        // Saved state with a value of the wrong type is rejected when loaded.
+        let mut state = state();
+        state.variables.insert(VISITS, Value::Bool(true));
+        assert!(new(content, state).is_err());
     }
 }

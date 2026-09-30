@@ -2,7 +2,7 @@
 //! an engine (Luau, in the `scripting` crate) only translates calls into these methods, so
 //! scripted and built-in rules go through the same checks and the same command journal.
 use crate::tx::Tx;
-use crate::{Action, GameContent, GameEvent, Result, SessionState, quests};
+use crate::{Action, GameContent, GameEvent, Result, SessionState, Value, quests};
 use game_types::*;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -130,9 +130,8 @@ impl ReadScope<'_> {
             || self.others.contains(&actor)
             || self.state.party.contains(&actor)
     }
-    pub fn fact(&self, key: &Key) -> Result<bool> {
-        require(self.content.game.facts.contains(key), "unknown fact")?;
-        Ok(self.state.facts.contains(key))
+    pub fn variable(&self, id: VariableId) -> Result<Value> {
+        self.state.variable(self.content, id)
     }
     pub fn inside_area(&self, actor: ActorId, area: AreaId) -> Result<bool> {
         self.content.area(area)?;

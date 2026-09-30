@@ -165,12 +165,12 @@ fn category_mechanics_bindings_and_scenario_errors_are_rejected() {
     let path = root.join("packages/old_gate/conversations/gate/graph.ron");
     let original: gameplay::dialogue::Dialogue = read(&path);
     let mut graph = original.clone();
-    graph.nodes[1].actions[0] = gameplay::Action::SetFact {
-        key: Key::new("undeclared").unwrap(),
-        value: true,
+    graph.nodes[1].actions[0] = gameplay::Action::Set {
+        variable: game_types::VariableId::named("undeclared"),
+        value: gameplay::Value::Bool(true),
     };
     write(&path, &graph);
-    assert!(failure(&root).contains("unknown fact"));
+    assert!(failure(&root).contains("unknown variable"));
     let mut graph = original.clone();
     graph.nodes[0].children.push(Key::new("nowhere").unwrap());
     write(&path, &graph);

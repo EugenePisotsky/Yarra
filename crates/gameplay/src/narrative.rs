@@ -93,6 +93,7 @@ pub enum Observed {
     Quantity(u64),
     Attitude(i16),
     Quest(quests::Status),
+    Value(Value),
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConditionCheck {
@@ -294,8 +295,13 @@ impl GameContent {
                     self.items.item(*definition)?;
                     require(*quantity > 0, "zero item condition")?;
                 }
-                Condition::Fact { key, .. } => {
-                    require(self.game.facts.contains(key), "unknown fact")?
+                Condition::Variable { variable, test } => {
+                    let initial = &self.variable(*variable)?.initial;
+                    let fits = match test {
+                        Test::Is(value) => initial.same_type(value),
+                        Test::AtLeast(_) | Test::AtMost(_) => matches!(initial, Value::Int(_)),
+                    };
+                    require(fits, "test does not fit the variable's type")?
                 }
                 Condition::SkillExperience { skill, .. } => {
                     self.game.rules.skill(skill)?;
@@ -425,9 +431,15 @@ impl GameContent {
                         .sum();
                     (Observed::Quantity(n), n >= u64::from(*quantity))
                 }
-                Condition::Fact { key, value } => {
-                    let found = state.facts.contains(key);
-                    (Observed::Boolean(found), found == *value)
+                Condition::Variable { variable, test } => {
+                    let value = state.variable(content, *variable)?;
+                    let matched = match (test, &value) {
+                        (Test::Is(expected), value) => expected == value,
+                        (Test::AtLeast(n), Value::Int(value)) => value >= n,
+                        (Test::AtMost(n), Value::Int(value)) => value <= n,
+                        _ => false,
+                    };
+                    (Observed::Value(value), matched)
                 }
                 Condition::SkillExperience { skill, minimum } => {
                     let n = state.actor(pair.0)?.skills.get(skill).copied().unwrap_or(0);

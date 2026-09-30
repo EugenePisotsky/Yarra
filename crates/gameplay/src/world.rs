@@ -62,7 +62,7 @@ pub enum WorldSignal {
     QuestStarted(QuestId),
     Quest(QuestId),
     Actor(ActorId),
-    Fact(Key),
+    Variable(VariableId),
     History(dialogue::HistoryKey),
     Claim(dialogue::ClaimKey),
     Relationship(actors::RelationshipKey),
@@ -84,7 +84,9 @@ impl WorldSignal {
             Self::QuestStarted(id) | Self::Quest(id) => {
                 content.quest(*id)?;
             }
-            Self::Fact(key) => require(content.game.facts.contains(key), "unknown trigger fact")?,
+            Self::Variable(id) => {
+                content.variable(*id)?;
+            }
             Self::Entered { area, .. } | Self::Exited { area, .. } => {
                 content.area(*area)?;
             }
@@ -214,8 +216,8 @@ impl TriggerDefinition {
                     | Condition::ObjectiveCompleted { quest, .. } => {
                         out.insert(WorldSignal::Quest(*quest));
                     }
-                    Condition::Fact { key, .. } => {
-                        out.insert(WorldSignal::Fact(key.clone()));
+                    Condition::Variable { variable, .. } => {
+                        out.insert(WorldSignal::Variable(*variable));
                     }
                     Condition::History { dialogue, .. } => {
                         out.insert(WorldSignal::History(

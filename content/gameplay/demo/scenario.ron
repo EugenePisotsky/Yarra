@@ -96,7 +96,6 @@
         ),
         balance: 100,
     )],
-    facts: [],
     steps: [UseItem(
         actor: "hero",
         definition: "healing_potion",

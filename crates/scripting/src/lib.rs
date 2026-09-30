@@ -10,7 +10,7 @@ use gameplay::quests::{Status, Transition};
 use gameplay::{ActScope, Action, GameplayError, Participant, ReadScope, ScriptEngine};
 use gameplay::{ScriptModule, ScriptName, Scripts};
 use mlua::chunk::{ChunkMode, Compiler};
-use mlua::{Function, Lua, Scope, Table, Value, VmState};
+use mlua::{Function, IntoLua, Lua, Scope, Table, Value, VmState};
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
@@ -106,10 +106,14 @@ fn add_reads<'s, T: Reads + 's>(scope: &'s Scope<'s, '_>, game: &Table, on: T) -
         })?,
     )?;
     game.set(
-        "fact",
-        scope.create_function(move |_, name: String| {
-            let name = key(name)?;
-            on.read(|r| r.fact(&name)).map_err(host)
+        "get",
+        scope.create_function(move |lua, variable: String| {
+            let variable = id(variable)?;
+            match on.read(|r| r.variable(variable)).map_err(host)? {
+                gameplay::Value::Bool(value) => value.into_lua(lua),
+                gameplay::Value::Int(value) => value.into_lua(lua),
+                gameplay::Value::Text(value) => value.into_lua(lua),
+            }
         })?,
     )?;
     game.set(
@@ -235,13 +239,38 @@ fn add_effects<'s>(
         })?,
     )?;
     game.set(
-        "set_fact",
-        scope.create_function(move |_, (name, value): (String, bool)| {
+        "set",
+        scope.create_function(move |_, (variable, value): (String, Value)| {
+            let value = match value {
+                Value::Boolean(value) => gameplay::Value::Bool(value),
+                Value::Integer(value) => gameplay::Value::Int(value),
+                Value::Number(value) if value.fract() == 0.0 && value.abs() < 9e15 => {
+                    gameplay::Value::Int(value as i64)
+                }
+                Value::String(value) => gameplay::Value::Text(value.to_str()?.to_owned()),
+                _ => {
+                    return Err(mlua::Error::runtime(
+                        "a variable holds true/false, a whole number or text",
+                    ));
+                }
+            };
             apply(
                 player(),
-                Action::SetFact {
-                    key: key(name)?,
+                Action::Set {
+                    variable: id(variable)?,
                     value,
+                },
+            )
+        })?,
+    )?;
+    game.set(
+        "add",
+        scope.create_function(move |_, (variable, amount): (String, i64)| {
+            apply(
+                player(),
+                Action::Add {
+                    variable: id(variable)?,
+                    amount,
                 },
             )
         })?,

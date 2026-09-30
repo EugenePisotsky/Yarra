@@ -10,6 +10,37 @@ use game_types::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+/// What a variable can hold. A variable keeps the type of its initial value.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Value {
+    Bool(bool),
+    Int(i64),
+    Text(String),
+}
+impl Value {
+    pub fn same_type(&self, other: &Value) -> bool {
+        std::mem::discriminant(self) == std::mem::discriminant(other)
+    }
+    fn validate(&self) -> game_types::Result<()> {
+        match self {
+            Self::Text(text) => require(text.len() <= 1024, "variable text exceeds 1024 bytes"),
+            _ => Ok(()),
+        }
+    }
+}
+/// A named value that content and scripts read and change, kept for the whole playthrough.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VariableDefinition {
+    pub id: VariableId,
+    pub initial: Value,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Test {
+    Is(Value),
+    AtLeast(i64),
+    AtMost(i64),
+}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Condition {
     /// A script function returning a boolean.
@@ -49,9 +80,9 @@ pub enum Condition {
         definition: ItemDefinitionId,
         quantity: u32,
     },
-    Fact {
-        key: Key,
-        value: bool,
+    Variable {
+        variable: VariableId,
+        test: Test,
     },
     SkillExperience {
         skill: Key,
@@ -91,9 +122,14 @@ pub enum Action {
         skill: Key,
         amount: u64,
     },
-    SetFact {
-        key: Key,
-        value: bool,
+    Set {
+        variable: VariableId,
+        value: Value,
+    },
+    /// Adds to a whole-number variable; the amount may be negative.
+    Add {
+        variable: VariableId,
+        amount: i64,
     },
     /// A failed roll is an accepted outcome, with its own effects. Invalid effects
     /// reject the entire command, restoring random state along with domain state.
@@ -124,7 +160,7 @@ pub struct GameDefinitions {
     pub rules: Rules,
     pub actors: Vec<ActorTemplate>,
     pub dialogues: Vec<Dialogue>,
-    pub facts: BTreeSet<Key>,
+    pub variables: Vec<VariableDefinition>,
     #[serde(default)]
     pub scripts: Vec<ScriptModule>,
 }
@@ -180,6 +216,11 @@ impl GameContent {
         for id in contracts.keys() {
             visit_text(*id, &contracts, &mut BTreeSet::new(), &mut visited)?;
         }
+        let mut variables = BTreeSet::new();
+        for variable in &self.game.variables {
+            variable.initial.validate()?;
+            require(variables.insert(variable.id), "duplicate variable")?;
+        }
         let mut modules = BTreeSet::new();
         for module in &self.game.scripts {
             require(
@@ -193,7 +234,7 @@ impl GameContent {
         require(
             self.game.actors.len() <= 10000
                 && self.game.dialogues.len() <= 1000
-                && self.game.facts.len() <= 10000,
+                && self.game.variables.len() <= 10000,
             "content exceeds limits",
         )?;
         for item in &self.items.items {
@@ -311,7 +352,17 @@ impl GameContent {
                 self.game.rules.skill(skill)?;
                 require(*amount > 0, "zero XP reward")?;
             }
-            Action::SetFact { key, .. } => require(self.game.facts.contains(key), "unknown fact")?,
+            Action::Set { variable, value } => {
+                value.validate()?;
+                require(
+                    self.variable(*variable)?.initial.same_type(value),
+                    "value has a different type than the variable",
+                )?
+            }
+            Action::Add { variable, .. } => require(
+                matches!(self.variable(*variable)?.initial, Value::Int(_)),
+                "only whole-number variables can be added to",
+            )?,
             Action::SkillCheck {
                 skill,
                 difficulty,
@@ -334,6 +385,13 @@ impl GameContent {
     pub fn dialogue(&self, id: DialogueId) -> Result<&Dialogue> {
         self.loaded_dialogue(id)
             .ok_or_else(|| Invalid("unknown dialogue".into()).into())
+    }
+    pub fn variable(&self, id: VariableId) -> Result<&VariableDefinition> {
+        self.game
+            .variables
+            .iter()
+            .find(|v| v.id == id)
+            .ok_or_else(|| Invalid(format!("unknown variable {id}")).into())
     }
     pub fn template(&self, id: ActorTemplateId) -> Result<&ActorTemplate> {
         self.game
@@ -360,6 +418,7 @@ impl GameContent {
         canonical.game.predicates.sort_by_key(|v| v.id);
         canonical.game.actors.sort_by_key(|v| v.id);
         canonical.game.dialogues.sort_by_key(|v| v.id);
+        canonical.game.variables.sort_by_key(|v| v.id);
         canonical.game.scripts.sort_by(|a, b| a.name.cmp(&b.name));
         let bytes = serde_json::to_vec(&canonical).map_err(|e| Invalid(e.to_string()))?;
         Ok(*blake3::hash(&bytes).as_bytes())

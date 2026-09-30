@@ -15,7 +15,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-pub const SOURCE_FORMAT_VERSION: u32 = 7;
+pub const SOURCE_FORMAT_VERSION: u32 = 8;
 pub(crate) const MAX_DOCUMENT_BYTES: usize = 16 * 1024 * 1024;
 const MAX_PROJECT_BYTES: usize = 64 * 1024 * 1024;
 const MAX_TRANSLATION_BYTES: usize = 2 * 1024 * 1024;
@@ -51,9 +51,9 @@ pub struct PackageFile {
     /// Luau files; each is a module named after its file.
     #[serde(default)]
     pub scripts: Vec<String>,
-    /// Campaign facts this package introduces.
+    /// Variables this package introduces, each with its initial value.
     #[serde(default)]
-    pub facts: BTreeSet<Key>,
+    pub variables: Vec<gameplay::VariableDefinition>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -130,7 +130,7 @@ impl LoadedProject {
         let mut quests = Vec::new();
         let mut profiles = Vec::new();
         let mut predicates = Vec::new();
-        let mut facts = BTreeSet::new();
+        let mut variables = Vec::new();
         let mut scripts = Vec::new();
         let mut contracts = Vec::new();
         let mut translations = Vec::new();
@@ -234,9 +234,9 @@ impl LoadedProject {
                     source: source.text(path, MAX_SCRIPT_BYTES)?,
                 });
             }
-            for fact in &package.facts {
-                own!(AssetId::Fact(fact.clone()));
-                facts.insert(fact.clone());
+            for variable in &package.variables {
+                own!(AssetId::Variable(variable.id));
+                variables.push(variable.clone());
             }
             require(resource_paths.len() <= 2048, "too many package resources")?;
             for path in resource_paths {
@@ -327,7 +327,7 @@ impl LoadedProject {
                 rules: rules.ok_or_else(|| Invalid("missing rules".into()))?,
                 actors,
                 dialogues,
-                facts,
+                variables,
                 scripts,
             },
             scripts: Default::default(),

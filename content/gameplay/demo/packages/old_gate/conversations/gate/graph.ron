@@ -11,7 +11,7 @@
             repeat: OnceEver,
             condition: Some(All([
                 HasItem(definition: "old_gate_key", quantity: 1),
-                Fact(key: "gate-rewarded", value: false),
+                Variable(variable: "old_gate/rewarded", test: Is(Bool(false))),
             ])),
             actions: [
                 ConsumeItem(definition: "old_gate_key", quantity: 1),
@@ -21,7 +21,7 @@
                     success: [
                         GrantItem(definition: "iron_sword", quantity: 1),
                         AwardExperience(skill: "persuasion", amount: 10),
-                        SetFact(key: "gate-rewarded", value: true),
+                        Set(variable: "old_gate/rewarded", value: Bool(true)),
                     ],
                     failure: [],
                 ),

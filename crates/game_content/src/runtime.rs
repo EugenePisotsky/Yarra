@@ -18,7 +18,7 @@ const CORE_KINDS: [AssetKind; 14] = [
     AssetKind::Item,
     AssetKind::Actor,
     AssetKind::Rules,
-    AssetKind::Fact,
+    AssetKind::Variable,
     AssetKind::Quest,
     AssetKind::Profile,
     AssetKind::Predicate,
@@ -73,7 +73,7 @@ impl ContentRepository {
                 },
                 actors: vec![],
                 dialogues: vec![],
-                facts: Default::default(),
+                variables: vec![],
                 scripts: vec![],
             },
         };
@@ -97,9 +97,7 @@ impl ContentRepository {
                         rules = true;
                     }
                     Asset::Script(v) => content.game.scripts.push(v),
-                    Asset::Fact(v) => {
-                        content.game.facts.insert(v);
-                    }
+                    Asset::Variable(v) => content.game.variables.push(v),
                     Asset::Dialogue(_) | Asset::Text(_) => {}
                 }
             }

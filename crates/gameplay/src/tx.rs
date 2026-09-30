@@ -31,7 +31,6 @@ macro_rules! journal {
         pub(crate) struct Before {
             scalars: Scalars,
             $(pub $name: BTreeMap<$key, Option<$value>>,)*
-            pub facts: BTreeMap<Key, bool>,
             pub claims: BTreeSet<ClaimKey>,
             pending: Option<VecDeque<PendingEvent>>,
             party: Option<BTreeSet<ActorId>>,
@@ -41,7 +40,6 @@ macro_rules! journal {
                 Self {
                     scalars: Scalars::of(state),
                     $($name: BTreeMap::new(),)*
-                    facts: BTreeMap::new(),
                     claims: BTreeSet::new(),
                     pending: None,
                     party: None,
@@ -54,13 +52,6 @@ macro_rules! journal {
                         None => state.$($path).+.remove(&key),
                     };
                 })*
-                for (key, present) in self.facts {
-                    if present {
-                        state.facts.insert(key);
-                    } else {
-                        state.facts.remove(&key);
-                    }
-                }
                 for key in self.claims {
                     state.claims.remove(&key);
                 }
@@ -79,9 +70,6 @@ macro_rules! journal {
                 $(for (key, value) in self.$name {
                     outer.$name.entry(key).or_insert(value);
                 })*
-                for (key, present) in self.facts {
-                    outer.facts.entry(key).or_insert(present);
-                }
                 outer.claims.extend(self.claims);
                 if outer.pending.is_none() {
                     outer.pending = self.pending;
@@ -114,6 +102,7 @@ journal! {
     objects / touch_object: ObjectId => ObjectState, world.objects;
     locations / touch_location: ActorId => LocationState, world.locations;
     triggers / touch_trigger: TriggerId => TriggerState, world.triggers;
+    variables / touch_variable: VariableId => Value, variables;
 }
 
 pub(crate) struct Tx<'a> {
@@ -247,14 +236,9 @@ impl<'a> Tx<'a> {
         self.touch_trigger(&progress.id);
         self.state.world.triggers.insert(progress.id, progress);
     }
-    pub fn set_fact(&mut self, key: &Key, value: bool) {
-        let present = self.state.facts.contains(key);
-        self.before.facts.entry(key.clone()).or_insert(present);
-        if value {
-            self.state.facts.insert(key.clone());
-        } else {
-            self.state.facts.remove(key);
-        }
+    pub fn set_variable(&mut self, id: VariableId, value: Value) {
+        self.touch_variable(&id);
+        self.state.variables.insert(id, value);
     }
     pub fn set_party(&mut self, actor: ActorId, member: bool) {
         if self.before.party.is_none() {

@@ -19,7 +19,7 @@ export type Reads = {
     relationship: (from: string, to: string) -> number,
     claimed: (claim: string) -> boolean,
     present: (actor: string) -> boolean,
-    fact: (key: string) -> boolean,
+    get: (variable: string) -> boolean | number | string,
     inside_area: (actor: string, area: string) -> boolean,
     skill_experience: (actor: string, skill: string) -> number,
     history_count: (dialogue: string, node: string) -> number,
@@ -36,7 +36,8 @@ export type Game = Reads & {
     fail_quest: (quest: string) -> (),
     adjust_relationship: (from: string, to: string, amount: number) -> (),
     award_experience: (actor: string, skill: string, amount: number) -> (),
-    set_fact: (key: string, value: boolean) -> (),
+    set: (variable: string, value: boolean | number | string) -> (),
+    add: (variable: string, amount: number) -> (),
     set_locked: (object: string, locked: boolean) -> (),
     -- A d20 check from the saved random stream. True when it passes.
     roll: (actor: string, skill: string, difficulty: number) -> boolean,

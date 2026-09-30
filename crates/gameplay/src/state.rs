@@ -6,7 +6,7 @@ use crate::inventory::{Inventory, Wallet};
 use crate::rules::{Attributes, RandomState};
 use crate::{
     ConversationKey, GameContent, LocationState, ObjectKind, ObjectState, Result, TriggerState,
-    quests,
+    Value, quests,
 };
 use game_types::*;
 use serde::{Deserialize, Serialize};
@@ -91,7 +91,8 @@ pub struct SessionState {
     pub claims: BTreeSet<ClaimKey>,
     #[serde(with = "keyed")]
     pub conversations: BTreeMap<ConversationKey, Conversation>,
-    pub facts: BTreeSet<Key>,
+    /// Variables that were set; the rest still have their initial value.
+    pub variables: BTreeMap<VariableId, Value>,
     /// Characters travelling together. They take part in every conversation any of them has.
     pub party: BTreeSet<ActorId>,
     pub world: crate::WorldState,
@@ -117,7 +118,7 @@ impl SessionState {
             histories: BTreeMap::new(),
             claims: BTreeSet::new(),
             conversations: BTreeMap::new(),
-            facts: BTreeSet::new(),
+            variables: BTreeMap::new(),
             party: BTreeSet::new(),
             world: Default::default(),
         }
@@ -203,6 +204,24 @@ impl SessionState {
                 ..LocationState::initial(actor)
             }),
         }
+    }
+    pub fn variable(&self, content: &GameContent, id: VariableId) -> Result<Value> {
+        let definition = content.variable(id)?;
+        Ok(self
+            .variables
+            .get(&id)
+            .unwrap_or(&definition.initial)
+            .clone())
+    }
+    pub(crate) fn check_variable(&self, content: &GameContent, id: VariableId) -> Result<()> {
+        let definition = content.variable(id)?;
+        require(
+            self.variables
+                .get(&id)
+                .is_none_or(|value| value.same_type(&definition.initial)),
+            "saved variable has the wrong type",
+        )
+        .map_err(Into::into)
     }
     pub fn trigger(&self, id: TriggerId) -> TriggerState {
         self.world
@@ -436,10 +455,9 @@ impl SessionState {
         for c in self.conversations.values() {
             self.check_conversation(content, c)?;
         }
-        require(
-            self.facts.is_subset(&content.game.facts),
-            "unknown saved fact",
-        )?;
+        for id in self.variables.keys() {
+            self.check_variable(content, *id)?;
+        }
         require(
             self.party.len() <= 16 && self.party.iter().all(|id| self.actors.contains_key(id)),
             "invalid party",

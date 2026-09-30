@@ -40,9 +40,9 @@ fn composite_diagnostics_include_all_branches_without_changing_state() {
             definition: inventory::fixtures::KEY,
             quantity: 2,
         },
-        Condition::Not(Box::new(Condition::Fact {
-            key: key("gate-rewarded"),
-            value: true,
+        Condition::Not(Box::new(Condition::Variable {
+            variable: REWARDED,
+            test: yarra_gameplay::Test::Is(yarra_gameplay::Value::Bool(true)),
         })),
     ]);
     content.validate_condition(&condition).unwrap();

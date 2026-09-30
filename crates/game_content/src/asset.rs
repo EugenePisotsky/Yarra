@@ -16,7 +16,7 @@ pub enum AssetKind {
     Actor,
     Rules,
     Dialogue,
-    Fact,
+    Variable,
     Text,
     Quest,
     Profile,
@@ -35,7 +35,7 @@ impl AssetKind {
         Self::Actor,
         Self::Rules,
         Self::Dialogue,
-        Self::Fact,
+        Self::Variable,
         Self::Text,
         Self::Quest,
         Self::Profile,
@@ -56,7 +56,7 @@ pub enum AssetId {
     Actor(ActorTemplateId),
     Rules,
     Dialogue(DialogueId),
-    Fact(Key),
+    Variable(VariableId),
     Text(TextResourceId),
     Quest(QuestId),
     Profile(InteractionProfileId),
@@ -76,7 +76,7 @@ impl AssetId {
             Self::Actor(_) => AssetKind::Actor,
             Self::Rules => AssetKind::Rules,
             Self::Dialogue(_) => AssetKind::Dialogue,
-            Self::Fact(_) => AssetKind::Fact,
+            Self::Variable(_) => AssetKind::Variable,
             Self::Text(_) => AssetKind::Text,
             Self::Quest(_) => AssetKind::Quest,
             Self::Profile(_) => AssetKind::Profile,
@@ -98,7 +98,8 @@ impl AssetId {
             Self::Actor(id) => id.raw(),
             Self::Rules => "rules".into(),
             Self::Dialogue(id) => id.raw(),
-            Self::Fact(key) | Self::Script(key) => key.as_str().into(),
+            Self::Variable(id) => id.raw(),
+            Self::Script(key) => key.as_str().into(),
             Self::Text(resource) => resource.raw(),
             Self::Quest(id) => id.raw(),
             Self::Profile(id) => id.raw(),
@@ -118,7 +119,7 @@ impl AssetId {
             AssetKind::Actor => Self::Actor(ActorTemplateId::try_from(key.clone())?),
             AssetKind::Rules => Self::Rules,
             AssetKind::Dialogue => Self::Dialogue(DialogueId::try_from(key.clone())?),
-            AssetKind::Fact => Self::Fact(Key::new(&key)?),
+            AssetKind::Variable => Self::Variable(VariableId::try_from(key.clone())?),
             AssetKind::Script => Self::Script(Key::new(&key)?),
             AssetKind::Text => Self::Text(TextResourceId::try_from(key.clone())?),
             AssetKind::Quest => Self::Quest(QuestId::try_from(key.clone())?),
@@ -152,7 +153,7 @@ pub enum Asset {
     Actor(actors::ActorTemplate),
     Rules(rules::Rules),
     Dialogue(dialogue::Dialogue),
-    Fact(Key),
+    Variable(gameplay::VariableDefinition),
     Text(TextContract),
     Quest(quests::Quest),
     Profile(gameplay::InteractionProfile),
@@ -214,7 +215,7 @@ impl Asset {
             Self::Actor(v) => AssetId::Actor(v.id),
             Self::Rules(_) => AssetId::Rules,
             Self::Dialogue(v) => AssetId::Dialogue(v.id),
-            Self::Fact(id) => AssetId::Fact(id.clone()),
+            Self::Variable(v) => AssetId::Variable(v.id),
             Self::Script(v) => AssetId::Script(v.name.clone()),
             Self::Text(v) => AssetId::Text(v.id),
             Self::Quest(v) => AssetId::Quest(v.id),
@@ -244,7 +245,7 @@ impl Asset {
                             }
                             ItemAcquired { definition, .. } => Some(AssetId::Item(*definition)),
                             QuestStarted(id) | Quest(id) => Some(AssetId::Quest(*id)),
-                            Fact(key) => Some(AssetId::Fact(key.clone())),
+                            Variable(id) => Some(AssetId::Variable(*id)),
                             History(key) => Some(AssetId::DialogueContract(key.dialogue)),
                             Claim(key) => Some(AssetId::Claim(key.claim)),
                             Actor(_) | Relationship(_) => None,
@@ -354,7 +355,7 @@ fn condition_references(condition: &Condition, refs: &mut BTreeSet<AssetId>) -> 
             Condition::History { dialogue, .. } => Some(AssetId::DialogueContract(*dialogue)),
             Condition::Claimed { claim, .. } => Some(AssetId::Claim(*claim)),
             Condition::HasItem { definition, .. } => Some(AssetId::Item(*definition)),
-            Condition::Fact { key, .. } => Some(AssetId::Fact(key.clone())),
+            Condition::Variable { variable, .. } => Some(AssetId::Variable(*variable)),
             Condition::QuestStatus { quest, .. } | Condition::ObjectiveCompleted { quest, .. } => {
                 Some(AssetId::Quest(*quest))
             }
@@ -377,7 +378,9 @@ fn action_references(action: &Action, refs: &mut BTreeSet<AssetId>) -> Result<()
             Action::GrantItem { definition, .. } | Action::ConsumeItem { definition, .. } => {
                 Some(AssetId::Item(*definition))
             }
-            Action::SetFact { key, .. } => Some(AssetId::Fact(key.clone())),
+            Action::Set { variable, .. } | Action::Add { variable, .. } => {
+                Some(AssetId::Variable(*variable))
+            }
             Action::AwardExperience { .. } | Action::SkillCheck { .. } => Some(AssetId::Rules),
             Action::Relationship { .. } => None,
         });

@@ -96,7 +96,6 @@
         ),
         balance: 100,
     )],
-    facts: [],
     steps: [
         Quest(quest: "guard/gate", transition: Start),
         Talk(bindings: {}, participant: "hero", speaker: "guard", topic: None),
