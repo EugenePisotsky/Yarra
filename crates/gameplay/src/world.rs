@@ -11,10 +11,12 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorldDefinitions {
-    pub objects: Vec<ObjectDefinition>,
+    #[serde(with = "crate::keyed::list")]
+    pub objects: BTreeMap<ObjectId, ObjectDefinition>,
     /// Areas this content refers to. The world supplies their shapes under the same names.
     pub areas: BTreeSet<AreaId>,
-    pub triggers: Vec<TriggerDefinition>,
+    #[serde(with = "crate::keyed::list")]
+    pub triggers: BTreeMap<TriggerId, TriggerDefinition>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ObjectKind {
@@ -212,13 +214,13 @@ pub enum Pending {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorldState {
-    #[serde(with = "crate::state::keyed")]
+    #[serde(with = "crate::keyed::list")]
     pub objects: BTreeMap<ObjectId, ObjectState>,
-    #[serde(with = "crate::state::keyed")]
+    #[serde(with = "crate::keyed::list")]
     pub locations: BTreeMap<ActorId, LocationState>,
-    #[serde(with = "crate::state::keyed")]
+    #[serde(with = "crate::keyed::list")]
     pub triggers: BTreeMap<TriggerId, TriggerState>,
-    #[serde(with = "crate::state::keyed")]
+    #[serde(with = "crate::keyed::list")]
     pub movements: BTreeMap<ActorId, Movement>,
     /// Oldest first.
     pub pending: VecDeque<Pending>,
@@ -291,7 +293,10 @@ pub enum WorldEvent {
 }
 impl GameContent {
     pub fn object(&self, id: ObjectId) -> Result<&ObjectDefinition> {
-        crate::content::find(&self.game.world.objects, id, |v| v.id)
+        self.game
+            .world
+            .objects
+            .get(&id)
             .ok_or_else(|| Invalid("unknown object".into()).into())
     }
     /// Checks that the content declares the area.
@@ -303,17 +308,20 @@ impl GameContent {
         .map_err(Into::into)
     }
     pub fn trigger(&self, id: TriggerId) -> Result<&TriggerDefinition> {
-        crate::content::find(&self.game.world.triggers, id, |v| v.id)
+        self.game
+            .world
+            .triggers
+            .get(&id)
             .ok_or_else(|| Invalid("unknown trigger".into()).into())
     }
     pub(crate) fn validate_world(&self) -> Result<()> {
         let w = &self.game.world;
-        crate::content::ordered(&w.objects, |v| v.id, "objects")?;
-        for d in &w.objects {
+        crate::content::filed(&w.objects, "objects")?;
+        for d in w.objects.values() {
             d.name.validate()?;
         }
-        crate::content::ordered(&w.triggers, |v| v.id, "triggers")?;
-        for d in &w.triggers {
+        crate::content::filed(&w.triggers, "triggers")?;
+        for d in w.triggers.values() {
             d.validate()?;
             for signal in &d.on {
                 signal.validate(self)?;
@@ -338,7 +346,7 @@ pub struct TriggerIndex {
 impl TriggerIndex {
     pub fn build(content: &GameContent) -> Self {
         let mut index = Self::default();
-        for d in &content.game.world.triggers {
+        for d in content.game.world.triggers.values() {
             for signal in &d.on {
                 if let WorldSignal::Entered { actor, .. } | WorldSignal::Exited { actor, .. } =
                     signal

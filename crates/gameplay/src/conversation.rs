@@ -30,18 +30,21 @@ pub struct ConversationView {
 }
 impl GameContent {
     pub fn dialogue_contract(&self, id: DialogueId) -> Result<&dialogue::DialogueContract> {
-        crate::content::find(&self.game.dialogue_contracts, id, |v| v.id)
+        self.game
+            .dialogue_contracts
+            .get(&id)
             .ok_or_else(|| Invalid("unknown dialogue contract".into()).into())
     }
     pub fn claim(&self, id: ClaimId) -> Result<&dialogue::ClaimDefinition> {
-        crate::content::find(&self.game.claims, id, |v| v.id)
+        self.game
+            .claims
+            .get(&id)
             .ok_or_else(|| Invalid("unknown claim definition".into()).into())
     }
     pub(crate) fn validate_dialogue_text(&self, graph: &Dialogue) -> Result<()> {
         graph.validate_messages(&|m| {
             self.text
-                .iter()
-                .find(|c| c.id == m.resource)
+                .get(&m.resource)
                 .and_then(|c| c.messages.get(&m.key))
                 .ok_or_else(|| Invalid("unknown dialogue message contract".into()))
         })?;

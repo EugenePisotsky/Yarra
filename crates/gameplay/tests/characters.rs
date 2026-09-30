@@ -18,13 +18,13 @@ fn session() -> GameSession {
 /// The fixture conversation with its one choice doing `actions`, always on offer.
 fn offering(actions: Vec<Action>) -> GameContent {
     let mut content = content();
-    let graph = &mut content.game.dialogues[0];
+    let graph = gate(&mut content);
     graph.repeat = dialogue::RepeatPolicy::Always;
     let choice = &mut graph.nodes[1];
     choice.condition = None;
     choice.repeat = dialogue::Repeat::Always;
     choice.actions = actions;
-    content.game.dialogue_contracts = vec![content.game.dialogues[0].contract()];
+    refresh_contracts(&mut content);
     content
 }
 /// Talks to the merchant and picks the choice, running its actions for the hero.
@@ -222,7 +222,7 @@ fn a_step_of_time_carries_out_everything_due_in_it_however_much() {
 fn losing_the_last_of_the_life_resource_is_death() {
     let mut content = content();
     // A trigger hears of the death like any other event.
-    content.game.world.triggers.push(TriggerDefinition {
+    content.game.world.triggers.add(TriggerDefinition {
         id: TriggerId::named("old_gate/mourn"),
         player: HERO,
         speaker: None,
@@ -393,12 +393,10 @@ fn a_trainer_teaches_what_the_class_allows_for_learning_points() {
 
     // A scholar cannot learn it at all, whatever points there are.
     let mut content = offering(vec![award(100), teach("swordsmanship")]);
-    content.game.actors[0].class = key("scholar");
+    content.game.actors.get_mut(&TRAVELLER).unwrap().class = key("scholar");
     let mut state = SessionState::empty(1);
     for id in [HERO, MERCHANT] {
-        state
-            .spawn(&content, content.game.actors[0].id, id)
-            .unwrap();
+        state.spawn(&content, TRAVELLER, id).unwrap();
     }
     state.party.members.insert(HERO);
     let mut scholar = GameSession::new(ToolContent::new(content).unwrap(), state).unwrap();
@@ -449,9 +447,7 @@ fn the_party_holds_four_and_one_of_them_is_steered() {
     let mut state = state();
     let extras: Vec<ActorId> = (1..=3u8).map(|n| ActorId([n; 16])).collect();
     for id in &extras {
-        state
-            .spawn(&content, content.game.actors[0].id, *id)
-            .unwrap();
+        state.spawn(&content, TRAVELLER, *id).unwrap();
     }
     let mut session = GameSession::new(ToolContent::new(content).unwrap(), state).unwrap();
     for actor in [COMPANION, extras[0], extras[1]] {
@@ -687,7 +683,7 @@ mod unopened {
     const TRUNK_BAG: InventoryId = InventoryId::named("old_gate/trunk");
     fn armed() -> GameContent {
         let mut content = content();
-        content.game.loot.push(LootTable {
+        content.game.loot.add(LootTable {
             id: STOCK,
             entries: vec![
                 LootEntry {
@@ -702,12 +698,12 @@ mod unopened {
                 },
             ],
         });
-        let mut guard = content.game.actors[0].clone();
+        let mut guard = content.game.actors[&TRAVELLER].clone();
         guard.id = GUARD;
         guard.equipment = vec![SWORD];
         guard.loot = Some(STOCK);
-        content.game.actors.push(guard);
-        content.game.world.objects.push(ObjectDefinition {
+        content.game.actors.add(guard);
+        content.game.world.objects.add(ObjectDefinition {
             id: TRUNK,
             name: "Trunk".into(),
             kind: ObjectKind::Container {
@@ -716,7 +712,6 @@ mod unopened {
             },
             locked: false,
         });
-        content.sort();
         content
     }
     fn start(count: u8) -> (SessionState, Vec<ActorId>) {
@@ -920,16 +915,15 @@ mod unopened {
 #[test]
 fn item_commands_cost_the_same_in_a_large_catalog() {
     let mut content = content();
-    let template = content.items.items[0].clone();
+    let template = content.items.items.values().next().unwrap().clone();
     // As many as a catalog may hold.
     for n in 0..9_997u32 {
         let mut item = template.clone();
         let mut id = [3u8; 16];
         id[..4].copy_from_slice(&n.to_le_bytes());
         item.id = ItemDefinitionId(id);
-        content.items.items.push(item);
+        content.items.items.add(item);
     }
-    content.sort();
     let mut session = GameSession::new(ToolContent::new(content).unwrap(), state()).unwrap();
     let potion = session.state().carried(HERO).unwrap().entries[0].id;
     let started = std::time::Instant::now();

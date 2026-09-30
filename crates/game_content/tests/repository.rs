@@ -95,9 +95,9 @@ fn a_session_over_a_large_catalog_loads_definitions_once_and_graphs_on_demand() 
     let source = temp.source();
     let mut items: ItemCatalog = read(source.join("packages/core/items.ron"));
     for i in items.items.len()..5_000 {
-        let mut item = items.items[0].clone();
+        let mut item = items.items.values().next().unwrap().clone();
         item.id = ItemDefinitionId((100_000 + i as u128).to_be_bytes());
-        items.items.push(item);
+        items.items.insert(item.id, item);
     }
     write(source.join("packages/core/items.ron"), &items);
     let project = LoadedProject::load_directory(&source).unwrap();
@@ -165,9 +165,9 @@ fn separate_publications_are_read_independently() {
         .build(&first)
         .unwrap();
     let mut items: ItemCatalog = read(source.join("packages/core/items.ron"));
-    let id = items.items[0].id;
-    let original_weight = items.items[0].weight_grams;
-    items.items[0].weight_grams += 10;
+    let id = *items.items.keys().next().unwrap();
+    let original_weight = items.items[&id].weight_grams;
+    items.items.get_mut(&id).unwrap().weight_grams += 10;
     write(source.join("packages/core/items.ron"), &items);
     let second = temp.0.join("second.sqlite");
     LoadedProject::load_directory(&source)

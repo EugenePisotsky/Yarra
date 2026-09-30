@@ -32,7 +32,7 @@ impl LoadedProject {
             let offset = prelude.lines().count();
             let mut command = Command::new(&analyzer);
             command.current_dir(&directory).arg("--mode=strict");
-            for module in modules {
+            for module in modules.values() {
                 let file = format!("{}.luau", module.name.as_str());
                 let mut text = String::with_capacity(prelude.len() + module.source.len() + 1);
                 text.push_str(prelude);

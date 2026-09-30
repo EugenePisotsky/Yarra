@@ -379,7 +379,14 @@ fn opening_checks_references_between_always_loaded_definitions() {
     let temp = Temp::new();
     let (project, session) = setup(&temp);
     drop(session);
-    let mut predicate = project.content().game.predicates[0].clone();
+    let mut predicate = project
+        .content()
+        .game
+        .predicates
+        .values()
+        .next()
+        .unwrap()
+        .clone();
     if let gameplay::Condition::All(children) = &mut predicate.condition {
         children.push(gameplay::Condition::ObjectiveCompleted {
             quest: GATE,

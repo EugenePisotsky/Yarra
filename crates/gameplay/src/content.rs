@@ -1,3 +1,4 @@
+use crate::Keyed;
 use crate::actors::ActorTemplate;
 use crate::dialogue::Dialogue;
 use crate::inventory::ItemCatalog;
@@ -246,24 +247,33 @@ pub struct ContentManifest {
 #[serde(deny_unknown_fields)]
 pub struct GameDefinitions {
     pub world: crate::WorldDefinitions,
-    pub dialogue_contracts: Vec<dialogue::DialogueContract>,
-    pub claims: Vec<dialogue::ClaimDefinition>,
-    pub quests: Vec<quests::Quest>,
-    pub profiles: Vec<InteractionProfile>,
-    pub predicates: Vec<NamedPredicate>,
+    #[serde(with = "crate::keyed::list")]
+    pub dialogue_contracts: BTreeMap<DialogueId, dialogue::DialogueContract>,
+    #[serde(with = "crate::keyed::list")]
+    pub claims: BTreeMap<ClaimId, dialogue::ClaimDefinition>,
+    #[serde(with = "crate::keyed::list")]
+    pub quests: BTreeMap<QuestId, quests::Quest>,
+    #[serde(with = "crate::keyed::list")]
+    pub profiles: BTreeMap<InteractionProfileId, InteractionProfile>,
+    #[serde(with = "crate::keyed::list")]
+    pub predicates: BTreeMap<PredicateId, NamedPredicate>,
     pub rules: Rules,
-    pub actors: Vec<ActorTemplate>,
-    pub dialogues: Vec<Dialogue>,
-    pub variables: Vec<VariableDefinition>,
-    #[serde(default)]
-    pub scripts: Vec<ScriptModule>,
-    #[serde(default)]
-    pub loot: Vec<crate::inventory::LootTable>,
+    #[serde(with = "crate::keyed::list")]
+    pub actors: BTreeMap<ActorTemplateId, ActorTemplate>,
+    #[serde(with = "crate::keyed::list")]
+    pub dialogues: BTreeMap<DialogueId, Dialogue>,
+    #[serde(with = "crate::keyed::list")]
+    pub variables: BTreeMap<VariableId, VariableDefinition>,
+    #[serde(default, with = "crate::keyed::list")]
+    pub scripts: BTreeMap<Key, ScriptModule>,
+    #[serde(default, with = "crate::keyed::list")]
+    pub loot: BTreeMap<LootId, crate::inventory::LootTable>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GameContent {
-    pub text: Vec<TextContract>,
+    #[serde(with = "crate::keyed::list")]
+    pub text: BTreeMap<TextResourceId, TextContract>,
     pub manifest: ContentManifest,
     pub items: ItemCatalog,
     pub game: GameDefinitions,
@@ -274,16 +284,11 @@ pub struct GameContent {
     #[serde(skip)]
     pub graphs: crate::Graphs,
 }
-/// Finds a definition in a list kept in order of identity.
-pub(crate) fn find<T, K: Ord + Copy>(list: &[T], id: K, of: impl Fn(&T) -> K) -> Option<&T> {
-    let index = list.binary_search_by_key(&id, of).ok()?;
-    Some(&list[index])
-}
-/// Each identity once and in order, which is what `find` relies on.
-pub(crate) fn ordered<T, K: Ord>(list: &[T], of: impl Fn(&T) -> K, what: &str) -> Result<()> {
+/// Each record is filed under its own identity.
+pub(crate) fn filed<V: Keyed>(map: &BTreeMap<V::Key, V>, what: &str) -> Result<()> {
     require(
-        list.windows(2).all(|pair| of(&pair[0]) < of(&pair[1])),
-        &format!("{what} must be listed once each in order of identity; see GameContent::sort"),
+        map.iter().all(|(key, value)| *key == value.key()),
+        &format!("{what} filed under another identity"),
     )
     .map_err(Into::into)
 }
@@ -295,15 +300,14 @@ impl GameContent {
                 && self.manifest.world_generation.len() <= 256,
             "invalid content manifest",
         )?;
-        let mut text_ids = BTreeSet::new();
-        for contract in &self.text {
+        filed(&self.text, "text resources")?;
+        for contract in self.text.values() {
             contract.validate()?;
-            require(text_ids.insert(contract.id), "duplicate text resource")?;
         }
-        let contracts: BTreeMap<_, _> = self.text.iter().map(|c| (c.id, c)).collect();
+        let contracts = &self.text;
         fn visit_text(
             id: TextResourceId,
-            contracts: &BTreeMap<TextResourceId, &TextContract>,
+            contracts: &BTreeMap<TextResourceId, TextContract>,
             active: &mut BTreeSet<TextResourceId>,
             visited: &mut BTreeSet<TextResourceId>,
         ) -> Result<()> {
@@ -325,16 +329,13 @@ impl GameContent {
         }
         let mut visited = BTreeSet::new();
         for id in contracts.keys() {
-            visit_text(*id, &contracts, &mut BTreeSet::new(), &mut visited)?;
+            visit_text(*id, contracts, &mut BTreeSet::new(), &mut visited)?;
         }
-        ordered(&self.game.variables, |v| v.id, "variables")?;
-        for variable in &self.game.variables {
+        filed(&self.game.variables, "variables")?;
+        for variable in self.game.variables.values() {
             variable.initial.validate()?;
         }
-        let mut modules = BTreeSet::new();
-        for module in &self.game.scripts {
-            require(modules.insert(&module.name), "duplicate script module")?;
-        }
+        filed(&self.game.scripts, "script modules")?;
         self.validate_world()?;
         self.items.validate()?;
         self.game.rules.validate()?;
@@ -344,15 +345,15 @@ impl GameContent {
         for ability in &self.game.rules.abilities {
             self.scripts.engine(&ability.resolve)?;
         }
-        for item in &self.items.items {
+        for item in self.items.items.values() {
             self.game.rules.validate_mechanics(&item.mechanics)?;
         }
-        ordered(&self.game.loot, |v| v.id, "loot tables")?;
-        for table in &self.game.loot {
+        filed(&self.game.loot, "loot tables")?;
+        for table in self.game.loot.values() {
             table.validate(&self.items)?;
         }
-        ordered(&self.game.actors, |v| v.id, "actor templates")?;
-        for actor in &self.game.actors {
+        filed(&self.game.actors, "actor templates")?;
+        for actor in self.game.actors.values() {
             actor.validate(&self.game.rules)?;
             if let Some(loot) = actor.loot {
                 self.loot(loot)?;
@@ -369,7 +370,7 @@ impl GameContent {
                 )?;
             }
         }
-        for object in &self.game.world.objects {
+        for object in self.game.world.objects.values() {
             if let crate::ObjectKind::Container {
                 loot: Some(loot), ..
             } = object.kind
@@ -377,18 +378,13 @@ impl GameContent {
                 self.loot(loot)?;
             }
         }
-        ordered(
-            &self.game.dialogue_contracts,
-            |v| v.id,
-            "dialogue contracts",
-        )?;
-        for contract in &self.game.dialogue_contracts {
+        filed(&self.game.dialogue_contracts, "dialogue contracts")?;
+        for contract in self.game.dialogue_contracts.values() {
             contract.validate()?;
         }
-        ordered(&self.game.claims, |v| v.id, "claims")?;
-        let mut graphs = BTreeSet::new();
-        for graph in &self.game.dialogues {
-            require(graphs.insert(graph.id), "duplicate dialogue")?;
+        filed(&self.game.claims, "claims")?;
+        filed(&self.game.dialogues, "dialogues")?;
+        for graph in self.game.dialogues.values() {
             graph.validate()?;
             require(
                 self.dialogue_contract(graph.id)? == &graph.contract(),
@@ -404,16 +400,16 @@ impl GameContent {
                 }
             }
         }
-        ordered(&self.game.quests, |v| v.id, "quests")?;
-        ordered(&self.game.predicates, |v| v.id, "named predicates")?;
-        ordered(&self.game.profiles, |v| v.id, "interaction profiles")?;
-        for quest in &self.game.quests {
+        filed(&self.game.quests, "quests")?;
+        filed(&self.game.predicates, "named predicates")?;
+        filed(&self.game.profiles, "interaction profiles")?;
+        for quest in self.game.quests.values() {
             quest.validate()?;
         }
-        for rule in &self.game.predicates {
+        for rule in self.game.predicates.values() {
             self.validate_condition(&rule.condition)?;
         }
-        for profile in &self.game.profiles {
+        for profile in self.game.profiles.values() {
             profile.validate()?;
             for rule in &profile.rules {
                 self.validate_condition(&rule.condition)?;
@@ -559,11 +555,11 @@ impl GameContent {
     }
     /// A graph the content was assembled with.
     pub(crate) fn authored(&self, id: DialogueId) -> Option<&Dialogue> {
-        self.game.dialogues.iter().find(|d| d.id == id)
+        self.game.dialogues.get(&id)
     }
     pub fn variable(&self, id: VariableId) -> Result<&VariableDefinition> {
-        find(&self.game.variables, id, |v| v.id)
-            .ok_or_else(|| Invalid(format!("unknown variable {id}")).into())
+        let variable = self.game.variables.get(&id);
+        variable.ok_or_else(|| Invalid(format!("unknown variable {id}")).into())
     }
     /// The definition, after checking that an actor is named exactly when the variable is
     /// per actor.
@@ -579,74 +575,41 @@ impl GameContent {
         )?;
         Ok(definition)
     }
-    /// Puts every list of definitions in order of identity. Lookups bisect, so content is
-    /// sorted once when it is loaded or built and checked to be so by `validate`.
-    pub fn sort(&mut self) {
-        self.items.sort();
-        self.text.sort_by_key(|v| v.id);
-        let game = &mut self.game;
-        game.world.objects.sort_by_key(|v| v.id);
-        game.world.triggers.sort_by_key(|v| v.id);
-        game.dialogue_contracts.sort_by_key(|v| v.id);
-        game.claims.sort_by_key(|v| v.id);
-        game.quests.sort_by_key(|v| v.id);
-        game.profiles.sort_by_key(|v| v.id);
-        game.predicates.sort_by_key(|v| v.id);
-        game.actors.sort_by_key(|v| v.id);
-        game.variables.sort_by_key(|v| v.id);
-        game.loot.sort_by_key(|v| v.id);
-        game.scripts.sort_by(|a, b| a.name.cmp(&b.name));
-    }
     pub fn loot(&self, id: LootId) -> Result<&crate::inventory::LootTable> {
-        find(&self.game.loot, id, |v| v.id)
-            .ok_or_else(|| Invalid(format!("unknown loot table {id}")).into())
+        let table = self.game.loot.get(&id);
+        table.ok_or_else(|| Invalid(format!("unknown loot table {id}")).into())
     }
     pub fn template(&self, id: ActorTemplateId) -> Result<&ActorTemplate> {
-        find(&self.game.actors, id, |v| v.id)
-            .ok_or_else(|| Invalid("unknown actor template".into()).into())
+        let template = self.game.actors.get(&id);
+        template.ok_or_else(|| Invalid(format!("unknown actor template {id}")).into())
     }
     /// Stable fingerprint of definitions, rules and world binding; excludes .ftl resources.
     pub fn fingerprint(&self) -> Result<[u8; 32]> {
         self.validate()?;
         self.validate_selection_links()?;
-        let mut canonical = self.clone();
-        canonical.game.world.objects.sort_by_key(|v| v.id);
-        canonical.game.world.triggers.sort_by_key(|v| v.id);
-        canonical.text.sort_by_key(|t| t.id);
-        canonical.items.categories.sort_by_key(|v| v.id);
-        canonical.items.items.sort_by_key(|v| v.id);
-        canonical.game.dialogue_contracts.sort_by_key(|v| v.id);
-        canonical.game.claims.sort_by_key(|v| v.id);
-        canonical.game.quests.sort_by_key(|v| v.id);
-        canonical.game.profiles.sort_by_key(|v| v.id);
-        canonical.game.predicates.sort_by_key(|v| v.id);
-        canonical.game.actors.sort_by_key(|v| v.id);
-        canonical.game.dialogues.sort_by_key(|v| v.id);
-        canonical.game.variables.sort_by_key(|v| v.id);
-        canonical.game.loot.sort_by_key(|v| v.id);
-        canonical.game.scripts.sort_by(|a, b| a.name.cmp(&b.name));
-        // Identities as bytes: a name shows only once something has parsed it, and the
-        // fingerprint must not depend on that.
-        let bytes =
-            names::raw(|| serde_json::to_vec(&canonical)).map_err(|e| Invalid(e.to_string()))?;
+        // Every definition is in a map, so it serializes in order of identity whatever order
+        // it was added in. Identities as bytes: a name shows only once something has parsed
+        // it, and the fingerprint must not depend on that.
+        let bytes = names::raw(|| serde_json::to_vec(self)).map_err(|e| Invalid(e.to_string()))?;
         Ok(*blake3::hash(&bytes).as_bytes())
     }
     pub fn text_keys(&self) -> Vec<&MessageRef> {
-        let mut refs: Vec<&TextRef> = self.items.categories.iter().map(|c| &c.name).collect();
-        for item in &self.items.items {
+        let categories = self.items.categories.values();
+        let mut refs: Vec<&TextRef> = categories.map(|c| &c.name).collect();
+        for item in self.items.items.values() {
             refs.extend([&item.name, &item.description]);
         }
-        refs.extend(self.game.world.objects.iter().map(|o| &o.name));
-        refs.extend(self.game.actors.iter().map(|a| &a.name));
+        refs.extend(self.game.world.objects.values().map(|o| &o.name));
+        refs.extend(self.game.actors.values().map(|a| &a.name));
         refs.extend(self.game.rules.names());
-        for quest in &self.game.quests {
+        for quest in self.game.quests.values() {
             refs.push(&quest.title);
             refs.extend(quest.objectives.iter().map(|o| &o.title));
         }
-        for profile in &self.game.profiles {
+        for profile in self.game.profiles.values() {
             refs.extend(profile.rules.iter().filter_map(|r| r.topic.as_ref()));
         }
-        for graph in &self.game.dialogues {
+        for graph in self.game.dialogues.values() {
             for (text, arguments) in graph.messages() {
                 refs.push(text);
                 refs.extend(arguments.values().filter_map(|a| match a {

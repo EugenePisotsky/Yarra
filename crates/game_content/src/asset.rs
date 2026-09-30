@@ -327,8 +327,8 @@ impl Asset {
                 inventory::ItemCatalog {
                     id: CatalogId([0; 16]),
                     revision: 1,
-                    categories: vec![v.clone()],
-                    items: vec![],
+                    categories: [(v.id, v.clone())].into(),
+                    items: Default::default(),
                 }
                 .validate()?;
             }

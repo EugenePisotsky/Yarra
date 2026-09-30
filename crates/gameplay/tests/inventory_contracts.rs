@@ -365,11 +365,29 @@ fn trade_rejects_duplicate_lines_missing_prices_and_insufficient_funds() {
         Err(InventoryError::InsufficientFunds { .. })
     ));
     fixture.customer_wallet.credit(money(100)).unwrap();
-    fixture.catalog.items[0].merchant_sell_price = None;
+    fixture
+        .catalog
+        .items
+        .values_mut()
+        .next()
+        .unwrap()
+        .merchant_sell_price = None;
     assert_eq!(fixture.quote(), Err(InventoryError::NotForTrade));
-    fixture.catalog.items[0].merchant_sell_price = Some(Money::ZERO);
+    fixture
+        .catalog
+        .items
+        .values_mut()
+        .next()
+        .unwrap()
+        .merchant_sell_price = Some(Money::ZERO);
     assert_eq!(fixture.quote().unwrap().purchase_total(), Money::ZERO);
-    fixture.catalog.items[0].merchant_sell_price = Some(Money::MAX);
+    fixture
+        .catalog
+        .items
+        .values_mut()
+        .next()
+        .unwrap()
+        .merchant_sell_price = Some(Money::MAX);
     assert_eq!(fixture.quote(), Err(InventoryError::Overflow));
 }
 

@@ -7,9 +7,7 @@ pub struct ToolContent {
     identity: ContentIdentity,
 }
 impl ToolContent {
-    pub fn new(mut content: GameContent) -> Result<Self> {
-        // Tools and tests assemble content in any order.
-        content.sort();
+    pub fn new(content: GameContent) -> Result<Self> {
         let identity = ContentIdentity {
             manifest: content.manifest.clone(),
             fingerprint: content.fingerprint()?,

@@ -2,8 +2,8 @@ use game_types::VariableId;
 use gameplay::dialogue::HistoryEvent;
 use gameplay::inventory::fixtures::{KEY, SWORD};
 use gameplay::{
-    Action, Command, Condition, ConversationKey, GameContent, GameEvent, GameSession, ScriptModule,
-    ScriptName, ToolContent, Value, VariableDefinition, fixtures::*,
+    Action, Command, Condition, ConversationKey, GameContent, GameEvent, GameSession, KeyedMap,
+    ScriptModule, ScriptName, ToolContent, Value, VariableDefinition, fixtures::*,
 };
 use yarra_scripting::{API_DEFINITIONS, LuauScripts};
 
@@ -43,11 +43,7 @@ return gate
 "#;
 
 fn module<'a>(content: &'a mut GameContent, name: &str) -> &'a mut ScriptModule {
-    let modules = &mut content.game.scripts;
-    modules
-        .iter_mut()
-        .find(|m| m.name.as_str() == name)
-        .unwrap()
+    content.game.scripts.get_mut(&key(name)).unwrap()
 }
 fn script(name: &str) -> ScriptName {
     ScriptName::try_from(name.to_owned()).unwrap()
@@ -59,7 +55,7 @@ fn content(source: &str, action: &str) -> GameContent {
         ("old_gate/visits", Value::Int(0)),
         ("old_gate/password", Value::Text(String::new())),
     ] {
-        content.game.variables.push(VariableDefinition {
+        content.game.variables.add(VariableDefinition {
             id: VariableId::try_from(name.to_owned()).unwrap(),
             initial,
             scope: Default::default(),
@@ -69,20 +65,19 @@ fn content(source: &str, action: &str) -> GameContent {
         ("old_gate/thanked", Value::Bool(false)),
         ("old_gate/favours", Value::Int(0)),
     ] {
-        content.game.variables.push(VariableDefinition {
+        content.game.variables.add(VariableDefinition {
             id: VariableId::try_from(name.to_owned()).unwrap(),
             initial,
             scope: gameplay::VariableScope::Actor,
         });
     }
     // Beside the rules module the fixture already carries.
-    content.game.scripts.push(ScriptModule {
+    content.game.scripts.add(ScriptModule {
         name: key("gate"),
         source: source.into(),
     });
-    content.sort();
-    content.scripts = LuauScripts::install(&content.game.scripts).unwrap();
-    let choice = &mut content.game.dialogues[0].nodes[1];
+    content.scripts = LuauScripts::install(content.game.scripts.values()).unwrap();
+    let choice = &mut gate(&mut content).nodes[1];
     choice.condition = Some(Condition::Script(script("gate.has_key")));
     choice.actions = vec![Action::Script(script(action))];
     content.validate().unwrap();
@@ -340,15 +335,8 @@ return gate
     // Mira is not in the party; she is there as a witness.
     let mut content = content(source, "gate.hand_over");
     let witness = gameplay::dialogue::Role::Optional;
-    content.game.dialogues[0]
-        .roles
-        .insert(key("witness"), witness);
-    content.game.dialogue_contracts = content
-        .game
-        .dialogues
-        .iter()
-        .map(|d| d.contract())
-        .collect();
+    gate(&mut content).roles.insert(key("witness"), witness);
+    refresh_contracts(&mut content);
     let mut session = GameSession::new(ToolContent::new(content).unwrap(), state()).unwrap();
     session
         .apply(Command::StartDialogue {
@@ -386,7 +374,7 @@ fn publication_rejects_broken_modules_and_missing_functions() {
     assert!(error("return 5").contains("table of functions"));
     assert!(error("return { ready = true }").contains("not a function"));
     let mut content = content(GATE, "gate.hand_over");
-    content.game.dialogues[0].nodes[1].actions = vec![Action::Script(script("gate.missing"))];
+    gate(&mut content).nodes[1].actions = vec![Action::Script(script("gate.missing"))];
     assert!(
         content
             .validate()
@@ -551,7 +539,7 @@ fn the_luau_rules_compute_what_the_fixture_formulas_do() {
     hero.level = 3;
     hero.base.insert(key("vitality"), 17);
     hero.skills.insert(key("swordsmanship"), 2);
-    let luau = LuauScripts::new(&content.game.scripts).unwrap();
+    let luau = LuauScripts::new(content.game.scripts.values()).unwrap();
     let rules = &content.game.rules;
     let hero = state.actors[&HERO].clone();
     let sheet = Sheet {
@@ -676,7 +664,7 @@ fn a_playthrough_opened_with_changed_formulas_takes_them_up() {
     let before = "40 + c.stats.vitality * 5";
     assert!(rules.source.contains(before));
     rules.source = rules.source.replace(before, "10 + c.stats.vitality * 2");
-    content.scripts = LuauScripts::install(&content.game.scripts).unwrap();
+    content.scripts = LuauScripts::install(content.game.scripts.values()).unwrap();
     // The fixture state was worked out with the old formula, as a save made before the
     // change would have been.
     let session = GameSession::new(ToolContent::new(content).unwrap(), state()).unwrap();
@@ -690,10 +678,10 @@ fn formulas_that_do_not_answer_properly_are_errors() {
     let broken = |rules: &str| {
         let mut content = gameplay::fixtures::content();
         module(&mut content, "rules").source = rules.into();
-        content.scripts = LuauScripts::install(&content.game.scripts).unwrap();
+        content.scripts = LuauScripts::install(content.game.scripts.values()).unwrap();
         let mut state = gameplay::SessionState::empty(1);
         state
-            .spawn(&content, content.game.actors[0].id, HERO)
+            .spawn(&content, TRAVELLER, HERO)
             .map(|_| ())
             .unwrap_err()
             .to_string()
@@ -725,7 +713,7 @@ fn formulas_that_do_not_answer_properly_are_errors() {
     let mut content = gameplay::fixtures::content();
     module(&mut content, "rules").source =
         "local rules = {}\nfunction rules.derive(c) return {} end\nreturn rules".into();
-    content.scripts = LuauScripts::install(&content.game.scripts).unwrap();
+    content.scripts = LuauScripts::install(content.game.scripts.values()).unwrap();
     let error = content.validate().unwrap_err().to_string();
     assert!(error.contains("unknown script rules.check"), "{error}");
 }
@@ -740,7 +728,7 @@ fn working_out_a_whole_population_in_luau_stays_cheap() {
         let mut id = [9u8; 16];
         id[..4].copy_from_slice(&n.to_le_bytes());
         state
-            .spawn(&content, content.game.actors[0].id, game_types::ActorId(id))
+            .spawn(&content, TRAVELLER, game_types::ActorId(id))
             .unwrap();
     }
     let spawned = started.elapsed();
@@ -814,7 +802,7 @@ function abilities.second_wind(game: Game, scene: Scene) end
 return abilities
 "#
     .into();
-    content.scripts = LuauScripts::install(&content.game.scripts).unwrap();
+    content.scripts = LuauScripts::install(content.game.scripts.values()).unwrap();
     let mut session = GameSession::new(ToolContent::new(content).unwrap(), state()).unwrap();
     session.apply(strike(HERO, MERCHANT)).unwrap();
     session

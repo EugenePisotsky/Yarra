@@ -81,7 +81,8 @@ mod tests {
     use super::*;
     #[test]
     fn the_graph_used_least_recently_goes_first() {
-        let template = crate::fixtures::content().game.dialogues[0].clone();
+        let template =
+            crate::fixtures::content().game.dialogues[&crate::fixtures::GATE_DIALOGUE].clone();
         let graph = |n: usize| Dialogue {
             id: DialogueId::named(&format!("graph/{n}")),
             ..template.clone()

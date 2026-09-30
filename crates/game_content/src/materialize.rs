@@ -2,7 +2,8 @@
 use crate::{asset::*, bundle::publication_hash, *};
 use game_types::require;
 use gameplay::inventory;
-use gameplay::{GameContent, GameDefinitions};
+use gameplay::{GameContent, GameDefinitions, KeyedMap};
+use std::collections::BTreeMap;
 use std::path::Path;
 
 impl LoadedProject {
@@ -35,50 +36,81 @@ impl LoadedProject {
         let mut items = inventory::ItemCatalog {
             id: manifest.catalog_id,
             revision: manifest.catalog_revision,
-            categories: vec![],
-            items: vec![],
+            categories: Default::default(),
+            items: Default::default(),
         };
         let mut rules = None;
         let mut world = gameplay::WorldDefinitions::default();
-        let mut claims = Vec::new();
-        let mut dialogue_contracts = Vec::new();
-        let mut quests = Vec::new();
-        let mut profiles = Vec::new();
-        let mut predicates = Vec::new();
-        let mut actors = Vec::new();
-        let mut dialogues = Vec::new();
-        let mut variables = Vec::new();
-        let mut scripts = Vec::new();
-        let mut loot = Vec::new();
-        let mut text = Vec::new();
+        let mut claims = BTreeMap::new();
+        let mut dialogue_contracts = BTreeMap::new();
+        let mut quests = BTreeMap::new();
+        let mut profiles = BTreeMap::new();
+        let mut predicates = BTreeMap::new();
+        let mut actors = BTreeMap::new();
+        let mut dialogues = BTreeMap::new();
+        let mut variables = BTreeMap::new();
+        let mut scripts = BTreeMap::new();
+        let mut loot = BTreeMap::new();
+        let mut text = BTreeMap::new();
         for record in records {
             match record {
-                Asset::DialogueContract(v) => dialogue_contracts.push(v),
-                Asset::Object(v) => world.objects.push(v),
+                Asset::DialogueContract(v) => {
+                    dialogue_contracts.add(v);
+                }
+                Asset::Object(v) => {
+                    world.objects.add(v);
+                }
                 Asset::Area(v) => {
                     world.areas.insert(v);
                 }
-                Asset::Trigger(v) => world.triggers.push(v),
-                Asset::Claim(v) => claims.push(v),
-                Asset::Quest(v) => quests.push(v),
-                Asset::Profile(v) => profiles.push(v),
-                Asset::Predicate(v) => predicates.push(v),
-                Asset::Category(v) => items.categories.push(v),
-                Asset::Item(v) => items.items.push(v),
-                Asset::Actor(v) => actors.push(v),
+                Asset::Trigger(v) => {
+                    world.triggers.add(v);
+                }
+                Asset::Claim(v) => {
+                    claims.add(v);
+                }
+                Asset::Quest(v) => {
+                    quests.add(v);
+                }
+                Asset::Profile(v) => {
+                    profiles.add(v);
+                }
+                Asset::Predicate(v) => {
+                    predicates.add(v);
+                }
+                Asset::Category(v) => {
+                    items.categories.add(v);
+                }
+                Asset::Item(v) => {
+                    items.items.add(v);
+                }
+                Asset::Actor(v) => {
+                    actors.add(v);
+                }
                 Asset::Rules(v) => rules = Some(v),
-                Asset::Dialogue(v) => dialogues.push(v),
-                Asset::Script(v) => scripts.push(v),
-                Asset::Loot(v) => loot.push(v),
-                Asset::Variable(v) => variables.push(v),
-                Asset::Text(v) => text.push(v),
+                Asset::Dialogue(v) => {
+                    dialogues.add(v);
+                }
+                Asset::Script(v) => {
+                    scripts.add(v);
+                }
+                Asset::Loot(v) => {
+                    loot.add(v);
+                }
+                Asset::Variable(v) => {
+                    variables.add(v);
+                }
+                Asset::Text(v) => {
+                    text.add(v);
+                }
             }
         }
-        let mut content = GameContent {
+        let content = GameContent {
             text,
             manifest: manifest.content,
             items,
-            scripts: scripting::LuauScripts::install(&scripts).map_err(game_types::Invalid)?,
+            scripts: scripting::LuauScripts::install(scripts.values())
+                .map_err(game_types::Invalid)?,
             graphs: Default::default(),
             game: GameDefinitions {
                 world,
@@ -95,8 +127,6 @@ impl LoadedProject {
                 loot,
             },
         };
-        content.sort();
-        content.game.dialogues.sort_by_key(|v| v.id);
         require(
             content.fingerprint()? == manifest.mechanical_fingerprint,
             "mechanical fingerprint mismatch",

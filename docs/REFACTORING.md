@@ -166,7 +166,7 @@ Evidence: new tests for turns kept through a save and the world held still, runa
 - Identities lose `Default`, which made a random UUID: done. Nothing relied on it; `new()` is now `random()`, which says what it does.
 - Inventory refusals a player can meet are `Rejection`s, so a UI matches one vocabulary: done. Not enough money is `NotEnoughGold` with the amounts, as paying a trainer is; no room, an item that cannot be given up, an item not traded here and a stale offer have their own. The conversion happens where inventory errors enter gameplay; the rest stay mistakes.
 - Per-command validation of changed records runs in debug builds only: done. It worked a character's stats out a second time on every equip or effect. The whole test suite passes with it switched off, so no command relies on it to refuse anything. A loaded save is still checked in full.
-- Definitions are stored as maps by identity, which removes the sort lists kept in five places and the "listed in order" failure.
+- Definitions are stored as maps by identity: done. Every list of definitions in `GameContent` (and the item catalog's) is a map, saved as a plain list as the state's records are, so authored files and bundles keep their shape. `sort`, the bisection lookups, the fingerprint's own sort list and the "listed in order" failure are gone; `keyed_map` and `KeyedMap::add` build and extend them. The rules' own lists stay lists, since their order is authored.
 - Scenarios share a base start; test fixtures move behind a feature.
 
 **Decided.** Claims fold into variables with a pair scope. Interaction profiles stay while graphs load on demand: they pick an opening without reading any graph.

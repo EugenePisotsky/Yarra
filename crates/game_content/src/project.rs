@@ -4,7 +4,7 @@ use gameplay::actors::ActorTemplate;
 use gameplay::dialogue::Dialogue;
 use gameplay::inventory::ItemCatalog;
 use gameplay::rules::Rules;
-use gameplay::{ContentManifest, GameContent, GameDefinitions};
+use gameplay::{ContentManifest, GameContent, GameDefinitions, KeyedMap, keyed_map};
 use gameplay::{dialogue, quests};
 use localization::{LanguageResource, Localization, contract_hash};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -151,7 +151,7 @@ impl LoadedProject {
             for path in &package.objects {
                 let d: gameplay::ObjectDefinition = source.ron(path)?;
                 own!(AssetId::Object(d.id));
-                world.objects.push(d);
+                world.objects.add(d);
             }
             for area in &package.areas {
                 own!(AssetId::Area(*area));
@@ -160,7 +160,7 @@ impl LoadedProject {
             for path in &package.triggers {
                 let d: gameplay::TriggerDefinition = source.ron(path)?;
                 own!(AssetId::Trigger(d.id));
-                world.triggers.push(d);
+                world.triggers.add(d);
             }
             for path in &package.claims {
                 let c: dialogue::ClaimDefinition = source.ron(path)?;
@@ -185,11 +185,11 @@ impl LoadedProject {
             let mut resource_paths = package.resources.clone();
             for path in &package.catalogs {
                 let catalog: ItemCatalog = source.ron(path)?;
-                for v in &catalog.categories {
-                    own!(AssetId::Category(v.id));
+                for id in catalog.categories.keys() {
+                    own!(AssetId::Category(*id));
                 }
-                for v in &catalog.items {
-                    own!(AssetId::Item(v.id));
+                for id in catalog.items.keys() {
+                    own!(AssetId::Item(*id));
                 }
                 if let Some(items) = &mut items {
                     require(
@@ -316,31 +316,29 @@ impl LoadedProject {
                 }
             }
         }
-        let mut content = GameContent {
+        // Kept by identity, so neither the order of packages nor of files in them matters.
+        let content = GameContent {
             manifest: project.manifest,
-            text: contracts,
+            text: keyed_map(contracts),
             items: items.ok_or_else(|| Invalid("missing item catalog".into()))?,
             game: GameDefinitions {
                 world,
-                dialogue_contracts: dialogues.iter().map(Dialogue::contract).collect(),
-                claims,
-                quests,
-                profiles,
-                predicates,
+                dialogue_contracts: keyed_map(dialogues.iter().map(Dialogue::contract)),
+                claims: keyed_map(claims),
+                quests: keyed_map(quests),
+                profiles: keyed_map(profiles),
+                predicates: keyed_map(predicates),
                 rules: rules.ok_or_else(|| Invalid("missing rules".into()))?,
-                actors,
-                dialogues,
-                variables,
-                scripts,
-                loot,
+                actors: keyed_map(actors),
+                dialogues: keyed_map(dialogues),
+                variables: keyed_map(variables),
+                scripts: keyed_map(scripts),
+                loot: keyed_map(loot),
             },
             scripts: Default::default(),
             graphs: Default::default(),
         };
-        // Canonical identities, not manifest/file traversal order, determine publication hashes.
-        content.sort();
-        content.game.dialogues.sort_by_key(|v| v.id);
-        for contract in &content.text {
+        for contract in content.text.values() {
             require(
                 translations
                     .iter()
@@ -416,7 +414,7 @@ impl LoadedProject {
     ) -> Result<Self> {
         content.scripts = contextual(
             "scripts",
-            scripting::LuauScripts::install(&content.game.scripts),
+            scripting::LuauScripts::install(content.game.scripts.values()),
         )?;
         contextual("game content", content.validate())?;
         content.validate_selection_links()?;
@@ -431,8 +429,7 @@ impl LoadedProject {
             )?;
             let contract = content
                 .text
-                .iter()
-                .find(|c| c.id == translation.id)
+                .get(&translation.id)
                 .ok_or_else(|| Invalid("translation resource has no contract".into()))?;
             for (key, revision) in &translation.reviewed {
                 require(
@@ -448,14 +445,14 @@ impl LoadedProject {
                 )?;
             }
         }
-        let localization =
-            Localization::new(&source_locale, content.text.clone(), translations.clone())?;
+        let contracts = content.text.values().cloned().collect();
+        let localization = Localization::new(&source_locale, contracts, translations.clone())?;
         let mut warnings = Vec::new();
         let mut reviews = Vec::new();
-        let contracts: BTreeMap<_, _> = content.text.iter().map(|c| (c.id, c)).collect();
         for reference in content.text_keys().into_iter().chain(scenario.text_keys()) {
             require(
-                contracts
+                content
+                    .text
                     .get(&reference.resource)
                     .is_some_and(|c| c.messages.contains_key(&reference.key)),
                 &format!(
@@ -469,7 +466,7 @@ impl LoadedProject {
         if !translations.is_empty() {
             localization
                 .validate_keys(content.text_keys().into_iter().chain(scenario.text_keys()))?;
-            for contract in &content.text {
+            for contract in content.text.values() {
                 let source = contextual(
                     format!("Fluent {}/{}", source_locale, contract.id),
                     localization.scope(contract.id, &source_locale),
@@ -527,18 +524,18 @@ impl LoadedProject {
         for asset in content
             .items
             .categories
-            .iter()
+            .values()
             .cloned()
             .map(Asset::Category)
-            .chain(content.items.items.iter().cloned().map(Asset::Item))
-            .chain(content.game.actors.iter().cloned().map(Asset::Actor))
+            .chain(content.items.items.values().cloned().map(Asset::Item))
+            .chain(content.game.actors.values().cloned().map(Asset::Actor))
             .chain(std::iter::once(Asset::Rules(content.game.rules.clone())))
-            .chain(content.game.quests.iter().cloned().map(Asset::Quest))
-            .chain(content.game.profiles.iter().cloned().map(Asset::Profile))
+            .chain(content.game.quests.values().cloned().map(Asset::Quest))
+            .chain(content.game.profiles.values().cloned().map(Asset::Profile))
         {
             for reference in asset.text_references() {
                 require(
-                    contracts[&reference.resource].messages[&reference.key]
+                    content.text[&reference.resource].messages[&reference.key]
                         .arguments
                         .is_empty(),
                     "static display name/description cannot require arguments",
@@ -547,7 +544,7 @@ impl LoadedProject {
         }
         for reference in scenario.text_keys() {
             require(
-                contracts[&reference.resource].messages[&reference.key]
+                content.text[&reference.resource].messages[&reference.key]
                     .arguments
                     .is_empty(),
                 "starting name cannot require arguments",

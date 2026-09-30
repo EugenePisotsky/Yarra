@@ -1,6 +1,6 @@
 use game_types::PredicateId;
 use yarra_gameplay::inventory;
-use yarra_gameplay::{Condition, NamedPredicate, fixtures::*};
+use yarra_gameplay::{Condition, KeyedMap, NamedPredicate, fixtures::*};
 
 #[test]
 fn resolved_depth_is_checked_before_a_valid_local_tree_reaches_runtime() {
@@ -18,7 +18,7 @@ fn resolved_depth_is_checked_before_a_valid_local_tree_reaches_runtime() {
         content
             .game
             .predicates
-            .push(NamedPredicate { id, condition });
+            .add(NamedPredicate { id, condition });
         condition = Condition::Named(id);
     }
     assert!(

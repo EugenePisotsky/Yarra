@@ -211,8 +211,7 @@ fn demo(project: &LoadedProject, locale: &str, directory: Option<PathBuf>) -> Re
         if project
             .content()
             .text
-            .iter()
-            .find(|c| c.id == key.resource)
+            .get(&key.resource)
             .is_some_and(|c| !c.messages[&key.key].arguments.is_empty())
         {
             continue;

@@ -3,7 +3,7 @@ use crate::*;
 use game_types::{DialogueId, Invalid, OwnerId, require};
 use gameplay::dialogue::Dialogue;
 use gameplay::inventory;
-use gameplay::{ContentIdentity, ContentSource, GameContent, GameDefinitions};
+use gameplay::{ContentIdentity, ContentSource, GameContent, GameDefinitions, KeyedMap};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -51,57 +51,82 @@ impl ContentRepository {
             return Err(ContentError::MissingAsset(AssetId::Rules));
         };
         let mut content = GameContent {
-            text: vec![],
+            text: Default::default(),
             manifest: self.manifest().content.clone(),
             items: inventory::ItemCatalog {
                 id: self.manifest().catalog_id,
                 revision: self.manifest().catalog_revision,
-                categories: vec![],
-                items: vec![],
+                categories: Default::default(),
+                items: Default::default(),
             },
             scripts: Default::default(),
             graphs: Default::default(),
             game: GameDefinitions {
                 world: Default::default(),
-                dialogue_contracts: vec![],
-                claims: vec![],
-                quests: vec![],
-                profiles: vec![],
-                predicates: vec![],
+                dialogue_contracts: Default::default(),
+                claims: Default::default(),
+                quests: Default::default(),
+                profiles: Default::default(),
+                predicates: Default::default(),
                 rules,
-                actors: vec![],
-                dialogues: vec![],
-                variables: vec![],
-                scripts: vec![],
-                loot: vec![],
+                actors: Default::default(),
+                dialogues: Default::default(),
+                variables: Default::default(),
+                scripts: Default::default(),
+                loot: Default::default(),
             },
         };
         for kind in CORE_KINDS {
             for asset in self.read_kind(kind)? {
                 match asset {
-                    Asset::Object(v) => content.game.world.objects.push(v),
+                    Asset::Object(v) => {
+                        content.game.world.objects.add(v);
+                    }
                     Asset::Area(v) => {
                         content.game.world.areas.insert(v);
                     }
-                    Asset::Trigger(v) => content.game.world.triggers.push(v),
-                    Asset::DialogueContract(v) => content.game.dialogue_contracts.push(v),
-                    Asset::Claim(v) => content.game.claims.push(v),
-                    Asset::Quest(v) => content.game.quests.push(v),
-                    Asset::Profile(v) => content.game.profiles.push(v),
-                    Asset::Predicate(v) => content.game.predicates.push(v),
-                    Asset::Category(v) => content.items.categories.push(v),
-                    Asset::Item(v) => content.items.items.push(v),
-                    Asset::Actor(v) => content.game.actors.push(v),
-                    Asset::Script(v) => content.game.scripts.push(v),
-                    Asset::Loot(v) => content.game.loot.push(v),
-                    Asset::Variable(v) => content.game.variables.push(v),
+                    Asset::Trigger(v) => {
+                        content.game.world.triggers.add(v);
+                    }
+                    Asset::DialogueContract(v) => {
+                        content.game.dialogue_contracts.add(v);
+                    }
+                    Asset::Claim(v) => {
+                        content.game.claims.add(v);
+                    }
+                    Asset::Quest(v) => {
+                        content.game.quests.add(v);
+                    }
+                    Asset::Profile(v) => {
+                        content.game.profiles.add(v);
+                    }
+                    Asset::Predicate(v) => {
+                        content.game.predicates.add(v);
+                    }
+                    Asset::Category(v) => {
+                        content.items.categories.add(v);
+                    }
+                    Asset::Item(v) => {
+                        content.items.items.add(v);
+                    }
+                    Asset::Actor(v) => {
+                        content.game.actors.add(v);
+                    }
+                    Asset::Script(v) => {
+                        content.game.scripts.add(v);
+                    }
+                    Asset::Loot(v) => {
+                        content.game.loot.add(v);
+                    }
+                    Asset::Variable(v) => {
+                        content.game.variables.add(v);
+                    }
                     Asset::Rules(_) | Asset::Dialogue(_) | Asset::Text(_) => {}
                 }
             }
         }
         content.scripts =
-            scripting::LuauScripts::install(&content.game.scripts).map_err(Invalid)?;
-        content.sort();
+            scripting::LuauScripts::install(content.game.scripts.values()).map_err(Invalid)?;
         // Cross-references are checked here once; graphs are checked as they are loaded.
         content.validate()?;
         Ok(content)

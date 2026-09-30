@@ -89,7 +89,7 @@ fn editing_data_changes_mechanics_without_changing_rust_or_old_bundles() {
     let path = temp.0.join("pinned.sqlite");
     original.build(&path).unwrap();
     let mut items: ItemCatalog = read(root.join("packages/core/items.ron"));
-    items.items[0].mechanics.on_use = vec![rules::Use::Restore {
+    items.items.values_mut().next().unwrap().mechanics.on_use = vec![rules::Use::Restore {
         resource: Key::new("health").unwrap(),
         amount: 40,
     }];
@@ -145,11 +145,12 @@ fn category_mechanics_bindings_and_scenario_errors_are_rejected() {
     let root = temp.source();
     let original: ItemCatalog = read(root.join("packages/core/items.ron"));
     let mut items = original.clone();
-    items.items[0].category = CategoryId::random();
+    items.items.values_mut().next().unwrap().category = CategoryId::random();
     write(root.join("packages/core/items.ron"), &items);
     assert!(failure(&root).contains("category"));
     let mut items = original.clone();
-    items.items[1].mechanics.modifiers[0].stat = Key::new("unknown-attribute").unwrap();
+    items.items.values_mut().nth(1).unwrap().mechanics.modifiers[0].stat =
+        Key::new("unknown-attribute").unwrap();
     write(root.join("packages/core/items.ron"), &items);
     assert!(failure(&root).contains("unknown stat"));
     write(root.join("packages/core/items.ron"), &original);

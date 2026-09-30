@@ -270,8 +270,7 @@ fn timed_effects_derive_from_explicit_time() {
     content
         .items
         .items
-        .iter_mut()
-        .find(|i| i.id == POTION)
+        .get_mut(&POTION)
         .unwrap()
         .mechanics
         .on_use
@@ -321,12 +320,11 @@ fn the_fingerprint_does_not_depend_on_which_names_were_parsed() {
     // Named in code only, so nothing has told the process this name yet.
     const NAMED: &str = "fingerprint/named_in_code";
     let mut content = content();
-    content.game.variables.push(VariableDefinition {
+    content.game.variables.add(VariableDefinition {
         id: VariableId::named(NAMED),
         initial: Value::Bool(false),
         scope: Default::default(),
     });
-    content.sort();
     let before = content.fingerprint().unwrap();
     VariableId::try_from(NAMED.to_owned()).unwrap();
     assert_eq!(VariableId::named(NAMED).to_string(), NAMED);
@@ -504,9 +502,7 @@ fn command_cost_does_not_grow_with_the_population() {
         let mut id = [7u8; 16];
         id[..4].copy_from_slice(&n.to_le_bytes());
         let id = ActorId(id);
-        state
-            .spawn(&content, content.game.actors[0].id, id)
-            .unwrap();
+        state.spawn(&content, TRAVELLER, id).unwrap();
         let mut bag = Inventory::new(OwnerRef::actor(id), InventoryRole::Carried);
         bag.grant(&content.items, POTION, 5).unwrap();
         state.add_inventory(bag);
@@ -604,8 +600,8 @@ mod party {
     fn session(party: &[ActorId], stranger: bool) -> GameSession {
         let mut content = content();
         let graph = banter();
-        content.game.dialogue_contracts.push(graph.contract());
-        content.game.dialogues.push(graph);
+        content.game.dialogue_contracts.add(graph.contract());
+        content.game.dialogues.add(graph);
         let mut state = state();
         if stranger {
             let mut actor = state.actors[&COMPANION].clone();
@@ -798,14 +794,13 @@ mod variables {
     const VISITS: VariableId = VariableId::named("old_gate/visits");
     fn with_counter(actions: Vec<Action>) -> GameContent {
         let mut content = content();
-        content.game.variables.push(VariableDefinition {
+        content.game.variables.add(VariableDefinition {
             id: VISITS,
             initial: Value::Int(0),
             scope: Default::default(),
         });
-        let choice = &mut content.game.dialogues[0].nodes[1];
+        let choice = &mut gate(&mut content).nodes[1];
         choice.actions = actions;
-        content.sort();
         content
     }
     fn add(amount: i64) -> Action {
@@ -893,12 +888,12 @@ mod variables {
             of: Some(Participant::Speaker),
             value: Value::Bool(true),
         }]);
-        content.game.variables.push(VariableDefinition {
+        content.game.variables.add(VariableDefinition {
             id: INSULTED,
             initial: Value::Bool(false),
             scope: VariableScope::Actor,
         });
-        let graph = &mut content.game.dialogues[0];
+        let graph = gate(&mut content);
         graph.repeat = dialogue::RepeatPolicy::Always;
         graph.nodes[1].repeat = dialogue::Repeat::Always;
         graph.nodes[1].condition = Some(Condition::Variable {
@@ -906,8 +901,7 @@ mod variables {
             of: Some(Participant::Speaker),
             test: Test::Is(Value::Bool(false)),
         });
-        content.game.dialogue_contracts = vec![graph.contract()];
-        content.sort();
+        refresh_contracts(&mut content);
         content
     }
     fn offered(session: &mut GameSession, speaker: ActorId) -> bool {
@@ -976,7 +970,7 @@ mod variables {
     #[test]
     fn content_must_name_an_actor_exactly_for_per_actor_variables() {
         let mut content = insulting();
-        content.game.dialogues[0].nodes[1].condition = Some(Condition::Variable {
+        gate(&mut content).nodes[1].condition = Some(Condition::Variable {
             variable: INSULTED,
             of: None,
             test: Test::Is(Value::Bool(false)),
@@ -989,7 +983,7 @@ mod variables {
                 .contains("per actor")
         );
         let mut content = insulting();
-        content.game.dialogues[0].nodes[1].actions = vec![Action::Add {
+        gate(&mut content).nodes[1].actions = vec![Action::Add {
             variable: VISITS,
             of: Some(Participant::Player),
             amount: 1,

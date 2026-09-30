@@ -238,15 +238,21 @@ impl Action {
 }
 impl GameContent {
     pub fn quest(&self, id: QuestId) -> Result<&quests::Quest> {
-        crate::content::find(&self.game.quests, id, |v| v.id)
+        self.game
+            .quests
+            .get(&id)
             .ok_or_else(|| Invalid("unknown quest".into()).into())
     }
     pub fn profile(&self, id: InteractionProfileId) -> Result<&InteractionProfile> {
-        crate::content::find(&self.game.profiles, id, |v| v.id)
+        self.game
+            .profiles
+            .get(&id)
             .ok_or_else(|| Invalid("unknown interaction profile".into()).into())
     }
     pub fn predicate(&self, id: PredicateId) -> Result<&Condition> {
-        crate::content::find(&self.game.predicates, id, |v| v.id)
+        self.game
+            .predicates
+            .get(&id)
             .map(|p| &p.condition)
             .ok_or_else(|| Invalid("unknown named predicate".into()).into())
     }
@@ -542,12 +548,12 @@ impl GameContent {
     /// Links used for selection are validated at publication, but are deliberately not eager
     /// runtime dependencies: inspecting an NPC must not load every potential conversation.
     pub fn validate_selection_links(&self) -> Result<()> {
-        for actor in &self.game.actors {
+        for actor in self.game.actors.values() {
             if let Some(id) = actor.interaction {
                 self.profile(id)?;
             }
         }
-        for profile in &self.game.profiles {
+        for profile in self.game.profiles.values() {
             for rule in &profile.rules {
                 for variant in &rule.variants {
                     self.authored(variant.dialogue)

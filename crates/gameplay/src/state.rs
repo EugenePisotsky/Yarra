@@ -15,57 +15,6 @@ use game_types::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-/// A record stored in a map under an identity it also carries.
-pub trait Keyed {
-    type Key: Ord + Clone;
-    fn key(&self) -> Self::Key;
-}
-macro_rules! keyed {
-    ($($value:ty => $key:ty, |$v:ident| $expr:expr;)*) => {$(
-        impl Keyed for $value {
-            type Key = $key;
-            fn key(&self) -> $key { let $v = self; $expr }
-        }
-    )*};
-}
-keyed! {
-    Actor => ActorId, |v| v.id;
-    Inventory => InventoryId, |v| v.id;
-    Wallet => WalletId, |v| v.id;
-    quests::Progress => QuestId, |v| v.quest;
-    Relationship => RelationshipKey, |v| v.key;
-    Interaction => InteractionKey, |v| v.key;
-    History => HistoryKey, |v| v.key;
-    Conversation => ConversationKey, |v| ConversationKey::of(v);
-    ObjectState => ObjectId, |v| v.id;
-    LocationState => ActorId, |v| v.actor;
-    crate::Movement => ActorId, |v| v.actor;
-    TriggerState => TriggerId, |v| v.id;
-}
-/// Saved as a plain list of records; duplicate identities are rejected on load.
-pub(crate) mod keyed {
-    use super::Keyed;
-    use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error};
-    use std::collections::BTreeMap;
-    pub fn serialize<S: Serializer, K, V: Serialize>(
-        map: &BTreeMap<K, V>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        serializer.collect_seq(map.values())
-    }
-    pub fn deserialize<'de, D: Deserializer<'de>, V: Keyed + Deserialize<'de>>(
-        deserializer: D,
-    ) -> Result<BTreeMap<V::Key, V>, D::Error> {
-        let mut map = BTreeMap::new();
-        for value in Vec::<V>::deserialize(deserializer)? {
-            if map.insert(value.key(), value).is_some() {
-                return Err(D::Error::custom("duplicate record identity"));
-            }
-        }
-        Ok(map)
-    }
-}
-
 /// A map whose keys are not plain text, saved as a list of key/value pairs.
 mod pairs {
     use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error};
@@ -100,26 +49,26 @@ pub struct SessionState {
     pub time: GameTime,
     pub random: RandomState,
     pub narrative_random: RandomState,
-    #[serde(with = "keyed")]
+    #[serde(with = "crate::keyed::list")]
     pub actors: BTreeMap<ActorId, Actor>,
     /// Inventory and wallet owners that are not actors, e.g. a party or a chest.
     pub owners: BTreeSet<OwnerRef>,
-    #[serde(with = "keyed")]
+    #[serde(with = "crate::keyed::list")]
     pub inventories: BTreeMap<InventoryId, Inventory>,
     /// Each actor's carried inventory. Maintained by `add_inventory`, checked by `validate`.
     pub carried: BTreeMap<ActorId, InventoryId>,
-    #[serde(with = "keyed")]
+    #[serde(with = "crate::keyed::list")]
     pub wallets: BTreeMap<WalletId, Wallet>,
-    #[serde(with = "keyed")]
+    #[serde(with = "crate::keyed::list")]
     pub quests: BTreeMap<QuestId, quests::Progress>,
-    #[serde(with = "keyed")]
+    #[serde(with = "crate::keyed::list")]
     pub relationships: BTreeMap<RelationshipKey, Relationship>,
-    #[serde(with = "keyed")]
+    #[serde(with = "crate::keyed::list")]
     pub interactions: BTreeMap<InteractionKey, Interaction>,
-    #[serde(with = "keyed")]
+    #[serde(with = "crate::keyed::list")]
     pub histories: BTreeMap<HistoryKey, History>,
     pub claims: BTreeSet<ClaimKey>,
-    #[serde(with = "keyed")]
+    #[serde(with = "crate::keyed::list")]
     pub conversations: BTreeMap<ConversationKey, Conversation>,
     /// Variables that were set; the rest still have their initial value.
     #[serde(with = "pairs")]

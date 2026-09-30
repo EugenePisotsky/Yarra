@@ -28,12 +28,13 @@ pub fn example_catalog() -> ItemCatalog {
             (POTIONS, "potions", "Potions"),
         ]
         .into_iter()
-        .map(|(id, key, name)| Category {
-            id: named(id, key),
-            name: name.into(),
+        .map(|(id, key, name)| {
+            let id = named(id, key);
+            let name = name.into();
+            (id, Category { id, name })
         })
         .collect(),
-        items: Vec::new(),
+        items: Default::default(),
     };
     for (id, key, name, category, stack_limit, weight, ask, bid) in [
         (
@@ -49,27 +50,30 @@ pub fn example_catalog() -> ItemCatalog {
         (SWORD, "iron_sword", "Iron sword", WEAPONS, 1, 2000, 100, 40),
         (KEY, "old_gate_key", "Old gate key", KEYS, 1, 50, 0, 0),
     ] {
-        catalog.items.push(ItemDefinition {
-            id: named(id, key),
-            name: name.into(),
-            category,
-            description: "".into(),
-            tags: Default::default(),
-            icon: None,
-            stack_limit,
-            weight_grams: weight,
-            merchant_sell_price: Some(Money::new(ask).unwrap()),
-            merchant_buy_price: Some(Money::new(bid).unwrap()),
-            permissions: ItemPermissions::default(),
-            mechanics: Default::default(),
-        });
+        let id = named(id, key);
+        catalog.items.insert(
+            id,
+            ItemDefinition {
+                id,
+                name: name.into(),
+                category,
+                description: "".into(),
+                tags: Default::default(),
+                icon: None,
+                stack_limit,
+                weight_grams: weight,
+                merchant_sell_price: Some(Money::new(ask).unwrap()),
+                merchant_buy_price: Some(Money::new(bid).unwrap()),
+                permissions: ItemPermissions::default(),
+                mechanics: Default::default(),
+            },
+        );
     }
-    let key = catalog.items.last_mut().unwrap();
+    let key = catalog.items.get_mut(&KEY).unwrap();
     key.tags.insert("quest".into());
     key.permissions.sellable = false;
     key.permissions.discardable = false;
     key.merchant_buy_price = None;
     key.merchant_sell_price = None;
-    catalog.sort();
     catalog
 }

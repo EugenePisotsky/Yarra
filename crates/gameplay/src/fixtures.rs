@@ -7,14 +7,17 @@ use crate::rules::{
     StatusEffect, Use,
 };
 use crate::{
-    ActScope, Action, Condition, ContentManifest, GameContent, GameDefinitions, ReadScope,
-    ScriptEngine, ScriptModule, ScriptName, Scripts, SessionState, Test, Value, VariableDefinition,
+    ActScope, Action, Condition, ContentManifest, GameContent, GameDefinitions, KeyedMap,
+    ReadScope, ScriptEngine, ScriptModule, ScriptName, Scripts, SessionState, Test, Value,
+    VariableDefinition, keyed_map,
 };
 use game_types::*;
 use std::collections::BTreeMap;
 
 pub const HERO: ActorId = ActorId::named("hero");
 pub const MERCHANT: ActorId = ActorId::named("merchant");
+/// The one template every fixture character is made from.
+pub const TRAVELLER: ActorTemplateId = ActorTemplateId::named("traveller");
 pub const COMPANION: ActorId = ActorId::named("mira");
 pub const HERO_BAG: InventoryId = InventoryId::named("hero");
 pub const MERCHANT_BAG: InventoryId = InventoryId::named("merchant");
@@ -130,24 +133,18 @@ impl ScriptEngine for FixtureFormulas {
 
 pub fn content() -> GameContent {
     let mut items = example_catalog();
-    for category in &mut items.categories {
+    for category in items.categories.values_mut() {
         category.name = text(&format!("category-{}", category.id));
     }
-    for item in &mut items.items {
+    for item in items.items.values_mut() {
         item.name = text(&format!("item-{}", item.id));
         item.description = text(&format!("item-{}-description", item.id));
     }
-    items
-        .items
-        .iter_mut()
-        .find(|i| i.id == POTION)
-        .unwrap()
-        .mechanics
-        .on_use = vec![Use::Restore {
+    items.items.get_mut(&POTION).unwrap().mechanics.on_use = vec![Use::Restore {
         resource: key("health"),
         amount: 25,
     }];
-    let sword = items.items.iter_mut().find(|i| i.id == SWORD).unwrap();
+    let sword = items.items.get_mut(&SWORD).unwrap();
     sword.mechanics.slot = Some(key("hand"));
     sword.mechanics.modifiers = vec![Modifier {
         stat: key("strength"),
@@ -289,7 +286,7 @@ pub fn content() -> GameContent {
     };
     let template = ActorTemplate {
         interaction: None,
-        id: ActorTemplateId::named("traveller"),
+        id: TRAVELLER,
         name: text("actor-traveller"),
         class: key("adventurer"),
         level: 1,
@@ -367,7 +364,7 @@ pub fn content() -> GameContent {
         ],
     };
     let mut content = GameContent {
-        text: vec![],
+        text: Default::default(),
         manifest: ContentManifest {
             id: ContentId([1; 16]),
             revision: 1,
@@ -378,35 +375,29 @@ pub fn content() -> GameContent {
         graphs: Default::default(),
         game: GameDefinitions {
             world: Default::default(),
-            dialogue_contracts: vec![],
-            claims: vec![],
-            quests: vec![],
-            profiles: vec![],
-            predicates: vec![],
+            dialogue_contracts: keyed_map([graph.contract()]),
+            claims: Default::default(),
+            quests: Default::default(),
+            profiles: Default::default(),
+            predicates: Default::default(),
             rules,
-            actors: vec![template],
-            dialogues: vec![graph],
-            variables: vec![VariableDefinition {
+            actors: keyed_map([template]),
+            dialogues: keyed_map([graph]),
+            variables: keyed_map([VariableDefinition {
                 id: REWARDED,
                 initial: Value::Bool(false),
                 scope: Default::default(),
-            }],
-            scripts: [("abilities", ABILITIES_LUAU), ("rules", RULES_LUAU)]
-                .map(|(name, source)| ScriptModule {
+            }]),
+            scripts: keyed_map([("abilities", ABILITIES_LUAU), ("rules", RULES_LUAU)].map(
+                |(name, source)| ScriptModule {
                     name: key(name),
                     source: source.into(),
-                })
-                .into(),
-            loot: vec![],
+                },
+            )),
+            loot: Default::default(),
         },
     };
-    content.game.dialogue_contracts = content
-        .game
-        .dialogues
-        .iter()
-        .map(Dialogue::contract)
-        .collect();
-    content.text.push(TextContract {
+    content.text.add(TextContract {
         id: TextResourceId::named("core/text"),
         imports: Default::default(),
         messages: content
@@ -415,7 +406,6 @@ pub fn content() -> GameContent {
             .map(|m| (m.key.clone(), MessageContract::default()))
             .collect(),
     });
-    content.sort();
     content
 }
 pub fn state() -> SessionState {
@@ -426,9 +416,7 @@ pub fn state() -> SessionState {
         (MERCHANT, MERCHANT_BAG),
         (COMPANION, COMPANION_BAG),
     ] {
-        let actor = state
-            .spawn(&content, content.game.actors[0].id, id)
-            .unwrap();
+        let actor = state.spawn(&content, TRAVELLER, id).unwrap();
         if id == HERO {
             actor.resources.insert(key("health"), 50);
         } else if id == MERCHANT {
@@ -474,5 +462,15 @@ pub fn state() -> SessionState {
 
 /// The persuasion check behind the gate conversation's only choice.
 pub fn persuade(content: &mut GameContent) -> &mut Action {
-    &mut content.game.dialogues[0].nodes[1].actions[1]
+    &mut gate(content).nodes[1].actions[1]
+}
+/// The gate conversation's graph, to change for a test. Its contract follows on its own
+/// only through `refresh_contracts`.
+pub fn gate(content: &mut GameContent) -> &mut Dialogue {
+    content.game.dialogues.get_mut(&GATE_DIALOGUE).unwrap()
+}
+/// Contracts made again from the graphs, after a test changed one.
+pub fn refresh_contracts(content: &mut GameContent) {
+    content.game.dialogue_contracts =
+        keyed_map(content.game.dialogues.values().map(Dialogue::contract));
 }

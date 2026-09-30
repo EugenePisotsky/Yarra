@@ -2,7 +2,7 @@ use super::{CatalogId, ItemDefinitionId, Money, types::*};
 use crate::rules::ItemMechanics;
 use game_types::TextRef;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub const MAX_STACK_LIMIT: u32 = 1_000_000;
 
@@ -80,8 +80,10 @@ impl ItemDefinition {
 pub struct ItemCatalog {
     pub id: CatalogId,
     pub revision: u64,
-    pub categories: Vec<Category>,
-    pub items: Vec<ItemDefinition>,
+    #[serde(with = "crate::keyed::list")]
+    pub categories: BTreeMap<CategoryId, Category>,
+    #[serde(with = "crate::keyed::list")]
+    pub items: BTreeMap<ItemDefinitionId, ItemDefinition>,
 }
 impl Default for ItemCatalog {
     fn default() -> Self {
@@ -93,82 +95,64 @@ impl ItemCatalog {
         Self {
             id: CatalogId::random(),
             revision: 1,
-            categories: Vec::new(),
-            items: Vec::new(),
+            categories: BTreeMap::new(),
+            items: BTreeMap::new(),
         }
     }
     pub fn validate(&self) -> Result<()> {
         validate_revision(self.revision)?;
-        // Both lists are kept in order of identity, which also shows each is there once,
-        // so a definition is found by bisection.
-        let ordered = self.categories.windows(2).all(|w| w[0].id < w[1].id)
-            && self.items.windows(2).all(|w| w[0].id < w[1].id);
-        if !ordered {
-            return Err(InventoryError::Duplicate);
+        let filed = self.categories.iter().all(|(id, c)| *id == c.id)
+            && self.items.iter().all(|(id, i)| *id == i.id);
+        if !filed {
+            return Err(InventoryError::Invalid(
+                "definition filed under another identity".into(),
+            ));
         }
-        for category in &self.categories {
+        for category in self.categories.values() {
             category.name.validate()?;
         }
-        for item in &self.items {
+        for item in self.items.values() {
             item.validate()?;
             self.category(item.category)?;
         }
         Ok(())
     }
-    /// Puts the definitions in the order lookups rely on.
-    pub fn sort(&mut self) {
-        self.categories.sort_by_key(|v| v.id);
-        self.items.sort_by_key(|v| v.id);
-    }
     pub fn item(&self, id: ItemDefinitionId) -> Result<&ItemDefinition> {
-        self.items
-            .binary_search_by_key(&id, |item| item.id)
-            .map(|index| &self.items[index])
-            .map_err(|_| InventoryError::UnknownDefinition(id))
+        let item = self.items.get(&id);
+        item.ok_or(InventoryError::UnknownDefinition(id))
     }
     pub fn category(&self, id: CategoryId) -> Result<&Category> {
-        self.categories
-            .binary_search_by_key(&id, |category| category.id)
-            .map(|index| &self.categories[index])
-            .map_err(|_| InventoryError::UnknownCategory(id))
+        let category = self.categories.get(&id);
+        category.ok_or(InventoryError::UnknownCategory(id))
     }
     /// Add or replace by identity. Changing the title preserves item references.
     pub fn put_category(&mut self, category: Category) -> Result<()> {
         let mut next = self.clone();
-        if let Some(existing) = next.categories.iter_mut().find(|c| c.id == category.id) {
-            *existing = category;
-        } else {
-            next.categories.push(category);
-        }
+        next.categories.insert(category.id, category);
         self.replace(next)
     }
     /// Add or update by identity.
     pub fn put_item(&mut self, item: ItemDefinition) -> Result<()> {
         let mut next = self.clone();
-        if let Some(existing) = next.items.iter_mut().find(|i| i.id == item.id) {
-            *existing = item;
-        } else {
-            next.items.push(item);
-        }
+        next.items.insert(item.id, item);
         self.replace(next)
     }
     pub fn remove_item(&mut self, id: ItemDefinitionId) -> Result<()> {
         self.item(id)?;
         let mut next = self.clone();
-        next.items.retain(|i| i.id != id);
+        next.items.remove(&id);
         self.replace(next)
     }
     pub fn remove_category(&mut self, id: CategoryId) -> Result<()> {
         self.category(id)?;
-        if self.items.iter().any(|item| item.category == id) {
+        if self.items.values().any(|item| item.category == id) {
             return Err(InventoryError::CategoryInUse(id));
         }
         let mut next = self.clone();
-        next.categories.retain(|c| c.id != id);
+        next.categories.remove(&id);
         self.replace(next)
     }
     fn replace(&mut self, mut next: Self) -> Result<()> {
-        next.sort();
         next.revision = next_revision(self.revision)?;
         next.validate()?;
         *self = next;

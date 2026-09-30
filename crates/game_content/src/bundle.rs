@@ -180,18 +180,18 @@ impl LoadedProject {
             self.content
                 .items
                 .categories
-                .iter()
+                .values()
                 .cloned()
                 .map(Asset::Category)
         );
-        append!(self.content.items.items.iter().cloned().map(Asset::Item));
-        append!(self.content.game.actors.iter().cloned().map(Asset::Actor));
+        append!(self.content.items.items.values().cloned().map(Asset::Item));
+        append!(self.content.game.actors.values().cloned().map(Asset::Actor));
         assets.push((0, Asset::Rules(self.content.game.rules.clone())));
         append!(
             self.content
                 .game
                 .dialogues
-                .iter()
+                .values()
                 .cloned()
                 .map(Asset::Dialogue)
         );
@@ -199,18 +199,25 @@ impl LoadedProject {
             self.content
                 .game
                 .variables
-                .iter()
+                .values()
                 .cloned()
                 .map(Asset::Variable)
         );
-        append!(self.content.text.iter().cloned().map(Asset::Text));
-        append!(self.content.game.scripts.iter().cloned().map(Asset::Script));
-        append!(self.content.game.loot.iter().cloned().map(Asset::Loot));
+        append!(self.content.text.values().cloned().map(Asset::Text));
+        append!(
+            self.content
+                .game
+                .scripts
+                .values()
+                .cloned()
+                .map(Asset::Script)
+        );
+        append!(self.content.game.loot.values().cloned().map(Asset::Loot));
         append!(
             self.content
                 .game
                 .dialogue_contracts
-                .iter()
+                .values()
                 .cloned()
                 .map(Asset::DialogueContract)
         );
@@ -219,7 +226,7 @@ impl LoadedProject {
                 .game
                 .world
                 .objects
-                .iter()
+                .values()
                 .cloned()
                 .map(Asset::Object)
         );
@@ -237,17 +244,17 @@ impl LoadedProject {
                 .game
                 .world
                 .triggers
-                .iter()
+                .values()
                 .cloned()
                 .map(Asset::Trigger)
         );
-        append!(self.content.game.claims.iter().cloned().map(Asset::Claim));
-        append!(self.content.game.quests.iter().cloned().map(Asset::Quest));
+        append!(self.content.game.claims.values().cloned().map(Asset::Claim));
+        append!(self.content.game.quests.values().cloned().map(Asset::Quest));
         append!(
             self.content
                 .game
                 .profiles
-                .iter()
+                .values()
                 .cloned()
                 .map(Asset::Profile)
         );
@@ -255,7 +262,7 @@ impl LoadedProject {
             self.content
                 .game
                 .predicates
-                .iter()
+                .values()
                 .cloned()
                 .map(Asset::Predicate)
         );

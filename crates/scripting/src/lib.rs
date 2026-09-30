@@ -462,7 +462,7 @@ fn add_effects<'s>(
 impl LuauScripts {
     /// Compiles every module and records what each exports. A module is a chunk returning
     /// a table of functions; anything else is an authoring error reported here.
-    pub fn new(modules: &[ScriptModule]) -> Result<Self, String> {
+    pub fn new<'a>(modules: impl IntoIterator<Item = &'a ScriptModule>) -> Result<Self, String> {
         let lua = Lua::new();
         // Chance and time come from the host, so a replay after loading behaves the same.
         (|| -> mlua::Result<()> {
@@ -534,7 +534,9 @@ impl LuauScripts {
         Ok(engine)
     }
     /// The engine as content carries it.
-    pub fn install(modules: &[ScriptModule]) -> Result<Scripts, String> {
+    pub fn install<'a>(
+        modules: impl IntoIterator<Item = &'a ScriptModule>,
+    ) -> Result<Scripts, String> {
         Ok(Scripts::new(Rc::new(Self::new(modules)?)))
     }
     /// Runs one call from the host. The step budget covers everything the call does,

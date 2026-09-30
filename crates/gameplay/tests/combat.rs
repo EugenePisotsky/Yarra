@@ -297,9 +297,7 @@ fn a_skirmish_costs_what_happens_in_it_not_the_size_of_the_world() {
         ActorId(id)
     };
     for n in 0..FIGHTERS + BYSTANDERS {
-        state
-            .spawn(&content, content.game.actors[0].id, id(n))
-            .unwrap();
+        state.spawn(&content, TRAVELLER, id(n)).unwrap();
     }
     let mut session = GameSession::new(ToolContent::new(content).unwrap(), state).unwrap();
     for n in 0..FIGHTERS {
