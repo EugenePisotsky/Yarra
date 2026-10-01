@@ -1,0 +1,20 @@
+(schema_version: 1, assets: [
+(key: "yarra_trees/forest_a", display_name: "Forest A", source_uri: "local/yarra_trees/source/forest_tree.hiplc", variants: [
+(uri: "local/yarra_trees/runtime/forest_a/forest_a_lod0.gltf", bounds: (7.1192, 19.1965, 6.8144), gpu_bytes_estimate: 355456, minimum_screen_height: 640.0),
+(uri: "local/yarra_trees/runtime/forest_a/forest_a_lod1.gltf", bounds: (7.1192, 19.1965, 6.8144), gpu_bytes_estimate: 244708, minimum_screen_height: 320.0),
+(uri: "local/yarra_trees/runtime/forest_a/forest_a_lod2.gltf", bounds: (7.1192, 19.1965, 6.8144), gpu_bytes_estimate: 121044, minimum_screen_height: 160.0),
+(uri: "local/yarra_trees/runtime/forest_a/forest_a_lod3.gltf", bounds: (7.1192, 19.1965, 6.8144), gpu_bytes_estimate: 53080, minimum_screen_height: 0.0),
+]),
+(key: "yarra_trees/forest_b", display_name: "Forest B", source_uri: "local/yarra_trees/source/forest_tree.hiplc", variants: [
+(uri: "local/yarra_trees/runtime/forest_b/forest_b_lod0.gltf", bounds: (6.1114, 17.7948, 6.4944), gpu_bytes_estimate: 250796, minimum_screen_height: 640.0),
+(uri: "local/yarra_trees/runtime/forest_b/forest_b_lod1.gltf", bounds: (6.1114, 17.7948, 6.4944), gpu_bytes_estimate: 191040, minimum_screen_height: 320.0),
+(uri: "local/yarra_trees/runtime/forest_b/forest_b_lod2.gltf", bounds: (6.1114, 17.7948, 6.4944), gpu_bytes_estimate: 92892, minimum_screen_height: 160.0),
+(uri: "local/yarra_trees/runtime/forest_b/forest_b_lod3.gltf", bounds: (6.1114, 17.7948, 6.4944), gpu_bytes_estimate: 43188, minimum_screen_height: 0.0),
+]),
+(key: "yarra_trees/forest_c", display_name: "Forest C", source_uri: "local/yarra_trees/source/forest_tree.hiplc", variants: [
+(uri: "local/yarra_trees/runtime/forest_c/forest_c_lod0.gltf", bounds: (8.6994, 20.3619, 7.8136), gpu_bytes_estimate: 412172, minimum_screen_height: 640.0),
+(uri: "local/yarra_trees/runtime/forest_c/forest_c_lod1.gltf", bounds: (8.6994, 20.3619, 7.8136), gpu_bytes_estimate: 301696, minimum_screen_height: 320.0),
+(uri: "local/yarra_trees/runtime/forest_c/forest_c_lod2.gltf", bounds: (8.6994, 20.3619, 7.8136), gpu_bytes_estimate: 137460, minimum_screen_height: 160.0),
+(uri: "local/yarra_trees/runtime/forest_c/forest_c_lod3.gltf", bounds: (8.6994, 20.3619, 7.8136), gpu_bytes_estimate: 61288, minimum_screen_height: 0.0),
+]),
+])
