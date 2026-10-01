@@ -6,21 +6,54 @@ use bevy::{
     gltf::GltfMaterialExtras,
     material::AlphaMode,
     math::Vec3A,
-    pbr::{ExtendedMaterial, MaterialExtension, MaterialPlugin},
+    mesh::MeshVertexBufferLayoutRef,
+    pbr::{
+        ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline,
+        MaterialPlugin,
+    },
     prelude::*,
-    render::{render_resource::AsBindGroup, storage::ShaderBuffer},
+    render::{
+        render_resource::{AsBindGroup, RenderPipelineDescriptor, SpecializedMeshPipelineError},
+        storage::ShaderBuffer,
+    },
     shader::ShaderRef,
 };
 use std::collections::{HashMap, HashSet};
 
 type TreeWindMaterial = ExtendedMaterial<CloudMaterial, TreeWindExtension>;
 #[derive(Asset, AsBindGroup, TypePath, Clone, Debug)]
+#[bind_group_data(TreeWindKey)]
 struct TreeWindExtension {
     // StandardMaterial uses 0–99; CloudMaterial uses 120–122.
     #[storage(100, read_only)]
     wind: Handle<ShaderBuffer>,
+    crown_shading: bool,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct TreeWindKey {
+    crown_shading: bool,
+}
+impl From<&TreeWindExtension> for TreeWindKey {
+    fn from(material: &TreeWindExtension) -> Self {
+        Self {
+            crown_shading: material.crown_shading,
+        }
+    }
 }
 impl MaterialExtension for TreeWindExtension {
+    fn specialize(
+        _pipeline: &MaterialExtensionPipeline,
+        descriptor: &mut RenderPipelineDescriptor,
+        _layout: &MeshVertexBufferLayoutRef,
+        key: MaterialExtensionKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        if key.bind_group_data.crown_shading
+            && let Some(fragment) = descriptor.fragment.as_mut()
+        {
+            fragment.shader_defs.push("TREE_CROWN_SHADING".into());
+        }
+        Ok(())
+    }
     fn vertex_shader() -> ShaderRef {
         "shaders/tree_wind.wgsl".into()
     }
@@ -59,15 +92,32 @@ struct WindBoundsPending;
 #[derive(Component)]
 struct SourceMaterial(Handle<CloudMaterial>);
 
-fn uses_wind(extras: &str) -> bool {
+fn extra_is(extras: &str, key: &str, value: &str) -> bool {
     serde_json::from_str::<serde_json::Value>(extras)
         .ok()
-        .and_then(|v| {
-            v.get("yarra_wind")
-                .and_then(|v| v.as_str())
-                .map(|v| v == "foliage_uv1_v1")
-        })
+        .and_then(|v| v.get(key).and_then(|v| v.as_str()).map(|v| v == value))
         .unwrap_or(false)
+}
+
+fn uses_wind(extras: &str) -> bool {
+    extra_is(extras, "yarra_wind", "foliage_uv1_v1")
+}
+
+// Crown-shaded foliage (`yarra_shading: "crown_v1"`) is lit by where a card sits in
+// the crown: both sides keep the authored crown normal, and vertex colour is crown
+// occlusion for indirect light (see TREE_CROWN_SHADING in the cloud material shaders).
+// Back faces are still drawn; only Bevy's two-sided normal flip is turned off.
+fn crown_shading(extras: &str) -> bool {
+    extra_is(extras, "yarra_shading", "crown_v1")
+}
+
+fn foliage_base(source: &CloudMaterial, crown_shading: bool) -> CloudMaterial {
+    let mut material = source.clone();
+    if crown_shading {
+        material.base.double_sided = false;
+        material.base.cull_mode = None;
+    }
+    material
 }
 
 // Collections in the Presets workspace also need the composed material while
@@ -107,17 +157,17 @@ fn convert(
         Without<WindChecked>,
     >,
     retained: Query<&SourceMaterial>,
-    mut cache: Local<HashMap<AssetId<CloudMaterial>, Handle<TreeWindMaterial>>>,
+    mut cache: Local<HashMap<AssetId<CloudMaterial>, (Handle<TreeWindMaterial>, bool)>>,
 ) {
     let Some(buffer) = buffer else {
         return;
     };
     for event in events.read() {
         if let AssetEvent::Modified { id } = event
-            && let (Some(material), Some(handle)) = (source.get(*id), cache.get(id))
+            && let (Some(material), Some(&(ref handle, crown))) = (source.get(*id), cache.get(id))
             && let Some(mut converted) = target.get_mut(handle)
         {
-            converted.base = material.clone();
+            converted.base = foliage_base(material, crown);
         }
     }
     // Only live scene instances retain material handles; unloading pages/LODs releases them.
@@ -144,13 +194,17 @@ fn convert(
         let converted = cache
             .entry(handle.id())
             .or_insert_with(|| {
-                target.add(TreeWindMaterial {
-                    base: material.clone(),
+                let crown = crown_shading(&extras.value);
+                let material = target.add(TreeWindMaterial {
+                    base: foliage_base(material, crown),
                     extension: TreeWindExtension {
                         wind: buffer.0.clone(),
+                        crown_shading: crown,
                     },
-                })
+                });
+                (material, crown)
             })
+            .0
             .clone();
         // Publish the final material before AssetEventSystems, so its GPU asset and
         // specialization are available in the same frame as the replacement mesh.
@@ -199,6 +253,26 @@ mod tests {
         ] {
             assert!(!uses_wind(text));
         }
+    }
+
+    #[test]
+    fn crown_shading_keeps_back_faces_without_flipping() {
+        let source = CloudMaterial {
+            base: StandardMaterial {
+                double_sided: true,
+                cull_mode: None,
+                ..default()
+            },
+            ..default()
+        };
+        let shared = foliage_base(
+            &source,
+            crown_shading(r#"{"yarra_wind":"foliage_uv1_v1","yarra_shading":"crown_v1"}"#),
+        );
+        assert!(!shared.base.double_sided);
+        assert_eq!(shared.base.cull_mode, None);
+        let flipped = foliage_base(&source, crown_shading(r#"{"yarra_wind":"foliage_uv1_v1"}"#));
+        assert!(flipped.base.double_sided);
     }
 
     #[test]

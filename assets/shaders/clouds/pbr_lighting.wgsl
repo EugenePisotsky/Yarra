@@ -87,7 +87,13 @@ fn apply_pbr_lighting(
     let specular_occlusion = in.specular_occlusion;
 
     // Neubelt and Pettineo 2013, "Crafting a Next-gen Material Pipeline for The Order: 1886"
+#ifdef TREE_CROWN_SHADING
+    // Crown normals are shared by both sides of a leaf card, so a card seen from behind
+    // is not at a grazing angle; treating it as one lit it with grey sky reflection.
+    let NdotV = max(abs(dot(in.N, in.V)), 0.0001);
+#else
     let NdotV = max(dot(in.N, in.V), 0.0001);
+#endif
     let R = reflect(-in.V, in.N);
 
 #ifdef STANDARD_MATERIAL_CLEARCOAT

@@ -66,6 +66,21 @@ fn fragment(
     // generate a PbrInput struct from the StandardMaterial bindings
     var pbr_input = pbr_input_from_standard_material(in, is_front);
 
+#ifdef TREE_CROWN_SHADING
+#ifdef VERTEX_COLORS
+    // Crown-shaded tree foliage stores crown occlusion in vertex colour
+    // (crates/engine/src/tree_wind/material.rs). It dims sky and ambient light only;
+    // shadow maps already darken the sun, so leaves in sunlight keep their colour.
+    let crown_occlusion = in.color.rgb;
+    pbr_input.material.base_color = vec4(
+        pbr_input.material.base_color.rgb / max(crown_occlusion, vec3(0.01)),
+        pbr_input.material.base_color.a,
+    );
+    pbr_input.diffuse_occlusion *= crown_occlusion;
+    pbr_input.specular_occlusion *= crown_occlusion.g;
+#endif
+#endif
+
     // alpha discard
     pbr_input.material.base_color = alpha_discard(pbr_input.material, pbr_input.material.base_color);
 
