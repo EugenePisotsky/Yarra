@@ -320,22 +320,21 @@ pub(super) fn attach_page(
                 });
                 let bounds_height = bounds[1];
                 let lod = ScreenSpaceLod::new(variants, bounds_height);
-                let entity = commands
-                    .spawn((
-                        lod.scene_root(),
-                        Transform::from_translation(translation)
-                            .with_rotation(Quat::from_rotation_y(instance.yaw))
-                            .with_scale(Vec3::splat(instance.scale)),
-                        lod,
-                        StreamedVisualObject { id: instance.id },
-                        ObjectFootprint {
-                            half_extent: Vec2::new(bounds[0], bounds[2]) * 0.5,
-                            height: bounds_height,
-                        },
-                        StreamedPageEntity(key),
-                        Name::new(format!("Streamed object {:?}", instance.id)),
-                    ))
-                    .id();
+                let mut object = commands.spawn((
+                    Transform::from_translation(translation)
+                        .with_rotation(Quat::from_rotation_y(instance.yaw))
+                        .with_scale(Vec3::splat(instance.scale)),
+                    Visibility::default(),
+                    StreamedVisualObject { id: instance.id },
+                    ObjectFootprint {
+                        half_extent: Vec2::new(bounds[0], bounds[2]) * 0.5,
+                        height: bounds_height,
+                    },
+                    StreamedPageEntity(key),
+                    Name::new(format!("Streamed object {:?}", instance.id)),
+                ));
+                lod.spawn_scenes(&mut object);
+                let entity = object.insert(lod).id();
                 if instance.generated {
                     commands.entity(entity).insert(GeneratedEnvironmentObject {
                         space: key.space,

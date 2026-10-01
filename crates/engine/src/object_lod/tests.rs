@@ -1,32 +1,61 @@
 use super::*;
-#[test]
-fn screen_space_lod_selection_has_hysteresis_in_both_directions() {
-    let minimums = [320.0, 160.0, 80.0, 0.0];
-    let select = |current, height| {
-        select_lod_index(minimums.len(), current, height, |index| minimums[index])
-    };
+use std::f32::consts::{FRAC_PI_4, FRAC_PI_8};
 
-    assert_eq!(select(0, 300.0), 0);
-    assert_eq!(select(0, 280.0), 1);
-    assert_eq!(select(1, 350.0), 1);
-    assert_eq!(select(1, 360.0), 0);
-    assert_eq!(select(3, 85.0), 3);
-    assert_eq!(select(3, 90.0), 2);
-    assert_eq!(select(2, 60.0), 3);
+const PERSPECTIVE: LodProjection = LodProjection {
+    pixels_per_metre: 1000.0,
+    orthographic: false,
+};
+
+#[test]
+fn lod_bands_meet_at_switch_distances_and_crossfade_around_them() {
+    // A 1 m object at 1000 px/m switches where it is 320, 160 and 80 px tall.
+    let thresholds = [320.0, 160.0, 80.0, 0.0];
+    let range = |index| PERSPECTIVE.range(&thresholds, 1.0, index);
+    let around = |d: f32| d * 0.9..d * 1.1;
+    assert_eq!(range(0).start_margin, 0.0..0.0);
+    assert_eq!(range(0).end_margin, around(3.125));
+    assert_eq!(range(1).start_margin, range(0).end_margin);
+    assert_eq!(range(1).end_margin, around(6.25));
+    assert_eq!(range(2).start_margin, range(1).end_margin);
+    assert_eq!(range(3).start_margin, around(12.5));
+    assert_eq!(range(3).end_margin, f32::MAX..f32::MAX);
+    assert!(range(0).is_visible_at_all(3.0) && range(1).is_visible_at_all(3.0));
+    assert!(!range(1).is_visible_at_all(2.5) && !range(0).is_visible_at_all(3.5));
+    assert!(range(3).is_visible_at_all(1.0e6));
 }
 
-fn app(install: bool) -> App {
-    let mut app = App::new();
-    app.add_plugins((bevy::app::TaskPoolPlugin::default(), TransformPlugin))
-        .init_resource::<Assets<WorldAsset>>();
-    if install {
-        app.add_plugins(ObjectLodPlugin);
+#[test]
+fn equal_thresholds_leave_the_skipped_lod_no_band() {
+    let range = PERSPECTIVE.range(&[320.0, 320.0, 80.0, 0.0], 1.0, 1);
+    assert!((0..100).all(|d| !range.is_visible_at_all(d as f32 * 0.25)));
+}
+
+#[test]
+fn orthographic_views_keep_the_one_matching_lod_at_any_distance() {
+    let projection = LodProjection {
+        pixels_per_metre: 100.0,
+        orthographic: true,
+    };
+    let thresholds = [160.0, 80.0, 0.0];
+    // 1 m tall at 100 px/m: 100 px, which is LOD1.
+    for (index, visible) in [(0, false), (1, true), (2, false)] {
+        let range = projection.range(&thresholds, 1.0, index);
+        assert_eq!(range.is_visible_at_all(1.0e4), visible, "LOD{index}");
     }
+}
+
+fn app(camera: Transform) -> App {
+    let mut app = App::new();
+    app.add_plugins((
+        bevy::app::TaskPoolPlugin::default(),
+        TransformPlugin,
+        ObjectLodPlugin,
+    ));
     app.world_mut().spawn((
         WorldViewCamera,
         Camera {
             computed: bevy::camera::ComputedCameraValues {
-                clip_from_view: Mat4::orthographic_rh(-5., 5., -5., 5., 0.1, 100.),
+                clip_from_view: Mat4::perspective_infinite_reverse_rh(FRAC_PI_4, 1., 0.1),
                 target_info: Some(bevy::camera::RenderTargetInfo {
                     physical_size: UVec2::splat(1000),
                     scale_factor: 1.,
@@ -35,116 +64,98 @@ fn app(install: bool) -> App {
             },
             ..default()
         },
-        Transform::from_xyz(0., 0., 10.),
+        camera,
     ));
     app
 }
 
-fn object(app: &mut App, height: f32) -> Entity {
-    let scenes = app.world().resource::<Assets<WorldAsset>>();
-    let variants = [160., 80., 0.]
+/// An object with two LOD scenes, each holding one mesh entity, as a spawned scene would.
+fn object(app: &mut App, height: f32) -> (Entity, [Entity; 2]) {
+    let variants = [160.0, 0.0]
         .into_iter()
         .enumerate()
         .map(|(lod, minimum_screen_height)| ScreenSpaceLodVariant {
             lod: lod as u8,
-            scene: scenes.reserve_handle(),
+            scene: Handle::default(),
             minimum_screen_height,
         })
         .collect();
-    let lod = ScreenSpaceLod::new(variants, height);
-    app.world_mut()
-        .spawn((lod.scene_root(), lod, Transform::default()))
-        .id()
+    let world = app.world_mut();
+    let meshes = [0, 1].map(|_| world.spawn(Mesh3d(Handle::default())).id());
+    let scenes = [0, 1].map(|index| world.spawn(LodScene(index)).add_child(meshes[index]).id());
+    let root = world
+        .spawn((ScreenSpaceLod::new(variants, height), Transform::default()))
+        .add_children(&scenes)
+        .id();
+    (root, meshes)
 }
 
-fn current(app: &App, object: Entity) -> u8 {
-    let world = app.world();
-    let lod = world.get::<ScreenSpaceLod>(object).unwrap();
-    assert_eq!(
-        world.get::<WorldAssetRoot>(object).unwrap().0,
-        lod.variants[lod.current].scene
-    );
-    lod.current_lod()
+fn lod(app: &App, entity: Entity) -> &ScreenSpaceLod {
+    app.world().get::<ScreenSpaceLod>(entity).unwrap()
 }
 
 #[test]
-fn plugin_observes_propagated_scale_and_keeps_unprojectable_objects_unchanged() {
-    let mut app = app(true);
-    let entity = object(&mut app, 1.);
+fn meshes_inside_each_lod_scene_get_that_lods_distance_band() {
+    let mut app = app(Transform::from_xyz(0., 2., 20.).looking_at(Vec3::new(0., 2., 0.), Vec3::Y));
+    let (root, meshes) = object(&mut app, 4.);
     app.update();
-    assert_eq!(current(&app, entity), 1);
-    app.world_mut().get_mut::<Transform>(entity).unwrap().scale = Vec3::splat(3.);
-    app.update();
-    assert_eq!(
-        current(&app, entity),
-        0,
-        "new global scale must be used this frame"
+    // 500 px over tan(22.5°) per metre at 1 m: the 4 m object is 160 px tall at ~30 m.
+    let switch = 4. * 500. / FRAC_PI_8.tan() / 160.;
+    let near = app.world().get::<VisibilityRange>(meshes[0]).unwrap();
+    let far = app.world().get::<VisibilityRange>(meshes[1]).unwrap();
+    assert!(
+        (near.end_margin.start - switch * 0.9).abs() < 0.01,
+        "{:?}",
+        near.end_margin
     );
-    let height = app
-        .world()
-        .get::<ScreenSpaceLod>(entity)
-        .unwrap()
-        .projected_height();
-    assert!((height - 300.).abs() < 0.01);
-    app.world_mut()
-        .get_mut::<Transform>(entity)
-        .unwrap()
-        .translation
-        .z = 20.;
-    app.world_mut().resource_mut::<VisualLodScale>().0 = 0.25;
-    app.update();
-    assert_eq!(
-        current(&app, entity),
-        0,
-        "behind-camera objects must retain their scene"
+    assert_eq!(near.end_margin, far.start_margin);
+    assert_eq!(far.end_margin, f32::MAX..f32::MAX);
+    // 20 m away is inside LOD0's band.
+    assert_eq!(lod(&app, root).current_lod(), 0);
+}
+
+#[test]
+fn projected_size_follows_distance_not_camera_pitch() {
+    let measure = |camera: Transform| {
+        let mut app = app(camera);
+        let (root, _) = object(&mut app, 4.);
+        app.update();
+        lod(&app, root).projected_height()
+    };
+    // The same tree 20 m away, seen side-on and from straight above.
+    let side = measure(Transform::from_xyz(0., 2., 20.).looking_at(Vec3::new(0., 2., 0.), Vec3::Y));
+    let above =
+        measure(Transform::from_xyz(0., 22., 0.).looking_at(Vec3::new(0., 2., 0.), Vec3::Z));
+    let expected = 4. * 500. / FRAC_PI_8.tan() / 20.;
+    assert!((side - expected).abs() < 0.5, "{side} vs {expected}");
+    assert!(
+        (above - side).abs() < 0.01,
+        "looking down must not shrink the tree: {above}"
     );
-    assert_eq!(
+}
+
+#[test]
+fn object_detail_scale_moves_switch_distances_and_keeps_its_clamps() {
+    let camera = Transform::from_xyz(0., 2., 20.).looking_at(Vec3::new(0., 2., 0.), Vec3::Y);
+    let end_of_lod0 = |scale: f32| {
+        let mut app = app(camera);
+        app.insert_resource(VisualLodScale(scale));
+        let (_, meshes) = object(&mut app, 4.);
+        app.update();
         app.world()
-            .get::<ScreenSpaceLod>(entity)
+            .get::<VisibilityRange>(meshes[0])
             .unwrap()
-            .projected_height(),
-        height
+            .end_margin
+            .start
+    };
+    let normal = end_of_lod0(1.0);
+    assert!((end_of_lod0(2.0) - 2. * normal).abs() < 0.01);
+    assert!(
+        (end_of_lod0(0.0) - 0.25 * normal).abs() < 0.01,
+        "zero clamps to 0.25"
     );
-}
-
-#[test]
-fn object_lod_budget_limits_switches_and_catches_up_on_the_next_frame() {
-    let mut app = app(true);
-    let objects: Vec<_> = (0..MAX_LOD_SWITCHES_PER_FRAME + 3)
-        .map(|_| object(&mut app, 2.))
-        .collect();
-    app.update();
-    assert_eq!(
-        objects.iter().filter(|&&e| current(&app, e) == 0).count(),
-        MAX_LOD_SWITCHES_PER_FRAME
+    assert!(
+        (end_of_lod0(100.0) - 4. * normal).abs() < 0.01,
+        "large values clamp to 4"
     );
-    // Even deferred switches retain current projected-size telemetry.
-    assert!(objects.iter().all(|&e| {
-        (app.world()
-            .get::<ScreenSpaceLod>(e)
-            .unwrap()
-            .projected_height()
-            - 200.)
-            .abs()
-            < 0.01
-    }));
-    app.update();
-    assert!(objects.iter().all(|&e| current(&app, e) == 0));
-}
-
-#[test]
-fn plugin_omission_keeps_initial_scene_and_scale_controls_keep_their_clamps() {
-    let mut omitted = app(false);
-    let entity = object(&mut omitted, 8.);
-    omitted.update();
-    assert!(!omitted.world().contains_resource::<VisualLodScale>());
-    assert_eq!(current(&omitted, entity), 2);
-    omitted.add_plugins(ObjectLodPlugin);
-    omitted.world_mut().resource_mut::<VisualLodScale>().0 = 0.;
-    omitted.update();
-    assert_eq!(current(&omitted, entity), 0, "zero scale clamps to 0.25");
-    let small = object(&mut omitted, 0.3);
-    omitted.world_mut().resource_mut::<VisualLodScale>().0 = 100.;
-    omitted.update();
-    assert_eq!(current(&omitted, small), 1, "large scale clamps to 4.0");
 }
