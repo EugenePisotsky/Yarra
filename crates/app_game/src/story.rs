@@ -548,6 +548,17 @@ impl Story {
             .contains(&id)
             .then_some(id)
     }
+    /// Every area the content refers to.
+    pub fn declared_areas(&self) -> impl Iterator<Item = AreaId> + '_ {
+        self.driver
+            .session()
+            .content()
+            .game
+            .world
+            .areas
+            .iter()
+            .copied()
+    }
     /// The areas the rules last heard the actor was inside.
     pub fn areas(&self, actor: ActorId) -> &BTreeSet<AreaId> {
         self.driver.state().areas(actor)
@@ -743,6 +754,28 @@ mod tests {
         read(&mut story);
         story.choose(9);
         assert!(story.in_conversation());
+    }
+    #[test]
+    fn the_world_and_the_rules_agree_on_what_an_area_may_be_called() {
+        let long = "x".repeat(96);
+        let longer = "x".repeat(97);
+        let names = [
+            "guard/approach",
+            "camp/fire-1.b_2",
+            "a",
+            &long,
+            &longer,
+            "",
+            "Guard",
+            "a b",
+        ];
+        for name in names {
+            assert_eq!(
+                world::valid_gameplay_area_name(name),
+                game_types::names::valid(name),
+                "{name}"
+            );
+        }
     }
     const APPROACH: AreaId = AreaId::named("guard/approach");
     const GATE_POST: AreaId = AreaId::named("guard/gate_post");

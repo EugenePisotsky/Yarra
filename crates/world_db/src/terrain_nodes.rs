@@ -448,9 +448,10 @@ impl TerrainCookStore {
             }
         }
         let hash = hasher.finalize();
+        let generation = crate::gameplay_areas::generation_id(&self.connection, hash.as_bytes())?;
         self.connection.execute(
             "UPDATE runtime_metadata SET generation_id=?1, content_hash=?2 WHERE singleton=1",
-            params![&hash.to_hex()[..16], hash.as_bytes().as_slice()],
+            params![generation, hash.as_bytes().as_slice()],
         )?;
         self.connection.execute_batch("COMMIT;")?;
         let manifest = read_runtime_manifest(&self.connection)?;

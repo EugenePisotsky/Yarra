@@ -243,9 +243,17 @@ impl WorldOrigin {
         ))
     }
 
-    /// Where a world position of the current space is in render space.
-    pub fn to_render(&self, catalog: &WorldCatalog, world: [f64; 3]) -> Option<Vec3> {
-        let (_, [x, z]) = self.offset(catalog)?;
+    /// Where a world position is in render space. Only positions in the open space have one.
+    pub fn to_render(
+        &self,
+        catalog: &WorldCatalog,
+        space: WorldSpaceId,
+        world: [f64; 3],
+    ) -> Option<Vec3> {
+        let (open, [x, z]) = self.offset(catalog)?;
+        if open != space {
+            return None;
+        }
         Some(Vec3::new(
             (world[0] - x) as f32,
             world[1] as f32,
@@ -1179,11 +1187,14 @@ mod tests {
         let render = Vec3::new(1.0, 5.0, 2.0);
         let (space, world) = origin.to_world(&catalog, render).unwrap();
         assert_eq!((space, world), (WorldSpaceId(7), [33.0, 5.0, -14.0]));
-        assert_eq!(origin.to_render(&catalog, world), Some(render));
+        assert_eq!(origin.to_render(&catalog, space, world), Some(render));
+        // A position in another space is not in this one's render space.
+        assert!(origin.to_render(&catalog, WorldSpaceId(8), world).is_none());
         // Before a world is open there is nothing to convert against.
         let unopened = WorldOrigin::default();
         assert!(unopened.to_world(&catalog, render).is_none());
-        assert!(origin.to_render(&WorldCatalog::default(), world).is_none());
+        let none = WorldCatalog::default();
+        assert!(origin.to_render(&none, space, world).is_none());
     }
 
     #[test]

@@ -78,10 +78,13 @@ impl Input<'_, '_> {
     /// Places world ground points in the view. Terrain is only loaded near the camera, so a
     /// corner without ground under it borrows the average height of those that have it;
     /// a shape with no loaded corner is not placed at all.
-    fn trace(&self, points: &[[f64; 2]], closed: bool) -> Option<Trace> {
+    fn trace(&self, space: WorldSpaceId, points: &[[f64; 2]], closed: bool) -> Option<Trace> {
         let flat: Vec<Vec3> = points
             .iter()
-            .map(|p| self.origin.to_render(&self.catalog, [p[0], 0., p[1]]))
+            .map(|p| {
+                self.origin
+                    .to_render(&self.catalog, space, [p[0], 0., p[1]])
+            })
             .collect::<Option<_>>()?;
         let heights: Vec<Option<f32>> = flat.iter().map(|p| self.ground(*p)).collect();
         let known: Vec<f32> = heights.iter().flatten().copied().collect();
@@ -382,15 +385,16 @@ pub(super) fn input(
     };
     // What is within reach of the pointer only matters on the frame of a click.
     if let (true, Some(cursor)) = (gesture.click && state.dragging.is_none(), cursor) {
-        if let Some(draft) = &state.draft {
+        if let (Some(draft), Some(space)) = (&state.draft, state.space) {
             gesture.on_first = draft.first().is_some_and(|first| {
                 input
-                    .trace(&[*first], false)
+                    .trace(space, &[*first], false)
                     .and_then(|trace| input.screen(trace.corners[0]))
                     .is_some_and(|first| first.distance(cursor) < CORNER_PICK)
             });
         } else if let Some(index) = state.selected_index(dense.areas.areas())
-            && let Some(trace) = input.trace(&dense.areas.areas()[index].points, true)
+            && let area = &dense.areas.areas()[index]
+            && let Some(trace) = input.trace(area.space, &area.points, true)
         {
             let corners: Vec<Option<Vec2>> =
                 trace.corners.iter().map(|p| input.screen(*p)).collect();
@@ -426,7 +430,7 @@ pub(super) fn draw(
         if area.space != space || !input.near(area) {
             continue;
         }
-        let Some(trace) = input.trace(&area.points, true) else {
+        let Some(trace) = input.trace(area.space, &area.points, true) else {
             continue;
         };
         let selected = state.selected.as_deref() == Some(area.name.as_str());
@@ -466,7 +470,7 @@ pub(super) fn draw(
     };
     let mut points = draft.clone();
     points.extend(state.hover);
-    if let Some(trace) = input.trace(&points, false) {
+    if let Some(trace) = input.trace(space, &points, false) {
         gizmos.linestrip(trace.line.iter().copied(), chosen);
         for (i, corner) in trace.corners.iter().take(draft.len()).enumerate() {
             // The first corner is the one to click to close the shape.

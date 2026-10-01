@@ -276,7 +276,8 @@ impl RuntimeCookWriter {
         )?;
         Ok(())
     }
-    /// Replaces the gameplay areas of a continued publication; they are not part of any hash.
+    /// Replaces the gameplay areas of a continued publication. They are not part of the
+    /// content hash, but `finish` folds them into the generation.
     pub fn set_gameplay_areas(&self, areas: &[world::GameplayArea]) -> Result<(), WorldDbError> {
         self.connection.execute(
             "UPDATE runtime_metadata SET gameplay_areas=?1 WHERE singleton=1",
@@ -406,7 +407,7 @@ impl RuntimeCookWriter {
             }
         }
         let content_hash = *hash.finalize().as_bytes();
-        let generation_id = blake3::Hash::from_bytes(content_hash).to_hex()[..16].to_owned();
+        let generation_id = crate::gameplay_areas::generation_id(&self.connection, &content_hash)?;
         self.connection.execute(
             "UPDATE runtime_metadata SET generation_id=?1,content_hash=?2 WHERE singleton=1",
             params![generation_id, content_hash.as_slice()],

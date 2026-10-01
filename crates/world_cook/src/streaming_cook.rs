@@ -435,13 +435,19 @@ mod tests {
         assert!(second.stats.incremental);
         assert_eq!(second.stats.terrain_cells, 0);
         assert_eq!(second.manifest.content_hash, first.manifest.content_hash);
+        // The publication is a new generation all the same, so a running game sees it.
+        assert_ne!(second.manifest.generation_id, first.manifest.generation_id);
         let reader = RuntimeReader::open_immutable(&fixture.runtime()).unwrap();
         assert_eq!(&*reader.manifest().gameplay_areas, &areas[..]);
-        // A cook from scratch carries them too.
+        // A cook from scratch carries them too, and is the same generation.
         let full = fixture.dir.join("full.sqlite");
         cook_project_fresh(&fixture.source(), &full, None).unwrap();
         let reader = RuntimeReader::open_immutable(&full).unwrap();
         assert_eq!(&*reader.manifest().gameplay_areas, &areas[..]);
+        assert_eq!(
+            reader.manifest().generation_id,
+            second.manifest.generation_id
+        );
     }
 
     fn assert_pages(reference: &RuntimeBuild, reader: &RuntimeReader) {

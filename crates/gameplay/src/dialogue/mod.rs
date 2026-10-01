@@ -85,7 +85,7 @@ pub struct Node {
 #[serde(deny_unknown_fields)]
 pub struct Dialogue {
     pub id: DialogueId,
-    #[serde(deserialize_with = "game_types::deserialize_key_map")]
+    #[serde(deserialize_with = "game_types::deserialize_unique_map")]
     pub roles: BTreeMap<Key, Role>,
     pub history_scope: ScopeSelector,
     pub repeat: RepeatPolicy,
@@ -101,7 +101,7 @@ pub struct Dialogue {
 #[serde(deny_unknown_fields)]
 pub struct DialogueContract {
     pub id: DialogueId,
-    #[serde(deserialize_with = "game_types::deserialize_key_map")]
+    #[serde(deserialize_with = "game_types::deserialize_unique_map")]
     pub roles: BTreeMap<Key, Role>,
     pub history_scope: ScopeSelector,
     pub repeat: RepeatPolicy,

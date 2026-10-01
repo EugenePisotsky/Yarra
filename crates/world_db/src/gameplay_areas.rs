@@ -9,6 +9,25 @@ use world::GameplayArea;
 
 pub const MAX_GAMEPLAY_AREA_BYTES: usize = 4 * 1024 * 1024;
 
+/// A runtime's generation: its content hash with the gameplay areas published beside it.
+/// Areas stay out of the content hash so repainting one recooks nothing, but a running
+/// consumer still has to see that the publication changed.
+pub(crate) fn generation_id(
+    connection: &Connection,
+    content_hash: &[u8],
+) -> Result<String, WorldDbError> {
+    let areas: Vec<u8> = connection.query_row(
+        "SELECT gameplay_areas FROM runtime_metadata WHERE singleton=1",
+        [],
+        |row| row.get(0),
+    )?;
+    let mut hash = blake3::Hasher::new();
+    hash.update(b"runtime-generation-v1");
+    hash.update(content_hash);
+    hash.update(&areas);
+    Ok(hash.finalize().to_hex()[..16].to_owned())
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct GameplayAreasRecord {
     pub revision: i64,

@@ -296,3 +296,43 @@ fn corners_are_dragged_added_on_an_edge_and_removed() {
     assert_eq!(dense.areas.areas(), &before);
     assert_eq!(history.undo_len(), steps);
 }
+
+#[test]
+fn leaving_the_world_workspace_mid_gesture_ends_it_so_saving_can_go_on() {
+    let mut app = App::new();
+    app.add_plugins(bevy::state::app::StatesPlugin)
+        .init_state::<EditorWorkspace>()
+        .insert_resource(loaded(vec![yard()]))
+        .init_resource::<EditorHistory>()
+        .init_resource::<AreaToolState>()
+        .add_systems(Update, end_gesture_away);
+    let world = app.world_mut();
+    let moved = with_area(
+        world.resource::<DenseDomainWorkingSets>().areas.areas(),
+        0,
+        |a| {
+            a.points[1] = [30., 0.];
+        },
+    );
+    world.resource_scope(|world, mut state: Mut<AreaToolState>| {
+        assert!(state.edit(&mut world.resource_mut::<DenseDomainWorkingSets>(), moved));
+    });
+    // Still in the World workspace, the window ends it; nothing else does.
+    app.update();
+    assert!(
+        app.world()
+            .resource::<DenseDomainWorkingSets>()
+            .gesture_active
+    );
+    app.world_mut()
+        .resource_mut::<NextState<EditorWorkspace>>()
+        .set(EditorWorkspace::Presets);
+    app.update();
+    let world = app.world();
+    assert!(!world.resource::<DenseDomainWorkingSets>().gesture_active);
+    assert_eq!(world.resource::<EditorHistory>().undo_len(), 1);
+    assert_eq!(
+        world.resource::<DenseDomainWorkingSets>().areas.areas()[0].points[1],
+        [30., 0.]
+    );
+}

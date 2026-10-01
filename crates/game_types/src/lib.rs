@@ -148,6 +148,11 @@ ids!(
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct Key(String);
+impl std::fmt::Display for Key {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
 impl Key {
     pub fn new(value: impl Into<String>) -> Result<Self> {
         let value = value.into();
@@ -181,6 +186,11 @@ impl From<Key> for String {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct TextKey(String);
+impl std::fmt::Display for TextKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
 impl TextKey {
     pub fn new(value: impl Into<String>) -> Result<Self> {
         let value = value.into();
@@ -288,40 +298,6 @@ impl GameTime {
     }
 }
 
-/// Deserialize authored semantic maps without silently replacing duplicate keys.
-pub fn deserialize_key_map<'de, D, V>(
-    deserializer: D,
-) -> std::result::Result<std::collections::BTreeMap<Key, V>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-    V: Deserialize<'de>,
-{
-    struct UniqueMap<V>(std::marker::PhantomData<V>);
-    impl<'de, V: Deserialize<'de>> serde::de::Visitor<'de> for UniqueMap<V> {
-        type Value = std::collections::BTreeMap<Key, V>;
-        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            formatter.write_str("a map with unique semantic keys")
-        }
-        fn visit_map<A: serde::de::MapAccess<'de>>(
-            self,
-            mut entries: A,
-        ) -> std::result::Result<Self::Value, A::Error> {
-            let mut result = std::collections::BTreeMap::new();
-            while let Some((key, value)) = entries.next_entry::<Key, V>()? {
-                if result.contains_key(&key) {
-                    return Err(serde::de::Error::custom(format!(
-                        "duplicate semantic key {}",
-                        key.as_str()
-                    )));
-                }
-                result.insert(key, value);
-            }
-            Ok(result)
-        }
-    }
-    deserializer.deserialize_map(UniqueMap(std::marker::PhantomData))
-}
-
 /// Stable resource scope and local Fluent key. Filesystem paths are never identities.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -381,11 +357,13 @@ pub fn deserialize_unique_map<'de, D, K, V>(
 ) -> std::result::Result<std::collections::BTreeMap<K, V>, D::Error>
 where
     D: serde::Deserializer<'de>,
-    K: Deserialize<'de> + Ord,
+    K: Deserialize<'de> + Ord + std::fmt::Display,
     V: Deserialize<'de>,
 {
     struct Unique<K, V>(std::marker::PhantomData<(K, V)>);
-    impl<'de, K: Deserialize<'de> + Ord, V: Deserialize<'de>> serde::de::Visitor<'de> for Unique<K, V> {
+    impl<'de, K: Deserialize<'de> + Ord + std::fmt::Display, V: Deserialize<'de>>
+        serde::de::Visitor<'de> for Unique<K, V>
+    {
         type Value = std::collections::BTreeMap<K, V>;
         fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             f.write_str("a map with unique keys")
@@ -395,10 +373,11 @@ where
             mut map: A,
         ) -> std::result::Result<Self::Value, A::Error> {
             let mut result = std::collections::BTreeMap::new();
-            while let Some((key, value)) = map.next_entry()? {
-                if result.insert(key, value).is_some() {
-                    return Err(serde::de::Error::custom("duplicate map key"));
+            while let Some((key, value)) = map.next_entry::<K, V>()? {
+                if result.contains_key(&key) {
+                    return Err(serde::de::Error::custom(format!("duplicate key {key}")));
                 }
+                result.insert(key, value);
             }
             Ok(result)
         }

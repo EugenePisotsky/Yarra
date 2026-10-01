@@ -48,16 +48,31 @@ pub fn standing_character(translation: Vec3, name: &'static str) -> impl Bundle 
     )
 }
 
-/// While set, the player stands still whatever input says: a conversation or a scripted
-/// moment has the player's attention. Camera controls are unaffected.
-#[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
-pub struct PlayerMovementSuspended(pub bool);
+/// While anything holds the player, they stand still whatever input says: a conversation, a
+/// menu or a scripted moment has their attention. Each holder gives its own reason and lets
+/// go of it alone, so one letting go does not free a player another still holds. Camera
+/// controls are unaffected.
+#[derive(Resource, Default, Clone, PartialEq, Eq, Debug)]
+pub struct PlayerMovementSuspended(std::collections::BTreeSet<&'static str>);
+impl PlayerMovementSuspended {
+    /// Holds the player for `reason`, or lets go of it.
+    pub fn hold(&mut self, reason: &'static str, held: bool) {
+        if held {
+            self.0.insert(reason);
+        } else {
+            self.0.remove(reason);
+        }
+    }
+    pub fn held(&self) -> bool {
+        !self.0.is_empty()
+    }
+}
 
 pub(super) fn hold_suspended_player(
     suspended: Res<PlayerMovementSuspended>,
     mut player: Query<&mut MoveIntent, With<PlayerControlled>>,
 ) {
-    if suspended.0 {
+    if suspended.held() {
         for mut intent in &mut player {
             *intent = MoveIntent::default();
         }
@@ -174,5 +189,21 @@ pub(crate) fn ground_characters_to_streamed_terrain(
         ) {
             transform.translation.y = surface.height;
         }
+    }
+}
+
+#[cfg(test)]
+mod suspension_tests {
+    use super::*;
+    #[test]
+    fn the_player_stays_held_while_any_reason_remains() {
+        let mut suspended = PlayerMovementSuspended::default();
+        assert!(!suspended.held());
+        suspended.hold("conversation", true);
+        suspended.hold("menu", true);
+        suspended.hold("conversation", false);
+        assert!(suspended.held());
+        suspended.hold("menu", false);
+        assert!(!suspended.held());
     }
 }

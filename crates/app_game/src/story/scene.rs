@@ -12,7 +12,7 @@ use game_types::{ActorId, AreaId};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
-use world::{GameplayArea, GameplayAreaIndex};
+use world::{GameplayArea, GameplayAreaIndex, WorldSpaceId};
 
 const TALK_RANGE: f32 = 3.0;
 /// How close the player stands to the dummy to hit it, and how far away gives it up.
@@ -122,8 +122,8 @@ impl Placement {
 struct Places {
     index: GameplayAreaIndex,
     ids: HashMap<String, AreaId>,
-    /// Where an actor sent to an area walks to.
-    targets: HashMap<AreaId, [f64; 2]>,
+    /// Where an actor sent to an area walks to, in the area's world.
+    targets: HashMap<AreaId, (WorldSpaceId, [f64; 2])>,
 }
 impl Places {
     fn new(story: &Story, catalog: &WorldCatalog, origin: &WorldOrigin, at: &Placement) -> Self {
@@ -159,8 +159,15 @@ impl Places {
             .collect();
         let targets = areas
             .iter()
-            .map(|area| (ids[&area.name], area.interior_point()))
+            .map(|area| (ids[&area.name], (area.space, area.interior_point())))
             .collect();
+        // Content that sends someone to an area the world lacks would fail every such walk.
+        for missing in story
+            .declared_areas()
+            .filter(|id| !ids.values().any(|v| v == id))
+        {
+            warn!("Story: the world has no area named {missing}");
+        }
         Self {
             index: GameplayAreaIndex::new(Arc::from(areas)),
             ids,
@@ -389,8 +396,9 @@ fn place(
 fn stand(placement: &Placement, origin: &WorldOrigin, catalog: &WorldCatalog) -> [Transform; 4] {
     let at = |along: f32, across: f32| {
         let [x, z] = placement.ground(along, across);
-        origin
-            .to_render(catalog, [x, f64::from(UNGROUNDED), z])
+        let space = origin.space();
+        space
+            .and_then(|space| origin.to_render(catalog, space, [x, f64::from(UNGROUNDED), z]))
             .unwrap_or(Vec3::new(0., UNGROUNDED, 0.))
     };
     let direction = placement.direction();
@@ -504,9 +512,9 @@ fn walk(
         let target = places
             .targets
             .get(&to)
-            .and_then(|&[x, z]| origin.to_render(&catalog, [x, 0., z]));
+            .and_then(|&(space, [x, z])| origin.to_render(&catalog, space, [x, 0., z]));
         let Some(target) = target else {
-            // Nobody painted the place the content sends this actor to.
+            // Nobody painted the place the content sends this actor to, in this world.
             story.move_failed(actor.0, request);
             continue;
         };
@@ -540,9 +548,9 @@ fn restore(
     }
     *seen = story.loads();
     for (actor, mut transform, mut intent) in &mut actors {
-        let saved = story
-            .position(actor.0)
-            .and_then(|position| origin.to_render(&catalog, position));
+        // Saved positions do not name a world yet; they are in the one the game is in.
+        let saved = story.position(actor.0).zip(origin.space());
+        let saved = saved.and_then(|(position, space)| origin.to_render(&catalog, space, position));
         if let Some(position) = saved {
             transform.translation = position;
             intent.clear();
@@ -587,7 +595,7 @@ fn input(
     }
     handle(&mut story, &keys, &placement, &player, &guard, &dummy);
     // Before movement runs, so a conversation holds the player on the frame it opens.
-    suspended.0 = story.in_conversation();
+    suspended.hold("conversation", story.in_conversation());
 }
 
 fn handle(
@@ -682,7 +690,7 @@ fn present(
     mut shown: Local<Option<(u64, bool, bool)>>,
 ) {
     story.tick(time.delta_secs());
-    suspended.0 = story.in_conversation();
+    suspended.hold("conversation", story.in_conversation());
 
     // An unlocked gate swings open; a reload that locks it again swings it shut.
     let target = if story.gate_locked() { 0.0 } else { 1.9 };
@@ -730,7 +738,7 @@ fn present(
         None => (String::new(), String::new()),
     };
     // A conversation that just ended releases the player.
-    suspended.0 = story.in_conversation();
+    suspended.hold("conversation", story.in_conversation());
     **panel_box = if body.is_empty() {
         Visibility::Hidden
     } else {

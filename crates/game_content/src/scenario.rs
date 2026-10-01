@@ -21,7 +21,7 @@ pub struct ActorSpawn {
     pub position: Position,
     pub name: Option<TextRef>,
     /// Resources that do not start full, e.g. `{"health": 50}`.
-    #[serde(default, deserialize_with = "game_types::deserialize_key_map")]
+    #[serde(default, deserialize_with = "game_types::deserialize_unique_map")]
     pub resources: std::collections::BTreeMap<Key, i32>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

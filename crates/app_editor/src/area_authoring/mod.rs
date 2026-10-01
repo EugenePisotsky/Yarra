@@ -40,7 +40,7 @@ impl Plugin for AreaAuthoringPlugin {
         app.init_resource::<AreaToolState>()
             .add_systems(
                 Update,
-                (reconcile, viewport::input)
+                (reconcile, end_gesture_away, viewport::input)
                     .chain()
                     .after(ProjectStoreUpdate)
                     .after(crate::journal::restore_loaded_journal)
@@ -168,6 +168,19 @@ fn tool_active(tools: &EditorToolRegistry) -> bool {
     tools
         .active(EditorWorkspace::World)
         .is_some_and(|tool| tool.id == AREA_TOOL.id)
+}
+
+/// A gesture still under way when the World workspace is left ends there, as one undo
+/// step. Its window is out of sight and cannot end it, and an open gesture holds up saving.
+fn end_gesture_away(
+    workspace: Res<State<EditorWorkspace>>,
+    mut state: ResMut<AreaToolState>,
+    mut dense: ResMut<DenseDomainWorkingSets>,
+    mut history: ResMut<EditorHistory>,
+) {
+    if *workspace.get() != EditorWorkspace::World && state.gesture.is_some() {
+        state.finish(&mut dense, &mut history, false);
+    }
 }
 
 fn reconcile(

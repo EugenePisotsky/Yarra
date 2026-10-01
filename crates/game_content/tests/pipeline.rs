@@ -407,7 +407,7 @@ fn duplicate_action_and_attribute_keys_are_not_silently_replaced() {
     )
     .unwrap();
     let error = failure(&root);
-    assert!(error.contains("duplicate semantic key player"));
+    assert!(error.contains("duplicate key player"));
     assert!(error.contains("packages/old_gate/conversations/gate/graph.ron"));
     fs::write(&path, original).unwrap();
     let path = root.join("packages/core/rules.ron");
@@ -417,5 +417,5 @@ fn duplicate_action_and_attribute_keys_are_not_silently_replaced() {
         original.replace("starting: {", "starting: {\"strength\": 20,"),
     )
     .unwrap();
-    assert!(failure(&root).contains("duplicate semantic key strength"));
+    assert!(failure(&root).contains("duplicate key strength"));
 }

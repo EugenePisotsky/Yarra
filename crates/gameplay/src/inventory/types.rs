@@ -6,7 +6,8 @@ pub use game_types::{
     OwnerRef, WalletId,
 };
 
-/// Integer units of the one configured currency, within SQLite's integer range.
+/// Integer units of the one configured currency. At most `i64::MAX`, so any amount also
+/// fits a signed integer, as scripts and arithmetic on differences need.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(try_from = "u64", into = "u64")]
 pub struct Money(u64);

@@ -42,10 +42,10 @@ pub struct ActorTemplate {
     #[serde(default = "first_level")]
     pub level: u32,
     /// Primary stats that differ from the class's starting values.
-    #[serde(default, deserialize_with = "game_types::deserialize_key_map")]
+    #[serde(default, deserialize_with = "game_types::deserialize_unique_map")]
     pub base: Stats,
     /// Skill ranks the character starts with.
-    #[serde(default, deserialize_with = "game_types::deserialize_key_map")]
+    #[serde(default, deserialize_with = "game_types::deserialize_unique_map")]
     pub skills: SkillRanks,
     /// What the character wears and wields. It counts towards the stats from the start and
     /// is in the inventory once that is opened.
@@ -71,30 +71,30 @@ pub struct Actor {
     pub class: Key,
     pub level: u32,
     /// Primary stats before equipment and effects.
-    #[serde(deserialize_with = "game_types::deserialize_key_map")]
+    #[serde(deserialize_with = "game_types::deserialize_unique_map")]
     pub base: Stats,
     /// Points not spent yet.
     pub attribute_points: u32,
     pub learning_points: u32,
     /// Skill ranks above zero.
-    #[serde(deserialize_with = "game_types::deserialize_key_map")]
+    #[serde(deserialize_with = "game_types::deserialize_unique_map")]
     pub skills: SkillRanks,
     pub abilities: BTreeSet<Key>,
-    #[serde(deserialize_with = "game_types::deserialize_key_map")]
+    #[serde(deserialize_with = "game_types::deserialize_unique_map")]
     pub equipment: BTreeMap<Key, ItemId>,
     pub effects: Vec<ActiveEffect>,
     /// How much of each resource the character has now.
-    #[serde(deserialize_with = "game_types::deserialize_key_map")]
+    #[serde(deserialize_with = "game_types::deserialize_unique_map")]
     pub resources: Stats,
     /// Every primary and derived stat after equipment and effects. Worked out again
     /// whenever something it depends on changes, so reading a stat is a lookup.
-    #[serde(deserialize_with = "game_types::deserialize_key_map")]
+    #[serde(deserialize_with = "game_types::deserialize_unique_map")]
     pub stats: Stats,
     pub acting: Option<Acting>,
     /// What the character means to do next, first first.
     pub intents: VecDeque<Intent>,
     /// When an ability that was used can be begun again.
-    #[serde(deserialize_with = "game_types::deserialize_key_map")]
+    #[serde(deserialize_with = "game_types::deserialize_unique_map")]
     pub cooldowns: BTreeMap<Key, GameTime>,
 }
 impl ActorTemplate {

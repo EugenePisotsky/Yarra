@@ -372,12 +372,12 @@ impl TerrainMaterialCookStore {
                 hash.update(r.get_ref(0)?.as_blob().map_err(rusqlite::Error::from)?);
             }
         }
+        let content_hash = *hash.finalize().as_bytes();
+        let generation =
+            crate::gameplay_areas::generation_id(&self.reader.connection, &content_hash)?;
         self.reader.connection.execute(
             "UPDATE runtime_metadata SET generation_id=?1,content_hash=?2 WHERE singleton=1",
-            params![
-                &hash.finalize().to_hex()[..16],
-                hash.finalize().as_bytes().as_slice()
-            ],
+            params![generation, content_hash.as_slice()],
         )?;
         self.reader
             .connection

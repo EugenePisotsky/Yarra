@@ -92,7 +92,7 @@ pub struct Grants {
     #[serde(default)]
     pub learning_points: u32,
     /// Added to primary stats outright.
-    #[serde(default, deserialize_with = "game_types::deserialize_key_map")]
+    #[serde(default, deserialize_with = "game_types::deserialize_unique_map")]
     pub bonuses: BTreeMap<Key, i32>,
     /// Abilities the character knows from then on.
     #[serde(default)]
@@ -104,7 +104,7 @@ pub struct Class {
     pub id: Key,
     pub name: TextRef,
     /// Primary stats of a first-level character.
-    #[serde(deserialize_with = "game_types::deserialize_key_map")]
+    #[serde(deserialize_with = "game_types::deserialize_unique_map")]
     pub starting: Stats,
     /// Granted at every level after the first.
     #[serde(default)]
@@ -114,7 +114,7 @@ pub struct Class {
     pub at_level: BTreeMap<u32, Grants>,
     /// The highest rank of each skill a trainer can teach this class. A skill that is not
     /// listed cannot be learned.
-    #[serde(default, deserialize_with = "game_types::deserialize_key_map")]
+    #[serde(default, deserialize_with = "game_types::deserialize_unique_map")]
     pub skills: BTreeMap<Key, u8>,
 }
 /// Something a character does that takes time: a strike, a spell. It takes effect
@@ -129,7 +129,7 @@ pub struct Ability {
     #[serde(default)]
     pub cooldown_ms: u64,
     /// Resources paid when it is begun.
-    #[serde(default, deserialize_with = "game_types::deserialize_key_map")]
+    #[serde(default, deserialize_with = "game_types::deserialize_unique_map")]
     pub costs: BTreeMap<Key, u32>,
     /// Whether it is aimed at another character.
     pub targeted: bool,
