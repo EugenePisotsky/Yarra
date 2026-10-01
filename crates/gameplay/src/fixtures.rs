@@ -398,7 +398,6 @@ pub fn content() -> GameContent {
     };
     content.text.add(TextContract {
         id: TextResourceId::named("core/text"),
-        imports: Default::default(),
         messages: content
             .text_keys()
             .iter()

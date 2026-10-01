@@ -1,6 +1,6 @@
 (
     id: "guard/old_gate",
-    name: Message((resource: "guard/text", key: "gate-title")),
+    name: Message("gate-title"),
     kind: Door,
     locked: true,
 )

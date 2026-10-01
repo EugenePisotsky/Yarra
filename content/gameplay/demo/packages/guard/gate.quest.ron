@@ -1,1 +1,1 @@
-(id: "guard/gate", title: Message((resource: "guard/text", key: "gate-title")), objectives: [(id: "deliver", title: Message((resource: "guard/text", key: "gate-objective")), required: true)])
+(id: "guard/gate", title: Message("gate-title"), objectives: [(id: "deliver", title: Message("gate-objective"), required: true)])

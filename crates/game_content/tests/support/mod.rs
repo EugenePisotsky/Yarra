@@ -44,8 +44,23 @@ pub fn write(path: impl AsRef<Path>, value: &impl serde::Serialize) {
     )
     .unwrap();
 }
+/// Reads a file as the loader does: one under `packages/<name>/` belongs to that package,
+/// so a message written as a bare key is in its text.
 pub fn read<T: serde::de::DeserializeOwned>(path: impl AsRef<Path>) -> T {
-    ron::from_str(&fs::read_to_string(path).unwrap()).unwrap()
+    let path = path.as_ref();
+    let text = fs::read_to_string(path).unwrap();
+    let mut parts = path.iter().map(|p| p.to_string_lossy().into_owned());
+    let package = parts
+        .by_ref()
+        .find(|part| part == "packages")
+        .and_then(|_| parts.next());
+    match package {
+        Some(name) => {
+            let text_id = game_types::TextResourceId::try_from(name).unwrap();
+            game_types::in_package(text_id, || ron::from_str(&text).unwrap())
+        }
+        None => ron::from_str(&text).unwrap(),
+    }
 }
 /// Publish the project and start its scenario against the published bundle.
 pub fn runtime(temp: &Temp, project: &yarra_game_content::LoadedProject) -> gameplay::GameSession {

@@ -4,21 +4,21 @@
     revision: 1,
     categories: [(
         id: "keys",
-        name: Message((resource: "core/text", key: "category-keys")),
+        name: Message("category-keys"),
     ), (
         id: "weapons",
-        name: Message((resource: "core/text", key: "category-weapons")),
+        name: Message("category-weapons"),
     ), (
         id: "armour",
-        name: Message((resource: "core/text", key: "category-armour")),
+        name: Message("category-armour"),
     ), (
         id: "potions",
-        name: Message((resource: "core/text", key: "category-potions")),
+        name: Message("category-potions"),
     )],
     items: [(
         id: "healing_potion",
-        name: Message((resource: "core/text", key: "item-healing_potion")),
-        description: Message((resource: "core/text", key: "item-healing_potion-description")),
+        name: Message("item-healing_potion"),
+        description: Message("item-healing_potion-description"),
         category: "potions",
         tags: [],
         icon: None,
@@ -38,8 +38,8 @@
         ),
     ), (
         id: "iron_sword",
-        name: Message((resource: "core/text", key: "item-iron_sword")),
-        description: Message((resource: "core/text", key: "item-iron_sword-description")),
+        name: Message("item-iron_sword"),
+        description: Message("item-iron_sword-description"),
         category: "weapons",
         tags: [],
         icon: None,
@@ -62,8 +62,8 @@
         ),
     ), (
         id: "old_gate_key",
-        name: Message((resource: "core/text", key: "item-old_gate_key")),
-        description: Message((resource: "core/text", key: "item-old_gate_key-description")),
+        name: Message("item-old_gate_key"),
+        description: Message("item-old_gate_key-description"),
         category: "keys",
         tags: ["quest"],
         icon: None,

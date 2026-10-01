@@ -399,9 +399,8 @@ fn counting_source(root: &std::path::Path) {
             }],
             repeat,
         };
-        let path = format!("packages/guard/world/count_{name}.ron");
+        let path = format!("packages/guard/world/count_{name}.trigger.ron");
         write(root.join(&path), &trigger);
-        package.triggers.push(path);
     }
     package.variables.push(variable("guard/entries"));
     let failing = TriggerDefinition {
@@ -428,10 +427,10 @@ fn counting_source(root: &std::path::Path) {
         ],
         repeat: TriggerRepeat::Always,
     };
-    write(root.join("packages/guard/world/failing.ron"), &failing);
-    package
-        .triggers
-        .push("packages/guard/world/failing.ron".into());
+    write(
+        root.join("packages/guard/world/failing.trigger.ron"),
+        &failing,
+    );
     write(root.join("packages/guard/package.ron"), &package);
 }
 #[test]
@@ -514,11 +513,8 @@ fn triggers_that_keep_setting_each_other_off_are_cut_short_and_the_game_goes_on(
         }],
         repeat: TriggerRepeat::Always,
     };
-    let path = root.join("packages/guard/world/echo.ron");
+    let path = root.join("packages/guard/world/echo.trigger.ron");
     write(&path, &echo(HERO));
-    package
-        .triggers
-        .push("packages/guard/world/echo.ron".into());
     write(root.join("packages/guard/package.ron"), &package);
     // A scenario that sets it off fails the build.
     let error = LoadedProject::load_directory_with_scenario(&root, "scenarios/guard-gate.ron")
@@ -614,8 +610,8 @@ fn unknown_and_destroyed_objects_fail_explicitly() {
 fn a_large_catalog_of_unrelated_triggers_does_not_disturb_dispatch() {
     let temp = Temp::new();
     let root = temp.source();
-    let mut package: PackageFile = read(root.join("packages/guard/package.ron"));
-    let mut definition: TriggerDefinition = read(root.join("packages/guard/world/escort.ron"));
+    let mut definition: TriggerDefinition =
+        read(root.join("packages/guard/world/escort.trigger.ron"));
     definition.on = [WorldSignal::Exited {
         actor: COMPANION,
         area: APPROACH,
@@ -625,11 +621,9 @@ fn a_large_catalog_of_unrelated_triggers_does_not_disturb_dispatch() {
         let mut id = [0x90; 16];
         id[..8].copy_from_slice(&n.to_le_bytes());
         definition.id = TriggerId(id);
-        let path = format!("packages/guard/world/unrelated-{n}.ron");
+        let path = format!("packages/guard/world/unrelated-{n}.trigger.ron");
         write(root.join(&path), &definition);
-        package.triggers.push(path);
     }
-    write(root.join("packages/guard/package.ron"), &package);
     let (_, mut session) = load(&temp, &root);
     let started = std::time::Instant::now();
     prepare(&mut session);
@@ -741,7 +735,7 @@ fn authoring_rejects_ambient_choices_undeclared_areas_and_unknown_dialogues() {
             .expect("invalid project accepted")
             .to_string()
     };
-    let path = root.join("packages/guard/conversations/reward/graph.ron");
+    let path = root.join("packages/guard/conversations/reward.dialogue.ron");
     let original: dialogue::Dialogue = read(&path);
     let mut graph = original.clone();
     graph.mode = Mode::Ambient;
@@ -749,7 +743,7 @@ fn authoring_rejects_ambient_choices_undeclared_areas_and_unknown_dialogues() {
     assert!(failure(&root).contains("cannot offer choices"));
     write(&path, &original);
 
-    let path = root.join("packages/guard/world/banter.ron");
+    let path = root.join("packages/guard/world/banter.trigger.ron");
     let original: TriggerDefinition = read(&path);
     let mut trigger = original.clone();
     trigger.on = [WorldSignal::Entered {

@@ -298,9 +298,10 @@ impl GameTime {
     }
 }
 
-/// Stable resource scope and local Fluent key. Filesystem paths are never identities.
+/// A message: the text resource it is in and its Fluent key there. Written
+/// `"package/key"`, or just `"key"` for the text of the package the file belongs to.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(try_from = "String", into = "String")]
 pub struct MessageRef {
     pub resource: TextResourceId,
     pub key: TextKey,
@@ -310,13 +311,55 @@ impl MessageRef {
         self.key.as_str()
     }
 }
+thread_local! {
+    static PACKAGE: std::cell::Cell<Option<TextResourceId>> = const { std::cell::Cell::new(None) };
+}
+/// Runs `work` while reading a package's files: a message written as a bare key is in that
+/// package's text.
+pub fn in_package<T>(text: TextResourceId, work: impl FnOnce() -> T) -> T {
+    let before = PACKAGE.replace(Some(text));
+    let result = work();
+    PACKAGE.set(before);
+    result
+}
+impl TryFrom<String> for MessageRef {
+    type Error = Invalid;
+    fn try_from(value: String) -> Result<Self> {
+        // Keys have no `/`, so whatever comes before the last one names the resource.
+        let (resource, key) = match value.rsplit_once('/') {
+            Some((resource, key)) => (TextResourceId::try_from(resource.to_owned())?, key),
+            None => {
+                let package = PACKAGE.get().ok_or_else(|| {
+                    Invalid(format!(
+                        "message {value} is outside a package; write package/{value}"
+                    ))
+                })?;
+                (package, value.as_str())
+            }
+        };
+        Ok(Self {
+            resource,
+            key: TextKey::new(key)?,
+        })
+    }
+}
+impl From<MessageRef> for String {
+    fn from(value: MessageRef) -> Self {
+        format!("{}/{}", value.resource, value.key)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// What a message argument takes, as its use in the source-language Fluent shows.
 pub enum ArgumentType {
+    /// Shown as it is: text or a number.
     Text,
+    /// Chooses a plural form or a numbered variant.
     Number,
+    /// Chooses one of these named variants.
     Select(std::collections::BTreeSet<String>),
 }
+/// The arguments a message takes. Worked out from the source-language Fluent file.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MessageContract {
@@ -327,16 +370,11 @@ pub struct MessageContract {
 #[serde(deny_unknown_fields)]
 pub struct TextContract {
     pub id: TextResourceId,
-    pub imports: std::collections::BTreeSet<TextResourceId>,
     #[serde(deserialize_with = "deserialize_unique_map")]
     pub messages: std::collections::BTreeMap<TextKey, MessageContract>,
 }
 impl TextContract {
     pub fn validate(&self) -> Result<()> {
-        require(
-            !self.imports.contains(&self.id),
-            "a text resource imports itself",
-        )?;
         for contract in self.messages.values() {
             for (name, kind) in &contract.arguments {
                 TextKey::new(name)?;

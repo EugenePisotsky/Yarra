@@ -1,0 +1,23 @@
+// The guard takes the key back. A companion travelling with the player comments first,
+// and the guard answers her before the player gets a word in.
+(
+    id: "guard/reward",
+    roles: {
+        "player": Required,
+        "speaker": Required,
+        "companion": Actor("mira"),
+    },
+    history_scope: Interaction, repeat: Always,
+    start: ["greeting"],
+    nodes: [
+        (id: "greeting", kind: Line, speaker: "speaker", text: Message("reward"), arguments: {"player": ActorName("player")}, children: ["companion-aside", "answer"]),
+        (id: "companion-aside", kind: Line, speaker: "companion", text: Message("companion-aside"), children: ["guard-reply"]),
+        (id: "guard-reply", kind: Line, speaker: "speaker", text: Message("guard-reply"), children: ["answer"]),
+        (id: "answer", kind: Line, speaker: "player", text: Message("return-key"), children: ["return-key", "refuse", "leave"]),
+        (id: "return-key", kind: Choice, speaker: "player", text: Message("return-key"),
+            condition: Some(Named("guard/ready")),
+            actions: [Script("guard.take_key")]),
+        (id: "refuse", kind: Choice, speaker: "player", text: Message("refuse")),
+        (id: "leave", kind: Choice, speaker: "player", text: Message("leave")),
+    ],
+)

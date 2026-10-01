@@ -154,7 +154,7 @@ fn category_mechanics_bindings_and_scenario_errors_are_rejected() {
     write(root.join("packages/core/items.ron"), &items);
     assert!(failure(&root).contains("unknown stat"));
     write(root.join("packages/core/items.ron"), &original);
-    let path = root.join("packages/old_gate/conversations/gate/graph.ron");
+    let path = root.join("packages/old_gate/conversations/gate.dialogue.ron");
     let original: gameplay::dialogue::Dialogue = read(&path);
     let mut graph = original.clone();
     graph.nodes[1].actions[0] = gameplay::Action::Set {
@@ -217,7 +217,12 @@ fn missing_source_messages_broken_fluent_references_and_syntax_fail() {
         original.replace("category-keys = Keys", "different = Keys"),
     )
     .unwrap();
-    assert!(failure(&root).contains("undeclared message different"));
+    // Content still names the old key, which the English text no longer has.
+    let error = failure(&root);
+    assert!(
+        error.contains("undeclared message core/category-keys"),
+        "{error}"
+    );
     fs::write(
         &path,
         original.replace("category-keys = Keys", "category-keys = { nonexistent }"),
@@ -229,7 +234,9 @@ fn missing_source_messages_broken_fluent_references_and_syntax_fail() {
         original.replace("category-keys = Keys", "category-keys = { $missing }"),
     )
     .unwrap();
-    assert!(failure(&root).contains("undeclared argument"));
+    // The argument becomes part of the message, which a category's name cannot take.
+    let error = failure(&root);
+    assert!(error.contains("cannot require arguments"), "{error}");
     fs::write(&path, "broken = {\n").unwrap();
     let error = failure(&root);
     assert!(error.contains("Fluent"));
@@ -247,7 +254,7 @@ fn partial_translations_report_fallback_and_starting_names_are_validated() {
     let mut scenario: Scenario = read(root.join("scenario.ron"));
     scenario.actors[0].name = Some(
         TextRef::message(
-            game_types::TextResourceId::named("core/text"),
+            game_types::TextResourceId::named("core"),
             "missing-actor-name",
         )
         .unwrap(),
@@ -256,15 +263,15 @@ fn partial_translations_report_fallback_and_starting_names_are_validated() {
     assert!(failure(&root).contains("missing-actor-name"));
 }
 #[test]
-fn resource_paths_and_read_budgets_are_bounded() {
+fn package_paths_and_read_budgets_are_bounded() {
     let temp = Temp::new();
     let root = temp.source();
-    let mut project: ResourceFile = read(root.join("packages/core/messages.ron"));
+    let mut project: ProjectFile = read(root.join("project.ron"));
     let original = project.clone();
-    project.locales[0].path = "../outside.ftl".into();
-    write(root.join("packages/core/messages.ron"), &project);
+    project.packages.push("../outside".into());
+    write(root.join("project.ron"), &project);
     assert!(failure(&root).contains("relative"));
-    write(root.join("packages/core/messages.ron"), &original);
+    write(root.join("project.ron"), &original);
     fs::write(
         root.join("packages/core/en.ftl"),
         "x".repeat(2 * 1024 * 1024 + 1),
@@ -399,7 +406,7 @@ fn cli_validates_builds_and_runs_from_bundle_with_locale_and_saves() {
 fn duplicate_action_and_attribute_keys_are_not_silently_replaced() {
     let temp = Temp::new();
     let root = temp.source();
-    let path = root.join("packages/old_gate/conversations/gate/graph.ron");
+    let path = root.join("packages/old_gate/conversations/gate.dialogue.ron");
     let original = fs::read_to_string(&path).unwrap();
     fs::write(
         &path,
@@ -408,7 +415,7 @@ fn duplicate_action_and_attribute_keys_are_not_silently_replaced() {
     .unwrap();
     let error = failure(&root);
     assert!(error.contains("duplicate key player"));
-    assert!(error.contains("packages/old_gate/conversations/gate/graph.ron"));
+    assert!(error.contains("packages/old_gate/conversations/gate.dialogue.ron"));
     fs::write(&path, original).unwrap();
     let path = root.join("packages/core/rules.ron");
     let original = fs::read_to_string(&path).unwrap();

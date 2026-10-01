@@ -1,10 +1,8 @@
 //! Immutable record contracts. Identity is independent of authoring paths.
 use crate::{ContentError, Result};
 use game_types::*;
-use gameplay::{Action, Condition};
 use gameplay::{actors, dialogue, inventory, quests, rules};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
 
 pub const MAX_ASSET_BYTES: usize = 2 * 1024 * 1024;
 
@@ -223,90 +221,6 @@ impl Asset {
             Self::Loot(v) => AssetId::Loot(v.id),
         }
     }
-    /// Other assets this one refers to. Authoring uses it to check that a package declares
-    /// the packages it draws from; the runtime never follows these.
-    pub(crate) fn references(&self) -> Result<BTreeSet<AssetId>> {
-        let mut refs = BTreeSet::new();
-        match self {
-            Self::Trigger(v) => {
-                refs.insert(AssetId::Rules);
-                if let Some(condition) = &v.condition {
-                    condition_references(condition, &mut refs)?;
-                }
-                for signal in &v.on {
-                    use gameplay::WorldSignal::*;
-                    refs.extend(match signal {
-                        Entered { area, .. } | Exited { area, .. } | Arrived { area, .. } => {
-                            Some(AssetId::Area(*area))
-                        }
-                        ItemAcquired { definition, .. } => Some(AssetId::Item(*definition)),
-                        QuestStarted(id) | QuestChanged(id) => Some(AssetId::Quest(*id)),
-                        VariableChanged(id) => Some(AssetId::Variable(*id)),
-                        DialogueCompleted(id) => Some(AssetId::DialogueContract(*id)),
-                        MoveFailed(_) | Died(_) | LeveledUp(_) => None,
-                    });
-                }
-                for action in &v.actions {
-                    action_references(action, &mut refs)?;
-                }
-            }
-            Self::Text(v) => refs.extend(v.imports.iter().copied().map(AssetId::Text)),
-            Self::Item(v) => {
-                refs.insert(AssetId::Category(v.category));
-                refs.insert(AssetId::Rules);
-            }
-            Self::Actor(v) => {
-                refs.insert(AssetId::Rules);
-                refs.extend(v.interaction.map(AssetId::Profile));
-                refs.extend(v.loot.map(AssetId::Loot));
-                refs.extend(v.equipment.iter().copied().map(AssetId::Item));
-            }
-            Self::Object(gameplay::ObjectDefinition {
-                kind:
-                    gameplay::ObjectKind::Container {
-                        loot: Some(loot), ..
-                    },
-                ..
-            }) => {
-                refs.insert(AssetId::Loot(*loot));
-            }
-            Self::Loot(v) => refs.extend(v.entries.iter().map(|e| AssetId::Item(e.item))),
-            Self::Dialogue(v) => {
-                refs.insert(AssetId::DialogueContract(v.id));
-                refs.insert(AssetId::Rules);
-                for node in &v.nodes {
-                    if let Some(condition) = &node.condition {
-                        condition_references(condition, &mut refs)?;
-                    }
-                    for action in &node.actions {
-                        action_references(action, &mut refs)?;
-                    }
-                }
-            }
-            Self::Rules(v) => {
-                let formulas = [&v.derive, &v.check].into_iter();
-                let scripts = formulas.chain(v.abilities.iter().map(|a| &a.resolve));
-                refs.extend(scripts.map(|name| AssetId::Script(name.module.clone())));
-            }
-            Self::Predicate(v) => condition_references(&v.condition, &mut refs)?,
-            Self::Profile(v) => {
-                for rule in &v.rules {
-                    for variant in &rule.variants {
-                        refs.insert(AssetId::DialogueContract(variant.dialogue));
-                        refs.insert(AssetId::Dialogue(variant.dialogue));
-                    }
-                    condition_references(&rule.condition, &mut refs)?;
-                }
-            }
-            _ => {}
-        }
-        refs.extend(
-            self.text_references()
-                .iter()
-                .map(|r| AssetId::Text(r.resource)),
-        );
-        Ok(refs)
-    }
     pub(crate) fn validate_local(&self) -> Result<()> {
         match self {
             Self::Object(v) => v.name.validate()?,
@@ -349,64 +263,4 @@ pub(crate) fn corrupt(id: &AssetId, message: impl Into<String>) -> ContentError 
         id: id.clone(),
         message: message.into(),
     }
-}
-
-fn condition_references(condition: &Condition, refs: &mut BTreeSet<AssetId>) -> Result<()> {
-    condition.visit(&mut |c| {
-        refs.extend(match c {
-            Condition::InsideArea { area } => Some(AssetId::Area(*area)),
-            Condition::History { dialogue, .. } => Some(AssetId::DialogueContract(*dialogue)),
-            Condition::HasItem { definition, .. } => Some(AssetId::Item(*definition)),
-            Condition::Variable { variable, .. } => Some(AssetId::Variable(*variable)),
-            Condition::QuestStatus { quest, .. } | Condition::ObjectiveCompleted { quest, .. } => {
-                Some(AssetId::Quest(*quest))
-            }
-            Condition::Named(id) => Some(AssetId::Predicate(*id)),
-            Condition::Script(name) => Some(AssetId::Script(name.module.clone())),
-            Condition::Stat { .. }
-            | Condition::Skill { .. }
-            | Condition::Level { .. }
-            | Condition::Class(_)
-            | Condition::CanLearn { .. } => Some(AssetId::Rules),
-            _ => None,
-        });
-        Ok(())
-    })?;
-    Ok(())
-}
-fn action_references(action: &Action, refs: &mut BTreeSet<AssetId>) -> Result<()> {
-    let mut conditions = Vec::new();
-    action.visit(&mut |a| {
-        refs.extend(match a {
-            Action::Script(name) => Some(AssetId::Script(name.module.clone())),
-            Action::SetLocked { object, .. } => Some(AssetId::Object(*object)),
-            Action::If { condition, .. } => {
-                conditions.push(condition.clone());
-                None
-            }
-            Action::Quest { quest, .. } => Some(AssetId::Quest(*quest)),
-            Action::GrantItem { definition, .. } | Action::ConsumeItem { definition, .. } => {
-                Some(AssetId::Item(*definition))
-            }
-            Action::Set { variable, .. } | Action::Add { variable, .. } => {
-                Some(AssetId::Variable(*variable))
-            }
-            Action::Check { .. }
-            | Action::Teach { .. }
-            | Action::ChangeResource { .. }
-            | Action::ApplyEffect { .. }
-            | Action::RemoveEffect { .. } => Some(AssetId::Rules),
-            Action::Move { to, .. } => Some(AssetId::Area(*to)),
-            Action::StartDialogue { dialogue, .. } => Some(AssetId::DialogueContract(*dialogue)),
-            Action::Relationship { .. } | Action::AwardExperience { .. } | Action::Pay { .. } => {
-                None
-            }
-        });
-        Ok(())
-    })?;
-    // What a conditional action tests refers to content too.
-    for condition in &conditions {
-        condition_references(condition, refs)?;
-    }
-    Ok(())
 }

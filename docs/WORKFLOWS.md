@@ -134,13 +134,13 @@ A guard and a gate appear a few metres ahead of the start. Walking up to them en
 
 Returning the key is worth a level, and the lines under the quest show the hero's sheet. With points to spend, **Z**, **X** and **C** raise strength, wisdom and vitality. Near the guard, **T** asks about what he offers once the gate is open: sword lessons for gold and learning points. **H** drinks a potion. Beside the training dummy, **F** strikes it again and again, **G** lines up a power strike (stamina, then a cooldown) and **V** stops; walking away stops too.
 
-The two areas use stand-in shapes beside the guard until the world has areas painted under the names `guard/approach` and `guard/gate_post`; painted ones win. The project is published to a private bundle under the system temp directory (`yarra-story/`), where the saves also live; a save made with different content is refused.
+The two areas use stand-in shapes beside the guard until the world has areas painted under the names `guard/approach` and `guard/gate_post`; painted ones win. The project is published to a private bundle under the system temp directory (`yarra-story/`), where the saves also live; a save made with different content still loads, and the game says the content has changed.
 
 ### Editing and validating gameplay content
 
 Content refers to things by name: `id: "guard/gate"` in the file that defines a quest, `quest: "guard/gate"` wherever it is used. A name is lowercase letters, digits, `_`, `-`, `/` and `.`, and it is the identity: renaming it makes a different thing. By convention a name starts with its package. In Rust, `QuestId::named("guard/gate")` gives the same identity.
 
-Scripts are Luau files listed under `scripts` in a package; the file name is the module name.
+Scripts are `.luau` files in a package; the file name is the module name.
 
 ```lua
 -- packages/guard/scripts/guard.luau
@@ -157,38 +157,36 @@ return guard
 
 Use it as `actions: [Script("guard.take_key")]` or `condition: Some(Script("guard.ready"))`. A condition function returns a boolean and can only read. `cargo run --offline -p yarra-game-content -- script-api` prints the full typed API. `validate` compiles every script and rejects references to missing functions. With [Luau](https://github.com/luau-lang/luau/releases) installed (`luau-analyze` on `PATH`, or its path in `YARRA_LUAU_ANALYZE`) it also type-checks them in strict mode against that API, so a misspelled function or a wrong argument type fails validation with the script's own line number.
 
-A package declares the variables it introduces: `variables: [(id: "old_gate/rewarded", initial: Bool(false))]`. A variable keeps the type of its initial value (`Bool`, `Int` or `Text`). Test one with `Variable(variable: "...", test: Is(Bool(true)))` (also `AtLeast(n)`, `AtMost(n)`), change it with `Set(variable: "...", value: ...)` and `Add(variable: "...", amount: n)`, or from a script with `game.get`, `game.set` and `game.add`. A scenario can start with `variables: {"name": Int(3)}`.
+A package declares the variables it introduces in its `package.ron`: `variables: [(id: "old_gate/rewarded", initial: Bool(false))]`. A variable keeps the type of its initial value (`Bool`, `Int` or `Text`). Test one with `Variable(variable: "...", test: Is(Bool(true)))` (also `AtLeast(n)`, `AtMost(n)`), change it with `Set(variable: "...", value: ...)` and `Add(variable: "...", amount: n)`, or from a script with `game.get`, `game.set` and `game.add`. A scenario can start with `variables: {"name": Int(3)}`.
 
 Add `scope: Actor` to a declaration and every actor has its own value, for things one character remembers: `(id: "guard/insulted", initial: Bool(false), scope: Actor)`. Content then says whose value it means with `of: Some(Speaker)` (or `Player`, or `Actor("name")`), and scripts pass the actor last: `game.set("guard/insulted", true, scene.speaker)`, `game.get("guard/insulted", scene.speaker)`. Leaving the actor out, or naming one for a playthrough variable, is an error.
 
-Copy `content/gameplay/demo` to start a project. Source format **8** uses explicit package manifests and one asset directory per conversation:
+Copy `content/gameplay/demo` to start a project. In source format **11** a project lists package directories, and each file in a package says what it holds by its name:
 
 ```text
-project.ron                         # content/world identity, packages, locale policy
-scenario.ron                        # standalone seed and command exercise
-packages/core/
-  package.ron                       # stable package ID and declared dependencies
-  items.ron, rules.ron, actors.ron   # package-owned domain definitions
-  messages.ron                      # resource UUID, message/argument contracts, locale paths/reviews
-  en.ftl, uk.ftl
-packages/old_gate/
-  package.ron
-  conversations/gate/
-    conversation.ron                # graph and resource paths
-    graph.ron                       # exactly one conversation
-    messages.ron
-    en.ftl, uk.ftl
+project.ron                         # content identity, source locale, packages, scenario
+scenario.ron, scenarios/            # starting conditions and steps
+packages/guard/                     # a package is named after its directory
+  package.ron                       # optional: the areas it names, the variables it declares
+  actors.ron, items.ron, loot.ron   # lists: templates, catalog fragments, loot tables
+  rules.ron                         # the one rules definition of the project
+  gate.quest.ron                    # one quest
+  guard.profile.ron                 # one interaction profile
+  ready.predicate.ron               # one named predicate
+  conversations/reward.dialogue.ron # one conversation graph
+  world/gate.object.ron             # one world object
+  world/escort.trigger.ron          # one trigger
+  scripts/guard.luau                # a script module named after its file
+  en.ftl, uk.ftl                    # the package's text, one or more files per locale
 ```
 
-Every path is relative to the **project root**, including paths inside conversation/resource manifests. Paths must remain inside that root after symlink resolution. Package manifests list catalog fragments, actor collections, an optional rules definition, conversations, resources and `quests`/`profiles`/`predicates`/`objects`/`areas`/`triggers` file lists, and the `variables` it declares. Each quest/profile/named-predicate/object/area/trigger file contains one definition; use empty lists when a package owns none. Shared catalog fragments use the same catalog ID/revision. The project has one rules definition. Cross-package mechanical/text references require a declared dependency (transitive dependencies are allowed). Missing dependencies, cycles, duplicate identities and ambiguous Fluent imports are errors. A conversation's action/condition keys are local: published `BindingId` combines the dialogue UUID and local `Key`. Facts remain explicitly shared campaign keys.
+Files are found anywhere under the package directory, in any subdirectories. A `.ron` file whose name says nothing above is an error, so a misnamed file is not silently left out; other files (notes, images) are ignored. `actors.ron`, `items.ron` and `loot.ron` may also be called `*.actors.ron` and so on. Catalog fragments share one catalog ID and revision. Every identity is defined once; one defined twice names both files. Paths in `project.ron` are relative to the project root and stay inside it after symlink resolution. Where a file sits and the order of packages change no identity; the order of a node's children does matter.
 
-Names stay with a thing when its file moves. Package and file enumeration order does not change fingerprints; the order of a node's children remains meaningful. Authored text references use `Message((resource: "core/text", key: "item-healing_potion"))`; user-entered names can use `Literal("Player name")`. Fluent keys only need to be unique within their resource and its imports.
+**Text.** Each package has one text resource, named after the package, made of its `<locale>.ftl` files (several files of one locale are joined, in path order). Content writes `Message("guard-name")` for a message of its own package and `Message("core/item-healing_potion")` for another's; `Literal("Player name")` is shown as written. A message key is unique within its package.
 
-`messages.ron` declares a `TextContract` with `id`, explicit `imports` and `messages`. Each message declares an `arguments` map whose values are `Text`, `Number` or `Select(["friendly", "hostile"])`. `locales` entries contain a canonical locale, FTL path and `reviewed` map. Source wording is required for every message contract. Static item/category/template/rule/quest/objective/topic/object/starting-name labels cannot require arguments. UI/dynamic text calls supply typed `localization::Arguments`. Dialogue read models supply `BoundText`; use `Localization::format_bound` to resolve localized actor names/text arguments and render the message in the requested locale.
+What messages a package has, and what arguments they take, comes from its source-language file (`source_locale` in `project.ron`): an argument used to choose between named variants (`{ $attitude -> [friendly] … *[hostile] … }`) takes one of those names; one used with plural categories or number keys is a number; any other is shown as it is, text or number. A message's arguments include those of the messages it refers to; a term takes only its own. Static labels (item, category, template, rule, quest, objective, topic, object and starting names) cannot take arguments. Dialogue nodes pass arguments with `arguments: {"player": ActorName("player")}`; `Localization::format_bound` renders the resulting `BoundText` in a locale.
 
-`validate` checks all Fluent branches, references, attributes, cycles and argument/selector types, including unused term structure. Unknown functions and positional term arguments are rejected; no application functions are registered yet. Literal named term arguments and message/term attributes are supported. Imports merge only the explicitly declared scope, rejecting ambiguous names. A missing translated message or one of its dependencies falls back as a whole to a locale with a complete dependency closure. It never combines a translated line with a source-language term. Invalid syntax/types remain errors.
-
-Translation reviews record each message's source dependency hash, including referenced terms/messages. Changing source wording marks affected translations stale without changing mechanical identity. `validate` prints stale keys and their current revisions; after a translator reviews the wording, record that revision in the locale's `reviewed` map in `messages.ron`. Missing/stale development translations are warnings. Add a locale to `project.ron`'s `shipping_locales` to require complete, reviewed coverage. Source locale is implicitly reviewed. Mechanical argument/import contract changes do change save compatibility.
+A translation may leave messages out; they fall back to the source language whole, and `validate` lists them as warnings. It may not define a message the source does not have or use an argument the message does not take. `validate` checks every Fluent branch, reference, attribute, cycle and argument use, including unused terms. Unknown functions and positional term arguments are rejected; literal named term arguments and attributes are supported. A translated message that leans on a term only the source defines falls back whole; a translated line is never mixed with source-language parts. Changing wording changes no mechanical identity and does not touch saves; changing what a message takes does.
 
 Validation also runs the scenario against a disposable session and reports the failed step. It does not prove that every possible story branch succeeds. No validation/build command edits source or existing saves. Each file read is bounded: 16 MiB per RON document, 2 MiB per Fluent source, 1 MiB per script. There is no cap on how many definitions content has. Increment content/catalog revisions for mechanical releases. New-game scenario changes are separate from existing saves' state and RNG.
 
@@ -205,11 +203,11 @@ cargo run --offline -p yarra-game-content -- validate tmp/game-content/mechanics
 cargo run --offline -p yarra-game-content -- demo tmp/game-content/mechanics-v6.sqlite --language tmp/game-content/en-v1.sqlite --language tmp/game-content/uk-v1.sqlite --locale uk
 ```
 
-Content schema **12** contains one checksummed record per mechanical asset, text contracts and the tool-only scenario. It contains **no FTL**. Language-pack schema **1** stores one locale's resources, their contract hashes and review metadata. A wording fix uses `build-language` with a fresh pack path and requires no mechanical rebuild and does not affect saves. The caller explicitly selects packs; nothing is discovered implicitly.
+Content schema **12** contains one checksummed record per mechanical asset, text contracts and the tool-only scenario. It contains **no FTL**. Language-pack schema **2** stores one locale's resources and the hash of the contract each was checked against. A wording fix uses `build-language` with a fresh pack path and requires no mechanical rebuild and does not affect saves. The caller explicitly selects packs; nothing is discovered implicitly.
 
 `ContentRepository::open(path)` reads the manifest only. `headers(kind)` lists identities and checksums without payloads; `read(&AssetId::Item(id))` and `read_kind(kind)` return verified assets. A session uses it through the `ContentSource` port: `core()` once, then `dialogue(id)` per conversation. Text **contracts** are read explicitly with `AssetId::Text(resource_id)`; commands never read or parse wording.
 
-`LanguageRepository::open` likewise decodes zero resources; `load(resource_id)` is an indexed, checksummed lookup in one locale. Compose `LanguageSource::new(content_repository, language_repositories)` with `Localization::with_source(source_locale, Box::new(source), limits)`. This is the runtime path. Formatting reads the requested scope/imports for the selected locale and its fallback candidates only. `Localization::scope` returns a handle pinning parsed Fluent data. Default runtime limits are 32 scopes, 32 imported resources per scope and 32 MiB charged cache bytes. Eviction cannot invalidate active handles; pinned/oversized requests return a budget error. Charges are conservative accounting, not measured RSS. Preparation is separately bounded by one scope budget. The eager authoring constructor allows 64 MiB. Replace the service/provider to activate another immutable pack generation. Use these synchronous readers on an I/O worker when integrating the game.
+`LanguageRepository::open` likewise decodes zero resources; `load(resource_id)` is an indexed, checksummed lookup in one locale. Compose `LanguageSource::new(content_repository, language_repositories)` with `Localization::with_source(source_locale, Box::new(source))`. This is the runtime path. A resource is read and parsed the first time a locale needs it and kept: a game has one per package and a few locales. Replace the service to switch to another pack generation. Use these synchronous readers on an I/O worker when integrating the game.
 
 Inspect mechanics without instantiating a session, executing a scenario or reading packs:
 

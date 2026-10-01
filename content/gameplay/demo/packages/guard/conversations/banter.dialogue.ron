@@ -1,0 +1,11 @@
+// Spoken while walking; nobody has to stop for it.
+(
+    id: "guard/banter",
+    roles: {"player": Required, "speaker": Required},
+    history_scope: Playthrough, repeat: OnceCompleted, mode: Ambient,
+    start: ["remark"],
+    nodes: [
+        (id: "remark", kind: Line, speaker: "speaker", text: Message("banter-remark"), children: ["reply"]),
+        (id: "reply", kind: Line, speaker: "player", text: Message("banter-reply")),
+    ],
+)

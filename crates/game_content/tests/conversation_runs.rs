@@ -108,7 +108,7 @@ fn reward_source(root: &std::path::Path, scope: VariableScope) {
     });
     write(&package_path, &package);
     let of = (scope == VariableScope::Actor).then_some(Participant::Player);
-    let graph_path = root.join("packages/guard/conversations/reward/graph.ron");
+    let graph_path = root.join("packages/guard/conversations/reward.dialogue.ron");
     let mut graph: dialogue::Dialogue = read(&graph_path);
     let reward = node(&mut graph, "return-key");
     reward.condition = None;
@@ -142,7 +142,7 @@ fn reward_source(root: &std::path::Path, scope: VariableScope) {
     let reward = reward.clone();
     write(graph_path, &graph);
     // The same variable can guard a reward offered by another graph or NPC.
-    let second = root.join("packages/guard/conversations/duty/graph.ron");
+    let second = root.join("packages/guard/conversations/duty.dialogue.ron");
     let mut duty: dialogue::Dialogue = read(&second);
     node(&mut duty, "greeting")
         .children
@@ -325,7 +325,7 @@ fn interruption_and_previous_choices_drive_selection_without_giving_rewards() {
 fn three_roles_bind_localized_names_and_numeric_attributes_and_restore() {
     let temp = Temp::new();
     let root = temp.source();
-    let graph_path = root.join("packages/guard/conversations/reward/graph.ron");
+    let graph_path = root.join("packages/guard/conversations/reward.dialogue.ron");
     let mut graph: dialogue::Dialogue = read(&graph_path);
     graph.roles.insert(key("companion"), Role::Required);
     node(&mut graph, "greeting").arguments.insert(
@@ -336,16 +336,7 @@ fn three_roles_bind_localized_names_and_numeric_attributes_and_restore() {
         },
     );
     write(graph_path, &graph);
-    let resource_path = root.join("packages/guard/messages.ron");
-    let mut resource: ResourceFile = read(&resource_path);
-    resource
-        .contract
-        .messages
-        .get_mut(&TextKey::new("reward").unwrap())
-        .unwrap()
-        .arguments
-        .insert("strength".into(), ArgumentType::Number);
-    write(resource_path, &resource);
+    // Using it in the English text is what gives the message the argument.
     for locale in ["en", "uk"] {
         let p = root.join(format!("packages/guard/{locale}.ftl"));
         let s = std::fs::read_to_string(&p).unwrap();
@@ -429,7 +420,7 @@ fn three_roles_bind_localized_names_and_numeric_attributes_and_restore() {
 fn hub_choices_repeat_per_run_or_history_and_npc_instances_stay_independent() {
     let temp = Temp::new();
     let root = temp.source();
-    let path = root.join("packages/guard/conversations/welcome-a/graph.ron");
+    let path = root.join("packages/guard/conversations/welcome-a.dialogue.ron");
     let mut graph: dialogue::Dialogue = read(&path);
     for (id, repeat) in [("run", Repeat::OncePerRun), ("ever", Repeat::OnceEver)] {
         let mut choice = node(&mut graph, "leave").clone();
@@ -494,7 +485,7 @@ fn repeat_contracts_filter_variants_and_cooldowns_use_saved_logical_time() {
             dialogue::RepeatPolicy::Cooldown { millis: 500 },
         ),
     ] {
-        let path = root.join(format!("packages/guard/conversations/{name}/graph.ron"));
+        let path = root.join(format!("packages/guard/conversations/{name}.dialogue.ron"));
         let mut graph: dialogue::Dialogue = read(&path);
         graph.repeat = repeat;
         write(path, &graph);
@@ -561,7 +552,7 @@ fn repeat_contracts_filter_variants_and_cooldowns_use_saved_logical_time() {
 fn invalid_speakers_message_bindings_and_history_references_fail_publication() {
     let temp = Temp::new();
     let root = temp.source();
-    let path = root.join("packages/guard/conversations/reward/graph.ron");
+    let path = root.join("packages/guard/conversations/reward.dialogue.ron");
     let original: dialogue::Dialogue = read(&path);
     for change in 0..4 {
         let mut graph = original.clone();
@@ -570,10 +561,11 @@ fn invalid_speakers_message_bindings_and_history_references_fail_publication() {
             1 => {
                 node(&mut graph, "greeting").arguments.clear();
             }
+            // An argument the message does not take.
             2 => {
                 node(&mut graph, "greeting")
                     .arguments
-                    .insert("player".into(), ArgumentSource::Number(1));
+                    .insert("mood".into(), ArgumentSource::Number(1));
             }
             _ => graph.nodes[1].id = graph.nodes[0].id.clone(),
         }
@@ -581,7 +573,7 @@ fn invalid_speakers_message_bindings_and_history_references_fail_publication() {
         assert!(LoadedProject::load_directory(&root).is_err());
     }
     write(path, &original);
-    let path = root.join("packages/guard/profile.ron");
+    let path = root.join("packages/guard/guard.profile.ron");
     let mut profile: gameplay::InteractionProfile = read(&path);
     profile.rules[0].condition = gameplay::Condition::History {
         dialogue: REWARD,
@@ -623,7 +615,7 @@ fn authored_refusal_exercise_runs_through_the_indexed_session() {
 fn final_line_completes_a_choice_free_scene_exactly_once() {
     let temp = Temp::new();
     let root = temp.source();
-    let path = root.join("packages/guard/conversations/welcome-a/graph.ron");
+    let path = root.join("packages/guard/conversations/welcome-a.dialogue.ron");
     let mut graph: dialogue::Dialogue = read(&path);
     node(&mut graph, "greeting").children.clear();
     graph.repeat = dialogue::RepeatPolicy::OnceCompleted;

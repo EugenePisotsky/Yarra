@@ -18,7 +18,8 @@ const USAGE: &str = "Usage:
   yarra-game-content script-api
   yarra-game-content demo SOURCE_DIR|BUNDLE.sqlite [--language PACK.sqlite]... [--locale LOCALE] [--save-dir NEW_DIR]
 
-Source directories declare packages, conversations, message contracts and Fluent files.
+A source directory lists package directories; their files are found by name, and each
+package has one Fluent file per locale.
 Validation and builds run the scenario in isolation. Demo writes fresh save slots.
 Inspect reads only the requested assets; it never runs a scenario or loads translations.
 Existing bundle paths and demo save directories are never overwritten.";

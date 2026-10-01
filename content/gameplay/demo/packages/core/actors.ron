@@ -2,6 +2,6 @@
 [(
     interaction: None,
     id: "traveller",
-    name: Message((resource: "core/text", key: "actor-traveller")),
+    name: Message("actor-traveller"),
     class: "adventurer",
 )]

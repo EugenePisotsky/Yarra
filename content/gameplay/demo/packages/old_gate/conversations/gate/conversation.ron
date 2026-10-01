@@ -1,4 +1,0 @@
-(
-    graph: "packages/old_gate/conversations/gate/graph.ron",
-    resources: ["packages/old_gate/conversations/gate/messages.ron"],
-)

@@ -1,0 +1,9 @@
+(
+    id: "guard/welcome_a",
+    roles: {"player": Required, "speaker": Required}, history_scope: Interaction, repeat: Always,
+    start: ["greeting"],
+    nodes: [
+        (id: "greeting", kind: Line, speaker: "speaker", text: Message("welcome-a"), children: ["leave"]),
+        (id: "leave", kind: Choice, speaker: "player", text: Message("leave")),
+    ],
+)

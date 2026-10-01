@@ -2,28 +2,28 @@
 // scripts/rules.luau.
 (
     stats: [
-        (id: "strength", name: Message((resource: "core/text", key: "attribute-strength")), kind: Primary(minimum: 1, maximum: 30)),
-        (id: "wisdom", name: Message((resource: "core/text", key: "attribute-wisdom")), kind: Primary(minimum: 1, maximum: 30)),
-        (id: "vitality", name: Message((resource: "core/text", key: "attribute-vitality")), kind: Primary(minimum: 1, maximum: 30)),
-        (id: "max-health", name: Message((resource: "core/text", key: "attribute-max-health")), kind: Derived(minimum: 1, maximum: 10000)),
-        (id: "max-stamina", name: Message((resource: "core/text", key: "attribute-max-stamina")), kind: Derived(minimum: 0, maximum: 1000)),
-        (id: "attack", name: Message((resource: "core/text", key: "attribute-attack")), kind: Derived(minimum: 0, maximum: 1000)),
-        (id: "health", name: Message((resource: "core/text", key: "attribute-health")), kind: Resource(maximum: "max-health")),
-        (id: "stamina", name: Message((resource: "core/text", key: "attribute-stamina")), kind: Resource(maximum: "max-stamina")),
+        (id: "strength", name: Message("attribute-strength"), kind: Primary(minimum: 1, maximum: 30)),
+        (id: "wisdom", name: Message("attribute-wisdom"), kind: Primary(minimum: 1, maximum: 30)),
+        (id: "vitality", name: Message("attribute-vitality"), kind: Primary(minimum: 1, maximum: 30)),
+        (id: "max-health", name: Message("attribute-max-health"), kind: Derived(minimum: 1, maximum: 10000)),
+        (id: "max-stamina", name: Message("attribute-max-stamina"), kind: Derived(minimum: 0, maximum: 1000)),
+        (id: "attack", name: Message("attribute-attack"), kind: Derived(minimum: 0, maximum: 1000)),
+        (id: "health", name: Message("attribute-health"), kind: Resource(maximum: "max-health")),
+        (id: "stamina", name: Message("attribute-stamina"), kind: Resource(maximum: "max-stamina")),
     ],
     skills: [
-        (id: "persuasion", name: Message((resource: "core/text", key: "skill-persuasion")), ranks: [1, 2, 3]),
-        (id: "swordsmanship", name: Message((resource: "core/text", key: "skill-swordsmanship")), ranks: [1, 2, 3]),
+        (id: "persuasion", name: Message("skill-persuasion"), ranks: [1, 2, 3]),
+        (id: "swordsmanship", name: Message("skill-swordsmanship"), ranks: [1, 2, 3]),
     ],
     slots: ["hand"],
     effects: [
-        (id: "fortified", name: Message((resource: "core/text", key: "effect-fortified")), modifiers: [(stat: "strength", op: Add(3))]),
-        (id: "poisoned", name: Message((resource: "core/text", key: "effect-poisoned")), periodic: Some((resource: "health", amount: -5, period_ms: 1000))),
+        (id: "fortified", name: Message("effect-fortified"), modifiers: [(stat: "strength", op: Add(3))]),
+        (id: "poisoned", name: Message("effect-poisoned"), periodic: Some((resource: "health", amount: -5, period_ms: 1000))),
     ],
     classes: [
         (
             id: "adventurer",
-            name: Message((resource: "core/text", key: "class-adventurer")),
+            name: Message("class-adventurer"),
             starting: {"strength": 10, "wisdom": 10, "vitality": 10},
             per_level: (attribute_points: 2, learning_points: 3),
             at_level: {
@@ -35,7 +35,7 @@
         ),
         (
             id: "soldier",
-            name: Message((resource: "core/text", key: "class-soldier")),
+            name: Message("class-soldier"),
             starting: {"strength": 13, "wisdom": 8, "vitality": 12},
             per_level: (attribute_points: 2, learning_points: 2),
             at_level: {1: (abilities: ["strike"])},
@@ -44,8 +44,8 @@
     ],
     // Things that take time. `duration_ms` passes between beginning one and its effect.
     abilities: [
-        (id: "strike", name: Message((resource: "core/text", key: "ability-strike")), duration_ms: 1500, targeted: true, resolve: "abilities.strike"),
-        (id: "power-strike", name: Message((resource: "core/text", key: "ability-power-strike")), duration_ms: 1500, cooldown_ms: 6000, costs: {"stamina": 10}, targeted: true, resolve: "abilities.power_strike"),
+        (id: "strike", name: Message("ability-strike"), duration_ms: 1500, targeted: true, resolve: "abilities.strike"),
+        (id: "power-strike", name: Message("ability-power-strike"), duration_ms: 1500, cooldown_ms: 6000, costs: {"stamina": 10}, targeted: true, resolve: "abilities.power_strike"),
     ],
     // Total experience for levels 2 to 5.
     levels: [100, 300, 600, 1000],

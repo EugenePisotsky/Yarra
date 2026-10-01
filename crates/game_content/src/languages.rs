@@ -10,7 +10,7 @@ use std::{
     path::{Path, PathBuf},
 };
 const APPLICATION_ID: i64 = 0x59474c50;
-const VERSION: i64 = 1;
+const VERSION: i64 = 2;
 const MAX_PACK_BYTES: u64 = 256 * 1024 * 1024;
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

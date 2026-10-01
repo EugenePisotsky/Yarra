@@ -1,4 +1,6 @@
-//! Scoped, bounded Fluent presentation. Domain contracts contain no Fluent/runtime types.
+//! Fluent presentation of the content's text. Each package has one text resource. What
+//! messages it has, and what arguments they take, comes from its source-language file;
+//! translations are checked against that. Gameplay holds only the resulting contracts.
 mod analysis;
 use fluent_bundle::{FluentArgs, FluentResource, concurrent::FluentBundle};
 use game_types::{
@@ -7,7 +9,7 @@ use game_types::{
 use serde::{Deserialize, Serialize};
 use std::{
     cell::RefCell,
-    collections::{BTreeMap, BTreeSet, VecDeque},
+    collections::{BTreeMap, BTreeSet},
     sync::Arc,
 };
 use thiserror::Error;
@@ -23,8 +25,6 @@ pub enum LocalizationError {
     Missing(String),
     #[error("Fluent formatting failed: {0}")]
     Format(String),
-    #[error("localization budget exceeded: {0}")]
-    Budget(String),
 }
 pub type Result<T> = std::result::Result<T, LocalizationError>;
 pub(crate) fn resource_error(value: impl Into<String>) -> LocalizationError {
@@ -42,23 +42,26 @@ pub struct LocalizedText {
     pub locale: Option<String>,
     pub used_fallback: bool,
 }
+/// One locale's wording of a text resource.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LanguageResource {
     pub id: TextResourceId,
     pub locale: String,
     pub source: String,
-    /// Hash of the mechanical contract this wording was validated against.
+    /// Hash of the contract this wording was checked against.
     pub contract_hash: [u8; 32],
-    /// Per-message source dependency revision accepted by the translator.
-    #[serde(deserialize_with = "game_types::deserialize_unique_map")]
-    pub reviewed: BTreeMap<TextKey, String>,
 }
 pub fn contract_hash(contract: &TextContract) -> Result<[u8; 32]> {
     Ok(
         *blake3::hash(&serde_json::to_vec(contract).map_err(|e| resource_error(e.to_string()))?)
             .as_bytes(),
     )
+}
+/// The contract of a text resource: every message its source-language Fluent defines, with
+/// the arguments it takes as their use there shows.
+pub fn contract(id: TextResourceId, source: &str) -> Result<TextContract> {
+    analysis::infer(id, source)
 }
 pub trait ResourceSource {
     fn contract(&mut self, id: TextResourceId) -> Result<TextContract>;
@@ -105,40 +108,20 @@ impl ResourceSource for MemorySource {
         Ok(self.resources.get(&(id, locale.into())).cloned())
     }
 }
-#[derive(Debug, Clone)]
-pub struct LocalizationLimits {
-    pub scopes: usize,
-    pub charge_bytes: usize,
-    pub resources_per_scope: usize,
-}
-impl Default for LocalizationLimits {
-    fn default() -> Self {
-        Self {
-            scopes: 32,
-            charge_bytes: 32 * 1024 * 1024,
-            resources_per_scope: 32,
-        }
-    }
-}
+/// A resource's wording in one locale, parsed once.
 struct Scope {
     bundle: FluentBundle<FluentResource>,
     patterns: analysis::Patterns,
     messages: BTreeMap<TextKey, MessageContract>,
-    all_messages: BTreeMap<TextKey, MessageContract>,
-    charge: usize,
+    /// Messages this locale can say in full; the rest fall back to another locale.
+    complete: BTreeSet<TextKey>,
 }
-struct CacheEntry {
-    id: TextResourceId,
-    locale: String,
-    scope: Arc<Scope>,
-}
-/// The service owns one immutable generation of providers. Replace it to activate new packs.
-/// A scope handle pins parsed data; cache pressure never invalidates a live handle.
+/// Formats the content's text. Each resource is parsed once per locale, the first time it is
+/// needed, and kept: a game has a resource per package and a handful of locales.
 pub struct Localization {
     source_locale: String,
     provider: RefCell<Box<dyn ResourceSource>>,
-    limits: LocalizationLimits,
-    cache: RefCell<VecDeque<CacheEntry>>,
+    scopes: RefCell<BTreeMap<(TextResourceId, String), Arc<Scope>>>,
 }
 pub struct TextScope {
     scope: Arc<Scope>,
@@ -150,201 +133,103 @@ fn locale(value: &str) -> Result<LanguageIdentifier> {
         .map_err(|_| LocalizationError::Locale(value.into()))
 }
 impl Localization {
-    /// Eager input ownership is for authoring tools. Parsing remains scoped and bounded.
+    /// Over contracts and wording already in memory, as tools have them.
     pub fn new(
         source: &str,
         contracts: Vec<TextContract>,
         resources: Vec<LanguageResource>,
     ) -> Result<Self> {
-        Self::with_source(
-            source,
-            Box::new(MemorySource::new(contracts, resources)?),
-            LocalizationLimits {
-                charge_bytes: 64 * 1024 * 1024,
-                ..Default::default()
-            },
-        )
+        Self::with_source(source, Box::new(MemorySource::new(contracts, resources)?))
     }
-    pub fn with_source(
-        source: &str,
-        provider: Box<dyn ResourceSource>,
-        limits: LocalizationLimits,
-    ) -> Result<Self> {
-        if limits.scopes == 0
-            || limits.scopes > 256
-            || limits.charge_bytes == 0
-            || limits.charge_bytes > 256 * 1024 * 1024
-            || limits.resources_per_scope == 0
-            || limits.resources_per_scope > 256
-        {
-            return Err(LocalizationError::Budget("invalid limits".into()));
-        }
+    pub fn with_source(source: &str, provider: Box<dyn ResourceSource>) -> Result<Self> {
         Ok(Self {
             source_locale: locale(source)?.to_string(),
             provider: RefCell::new(provider),
-            limits,
-            cache: RefCell::new(VecDeque::new()),
+            scopes: RefCell::default(),
         })
-    }
-    pub fn cached_scopes(&self) -> usize {
-        self.cache.borrow().len()
-    }
-    pub fn cached_charge(&self) -> usize {
-        self.cache.borrow().iter().map(|e| e.scope.charge).sum()
     }
     pub fn scope(&self, resource: TextResourceId, language: &str) -> Result<TextScope> {
         let language = locale(language)?.to_string();
-        let mut cache = self.cache.borrow_mut();
-        if let Some(index) = cache
-            .iter()
-            .position(|e| e.id == resource && e.locale == language)
-        {
-            let entry = cache.remove(index).unwrap();
-            let result = TextScope {
-                scope: entry.scope.clone(),
+        let key = (resource, language.clone());
+        if let Some(scope) = self.scopes.borrow().get(&key) {
+            return Ok(TextScope {
+                scope: scope.clone(),
                 locale: language,
-            };
-            cache.push_back(entry);
-            return Ok(result);
+            });
         }
         let scope = Arc::new(self.prepare(resource, &language)?);
-        while cache.len() >= self.limits.scopes
-            || cache.iter().map(|e| e.scope.charge).sum::<usize>() + scope.charge
-                > self.limits.charge_bytes
-        {
-            let Some(index) = cache.iter().position(|e| Arc::strong_count(&e.scope) == 1) else {
-                return Err(LocalizationError::Budget(
-                    "parsed scope cache is pinned or full".into(),
-                ));
-            };
-            cache.remove(index);
-        }
-        cache.push_back(CacheEntry {
-            id: resource,
-            locale: language.clone(),
-            scope: scope.clone(),
-        });
+        self.scopes.borrow_mut().insert(key, scope.clone());
         Ok(TextScope {
             scope,
             locale: language,
         })
     }
     fn prepare(&self, id: TextResourceId, language: &str) -> Result<Scope> {
-        fn visit(
-            provider: &mut dyn ResourceSource,
-            id: TextResourceId,
-            active: &mut BTreeSet<TextResourceId>,
-            contracts: &mut BTreeMap<TextResourceId, TextContract>,
-            limit: usize,
-        ) -> Result<()> {
-            if active.contains(&id) {
-                return Err(resource_error("text import cycle"));
-            }
-            if contracts.contains_key(&id) {
-                return Ok(());
-            }
-            if active.len() + contracts.len() >= limit {
-                return Err(LocalizationError::Budget("text import closure".into()));
-            }
-            active.insert(id);
-            let contract = provider.contract(id)?;
-            if contract.id != id {
-                return Err(resource_error("text contract identity mismatch"));
-            }
-            contract
-                .validate()
-                .map_err(|e| resource_error(e.to_string()))?;
-            for dependency in &contract.imports {
-                visit(provider, *dependency, active, contracts, limit)?;
-            }
-            active.remove(&id);
-            contracts.insert(id, contract);
-            Ok(())
-        }
         let mut provider = self.provider.borrow_mut();
-        let mut contracts = BTreeMap::new();
-        visit(
-            provider.as_mut(),
-            id,
-            &mut BTreeSet::new(),
-            &mut contracts,
-            self.limits.resources_per_scope,
-        )?;
+        let contract = provider.contract(id)?;
+        if contract.id != id {
+            return Err(resource_error("text contract identity mismatch"));
+        }
+        contract
+            .validate()
+            .map_err(|e| resource_error(e.to_string()))?;
         let mut scope = Scope {
             bundle: FluentBundle::new_concurrent(vec![locale(language)?]),
             patterns: BTreeMap::new(),
-            messages: contracts[&id].messages.clone(),
-            all_messages: BTreeMap::new(),
-            charge: 4096,
+            messages: contract.messages.clone(),
+            complete: BTreeSet::new(),
         };
-        let mut message_names = BTreeSet::new();
-        for (resource_id, contract) in &contracts {
-            for key in contract.messages.keys() {
-                if !message_names.insert(key.clone()) {
-                    return Err(resource_error(format!(
-                        "ambiguous imported message {}",
-                        key.as_str()
-                    )));
-                }
-            }
-            scope.all_messages.extend(contract.messages.clone());
-            scope.charge += serde_json::to_vec(contract)
-                .map_err(|e| resource_error(e.to_string()))?
-                .len()
-                * 16
-                + 4096;
-            if let Some(resource) = provider.resource(*resource_id, language)? {
-                if resource.id != *resource_id
-                    || resource.locale != language
-                    || resource.contract_hash != contract_hash(contract)?
-                {
-                    return Err(resource_error(
-                        "language resource contract/identity mismatch",
-                    ));
-                }
-                if resource.source.len() > 2 * 1024 * 1024 {
-                    return Err(LocalizationError::Budget(
-                        "Fluent resource exceeds 2 MiB".into(),
-                    ));
-                }
-                scope.charge += resource.source.len() * 16 + 4096;
-                if scope.charge > self.limits.charge_bytes {
-                    return Err(LocalizationError::Budget(
-                        "parsed scope exceeds cache charge".into(),
-                    ));
-                }
-                let mut local = BTreeMap::new();
-                analysis::parse(&resource.source, &mut local)?;
-                for key in local.keys().filter(|k| !k.starts_with('-')) {
-                    let name = key.split('.').next().unwrap();
-                    if !contract.messages.contains_key(
-                        &TextKey::new(name).map_err(|e| resource_error(e.to_string()))?,
-                    ) {
-                        return Err(resource_error(format!("undeclared message {name}")));
-                    }
-                }
-                for (key, value) in local {
-                    if scope.patterns.insert(key.clone(), value).is_some() {
-                        return Err(resource_error(format!(
-                            "ambiguous imported Fluent key {key}"
-                        )));
-                    }
-                }
-                let parsed = FluentResource::try_new(resource.source)
-                    .map_err(|(_, e)| resource_error(format!("{e:?}")))?;
-                scope
-                    .bundle
-                    .add_resource(parsed)
-                    .map_err(|e| resource_error(format!("{e:?}")))?;
+        let Some(resource) = provider.resource(id, language)? else {
+            return Ok(scope);
+        };
+        if resource.id != id
+            || resource.locale != language
+            || resource.contract_hash != contract_hash(&contract)?
+        {
+            return Err(resource_error(
+                "language resource contract/identity mismatch",
+            ));
+        }
+        analysis::parse(&resource.source, &mut scope.patterns)?;
+        for key in scope.patterns.keys().filter(|k| !k.starts_with('-')) {
+            let name = key.split('.').next().unwrap();
+            let declared =
+                TextKey::new(name).is_ok_and(|name| contract.messages.contains_key(&name));
+            if !declared {
+                return Err(resource_error(format!(
+                    "{name} is not in the source-language text"
+                )));
             }
         }
+        // Worked out once: whether each message can be said in full in this locale.
+        for (key, message) in &contract.messages {
+            let walk = analysis::dependencies(
+                &scope.patterns,
+                &contract.messages,
+                key.as_str(),
+                &message.arguments,
+            );
+            match walk {
+                Ok(_) => {
+                    scope.complete.insert(key.clone());
+                }
+                Err(LocalizationError::Missing(_)) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        let parsed = FluentResource::try_new(resource.source)
+            .map_err(|(_, e)| resource_error(format!("{e:?}")))?;
+        scope
+            .bundle
+            .add_resource(parsed)
+            .map_err(|e| resource_error(format!("{e:?}")))?;
         Ok(scope)
     }
+    /// Every message exists in the source language and can be said in full there.
     pub fn validate_keys<'a>(&self, keys: impl IntoIterator<Item = &'a MessageRef>) -> Result<()> {
         for key in keys {
-            let scope = self.scope(key.resource, &self.source_locale)?;
-            scope.contract(&key.key)?;
-            scope.revision(&key.key)?;
+            self.scope(key.resource, &self.source_locale)?
+                .validate(&key.key)?;
         }
         Ok(())
     }
@@ -366,21 +251,23 @@ impl Localization {
         }
         self.format(locale, &bound.text, &args)
     }
+    /// The text in the requested locale, or the nearest one that has it, the source
+    /// language last.
     pub fn format(
         &self,
         requested: &str,
         text: &TextRef,
         arguments: &Arguments,
     ) -> Result<LocalizedText> {
-        if let TextRef::Literal(value) = text {
-            return Ok(LocalizedText {
-                value: value.clone(),
-                locale: None,
-                used_fallback: false,
-            });
-        }
-        let TextRef::Message(message) = text else {
-            unreachable!()
+        let message = match text {
+            TextRef::Literal(value) => {
+                return Ok(LocalizedText {
+                    value: value.clone(),
+                    locale: None,
+                    used_fallback: false,
+                });
+            }
+            TextRef::Message(message) => message,
         };
         let requested = locale(requested)?;
         let mut candidates = vec![requested.to_string()];
@@ -411,8 +298,9 @@ impl Localization {
     }
 }
 impl TextScope {
-    /// Source scopes must resolve every reference. Translations may be incomplete but must
-    /// only reference declared dependencies; unknown names and cycles are publication errors.
+    /// Every reference resolves and every branch fits the contract. A translation may leave
+    /// messages out, or lean on terms only the source language defines; those messages fall
+    /// back whole.
     pub fn validate_definitions(&self, source: Option<&TextScope>) -> Result<()> {
         analysis::validate_graph(&self.scope.patterns, source.map(|s| &s.scope.patterns))?;
         let mut combined;
@@ -429,7 +317,7 @@ impl TextScope {
             }) {
                 match analysis::dependencies(
                     patterns,
-                    &self.scope.all_messages,
+                    &self.scope.messages,
                     name,
                     &contract.arguments,
                 ) {
@@ -448,16 +336,14 @@ impl TextScope {
             .get(key)
             .ok_or_else(|| resource_error(format!("undeclared message {}", key.as_str())))
     }
-    pub fn revision(&self, key: &TextKey) -> Result<String> {
-        analysis::revision(
-            &self.scope.patterns,
-            &self.scope.all_messages,
-            key.as_str(),
-            &self.contract(key)?.arguments,
-        )
-    }
+    /// The message can be said in full in this locale.
     pub fn validate(&self, key: &TextKey) -> Result<()> {
-        self.revision(key).map(|_| ())
+        self.contract(key)?;
+        if self.scope.complete.contains(key) {
+            Ok(())
+        } else {
+            Err(LocalizationError::Missing(key.as_str().into()))
+        }
     }
     pub fn format(&self, key: &TextKey, arguments: &Arguments) -> Result<String> {
         let contract = self.contract(key)?;
@@ -467,7 +353,9 @@ impl TextScope {
         let mut args = FluentArgs::new();
         for (name, kind) in &contract.arguments {
             match (kind, arguments.get(name)) {
-                (ArgumentType::Number, Some(Argument::Number(v))) => args.set(name.as_str(), *v),
+                (ArgumentType::Number | ArgumentType::Text, Some(Argument::Number(v))) => {
+                    args.set(name.as_str(), *v)
+                }
                 (ArgumentType::Text, Some(Argument::Text(v))) => {
                     args.set(name.as_str(), v.as_str())
                 }
@@ -481,12 +369,9 @@ impl TextScope {
                 }
             }
         }
-        analysis::dependencies(
-            &self.scope.patterns,
-            &self.scope.all_messages,
-            key.as_str(),
-            &contract.arguments,
-        )?;
+        if !self.scope.complete.contains(key) {
+            return Err(LocalizationError::Missing(key.as_str().into()));
+        }
         let pattern = self
             .scope
             .bundle

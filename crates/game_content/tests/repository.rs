@@ -125,15 +125,17 @@ fn text_contracts_have_stable_ids_and_are_read_explicitly() {
         .unwrap()
         .build(&original)
         .unwrap();
-    let mut project: ResourceFile = read(source.join("packages/core/messages.ron"));
-    let resource = project.contract.id;
-    fs::rename(
-        source.join(&project.locales[0].path),
-        source.join("renamed.ftl"),
-    )
-    .unwrap();
-    project.locales[0].path = "renamed.ftl".into();
-    write(source.join("packages/core/messages.ron"), &project);
+    // Where a package keeps its text is not part of any identity.
+    let resource = TextResourceId::named("core");
+    fs::create_dir(source.join("packages/core/text")).unwrap();
+    for locale in ["en", "uk"] {
+        let file = format!("packages/core/{locale}.ftl");
+        fs::rename(
+            source.join(&file),
+            source.join(format!("packages/core/text/{locale}.ftl")),
+        )
+        .unwrap();
+    }
     let renamed = temp.0.join("renamed.sqlite");
     LoadedProject::load_directory(&source)
         .unwrap()
@@ -229,27 +231,26 @@ fn source_and_bundle_versions_are_replaced_without_compatibility_loading() {
 }
 
 #[test]
-fn language_resource_declarations_reject_duplicate_or_orphaned_ids() {
+fn a_package_needs_its_source_text_and_each_message_once() {
     let temp = Temp::new();
     let source = temp.source();
-    let mut resource: ResourceFile = read(source.join("packages/core/messages.ron"));
-    let original = resource.clone();
-    resource.locales.remove(0);
-    write(source.join("packages/core/messages.ron"), &resource);
-    assert!(LoadedProject::load_directory(&source).is_err());
-    resource = original;
-    let mut duplicate = resource.locales[0].clone();
-    fs::copy(source.join(&duplicate.path), source.join("duplicate.ftl")).unwrap();
-    duplicate.path = "duplicate.ftl".into();
-    resource.locales.push(duplicate);
-    write(source.join("packages/core/messages.ron"), &resource);
-    assert!(
-        LoadedProject::load_directory(&source)
-            .err()
-            .unwrap()
-            .to_string()
-            .contains("duplicate locale resource identity")
-    );
+    let english = source.join("packages/core/en.ftl");
+    let original = fs::read(&english).unwrap();
+    fs::remove_file(&english).unwrap();
+    let error = LoadedProject::load_directory(&source)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(error.contains("translations but no en.ftl"), "{error}");
+    // Several files of one locale are joined; a message defined in two is an error.
+    fs::write(&english, &original).unwrap();
+    fs::create_dir(source.join("packages/core/more")).unwrap();
+    fs::write(source.join("packages/core/more/en.ftl"), &original).unwrap();
+    let error = LoadedProject::load_directory(&source)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(error.contains("duplicate Fluent key"), "{error}");
 }
 
 #[test]

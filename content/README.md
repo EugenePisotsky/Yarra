@@ -34,22 +34,24 @@ the current world database. Use `cargo run --offline -p yarra-game-content -- va
 content/gameplay/demo` to validate it; see the [gameplay workflow](../docs/WORKFLOWS.md#standalone-gameplay-and-saves)
 for running the scenario, publishing SQLite bundles and save/load checks.
 
-Gameplay source format 10 uses explicitly declared packages and one conversation per
-asset directory: the graph (with its conditions and actions inline), message contracts
-and translations are grouped together. Text references contain a stable resource UUID and a local key. `build`
-publishes an immutable SQLite bundle (schema 11) with one checksummed record per asset;
-language packs are published separately and hold the wording and review metadata.
+Gameplay source format 11: `project.ron` lists package directories, and each file in a
+package says what it holds by its name (`*.quest.ron`, `*.dialogue.ron`, `*.trigger.ron`,
+`en.ftl`…). A package has one text resource, its Fluent files; content writes
+`Message("key")` for its own package's text, and what a message takes comes from the
+English file. `build` publishes an immutable SQLite bundle (schema 12) with one
+checksummed record per asset; language packs are published separately and hold the
+wording.
 
 At runtime the whole playthrough state is held in memory and saved as one snapshot file
-per slot (save format 12). A session loads the always-needed definitions once and each
-dialogue graph when a conversation needs it. Saves are tied to the content they were
-made with; wording updates do not affect them. Old bundles and saves are rebuilt, not
-migrated.
+per slot (save format 16). A session loads the always-needed definitions once and each
+dialogue graph when a conversation needs it. A save loads with changed content, brought
+in line with it; wording updates do not affect it. Old bundles and saves of another
+format are rebuilt, not migrated.
 
 The core package holds the rules: stats, classes, levels, status effects and abilities in
 `rules.ron`, with their formulas in `scripts/rules.luau` and what the abilities do in
-`scripts/abilities.luau`. The guard package adds quest, named-predicate,
-interaction-profile, loot and `world/` object, area and trigger assets. Four scenarios,
+`scripts/abilities.luau`. The guard package adds quests, a named predicate, an
+interaction profile, loot, conversations and `world/` objects and triggers. Four scenarios,
 sharing the start in `scenarios/guard-start.ron`,
 exercise them through the same commands the game uses:
 

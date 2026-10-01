@@ -168,10 +168,8 @@ impl Dialogue {
                     )?;
                     for (name, source) in args {
                         let valid = match (source, contract.arguments.get(name)) {
-                            (
-                                ArgumentSource::ActorName(_) | ArgumentSource::Text(_),
-                                Some(ArgumentType::Text),
-                            ) => true,
+                            // Text shows whatever it is given, numbers included.
+                            (_, Some(ArgumentType::Text)) => true,
                             (
                                 ArgumentSource::Stat { .. } | ArgumentSource::Number(_),
                                 Some(ArgumentType::Number),

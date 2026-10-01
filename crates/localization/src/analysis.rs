@@ -1,4 +1,5 @@
-//! Walk every Fluent branch before publication or rendering. No sample-value validation.
+//! Fluent read once: what a resource's messages take, and whether every branch of them fits.
+//! No sample-value validation.
 use crate::*;
 use fluent_syntax::ast::*;
 
@@ -84,7 +85,10 @@ impl ValueType {
     fn compatible(&self, expected: &ArgumentType) -> bool {
         match (self, expected) {
             (Self::Number, ArgumentType::Number) => true,
-            (Self::Text | Self::Select(_) | Self::LiteralText(_), ArgumentType::Text) => true,
+            (
+                Self::Text | Self::Number | Self::Select(_) | Self::LiteralText(_),
+                ArgumentType::Text,
+            ) => true,
             (Self::Select(values), ArgumentType::Select(allowed)) => values.is_subset(allowed),
             (Self::LiteralText(value), ArgumentType::Select(allowed)) => allowed.contains(value),
             _ => false,
@@ -248,23 +252,6 @@ pub(crate) fn dependencies(
     walk.node(key, &args)?;
     Ok(walk.used)
 }
-pub(crate) fn revision(
-    patterns: &Patterns,
-    contracts: &BTreeMap<TextKey, MessageContract>,
-    key: &str,
-    args: &BTreeMap<String, ArgumentType>,
-) -> Result<String> {
-    let used = dependencies(patterns, contracts, key, args)?;
-    let mut hash = blake3::Hasher::new();
-    for key in used {
-        let value = serde_json::to_vec(&(&key, &patterns[&key]))
-            .map_err(|e| resource_error(e.to_string()))?;
-        hash.update(&(value.len() as u64).to_le_bytes());
-        hash.update(&value);
-    }
-    Ok(hash.finalize().to_hex().to_string())
-}
-
 /// Structural validation includes unused terms/attributes and every branch. Missing translated
 /// dependencies are allowed only when the source scope defines them (whole-message fallback).
 pub(crate) fn validate_graph(patterns: &Patterns, source: Option<&Patterns>) -> Result<()> {
@@ -388,4 +375,158 @@ pub(crate) fn validate_graph(patterns: &Patterns, source: Option<&Patterns>) -> 
         visit(key, &graph, &mut BTreeSet::new(), &mut done)?;
     }
     Ok(())
+}
+
+/// Plural categories: a selector whose named variants are only these chooses on a number.
+const PLURALS: [&str; 6] = ["zero", "one", "two", "few", "many", "other"];
+/// How one entry uses an argument.
+#[derive(Default, Clone)]
+struct Usage {
+    /// Variants chosen on it by name; a default `other` is no name of its own.
+    names: BTreeSet<String>,
+    /// Chosen on with number keys.
+    numeric: bool,
+    selected: bool,
+}
+impl Usage {
+    fn merge(&mut self, other: &Usage) {
+        self.names.extend(other.names.iter().cloned());
+        self.numeric |= other.numeric;
+        self.selected |= other.selected;
+    }
+    fn kind(&self) -> ArgumentType {
+        if !self.selected {
+            ArgumentType::Text
+        } else if self.numeric || self.names.iter().all(|n| PLURALS.contains(&n.as_str())) {
+            ArgumentType::Number
+        } else {
+            ArgumentType::Select(self.names.clone())
+        }
+    }
+}
+/// What one message, attribute or term uses directly.
+#[derive(Default)]
+struct Uses {
+    arguments: BTreeMap<String, Usage>,
+    /// Messages and attributes it refers to; they are given the same arguments.
+    messages: BTreeSet<String>,
+}
+impl Uses {
+    fn pattern(&mut self, pattern: &Pattern<String>) {
+        for element in &pattern.elements {
+            if let PatternElement::Placeable { expression } = element {
+                self.expression(expression);
+            }
+        }
+    }
+    fn expression(&mut self, expression: &Expression<String>) {
+        match expression {
+            Expression::Inline(inline) => self.inline(inline),
+            Expression::Select { selector, variants } => {
+                if let InlineExpression::VariableReference { id } = selector {
+                    let usage = self.arguments.entry(id.name.clone()).or_default();
+                    usage.selected = true;
+                    for variant in variants {
+                        match &variant.key {
+                            VariantKey::Identifier { name }
+                                if variant.default && name == "other" => {}
+                            VariantKey::Identifier { name } => {
+                                usage.names.insert(name.clone());
+                            }
+                            VariantKey::NumberLiteral { .. } => usage.numeric = true,
+                        }
+                    }
+                } else {
+                    self.inline(selector);
+                }
+                for variant in variants {
+                    self.pattern(&variant.value);
+                }
+            }
+        }
+    }
+    fn inline(&mut self, inline: &InlineExpression<String>) {
+        match inline {
+            InlineExpression::VariableReference { id } => {
+                self.arguments.entry(id.name.clone()).or_default();
+            }
+            InlineExpression::MessageReference { id, attribute } => {
+                self.messages.insert(reference(&id.name, attribute));
+            }
+            // A term has parameters of its own; only what is passed to it is used here.
+            InlineExpression::TermReference {
+                arguments: Some(arguments),
+                ..
+            } => {
+                for argument in &arguments.named {
+                    self.inline(&argument.value);
+                }
+            }
+            InlineExpression::Placeable { expression } => self.expression(expression),
+            _ => {}
+        }
+    }
+}
+/// The contract of a source-language resource: each message and the arguments it, its
+/// attributes and the messages it refers to use.
+pub(crate) fn infer(id: TextResourceId, source: &str) -> Result<TextContract> {
+    let mut patterns = Patterns::new();
+    parse(source, &mut patterns)?;
+    validate_graph(&patterns, None)?;
+    let uses: BTreeMap<&str, Uses> = patterns
+        .iter()
+        .map(|(entry, pattern)| {
+            let mut uses = Uses::default();
+            uses.pattern(pattern);
+            (entry.as_str(), uses)
+        })
+        .collect();
+    fn gather<'a>(
+        entry: &'a str,
+        uses: &'a BTreeMap<&str, Uses>,
+        seen: &mut BTreeSet<&'a str>,
+        into: &mut BTreeMap<String, Usage>,
+    ) {
+        let Some(found) = uses.get(entry) else {
+            return;
+        };
+        if !seen.insert(entry) {
+            return;
+        }
+        for (name, usage) in &found.arguments {
+            into.entry(name.clone()).or_default().merge(usage);
+        }
+        for message in &found.messages {
+            gather(message, uses, seen, into);
+        }
+    }
+    let mut messages = BTreeMap::new();
+    for entry in patterns.keys().filter(|entry| !entry.starts_with('-')) {
+        let name = entry.split('.').next().unwrap();
+        let key = TextKey::new(name).map_err(|e| resource_error(e.to_string()))?;
+        let mut arguments = BTreeMap::new();
+        gather(entry, &uses, &mut BTreeSet::new(), &mut arguments);
+        let contract: &mut MessageContract = messages.entry(key).or_default();
+        for (argument, usage) in arguments {
+            let merged = match contract.arguments.remove(&argument) {
+                Some(ArgumentType::Select(names)) => Usage {
+                    names,
+                    selected: true,
+                    ..usage
+                },
+                Some(ArgumentType::Number) => Usage {
+                    numeric: true,
+                    selected: true,
+                    ..usage
+                },
+                _ => usage,
+            };
+            contract.arguments.insert(argument, merged.kind());
+        }
+    }
+    let contract = TextContract { id, messages };
+    contract
+        .validate()
+        .map_err(|e| resource_error(e.to_string()))?;
+    Ok(contract)
 }

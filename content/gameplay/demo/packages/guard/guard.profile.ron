@@ -4,7 +4,7 @@
     (id: "duty", priority: 80, order: 0, topic: None, condition: QuestStatus(quest: "guard/gate", status: Active), variants: [(dialogue: "guard/duty", weight: 1)]),
     (id: "hostile", priority: 20, order: 0, topic: None, condition: Not(Relationship(from: Speaker, to: Player, minimum: 0)), variants: [(dialogue: "guard/hostile", weight: 1)]),
     (id: "welcome", priority: 0, order: 0, topic: None, condition: Relationship(from: Speaker, to: Player, minimum: 0), variants: [(dialogue: "guard/welcome_a", weight: 1), (dialogue: "guard/welcome_b", weight: 3)]),
-    (id: "gate-topic", priority: 10, order: 0, topic: Some(Message((resource: "guard/text", key: "gate-topic"))), condition: QuestStatus(quest: "guard/gate", status: Active), variants: [(dialogue: "guard/reward", weight: 1)]),
-    (id: "supply-topic", priority: 10, order: 1, topic: Some(Message((resource: "guard/text", key: "supply-topic"))), condition: QuestStatus(quest: "guard/supplies", status: Active), variants: [(dialogue: "guard/duty", weight: 1)]),
-    (id: "training-topic", priority: 10, order: 2, topic: Some(Message((resource: "guard/text", key: "training-topic"))), condition: QuestStatus(quest: "guard/gate", status: Completed), variants: [(dialogue: "guard/training", weight: 1)])
+    (id: "gate-topic", priority: 10, order: 0, topic: Some(Message("gate-topic")), condition: QuestStatus(quest: "guard/gate", status: Active), variants: [(dialogue: "guard/reward", weight: 1)]),
+    (id: "supply-topic", priority: 10, order: 1, topic: Some(Message("supply-topic")), condition: QuestStatus(quest: "guard/supplies", status: Active), variants: [(dialogue: "guard/duty", weight: 1)]),
+    (id: "training-topic", priority: 10, order: 2, topic: Some(Message("training-topic")), condition: QuestStatus(quest: "guard/gate", status: Completed), variants: [(dialogue: "guard/training", weight: 1)])
 ])

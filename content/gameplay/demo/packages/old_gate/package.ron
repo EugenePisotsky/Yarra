@@ -1,14 +1,3 @@
 (
-    objects: [],
-    areas: [],
-    triggers: [],
-    quests: [], profiles: [], predicates: [],
-    id: "old_gate",
-    dependencies: ["core"],
-    catalogs: [],
-    rules: None,
-    actors: [],
-    conversations: ["packages/old_gate/conversations/gate/conversation.ron"],
-    resources: [],
     variables: [(id: "old_gate/rewarded", initial: Bool(false))],
 )

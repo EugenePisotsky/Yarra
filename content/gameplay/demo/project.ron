@@ -1,13 +1,12 @@
 // Authored gameplay data; see docs/WORKFLOWS.md for validation and builds.
 (
-    format: 10,
+    format: 11,
     manifest: (
         id: "demo",
         revision: 1,
         world_generation: "standalone-world-v1",
     ),
     source_locale: "en",
-    packages: ["packages/core/package.ron", "packages/old_gate/package.ron", "packages/guard/package.ron"],
+    packages: ["packages/core", "packages/old_gate", "packages/guard"],
     scenario: "scenario.ron",
-    shipping_locales: ["en"],
 )

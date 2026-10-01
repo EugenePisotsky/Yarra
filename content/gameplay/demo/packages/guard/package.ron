@@ -1,15 +1,5 @@
 (
-    objects: ["packages/guard/world/gate.ron", "packages/guard/world/chest.ron"],
     areas: ["guard/approach", "guard/gate_post"],
-    triggers: ["packages/guard/world/escort.ron", "packages/guard/world/arrival.ron", "packages/guard/world/banter.ron"],
     // Set once the gate key has been rewarded, by whichever way came first.
     variables: [(id: "guard/rewarded", initial: Bool(false))],
-    id: "guard", dependencies: ["core"],
-    quests: ["packages/guard/gate.quest.ron", "packages/guard/supplies.quest.ron"],
-    profiles: ["packages/guard/profile.ron"], predicates: ["packages/guard/ready.predicate.ron"],
-    catalogs: [], rules: None, actors: ["packages/guard/actors.ron"],
-    conversations: ["packages/guard/conversations/reward/conversation.ron", "packages/guard/conversations/duty/conversation.ron", "packages/guard/conversations/welcome-a/conversation.ron", "packages/guard/conversations/welcome-b/conversation.ron", "packages/guard/conversations/hostile/conversation.ron", "packages/guard/conversations/banter/conversation.ron", "packages/guard/conversations/training/conversation.ron"],
-    resources: ["packages/guard/messages.ron"],
-    scripts: ["packages/guard/scripts/guard.luau"],
-    loot: ["packages/guard/loot.ron"],
 )

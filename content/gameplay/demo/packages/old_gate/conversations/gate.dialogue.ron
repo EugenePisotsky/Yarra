@@ -5,9 +5,9 @@
     repeat: OnceCompleted,
     start: ["greeting"],
     nodes: [
-        (id: "greeting", kind: Line, speaker: "speaker", text: Message((resource: "old_gate/gate/text", key: "greeting")), children: ["return-key"]),
+        (id: "greeting", kind: Line, speaker: "speaker", text: Message("greeting"), children: ["return-key"]),
         (
-            id: "return-key", kind: Choice, speaker: "player", text: Message((resource: "old_gate/gate/text", key: "return-key")),
+            id: "return-key", kind: Choice, speaker: "player", text: Message("return-key"),
             repeat: OnceEver,
             condition: Some(All([
                 HasItem(definition: "old_gate_key", quantity: 1),

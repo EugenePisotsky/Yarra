@@ -4,13 +4,12 @@ use gameplay::{
     fixtures::{GATE_DIALOGUE, HERO, MERCHANT},
 };
 use gameplay::{dialogue, inventory};
-use localization::{Arguments, Localization, LocalizationLimits};
+use localization::{Arguments, Localization};
 use std::{fs, path::Path};
 use yarra_game_content::*;
 mod support;
 use support::{Temp, read, write};
-const CORE: &str = "packages/core/messages.ron";
-const GATE: &str = "packages/old_gate/conversations/gate";
+const GATE: &str = "packages/old_gate/conversations/gate.dialogue.ron";
 fn error(path: &Path) -> String {
     LoadedProject::load_directory(path)
         .err()
@@ -22,8 +21,9 @@ fn conversations_reuse_text_keys_and_node_names_without_sharing_logic() {
     let temp = Temp::new();
     let root = temp.source();
     let second_id = DialogueId([2; 16]);
-    let text_id = TextResourceId([10; 16]);
-    let mut graph: dialogue::Dialogue = read(root.join(format!("{GATE}/graph.ron")));
+    // Another package, with text of its own under the same keys.
+    let text_id = TextResourceId::try_from("second".to_owned()).unwrap();
+    let mut graph: dialogue::Dialogue = read(root.join(GATE));
     graph.id = second_id;
     graph.nodes[0].text = TextRef::message(text_id, "greeting").unwrap();
     graph.nodes[1].text = TextRef::message(text_id, "return-key").unwrap();
@@ -32,31 +32,18 @@ fn conversations_reuse_text_keys_and_node_names_without_sharing_logic() {
         definition: inventory::fixtures::KEY,
         quantity: 2,
     });
-    let folder = "packages/old_gate/conversations/second";
+    let folder = "packages/second";
     fs::create_dir_all(root.join(folder)).unwrap();
-    write(root.join(format!("{folder}/graph.ron")), &graph);
-    let mut resource: ResourceFile = read(root.join(format!("{GATE}/messages.ron")));
-    resource.contract.id = text_id;
-    for locale in &mut resource.locales {
-        let text = fs::read_to_string(root.join(&locale.path))
+    write(root.join(format!("{folder}/gate.dialogue.ron")), &graph);
+    for locale in ["en", "uk"] {
+        let text = fs::read_to_string(root.join(format!("packages/old_gate/{locale}.ftl")))
             .unwrap()
             .replace("Did you find the key?", "I need two keys.");
-        locale.path = format!("{folder}/{}.ftl", locale.locale);
-        fs::write(root.join(&locale.path), text).unwrap();
+        fs::write(root.join(format!("{folder}/{locale}.ftl")), text).unwrap();
     }
-    write(root.join(format!("{folder}/messages.ron")), &resource);
-    write(
-        root.join(format!("{folder}/conversation.ron")),
-        &ConversationFile {
-            graph: format!("{folder}/graph.ron"),
-            resources: vec![format!("{folder}/messages.ron")],
-        },
-    );
-    let mut package: PackageFile = read(root.join("packages/old_gate/package.ron"));
-    package
-        .conversations
-        .push(format!("{folder}/conversation.ron"));
-    write(root.join("packages/old_gate/package.ron"), &package);
+    let mut manifest: ProjectFile = read(root.join("project.ron"));
+    manifest.packages.push(folder.into());
+    write(root.join("project.ron"), &manifest);
     let project = LoadedProject::load_directory(&root).unwrap();
     assert_eq!(project.content().game.dialogues.len(), 9);
     let mut session = project.start().unwrap();
@@ -118,23 +105,16 @@ fn moving_conversation_and_reordering_packages_preserves_publication_identity() 
     let before = LoadedProject::load_directory(&root).unwrap();
     let first = temp.0.join("first.sqlite");
     before.build(&first).unwrap();
-    fs::rename(root.join(GATE), root.join("moved-conversation")).unwrap();
-    for name in ["conversation.ron", "messages.ron"] {
-        let path = root.join("moved-conversation").join(name);
-        fs::write(
-            &path,
-            fs::read_to_string(&path)
-                .unwrap()
-                .replace(GATE, "moved-conversation"),
-        )
-        .unwrap();
-    }
-    let path = root.join("packages/old_gate/package.ron");
-    fs::write(
-        &path,
-        fs::read_to_string(&path)
-            .unwrap()
-            .replace(GATE, "moved-conversation"),
+    // Where a file sits in its package, and the order of packages, are no identity.
+    fs::create_dir(root.join("packages/old_gate/moved")).unwrap();
+    fs::rename(
+        root.join(GATE),
+        root.join("packages/old_gate/moved/gate.dialogue.ron"),
+    )
+    .unwrap();
+    fs::rename(
+        root.join("packages/old_gate/uk.ftl"),
+        root.join("packages/old_gate/moved/uk.ftl"),
     )
     .unwrap();
     let mut manifest: ProjectFile = read(root.join("project.ron"));
@@ -203,13 +183,11 @@ fn independent_language_updates_work_with_retained_content_and_saved_state() {
                 )
                 .unwrap(),
             ),
-            LocalizationLimits::default(),
         )
         .unwrap()
     };
     let old = render(&uk1);
     let new = render(&uk2);
-    assert_eq!(old.cached_scopes(), 0);
     assert_eq!(
         new.format("uk", &name, &Arguments::new()).unwrap().value,
         "Цілюще зілля"
@@ -218,75 +196,40 @@ fn independent_language_updates_work_with_retained_content_and_saved_state() {
         old.format("uk", &name, &Arguments::new()).unwrap().value,
         "Лікувальне зілля"
     );
-    assert_eq!(new.cached_scopes(), 1);
     library.load(&saves, save::SaveSlot::Quick).unwrap();
 }
 #[test]
-fn source_revisions_mark_only_affected_translations_and_shipping_requires_review() {
+fn new_wording_changes_no_identity_and_missing_translations_fall_back() {
     let temp = Temp::new();
     let root = temp.source();
     let before = LoadedProject::load_directory(&root).unwrap();
-    let path = root.join(format!("{GATE}/en.ftl"));
+    assert!(before.warnings().is_empty());
+    let english = root.join("packages/old_gate/en.ftl");
     fs::write(
-        &path,
-        fs::read_to_string(&path)
+        &english,
+        fs::read_to_string(&english)
             .unwrap()
             .replace("Did you find the key?", "Have you brought the key?"),
     )
     .unwrap();
+    let ukrainian = root.join("packages/old_gate/uk.ftl");
+    fs::write(&ukrainian, "return-key = Ось ключ.\n").unwrap();
     let after = LoadedProject::load_directory(&root).unwrap();
     assert_eq!(
         before.content().fingerprint().unwrap(),
         after.content().fingerprint().unwrap()
     );
-    let stale: Vec<_> = after
-        .translation_reviews()
-        .iter()
-        .filter(|r| !r.reviewed)
-        .collect();
-    assert_eq!(stale.len(), 1);
-    assert_eq!(stale[0].key.as_str(), "greeting");
-    let mut project: ProjectFile = read(root.join("project.ron"));
-    project.shipping_locales.insert("uk".into());
-    write(root.join("project.ron"), &project);
-    assert!(error(&root).contains("stale translations"));
-    let mut resource: ResourceFile = read(root.join(format!("{GATE}/messages.ron")));
-    resource
-        .locales
-        .iter_mut()
-        .find(|r| r.locale == "uk")
-        .unwrap()
-        .reviewed
-        .insert(stale[0].key.clone(), stale[0].source_revision.clone());
-    write(root.join(format!("{GATE}/messages.ron")), &resource);
-    assert!(
-        LoadedProject::load_directory(root)
-            .unwrap()
-            .warnings()
-            .is_empty()
-    );
+    assert_eq!(after.warnings().len(), 1);
+    assert!(after.warnings()[0].contains("uk: old_gate/greeting falls back to en"));
 }
 #[test]
-fn package_dependencies_import_cycles_and_hidden_fluent_errors_fail_publication() {
+fn misnamed_files_hidden_fluent_errors_and_extra_translations_fail_publication() {
     let temp = Temp::new();
     let root = temp.source();
-    let path = root.join("packages/old_gate/package.ron");
-    let original: PackageFile = read(&path);
-    let mut package = original.clone();
-    package.dependencies.clear();
-    write(&path, &package);
-    assert!(error(&root).contains("package dependency"));
-    write(&path, &original);
-    let resource_path = root.join(CORE);
-    let original: ResourceFile = read(&resource_path);
-    let mut resource = original.clone();
-    resource
-        .contract
-        .imports
-        .insert(TextResourceId::named("old_gate/gate/text"));
-    write(&resource_path, &resource);
-    assert!(error(&root).contains("package dependency"));
-    write(&resource_path, &original);
+    let stray = root.join("packages/core/item.ron");
+    fs::write(&stray, "()").unwrap();
+    assert!(error(&root).contains("no kind of content is named like this"));
+    fs::remove_file(stray).unwrap();
     let path = root.join("packages/core/en.ftl");
     let original = fs::read_to_string(&path).unwrap();
     for extra in [
@@ -296,8 +239,14 @@ fn package_dependencies_import_cycles_and_hidden_fluent_errors_fail_publication(
         "\nwelcome = Duplicate",
     ] {
         fs::write(&path, format!("{original}{extra}")).unwrap();
-        assert!(LoadedProject::load_directory(&root).is_err());
+        assert!(LoadedProject::load_directory(&root).is_err(), "{extra}");
     }
+    fs::write(&path, &original).unwrap();
+    // A translation says what the source language says, not more.
+    let ukrainian = root.join("packages/core/uk.ftl");
+    let text = fs::read_to_string(&ukrainian).unwrap();
+    fs::write(&ukrainian, format!("{text}\nunheard-of = Нове")).unwrap();
+    assert!(error(&root).contains("unheard-of is not in the source-language text"));
 }
 #[test]
 fn language_packs_are_indexed_lazy_and_reject_requested_corruption() {
@@ -309,21 +258,21 @@ fn language_packs_are_indexed_lazy_and_reject_requested_corruption() {
     let plan: String = db
         .query_row(
             "EXPLAIN QUERY PLAN SELECT payload FROM resources WHERE id=?1",
-            [TextResourceId::named("core/text").raw()],
+            [TextResourceId::named("core").raw()],
             |r| r.get(3),
         )
         .unwrap();
     assert!(plan.contains("PRIMARY KEY"));
     db.execute(
         "UPDATE resources SET hash=zeroblob(32) WHERE id=?1",
-        [TextResourceId::named("old_gate/gate/text").raw()],
+        [TextResourceId::named("old_gate").raw()],
     )
     .unwrap();
     drop(db);
     let mut pack = LanguageRepository::open(&path).unwrap();
     assert_eq!(pack.stats(), &LanguageStats::default());
     assert!(
-        pack.load(TextResourceId::named("core/text"))
+        pack.load(TextResourceId::named("core"))
             .unwrap()
             .unwrap()
             .source
@@ -331,7 +280,7 @@ fn language_packs_are_indexed_lazy_and_reject_requested_corruption() {
     );
     assert_eq!(pack.stats().decoded_resources, 1);
     assert!(
-        pack.load(TextResourceId::named("old_gate/gate/text"))
+        pack.load(TextResourceId::named("old_gate"))
             .unwrap_err()
             .to_string()
             .contains("checksum")
@@ -345,19 +294,13 @@ fn argument_contract_changes_change_mechanical_identity() {
     let temp = Temp::new();
     let root = temp.source();
     let before = LoadedProject::load_directory(&root).unwrap();
-    let path = root.join(CORE);
-    let mut contract: ResourceFile = read(&path);
-    contract
-        .contract
-        .messages
-        .get_mut(&TextKey::new("welcome").unwrap())
-        .unwrap()
-        .arguments
-        .insert(
-            "name".into(),
-            ArgumentType::Select(["Ada".into(), "Lin".into()].into()),
-        );
-    write(path, &contract);
+    // The English text choosing on the name makes it a choice between named variants.
+    let path = root.join("packages/core/en.ftl");
+    let text = fs::read_to_string(&path).unwrap().replace(
+        "welcome = Welcome, { $name }!",
+        "welcome = { $name ->\n    [ada] Welcome, Ada!\n   *[lin] Welcome, Lin!\n}",
+    );
+    fs::write(&path, text).unwrap();
     let after = LoadedProject::load_directory(root).unwrap();
     assert_ne!(
         before.content().fingerprint().unwrap(),

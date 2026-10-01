@@ -102,7 +102,7 @@ Read models (`state()`, `derived`, `conversation_view`, `preview_interaction`, `
 
 ### Content and publication
 
-[The checked-in project](../content/gameplay/demo/project.ron) is authored as RON plus Fluent: a project lists packages; a package owns catalog fragments, actor templates, rules, quests, profiles, predicates, variables, world objects/areas/triggers and conversations; a conversation directory owns its graph, message contracts and locale files. Names such as `guard/gate`, not paths or package order, are identities; a name hashes to the 16-byte identity used at runtime. Cross-package references need a declared package dependency. RON and Fluent are the only authoring source; gameplay reads published SQLite only.
+[The checked-in project](../content/gameplay/demo/project.ron) is authored as RON plus Fluent: a project lists package directories; a package's files say by their names what they hold (catalog fragments, actor templates, rules, quests, profiles, predicates, world objects and triggers, conversation graphs, scripts), its `package.ron` declares its areas and variables, and its Fluent files are its one text resource. Names such as `guard/gate`, not paths or package order, are identities; a name hashes to the 16-byte identity used at runtime. RON and Fluent are the only authoring source; gameplay reads published SQLite only.
 
 `LoadedProject::build` publishes one immutable bundle (schema **12**): one checksummed JSON record per asset keyed by `(kind, id)`, a manifest with the mechanical fingerprint, and a tool-only scenario. `ContentRepository::open` reads the manifest; `read`/`read_kind` verify checksum and identity of what they return. Language packs (schema **1**) are published separately per locale, so wording fixes need no mechanical rebuild and do not affect saves. The mechanical fingerprint covers definitions, rules and world binding and excludes translations.
 
@@ -127,7 +127,7 @@ These work today and are covered by the headless scenarios and tests.
 
 ### Localization
 
-Text references are `(TextResourceId, TextKey)` with typed arguments (`Text`, `Number`, selector). Read models return `BoundText` (a reference plus typed values); only the central formatter renders a locale. Publication analyses every Fluent branch, reference and argument type; translation reviews track source-dependency hashes. `LanguageSource` composes content contracts with the selected packs; scopes are parsed on first use and cached. Details and commands are in [workflows](WORKFLOWS.md#editing-and-validating-gameplay-content).
+Text references are `(TextResourceId, TextKey)`, written `"package/key"` or just `"key"` within a package. What a message takes (`Text`, `Number`, a choice of names) is read from the source-language Fluent, so the contract and the wording cannot disagree. Read models return `BoundText` (a reference plus typed values); only the central formatter renders a locale. Publication analyses every Fluent branch, reference and argument use. `LanguageSource` composes content contracts with the selected packs; each resource is parsed once per locale and kept. Details and commands are in [workflows](WORKFLOWS.md#editing-and-validating-gameplay-content).
 
 ### Known limits
 

@@ -1,9 +1,8 @@
-use crate::{Asset, AssetId, ContentError, Result, Scenario, contextual};
+use crate::{Asset, ContentError, Result, Scenario, contextual};
 use game_types::*;
 use gameplay::actors::ActorTemplate;
 use gameplay::dialogue::Dialogue;
-use gameplay::inventory::ItemCatalog;
-use gameplay::quests;
+use gameplay::inventory::{ItemCatalog, LootTable};
 use gameplay::rules::Rules;
 use gameplay::{ContentManifest, GameContent, GameDefinitions, KeyedMap, keyed_map};
 use localization::{LanguageResource, Localization, contract_hash};
@@ -15,7 +14,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-pub const SOURCE_FORMAT_VERSION: u32 = 10;
+pub const SOURCE_FORMAT_VERSION: u32 = 11;
 pub(crate) const MAX_DOCUMENT_BYTES: usize = 16 * 1024 * 1024;
 const MAX_TRANSLATION_BYTES: usize = 2 * 1024 * 1024;
 const MAX_SCRIPT_BYTES: usize = 1024 * 1024;
@@ -25,66 +24,79 @@ pub struct ProjectFile {
     pub format: u32,
     pub manifest: ContentManifest,
     pub source_locale: String,
+    /// Package directories. A package is named after its directory.
     pub packages: Vec<String>,
     pub scenario: String,
-    /// Locales that must be complete and reviewed at publication.
-    pub shipping_locales: BTreeSet<String>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// A package's `package.ron`, which it needs only to declare these.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PackageFile {
-    pub objects: Vec<String>,
     /// Names of the world areas this package refers to.
-    pub areas: BTreeSet<AreaId>,
-    pub triggers: Vec<String>,
-    pub quests: Vec<String>,
-    pub profiles: Vec<String>,
-    pub predicates: Vec<String>,
-    pub id: PackageId,
-    pub dependencies: BTreeSet<PackageId>,
-    pub catalogs: Vec<String>,
-    pub rules: Option<String>,
-    pub actors: Vec<String>,
-    pub conversations: Vec<String>,
-    pub resources: Vec<String>,
-    /// Luau files; each is a module named after its file.
     #[serde(default)]
-    pub scripts: Vec<String>,
+    pub areas: BTreeSet<AreaId>,
     /// Variables this package introduces, each with its initial value.
     #[serde(default)]
     pub variables: Vec<gameplay::VariableDefinition>,
-    /// Files listing loot and stock tables.
-    #[serde(default)]
-    pub loot: Vec<String>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ConversationFile {
-    pub graph: String,
-    pub resources: Vec<String>,
+/// What a file in a package holds, by its name.
+enum Kind {
+    Package,
+    Rules,
+    Items,
+    Actors,
+    Loot,
+    Quest,
+    Profile,
+    Predicate,
+    Object,
+    Trigger,
+    Dialogue,
+    Script,
+    Text(String),
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ResourceFile {
-    pub contract: TextContract,
-    pub locales: Vec<LocaleFile>,
-}
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct LocaleFile {
-    pub locale: String,
-    pub path: String,
-    #[serde(deserialize_with = "game_types::deserialize_unique_map")]
-    pub reviewed: BTreeMap<TextKey, String>,
-}
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TranslationReview {
-    pub resource: TextResourceId,
-    pub key: TextKey,
-    pub locale: String,
-    pub source_revision: String,
-    pub complete: bool,
-    pub reviewed: bool,
+fn kind(path: &str) -> Result<Option<Kind>> {
+    let name = Path::new(path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    let named =
+        |kind: &str| name == format!("{kind}.ron") || name.ends_with(&format!(".{kind}.ron"));
+    Ok(Some(if name == "package.ron" {
+        Kind::Package
+    } else if name == "rules.ron" {
+        Kind::Rules
+    } else if named("items") {
+        Kind::Items
+    } else if named("actors") {
+        Kind::Actors
+    } else if named("loot") {
+        Kind::Loot
+    } else if name.ends_with(".quest.ron") {
+        Kind::Quest
+    } else if name.ends_with(".profile.ron") {
+        Kind::Profile
+    } else if name.ends_with(".predicate.ron") {
+        Kind::Predicate
+    } else if name.ends_with(".object.ron") {
+        Kind::Object
+    } else if name.ends_with(".trigger.ron") {
+        Kind::Trigger
+    } else if name.ends_with(".dialogue.ron") {
+        Kind::Dialogue
+    } else if name.ends_with(".luau") {
+        Kind::Script
+    } else if let Some(locale) = name.strip_suffix(".ftl") {
+        crate::asset::validate_locale(locale)?;
+        Kind::Text(locale.into())
+    } else if name.ends_with(".ron") {
+        return Err(Invalid(format!(
+            "{path}: no kind of content is named like this; see the package layout in docs/WORKFLOWS.md"
+        ))
+        .into());
+    } else {
+        return Ok(None);
+    }))
 }
 /// Eager authoring snapshot. Runtime uses indexed content and language repositories.
 pub struct LoadedProject {
@@ -94,7 +106,6 @@ pub struct LoadedProject {
     pub(crate) translations: Vec<LanguageResource>,
     localization: Localization,
     warnings: Vec<String>,
-    reviews: Vec<TranslationReview>,
 }
 impl LoadedProject {
     pub fn load_directory(root: impl AsRef<Path>) -> Result<Self> {
@@ -119,195 +130,174 @@ impl LoadedProject {
         let project: ProjectFile =
             ron::from_str(&text).map_err(|e| source_error(&root.join("project.ron"), e))?;
         require(!project.packages.is_empty(), "a project has packages")?;
-        let mut packages = BTreeMap::new();
+        crate::asset::validate_locale(&project.source_locale)?;
         let mut items: Option<ItemCatalog> = None;
         let mut rules: Option<Rules> = None;
-        let mut actors: Vec<ActorTemplate> = Vec::new();
-        let mut dialogues: Vec<Dialogue> = Vec::new();
+        let mut actors = BTreeMap::new();
+        let mut dialogues = BTreeMap::new();
         let mut world = gameplay::WorldDefinitions::default();
-        let mut quests = Vec::new();
-        let mut profiles = Vec::new();
-        let mut predicates = Vec::new();
-        let mut variables = Vec::new();
-        let mut scripts = Vec::new();
-        let mut loot = Vec::new();
+        let mut quests = BTreeMap::new();
+        let mut profiles = BTreeMap::new();
+        let mut predicates = BTreeMap::new();
+        let mut variables = BTreeMap::new();
+        let mut scripts = BTreeMap::new();
+        let mut loot = BTreeMap::new();
         let mut contracts = Vec::new();
         let mut translations = Vec::new();
-        let mut resource_owners = BTreeMap::new();
-        let mut owners = BTreeMap::new();
-        let mut paths = BTreeSet::new();
-        for path in &project.packages {
-            let package: PackageFile = source.ron(path)?;
-            macro_rules! own {
-                ($id:expr) => {
-                    require(
-                        owners.insert($id, package.id).is_none(),
-                        "duplicate asset identity",
-                    )?
-                };
-            }
-            for path in &package.objects {
-                let d: gameplay::ObjectDefinition = source.ron(path)?;
-                own!(AssetId::Object(d.id));
-                world.objects.add(d);
-            }
-            for area in &package.areas {
-                own!(AssetId::Area(*area));
-                world.areas.insert(*area);
-            }
-            for path in &package.triggers {
-                let d: gameplay::TriggerDefinition = source.ron(path)?;
-                own!(AssetId::Trigger(d.id));
-                world.triggers.add(d);
-            }
-            for path in &package.quests {
-                let q: quests::Quest = source.ron(path)?;
-                own!(AssetId::Quest(q.id));
-                quests.push(q);
-            }
-            for path in &package.profiles {
-                let p: gameplay::InteractionProfile = source.ron(path)?;
-                own!(AssetId::Profile(p.id));
-                profiles.push(p);
-            }
-            for path in &package.predicates {
-                let p: gameplay::NamedPredicate = source.ron(path)?;
-                own!(AssetId::Predicate(p.id));
-                predicates.push(p);
-            }
-            let mut resource_paths = package.resources.clone();
-            for path in &package.catalogs {
-                let catalog: ItemCatalog = source.ron(path)?;
-                for id in catalog.categories.keys() {
-                    own!(AssetId::Category(*id));
+        // Which file defined each identity, to name both when one is defined twice.
+        let mut defined: BTreeMap<String, String> = BTreeMap::new();
+        let mut packages = BTreeSet::new();
+        for directory in &project.packages {
+            let name = Path::new(directory)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default();
+            let text_id = contextual(
+                directory.as_str(),
+                TextResourceId::try_from(name.to_owned()),
+            )?;
+            require(packages.insert(text_id), &format!("package {name} twice"))?;
+            let mut wording: BTreeMap<String, String> = BTreeMap::new();
+            let files = source.files(directory)?;
+            // A message written as a bare key is in this package's text.
+            in_package(text_id, || -> Result<()> {
+                for path in &files {
+                    let mut define =
+                        |identity: String| match defined.insert(identity.clone(), path.clone()) {
+                            Some(first) => Err(Invalid(format!(
+                                "{identity} is defined in both {first} and {path}"
+                            ))),
+                            None => Ok(()),
+                        };
+                    let Some(kind) = kind(path)? else {
+                        continue;
+                    };
+                    match kind {
+                        Kind::Package => {
+                            require(
+                                Path::new(path).parent() == Some(Path::new(directory)),
+                                "package.ron belongs at the top of its package",
+                            )?;
+                            let package: PackageFile = source.ron(path)?;
+                            for area in package.areas {
+                                world.areas.insert(area);
+                            }
+                            for variable in package.variables {
+                                define(format!("variable {}", variable.id))?;
+                                variables.add(variable);
+                            }
+                        }
+                        Kind::Rules => {
+                            define("the rules".into())?;
+                            rules = Some(source.ron(path)?);
+                        }
+                        Kind::Items => {
+                            let catalog: ItemCatalog = source.ron(path)?;
+                            for id in catalog.categories.keys() {
+                                define(format!("item category {id}"))?;
+                            }
+                            for id in catalog.items.keys() {
+                                define(format!("item {id}"))?;
+                            }
+                            if let Some(items) = &mut items {
+                                require(
+                                    items.id == catalog.id && items.revision == catalog.revision,
+                                    "catalog fragments have different identities",
+                                )?;
+                                items.categories.extend(catalog.categories);
+                                items.items.extend(catalog.items);
+                            } else {
+                                items = Some(catalog);
+                            }
+                        }
+                        Kind::Actors => {
+                            for template in source.ron::<Vec<ActorTemplate>>(path)? {
+                                define(format!("actor template {}", template.id))?;
+                                actors.add(template);
+                            }
+                        }
+                        Kind::Loot => {
+                            for table in source.ron::<Vec<LootTable>>(path)? {
+                                define(format!("loot table {}", table.id))?;
+                                loot.add(table);
+                            }
+                        }
+                        Kind::Quest => {
+                            let quest: gameplay::quests::Quest = source.ron(path)?;
+                            define(format!("quest {}", quest.id))?;
+                            quests.add(quest);
+                        }
+                        Kind::Profile => {
+                            let profile: gameplay::InteractionProfile = source.ron(path)?;
+                            define(format!("interaction profile {}", profile.id))?;
+                            profiles.add(profile);
+                        }
+                        Kind::Predicate => {
+                            let predicate: gameplay::NamedPredicate = source.ron(path)?;
+                            define(format!("predicate {}", predicate.id))?;
+                            predicates.add(predicate);
+                        }
+                        Kind::Object => {
+                            let object: gameplay::ObjectDefinition = source.ron(path)?;
+                            define(format!("object {}", object.id))?;
+                            world.objects.add(object);
+                        }
+                        Kind::Trigger => {
+                            let trigger: gameplay::TriggerDefinition = source.ron(path)?;
+                            define(format!("trigger {}", trigger.id))?;
+                            world.triggers.add(trigger);
+                        }
+                        Kind::Dialogue => {
+                            let graph: Dialogue = source.ron(path)?;
+                            define(format!("dialogue {}", graph.id))?;
+                            dialogues.add(graph);
+                        }
+                        Kind::Script => {
+                            let stem = Path::new(path).file_stem().and_then(|s| s.to_str());
+                            let name =
+                                contextual(path.as_str(), Key::new(stem.unwrap_or_default()))?;
+                            define(format!("script module {name}"))?;
+                            let source = source.text(path, MAX_SCRIPT_BYTES)?;
+                            scripts.add(gameplay::ScriptModule { name, source });
+                        }
+                        Kind::Text(locale) => {
+                            let text = source.text(path, MAX_TRANSLATION_BYTES)?;
+                            // Several files of one locale are one text, in path order.
+                            let joined = wording.entry(locale).or_default();
+                            if !joined.is_empty() {
+                                joined.push('\n');
+                            }
+                            joined.push_str(&text);
+                        }
+                    }
                 }
-                for id in catalog.items.keys() {
-                    own!(AssetId::Item(*id));
-                }
-                if let Some(items) = &mut items {
-                    require(
-                        items.id == catalog.id && items.revision == catalog.revision,
-                        "catalog fragments have different identities",
-                    )?;
-                    items.categories.extend(catalog.categories);
-                    items.items.extend(catalog.items);
-                } else {
-                    items = Some(catalog);
-                }
-            }
-            if let Some(path) = &package.rules {
-                own!(AssetId::Rules);
-                require(rules.is_none(), "multiple rules definitions")?;
-                rules = Some(source.ron(path)?);
-            }
-            for path in &package.loot {
-                let tables = source.ron::<Vec<gameplay::inventory::LootTable>>(path)?;
-                for v in &tables {
-                    own!(AssetId::Loot(v.id));
-                }
-                loot.extend(tables);
-            }
-            for path in &package.actors {
-                let templates = source.ron::<Vec<ActorTemplate>>(path)?;
-                for v in &templates {
-                    own!(AssetId::Actor(v.id));
-                }
-                actors.extend(templates);
-            }
-            for path in &package.conversations {
-                let conversation: ConversationFile = source.ron(path)?;
-                let graph: Dialogue = source.ron(&conversation.graph)?;
-                own!(AssetId::Dialogue(graph.id));
-                own!(AssetId::DialogueContract(graph.id));
-                dialogues.push(graph);
-                resource_paths.extend(conversation.resources);
-            }
-            for path in &package.scripts {
-                let name = Path::new(path)
-                    .file_stem()
-                    .and_then(|stem| stem.to_str())
-                    .ok_or_else(|| Invalid(format!("script path {path} has no name")))?;
-                let name = contextual(path.as_str(), Key::new(name))?;
-                own!(AssetId::Script(name.clone()));
-                scripts.push(gameplay::ScriptModule {
-                    name,
-                    source: source.text(path, MAX_SCRIPT_BYTES)?,
+                Ok(())
+            })?;
+            // The source language says what messages the package has and what they take.
+            let Some(source_text) = wording.get(&project.source_locale) else {
+                require(
+                    wording.is_empty(),
+                    &format!(
+                        "package {name} has translations but no {}.ftl",
+                        project.source_locale
+                    ),
+                )?;
+                continue;
+            };
+            let contract = contextual(
+                format!("{directory}/{}.ftl", project.source_locale),
+                localization::contract(text_id, source_text),
+            )?;
+            let hash = contract_hash(&contract)?;
+            for (locale, source) in wording {
+                translations.push(LanguageResource {
+                    id: text_id,
+                    locale,
+                    source,
+                    contract_hash: hash,
                 });
             }
-            for variable in &package.variables {
-                own!(AssetId::Variable(variable.id));
-                variables.push(variable.clone());
-            }
-            for path in resource_paths {
-                let resource: ResourceFile = source.ron(&path)?;
-                let id = resource.contract.id;
-                own!(AssetId::Text(id));
-                require(
-                    resource_owners.insert(id, package.id).is_none(),
-                    "duplicate text resource identity",
-                )?;
-                require(!resource.locales.is_empty(), "a text resource has locales")?;
-                let hash = contract_hash(&resource.contract)?;
-                for entry in resource.locales {
-                    require(
-                        paths.insert(entry.path.clone()),
-                        "duplicate locale resource path",
-                    )?;
-                    require(
-                        Path::new(&entry.path)
-                            .extension()
-                            .is_some_and(|e| e == "ftl"),
-                        "translation must be an .ftl file",
-                    )?;
-                    translations.push(LanguageResource {
-                        id,
-                        locale: entry.locale,
-                        source: source.text(&entry.path, MAX_TRANSLATION_BYTES)?,
-                        contract_hash: hash,
-                        reviewed: entry.reviewed,
-                    });
-                }
-                contracts.push(resource.contract);
-            }
-            require(
-                packages.insert(package.id, package).is_none(),
-                "duplicate package identity",
-            )?;
-        }
-        fn dependencies(
-            id: PackageId,
-            packages: &BTreeMap<PackageId, PackageFile>,
-            active: &mut BTreeSet<PackageId>,
-            seen: &mut BTreeSet<PackageId>,
-        ) -> Result<()> {
-            require(!active.contains(&id), "package dependency cycle")?;
-            if !seen.insert(id) {
-                return Ok(());
-            }
-            active.insert(id);
-            let package = packages
-                .get(&id)
-                .ok_or_else(|| Invalid("missing package dependency".into()))?;
-            for dependency in &package.dependencies {
-                dependencies(*dependency, packages, active, seen)?;
-            }
-            active.remove(&id);
-            Ok(())
-        }
-        for id in packages.keys() {
-            let mut reachable = BTreeSet::new();
-            dependencies(*id, &packages, &mut BTreeSet::new(), &mut reachable)?;
-            for contract in contracts.iter().filter(|c| resource_owners[&c.id] == *id) {
-                for import in &contract.imports {
-                    let owner = resource_owners
-                        .get(import)
-                        .ok_or_else(|| Invalid("missing text import".into()))?;
-                    require(
-                        reachable.contains(owner),
-                        "text import needs an explicit package dependency",
-                    )?;
-                }
-            }
+            contracts.push(contract);
         }
         // Kept by identity, so neither the order of packages nor of files in them matters.
         let content = GameContent {
@@ -316,28 +306,20 @@ impl LoadedProject {
             items: items.ok_or_else(|| Invalid("missing item catalog".into()))?,
             game: GameDefinitions {
                 world,
-                dialogue_contracts: keyed_map(dialogues.iter().map(Dialogue::contract)),
-                quests: keyed_map(quests),
-                profiles: keyed_map(profiles),
-                predicates: keyed_map(predicates),
+                dialogue_contracts: keyed_map(dialogues.values().map(Dialogue::contract)),
+                quests,
+                profiles,
+                predicates,
                 rules: rules.ok_or_else(|| Invalid("missing rules".into()))?,
-                actors: keyed_map(actors),
-                dialogues: keyed_map(dialogues),
-                variables: keyed_map(variables),
-                scripts: keyed_map(scripts),
-                loot: keyed_map(loot),
+                actors,
+                dialogues,
+                variables,
+                scripts,
+                loot,
             },
             scripts: Default::default(),
             graphs: Default::default(),
         };
-        for contract in content.text.values() {
-            require(
-                translations
-                    .iter()
-                    .any(|t| t.id == contract.id && t.locale == project.source_locale),
-                "text resource has no source-locale counterpart",
-            )?;
-        }
         let mut scenario: Scenario = source.ron(exercise.unwrap_or(&project.scenario))?;
         if let Some(base) = scenario.base.clone() {
             scenario = contextual(
@@ -345,40 +327,7 @@ impl LoadedProject {
                 scenario.starting_from(source.ron(&base)?),
             )?;
         }
-        let loaded = Self::from_parts(content, scenario, project.source_locale, translations)?;
-        for (_, asset) in loaded.assets() {
-            let owner = owners[&asset.id()];
-            let mut reachable = BTreeSet::new();
-            dependencies(owner, &packages, &mut BTreeSet::new(), &mut reachable)?;
-            for dependency in asset.references()? {
-                let target = owners
-                    .get(&dependency)
-                    .ok_or_else(|| Invalid(format!("missing package asset {dependency:?}")))?;
-                require(
-                    reachable.contains(target),
-                    &format!(
-                        "asset {:?} needs a package dependency for {dependency:?}",
-                        asset.id()
-                    ),
-                )?;
-            }
-        }
-        for locale in project.shipping_locales {
-            crate::asset::validate_locale(&locale)?;
-            require(
-                locale == loaded.source_locale || loaded.reviews.iter().any(|r| r.locale == locale),
-                "shipping locale has no translations",
-            )?;
-            require(
-                loaded
-                    .reviews
-                    .iter()
-                    .filter(|r| r.locale == locale)
-                    .all(|r| r.complete && r.reviewed),
-                "shipping locale has missing or stale translations",
-            )?;
-        }
-        Ok(loaded)
+        Self::from_parts(content, scenario, project.source_locale, translations)
     }
     pub fn content(&self) -> &GameContent {
         &self.content
@@ -394,9 +343,6 @@ impl LoadedProject {
     }
     pub fn warnings(&self) -> &[String] {
         &self.warnings
-    }
-    pub fn translation_reviews(&self) -> &[TranslationReview] {
-        &self.reviews
     }
     pub fn start(&self) -> Result<gameplay::GameSession> {
         self.scenario.instantiate(&self.content)
@@ -422,31 +368,13 @@ impl LoadedProject {
             crate::asset::validate_locale(&translation.locale)?;
             locales.insert(translation.locale.clone());
             require(
-                translation.source.len() <= MAX_TRANSLATION_BYTES,
-                "translation exceeds 2 MiB",
+                content.text.contains_key(&translation.id),
+                "translation resource has no contract",
             )?;
-            let contract = content
-                .text
-                .get(&translation.id)
-                .ok_or_else(|| Invalid("translation resource has no contract".into()))?;
-            for (key, revision) in &translation.reviewed {
-                require(
-                    contract.messages.contains_key(key),
-                    "review metadata names an undeclared message",
-                )?;
-                require(
-                    revision.len() == 64
-                        && revision
-                            .bytes()
-                            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
-                    "review revision must be a lowercase BLAKE3 hash",
-                )?;
-            }
         }
         let contracts = content.text.values().cloned().collect();
         let localization = Localization::new(&source_locale, contracts, translations.clone())?;
         let mut warnings = Vec::new();
-        let mut reviews = Vec::new();
         for reference in content.text_keys().into_iter().chain(scenario.text_keys()) {
             require(
                 content
@@ -465,56 +393,24 @@ impl LoadedProject {
             localization
                 .validate_keys(content.text_keys().into_iter().chain(scenario.text_keys()))?;
             for contract in content.text.values() {
+                let context = |locale: &str| format!("Fluent {locale}/{}", contract.id);
                 let source = contextual(
-                    format!("Fluent {}/{}", source_locale, contract.id),
+                    context(&source_locale),
                     localization.scope(contract.id, &source_locale),
                 )?;
-                contextual(
-                    format!("Fluent {}/{}", source_locale, contract.id),
-                    source.validate_definitions(None),
-                )?;
-                let revisions: BTreeMap<_, _> = contract
-                    .messages
-                    .keys()
-                    .map(|key| Ok((key.clone(), source.revision(key)?)))
-                    .collect::<localization::Result<_>>()?;
+                contextual(context(&source_locale), source.validate_definitions(None))?;
                 for locale in locales.iter().filter(|l| **l != source_locale) {
-                    let scope = contextual(
-                        format!("Fluent {}/{}", locale, contract.id),
-                        localization.scope(contract.id, locale),
-                    )?;
-                    contextual(
-                        format!("Fluent {}/{}", locale, contract.id),
-                        scope.validate_definitions(Some(&source)),
-                    )?;
-                    for (key, revision) in &revisions {
-                        let complete = match scope.validate(key) {
-                            Ok(()) => true,
-                            Err(localization::LocalizationError::Missing(_)) => false,
-                            Err(e) => return Err(e.into()),
-                        };
-                        let reviewed = translations
-                            .iter()
-                            .find(|t| t.id == contract.id && t.locale == *locale)
-                            .and_then(|t| t.reviewed.get(key))
-                            .is_some_and(|r| r == revision);
-                        if !complete {
+                    let scope =
+                        contextual(context(locale), localization.scope(contract.id, locale))?;
+                    contextual(context(locale), scope.validate_definitions(Some(&source)))?;
+                    for key in contract.messages.keys() {
+                        if scope.validate(key).is_err() {
                             warnings.push(format!(
                                 "{locale}: {}/{} falls back to {source_locale}",
                                 contract.id,
                                 key.as_str()
                             ));
-                        } else if !reviewed {
-                            warnings.push(format!("{locale}: {}/{} needs translation review; source revision {revision}", contract.id, key.as_str()));
                         }
-                        reviews.push(TranslationReview {
-                            resource: contract.id,
-                            key: key.clone(),
-                            locale: locale.clone(),
-                            source_revision: revision.clone(),
-                            complete,
-                            reviewed,
-                        });
                     }
                 }
             }
@@ -556,7 +452,6 @@ impl LoadedProject {
             translations,
             localization,
             warnings,
-            reviews,
         })
     }
 }
@@ -576,7 +471,44 @@ impl SourceReader {
         let text = self.text(path, MAX_DOCUMENT_BYTES)?;
         ron::from_str(&text).map_err(|error| source_error(&self.root.join(path), error))
     }
-    fn text(&mut self, path: &str, limit: usize) -> Result<String> {
+    /// Every file under a directory of the project, by path from the root, in order.
+    /// Hidden files are left out.
+    fn files(&self, directory: &str) -> Result<Vec<String>> {
+        fn walk(root: &Path, at: &Path, into: &mut Vec<String>) -> Result<()> {
+            let full = root.join(at);
+            let mut entries: Vec<_> = std::fs::read_dir(&full)
+                .map_err(|error| source_error(&full, error))?
+                .collect::<std::io::Result<_>>()
+                .map_err(|error| source_error(&full, error))?;
+            entries.sort_by_key(|entry| entry.file_name());
+            for entry in entries {
+                let name = entry.file_name();
+                let Some(name) = name.to_str() else {
+                    return Err(source_error(&entry.path(), "file name is not UTF-8"));
+                };
+                if name.starts_with('.') {
+                    continue;
+                }
+                let path = at.join(name);
+                if entry
+                    .file_type()
+                    .map_err(|e| source_error(&entry.path(), e))?
+                    .is_dir()
+                {
+                    walk(root, &path, into)?;
+                } else {
+                    into.push(path.to_string_lossy().into_owned());
+                }
+            }
+            Ok(())
+        }
+        self.check_path(directory)?;
+        let mut files = Vec::new();
+        walk(&self.root, Path::new(directory), &mut files)?;
+        Ok(files)
+    }
+    /// A path relative to the root that stays inside it.
+    fn check_path(&self, path: &str) -> Result<()> {
         let relative = Path::new(path);
         require(
             !path.is_empty()
@@ -584,7 +516,12 @@ impl SourceReader {
                     .components()
                     .all(|c| matches!(c, Component::Normal(_))),
             "source paths must be relative without . or ..",
-        )?;
+        )
+        .map_err(Into::into)
+    }
+    fn text(&mut self, path: &str, limit: usize) -> Result<String> {
+        self.check_path(path)?;
+        let relative = Path::new(path);
         let full = self.root.join(relative);
         let canonical = full
             .canonicalize()

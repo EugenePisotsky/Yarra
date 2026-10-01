@@ -316,7 +316,7 @@ fn only_the_selected_dialogue_graph_is_read() {
 fn invalid_profile_predicate_and_quest_references_fail_authoring() {
     let temp = Temp::new();
     let root = temp.source();
-    let path = root.join("packages/guard/profile.ron");
+    let path = root.join("packages/guard/guard.profile.ron");
     let original: gameplay::InteractionProfile = read(&path);
     for change in 0..4 {
         let mut profile = original.clone();

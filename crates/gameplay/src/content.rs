@@ -302,33 +302,6 @@ impl GameContent {
         for contract in self.text.values() {
             contract.validate()?;
         }
-        let contracts = &self.text;
-        fn visit_text(
-            id: TextResourceId,
-            contracts: &BTreeMap<TextResourceId, TextContract>,
-            active: &mut BTreeSet<TextResourceId>,
-            visited: &mut BTreeSet<TextResourceId>,
-        ) -> Result<()> {
-            require(!active.contains(&id), "text import cycle")?;
-            if visited.contains(&id) {
-                return Ok(());
-            }
-            require(active.len() < 256, "text import depth exceeds limit")?;
-            let contract = contracts
-                .get(&id)
-                .ok_or_else(|| Invalid("unknown text import".into()))?;
-            active.insert(id);
-            for import in &contract.imports {
-                visit_text(*import, contracts, active, visited)?;
-            }
-            active.remove(&id);
-            visited.insert(id);
-            Ok(())
-        }
-        let mut visited = BTreeSet::new();
-        for id in contracts.keys() {
-            visit_text(*id, contracts, &mut BTreeSet::new(), &mut visited)?;
-        }
         filed(&self.game.variables, "variables")?;
         for variable in self.game.variables.values() {
             variable.initial.validate()?;
