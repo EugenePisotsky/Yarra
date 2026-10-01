@@ -602,6 +602,9 @@ mod party {
         let graph = banter();
         content.game.dialogue_contracts.add(graph.contract());
         content.game.dialogues.add(graph);
+        let mut character = content.character(COMPANION).unwrap().clone();
+        character.id = STRANGER;
+        content.game.characters.add(character);
         let mut state = state();
         if stranger {
             let mut actor = state.actors[&COMPANION].clone();

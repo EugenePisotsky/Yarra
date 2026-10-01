@@ -71,11 +71,17 @@ pub enum WorldSignal {
 impl WorldSignal {
     fn validate(&self, content: &GameContent) -> Result<()> {
         match self {
-            Self::Entered { area, .. } | Self::Exited { area, .. } | Self::Arrived { area, .. } => {
+            Self::Entered { actor, area }
+            | Self::Exited { actor, area }
+            | Self::Arrived { actor, area } => {
+                content.character(*actor)?;
                 content.area(*area)?
             }
-            Self::MoveFailed(_) | Self::Died(_) | Self::LeveledUp(_) => {}
-            Self::ItemAcquired { definition, .. } => {
+            Self::MoveFailed(actor) | Self::Died(actor) | Self::LeveledUp(actor) => {
+                content.character(*actor)?;
+            }
+            Self::ItemAcquired { actor, definition } => {
+                content.character(*actor)?;
                 content.items.item(*definition)?;
             }
             Self::QuestStarted(id) | Self::QuestChanged(id) => {
@@ -322,16 +328,23 @@ impl GameContent {
         }
         crate::content::filed(&w.triggers, "triggers")?;
         for d in w.triggers.values() {
-            d.validate()?;
-            for signal in &d.on {
-                signal.validate(self)?;
-            }
-            if let Some(condition) = &d.condition {
-                self.validate_condition(condition)?;
-            }
-            for action in &d.actions {
-                self.validate_action(action, 0)?;
-            }
+            crate::content::within(format!("trigger {}", d.id), || {
+                d.validate()?;
+                self.character(d.player)?;
+                if let Some(speaker) = d.speaker {
+                    self.character(speaker)?;
+                }
+                for signal in &d.on {
+                    signal.validate(self)?;
+                }
+                if let Some(condition) = &d.condition {
+                    self.validate_condition(condition)?;
+                }
+                for action in &d.actions {
+                    self.validate_action(action, 0)?;
+                }
+                Ok(())
+            })?;
         }
         Ok(())
     }

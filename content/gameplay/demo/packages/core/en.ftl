@@ -26,6 +26,8 @@ class-soldier = Soldier
 skill-persuasion = Persuasion
 skill-swordsmanship = Swordsmanship
 actor-traveller = Traveller
+merchant-name = Merchant
+mira-name = Mira
 inventory-count = { $count ->
     [one] One item
    *[other] { $count } items

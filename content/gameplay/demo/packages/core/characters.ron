@@ -1,0 +1,4 @@
+// Characters content may name; see docs/WORKFLOWS.md for the package layout.
+[(id: "hero", template: "traveller"),
+ (id: "merchant", template: "traveller", name: Some(Message("merchant-name"))),
+ (id: "mira", template: "traveller", name: Some(Message("mira-name")))]

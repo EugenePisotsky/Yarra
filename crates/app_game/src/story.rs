@@ -84,6 +84,10 @@ impl Story {
         let text = |e: &dyn std::fmt::Display| e.to_string();
         let project =
             LoadedProject::load_directory_with_scenario(source, SCENARIO).map_err(|e| text(&e))?;
+        // Content that lost a character the slice names fails here, not mid-play.
+        for id in [HERO, GUARD, MIRA, DUMMY] {
+            project.content().character(id).map_err(|e| text(&e))?;
+        }
         std::fs::create_dir_all(work).map_err(|e| text(&e))?;
         let bundle = work.join("content.sqlite");
         // Publication never replaces a bundle; this one is a private copy for the session.
@@ -141,13 +145,9 @@ impl Story {
         let Ok(actor) = state.actor(id) else {
             return String::new();
         };
-        match (
-            &actor.name_override,
-            self.project.content().template(actor.template),
-        ) {
-            (Some(name), _) => self.format(name),
-            (None, Ok(template)) => self.format(&template.name),
-            _ => String::new(),
+        match self.project.content().actor_name(actor) {
+            Ok(name) => self.format(name),
+            Err(_) => String::new(),
         }
     }
     pub fn guard_name(&self) -> &str {

@@ -1,6 +1,6 @@
 //! Records kept in maps under an identity they also carry, and saved as plain lists: the
 //! playthrough's state and the content's definitions alike.
-use crate::actors::{Actor, ActorTemplate, Relationship, RelationshipKey};
+use crate::actors::{Actor, ActorTemplate, CharacterDefinition, Relationship, RelationshipKey};
 use crate::dialogue::{
     Conversation, Dialogue, DialogueContract, History, HistoryKey, Interaction, InteractionKey,
 };
@@ -65,6 +65,7 @@ keyed! {
     InteractionProfile => InteractionProfileId, |v| v.id;
     NamedPredicate => PredicateId, |v| v.id;
     ActorTemplate => ActorTemplateId, |v| v.id;
+    CharacterDefinition => ActorId, |v| v.id;
     VariableDefinition => VariableId, |v| v.id;
     ScriptModule => Key, |v| v.name.clone();
 }

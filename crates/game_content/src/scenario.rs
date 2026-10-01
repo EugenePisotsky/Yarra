@@ -17,8 +17,9 @@ pub struct ItemAmount {
 #[serde(deny_unknown_fields)]
 pub struct ActorSpawn {
     pub id: ActorId,
-    pub template: ActorTemplateId,
     pub position: Position,
+    /// A name for this playthrough instead of the character's own.
+    #[serde(default)]
     pub name: Option<TextRef>,
     /// Resources that do not start full, e.g. `{"health": 50}`.
     #[serde(default, deserialize_with = "game_types::deserialize_unique_map")]
@@ -40,8 +41,8 @@ pub struct WalletSeed {
     pub balance: Money,
 }
 /// Authored starting conditions and the steps played from them; not a saved playthrough or
-/// a second actor model. Characters are built from their templates; the playthrough ID is
-/// fresh each start.
+/// a second actor model. Each actor is a declared character, built from its template; the
+/// playthrough ID is fresh each start.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Scenario {
@@ -122,16 +123,10 @@ impl Scenario {
             wallet: self.purse,
         };
         for spawn in &self.actors {
-            content.template(spawn.template).map_err(|_| {
-                Invalid(format!(
-                    "actor {}: unknown template {}",
-                    spawn.id, spawn.template
-                ))
+            let actor = contextual(format!("actor {}", spawn.id), {
+                let character = content.character(spawn.id)?;
+                state.spawn(content, character.template, spawn.id)
             })?;
-            let actor = contextual(
-                format!("actor {}", spawn.id),
-                state.spawn(content, spawn.template, spawn.id),
-            )?;
             actor.position = spawn.position.clone();
             actor.name_override = spawn.name.clone();
             for (resource, amount) in &spawn.resources {

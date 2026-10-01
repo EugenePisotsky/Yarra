@@ -27,6 +27,14 @@ fn pair(dialogue: DialogueId) -> ConversationKey {
         speaker: MERCHANT,
     }
 }
+/// The merchant built from the guard's template, so it has the guard's conversations.
+fn merchant_as_guard(root: &std::path::Path) {
+    let path = root.join("packages/core/characters.ron");
+    let mut characters: Vec<gameplay::actors::CharacterDefinition> = read(&path);
+    let merchant = characters.iter_mut().find(|c| c.id == MERCHANT).unwrap();
+    merchant.template = ActorTemplateId::named("gate_guard");
+    write(path, &characters);
+}
 fn load(temp: &Temp, root: &std::path::Path) -> (LoadedProject, gameplay::GameSession) {
     let project = LoadedProject::load_directory(root).unwrap();
     let session = support::runtime(temp, &project);
@@ -222,14 +230,8 @@ fn a_reward_given_once_per_player_is_still_there_for_the_next() {
 fn interruption_and_previous_choices_drive_selection_without_giving_rewards() {
     let temp = Temp::new();
     let root = temp.source();
-    // Use the NPC template from the authored guard exercise.
+    merchant_as_guard(&root);
     let mut source: Scenario = read(root.join("scenario.ron"));
-    source
-        .actors
-        .iter_mut()
-        .find(|a| a.id == MERCHANT)
-        .unwrap()
-        .template = ActorTemplateId::named("gate_guard");
     source.steps.clear();
     write(root.join("scenario.ron"), &source);
     let (project, mut session) = load(&temp, &root);
@@ -490,13 +492,8 @@ fn repeat_contracts_filter_variants_and_cooldowns_use_saved_logical_time() {
         graph.repeat = repeat;
         write(path, &graph);
     }
+    merchant_as_guard(&root);
     let mut source: Scenario = read(root.join("scenario.ron"));
-    source
-        .actors
-        .iter_mut()
-        .find(|a| a.id == MERCHANT)
-        .unwrap()
-        .template = ActorTemplateId::named("gate_guard");
     source.steps.clear();
     write(root.join("scenario.ron"), &source);
     let (_, mut session) = load(&temp, &root);

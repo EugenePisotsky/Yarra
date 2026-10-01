@@ -1,0 +1,3 @@
+// Characters content may name; see docs/WORKFLOWS.md for the package layout.
+[(id: "guard", template: "gate_guard"),
+ (id: "dummy", template: "training_dummy")]

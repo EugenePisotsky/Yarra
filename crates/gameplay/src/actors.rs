@@ -32,6 +32,17 @@ pub struct Acting {
 fn first_level() -> u32 {
     1
 }
+/// A character the content knows by name: who it is built from and what it is called.
+/// Content may name only declared characters, so a mistyped name fails the build.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CharacterDefinition {
+    pub id: ActorId,
+    pub template: ActorTemplateId,
+    /// Its own name; without one it goes by its template's.
+    #[serde(default)]
+    pub name: Option<TextRef>,
+}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ActorTemplate {

@@ -25,6 +25,8 @@ class-soldier = Солдат
 skill-persuasion = Переконання
 skill-swordsmanship = Володіння мечем
 actor-traveller = Мандрівник
+merchant-name = Торговець
+mira-name = Міра
 inventory-count = { $count ->
     [one] { $count } предмет
     [few] { $count } предмети

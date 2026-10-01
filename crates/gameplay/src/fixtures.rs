@@ -381,6 +381,13 @@ pub fn content() -> GameContent {
             predicates: Default::default(),
             rules,
             actors: keyed_map([template]),
+            characters: keyed_map([HERO, MERCHANT, COMPANION].map(|id| {
+                crate::actors::CharacterDefinition {
+                    id,
+                    template: TRAVELLER,
+                    name: None,
+                }
+            })),
             dialogues: keyed_map([graph]),
             variables: keyed_map([VariableDefinition {
                 id: REWARDED,

@@ -45,10 +45,11 @@ fn load(path: &Path, languages: &[PathBuf]) -> Result<LoadedProject> {
 }
 fn report(project: &LoadedProject) -> Result<()> {
     println!(
-        "Validated: {} categories, {} items, {} actor templates, {} dialogues, {} scenario steps.",
+        "Validated: {} categories, {} items, {} actor templates, {} characters, {} dialogues, {} scenario steps.",
         project.content().items.categories.len(),
         project.content().items.items.len(),
         project.content().game.actors.len(),
+        project.content().game.characters.len(),
         project.content().game.dialogues.len(),
         project.scenario().steps.len()
     );
@@ -240,15 +241,8 @@ fn demo(project: &LoadedProject, locale: &str, directory: Option<PathBuf>) -> Re
     // Resolve all presentation before writing files, including invalid locale errors.
     let mut summary = Vec::new();
     for actor in state.actors.values() {
-        let template = project.content().template(actor.template)?;
-        let name = project
-            .localization()
-            .format(
-                locale,
-                actor.name_override.as_ref().unwrap_or(&template.name),
-                &args,
-            )?
-            .value;
+        let name = project.content().actor_name(actor)?;
+        let name = project.localization().format(locale, name, &args)?.value;
         let rules = &project.content().game.rules;
         let named = |text: &game_types::TextRef| project.localization().format(locale, text, &args);
         summary.push(format!(

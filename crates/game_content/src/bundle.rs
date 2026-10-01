@@ -10,14 +10,14 @@ use std::{
 };
 
 pub const BUNDLE_APPLICATION_ID: i64 = 0x59474342;
-pub const BUNDLE_SCHEMA_VERSION: i64 = 12;
+pub const BUNDLE_SCHEMA_VERSION: i64 = 13;
 const SCHEMA: &str = "
 CREATE TABLE bundle_manifest (
  singleton INTEGER PRIMARY KEY CHECK(singleton=1),
  payload BLOB NOT NULL CHECK(length(payload)<=65536)
 ) STRICT;
 CREATE TABLE assets (
- kind INTEGER NOT NULL CHECK(kind BETWEEN 1 AND 16),
+ kind INTEGER NOT NULL CHECK(kind BETWEEN 1 AND 17),
  id TEXT NOT NULL CHECK(length(CAST(id AS BLOB)) BETWEEN 1 AND 192),
  position INTEGER NOT NULL CHECK(position>=0),
  byte_len INTEGER NOT NULL CHECK(byte_len BETWEEN 1 AND 2097152),
@@ -186,6 +186,14 @@ impl LoadedProject {
         );
         append!(self.content.items.items.values().cloned().map(Asset::Item));
         append!(self.content.game.actors.values().cloned().map(Asset::Actor));
+        append!(
+            self.content
+                .game
+                .characters
+                .values()
+                .cloned()
+                .map(Asset::Character)
+        );
         assets.push((0, Asset::Rules(self.content.game.rules.clone())));
         append!(
             self.content

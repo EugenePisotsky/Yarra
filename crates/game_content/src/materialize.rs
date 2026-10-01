@@ -46,6 +46,7 @@ impl LoadedProject {
         let mut profiles = BTreeMap::new();
         let mut predicates = BTreeMap::new();
         let mut actors = BTreeMap::new();
+        let mut characters = BTreeMap::new();
         let mut dialogues = BTreeMap::new();
         let mut variables = BTreeMap::new();
         let mut scripts = BTreeMap::new();
@@ -83,6 +84,9 @@ impl LoadedProject {
                 Asset::Actor(v) => {
                     actors.add(v);
                 }
+                Asset::Character(v) => {
+                    characters.add(v);
+                }
                 Asset::Rules(v) => rules = Some(v),
                 Asset::Dialogue(v) => {
                     dialogues.add(v);
@@ -116,6 +120,7 @@ impl LoadedProject {
                 predicates,
                 rules: rules.ok_or(ContentError::MissingAsset(AssetId::Rules))?,
                 actors,
+                characters,
                 dialogues,
                 variables,
                 scripts,

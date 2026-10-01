@@ -3,26 +3,20 @@
     seed: 42,
     actors: [(
         id: "hero",
-        template: "traveller",
         position: (
             millimetres: (0, 0, 0),
         ),
-        name: None,
         resources: {"health": 50},
     ), (
         id: "merchant",
-        template: "traveller",
         position: (
             millimetres: (100000000, 0, 100000000),
         ),
-        name: None,
     ), (
         id: "mira",
-        template: "traveller",
         position: (
             millimetres: (0, 0, 0),
         ),
-        name: None,
     )],
     owners: [(
         kind: Object,

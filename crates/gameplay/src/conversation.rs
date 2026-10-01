@@ -57,10 +57,7 @@ impl GameContent {
             let value = match source {
                 ArgumentSource::ActorName(role) => {
                     let actor = state.actor(c.bindings[role])?;
-                    BoundArgument::Text(match &actor.name_override {
-                        Some(name) => name.clone(),
-                        None => self.template(actor.template)?.name.clone(),
-                    })
+                    BoundArgument::Text(self.actor_name(actor)?.clone())
                 }
                 ArgumentSource::Stat { role, stat } => {
                     BoundArgument::Number(state.stat(self, c.bindings[role], stat)?)

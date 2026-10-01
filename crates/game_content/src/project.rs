@@ -1,6 +1,6 @@
 use crate::{Asset, ContentError, Result, Scenario, contextual};
 use game_types::*;
-use gameplay::actors::ActorTemplate;
+use gameplay::actors::{ActorTemplate, CharacterDefinition};
 use gameplay::dialogue::Dialogue;
 use gameplay::inventory::{ItemCatalog, LootTable};
 use gameplay::rules::Rules;
@@ -45,6 +45,7 @@ enum Kind {
     Rules,
     Items,
     Actors,
+    Characters,
     Loot,
     Quest,
     Profile,
@@ -70,6 +71,8 @@ fn kind(path: &str) -> Result<Option<Kind>> {
         Kind::Items
     } else if named("actors") {
         Kind::Actors
+    } else if named("characters") {
+        Kind::Characters
     } else if named("loot") {
         Kind::Loot
     } else if name.ends_with(".quest.ron") {
@@ -134,6 +137,7 @@ impl LoadedProject {
         let mut items: Option<ItemCatalog> = None;
         let mut rules: Option<Rules> = None;
         let mut actors = BTreeMap::new();
+        let mut characters = BTreeMap::new();
         let mut dialogues = BTreeMap::new();
         let mut world = gameplay::WorldDefinitions::default();
         let mut quests = BTreeMap::new();
@@ -214,6 +218,12 @@ impl LoadedProject {
                             for template in source.ron::<Vec<ActorTemplate>>(path)? {
                                 define(format!("actor template {}", template.id))?;
                                 actors.add(template);
+                            }
+                        }
+                        Kind::Characters => {
+                            for character in source.ron::<Vec<CharacterDefinition>>(path)? {
+                                define(format!("character {}", character.id))?;
+                                characters.add(character);
                             }
                         }
                         Kind::Loot => {
@@ -312,6 +322,7 @@ impl LoadedProject {
                 predicates,
                 rules: rules.ok_or_else(|| Invalid("missing rules".into()))?,
                 actors,
+                characters,
                 dialogues,
                 variables,
                 scripts,
@@ -423,6 +434,14 @@ impl LoadedProject {
             .map(Asset::Category)
             .chain(content.items.items.values().cloned().map(Asset::Item))
             .chain(content.game.actors.values().cloned().map(Asset::Actor))
+            .chain(
+                content
+                    .game
+                    .characters
+                    .values()
+                    .cloned()
+                    .map(Asset::Character),
+            )
             .chain(std::iter::once(Asset::Rules(content.game.rules.clone())))
             .chain(content.game.quests.values().cloned().map(Asset::Quest))
             .chain(content.game.profiles.values().cloned().map(Asset::Profile))

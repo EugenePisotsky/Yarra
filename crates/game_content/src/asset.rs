@@ -25,9 +25,10 @@ pub enum AssetKind {
     Trigger,
     Script,
     Loot,
+    Character,
 }
 impl AssetKind {
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 17] = [
         Self::Category,
         Self::Item,
         Self::Actor,
@@ -44,6 +45,7 @@ impl AssetKind {
         Self::Trigger,
         Self::Script,
         Self::Loot,
+        Self::Character,
     ];
 }
 
@@ -65,6 +67,7 @@ pub enum AssetId {
     Trigger(TriggerId),
     Script(Key),
     Loot(LootId),
+    Character(ActorId),
 }
 impl AssetId {
     pub fn kind(&self) -> AssetKind {
@@ -85,6 +88,7 @@ impl AssetId {
             Self::Trigger(_) => AssetKind::Trigger,
             Self::Script(_) => AssetKind::Script,
             Self::Loot(_) => AssetKind::Loot,
+            Self::Character(_) => AssetKind::Character,
         }
     }
     /// Storage key: the identity bytes, never the name, so lookups do not depend on which
@@ -107,6 +111,7 @@ impl AssetId {
             Self::Area(id) => id.raw(),
             Self::Trigger(id) => id.raw(),
             Self::Loot(id) => id.raw(),
+            Self::Character(id) => id.raw(),
         }
     }
     pub(crate) fn from_key(kind: AssetKind, key: String) -> Result<Self> {
@@ -130,6 +135,7 @@ impl AssetId {
             AssetKind::Trigger => Self::Trigger(TriggerId::try_from(key.clone())?),
             AssetKind::Predicate => Self::Predicate(PredicateId::try_from(key.clone())?),
             AssetKind::Loot => Self::Loot(LootId::try_from(key.clone())?),
+            AssetKind::Character => Self::Character(ActorId::try_from(key.clone())?),
         };
         require(id.key() == key, "noncanonical asset key")?;
         Ok(id)
@@ -162,6 +168,7 @@ pub enum Asset {
     Trigger(gameplay::TriggerDefinition),
     Script(gameplay::ScriptModule),
     Loot(inventory::LootTable),
+    Character(actors::CharacterDefinition),
 }
 impl Asset {
     pub(crate) fn text_references(&self) -> Vec<&MessageRef> {
@@ -174,6 +181,7 @@ impl Asset {
             Self::Category(v) => vec![&v.name],
             Self::Item(v) => vec![&v.name, &v.description],
             Self::Actor(v) => vec![&v.name],
+            Self::Character(v) => v.name.iter().collect(),
             Self::Rules(v) => v.names().collect(),
             Self::Dialogue(v) => v
                 .messages()
@@ -219,6 +227,7 @@ impl Asset {
             Self::Area(id) => AssetId::Area(*id),
             Self::Trigger(v) => AssetId::Trigger(v.id),
             Self::Loot(v) => AssetId::Loot(v.id),
+            Self::Character(v) => AssetId::Character(v.id),
         }
     }
     pub(crate) fn validate_local(&self) -> Result<()> {
@@ -240,6 +249,11 @@ impl Asset {
             }
             Self::Item(v) => v.validate()?,
             Self::Actor(v) => v.name.validate()?,
+            Self::Character(v) => {
+                if let Some(name) = &v.name {
+                    name.validate()?;
+                }
+            }
             Self::Rules(v) => v.validate()?,
             Self::Dialogue(v) => v.validate()?,
             Self::Text(v) => {

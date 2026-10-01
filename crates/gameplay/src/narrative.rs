@@ -261,6 +261,9 @@ impl GameContent {
     pub fn validate_condition(&self, condition: &Condition) -> Result<()> {
         condition.visit_resolved(&|id| self.predicate(id), &mut |c| {
             match c {
+                Condition::Present(actor) => {
+                    self.character(*actor)?;
+                }
                 Condition::Script(name) => {
                     self.scripts.engine(name)?;
                 }
@@ -287,6 +290,9 @@ impl GameContent {
                     require(*quantity > 0, "zero item condition")?;
                 }
                 Condition::Variable { variable, of, test } => {
+                    if let Some(of) = of {
+                        self.validate_participant(of)?;
+                    }
                     let initial = &self.variable_use(*variable, of)?.initial;
                     let fits = match test {
                         Test::Is(value) => initial.same_type(value),
@@ -313,10 +319,14 @@ impl GameContent {
                 Condition::ObjectiveCompleted { quest, objective } => {
                     self.quest(*quest)?.objective(objective)?;
                 }
-                Condition::Relationship { from, to, minimum } => require(
-                    from != to && (-100..=100).contains(minimum),
-                    "invalid relationship condition",
-                )?,
+                Condition::Relationship { from, to, minimum } => {
+                    self.validate_participant(from)?;
+                    self.validate_participant(to)?;
+                    require(
+                        from != to && (-100..=100).contains(minimum),
+                        "invalid relationship condition",
+                    )?
+                }
                 _ => {}
             }
             Ok(())

@@ -38,9 +38,9 @@ Gameplay source format 11: `project.ron` lists package directories, and each fil
 package says what it holds by its name (`*.quest.ron`, `*.dialogue.ron`, `*.trigger.ron`,
 `en.ftl`…). A package has one text resource, its Fluent files; content writes
 `Message("key")` for its own package's text, and what a message takes comes from the
-English file. `build` publishes an immutable SQLite bundle (schema 12) with one
-checksummed record per asset; language packs are published separately and hold the
-wording.
+English file. Content names only characters declared in `characters.ron`. `build`
+publishes an immutable SQLite bundle (schema 13) with one checksummed record per asset;
+language packs are published separately and hold the wording.
 
 At runtime the whole playthrough state is held in memory and saved as one snapshot file
 per slot (save format 16). A session loads the always-needed definitions once and each

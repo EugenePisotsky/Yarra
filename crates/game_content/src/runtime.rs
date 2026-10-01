@@ -11,10 +11,11 @@ use std::{
 
 /// Asset kinds read once when a session opens. Dialogue graphs and text contracts are read
 /// only when a conversation or a formatter needs them.
-const CORE_KINDS: [AssetKind; 14] = [
+const CORE_KINDS: [AssetKind; 15] = [
     AssetKind::Category,
     AssetKind::Item,
     AssetKind::Actor,
+    AssetKind::Character,
     AssetKind::Rules,
     AssetKind::Variable,
     AssetKind::Quest,
@@ -68,6 +69,7 @@ impl ContentRepository {
                 predicates: Default::default(),
                 rules,
                 actors: Default::default(),
+                characters: Default::default(),
                 dialogues: Default::default(),
                 variables: Default::default(),
                 scripts: Default::default(),
@@ -106,6 +108,9 @@ impl ContentRepository {
                     }
                     Asset::Actor(v) => {
                         content.game.actors.add(v);
+                    }
+                    Asset::Character(v) => {
+                        content.game.characters.add(v);
                     }
                     Asset::Script(v) => {
                         content.game.scripts.add(v);

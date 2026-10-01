@@ -249,6 +249,33 @@ fn misnamed_files_hidden_fluent_errors_and_extra_translations_fail_publication()
     assert!(error(&root).contains("unheard-of is not in the source-language text"));
 }
 #[test]
+fn content_names_only_declared_characters() {
+    let temp = Temp::new();
+    let root = temp.source();
+    let banter = root.join("packages/guard/world/banter.trigger.ron");
+    let original = fs::read_to_string(&banter).unwrap();
+    // A mistyped name, wherever content names a character, fails the build.
+    for (from, to) in [
+        ("Present(\"mira\")", "Present(\"mria\")"),
+        ("Actor(\"mira\")", "Actor(\"mria\")"),
+        ("Entered(actor: \"hero\"", "Entered(actor: \"heor\""),
+        ("player: \"hero\"", "player: \"heor\""),
+    ] {
+        fs::write(&banter, original.replace(from, to)).unwrap();
+        let error = error(&root);
+        assert!(error.contains("unknown character"), "{to}: {error}");
+    }
+    fs::write(&banter, &original).unwrap();
+    // So does starting a scenario with one, or declaring one twice.
+    let mut scenario: Scenario = read(root.join("scenario.ron"));
+    scenario.actors[0].id = ActorId::try_from("stranger".to_owned()).unwrap();
+    write(root.join("scenario.ron"), &scenario);
+    assert!(error(&root).contains("unknown character stranger"));
+    let characters = root.join("packages/core/characters.ron");
+    fs::copy(&characters, root.join("packages/guard/more.characters.ron")).unwrap();
+    assert!(error(&root).contains("character hero is defined in both"));
+}
+#[test]
 fn language_packs_are_indexed_lazy_and_reject_requested_corruption() {
     let temp = Temp::new();
     let project = LoadedProject::load_directory(temp.source()).unwrap();

@@ -258,6 +258,9 @@ pub struct GameDefinitions {
     pub rules: Rules,
     #[serde(with = "crate::keyed::list")]
     pub actors: BTreeMap<ActorTemplateId, ActorTemplate>,
+    /// Characters the content refers to by name.
+    #[serde(default, with = "crate::keyed::list")]
+    pub characters: BTreeMap<ActorId, crate::actors::CharacterDefinition>,
     #[serde(with = "crate::keyed::list")]
     pub dialogues: BTreeMap<DialogueId, Dialogue>,
     #[serde(with = "crate::keyed::list")]
@@ -281,6 +284,33 @@ pub struct GameContent {
     /// Where dialogue graphs not in `game.dialogues` are read from; see `dialogue`.
     #[serde(skip)]
     pub graphs: crate::Graphs,
+}
+impl Action {
+    /// The participants this action names itself, not those of actions inside it.
+    pub fn participants(&self) -> Vec<&Participant> {
+        match self {
+            Self::Relationship { from, to, .. } => vec![from, to],
+            Self::ChangeResource { of, .. }
+            | Self::ApplyEffect { of, .. }
+            | Self::RemoveEffect { of, .. } => vec![of],
+            Self::Move { actor, .. } => vec![actor],
+            Self::StartDialogue { speaker, .. } => speaker.iter().collect(),
+            Self::Set { of, .. } | Self::Add { of, .. } => of.iter().collect(),
+            _ => vec![],
+        }
+    }
+}
+/// Names the record a mistake in content was found in.
+pub(crate) fn within(
+    record: impl std::fmt::Display,
+    check: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    check().map_err(|error| match error {
+        crate::GameplayError::Invalid(Invalid(message)) => {
+            Invalid(format!("{record}: {message}")).into()
+        }
+        other => other,
+    })
 }
 /// Each record is filed under its own identity.
 pub(crate) fn filed<V: Keyed>(map: &BTreeMap<V::Key, V>, what: &str) -> Result<()> {
@@ -323,6 +353,16 @@ impl GameContent {
         for table in self.game.loot.values() {
             table.validate(&self.items)?;
         }
+        filed(&self.game.characters, "characters")?;
+        for character in self.game.characters.values() {
+            within(format!("character {}", character.id), || {
+                self.template(character.template)?;
+                match &character.name {
+                    Some(name) => Ok(name.validate()?),
+                    None => Ok(()),
+                }
+            })?;
+        }
         filed(&self.game.actors, "actor templates")?;
         for actor in self.game.actors.values() {
             actor.validate(&self.game.rules)?;
@@ -351,45 +391,67 @@ impl GameContent {
         }
         filed(&self.game.dialogue_contracts, "dialogue contracts")?;
         for contract in self.game.dialogue_contracts.values() {
-            contract.validate()?;
+            within(format!("dialogue {}", contract.id), || {
+                contract.validate()?;
+                for role in contract.roles.values() {
+                    if let crate::dialogue::Role::Actor(actor) = role {
+                        self.character(*actor)?;
+                    }
+                }
+                Ok(())
+            })?;
         }
         filed(&self.game.dialogues, "dialogues")?;
         for graph in self.game.dialogues.values() {
-            graph.validate()?;
-            require(
-                self.dialogue_contract(graph.id)? == &graph.contract(),
-                "dialogue contract mismatch",
-            )?;
-            self.validate_dialogue_text(graph)?;
-            for node in &graph.nodes {
-                if let Some(condition) = &node.condition {
-                    self.validate_condition(condition)?;
+            within(format!("dialogue {}", graph.id), || {
+                graph.validate()?;
+                require(
+                    self.dialogue_contract(graph.id)? == &graph.contract(),
+                    "dialogue contract mismatch",
+                )?;
+                self.validate_dialogue_text(graph)?;
+                for node in &graph.nodes {
+                    within(format!("node {}", node.id), || {
+                        if let Some(condition) = &node.condition {
+                            self.validate_condition(condition)?;
+                        }
+                        for action in &node.actions {
+                            self.validate_action(action, 0)?;
+                        }
+                        Ok(())
+                    })?;
                 }
-                for action in &node.actions {
-                    self.validate_action(action, 0)?;
-                }
-            }
+                Ok(())
+            })?;
         }
         filed(&self.game.quests, "quests")?;
         filed(&self.game.predicates, "named predicates")?;
         filed(&self.game.profiles, "interaction profiles")?;
         for quest in self.game.quests.values() {
-            quest.validate()?;
+            within(format!("quest {}", quest.id), || Ok(quest.validate()?))?;
         }
         for rule in self.game.predicates.values() {
-            self.validate_condition(&rule.condition)?;
+            within(format!("predicate {}", rule.id), || {
+                self.validate_condition(&rule.condition)
+            })?;
         }
         for profile in self.game.profiles.values() {
-            profile.validate()?;
-            for rule in &profile.rules {
-                self.validate_condition(&rule.condition)?;
-            }
+            within(format!("interaction profile {}", profile.id), || {
+                profile.validate()?;
+                for rule in &profile.rules {
+                    self.validate_condition(&rule.condition)?;
+                }
+                Ok(())
+            })?;
         }
         Ok(())
     }
     /// Actions nest only so deep, so running them cannot exhaust the stack.
     pub(crate) fn validate_action(&self, action: &Action, depth: usize) -> Result<()> {
         require(depth <= 8, "actions nested too deeply")?;
+        for participant in action.participants() {
+            self.validate_participant(participant)?;
+        }
         match action {
             Action::Script(name) => {
                 self.scripts.engine(name)?;
@@ -556,6 +618,30 @@ impl GameContent {
         let table = self.game.loot.get(&id);
         table.ok_or_else(|| Invalid(format!("unknown loot table {id}")).into())
     }
+    /// A declared character.
+    pub fn character(&self, id: ActorId) -> Result<&crate::actors::CharacterDefinition> {
+        let character = self.game.characters.get(&id);
+        character.ok_or_else(|| Invalid(format!("unknown character {id}")).into())
+    }
+    /// What an actor is called: its own name in this playthrough, else its character's,
+    /// else its template's.
+    pub fn actor_name<'a>(&'a self, actor: &'a crate::actors::Actor) -> Result<&'a TextRef> {
+        if let Some(name) = &actor.name_override {
+            return Ok(name);
+        }
+        let character = self.game.characters.get(&actor.id);
+        match character.and_then(|c| c.name.as_ref()) {
+            Some(name) => Ok(name),
+            None => Ok(&self.template(actor.template)?.name),
+        }
+    }
+    /// A participant naming a character names a declared one.
+    pub(crate) fn validate_participant(&self, participant: &Participant) -> Result<()> {
+        if let Participant::Actor(id) = participant {
+            self.character(*id)?;
+        }
+        Ok(())
+    }
     pub fn template(&self, id: ActorTemplateId) -> Result<&ActorTemplate> {
         let template = self.game.actors.get(&id);
         template.ok_or_else(|| Invalid(format!("unknown actor template {id}")).into())
@@ -578,6 +664,12 @@ impl GameContent {
         }
         refs.extend(self.game.world.objects.values().map(|o| &o.name));
         refs.extend(self.game.actors.values().map(|a| &a.name));
+        refs.extend(
+            self.game
+                .characters
+                .values()
+                .filter_map(|c| c.name.as_ref()),
+        );
         refs.extend(self.game.rules.names());
         for quest in self.game.quests.values() {
             refs.push(&quest.title);
