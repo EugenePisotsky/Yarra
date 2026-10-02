@@ -103,6 +103,23 @@ cargo run --release -p yarra-app-game -- --start-view content/world.project.view
 
 `place_oak_preview.py` adds three samples east of the birch stand, preserving existing scenery and edits on repeat runs. It backs up the source to `tmp/oak-placement-*/` and creates `oak-forest`, `oak-spreading`, `oak-sparse`, and `oak-overhead` bookmarks. Ground and overhead captures are under local `tmp/oak-playtest/`. These are art/correctness checks; dense-forest performance is not yet measured. Existing LOD stippling remains visible. Billboard selection and the separate translucency texture are still pending runtime work.
 
+**Maple prototypes:** Forest, spreading and sparse forms use paired maple shoots from two supplied leaf sheets, an upright leader and smoother rising forks. All three share six compressed runtime maps. Elm bark is a provisional stand-in. Counts are 2,612/754/362 (forest), 2,968/858/406 (spreading), and 2,630/722/292 (sparse). Their 58/71/17 centered facing cards persist at each mesh LOD, including 16/24/0 density-aware filler cards. The current lighting and renderer are unchanged.
+
+```sh
+python3 tools/import_vegetation_bundle.py \
+  --bundle /path/to/vegetation/outputs/maple_forest/current \
+  --bundle /path/to/vegetation/outputs/maple_spreading/current \
+  --bundle /path/to/vegetation/outputs/maple_sparse/current \
+  --output assets/local/yarra_maples \
+  --catalog assets/packs/yarra_maples/maples.catalog.ron
+cargo run --release -p yarra-world-cook -- import-assets assets/packs/yarra_maples/maples.catalog.ron
+python3 tools/place_maple_preview.py
+cargo run --release -p yarra-world-cook -- cook
+cargo run --release -p yarra-app-game -- --start-view content/world.project.views/maple-spreading.ron
+```
+
+The maple samples stand east of the oaks. `place_maple_preview.py` preserves existing placements/bookmarks and backs up the source to `tmp/maple-placement-*/`. It creates `maple-forest`, `maple-spreading`, `maple-sparse`, and `maple-overhead` bookmarks. Art review is pending; native captures go under local `tmp/maple-playtest/`. The same billboard and dense-forest profiling limitations as oak apply.
+
 **Houdini trees:** `tools/houdini_export_tree.py` exports the forest trees from the Houdini tree scene as glTF LODs plus `assets/packs/yarra_trees/trees.catalog.ron`; import that catalog the same way. See [Houdini trees](../assets/README.md#houdini-trees) for the export command, the cluster-card bake and the `crown_v1` shading contract.
 
 Imported forest foliage now animates in both game and editor. It follows the shared wind enable/direction/strength and preview transport, with rigid bark and authored leaf weights. The existing game Wind control affects trees and grass together. `--upscaler metalfx-temporal` uses deformation-aware tree motion vectors automatically. To check the wind implementation, run `cargo test -p yarra-engine tree_wind`; with native GPU access, also run `cargo test -p yarra-engine tree_wind::gpu_tests -- --ignored`. The current local exports already include wind metadata; no world recook is needed for the shader/material update.

@@ -13,6 +13,10 @@ KTX 4.4.2, available on PATH or via `--ktx`).
 `assets/packs/yarra_oaks/oaks.catalog.ron` records the forest, spreading and sparse
 oak forms. Use the same importer with a separate `assets/local/yarra_oaks/` output
 pack; the three forms share one texture set and three mesh LODs each.
+`assets/packs/yarra_maples/maples.catalog.ron` records forest, spreading and sparse
+maples, rebuilt into `assets/local/yarra_maples/` with the same importer. Both
+source leaf packages are combined into one shared texture set; the current bark
+uses the supplied elm texture as a provisional stand-in.
 `assets/packs/yarra_pines/pines.catalog.ron` records the six legacy native-scene
 pine variants imported by `tools/houdini_export_tree.py`. Their original scene
 and source inputs must also be restored locally. See
