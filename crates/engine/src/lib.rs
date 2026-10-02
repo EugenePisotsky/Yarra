@@ -9,7 +9,7 @@ mod msaa_store;
 mod object_lod;
 pub use object_lod::{ObjectFootprint, ObjectLodPlugin};
 mod tree_wind;
-pub use tree_wind::{TreeWindPlugin, TreeWindResponse, TreeWindSystems};
+pub use tree_wind::{TreeWindPlugin, TreeWindResponse, TreeWindSystems, tree_gltf_plugin};
 mod weather;
 pub use weather::{GameWeather, GameWeatherPlugin, WeatherStart};
 pub use world::weather::{WeatherKind, WeatherParams};

@@ -44,7 +44,7 @@ impl MaterialExtension for TreeWindExtension {
     fn specialize(
         _pipeline: &MaterialExtensionPipeline,
         descriptor: &mut RenderPipelineDescriptor,
-        _layout: &MeshVertexBufferLayoutRef,
+        layout: &MeshVertexBufferLayoutRef,
         key: MaterialExtensionKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
         if key.bind_group_data.crown_shading
@@ -52,7 +52,7 @@ impl MaterialExtension for TreeWindExtension {
         {
             fragment.shader_defs.push("TREE_CROWN_SHADING".into());
         }
-        Ok(())
+        super::cards::specialize(descriptor, layout)
     }
     fn vertex_shader() -> ShaderRef {
         "shaders/tree_wind.wgsl".into()
@@ -103,17 +103,33 @@ fn uses_wind(extras: &str) -> bool {
     extra_is(extras, "yarra_wind", "foliage_uv1_v1")
 }
 
-// Crown-shaded foliage (`yarra_shading: "crown_v1"`) is lit by where a card sits in
-// the crown: both sides keep the authored crown normal, and vertex colour is crown
-// occlusion for indirect light (see TREE_CROWN_SHADING in the cloud material shaders).
-// Back faces are still drawn; only Bevy's two-sided normal flip is turned off.
-fn crown_shading(extras: &str) -> bool {
-    extra_is(extras, "yarra_shading", "crown_v1")
+/// How tagged foliage is lit (see TREE_CROWN_SHADING in the cloud material shaders).
+/// Both modes treat vertex colour as crown occlusion of indirect light and soften shadows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FoliageShading {
+    Plain,
+    /// `yarra_shading: "crown_v1"`: cards are lit by where they sit in the crown, so both
+    /// sides keep the authored crown normal. Back faces are still drawn; only Bevy's
+    /// two-sided normal flip is turned off.
+    Crown,
+    /// `yarra_shading: "pad_v1"`: cards are flat pads (pine branch ends) whose authored
+    /// normal faces up, so Bevy's flip is kept: a pad's underside faces down and falls dark.
+    Pad,
 }
 
-fn foliage_base(source: &CloudMaterial, crown_shading: bool) -> CloudMaterial {
+fn foliage_shading(extras: &str) -> FoliageShading {
+    if extra_is(extras, "yarra_shading", "crown_v1") {
+        FoliageShading::Crown
+    } else if extra_is(extras, "yarra_shading", "pad_v1") {
+        FoliageShading::Pad
+    } else {
+        FoliageShading::Plain
+    }
+}
+
+fn foliage_base(source: &CloudMaterial, shading: FoliageShading) -> CloudMaterial {
     let mut material = source.clone();
-    if crown_shading {
+    if shading == FoliageShading::Crown {
         material.base.double_sided = false;
         material.base.cull_mode = None;
     }
@@ -157,17 +173,17 @@ fn convert(
         Without<WindChecked>,
     >,
     retained: Query<&SourceMaterial>,
-    mut cache: Local<HashMap<AssetId<CloudMaterial>, (Handle<TreeWindMaterial>, bool)>>,
+    mut cache: Local<HashMap<AssetId<CloudMaterial>, (Handle<TreeWindMaterial>, FoliageShading)>>,
 ) {
     let Some(buffer) = buffer else {
         return;
     };
     for event in events.read() {
         if let AssetEvent::Modified { id } = event
-            && let (Some(material), Some(&(ref handle, crown))) = (source.get(*id), cache.get(id))
+            && let (Some(material), Some(&(ref handle, shading))) = (source.get(*id), cache.get(id))
             && let Some(mut converted) = target.get_mut(handle)
         {
-            converted.base = foliage_base(material, crown);
+            converted.base = foliage_base(material, shading);
         }
     }
     // Only live scene instances retain material handles; unloading pages/LODs releases them.
@@ -194,15 +210,15 @@ fn convert(
         let converted = cache
             .entry(handle.id())
             .or_insert_with(|| {
-                let crown = crown_shading(&extras.value);
+                let shading = foliage_shading(&extras.value);
                 let material = target.add(TreeWindMaterial {
-                    base: foliage_base(material, crown),
+                    base: foliage_base(material, shading),
                     extension: TreeWindExtension {
                         wind: buffer.0.clone(),
-                        crown_shading: crown,
+                        crown_shading: shading != FoliageShading::Plain,
                     },
                 });
-                (material, crown)
+                (material, shading)
             })
             .0
             .clone();
@@ -223,9 +239,13 @@ fn convert(
 
 fn expand_bounds(
     mut commands: Commands,
-    mut meshes: Query<(Entity, &GlobalTransform, &mut Aabb), With<WindBoundsPending>>,
+    assets: Res<Assets<Mesh>>,
+    mut meshes: Query<(Entity, &GlobalTransform, &Mesh3d, &mut Aabb), With<WindBoundsPending>>,
 ) {
-    for (entity, transform, mut bounds) in &mut meshes {
+    for (entity, transform, handle, mut bounds) in &mut meshes {
+        let Some(mesh) = assets.get(&handle.0) else {
+            continue;
+        };
         // Bounds are calculated after transform propagation. Keep this separate
         // from early material conversion and expand exactly once, before culling.
         let scale = transform
@@ -234,7 +254,8 @@ fn expand_bounds(
             .abs()
             .min_element()
             .max(0.001);
-        bounds.half_extents += Vec3A::splat(MAX_DISPLACEMENT / scale);
+        bounds.half_extents +=
+            Vec3A::splat(MAX_DISPLACEMENT / scale + super::cards::max_card_swing(mesh));
         commands.entity(entity).remove::<WindBoundsPending>();
     }
 }
@@ -256,7 +277,7 @@ mod tests {
     }
 
     #[test]
-    fn crown_shading_keeps_back_faces_without_flipping() {
+    fn crown_shading_keeps_back_faces_without_flipping_and_pads_keep_the_flip() {
         let source = CloudMaterial {
             base: StandardMaterial {
                 double_sided: true,
@@ -267,12 +288,16 @@ mod tests {
         };
         let shared = foliage_base(
             &source,
-            crown_shading(r#"{"yarra_wind":"foliage_uv1_v1","yarra_shading":"crown_v1"}"#),
+            foliage_shading(r#"{"yarra_wind":"foliage_uv1_v1","yarra_shading":"crown_v1"}"#),
         );
         assert!(!shared.base.double_sided);
         assert_eq!(shared.base.cull_mode, None);
-        let flipped = foliage_base(&source, crown_shading(r#"{"yarra_wind":"foliage_uv1_v1"}"#));
-        assert!(flipped.base.double_sided);
+        let pad = foliage_shading(r#"{"yarra_wind":"foliage_uv1_v1","yarra_shading":"pad_v1"}"#);
+        assert_eq!(pad, FoliageShading::Pad);
+        assert!(foliage_base(&source, pad).base.double_sided);
+        let plain = foliage_shading(r#"{"yarra_wind":"foliage_uv1_v1"}"#);
+        assert_eq!(plain, FoliageShading::Plain);
+        assert!(foliage_base(&source, plain).base.double_sided);
     }
 
     #[test]

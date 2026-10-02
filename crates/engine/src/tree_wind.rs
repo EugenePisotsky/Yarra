@@ -1,5 +1,9 @@
 //! Authored foliage weights deform on the GPU using the shared vegetation wind field.
 //! This composes with cloud-shaded PBR and uses identical colour/depth/shadow geometry.
+//! Two-layer bark (see `bark`) is installed with it.
+mod bark;
+mod cards;
+pub use cards::tree_gltf_plugin;
 #[cfg(test)]
 mod gpu_tests;
 mod material;
@@ -32,7 +36,12 @@ impl Plugin for TreeWindPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<TreeWindResponse>()
             .init_resource::<WindPose>()
-            .add_systems(PostUpdate, sample_wind.in_set(TreeWindSystems));
+            .add_systems(
+                PostUpdate,
+                sample_wind
+                    .in_set(TreeWindSystems)
+                    .after(bevy::transform::TransformSystems::Propagate),
+            );
         if app.get_sub_app(RenderApp).is_none() {
             return;
         }
@@ -40,6 +49,7 @@ impl Plugin for TreeWindPlugin {
             ExtractResourcePlugin::<WindPose>::default(),
             ExtractResourcePlugin::<WindBuffer>::default(),
             material::TreeWindMaterialPlugin,
+            bark::TreeBarkPlugin,
         ))
         .add_systems(Startup, setup_buffer);
         app.sub_app_mut(RenderApp)
@@ -76,6 +86,9 @@ struct WindPose {
     phases: [f32; 4],
     // gustiness, branch amplitude, flutter amplitude, padding
     response: [f32; 4],
+    // Main camera in the same floating-origin coordinates as this frame's meshes.
+    // W indicates a valid sample; the GPU history retains the previous camera too.
+    camera: [f32; 4],
 }
 
 fn finite(value: f32, fallback: f32) -> f32 {
@@ -129,6 +142,7 @@ impl WindPose {
                 finite(response.flutter_amplitude, 0.).clamp(0., 0.1),
                 0.,
             ],
+            camera: [0.; 4],
         }
     }
 }
@@ -138,10 +152,14 @@ fn sample_wind(
     origin: Option<Res<VegetationRenderOrigin>>,
     response: Res<TreeWindResponse>,
     mut pose: ResMut<WindPose>,
+    cameras: Query<&GlobalTransform, With<crate::WorldViewCamera>>,
 ) {
     *pose = wind.map_or_else(WindPose::default, |w| {
         WindPose::sample(&w, *response, origin.map_or([0.; 2], |o| o.world_xz))
     });
+    if let Ok(camera) = cameras.single() {
+        pose.camera = camera.translation().extend(1.).to_array();
+    }
 }
 
 #[derive(Resource, ExtractResource, Clone)]

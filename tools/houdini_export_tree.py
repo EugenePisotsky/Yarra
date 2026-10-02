@@ -7,8 +7,9 @@ Run with Houdini's Python (Indie and Apprentice licences both allow it):
         --catalog assets/packs/yarra_trees/trees.catalog.ron \
         --variant broadleaf_a:1:15.5:7.5:5 --variant broadleaf_b:2:12:6.5:4
 
-The scene needs /obj/FOREST_TREE with a CONTROLS node (seed, height, crown_width, lod
-and texture paths) and an OUT_TREE node producing triangles with point P, N, Cd, uv2,
+The scene object (--object, /obj/FOREST_TREE by default) needs a CONTROLS node (seed,
+height, crown_width, crown_base, lod and texture paths), a BAKE_* node that renders the
+leaf card atlas, and an OUT_TREE node producing triangles with point P, N, Cd, uv2,
 vertex uv and a primitive `mat` of "bark" or "leaf". Each --variant NAME:SEED:HEIGHT:WIDTH[:CROWN_BASE]
 is cooked at LOD0-3 and written to OUTPUT/runtime/NAME/NAME_lodK.gltf. Textures are
 written once to OUTPUT/runtime/textures as mipmapped UASTC KTX2; the leaf atlas is the
@@ -17,8 +18,15 @@ foliage does not thin out with distance. The scene is copied to
 OUTPUT/source/ because the asset importer requires a local source file.
 
 Foliage materials carry the engine's wind contract (`yarra_wind`, TEXCOORD_1 =
-flutter, branch) and `yarra_shading: "crown_v1"`: normals come from the crown and are
-shared by both sides of a card, and COLOR_0 is crown occlusion for indirect light only.
+flutter, branch) and `yarra_shading`: "crown_v1" (normals come from the crown and are
+shared by both sides of a card) or, with CONTROLS shading_mode 1, "pad_v1" (flat pads
+whose undersides face down). COLOR_0 is crown occlusion for indirect light only.
+CONTROLS may set leaf_luminance, bark_luminance and bark_upper_luminance: the exporter
+scales those textures in linear space to that mean luminance (the kit trees sit near 0.18),
+after multiplying the leaf atlas by an optional leaf_tint colour.
+When CONTROLS has bark_upper_* textures, the bark material also carries `yarra_bark:
+"blend_v1"`: COLOR_0 alpha (the scene's point Alpha) blends from the main bark to that
+upper bark, whose textures the extras list by asset path.
 """
 import argparse
 import json
@@ -34,7 +42,7 @@ from PIL import Image
 
 KTX_VERSION = "4.4.2"
 LEAF_SIZE = 2048
-BARK_SIZE = 1024
+BARK_MAX = 2048  # longest side of a bark tile; scans keep their aspect ratio
 
 
 def find_ktx(explicit):
@@ -107,10 +115,38 @@ def mip_chain(image, alpha_coverage=False, normal=False):
 
 
 def load(path, size, mode="RGB"):
+    """Square at `size`, or, for a tuple (None, longest), the source aspect capped at longest."""
     img = Image.open(path).convert(mode)
-    if img.size != (size, size):
-        img = img.resize((size, size), Image.LANCZOS)
+    if isinstance(size, tuple):
+        k = min(1.0, size[1] / max(img.size))
+        target = (max(1, round(img.size[0] * k)), max(1, round(img.size[1] * k)))
+    else:
+        target = (size, size)
+    if img.size != target:
+        img = img.resize(target, Image.LANCZOS)
     return np.asarray(img, dtype=np.float32) / 255.0
+
+
+def calibrate(rgb, mask, target, tint=None):
+    """Tint sRGB colours in linear space, then scale them so the masked texels' mean
+    luminance is `target`. Scanned albedos are physically dark; the game's exposure is set
+    for brighter assets."""
+    if (not target or target <= 0) and tint is None:
+        return rgb
+    lin = np.where(rgb <= 0.04045, rgb / 12.92, ((rgb + 0.055) / 1.055) ** 2.4)
+    if tint is not None:
+        lin = lin * np.asarray(tint, np.float32)
+    if not target or target <= 0:
+        lin = np.clip(lin, 0.0, 1.0)
+        return np.where(lin <= 0.0031308, lin * 12.92, 1.055 * lin ** (1 / 2.4) - 0.055).astype(np.float32)
+    lum = float((lin[mask] @ np.array([0.2126, 0.7152, 0.0722], np.float32)).mean())
+    lin = np.clip(lin * (target / max(lum, 1e-4)), 0.0, 1.0)
+    return np.where(lin <= 0.0031308, lin * 12.92, 1.055 * lin ** (1 / 2.4) - 0.055).astype(np.float32)
+
+
+def control(ctl, name, default=None):
+    parm = ctl.parm(name)
+    return parm.eval() if parm is not None else default
 
 
 def write_ktx2(ktx, levels, destination, srgb, preview=None):
@@ -142,7 +178,9 @@ def export_textures(ctl, ktx, folder, preview=None):
     bake = Path(ctl.parm("bake_dir").evalAsString())
     rgba = load(bake / "cluster_color.png", LEAF_SIZE, "RGBA")
     alpha = rgba[..., 3]
-    rgba = np.dstack([bleed(rgba[..., :3], alpha), alpha])
+    tint = ctl.parmTuple("leaf_tint").eval() if ctl.parmTuple("leaf_tint") is not None else None
+    color = calibrate(rgba[..., :3], alpha > 0.5, control(ctl, "leaf_luminance"), tint)
+    rgba = np.dstack([bleed(color, alpha), alpha])
     write_ktx2(ktx, mip_chain(rgba, alpha_coverage=True), folder / "leaf_color.ktx2", True, preview)
     out["leaf_color"] = "leaf_color.ktx2"
 
@@ -160,13 +198,25 @@ def export_textures(ctl, ktx, folder, preview=None):
     write_ktx2(ktx, mip_chain(mr), folder / "leaf_metallic_roughness.ktx2", False, preview)
     out["leaf_metallic_roughness"] = "leaf_metallic_roughness.ktx2"
 
-    for key, parm, srgb, is_normal in (("bark_color", "bark_color", True, False),
-                                       ("bark_normal", "bark_normal", False, True),
-                                       ("bark_metallic_roughness", "bark_metallic_roughness", False, False)):
-        img = load(ev(parm), BARK_SIZE)
-        img = np.dstack([img, np.ones(img.shape[:2], dtype=np.float32)])
-        write_ktx2(ktx, mip_chain(img, normal=is_normal), folder / f"{key}.ktx2", srgb, preview)
-        out[key] = f"{key}.ktx2"
+    layers = [("bark", "bark")]
+    if ctl.parm("bark_upper_color") is not None:
+        layers.append(("bark_upper", "bark_upper"))
+    for key, parm in layers:
+        size = (None, BARK_MAX)
+        color = load(ctl.parm(f"{parm}_color").evalAsString(), size)
+        color = calibrate(color, np.ones(color.shape[:2], bool), control(ctl, f"{parm}_luminance"))
+        normal = load(ctl.parm(f"{parm}_normal").evalAsString(), size)
+        if ctl.parm(f"{parm}_roughness") is not None:
+            rough = load(ctl.parm(f"{parm}_roughness").evalAsString(), size, "L")
+            mr = np.dstack([np.ones_like(rough), rough, np.zeros_like(rough)])
+        else:  # already glTF-packed: roughness in G, metalness in B
+            mr = load(ctl.parm(f"{parm}_metallic_roughness").evalAsString(), size)
+        for suffix, img, srgb, is_normal in (("color", color, True, False), ("normal", normal, False, True),
+                                             ("metallic_roughness", mr, False, False)):
+            img = np.dstack([img, np.ones(img.shape[:2], dtype=np.float32)])
+            name = f"{key}_{suffix}.ktx2"
+            write_ktx2(ktx, mip_chain(img, normal=is_normal), folder / name, srgb, preview)
+            out[f"{key}_{suffix}"] = name
     return out
 
 
@@ -175,8 +225,17 @@ def read_mesh(geo):
     P = np.array(geo.pointFloatAttribValues("P"), dtype=np.float32).reshape(-1, 3)
     N = np.array(geo.pointFloatAttribValues("N"), dtype=np.float32).reshape(-1, 3)
     Cd = np.array(geo.pointFloatAttribValues("Cd"), dtype=np.float32).reshape(-1, 3)
+    alpha = (np.array(geo.pointFloatAttribValues("Alpha"), dtype=np.float32)
+             if geo.findPointAttrib("Alpha") is not None else np.ones(len(Cd), np.float32))
+    Cd = np.hstack([Cd, alpha[:, None]])  # alpha: bark blend weight (1 on foliage)
     uv2 = np.array(geo.pointFloatAttribValues("uv2"), dtype=np.float32).reshape(-1, 3)[:, :2]
     uv = np.array(geo.vertexFloatAttribValues("uv"), dtype=np.float32).reshape(-1, 3)[:, :2]
+    # Branch cards that turn towards the camera in the engine (_CARD_PIVOT, _CARD_AXIS,
+    # _CARD_NORMAL; a zero axis keeps a card fixed). Optional; zero for bark.
+    cards = {}
+    for name, attrib in (("_CARD_PIVOT", "cardpivot"), ("_CARD_AXIS", "axis"), ("_CARD_NORMAL", "cardn")):
+        if geo.findPointAttrib(attrib) is not None:
+            cards[name] = np.array(geo.pointFloatAttribValues(attrib), dtype=np.float32).reshape(-1, 3)
     mats = geo.primStringAttribValues("mat")
     tris = {"bark": [], "leaf": []}
     vtx = 0
@@ -187,10 +246,10 @@ def read_mesh(geo):
         # Houdini's front faces wind clockwise; glTF's wind counter-clockwise.
         tris[mat].append([(pts[0], vtx), (pts[2], vtx + 2), (pts[1], vtx + 1)])
         vtx += 3
-    return P, N, Cd, uv2, uv, tris
+    return P, N, Cd, uv2, uv, tris, cards
 
 
-def build_primitive(P, N, Cd, uv2, uv, tris, double=False):
+def build_primitive(P, N, Cd, uv2, uv, tris, double=False, cards=None):
     keys = {}
     order = []
     index = []
@@ -235,11 +294,14 @@ def build_primitive(P, N, Cd, uv2, uv, tris, double=False):
         # For viewers that flip normals on back faces: a reversed copy of every
         # triangle shares the same vertices, so both sides keep the crown normal.
         idx = np.vstack([idx, idx[:, ::-1]])
-    return {"POSITION": pos, "NORMAL": nrm, "TANGENT": tangent, "TEXCOORD_0": tex,
-            "TEXCOORD_1": wind, "COLOR_0": col}, idx
+    attrs = {"POSITION": pos, "NORMAL": nrm, "TANGENT": tangent, "TEXCOORD_0": tex,
+             "TEXCOORD_1": wind, "COLOR_0": col}
+    for name, values in (cards or {}).items():
+        attrs[name] = values[pts]
+    return attrs, idx
 
 
-def write_gltf(path, primitives, textures, double_sided=True):
+def write_gltf(path, primitives, textures, double_sided=True, bark_extras=None, shading="crown_v1"):
     blob = bytearray()
     views, accessors = [], []
 
@@ -257,7 +319,7 @@ def write_gltf(path, primitives, textures, double_sided=True):
         accessors.append(acc)
         return len(accessors) - 1
 
-    images = sorted(set(textures.values()))
+    images = sorted({v for k, v in textures.items() if not k.startswith("bark_upper")})
     image_index = {name: i for i, name in enumerate(images)}
 
     def tex(key):
@@ -267,7 +329,8 @@ def write_gltf(path, primitives, textures, double_sided=True):
         {"name": "bark", "pbrMetallicRoughness": {"baseColorTexture": tex("bark_color"),
                                                   "metallicRoughnessTexture": tex("bark_metallic_roughness"),
                                                   "metallicFactor": 0.0, "roughnessFactor": 1.0},
-         "normalTexture": {**tex("bark_normal"), "scale": 1.0}},
+         "normalTexture": {**tex("bark_normal"), "scale": 1.0},
+         **({"extras": bark_extras} if bark_extras else {})},
         {"name": "leaves", "pbrMetallicRoughness": {"baseColorTexture": tex("leaf_color"),
                                                     "metallicRoughnessTexture": tex("leaf_metallic_roughness"),
                                                     "metallicFactor": 0.0, "roughnessFactor": 1.0},
@@ -275,7 +338,7 @@ def write_gltf(path, primitives, textures, double_sided=True):
          "alphaMode": "MASK", "alphaCutoff": 0.5, "doubleSided": double_sided,
          # Half the default reflectance: less grey sky sheen on leaves in shade.
          "extensions": {"KHR_materials_specular": {"specularFactor": 0.5}},
-         "extras": {"yarra_wind": "foliage_uv1_v1", "yarra_shading": "crown_v1"}},
+         "extras": {"yarra_wind": "foliage_uv1_v1", "yarra_shading": shading}},
     ]
     prims = []
     for material, (attrs, idx) in enumerate(primitives):
@@ -287,8 +350,11 @@ def write_gltf(path, primitives, textures, double_sided=True):
             "TANGENT": add(attrs["TANGENT"], 34962, "VEC4", 5126),
             "TEXCOORD_0": add(attrs["TEXCOORD_0"], 34962, "VEC2", 5126),
             "TEXCOORD_1": add(attrs["TEXCOORD_1"], 34962, "VEC2", 5126),
-            "COLOR_0": add(attrs["COLOR_0"], 34962, "VEC3", 5126),
+            "COLOR_0": add(attrs["COLOR_0"], 34962, "VEC4", 5126),
         }
+        for name in ("_CARD_PIVOT", "_CARD_AXIS", "_CARD_NORMAL"):
+            if name in attrs:
+                a[name] = add(attrs[name], 34962, "VEC3", 5126)
         if len(attrs["POSITION"]) < 65536:
             indices = add(idx.reshape(-1).astype(np.uint16), 34963, "SCALAR", 5123)
         else:
@@ -319,8 +385,11 @@ def main():
     parser.add_argument("scene")
     parser.add_argument("output", type=Path, help="pack directory under assets/, e.g. assets/local/yarra_trees")
     parser.add_argument("--catalog", type=Path, required=True)
-    parser.add_argument("--variant", action="append", required=True, metavar="NAME:SEED:HEIGHT:WIDTH[:CROWN_BASE]")
+    parser.add_argument("--variant", action="append", required=True,
+                        metavar="NAME:SEED:HEIGHT:WIDTH[:CROWN_BASE[:PARM=VALUE...]]",
+                        help="extra PARM=VALUE fields override CONTROLS for this variant only")
     parser.add_argument("--ktx")
+    parser.add_argument("--object", default="/obj/FOREST_TREE", help="the tree object in the scene")
     parser.add_argument("--skip-textures", action="store_true")
     parser.add_argument("--set", action="append", default=[], metavar="PARM=VALUE",
                         help="override a CONTROLS parameter for every variant, e.g. lod_shell=0")
@@ -338,34 +407,52 @@ def main():
         sys.exit(f"{output} must be inside {assets}")
 
     hou.hipFile.load(args.scene, suppress_save_prompt=True, ignore_load_warnings=True)
-    obj = hou.node("/obj/FOREST_TREE")
-    obj.node("BAKE_CLUSTERS").cook(force=True)  # the leaf atlas must match the scene
+    obj = hou.node(args.object)
+    if obj is None:
+        sys.exit(f"{args.scene} has no {args.object}")
+    for bake in (n for n in obj.children() if n.name().startswith("BAKE_")):
+        bake.cook(force=True)  # the leaf atlas must match the scene
     ctl, out = obj.node("CONTROLS"), obj.node("OUT_TREE")
-    for item in args.set:
-        name, value = item.split("=", 1)
-        parm = ctl.parm(name)
-        if parm is None:
-            sys.exit(f"CONTROLS has no parameter {name}")
-        parm.set(type(parm.eval())(value))
+    def apply(items):
+        """Set PARM=VALUE overrides; returns the previous values so they can be restored."""
+        previous = []
+        for item in items:
+            name, value = item.split("=", 1)
+            parm = ctl.parm(name)
+            if parm is None:
+                sys.exit(f"CONTROLS has no parameter {name}")
+            previous.append(f"{name}={parm.eval()}")
+            parm.set(type(parm.eval())(value))
+        return previous
+
+    apply(args.set)
     heights = [float(h) for h in args.lod_heights.split(",")]
     if len(heights) != 4 or heights[-1] != 0 or heights != sorted(heights, reverse=True):
         sys.exit("--lod-heights needs four descending values ending in 0")
     runtime = output / "runtime"
-    names = {"leaf_color": "leaf_color.ktx2", "leaf_normal": "leaf_normal.ktx2",
-             "leaf_metallic_roughness": "leaf_metallic_roughness.ktx2", "bark_color": "bark_color.ktx2",
-             "bark_normal": "bark_normal.ktx2", "bark_metallic_roughness": "bark_metallic_roughness.ktx2"}
+    names = {f"{key}_{suffix}": f"{key}_{suffix}.ktx2"
+             for key in ("leaf", "bark") + (("bark_upper",) if ctl.parm("bark_upper_color") else ())
+             for suffix in ("color", "normal", "metallic_roughness")}
     if not args.skip_textures:
         names = export_textures(ctl, find_ktx(args.ktx), runtime / "textures",
                                 args.preview / "textures" if args.preview else None)
+    bark_extras = None
+    if "bark_upper_color" in names:
+        textures = f"{pack.as_posix()}/runtime/textures"
+        bark_extras = {"yarra_bark": "blend_v1", "yarra_bark_upper": {
+            suffix: f"{textures}/{names['bark_upper_' + suffix]}"
+            for suffix in ("color", "normal", "metallic_roughness")}}
+    # CONTROLS shading_mode 1: flat needle pads whose undersides fall dark (pad_v1).
+    shading = "pad_v1" if control(ctl, "shading_mode", 0) == 1 else "crown_v1"
     source = output / "source" / Path(args.scene).name
     source.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(args.scene, source)
 
     entries = []
     for spec in args.variant:
-        name, seed, height, width, *base = spec.split(":")
-        if base:
-            ctl.parm("crown_base").set(float(base[0]))
+        name, seed, height, width, *rest = spec.split(":")
+        overrides = [f"crown_base={rest[0]}"] if rest else []
+        restore = apply(overrides + rest[1:])
         ctl.parm("seed").set(int(seed))
         ctl.parm("height").set(float(height))
         ctl.parm("crown_width").set(float(width))
@@ -373,16 +460,16 @@ def main():
         for lod, screen in enumerate(heights):
             ctl.parm("lod").set(lod)
             geo = out.geometry()
-            P, N, Cd, uv2, uv, tris = read_mesh(geo)
-            prims = [build_primitive(P, N, Cd, uv2, uv, tris[m]) if tris[m] else ({}, np.zeros((0, 3)))
-                     for m in ("bark", "leaf")]
+            P, N, Cd, uv2, uv, tris, cards = read_mesh(geo)
+            prims = [build_primitive(P, N, Cd, uv2, uv, tris[m], cards=cards if m == "leaf" else None)
+                     if tris[m] else ({}, np.zeros((0, 3))) for m in ("bark", "leaf")]
             path = runtime / name / f"{name}_lod{lod}.gltf"
             path.parent.mkdir(parents=True, exist_ok=True)
-            size = write_gltf(path, prims, names)
+            size = write_gltf(path, prims, names, bark_extras=bark_extras, shading=shading)
             if args.preview:
                 preview = args.preview / name / path.name
                 preview.parent.mkdir(parents=True, exist_ok=True)
-                doubled = [prims[0], build_primitive(P, N, Cd, uv2, uv, tris["leaf"], True)]
+                doubled = [prims[0], build_primitive(P, N, Cd, uv2, uv, tris["leaf"], True)]  # rest pose
                 write_gltf(preview, doubled, {k: v.replace(".ktx2", ".png") for k, v in names.items()}, False)
             span = (float(max(abs(P[:, 0]).max(), 1e-3) * 2), float(P[:, 1].max()),
                     float(max(abs(P[:, 2]).max(), 1e-3) * 2))
@@ -395,6 +482,7 @@ def main():
             print(f"{name} LOD{lod}: {tri_count} triangles ({len(tris['bark'])} bark, "
                   f"{len(tris['leaf'])} leaf), {area:.0f} m2 of leaf cards, {size} bytes, height {span[1]:.1f} m")
             variants.append((f"{pack.as_posix()}/runtime/{name}/{path.name}", size, screen))
+        apply(restore)
         title = name.replace("_", " ").title()
         lines = [f'(key: "{pack.name}/{name}", display_name: "{title}", '
                  f'source_uri: "{pack.as_posix()}/source/{source.name}", variants: [']

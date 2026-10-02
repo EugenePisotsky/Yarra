@@ -6,6 +6,11 @@ __pycache__/
 /assets/generated/
 /content/*.project.sqlite
 /content/*.project.views/
+/content/*.project.editor-journal.ron
+# Local vegetation reference photographs.
+/content/study/
+/content/IMG_*.JPG
+/content/photo-*.avif
 /content/*.project.cook-cache.sqlite
 *.sqlite-wal
 *.sqlite-shm

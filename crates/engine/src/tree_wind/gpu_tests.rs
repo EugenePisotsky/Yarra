@@ -69,7 +69,11 @@ fn deformation_history_handles_animation_pause_disable_and_rebase() {
     let source = include_str!("../../../../assets/shaders/tree_wind.wgsl");
     // Only the Bevy matrix helper needs a stand-in; evaluate the actual field/deformation
     // implementation, not a second copy of its math. Full vertex variants run in game QA.
-    let body = &source[source.find("struct WindPose").unwrap()..source.find("@vertex").unwrap()];
+    let body = format!(
+        "{}\n{}",
+        &source[source.find("struct WindPose").unwrap()..source.find("fn facing_camera").unwrap()],
+        &source[source.find("fn displaced_position").unwrap()..source.find("@vertex").unwrap()]
+    );
     let body = body
         .replace(
             "@group(#{MATERIAL_BIND_GROUP}) @binding(100)\nvar<storage, read> wind: WindFrames;",
@@ -84,15 +88,19 @@ fn deformation_history_handles_animation_pause_disable_and_rebase() {
         r#"
 fn position_local_to_world(model: mat4x4<f32>, p: vec4<f32>) -> vec4<f32> { return model * p; }
 struct Case { frames: WindFrames, model: mat4x4<f32>, previous_model: mat4x4<f32>, weights: vec4<f32> }
-struct Result { current: vec4<f32>, previous: vec4<f32> }
+struct Result { current: vec4<f32>, previous: vec4<f32>, full_facing: vec4<f32>, keep_tilt: vec4<f32> }
 @group(0) @binding(0) var<storage, read> inputs: array<Case>;
 @group(0) @binding(1) var<storage, read_write> results: array<Result>;
 @compute @workgroup_size(1)
 fn evaluate(@builtin(global_invocation_id) id: vec3<u32>) {
     let c = inputs[id.x];
-    let p = vec3(2.0, 10.0, 3.0);
-    results[id.x].current = displaced_position(p, c.model, c.weights.xy, c.frames.current);
-    results[id.x].previous = displaced_position(p, c.previous_model, c.weights.xy, c.frames.previous);
+    let p = vec4(2.0, 10.0, 3.0, 1.0);
+    results[id.x].current = displaced_position(c.model * p, c.model, c.weights.xy, c.frames.current);
+    results[id.x].previous = displaced_position(c.previous_model * p, c.previous_model, c.weights.xy, c.frames.previous);
+    let directions = array<vec3<f32>, 5>(vec3(1., .4, -2.), vec3(0., 1., 0.), vec3(0., -1., 0.), vec3(-2., 4., 3.), vec3(0., 0., 1.));
+    let rest = normalize(vec3(.3, .6, .7));
+    results[id.x].full_facing = vec4(turn_camera(rest, rest, directions[id.x], 1.), 0.);
+    results[id.x].keep_tilt = vec4(turn_camera(rest, rest, directions[id.x], 0.), 0.);
 }
 "#
     );
@@ -119,7 +127,7 @@ fn evaluate(@builtin(global_invocation_id) id: vec3<u32>) {
         contents: bytemuck::cast_slice(&cases),
         usage: BufferUsages::STORAGE,
     });
-    let bytes = cases.len() as u64 * 32;
+    let bytes = cases.len() as u64 * 64;
     let output = resources.0.create_buffer(&BufferDescriptor {
         label: None,
         size: bytes,
@@ -162,7 +170,7 @@ fn evaluate(@builtin(global_invocation_id) id: vec3<u32>) {
     device.poll(PollType::wait_indefinitely()).unwrap();
     receiver.recv().unwrap().unwrap();
     let data = readback.slice(..).get_mapped_range();
-    let results: &[[f32; 8]] = bytemuck::cast_slice(&data);
+    let results: &[[f32; 16]] = bytemuck::cast_slice(&data);
     let delta = |i: usize, offset: Vec3| {
         let r = results[i];
         Vec3::new(r[0], r[1], r[2]) + offset - Vec3::new(r[4], r[5], r[6])
@@ -189,4 +197,22 @@ fn evaluate(@builtin(global_invocation_id) id: vec3<u32>) {
         "rebasing must not change the deformation"
     );
     assert!(results.iter().flatten().all(|v| v.is_finite()));
+    let directions = [
+        Vec3::new(1., 0.4, -2.),
+        Vec3::Y,
+        -Vec3::Y,
+        Vec3::new(-2., 4., 3.),
+        Vec3::Z,
+    ];
+    let rest = Vec3::new(0.3, 0.6, 0.7).normalize();
+    for (result, direction) in results.iter().zip(directions) {
+        assert!(
+            (Vec3::from_slice(&result[8..11]) - direction.normalize()).length() < 0.0001,
+            "full-facing normal must face the camera, including directly overhead"
+        );
+        assert!(
+            (result[13] - rest.y).abs() < 0.0001,
+            "yaw-only mode must preserve tilt"
+        );
+    }
 }

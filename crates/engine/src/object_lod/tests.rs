@@ -159,3 +159,13 @@ fn object_detail_scale_moves_switch_distances_and_keeps_its_clamps() {
         "large values clamp to 4"
     );
 }
+
+#[test]
+fn world_view_cameras_are_the_shadow_lod_origin() {
+    let mut app = app(Transform::default());
+    app.update();
+    let mut cameras = app
+        .world_mut()
+        .query_filtered::<Entity, (With<WorldViewCamera>, With<ShadowLodOrigin>)>();
+    assert_eq!(cameras.iter(app.world()).count(), 1);
+}

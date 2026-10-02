@@ -1,5 +1,21 @@
 # Asset layout
 
+The Houdini forest authoring project is tracked separately in
+[YarraVegetation](https://github.com/EugenePisotsky/YarraVegetation). Its native
+scene, generators, presets, and source-texture inventory are versioned there.
+Supplied textures, rendered atlases, and exported meshes remain local in both
+projects. Restoring a Git checkout alone does not restore these asset binaries.
+
+`assets/packs/yarra_birches/birches.catalog.ron` records the three imported birch
+states and their three mesh LODs. Rebuild them with
+`tools/import_vegetation_bundle.py` from the matching authoring bundles (Khronos
+KTX 4.4.2, available on PATH or via `--ktx`).
+`assets/packs/yarra_pines/pines.catalog.ron` records the six legacy native-scene
+pine variants imported by `tools/houdini_export_tree.py`. Their original scene
+and source inputs must also be restored locally. See
+[vegetation integration](../docs/WORKFLOWS.md) for the sample placements and cook.
+Editor journals and reference captures are local working data as well.
+
 `assets/generated/` contains derived runtime SQLite generations produced by
 `yarra-world-cook`. It is ignored because it can be rebuilt from `content/`.
 

@@ -77,6 +77,7 @@ fn run() -> Result<(), String> {
         .add_plugins(
             DefaultPlugins
                 .set(game_log_plugin(&options))
+                .set(engine::tree_gltf_plugin())
                 .set(AssetPlugin {
                     file_path: asset_root.to_string_lossy().into_owned(),
                     ..default()

@@ -6,7 +6,10 @@
 //! Shadow cascades resolve the same ranges from the main camera.
 use crate::WorldViewCamera;
 use bevy::{
-    camera::visibility::{VisibilityRange, VisibilitySystems},
+    camera::{
+        ShadowLodOrigin,
+        visibility::{VisibilityRange, VisibilitySystems},
+    },
     gltf::GltfAssetLabel,
     prelude::*,
     transform::TransformSystems,
@@ -26,6 +29,7 @@ impl Plugin for ObjectLodPlugin {
         app.init_resource::<VisualLodScale>()
             .init_resource::<LodProjection>()
             .add_observer(range_new_lod_scene)
+            .add_observer(shadow_lods_follow_world_view)
             .add_systems(
                 PostUpdate,
                 update_object_lods
@@ -241,6 +245,15 @@ fn update_object_lods(
             }
         }
     }
+}
+
+/// Shadow passes dither LODs by distance from Bevy's shadow LOD origin, while CPU culling
+/// picks shadow casters by distance from the world camera. Without an explicit origin
+/// Bevy uses the camera that renders to the window: the UI camera at the world origin,
+/// since world views render to an image. Casters near the world camera were then dithered
+/// away, and shadows vanished as the camera moved.
+fn shadow_lods_follow_world_view(added: On<Add, WorldViewCamera>, mut commands: Commands) {
+    commands.entity(added.entity).insert(ShadowLodOrigin);
 }
 
 /// A LOD scene spawns its meshes asynchronously; range them as soon as they exist.

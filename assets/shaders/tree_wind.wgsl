@@ -1,14 +1,78 @@
 #import bevy_pbr::{mesh_functions, view_transformations::position_world_to_clip}
+#import bevy_pbr::mesh_view_bindings::view
 #ifdef PREPASS_PIPELINE
-#import bevy_pbr::prepass_io::{Vertex, VertexOutput}
+#import bevy_pbr::prepass_io::VertexOutput
 #else
-#import bevy_pbr::forward_io::{Vertex, VertexOutput}
+#import bevy_pbr::forward_io::VertexOutput
+#endif
+
+// Bevy's vertex inputs for this pass, plus the branch card attributes
+// (crates/engine/src/tree_wind/cards.rs) at locations 10-12.
+#ifdef PREPASS_PIPELINE
+struct Vertex {
+    @builtin(instance_index) instance_index: u32,
+    @location(0) position: vec3<f32>,
+#ifdef VERTEX_UVS_A
+    @location(1) uv: vec2<f32>,
+#endif
+#ifdef VERTEX_UVS_B
+    @location(2) uv_b: vec2<f32>,
+#endif
+#ifdef NORMAL_PREPASS_OR_DEFERRED_PREPASS
+#ifdef VERTEX_NORMALS
+    @location(3) normal: vec3<f32>,
+#endif
+#ifdef VERTEX_TANGENTS
+    @location(4) tangent: vec4<f32>,
+#endif
+#endif
+#ifdef VERTEX_COLORS
+    @location(7) color: vec4<f32>,
+#endif
+#ifdef TREE_BRANCH_CARDS
+    @location(10) card_pivot: vec3<f32>,
+    @location(11) card_axis: vec3<f32>,
+    @location(12) card_normal: vec3<f32>,
+#ifdef TREE_CARD_FACING
+    @location(13) card_facing: vec2<f32>,
+#endif
+#endif
+}
+#else
+struct Vertex {
+    @builtin(instance_index) instance_index: u32,
+    @location(0) position: vec3<f32>,
+#ifdef VERTEX_NORMALS
+    @location(1) normal: vec3<f32>,
+#endif
+#ifdef VERTEX_UVS_A
+    @location(2) uv: vec2<f32>,
+#endif
+#ifdef VERTEX_UVS_B
+    @location(3) uv_b: vec2<f32>,
+#endif
+#ifdef VERTEX_TANGENTS
+    @location(4) tangent: vec4<f32>,
+#endif
+#ifdef VERTEX_COLORS
+    @location(5) color: vec4<f32>,
+#endif
+#ifdef TREE_BRANCH_CARDS
+    @location(10) card_pivot: vec3<f32>,
+    @location(11) card_axis: vec3<f32>,
+    @location(12) card_normal: vec3<f32>,
+#ifdef TREE_CARD_FACING
+    @location(13) card_facing: vec2<f32>,
+#endif
+#endif
+}
 #endif
 
 struct WindPose {
     field: vec4<f32>,
     phases: vec4<f32>,
     response: vec4<f32>,
+    camera: vec4<f32>,
 }
 struct WindFrames {
     current: WindPose,
@@ -34,8 +98,62 @@ fn field_force(anchor: vec2<f32>, pose: WindPose) -> f32 {
     return pose.field.w * clamp(0.25 + broad_amount * 0.18 + pulse * pose.response.x * 0.90, 0.12, 1.30);
 }
 
-fn displaced_position(local: vec3<f32>, model: mat4x4<f32>, weights_in: vec2<f32>, pose: WindPose) -> vec4<f32> {
-    let p = mesh_functions::mesh_position_local_to_world(model, vec4(local, 1.0));
+fn turn_axis(v: vec3<f32>, axis: vec3<f32>, angle: f32) -> vec3<f32> {
+    let c = cos(angle);
+    return v * c + cross(axis, v) * sin(angle) + axis * dot(axis, v) * (1.0 - c);
+}
+
+// Yaw preserves the authored in-plane roll; elevation follow optionally tilts
+// the surface to face elevated cameras. Full follow works at overhead angles too.
+fn turn_camera(v: vec3<f32>, normal: vec3<f32>, to_view: vec3<f32>, follow: f32) -> vec3<f32> {
+    if dot(to_view, to_view) < 1e-8 { return v; }
+    let n = normalize(normal);
+    let d = normalize(to_view);
+    let up = vec3(0.0, 1.0, 0.0);
+    var nh = vec3(n.x, 0.0, n.z);
+    if dot(nh, nh) < 1e-12 { nh = vec3(0.0, 0.0, 1.0); }
+    nh = normalize(nh);
+    var dh = vec3(d.x, 0.0, d.z);
+    if dot(dh, dh) < 1e-12 { dh = nh; }
+    dh = normalize(dh);
+    let yaw = atan2(dot(up, cross(nh, dh)), dot(nh, dh));
+    let pitch = (atan2(n.y, length(n.xz)) - atan2(d.y, length(d.xz))) * clamp(follow, 0.0, 1.0);
+    return turn_axis(turn_axis(v, up, yaw), normalize(cross(up, dh)), pitch);
+}
+
+// Use the main camera in shadows, and its previous pose for temporal motion.
+fn facing_camera(world: vec4<f32>, model: mat4x4<f32>, vertex: Vertex, camera: vec4<f32>) -> vec4<f32> {
+#ifdef TREE_BRANCH_CARDS
+    if dot(vertex.card_axis, vertex.card_axis) < 0.25 {
+        return world;  // a card that does not turn
+    }
+    let pivot = (model * vec4(vertex.card_pivot, 1.0)).xyz;
+    let axis = normalize((model * vec4(vertex.card_axis, 0.0)).xyz);
+    let rest = (model * vec4(vertex.card_normal, 0.0)).xyz;
+    let rest_facing = rest - axis * dot(rest, axis);
+    let to_view = select(view.lod_view_world_position, camera.xyz, camera.w > 0.5) - pivot;
+#ifdef TREE_CARD_FACING
+    if vertex.card_facing.x > 0.5 {
+        return vec4(pivot + turn_camera(world.xyz - pivot, rest, to_view, vertex.card_facing.y), world.w);
+    }
+#endif
+    let view_facing = to_view - axis * dot(to_view, axis);
+    if dot(rest_facing, rest_facing) < 1e-8 || dot(view_facing, view_facing) < 1e-8 {
+        return world;  // looking straight along the branch: any turn is as good
+    }
+    let a = normalize(rest_facing);
+    let b = normalize(view_facing);
+    let c = dot(a, b);
+    let s = dot(axis, cross(a, b));
+    let r = world.xyz - pivot;
+    let turned = r * c + cross(axis, r) * s + axis * dot(axis, r) * (1.0 - c);
+    return vec4(pivot + turned, world.w);
+#else
+    return world;
+#endif
+}
+
+fn displaced_position(p: vec4<f32>, model: mat4x4<f32>, weights_in: vec2<f32>, pose: WindPose) -> vec4<f32> {
     let weights = clamp(weights_in, vec2(0.0), vec2(1.0));
     let direction = pose.field.xy;
     let perpendicular = vec2(-direction.y, direction.x);
@@ -54,7 +172,8 @@ fn vertex(vertex: Vertex) -> VertexOutput {
 #ifdef VERTEX_UVS_B
     weights = vertex.uv_b;
 #endif
-    out.world_position = displaced_position(vertex.position, model, weights, wind.current);
+    let rest = mesh_functions::mesh_position_local_to_world(model, vec4(vertex.position, 1.0));
+    out.world_position = displaced_position(facing_camera(rest, model, vertex, wind.current.camera), model, weights, wind.current);
     out.position = position_world_to_clip(out.world_position.xyz);
 
 #ifdef UNCLIPPED_DEPTH_ORTHO_EMULATION
@@ -84,7 +203,10 @@ fn vertex(vertex: Vertex) -> VertexOutput {
 #endif
 #ifdef MOTION_VECTOR_PREPASS
     let previous_model = mesh_functions::get_previous_world_from_local(vertex.instance_index);
-    out.previous_world_position = displaced_position(vertex.position, previous_model, weights, wind.previous);
+    let previous_rest =
+        mesh_functions::mesh_position_local_to_world(previous_model, vec4(vertex.position, 1.0));
+    out.previous_world_position = displaced_position(
+        facing_camera(previous_rest, previous_model, vertex, wind.previous.camera), previous_model, weights, wind.previous);
 #endif
 #else
 #ifdef VERTEX_NORMALS

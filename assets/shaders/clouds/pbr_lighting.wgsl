@@ -18,7 +18,7 @@
 }
 #import bevy_pbr::mesh_view_bindings::globals
 #import bevy_pbr::view_transformations::{position_world_to_ndc}
-#import bevy_render::maths::{E, powsafe}
+#import bevy_render::maths::{E, PI, powsafe}
 
 #ifdef STANDARD_MATERIAL_SPECULAR_TRANSMISSION
 #import bevy_pbr::transmission
@@ -368,8 +368,34 @@ fn apply_pbr_lighting(
         // Yarra: only direct celestial lighting is attenuated. Ambient, emissive,
         // local lights and material response retain the upstream behavior.
         let cloud = cloud_visibility(in.world_position.xyz, (*light).direction_to_light);
+#ifdef TREE_CROWN_SHADING
+        {
+            // Past the last shadow cascade nothing shadows a crown, and distant trees went
+            // flat and pale. There the crown's own occlusion (vertex colour, darker inside
+            // and underneath) stands in for the shadow maps, fading in over the outer 30%
+            // of the shadow range.
+            let cascades = (*light).num_cascades;
+            let shadows_on = cascades > 0u
+                && ((*light).flags & mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u;
+            let shadow_end = (*light).cascades[max(cascades, 1u) - 1u].far_bound;
+            let beyond = select(1.0, smoothstep(shadow_end * 0.7, shadow_end, -view_z), shadows_on);
+            let crown = clamp(in.diffuse_occlusion.g, 0.0, 1.0);
+            shadow = mix(shadow, crown * crown * crown, beyond);
+        }
+#endif
         shadow *= cloud;
         var light_contrib = lighting::directional_light(i, &lighting_input, enable_diffuse);
+#ifdef TREE_CROWN_SHADING
+        {
+            // Light wraps around a crown clump past its terminator and shines through the
+            // needles from behind, so neighbouring cards fade into each other instead of
+            // switching between lit and black.
+            let n_dot_l = dot(in.N, (*light).direction_to_light);
+            let wrap = max((n_dot_l + 0.5) / 1.5, 0.0) - max(n_dot_l, 0.0);
+            let through = max(-n_dot_l, 0.0) * 0.35;
+            light_contrib += diffuse_color * (1.0 / PI) * (*light).color.rgb * (wrap + through);
+        }
+#endif
 
 #ifdef DIRECTIONAL_LIGHT_SHADOW_MAP_DEBUG_CASCADES
         light_contrib = shadows::cascade_debug_visualization(light_contrib, i, view_z);
@@ -500,7 +526,11 @@ fn apply_pbr_lighting(
     let enable_ambient = true;
 #endif  // LIGHTMAP
     if (enable_ambient) {
-        indirect_light += ambient::ambient_light(in.world_position, in.N, in.V, NdotV, diffuse_color, F0, perceptual_roughness, diffuse_occlusion);
+        // Yarra: ambient comes from the sky above. Up-facing surfaces keep it all (flat
+        // ground is unchanged); vertical ones get 75% and downward ones 50%, so shapes
+        // still read when clouds hide the sun.
+        let sky_facing = 0.75 + 0.25 * in.N.y;
+        indirect_light += ambient::ambient_light(in.world_position, in.N, in.V, NdotV, diffuse_color, F0, perceptual_roughness, diffuse_occlusion * sky_facing);
     }
 
     // we'll use the specular component of the transmitted environment

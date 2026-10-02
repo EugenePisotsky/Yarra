@@ -11,7 +11,9 @@ fn cloud_visibility(p: vec3<f32>, direction: vec3<f32>) -> f32 {
     if !sun && !moon {return 1.0;}
     let hit = p.xz+clouds.offset.xy+direction.xz*(clouds.layer.x-p.y)/max(direction.y,0.04);
     let t=textureSampleLevel(cloud_shadow,cloud_repeat,(hit-clouds.offset.zw)/(clouds.layer.z*4.0),0.0).rg;
-    return select(t.y,t.x,sun);
+    // Even a thick deck lets some direct light through (the bright patch around the sun),
+    // so overcast scenes keep a little modelling instead of going flat.
+    return max(select(t.y,t.x,sun), 0.12);
 }
 /// 1 where rain reaches `p`, 0 under full cover. Bilinear coverage, as on the CPU.
 fn rain_shelter(p: vec3<f32>) -> f32 {

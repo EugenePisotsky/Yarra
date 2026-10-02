@@ -23,6 +23,10 @@
 #import bevy_pbr::pbr_functions::visibility_range_dither;
 #endif
 
+#ifdef TREE_BARK_BLEND
+#import "shaders/tree_bark.wgsl"::blend_upper_bark
+#endif
+
 #ifdef MESHLET_MESH_MATERIAL_PASS
 #import bevy_pbr::meshlet_visibility_buffer_resolve::resolve_vertex_output
 #endif
@@ -71,13 +75,33 @@ fn fragment(
     // Crown-shaded tree foliage stores crown occlusion in vertex colour
     // (crates/engine/src/tree_wind/material.rs). It dims sky and ambient light only;
     // shadow maps already darken the sun, so leaves in sunlight keep their colour.
-    let crown_occlusion = in.color.rgb;
+    // MSAA evaluates edge pixels at the pixel centre, which can lie outside a small distant
+    // card; vertex colour extrapolated there can leave [0, 1] by a lot. Clamped, it can
+    // neither cancel the base colour nor brighten the lighting below.
+    let crown_occlusion = clamp(in.color.rgb, vec3(0.05), vec3(1.0));
     pbr_input.material.base_color = vec4(
         pbr_input.material.base_color.rgb / max(crown_occlusion, vec3(0.01)),
         pbr_input.material.base_color.a,
     );
     pbr_input.diffuse_occlusion *= crown_occlusion;
     pbr_input.specular_occlusion *= crown_occlusion.g;
+#endif
+#endif
+
+#ifdef TREE_BARK_BLEND
+#ifndef PREPASS_PIPELINE
+#ifdef VERTEX_COLORS
+#ifdef VERTEX_UVS_A
+#ifdef VERTEX_TANGENTS
+    // Two-layer tree bark (crates/engine/src/tree_wind/bark.rs): vertex colour alpha
+    // blends the lower bark built above towards the upper bark.
+    // Clamped for the same reason as crown occlusion: MSAA extrapolates vertex colour on
+    // thin branches.
+    blend_upper_bark(&pbr_input, in.uv, clamp(in.color.rgb, vec3(0.0), vec3(1.0)), in.color.a,
+        in.world_normal, in.world_tangent);
+#endif
+#endif
+#endif
 #endif
 #endif
 
