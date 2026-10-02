@@ -120,6 +120,25 @@ cargo run --release -p yarra-app-game -- --start-view content/world.project.view
 
 The maple samples stand east of the oaks. `place_maple_preview.py` preserves existing placements/bookmarks and backs up the source to `tmp/maple-placement-*/`. It creates `maple-forest`, `maple-spreading`, `maple-sparse`, and `maple-overhead` bookmarks. Art review is pending; native captures go under local `tmp/maple-playtest/`. The same billboard and dense-forest profiling limitations as oak apply.
 
+The maple spacing revision reduces each baked spray from 49–65 overlapping leaves to 29–39, with more space between pairs and slightly smaller leaves. The existing sample placements, card counts, mesh LOD budgets and shading remain unchanged. Reimport the three bundles together to refresh their shared texture set and updated mesh bounds.
+
+The user approved the more open maple spacing; retain it as the current maple art checkpoint.
+
+**Tall layered broadleaf:** `tall_broadleaf_forest` is a roughly 24 m foliage-height prototype inspired by local Witcher reference IMG_1369. A low, tapered crown uses staggered limbs, small pointed qgCoa2 leaves and brown elm bark. Its three mesh LODs are 3,466/1,092/480 triangles. Two compact stemless facing bunches sit within the mid/outer sprays on each leafy side of 28 limbs (112 total), with the same pivots across all mesh LODs. The 232 original sprays stay fixed; narrower, more open bakes and a near-LOD bend reduce long flat panels. The old 40 central fillers and random large rotating sprays are replaced by these branch-facing pairs. Typical leaf length is about 10.8 cm; the atlas remains 2048×3072. The renderer and lighting are unchanged. This is a larger-tree asset budget; dense-forest/device performance remains unmeasured.
+
+```sh
+python3 tools/import_vegetation_bundle.py \
+  --bundle /path/to/vegetation/outputs/tall_broadleaf_forest/current \
+  --output assets/local/yarra_tall_forest \
+  --catalog assets/packs/yarra_tall_forest/tall_forest.catalog.ron
+cargo run --release -p yarra-world-cook -- import-assets assets/packs/yarra_tall_forest/tall_forest.catalog.ron
+python3 tools/place_tall_forest_preview.py
+cargo run --release -p yarra-world-cook -- cook
+cargo run --release -p yarra-app-game -- --start-view content/world.project.views/tall-forest-stand.ron
+```
+
+Three samples of the same shape at different rotations/scales stand east of the maples, at x=2712/2736/2760, z≈4310. The placement helper backs up the source, uses stable IDs and preserves edits on repeat runs. It creates `tall-forest`, `tall-forest-stand` and `tall-forest-overhead` bookmarks. Native captures go under local `tmp/tall-forest-playtest/`. The authoring billboard is exported but is not imported into the runtime yet.
+
 **Houdini trees:** `tools/houdini_export_tree.py` exports the forest trees from the Houdini tree scene as glTF LODs plus `assets/packs/yarra_trees/trees.catalog.ron`; import that catalog the same way. See [Houdini trees](../assets/README.md#houdini-trees) for the export command, the cluster-card bake and the `crown_v1` shading contract.
 
 Imported forest foliage now animates in both game and editor. It follows the shared wind enable/direction/strength and preview transport, with rigid bark and authored leaf weights. The existing game Wind control affects trees and grass together. `--upscaler metalfx-temporal` uses deformation-aware tree motion vectors automatically. To check the wind implementation, run `cargo test -p yarra-engine tree_wind`; with native GPU access, also run `cargo test -p yarra-engine tree_wind::gpu_tests -- --ignored`. The current local exports already include wind metadata; no world recook is needed for the shader/material update.
