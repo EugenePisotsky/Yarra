@@ -124,7 +124,7 @@ The maple spacing revision reduces each baked spray from 49–65 overlapping lea
 
 The user approved the more open maple spacing; retain it as the current maple art checkpoint.
 
-**Tall layered broadleaf:** `tall_broadleaf_forest` is a roughly 24 m foliage-height prototype inspired by local Witcher reference IMG_1369. A low, tapered crown uses staggered limbs, small pointed qgCoa2 leaves and brown elm bark. Its three mesh LODs are 3,466/1,092/480 triangles. Two compact stemless facing bunches sit within the mid/outer sprays on each leafy side of 28 limbs (112 total), with the same pivots across all mesh LODs. The 232 original sprays stay fixed; narrower, more open bakes and a near-LOD bend reduce long flat panels. The old 40 central fillers and random large rotating sprays are replaced by these branch-facing pairs. Typical leaf length is about 10.8 cm; the atlas remains 2048×3072. The renderer and lighting are unchanged. This is a larger-tree asset budget; dense-forest/device performance remains unmeasured.
+**Tall layered broadleaf:** `tall_broadleaf_forest` is a roughly 24 m foliage-height prototype inspired by local Witcher reference IMG_1369. A low, tapered crown uses staggered limbs, small pointed qgCoa2 leaves and brown elm bark. Its three mesh LODs are 3,466/1,092/592 triangles after the connection trial below. Two compact stemless facing bunches sit within the mid/outer sprays on each leafy side of 28 limbs (112 total), with the same pivots across all mesh LODs. The 232 original sprays stay fixed; narrower, more open bakes and a near-LOD bend reduce long flat panels. The old 40 central fillers and random large rotating sprays are replaced by these branch-facing pairs. Typical leaf length is about 10.8 cm; the atlas remains 2048×3072. See the lighting trial below for its material. This is a larger-tree asset budget; dense-forest/device performance remains unmeasured.
 
 ```sh
 python3 tools/import_vegetation_bundle.py \
@@ -139,7 +139,11 @@ cargo run --release -p yarra-app-game -- --start-view content/world.project.view
 
 Three samples of the same shape at different rotations/scales stand east of the maples, at x=2712/2736/2760, z≈4310. The placement helper backs up the source, uses stable IDs and preserves edits on repeat runs. It creates `tall-forest`, `tall-forest-stand` and `tall-forest-overhead` bookmarks. Native captures go under local `tmp/tall-forest-playtest/`. The authoring billboard is exported but is not imported into the runtime yet.
 
-**Houdini trees:** `tools/houdini_export_tree.py` exports the forest trees from the Houdini tree scene as glTF LODs plus `assets/packs/yarra_trees/trees.catalog.ron`; import that catalog the same way. See [Houdini trees](../assets/README.md#houdini-trees) for the export command, the cluster-card bake and the `crown_v1` shading contract.
+**Tall-tree lighting trial:** The approved art checkpoint is vegetation `a0818aa` / Yarra `d48e5fd`. The subsequent local trial enables **Crown lighting → Bake crown occlusion**, strength 0.9, for the tall preset. Rebuild and import with the same commands above. The importer selects `crown_v2` only for `crown_sky_v1` source materials; other species retain legacy shading. Broad sky visibility is baked into existing vertex colors from the complete crown before LOD thinning. Beyond dynamic-shadow coverage, the shader uses this data and stable crown normals to preserve sun-responsive contrast. Geometry and original foliage textures are unchanged. Restart the rebuilt game to load the new material pipeline and imported assets. Local native before/after captures and bookmarks are under `tmp/crown-occlusion/`; close, 35/65/100/150 m and overhead views were checked. The distant effect approximates crown self-shadowing; it does not extend cast ground shadows. Full weather/sun and dense-forest device profiling remain pending.
+
+**Tall-tree far connections:** LOD2 now retains two existing inner fixed sprays on each of 28 limbs, adding 112 triangles (480 → 592). LOD1 prioritizes these sprays within its unchanged count. Branch radii increase by 1.3 in LOD1 and 1.6 in LOD2, while the trunk, LOD0 and all 112 facing bunches remain unchanged. Connecting sprays share a 1.12 scale across the two simplified LODs. Authoring controls live under **Distant LOD**; 0 connecting sprays and thickness 1 recover the preceding version. It uses identical textures and the existing `crown_v2` shader. Rebuild/import as above and recook the catalog for its updated mesh memory estimates. Native visual comparisons are under `tmp/far-lod-connectors/`; forest GPU profiling remains separate.
+
+**Houdini trees:** `tools/houdini_export_tree.py` exports the forest trees from the Houdini tree scene as glTF LODs plus `assets/packs/yarra_trees/trees.catalog.ron`; import that catalog the same way. See [Houdini trees](../assets/README.md#houdini-trees) for the export command, the cluster-card bake and the `crown_v1`/`crown_v2` shading contracts.
 
 Imported forest foliage now animates in both game and editor. It follows the shared wind enable/direction/strength and preview transport, with rigid bark and authored leaf weights. The existing game Wind control affects trees and grass together. `--upscaler metalfx-temporal` uses deformation-aware tree motion vectors automatically. To check the wind implementation, run `cargo test -p yarra-engine tree_wind`; with native GPU access, also run `cargo test -p yarra-engine tree_wind::gpu_tests -- --ignored`. The current local exports already include wind metadata; no world recook is needed for the shader/material update.
 
@@ -168,6 +172,139 @@ python3 tools/vegetation_study.py capture --camera low --character --time 2.5
 The helper builds the debug editor unless `--no-build` is supplied. `--output DIR` selects a fresh capture directory. Captures contain `viewport.png`, `editor.png`, `study.ron` and diagnostics. Replay loads an unsaved draft; it does not silently save a catalog. Matching pixels require the same renderer/assets/device. Reference originals live under `.editor/vegetation/references`; capture/study data is local. Study versions 1 and 2 remain readable.
 
 Canopy controls isolate combined/ground/blade treatment. **Save canopy look** writes `content/vegetation/canopy-look.ron`; the game loads it at startup or **F1 → Advanced → Reload canopy look**. This is an artistic approximation, not a shadow solution. Shader-level banding studies remain experimental; normal-game controls were removed. The Animation workspace independently previews catalog models/clips and transport without changing gameplay actor authority.
+
+### Bay shrub prototype
+
+`bay_upright` uses six curved stems spreading directly from the
+ground, small branch sprays, and the supplied bay leaf sheet. The three
+mesh LODs contain 2,632 / 864 / 426 triangles and preserve all 52 centered facing
+cards; 26 are distributed through the interior crown to fill gaps. Crown occlusion is enabled; elm bark is provisional. The material/shader
+uses the existing foliage path. No additional shader or runtime feature is needed.
+
+```sh
+python3 tools/import_vegetation_bundle.py \
+  --bundle /path/to/vegetation/outputs/bay_upright/current \
+  --output assets/local/yarra_bay \
+  --catalog assets/packs/yarra_bay/bay.catalog.ron
+cargo run --release -p yarra-world-cook -- import-assets assets/packs/yarra_bay/bay.catalog.ron
+python3 tools/place_bay_preview.py
+cargo run --release -p yarra-world-cook -- cook
+cargo run --release -p yarra-app-game -- --start-view content/world.project.views/bay-near.ron
+```
+
+Three samples stand east of the tall-tree stand at x=2782/2793/2804, z≈4310,
+with different rotations/scales. The placement helper backs up the source and
+preserves existing placements/bookmarks on repeat runs. Review bookmarks are
+`bay-near`, `bay-stand`, and `bay-overhead`; native captures are under
+`tmp/bay-playtest/`. As with the other kit assets, the authoring billboard is
+exported but not registered in the game pending runtime view selection. This
+small stand is an art check, not a dense-forest performance benchmark.
+
+### Current longleaf pine kit
+
+Run `hython scripts/build_longleaf_kit.py` and
+`hython scripts/validate_longleaf_kit.py` in the vegetation project, then:
+
+```sh
+python3 tools/import_vegetation_bundle.py \
+  --bundle /path/to/vegetation/outputs/pine_longleaf/current \
+  --bundle /path/to/vegetation/outputs/pine_longleaf_half_bare/current \
+  --bundle /path/to/vegetation/outputs/pine_longleaf_nearly_bare/current \
+  --bundle /path/to/vegetation/outputs/pine_longleaf_one_sided/current \
+  --output assets/local/yarra_longleaf \
+  --catalog assets/packs/yarra_longleaf/longleaf.catalog.ron
+target/release/yarra-world-cook import-assets assets/packs/yarra_longleaf/longleaf.catalog.ron
+python3 tools/place_longleaf_preview.py
+target/release/yarra-world-cook cook
+python3 tools/render_longleaf_preview.py
+```
+
+The healthy tree is beside the birches at X 2510, Z 4346. Half-bare, nearly-bare,
+and one-sided forms are at X 2474, 2486, and 2498 on the same row. They retain
+the approved shape and needle scale, with 11 / 3 surviving limbs for the first
+two forms; the one-sided form retains 15% of its opposite-side groups.
+
+`longleaf-kit` shows the lineup. Individual bookmarks are `longleaf-half`,
+`longleaf-nearly`, `longleaf-one-sided`, and `longleaf-bare-close`.
+Healthy-tree bookmarks:
+`longleaf-whole`, `longleaf-close`, `longleaf-side`, `longleaf-overhead`,
+`longleaf-far`. The whole/far views offset their focus along the viewing ray
+because bookmarks allow at most a 24 m orbit distance. Placement removes the
+six known old-pine and two branch-study preview IDs in the same transaction as
+adding the new forms. It backs up SQLite first and verifies unrelated objects
+are unchanged. Reruns preserve existing longleaf placements and bookmark edits.
+
+Captures go to `tmp/longleaf-review`; use `--view close --mode half` for a
+reduced-resolution check. The helper verifies fresh, non-black output. These
+are visual checks; GPU/frame timings during a capture are not a forest benchmark.
+The four longleaf forms are the active pine kit. Old source assets remain archived.
+
+### Archived pine kit
+
+Six shared-pipeline pines use `yarra_pines_v2`: mature forest, young, spreading,
+half bare, nearly bare and one-sided. They share needle textures and use the
+same centered camera-facing cards, coverage mip chain and crown lighting as the
+newer vegetation. These are retained as authoring archives; their six preview
+trees were replaced by the longleaf kit below. To reimport the archived assets
+without placing them, import all six together so textures remain shared:
+
+```sh
+python3 tools/import_vegetation_bundle.py \
+  --bundle /path/to/vegetation/outputs/pine_forest/current \
+  --bundle /path/to/vegetation/outputs/pine_young/current \
+  --bundle /path/to/vegetation/outputs/pine_open/current \
+  --bundle /path/to/vegetation/outputs/pine_half_bare/current \
+  --bundle /path/to/vegetation/outputs/pine_nearly_bare/current \
+  --bundle /path/to/vegetation/outputs/pine_one_sided/current \
+  --output assets/local/yarra_pines_v2 \
+  --catalog assets/packs/yarra_pines_v2/pines.catalog.ron
+cargo run --release -p yarra-world-cook -- import-assets assets/packs/yarra_pines_v2/pines.catalog.ron
+```
+
+The retired samples were west of the birches (X 2438–2474, Z 4327–4350).
+Their old bookmarks no longer represent the current kit.
+`tools/place_pine_preview.py` forwards to the current longleaf placement helper.
+Exposed crown branches in the archived models use two fixed curved
+cards with a short solid attachment, retained across all three LODs.
+Mature branches now spread or droop and carry overlapping groups of needles.
+About 25% of needle cards face the camera, primarily the two fillers inside
+each limb's outer foliage groups. This is an asset update using existing shaders.
+The original `yarra_pines` pack remains an archive; use `yarra_longleaf` for the current kit.
+Three mesh LODs are imported; billboard support remains separate pending work.
+
+### Archived isolated pine branch study
+
+The grouped-needle pine revision was rejected in art review: shoots and stacked
+cards merge into painted-looking clumps. `yarra_pine_branch_study` tested a
+simpler branch in isolation. Its two preview fixtures have now been removed;
+the commands below reproduce the archived experiment explicitly. Its two
+samples use eight separate shoots on one card, then the same card with a smaller
+offset companion (8 / 16 triangles). They share textures and identical LODs.
+There is no canopy-normal blend, crown occlusion, or camera rotation in this study.
+
+```sh
+# First run scripts/build_pine_branch_study.py with hython in vegetation.
+python3 tools/import_vegetation_bundle.py \
+  --bundle /path/to/vegetation/outputs/pine_branch_single/current \
+  --bundle /path/to/vegetation/outputs/pine_branch_depth/current \
+  --output assets/local/yarra_pine_branch_study \
+  --catalog assets/packs/yarra_pine_branch_study/branches.catalog.ron \
+  --canopy-blend 0
+target/release/yarra-world-cook import-assets assets/packs/yarra_pine_branch_study/branches.catalog.ron
+python3 tools/place_pine_branch_study.py
+target/release/yarra-world-cook cook
+python3 tools/render_pine_branch_study.py
+```
+
+The branches float at chest height beside the birches, at X 2491 / 2497, Z 4338.
+Use `pine-branch-compare`, `pine-branch-single`, `pine-branch-depth`,
+`pine-branch-below`, and `pine-branch-overhead` bookmarks. Placement preserves
+existing scenery and repeat-run edits. Captures go to `tmp/pine-branch-study/`,
+with 1920×1080 native and 960×540 internal / 1920×1080 MetalFX Temporal output.
+The capture helper requires Pillow, rejects missing/stale/black screenshots,
+and accepts `--view overhead --mode half` to repeat an individual check.
+The first test is branch readability and card overlap; it does not validate
+full-tree silhouette, LOD transitions, or forest performance.
 
 ## Explicit fixtures and catalog tools
 

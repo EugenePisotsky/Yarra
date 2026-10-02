@@ -79,7 +79,10 @@ def adapt_foliage(doc, blob, blend):
             material = doc['materials'][primitive['material']]
             a = primitive['attributes']
             if material.get('alphaMode') == 'MASK':
-                material['extras'] = {'yarra_wind': 'foliage_uv1_v1', 'yarra_shading': 'crown_v1'}
+                extras = material.setdefault('extras', {})
+                occlusion = extras.get('vegetation_occlusion') == 'crown_sky_v1'
+                extras.update(yarra_wind='foliage_uv1_v1',
+                              yarra_shading='crown_v2' if occlusion else 'crown_v1')
                 material['extensions'] = {'KHR_materials_specular': {'specularFactor': .5}}
                 material['normalTexture']['scale'] = .6
                 n = rows(doc, blob, a['NORMAL'])
@@ -206,7 +209,7 @@ def main():
             entries.append(f'(key: "{output.name}/{name}", display_name: "{name.replace("_", " ").title()}", source_uri: "{pack}/source/{name}.glb", variants: [\n'+ '\n'.join(variants)+'\n]),')
             reports.append({'asset': name, 'triangles': counts, 'facing_cards': len(first_ids), 'source': str(bundle.resolve())})
         (stage/'import.json').write_text(json.dumps({'assets': reports, 'source_texture_sha256': texture_hashes,
-            'canopy_blend': args.canopy_blend, 'lighting': 'Existing experimental crown_v1 shader; no global lighting changes',
+            'canopy_blend': args.canopy_blend, 'lighting': 'crown_v2 for crown_sky_v1 occlusion bakes; legacy bundles retain crown_v1',
             'billboard': 'Not registered: view-selection shader pending',
             'translucency': 'Source sidecar not sampled by current Yarra foliage shader'}, indent=2)+'\n')
         if output.exists():

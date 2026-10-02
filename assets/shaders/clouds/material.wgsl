@@ -73,8 +73,9 @@ fn fragment(
 #ifdef TREE_CROWN_SHADING
 #ifdef VERTEX_COLORS
     // Crown-shaded tree foliage stores crown occlusion in vertex colour
-    // (crates/engine/src/tree_wind/material.rs). It dims sky and ambient light only;
-    // shadow maps already darken the sun, so leaves in sunlight keep their colour.
+    // (crates/engine/src/tree_wind/material.rs). Apply it to indirect lighting;
+    // pbr_lighting handles the separate crown self-shadow / cascade handoff.
+    // Remove Bevy's vertex tint so occlusion never changes leaf albedo itself.
     // MSAA evaluates edge pixels at the pixel centre, which can lie outside a small distant
     // card; vertex colour extrapolated there can leave [0, 1] by a lot. Clamped, it can
     // neither cancel the base colour nor brighten the lighting below.

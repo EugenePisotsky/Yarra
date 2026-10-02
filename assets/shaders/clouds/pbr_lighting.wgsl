@@ -380,7 +380,19 @@ fn apply_pbr_lighting(
             let shadow_end = (*light).cascades[max(cascades, 1u) - 1u].far_bound;
             let beyond = select(1.0, smoothstep(shadow_end * 0.7, shadow_end, -view_z), shadows_on);
             let crown = clamp(in.diffuse_occlusion.g, 0.0, 1.0);
+#ifdef TREE_CROWN_OCCLUSION
+            // Approximate broad self-shadowing once shadow maps run out. The
+            // unperturbed authored crown normal follows the sun, not the camera
+            // or leaf-detail normal map. Exposed sides keep sunlight; sheltered
+            // sides retain depth. A constant multiplier merely makes a flat
+            // distant crown darker. Nearby direct lighting stays map-driven.
+            let sun_facing = smoothstep(-0.25, 0.65,
+                dot(normalize(in.world_normal), (*light).direction_to_light));
+            let crown_shadow = mix(crown * crown * crown * crown, sqrt(crown), sun_facing);
+            shadow = mix(shadow, crown_shadow, beyond);
+#else
             shadow = mix(shadow, crown * crown * crown, beyond);
+#endif
         }
 #endif
         shadow *= cloud;

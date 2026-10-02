@@ -175,9 +175,53 @@ Leaf cards are lit by the crown, not by their own orientation. `NORMAL` is the
 smoothed crown surface normal (blended 85% with the card) and `COLOR_0` is
 crown-depth occlusion. The foliage material is tagged `yarra_shading: "crown_v1"`:
 both sides of a card keep the crown normal (Bevy's two-sided flip would light every
-back face as if it faced into the crown), and the occlusion dims only sky and ambient
-light, because shadow maps already darken the sun. Leaves are kept rough and use half
+back face as if it faced into the crown). Occlusion dims sky and ambient light;
+past the shadow range it also supplies a coarse self-shadow fallback. Leaves are kept rough and use half
 the default reflectance (`KHR_materials_specular`), since glossy sky reflection off
 crown normals turns shaded leaves grey. It also carries the usual `yarra_wind`
 contract (TEXCOORD_1 = flutter, branch); bark is opaque and rigid, with its
 occlusion multiplied into base colour.
+
+The tall-tree lighting trial exports `vegetation_occlusion: "crown_sky_v1"`.
+`import_vegetation_bundle.py` preserves this marker and selects
+`yarra_shading: "crown_v2"`. Its vertex colors contain spatial sky visibility
+from the complete crown before LOD thinning. Facing clumps retain constant AO
+at their pivot; the approved geometry and foliage textures are unchanged.
+Near direct sunlight still uses dynamic shadows. Over the outer 30% of the
+shadow range, `crown_v2` blends to coarse self-shadowing from AO and the stable
+crown normal relative to the light. Sun-facing areas stay brighter than sheltered
+areas after shadow maps run out. It adds no texture samples or geometry.
+Unmarked bundles keep `crown_v1`. This is an art trial, not final foliage shading;
+it does not extend ground-shadow range or implement runtime billboards.
+
+The bay shrub trial is rebuilt from vegetation's `bay_upright` bundle using
+`tools/import_vegetation_bundle.py`, with tracked catalog
+`packs/yarra_bay/bay.catalog.ron` and local textures/geometry in `local/yarra_bay`.
+`tools/place_bay_preview.py` adds its review stand without replacing existing trees.
+
+The archived six-form pine kit is recorded by
+`packs/yarra_pines_v2/pines.catalog.ron` and imported into `local/yarra_pines_v2`.
+It shares one 24-tile needle atlas, coverage mipmaps and the newer card/crown
+lighting contract. Mature limbs spread and droop; broad fixed needle groups
+contain the centered facing fillers, using the existing renderer unchanged.
+Its six preview trees have been replaced by longleaf forms.
+`tools/place_pine_preview.py` now forwards to the longleaf placement helper.
+Source bundles remain available as archives. See `docs/WORKFLOWS.md`.
+
+`packs/yarra_pine_branch_study/branches.catalog.ron` registers two isolated
+branch experiments following the rejected grouped-needle pine treatment.
+The single-card and offset-companion samples use 8 / 16 triangles, shared
+textures, and identical LODs. Local binaries are under `local/yarra_pine_branch_study`.
+Their two preview fixtures have been retired along with the old pine stand.
+
+
+`packs/yarra_longleaf/longleaf.catalog.ron` registers the current four-form pine
+kit: healthy, half bare, nearly bare with top needles, and mostly one-sided.
+Local source/runtime geometry is under `local/yarra_longleaf`.
+It uses rfefw2 needle scans on upward forked sprays, with 2,662 / 1,346 / 676
+triangles and 23 centered facing cards. Every branch group retains a fixed spray
+at far LOD. The existing renderer and other tree assets are unchanged by this
+kit. All four forms share their textures and woody scaffold; bare fork cards
+remain fixed. `tools/place_longleaf_preview.py` plants the variants beside the
+healthy tree near the birches, removing only the eight known retired preview
+IDs after a source-world backup. The `longleaf-kit` bookmark shows the lineup.

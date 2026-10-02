@@ -28,15 +28,18 @@ struct TreeWindExtension {
     #[storage(100, read_only)]
     wind: Handle<ShaderBuffer>,
     crown_shading: bool,
+    crown_occlusion: bool,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct TreeWindKey {
     crown_shading: bool,
+    crown_occlusion: bool,
 }
 impl From<&TreeWindExtension> for TreeWindKey {
     fn from(material: &TreeWindExtension) -> Self {
         Self {
             crown_shading: material.crown_shading,
+            crown_occlusion: material.crown_occlusion,
         }
     }
 }
@@ -51,6 +54,9 @@ impl MaterialExtension for TreeWindExtension {
             && let Some(fragment) = descriptor.fragment.as_mut()
         {
             fragment.shader_defs.push("TREE_CROWN_SHADING".into());
+            if key.bind_group_data.crown_occlusion {
+                fragment.shader_defs.push("TREE_CROWN_OCCLUSION".into());
+            }
         }
         super::cards::specialize(descriptor, layout)
     }
@@ -104,7 +110,7 @@ fn uses_wind(extras: &str) -> bool {
 }
 
 /// How tagged foliage is lit (see TREE_CROWN_SHADING in the cloud material shaders).
-/// Both modes treat vertex colour as crown occlusion of indirect light and soften shadows.
+/// Tagged modes treat vertex colour as crown occlusion, not an albedo tint.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum FoliageShading {
     Plain,
@@ -112,13 +118,18 @@ enum FoliageShading {
     /// sides keep the authored crown normal. Back faces are still drawn; only Bevy's
     /// two-sided normal flip is turned off.
     Crown,
+    /// `crown_v2`: spatial sky visibility baked from the full crown, retained
+    /// across LODs and used with crown normals for distant self-shadowing.
+    CrownOcclusion,
     /// `yarra_shading: "pad_v1"`: cards are flat pads (pine branch ends) whose authored
     /// normal faces up, so Bevy's flip is kept: a pad's underside faces down and falls dark.
     Pad,
 }
 
 fn foliage_shading(extras: &str) -> FoliageShading {
-    if extra_is(extras, "yarra_shading", "crown_v1") {
+    if extra_is(extras, "yarra_shading", "crown_v2") {
+        FoliageShading::CrownOcclusion
+    } else if extra_is(extras, "yarra_shading", "crown_v1") {
         FoliageShading::Crown
     } else if extra_is(extras, "yarra_shading", "pad_v1") {
         FoliageShading::Pad
@@ -129,7 +140,10 @@ fn foliage_shading(extras: &str) -> FoliageShading {
 
 fn foliage_base(source: &CloudMaterial, shading: FoliageShading) -> CloudMaterial {
     let mut material = source.clone();
-    if shading == FoliageShading::Crown {
+    if matches!(
+        shading,
+        FoliageShading::Crown | FoliageShading::CrownOcclusion
+    ) {
         material.base.double_sided = false;
         material.base.cull_mode = None;
     }
@@ -216,6 +230,7 @@ fn convert(
                     extension: TreeWindExtension {
                         wind: buffer.0.clone(),
                         crown_shading: shading != FoliageShading::Plain,
+                        crown_occlusion: shading == FoliageShading::CrownOcclusion,
                     },
                 });
                 (material, shading)
@@ -292,6 +307,20 @@ mod tests {
         );
         assert!(!shared.base.double_sided);
         assert_eq!(shared.base.cull_mode, None);
+        let baked = foliage_shading(r#"{"yarra_shading":"crown_v2"}"#);
+        assert_eq!(baked, FoliageShading::CrownOcclusion);
+        let baked_base = foliage_base(&source, baked);
+        assert!(!baked_base.base.double_sided);
+        assert_eq!(baked_base.base.cull_mode, None);
+        // New occlusion behavior has a distinct pipeline; old assets retain theirs.
+        let key = |shading| {
+            TreeWindKey::from(&TreeWindExtension {
+                wind: Handle::default(),
+                crown_shading: true,
+                crown_occlusion: shading == FoliageShading::CrownOcclusion,
+            })
+        };
+        assert_ne!(key(FoliageShading::Crown), key(baked));
         let pad = foliage_shading(r#"{"yarra_wind":"foliage_uv1_v1","yarra_shading":"pad_v1"}"#);
         assert_eq!(pad, FoliageShading::Pad);
         assert!(foliage_base(&source, pad).base.double_sided);
