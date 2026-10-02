@@ -10,6 +10,9 @@ projects. Restoring a Git checkout alone does not restore these asset binaries.
 states and their three mesh LODs. Rebuild them with
 `tools/import_vegetation_bundle.py` from the matching authoring bundles (Khronos
 KTX 4.4.2, available on PATH or via `--ktx`).
+`assets/packs/yarra_oaks/oaks.catalog.ron` records the forest, spreading and sparse
+oak forms. Use the same importer with a separate `assets/local/yarra_oaks/` output
+pack; the three forms share one texture set and three mesh LODs each.
 `assets/packs/yarra_pines/pines.catalog.ron` records the six legacy native-scene
 pine variants imported by `tools/houdini_export_tree.py`. Their original scene
 and source inputs must also be restored locally. See

@@ -153,7 +153,7 @@ def main():
     pack = output.relative_to(ROOT/'assets').as_posix()
     output.parent.mkdir(parents=True, exist_ok=True)
     entries, reports, texture_hashes = [], [], {}
-    with tempfile.TemporaryDirectory(prefix='.birch-import-', dir=output.parent) as tmp:
+    with tempfile.TemporaryDirectory(prefix='.vegetation-import-', dir=output.parent) as tmp:
         stage = Path(tmp)/'pack'
         texdir, source = stage/'runtime/textures', stage/'source'
         texdir.mkdir(parents=True); (source/'textures').mkdir(parents=True)

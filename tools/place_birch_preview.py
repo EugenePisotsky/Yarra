@@ -47,17 +47,15 @@ def height(db, size, x, z):
     return (h[iz*n+ix]*(1-fx)+h[iz*n+ix+1]*fx)*(1-fz)+(h[(iz+1)*n+ix]*(1-fx)+h[(iz+1)*n+ix+1]*fx)*fz
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--project', type=Path, default=ROOT/'content/world.project.sqlite')
-    args = parser.parse_args()
-    db = sqlite3.connect('file:'+str(args.project.resolve())+'?mode=rw', uri=True)
+def place(project, samples, views, tag, pack, prefix):
+    """Add one species stand, preserving existing placements and bookmarks."""
+    db = sqlite3.connect('file:'+str(project.resolve())+'?mode=rw', uri=True)
     db.execute('PRAGMA foreign_keys=ON')
     row = db.execute('SELECT name,cell_size FROM world_spaces WHERE id=1').fetchone()
     if row != ('Island', 32.):
         raise ValueError('These preview coordinates are for the current 32 m island world only')
     size = row[1]
-    backup = ROOT/'tmp'/('birch-placement-'+str(time.time_ns()))
+    backup = ROOT/'tmp'/(tag+'-placement-'+str(time.time_ns()))
     backup.mkdir(parents=True)
     with sqlite3.connect(backup/'world.project.sqlite') as target:
         db.backup(target)
@@ -65,11 +63,11 @@ def main():
     report = []
     with db:
         db.execute('BEGIN IMMEDIATE')
-        for name, state, x, z, yaw, scale in SAMPLES:
-            object_id = uuid.uuid5(uuid.NAMESPACE_URL, 'yarra:birch-preview/v1/'+name).bytes
-            definition = db.execute('SELECT definition_id FROM object_definitions WHERE definition_key=?', ('asset/yarra_birches/birch_'+state,)).fetchone()
+        for name, state, x, z, yaw, scale in samples:
+            object_id = uuid.uuid5(uuid.NAMESPACE_URL, 'yarra:'+tag+'-preview/v1/'+name).bytes
+            definition = db.execute('SELECT definition_id FROM object_definitions WHERE definition_key=?', ('asset/'+pack+'/'+prefix+state,)).fetchone()
             if definition is None:
-                raise ValueError('Import the birch catalog before placing trees')
+                raise ValueError('Import the '+tag+' catalog before placing trees')
             existing = db.execute('SELECT definition_id FROM object_placements WHERE object_id=?', (object_id,)).fetchone()
             if existing and existing != definition:
                 raise ValueError('Preview object ID is already used by another definition')
@@ -84,15 +82,23 @@ def main():
                            'position': [x, y, z], 'scale': scale, 'created': not bool(existing)})
         assert not db.execute('PRAGMA foreign_key_check').fetchall()
         assert db.execute('SELECT count(*) FROM object_placements').fetchone()[0] == before+sum(r['created'] for r in report)
-    views = args.project.with_suffix('.views')
-    views.mkdir(exist_ok=True)
-    for name, x, z, yaw, pitch, distance in VIEWS:
-        path = views/(name+'.ron')
+    view_dir = project.with_suffix('.views')
+    view_dir.mkdir(exist_ok=True)
+    for name, x, z, yaw, pitch, distance in views:
+        path = view_dir/(name+'.ron')
         if not path.exists():
             path.write_text(f'(position: ({x}, {height(db,size,x,z):.6f}, {z}), yaw_degrees: {yaw}, pitch_degrees: {pitch}, distance: {distance}, fog_visibility: 20000.0, route: [])\n')
     (backup/'placements.json').write_text(json.dumps(report, indent=2)+'\n')
     print(json.dumps(report, indent=2))
     print('Source backup and placement IDs:', backup)
+    db.close()
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--project', type=Path, default=ROOT/'content/world.project.sqlite')
+    args = parser.parse_args()
+    place(args.project, SAMPLES, VIEWS, 'birch', 'yarra_birches', 'birch_')
 
 
 if __name__ == '__main__':

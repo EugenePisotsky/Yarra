@@ -84,6 +84,25 @@ The placement helper is specific to the current 32 m island world: it adds nine 
 
 The refined birch uses smaller leaves, doubled baked twig thickness and 20% thicker mesh branches. The original broad-leaf look remains in authoring presets `generic_deciduous_leafy/sparse/bare`. Birch selects 25% of LOD0 leafy clusters from the inner crown (54 leafy / 11 sparse / 0 bare) and retains them at every mesh LOD. These two-triangle clusters rotate around their centers and use eight dedicated stemless atlas tiles; structural cards stay fixed. The shared foliage atlas is now 2048×3072, with the original tile detail and no additional material. In Houdini, **Moving share of leafy cards** can be set to 0.20–0.30; changing it reuses the atlas. **Stemless moving foliage** retains leaves and fine twigs but removes the main stem and attachment bases. `_CARD_FACING.xy` stores mode (0 legacy axis, 1 camera facing) and elevation follow (0 preserve tilt, 1 full facing). Change **Facing & detail** in Houdini and rebuild, or compare elevation live in the generated browser preview. Older exports without this optional attribute retain legacy behavior. All passes use the main camera; previous-camera poses drive temporal motion, and culling uses each mesh's measured rotation radius. The current lighting is unchanged.
 
+**Oak prototypes:** Forest, spreading and sparse oaks use the same importer and existing crown lighting. All three share six compressed textures and the same eight shoot recipes, each with leafy, bare and stemless tiles. Imported triangle counts are 2,616/784/374 (forest), 2,814/858/424 (spreading), and 2,616/736/286 (sparse). The original 25% moving subset is supplemented by 24 forest / 40 spreading interior stemless quads, giving 63 / 79 / 15 facing cards at every mesh LOD. IDs and pivots stay stable across LODs. Added fill reuses the same atlas; transparent overlap still needs dense-forest profiling.
+
+Extra oak foliage is distributed near secondary limbs using local foliage density and spacing, instead of concentrated in a central oval. Raising the authoring count retains existing filler positions. The lower fork stays open; sparse oak has no extra fill.
+
+```sh
+python3 tools/import_vegetation_bundle.py \
+  --bundle /path/to/vegetation/outputs/oak_forest/current \
+  --bundle /path/to/vegetation/outputs/oak_spreading/current \
+  --bundle /path/to/vegetation/outputs/oak_sparse/current \
+  --output assets/local/yarra_oaks \
+  --catalog assets/packs/yarra_oaks/oaks.catalog.ron
+cargo run --release -p yarra-world-cook -- import-assets assets/packs/yarra_oaks/oaks.catalog.ron
+python3 tools/place_oak_preview.py
+cargo run --release -p yarra-world-cook -- cook
+cargo run --release -p yarra-app-game -- --start-view content/world.project.views/oak-spreading.ron
+```
+
+`place_oak_preview.py` adds three samples east of the birch stand, preserving existing scenery and edits on repeat runs. It backs up the source to `tmp/oak-placement-*/` and creates `oak-forest`, `oak-spreading`, `oak-sparse`, and `oak-overhead` bookmarks. Ground and overhead captures are under local `tmp/oak-playtest/`. These are art/correctness checks; dense-forest performance is not yet measured. Existing LOD stippling remains visible. Billboard selection and the separate translucency texture are still pending runtime work.
+
 **Houdini trees:** `tools/houdini_export_tree.py` exports the forest trees from the Houdini tree scene as glTF LODs plus `assets/packs/yarra_trees/trees.catalog.ron`; import that catalog the same way. See [Houdini trees](../assets/README.md#houdini-trees) for the export command, the cluster-card bake and the `crown_v1` shading contract.
 
 Imported forest foliage now animates in both game and editor. It follows the shared wind enable/direction/strength and preview transport, with rigid bark and authored leaf weights. The existing game Wind control affects trees and grass together. `--upscaler metalfx-temporal` uses deformation-aware tree motion vectors automatically. To check the wind implementation, run `cargo test -p yarra-engine tree_wind`; with native GPU access, also run `cargo test -p yarra-engine tree_wind::gpu_tests -- --ignored`. The current local exports already include wind metadata; no world recook is needed for the shader/material update.
