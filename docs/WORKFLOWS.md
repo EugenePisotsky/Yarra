@@ -65,6 +65,92 @@ Navigation: right/middle drag orbits, Shift+right drag pans, wheel/pinch zooms, 
 
 **Collections:** Presets → Environment → New → Asset collection. Select registered tree/bush/rock assets, weights, scales, spacing, slope and road clearance. Paint a collection directly or include it in a composition. Layer density/seed control deterministic generated placements. Generated objects are not individually editable; use manual placement when independent identity/editing is needed.
 
+### Creating and revising trees
+
+Tree authoring lives in [YarraVegetation](https://github.com/EugenePisotsky/YarraVegetation),
+not in this game's runtime exporter. Its
+[authoring guide](https://github.com/EugenePisotsky/YarraVegetation/blob/main/TREE_AUTHORING.md)
+records the current recipes, branch/card design lessons, how to add variants or
+species, and the LOD/wind contract. Start there for shape changes. Use
+`tools/import_vegetation_bundle.py` for the current kit; the older
+`houdini_export_tree.py` and Forest Tree Starter Kit paths below reproduce
+separate legacy assets.
+
+| Current family | Runtime pack / tracked catalog under `assets/packs/` | Review view |
+| --- | --- | --- |
+| Birch: leafy, sparse, bare | `yarra_birches/birches.catalog.ron` | See birch placement workflow below |
+| Oak: forest, spreading, sparse | `yarra_oaks/oaks.catalog.ron` | See oak placement workflow below |
+| Maple: forest, spreading, sparse | `yarra_maples/maples.catalog.ron` | See maple placement workflow below |
+| Tall layered broadleaf | `yarra_tall_forest/tall_forest.catalog.ron` | `tall-forest-stand` |
+| Bay shrub | `yarra_bay/bay.catalog.ron` | `bay-stand` |
+| Longleaf: healthy, half-bare, nearly-bare, one-sided | `yarra_longleaf/longleaf.catalog.ron` | `longleaf-kit` |
+| Norway spruce | `yarra_spruces/spruces.catalog.ron` | `spruce-stand` |
+
+These are 16 forms, each with three mesh LODs. Legacy pine packs and branch-study
+assets remain archived; do not restore their retired preview placements when
+adding new pine variants. The current pine scaffold is `pine_longleaf`.
+
+1. Build and validate the selected family in YarraVegetation. Keep the seed,
+   source package and settings in a preset, with a separate output name for an
+   experiment. Preserve an approved bundle if a geometry comparison is needed.
+2. Import **every variant in the destination pack in one invocation**, repeating
+   `--bundle` for each. The importer replaces that pack, rather than appending
+   to it. It requires matching shared texture bytes, compresses one texture set
+   with Khronos KTX 4.4.2, and preserves coverage mipmaps. Use an explicit
+   `--output` and `--catalog`; their defaults target the birch pack. Split
+   variants into separate packs if they intentionally use different atlases.
+3. Register the regenerated catalog, then place only genuinely new samples and
+   cook the world. Re-register even if URIs are unchanged: mesh memory estimates
+   can change when vertex attributes change. Registration preserves placements;
+   it does not publish by itself. Existing shape updates need no placement rerun.
+4. Restart the game for a reliable check of new meshes/materials. Do not restart
+   a user's active tuning session without coordinating it: F1 wind settings are
+   temporary. Save requested tuning as source defaults separately.
+
+The spruce is a complete single-member example; the family-specific commands
+below show multi-bundle packs:
+
+```sh
+python3 tools/import_vegetation_bundle.py --ktx /path/to/ktx \
+  --bundle /path/to/YarraVegetation/outputs/spruce_forest/current \
+  --output assets/local/yarra_spruces \
+  --catalog assets/packs/yarra_spruces/spruces.catalog.ron
+cargo run --release -p yarra-world-cook -- import-assets assets/packs/yarra_spruces/spruces.catalog.ron
+# Only needed to create missing preview instances/views:
+python3 tools/place_spruce_preview.py
+cargo run --release -p yarra-world-cook -- cook
+cargo run --release -p yarra-app-game -- --start-view content/world.project.views/spruce-stand.ron
+```
+
+For another family, adapt the existing `place_spruce_preview.py` or
+`place_longleaf_preview.py` pattern: unique stable sample IDs, terrain-relative
+placement, a source SQLite backup, and preservation of unrelated objects and
+existing bookmark edits. Keep new review samples near the birches/longleaf row
+around X 2474–2551, Z 4346, with room between crowns. Add whole/close/below/far/
+overhead bookmarks. A few rotated/scaled samples help review a shape; they do
+not substitute for independently authored variants. Preview scripts describe
+local world edits; Git does not carry the resulting SQLite files.
+
+Check identifiable leaves/needles and mesh-to-card joins at character scale,
+the whole silhouette from several directions, moving-camera facing behavior,
+LOD transitions and reduced internal resolution. Test calm and strong wind,
+root contact, branch/card attachment, shadows and Temporal motion. A distant
+washed-out crown may involve shadow range or shading as well as asset density;
+a missing connection may involve geometry or alpha mip coverage. Diagnose the
+layer before enlarging cards or adding more overlap. The browser preview does
+not reproduce Yarra's full lighting or connected wind.
+
+Track scripts, presets in the other repo, runtime shaders, pack catalogs and
+docs. Keep source/derived textures, local meshes, captures, caches, databases
+and their backups ignored. A push to both repos preserves the rebuild recipe;
+a fresh checkout still needs licensed sources restored, then build/import/cook.
+Run focused checks for the changed contract. GPU checks need native GPU access
+and imported local packs; missing prerequisites are not a passing result.
+Use [Performance](PERFORMANCE.md) for matched measurements after visual review;
+triangle counts and a few trees at a capped frame rate are not forest budgets.
+
+### Existing forest packs and species recipes
+
 **Forest assets:** Follow [asset setup](../assets/README.md) to export the Forest Tree Starter Kit, then run `cargo run -p yarra-world-cook -- import-assets assets/packs/forest_tree_starter_kit/summer.catalog.ron [PROJECT_DB]` (omit the optional project argument for the current world). This registers 11 summer trees and 8 shrubs, each with four authored mesh LODs. Restart the editor to refresh the palette; search “Forest” for manual placement or select the assets in a collection. Registration preserves existing world placements and does not publish automatically. Save & Publish after authoring. The normal renderer retains object pages within 192 m in all directions, subject to residency budgets, and uses their mesh LODs. Off-screen trees remain available to cast shadows after camera turns; Bevy still culls individual draws. Visible pages load before off-screen ones; there are no usable billboards yet. Legacy terrain diagnostics retain their old local object window.
 
 **Birch prototype:** `tools/import_vegetation_bundle.py` imports the vegetation project's built `birch_leafy`, `birch_sparse`, and `birch_bare` bundles. It preserves geometry, UVs, wind weights and the authored rotating-card identities; adapts normals to the current experimental `crown_v1` material; and compresses six shared textures to mipmapped UASTC KTX2. Foliage color uses the baker's per-cell alpha-coverage mip levels. `--canopy-blend` controls the import's normal blend (default 0.85); this is not a final lighting decision. Source and converted binaries stay under ignored `assets/local/yarra_birches/`.
@@ -145,7 +231,15 @@ Three samples of the same shape at different rotations/scales stand east of the 
 
 **Houdini trees:** `tools/houdini_export_tree.py` exports the forest trees from the Houdini tree scene as glTF LODs plus `assets/packs/yarra_trees/trees.catalog.ron`; import that catalog the same way. See [Houdini trees](../assets/README.md#houdini-trees) for the export command, the cluster-card bake and the `crown_v1`/`crown_v2` shading contracts.
 
-Imported forest foliage now animates in both game and editor. It follows the shared wind enable/direction/strength and preview transport, with rigid bark and authored leaf weights. The existing game Wind control affects trees and grass together. `--upscaler metalfx-temporal` uses deformation-aware tree motion vectors automatically. To check the wind implementation, run `cargo test -p yarra-engine tree_wind`; with native GPU access, also run `cargo test -p yarra-engine tree_wind::gpu_tests -- --ignored`. The current local exports already include wind metadata; no world recook is needed for the shader/material update.
+Legacy imported forest foliage animates in both game and editor using shared wind enable/direction/strength and preview transport, with rigid bark and authored leaf weights. The existing game Wind control affects trees and grass together. `--upscaler metalfx-temporal` uses deformation-aware tree motion vectors automatically. To check the wind implementation, run `cargo test -p yarra-engine tree_wind`; with native GPU access, also run `cargo test -p yarra-engine tree_wind::gpu_tests -- --ignored`. The current local exports already include wind metadata; no world recook is needed for the shader/material update.
+
+**Connected tree wind trial:** Rebuilt vegetation bundles use `hierarchy_v2` on both bark and foliage. `_WIND_PIVOT` stores the primary limb root and tree height; `_WIND_AXIS` stores limb direction and compliance. Descendants share that limb transform. The trunk follows a curved, rooted bend; limbs inherit its pose; cards turn toward the camera and flutter about the transformed attachment. The same functions run for colour, depth, shadows and current/previous motion-vector poses. Retained card bindings are identical across LODs; mesh bounds include the maximum allowed swing. Bark keeps its two-texture transition. Older bundles retain their existing wind path.
+
+Open **F1 → Wind** to drag Strength, Gustiness, Direction, Trunk bend, Branch movement, Flutter and Trunk response period. Calm/Breeze/Gusty/Strong set manual shared wind; Follow weather restores the automatic source; Reset wind tuning restores the default response. Manual strength/direction settle smoothly and affect grass as well. Response gains affect connected trees. Controls are session-only, locked during F1 recordings, and included in the capture context; A/B Restore restores rendering settings, not these scene controls. The Features wind switch still disables all vegetation wind.
+
+This is a shallow GPU hierarchy with four coherent frequency bands filtered by a damped response, not a per-branch physical simulation or a fit to measured turbulence. Species compliance, height-based period and foliage load are starting artistic profiles; strength is dimensionless, not m/s. There is no requested 35° target. Trunk/limb hard limits only bound extreme slider values. Ground stems retain their separate feet; tiny secondary twigs inherit their primary limb rather than flexing independently. Trees currently use their uniform instance scale; collision and weather-shelter footprints remain in the rest pose. Dense-forest/device cost and motion tuning still need acceptance.
+
+Rebuild the current birch/oak/maple/bay/tall-forest/longleaf/spruce bundles, import each complete pack with `tools/import_vegetation_bundle.py`, re-register its catalog and cook to update mesh-memory estimates. The vertex contract adds 32 bytes per exported vertex, no triangles or materials. Validate bindings/rest geometry with vegetation `scripts/test_wind_binding.py` and `scripts/validate_wind.py ... --compare-previous`. Engine checks: `cargo test -p yarra-engine tree_wind`, native `tree_wind::gpu_tests -- --ignored`, and `connected_spruce_lods_compile_colour_depth_and_motion -- --ignored`.
 
 For tree LOD dropout regression, run `cargo test -p yarra-engine imported_tree_lod_materials_remain_drawable -- --ignored --nocapture` with native GPU access and the local forest pack. It switches an imported tree through all four LODs without Temporal AA and checks that bark and foliage both have prepared GPU materials and compiled color/depth/motion pipelines on every transition frame. Material conversion must finish before Bevy's asset events; wind bounds expand separately before culling. `--metalfx-timing-log` also logs every camera/history/target reset as `TEMPORAL_HISTORY_RESET`, so remaining full-view flicker can be distinguished from local LOD draw gaps.
 

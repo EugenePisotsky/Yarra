@@ -1,7 +1,7 @@
 (schema_version: 1, assets: [
 (key: "yarra_bay/bay_upright", display_name: "Bay Upright", source_uri: "local/yarra_bay/source/bay_upright.glb", variants: [
-(uri: "local/yarra_bay/runtime/bay_upright/bay_upright_lod0.gltf", bounds: (9.2464, 7.1935, 8.2850), gpu_bytes_estimate: 726384, minimum_screen_height: 480.0),
-(uri: "local/yarra_bay/runtime/bay_upright/bay_upright_lod1.gltf", bounds: (9.2464, 7.1935, 8.2850), gpu_bytes_estimate: 247608, minimum_screen_height: 180.0),
-(uri: "local/yarra_bay/runtime/bay_upright/bay_upright_lod2.gltf", bounds: (9.2464, 7.1935, 8.2850), gpu_bytes_estimate: 134496, minimum_screen_height: 0.0),
+(uri: "local/yarra_bay/runtime/bay_upright/bay_upright_lod0.gltf", bounds: (9.2464, 7.1935, 8.2850), gpu_bytes_estimate: 978512, minimum_screen_height: 480.0),
+(uri: "local/yarra_bay/runtime/bay_upright/bay_upright_lod1.gltf", bounds: (9.2464, 7.1935, 8.2850), gpu_bytes_estimate: 330200, minimum_screen_height: 180.0),
+(uri: "local/yarra_bay/runtime/bay_upright/bay_upright_lod2.gltf", bounds: (9.2464, 7.1935, 8.2850), gpu_bytes_estimate: 175328, minimum_screen_height: 0.0),
 ]),
 ])

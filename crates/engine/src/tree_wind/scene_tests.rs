@@ -78,9 +78,24 @@ fn track_draws(
 #[test]
 #[ignore = "requires native GPU and locally imported Forest Tree Starter Kit"]
 fn imported_tree_lod_materials_remain_drawable() {
+    check_lods((0..4).map(|i| format!("local/forest_tree_starter_kit/runtime/tree_07/summer/tree_07_summer_lod{i}.gltf")).collect());
+}
+
+#[test]
+#[ignore = "requires native GPU and locally rebuilt spruce wind bundle"]
+fn connected_spruce_lods_compile_colour_depth_and_motion() {
+    check_lods(
+        (0..3)
+            .map(|i| format!("local/yarra_spruces/runtime/spruce_forest/spruce_forest_lod{i}.gltf"))
+            .collect(),
+    );
+}
+
+fn check_lods(paths: Vec<String>) {
     let mut app = App::new();
     app.add_plugins(
         DefaultPlugins
+            .set(tree_gltf_plugin())
             .set(AssetPlugin {
                 file_path: format!("{}/../../assets", env!("CARGO_MANIFEST_DIR")),
                 ..default()
@@ -128,13 +143,12 @@ fn imported_tree_lod_materials_remain_drawable() {
         bevy::core_pipeline::prepass::DepthPrepass,
         bevy::core_pipeline::prepass::MotionVectorPrepass,
     ));
-    let variants: Vec<Handle<WorldAsset>> = (0..4)
-        .map(|i| {
+    let variants: Vec<Handle<WorldAsset>> = paths
+        .into_iter()
+        .map(|path| {
             app.world()
                 .resource::<AssetServer>()
-                .load(GltfAssetLabel::Scene(0).from_asset(format!(
-                "local/forest_tree_starter_kit/runtime/tree_07/summer/tree_07_summer_lod{i}.gltf"
-            )))
+                .load(GltfAssetLabel::Scene(0).from_asset(path))
         })
         .collect();
     let root = app
@@ -159,7 +173,7 @@ fn imported_tree_lod_materials_remain_drawable() {
         std::thread::sleep(Duration::from_millis(10));
     }
     let mut gaps = Vec::new();
-    for lod in [1, 2, 3, 0, 1, 2, 3, 0] {
+    for lod in (1..=variants.len() * 2).map(|i| i % variants.len()) {
         app.world_mut().get_mut::<WorldAssetRoot>(root).unwrap().0 = variants[lod].clone();
         for frame in 0..16 {
             app.update();

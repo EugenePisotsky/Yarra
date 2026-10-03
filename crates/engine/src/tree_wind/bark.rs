@@ -51,13 +51,13 @@ impl MaterialExtension for TreeBarkExtension {
 
 /// Asset paths of the upper bark's textures.
 #[derive(Clone, Debug, PartialEq)]
-struct UpperBark {
-    color: String,
-    normal: String,
-    metallic_roughness: String,
+pub(super) struct UpperBark {
+    pub(super) color: String,
+    pub(super) normal: String,
+    pub(super) metallic_roughness: String,
 }
 
-fn upper_bark(extras: &str) -> Option<UpperBark> {
+pub(super) fn upper_bark(extras: &str) -> Option<UpperBark> {
     let value = serde_json::from_str::<serde_json::Value>(extras).ok()?;
     if value.get("yarra_bark")?.as_str()? != "blend_v1" {
         return None;
@@ -109,7 +109,7 @@ fn opt_in(
     }
 }
 
-fn load_tiling(server: &AssetServer, path: &str, srgb: bool) -> Handle<Image> {
+pub(super) fn load_tiling(server: &AssetServer, path: &str, srgb: bool) -> Handle<Image> {
     server
         .load_builder()
         .with_settings(move |settings: &mut ImageLoaderSettings| {
@@ -156,6 +156,9 @@ fn convert(
             continue;
         };
         commands.entity(entity).insert(BarkChecked);
+        if super::material::structural_tag(&extras.value) {
+            continue;
+        }
         let Some(upper) = upper_bark(&extras.value) else {
             continue;
         };

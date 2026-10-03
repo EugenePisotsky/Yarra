@@ -77,5 +77,5 @@ fn externally_driven_pause_is_exact_and_bad_settings_stay_bounded() {
     assert_eq!(pose.field[3], 0.);
     assert_eq!(pose.response[1], 0.5);
     assert_eq!(pose.response[2], 0.);
-    assert_eq!(std::mem::size_of::<WindFrames>(), 128);
+    assert_eq!(std::mem::size_of::<WindFrames>(), 192);
 }

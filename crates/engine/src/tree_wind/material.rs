@@ -29,17 +29,29 @@ struct TreeWindExtension {
     wind: Handle<ShaderBuffer>,
     crown_shading: bool,
     crown_occlusion: bool,
+    bark_blend: bool,
+    #[uniform(105)]
+    profile: Vec4,
+    #[texture(101)]
+    #[sampler(102)]
+    upper_color: Option<Handle<Image>>,
+    #[texture(103)]
+    upper_normal: Option<Handle<Image>>,
+    #[texture(104)]
+    upper_metallic_roughness: Option<Handle<Image>>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct TreeWindKey {
     crown_shading: bool,
     crown_occlusion: bool,
+    bark_blend: bool,
 }
 impl From<&TreeWindExtension> for TreeWindKey {
     fn from(material: &TreeWindExtension) -> Self {
         Self {
             crown_shading: material.crown_shading,
             crown_occlusion: material.crown_occlusion,
+            bark_blend: material.bark_blend,
         }
     }
 }
@@ -57,6 +69,11 @@ impl MaterialExtension for TreeWindExtension {
             if key.bind_group_data.crown_occlusion {
                 fragment.shader_defs.push("TREE_CROWN_OCCLUSION".into());
             }
+        }
+        if key.bind_group_data.bark_blend
+            && let Some(fragment) = descriptor.fragment.as_mut()
+        {
+            fragment.shader_defs.push("TREE_BARK_BLEND".into());
         }
         super::cards::specialize(descriptor, layout)
     }
@@ -106,7 +123,19 @@ fn extra_is(extras: &str, key: &str, value: &str) -> bool {
 }
 
 fn uses_wind(extras: &str) -> bool {
-    extra_is(extras, "yarra_wind", "foliage_uv1_v1")
+    extra_is(extras, "yarra_wind", "foliage_uv1_v1") || structural_tag(extras)
+}
+
+pub(super) fn structural_tag(extras: &str) -> bool {
+    extra_is(extras, "yarra_wind", "hierarchy_v2")
+}
+fn wind_profile(extras: &str) -> Vec4 {
+    serde_json::from_str::<serde_json::Value>(extras)
+        .ok()
+        .and_then(|v| serde_json::from_value::<[f32; 4]>(v.get("wind_profile")?.clone()).ok())
+        .filter(|v| v.iter().all(|x| x.is_finite() && *x > 0.))
+        .map(Vec4::from_array)
+        .unwrap_or(Vec4::new(1., 3., 1., 1.))
 }
 
 /// How tagged foliage is lit (see TREE_CROWN_SHADING in the cloud material shaders).
@@ -174,6 +203,7 @@ fn convert(
     mut commands: Commands,
     buffer: Option<Res<WindBuffer>>,
     meshes: Res<Assets<Mesh>>,
+    server: Option<Res<AssetServer>>,
     source: Res<Assets<CloudMaterial>>,
     mut target: ResMut<Assets<TreeWindMaterial>>,
     mut events: MessageReader<AssetEvent<CloudMaterial>>,
@@ -214,10 +244,12 @@ fn convert(
         if !mesh.contains_attribute(Mesh::ATTRIBUTE_UV_1)
             || mesh.contains_attribute(Mesh::ATTRIBUTE_JOINT_INDEX)
             || mesh.has_morph_targets()
-            || !matches!(material.base.alpha_mode, AlphaMode::Mask(_))
+            || (structural_tag(&extras.value) && !super::cards::structural(mesh))
+            || (!structural_tag(&extras.value)
+                && !matches!(material.base.alpha_mode, AlphaMode::Mask(_)))
         {
             warn!(
-                "Tree wind requires a static alpha-masked mesh with authored UV1 weights: {entity:?}"
+                "Tree wind requires static geometry and the attributes for its versioned contract: {entity:?}"
             );
             continue;
         }
@@ -225,10 +257,23 @@ fn convert(
             .entry(handle.id())
             .or_insert_with(|| {
                 let shading = foliage_shading(&extras.value);
+                let upper = super::bark::upper_bark(&extras.value);
+                let load = |path: &str, srgb| {
+                    server
+                        .as_ref()
+                        .map(|s| super::bark::load_tiling(s, path, srgb))
+                };
                 let material = target.add(TreeWindMaterial {
                     base: foliage_base(material, shading),
                     extension: TreeWindExtension {
                         wind: buffer.0.clone(),
+                        profile: wind_profile(&extras.value),
+                        bark_blend: upper.is_some(),
+                        upper_color: upper.as_ref().and_then(|u| load(&u.color, true)),
+                        upper_normal: upper.as_ref().and_then(|u| load(&u.normal, false)),
+                        upper_metallic_roughness: upper
+                            .as_ref()
+                            .and_then(|u| load(&u.metallic_roughness, false)),
                         crown_shading: shading != FoliageShading::Plain,
                         crown_occlusion: shading == FoliageShading::CrownOcclusion,
                     },
@@ -269,8 +314,11 @@ fn expand_bounds(
             .abs()
             .min_element()
             .max(0.001);
-        bounds.half_extents +=
-            Vec3A::splat(MAX_DISPLACEMENT / scale + super::cards::max_card_swing(mesh));
+        bounds.half_extents += Vec3A::splat(
+            MAX_DISPLACEMENT / scale
+                + super::cards::max_card_swing(mesh)
+                + super::cards::structural_padding(mesh),
+        );
         commands.entity(entity).remove::<WindBoundsPending>();
     }
 }
@@ -316,6 +364,11 @@ mod tests {
         let key = |shading| {
             TreeWindKey::from(&TreeWindExtension {
                 wind: Handle::default(),
+                profile: Vec4::ONE,
+                bark_blend: false,
+                upper_color: None,
+                upper_normal: None,
+                upper_metallic_roughness: None,
                 crown_shading: true,
                 crown_occlusion: shading == FoliageShading::CrownOcclusion,
             })

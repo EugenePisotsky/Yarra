@@ -7,6 +7,8 @@ pub use cards::tree_gltf_plugin;
 #[cfg(test)]
 mod gpu_tests;
 mod material;
+mod tuning;
+pub use tuning::TreeWindTuning;
 #[cfg(test)]
 mod scene_tests;
 #[cfg(test)]
@@ -34,7 +36,10 @@ pub struct TreeWindPlugin;
 pub struct TreeWindSystems;
 impl Plugin for TreeWindPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<TreeWindResponse>()
+        app.init_resource::<TreeWindTuning>()
+            .init_resource::<tuning::WindTuningState>()
+            .add_systems(PreUpdate, tuning::restore_automatic)
+            .init_resource::<TreeWindResponse>()
             .init_resource::<WindPose>()
             .add_systems(
                 PostUpdate,
@@ -72,7 +77,8 @@ impl Default for TreeWindResponse {
     }
 }
 
-// Limits below bound every deformation to < 1.5 m, including the vertical flutter.
+// Legacy UV-weight deformation is bounded to < 1.5 m. Hierarchical assets use
+// their own swept bounds because their whole trunks can bend.
 const MAX_DISPLACEMENT: f32 = 1.5;
 const FLUTTER_FREQUENCY: [f64; 2] = [1.91, -1.37];
 const FLUTTER_SPEED: f64 = 6.5;
@@ -89,6 +95,9 @@ struct WindPose {
     // Main camera in the same floating-origin coordinates as this frame's meshes.
     // W indicates a valid sample; the GPU history retains the previous camera too.
     camera: [f32; 4],
+    // hierarchy: trunk gain, branch gain, flutter gain, rhythm multiplier
+    hierarchy: [f32; 4],
+    sway_phases: [f32; 4],
 }
 
 fn finite(value: f32, fallback: f32) -> f32 {
@@ -143,19 +152,38 @@ impl WindPose {
                 0.,
             ],
             camera: [0.; 4],
+            hierarchy: [1.; 4],
+            sway_phases: [(0.035, 0.55), (0.07, 1.3), (0.14, 2.7), (0.28, 4.3)].map(
+                |(k, omega)| {
+                    ((origin[0] * f64::from(direction.x) + origin[1] * f64::from(direction.y)) * k
+                        - time * omega)
+                        .rem_euclid(std::f64::consts::TAU) as f32
+                },
+            ),
         }
     }
 }
 
 fn sample_wind(
-    wind: Option<Res<VegetationWind>>,
+    wind: Option<ResMut<VegetationWind>>,
+    time: Res<Time>,
+    tuning: Res<TreeWindTuning>,
+    mut state: ResMut<tuning::WindTuningState>,
     origin: Option<Res<VegetationRenderOrigin>>,
     response: Res<TreeWindResponse>,
     mut pose: ResMut<WindPose>,
     cameras: Query<&GlobalTransform, With<crate::WorldViewCamera>>,
 ) {
-    *pose = wind.map_or_else(WindPose::default, |w| {
-        WindPose::sample(&w, *response, origin.map_or([0.; 2], |o| o.world_xz))
+    *pose = wind.map_or_else(WindPose::default, |mut w| {
+        state.apply(&mut w, &tuning, time.delta_secs());
+        let mut result = WindPose::sample(&w, *response, origin.map_or([0.; 2], |o| o.world_xz));
+        result.hierarchy = [
+            tuning.sway.clamp(0., 3.),
+            tuning.branches.clamp(0., 3.),
+            tuning.flutter.clamp(0., 3.),
+            tuning.rhythm.clamp(0.4, 2.),
+        ];
+        result
     });
     if let Ok(camera) = cameras.single() {
         pose.camera = camera.translation().extend(1.).to_array();

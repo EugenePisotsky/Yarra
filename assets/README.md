@@ -6,6 +6,13 @@ scene, generators, presets, and source-texture inventory are versioned there.
 Supplied textures, rendered atlases, and exported meshes remain local in both
 projects. Restoring a Git checkout alone does not restore these asset binaries.
 
+For new trees or variants, use the
+[authoring guide](https://github.com/EugenePisotsky/YarraVegetation/blob/main/TREE_AUTHORING.md)
+and [game integration workflow](../docs/WORKFLOWS.md#creating-and-revising-trees).
+Import complete texture-sharing families together. The current 16 forms use
+`hierarchy_v2` bindings on bark and cards; rebuilt bundles require the matching
+importer and engine. Legacy exports retain their earlier wind path.
+
 `assets/packs/yarra_birches/birches.catalog.ron` records the three imported birch
 states and their three mesh LODs. Rebuild them with
 `tools/import_vegetation_bundle.py` from the matching authoring bundles (Khronos

@@ -1,17 +1,17 @@
 (schema_version: 1, assets: [
 (key: "yarra_maples/maple_forest", display_name: "Maple Forest", source_uri: "local/yarra_maples/source/maple_forest.glb", variants: [
-(uri: "local/yarra_maples/runtime/maple_forest/maple_forest_lod0.gltf", bounds: (13.6629, 17.7724, 13.8698), gpu_bytes_estimate: 728088, minimum_screen_height: 480.0),
-(uri: "local/yarra_maples/runtime/maple_forest/maple_forest_lod1.gltf", bounds: (13.6629, 17.7724, 13.8698), gpu_bytes_estimate: 216840, minimum_screen_height: 180.0),
-(uri: "local/yarra_maples/runtime/maple_forest/maple_forest_lod2.gltf", bounds: (13.6629, 17.7724, 13.8698), gpu_bytes_estimate: 116232, minimum_screen_height: 0.0),
+(uri: "local/yarra_maples/runtime/maple_forest/maple_forest_lod0.gltf", bounds: (13.6629, 17.7724, 13.8698), gpu_bytes_estimate: 978200, minimum_screen_height: 480.0),
+(uri: "local/yarra_maples/runtime/maple_forest/maple_forest_lod1.gltf", bounds: (13.6629, 17.7724, 13.8698), gpu_bytes_estimate: 288936, minimum_screen_height: 180.0),
+(uri: "local/yarra_maples/runtime/maple_forest/maple_forest_lod2.gltf", bounds: (13.6629, 17.7724, 13.8698), gpu_bytes_estimate: 150888, minimum_screen_height: 0.0),
 ]),
 (key: "yarra_maples/maple_spreading", display_name: "Maple Spreading", source_uri: "local/yarra_maples/source/maple_spreading.glb", variants: [
-(uri: "local/yarra_maples/runtime/maple_spreading/maple_spreading_lod0.gltf", bounds: (17.0181, 13.7783, 17.6551), gpu_bytes_estimate: 826464, minimum_screen_height: 480.0),
-(uri: "local/yarra_maples/runtime/maple_spreading/maple_spreading_lod1.gltf", bounds: (17.0181, 13.7783, 17.6551), gpu_bytes_estimate: 247896, minimum_screen_height: 180.0),
-(uri: "local/yarra_maples/runtime/maple_spreading/maple_spreading_lod2.gltf", bounds: (17.0181, 13.7783, 17.6551), gpu_bytes_estimate: 130728, minimum_screen_height: 0.0),
+(uri: "local/yarra_maples/runtime/maple_spreading/maple_spreading_lod0.gltf", bounds: (17.0181, 13.7783, 17.6551), gpu_bytes_estimate: 1110496, minimum_screen_height: 480.0),
+(uri: "local/yarra_maples/runtime/maple_spreading/maple_spreading_lod1.gltf", bounds: (17.0181, 13.7783, 17.6551), gpu_bytes_estimate: 330040, minimum_screen_height: 180.0),
+(uri: "local/yarra_maples/runtime/maple_spreading/maple_spreading_lod2.gltf", bounds: (17.0181, 13.7783, 17.6551), gpu_bytes_estimate: 169640, minimum_screen_height: 0.0),
 ]),
 (key: "yarra_maples/maple_sparse", display_name: "Maple Sparse", source_uri: "local/yarra_maples/source/maple_sparse.glb", variants: [
-(uri: "local/yarra_maples/runtime/maple_sparse/maple_sparse_lod0.gltf", bounds: (13.6629, 17.2539, 12.7239), gpu_bytes_estimate: 735936, minimum_screen_height: 480.0),
-(uri: "local/yarra_maples/runtime/maple_sparse/maple_sparse_lod1.gltf", bounds: (13.6629, 17.2539, 12.7239), gpu_bytes_estimate: 203208, minimum_screen_height: 180.0),
-(uri: "local/yarra_maples/runtime/maple_sparse/maple_sparse_lod2.gltf", bounds: (13.6629, 17.2539, 12.7239), gpu_bytes_estimate: 85152, minimum_screen_height: 0.0),
+(uri: "local/yarra_maples/runtime/maple_sparse/maple_sparse_lod0.gltf", bounds: (13.6629, 17.2539, 12.7239), gpu_bytes_estimate: 987744, minimum_screen_height: 480.0),
+(uri: "local/yarra_maples/runtime/maple_sparse/maple_sparse_lod1.gltf", bounds: (13.6629, 17.2539, 12.7239), gpu_bytes_estimate: 272360, minimum_screen_height: 180.0),
+(uri: "local/yarra_maples/runtime/maple_sparse/maple_sparse_lod2.gltf", bounds: (13.6629, 17.2539, 12.7239), gpu_bytes_estimate: 113088, minimum_screen_height: 0.0),
 ]),
 ])

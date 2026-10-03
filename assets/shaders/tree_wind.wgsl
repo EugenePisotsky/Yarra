@@ -12,6 +12,10 @@
 struct Vertex {
     @builtin(instance_index) instance_index: u32,
     @location(0) position: vec3<f32>,
+#ifdef TREE_HIERARCHY
+    @location(14) wind_pivot: vec4<f32>,
+    @location(15) wind_axis: vec4<f32>,
+#endif
 #ifdef VERTEX_UVS_A
     @location(1) uv: vec2<f32>,
 #endif
@@ -42,6 +46,10 @@ struct Vertex {
 struct Vertex {
     @builtin(instance_index) instance_index: u32,
     @location(0) position: vec3<f32>,
+#ifdef TREE_HIERARCHY
+    @location(14) wind_pivot: vec4<f32>,
+    @location(15) wind_axis: vec4<f32>,
+#endif
 #ifdef VERTEX_NORMALS
     @location(1) normal: vec3<f32>,
 #endif
@@ -73,6 +81,8 @@ struct WindPose {
     phases: vec4<f32>,
     response: vec4<f32>,
     camera: vec4<f32>,
+    hierarchy: vec4<f32>,
+    sway_phases: vec4<f32>,
 }
 struct WindFrames {
     current: WindPose,
@@ -164,16 +174,156 @@ fn displaced_position(p: vec4<f32>, model: mat4x4<f32>, weights_in: vec2<f32>, p
     return p + vec4(horizontal.x, flutter * 0.16, horizontal.y, 0.0);
 }
 
-@vertex
-fn vertex(vertex: Vertex) -> VertexOutput {
-    var out: VertexOutput;
-    let model = mesh_functions::get_world_from_local(vertex.instance_index);
+// Structural wind helpers. All positions, pivots and directions share this pose.
+struct SwayFrame {
+    source: vec3<f32>,
+    deformed_anchor: vec3<f32>,
+    trunk_axis: vec3<f32>,
+    trunk_angle: f32,
+    branch_axis: vec3<f32>,
+    branch_angle: f32,
+}
+
+fn sway_vector(v: vec3<f32>, frame: SwayFrame) -> vec3<f32> {
+    return turn_axis(turn_axis(v, frame.branch_axis, frame.branch_angle), frame.trunk_axis, frame.trunk_angle);
+}
+fn sway_point(p: vec3<f32>, frame: SwayFrame) -> vec3<f32> {
+    return frame.deformed_anchor + sway_vector(p - frame.source, frame);
+}
+
+// Four coherent bands with the amplitude/phase response of a damped oscillator.
+// This is an artistic approximation, not a fitted Kaimal spectrum. Species retain
+// their own response period when wind strength changes; damping prevents ringing.
+fn sway_signal(model: mat4x4<f32>, pose: WindPose, period: f32, detail: f32) -> f32 {
+    let frequencies = vec4(0.55, 1.3, 2.7, 4.3);
+    let spatial = vec4(0.035, 0.07, 0.14, 0.28);
+    let phase = pose.sway_phases + dot(model[3].xz, pose.field.xy) * spatial + vec4(detail);
+    let ratio = frequencies * max(0.5, period * pose.hierarchy.w) / 6.2831853;
+    let spring = vec4(1.0) - ratio * ratio;
+    let damping = 1.5 * ratio;
+    let gain = inverseSqrt(spring * spring + damping * damping);
+    let lag = atan2(damping, spring);
+    // Phases travel backwards in time, so lag is added here.
+    return dot(sin(phase + lag) * gain, vec4(0.65, 0.38, 0.19, 0.09));
+}
+
+fn structural_frame(local_anchor: vec3<f32>, limb_axis: vec4<f32>, height: f32,
+                    model: mat4x4<f32>, pose: WindPose, profile: vec4<f32>) -> SwayFrame {
+    let up = normalize(model[1].xyz);
+    let direction = vec3(pose.field.x, 0.0, pose.field.y);
+    var bend_axis = cross(up, direction);
+    if dot(bend_axis, bend_axis) < 1e-8 { bend_axis = vec3(0.0, 0.0, 1.0); }
+    bend_axis = normalize(bend_axis);
+    let pressure = pose.field.w * pose.field.w;
+    let wave = sway_signal(model, pose, profile.y, 0.0);
+    let lean = clamp(0.11 * pressure * profile.x * profile.w * pose.hierarchy.x
+                    * (1.0 + pose.response.x * wave), -0.15, 0.8);
+    let tree_height = max(0.1, height * length(model[1].xyz));
+    let y = max(0.0, local_anchor.y) * length(model[1].xyz);
+    let angle = lean * clamp(y / tree_height, 0.0, 1.0);
+    let curvature = lean / tree_height;
+    var center = up * y;
+    if abs(curvature) > 1e-6 {
+        center = up * (sin(angle) / curvature)
+                 + cross(bend_axis, up) * ((1.0 - cos(angle)) / curvature);
+        // Sprays can extend beyond the authored stem height. Continue along the
+        // tip tangent rather than collapsing those anchors onto the treetop.
+        center += turn_axis(up, bend_axis, angle) * max(0.0, y - tree_height);
+    }
+    let source = (model * vec4(local_anchor, 1.0)).xyz;
+    // Preserve buried feet and existing trunk lean/curvature in the rest shape.
+    let lateral = source - model[3].xyz - up * y;
+    let deformed_anchor = model[3].xyz + center + turn_axis(lateral, bend_axis, angle);
+    var branch_axis = bend_axis;
+    var branch_angle = 0.0;
+    if limb_axis.w > 0.0 {
+        let axis = normalize((model * vec4(limb_axis.xyz, 0.0)).xyz);
+        let force_axis = cross(axis, direction);
+        let lever = length(force_axis);
+        if lever > 1e-5 { branch_axis = force_axis / lever; }
+        let phase = dot(local_anchor, vec3(0.73, 0.41, -0.57));
+        branch_angle = clamp(0.10 * pressure * profile.w * limb_axis.w * pose.hierarchy.y * lever
+            * (0.6 + pose.response.x * sway_signal(model, pose, profile.y * 0.35, phase)), -0.5, 0.5);
+    }
+    return SwayFrame(source, deformed_anchor, bend_axis, angle, branch_axis, branch_angle);
+}
+// End structural helpers.
+
+#ifdef TREE_HIERARCHY
+@group(#{MATERIAL_BIND_GROUP}) @binding(105) var<uniform> tree_profile: vec4<f32>;
+
+fn vertex_frame(vertex: Vertex, model: mat4x4<f32>, pose: WindPose) -> SwayFrame {
+    var anchor = vertex.wind_pivot.xyz;
+    if vertex.wind_axis.w == 0.0 {
+        anchor = vertex.position;
+#ifdef TREE_BRANCH_CARDS
+        anchor = vertex.card_pivot;
+#endif
+    }
+    return structural_frame(anchor, vertex.wind_axis, vertex.wind_pivot.w, model, pose, tree_profile);
+}
+#endif
+
+fn animated_position(vertex: Vertex, model: mat4x4<f32>, pose: WindPose) -> vec4<f32> {
+    var p = model * vec4(vertex.position, 1.0);
+#ifdef TREE_HIERARCHY
+    let frame = vertex_frame(vertex, model, pose);
+    p = vec4(sway_point(p.xyz, frame), 1.0);
+#ifdef TREE_BRANCH_CARDS
+    let pivot = sway_point((model * vec4(vertex.card_pivot, 1.0)).xyz, frame);
+    let axis = sway_vector((model * vec4(vertex.card_axis, 0.0)).xyz, frame);
+    let normal = sway_vector((model * vec4(vertex.card_normal, 0.0)).xyz, frame);
+    if dot(axis, axis) > 0.25 {
+        let to_view = select(view.lod_view_world_position, pose.camera.xyz, pose.camera.w > 0.5) - pivot;
+#ifdef TREE_CARD_FACING
+        if vertex.card_facing.x > 0.5 {
+            p = vec4(pivot + turn_camera(p.xyz - pivot, normal, to_view, vertex.card_facing.y), 1.0);
+        } else {
+#endif
+            let a = normalize(axis);
+            let rest = normal - a * dot(normal, a);
+            let facing = to_view - a * dot(to_view, a);
+            if dot(rest, rest) > 1e-8 && dot(facing, facing) > 1e-8 {
+                let angle = atan2(dot(a, cross(normalize(rest), normalize(facing))), dot(normalize(rest), normalize(facing)));
+                p = vec4(pivot + turn_axis(p.xyz - pivot, a, angle), 1.0);
+            }
+#ifdef TREE_CARD_FACING
+        }
+#endif
+    }
+#ifdef VERTEX_UVS_B
+    // Entire cards rock a little around their own attachment. A zero-length
+    // root vector stays exactly zero, including V-card seams and bare twig cards.
+    let leaf = select(0.35, 1.0, vertex.uv_b.x > 0.0);
+    let flutter = sin(dot(vertex.card_pivot, vec3(1.91, 1.13, -1.37)) + pose.phases.w
+                      + dot(model[3].xz, vec2(1.91, -1.37)))
+                  * 0.035 * pose.field.w * pose.hierarchy.z * tree_profile.z * leaf;
+    p = vec4(pivot + turn_axis(p.xyz - pivot, frame.trunk_axis, flutter), 1.0);
+#endif
+#endif
+    return p;
+#else
     var weights = vec2(0.0);
 #ifdef VERTEX_UVS_B
     weights = vertex.uv_b;
 #endif
-    let rest = mesh_functions::mesh_position_local_to_world(model, vec4(vertex.position, 1.0));
-    out.world_position = displaced_position(facing_camera(rest, model, vertex, wind.current.camera), model, weights, wind.current);
+    return displaced_position(facing_camera(p, model, vertex, pose.camera), model, weights, pose);
+#endif
+}
+
+fn animated_vector(v: vec3<f32>, vertex: Vertex, model: mat4x4<f32>, pose: WindPose) -> vec3<f32> {
+#ifdef TREE_HIERARCHY
+    return sway_vector(v, vertex_frame(vertex, model, pose));
+#else
+    return v;
+#endif
+}
+
+@vertex
+fn vertex(vertex: Vertex) -> VertexOutput {
+    var out: VertexOutput;
+    let model = mesh_functions::get_world_from_local(vertex.instance_index);
+    out.world_position = animated_position(vertex, model, wind.current);
     out.position = position_world_to_clip(out.world_position.xyz);
 
 #ifdef UNCLIPPED_DEPTH_ORTHO_EMULATION
@@ -195,25 +345,24 @@ fn vertex(vertex: Vertex) -> VertexOutput {
 #ifdef PREPASS_PIPELINE
 #ifdef NORMAL_PREPASS_OR_DEFERRED_PREPASS
 #ifdef VERTEX_NORMALS
-    out.world_normal = mesh_functions::mesh_normal_local_to_world(vertex.normal, vertex.instance_index);
+    out.world_normal = animated_vector(mesh_functions::mesh_normal_local_to_world(vertex.normal, vertex.instance_index), vertex, model, wind.current);
 #endif
 #ifdef VERTEX_TANGENTS
-    out.world_tangent = mesh_functions::mesh_tangent_local_to_world(model, vertex.tangent, vertex.instance_index);
+    let tangent = mesh_functions::mesh_tangent_local_to_world(model, vertex.tangent, vertex.instance_index);
+    out.world_tangent = vec4(animated_vector(tangent.xyz, vertex, model, wind.current), tangent.w);
 #endif
 #endif
 #ifdef MOTION_VECTOR_PREPASS
     let previous_model = mesh_functions::get_previous_world_from_local(vertex.instance_index);
-    let previous_rest =
-        mesh_functions::mesh_position_local_to_world(previous_model, vec4(vertex.position, 1.0));
-    out.previous_world_position = displaced_position(
-        facing_camera(previous_rest, previous_model, vertex, wind.previous.camera), previous_model, weights, wind.previous);
+    out.previous_world_position = animated_position(vertex, previous_model, wind.previous);
 #endif
 #else
 #ifdef VERTEX_NORMALS
-    out.world_normal = mesh_functions::mesh_normal_local_to_world(vertex.normal, vertex.instance_index);
+    out.world_normal = animated_vector(mesh_functions::mesh_normal_local_to_world(vertex.normal, vertex.instance_index), vertex, model, wind.current);
 #endif
 #ifdef VERTEX_TANGENTS
-    out.world_tangent = mesh_functions::mesh_tangent_local_to_world(model, vertex.tangent, vertex.instance_index);
+    let tangent = mesh_functions::mesh_tangent_local_to_world(model, vertex.tangent, vertex.instance_index);
+    out.world_tangent = vec4(animated_vector(tangent.xyz, vertex, model, wind.current), tangent.w);
 #endif
 #endif
 

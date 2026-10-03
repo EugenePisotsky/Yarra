@@ -4,6 +4,7 @@ mod panel;
 mod report;
 mod telemetry;
 mod weather;
+mod wind;
 
 use super::timing;
 use crate::runtime_settings::RuntimeSettingsInit;
@@ -18,4 +19,5 @@ pub(super) fn install(app: &mut App) {
     telemetry::install(app);
     panel::install(app);
     weather::install(app);
+    wind::install(app);
 }

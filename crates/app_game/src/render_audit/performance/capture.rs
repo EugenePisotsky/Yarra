@@ -199,6 +199,7 @@ pub(super) fn sample(
     timings: Res<timing::History>,
     stamp: Res<timing::Stamp>,
     pacing: Res<FramePacing>,
+    wind_tuning: Option<Res<engine::TreeWindTuning>>,
 ) -> bool {
     let frame_ms = time.delta_secs_f64() * 1000.0;
     let app_ms = t.app_ms;
@@ -267,6 +268,10 @@ pub(super) fn sample(
             terrain.triangles,
             terrain.patches,
             streaming.resident
+        );
+        recording.capture.context += &format!(
+            "\nTree wind tuning (session controls): {:?}",
+            wind_tuning.as_deref()
         );
         if let Ok(status) = upscaler.single() {
             recording.capture.context += &format!("\n{}", status.description());

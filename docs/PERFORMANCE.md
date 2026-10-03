@@ -31,15 +31,34 @@ Equal capped FPS can hide very different work and power. Off/on differences can 
 
 ## F1 comparison
 
-Overview shows cadence, diagnostic GPU/CPU spans, thermal/power mode, render dimensions and residency. Features toggles scene effects; Quality changes resolution/upscaler/AA/detail; Weather forces presets and the weather clock; Advanced exposes isolation modes and overlays; Compare records A/B. Captures pause the weather clock and report differing weather as a changed condition; Restore does not restore weather.
+Overview shows cadence, diagnostic GPU/CPU spans, thermal/power mode, render dimensions and residency. Features toggles scene effects; Quality changes resolution/upscaler/AA/detail; Weather forces presets and the weather clock; Wind tunes shared vegetation wind and tree response; Advanced exposes isolation modes and overlays; Compare records A/B. Captures pause the weather clock and report differing weather as a changed condition; Restore does not restore weather or wind tuning.
 
 1. Fix the viewpoint, time/weather, content, render size and FPS cap. Wait for loading and shader compilation.
 2. Capture A. The panel closes and controls lock; it settles at least 2 seconds, then samples 10 seconds. Settling beyond 8 seconds or loss of focus cancels.
 3. Change one setting; capture B. Detailed GPU probes pause during captures. F1/Escape cancels without erasing the previous slot.
-4. Inspect conditions/warnings and the metric's limitations above. Restore A/B restores captured settings/FPS, not camera or weather.
+4. Inspect conditions/warnings and the metric's limitations above. Restore A/B restores captured settings/FPS, not camera, weather or wind tuning.
 5. Export writes `tmp/performance/comparison-<timestamp>/report.txt` and frame/GPU/CPU CSVs. `YARRA_PERFORMANCE_DIR` changes the root. Slots last for the session.
 
 Reset restores F1's launch settings, including the loaded canopy values and terrain macro setting. Canopy reload and page gizmos live in Advanced and participate in captured settings; the old experiment hotkeys were removed. An externally changed cap cancels capture. Ten seconds is not sustained thermal acceptance.
+
+**Wind experiments:** Strength, Gustiness and Direction switch to a smoothly
+settled manual wind shared by grass and trees. Follow weather returns to the
+automatic source. Trunk bend, Branch movement, Leaf / needle flutter and Trunk
+response period adjust connected `hierarchy_v2` trees. A longer response period
+changes the filtered sway response; it does not slow the shared wind clock.
+Calm/Breeze/Gusty/Strong are artistic presets, not measured speeds. The Wind
+page's separate **Reset wind tuning** restores its defaults; the Features wind
+switch disables vegetation wind. Values last only for this session.
+
+Wind controls lock during recordings and tuning is included in capture context.
+Let manual changes settle before recording and match them between comparisons
+unless wind is the variable under test. Static versus moving vegetation changes
+coverage and shadow work as well as deformation, so the difference is not a pure
+shader cost. Connected wind adds two vec4 attributes (32 bytes per exported
+vertex), no triangles or materials, and one shared current/previous pose buffer.
+Its additional per-vertex work and expanded culling bounds still need measured
+forest/device evaluation. The 2026-10-03 GPU and LOD checks establish correctness
+for their exercised cases, not a performance result.
 
 Disabled means different things: grass Disabled skips render preparation/compute/draw but retains source streaming and joining for canopy/contact consumers; terrain/object switches hide draws while streaming/animation/grounding continue; Cloud Off skips passes but retains weather ambient response and shared state. These are isolation tools, not complete subsystem teardown. Closing F1 does not uninstall instrumentation. Choose its composition at launch:
 

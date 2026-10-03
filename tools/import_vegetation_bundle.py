@@ -78,10 +78,15 @@ def adapt_foliage(doc, blob, blend):
         for primitive in mesh['primitives']:
             material = doc['materials'][primitive['material']]
             a = primitive['attributes']
+            structural = material.get('extras', {}).get('vegetation_wind') == 'hierarchy_v2'
+            if structural:
+                if not all(k in a for k in ('_WIND_PIVOT', '_WIND_AXIS')):
+                    raise ValueError('Structural wind requires limb bindings on every primitive')
+                material['extras']['yarra_wind'] = 'hierarchy_v2'
             if material.get('alphaMode') == 'MASK':
                 extras = material.setdefault('extras', {})
                 occlusion = extras.get('vegetation_occlusion') == 'crown_sky_v1'
-                extras.update(yarra_wind='foliage_uv1_v1',
+                extras.update(yarra_wind='hierarchy_v2' if structural else 'foliage_uv1_v1',
                               yarra_shading='crown_v2' if occlusion else 'crown_v1')
                 material['extensions'] = {'KHR_materials_specular': {'specularFactor': .5}}
                 material['normalTexture']['scale'] = .6
@@ -122,7 +127,7 @@ def adapt_foliage(doc, blob, blend):
             # These authoring attributes are retained in the original GLB. The
             # game registers the card transform attributes below.
             for key in list(a):
-                if key.startswith('_') and key not in ('_CARD_AXIS', '_CARD_PIVOT', '_CARD_NORMAL', '_CARD_FACING'):
+                if key.startswith('_') and key not in ('_CARD_AXIS', '_CARD_PIVOT', '_CARD_NORMAL', '_CARD_FACING', '_WIND_PIVOT', '_WIND_AXIS'):
                     del a[key]
     doc['extensionsUsed'] = sorted(set(doc.get('extensionsUsed', [])) | {'KHR_materials_specular'})
     return moving_ids

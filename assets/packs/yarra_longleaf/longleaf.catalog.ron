@@ -1,22 +1,22 @@
 (schema_version: 1, assets: [
 (key: "yarra_longleaf/pine_longleaf", display_name: "Pine Longleaf", source_uri: "local/yarra_longleaf/source/pine_longleaf.glb", variants: [
-(uri: "local/yarra_longleaf/runtime/pine_longleaf/pine_longleaf_lod0.gltf", bounds: (8.5340, 19.0000, 8.7798), gpu_bytes_estimate: 691968, minimum_screen_height: 480.0),
-(uri: "local/yarra_longleaf/runtime/pine_longleaf/pine_longleaf_lod1.gltf", bounds: (8.5340, 19.0000, 8.7798), gpu_bytes_estimate: 354696, minimum_screen_height: 180.0),
-(uri: "local/yarra_longleaf/runtime/pine_longleaf/pine_longleaf_lod2.gltf", bounds: (8.5340, 19.0000, 8.7798), gpu_bytes_estimate: 182928, minimum_screen_height: 0.0),
+(uri: "local/yarra_longleaf/runtime/pine_longleaf/pine_longleaf_lod0.gltf", bounds: (8.5340, 19.0000, 8.7798), gpu_bytes_estimate: 946848, minimum_screen_height: 480.0),
+(uri: "local/yarra_longleaf/runtime/pine_longleaf/pine_longleaf_lod1.gltf", bounds: (8.5340, 19.0000, 8.7798), gpu_bytes_estimate: 483688, minimum_screen_height: 180.0),
+(uri: "local/yarra_longleaf/runtime/pine_longleaf/pine_longleaf_lod2.gltf", bounds: (8.5340, 19.0000, 8.7798), gpu_bytes_estimate: 247600, minimum_screen_height: 0.0),
 ]),
 (key: "yarra_longleaf/pine_longleaf_half_bare", display_name: "Pine Longleaf Half Bare", source_uri: "local/yarra_longleaf/source/pine_longleaf_half_bare.glb", variants: [
-(uri: "local/yarra_longleaf/runtime/pine_longleaf_half_bare/pine_longleaf_half_bare_lod0.gltf", bounds: (8.5340, 19.0000, 8.7798), gpu_bytes_estimate: 682920, minimum_screen_height: 480.0),
-(uri: "local/yarra_longleaf/runtime/pine_longleaf_half_bare/pine_longleaf_half_bare_lod1.gltf", bounds: (8.5340, 19.0000, 8.7798), gpu_bytes_estimate: 345216, minimum_screen_height: 180.0),
-(uri: "local/yarra_longleaf/runtime/pine_longleaf_half_bare/pine_longleaf_half_bare_lod2.gltf", bounds: (8.5340, 19.0000, 8.7798), gpu_bytes_estimate: 173448, minimum_screen_height: 0.0),
+(uri: "local/yarra_longleaf/runtime/pine_longleaf_half_bare/pine_longleaf_half_bare_lod0.gltf", bounds: (8.5340, 19.0000, 8.7798), gpu_bytes_estimate: 935848, minimum_screen_height: 480.0),
+(uri: "local/yarra_longleaf/runtime/pine_longleaf_half_bare/pine_longleaf_half_bare_lod1.gltf", bounds: (8.5340, 19.0000, 8.7798), gpu_bytes_estimate: 472160, minimum_screen_height: 180.0),
+(uri: "local/yarra_longleaf/runtime/pine_longleaf_half_bare/pine_longleaf_half_bare_lod2.gltf", bounds: (8.5340, 19.0000, 8.7798), gpu_bytes_estimate: 236072, minimum_screen_height: 0.0),
 ]),
 (key: "yarra_longleaf/pine_longleaf_nearly_bare", display_name: "Pine Longleaf Nearly Bare", source_uri: "local/yarra_longleaf/source/pine_longleaf_nearly_bare.glb", variants: [
-(uri: "local/yarra_longleaf/runtime/pine_longleaf_nearly_bare/pine_longleaf_nearly_bare_lod0.gltf", bounds: (8.5340, 19.0626, 8.7798), gpu_bytes_estimate: 676536, minimum_screen_height: 480.0),
-(uri: "local/yarra_longleaf/runtime/pine_longleaf_nearly_bare/pine_longleaf_nearly_bare_lod1.gltf", bounds: (8.5340, 19.0626, 8.7798), gpu_bytes_estimate: 338400, minimum_screen_height: 180.0),
-(uri: "local/yarra_longleaf/runtime/pine_longleaf_nearly_bare/pine_longleaf_nearly_bare_lod2.gltf", bounds: (8.5340, 19.0626, 8.7798), gpu_bytes_estimate: 166776, minimum_screen_height: 0.0),
+(uri: "local/yarra_longleaf/runtime/pine_longleaf_nearly_bare/pine_longleaf_nearly_bare_lod0.gltf", bounds: (8.5340, 19.0626, 8.7798), gpu_bytes_estimate: 928088, minimum_screen_height: 480.0),
+(uri: "local/yarra_longleaf/runtime/pine_longleaf_nearly_bare/pine_longleaf_nearly_bare_lod1.gltf", bounds: (8.5340, 19.0626, 8.7798), gpu_bytes_estimate: 463872, minimum_screen_height: 180.0),
+(uri: "local/yarra_longleaf/runtime/pine_longleaf_nearly_bare/pine_longleaf_nearly_bare_lod2.gltf", bounds: (8.5340, 19.0626, 8.7798), gpu_bytes_estimate: 227960, minimum_screen_height: 0.0),
 ]),
 (key: "yarra_longleaf/pine_longleaf_one_sided", display_name: "Pine Longleaf One Sided", source_uri: "local/yarra_longleaf/source/pine_longleaf_one_sided.glb", variants: [
-(uri: "local/yarra_longleaf/runtime/pine_longleaf_one_sided/pine_longleaf_one_sided_lod0.gltf", bounds: (8.5340, 19.0000, 8.7798), gpu_bytes_estimate: 683664, minimum_screen_height: 480.0),
-(uri: "local/yarra_longleaf/runtime/pine_longleaf_one_sided/pine_longleaf_one_sided_lod1.gltf", bounds: (8.5340, 19.0000, 8.7798), gpu_bytes_estimate: 345960, minimum_screen_height: 180.0),
-(uri: "local/yarra_longleaf/runtime/pine_longleaf_one_sided/pine_longleaf_one_sided_lod2.gltf", bounds: (8.5340, 19.0000, 8.7798), gpu_bytes_estimate: 174336, minimum_screen_height: 0.0),
+(uri: "local/yarra_longleaf/runtime/pine_longleaf_one_sided/pine_longleaf_one_sided_lod0.gltf", bounds: (8.5340, 19.0000, 8.7798), gpu_bytes_estimate: 936752, minimum_screen_height: 480.0),
+(uri: "local/yarra_longleaf/runtime/pine_longleaf_one_sided/pine_longleaf_one_sided_lod1.gltf", bounds: (8.5340, 19.0000, 8.7798), gpu_bytes_estimate: 473064, minimum_screen_height: 180.0),
+(uri: "local/yarra_longleaf/runtime/pine_longleaf_one_sided/pine_longleaf_one_sided_lod2.gltf", bounds: (8.5340, 19.0000, 8.7798), gpu_bytes_estimate: 237152, minimum_screen_height: 0.0),
 ]),
 ])

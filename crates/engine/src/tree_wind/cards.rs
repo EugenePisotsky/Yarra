@@ -24,6 +24,59 @@ pub const CARD_FACING: MeshVertexAttribute = MeshVertexAttribute::new(
     VertexFormat::Float32x2,
 );
 
+pub const WIND_PIVOT: MeshVertexAttribute =
+    MeshVertexAttribute::new("Wind_Pivot", 0x5952_5241_4341_0005, VertexFormat::Float32x4);
+pub const WIND_AXIS: MeshVertexAttribute =
+    MeshVertexAttribute::new("Wind_Axis", 0x5952_5241_4341_0006, VertexFormat::Float32x4);
+
+pub(super) fn structural(mesh: &bevy::mesh::Mesh) -> bool {
+    mesh.contains_attribute(WIND_PIVOT) && mesh.contains_attribute(WIND_AXIS)
+}
+
+/// Local displacement bound at the shader's hard angle limits (.8 trunk, .5 limb).
+/// The arc plus any over-height extension moves by < .8 * anchor height.
+pub(super) fn structural_padding(mesh: &bevy::mesh::Mesh) -> f32 {
+    use bevy::math::{Vec3, Vec3Swizzles};
+    use bevy::mesh::VertexAttributeValues;
+    if !structural(mesh) {
+        return 0.;
+    }
+    let Some(VertexAttributeValues::Float32x3(positions)) =
+        mesh.attribute(bevy::mesh::Mesh::ATTRIBUTE_POSITION)
+    else {
+        return 0.;
+    };
+    let Some(VertexAttributeValues::Float32x4(pivots)) = mesh.attribute(WIND_PIVOT) else {
+        return 0.;
+    };
+    let Some(VertexAttributeValues::Float32x4(axes)) = mesh.attribute(WIND_AXIS) else {
+        return 0.;
+    };
+    let cards = match mesh.attribute(CARD_PIVOT) {
+        Some(VertexAttributeValues::Float32x3(p)) => Some(p),
+        _ => None,
+    };
+    positions
+        .iter()
+        .zip(pivots)
+        .zip(axes)
+        .enumerate()
+        .map(|(i, ((p, pivot), axis))| {
+            let p = Vec3::from_array(*p);
+            let anchor = if axis[3] > 0. {
+                Vec3::from_slice(&pivot[..3])
+            } else {
+                cards.map_or(p, |cards| Vec3::from_array(cards[i]))
+            };
+            let card_radius = cards.map_or(0., |cards| p.distance(Vec3::from_array(cards[i])));
+            0.8 * anchor.y.max(0.)
+                + 0.78 * anchor.xz().length()
+                + 1.28 * p.distance(anchor)
+                + 0.21 * card_radius
+        })
+        .fold(0., f32::max)
+}
+
 /// Shader locations after Bevy's own vertex inputs (0–7 in every pass).
 const FIRST_LOCATION: u32 = 10;
 
@@ -76,6 +129,8 @@ pub fn tree_gltf_plugin() -> GltfPlugin {
         .add_custom_vertex_attribute("CARD_AXIS", CARD_AXIS)
         .add_custom_vertex_attribute("CARD_NORMAL", CARD_NORMAL)
         .add_custom_vertex_attribute("CARD_FACING", CARD_FACING)
+        .add_custom_vertex_attribute("WIND_PIVOT", WIND_PIVOT)
+        .add_custom_vertex_attribute("WIND_AXIS", WIND_AXIS)
 }
 
 /// Adds the card attributes to the pipeline's vertex buffer when the mesh has them.
@@ -84,6 +139,16 @@ pub(super) fn specialize(
     layout: &MeshVertexBufferLayoutRef,
 ) -> Result<(), SpecializedMeshPipelineError> {
     let mesh = &layout.0;
+    if mesh.contains(WIND_PIVOT) && mesh.contains(WIND_AXIS) {
+        let attrs = mesh.get_layout(&[
+            WIND_PIVOT.at_shader_location(14),
+            WIND_AXIS.at_shader_location(15),
+        ])?;
+        if let Some(buffer) = descriptor.vertex.buffers.first_mut() {
+            buffer.attributes.extend(attrs.attributes);
+            descriptor.vertex.shader_defs.push("TREE_HIERARCHY".into());
+        }
+    }
     if !(mesh.contains(CARD_PIVOT) && mesh.contains(CARD_AXIS) && mesh.contains(CARD_NORMAL)) {
         return Ok(());
     }
