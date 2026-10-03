@@ -239,6 +239,38 @@ reduced-resolution check. The helper verifies fresh, non-black output. These
 are visual checks; GPU/frame timings during a capture are not a forest benchmark.
 The four longleaf forms are the active pine kit. Old source assets remain archived.
 
+### Norway spruce prototype
+
+Build `spruce_forest` in the vegetation project with `scripts/build.py`, then run
+`hython scripts/validate_spruce.py`. Import and place the resulting bundle:
+
+```sh
+python3 tools/import_vegetation_bundle.py \
+  --bundle /path/to/vegetation/outputs/spruce_forest/current \
+  --output assets/local/yarra_spruces \
+  --catalog assets/packs/yarra_spruces/spruces.catalog.ron
+target/release/yarra-world-cook import-assets assets/packs/yarra_spruces/spruces.catalog.ron
+python3 tools/place_spruce_preview.py
+target/release/yarra-world-cook cook
+python3 tools/render_spruce_preview.py
+```
+
+Three rotated/scaled instances of the same forest preset sit at X 2525 / 2538 /
+2551, Z 4346, continuing the longleaf row near the birches. The helper backs up
+the source database and preserves existing placements and bookmark edits.
+Bookmarks: `spruce-stand`, `spruce-whole`, `spruce-close`, `spruce-below`,
+`spruce-overhead`, and `spruce-far`. Whole/stand/far views offset the focus to
+work around the 24 m orbit cap; below uses a low focus at the supported 5° pitch.
+
+The generator uses photographed qgpvu2 spruce shoots, fixed V-shaped branches,
+hanging side sprays and a small share of stemless facing fillers. Main sprays
+retain their size and fold at every LOD. Pine bark is a provisional stand-in.
+It uses existing crown lighting, cutout coverage mips and foliage shaders.
+Only three mesh LODs are registered; runtime billboard selection remains pending.
+Captures go to `tmp/spruce-review`; `--view close --mode half` tests reduced
+resolution. The spruce passed user art review on 2026-10-03; dense-forest
+profiling remains pending.
+
 ### Archived pine kit
 
 Six shared-pipeline pines use `yarra_pines_v2`: mature forest, young, spreading,

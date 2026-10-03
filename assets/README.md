@@ -22,6 +22,11 @@ broadleaf prototype inspired by Witcher reference IMG_1369. It uses
 small pointed qgCoa2 leaves on slim fixed sprays and compact facing bunches,
 with brown elm bark, and imports into `assets/local/yarra_tall_forest/`.
 The editable generator and preset live in YarraVegetation.
+`assets/packs/yarra_spruces/spruces.catalog.ron` records the Norway spruce
+prototype in `assets/local/yarra_spruces/`. It uses the supplied qgpvu2 shoots on
+fixed V-shaped sprays and provisional pine bark. Main folds remain through all
+three mesh LODs. The placement helper adds three review instances beside the
+longleafs and birches; use `spruce-stand`. See the workflow for rebuilding.
 `assets/packs/yarra_pines/pines.catalog.ron` records the six legacy native-scene
 pine variants imported by `tools/houdini_export_tree.py`. Their original scene
 and source inputs must also be restored locally. See
