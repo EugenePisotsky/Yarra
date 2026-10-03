@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Replace the retired pine preview objects with the current four-form longleaf kit.
+"""Place the current four-form longleaf pine kit.
 
 Back up the source world first. Stable IDs preserve later editor adjustments and
-allow safe repeat runs. Only the eight known retired preview IDs are removed.
+allow safe repeat runs. Existing scenery and editor adjustments are preserved.
 """
 import argparse
 import json
@@ -32,11 +32,6 @@ HEIGHTS={'longleaf-whole':8.,'longleaf-close':11.,'longleaf-side':11.,
          'longleaf-half':8.,'longleaf-nearly':8.,'longleaf-one-sided':8.,'longleaf-bare-close':11.}
 EXTRA={'longleaf-whole':12.,'longleaf-far':48.,'longleaf-kit':24.,
        'longleaf-half':12.,'longleaf-nearly':12.,'longleaf-one-sided':12.}
-RETIRED=[('pine-v2',name,'asset/yarra_pines_v2/pine_'+state) for name,state in
-         (('forest','forest'),('young','young'),('open','open'),('half','half_bare'),
-          ('nearly','nearly_bare'),('one_side','one_sided'))]
-RETIRED += [('pine-branch-study',state,'asset/yarra_pine_branch_study/pine_branch_'+state)
-            for state in ('single','depth')]
 
 
 def object_id(tag,name):
@@ -53,17 +48,10 @@ def main():
             raise ValueError('These coordinates are for the 32 m island world')
         backup=ROOT/'tmp'/('longleaf-kit-placement-'+str(time.time_ns()));backup.mkdir(parents=True)
         with sqlite3.connect(backup/'world.project.sqlite') as target:db.backup(target)
-        report={'removed':[],'samples':[]}
+        report={'samples':[]}
         with db:
             db.execute('BEGIN IMMEDIATE')
             before=dict(db.execute('SELECT object_id,hex(definition_id)||":"||world_space_id||":"||owner_cell_x||":"||owner_cell_z||":"||local_x||":"||local_y||":"||local_z||":"||yaw||":"||scale||":"||source_revision FROM object_placements'))
-            for tag,name,expected_key in RETIRED:
-                oid=object_id(tag,name)
-                found=db.execute('SELECT definition_key FROM object_placements JOIN object_definitions USING(definition_id) WHERE object_id=?',(oid,)).fetchone()
-                if found is None:continue
-                if found[0]!=expected_key:raise ValueError('Retired preview ID points to a different asset')
-                db.execute('DELETE FROM object_placements WHERE object_id=?',(oid,))
-                report['removed'].append({'object_id':oid.hex(),'asset':expected_key})
             for name,state,x,z,yaw,scale in SAMPLES:
                 oid=object_id('longleaf',name);key='asset/yarra_longleaf/pine_'+state
                 definition=db.execute('SELECT definition_id FROM object_definitions WHERE definition_key=?',(key,)).fetchone()
@@ -77,9 +65,8 @@ def main():
                                (oid,1,cx,cz,definition[0],x-cx*32.,y,z-cz*32.,yaw,scale))
                 report['samples'].append({'object_id':oid.hex(),'asset':key,'created':not bool(existing),'position':[x,y,z]})
             after=dict(db.execute('SELECT object_id,hex(definition_id)||":"||world_space_id||":"||owner_cell_x||":"||owner_cell_z||":"||local_x||":"||local_y||":"||local_z||":"||yaw||":"||scale||":"||source_revision FROM object_placements'))
-            removed={bytes.fromhex(r['object_id']) for r in report['removed']}
-            assert all(after.get(oid)==value for oid,value in before.items() if oid not in removed),'Unrelated placement changed'
-            assert len(after)==len(before)-len(removed)+sum(s['created'] for s in report['samples'])
+            assert all(after.get(oid)==value for oid,value in before.items()),'Unrelated placement changed'
+            assert len(after)==len(before)+sum(s['created'] for s in report['samples'])
             assert not db.execute('PRAGMA foreign_key_check').fetchall()
         view_dir.mkdir(exist_ok=True)
         for name,x,z,yaw,pitch,distance in VIEWS:

@@ -34,10 +34,6 @@ prototype in `assets/local/yarra_spruces/`. It uses the supplied qgpvu2 shoots o
 fixed V-shaped sprays and provisional pine bark. Main folds remain through all
 three mesh LODs. The placement helper adds three review instances beside the
 longleafs and birches; use `spruce-stand`. See the workflow for rebuilding.
-`assets/packs/yarra_pines/pines.catalog.ron` records the six legacy native-scene
-pine variants imported by `tools/houdini_export_tree.py`. Their original scene
-and source inputs must also be restored locally. See
-[vegetation integration](../docs/WORKFLOWS.md) for the sample placements and cook.
 Editor journals and reference captures are local working data as well.
 
 `assets/generated/` contains derived runtime SQLite generations produced by
@@ -211,22 +207,6 @@ The bay shrub trial is rebuilt from vegetation's `bay_upright` bundle using
 `packs/yarra_bay/bay.catalog.ron` and local textures/geometry in `local/yarra_bay`.
 `tools/place_bay_preview.py` adds its review stand without replacing existing trees.
 
-The archived six-form pine kit is recorded by
-`packs/yarra_pines_v2/pines.catalog.ron` and imported into `local/yarra_pines_v2`.
-It shares one 24-tile needle atlas, coverage mipmaps and the newer card/crown
-lighting contract. Mature limbs spread and droop; broad fixed needle groups
-contain the centered facing fillers, using the existing renderer unchanged.
-Its six preview trees have been replaced by longleaf forms.
-`tools/place_pine_preview.py` now forwards to the longleaf placement helper.
-Source bundles remain available as archives. See `docs/WORKFLOWS.md`.
-
-`packs/yarra_pine_branch_study/branches.catalog.ron` registers two isolated
-branch experiments following the rejected grouped-needle pine treatment.
-The single-card and offset-companion samples use 8 / 16 triangles, shared
-textures, and identical LODs. Local binaries are under `local/yarra_pine_branch_study`.
-Their two preview fixtures have been retired along with the old pine stand.
-
-
 `packs/yarra_longleaf/longleaf.catalog.ron` registers the current four-form pine
 kit: healthy, half bare, nearly bare with top needles, and mostly one-sided.
 Local source/runtime geometry is under `local/yarra_longleaf`.
@@ -235,5 +215,12 @@ triangles and 23 centered facing cards. Every branch group retains a fixed spray
 at far LOD. The existing renderer and other tree assets are unchanged by this
 kit. All four forms share their textures and woody scaffold; bare fork cards
 remain fixed. `tools/place_longleaf_preview.py` plants the variants beside the
-healthy tree near the birches, removing only the eight known retired preview
-IDs after a source-world backup. The `longleaf-kit` bookmark shows the lineup.
+healthy tree near the birches, preserving existing scenery after a source-world
+backup. The `longleaf-kit` bookmark shows the lineup.
+
+The earlier native-scene pine pack, shared-pipeline pine experiments and isolated
+branch studies have been removed from game assets. For an existing local world,
+run `python3 tools/remove_retired_pines.py`, then recook. The helper unregisters
+retired definitions/assets and moves obsolete imports/bookmarks to an ignored
+backup outside the asset tree. Authoring experiments remain in YarraVegetation
+for historical reference; use the longleaf kit for game content.

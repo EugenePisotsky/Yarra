@@ -1,0 +1,17 @@
+(schema_version: 1, assets: [
+(key: "yarra_nettles/nettle_young", display_name: "Nettle Young", source_uri: "local/yarra_nettles/source/nettle_young.glb", variants: [
+(uri: "local/yarra_nettles/runtime/nettle_young/nettle_young_lod0.gltf", bounds: (0.2344, 0.4026, 0.2099), gpu_bytes_estimate: 70508, minimum_screen_height: 100.0),
+(uri: "local/yarra_nettles/runtime/nettle_young/nettle_young_lod1.gltf", bounds: (0.2344, 0.4026, 0.2099), gpu_bytes_estimate: 48928, minimum_screen_height: 35.0),
+(uri: "local/yarra_nettles/runtime/nettle_young/nettle_young_lod2.gltf", bounds: (0.2344, 0.4026, 0.2099), gpu_bytes_estimate: 25940, minimum_screen_height: 0.0),
+]),
+(key: "yarra_nettles/nettle_mature", display_name: "Nettle Mature", source_uri: "local/yarra_nettles/source/nettle_mature.glb", variants: [
+(uri: "local/yarra_nettles/runtime/nettle_mature/nettle_mature_lod0.gltf", bounds: (0.5838, 0.9434, 0.6028), gpu_bytes_estimate: 336284, minimum_screen_height: 100.0),
+(uri: "local/yarra_nettles/runtime/nettle_mature/nettle_mature_lod1.gltf", bounds: (0.5838, 0.9434, 0.6028), gpu_bytes_estimate: 229632, minimum_screen_height: 35.0),
+(uri: "local/yarra_nettles/runtime/nettle_mature/nettle_mature_lod2.gltf", bounds: (0.5838, 0.9434, 0.6028), gpu_bytes_estimate: 122100, minimum_screen_height: 0.0),
+]),
+(key: "yarra_nettles/nettle_patch", display_name: "Nettle Patch", source_uri: "local/yarra_nettles/source/nettle_patch.glb", variants: [
+(uri: "local/yarra_nettles/runtime/nettle_patch/nettle_patch_lod0.gltf", bounds: (1.1405, 0.9481, 0.8998), gpu_bytes_estimate: 684420, minimum_screen_height: 100.0),
+(uri: "local/yarra_nettles/runtime/nettle_patch/nettle_patch_lod1.gltf", bounds: (1.1405, 0.9481, 0.8998), gpu_bytes_estimate: 468848, minimum_screen_height: 35.0),
+(uri: "local/yarra_nettles/runtime/nettle_patch/nettle_patch_lod2.gltf", bounds: (1.1405, 0.9481, 0.8998), gpu_bytes_estimate: 250460, minimum_screen_height: 0.0),
+]),
+])

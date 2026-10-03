@@ -1,0 +1,17 @@
+(schema_version: 1, assets: [
+(key: "yarra_sorrel/sorrel_open", display_name: "Sorrel Open", source_uri: "local/yarra_sorrel/source/sorrel_open.glb", variants: [
+(uri: "local/yarra_sorrel/runtime/sorrel_open/sorrel_open_lod0.gltf", bounds: (0.6322, 0.1968, 0.5938), gpu_bytes_estimate: 90208, minimum_screen_height: 80.0),
+(uri: "local/yarra_sorrel/runtime/sorrel_open/sorrel_open_lod1.gltf", bounds: (0.6322, 0.1968, 0.5938), gpu_bytes_estimate: 45984, minimum_screen_height: 25.0),
+(uri: "local/yarra_sorrel/runtime/sorrel_open/sorrel_open_lod2.gltf", bounds: (0.6322, 0.1968, 0.5938), gpu_bytes_estimate: 31696, minimum_screen_height: 0.0),
+]),
+(key: "yarra_sorrel/sorrel_full", display_name: "Sorrel Full", source_uri: "local/yarra_sorrel/source/sorrel_full.glb", variants: [
+(uri: "local/yarra_sorrel/runtime/sorrel_full/sorrel_full_lod0.gltf", bounds: (0.8473, 0.2045, 0.6544), gpu_bytes_estimate: 201880, minimum_screen_height: 80.0),
+(uri: "local/yarra_sorrel/runtime/sorrel_full/sorrel_full_lod1.gltf", bounds: (0.8473, 0.2045, 0.6544), gpu_bytes_estimate: 101292, minimum_screen_height: 25.0),
+(uri: "local/yarra_sorrel/runtime/sorrel_full/sorrel_full_lod2.gltf", bounds: (0.8473, 0.2045, 0.6544), gpu_bytes_estimate: 69332, minimum_screen_height: 0.0),
+]),
+(key: "yarra_sorrel/sorrel_patch", display_name: "Sorrel Patch", source_uri: "local/yarra_sorrel/source/sorrel_patch.glb", variants: [
+(uri: "local/yarra_sorrel/runtime/sorrel_patch/sorrel_patch_lod0.gltf", bounds: (1.1750, 0.2316, 0.9986), gpu_bytes_estimate: 375144, minimum_screen_height: 80.0),
+(uri: "local/yarra_sorrel/runtime/sorrel_patch/sorrel_patch_lod1.gltf", bounds: (1.1750, 0.2316, 0.9986), gpu_bytes_estimate: 188188, minimum_screen_height: 25.0),
+(uri: "local/yarra_sorrel/runtime/sorrel_patch/sorrel_patch_lod2.gltf", bounds: (1.1750, 0.2316, 0.9986), gpu_bytes_estimate: 128404, minimum_screen_height: 0.0),
+]),
+])

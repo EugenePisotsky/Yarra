@@ -390,6 +390,107 @@ Captures go to `tmp/spruce-review`; `--view close --mode half` tests reduced
 resolution. The spruce passed user art review on 2026-10-03; dense-forest
 profiling remains pending.
 
+### Common nettle
+
+Build `nettle_young`, `nettle_mature` and `nettle_patch` in YarraVegetation with
+`hython scripts/build_nettles.py`, then `hython scripts/validate_nettles.py`.
+The qfyqW2 atlas supplies nine individual serrated leaves. Thin mesh stems carry
+opposed pairs and smaller upper leaves. Forms have 1/3/7 stems, roughly 0.4/0.9/0.9 m
+high, with one shared foliage material. Leaves follow the continuous wind frame
+of their stem attachment ring. All pairs and attachment nodes remain at every LOD.
+
+```sh
+python3 tools/import_vegetation_bundle.py \
+  --bundle /path/to/vegetation/outputs/nettle_young/current \
+  --bundle /path/to/vegetation/outputs/nettle_mature/current \
+  --bundle /path/to/vegetation/outputs/nettle_patch/current \
+  --output assets/local/yarra_nettles \
+  --catalog assets/packs/yarra_nettles/nettles.catalog.ron \
+  --canopy-blend 0 --lod-screen-heights 100 35
+cargo run --release -p yarra-world-cook -- import-assets assets/packs/yarra_nettles/nettles.catalog.ron
+python3 tools/place_nettles_preview.py
+cargo run --release -p yarra-world-cook -- cook
+cargo run --release -p yarra-app-game -- --start-view content/world.project.views/nettles-walk.ron
+```
+
+Samples at X 2490/2493/2496, Z 4353 sit beside the sorrel and birches. Placement
+backs up the project database and preserves existing editor adjustments.
+Bookmarks use `nettles-`: `stand`, `young`, `mature`, `patch`, `close`, `side`,
+`overhead`, `far`, and `walk` for normal play. Capture with
+`tools/render_nettles_preview.py --view close --mode native` or `--view patch --mode half`
+for MetalFX Temporal; pass `--game /path/to/executable` for an existing build.
+Images/logs stay ignored in `tmp/nettles-review/`. Keep the preview window focused.
+This foliage pass has no flower/seed clusters. Dense-scene GPU cost is unmeasured.
+
+### Wood-sorrel ground cover
+
+Build `sorrel_open`, `sorrel_full` and `sorrel_patch` in YarraVegetation with
+`hython scripts/build_sorrel.py`, then `hython scripts/validate_sorrel.py`.
+The pdEko2 source supplies complete three-part leaves. Small cluster cards carry
+4–6 heads, with tilted single heads at the edges and two/three loose height bands.
+Fine petioles and leaves share one material and planted wind bindings. All leaves
+remain through the three LODs; the stems become simpler with distance.
+
+```sh
+python3 tools/import_vegetation_bundle.py \
+  --bundle /path/to/vegetation/outputs/sorrel_open/current \
+  --bundle /path/to/vegetation/outputs/sorrel_full/current \
+  --bundle /path/to/vegetation/outputs/sorrel_patch/current \
+  --output assets/local/yarra_sorrel \
+  --catalog assets/packs/yarra_sorrel/sorrel.catalog.ron \
+  --canopy-blend 0 --lod-screen-heights 80 25
+cargo run --release -p yarra-world-cook -- import-assets assets/packs/yarra_sorrel/sorrel.catalog.ron
+python3 tools/place_sorrel_preview.py
+cargo run --release -p yarra-world-cook -- cook
+cargo run --release -p yarra-app-game -- --start-view content/world.project.views/sorrel-walk.ron
+```
+
+Samples at X 2490/2493/2496, Z 4350 sit beside the lilies/ferns. Placement is
+additive, backs up the project database and preserves existing editor adjustments.
+Bookmarks use the `sorrel-` prefix: `stand`, `open`, `full`, `patch`, `close`,
+`side`, `overhead`, `far`; `sorrel-walk` starts normal play. Run
+`tools/render_sorrel_preview.py --view close --mode native` or `--mode half`
+for MetalFX Temporal. Supply `--game /path/to/executable` to use an existing build.
+Captures are ignored under `tmp/sorrel-review/`. Keep the macOS preview window
+focused during capture. Native close/overhead and temporal patch views were
+reviewed for this first pass. Dense-patch overdraw/performance remains unmeasured.
+
+### Lily-of-the-valley foliage
+
+Build `lily_open`, `lily_full` and `lily_patch` in YarraVegetation using
+`hython scripts/build_lilies.py`, then `hython scripts/validate_lilies.py`.
+These are foliage forms using six qgwlD2 photographed leaves. They share one
+atlas and material, with separated ground shoots, outward-fanning upright leaves and subtle rooted
+wind. Heights are roughly 0.42–0.47 m; the broadest patch spans about 1.5 m.
+
+```sh
+python3 tools/import_vegetation_bundle.py \
+  --bundle /path/to/vegetation/outputs/lily_open/current \
+  --bundle /path/to/vegetation/outputs/lily_full/current \
+  --bundle /path/to/vegetation/outputs/lily_patch/current \
+  --output assets/local/yarra_lilies \
+  --catalog assets/packs/yarra_lilies/lilies.catalog.ron \
+  --canopy-blend 0 --lod-screen-heights 100 35
+cargo run --release -p yarra-world-cook -- import-assets assets/packs/yarra_lilies/lilies.catalog.ron
+python3 tools/place_lilies_preview.py
+cargo run --release -p yarra-world-cook -- cook
+cargo run --release -p yarra-app-game -- --start-view content/world.project.views/lilies-walk.ron
+```
+
+All leaves survive the 8/5/3-section LODs, retaining their source shape, leaf ID
+and wind root. Review plants are at X 2490/2493/2496, Z 4346, in front of the
+ferns. Existing scenery and later editor adjustments are preserved. Review
+bookmarks start with `lilies-`: `stand`, `open`, `full`, `patch`, `close`, `side`,
+`overhead`, `far`. `lilies-walk` starts normal play.
+
+`tools/render_lilies_preview.py` supports `--view close --mode half` for
+MetalFX Temporal and `--game /path/to/executable` for an existing build.
+Captures stay in ignored `tmp/lilies-review/`. Keep the preview window focused
+while capturing on macOS; a background window may produce a black snapshot.
+Native close/patch/far and temporal close captures were reviewed for the first
+pass; the upright revision was checked in native close and temporal patch views.
+User art review and dense-area performance checks remain pending.
+
 ### Green fern ground cover
 
 Build `fern_upright`, `fern_spreading` and `fern_sparse` in YarraVegetation with
@@ -552,72 +653,24 @@ case; the fixed shader produced zero in all six cases. The compute tests under
 history. Native Temporal captures are in `tmp/dead-trees-review/`; this is
 correctness coverage, not a dense-forest performance measurement.
 
-### Archived pine kit
+### Removing retired pine imports
 
-Six shared-pipeline pines use `yarra_pines_v2`: mature forest, young, spreading,
-half bare, nearly bare and one-sided. They share needle textures and use the
-same centered camera-facing cards, coverage mip chain and crown lighting as the
-newer vegetation. These are retained as authoring archives; their six preview
-trees were replaced by the longleaf kit below. To reimport the archived assets
-without placing them, import all six together so textures remain shared:
+The old native-scene pines, six shared-pipeline experiments and two isolated
+branch studies have been removed from the game's tracked catalogs and helpers.
+Existing local project databases retain imported catalog rows until migrated:
 
 ```sh
-python3 tools/import_vegetation_bundle.py \
-  --bundle /path/to/vegetation/outputs/pine_forest/current \
-  --bundle /path/to/vegetation/outputs/pine_young/current \
-  --bundle /path/to/vegetation/outputs/pine_open/current \
-  --bundle /path/to/vegetation/outputs/pine_half_bare/current \
-  --bundle /path/to/vegetation/outputs/pine_nearly_bare/current \
-  --bundle /path/to/vegetation/outputs/pine_one_sided/current \
-  --output assets/local/yarra_pines_v2 \
-  --catalog assets/packs/yarra_pines_v2/pines.catalog.ron
-cargo run --release -p yarra-world-cook -- import-assets assets/packs/yarra_pines_v2/pines.catalog.ron
+# Close game/editor first. This preserves a source backup and unrelated scenery.
+python3 tools/remove_retired_pines.py
+cargo run --release -p yarra-world-cook -- cook
 ```
 
-The retired samples were west of the birches (X 2438–2474, Z 4327–4350).
-Their old bookmarks no longer represent the current kit.
-`tools/place_pine_preview.py` forwards to the current longleaf placement helper.
-Exposed crown branches in the archived models use two fixed curved
-cards with a short solid attachment, retained across all three LODs.
-Mature branches now spread or droop and carry overlapping groups of needles.
-About 25% of needle cards face the camera, primarily the two fillers inside
-each limb's outer foliage groups. This is an asset update using existing shaders.
-The original `yarra_pines` pack remains an archive; use `yarra_longleaf` for the current kit.
-Three mesh LODs are imported; billboard support remains separate pending work.
-
-### Archived isolated pine branch study
-
-The grouped-needle pine revision was rejected in art review: shoots and stacked
-cards merge into painted-looking clumps. `yarra_pine_branch_study` tested a
-simpler branch in isolation. Its two preview fixtures have now been removed;
-the commands below reproduce the archived experiment explicitly. Its two
-samples use eight separate shoots on one card, then the same card with a smaller
-offset companion (8 / 16 triangles). They share textures and identical LODs.
-There is no canopy-normal blend, crown occlusion, or camera rotation in this study.
-
-```sh
-# First run scripts/build_pine_branch_study.py with hython in vegetation.
-python3 tools/import_vegetation_bundle.py \
-  --bundle /path/to/vegetation/outputs/pine_branch_single/current \
-  --bundle /path/to/vegetation/outputs/pine_branch_depth/current \
-  --output assets/local/yarra_pine_branch_study \
-  --catalog assets/packs/yarra_pine_branch_study/branches.catalog.ron \
-  --canopy-blend 0
-target/release/yarra-world-cook import-assets assets/packs/yarra_pine_branch_study/branches.catalog.ron
-python3 tools/place_pine_branch_study.py
-target/release/yarra-world-cook cook
-python3 tools/render_pine_branch_study.py
-```
-
-The branches float at chest height beside the birches, at X 2491 / 2497, Z 4338.
-Use `pine-branch-compare`, `pine-branch-single`, `pine-branch-depth`,
-`pine-branch-below`, and `pine-branch-overhead` bookmarks. Placement preserves
-existing scenery and repeat-run edits. Captures go to `tmp/pine-branch-study/`,
-with 1920×1080 native and 960×540 internal / 1920×1080 MetalFX Temporal output.
-The capture helper requires Pillow, rejects missing/stale/black screenshots,
-and accepts `--view overhead --mode half` to repeat an individual check.
-The first test is branch readability and card overlap; it does not validate
-full-tree silhouette, LOD transitions, or forest performance.
+The helper removes retired asset definitions, variants and any placements using
+them. It also moves obsolete local packs/import backups and `pine-*` bookmarks
+out of the asset tree into ignored `tmp/retired-pines-*` storage. Repeated runs
+are safe. It refuses serialized environment-collection references that need
+explicit editing. The current `yarra_longleaf` kit and `longleaf-*` bookmarks
+remain available; `tools/place_longleaf_preview.py` handles its four forms.
 
 ## Explicit fixtures and catalog tools
 

@@ -1,23 +1,24 @@
 #!/usr/bin/env python3
-"""Capture the isolated branch under native/reduced game settings (requires Pillow)."""
+"""Capture the wood-sorrel forms under native/reduced game settings (requires Pillow)."""
 from pathlib import Path
 import argparse
 import subprocess
 import time
 from PIL import Image
 ROOT=Path(__file__).resolve().parents[1]
-OUT=ROOT/'tmp/pine-branch-study';OUT.mkdir(parents=True,exist_ok=True)
+OUT=ROOT/'tmp/sorrel-review';OUT.mkdir(parents=True,exist_ok=True)
 parser=argparse.ArgumentParser(description=__doc__)
-views=('single','depth','below','overhead','compare')
+views=('stand','open','full','patch','close','side','overhead','far')
 parser.add_argument('--view',choices=views,action='append',help='Render selected views only; defaults to all')
 parser.add_argument('--mode',choices=('native','half'),action='append',help='Render selected resolutions only')
+parser.add_argument('--game',type=Path,default=ROOT/'target/release/yarra-app-game',help='Existing game executable to render with')
 options=parser.parse_args()
 for view in options.view or views:
-    for mode in options.mode or (('native','half') if view!='compare' else ('native',)):
+    for mode in options.mode or (('native','half') if view.endswith('close') else ('native',)):
         name=view+'-'+mode
         started=time.time_ns()
         print('Rendering '+name,flush=True)
-        args=[str(ROOT/'target/release/yarra-app-game'),'--start-view',str(ROOT/f'content/world.project.views/pine-branch-{view}.ron'),
+        args=[str(options.game.resolve()),'--start-view',str(ROOT/f'content/world.project.views/sorrel-{view}.ron'),
               '--render-repro','landscape','--render-frames','900','--render-snapshot',str(OUT/(name+'.png')),
               '--render-snapshot-frames','850','--render-ui-off','--profile-diagnostic',
               '--profile-size','1920x1080' if mode=='native' else 'game','--profile-surface','1920x1080',
@@ -29,4 +30,4 @@ for view in options.view or views:
         with Image.open(snapshot) as im:
             if not im.convert('RGB').getbbox():
                 raise RuntimeError('Game produced a black snapshot; inspect '+str(OUT/(name+'.log')))
-print('Branch captures complete',flush=True)
+print('Sorrel captures complete',flush=True)

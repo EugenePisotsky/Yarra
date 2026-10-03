@@ -1,0 +1,17 @@
+(schema_version: 1, assets: [
+(key: "yarra_lilies/lily_open", display_name: "Lily Open", source_uri: "local/yarra_lilies/source/lily_open.glb", variants: [
+(uri: "local/yarra_lilies/runtime/lily_open/lily_open_lod0.gltf", bounds: (0.8119, 0.4247, 0.6789), gpu_bytes_estimate: 119552, minimum_screen_height: 100.0),
+(uri: "local/yarra_lilies/runtime/lily_open/lily_open_lod1.gltf", bounds: (0.8119, 0.4247, 0.6789), gpu_bytes_estimate: 75424, minimum_screen_height: 35.0),
+(uri: "local/yarra_lilies/runtime/lily_open/lily_open_lod2.gltf", bounds: (0.8119, 0.4247, 0.6789), gpu_bytes_estimate: 45360, minimum_screen_height: 0.0),
+]),
+(key: "yarra_lilies/lily_full", display_name: "Lily Full", source_uri: "local/yarra_lilies/source/lily_full.glb", variants: [
+(uri: "local/yarra_lilies/runtime/lily_full/lily_full_lod0.gltf", bounds: (1.0669, 0.4734, 0.9411), gpu_bytes_estimate: 240512, minimum_screen_height: 100.0),
+(uri: "local/yarra_lilies/runtime/lily_full/lily_full_lod1.gltf", bounds: (1.0669, 0.4734, 0.9411), gpu_bytes_estimate: 150144, minimum_screen_height: 35.0),
+(uri: "local/yarra_lilies/runtime/lily_full/lily_full_lod2.gltf", bounds: (1.0669, 0.4734, 0.9411), gpu_bytes_estimate: 90368, minimum_screen_height: 0.0),
+]),
+(key: "yarra_lilies/lily_patch", display_name: "Lily Patch", source_uri: "local/yarra_lilies/source/lily_patch.glb", variants: [
+(uri: "local/yarra_lilies/runtime/lily_patch/lily_patch_lod0.gltf", bounds: (1.7011, 0.4638, 1.4560), gpu_bytes_estimate: 425488, minimum_screen_height: 100.0),
+(uri: "local/yarra_lilies/runtime/lily_patch/lily_patch_lod1.gltf", bounds: (1.7011, 0.4638, 1.4560), gpu_bytes_estimate: 268416, minimum_screen_height: 35.0),
+(uri: "local/yarra_lilies/runtime/lily_patch/lily_patch_lod2.gltf", bounds: (1.7011, 0.4638, 1.4560), gpu_bytes_estimate: 162000, minimum_screen_height: 0.0),
+]),
+])
