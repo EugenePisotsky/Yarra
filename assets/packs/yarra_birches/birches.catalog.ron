@@ -14,4 +14,24 @@
 (uri: "local/yarra_birches/runtime/birch_bare/birch_bare_lod1.gltf", bounds: (7.3989, 14.6433, 8.0551), gpu_bytes_estimate: 360152, minimum_screen_height: 180.0),
 (uri: "local/yarra_birches/runtime/birch_bare/birch_bare_lod2.gltf", bounds: (7.3989, 14.6433, 8.0551), gpu_bytes_estimate: 145624, minimum_screen_height: 0.0),
 ]),
+(key: "yarra_birches/birch_crown", display_name: "Birch Crown", source_uri: "local/yarra_birches/source/birch_crown.glb", variants: [
+(uri: "local/yarra_birches/runtime/birch_crown/birch_crown_lod0.gltf", bounds: (6.4204, 15.6750, 6.1113), gpu_bytes_estimate: 873376, minimum_screen_height: 480.0),
+(uri: "local/yarra_birches/runtime/birch_crown/birch_crown_lod1.gltf", bounds: (6.4204, 15.6750, 6.1113), gpu_bytes_estimate: 422168, minimum_screen_height: 180.0),
+(uri: "local/yarra_birches/runtime/birch_crown/birch_crown_lod2.gltf", bounds: (6.4204, 15.6750, 6.1113), gpu_bytes_estimate: 224688, minimum_screen_height: 0.0),
+]),
+(key: "yarra_birches/birch_pendulous", display_name: "Birch Pendulous", source_uri: "local/yarra_birches/source/birch_pendulous.glb", variants: [
+(uri: "local/yarra_birches/runtime/birch_pendulous/birch_pendulous_lod0.gltf", bounds: (9.4041, 14.6713, 8.7089), gpu_bytes_estimate: 2793816, minimum_screen_height: 480.0),
+(uri: "local/yarra_birches/runtime/birch_pendulous/birch_pendulous_lod1.gltf", bounds: (9.4041, 14.6713, 8.7089), gpu_bytes_estimate: 1413072, minimum_screen_height: 180.0),
+(uri: "local/yarra_birches/runtime/birch_pendulous/birch_pendulous_lod2.gltf", bounds: (9.4041, 14.6713, 8.7089), gpu_bytes_estimate: 779176, minimum_screen_height: 0.0),
+]),
+(key: "yarra_birches/birch_double", display_name: "Birch Double", source_uri: "local/yarra_birches/source/birch_double.glb", variants: [
+(uri: "local/yarra_birches/runtime/birch_double/birch_double_lod0.gltf", bounds: (8.0358, 15.4127, 7.8380), gpu_bytes_estimate: 4344328, minimum_screen_height: 480.0),
+(uri: "local/yarra_birches/runtime/birch_double/birch_double_lod1.gltf", bounds: (8.0358, 15.4127, 7.8380), gpu_bytes_estimate: 2184472, minimum_screen_height: 180.0),
+(uri: "local/yarra_birches/runtime/birch_double/birch_double_lod2.gltf", bounds: (8.0358, 15.4127, 7.8380), gpu_bytes_estimate: 1201528, minimum_screen_height: 0.0),
+]),
+(key: "yarra_birches/birch_triple", display_name: "Birch Triple", source_uri: "local/yarra_birches/source/birch_triple.glb", variants: [
+(uri: "local/yarra_birches/runtime/birch_triple/birch_triple_lod0.gltf", bounds: (8.3750, 15.8175, 8.2096), gpu_bytes_estimate: 5606056, minimum_screen_height: 480.0),
+(uri: "local/yarra_birches/runtime/birch_triple/birch_triple_lod1.gltf", bounds: (8.3750, 15.8175, 8.2096), gpu_bytes_estimate: 2815624, minimum_screen_height: 180.0),
+(uri: "local/yarra_birches/runtime/birch_triple/birch_triple_lod2.gltf", bounds: (8.3750, 15.8175, 8.2096), gpu_bytes_estimate: 1551096, minimum_screen_height: 0.0),
+]),
 ])

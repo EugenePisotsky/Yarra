@@ -159,9 +159,14 @@ triangle counts and a few trees at a capped frame rate are not forest budgets.
 python3 tools/import_vegetation_bundle.py \
   --bundle /path/to/vegetation/outputs/birch_leafy/current \
   --bundle /path/to/vegetation/outputs/birch_sparse/current \
-  --bundle /path/to/vegetation/outputs/birch_bare/current
+  --bundle /path/to/vegetation/outputs/birch_bare/current \
+  --bundle /path/to/vegetation/outputs/birch_crown/current \
+  --bundle /path/to/vegetation/outputs/birch_pendulous/current \
+  --bundle /path/to/vegetation/outputs/birch_double/current \
+  --bundle /path/to/vegetation/outputs/birch_triple/current
 cargo run --release -p yarra-world-cook -- import-assets assets/packs/yarra_birches/birches.catalog.ron
 python3 tools/place_birch_preview.py
+python3 tools/place_birch_variants_preview.py
 cargo run --release -p yarra-world-cook -- cook
 cargo run --release -p yarra-app-game -- --start-view content/world.project.views/birch-near.ron
 ```
@@ -169,6 +174,24 @@ cargo run --release -p yarra-app-game -- --start-view content/world.project.view
 The placement helper is specific to the current 32 m island world: it adds nine samples in three groups near the start, saves a source backup and placement IDs under `tmp/birch-placement-*/`, and preserves existing samples on reruns. Six are leafy, two sparse and one bare. Bookmarks `birch-near`, `birch-west`, `birch-east`, and `birch-overhead` cover the groups and an elevated view. The revised catalog has three mesh LODs (3,104–3,212 / 922 / 366–414 triangles, depending on foliage state), with provisional 480/180/0 logical-pixel thresholds. Billboard view selection and the separate translucency map are not integrated; the last mesh LOD remains active at distance. These placements are an appearance check, not a dense-forest or device-performance benchmark.
 
 The refined birch uses smaller leaves, doubled baked twig thickness and 20% thicker mesh branches. The original broad-leaf look remains in authoring presets `generic_deciduous_leafy/sparse/bare`. Birch selects 25% of LOD0 leafy clusters from the inner crown (54 leafy / 11 sparse / 0 bare) and retains them at every mesh LOD. These two-triangle clusters rotate around their centers and use eight dedicated stemless atlas tiles; structural cards stay fixed. The shared foliage atlas is now 2048×3072, with the original tile detail and no additional material. In Houdini, **Moving share of leafy cards** can be set to 0.20–0.30; changing it reuses the atlas. **Stemless moving foliage** retains leaves and fine twigs but removes the main stem and attachment bases. `_CARD_FACING.xy` stores mode (0 legacy axis, 1 camera facing) and elevation follow (0 preserve tilt, 1 full facing). Change **Facing & detail** in Houdini and rebuild, or compare elevation live in the generated browser preview. Older exports without this optional attribute retain legacy behavior. All passes use the main camera; previous-camera poses drive temporal motion, and culling uses each mesh's measured rotation radius. The current lighting is unchanged.
+
+**Additional birch forms:** `birch_crown` exposes curved bare lower twig cards,
+with occasional living sprays and a fuller leafy top. `birch_pendulous` has
+arched limbs and hanging outer sprays; `birch_double` and `birch_triple` use
+separate ground-planted stems of different heights and lean. All four share
+the original birch atlas, use connected wind and bake crown occlusion for
+`crown_v2`. Their fixed card scales stay constant through LODs. Import all seven
+birch bundles together, since each import replaces the complete local pack.
+`place_birch_variants_preview.py` adds four samples at X 2490 / 2504 / 2519 /
+2535, Z 4356, beside the conifer review row. It preserves existing placements
+and bookmark edits; source backups stay under `tmp/birch-variants-placement-*`.
+Use `birch-variants-stand`, `crown`, `pendulous`, `double`, `triple`, `close`,
+`bare`, `roots`, `overhead` and `far` bookmarks (all share the prefix).
+`birch-variants-walk` starts normal play between the hanging birch and double clump.
+`render_birch_variants_preview.py` captures native and reduced-resolution views
+under ignored `tmp/birch-variants-review/`. These are appearance checks; the
+clumps contain multiple stems and are more expensive than one tree. Dense
+forest cost remains unmeasured.
 
 **Oak prototypes:** Forest, spreading and sparse oaks use the same importer and existing crown lighting. All three share six compressed textures and the same eight shoot recipes, each with leafy, bare and stemless tiles. Imported triangle counts are 2,616/784/374 (forest), 2,814/858/424 (spreading), and 2,616/736/286 (sparse). The original 25% moving subset is supplemented by 24 forest / 40 spreading interior stemless quads, giving 63 / 79 / 15 facing cards at every mesh LOD. IDs and pivots stay stable across LODs. Added fill reuses the same atlas; transparent overlap still needs dense-forest profiling.
 
