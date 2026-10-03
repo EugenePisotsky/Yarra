@@ -156,11 +156,16 @@ def main():
     parser.add_argument('--ktx', type=Path, default=Path(shutil.which('ktx') or ROOT.parent/'yarra/.tools/ktx/4.4.2/bin/ktx'),
                         help='Khronos ktx executable (PATH, then the legacy sibling tool cache)')
     parser.add_argument('--canopy-blend', type=float, default=.85)
+    parser.add_argument('--lod-screen-heights', type=float, nargs=2, default=(480., 180.),
+                        metavar=('NEAR', 'MID'), help='Minimum projected heights for the first two mesh LODs; far uses 0')
     args = parser.parse_args()
     if not args.ktx.is_file():
         parser.error('Khronos ktx was not found; install it on PATH or pass --ktx /path/to/ktx')
     if not 0 <= args.canopy_blend <= 1:
         parser.error('--canopy-blend must be 0..1')
+    near, mid = args.lod_screen_heights
+    if not all(math.isfinite(v) for v in (near, mid)) or not near > mid > 0:
+        parser.error('--lod-screen-heights requires finite NEAR > MID > 0')
     output = args.output.resolve()
     pack = output.relative_to(ROOT/'assets').as_posix()
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -180,7 +185,7 @@ def main():
             variants, counts, first_ids = [], [], None
             bounds = [max(max(abs(v['min'][c]), abs(v['max'][c])) * (1 if c == 1 else 2)
                           for v in manifest['bounds'].values()) for c in range(3)]
-            for lod, threshold in enumerate((480., 180., 0.)):
+            for lod, threshold in enumerate((near, mid, 0.)):
                 glb = bundle/f'lod{lod}.glb'
                 doc, blob = read_glb(glb)
                 for im in doc['images']:
@@ -218,6 +223,7 @@ def main():
             entries.append(f'(key: "{output.name}/{name}", display_name: "{name.replace("_", " ").title()}", source_uri: "{pack}/source/{name}.glb", variants: [\n'+ '\n'.join(variants)+'\n]),')
             reports.append({'asset': name, 'triangles': counts, 'facing_cards': len(first_ids), 'source': str(bundle.resolve())})
         (stage/'import.json').write_text(json.dumps({'assets': reports, 'source_texture_sha256': texture_hashes,
+            'lod_screen_heights': [near, mid, 0.],
             'canopy_blend': args.canopy_blend, 'lighting': 'crown_v2 for crown_sky_v1 occlusion bakes; legacy bundles retain crown_v1',
             'billboard': 'Not registered: view-selection shader pending',
             'translucency': 'Source sidecar not sampled by current Yarra foliage shader'}, indent=2)+'\n')

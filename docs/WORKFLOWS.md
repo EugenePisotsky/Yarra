@@ -82,12 +82,13 @@ separate legacy assets.
 | Oak: forest, spreading, sparse | `yarra_oaks/oaks.catalog.ron` | See oak placement workflow below |
 | Maple: forest, spreading, sparse | `yarra_maples/maples.catalog.ron` | See maple placement workflow below |
 | Tall layered broadleaf | `yarra_tall_forest/tall_forest.catalog.ron` | `tall-forest-stand` |
+| Generic forest shrubs: rounded, spreading, sparse; medium rounded/spreading/upright (medium forms under review) | `yarra_shrubs/shrubs.catalog.ron` | `shrubs-stand`, `shrubs-medium-stand` |
 | Bay shrub | `yarra_bay/bay.catalog.ron` | `bay-stand` |
 | Longleaf: healthy, half-bare, nearly-bare, one-sided | `yarra_longleaf/longleaf.catalog.ron` | `longleaf-kit` |
 | Norway spruce | `yarra_spruces/spruces.catalog.ron` | `spruce-stand` |
 | Dead broadleaf: upright, spreading, split, slender, double, triple | `yarra_dead_trees/dead_trees.catalog.ron` | `dead-trees-stand`, `dead-trees-slender-stand` |
 
-These are 26 approved forms, each with three mesh LODs. Legacy pine packs and branch-study
+These are 29 approved forms plus three medium shrub studies under review, each with three mesh LODs. Legacy pine packs and branch-study
 assets remain archived; do not restore their retired preview placements when
 adding new pine variants. The current pine scaffold is `pine_longleaf`.
 
@@ -388,6 +389,93 @@ Only three mesh LODs are registered; runtime billboard selection remains pending
 Captures go to `tmp/spruce-review`; `--view close --mode half` tests reduced
 resolution. The spruce passed user art review on 2026-10-03; dense-forest
 profiling remains pending.
+
+### Green fern ground cover
+
+Build `fern_upright`, `fern_spreading` and `fern_sparse` in YarraVegetation with
+`hython scripts/build_ferns.py`, then `hython scripts/validate_ferns.py`.
+The shared s3vss3 source atlas has two whole fronds; all three forms keep every
+frond through LOD changes while reducing blade tessellation. Two loose radial
+layers emerge from a ground-level crown (about 0.55–0.63 m high). They use one
+foliage material and rooted hierarchy wind. Import with the actual curved blade
+normals, without blending toward a tree crown:
+
+```sh
+python3 tools/import_vegetation_bundle.py \
+  --bundle /path/to/vegetation/outputs/fern_upright/current \
+  --bundle /path/to/vegetation/outputs/fern_spreading/current \
+  --bundle /path/to/vegetation/outputs/fern_sparse/current \
+  --output assets/local/yarra_ferns \
+  --catalog assets/packs/yarra_ferns/ferns.catalog.ron --canopy-blend 0 --lod-screen-heights 140 45
+cargo run --release -p yarra-world-cook -- import-assets assets/packs/yarra_ferns/ferns.catalog.ron
+python3 tools/place_ferns_preview.py
+cargo run --release -p yarra-world-cook -- cook
+cargo run --release -p yarra-app-game -- --start-view content/world.project.views/ferns-walk.ron
+```
+
+Fronds use 12/8/4 curve sections. The 140/45 screen-height thresholds retain
+smooth arches at player distance; generic tree thresholds remain 480/180.
+The sparse form is full-sized with fewer fronds, and the spreading form is
+about 2.5 m across. No extra material or texture set is needed.
+
+Review samples: X 2490 / 2494 / 2498, Z 4342, in the gap beside the birches and
+shrubs. Stable placement IDs preserve existing scenery and editor adjustments.
+Bookmarks: `ferns-stand`, `ferns-upright`, `ferns-spreading`, `ferns-sparse`,
+`ferns-close`, `ferns-side`, `ferns-overhead`, `ferns-far`. `ferns-walk` is normal
+play. Use `tools/render_ferns_preview.py --view close --mode half` to check
+MetalFX Temporal; `--game` accepts an existing executable. Captures are local
+under `tmp/ferns-review`. The revised forms passed user art review on
+2026-10-03; large-area scattering/performance has not been assessed. Flower and other ground-cover species are separate work.
+
+### Generic forest shrubs
+
+Build and validate the six forms in YarraVegetation (`--medium-only` limits
+the builder to the three medium additions):
+
+```sh
+hython scripts/build_shrubs.py
+hython scripts/validate_shrubs.py
+```
+
+Then import all six together and cook their nearby review row:
+
+```sh
+python3 tools/import_vegetation_bundle.py \
+  --bundle /path/to/vegetation/outputs/shrub_rounded/current \
+  --bundle /path/to/vegetation/outputs/shrub_spreading/current \
+  --bundle /path/to/vegetation/outputs/shrub_sparse/current \
+  --bundle /path/to/vegetation/outputs/shrub_medium_rounded/current \
+  --bundle /path/to/vegetation/outputs/shrub_medium_spreading/current \
+  --bundle /path/to/vegetation/outputs/shrub_medium_upright/current \
+  --output assets/local/yarra_shrubs \
+  --catalog assets/packs/yarra_shrubs/shrubs.catalog.ron
+cargo run --release -p yarra-world-cook -- import-assets assets/packs/yarra_shrubs/shrubs.catalog.ron
+python3 tools/place_shrubs_preview.py
+cargo run --release -p yarra-world-cook -- cook
+cargo run --release -p yarra-app-game -- --start-view content/world.project.views/shrubs-walk.ron
+```
+
+The rounded, low spreading and sparse woody samples sit at X 2490 / 2496 / 2502,
+Z 4328, between the birches and pines. Stable placement IDs and source backups
+preserve older scenery and subsequent editor changes. Review bookmarks are
+`shrubs-stand`, `shrubs-rounded`, `shrubs-spreading`, `shrubs-sparse`,
+`shrubs-close`, `shrubs-roots`, `shrubs-overhead` and `shrubs-far`.
+
+The medium forms extend the same row west at X 2466 / 2474 / 2482, Z 4328.
+They are about 3.1 / 2.5 / 3.5 m tall, retaining the small leaf scale with more
+stems and shoots. Use `shrubs-medium-walk` for normal play, or
+`shrubs-medium-stand`, `shrubs-medium-rounded`, `shrubs-medium-spreading`,
+`shrubs-medium-upright`, `shrubs-medium-close`, `shrubs-medium-overhead` and
+`shrubs-medium-far` for review.
+
+`tools/render_shrubs_preview.py` captures these views; `--view close --mode half`
+checks MetalFX Temporal. Pass `--game /path/to/executable` when using an existing
+build outside `target/release`. Captures stay in ignored `tmp/shrubs-review/`.
+
+The pack shares one oval-leaf atlas and existing crown lighting/wind shaders.
+Retained cards never enlarge at LOD changes. Bare fans and terminal sprays stay
+at all three LODs. All six forms are included in the accepted kit. Dense-forest profiling and
+runtime billboard selection remain pending.
 
 ### Dead broadleaf forms
 

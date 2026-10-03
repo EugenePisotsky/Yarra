@@ -1,0 +1,17 @@
+(schema_version: 1, assets: [
+(key: "yarra_ferns/fern_upright", display_name: "Fern Upright", source_uri: "local/yarra_ferns/source/fern_upright.glb", variants: [
+(uri: "local/yarra_ferns/runtime/fern_upright/fern_upright_lod0.gltf", bounds: (1.7843, 0.6283, 1.7700), gpu_bytes_estimate: 246704, minimum_screen_height: 140.0),
+(uri: "local/yarra_ferns/runtime/fern_upright/fern_upright_lod1.gltf", bounds: (1.7843, 0.6283, 1.7700), gpu_bytes_estimate: 166112, minimum_screen_height: 45.0),
+(uri: "local/yarra_ferns/runtime/fern_upright/fern_upright_lod2.gltf", bounds: (1.7843, 0.6283, 1.7700), gpu_bytes_estimate: 83056, minimum_screen_height: 0.0),
+]),
+(key: "yarra_ferns/fern_spreading", display_name: "Fern Spreading", source_uri: "local/yarra_ferns/source/fern_spreading.glb", variants: [
+(uri: "local/yarra_ferns/runtime/fern_spreading/fern_spreading_lod0.gltf", bounds: (2.6343, 0.5549, 2.6002), gpu_bytes_estimate: 291152, minimum_screen_height: 140.0),
+(uri: "local/yarra_ferns/runtime/fern_spreading/fern_spreading_lod1.gltf", bounds: (2.6343, 0.5549, 2.6002), gpu_bytes_estimate: 198032, minimum_screen_height: 45.0),
+(uri: "local/yarra_ferns/runtime/fern_spreading/fern_spreading_lod2.gltf", bounds: (2.6343, 0.5549, 2.6002), gpu_bytes_estimate: 100160, minimum_screen_height: 0.0),
+]),
+(key: "yarra_ferns/fern_sparse", display_name: "Fern Sparse", source_uri: "local/yarra_ferns/source/fern_sparse.glb", variants: [
+(uri: "local/yarra_ferns/runtime/fern_sparse/fern_sparse_lod0.gltf", bounds: (1.8504, 0.6018, 1.8658), gpu_bytes_estimate: 173168, minimum_screen_height: 140.0),
+(uri: "local/yarra_ferns/runtime/fern_sparse/fern_sparse_lod1.gltf", bounds: (1.8504, 0.6018, 1.8658), gpu_bytes_estimate: 115504, minimum_screen_height: 45.0),
+(uri: "local/yarra_ferns/runtime/fern_sparse/fern_sparse_lod2.gltf", bounds: (1.8504, 0.6018, 1.8658), gpu_bytes_estimate: 58544, minimum_screen_height: 0.0),
+]),
+])
