@@ -85,14 +85,18 @@ def adapt_foliage(doc, blob, blend):
                 material['extras']['yarra_wind'] = 'hierarchy_v2'
             if material.get('alphaMode') == 'MASK':
                 extras = material.setdefault('extras', {})
+                bare_wood = extras.get('vegetation_surface') == 'bare_wood'
                 occlusion = extras.get('vegetation_occlusion') == 'crown_sky_v1'
                 extras.update(yarra_wind='hierarchy_v2' if structural else 'foliage_uv1_v1',
-                              yarra_shading='crown_v2' if occlusion else 'crown_v1')
+                              yarra_shading='plain' if bare_wood else 'crown_v2' if occlusion else 'crown_v1')
                 material['extensions'] = {'KHR_materials_specular': {'specularFactor': .5}}
                 material['normalTexture']['scale'] = .6
                 n = rows(doc, blob, a['NORMAL'])
                 canopy = rows(doc, blob, a['_CANOPY_NORMAL'])
-                n = [unit(tuple(x*(1-blend)+y*blend for x, y in zip(v, c))) for v, c in zip(n, canopy)]
+                # Exposed twig cards use their rounded bark normal maps and
+                # ordinary two-sided lighting, rather than a leafy crown normal.
+                normal_blend = 0. if bare_wood else blend
+                n = [unit(tuple(x*(1-normal_blend)+y*normal_blend for x, y in zip(v, c))) for v, c in zip(n, canopy)]
                 overwrite(doc, blob, a['NORMAL'], n)
                 # Rebuild tangents against the adapted normals and unchanged UVs.
                 p = rows(doc, blob, a['POSITION'])

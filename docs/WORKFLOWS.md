@@ -78,15 +78,17 @@ separate legacy assets.
 
 | Current family | Runtime pack / tracked catalog under `assets/packs/` | Review view |
 | --- | --- | --- |
-| Birch: leafy, sparse, bare | `yarra_birches/birches.catalog.ron` | See birch placement workflow below |
+| Birch: leafy, sparse, bare, crown, pendulous, double, triple | `yarra_birches/birches.catalog.ron` | See birch placement workflow below |
 | Oak: forest, spreading, sparse | `yarra_oaks/oaks.catalog.ron` | See oak placement workflow below |
 | Maple: forest, spreading, sparse | `yarra_maples/maples.catalog.ron` | See maple placement workflow below |
 | Tall layered broadleaf | `yarra_tall_forest/tall_forest.catalog.ron` | `tall-forest-stand` |
 | Bay shrub | `yarra_bay/bay.catalog.ron` | `bay-stand` |
 | Longleaf: healthy, half-bare, nearly-bare, one-sided | `yarra_longleaf/longleaf.catalog.ron` | `longleaf-kit` |
 | Norway spruce | `yarra_spruces/spruces.catalog.ron` | `spruce-stand` |
+| Dead broadleaf: upright, spreading, split | `yarra_dead_trees/dead_trees.catalog.ron` | `dead-trees-stand` |
 
-These are 16 forms, each with three mesh LODs. Legacy pine packs and branch-study
+These are 23 forms, each with three mesh LODs. The three dead broadleaf forms
+are pending user art review. Legacy pine packs and branch-study
 assets remain archived; do not restore their retired preview placements when
 adding new pine variants. The current pine scaffold is `pine_longleaf`.
 
@@ -387,6 +389,63 @@ Only three mesh LODs are registered; runtime billboard selection remains pending
 Captures go to `tmp/spruce-review`; `--view close --mode half` tests reduced
 resolution. The spruce passed user art review on 2026-10-03; dense-forest
 profiling remains pending.
+
+### Dead broadleaf forms
+
+Build the three presets with vegetation `scripts/build_dead_trees.py`, then run
+`hython scripts/validate_dead_trees.py`. Import the complete pack together:
+
+```sh
+python3 tools/import_vegetation_bundle.py \
+  --bundle /path/to/vegetation/outputs/dead_upright/current \
+  --bundle /path/to/vegetation/outputs/dead_spreading/current \
+  --bundle /path/to/vegetation/outputs/dead_split/current \
+  --output assets/local/yarra_dead_trees \
+  --catalog assets/packs/yarra_dead_trees/dead_trees.catalog.ron
+target/release/yarra-world-cook import-assets assets/packs/yarra_dead_trees/dead_trees.catalog.ron
+python3 tools/place_dead_trees_preview.py
+target/release/yarra-world-cook cook
+python3 tools/render_dead_trees_preview.py
+```
+
+The three samples sit at X 2428 / 2443 / 2458, Z 4344, west of the longleaf row.
+The placement helper backs up the source database and preserves edited objects
+and bookmarks. `dead-trees-walk` starts normal play near the spreading tree.
+Other bookmarks are `stand`, `upright`, `spreading`, `split`, `close`, `bark`,
+`twigs`, `overhead` and `far`, all prefixed `dead-trees-`. Captures go to ignored
+`tmp/dead-trees-review/`; the close view also runs at reduced internal resolution.
+
+These trees reuse the existing elm bark package with curved bare twig cards.
+`vegetation_surface: bare_wood` opts masked materials into existing `plain`
+two-sided lighting and skips the importer's canopy normal blend. This retains
+rounded bark normal detail without adding a renderer shader. The `hierarchy_v2`
+wind bindings remain active; no facing cards or leaf flutter are present. Twig
+cards retain their rest positions through all mesh LODs while wood tessellation
+reduces. Budgets are 3660/1988/1120, 4094/2214/1246 and 3966/2168/1228 triangles
+respectively. Only the three mesh LODs are registered; runtime billboards remain
+pending. Existing living-tree material conversion is unchanged.
+
+Mesh tips now retain the root radius measured by the twig baker, scaled by the
+attached card size. Shared tips meet the widest attached stem; the transition
+is blended along the supporting mesh and persists through all three LODs.
+
+Resolved wind depth mismatch (2026-10-03): Strong wind exposed dark patches on
+both bare and living trees when the depth prepass was enabled. Bypassing MetalFX
+reconstruction left the patches intact. The independently compiled depth and
+colour vertex variants could evaluate wind arithmetic differently; colour
+fragments then failed against their own prepass depth. `tree_wind.wgsl` now owns
+the Bevy-compatible vertex output layouts and marks both clip positions
+`@invariant`. Keep these locations synchronized with Bevy's forward/prepass IO
+when upgrading Bevy. Wind motion, material lighting and pass counts are unchanged.
+
+Run `cargo test -p yarra-engine wind_depth_prepass_preserves_colour_coverage -- --ignored --nocapture`
+with native GPU access and local dead-tree/spruce bundles. It compares rendered
+colour with/without depth and motion prepasses in Calm and two Strong poses.
+Removing `@invariant` reproduced 2176 damaged pixels in the bare-tree Strong
+case; the fixed shader produced zero in all six cases. The compute tests under
+`tree_wind::gpu_tests` separately cover attached card roots and deformation
+history. Native Temporal captures are in `tmp/dead-trees-review/`; this is
+correctness coverage, not a dense-forest performance measurement.
 
 ### Archived pine kit
 

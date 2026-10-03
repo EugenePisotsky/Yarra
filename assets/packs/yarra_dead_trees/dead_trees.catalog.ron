@@ -1,0 +1,17 @@
+(schema_version: 1, assets: [
+(key: "yarra_dead_trees/dead_upright", display_name: "Dead Upright", source_uri: "local/yarra_dead_trees/source/dead_upright.glb", variants: [
+(uri: "local/yarra_dead_trees/runtime/dead_upright/dead_upright_lod0.gltf", bounds: (10.7368, 15.4387, 11.2547), gpu_bytes_estimate: 1241288, minimum_screen_height: 480.0),
+(uri: "local/yarra_dead_trees/runtime/dead_upright/dead_upright_lod1.gltf", bounds: (10.7368, 15.4387, 11.2547), gpu_bytes_estimate: 703720, minimum_screen_height: 180.0),
+(uri: "local/yarra_dead_trees/runtime/dead_upright/dead_upright_lod2.gltf", bounds: (10.7368, 15.4387, 11.2547), gpu_bytes_estimate: 424984, minimum_screen_height: 0.0),
+]),
+(key: "yarra_dead_trees/dead_spreading", display_name: "Dead Spreading", source_uri: "local/yarra_dead_trees/source/dead_spreading.glb", variants: [
+(uri: "local/yarra_dead_trees/runtime/dead_spreading/dead_spreading_lod0.gltf", bounds: (16.6353, 12.5151, 14.5892), gpu_bytes_estimate: 1385848, minimum_screen_height: 480.0),
+(uri: "local/yarra_dead_trees/runtime/dead_spreading/dead_spreading_lod1.gltf", bounds: (16.6353, 12.5151, 14.5892), gpu_bytes_estimate: 783696, minimum_screen_height: 180.0),
+(uri: "local/yarra_dead_trees/runtime/dead_spreading/dead_spreading_lod2.gltf", bounds: (16.6353, 12.5151, 14.5892), gpu_bytes_estimate: 471416, minimum_screen_height: 0.0),
+]),
+(key: "yarra_dead_trees/dead_split", display_name: "Dead Split", source_uri: "local/yarra_dead_trees/source/dead_split.glb", variants: [
+(uri: "local/yarra_dead_trees/runtime/dead_split/dead_split_lod0.gltf", bounds: (12.7252, 13.8464, 12.7445), gpu_bytes_estimate: 1347192, minimum_screen_height: 480.0),
+(uri: "local/yarra_dead_trees/runtime/dead_split/dead_split_lod1.gltf", bounds: (12.7252, 13.8464, 12.7445), gpu_bytes_estimate: 768280, minimum_screen_height: 180.0),
+(uri: "local/yarra_dead_trees/runtime/dead_split/dead_split_lod2.gltf", bounds: (12.7252, 13.8464, 12.7445), gpu_bytes_estimate: 466736, minimum_screen_height: 0.0),
+]),
+])

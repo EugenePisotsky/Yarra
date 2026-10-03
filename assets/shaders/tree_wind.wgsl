@@ -1,9 +1,75 @@
 #import bevy_pbr::{mesh_functions, view_transformations::position_world_to_clip}
 #import bevy_pbr::mesh_view_bindings::view
+// Match Bevy 0.19 vertex-output locations, but require invariant clip positions.
+// Colour and depth compile separately; wind arithmetic must not be reassociated
+// differently or opaque fragments can fail their own prepass depth test.
 #ifdef PREPASS_PIPELINE
-#import bevy_pbr::prepass_io::VertexOutput
+struct VertexOutput {
+    // This is `clip position` when the struct is used as a vertex stage output
+    // and `frag coord` when used as a fragment stage input
+    @builtin(position) @invariant position: vec4<f32>,
+
+#ifdef VERTEX_UVS_A
+    @location(0) uv: vec2<f32>,
+#endif
+
+#ifdef VERTEX_UVS_B
+    @location(1) uv_b: vec2<f32>,
+#endif
+
+#ifdef NORMAL_PREPASS_OR_DEFERRED_PREPASS
+    @location(2) world_normal: vec3<f32>,
+#ifdef VERTEX_TANGENTS
+    @location(3) world_tangent: vec4<f32>,
+#endif
+#endif // NORMAL_PREPASS_OR_DEFERRED_PREPASS
+
+    @location(4) world_position: vec4<f32>,
+#ifdef MOTION_VECTOR_PREPASS
+    @location(5) previous_world_position: vec4<f32>,
+#endif
+
+#ifdef UNCLIPPED_DEPTH_ORTHO_EMULATION
+    @location(6) unclipped_depth: f32,
+#endif // UNCLIPPED_DEPTH_ORTHO_EMULATION
+#ifdef VERTEX_OUTPUT_INSTANCE_INDEX
+    @location(7) instance_index: u32,
+#endif
+
+#ifdef VERTEX_COLORS
+    @location(8) color: vec4<f32>,
+#endif
+
+#ifdef VISIBILITY_RANGE_DITHER
+    @location(9) @interpolate(flat) visibility_range_dither: i32,
+#endif  // VISIBILITY_RANGE_DITHER
+}
 #else
-#import bevy_pbr::forward_io::VertexOutput
+struct VertexOutput {
+    // This is `clip position` when the struct is used as a vertex stage output
+    // and `frag coord` when used as a fragment stage input
+    @builtin(position) @invariant position: vec4<f32>,
+    @location(0) world_position: vec4<f32>,
+    @location(1) world_normal: vec3<f32>,
+#ifdef VERTEX_UVS_A
+    @location(2) uv: vec2<f32>,
+#endif
+#ifdef VERTEX_UVS_B
+    @location(3) uv_b: vec2<f32>,
+#endif
+#ifdef VERTEX_TANGENTS
+    @location(4) world_tangent: vec4<f32>,
+#endif
+#ifdef VERTEX_COLORS
+    @location(5) color: vec4<f32>,
+#endif
+#ifdef VERTEX_OUTPUT_INSTANCE_INDEX
+    @location(6) @interpolate(flat) instance_index: u32,
+#endif
+#ifdef VISIBILITY_RANGE_DITHER
+    @location(7) @interpolate(flat) visibility_range_dither: i32,
+#endif
+}
 #endif
 
 // Bevy's vertex inputs for this pass, plus the branch card attributes

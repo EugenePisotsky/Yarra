@@ -5,6 +5,8 @@ mod bark;
 mod cards;
 pub use cards::tree_gltf_plugin;
 #[cfg(test)]
+mod depth_tests;
+#[cfg(test)]
 mod gpu_tests;
 mod material;
 mod tuning;
