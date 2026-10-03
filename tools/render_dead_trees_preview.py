@@ -8,12 +8,14 @@ from PIL import Image
 ROOT=Path(__file__).resolve().parents[1]
 OUT=ROOT/'tmp/dead-trees-review';OUT.mkdir(parents=True,exist_ok=True)
 parser=argparse.ArgumentParser(description=__doc__)
-views=('stand','upright','spreading','split','close','bark','twigs','overhead','far')
+views=('stand','upright','spreading','split','close','bark','twigs','overhead','far',
+       'slender-stand','slender','double','triple','slender-roots','slender-close',
+       'slender-overhead','slender-far')
 parser.add_argument('--view',choices=views,action='append',help='Render selected views only; defaults to all')
 parser.add_argument('--mode',choices=('native','half'),action='append',help='Render selected resolutions only')
 options=parser.parse_args()
 for view in options.view or views:
-    for mode in options.mode or (('native','half') if view=='close' else ('native',)):
+    for mode in options.mode or (('native','half') if view in ('close','slender-close') else ('native',)):
         name=view+'-'+mode
         started=time.time_ns()
         print('Rendering '+name,flush=True)

@@ -85,10 +85,9 @@ separate legacy assets.
 | Bay shrub | `yarra_bay/bay.catalog.ron` | `bay-stand` |
 | Longleaf: healthy, half-bare, nearly-bare, one-sided | `yarra_longleaf/longleaf.catalog.ron` | `longleaf-kit` |
 | Norway spruce | `yarra_spruces/spruces.catalog.ron` | `spruce-stand` |
-| Dead broadleaf: upright, spreading, split | `yarra_dead_trees/dead_trees.catalog.ron` | `dead-trees-stand` |
+| Dead broadleaf: upright, spreading, split, slender, double, triple | `yarra_dead_trees/dead_trees.catalog.ron` | `dead-trees-stand`, `dead-trees-slender-stand` |
 
-These are 23 forms, each with three mesh LODs. The three dead broadleaf forms
-are pending user art review. Legacy pine packs and branch-study
+These are 26 approved forms, each with three mesh LODs. Legacy pine packs and branch-study
 assets remain archived; do not restore their retired preview placements when
 adding new pine variants. The current pine scaffold is `pine_longleaf`.
 
@@ -392,7 +391,8 @@ profiling remains pending.
 
 ### Dead broadleaf forms
 
-Build the three presets with vegetation `scripts/build_dead_trees.py`, then run
+Build the six presets with vegetation `scripts/build_dead_trees.py` (or use
+`--slender-only` to rebuild just the three narrow forms), then run
 `hython scripts/validate_dead_trees.py`. Import the complete pack together:
 
 ```sh
@@ -400,6 +400,9 @@ python3 tools/import_vegetation_bundle.py \
   --bundle /path/to/vegetation/outputs/dead_upright/current \
   --bundle /path/to/vegetation/outputs/dead_spreading/current \
   --bundle /path/to/vegetation/outputs/dead_split/current \
+  --bundle /path/to/vegetation/outputs/dead_slender/current \
+  --bundle /path/to/vegetation/outputs/dead_double/current \
+  --bundle /path/to/vegetation/outputs/dead_triple/current \
   --output assets/local/yarra_dead_trees \
   --catalog assets/packs/yarra_dead_trees/dead_trees.catalog.ron
 target/release/yarra-world-cook import-assets assets/packs/yarra_dead_trees/dead_trees.catalog.ron
@@ -408,12 +411,20 @@ target/release/yarra-world-cook cook
 python3 tools/render_dead_trees_preview.py
 ```
 
-The three samples sit at X 2428 / 2443 / 2458, Z 4344, west of the longleaf row.
+The original three samples sit at X 2428 / 2443 / 2458, Z 4344, west of the longleaf row.
+Slender single/double/triple forms sit in a clear patch farther west at
+X 2390 / 2402 / 2414, Z 4338, with thin
+trunks, ascending limbs and distinct planted feet. Their shared materials and
+wind path need no engine changes. The richer, wider forms were approved on 2026-10-03.
 The placement helper backs up the source database and preserves edited objects
 and bookmarks. `dead-trees-walk` starts normal play near the spreading tree.
 Other bookmarks are `stand`, `upright`, `spreading`, `split`, `close`, `bark`,
 `twigs`, `overhead` and `far`, all prefixed `dead-trees-`. Captures go to ignored
 `tmp/dead-trees-review/`; the close view also runs at reduced internal resolution.
+New bookmarks are `slender-walk`, `slender-stand`, `slender`, `double`, `triple`,
+`slender-roots`, `slender-close`, `slender-overhead` and `slender-far`, with the same
+`dead-trees-` prefix. The capture helper accepts these names through `--view`;
+use `--view slender-close --mode half` to check Temporal reconstruction.
 
 These trees reuse the existing elm bark package with curved bare twig cards.
 `vegetation_surface: bare_wood` opts masked materials into existing `plain`
@@ -422,8 +433,14 @@ rounded bark normal detail without adding a renderer shader. The `hierarchy_v2`
 wind bindings remain active; no facing cards or leaf flutter are present. Twig
 cards retain their rest positions through all mesh LODs while wood tessellation
 reduces. Budgets are 3660/1988/1120, 4094/2214/1246 and 3966/2168/1228 triangles
-respectively. Only the three mesh LODs are registered; runtime billboards remain
+respectively for the original forms. Slender/double/triple use 2500/1362/750,
+3616/1964/1088 and 4614/2496/1380 triangles, with 106/144/171 fixed cards retained at
+every LOD. Only the three mesh LODs are registered; runtime billboards remain
 pending. Existing living-tree material conversion is unchanged.
+The slender forms use smaller staggered twig fans along limbs and upper stems;
+their authoring `Twig richness` control changes this fill without rebaking.
+Crown-width settings are about 25% higher than in the initial slender study, with slightly
+more open double/triple clumps.
 
 Mesh tips now retain the root radius measured by the twig baker, scaled by the
 attached card size. Shared tips meet the widest attached stem; the transition

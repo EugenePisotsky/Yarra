@@ -8,8 +8,11 @@ from place_birch_preview import ROOT, place, height
 
 SAMPLES=[('upright','upright',2428.,4344.,.35,1.),
          ('spreading','spreading',2443.,4344.,.7,1.),
-         ('split','split',2458.,4344.,2.1,1.)]
-# Keep the review row beside the longleafs, on dry terrain near the birches.
+         ('split','split',2458.,4344.,2.1,1.),
+         ('slender','slender',2390.,4338.,.4,1.),
+         ('double','double',2402.,4338.,1.2,1.),
+         ('triple','triple',2414.,4338.,2.5,1.)]
+# Broad forms stay beside the longleafs; slender forms have a clear row farther west.
 VIEWS=[('dead-trees-walk',2443.,4337.,180.,5.,15.,0.,0.),
        ('dead-trees-stand',2443.,4344.,180.,8.,24.,6.,18.),
        ('dead-trees-upright',2428.,4344.,0.,8.,24.,7.,4.),
@@ -19,7 +22,17 @@ VIEWS=[('dead-trees-walk',2443.,4337.,180.,5.,15.,0.,0.),
        ('dead-trees-bark',2443.,4344.,195.,5.,4.,1.,0.),
        ('dead-trees-twigs',2440.,4344.,180.,10.,5.,7.,0.),
        ('dead-trees-overhead',2443.,4344.,25.,70.,22.,6.,0.),
-       ('dead-trees-far',2443.,4344.,0.,8.,24.,6.,70.)]
+       ('dead-trees-far',2443.,4344.,0.,8.,24.,6.,70.),
+       ('dead-trees-slender-walk',2402.,4331.,180.,5.,15.,0.,0.),
+       ('dead-trees-slender-stand',2402.,4338.,180.,8.,24.,7.,8.),
+       ('dead-trees-slender',2390.,4338.,180.,8.,24.,7.,0.),
+       ('dead-trees-double',2402.,4338.,180.,8.,24.,7.,0.),
+       ('dead-trees-triple',2414.,4338.,180.,8.,24.,7.,0.),
+       ('dead-trees-slender-roots',2402.,4338.,180.,8.,5.,1.,0.),
+       ('dead-trees-slender-close',2390.,4338.,180.,10.,6.,5.,0.),
+       ('dead-trees-slender-overhead',2402.,4338.,180.,70.,22.,7.,0.),
+       ('dead-trees-slender-far',2402.,4338.,180.,8.,24.,7.,55.)]
+
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
