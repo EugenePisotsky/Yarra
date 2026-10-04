@@ -46,6 +46,25 @@ Re-importing after a change in Houdini rewrites only cells whose heights or impo
 
 To stress streaming on foot, `--render-repro actor-walk --start-view VIEW` walks the player along the view's `route` at 20 m/s. The camera follows, holds its heading for 60 s, then looks back and forth every 20 s. Add `--fps 60` to match a 60 Hz display. `ACTOR_WALK` lines log progress. Whenever an actor waits more than 5 s for ground, the game logs `TERRAIN_STALL` with the loader's state; a loader that stops for good logs `TERRAIN_LOD_FAILED`. To send a log of a normal session: `cargo run --release -p yarra-app-game 2>&1 | tee tmp/walk.log`.
 
+### World map
+
+`tools/render_world_map.py` draws a hand-coloured engraved map, in the style of an 18th-century chart, from the same heightfield export the import reads. `uv run` installs its NumPy, SciPy and Pillow:
+
+```sh
+uv run tools/render_world_map.py ~/Dev/Assets/reteya_island/outputs/game_1m/current/heightfield.json \
+  content/maps/reteya.map.json assets/generated/maps/reteya.png
+```
+
+The coast comes from heights and sea level. Rivers are channels at least 24 m wide, cut below their surroundings, mostly wet (`wetness` ≥ 0.8) and reaching the sea. Only partly wet banks and old cuts are left out. Homann mountain symbols cover the steep high ground. Groves and fields on `soil` are decorative until forests have source data. `content/maps/*.map.json` holds what the terrain cannot say:
+- the title and the compass position;
+- features, each with a `name`, a `kind` and a world XZ point (`at`):
+  - `range`: the name goes beside the nearest high ground;
+  - `river`: the name follows the river;
+  - `water`: the name follows a strait or bay; `angle` overrides the direction;
+  - `place`: the name goes beside optional `hamlet` and `anchorage` symbols.
+
+Names are laid out first, and symbols keep clear of them; a name with no room is reported. The PNG covers the land plus 10% sea (`--margin`). Beside it, a JSON file records the world rectangle, +X right and +Z down, for placing markers later. `--no-lettering` leaves names out so the game can draw translated ones. A 3072 px map takes about 25 s and 3 GB. The brushes and fonts are local assets ([asset setup](../assets/README.md#map-symbols-and-lettering)).
+
 ## Game and F1
 
 - Click/tap ground for a destination; WASD/left gamepad stick gives camera-relative movement.

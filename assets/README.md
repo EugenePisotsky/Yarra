@@ -224,3 +224,19 @@ run `python3 tools/remove_retired_pines.py`, then recook. The helper unregisters
 retired definitions/assets and moves obsolete imports/bookmarks to an ignored
 backup outside the asset tree. Authoring experiments remain in YarraVegetation
 for historical reference; use the longleaf kit for game content.
+
+## Map symbols and lettering
+
+`tools/render_world_map.py` reads two free sets from `assets/local/map/` (ignored by Git):
+
+```text
+assets/local/map/homann/   K.M. Alexander's Homann Cartography Brushes 2.0 PNG Pack (CC0),
+                           unpacked as distributed: Landforms/, Flora/, Settlements/, Cartouches/
+assets/local/map/fonts/    IMFeENrm28P.ttf, IMFeENit28P.ttf, IMFeENsc28P.ttf: IM Fell English
+                           roman, italic and small caps (SIL Open Font License)
+```
+
+Download the brushes from <https://kmalexander.com/free-stuff/fantasy-map-brushes/> and the
+fonts from Google Fonts (`ofl/imfellenglish`, `ofl/imfellenglishsc`). CC0 needs no
+attribution. A shipped game that includes the fonts must include the OFL text.
+

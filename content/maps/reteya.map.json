@@ -1,0 +1,14 @@
+{
+  "title": "Reteya",
+  "compass": [-3700, 3650],
+  "features": [
+    {"name": "North Mtns.", "kind": "range", "at": [-1466, -2092]},
+    {"name": "East Ridge", "kind": "range", "at": [392, -209]},
+    {"name": "West Ridge", "kind": "range", "at": [-2211, -185]},
+    {"name": "South Hills", "kind": "range", "at": [-2685, 1562]},
+    {"name": "Great River", "kind": "river", "at": [-1150, -1700]},
+    {"name": "The Strait", "kind": "water", "at": [320, 1470]},
+    {"name": "The Pass", "kind": "place", "at": [-760, -215]},
+    {"name": "Landing", "kind": "place", "at": [2910, 3150], "symbols": ["hamlet", "anchorage"]}
+  ]
+}
