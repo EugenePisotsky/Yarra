@@ -1267,7 +1267,7 @@ fn assert_valid_cover(app: &App) {
             .composites
             .detail
             .as_ref()
-            .is_none_or(|d| d.count() <= 128)
+            .is_none_or(|d| d.count() <= terrain_render::composite::atlas::DETAIL_SLOTS)
     );
     assert!(stream.materials_ready(app.world().resource::<UploadTracker>()));
     for (&(key, _), &entity) in &stream.active {

@@ -1,4 +1,4 @@
-//! Texture demand uses projected texel size and 3D bounds, never geometry error.
+//! Texture demand uses rotation-independent texel size and 3D bounds, never geometry error.
 use super::*;
 
 pub(super) struct Plan {
@@ -16,35 +16,8 @@ fn bounds(d: &TerrainCompositeDescriptor, size: f64) -> [DVec3; 2] {
     ]
 }
 fn score(d: &TerrainCompositeDescriptor, view: &LodView, size: f64) -> f64 {
-    let b = bounds(d, size);
-    if !view.visible(b) {
-        return 0.;
-    }
     let texel = size * (1_u64 << d.key.0.level) as f64 / 64.;
-    let w = (0..8)
-        .map(|i| {
-            (view.clip_from_world
-                * DVec3::new(b[i & 1].x, b[(i >> 1) & 1].y, b[(i >> 2) & 1].z).extend(1.))
-            .w
-        })
-        .fold(f64::INFINITY, f64::min);
-    let mut maximum: f64 = 0.;
-    for axis in [
-        view.clip_from_world.x_axis,
-        view.clip_from_world.y_axis,
-        view.clip_from_world.z_axis,
-    ] {
-        let denominator = w - texel * axis.w.abs();
-        if denominator <= 1e-9 {
-            return f64::INFINITY;
-        }
-        maximum = maximum.max(
-            texel * 0.5 / denominator
-                * ((axis.x.abs() + axis.w.abs()) * view.viewport[0] as f64)
-                    .max((axis.y.abs() + axis.w.abs()) * view.viewport[1] as f64),
-        );
-    }
-    maximum
+    view.distance_error(bounds(d, size), texel as f32)
 }
 
 pub(super) fn plan(

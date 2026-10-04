@@ -339,6 +339,47 @@ fn missing_children_keep_parent_and_request_complete_replacement() {
     check_cover(&[root], &plan);
 }
 #[test]
+fn looking_away_and_back_keeps_the_same_balanced_cover_even_at_the_budget() {
+    let roots = [key(4, -1, -1), key(4, 0, -1), key(4, -1, 0), key(4, 0, 0)];
+    let m: BTreeMap<_, _> = roots.into_iter().flat_map(metadata).collect();
+    let eye = DVec3::new(0., 30., -170.);
+    let initial = view(eye, DVec3::ZERO);
+    for max_patches in [100, 2048] {
+        let s = LodSettings {
+            max_patches,
+            max_triangles: max_patches * 2048,
+            ..settings()
+        };
+        let first = plan_cover(&roots, &m, &BTreeSet::new(), &initial, 8., &s).unwrap();
+        let previous = first.patches.keys().copied().collect();
+        let settled = plan_cover(&roots, &m, &previous, &initial, 8., &s).unwrap();
+        let previous = settled.patches.keys().copied().collect();
+        assert!(settled.patches.len() > roots.len());
+        for target in [
+            DVec3::new(0., 0., -400.),
+            DVec3::new(500., 80., 0.),
+            DVec3::ZERO,
+        ] {
+            let turned = plan_cover(&roots, &m, &previous, &view(eye, target), 8., &s).unwrap();
+            check_cover(&roots, &turned);
+            assert_eq!(
+                turned.patches, settled.patches,
+                "camera rotation changed terrain"
+            );
+            assert!(turned.patches.len() <= max_patches);
+            assert!(turned.stats.triangles <= s.max_triangles);
+            assert!(turned.requests.is_empty());
+        }
+        let distant = view(DVec3::splat(20_000.), DVec3::ZERO);
+        let moved = plan_cover(&roots, &m, &previous, &distant, 8., &s).unwrap();
+        assert!(
+            moved.patches.len() < settled.patches.len(),
+            "distance still releases detail"
+        );
+    }
+}
+
+#[test]
 fn camera_motion_rotation_and_budget_keep_exact_balanced_coverage() {
     let roots = [key(4, -1, -1), key(4, 0, -1), key(4, -1, 0), key(4, 0, 0)];
     let metadata: BTreeMap<_, _> = roots.into_iter().flat_map(metadata).collect();
@@ -441,7 +482,7 @@ fn hysteresis_preserves_refinement_and_bad_budgets_fail_explicitly() {
     let m = metadata(root);
     let mut v = view(DVec3::new(8., 100., 8.), DVec3::ZERO);
     // A horizontal look makes vertical terrain error affect projected height.
-    v.clip_from_world = DMat4::orthographic_rh(-100., 100., -120., 120., 0.1, 2000.)
+    v.clip_from_world = DMat4::orthographic_rh(-256., 256., -120., 120., 0.1, 2000.)
         * DMat4::look_at_rh(DVec3::new(8., 20., 100.), DVec3::new(8., 20., 0.), DVec3::Y);
     let before = plan_cover(&[root], &m, &BTreeSet::new(), &v, 8.0, &settings()).unwrap();
     let refined = root.children().unwrap().unwrap().into_iter().collect();

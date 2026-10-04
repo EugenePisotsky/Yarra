@@ -179,6 +179,53 @@ fn texture_demand_refines_flat_geometry_and_respects_altitude_and_capacity() {
         0,
     );
     assert!(limited.limited && limited.keys.len() <= 4);
+    // Both an unconstrained and a full atlas must select the same shading when
+    // looking behind the camera. Retaining a GPU tile alone did not ensure this.
+    for capacity in [4, 128] {
+        let initial = view(40.);
+        let selected = selection::plan(
+            &[root.0],
+            &descriptors,
+            &BTreeSet::new(),
+            &initial,
+            32.,
+            capacity,
+            0,
+        );
+        let previous = selected.keys.iter().copied().collect();
+        let settled = selection::plan(
+            &[root.0],
+            &descriptors,
+            &previous,
+            &initial,
+            32.,
+            capacity,
+            0,
+        );
+        let eye = initial.contact_position;
+        for direction in [DVec3::Y, DVec3::X, DVec3::NEG_Y] {
+            let turned = LodView {
+                clip_from_world: DMat4::perspective_rh(1., 1., 0.1, 10000.)
+                    * DMat4::look_at_rh(eye, eye + direction, DVec3::Z),
+                ..initial.clone()
+            };
+            let selected = selection::plan(
+                &[root.0],
+                &descriptors,
+                &previous,
+                &turned,
+                32.,
+                capacity,
+                0,
+            );
+            assert_eq!(
+                selected.keys, settled.keys,
+                "rotation evicted surface detail"
+            );
+            assert_eq!(selected.metadata, settled.metadata);
+            assert!(selected.keys.len() <= capacity);
+        }
+    }
     for key in &low.keys {
         assert!(key.0.x < 0);
         let parent = TerrainMaterialKey(key.0.parent().unwrap().unwrap());

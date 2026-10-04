@@ -19,8 +19,8 @@ use std::sync::{Arc, Mutex, Weak};
 
 /// Tiles one `submit` may upload.
 pub const MAX_UPLOADS: usize = 4;
-pub const DETAIL_SLOTS: usize = 128;
-pub const TABLE_SIZE: usize = 512;
+pub const DETAIL_SLOTS: usize = if cfg!(target_os = "ios") { 128 } else { 256 };
+pub const TABLE_SIZE: usize = DETAIL_SLOTS * 4;
 pub const DETAIL_BYTES: u64 =
     (DETAIL_SLOTS * (72 * 72 + 36 * 36 + 18 * 18) * 8 + TABLE_SIZE * 32) as u64;
 

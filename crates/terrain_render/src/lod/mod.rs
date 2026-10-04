@@ -1,4 +1,4 @@
-//! Camera-driven terrain cover planning. IO/upload readiness is deliberately separate:
+//! Distance-driven terrain cover planning. IO/upload readiness is deliberately separate:
 //! a caller stages the complete result and retains its previous cover until ready.
 use bevy::math::{DMat4, DVec3};
 use std::collections::{BTreeMap, BTreeSet};
@@ -51,6 +51,34 @@ pub struct LodView {
     pub contact_position: DVec3,
 }
 impl LodView {
+    /// A rotation-independent screen-error bound. Detail must already exist behind
+    /// the camera: frustum-driven coarsening otherwise exposes a coarse cover for
+    /// seconds after a turn, even when all fine meshes are cached.
+    ///
+    /// Row lengths recover projection scale independently of camera rotation. In
+    /// perspective, use 3D distance to the bounds and the worst point in the view
+    /// cone (including its corners). Orthographic error is independent of distance.
+    pub fn distance_error(&self, bounds: [DVec3; 2], error: f32) -> f64 {
+        if error == 0.0 {
+            return 0.0;
+        }
+        let rows = self.clip_from_world.transpose();
+        let x = rows.x_axis.truncate().length();
+        let y = rows.y_axis.truncate().length();
+        let w = rows.w_axis.truncate().length();
+        let pixels = (x * self.viewport[0] as f64).max(y * self.viewport[1] as f64) * 0.5;
+        let e = f64::from(error);
+        if w < 1e-9 {
+            return e * pixels / rows.w_axis.w.abs().max(1e-9);
+        }
+        let cosine = (1.0 + (w / x).powi(2) + (w / y).powi(2)).sqrt().recip();
+        let depth = self.distance(bounds) * cosine - e;
+        if depth <= 1e-9 {
+            return f64::INFINITY;
+        }
+        e * pixels / (w * cosine * depth)
+    }
+
     pub fn visible(&self, bounds: [DVec3; 2]) -> bool {
         let corners = corners(bounds).map(|p| self.clip_from_world * p.extend(1.0));
         // WebGPU clip space: -w <= x,y <= w and 0 <= z <= w, including reverse Z.
@@ -291,8 +319,8 @@ impl Planner<'_> {
     }
 }
 
-/// Every result covers exactly the root forest, including off-screen ground. Frustum
-/// tests choose refinement priorities, not whether a fallback exists after a teleport.
+/// Every result covers exactly the root forest. Distance chooses detail in every
+/// direction; the renderer's frustum culling decides which resident patches draw.
 pub fn plan_cover(
     roots: &[TerrainNodeKey],
     metadata: &BTreeMap<TerrainNodeKey, PatchMetadata>,

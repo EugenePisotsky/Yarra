@@ -203,6 +203,7 @@ pub(in crate::world_streaming) fn prepare(
     // Drain work already admitted by the active cover before admitting more. This
     // keeps the same four IO/decode and two mesh-job limits across both streams.
     active.poll_work(&mut meshes, &tracker);
+    active.trim_mesh_cache(&mut meshes, &tracker, 0, MAX_MESH_BYTES);
     let active_size = active
         .identity
         .as_ref()
@@ -291,6 +292,8 @@ pub(in crate::world_streaming) fn prepare(
     }
     stage.prepare_target(
         &worker,
+        &mut meshes,
+        &tracker,
         size,
         MAX_NODE_BYTES.saturating_sub(active.decoded_bytes()),
         MAX_MESH_BYTES.saturating_sub(active.mesh_bytes() + PROBE_BYTES),

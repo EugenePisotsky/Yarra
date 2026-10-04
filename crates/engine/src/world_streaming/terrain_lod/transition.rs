@@ -58,7 +58,7 @@ pub(super) enum MorphStart {
 
 impl Transition {
     fn new(
-        stream: &TerrainLodStream,
+        stream: &mut TerrainLodStream,
         settings: &LodSettings,
         commands: &mut Commands,
         assets: &mut Assets<Mesh>,
@@ -87,6 +87,12 @@ impl Transition {
                 .iter()
                 .map(|k| MorphMesh::bytes_estimate(stream.metadata[k].resolution))
                 .sum::<u64>();
+        stream.trim_mesh_cache(
+            assets,
+            tracker,
+            MESH_CACHE_BYTES,
+            MAX_MESH_BYTES.saturating_sub(bytes),
+        );
         if stream.mesh_bytes() + bytes > MAX_MESH_BYTES {
             return Err(MorphStart::OverBudget);
         }
@@ -587,7 +593,7 @@ mod tests {
             let handoff = HandoffIndex::new(&old, new, &stream.metadata, 8.);
             assert!(
                 Transition::new(
-                    &stream,
+                    &mut stream,
                     &settings,
                     &mut commands,
                     &mut assets,

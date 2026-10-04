@@ -18,6 +18,7 @@ mod contact;
 mod material;
 use terrain_render::TerrainCompositeMaterial;
 pub(super) mod entry;
+mod mesh_cache;
 mod transition;
 pub use contact::TerrainContactReadiness;
 mod authoring;
@@ -49,6 +50,8 @@ const MAX_NODE_BYTES: u64 = 32 * 1024 * 1024;
 /// triangle budgets (about 157 MB each on desktop), plus smaller morphs. At 256 MiB, turning
 /// the camera at the full budget exceeded it and stopped terrain streaming.
 const MAX_MESH_BYTES: u64 = if cfg!(target_os = "ios") { 128 } else { 384 } * 1024 * 1024;
+// Unused GPU meshes are evictable first; this is part of MAX_MESH_BYTES, not extra memory.
+const MESH_CACHE_BYTES: u64 = if cfg!(target_os = "ios") { 16 } else { 96 } * 1024 * 1024;
 /// Database queries in flight: metadata batches, node samples and ground materials.
 const MAX_REQUESTS: usize = 12;
 /// A moving view re-plans at most this often while the drawn ground satisfies contact
@@ -107,6 +110,7 @@ pub struct TerrainLodStats {
     pub metadata: usize,
     pub decoded_bytes: u64,
     pub mesh_bytes: u64,
+    pub cached_mesh_bytes: u64,
     pub material_status: String,
     pub material_tiles: usize,
     pub material_detail_tiles: usize,
@@ -345,6 +349,7 @@ pub(crate) struct TerrainLodStream {
     decodes: BTreeMap<TerrainNodeKey, Task<Result<TerrainNode, String>>>,
     builds: Vec<MeshJob>,
     meshes: BTreeMap<Patch, ResidentMesh>,
+    mesh_last_used: HashMap<Patch, u64>,
     active: BTreeMap<Patch, Entity>,
     target: Option<PlannedCover>,
     transition: Option<Transition>,
@@ -581,6 +586,8 @@ impl TerrainLodStream {
     fn prepare_target(
         &mut self,
         worker: &WorldDatabaseWorker,
+        assets: &mut Assets<Mesh>,
+        tracker: &UploadTracker,
         cell_size: f32,
         node_limit: u64,
         mesh_limit: u64,
@@ -589,6 +596,19 @@ impl TerrainLodStream {
             return;
         };
         let patches: Vec<_> = plan.patches.iter().map(|(&k, &e)| (k, e)).collect();
+        let reserved: u64 = patches
+            .iter()
+            .filter(|p| !self.meshes.contains_key(p) && !self.builds.iter().any(|b| b.patch == **p))
+            .map(|(key, _)| self.descriptors[key].gpu_bytes_estimate)
+            .sum();
+        if self.mesh_bytes() + reserved > mesh_limit {
+            self.trim_mesh_cache(
+                assets,
+                tracker,
+                MESH_CACHE_BYTES,
+                mesh_limit.saturating_sub(reserved),
+            );
+        }
         // Totals once per pass, and only once something is to start: summing every
         // resident node per patch was quadratic, and every frame of a staged cover paid it.
         let mut mesh_bytes = None;
@@ -598,10 +618,15 @@ impl TerrainLodStream {
             if self.builds.len() >= MAX_BUILDS && !requests_open {
                 break;
             }
-            if self.meshes.contains_key(patch) || self.builds.iter().any(|b| b.patch == *patch) {
+            if (self.meshes.contains_key(patch) && self.nodes.contains_key(key))
+                || self.builds.iter().any(|b| b.patch == *patch)
+            {
                 continue;
             }
             if let Some(field) = self.nodes.get(key).and_then(|n| n.heightfield.as_ref()) {
+                if self.meshes.contains_key(patch) {
+                    continue;
+                }
                 if self.builds.len() >= MAX_BUILDS {
                     continue;
                 }
@@ -667,9 +692,13 @@ impl TerrainLodStream {
         let patches: Vec<_> = plan.patches.iter().map(|(&k, &e)| (k, e)).collect();
         let uploads = tracker.0.lock().unwrap();
         patches.iter().all(|p| {
-            self.meshes
-                .get(p)
-                .is_some_and(|m| uploads.ready.contains(&m.handle.id()))
+            // GPU meshes may outlive their decoded samples. Reload samples before
+            // publication: morph endpoints and contact checks still require them.
+            self.nodes.contains_key(&p.0)
+                && self
+                    .meshes
+                    .get(p)
+                    .is_some_and(|m| uploads.ready.contains(&m.handle.id()))
         })
     }
     fn evict(&mut self, assets: &mut Assets<Mesh>, tracker: &UploadTracker) {
@@ -680,23 +709,16 @@ impl TerrainLodStream {
             .flat_map(|p| p.patches.iter().map(|(&k, &e)| (k, e)))
             .chain(self.active.keys().copied())
             .collect();
-        self.meshes.retain(|patch, mesh| {
-            if wanted.contains(patch) {
-                true
-            } else {
-                assets.remove(mesh.handle.id());
-                let mut t = tracker.0.lock().unwrap();
-                t.wanted.remove(&mesh.handle.id());
-                t.ready.remove(&mesh.handle.id());
-                false
-            }
-        });
+        self.epoch += 1;
+        for &patch in &wanted {
+            self.mesh_last_used.insert(patch, self.epoch);
+        }
+        self.trim_mesh_cache(assets, tracker, MESH_CACHE_BYTES, MAX_MESH_BYTES);
         let keys: KeySet = wanted
             .iter()
             .map(|(k, _)| *k)
             .chain(self.roots.iter().flatten().copied())
             .collect();
-        self.epoch += 1;
         let epoch = self.epoch;
         for key in &keys {
             self.last_used.insert(*key, epoch);
@@ -741,6 +763,7 @@ impl TerrainLodStream {
         }
         metadata.extend(self.decodes.keys().copied());
         metadata.extend(self.nodes.keys().copied());
+        metadata.extend(self.meshes.keys().map(|(key, _)| *key));
         for key in &metadata {
             self.last_used.insert(*key, epoch);
         }
@@ -1039,7 +1062,14 @@ fn update(
     }
     if let Some(plan) = &stream.target {
         let patches: Vec<_> = plan.patches.iter().map(|(&k, &e)| (k, e)).collect();
-        stream.prepare_target(&worker, info.cell_size, MAX_NODE_BYTES, MAX_MESH_BYTES);
+        stream.prepare_target(
+            &worker,
+            &mut meshes,
+            &tracker,
+            info.cell_size,
+            MAX_NODE_BYTES,
+            MAX_MESH_BYTES,
+        );
         let uploaded = stream.target_uploaded(&tracker) && stream.materials_ready(&tracker);
         let changed = stream.active.len() != patches.len()
             || patches.iter().any(|p| !stream.active.contains_key(p));
@@ -1179,6 +1209,7 @@ fn update(
     stats.metadata = stream.metadata.len();
     stats.decoded_bytes = stream.decoded_bytes();
     stats.mesh_bytes = stream.mesh_bytes();
+    stats.cached_mesh_bytes = stream.cached_mesh_bytes();
     stats.pending = stream.composites.decodes.len()
         + stream.pending.len()
         + stream.decodes.len()

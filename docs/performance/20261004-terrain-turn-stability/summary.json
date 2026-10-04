@@ -1,0 +1,384 @@
+{
+  "date": "2026-10-04",
+  "decision": "restored at user request after temporary stash; performance impact remains unverified",
+  "change": "Rotation-independent distance/projection error for geometry and baked surface-detail selection; frustum culling only controls drawing.",
+  "device": "Apple M2 Max; native Metal; release build",
+  "hashes": {
+    "baseline_game": {
+      "path": "/private/tmp/reteya_turn_stability/baseline-game",
+      "sha256": "a9744b7cd13f7a5832ee2b69dc5a2fc278f72477659931510e33b6ab07d8e62a",
+      "bytes": 100873824
+    },
+    "candidate_game": {
+      "path": "/Users/eugenepisotsky/Dev/Sources/Hobby/YarraProject/target/release/yarra-app-game",
+      "sha256": "15eaee7fabd9db572189d033628c37701484342896598defb32eb2522de0bd24",
+      "bytes": 100874000
+    },
+    "world": {
+      "path": "/Users/eugenepisotsky/Dev/Sources/Hobby/YarraProject/assets/generated/world.runtime.sqlite",
+      "sha256": "45d1cc0dae6c7e195b0d6a2982633b5f8361d508f081284af4e71bcc069b91e6",
+      "bytes": 687616000
+    },
+    "bookmark": {
+      "path": "/private/tmp/reteya_turn_stability/branches.ron",
+      "sha256": "2fb093eaa3785702969e40d39847125f3d0c2e69c00199ab4f258d358911fa9f",
+      "bytes": 141
+    }
+  },
+  "limits_unchanged_this_followup": {
+    "desktop_patches": 2048,
+    "desktop_triangles": 4194304,
+    "desktop_mesh_mib": 384,
+    "desktop_detail_tiles": 256,
+    "ios_patches": 512,
+    "ios_triangles": 1048576,
+    "ios_mesh_mib": 128,
+    "ios_detail_tiles": 128
+  },
+  "visual": {
+    "scenario": "landscape-turn",
+    "fps_cap": 60,
+    "render_px": [
+      1920,
+      1080
+    ],
+    "surface_px": [
+      2560,
+      1440
+    ],
+    "frames": 1800,
+    "snapshots": [
+      590,
+      1210,
+      1300,
+      1750
+    ],
+    "turn_frames": [
+      600,
+      1200
+    ],
+    "settled_patches": 2047,
+    "material_detail_uploads_after_settling": 256,
+    "contact_handoffs_after_settling": 7,
+    "return_triggered_morph_or_detail_upload": false,
+    "observation": "Broad transient mountain facets absent at frame 1210; same geometry at frame 1750. Cold loading still progressive. Animated lighting/grass prevent pixel identity."
+  },
+  "gpu_diagnostic": {
+    "scenario": "landscape",
+    "render_px": [
+      3456,
+      1942
+    ],
+    "surface_px": [
+      3456,
+      1942
+    ],
+    "msaa": 4,
+    "fps_cap": 0,
+    "warmup_seconds": 12,
+    "measurement_seconds": 20,
+    "accepted_interval": "Final settled 10 seconds of every run; discard overlapping first HUD packet. A1 full measurement rejected because terrain was still loading.",
+    "order": [
+      "static-a1.log",
+      "static-b.log",
+      "static-a2.log"
+    ],
+    "results": {
+      "static-a1.log": {
+        "profile_end": {
+          "event": "complete",
+          "unix_ms": "1791090908628",
+          "elapsed_s": "32.004672",
+          "measured_s": "20.001396",
+          "frames": "1206"
+        },
+        "focused": [
+          "true"
+        ],
+        "thermal": [
+          "nominal"
+        ],
+        "hud": {
+          "samples": 1166,
+          "gpu_median_ms": 8.41,
+          "gpu_mean_ms": 8.442144082332762,
+          "gpu_p95_ms": 8.67,
+          "presentation_median_ms": 16.67,
+          "presentation_mean_ms": 16.154922813036023,
+          "presentation_p95_ms": 16.67,
+          "scope": "Correlated Metal HUD samples; clock/power not measured. See manifest for FPS cap."
+        },
+        "terrain": {
+          "max_mesh_mib": 165.00230026245117,
+          "max_cached_mesh_mib": 68.30438232421875,
+          "max_material_detail_tiles": 256,
+          "max_unmorphed_swaps": 0,
+          "last": {
+            "terrain_lod": "TERRAIN_LOD",
+            "live_preview_bytes": "0",
+            "live_preview_revision": "0",
+            "entry_status": "None",
+            "entry_decoded_bytes": "0",
+            "entry_mesh_bytes": "0",
+            "patches": "1315",
+            "triangles": "2693120",
+            "0": "152",
+            "1": "610",
+            "2": "226",
+            "3": "187",
+            "4": "85",
+            "5": "53",
+            "6": "2",
+            "maximum_visible_error": "1.984227354957493",
+            "quality_pending": "false",
+            "budget_limited": "false",
+            "contact_limited": "false",
+            "drawn_contact_limited": "false",
+            "drawn_maximum_visible_error": "1.984227354957493",
+            "blocked_actors": "0",
+            "blocked_grass_pages": "0",
+            "mismatched_grass_pages": "0",
+            "contact_handoffs": "7",
+            "replans": "0",
+            "unmorphed_swaps": "0",
+            "contact_source_checks": "56",
+            "contact_source_samples": "60984",
+            "metadata": "1740",
+            "decoded_bytes": "6516921",
+            "mesh_bytes": "172677456",
+            "cached_mesh_bytes": "71622336",
+            "material_tiles": "40",
+            "material_detail_tiles": "256",
+            "material_metadata": "500",
+            "material_detail_uploads": "256",
+            "material_detail_limited": "true",
+            "near_material_pages": "14",
+            "near_material_ready_pages": "14",
+            "near_material_bytes": "10695296",
+            "near_material_limited": "false",
+            "near_material_error": "None",
+            "material_reserved_bytes": "16144640",
+            "entry_material_reserved_bytes": "0",
+            "pending": "0",
+            "staged": "0",
+            "plans": "19",
+            "plan_milliseconds": "3.641334",
+            "morph_weight": "None",
+            "transition_patches": "0",
+            "transition_triangles": "0"
+          }
+        }
+      },
+      "static-b.log": {
+        "profile_end": {
+          "event": "complete",
+          "unix_ms": "1791090974482",
+          "elapsed_s": "32.009726",
+          "measured_s": "20.003442",
+          "frames": "1515"
+        },
+        "focused": [
+          "true"
+        ],
+        "thermal": [
+          "nominal"
+        ],
+        "hud": {
+          "samples": 1444,
+          "gpu_median_ms": 8.4,
+          "gpu_mean_ms": 8.43718836565097,
+          "gpu_p95_ms": 8.66,
+          "presentation_median_ms": 16.67,
+          "presentation_mean_ms": 13.215858725761773,
+          "presentation_p95_ms": 16.67,
+          "scope": "Correlated Metal HUD samples; clock/power not measured. See manifest for FPS cap."
+        },
+        "terrain": {
+          "max_mesh_mib": 331.8614387512207,
+          "max_cached_mesh_mib": 95.93394470214844,
+          "max_material_detail_tiles": 256,
+          "max_unmorphed_swaps": 0,
+          "last": {
+            "terrain_lod": "TERRAIN_LOD",
+            "live_preview_bytes": "0",
+            "live_preview_revision": "0",
+            "entry_status": "None",
+            "entry_decoded_bytes": "0",
+            "entry_mesh_bytes": "0",
+            "patches": "2047",
+            "triangles": "4192256",
+            "0": "152",
+            "1": "754",
+            "2": "578",
+            "3": "374",
+            "4": "166",
+            "5": "23",
+            "maximum_visible_error": "5.02457566157159",
+            "quality_pending": "false",
+            "budget_limited": "true",
+            "contact_limited": "false",
+            "drawn_contact_limited": "false",
+            "drawn_maximum_visible_error": "5.02457566157159",
+            "blocked_actors": "0",
+            "blocked_grass_pages": "0",
+            "mismatched_grass_pages": "0",
+            "contact_handoffs": "7",
+            "replans": "0",
+            "unmorphed_swaps": "0",
+            "contact_source_checks": "56",
+            "contact_source_samples": "60984",
+            "metadata": "3688",
+            "decoded_bytes": "11189039",
+            "mesh_bytes": "257901888",
+            "cached_mesh_bytes": "100594032",
+            "material_tiles": "40",
+            "material_detail_tiles": "256",
+            "material_metadata": "608",
+            "material_detail_uploads": "256",
+            "material_detail_limited": "true",
+            "near_material_pages": "14",
+            "near_material_ready_pages": "14",
+            "near_material_bytes": "10695296",
+            "near_material_limited": "false",
+            "near_material_error": "None",
+            "material_reserved_bytes": "16144640",
+            "entry_material_reserved_bytes": "0",
+            "pending": "0",
+            "staged": "0",
+            "plans": "17",
+            "plan_milliseconds": "6.217125",
+            "morph_weight": "None",
+            "transition_patches": "0",
+            "transition_triangles": "0"
+          }
+        }
+      },
+      "static-a2.log": {
+        "profile_end": {
+          "event": "complete",
+          "unix_ms": "1791091029861",
+          "elapsed_s": "32.013729",
+          "measured_s": "20.004557",
+          "frames": "1509"
+        },
+        "focused": [
+          "true"
+        ],
+        "thermal": [
+          "nominal"
+        ],
+        "hud": {
+          "samples": 1377,
+          "gpu_median_ms": 8.45,
+          "gpu_mean_ms": 8.500980392156864,
+          "gpu_p95_ms": 8.73,
+          "presentation_median_ms": 16.67,
+          "presentation_mean_ms": 13.36289760348584,
+          "presentation_p95_ms": 16.67,
+          "scope": "Correlated Metal HUD samples; clock/power not measured. See manifest for FPS cap."
+        },
+        "terrain": {
+          "max_mesh_mib": 165.48422241210938,
+          "max_cached_mesh_mib": 69.11054992675781,
+          "max_material_detail_tiles": 256,
+          "max_unmorphed_swaps": 0,
+          "last": {
+            "terrain_lod": "TERRAIN_LOD",
+            "live_preview_bytes": "0",
+            "live_preview_revision": "0",
+            "entry_status": "None",
+            "entry_decoded_bytes": "0",
+            "entry_mesh_bytes": "0",
+            "patches": "1315",
+            "triangles": "2693120",
+            "0": "152",
+            "1": "610",
+            "2": "226",
+            "3": "187",
+            "4": "85",
+            "5": "53",
+            "6": "2",
+            "maximum_visible_error": "1.984227354957493",
+            "quality_pending": "false",
+            "budget_limited": "false",
+            "contact_limited": "false",
+            "drawn_contact_limited": "false",
+            "drawn_maximum_visible_error": "1.984227354957493",
+            "blocked_actors": "0",
+            "blocked_grass_pages": "0",
+            "mismatched_grass_pages": "0",
+            "contact_handoffs": "7",
+            "replans": "0",
+            "unmorphed_swaps": "0",
+            "contact_source_checks": "56",
+            "contact_source_samples": "60984",
+            "metadata": "1740",
+            "decoded_bytes": "6516921",
+            "mesh_bytes": "173522784",
+            "cached_mesh_bytes": "72467664",
+            "material_tiles": "40",
+            "material_detail_tiles": "256",
+            "material_metadata": "500",
+            "material_detail_uploads": "256",
+            "material_detail_limited": "true",
+            "near_material_pages": "14",
+            "near_material_ready_pages": "14",
+            "near_material_bytes": "10695296",
+            "near_material_limited": "false",
+            "near_material_error": "None",
+            "material_reserved_bytes": "16144640",
+            "entry_material_reserved_bytes": "0",
+            "pending": "0",
+            "staged": "0",
+            "plans": "17",
+            "plan_milliseconds": "3.63225",
+            "morph_weight": "None",
+            "transition_patches": "0",
+            "transition_triangles": "0"
+          }
+        }
+      }
+    },
+    "interpretation": "Descriptive clock-dependent timings only; not proof of unchanged work or performance. User reports FPS spikes and requests manual comparison with baseline."
+  },
+  "quality_tradeoff": {
+    "native_baseline_max_visible_error_px": 1.98,
+    "native_candidate_max_visible_error_px": 5.02,
+    "native_baseline_settled_patches": 1315,
+    "native_candidate_settled_patches": 2047,
+    "ordinary_game_preview_patches": 1882,
+    "ordinary_game_preview_error_px": 1.64,
+    "note": "All-direction residency shares the same finite budget; target may be exceeded at high render resolution or complex views."
+  },
+  "tests": {
+    "render_unit_passed": 33,
+    "engine_terrain_unit_passed": 22,
+    "real_world_probes_passed": 3,
+    "native_metal_regression_passed": 1,
+    "regressions": [
+      "Geometry cover and stitching invariant under fixed-eye rotation, including budget pressure; distance still releases detail.",
+      "Baked detail keys and metadata demand invariant under rotation.",
+      "Real island cover hash identical at fixed-eye 0,135,180 degree turns.",
+      "Native morphs, movement, origin rebasing, grounding, height edits, world entry and publication handoffs."
+    ],
+    "probe_adjustment": "Optional 262144-triangle stress profile cannot support this island root forest plus exact actor guard. Verified actor failure also with visual, nearby and grass refinement disabled. Shipping 1M/4M profiles must retain actor grounding."
+  },
+  "rejected_or_corrected_checks": [
+    "Initial real-world probe incorrectly required arbitrary quarter-budget stress case to ground every imported world; corrected with guard-only proof.",
+    "A cargo-driven probe used a relative DB path from the crate directory and could not open it; rerun with an absolute path passed.",
+    "A1 full performance interval included loading; only common settled final 10 seconds are compared."
+  ],
+  "evidence": "evidence.tar.gz",
+  "local_visual_files": {
+    "/private/tmp/reteya_turn_stability/after-000590.png": "419917b2eb63e490c7d7af2bd4072cb9ed38b6b3930e9dfb0b3519ca572cb61d",
+    "/private/tmp/reteya_turn_stability/after-001210.png": "ce9e8fd91ffc67185d7133e6fe354f4c0c622e8437afc89ed07bc78b052d4ae6",
+    "/private/tmp/reteya_turn_stability/after-001300.png": "b9bcdbee93f4bcc30b0886f58a5937753b29e30f83e0c941c1c86ba7f4248489",
+    "/private/tmp/reteya_turn_stability/after-001750.png": "943be11a5123ef548de67bec57079d1a6b67b7d78d462bd8e5fb81c24c0bc087"
+  },
+  "limitations": [
+    "No sustained power or phone measurements.",
+    "Moving the camera can still change distance-based LOD; cold loading is progressive.",
+    "This does not add source terrain resolution or eliminate all close-up faceting."
+  ],
+  "stash": "7042ea0fca6a3738ae14a3372d561c210b80d637"
+}

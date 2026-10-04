@@ -5,12 +5,15 @@ use terrain_render::composite::atlas::{self, CompositeUploadHub, DETAIL_SLOTS, D
 struct Slot {
     layer: u32,
     fade: f32,
+    last_used: u64,
 }
 pub(in crate::world_streaming::terrain_lod) struct Detail {
     pub atlas: DetailAtlas,
     slots: BTreeMap<TerrainMaterialKey, Slot>,
     pub cpu: BTreeMap<TerrainMaterialKey, TerrainComposite>,
     desired: BTreeSet<TerrainMaterialKey>,
+    retiring: BTreeSet<TerrainMaterialKey>,
+    epoch: u64,
     bound: bool,
     pub limited: bool,
     last_table: Vec<atlas::DetailEntry>,
@@ -26,6 +29,8 @@ impl Detail {
             slots: BTreeMap::new(),
             cpu: BTreeMap::new(),
             desired: BTreeSet::new(),
+            retiring: BTreeSet::new(),
+            epoch: 0,
             bound: false,
             limited: false,
             last_table: vec![atlas::DetailEntry::default(); atlas::TABLE_SIZE],
@@ -34,13 +39,66 @@ impl Detail {
     pub fn count(&self) -> usize {
         self.slots.len()
     }
+    fn set_desired(&mut self, desired: BTreeSet<TerrainMaterialKey>, capacity: usize) {
+        if self.desired == desired {
+            return;
+        }
+        self.desired = desired;
+        self.epoch += 1;
+        for (key, slot) in &mut self.slots {
+            if self.desired.contains(key) {
+                slot.last_used = self.epoch;
+            }
+        }
+        self.retiring.clear();
+        let missing = self
+            .desired
+            .iter()
+            .filter(|k| !self.slots.contains_key(k))
+            .count();
+        let retire_count = (self.slots.len() + missing).saturating_sub(capacity);
+        // Keep spare tiles warm. Under pressure retire oldest leaves first, keeping
+        // their ancestors available throughout the fade and the next upload.
+        let mut children = BTreeMap::<TerrainMaterialKey, usize>::new();
+        for key in self.slots.keys() {
+            if let Some(parent) = key.0.parent().ok().flatten() {
+                *children.entry(TerrainMaterialKey(parent)).or_default() += 1;
+            }
+        }
+        let mut leaves: BTreeSet<_> = self
+            .slots
+            .iter()
+            .filter(|(key, _)| !self.desired.contains(key) && !children.contains_key(key))
+            .map(|(&key, slot)| (slot.last_used, key))
+            .collect();
+        while self.retiring.len() < retire_count {
+            let Some((_, key)) = leaves.pop_first() else {
+                break;
+            };
+            self.retiring.insert(key);
+            if let Some(parent) = key.0.parent().ok().flatten().map(TerrainMaterialKey) {
+                let count = children.get_mut(&parent).unwrap();
+                *count -= 1;
+                if *count == 0
+                    && !self.desired.contains(&parent)
+                    && let Some(slot) = self.slots.get(&parent)
+                {
+                    leaves.insert((slot.last_used, parent));
+                }
+            }
+        }
+    }
     fn animate(&mut self, roots: &[TerrainNodeKey], dt: f32) {
         let step = dt.clamp(0., 1. / 30.) / 0.3;
         // Ancestors must be stable before a child appears. Retiring descendants
         // disappear first, preserving a fully weighted fallback at every step.
         let keys: Vec<_> = self.slots.keys().copied().collect();
+        let parents: BTreeSet<_> = keys
+            .iter()
+            .filter_map(|k| k.0.parent().ok().flatten().map(TerrainMaterialKey))
+            .collect();
         for key in keys.iter().rev() {
-            let wanted = self.desired.contains(key);
+            let wanted = !self.retiring.contains(key);
             let parent_ready = key.0.parent().ok().flatten().is_some_and(|p| {
                 roots.contains(&p)
                     || self
@@ -48,10 +106,7 @@ impl Detail {
                         .get(&TerrainMaterialKey(p))
                         .is_some_and(|s| s.fade >= 1.)
             });
-            let has_child = self
-                .slots
-                .keys()
-                .any(|k| k.0.parent().ok().flatten() == Some(key.0));
+            let has_child = parents.contains(key);
             let slot = self.slots.get_mut(key).unwrap();
             if wanted && parent_ready {
                 slot.fade = (slot.fade + step).min(1.);
@@ -60,7 +115,7 @@ impl Detail {
             }
         }
         self.slots
-            .retain(|k, s| s.fade > 0. || self.desired.contains(k));
+            .retain(|k, s| s.fade > 0. || !self.retiring.contains(k));
     }
 }
 
@@ -114,7 +169,7 @@ impl TerrainLodStream {
             DETAIL_SLOTS,
             self.composites.minimum_level,
         );
-        cache.desired = plan.keys.iter().copied().collect();
+        cache.set_desired(plan.keys.iter().copied().collect(), DETAIL_SLOTS);
         cache.limited = plan.limited;
         cache.animate(&roots, dt);
         cache.cpu.retain(|k, _| cache.desired.contains(k));
@@ -133,7 +188,14 @@ impl TerrainLodStream {
                 break;
             };
             if let Some(tile) = cache.cpu.remove(key) {
-                cache.slots.insert(*key, Slot { layer, fade: 0. });
+                cache.slots.insert(
+                    *key,
+                    Slot {
+                        layer,
+                        fade: 0.,
+                        last_used: cache.epoch,
+                    },
+                );
                 uploads.push((layer, tile));
             }
         }
@@ -192,7 +254,13 @@ impl TerrainLodStream {
                 ),
             )
             .collect();
-        let occupied = cache.slots.len()
+        // Cached residents yield to desired requests. CPU payloads remain bounded by
+        // the desired capacity while their GPU predecessors finish fading out.
+        let occupied = cache
+            .slots
+            .keys()
+            .filter(|k| cache.desired.contains(k))
+            .count()
             + cache.cpu.len()
             + self.composites.decodes.len()
             + self
@@ -229,6 +297,61 @@ mod tests {
     use super::*;
 
     #[test]
+    fn turning_back_keeps_spare_tiles_and_pressure_retires_the_oldest() {
+        let root = TerrainNodeKey {
+            space: WorldSpaceId(1),
+            level: 1,
+            x: 0,
+            z: 0,
+        };
+        let [a, b, c, d] = root.children().unwrap().unwrap().map(TerrainMaterialKey);
+        let mut cache = Detail::new(
+            &mut Assets::default(),
+            &mut Assets::default(),
+            &CompositeUploadHub::default(),
+        );
+        cache.slots.insert(
+            a,
+            Slot {
+                layer: 0,
+                fade: 1.,
+                last_used: 0,
+            },
+        );
+        cache.slots.insert(
+            b,
+            Slot {
+                layer: 1,
+                fade: 1.,
+                last_used: 0,
+            },
+        );
+        cache.set_desired(BTreeSet::from([a]), 3);
+        cache.set_desired(BTreeSet::from([b]), 3);
+        for _ in 0..40 {
+            cache.animate(&[root], 1. / 30.);
+        }
+        assert_eq!(
+            cache.slots[&a].fade, 1.,
+            "looking away alone must not discard detail"
+        );
+        cache.set_desired(BTreeSet::from([b, c, d]), 3);
+        assert_eq!(cache.retiring, BTreeSet::from([a]));
+        cache.animate(&[root], 1. / 30.);
+        assert!(cache.slots[&a].fade < 1.);
+        cache.set_desired(BTreeSet::from([a]), 3);
+        for _ in 0..10 {
+            cache.animate(&[root], 1. / 30.);
+        }
+        assert_eq!(
+            cache.slots[&a].fade, 1.,
+            "return during retirement must reuse the tile"
+        );
+        assert_eq!(cache.slots[&a].layer, 0);
+        assert!(cache.retiring.is_empty());
+    }
+
+    #[test]
     fn parents_are_ready_before_children_fade_in_and_retire_after_them() {
         let root = TerrainNodeKey {
             space: WorldSpaceId(1),
@@ -241,8 +364,22 @@ mod tests {
         let mut images = Assets::default();
         let mut buffers = Assets::default();
         let mut cache = Detail::new(&mut images, &mut buffers, &CompositeUploadHub::default());
-        cache.slots.insert(parent, Slot { layer: 0, fade: 0. });
-        cache.slots.insert(child, Slot { layer: 1, fade: 0. });
+        cache.slots.insert(
+            parent,
+            Slot {
+                layer: 0,
+                fade: 0.,
+                last_used: 0,
+            },
+        );
+        cache.slots.insert(
+            child,
+            Slot {
+                layer: 1,
+                fade: 0.,
+                last_used: 0,
+            },
+        );
         cache.desired.extend([parent, child]);
         cache.animate(&[root], 1. / 30.);
         assert!(cache.slots[&parent].fade > 0.);
@@ -251,7 +388,7 @@ mod tests {
             cache.animate(&[root], 1. / 30.);
         }
         assert_eq!(cache.slots[&child].fade, 1.);
-        cache.desired.clear();
+        cache.set_desired(BTreeSet::new(), 0);
         cache.animate(&[root], 1. / 30.);
         assert_eq!(cache.slots[&parent].fade, 1.);
         assert!(cache.slots[&child].fade < 1.);

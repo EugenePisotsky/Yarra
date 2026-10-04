@@ -135,6 +135,8 @@ pub(super) fn update(
     stream.target = None;
     stream.builds.clear();
     stream.evict(&mut meshes, &tracker);
+    // A cached off-screen mesh may predate this edit; never reuse it for the new overlay.
+    stream.trim_mesh_cache(&mut meshes, &tracker, 0, MAX_MESH_BYTES);
     let size = catalog.world_space(request.space).unwrap().cell_size;
     if live.stage.is_none() {
         let appearance_changed = stream

@@ -54,15 +54,12 @@ impl Demand<'_> {
         {
             return Priority(2, near);
         }
-        if !self.view.visible(bounds) {
-            return Priority(0, 0.);
-        }
         let threshold = if self.previously_refined.contains(&key) {
             p.settings.collapse_pixels
         } else {
             p.settings.refine_pixels
         };
-        let error = self.view.projected_error(bounds, error) / threshold;
+        let error = self.view.distance_error(bounds, error) / threshold;
         if error > 1. {
             Priority(1, error)
         } else {

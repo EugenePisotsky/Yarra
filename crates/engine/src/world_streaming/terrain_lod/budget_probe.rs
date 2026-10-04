@@ -154,7 +154,33 @@ fn published_landscape_contact_budget_probe() {
                 plan.stats.maximum_visible_error,
                 start.elapsed().as_secs_f64() * 1000.,
             );
-            assert!(plan.balanced && actor_ready);
+            assert!(plan.balanced);
+            if max_triangles >= 1_048_576 {
+                assert!(actor_ready, "shipping budgets must keep the actor grounded");
+            } else if !actor_ready {
+                // This optional quarter-budget stress case need not support every
+                // imported root forest plus its exact actor/contact guard.
+                assert!(plan.stats.budget_limited);
+                // Verify it also fails without visual, nearby or grass demand;
+                // otherwise a lower-priority consumer stole the actor's budget.
+                let mut guard_view = view.clone();
+                guard_view.clip_from_world = DMat4::from_scale(DVec3::splat(1e-12));
+                let guard_only = lod::plan_cover_with_contacts(
+                    &keys,
+                    &metadata,
+                    &BTreeSet::new(),
+                    &guard_view,
+                    size,
+                    &LodSettings {
+                        exact_radius: 0.,
+                        contact_radius: 0.,
+                        ..settings.clone()
+                    },
+                    std::slice::from_ref(&actor_guard),
+                )
+                .unwrap();
+                assert!(!cover_accepts(&actor, &guard_only.patches, &metadata, size));
+            }
             assert!(plan.patches.len() <= settings.max_patches);
             assert!(plan.stats.triangles <= settings.max_triangles);
             assert!(plan.stats.work <= settings.max_work);
@@ -331,9 +357,10 @@ fn planner_cost_probe() {
     );
     let settings = LodSettings::default();
     let view_at = |yaw: f32| {
-        let mut bookmark = bookmark.clone();
-        bookmark.yaw_degrees += yaw;
-        let camera = crate::WorldStartView::camera_at(&bookmark, position);
+        // Match landscape-turn: rotate the eye in place, not the third-person
+        // orbit, which also moves it several metres around the actor.
+        let mut camera = crate::WorldStartView::camera_at(&bookmark, position);
+        camera.rotation = Quat::from_rotation_y(yaw.to_radians()) * camera.rotation;
         let projection = PerspectiveProjection {
             aspect_ratio: 16. / 9.,
             far: bookmark.fog_visibility,
@@ -442,6 +469,12 @@ fn planner_cost_probe() {
             hash(&steady.patches),
         );
         covers.push((name, view, plan.patches, metadata));
+    }
+    for (name, _, patches, _) in &covers[1..] {
+        assert_eq!(
+            patches, &covers[0].2,
+            "rotating the eye to {name} changed the real island's terrain cover"
+        );
     }
     for (a, b) in [(0, 1), (1, 0), (0, 2)] {
         let (from, _, old, old_metadata) = &covers[a];

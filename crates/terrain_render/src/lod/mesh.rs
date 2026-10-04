@@ -4,7 +4,7 @@ use bevy::{
 use world::TerrainHeightfield;
 
 /// Fine edges adjacent to a patch exactly one level coarser.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct StitchEdges(pub u8);
 impl StitchEdges {
     pub const WEST: u8 = 1;
