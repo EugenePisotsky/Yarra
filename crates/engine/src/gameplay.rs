@@ -67,6 +67,7 @@ impl Plugin for GameplayPlugin {
             .add_message::<crate::WorldStartAdopted>()
             .init_resource::<GameInputEnabled>()
             .init_resource::<GamePointerInputBlocked>()
+            .init_resource::<PlayerMovementSpeed>()
             .init_resource::<PlayerMovementSuspended>()
             .configure_sets(
                 Update,
@@ -134,6 +135,23 @@ impl Default for GameInputEnabled {
 /// UI pointer capture does not suppress keyboard or gamepad input.
 #[derive(Resource, Default)]
 pub struct GamePointerInputBlocked(pub bool);
+
+/// Temporary exploration speed for the controlled actor. Terrain contact still applies.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PlayerMovementSpeed {
+    #[default]
+    Normal,
+    Fast,
+}
+
+impl PlayerMovementSpeed {
+    pub fn multiplier(self) -> f32 {
+        match self {
+            Self::Normal => 1.0,
+            Self::Fast => 10.0,
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests;

@@ -81,6 +81,7 @@ fn update_stamp(
 #[derive(Component, Clone, Copy)]
 enum Control {
     FrameRate,
+    MovementSpeed,
     Scene,
     Grass,
     GrassEnabled,
@@ -117,6 +118,16 @@ impl Control {
     fn label(self, s: &RuntimeSettings, frame_rate: FrameRate) -> String {
         match self {
             Self::FrameRate => frame_rate.label(),
+            Self::MovementSpeed => {
+                if s.fast_movement {
+                    format!(
+                        "Movement: Fast ({}x)",
+                        engine::PlayerMovementSpeed::Fast.multiplier()
+                    )
+                } else {
+                    "Movement: Normal".into()
+                }
+            }
             Self::ObjectDetail => format!("Object LOD size: {}x", [0.5, 1.0, 2.0][s.object_detail]),
             Self::Clouds => format!("Clouds: {:?}", s.clouds),
             Self::Sky => format!("Sky + haze pass: {}", on_off(s.sky)),
@@ -217,6 +228,7 @@ fn buttons(
             continue;
         }
         match control {
+            Control::MovementSpeed => s.fast_movement = !s.fast_movement,
             Control::FrameRate => {
                 if !pacing.profile_locked {
                     pacing.rate = pacing.rate.next();

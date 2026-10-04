@@ -56,5 +56,6 @@ pub use actor::{MoveIntent, PlayerControlled, TerrainGrounded};
 pub use gameplay::{
     GAME_DEPTH_PREPASS_ENABLED, GameCameraPlugin, GameInputEnabled, GameInputPlugin,
     GamePointerInputBlocked, GameplayPlugin, GameplayPlugins, GameplaySystems, MinimalGamePlugin,
-    MovementTargetPlugin, PlayerMovementSuspended, PlayerRoute, standing_character,
+    MovementTargetPlugin, PlayerMovementSpeed, PlayerMovementSuspended, PlayerRoute,
+    standing_character,
 };

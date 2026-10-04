@@ -15,6 +15,7 @@ fn panel_app() -> App {
         .init_resource::<FramePacing>()
         .init_resource::<RuntimeSettings>()
         .init_resource::<GameInputEnabled>()
+        .init_resource::<engine::PlayerMovementSpeed>()
         .init_resource::<GamePointerInputBlocked>()
         .init_resource::<engine::StreamingStats>()
         .init_resource::<engine::TerrainLodStats>()
@@ -23,7 +24,11 @@ fn panel_app() -> App {
         .add_plugins(PerformancePanelPlugin)
         .add_systems(
             Update,
-            crate::runtime_settings::apply_input_lock
+            (
+                crate::runtime_settings::apply_input_lock,
+                crate::runtime_settings::apply_player_movement,
+            )
+                .chain()
                 .in_set(crate::runtime_settings::RuntimeSettingsApply),
         );
     app.world_mut().spawn((
@@ -56,6 +61,60 @@ fn click(app: &mut App, action: Action) {
     let button = app.world_mut().spawn((Interaction::Pressed, action)).id();
     tick(app, 0.01);
     app.world_mut().despawn(button);
+}
+
+#[test]
+fn movement_button_toggles_player_speed_and_reset_restores_normal() {
+    let mut app = panel_app();
+    let button = {
+        let world = app.world_mut();
+        world
+            .query::<(Entity, &Control)>()
+            .iter(world)
+            .find(|(_, control)| matches!(control, Control::MovementSpeed))
+            .unwrap()
+            .0
+    };
+    assert_eq!(
+        *app.world().resource::<engine::PlayerMovementSpeed>(),
+        engine::PlayerMovementSpeed::Normal
+    );
+    for expected in [true, false, true] {
+        *app.world_mut().get_mut::<Interaction>(button).unwrap() = Interaction::Pressed;
+        tick(&mut app, 0.01);
+        assert_eq!(
+            app.world().resource::<RuntimeSettings>().fast_movement,
+            expected
+        );
+        assert_eq!(
+            *app.world().resource::<engine::PlayerMovementSpeed>(),
+            if expected {
+                engine::PlayerMovementSpeed::Fast
+            } else {
+                engine::PlayerMovementSpeed::Normal
+            }
+        );
+        let child = app.world().get::<Children>(button).unwrap()[0];
+        assert_eq!(
+            app.world().get::<Text>(child).unwrap().0,
+            if expected {
+                "Movement: Fast (10x)"
+            } else {
+                "Movement: Normal"
+            }
+        );
+    }
+    let reset = app
+        .world_mut()
+        .spawn((Interaction::Pressed, Control::Reset))
+        .id();
+    tick(&mut app, 0.01);
+    app.world_mut().despawn(reset);
+    assert_eq!(
+        *app.world().resource::<engine::PlayerMovementSpeed>(),
+        engine::PlayerMovementSpeed::Normal
+    );
+    assert!(!app.world().resource::<RuntimeSettings>().fast_movement);
 }
 
 #[test]

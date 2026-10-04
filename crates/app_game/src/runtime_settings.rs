@@ -27,7 +27,8 @@ pub(crate) struct RuntimeSettingsApply;
 
 impl Plugin for RuntimeSettingsPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<crate::launch::LaunchOptions>();
+        app.init_resource::<crate::launch::LaunchOptions>()
+            .init_resource::<engine::PlayerMovementSpeed>();
         let options = app.world().resource::<crate::launch::LaunchOptions>();
         let settings = RuntimeSettings {
             terrain_near_disabled: options.terrain_near_off,
@@ -52,6 +53,7 @@ impl Plugin for RuntimeSettingsPlugin {
                     apply_settings,
                     apply_appearance,
                     apply_input_lock,
+                    apply_player_movement,
                 )
                     .chain()
                     .in_set(RuntimeSettingsApply)
@@ -88,6 +90,17 @@ pub(crate) fn apply_input_lock(
     enabled.0 = !settings.controls_locked;
 }
 
+pub(crate) fn apply_player_movement(
+    settings: Res<RuntimeSettings>,
+    mut speed: ResMut<engine::PlayerMovementSpeed>,
+) {
+    speed.set_if_neq(if settings.fast_movement {
+        engine::PlayerMovementSpeed::Fast
+    } else {
+        engine::PlayerMovementSpeed::Normal
+    });
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum Scene {
     #[default]
@@ -121,6 +134,7 @@ pub(crate) struct RuntimeSettings {
     pub(crate) gpu_pass_timings: bool,
     pub(crate) wind: bool,
     pub(crate) controls_locked: bool,
+    pub(crate) fast_movement: bool,
     pub(crate) render_path: RenderPath,
     pub(crate) show_ui: bool,
     pub(crate) changed_at: f64,
@@ -163,6 +177,7 @@ impl Default for RuntimeSettings {
             gpu_pass_timings: false,
             wind: true,
             controls_locked: false,
+            fast_movement: false,
             render_path: render.render_path,
             show_ui: render.show_ui,
             changed_at: 0.0,

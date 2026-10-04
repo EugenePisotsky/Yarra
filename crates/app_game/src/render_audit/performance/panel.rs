@@ -126,6 +126,8 @@ fn initialize(
         panel.spawn((Text::new("Starting measurements..."), font(14.0), Summary));
         panel.spawn((Button, Control::FrameRate, button_node(), BackgroundColor(button_color())))
             .with_child((Text::new(pacing.control_label()), font(13.0)));
+        panel.spawn((Button, Control::MovementSpeed, button_node(), BackgroundColor(button_color())))
+            .with_child((Text::new(Control::MovementSpeed.label(&s, pacing.rate)), font(13.0)));
         panel.spawn(Node { column_gap: px(4), flex_wrap: FlexWrap::Wrap, row_gap: px(4), ..default() }).with_children(|row| {
             for tab in [Tab::Overview, Tab::Features, Tab::Quality, Tab::Weather, Tab::Wind, Tab::Compare, Tab::Advanced] {
                 row.spawn((Button, Action::Tab(tab), button_node(), BackgroundColor(button_color())))

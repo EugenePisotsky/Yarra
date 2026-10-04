@@ -208,6 +208,7 @@ struct MotorOutput {
 
 pub(crate) fn advance_character_motors(
     time: Res<Time>,
+    player_speed: Option<Res<crate::PlayerMovementSpeed>>,
     lod_config: Option<Res<crate::TerrainLodPreview>>,
     readiness: Option<Res<crate::TerrainContactReadiness>>,
     origin: Option<Res<crate::WorldOrigin>>,
@@ -219,10 +220,29 @@ pub(crate) fn advance_character_motors(
         &mut CharacterMotor,
         &mut CharacterMotion,
         Has<TerrainGrounded>,
+        Has<PlayerControlled>,
     )>,
 ) {
     let delta_seconds = time.delta_secs();
-    for (mut transform, mut intent, config, mut motor, mut motion, grounded) in &mut actors {
+    for (mut transform, mut intent, config, mut motor, mut motion, grounded, controlled) in
+        &mut actors
+    {
+        // Scale a local copy so disabling the mode restores authored speeds, and NPCs
+        // and character presentation never inherit a modified configuration.
+        let mut config = *config;
+        if controlled && let Some(speed) = &player_speed {
+            config.walk_speed_mps *= speed.multiplier();
+            config.jog_speed_mps *= speed.multiplier();
+            if speed.is_changed() {
+                // Do not coast at the old fast speed or retain its destination braking
+                // curve after switching back to normal. Preserve heading and intent.
+                motor.speed_mps = motor
+                    .speed_mps
+                    .min(config.walk_speed_mps.max(config.jog_speed_mps));
+                motor.destination_braking = None;
+            }
+        }
+        let config = &config;
         let output = if let Some(destination) = intent.destination {
             let offset = destination.position - transform.translation;
             motor.update_destination(
@@ -576,55 +596,141 @@ mod tests {
 
     #[test]
     fn missing_contact_stops_grounded_motion_without_losing_intent() {
+        for speed in [
+            crate::PlayerMovementSpeed::Normal,
+            crate::PlayerMovementSpeed::Fast,
+        ] {
+            let mut app = App::new();
+            let mut time = Time::<()>::default();
+            time.advance_by(std::time::Duration::from_secs_f32(DELTA_SECONDS));
+            app.insert_resource(time)
+                .insert_resource(speed)
+                .insert_resource(crate::TerrainLodPreview {
+                    enabled: true,
+                    ..default()
+                })
+                .add_systems(Update, advance_character_motors);
+            let mut intent = MoveIntent::default();
+            intent.set_destination(Vec3::new(0., 0., 0.0001), CharacterGait::Walk);
+            let actor = app
+                .world_mut()
+                .spawn((
+                    Transform::default(),
+                    intent,
+                    test_config(),
+                    CharacterMotor::default(),
+                    CharacterMotion::default(),
+                    TerrainGrounded,
+                    PlayerControlled,
+                ))
+                .id();
+            app.update();
+            assert_eq!(
+                app.world().get::<Transform>(actor).unwrap().translation,
+                Vec3::ZERO
+            );
+            assert_eq!(
+                app.world().get::<MoveIntent>(actor).unwrap().destination(),
+                intent.destination()
+            );
+            assert_eq!(
+                app.world().get::<CharacterMotion>(actor).unwrap().phase,
+                CharacterMotionPhase::Idle
+            );
+            app.world_mut()
+                .resource_mut::<crate::TerrainLodPreview>()
+                .enabled = false;
+            app.update();
+            assert_eq!(
+                app.world().get::<Transform>(actor).unwrap().translation,
+                intent.destination().unwrap()
+            );
+            assert!(
+                app.world()
+                    .get::<MoveIntent>(actor)
+                    .unwrap()
+                    .destination()
+                    .is_none()
+            );
+        }
+    }
+
+    #[test]
+    fn fast_movement_only_scales_player_and_switching_off_restores_authored_speed() {
         let mut app = App::new();
         let mut time = Time::<()>::default();
         time.advance_by(std::time::Duration::from_secs_f32(DELTA_SECONDS));
         app.insert_resource(time)
-            .insert_resource(crate::TerrainLodPreview {
-                enabled: true,
-                ..default()
-            })
+            .insert_resource(crate::PlayerMovementSpeed::Fast)
             .add_systems(Update, advance_character_motors);
         let mut intent = MoveIntent::default();
-        intent.set_destination(Vec3::new(0., 0., 0.0001), CharacterGait::Walk);
-        let actor = app
-            .world_mut()
-            .spawn((
-                Transform::default(),
-                intent,
-                test_config(),
-                CharacterMotor::default(),
-                CharacterMotion::default(),
-                TerrainGrounded,
-            ))
-            .id();
+        intent.set_direct(Vec2::Y, 1.0, Some(CharacterGait::Jog));
+        let mut spawn = || {
+            app.world_mut()
+                .spawn((
+                    Transform::default(),
+                    intent,
+                    test_config(),
+                    CharacterMotor::default(),
+                    CharacterMotion::default(),
+                ))
+                .id()
+        };
+        let player = spawn();
+        let npc = spawn();
+        app.world_mut().entity_mut(player).insert(PlayerControlled);
+        for _ in 0..60 {
+            app.update();
+        }
+        let position =
+            |app: &App, actor| app.world().get::<Transform>(actor).unwrap().translation.z;
+        assert!((position(&app, player) / position(&app, npc) - 10.0).abs() < 0.001);
+        assert_eq!(
+            app.world()
+                .get::<CharacterMotorConfig>(player)
+                .unwrap()
+                .jog_speed_mps,
+            test_config().jog_speed_mps
+        );
+        let before = position(&app, player);
+        *app.world_mut().resource_mut::<crate::PlayerMovementSpeed>() =
+            crate::PlayerMovementSpeed::Normal;
         app.update();
-        assert_eq!(
-            app.world().get::<Transform>(actor).unwrap().translation,
-            Vec3::ZERO
-        );
-        assert_eq!(
-            app.world().get::<MoveIntent>(actor).unwrap().destination(),
-            intent.destination()
-        );
-        assert_eq!(
-            app.world().get::<CharacterMotion>(actor).unwrap().phase,
-            CharacterMotionPhase::Idle
-        );
+        let step = position(&app, player) - before;
+        assert!((step - test_config().jog_speed_mps * DELTA_SECONDS).abs() < 0.00001);
+
+        // Click-to-move uses the same speed mode and must still stop at the target.
+        *app.world_mut().resource_mut::<crate::PlayerMovementSpeed>() =
+            crate::PlayerMovementSpeed::Fast;
+        let target = Vec3::new(0.0, 0.0, position(&app, player) + 20.0);
         app.world_mut()
-            .resource_mut::<crate::TerrainLodPreview>()
-            .enabled = false;
-        app.update();
-        assert_eq!(
-            app.world().get::<Transform>(actor).unwrap().translation,
-            intent.destination().unwrap()
+            .get_mut::<MoveIntent>(player)
+            .unwrap()
+            .walk_to(target);
+        for _ in 0..180 {
+            app.update();
+        }
+        assert!(
+            app.world()
+                .get::<Transform>(player)
+                .unwrap()
+                .translation
+                .distance(target)
+                < 0.0001
         );
         assert!(
             app.world()
-                .get::<MoveIntent>(actor)
+                .get::<MoveIntent>(player)
                 .unwrap()
                 .destination()
                 .is_none()
+        );
+        assert_eq!(
+            app.world()
+                .get::<CharacterMotion>(player)
+                .unwrap()
+                .speed_mps,
+            0.0
         );
     }
 

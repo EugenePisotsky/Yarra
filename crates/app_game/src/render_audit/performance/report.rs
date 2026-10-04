@@ -8,6 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const ALL_CONTROLS: &[Control] = &[
     Control::FrameRate,
+    Control::MovementSpeed,
     Control::Clouds,
     Control::Sky,
     Control::Bloom,
