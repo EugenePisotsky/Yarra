@@ -14,6 +14,74 @@ const VIEW_VISIBILITY: f32 = 20_000.;
 
 /// Terrain height at a world XZ position.
 pub(crate) type HeightFn<'a> = dyn Fn(Vec2) -> f32 + Sync + 'a;
+/// A terrain tool's mask at a world XZ position, from 0 to 1.
+pub(crate) type MaskFn<'a> = dyn Fn(Vec2) -> f32 + Sync + 'a;
+
+/// Masks every island world has, generated from height and slope by `paint`. An imported
+/// mask of the same name replaces one.
+const GENERATED_MASKS: [&str; 3] = ["land", "green", "bare"];
+
+/// Where an imported layer's coverage comes from.
+#[derive(Clone, Copy)]
+pub(crate) enum Mask<'a> {
+    /// `paint`'s output at this index of `GENERATED_MASKS`.
+    Generated(usize),
+    Imported(&'a MaskFn<'a>),
+}
+
+/// The layers of `definition` that read a mask, each with its source: an imported mask of that
+/// name, otherwise a generated one. Painted layers are left out; imports never touch them.
+pub(crate) fn imported_layers<'a>(
+    definition: &environment::EnvironmentDefinition,
+    imported: &[(&str, &'a MaskFn<'a>)],
+) -> Result<Vec<(environment::LayerId, Mask<'a>)>> {
+    definition
+        .layers
+        .iter()
+        .filter_map(|layer| Some((layer, layer.imported_mask.as_deref()?)))
+        .map(|(layer, name)| {
+            let mask = match imported.iter().find(|(n, _)| *n == name) {
+                Some((_, sample)) => Mask::Imported(*sample),
+                None => Mask::Generated(
+                    GENERATED_MASKS
+                        .iter()
+                        .position(|n| *n == name)
+                        .with_context(|| {
+                            let available: Vec<_> = imported
+                                .iter()
+                                .map(|(n, _)| *n)
+                                .chain(GENERATED_MASKS)
+                                .collect();
+                            format!(
+                                "layer {:?} reads mask {name:?}, which the import does not \
+                                 provide; available: {}",
+                                layer.name,
+                                available.join(", ")
+                            )
+                        })?,
+                ),
+            };
+            Ok((layer.id, mask))
+        })
+        .collect()
+}
+
+/// Imported masks no layer reads.
+pub(crate) fn unused_masks<'a>(
+    definition: &environment::EnvironmentDefinition,
+    imported: impl IntoIterator<Item = &'a str>,
+) -> Vec<String> {
+    imported
+        .into_iter()
+        .filter(|name| {
+            !definition
+                .layers
+                .iter()
+                .any(|l| l.imported_mask.as_deref() == Some(*name))
+        })
+        .map(String::from)
+        .collect()
+}
 
 /// The catalog and settings of an island world, without cells.
 pub(crate) fn base_document(name: &str, bounds: [f32; 2], sea_level: f32) -> ProjectDocument {
@@ -29,6 +97,16 @@ pub(crate) fn base_document(name: &str, bounds: [f32; 2], sea_level: f32) -> Pro
     let definition = &mut project.environments[0];
     definition.cell_size = DEFAULT_CELL_SIZE;
     definition.mask_resolution = MASK_SIDE as u16;
+    // The meadow layers follow the generated masks, so imports keep them up to date.
+    for layer in &mut definition.layers {
+        let mask = match layer.preset {
+            environment::fixtures::DRY_MEADOW => "land",
+            environment::fixtures::GREEN_MEADOW => "green",
+            environment::fixtures::CLEARING => "bare",
+            _ => continue,
+        };
+        layer.imported_mask = Some(mask.into());
+    }
     project.terrain_profiles.retain(|p| p.space == space);
     project.terrain_profiles[0].composite_minimum_level = COMPOSITE_MINIMUM_LEVEL;
     project.cells.clear();
@@ -84,15 +162,16 @@ fn paint(p: Vec2, height: f32, slope: f32) -> [f32; 3] {
     [land, green, bare]
 }
 
-/// Heights and paint of one cell, sampled every metre on the world-wide grid, so neighbours
-/// share their edges. Heights sit on the cooked 1/1024 m grid, so an exactly flat cell (open
-/// sea) is detected and stores no heightfield. `edge` fades paint out towards the border of a
-/// square world whose surroundings are unbuilt.
+/// Heights and the coverage of imported `layers` in one cell, sampled every metre on the
+/// world-wide grid, so neighbours share their edges. Heights sit on the cooked 1/1024 m grid,
+/// so an exactly flat cell (open sea) is detected and stores no heightfield. Coverage fades
+/// out over the last 48 m towards the world's XZ `bounds`: beyond them nothing is built, and
+/// the cook requires neighbouring cells to agree along their shared edges.
 pub(crate) fn terrain_cell(
     cell: CellCoord,
     height: &HeightFn,
-    layers: &[environment::LayerId],
-    edge: Option<f32>,
+    layers: &[(environment::LayerId, Mask)],
+    bounds: [Vec2; 2],
 ) -> ImportedTerrainCell {
     let step = DEFAULT_CELL_SIZE / (HEIGHT_SIDE - 1) as f32;
     // One sample of halo on each side gives central-difference slopes that agree across
@@ -114,7 +193,7 @@ pub(crate) fn terrain_cell(
         .collect();
     let mut tiles: Vec<_> = layers
         .iter()
-        .map(|&layer| CoverageTile {
+        .map(|&(layer, _)| CoverageTile {
             layer,
             samples: Vec::with_capacity(MASK_SIDE * MASK_SIDE),
         })
@@ -124,13 +203,13 @@ pub(crate) fn terrain_cell(
             let dx = (halo[j * side + i + 1] - halo[j * side + i - 1]) / (2. * step);
             let dz = (halo[(j + 1) * side + i] - halo[(j - 1) * side + i]) / (2. * step);
             let p = point(i, j);
-            let fade = edge.map_or(1., |extent| {
-                smoothstep(0., 48., extent - p.abs().max_element())
-            });
-            for (tile, weight) in tiles
-                .iter_mut()
-                .zip(paint(p, halo[j * side + i], dx.hypot(dz)))
-            {
+            let fade = smoothstep(0., 48., (p - bounds[0]).min(bounds[1] - p).min_element());
+            let generated = paint(p, halo[j * side + i], dx.hypot(dz));
+            for (tile, (_, mask)) in tiles.iter_mut().zip(layers) {
+                let weight = match *mask {
+                    Mask::Generated(index) => generated[index],
+                    Mask::Imported(sample) => sample(p).clamp(0., 1.),
+                };
                 tile.samples.push((weight * fade * 255.).round() as u8);
             }
         }

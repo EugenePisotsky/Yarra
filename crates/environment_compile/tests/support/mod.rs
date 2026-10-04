@@ -41,6 +41,7 @@ pub fn fixture() -> (
                 seed: 42,
                 enabled: true,
                 opacity: 1.0,
+                imported_mask: None,
                 overrides: vec![],
             })
             .collect(),

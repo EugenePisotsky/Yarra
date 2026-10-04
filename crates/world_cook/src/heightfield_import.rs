@@ -1,8 +1,11 @@
 //! Imports a heightfield from a terrain tool (Houdini, World Creator, Gaea) as the terrain of a
 //! project's default world. The neutral format is a JSON manifest beside little-endian f32
-//! samples on a regular XZ grid; `tools/houdini_export_heightfield.py` writes it from Houdini.
-//! The heightfield's footprint defines the world, and a re-import rewrites only cells whose
-//! heights or paint changed, so the following cook is incremental.
+//! samples on a regular XZ grid, plus optional named masks of one byte per sample on the same
+//! grid; `tools/houdini_export_heightfield.py` writes it from Houdini. The heightfield's
+//! footprint defines the world. Layers with an imported mask take their coverage from the mask
+//! of that name, or from a mask generated from height and slope; painted layers are kept. A
+//! re-import rewrites only cells whose heights or imported coverage changed, so the following
+//! cook is incremental.
 use super::*;
 use serde::Deserialize;
 use std::path::PathBuf;
@@ -10,8 +13,10 @@ use terrain_world::{HeightFn, highest, nearest_shore, terrain_cell, view};
 use world_db::{TerrainImportStats, TerrainImportWriter};
 
 const FORMAT: &str = "yarra-heightfield";
+const VERSION: u32 = 2;
 /// 1 GiB of samples, e.g. 16k × 16k.
 const MAX_SAMPLES: usize = 1 << 28;
+const MAX_MASKS: usize = 32;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -27,12 +32,25 @@ struct Manifest {
     /// Little-endian f32 heights in rows along +X, one row per Z; relative to the manifest.
     heights: PathBuf,
     sea_level: f32,
+    /// Named masks on the heightfield's grid.
+    #[serde(default)]
+    masks: Vec<ManifestMask>,
     /// Where the player starts; by default, the shore nearest the centre.
     #[serde(default)]
     start: Option<[f32; 2]>,
     /// Free text naming the scene and node it came from.
     #[serde(default)]
     source: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ManifestMask {
+    /// Layers read the mask by this name (`environment::valid_mask_name`).
+    name: String,
+    /// One byte per sample, 0 to 255 for 0 to 1, in the heights' order; relative to the
+    /// manifest.
+    file: PathBuf,
 }
 
 struct Heightfield {
@@ -43,14 +61,16 @@ struct Heightfield {
     range: [f32; 2],
     sea_level: f32,
     start: Option<Vec2>,
+    /// Name and samples of each mask.
+    masks: Vec<(String, Vec<u8>)>,
 }
 
 impl Heightfield {
     fn load(path: &Path) -> Result<Self> {
         let manifest: Manifest = serde_json::from_slice(&fs::read(path)?)
             .with_context(|| format!("invalid heightfield manifest {}", path.display()))?;
-        if manifest.format != FORMAT || manifest.version != 1 {
-            bail!("expected a {FORMAT} version 1 manifest");
+        if manifest.format != FORMAT || manifest.version != VERSION {
+            bail!("expected a {FORMAT} version {VERSION} manifest");
         }
         let [nx, nz] = manifest.samples;
         if nx < 2 || nz < 2 || nx.saturating_mul(nz) > MAX_SAMPLES {
@@ -65,30 +85,50 @@ impl Heightfield {
         {
             bail!("heightfield spacing must be positive; spacing, origin and sea level finite");
         }
-        let file = path
-            .parent()
-            .unwrap_or(Path::new("."))
-            .join(&manifest.heights);
-        let bytes = fs::read(&file).with_context(|| format!("cannot read {}", file.display()))?;
-        if bytes.len() != nx * nz * 4 {
-            bail!(
-                "{} holds {} bytes, expected {nx} × {nz} f32 samples",
-                file.display(),
-                bytes.len()
-            );
-        }
+        let directory = path.parent().unwrap_or(Path::new("."));
+        let read = |name: &Path, bytes_per_sample: usize| -> Result<Vec<u8>> {
+            let file = directory.join(name);
+            let bytes =
+                fs::read(&file).with_context(|| format!("cannot read {}", file.display()))?;
+            if bytes.len() != nx * nz * bytes_per_sample {
+                bail!(
+                    "{} holds {} bytes, expected {nx} × {nz} samples of {bytes_per_sample} bytes",
+                    file.display(),
+                    bytes.len()
+                );
+            }
+            Ok(bytes)
+        };
+        let bytes = read(&manifest.heights, 4)?;
         let heights: Vec<f32> = bytes
             .chunks_exact(4)
             .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
             .collect();
         if heights.iter().any(|h| !h.is_finite()) {
-            bail!("{} contains non-finite heights", file.display());
+            bail!("{} contains non-finite heights", manifest.heights.display());
         }
         let range = heights
             .iter()
             .fold([f32::INFINITY, f32::NEG_INFINITY], |[lo, hi], &h| {
                 [lo.min(h), hi.max(h)]
             });
+        if manifest.masks.len() > MAX_MASKS {
+            bail!("a heightfield may have at most {MAX_MASKS} masks");
+        }
+        let mut masks: Vec<(String, Vec<u8>)> = Vec::with_capacity(manifest.masks.len());
+        for mask in &manifest.masks {
+            if !environment::valid_mask_name(&mask.name) {
+                bail!(
+                    "mask name {:?} must be 1–32 lowercase letters, digits or underscores, \
+                     starting with a letter",
+                    mask.name
+                );
+            }
+            if masks.iter().any(|(name, _)| *name == mask.name) {
+                bail!("mask {:?} appears twice", mask.name);
+            }
+            masks.push((mask.name.clone(), read(&mask.file, 1)?));
+        }
         if let Some(source) = &manifest.source {
             println!("Heightfield from {source}");
         }
@@ -100,7 +140,23 @@ impl Heightfield {
             range,
             sea_level: manifest.sea_level,
             start: manifest.start.map(Vec2::from),
+            masks,
         })
+    }
+
+    /// Mask `index` at `p`, from 0 to 1, interpolated linearly so it never overshoots. Beyond
+    /// the grid the border samples continue.
+    fn mask(&self, index: usize, p: Vec2) -> f32 {
+        let [nx, nz] = self.samples;
+        let samples = &self.masks[index].1;
+        let u = ((p - self.origin) / self.spacing)
+            .clamp(Vec2::ZERO, Vec2::new(nx as f32 - 1., nz as f32 - 1.));
+        let (x, z) = ((u.x as usize).min(nx - 2), (u.y as usize).min(nz - 2));
+        let f = u - Vec2::new(x as f32, z as f32);
+        let at = |x: usize, z: usize| f32::from(samples[z * nx + x]) / 255.;
+        let near = at(x, z) + (at(x + 1, z) - at(x, z)) * f.x;
+        let far = at(x, z + 1) + (at(x + 1, z + 1) - at(x, z + 1)) * f.x;
+        near + (far - near) * f.y
     }
 
     fn sample(&self, x: isize, z: isize) -> f32 {
@@ -181,6 +237,8 @@ pub struct HeightfieldImportReport {
     pub bounds: [f32; 2],
     pub created: bool,
     pub seconds: f64,
+    /// Imported masks that no layer reads.
+    pub unused_masks: Vec<String>,
 }
 
 /// Imports `manifest` as the default world's terrain in `project`, creating the project if
@@ -204,9 +262,29 @@ pub fn import_heightfield(manifest: &Path, project: &Path) -> Result<Heightfield
         .with_context(|| format!("failed to create {}", project.display()))?;
     }
     let mut writer = TerrainImportWriter::open(project, bounds, Some(field.sea_level))?;
-    let layers: Vec<_> = writer.definition().layers.iter().map(|l| l.id).collect();
+    let field = &field;
+    let samplers: Vec<_> = (0..field.masks.len())
+        .map(|index| move |p: Vec2| field.mask(index, p))
+        .collect();
+    let masks: Vec<(&str, &terrain_world::MaskFn)> = field
+        .masks
+        .iter()
+        .zip(&samplers)
+        .map(|((name, _), sample)| (name.as_str(), sample as &terrain_world::MaskFn))
+        .collect();
+    let layers = terrain_world::imported_layers(writer.definition(), &masks)?;
+    let unused_masks =
+        terrain_world::unused_masks(writer.definition(), masks.iter().map(|(name, _)| *name));
     let height = |p: Vec2| field.height(p);
     let [first, last] = field.cells();
+    let corner = |cell: CellCoord| Vec2::new(cell.x as f32, cell.z as f32) * DEFAULT_CELL_SIZE;
+    let world = [
+        corner(first),
+        corner(CellCoord {
+            x: last.x + 1,
+            z: last.z + 1,
+        }),
+    ];
     let mut flat_cells = 0;
     // Rows of cells are built on every core and written here in order.
     let rows: Vec<_> = (first.z..=last.z).collect();
@@ -215,12 +293,12 @@ pub fn import_heightfield(manifest: &Path, project: &Path) -> Result<Heightfield
             .iter()
             .flat_map(|&z| (first.x..=last.x).map(move |x| CellCoord { x, z }))
             .collect();
-        for cell in parallel::map(&cells, |&cell| terrain_cell(cell, &height, &layers, None)) {
+        for cell in parallel::map(&cells, |&cell| terrain_cell(cell, &height, &layers, world)) {
             flat_cells += u64::from(cell.heights.is_none());
             writer.put(&cell)?;
         }
     }
-    let views = views(&height, &field)?;
+    let views = views(&height, field)?;
     writer.set_start_view(&views[0].1)?;
     let stats = writer.finish()?;
     terrain_world::write_views(project, &views)?;
@@ -230,6 +308,7 @@ pub fn import_heightfield(manifest: &Path, project: &Path) -> Result<Heightfield
         bounds,
         created,
         seconds: start.elapsed().as_secs_f64(),
+        unused_masks,
     })
 }
 
@@ -281,26 +360,46 @@ mod tests {
 
     /// A 2 m grid over 256 m: a round island in flat sea, with an optional bump.
     fn write_field(dir: &Path, bump: f32) -> PathBuf {
+        write_field_with_masks(dir, bump, &[])
+    }
+
+    type MaskRule = fn(Vec2) -> u8;
+
+    /// `write_field` with masks, each a name and its value at a sample.
+    fn write_field_with_masks(dir: &Path, bump: f32, masks: &[(&str, MaskRule)]) -> PathBuf {
         let n = 129;
         let origin = [-127.0_f32, -129.0];
-        let mut bytes = Vec::with_capacity(n * n * 4);
-        for z in 0..n {
-            for x in 0..n {
-                let p = Vec2::new(origin[0] + x as f32 * 2., origin[1] + z as f32 * 2.);
+        let points: Vec<_> = (0..n)
+            .flat_map(|z| (0..n).map(move |x| (x, z)))
+            .map(|(x, z)| Vec2::new(origin[0] + x as f32 * 2., origin[1] + z as f32 * 2.))
+            .collect();
+        let heights: Vec<u8> = points
+            .iter()
+            .flat_map(|&p| {
                 let island = 40. * (1. - p.length() / 70.);
                 let bumped = bump * (-(p - Vec2::new(20., 10.)).length_squared() / 36.).exp();
-                bytes.extend((island.max(-30.) + bumped).to_le_bytes());
-            }
+                (island.max(-30.) + bumped).to_le_bytes()
+            })
+            .collect();
+        fs::write(dir.join("height.f32"), heights).unwrap();
+        for (name, rule) in masks {
+            let samples: Vec<u8> = points.iter().map(|&p| rule(p)).collect();
+            fs::write(dir.join(format!("{name}.u8")), samples).unwrap();
         }
-        fs::write(dir.join("height.f32"), bytes).unwrap();
+        let masks: Vec<_> = masks
+            .iter()
+            .map(|(name, _)| format!(r#"{{"name": "{name}", "file": "{name}.u8"}}"#))
+            .collect();
         let manifest = dir.join("island.json");
         fs::write(
             &manifest,
             format!(
-                r#"{{"format": "yarra-heightfield", "version": 1, "samples": [{n}, {n}],
+                r#"{{"format": "yarra-heightfield", "version": 2, "samples": [{n}, {n}],
                 "spacing": 2.0, "origin": [{}, {}], "heights": "height.f32",
-                "sea_level": 0.0, "start": [60.0, 0.0], "source": "test"}}"#,
-                origin[0], origin[1]
+                "sea_level": 0.0, "masks": [{}], "start": [60.0, 0.0], "source": "test"}}"#,
+                origin[0],
+                origin[1],
+                masks.join(", ")
             ),
         )
         .unwrap();
@@ -334,6 +433,7 @@ mod tests {
             range: [-30., 1266.],
             sea_level: 0.,
             start: None,
+            masks: Vec::new(),
         };
         assert_eq!(
             field.cells(),
@@ -400,5 +500,121 @@ mod tests {
             incremental.manifest.content_hash,
             fresh.manifest.content_hash
         );
+    }
+
+    #[test]
+    fn masks_fill_their_layers_and_reimports_keep_painted_layers() {
+        let output = Output::new();
+        let sand: MaskRule = |p| if p.x > 10. { 255 } else { 0 };
+        let manifest = write_field_with_masks(&output.0, 0., &[("sand", sand)]);
+        let first = output.0.join("first.project.sqlite");
+        let report = import_heightfield(&manifest, &first).unwrap();
+        assert_eq!(report.unused_masks, ["sand"]);
+
+        // A sand layer reads the mask; a forest layer is painted in cell (1, 0).
+        let mut document = world_db::read_project_database(&first).unwrap();
+        let definition = &mut document.environments[0];
+        let template = definition.layers[0].clone();
+        let layer = |name: &str, order, imported_mask: Option<&str>| environment::Layer {
+            id: environment::LayerId(stable_id(name)),
+            name: name.into(),
+            order,
+            imported_mask: imported_mask.map(Into::into),
+            ..template.clone()
+        };
+        let (sand_layer, forest_layer) =
+            (layer("sand", 10, Some("sand")), layer("forest", 11, None));
+        definition
+            .layers
+            .extend([sand_layer.clone(), forest_layer.clone()]);
+        let green = definition
+            .layers
+            .iter()
+            .find(|l| l.imported_mask.as_deref() == Some("green"))
+            .unwrap()
+            .id;
+        let cell = CellCoord { x: 1, z: 0 };
+        // Empty along the border, which neighbouring cells share.
+        let side = terrain_world::MASK_SIDE;
+        let painted = environment::CoverageTile {
+            layer: forest_layer.id,
+            samples: (0..side * side)
+                .map(|i| {
+                    let inside = |v| (1..side - 1).contains(&v);
+                    if inside(i % side) && inside(i / side) {
+                        200
+                    } else {
+                        0
+                    }
+                })
+                .collect(),
+        };
+        document
+            .environment_cells
+            .iter_mut()
+            .find(|c| c.cell == cell)
+            .unwrap()
+            .tiles
+            .push(painted.clone());
+        let project = output.0.join("island.project.sqlite");
+        world_db::write_project_database(&project, &document).unwrap();
+
+        // An imported `green` replaces the generated one.
+        let manifest = write_field_with_masks(&output.0, 0., &[("sand", sand), ("green", |_| 0)]);
+        let report = import_heightfield(&manifest, &project).unwrap();
+        assert!(report.unused_masks.is_empty(), "{:?}", report.unused_masks);
+        assert!(report.stats.changed > 0);
+        let tiles = |project: &Path, cell: CellCoord| {
+            world_db::read_project_database(project)
+                .unwrap()
+                .environment_cells
+                .into_iter()
+                .find(|c| c.cell == cell)
+                .map_or_else(Vec::new, |c| c.tiles)
+        };
+        let east = tiles(&project, cell);
+        let tile = |layer| east.iter().find(|t| t.layer == layer);
+        assert!(
+            tile(sand_layer.id)
+                .unwrap()
+                .samples
+                .iter()
+                .all(|&s| s == 255)
+        );
+        assert_eq!(tile(forest_layer.id), Some(&painted));
+        assert_eq!(tile(green), None);
+        assert!(
+            tiles(&project, CellCoord { x: -2, z: 0 })
+                .iter()
+                .all(|t| t.layer != sand_layer.id)
+        );
+
+        // Imported coverage agrees along shared cell borders, as the cook requires.
+        cook_project_with_report(&project, &output.0.join("island.runtime.sqlite")).unwrap();
+
+        // Importing the same terrain again changes nothing and keeps the painting.
+        let again = import_heightfield(&manifest, &project).unwrap();
+        assert_eq!((again.stats.added, again.stats.changed), (0, 0));
+        assert_eq!(tiles(&project, cell), east);
+
+        // A layer whose mask the import lacks is an error.
+        let manifest = write_field_with_masks(&output.0, 0., &[("green", |_| 0)]);
+        let error = import_heightfield(&manifest, &project).unwrap_err();
+        assert!(format!("{error:#}").contains("\"sand\""), "{error:#}");
+    }
+
+    #[test]
+    fn mask_names_and_sizes_are_checked() {
+        let output = Output::new();
+        let project = output.0.join("island.project.sqlite");
+        for name in ["Sand", "sand", "wet ness"] {
+            let manifest = write_field_with_masks(&output.0, 0., &[(name, |_| 0), ("sand", |_| 0)]);
+            assert!(import_heightfield(&manifest, &project).is_err(), "{name}");
+        }
+        let manifest = write_field_with_masks(&output.0, 0., &[("sand", |_| 0)]);
+        fs::write(output.0.join("sand.u8"), [0; 10]).unwrap();
+        let error = import_heightfield(&manifest, &project).unwrap_err();
+        assert!(format!("{error:#}").contains("sand.u8"), "{error:#}");
+        assert!(!project.exists());
     }
 }

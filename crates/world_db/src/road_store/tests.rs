@@ -99,6 +99,7 @@ fn project() -> ProjectDocument {
             seed: 42,
             enabled: true,
             opacity: 1.0,
+            imported_mask: None,
         }],
     };
     let samples = (0..17)

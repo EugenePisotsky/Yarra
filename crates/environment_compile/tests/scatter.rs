@@ -46,6 +46,7 @@ fn add_collection(d: &mut EnvironmentDefinition, l: &mut PresetLibrary) {
         seed: 78,
         enabled: true,
         opacity: 1.0,
+        imported_mask: None,
     });
 }
 fn collection(l: &mut PresetLibrary) -> &mut AssetCollection {

@@ -39,6 +39,7 @@ fn add_layer(definition: &mut EnvironmentDefinition, preset: PresetId) -> LayerI
         seed: u32::from_le_bytes(id()[..4].try_into().unwrap()),
         enabled: true,
         opacity: 1.0,
+        imported_mask: None,
     });
     layer
 }
@@ -185,6 +186,9 @@ pub(crate) fn inspector(
                             paint.selected = Some(layer.id);
                             paint.definition_form = None;
                         }
+                        if let Some(mask) = &layer.imported_mask {
+                            ui.weak(format!("· imports {mask}"));
+                        }
                         if !browser.all
                             && paint.selected == Some(layer.id)
                             && !nearby.contains(&layer.id)
@@ -259,6 +263,34 @@ pub(crate) fn inspector(
                 ui.add(egui::Slider::new(&mut layer.opacity, 0.0..=1.0).text("Opacity"));
                 ui.label("Distribution seed");
                 ui.add(egui::DragValue::new(&mut layer.seed));
+                let mut imported = layer.imported_mask.is_some();
+                if ui
+                    .checkbox(&mut imported, "Coverage from terrain import")
+                    .on_hover_text(
+                        "Each terrain import rewrites this layer's coverage from the named mask, \
+                         so it cannot be painted. Paint touch-ups on a layer above it.",
+                    )
+                    .changed()
+                {
+                    layer.imported_mask = imported.then(String::new);
+                }
+                if let Some(mask) = &mut layer.imported_mask {
+                    ui.horizontal(|ui| {
+                        ui.label("Mask");
+                        ui.add(
+                            egui::TextEdit::singleline(mask)
+                                .char_limit(32)
+                                .hint_text("sand"),
+                        );
+                    });
+                    if !environment::valid_mask_name(mask) {
+                        ui.colored_label(
+                            egui::Color32::YELLOW,
+                            "Use lowercase letters, digits and underscores, starting with a letter.",
+                        );
+                    }
+                    ui.small("The next terrain import fills it; until then it keeps its coverage.");
+                }
             });
             let previous = layer.preset;
             controls::preset_selector(ui, "environment_preset", &mut layer.preset, &library, None);
@@ -289,6 +321,11 @@ pub(crate) fn inspector(
             }
         });
         let changed = form.changed();
+        let valid = form.draft.layers.iter().all(|l| {
+            l.imported_mask
+                .as_deref()
+                .is_none_or(environment::valid_mask_name)
+        });
         let mut apply = false;
         let mut discard = false;
         if changed {
@@ -299,7 +336,10 @@ pub(crate) fn inspector(
         }
         ui.horizontal(|ui| {
             apply = ui
-                .add_enabled(idle && changed, egui::Button::new("Apply settings"))
+                .add_enabled(
+                    idle && changed && valid,
+                    egui::Button::new("Apply settings"),
+                )
                 .clicked();
             discard = ui
                 .add_enabled(idle && changed, egui::Button::new("Discard"))
@@ -315,8 +355,17 @@ pub(crate) fn inspector(
         ui.weak("Create a layer to start painting this world.");
     }
     ui.separator();
+    let imported = paint.selected.is_some_and(|selected| {
+        definition
+            .layers
+            .iter()
+            .any(|l| l.id == selected && l.imported_mask.is_some())
+    });
+    if imported {
+        ui.weak("This layer's coverage comes from the terrain import.");
+    }
     ui.add_enabled_ui(
-        idle && !paint.has_unapplied_changes() && paint.selected.is_some(),
+        idle && !paint.has_unapplied_changes() && paint.selected.is_some() && !imported,
         |ui| {
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut paint.brush.operation, BrushOperation::Paint, "Paint");

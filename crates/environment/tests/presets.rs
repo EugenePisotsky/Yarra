@@ -225,3 +225,33 @@ fn resolved_dependencies_only_include_reachable_presets() {
         .revision += 1;
     assert_ne!(before, lib.resolve(DRY_MEADOW, &[]).unwrap());
 }
+#[test]
+fn imported_mask_names_are_checked_with_their_layer() {
+    let (lib, _) = fixture();
+    let layer = |mask: Option<&str>| EnvironmentDefinition {
+        space: world::WorldSpaceId(1),
+        revision: 1,
+        cell_size: 32.0,
+        mask_resolution: 33,
+        surfaces: vec![TerrainSurfaceId([1; 16]), TerrainSurfaceId([2; 16])],
+        base_surface: TerrainSurfaceId([1; 16]),
+        layers: vec![Layer {
+            id: LayerId([1; 16]),
+            revision: 1,
+            name: "Sand".into(),
+            preset: DRY_MEADOW,
+            overrides: vec![],
+            order: 0,
+            seed: 1,
+            enabled: true,
+            opacity: 1.0,
+            imported_mask: mask.map(Into::into),
+        }],
+    };
+    for mask in [None, Some("sand"), Some("rock_2"), Some(&*"a".repeat(32))] {
+        assert!(layer(mask).validate_layers(&lib).is_ok(), "{mask:?}");
+    }
+    for mask in ["", "Sand", "2rock", "wet ness", "_sand", &"a".repeat(33)] {
+        assert!(layer(Some(mask)).validate_layers(&lib).is_err(), "{mask:?}");
+    }
+}

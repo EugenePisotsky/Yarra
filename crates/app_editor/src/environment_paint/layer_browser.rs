@@ -451,6 +451,7 @@ mod tests {
             seed: 1,
             enabled: false,
             opacity: 1.0,
+            imported_mask: None,
         };
         let mut browser = EnvironmentLayerBrowser {
             search: "not a match".into(),

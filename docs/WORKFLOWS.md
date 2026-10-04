@@ -26,16 +26,23 @@ Explicit paths: `init PROJECT_DB RUNTIME_DB`, `cook PROJECT_DB RUNTIME_DB`, edit
 
 ### Terrain from Houdini
 
-A heightfield from a terrain tool defines the world: its footprint sets the cells, and its heights replace the default world's terrain. Houdini's `hython` (Apprentice or Indie) writes the neutral format, float32 heights plus a JSON manifest:
+A heightfield from a terrain tool defines the world: its footprint sets the cells, and its heights replace the default world's terrain. Houdini's `hython` (Apprentice or Indie) writes the neutral format, version 2: float32 heights, optional masks of one byte per sample, and a JSON manifest:
 
 ```sh
 /Applications/Houdini/Current/Frameworks/Houdini.framework/Versions/Current/Resources/bin/hython \
-  tools/houdini_export_heightfield.py ~/Dev/world_next.hipnc /tmp/island --start 2500 4330
+  tools/houdini_export_heightfield.py ~/Dev/world_next.hipnc /tmp/island --start 2500 4330 \
+  --mask sand=beach_mask --mask rock=cliff_faces
 cargo run --release -p yarra-world-cook -- import-heightfield /tmp/island/heightfield.json
 cargo run --release -p yarra-app-game
 ```
 
-The script exports the display node's `height` volume (or `--node SOP`) with Houdini's axes unchanged: in the top view +X is right and +Z is down. `import-heightfield MANIFEST [PROJECT_DB] [RUNTIME_DB]` creates the project if it is missing, then cooks. It samples the heightfield every metre with smooth (Catmull-Rom) interpolation and paints ground from height and slope. The world is widened to whole 1 km blocks of flat sea so the terrain hierarchy closes. The `--start` point (by default the shore nearest the centre) becomes the world's start: the game and editor begin there unless `--start-view` overrides it. `start` and `summit` views are also written beside the project. Moving the start recooks nothing. Re-importing after a change in Houdini rewrites only cells whose heights or paint changed, so the cook that follows is incremental. Objects and roads in the project are kept; a cell the new footprint no longer covers is removed and fails if it still holds them. Sculpt in Houdini, not in the editor: a re-import replaces heights.
+The script exports the display node's `height` volume (or `--node SOP`; `--height VOLUME` names another volume, such as the `mask` a Copernicus network outputs) with Houdini's axes unchanged: in the top view +X is right and +Z is down. Each `--mask NAME[=VOLUME]` exports a volume of the same heightfield as `NAME.u8`, 0–1 as 0–255; remap masks to 0–1 in Houdini, since the script clamps (and warns about) values outside. Mask names are lowercase letters, digits and underscores. Slope, height and their derivatives need no export: the cook computes them. Whole-metre spacing from a whole-metre origin lets the import use samples as they are; the script notes other grids.
+
+`import-heightfield MANIFEST [PROJECT_DB] [RUNTIME_DB]` creates the project if it is missing, then cooks. It samples the heightfield every metre with smooth (Catmull-Rom) interpolation and masks linearly. The world is widened to whole 1 km blocks of flat sea so the terrain hierarchy closes. The `--start` point (by default the shore nearest the centre) becomes the world's start: the game and editor begin there unless `--start-view` overrides it. `start` and `summit` views are also written beside the project. Moving the start recooks nothing.
+
+Ground layers are either imported or painted. An imported layer names a mask (editor: Environment → Layer settings → **Coverage from terrain import**), and every import rewrites its coverage from that mask; the editor does not paint it, so touch-ups go on a painted layer above. Painted layers are never touched by imports. New worlds bind the three meadow layers to masks generated from height and slope: `land` (Dry meadow), `green` (Green meadow) and `bare` (Clearing). An exported mask with one of those names replaces the generated one. The import prints masks no layer reads, and fails if a layer reads a mask it doesn't provide. Bind a new mask in the editor, save, then re-import. Imported coverage fades out over the world's last 48 m.
+
+Re-importing after a change in Houdini rewrites only cells whose heights or imported coverage changed, so the cook that follows is incremental. Objects, roads and painted layers in the project are kept; a cell the new footprint no longer covers is removed and fails if it still holds objects or roads. Sculpt in Houdini, not in the editor: a re-import replaces heights.
 
 To stress streaming on foot, `--render-repro actor-walk --start-view VIEW` walks the player along the view's `route` at 20 m/s. The camera follows, holds its heading for 60 s, then looks back and forth every 20 s. Add `--fps 60` to match a 60 Hz display. `ACTOR_WALK` lines log progress. Whenever an actor waits more than 5 s for ground, the game logs `TERRAIN_STALL` with the loader's state; a loader that stops for good logs `TERRAIN_LOD_FAILED`. To send a log of a normal session: `cargo run --release -p yarra-app-game 2>&1 | tee tmp/walk.log`.
 

@@ -17,6 +17,7 @@ fn definition() -> EnvironmentDefinition {
             seed: 1,
             enabled: true,
             opacity: 1.0,
+            imported_mask: None,
             overrides: vec![],
         }],
     }

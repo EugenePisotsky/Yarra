@@ -97,6 +97,20 @@ pub struct Layer {
     pub enabled: bool,
     /// Multiplies coverage for all outputs, including replacement and exclusion.
     pub opacity: f32,
+    /// The terrain mask that supplies this layer's coverage. Every terrain import rewrites it,
+    /// so it is not painted. `None` for a painted layer, which imports never touch.
+    #[serde(default)]
+    pub imported_mask: Option<String>,
+}
+
+/// A terrain mask name: 1–32 lowercase ASCII letters, digits and underscores, starting with a
+/// letter. Masks come from terrain tools and are matched to layers by name.
+pub fn valid_mask_name(name: &str) -> bool {
+    (1..=32).contains(&name.len())
+        && name.starts_with(|c: char| c.is_ascii_lowercase())
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
 }
 
 /// An explicitly loaded cell. An absent layer tile here means zero coverage.
@@ -152,6 +166,10 @@ impl EnvironmentDefinition {
                 || layer.name.trim().is_empty()
                 || layer.name.len() > 256
                 || !unit(layer.opacity)
+                || layer
+                    .imported_mask
+                    .as_deref()
+                    .is_some_and(|mask| !valid_mask_name(mask))
             {
                 return Err(ValidationError::Invalid("layer"));
             }

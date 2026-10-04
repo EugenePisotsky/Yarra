@@ -137,6 +137,7 @@ impl Request {
             seed: SEED,
             enabled: true,
             opacity: 1.0,
+            imported_mask: None,
         };
         let mut layers = vec![];
         if let Some(p) = self.underlay {

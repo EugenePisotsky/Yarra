@@ -280,6 +280,7 @@ pub(super) fn demo_environment(
                 seed: 42,
                 enabled: true,
                 opacity: 1.0,
+                imported_mask: None,
             })
             .collect(),
     };

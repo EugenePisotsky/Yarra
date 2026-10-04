@@ -139,6 +139,12 @@ fn main() -> Result<()> {
             report.bounds[0],
             report.bounds[1]
         );
+        if !report.unused_masks.is_empty() {
+            println!(
+                "No layer reads the masks {}; give a layer one in the editor to use it",
+                report.unused_masks.join(", ")
+            );
+        }
         println!(
             "Start views: {}",
             project_path.with_extension("views").display()

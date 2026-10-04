@@ -256,6 +256,17 @@ fn paint_input(
         paint.status = Some("Enable this layer before painting".into());
         return;
     }
+    if let Some(mask) = definition
+        .layers
+        .iter()
+        .find(|l| l.id == layer)
+        .and_then(|l| l.imported_mask.as_ref())
+    {
+        paint.status = Some(format!(
+            "This layer imports the {mask} mask; paint on a layer above it"
+        ));
+        return;
+    }
     let Some(cursor) = input.window.cursor_position() else {
         if let Some(stroke) = &mut paint.stroke {
             stroke.last_point = None;

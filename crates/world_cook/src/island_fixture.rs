@@ -77,19 +77,16 @@ fn island_height(p: Vec2) -> f32 {
 
 fn document(half_cells: i32) -> ProjectDocument {
     let mut project = base_document("Island", [MINIMUM_HEIGHT, MAXIMUM_HEIGHT], SEA_LEVEL);
-    let layers: Vec<_> = project.environments[0]
-        .layers
-        .iter()
-        .map(|l| l.id)
-        .collect();
-    let extent = half_cells as f32 * DEFAULT_CELL_SIZE;
+    let layers = terrain_world::imported_layers(&project.environments[0], &[])
+        .expect("the island's layers read generated masks");
+    let bounds = Vec2::splat(half_cells as f32 * DEFAULT_CELL_SIZE);
     let cells: Vec<_> = (-half_cells..half_cells)
         .flat_map(|x| (-half_cells..half_cells).map(move |z| CellCoord { x, z }))
         .collect();
     // Paint must match across borders, including cells beyond the world. The full island's
     // edge is sea; smaller test squares fade out instead.
     for cell in parallel::map(&cells, |&cell| {
-        terrain_world::terrain_cell(cell, &island_height, &layers, Some(extent))
+        terrain_world::terrain_cell(cell, &island_height, &layers, [-bounds, bounds])
     }) {
         terrain_world::push_cell(&mut project, cell);
     }

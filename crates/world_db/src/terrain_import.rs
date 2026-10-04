@@ -1,7 +1,8 @@
-//! In-place replacement of a world space's terrain for importers: heights and paint, written
-//! cell by cell in one transaction. Revisions advance only where the data changed, so the next
-//! incremental cook recompiles only those cells. Paint rows are never deleted, only cleared,
-//! so a revision can never repeat with different contents.
+//! In-place replacement of a world space's terrain for importers: heights and the coverage of
+//! imported layers, written cell by cell in one transaction. Painted layers keep their coverage.
+//! Revisions advance only where the data changed, so the next incremental cook recompiles only
+//! those cells. Paint rows are never deleted, only cleared, so a revision can never repeat with
+//! different contents.
 use crate::environment_store::{read_cell, read_definition, store_cell};
 use crate::storage::{decode_f32_blob, encode_f32_blob, ensure_schema_version};
 use crate::{SourceEnvironmentCellRecord, WorldDbError};
@@ -23,7 +24,7 @@ pub struct ImportedTerrainCell {
     /// `resolution²` samples, or `None` for an exactly flat cell.
     pub heights: Option<Vec<f32>>,
     pub resolution: u16,
-    /// Coverage per environment layer; all-zero tiles are dropped.
+    /// Coverage of the layers with an imported mask; all-zero tiles are dropped.
     pub tiles: Vec<CoverageTile>,
 }
 
@@ -31,7 +32,7 @@ pub struct ImportedTerrainCell {
 pub struct TerrainImportStats {
     pub cells: u64,
     pub added: u64,
-    /// Existing cells whose heights or paint changed.
+    /// Existing cells whose heights or imported coverage changed.
     pub changed: u64,
     /// Cells of the space the import no longer covers.
     pub removed: u64,
@@ -94,11 +95,19 @@ impl TerrainImportWriter {
             return Err(invalid("imported heightfield size"));
         }
         let mask = usize::from(self.definition.mask_resolution).pow(2);
-        if imported.tiles.iter().any(|t| {
-            t.samples.len() != mask || !self.definition.layers.iter().any(|l| l.id == t.layer)
-        }) {
+        let imported_layer = |layer| {
+            self.definition
+                .layers
+                .iter()
+                .any(|l| l.id == layer && l.imported_mask.is_some())
+        };
+        if imported
+            .tiles
+            .iter()
+            .any(|t| t.samples.len() != mask || !imported_layer(t.layer))
+        {
             return Err(invalid(
-                "imported paint does not match the environment definition",
+                "imported coverage must be for layers with an imported mask",
             ));
         }
         let c = &self.connection;
@@ -173,15 +182,18 @@ impl TerrainImportWriter {
             }
             changed = true;
         }
-        let mut tiles: Vec<_> = imported
-            .tiles
+        let mut budget = usize::MAX;
+        let paint = read_cell(c, &self.definition, cell, &mut budget)?;
+        // Painted layers keep their tiles; imported layers get the new ones.
+        let mut tiles: Vec<_> = paint
             .iter()
+            .flat_map(|p| &p.tiles)
+            .filter(|t| !imported_layer(t.layer))
+            .chain(&imported.tiles)
             .filter(|t| t.samples.iter().any(|&s| s != 0))
             .cloned()
             .collect();
         tiles.sort_by_key(|t| t.layer.0);
-        let mut budget = usize::MAX;
-        let paint = read_cell(c, &self.definition, cell, &mut budget)?;
         let same_paint = match &paint {
             Some(old) => old.tiles == tiles,
             None => tiles.is_empty(),

@@ -302,7 +302,7 @@ CREATE TABLE road_junction_cells (
 ) STRICT;
 CREATE INDEX road_junction_cells_id ON road_junction_cells(junction_id);
 
-PRAGMA user_version = 27;
+PRAGMA user_version = 28;
 "#;
 
 pub const RUNTIME_SCHEMA: &str = r#"
