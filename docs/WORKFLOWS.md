@@ -111,11 +111,11 @@ separate legacy assets.
 | Tall layered broadleaf | `yarra_tall_forest/tall_forest.catalog.ron` | `tall-forest-stand` |
 | Generic forest shrubs: rounded, spreading, sparse; medium rounded/spreading/upright (medium forms under review) | `yarra_shrubs/shrubs.catalog.ron` | `shrubs-stand`, `shrubs-medium-stand` |
 | Bay shrub | `yarra_bay/bay.catalog.ron` | `bay-stand` |
-| Longleaf: healthy, half-bare, nearly-bare, one-sided | `yarra_longleaf/longleaf.catalog.ron` | `longleaf-kit` |
+| Longleaf: healthy, tall-bole, broad, leaning, flat-top, half-bare, nearly-bare, one-sided | `yarra_longleaf/longleaf.catalog.ron` | `longleaf-kit` |
 | Norway spruce | `yarra_spruces/spruces.catalog.ron` | `spruce-stand` |
 | Dead broadleaf: upright, spreading, split, slender, double, triple | `yarra_dead_trees/dead_trees.catalog.ron` | `dead-trees-stand`, `dead-trees-slender-stand` |
 
-These are 29 approved forms plus three medium shrub studies under review, each with three mesh LODs. Legacy pine packs and branch-study
+These are 29 approved forms plus three medium shrub studies and four longleaf shape variants under review, each with three mesh LODs and an impostor. Legacy pine packs and branch-study
 assets remain archived; do not restore their retired preview placements when
 adding new pine variants. The current pine scaffold is `pine_longleaf`.
 
@@ -378,6 +378,11 @@ python3 tools/import_vegetation_bundle.py \
   --bundle /path/to/vegetation/outputs/pine_longleaf_half_bare/current \
   --bundle /path/to/vegetation/outputs/pine_longleaf_nearly_bare/current \
   --bundle /path/to/vegetation/outputs/pine_longleaf_one_sided/current \
+  --bundle /path/to/vegetation/outputs/pine_longleaf_tall_bole/current \
+  --bundle /path/to/vegetation/outputs/pine_longleaf_broad/current \
+  --bundle /path/to/vegetation/outputs/pine_longleaf_leaning/current \
+  --bundle /path/to/vegetation/outputs/pine_longleaf_flat_top/current \
+  --lod-screen-heights 480 240 --impostor-screen-height 200 \
   --output assets/local/yarra_longleaf \
   --catalog assets/packs/yarra_longleaf/longleaf.catalog.ron
 target/release/yarra-world-cook import-assets assets/packs/yarra_longleaf/longleaf.catalog.ron
@@ -404,7 +409,9 @@ are unchanged. Reruns preserve existing longleaf placements and bookmark edits.
 Captures go to `tmp/longleaf-review`; use `--view close --mode half` for a
 reduced-resolution check. The helper verifies fresh, non-black output. These
 are visual checks; GPU/frame timings during a capture are not a forest benchmark.
-The four longleaf forms are the active pine kit. Old source assets remain archived.
+The eight longleaf forms are the active pine kit: four healthy shapes grown from
+their own seeds and four needle-loss forms of the approved tree. Old source assets
+remain archived. `tools/forest_plan.py` mixes all eight in pine stands.
 
 ### Norway spruce prototype
 

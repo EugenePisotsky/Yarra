@@ -23,4 +23,28 @@
 (uri: "local/yarra_longleaf/runtime/pine_longleaf_one_sided/pine_longleaf_one_sided_lod2.gltf", bounds: (8.5340, 19.0000, 8.7798), gpu_bytes_estimate: 237152, minimum_screen_height: 200.0),
 (uri: "local/yarra_longleaf/runtime/pine_longleaf_one_sided/pine_longleaf_one_sided.impostor.json", bounds: (8.5340, 19.0000, 8.7798), gpu_bytes_estimate: 1369457, minimum_screen_height: 0.0),
 ]),
+(key: "yarra_longleaf/pine_longleaf_tall_bole", display_name: "Pine Longleaf Tall Bole", source_uri: "local/yarra_longleaf/source/pine_longleaf_tall_bole.glb", variants: [
+(uri: "local/yarra_longleaf/runtime/pine_longleaf_tall_bole/pine_longleaf_tall_bole_lod0.gltf", bounds: (8.7864, 19.0000, 8.2246), gpu_bytes_estimate: 947904, minimum_screen_height: 480.0),
+(uri: "local/yarra_longleaf/runtime/pine_longleaf_tall_bole/pine_longleaf_tall_bole_lod1.gltf", bounds: (8.7864, 19.0000, 8.2246), gpu_bytes_estimate: 483512, minimum_screen_height: 240.0),
+(uri: "local/yarra_longleaf/runtime/pine_longleaf_tall_bole/pine_longleaf_tall_bole_lod2.gltf", bounds: (8.7864, 19.0000, 8.2246), gpu_bytes_estimate: 247424, minimum_screen_height: 200.0),
+(uri: "local/yarra_longleaf/runtime/pine_longleaf_tall_bole/pine_longleaf_tall_bole.impostor.json", bounds: (8.7864, 19.0000, 8.2246), gpu_bytes_estimate: 1309028, minimum_screen_height: 0.0),
+]),
+(key: "yarra_longleaf/pine_longleaf_broad", display_name: "Pine Longleaf Broad", source_uri: "local/yarra_longleaf/source/pine_longleaf_broad.glb", variants: [
+(uri: "local/yarra_longleaf/runtime/pine_longleaf_broad/pine_longleaf_broad_lod0.gltf", bounds: (10.5039, 19.0870, 8.8771), gpu_bytes_estimate: 945768, minimum_screen_height: 480.0),
+(uri: "local/yarra_longleaf/runtime/pine_longleaf_broad/pine_longleaf_broad_lod1.gltf", bounds: (10.5039, 19.0870, 8.8771), gpu_bytes_estimate: 483304, minimum_screen_height: 240.0),
+(uri: "local/yarra_longleaf/runtime/pine_longleaf_broad/pine_longleaf_broad_lod2.gltf", bounds: (10.5039, 19.0870, 8.8771), gpu_bytes_estimate: 247600, minimum_screen_height: 200.0),
+(uri: "local/yarra_longleaf/runtime/pine_longleaf_broad/pine_longleaf_broad.impostor.json", bounds: (10.5039, 19.0870, 8.8771), gpu_bytes_estimate: 1550431, minimum_screen_height: 0.0),
+]),
+(key: "yarra_longleaf/pine_longleaf_leaning", display_name: "Pine Longleaf Leaning", source_uri: "local/yarra_longleaf/source/pine_longleaf_leaning.glb", variants: [
+(uri: "local/yarra_longleaf/runtime/pine_longleaf_leaning/pine_longleaf_leaning_lod0.gltf", bounds: (7.9867, 20.0001, 8.6153), gpu_bytes_estimate: 946464, minimum_screen_height: 480.0),
+(uri: "local/yarra_longleaf/runtime/pine_longleaf_leaning/pine_longleaf_leaning_lod1.gltf", bounds: (7.9867, 20.0001, 8.6153), gpu_bytes_estimate: 482808, minimum_screen_height: 240.0),
+(uri: "local/yarra_longleaf/runtime/pine_longleaf_leaning/pine_longleaf_leaning_lod2.gltf", bounds: (7.9867, 20.0001, 8.6153), gpu_bytes_estimate: 247424, minimum_screen_height: 200.0),
+(uri: "local/yarra_longleaf/runtime/pine_longleaf_leaning/pine_longleaf_leaning.impostor.json", bounds: (7.9867, 20.0001, 8.6153), gpu_bytes_estimate: 1317471, minimum_screen_height: 0.0),
+]),
+(key: "yarra_longleaf/pine_longleaf_flat_top", display_name: "Pine Longleaf Flat Top", source_uri: "local/yarra_longleaf/source/pine_longleaf_flat_top.glb", variants: [
+(uri: "local/yarra_longleaf/runtime/pine_longleaf_flat_top/pine_longleaf_flat_top_lod0.gltf", bounds: (7.8349, 19.1541, 8.9253), gpu_bytes_estimate: 947096, minimum_screen_height: 480.0),
+(uri: "local/yarra_longleaf/runtime/pine_longleaf_flat_top/pine_longleaf_flat_top_lod1.gltf", bounds: (7.8349, 19.1541, 8.9253), gpu_bytes_estimate: 484040, minimum_screen_height: 240.0),
+(uri: "local/yarra_longleaf/runtime/pine_longleaf_flat_top/pine_longleaf_flat_top_lod2.gltf", bounds: (7.8349, 19.1541, 8.9253), gpu_bytes_estimate: 248128, minimum_screen_height: 200.0),
+(uri: "local/yarra_longleaf/runtime/pine_longleaf_flat_top/pine_longleaf_flat_top.impostor.json", bounds: (7.8349, 19.1541, 8.9253), gpu_bytes_estimate: 1366866, minimum_screen_height: 0.0),
+]),
 ])

@@ -39,6 +39,8 @@ CELL = 32.0
 CROWN = {
     'yarra_longleaf/pine_longleaf': 8.6, 'yarra_longleaf/pine_longleaf_half_bare': 8.6,
     'yarra_longleaf/pine_longleaf_nearly_bare': 8.6, 'yarra_longleaf/pine_longleaf_one_sided': 8.6,
+    'yarra_longleaf/pine_longleaf_tall_bole': 8.5, 'yarra_longleaf/pine_longleaf_broad': 9.7,
+    'yarra_longleaf/pine_longleaf_leaning': 8.3, 'yarra_longleaf/pine_longleaf_flat_top': 8.4,
     'yarra_spruces/spruce_forest': 7.8,
     'yarra_oaks/oak_forest': 16.8, 'yarra_oaks/oak_spreading': 20.6, 'yarra_oaks/oak_sparse': 16.2,
     'yarra_maples/maple_forest': 13.8, 'yarra_maples/maple_spreading': 17.3, 'yarra_maples/maple_sparse': 13.2,
@@ -55,15 +57,22 @@ CROWN = {
 PINE, SPRUCE, BROADLEAF, BIRCH = 'pine', 'spruce', 'broadleaf', 'birch'
 TYPES = (PINE, SPRUCE, BROADLEAF, BIRCH)
 YOUNG, MATURE, OLD = 'young', 'mature', 'old'
-AGES = {YOUNG: (0.25, 1.3, (0.55, 0.8)), MATURE: (0.5, 1.0, (0.85, 1.05)), OLD: (0.25, 0.7, (1.0, 1.2))}
+# Per age: share of stands, relative density, and the uniform scale range of its trees.
+AGES = {YOUNG: (0.25, 1.3, (0.55, 0.8)), MATURE: (0.5, 1.0, (0.85, 1.15)), OLD: (0.25, 0.7, (0.95, 1.25))}
 # Canopy composition per forest type and age: (form, weight). Dead forms appear with age.
 P, S, B = 'yarra_longleaf/', 'yarra_spruces/', 'yarra_birches/'
 O, M, T, D = 'yarra_oaks/', 'yarra_maples/', 'yarra_tall_forest/', 'yarra_dead_trees/'
 COMPOSITION = {
-    (PINE, YOUNG): [(P + 'pine_longleaf', 65), (B + 'birch_leafy', 20), (B + 'birch_crown', 15)],
-    (PINE, MATURE): [(P + 'pine_longleaf', 72), (P + 'pine_longleaf_half_bare', 10), (P + 'pine_longleaf_one_sided', 6),
+    (PINE, YOUNG): [(P + 'pine_longleaf', 25), (P + 'pine_longleaf_tall_bole', 10), (P + 'pine_longleaf_broad', 10),
+                    (P + 'pine_longleaf_leaning', 10), (P + 'pine_longleaf_flat_top', 10),
+                    (B + 'birch_leafy', 20), (B + 'birch_crown', 15)],
+    (PINE, MATURE): [(P + 'pine_longleaf', 24), (P + 'pine_longleaf_tall_bole', 14), (P + 'pine_longleaf_broad', 12),
+                     (P + 'pine_longleaf_leaning', 11), (P + 'pine_longleaf_flat_top', 11),
+                     (P + 'pine_longleaf_half_bare', 10), (P + 'pine_longleaf_one_sided', 6),
                      (B + 'birch_leafy', 8), (D + 'dead_slender', 4)],
-    (PINE, OLD): [(P + 'pine_longleaf', 45), (P + 'pine_longleaf_half_bare', 22), (P + 'pine_longleaf_nearly_bare', 12),
+    (PINE, OLD): [(P + 'pine_longleaf', 14), (P + 'pine_longleaf_tall_bole', 9), (P + 'pine_longleaf_broad', 8),
+                  (P + 'pine_longleaf_leaning', 7), (P + 'pine_longleaf_flat_top', 7),
+                  (P + 'pine_longleaf_half_bare', 22), (P + 'pine_longleaf_nearly_bare', 12),
                   (P + 'pine_longleaf_one_sided', 8), (D + 'dead_upright', 5), (D + 'dead_slender', 4), (D + 'dead_double', 4)],
     (SPRUCE, YOUNG): [(S + 'spruce_forest', 75), (B + 'birch_crown', 15), (B + 'birch_pendulous', 10)],
     (SPRUCE, MATURE): [(S + 'spruce_forest', 85), (B + 'birch_pendulous', 7), (D + 'dead_slender', 5), (D + 'dead_double', 3)],
@@ -75,9 +84,9 @@ COMPOSITION = {
                        (T + 'tall_broadleaf_forest', 16), (O + 'oak_sparse', 6), (D + 'dead_spreading', 6), (D + 'dead_split', 6)],
     (BIRCH, YOUNG): [(B + 'birch_leafy', 40), (B + 'birch_crown', 20), (B + 'birch_double', 20), (B + 'birch_triple', 20)],
     (BIRCH, MATURE): [(B + 'birch_leafy', 35), (B + 'birch_pendulous', 15), (B + 'birch_double', 15), (B + 'birch_triple', 12),
-                      (B + 'birch_crown', 13), (B + 'birch_sparse', 6), (P + 'pine_longleaf', 4)],
+                      (B + 'birch_crown', 13), (B + 'birch_sparse', 6), (P + 'pine_longleaf', 2), (P + 'pine_longleaf_broad', 2)],
     (BIRCH, OLD): [(B + 'birch_leafy', 30), (B + 'birch_pendulous', 20), (B + 'birch_sparse', 15), (B + 'birch_bare', 8),
-                   (B + 'birch_triple', 12), (D + 'dead_slender', 8), (P + 'pine_longleaf', 7)],
+                   (B + 'birch_triple', 12), (D + 'dead_slender', 8), (P + 'pine_longleaf', 4), (P + 'pine_longleaf_flat_top', 3)],
 }
 # Clustering: the share of candidates drawn around parent trees instead of evenly.
 CLUMPING = {PINE: 0.2, SPRUCE: 0.45, BROADLEAF: 0.3, BIRCH: 0.6}
