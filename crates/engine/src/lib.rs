@@ -8,6 +8,7 @@ mod character_catalog;
 mod msaa_store;
 mod object_lod;
 pub use object_lod::{ObjectFootprint, ObjectLodPlugin};
+mod forest_shadow;
 mod tree_impostor;
 mod tree_wind;
 pub use tree_wind::{

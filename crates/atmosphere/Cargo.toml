@@ -8,3 +8,4 @@ publish.workspace = true
 bevy.workspace = true
 world.workspace = true
 bytemuck.workspace = true
+half = "2.7"

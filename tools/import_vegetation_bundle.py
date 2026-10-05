@@ -244,6 +244,7 @@ def main():
                 descriptor.write_text(json.dumps({
                     'version': 1, 'views': info['views'], 'cell': info['cell'], 'centre': info['centre'],
                     'radius': info['radius'], 'crop': info.get('crop', [0., 0., 1., 1.]),
+                    **({'crown': info['crown']} if 'crown' in info else {}),
                     'alpha_cutoff': info['alpha_cutoff'], **maps,
                     'conventions': info['conventions'],
                 }, indent=1)+'\n')

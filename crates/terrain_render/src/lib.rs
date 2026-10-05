@@ -156,6 +156,9 @@ pub struct TerrainMaterial {
     cloud_shadows: Option<Handle<Image>>,
     #[texture(123, sample_type = "float", filterable = false)]
     rain_shelter: Option<Handle<Image>>,
+    #[texture(124)]
+    #[sampler(125)]
+    forest_shadow: Option<Handle<Image>>,
     pub shading_mode: TerrainShadingMode,
     stochastic_cached: bool,
     prepared: bool,
@@ -246,6 +249,9 @@ impl Material for TerrainMaterial {
         _layout: &MeshVertexBufferLayoutRef,
         key: MaterialPipelineKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
+        if let Some(fragment) = descriptor.fragment.as_mut() {
+            fragment.shader_defs.push("FOREST_SHADOW".into());
+        }
         if key.bind_group_data.canopy
             && let Some(fragment) = descriptor.fragment.as_mut()
         {
@@ -341,6 +347,7 @@ pub fn prepare_terrain_material(
         cloud_parameters: atmosphere::clouds::fallback_parameters(),
         cloud_shadows: None,
         rain_shelter: None,
+        forest_shadow: None,
         shading_mode: TerrainShadingMode::Production,
         stochastic_cached: false,
         prepared: false,
@@ -566,6 +573,7 @@ fn sync_cloud_inputs(
         m.cloud_parameters = clouds.parameters.clone();
         m.cloud_shadows = Some(clouds.shadows.clone());
         m.rain_shelter = Some(clouds.shelter.clone());
+        m.forest_shadow = Some(clouds.forest_shadow.clone());
     }
     let ids: Vec<_> = far
         .iter()
@@ -577,5 +585,6 @@ fn sync_cloud_inputs(
         m.cloud_parameters = clouds.parameters.clone();
         m.cloud_shadows = Some(clouds.shadows.clone());
         m.rain_shelter = Some(clouds.shelter.clone());
+        m.forest_shadow = Some(clouds.forest_shadow.clone());
     }
 }

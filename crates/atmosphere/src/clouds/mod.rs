@@ -55,6 +55,8 @@ pub struct CloudAssets {
     pub noise: Handle<Image>,
     /// Top-down rain shelter around the camera; see `crate::shelter`.
     pub shelter: Handle<Image>,
+    /// Crowns around the camera for distant forest shadows; see `crate::forest_shadow`.
+    pub forest_shadow: Handle<Image>,
 }
 #[derive(Resource, Clone, Copy, Default, ExtractResource, Pod, Zeroable)]
 #[repr(C)]
@@ -77,6 +79,8 @@ pub struct CloudParams {
     pub weather: [f32; 4],
     /// Rain shelter map: origin XZ, metres per texel, enabled.
     pub shelter: [f32; 4],
+    /// Forest shadow map: origin XZ, metres per texel (0 when off), tallest crown top.
+    pub forest_shadow: [f32; 4],
 }
 #[derive(Component, Clone, bevy::render::extract_component::ExtractComponent)]
 pub struct CloudView;
@@ -85,6 +89,7 @@ impl Plugin for CloudsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CloudClock>()
             .init_resource::<crate::shelter::RainShelter>()
+            .init_resource::<crate::forest_shadow::ForestShadow>()
             .init_resource::<CloudOrigin>()
             .init_resource::<CloudQuality>()
             .init_resource::<CloudParams>();
@@ -100,7 +105,10 @@ impl Plugin for CloudsPlugin {
             material::CloudMaterialPlugin,
         ))
         .add_systems(Startup, setup)
-        .add_systems(PostUpdate, (sync, publish_shelter).after(ApplyAtmosphere));
+        .add_systems(
+            PostUpdate,
+            (sync, publish_shelter, publish_forest_shadow).after(ApplyAtmosphere),
+        );
         render::install(app);
     }
 }
@@ -148,6 +156,7 @@ fn setup(
         noise: images.add(noise),
         shadows: images.add(shadows),
         shelter: images.add(crate::shelter::RainShelter::image()),
+        forest_shadow: images.add(crate::forest_shadow::ForestShadow::image()),
         parameters: buffers.add(ShaderBuffer::new(
             bytemuck::bytes_of(&CloudParams::default()),
             RenderAssetUsages::RENDER_WORLD,
@@ -164,6 +173,7 @@ fn sync(
     mut params: ResMut<CloudParams>,
     views: Query<(Entity, Option<&CloudView>, &WorldEnvironmentView)>,
     shelter: Res<crate::shelter::RainShelter>,
+    forest: Res<crate::forest_shadow::ForestShadow>,
 ) {
     let profile = state.effective_profile();
     let profile = profile.as_ref();
@@ -231,6 +241,7 @@ fn sync(
         transition: [0.; 4],
         weather: [0.; 4],
         shelter: shelter.parameters(),
+        forest_shadow: forest.parameters(),
     };
     if state.owner != AtmosphereOwner::Study && profile.outdoor {
         params.weather = [
@@ -303,6 +314,25 @@ fn publish_shelter(
     }
 }
 
+/// Upload the forest shadow map only when a rebuild changed it.
+fn publish_forest_shadow(
+    forest: Res<crate::forest_shadow::ForestShadow>,
+    assets: Option<Res<CloudAssets>>,
+    mut images: ResMut<Assets<Image>>,
+    mut published: Local<Option<u64>>,
+) {
+    let Some(assets) = assets else {
+        return;
+    };
+    if *published == Some(forest.revision()) {
+        return;
+    }
+    if let Some(mut image) = images.get_mut(&assets.forest_shadow) {
+        forest.write(&mut image);
+        *published = Some(forest.revision());
+    }
+}
+
 /// Approximate clear-air extinction for the cloud lighting path, which does not
 /// sample Bevy's atmosphere LUT. Authored lux is outside the atmosphere; it must
 /// not illuminate clouds or their foreground haze after the light has set.
@@ -345,6 +375,7 @@ mod tests {
             .init_resource::<CloudQuality>()
             .init_resource::<CloudParams>()
             .init_resource::<crate::shelter::RainShelter>()
+            .init_resource::<crate::forest_shadow::ForestShadow>()
             .add_systems(Update, sync);
         app.update();
         let first = app.world().resource::<CloudParams>().offset;
@@ -394,6 +425,7 @@ mod tests {
             .init_resource::<CloudQuality>()
             .init_resource::<CloudParams>()
             .init_resource::<crate::shelter::RainShelter>()
+            .init_resource::<crate::forest_shadow::ForestShadow>()
             .add_systems(Update, sync);
         app.update();
         let params = *app.world().resource::<CloudParams>();

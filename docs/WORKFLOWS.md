@@ -164,7 +164,9 @@ python3 tools/import_vegetation_bundle.py ... --lod-screen-heights 480 240 --imp
 # Shrubs and bay: --lod-screen-heights 480 180 --impostor-screen-height 60
 ```
 
-`--crop-only` adds the coverage crop to an older bake. Register and cook as
+Each bake also records the crown (base, top, radius, centre, opacity) for the
+distant forest shadows; `--crop-only` adds the coverage crop and the crown to an
+older bake without rendering. Register and cook as
 usual: the cook regroups impostor-drawn objects into far-object blocks, which
 the game streams out to 2 km ([architecture](ARCHITECTURE.md)). To compare
 impostors with their meshes, capture a view twice, once with

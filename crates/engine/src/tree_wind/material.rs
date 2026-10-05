@@ -28,7 +28,6 @@ struct TreeWindExtension {
     #[storage(100, read_only)]
     wind: Handle<ShaderBuffer>,
     crown_shading: bool,
-    crown_occlusion: bool,
     bark_blend: bool,
     #[uniform(105)]
     profile: Vec4,
@@ -43,14 +42,12 @@ struct TreeWindExtension {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct TreeWindKey {
     crown_shading: bool,
-    crown_occlusion: bool,
     bark_blend: bool,
 }
 impl From<&TreeWindExtension> for TreeWindKey {
     fn from(material: &TreeWindExtension) -> Self {
         Self {
             crown_shading: material.crown_shading,
-            crown_occlusion: material.crown_occlusion,
             bark_blend: material.bark_blend,
         }
     }
@@ -66,9 +63,6 @@ impl MaterialExtension for TreeWindExtension {
             && let Some(fragment) = descriptor.fragment.as_mut()
         {
             fragment.shader_defs.push("TREE_CROWN_SHADING".into());
-            if key.bind_group_data.crown_occlusion {
-                fragment.shader_defs.push("TREE_CROWN_OCCLUSION".into());
-            }
         }
         if key.bind_group_data.bark_blend
             && let Some(fragment) = descriptor.fragment.as_mut()
@@ -147,8 +141,8 @@ enum FoliageShading {
     /// sides keep the authored crown normal. Back faces are still drawn; only Bevy's
     /// two-sided normal flip is turned off.
     Crown,
-    /// `crown_v2`: spatial sky visibility baked from the full crown, retained
-    /// across LODs and used with crown normals for distant self-shadowing.
+    /// `crown_v2`: spatial sky visibility baked from the full crown, retained across LODs.
+    /// Lit like `crown_v1`; distant self-shadowing reads either occlusion the same way.
     CrownOcclusion,
     /// `yarra_shading: "pad_v1"`: cards are flat pads (pine branch ends) whose authored
     /// normal faces up, so Bevy's flip is kept: a pad's underside faces down and falls dark.
@@ -275,7 +269,6 @@ fn convert(
                             .as_ref()
                             .and_then(|u| load(&u.metallic_roughness, false)),
                         crown_shading: shading != FoliageShading::Plain,
-                        crown_occlusion: shading == FoliageShading::CrownOcclusion,
                     },
                 });
                 (material, shading)
@@ -360,20 +353,6 @@ mod tests {
         let baked_base = foliage_base(&source, baked);
         assert!(!baked_base.base.double_sided);
         assert_eq!(baked_base.base.cull_mode, None);
-        // New occlusion behavior has a distinct pipeline; old assets retain theirs.
-        let key = |shading| {
-            TreeWindKey::from(&TreeWindExtension {
-                wind: Handle::default(),
-                profile: Vec4::ONE,
-                bark_blend: false,
-                upper_color: None,
-                upper_normal: None,
-                upper_metallic_roughness: None,
-                crown_shading: true,
-                crown_occlusion: shading == FoliageShading::CrownOcclusion,
-            })
-        };
-        assert_ne!(key(FoliageShading::Crown), key(baked));
         let pad = foliage_shading(r#"{"yarra_wind":"foliage_uv1_v1","yarra_shading":"pad_v1"}"#);
         assert_eq!(pad, FoliageShading::Pad);
         assert!(foliage_base(&source, pad).base.double_sided);

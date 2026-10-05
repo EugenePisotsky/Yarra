@@ -25,6 +25,9 @@ pub struct TerrainCompositeMaterial {
     pub(super) cloud_shadows: Option<Handle<Image>>,
     #[texture(123, sample_type = "float", filterable = false)]
     pub(super) rain_shelter: Option<Handle<Image>>,
+    #[texture(124)]
+    #[sampler(125)]
+    pub(super) forest_shadow: Option<Handle<Image>>,
     pub key: Option<TerrainMaterialKey>,
     pub shading_mode: TerrainShadingMode,
     /// Diagnostic shader bypass only; retains near-source residency for a fair A/B.
@@ -70,6 +73,7 @@ impl Default for TerrainCompositeMaterial {
             cloud_parameters: atmosphere::clouds::fallback_parameters(),
             cloud_shadows: None,
             rain_shelter: None,
+            forest_shadow: None,
             key: None,
             shading_mode: Default::default(),
             near_disabled: false,
@@ -235,6 +239,7 @@ impl Material for TerrainCompositeMaterial {
         key: MaterialPipelineKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
         if let Some(fragment) = descriptor.fragment.as_mut() {
+            fragment.shader_defs.push("FOREST_SHADOW".into());
             let define = match key.bind_group_data.shading {
                 TerrainShadingMode::Production => None,
                 TerrainShadingMode::SurfaceUnlit => Some("TERRAIN_SURFACE_UNLIT"),

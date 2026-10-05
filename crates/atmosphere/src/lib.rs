@@ -1,6 +1,7 @@
 //! Shared sky, sun and illumination. Applications supply profile/time inputs;
 //! one ordered presentation system applies them before transform propagation.
 pub mod clouds;
+pub mod forest_shadow;
 pub mod precipitation;
 pub mod shelter;
 pub mod sky;

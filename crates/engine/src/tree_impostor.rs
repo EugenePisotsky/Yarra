@@ -55,7 +55,11 @@ impl Plugin for TreeImpostorPlugin {
             return;
         }
         app.add_plugins(MaterialPlugin::<ImpostorMaterial>::default())
-            .add_systems(PostUpdate, (follow_projection, complete_batches).chain());
+            .add_systems(PostUpdate, (follow_projection, complete_batches).chain())
+            .add_systems(
+                PostUpdate,
+                crate::forest_shadow::rebuild.after(bevy::transform::TransformSystems::Propagate),
+            );
     }
 }
 
@@ -68,8 +72,59 @@ pub struct ImpostorDescriptor {
     pub centre: Vec3,
     pub radius: f32,
     pub crop: Vec4,
+    /// The foliage, for distant forest shadows (`crate::forest_shadow`).
+    pub crown: ImpostorCrown,
     pub albedo: Handle<Image>,
     pub normal: Handle<Image>,
+}
+
+/// A crown as an upright ellipsoid of foliage, in object space.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ImpostorCrown {
+    /// Horizontal centre (X, Z).
+    pub centre: Vec2,
+    pub bottom: f32,
+    pub top: f32,
+    pub radius: f32,
+    /// Share of the crown's silhouette that foliage covers.
+    pub opacity: f32,
+}
+impl ImpostorCrown {
+    /// Older bakes have no crown: the upper 65% of the views' coverage, half opaque.
+    fn from_crop(centre: Vec3, radius: f32, crop: [f32; 4]) -> Self {
+        let top = centre.y + (1.0 - 2.0 * crop[1]) * radius;
+        let base = centre.y + (1.0 - 2.0 * crop[3]) * radius;
+        Self {
+            centre: Vec2::new(centre.x, centre.z),
+            bottom: base + 0.35 * (top - base),
+            top,
+            radius: (crop[2] - crop[0]) * radius * 0.8,
+            opacity: 0.5,
+        }
+    }
+    fn valid(&self) -> bool {
+        [
+            self.centre.x,
+            self.centre.y,
+            self.bottom,
+            self.top,
+            self.radius,
+        ]
+        .iter()
+        .all(|v| v.is_finite())
+            && self.top > self.bottom
+            && self.radius > 0.0
+            && (0.0..=1.0).contains(&self.opacity)
+    }
+}
+
+#[derive(Deserialize)]
+struct CrownFile {
+    centre: [f32; 2],
+    bottom: f32,
+    top: f32,
+    radius: f32,
+    opacity: f32,
 }
 
 #[derive(Deserialize)]
@@ -80,6 +135,8 @@ struct DescriptorFile {
     radius: f32,
     #[serde(default = "full_view")]
     crop: [f32; 4],
+    #[serde(default)]
+    crown: Option<CrownFile>,
     alpha_cutoff: f32,
     albedo: String,
     normal: String,
@@ -124,6 +181,19 @@ impl AssetLoader for ImpostorLoader {
                 "invalid impostor descriptor (version 1, 2-32 views, positive radius, crop within a view, 0.5 cut-out)".into(),
             ));
         }
+        let crown = file.crown.as_ref().map_or_else(
+            || ImpostorCrown::from_crop(Vec3::from(file.centre), file.radius, file.crop),
+            |c| ImpostorCrown {
+                centre: Vec2::from(c.centre),
+                bottom: c.bottom,
+                top: c.top,
+                radius: c.radius,
+                opacity: c.opacity,
+            },
+        );
+        if !crown.valid() {
+            return Err(invalid("invalid impostor crown".into()));
+        }
         let folder = context
             .path()
             .path()
@@ -135,6 +205,7 @@ impl AssetLoader for ImpostorLoader {
             centre: Vec3::from(file.centre),
             radius: file.radius,
             crop: Vec4::from(file.crop),
+            crown,
             albedo: context.load(folder.join(file.albedo)),
             normal: context.load(folder.join(file.normal)),
         })
@@ -162,8 +233,9 @@ pub(crate) struct ImpostorBatch {
     pub(crate) instances: Vec<ImpostorInstance>,
 }
 
+/// An [`ImpostorBatch`] whose descriptor loaded: drawn and feeding the forest shadows.
 #[derive(Component)]
-struct ImpostorBatchDone;
+pub(crate) struct ImpostorBatchDone;
 
 type ImpostorMaterial = ExtendedMaterial<CloudMaterial, ImpostorExtension>;
 
@@ -310,6 +382,7 @@ fn complete_batches(
                             parameters: clouds.parameters.clone(),
                             shadows: clouds.shadows.clone(),
                             shelter: clouds.shelter.clone(),
+                            forest_shadow: clouds.forest_shadow.clone(),
                         },
                     },
                     extension: ImpostorExtension {

@@ -55,6 +55,9 @@
 #endif
 #endif
 #import "shaders/clouds/surface.wgsl"::{cloud_visibility, surface_wetness}
+#ifdef FOREST_SHADOW
+#import "shaders/clouds/forest_shadow.wgsl"::forest_transmittance
+#endif
 fn apply_pbr_lighting(
     input: pbr_types::PbrInput,
 ) -> vec4<f32> {
@@ -368,31 +371,31 @@ fn apply_pbr_lighting(
         // Yarra: only direct celestial lighting is attenuated. Ambient, emissive,
         // local lights and material response retain the upstream behavior.
         let cloud = cloud_visibility(in.world_position.xyz, (*light).direction_to_light);
-#ifdef TREE_CROWN_SHADING
-        {
-            // Past the last shadow cascade nothing shadows a crown, and distant trees went
-            // flat and pale. There the crown's own occlusion (vertex colour, darker inside
-            // and underneath) stands in for the shadow maps, fading in over the outer 30%
-            // of the shadow range.
+#ifdef FOREST_SHADOW
+        if (in.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) != 0u {
+            // Past the last shadow cascade nothing casts shadows, and distant forests went
+            // flat and pale. There the forest shadow map stands in for the shadow maps,
+            // fading in over the outer 30% of the shadow range: the sun is dimmed by the
+            // crowns around a point, and a crown also by its own foliage towards the sun.
             let cascades = (*light).num_cascades;
             let shadows_on = cascades > 0u
                 && ((*light).flags & mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u;
             let shadow_end = (*light).cascades[max(cascades, 1u) - 1u].far_bound;
             let beyond = select(1.0, smoothstep(shadow_end * 0.7, shadow_end, -view_z), shadows_on);
-            let crown = clamp(in.diffuse_occlusion.g, 0.0, 1.0);
-#ifdef TREE_CROWN_OCCLUSION
-            // Approximate broad self-shadowing once shadow maps run out. The
-            // unperturbed authored crown normal follows the sun, not the camera
-            // or leaf-detail normal map. Exposed sides keep sunlight; sheltered
-            // sides retain depth. A constant multiplier merely makes a flat
-            // distant crown darker. Nearby direct lighting stays map-driven.
-            let sun_facing = smoothstep(-0.25, 0.65,
-                dot(normalize(in.world_normal), (*light).direction_to_light));
-            let crown_shadow = mix(crown * crown * crown * crown, sqrt(crown), sun_facing);
-            shadow = mix(shadow, crown_shadow, beyond);
+            if beyond > 0.0 {
+                let to_light = (*light).direction_to_light;
+#ifdef TREE_CROWN_SHADING
+                // The authored crown normal faces the sun on exposed sides; the crown's
+                // occlusion deepens sheltered ones. The march skips the crown's own front.
+                let crown = clamp(in.diffuse_occlusion.g, 0.0, 1.0);
+                let sun_facing = smoothstep(-0.25, 0.65, dot(normalize(in.world_normal), to_light));
+                let own = mix(crown * crown * crown * crown, sqrt(crown), sun_facing);
+                let far = own * forest_transmittance(in.world_position.xyz, to_light, 2.5);
 #else
-            shadow = mix(shadow, crown * crown * crown, beyond);
+                let far = forest_transmittance(in.world_position.xyz, to_light, 0.25);
 #endif
+                shadow = mix(shadow, far, beyond);
+            }
         }
 #endif
         shadow *= cloud;

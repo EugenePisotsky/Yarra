@@ -15,6 +15,11 @@ fn cloud_visibility(p: vec3<f32>, direction: vec3<f32>) -> f32 {
     // so overcast scenes keep a little modelling instead of going flat.
     return max(select(t.y,t.x,sun), 0.12);
 }
+/// Forest shadow map: origin xz, metres per texel (0 when off), tallest crown top.
+fn forest_shadow_parameters() -> vec4<f32> {
+    return clouds.forest_shadow;
+}
+
 /// 1 where rain reaches `p`, 0 under full cover. Bilinear coverage, as on the CPU.
 fn rain_shelter(p: vec3<f32>) -> f32 {
     return shelter_exposure(shelter_map, clouds.shelter, p);

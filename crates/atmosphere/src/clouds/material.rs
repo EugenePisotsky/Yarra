@@ -16,23 +16,28 @@ pub struct CloudExtension {
     pub shadows: Handle<Image>,
     #[texture(123, sample_type = "float", filterable = false)]
     pub shelter: Handle<Image>,
+    #[texture(124)]
+    #[sampler(125)]
+    pub forest_shadow: Handle<Image>,
 }
 impl MaterialExtension for CloudExtension {
     fn fragment_shader() -> ShaderRef {
         "shaders/clouds/material.wgsl".into()
     }
     /// With 4x MSAA, LOD crossfades cover samples instead of dithering whole pixels
-    /// (`shaders/crossfade.wgsl`); the main pass resolves them into a smooth blend.
+    /// (`shaders/crossfade.wgsl`); the main pass resolves them into a smooth blend. Every
+    /// cloud material binds the forest shadow map (`FOREST_SHADOW`).
     fn specialize(
         _pipeline: &MaterialExtensionPipeline,
         descriptor: &mut RenderPipelineDescriptor,
         _layout: &MeshVertexBufferLayoutRef,
         key: MaterialExtensionKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
-        if key.mesh_key.msaa_samples() == 4
-            && let Some(fragment) = descriptor.fragment.as_mut()
-        {
-            fragment.shader_defs.push("CROSSFADE_SAMPLE_MASK".into());
+        if let Some(fragment) = descriptor.fragment.as_mut() {
+            fragment.shader_defs.push("FOREST_SHADOW".into());
+            if key.mesh_key.msaa_samples() == 4 {
+                fragment.shader_defs.push("CROSSFADE_SAMPLE_MASK".into());
+            }
         }
         Ok(())
     }
@@ -110,6 +115,7 @@ fn convert(
                         parameters: assets.parameters.clone(),
                         shadows: assets.shadows.clone(),
                         shelter: assets.shelter.clone(),
+                        forest_shadow: assets.forest_shadow.clone(),
                     },
                 })
             })
@@ -139,6 +145,7 @@ mod tests {
                 shadows: default(),
                 noise: default(),
                 shelter: default(),
+                forest_shadow: default(),
             })
             .add_systems(Update, convert);
         let material = app

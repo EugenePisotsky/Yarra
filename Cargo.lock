@@ -6558,6 +6558,7 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "bytemuck",
+ "half",
  "yarra-world",
 ]
 

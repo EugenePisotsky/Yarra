@@ -12,6 +12,7 @@ struct CloudParams {
     transition: vec4<f32>, // previous coverage, extinction / metre, erosion; linear progress
     weather: vec4<f32>, // x: surface wetness, y: precipitation intensity
     shelter: vec4<f32>, // rain shelter map: origin xz, metres per texel, enabled
+    forest_shadow: vec4<f32>, // forest shadow map: origin xz, metres per texel (0 off), tallest crown top
 }
 
 // Cached sky: azimuth across, square-root warped elevation down from the tracing cutoff (ray.y
