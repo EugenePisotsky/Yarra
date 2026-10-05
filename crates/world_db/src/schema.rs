@@ -544,5 +544,15 @@ CREATE TABLE terrain_cores (
     PRIMARY KEY(world_space_id,level,node_x,node_z),
     FOREIGN KEY(world_space_id,level,node_x,node_z) REFERENCES terrain_nodes(world_space_id,level,node_x,node_z)
 ) STRICT, WITHOUT ROWID;
-PRAGMA user_version = 26;
+-- Impostor-drawn static objects per block of world::FAR_OBJECT_BLOCK_CELLS² cells (an
+-- encoded world::FarObjectsPage), derived from the static-object pages when a cook finishes.
+CREATE TABLE far_object_pages (
+    world_space_id INTEGER NOT NULL REFERENCES world_spaces(id),
+    block_x INTEGER NOT NULL,
+    block_z INTEGER NOT NULL,
+    instance_count INTEGER NOT NULL CHECK(instance_count > 0),
+    payload BLOB NOT NULL CHECK(length(payload) BETWEEN 1 AND 67108864),
+    PRIMARY KEY(world_space_id, block_x, block_z)
+) STRICT, WITHOUT ROWID;
+PRAGMA user_version = 27;
 "#;

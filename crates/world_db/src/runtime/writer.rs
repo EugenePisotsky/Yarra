@@ -15,6 +15,7 @@ pub fn write_runtime_database(path: &Path, build: &RuntimeBuild) -> Result<(), W
     connection.execute_batch(schema::RUNTIME_SCHEMA)?;
     let transaction = connection.transaction()?;
     write_runtime_build(&transaction, build)?;
+    super::far_objects::rebuild(&transaction)?;
     transaction.commit()?;
     connection.execute_batch("PRAGMA optimize;")?;
     Ok(())
@@ -381,6 +382,11 @@ impl RuntimeCookWriter {
             input_fingerprint,
             batch.manifest.content_hash,
         )
+    }
+    /// Regroups the impostor-drawn objects of every static-object page into far-object
+    /// blocks. Derived from cell pages and asset variants, it changes no content hash.
+    pub fn rebuild_far_objects(&self) -> Result<super::FarObjectStats, WorldDbError> {
+        super::far_objects::rebuild(&self.connection)
     }
     /// The generation's content hash folds the header with every cell in key order, read
     /// back from the output, so full and incremental cooks agree.

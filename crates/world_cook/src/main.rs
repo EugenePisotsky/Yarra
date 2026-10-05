@@ -211,6 +211,10 @@ fn main() -> Result<()> {
         );
     }
     println!(
+        "Far objects: {} impostor-drawn objects in {} blocks",
+        stats.far_objects, stats.far_object_blocks
+    );
+    println!(
         "Peak source batch: {} height samples, {} mask bytes, {} manual objects, {} road spans",
         stats.peak_source_height_samples,
         stats.peak_source_mask_bytes,

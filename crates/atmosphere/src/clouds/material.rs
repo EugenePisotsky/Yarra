@@ -1,7 +1,9 @@
 use super::*;
 use bevy::{
     asset::AssetEventSystems,
-    pbr::{ExtendedMaterial, MaterialExtension},
+    mesh::MeshVertexBufferLayoutRef,
+    pbr::{ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline},
+    render::render_resource::{RenderPipelineDescriptor, SpecializedMeshPipelineError},
     shader::ShaderRef,
 };
 use std::collections::HashMap;
@@ -18,6 +20,21 @@ pub struct CloudExtension {
 impl MaterialExtension for CloudExtension {
     fn fragment_shader() -> ShaderRef {
         "shaders/clouds/material.wgsl".into()
+    }
+    /// With 4x MSAA, LOD crossfades cover samples instead of dithering whole pixels
+    /// (`shaders/crossfade.wgsl`); the main pass resolves them into a smooth blend.
+    fn specialize(
+        _pipeline: &MaterialExtensionPipeline,
+        descriptor: &mut RenderPipelineDescriptor,
+        _layout: &MeshVertexBufferLayoutRef,
+        key: MaterialExtensionKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        if key.mesh_key.msaa_samples() == 4
+            && let Some(fragment) = descriptor.fragment.as_mut()
+        {
+            fragment.shader_defs.push("CROSSFADE_SAMPLE_MASK".into());
+        }
+        Ok(())
     }
 }
 pub type CloudMaterial = ExtendedMaterial<StandardMaterial, CloudExtension>;

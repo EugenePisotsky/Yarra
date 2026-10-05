@@ -21,6 +21,17 @@
 
 #ifdef VISIBILITY_RANGE_DITHER
 #import bevy_pbr::pbr_functions::visibility_range_dither;
+#ifndef PREPASS_PIPELINE
+#ifdef CROSSFADE_SAMPLE_MASK
+#import "shaders/crossfade.wgsl"::crossfade_sample_mask
+
+// The forward output with the crossfade's covered samples.
+struct CrossfadeOutput {
+    @location(0) color: vec4<f32>,
+    @builtin(sample_mask) sample_mask: u32,
+}
+#endif
+#endif
 #endif
 
 #ifdef TREE_BARK_BLEND
@@ -47,7 +58,19 @@ fn fragment(
     vertex_output: VertexOutput,
     @builtin(front_facing) is_front: bool,
 #endif
+#ifdef VISIBILITY_RANGE_DITHER
+#ifndef PREPASS_PIPELINE
+#ifdef CROSSFADE_SAMPLE_MASK
+) -> CrossfadeOutput {
+#else
 ) -> FragmentOutput {
+#endif
+#else
+) -> FragmentOutput {
+#endif
+#else
+) -> FragmentOutput {
+#endif
 #ifdef MESHLET_MESH_MATERIAL_PASS
     let vertex_output = resolve_vertex_output(frag_coord);
     let is_front = true;
@@ -58,7 +81,18 @@ fn fragment(
     // If we're in the crossfade section of a visibility range, conditionally
     // discard the fragment according to the visibility pattern.
 #ifdef VISIBILITY_RANGE_DITHER
+#ifndef PREPASS_PIPELINE
+#ifdef CROSSFADE_SAMPLE_MASK
+    let crossfade_mask = crossfade_sample_mask(in.position, in.visibility_range_dither);
+    if crossfade_mask == 0u {
+        discard;
+    }
+#else
     visibility_range_dither(in.position, in.visibility_range_dither);
+#endif
+#else
+    visibility_range_dither(in.position, in.visibility_range_dither);
+#endif
 #endif
 
 #ifdef FORWARD_DECAL
@@ -143,5 +177,17 @@ fn fragment(
         out.color.a = min(forward_decal_info.alpha, out.color.a);
 #endif
 
+#ifdef VISIBILITY_RANGE_DITHER
+#ifndef PREPASS_PIPELINE
+#ifdef CROSSFADE_SAMPLE_MASK
+        return CrossfadeOutput(out.color, crossfade_mask);
+#else
         return out;
+#endif
+#else
+        return out;
+#endif
+#else
+        return out;
+#endif
 }

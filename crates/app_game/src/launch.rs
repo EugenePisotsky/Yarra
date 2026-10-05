@@ -38,6 +38,8 @@ pub(crate) struct LaunchOptions {
     pub terrain_procedural: bool,
     pub terrain_universal: bool,
     pub terrain_near_off: bool,
+    /// Diagnostic: the farthest tree mesh before impostors, in metres.
+    pub impostor_handoff: Option<f32>,
     pub vertex_reference: bool,
     pub placement_reference: bool,
     pub candidate_reference: bool,
@@ -238,6 +240,11 @@ const FLAGS: &[(&str, bool, &str)] = &[
         "N,N: capture frames after warmup and before exit",
     ),
     ("--render-prepass", false, "Enable depth prepass in a repro"),
+    (
+        "--impostor-handoff",
+        true,
+        "METRES: farthest tree mesh before impostors, 0..166 (diagnostic; 0 draws only impostors)",
+    ),
     ("--render-ui-off", false, "Hide UI during a repro"),
     (
         "--profile-seconds",
@@ -346,6 +353,14 @@ impl LaunchOptions {
         if fps != 0 && !(15..=240).contains(&fps) {
             return Err("--fps requires 0 or 15..240".into());
         }
+        let impostor_handoff = value("--impostor-handoff")?
+            .map(|v| {
+                v.parse::<f32>()
+                    .ok()
+                    .filter(|m| (0.0..=166.0).contains(m))
+                    .ok_or("--impostor-handoff requires 0..166 metres")
+            })
+            .transpose()?;
         let upscaler = match value("--upscaler")?.unwrap_or("auto") {
             "auto" => upscaling::UpscaleMethod::Auto,
             "linear" => upscaling::UpscaleMethod::Linear,
@@ -575,6 +590,7 @@ impl LaunchOptions {
             terrain_procedural: has("--terrain-procedural"),
             terrain_universal: has("--terrain-prepared-universal"),
             terrain_near_off: has("--terrain-near-off"),
+            impostor_handoff,
             vertex_reference: has("--grass-vertex-reference"),
             placement_reference: has("--grass-placement-reference"),
             candidate_reference: has("--grass-candidate-reference"),

@@ -27,11 +27,29 @@ pub(in crate::world_streaming) struct PageAttachment {
     pub(in crate::world_streaming) owned_terrain_materials: Vec<Handle<TerrainMaterial>>,
     pub(in crate::world_streaming) owned_terrain_images: Vec<Handle<Image>>,
     pub(in crate::world_streaming) decoded_bytes: u64,
+    /// The page's own GPU bytes; shared assets are in `asset_variants`.
     pub(in crate::world_streaming) gpu_bytes_estimate: u64,
+    /// Asset variants the page draws, with their GPU bytes. Pages share them, so the
+    /// residency counts each variant once however many pages use it.
+    pub(in crate::world_streaming) asset_variants: Vec<(AssetVariantKey, u64)>,
     pub(in crate::world_streaming) gameplay_objects: usize,
     pub(in crate::world_streaming) vegetation_pages: usize,
     pub(in crate::world_streaming) height_only_pages: usize,
     pub(in crate::world_streaming) terrain_texture_set: Option<(TerrainTextureSetId, u64)>,
+}
+
+pub(in crate::world_streaming) type AssetVariantKey = (world::AssetId, u8);
+
+/// The asset variants a page's attachment loads. Impostors are not among them: far-object
+/// blocks draw those, and their textures are not part of a page's residency.
+pub(in crate::world_streaming) fn page_asset_variants(
+    dependencies: &[PageDependency],
+) -> Vec<(AssetVariantKey, u64)> {
+    dependencies
+        .iter()
+        .filter(|d| !world::is_impostor_uri(&d.uri))
+        .map(|d| ((d.asset, d.asset_lod), d.gpu_bytes_estimate))
+        .collect()
 }
 
 #[derive(Resource)]
@@ -283,6 +301,17 @@ pub(super) fn attach_page(
                     return Err(format!("asset {:?} has no LOD variants", instance.asset));
                 }
                 let mut previous_minimum = f32::INFINITY;
+                // Only the last LOD may be an impostor, and a mesh must come before it.
+                for (i, dependency) in dependencies.iter().enumerate() {
+                    if world::is_impostor_uri(&dependency.uri)
+                        && (i == 0 || i + 1 != dependencies.len())
+                    {
+                        return Err(format!(
+                            "asset {:?} has an impostor that is not its last LOD after a mesh",
+                            dependency.asset
+                        ));
+                    }
+                }
                 for dependency in dependencies {
                     if dependency.kind != "gltf-scene" {
                         return Err(format!(
@@ -299,6 +328,7 @@ pub(super) fn attach_page(
                     previous_minimum = dependency.minimum_screen_height;
                 }
             }
+            // Impostor LODs have no scene here: far-object blocks draw them.
             for instance in objects.instances {
                 let dependencies = &dependencies[&instance.asset];
                 let translation = Vec3::new(
@@ -310,8 +340,10 @@ pub(super) fn attach_page(
                     .iter()
                     .map(|dependency| ScreenSpaceLodVariant {
                         lod: dependency.asset_lod,
-                        scene: asset_server
-                            .load(GltfAssetLabel::Scene(0).from_asset(dependency.uri.clone())),
+                        scene: (!world::is_impostor_uri(&dependency.uri)).then(|| {
+                            asset_server
+                                .load(GltfAssetLabel::Scene(0).from_asset(dependency.uri.clone()))
+                        }),
                         minimum_screen_height: dependency.minimum_screen_height,
                     })
                     .collect();
@@ -422,12 +454,8 @@ pub(super) fn attach_page(
         owned_terrain_materials,
         owned_terrain_images,
         decoded_bytes: prepared.decoded.decoded_bytes,
-        gpu_bytes_estimate: prepared.decoded.gpu_bytes_estimate
-            + prepared
-                .dependencies
-                .iter()
-                .map(|dependency| dependency.gpu_bytes_estimate)
-                .sum::<u64>(),
+        gpu_bytes_estimate: prepared.decoded.gpu_bytes_estimate,
+        asset_variants: page_asset_variants(&prepared.dependencies),
         gameplay_objects,
         vegetation_pages,
         height_only_pages: 0,

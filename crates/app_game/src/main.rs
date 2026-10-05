@@ -172,6 +172,9 @@ fn run() -> Result<(), String> {
             .enabled = false;
     }
     app.insert_resource(options.clouds);
+    if let Some(metres) = options.impostor_handoff {
+        app.insert_resource(engine::ImpostorHandoff::new(metres));
+    }
     if let Some(source) = &options.story {
         story::install(&mut app, source)?;
     }

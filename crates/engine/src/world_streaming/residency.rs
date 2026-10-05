@@ -10,7 +10,10 @@ use super::{
     ActiveWorldSpace, StreamPhase, WorldGenerationReload, WorldOrigin, WorldStream, source_demand,
 };
 use crate::object_lod::ScreenSpaceLod;
-use attachment::{PageAttachment, WorldRenderAssets, attach_page, despawn_attachment};
+use attachment::{
+    AssetVariantKey, PageAttachment, WorldRenderAssets, attach_page, despawn_attachment,
+    page_asset_variants,
+};
 use bevy::{
     prelude::*,
     tasks::{AsyncComputeTaskPool, Task, futures::check_ready},
@@ -39,6 +42,8 @@ pub(super) struct SourceResidency {
     pub(super) definition_cache: HashMap<ObjectDefinitionId, RuntimeObjectDefinition>,
     decode_tasks: Vec<DecodeTask>,
     next_request_id: u64,
+    /// Trees attached after the camera passed their impostor hand-off, since start.
+    late_objects: u64,
 }
 
 pub(super) enum PageState {
@@ -255,6 +260,10 @@ pub(super) fn attach_prepared_pages(
     origin: Res<WorldOrigin>,
     world: Res<WorldStream>,
     mut stream: ResMut<SourceResidency>,
+    (view, projection): (
+        Res<source_demand::SourceView>,
+        Res<crate::object_lod::LodProjection>,
+    ),
 ) {
     stream.admission_blocked = 0;
     let Some(render_assets) = render_assets else {
@@ -281,6 +290,7 @@ pub(super) fn attach_prepared_pages(
     let mut admitted_decoded_bytes = stats.decoded_bytes;
     let mut admitted_gpu_bytes = stats.gpu_bytes_estimate;
     let mut admitted_terrain_texture_sets = stats.terrain_texture_sets.clone();
+    let mut admitted_asset_variants = stats.asset_variants.clone();
 
     for key in keys {
         if attachment_attempts == MAX_ATTACHMENTS_PER_FRAME {
@@ -305,11 +315,12 @@ pub(super) fn attach_prepared_pages(
             continue;
         }
         let page_decoded_bytes = prepared.decoded.decoded_bytes;
+        let page_asset_variants = page_asset_variants(&prepared.dependencies);
         let page_gpu_bytes = prepared.decoded.gpu_bytes_estimate
-            + prepared
-                .dependencies
+            + page_asset_variants
                 .iter()
-                .map(|dependency| dependency.gpu_bytes_estimate)
+                .filter(|(key, _)| !admitted_asset_variants.contains(key))
+                .map(|(_, bytes)| bytes)
                 .sum::<u64>()
             + prepared
                 .terrain
@@ -342,6 +353,10 @@ pub(super) fn attach_prepared_pages(
             continue;
         }
         attachment_attempts += 1;
+        if let Some(eye) = view.eye_in(key.space) {
+            let late = late_objects(&prepared, eye, cell_size, &projection);
+            stream.late_objects += late;
+        }
         match attach_page(
             &mut commands,
             &asset_server,
@@ -360,6 +375,11 @@ pub(super) fn attach_prepared_pages(
                     admitted_decoded_bytes.saturating_add(attachment.decoded_bytes);
                 admitted_gpu_bytes =
                     admitted_gpu_bytes.saturating_add(attachment.gpu_bytes_estimate);
+                for &(key, bytes) in &attachment.asset_variants {
+                    if admitted_asset_variants.insert(key) {
+                        admitted_gpu_bytes = admitted_gpu_bytes.saturating_add(bytes);
+                    }
+                }
                 if let Some((texture_set, gpu_bytes)) = attachment.terrain_texture_set
                     && admitted_terrain_texture_sets.insert(texture_set)
                 {
@@ -372,6 +392,58 @@ pub(super) fn attach_prepared_pages(
             }
         }
     }
+}
+
+/// Objects attached after the camera came within their impostor hand-off: until now
+/// neither their impostor (faded out) nor their mesh drew them.
+fn late_objects(
+    prepared: &PreparedPage,
+    eye: bevy::math::DVec3,
+    cell_size: f32,
+    projection: &crate::object_lod::LodProjection,
+) -> u64 {
+    let world::PagePayload::StaticObjects(objects) = &prepared.decoded.payload else {
+        return 0;
+    };
+    let key = prepared.decoded.key;
+    let mut late = 0;
+    for instance in &objects.instances {
+        let variants: Vec<_> = prepared
+            .dependencies
+            .iter()
+            .filter(|d| d.asset == instance.asset)
+            .collect();
+        let Some(mesh) = variants
+            .iter()
+            .rev()
+            .skip(1)
+            .find(|d| !world::is_impostor_uri(&d.uri))
+            .filter(|_| {
+                variants
+                    .last()
+                    .is_some_and(|d| world::is_impostor_uri(&d.uri))
+            })
+        else {
+            continue;
+        };
+        let height = variants.iter().map(|d| d.bounds[1]).fold(0.0_f32, f32::max);
+        let handoff = f64::from(
+            (height * instance.scale * projection.pixels_per_metre() / mesh.minimum_screen_height)
+                .min(crate::object_lod::IMPOSTOR_HANDOFF_METRES),
+        );
+        let position = bevy::math::DVec3::new(
+            f64::from(key.cell.x) * f64::from(cell_size) + f64::from(instance.translation[0]),
+            f64::from(instance.translation[1]),
+            f64::from(key.cell.z) * f64::from(cell_size) + f64::from(instance.translation[2]),
+        );
+        if eye.distance(position) < handoff * 0.9 {
+            late += 1;
+        }
+    }
+    if late > 0 {
+        debug!("{late} objects of {key:?} attached inside their impostor hand-off");
+    }
+    late
 }
 
 pub(super) fn cool_and_remove_pages(
@@ -445,7 +517,11 @@ pub struct StreamingStats {
     pub lod_counts: BTreeMap<u8, usize>,
     pub minimum_projected_height: f32,
     pub maximum_projected_height: f32,
+    /// Objects that appeared after the camera passed their impostor hand-off (popped in),
+    /// since start. Nonzero while the world first loads.
+    pub late_objects: u64,
     terrain_texture_sets: BTreeSet<TerrainTextureSetId>,
+    asset_variants: BTreeSet<AssetVariantKey>,
 }
 
 pub(super) fn update_streaming_stats(
@@ -494,6 +570,7 @@ pub(super) fn update_streaming_stats(
     }
     stats.source_demand_error = world.demand_error.clone();
     stats.budget_waiting = stream.admission_blocked;
+    stats.late_objects = stream.late_objects;
     if stream.admission_blocked > 0 {
         stats.status.push_str(" | source residency budget full");
     }
@@ -515,6 +592,7 @@ pub(super) fn update_streaming_stats(
     stats.gameplay_objects = 0;
     stats.vegetation_pages = 0;
     stats.terrain_texture_sets.clear();
+    stats.asset_variants.clear();
     stats.lod_counts.clear();
     stats.minimum_projected_height = f32::INFINITY;
     stats.maximum_projected_height = 0.0;
@@ -541,7 +619,7 @@ pub(super) fn update_streaming_stats(
                 stats.gameplay_objects += attachment.gameplay_objects;
                 stats.vegetation_pages += attachment.vegetation_pages;
                 stats.height_only_pages += attachment.height_only_pages;
-                account_terrain_texture_set(&mut stats, attachment);
+                account_shared_assets(&mut stats, attachment);
             }
             PageState::Cooling { attachment, .. } => {
                 stats.cooling += 1;
@@ -551,7 +629,7 @@ pub(super) fn update_streaming_stats(
                 stats.gameplay_objects += attachment.gameplay_objects;
                 stats.vegetation_pages += attachment.vegetation_pages;
                 stats.height_only_pages += attachment.height_only_pages;
-                account_terrain_texture_set(&mut stats, attachment);
+                account_shared_assets(&mut stats, attachment);
             }
             PageState::Failed(error) => {
                 let _ = error;
@@ -561,7 +639,12 @@ pub(super) fn update_streaming_stats(
     }
 }
 
-fn account_terrain_texture_set(stats: &mut StreamingStats, attachment: &PageAttachment) {
+fn account_shared_assets(stats: &mut StreamingStats, attachment: &PageAttachment) {
+    for &(key, bytes) in &attachment.asset_variants {
+        if stats.asset_variants.insert(key) {
+            stats.gpu_bytes_estimate = stats.gpu_bytes_estimate.saturating_add(bytes);
+        }
+    }
     let Some((texture_set, gpu_bytes)) = attachment.terrain_texture_set else {
         return;
     };

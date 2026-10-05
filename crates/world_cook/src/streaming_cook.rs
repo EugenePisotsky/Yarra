@@ -29,6 +29,9 @@ pub struct CookStats {
     pub incremental: bool,
     /// Recompiled cells whose ground page changed; only their terrain nodes are rebuilt.
     pub changed_ground_cells: u64,
+    /// Impostor-drawn objects regrouped into far-object blocks, rebuilt by every cook.
+    pub far_object_blocks: usize,
+    pub far_objects: usize,
 }
 #[derive(Debug, Clone)]
 pub struct CookReport {
@@ -200,6 +203,9 @@ fn cook_snapshot_options(
         // A geometry-only cook publishes no composites; otherwise they are updated in place.
         writer.clear_terrain_composites()?;
     }
+    let far = writer.rebuild_far_objects()?;
+    stats.far_object_blocks = far.blocks;
+    stats.far_objects = far.instances;
     let manifest = writer.finish()?;
     stats.cell_seconds = start.elapsed().as_secs_f64();
     let start = std::time::Instant::now();

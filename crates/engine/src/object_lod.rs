@@ -19,6 +19,32 @@ use world::{CellCoord, StableObjectId, WorldSpaceId};
 
 /// Each switch crossfades between 90% and 110% of its switch distance.
 const CROSSFADE_FRACTION: f32 = 0.1;
+/// Streamed cells keep their objects resident within this distance of the camera
+/// (`world_streaming::source_demand`).
+pub(crate) const OBJECT_RESIDENCY_METRES: f32 = 192.0;
+/// The farthest an object with an impostor keeps its last mesh LOD: its crossfade ends
+/// inside the residency, with a margin for cells still loading. The impostor shader limits
+/// its hand-off the same way.
+pub(crate) const IMPOSTOR_HANDOFF_METRES: f32 =
+    OBJECT_RESIDENCY_METRES / (1.0 + CROSSFADE_FRACTION) - 8.0;
+
+/// The farthest distance any object keeps a mesh LOD before its impostor, at most
+/// [`IMPOSTOR_HANDOFF_METRES`]. Lowering it is a diagnostic: 0 draws only impostors.
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+pub struct ImpostorHandoff(f32);
+impl ImpostorHandoff {
+    pub fn new(metres: f32) -> Self {
+        Self(metres.clamp(0.0, IMPOSTOR_HANDOFF_METRES))
+    }
+    pub fn metres(self) -> f32 {
+        self.0
+    }
+}
+impl Default for ImpostorHandoff {
+    fn default() -> Self {
+        Self(IMPOSTOR_HANDOFF_METRES)
+    }
+}
 
 /// Installs object LOD ranges after transform propagation. Requires a WorldViewCamera.
 /// WorldStreamingPlugin includes this plugin for both game and editor applications.
@@ -26,7 +52,9 @@ const CROSSFADE_FRACTION: f32 = 0.1;
 pub struct ObjectLodPlugin;
 impl Plugin for ObjectLodPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<VisualLodScale>()
+        app.add_plugins(crate::tree_impostor::TreeImpostorPlugin)
+            .init_resource::<VisualLodScale>()
+            .init_resource::<ImpostorHandoff>()
             .init_resource::<LodProjection>()
             .add_observer(range_new_lod_scene)
             .add_observer(shadow_lods_follow_world_view)
@@ -50,7 +78,8 @@ pub(crate) struct ScreenSpaceLod {
 
 pub(crate) struct ScreenSpaceLodVariant {
     pub(crate) lod: u8,
-    pub(crate) scene: Handle<WorldAsset>,
+    /// `None` for an impostor, drawn by its far-object block instead of a scene.
+    pub(crate) scene: Option<Handle<WorldAsset>>,
     pub(crate) minimum_screen_height: f32,
 }
 
@@ -78,8 +107,11 @@ impl ScreenSpaceLod {
     pub(crate) fn spawn_scenes(&self, entity: &mut EntityCommands) {
         entity.with_children(|children| {
             for (index, variant) in self.variants.iter().enumerate() {
+                let Some(scene) = &variant.scene else {
+                    continue;
+                };
                 children.spawn((
-                    WorldAssetRoot(variant.scene.clone()),
+                    WorldAssetRoot(scene.clone()),
                     LodScene(index),
                     Name::new(format!("LOD{}", variant.lod)),
                 ));
@@ -101,6 +133,16 @@ impl ScreenSpaceLod {
     fn thresholds(&self) -> impl Iterator<Item = f32> + '_ {
         self.variants.iter().map(|v| v.minimum_screen_height)
     }
+
+    /// The farthest switch distance: the impostor hand-off when an impostor follows the
+    /// meshes, since the cells holding them are not resident much beyond it.
+    fn farthest_switch(&self, handoff: ImpostorHandoff) -> f32 {
+        if self.variants.last().is_some_and(|v| v.scene.is_none()) {
+            handoff.0
+        } else {
+            f32::INFINITY
+        }
+    }
 }
 
 /// Multiplies projected size for visual LOD selection; collision is unchanged.
@@ -115,12 +157,19 @@ impl Default for VisualLodScale {
 /// Logical pixels per metre of object height at one metre from the camera (anywhere, for
 /// an orthographic camera), including [`VisualLodScale`]. Zero until the camera is known.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
-struct LodProjection {
+pub(crate) struct LodProjection {
     pixels_per_metre: f32,
     orthographic: bool,
 }
 
 impl LodProjection {
+    pub(crate) fn pixels_per_metre(&self) -> f32 {
+        self.pixels_per_metre
+    }
+    pub(crate) fn orthographic(&self) -> bool {
+        self.orthographic
+    }
+
     /// Projected height of an object `height` metres tall, `distance` metres away. Seen
     /// side-on at its distance, so pitching the camera never changes it (projecting the
     /// root-to-top segment shrank when the camera looked down).
@@ -133,9 +182,19 @@ impl LodProjection {
     }
 
     /// Visibility range of LOD `index`: shown between the distances where the object's
-    /// projected height crosses the previous LOD's threshold and its own, crossfading
-    /// over [`CROSSFADE_FRACTION`] of each switch distance.
-    fn range(&self, thresholds: &[f32], height: f32, index: usize) -> VisibilityRange {
+    /// projected height crosses the previous LOD's threshold and its own, at most
+    /// `farthest`, crossfading over [`CROSSFADE_FRACTION`] of each switch distance.
+    ///
+    /// A LOD whose switches lie closer together than the crossfade needs is skipped, and
+    /// the LOD before it keeps drawing until the skipped LOD's own switch: the next LOD
+    /// (or the impostor, which fades in there) must meet a LOD fading out, never a gap.
+    fn range(
+        &self,
+        thresholds: &[f32],
+        height: f32,
+        index: usize,
+        farthest: f32,
+    ) -> VisibilityRange {
         const NEVER: VisibilityRange = VisibilityRange {
             start_margin: 0.0..0.0,
             end_margin: 0.0..0.0,
@@ -157,30 +216,36 @@ impl LodProjection {
         let size = height * self.pixels_per_metre;
         let switch = |i: usize| {
             if thresholds[i] > 0.0 {
-                size / thresholds[i]
+                (size / thresholds[i]).min(farthest)
             } else {
                 f32::INFINITY
             }
         };
         let margin = |d: f32| d * (1.0 - CROSSFADE_FRACTION)..d * (1.0 + CROSSFADE_FRACTION);
-        let start_margin = if index == 0 {
-            0.0..0.0
-        } else {
-            margin(switch(index - 1))
+        let fits = |start: f32, end: f32| {
+            start * (1.0 + CROSSFADE_FRACTION) <= end * (1.0 - CROSSFADE_FRACTION)
         };
-        let far = switch(index);
-        let end_margin = if far.is_finite() {
-            margin(far)
-        } else {
-            f32::MAX..f32::MAX
-        };
-        if start_margin.end > end_margin.start {
-            // Equal thresholds leave this LOD no band of its own.
+        // A LOD starts at the previous switch, whether the LOD before drew up to it or
+        // was skipped and extended its own predecessor there.
+        let start = if index == 0 { 0.0 } else { switch(index - 1) };
+        if index > 0 && !fits(start, switch(index)) {
             return NEVER;
         }
+        // Later LODs too close to fit a band of their own extend this one.
+        let mut end = switch(index);
+        for i in index + 1..thresholds.len() {
+            if fits(end, switch(i)) {
+                break;
+            }
+            end = switch(i);
+        }
         VisibilityRange {
-            start_margin,
-            end_margin,
+            start_margin: if index == 0 { 0.0..0.0 } else { margin(start) },
+            end_margin: if end.is_finite() {
+                margin(end)
+            } else {
+                f32::MAX..f32::MAX
+            },
             use_aabb: false,
         }
     }
@@ -201,6 +266,7 @@ fn object_height(lod: &ScreenSpaceLod, scale: Vec3) -> f32 {
 fn update_object_lods(
     mut commands: Commands,
     lod_scale: Res<VisualLodScale>,
+    handoff: Res<ImpostorHandoff>,
     mut projection: ResMut<LodProjection>,
     camera: Single<(&Camera, &GlobalTransform), With<WorldViewCamera>>,
     mut objects: Query<(&GlobalTransform, &mut ScreenSpaceLod, Option<&Children>)>,
@@ -219,7 +285,8 @@ fn update_object_lods(
     };
     // Window size, field of view and Object detail change the switch distances; they
     // change rarely, so only then are ranges rewritten.
-    let changed = next.orthographic != projection.orthographic
+    let changed = handoff.is_changed()
+        || next.orthographic != projection.orthographic
         || (next.pixels_per_metre - projection.pixels_per_metre).abs()
             > 0.005 * projection.pixels_per_metre.max(f32::EPSILON);
     if changed {
@@ -238,7 +305,8 @@ fn update_object_lods(
         }
         for &child in children.into_iter().flatten() {
             if let Ok((level, scene_children)) = scenes.get(child) {
-                let range = projection.range(&thresholds, height, level.0);
+                let range =
+                    projection.range(&thresholds, height, level.0, lod.farthest_switch(*handoff));
                 for &scene_child in scene_children.into_iter().flatten() {
                     apply_range(&mut commands, scene_child, &range, &descendants, &meshes);
                 }
@@ -257,10 +325,12 @@ fn shadow_lods_follow_world_view(added: On<Add, WorldViewCamera>, mut commands: 
 }
 
 /// A LOD scene spawns its meshes asynchronously; range them as soon as they exist.
+#[allow(clippy::too_many_arguments)]
 fn range_new_lod_scene(
     ready: On<WorldInstanceReady>,
     mut commands: Commands,
     projection: Res<LodProjection>,
+    handoff: Res<ImpostorHandoff>,
     scenes: Query<(&LodScene, &ChildOf, Option<&Children>)>,
     objects: Query<(&ScreenSpaceLod, &Transform)>,
     descendants: Query<&Children>,
@@ -276,7 +346,12 @@ fn range_new_lod_scene(
         return; // update_object_lods ranges every scene once the camera is known
     }
     let thresholds: Vec<f32> = lod.thresholds().collect();
-    let range = projection.range(&thresholds, object_height(lod, transform.scale), level.0);
+    let range = projection.range(
+        &thresholds,
+        object_height(lod, transform.scale),
+        level.0,
+        lod.farthest_switch(*handoff),
+    );
     for &child in children.into_iter().flatten() {
         apply_range(&mut commands, child, &range, &descendants, &meshes);
     }
@@ -303,22 +378,27 @@ pub struct GeneratedEnvironmentObject {
     pub cell: CellCoord,
 }
 
-/// Editor world previews share the runtime object's LODs.
+/// Editor world previews share the runtime object's mesh LODs. Previews have no impostor
+/// batches, so their last mesh LOD stays visible at any distance.
 pub fn spawn_collection_visual(
     commands: &mut Commands,
     server: &AssetServer,
     transform: Transform,
     asset: &world_db::CollectionAssetView,
 ) -> Entity {
-    let variants: Vec<_> = asset
+    let mut variants: Vec<_> = asset
         .variants
         .iter()
+        .filter(|v| !world::is_impostor_uri(&v.uri))
         .map(|v| ScreenSpaceLodVariant {
             lod: v.lod,
-            scene: server.load(GltfAssetLabel::Scene(0).from_asset(v.uri.clone())),
+            scene: Some(server.load(GltfAssetLabel::Scene(0).from_asset(v.uri.clone()))),
             minimum_screen_height: v.minimum_screen_height,
         })
         .collect();
+    if let Some(last) = variants.last_mut() {
+        last.minimum_screen_height = 0.0;
+    }
     let lod = ScreenSpaceLod::new(
         variants,
         asset

@@ -5,9 +5,11 @@ Uses Python's standard library and Khronos ktx. Example:
   python3 tools/import_vegetation_bundle.py --bundle /path/to/birch_leafy/current \
     --bundle /path/to/birch_sparse/current --bundle /path/to/birch_bare/current
 
-The source bundles are never modified. This imports three mesh LODs only: the
-authoring billboard's view selection and elevated coverage are not implemented
-in Yarra yet. Crown shading is an adjustable experiment, not a final art rule.
+The source bundles are never modified. This imports three mesh LODs and, with
+--impostor-screen-height, the bundle's baked hemi-octahedral impostor
+(scripts/bake_impostor.py) as a final LOD drawn beyond that projected height.
+The older eight-view billboard is not used. Crown shading is an adjustable
+experiment, not a final art rule.
 """
 import argparse
 import hashlib
@@ -158,6 +160,8 @@ def main():
     parser.add_argument('--canopy-blend', type=float, default=.85)
     parser.add_argument('--lod-screen-heights', type=float, nargs=2, default=(480., 180.),
                         metavar=('NEAR', 'MID'), help='Minimum projected heights for the first two mesh LODs; far uses 0')
+    parser.add_argument('--impostor-screen-height', type=float, default=0.,
+                        help='Draw the baked impostor below this projected height (0 keeps the far mesh LOD)')
     args = parser.parse_args()
     if not args.ktx.is_file():
         parser.error('Khronos ktx was not found; install it on PATH or pass --ktx /path/to/ktx')
@@ -166,6 +170,9 @@ def main():
     near, mid = args.lod_screen_heights
     if not all(math.isfinite(v) for v in (near, mid)) or not near > mid > 0:
         parser.error('--lod-screen-heights requires finite NEAR > MID > 0')
+    far = args.impostor_screen_height
+    if not math.isfinite(far) or far < 0 or (far > 0 and not mid > far):
+        parser.error('--impostor-screen-height must be 0 or below MID')
     output = args.output.resolve()
     pack = output.relative_to(ROOT/'assets').as_posix()
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -185,7 +192,10 @@ def main():
             variants, counts, first_ids = [], [], None
             bounds = [max(max(abs(v['min'][c]), abs(v['max'][c])) * (1 if c == 1 else 2)
                           for v in manifest['bounds'].values()) for c in range(3)]
-            for lod, threshold in enumerate((near, mid, 0.)):
+            impostor = bundle/'impostor/impostor.json'
+            if far > 0 and not impostor.is_file():
+                raise ValueError(f'{name} has no baked impostor; run scripts/bake_impostor.py on the bundle')
+            for lod, threshold in enumerate((near, mid, far)):
                 glb = bundle/f'lod{lod}.glb'
                 doc, blob = read_glb(glb)
                 for im in doc['images']:
@@ -217,15 +227,41 @@ def main():
                 assert count == manifest['triangles'][f'lod{lod}']
                 counts.append(count)
                 variants.append(f'(uri: "{pack}/runtime/{name}/{target.name}", bounds: ({bounds[0]:.4f}, {bounds[1]:.4f}, {bounds[2]:.4f}), gpu_bytes_estimate: {len(blob)}, minimum_screen_height: {threshold}),')
+            if far > 0:
+                info = json.loads(impostor.read_text())
+                if info.get('version') != 2 or info.get('layout') != 'hemi_octahedral':
+                    raise ValueError(f'{name}: expected a version 2 hemi-octahedral impostor')
+                folder = stage/'runtime'/name
+                maps = {}
+                for key, srgb in (('albedo', True), ('normal', False)):
+                    files = [impostor.parent/info['textures'][key]]
+                    if key == 'albedo':
+                        files += [impostor.parent/m for m in info['albedo_mips']]
+                    maps[key] = f'{name}_impostor_{key}.ktx2'
+                    print('Compressing', maps[key], flush=True)
+                    texture(args.ktx, files, folder/maps[key], srgb, False)
+                descriptor = folder/f'{name}.impostor.json'
+                descriptor.write_text(json.dumps({
+                    'version': 1, 'views': info['views'], 'cell': info['cell'], 'centre': info['centre'],
+                    'radius': info['radius'], 'crop': info.get('crop', [0., 0., 1., 1.]),
+                    'alpha_cutoff': info['alpha_cutoff'], **maps,
+                    'conventions': info['conventions'],
+                }, indent=1)+'\n')
+                size = sum((folder/m).stat().st_size for m in maps.values())
+                variants.append(f'(uri: "{pack}/runtime/{name}/{descriptor.name}", bounds: ({bounds[0]:.4f}, {bounds[1]:.4f}, {bounds[2]:.4f}), gpu_bytes_estimate: {size}, minimum_screen_height: 0.0),')
+                shutil.copy2(impostor, source/f'{name}_impostor.json')
+            elif variants:
+                variants[-1] = variants[-1].replace(f'minimum_screen_height: {far})', 'minimum_screen_height: 0.0)')
             shutil.copy2(bundle/'lod0.glb', source/f'{name}.glb')
             for filename in ('manifest.json', 'settings.json', 'branch_library.json'):
                 shutil.copy2(bundle/filename, source/f'{name}_{filename}')
             entries.append(f'(key: "{output.name}/{name}", display_name: "{name.replace("_", " ").title()}", source_uri: "{pack}/source/{name}.glb", variants: [\n'+ '\n'.join(variants)+'\n]),')
             reports.append({'asset': name, 'triangles': counts, 'facing_cards': len(first_ids), 'source': str(bundle.resolve())})
         (stage/'import.json').write_text(json.dumps({'assets': reports, 'source_texture_sha256': texture_hashes,
-            'lod_screen_heights': [near, mid, 0.],
+            'lod_screen_heights': [near, mid, far] + ([0.] if far > 0 else []),
+            'impostor': 'hemi-octahedral impostor below the third height' if far > 0 else 'none',
             'canopy_blend': args.canopy_blend, 'lighting': 'crown_v2 for crown_sky_v1 occlusion bakes; legacy bundles retain crown_v1',
-            'billboard': 'Not registered: view-selection shader pending',
+            'billboard': 'The eight-view authoring billboard is not imported',
             'translucency': 'Source sidecar not sampled by current Yarra foliage shader'}, indent=2)+'\n')
         if output.exists():
             output.rename(output.with_name(output.name+'.previous-'+str(time.time_ns())))

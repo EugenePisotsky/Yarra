@@ -36,7 +36,7 @@ pub use page::{DecodedPage, EncodedPage};
 pub use project::{ProjectReader, ProjectWriter, read_project_database, write_project_database};
 pub use records::*;
 pub use road_store::*;
-pub use runtime::{RuntimeCookWriter, RuntimeReader, write_runtime_database};
+pub use runtime::{FarObjectStats, RuntimeCookWriter, RuntimeReader, write_runtime_database};
 pub use terrain_import::*;
 pub use terrain_materials::*;
 pub use terrain_nodes::*;

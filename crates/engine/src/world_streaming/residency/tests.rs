@@ -73,6 +73,8 @@ fn attachment_app(resident_bytes: u64) -> App {
         .init_resource::<TerrainMacroVariation>()
         .init_resource::<WorldOrigin>()
         .init_resource::<SourceResidency>()
+        .init_resource::<source_demand::SourceView>()
+        .init_resource::<crate::object_lod::LodProjection>()
         .insert_resource(WorldRenderAssets {
             unit_plane: Handle::default(),
         })
@@ -148,6 +150,59 @@ fn attachment_limit_still_bounds_successful_work_per_frame() {
     for key in &keys[MAX_ATTACHMENTS_PER_FRAME..] {
         assert!(matches!(stream.pages[key], PageState::Prepared(_)));
     }
+}
+
+#[test]
+fn pages_sharing_an_asset_count_it_once_and_never_count_impostors() {
+    let mut app = attachment_app(0);
+    let mesh = PageDependency {
+        asset: world::AssetId([1; 32]),
+        asset_lod: 0,
+        kind: "gltf-scene".into(),
+        uri: "tree.gltf".into(),
+        bounds: [1.; 3],
+        // Two of these would not fit the residency together.
+        gpu_bytes_estimate: MAX_RESIDENT_GPU_BYTES_ESTIMATE * 3 / 4,
+        shadow_policy: 0,
+        minimum_screen_height: 100.,
+    };
+    let impostor = PageDependency {
+        asset_lod: 1,
+        uri: "tree.impostor.json".into(),
+        // Alone larger than the residency: far-object blocks own impostor textures.
+        gpu_bytes_estimate: MAX_RESIDENT_GPU_BYTES_ESTIMATE * 2,
+        minimum_screen_height: 0.,
+        ..mesh.clone()
+    };
+    let keys = [
+        key(PageDomain::StaticObjects, 0),
+        key(PageDomain::StaticObjects, 1),
+    ];
+    for key in keys {
+        let mut page = height_page(key);
+        page.height_only = false;
+        page.dependencies = vec![mesh.clone(), impostor.clone()];
+        page.decoded.payload = PagePayload::StaticObjects(world::StaticObjectsPage {
+            instances: vec![world::StaticObjectInstance {
+                id: world::StableObjectId([key.cell.x as u8; 16]),
+                asset: mesh.asset,
+                generated: false,
+                translation: [0.; 3],
+                yaw: 0.,
+                scale: 1.,
+            }],
+        });
+        queue_page(&mut app, page);
+    }
+    app.update();
+    let stream = app.world().resource::<SourceResidency>();
+    for key in keys {
+        assert!(
+            matches!(stream.pages[&key], PageState::Resident(_)),
+            "{key:?} must attach"
+        );
+    }
+    assert_eq!(stream.admission_blocked, 0);
 }
 
 fn key(domain: PageDomain, x: i32) -> PageKey {

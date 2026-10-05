@@ -26,9 +26,17 @@ pub const DEFAULT_RUNTIME_DATABASE: &str = "generated/world.runtime.sqlite";
 pub const DEFAULT_CELL_SIZE: f32 = 32.0;
 pub const MAX_DECODED_PAGE_BYTES: u64 = 64 * 1024 * 1024;
 pub const PROJECT_SCHEMA_VERSION: i64 = 28;
-pub const RUNTIME_SCHEMA_VERSION: i64 = 26;
+pub const RUNTIME_SCHEMA_VERSION: i64 = 27;
 pub const PAGE_PAYLOAD_VERSION: u16 = 9;
 pub const MAX_TERRAIN_SURFACES_PER_CELL: usize = 8;
+
+/// An asset's last LOD variant may be an impostor: a descriptor of baked views drawn as one
+/// camera-facing quad per object, instead of a glTF scene.
+pub const IMPOSTOR_SUFFIX: &str = ".impostor.json";
+
+pub fn is_impostor_uri(uri: &str) -> bool {
+    uri.ends_with(IMPOSTOR_SUFFIX)
+}
 pub const MAX_TERRAIN_WEIGHT_PAGES: usize = 2;
 pub const MAX_TERRAIN_WEIGHT_RESOLUTION: u16 = 257;
 pub const MAX_TERRAIN_HEIGHTFIELD_RESOLUTION: u16 = 257;
@@ -731,6 +739,119 @@ pub enum PagePayloadDecodeError {
     UnsupportedVersion(u16),
 }
 
+/// Cells per side of a far-object block.
+pub const FAR_OBJECT_BLOCK_CELLS: i32 = 16;
+pub const FAR_OBJECTS_PAGE_VERSION: u16 = 1;
+pub const MAX_FAR_OBJECT_FORMS: usize = 256;
+pub const MAX_FAR_OBJECTS_PER_BLOCK: usize = 262_144;
+
+/// The block of [`FAR_OBJECT_BLOCK_CELLS`]² cells containing `cell`, as its lowest cell
+/// divided by the block size.
+pub fn far_object_block(cell: CellCoord) -> CellCoord {
+    CellCoord {
+        x: cell.x.div_euclid(FAR_OBJECT_BLOCK_CELLS),
+        z: cell.z.div_euclid(FAR_OBJECT_BLOCK_CELLS),
+    }
+}
+
+/// Every impostor-drawn static object of one block, derived from its cells' static-object
+/// pages when a cook finishes. Streamed much further than cells, it draws those objects
+/// from their last mesh LOD's hand-off outward; the cells draw only meshes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FarObjectsPage {
+    pub forms: Vec<FarObjectForm>,
+    pub instances: Vec<FarObjectInstance>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FarObjectForm {
+    /// The asset's impostor descriptor (its last LOD).
+    pub uri: String,
+    /// Object height (the largest LOD bounds) over its last mesh LOD's minimum screen
+    /// height, at unit scale: times scale and pixels per metre, the hand-off distance.
+    pub switch: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FarObjectInstance {
+    /// Index into the page's forms.
+    pub form: u16,
+    /// X and Z from the block's lowest corner; Y as in the cell page.
+    pub translation: [f32; 3],
+    pub yaw: f32,
+    pub scale: f32,
+}
+
+#[derive(Serialize, Deserialize)]
+struct VersionedFarObjectsPage {
+    version: u16,
+    page: FarObjectsPage,
+}
+
+impl FarObjectsPage {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.forms.is_empty()
+            || self.forms.len() > MAX_FAR_OBJECT_FORMS
+            || self.instances.is_empty()
+            || self.instances.len() > MAX_FAR_OBJECTS_PER_BLOCK
+        {
+            return Err("far-object page has no or too many forms or instances".into());
+        }
+        if self
+            .forms
+            .iter()
+            .any(|f| !is_impostor_uri(&f.uri) || !f.switch.is_finite() || f.switch <= 0.0)
+        {
+            return Err("far-object form is not an impostor with a hand-off".into());
+        }
+        if self.instances.iter().any(|i| {
+            usize::from(i.form) >= self.forms.len()
+                || !i.translation.iter().all(|v| v.is_finite())
+                || !i.yaw.is_finite()
+                || !i.scale.is_finite()
+                || i.scale <= 0.0
+        }) {
+            return Err("far-object instance is invalid".into());
+        }
+        Ok(())
+    }
+
+    pub fn encode(&self) -> Result<Vec<u8>, bincode::error::EncodeError> {
+        bincode::serde::encode_to_vec(
+            VersionedFarObjectsPage {
+                version: FAR_OBJECTS_PAGE_VERSION,
+                page: self.clone(),
+            },
+            bincode::config::standard()
+                .with_little_endian()
+                .with_fixed_int_encoding(),
+        )
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self, PagePayloadDecodeError> {
+        let (versioned, consumed): (VersionedFarObjectsPage, usize) =
+            bincode::serde::decode_from_slice(
+                bytes,
+                bincode::config::standard()
+                    .with_little_endian()
+                    .with_fixed_int_encoding()
+                    .with_limit::<{ MAX_DECODED_PAGE_BYTES as usize }>(),
+            )?;
+        if consumed != bytes.len() {
+            return Err(PagePayloadDecodeError::TrailingBytes {
+                consumed,
+                total: bytes.len(),
+            });
+        }
+        if versioned.version != FAR_OBJECTS_PAGE_VERSION {
+            return Err(PagePayloadDecodeError::UnsupportedVersion(
+                versioned.version,
+            ));
+        }
+        Ok(versioned.page)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -780,6 +901,40 @@ mod tests {
         );
         assert_eq!(moved.local, [0.5, 6.0, 31.25]);
         assert_eq!(moved.relative_to(position.cell, 32.0), [32.5, 6.0, -0.75]);
+    }
+
+    #[test]
+    fn far_object_blocks_floor_negative_cells() {
+        let block = |x, z| far_object_block(CellCoord { x, z });
+        assert_eq!(block(0, 15), CellCoord { x: 0, z: 0 });
+        assert_eq!(block(-1, 16), CellCoord { x: -1, z: 1 });
+        assert_eq!(block(-16, -17), CellCoord { x: -1, z: -2 });
+    }
+
+    #[test]
+    fn far_objects_page_round_trips_and_rejects_dangling_forms() {
+        let mut page = FarObjectsPage {
+            forms: vec![FarObjectForm {
+                uri: "packs/tree.impostor.json".into(),
+                switch: 0.1,
+            }],
+            instances: vec![FarObjectInstance {
+                form: 0,
+                translation: [1.0, 2.0, 3.0],
+                yaw: 0.5,
+                scale: 1.5,
+            }],
+        };
+        page.validate().unwrap();
+        assert_eq!(
+            FarObjectsPage::decode(&page.encode().unwrap()).unwrap(),
+            page
+        );
+        page.instances[0].form = 1;
+        assert!(page.validate().is_err());
+        page.instances[0].form = 0;
+        page.forms[0].uri = "packs/tree.gltf".into();
+        assert!(page.validate().is_err());
     }
 
     #[test]

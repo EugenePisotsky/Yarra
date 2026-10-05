@@ -1,5 +1,6 @@
 mod database;
 use database::{DatabaseRequest, DatabaseResult, WorldDatabaseWorker};
+mod far_objects;
 mod generation;
 mod residency;
 use residency::SourceResidency;
@@ -10,7 +11,8 @@ mod rebase;
 mod smoke;
 mod source_demand;
 pub use crate::object_lod::{
-    GeneratedEnvironmentObject, StreamedVisualObject, VisualLodScale, spawn_collection_visual,
+    GeneratedEnvironmentObject, ImpostorHandoff, StreamedVisualObject, VisualLodScale,
+    spawn_collection_visual,
 };
 pub use rebase::WorldRenderRoot;
 pub use smoke::StreamingSmokePlugin;
@@ -76,6 +78,7 @@ impl Plugin for WorldStreamingPlugin {
             .insert_resource(self.config)
             .init_resource::<WorldStream>()
             .init_resource::<SourceResidency>()
+            .init_resource::<far_objects::FarObjects>()
             .init_resource::<ActiveWorldSpace>()
             .init_resource::<WorldCatalog>()
             .init_resource::<WorldGenerationReload>()
@@ -107,6 +110,7 @@ impl Plugin for WorldStreamingPlugin {
                     residency::attach_prepared_pages,
                     residency::cool_and_remove_pages,
                     residency::update_streaming_stats,
+                    far_objects::update,
                 )
                     .chain()
                     .in_set(WorldStreamingSystems),
@@ -498,6 +502,7 @@ fn receive_database_results(
     mut stream: ResMut<WorldStream>,
     mut residency: ResMut<SourceResidency>,
     mut reload: ResMut<WorldGenerationReload>,
+    mut far: ResMut<far_objects::FarObjects>,
 ) {
     let Some(worker) = worker else {
         return;
@@ -628,6 +633,11 @@ fn receive_database_results(
             }) => {
                 residency.receive_page(request_id, key, result);
             }
+            Ok(DatabaseResult::FarObjects {
+                generation,
+                space,
+                result,
+            }) => far.receive(generation, space, result),
             Err(TryRecvError::Empty) => break,
             Err(TryRecvError::Disconnected) => {
                 if reload.active() {

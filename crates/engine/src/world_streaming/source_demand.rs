@@ -6,8 +6,8 @@ use std::collections::BTreeMap;
 pub(super) const PRELOAD_METERS: f64 = 16.;
 // Object residency is independent of source cell size, grass range and camera heading.
 // Bevy culls resident meshes separately for the camera and each shadow cascade.
-// Keep the final mesh LOD until this bounded range; billboards are not available yet.
-const OBJECT_VISIBILITY_METERS: f64 = 192.;
+// Meshes end within this bounded range; far-object blocks draw impostors beyond it.
+const OBJECT_VISIBILITY_METERS: f64 = crate::object_lod::OBJECT_RESIDENCY_METRES as f64;
 pub(super) type Window = [CellCoord; 2];
 pub(super) type Priority = (u8, f64);
 
@@ -16,6 +16,13 @@ pub(super) struct SourceView {
     space: Option<WorldSpaceId>,
     eye: DVec3,
     radius: f64,
+}
+
+impl SourceView {
+    /// The camera in world coordinates, when the view is in `space`.
+    pub(super) fn eye_in(&self, space: WorldSpaceId) -> Option<DVec3> {
+        (self.space == Some(space)).then_some(self.eye)
+    }
 }
 
 pub(super) fn collect_view(

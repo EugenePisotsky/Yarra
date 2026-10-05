@@ -135,6 +135,17 @@ impl RuntimeReader {
         Ok(result)
     }
 
+    /// Encoded far-object pages of the blocks in `[minimum, maximum]` (block coordinates,
+    /// see [`world::far_object_block`]); blocks without objects are absent.
+    pub fn read_far_objects(
+        &self,
+        space: WorldSpaceId,
+        minimum: CellCoord,
+        maximum: CellCoord,
+    ) -> Result<Vec<(CellCoord, Vec<u8>)>, WorldDbError> {
+        super::far_objects::read(&self.connection, space, minimum, maximum)
+    }
+
     pub fn read_page(&self, key: PageKey) -> Result<Option<EncodedPage>, WorldDbError> {
         read_page_connection(&self.connection, key)
     }

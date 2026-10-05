@@ -4,8 +4,8 @@ mod reader;
 use bevy::prelude::*;
 use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded};
 pub(super) use protocol::{
-    DatabaseRequest, DatabaseResult, FetchedPage, TerrainMaterialQuery, TerrainMaterialReply,
-    TerrainQuery, TerrainReply,
+    DatabaseRequest, DatabaseResult, FarObjectPayloads, FetchedPage, TerrainMaterialQuery,
+    TerrainMaterialReply, TerrainQuery, TerrainReply,
 };
 use std::{
     path::PathBuf,

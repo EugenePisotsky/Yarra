@@ -1,17 +1,20 @@
 (schema_version: 1, assets: [
 (key: "yarra_oaks/oak_forest", display_name: "Oak Forest", source_uri: "local/yarra_oaks/source/oak_forest.glb", variants: [
 (uri: "local/yarra_oaks/runtime/oak_forest/oak_forest_lod0.gltf", bounds: (16.7353, 19.2182, 17.0012), gpu_bytes_estimate: 972808, minimum_screen_height: 480.0),
-(uri: "local/yarra_oaks/runtime/oak_forest/oak_forest_lod1.gltf", bounds: (16.7353, 19.2182, 17.0012), gpu_bytes_estimate: 303480, minimum_screen_height: 180.0),
-(uri: "local/yarra_oaks/runtime/oak_forest/oak_forest_lod2.gltf", bounds: (16.7353, 19.2182, 17.0012), gpu_bytes_estimate: 156840, minimum_screen_height: 0.0),
+(uri: "local/yarra_oaks/runtime/oak_forest/oak_forest_lod1.gltf", bounds: (16.7353, 19.2182, 17.0012), gpu_bytes_estimate: 303480, minimum_screen_height: 240.0),
+(uri: "local/yarra_oaks/runtime/oak_forest/oak_forest_lod2.gltf", bounds: (16.7353, 19.2182, 17.0012), gpu_bytes_estimate: 156840, minimum_screen_height: 200.0),
+(uri: "local/yarra_oaks/runtime/oak_forest/oak_forest.impostor.json", bounds: (16.7353, 19.2182, 17.0012), gpu_bytes_estimate: 2044499, minimum_screen_height: 0.0),
 ]),
 (key: "yarra_oaks/oak_spreading", display_name: "Oak Spreading", source_uri: "local/yarra_oaks/source/oak_spreading.glb", variants: [
 (uri: "local/yarra_oaks/runtime/oak_spreading/oak_spreading_lod0.gltf", bounds: (20.5509, 15.7751, 20.6832), gpu_bytes_estimate: 1045880, minimum_screen_height: 480.0),
-(uri: "local/yarra_oaks/runtime/oak_spreading/oak_spreading_lod1.gltf", bounds: (20.5509, 15.7751, 20.6832), gpu_bytes_estimate: 335792, minimum_screen_height: 180.0),
-(uri: "local/yarra_oaks/runtime/oak_spreading/oak_spreading_lod2.gltf", bounds: (20.5509, 15.7751, 20.6832), gpu_bytes_estimate: 182304, minimum_screen_height: 0.0),
+(uri: "local/yarra_oaks/runtime/oak_spreading/oak_spreading_lod1.gltf", bounds: (20.5509, 15.7751, 20.6832), gpu_bytes_estimate: 335792, minimum_screen_height: 240.0),
+(uri: "local/yarra_oaks/runtime/oak_spreading/oak_spreading_lod2.gltf", bounds: (20.5509, 15.7751, 20.6832), gpu_bytes_estimate: 182304, minimum_screen_height: 200.0),
+(uri: "local/yarra_oaks/runtime/oak_spreading/oak_spreading.impostor.json", bounds: (20.5509, 15.7751, 20.6832), gpu_bytes_estimate: 2393626, minimum_screen_height: 0.0),
 ]),
 (key: "yarra_oaks/oak_sparse", display_name: "Oak Sparse", source_uri: "local/yarra_oaks/source/oak_sparse.glb", variants: [
 (uri: "local/yarra_oaks/runtime/oak_sparse/oak_sparse_lod0.gltf", bounds: (16.0403, 19.1921, 16.3492), gpu_bytes_estimate: 972280, minimum_screen_height: 480.0),
-(uri: "local/yarra_oaks/runtime/oak_sparse/oak_sparse_lod1.gltf", bounds: (16.0403, 19.1921, 16.3492), gpu_bytes_estimate: 277912, minimum_screen_height: 180.0),
-(uri: "local/yarra_oaks/runtime/oak_sparse/oak_sparse_lod2.gltf", bounds: (16.0403, 19.1921, 16.3492), gpu_bytes_estimate: 109672, minimum_screen_height: 0.0),
+(uri: "local/yarra_oaks/runtime/oak_sparse/oak_sparse_lod1.gltf", bounds: (16.0403, 19.1921, 16.3492), gpu_bytes_estimate: 277912, minimum_screen_height: 240.0),
+(uri: "local/yarra_oaks/runtime/oak_sparse/oak_sparse_lod2.gltf", bounds: (16.0403, 19.1921, 16.3492), gpu_bytes_estimate: 109672, minimum_screen_height: 200.0),
+(uri: "local/yarra_oaks/runtime/oak_sparse/oak_sparse.impostor.json", bounds: (16.0403, 19.1921, 16.3492), gpu_bytes_estimate: 1959242, minimum_screen_height: 0.0),
 ]),
 ])

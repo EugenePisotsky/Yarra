@@ -151,6 +151,25 @@ cargo run --release -p yarra-world-cook -- cook
 cargo run --release -p yarra-app-game -- --start-view content/world.project.views/spruce-stand.ron
 ```
 
+**Impostors.** Distant trees are drawn as hemi-octahedral impostors baked from
+LOD0, not as their last mesh LOD. Bake each bundle in YarraVegetation (no Houdini
+needed, about 8 s per form), then import with an impostor threshold below the
+mesh ones; the descriptor and two KTX2 atlases (~4.4 MB per form) are added as
+the last LOD:
+
+```sh
+uv run --with numpy --with pillow python scripts/bake_impostor.py outputs/spruce_forest/current --leaf-grow 2 --fill 0
+# Bare and dead trees: --leaf-grow 0 --fill 0. Filled crowns (--fill 1) merge needle clusters.
+python3 tools/import_vegetation_bundle.py ... --lod-screen-heights 480 240 --impostor-screen-height 200
+# Shrubs and bay: --lod-screen-heights 480 180 --impostor-screen-height 60
+```
+
+`--crop-only` adds the coverage crop to an older bake. Register and cook as
+usual: the cook regroups impostor-drawn objects into far-object blocks, which
+the game streams out to 2 km ([architecture](ARCHITECTURE.md)). To compare
+impostors with their meshes, capture a view twice, once with
+`--impostor-handoff 0` (impostors only).
+
 For another family, adapt the existing `place_spruce_preview.py` or
 `place_longleaf_preview.py` pattern: unique stable sample IDs, terrain-relative
 placement, a source SQLite backup, and preservation of unrelated objects and

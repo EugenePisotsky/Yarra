@@ -8,6 +8,7 @@ mod character_catalog;
 mod msaa_store;
 mod object_lod;
 pub use object_lod::{ObjectFootprint, ObjectLodPlugin};
+mod tree_impostor;
 mod tree_wind;
 pub use tree_wind::{
     TreeWindPlugin, TreeWindResponse, TreeWindSystems, TreeWindTuning, tree_gltf_plugin,
@@ -38,8 +39,8 @@ pub use character_catalog::{
 };
 pub use msaa_store::{MsaaColorStorePlugin, MsaaColorStorePolicy};
 pub use world_streaming::{
-    ActiveWorldSpace, GameplayObject, GeneratedEnvironmentObject, LiveTerrainPreview,
-    StreamedTerrainSurface, StreamedVegetationFieldPage, StreamedVisualObject,
+    ActiveWorldSpace, GameplayObject, GeneratedEnvironmentObject, ImpostorHandoff,
+    LiveTerrainPreview, StreamedTerrainSurface, StreamedVegetationFieldPage, StreamedVisualObject,
     StreamingSmokePlugin, StreamingStats, TerrainContactReadiness, TerrainLodPreview,
     TerrainLodStats, TerrainPreviewRequest, VisualLodScale, WorldCatalog, WorldDebugControls,
     WorldDetailDemand, WorldGenerationReload, WorldOrigin, WorldRenderRoot, WorldSpaceInfo,

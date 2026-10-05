@@ -65,9 +65,13 @@ impl AssetImportCatalog {
                     .variants
                     .windows(2)
                     .any(|v| v[0].minimum_screen_height < v[1].minimum_screen_height)
-                || asset.variants.iter().any(|v| {
+                || asset.variants.iter().enumerate().any(|(i, v)| {
+                    let last = i + 1 == asset.variants.len();
+                    // Mesh LODs are glTF; only the last may be an impostor, after a mesh.
+                    let kind_ok = v.uri.ends_with(".gltf")
+                        || (last && i > 0 && world::is_impostor_uri(&v.uri));
                     !valid_uri(&v.uri)
-                        || !v.uri.ends_with(".gltf")
+                        || !kind_ok
                         || v.bounds.iter().any(|b| !b.is_finite() || *b <= 0.0)
                         || !v.minimum_screen_height.is_finite()
                         || v.minimum_screen_height < 0.0
@@ -217,6 +221,33 @@ mod tests {
         assert!(c.validate().is_err());
         c.assets[0].variants[0].minimum_screen_height = 0.;
         c.assets[0].variants[0].uri = "../tree.gltf".into();
+        assert!(c.validate().is_err());
+    }
+    #[test]
+    fn only_the_last_variant_may_be_an_impostor_after_a_mesh() {
+        let variant = |uri: &str, minimum| AssetImportVariant {
+            uri: uri.into(),
+            bounds: [2., 10., 2.],
+            gpu_bytes_estimate: 100,
+            minimum_screen_height: minimum,
+        };
+        let mut c = catalog();
+        c.assets[0].variants = vec![
+            variant("local/tree.gltf", 150.),
+            variant("local/tree.impostor.json", 0.),
+        ];
+        assert!(c.validate().is_ok());
+        c.assets[0].variants = vec![variant("local/tree.impostor.json", 0.)];
+        assert!(c.validate().is_err(), "an impostor needs a mesh before it");
+        c.assets[0].variants = vec![
+            variant("local/tree.impostor.json", 150.),
+            variant("local/tree.gltf", 0.),
+        ];
+        assert!(c.validate().is_err(), "an impostor must be last");
+        c.assets[0].variants = vec![
+            variant("local/tree.gltf", 150.),
+            variant("local/tree.json", 0.),
+        ];
         assert!(c.validate().is_err());
     }
 }

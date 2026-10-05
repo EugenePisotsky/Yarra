@@ -7,6 +7,9 @@ use world_db::{
     TerrainRenderResources,
 };
 
+/// Encoded far-object pages by block; `None` for a block without far objects.
+pub(in crate::world_streaming) type FarObjectPayloads = Vec<(CellCoord, Option<Vec<u8>>)>;
+
 #[derive(Debug)]
 pub(in crate::world_streaming) enum DatabaseRequest {
     Terrain {
@@ -37,6 +40,12 @@ pub(in crate::world_streaming) enum DatabaseRequest {
         key: PageKey,
         height_only: bool,
     },
+    /// Encoded far-object pages of these blocks (see [`world::far_object_block`]).
+    ReadFarObjects {
+        generation: String,
+        space: WorldSpaceId,
+        blocks: Vec<CellCoord>,
+    },
 }
 
 #[derive(Debug)]
@@ -63,6 +72,12 @@ pub(in crate::world_streaming) enum DatabaseResult {
         request_id: u64,
         key: PageKey,
         result: Result<Option<FetchedPage>, String>,
+    },
+    /// Every requested block.
+    FarObjects {
+        generation: String,
+        space: WorldSpaceId,
+        result: Result<FarObjectPayloads, String>,
     },
 }
 

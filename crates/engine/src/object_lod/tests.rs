@@ -10,7 +10,7 @@ const PERSPECTIVE: LodProjection = LodProjection {
 fn lod_bands_meet_at_switch_distances_and_crossfade_around_them() {
     // A 1 m object at 1000 px/m switches where it is 320, 160 and 80 px tall.
     let thresholds = [320.0, 160.0, 80.0, 0.0];
-    let range = |index| PERSPECTIVE.range(&thresholds, 1.0, index);
+    let range = |index| PERSPECTIVE.range(&thresholds, 1.0, index, f32::INFINITY);
     let around = |d: f32| d * 0.9..d * 1.1;
     assert_eq!(range(0).start_margin, 0.0..0.0);
     assert_eq!(range(0).end_margin, around(3.125));
@@ -26,8 +26,31 @@ fn lod_bands_meet_at_switch_distances_and_crossfade_around_them() {
 
 #[test]
 fn equal_thresholds_leave_the_skipped_lod_no_band() {
-    let range = PERSPECTIVE.range(&[320.0, 320.0, 80.0, 0.0], 1.0, 1);
+    let range = PERSPECTIVE.range(&[320.0, 320.0, 80.0, 0.0], 1.0, 1, f32::INFINITY);
     assert!((0..100).all(|d| !range.is_visible_at_all(d as f32 * 0.25)));
+}
+
+#[test]
+fn a_lod_without_room_for_a_band_extends_the_previous_one_to_the_next() {
+    // 240 and 200 px are closer than the crossfade: LOD2 is skipped and LOD1 draws until
+    // the impostor (after LOD2) fades in, so they crossfade with no gap between them.
+    let thresholds = [480.0, 240.0, 200.0, 0.0];
+    let range = |index| PERSPECTIVE.range(&thresholds, 1.0, index, f32::INFINITY);
+    let around = |d: f32| d * 0.9..d * 1.1;
+    assert_eq!(range(1).start_margin, around(1000.0 / 480.0));
+    assert_eq!(range(1).end_margin, around(5.0));
+    assert!((0..100).all(|d| !range(2).is_visible_at_all(d as f32 * 0.1)));
+}
+
+#[test]
+fn meshes_before_an_impostor_end_by_the_hand_off_limit() {
+    // A 1 m object at 1000 px/m would keep LOD1 until 12.5 m; limited to 5 m, LOD1 ends
+    // there and LOD2, whose band now starts beyond its end, is skipped.
+    let thresholds = [320.0, 160.0, 80.0, 0.0];
+    let range = |index| PERSPECTIVE.range(&thresholds, 1.0, index, 5.0);
+    assert_eq!(range(0).end_margin, 3.125 * 0.9..3.125 * 1.1);
+    assert_eq!(range(1).end_margin, 5.0 * 0.9..5.0 * 1.1);
+    assert!((0..100).all(|d| !range(2).is_visible_at_all(d as f32 * 0.25)));
 }
 
 #[test]
@@ -39,7 +62,7 @@ fn orthographic_views_keep_the_one_matching_lod_at_any_distance() {
     let thresholds = [160.0, 80.0, 0.0];
     // 1 m tall at 100 px/m: 100 px, which is LOD1.
     for (index, visible) in [(0, false), (1, true), (2, false)] {
-        let range = projection.range(&thresholds, 1.0, index);
+        let range = projection.range(&thresholds, 1.0, index, f32::INFINITY);
         assert_eq!(range.is_visible_at_all(1.0e4), visible, "LOD{index}");
     }
 }
@@ -76,7 +99,7 @@ fn object(app: &mut App, height: f32) -> (Entity, [Entity; 2]) {
         .enumerate()
         .map(|(lod, minimum_screen_height)| ScreenSpaceLodVariant {
             lod: lod as u8,
-            scene: Handle::default(),
+            scene: Some(Handle::default()),
             minimum_screen_height,
         })
         .collect();

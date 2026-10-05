@@ -228,6 +228,40 @@ pub(super) fn run(
                     return;
                 }
             }
+            DatabaseRequest::ReadFarObjects {
+                generation,
+                space,
+                blocks,
+            } => {
+                let result = (if reader.manifest().generation_id == generation {
+                    Ok(&reader)
+                } else {
+                    Err("far objects belong to a stale generation".to_string())
+                })
+                .and_then(|reader| {
+                    blocks
+                        .into_iter()
+                        .map(|block| {
+                            let page = reader.read_far_objects(space, block, block)?;
+                            Ok((block, page.into_iter().next().map(|(_, payload)| payload)))
+                        })
+                        .collect::<Result<Vec<_>, world_db::WorldDbError>>()
+                        .map_err(|error| error.to_string())
+                });
+                if reply(
+                    &results,
+                    &cancel,
+                    DatabaseResult::FarObjects {
+                        generation,
+                        space,
+                        result,
+                    },
+                )
+                .is_err()
+                {
+                    return;
+                }
+            }
         }
     }
 }
