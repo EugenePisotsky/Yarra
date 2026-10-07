@@ -45,6 +45,10 @@ pub(crate) struct LookVariant {
     pub(crate) auto_exposure: Option<bool>,
     /// Ground haze and valley mist; the game's setting when `None`.
     pub(crate) fog: Option<bool>,
+    /// Ambient particles; the game's setting when `None`.
+    pub(crate) particles: Option<bool>,
+    /// Screenshots taken one after another, for motion; 1 for a still.
+    pub(crate) burst: u32,
     /// Time of day as a phase of the day, 0..1; the world's start time when `None`.
     pub(crate) phase: Option<f32>,
     /// Scales of haze and mist extinction and of mist depth ([`FogTuning`]).
@@ -71,7 +75,8 @@ pub(crate) const TONEMAPPERS: [(&str, Tonemapping); 8] = [
 ];
 
 /// `NAME[:key=value,...]` separated by `;`, keys `ev`, `tone`, `ambient`, `sun`, `canopy`,
-/// `auto`, `fog`, `phase`, `haze`, `mist` and `depth`.
+/// `auto`, `fog`, `particles`, `phase`, `haze`, `mist`, `depth` and `burst` (that many
+/// screenshots one after another, a frame or two apart).
 pub(crate) fn parse_variants(spec: &str) -> Result<Vec<LookVariant>, String> {
     let variants = spec
         .split(';')
@@ -88,6 +93,8 @@ pub(crate) fn parse_variants(spec: &str) -> Result<Vec<LookVariant>, String> {
                 canopy: None,
                 auto_exposure: None,
                 fog: None,
+                particles: None,
+                burst: 1,
                 phase: None,
                 tuning: FogTuning::default(),
             };
@@ -113,7 +120,7 @@ pub(crate) fn parse_variants(spec: &str) -> Result<Vec<LookVariant>, String> {
                     "ambient" => variant.ambient = number(0.05..=20.0)?,
                     "sun" => variant.sun = number(0.05..=20.0)?,
                     "canopy" => variant.canopy = Some(number(0.0..=1.0)?),
-                    "auto" | "fog" => {
+                    "auto" | "fog" | "particles" => {
                         let on = match value {
                             "1" | "on" => true,
                             "0" | "off" => false,
@@ -123,13 +130,14 @@ pub(crate) fn parse_variants(spec: &str) -> Result<Vec<LookVariant>, String> {
                                 ));
                             }
                         };
-                        if key.trim() == "auto" {
-                            variant.auto_exposure = Some(on);
-                        } else {
-                            variant.fog = Some(on);
+                        match key.trim() {
+                            "auto" => variant.auto_exposure = Some(on),
+                            "fog" => variant.fog = Some(on),
+                            _ => variant.particles = Some(on),
                         }
                     }
                     "phase" => variant.phase = Some(number(0.0..=0.999)?),
+                    "burst" => variant.burst = number(1.0..=120.0)? as u32,
                     "haze" => variant.tuning.haze = number(0.0..=20.0)?,
                     "mist" => variant.tuning.mist = number(0.0..=20.0)?,
                     "depth" => variant.tuning.mist_depth = number(0.1..=10.0)?,
@@ -248,6 +256,10 @@ fn present(
     if presentation.low_air != fog {
         presentation.low_air = fog;
     }
+    let particles = variant.particles.unwrap_or(settings.particles);
+    if presentation.particles != particles {
+        presentation.particles = particles;
+    }
     tuning.set_if_neq(variant.tuning);
     occlusion.set_if_neq(ForestSkyOcclusion(
         variant.canopy.unwrap_or(ForestSkyOcclusion::default().0),
@@ -336,8 +348,9 @@ fn run(
         capture.current = Some((index, drawn.min(VARIANT_FRAMES - 1) + 1, started));
         return;
     }
-    if drawn > VARIANT_FRAMES {
-        // Its screenshot is taken: the next variant may draw.
+    let shot = drawn - VARIANT_FRAMES;
+    if shot >= capture.options.variants[index].burst {
+        // Its screenshots are taken: the next variant may draw.
         if index + 1 < capture.options.variants.len() {
             capture.current = Some((index + 1, 0, now));
         } else {
@@ -347,8 +360,13 @@ fn run(
     }
     capture.current = Some((index, drawn + 1, started));
     let variant = capture.options.variants[index].clone();
+    let burst = if variant.burst > 1 {
+        format!("-{shot:02}")
+    } else {
+        String::new()
+    };
     let file = format!(
-        "{index:02}-{}.png",
+        "{index:02}-{}{burst}.png",
         variant
             .name
             .chars()
@@ -369,6 +387,7 @@ fn run(
         "canopy": variant.canopy.unwrap_or(ForestSkyOcclusion::default().0),
         "auto_exposure": adapting,
         "fog": variant.fog.unwrap_or(settings.fog),
+        "particles": variant.particles.unwrap_or(settings.particles),
         "phase": variant.phase.unwrap_or(atmosphere.profile.initial_phase),
         "haze": variant.tuning.haze,
         "mist": variant.tuning.mist,
@@ -400,7 +419,7 @@ fn run(
             });
         },
     );
-    if index + 1 < capture.options.variants.len() {
+    if index + 1 < capture.options.variants.len() || shot + 1 < variant.burst {
         return;
     }
     let phases = &atmosphere.profile.phases;
@@ -452,6 +471,11 @@ mod tests {
         assert_eq!(fog[0].fog, Some(false));
         assert_eq!((fog[0].tuning.mist, fog[0].tuning.mist_depth), (2.0, 0.5));
         assert!(parse_variants("x:fog=maybe").is_err());
+        assert_eq!(
+            parse_variants("x:particles=off").unwrap()[0].particles,
+            Some(false)
+        );
+        assert_eq!(parse_variants("x:burst=12").unwrap()[0].burst, 12);
         assert!(parse_variants("x:tone=sepia").is_err());
         assert!(parse_variants("x:ev=40").is_err());
         assert!(parse_variants(";").is_err());

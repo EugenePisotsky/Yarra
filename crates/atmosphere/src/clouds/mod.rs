@@ -344,6 +344,10 @@ fn sync(
             .extend(fog.extinction)
             .to_array();
     }
+    // The map also gives falling leaves their ground.
+    if profile.outdoor && state.owner != AtmosphereOwner::Study {
+        params.mist_map = mist.parameters(origin.0);
+    }
     // Ground haze and valley mist in every weather; rain fog adds to them.
     if mist_fade.0 != mist.revision() {
         *mist_fade = (mist.revision(), 0.);
@@ -374,7 +378,6 @@ fn sync(
             0.,
             0.,
         ];
-        params.mist_map = mist.parameters(origin.0);
         let travel = clock.seconds * MIST_DRIFT_METRES_PER_SECOND;
         let drift = [wind.cos(), wind.sin()].map(|d| travel * f64::from(d));
         params.mist_drift = [

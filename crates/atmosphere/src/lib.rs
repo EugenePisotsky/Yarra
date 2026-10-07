@@ -1,6 +1,7 @@
 //! Shared sky, sun and illumination. Applications supply profile/time inputs;
 //! one ordered presentation system applies them before transform propagation.
 pub mod adaptation;
+pub mod ambient_particles;
 pub mod clouds;
 pub mod forest_shadow;
 pub mod precipitation;
@@ -49,6 +50,8 @@ pub struct AtmospherePresentation {
     pub auto_exposure: bool,
     /// Ground haze and valley mist ([`valley_mist`]); weather fog stays.
     pub low_air: bool,
+    /// Dust motes, seed fluff and falling leaves ([`ambient_particles`]).
+    pub particles: bool,
 }
 impl Default for AtmospherePresentation {
     fn default() -> Self {
@@ -57,6 +60,7 @@ impl Default for AtmospherePresentation {
             bloom: true,
             auto_exposure: true,
             low_air: true,
+            particles: true,
         }
     }
 }
@@ -161,6 +165,7 @@ impl Plugin for WorldEnvironmentPlugin {
             .add_plugins((
                 clouds::CloudsPlugin,
                 precipitation::PrecipitationPlugin,
+                ambient_particles::AmbientParticlesPlugin,
                 sky::SkyCompositePlugin,
             ))
             .insert_resource(ClearColor(Color::BLACK))
@@ -550,6 +555,7 @@ mod tests {
             bloom: false,
             auto_exposure: false,
             low_air: false,
+            particles: false,
         };
         app.update();
         // Surfaces keep atmosphere lighting; the composite alone stops drawing sky and haze.

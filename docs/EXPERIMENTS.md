@@ -375,6 +375,18 @@ User request: fog and valley mist. Look captures from the start beach, the start
 | Silhouette cost | Grass edges send most pixels at the start through the per-sample path, which evaluated the mist up to four times per pixel: fog on cost 0.69 ms (6.31 → 7.00, one pair). Haze and mist are now evaluated at the nearest and farthest samples and interpolated. |
 | Cost | **About 0.1–0.2 ms.** Fullscreen game settings, three pairs in alternating order, GPU ms off → on: valley 3.71–4.44 → 3.91–4.02, start 5.36–5.57 → 5.55–5.71, forest edge 5.88–6.08 → 6.05–6.19. The map is ready about 1.5 s after the runtime world opens and fades in over 3 s. |
 
+## Ambient particles — October 7
+
+User request: dust close to the character, then the rest of the environment plan. Look captures in the broadleaf forest and at the forest edge facing the 8 am sun (backlit), on the start beach and in bursts of 24 frames for motion. Fullscreen 3456×2168.
+
+| Change | Decision / observation |
+| --- | --- |
+| Physically sized motes | **Rejected.** Half-millimetre motes were sub-pixel and invisible even when lit. Their soft dots also lost about two-thirds of their light: the falloff was not normalised and tiny quads missed their bright centre. Dots are now at least three pixels across and hold their true light. Motes are 1–3 mm and glint up to 2× above their mean (MOTE_GLINT 4), as flakes and fibres do. |
+| Motes everywhere | **Rejected.** In open sun they showed against the sky like stars or snow. In the closed broadleaf stand about 2% sit in sunbeams (shadow-map check: on the open beach nearly all are lit), so a 10 m box of 4,000 showed none. Motes now keep to shade under crowns, 8,000 in a 6 m box, drifting at 4% of the wind. They show as a few twinkling specks per frame; sunbeams themselves need the light-shaft step. |
+| Seed fluff over the camera's box | **Rejected.** Seeds up to 8 m above the camera read as stars against the sky. Fluff now drifts in a 5 m layer over the ground, more over open ground. |
+| Falling leaves | **Retained.** They spawn under crowns of the forest map. In shade they read as dark flecks; in sunbeams and against the sky they show colour. |
+| Cost | **Within noise.** GPU ms, pairs in alternating order, off → on: broadleaf forest 7.16–7.42 → 7.18–7.29, start 5.62–5.95 → 5.73. |
+
 ## Open gates and maintenance
 
 The remaining gates are sustained terrain/whole-game power, Temporal cost and motion quality, field-scale grass lighting, target-PC acceptance, and physical-phone heat/60-FPS delivery. Keep correctness references until their replacements pass the relevant gate. Existing counters often identify less work without demonstrating better delivered frames or lower power.

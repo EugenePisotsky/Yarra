@@ -14,6 +14,7 @@ const ALL_CONTROLS: &[Control] = &[
     Control::Bloom,
     Control::AutoExposure,
     Control::Fog,
+    Control::Particles,
     Control::Grass,
     Control::Terrain,
     Control::Objects,

@@ -75,6 +75,7 @@ Names are laid out first, and symbols keep clear of them; a name with no room is
 - **Movement** below FPS limit toggles Normal / Fast (10×) for island exploration. It speeds up the player with WASD, gamepad and click-to-move; NPC speeds stay unchanged and unloaded terrain still stops movement. It lasts for this session; **Reset launch settings** restores Normal.
 - Quality controls resolution (100/75/50/33%), upscaler, MSAA, density and terrain/object detail. Auto/Spatial/Linear are normal choices; Temporal remains an explicit prototype.
 - **Auto exposure** (Features) turns eye adaptation on or off; the correction eases out over about a second.
+- **Ambient particles** (Features) hides dust motes, seed fluff and falling leaves.
 - **Fog & mist** (Features) hides ground haze and valley mist; weather fog stays. Each world authors both in the editor's atmosphere panel (**Fog and mist**). Where mist pools comes from the cooked terrain, so a re-import and cook updates it.
 - Weather follows a random sequence by default. `--weather clear|scattered|overcast|rain|storm` starts in a held preset; `--weather authored` shows the published profile unchanged. **F1 → Weather** forces presets (60 s, 10 s or instant blends), toggles the automatic sequence, starts the next change and accelerates the weather clock (1×/10×/60×/stopped). Rain and Storm draw rain streaks, splashes and, as wetness builds up (about 1.5 minutes to soak, 4 minutes to dry), wet surfaces and puddles; ground under trees and other objects stays drier. **Rain rendering** hides streaks and splashes for comparisons.
 
@@ -86,7 +87,7 @@ target/release/yarra-app-game --start-view content/world.project.views/start.ron
 uv run --with numpy --with pillow python tools/look_sheet.py tmp/look/start
 ```
 
-Keys: `ev` (EV100), `tone` (tony, agx, neutral, filmic, aces, boring, reinhard, none), `ambient` and `sun` (scales of the sky and sun light), `canopy` (0–1), `auto` and `fog` (on/off), `phase` (time of day as a share of the day: 0.27 is just after sunrise, 0.34 the game's morning, 0.5 noon) and `haze`, `mist` and `depth` (scales of the authored haze and mist extinction and the mist depth). With `tone=none` the frame is the exposed linear image, so its 10–90% mean log2 luminance is what auto exposure meters.
+Keys: `ev` (EV100), `tone` (tony, agx, neutral, filmic, aces, boring, reinhard, none), `ambient` and `sun` (scales of the sky and sun light), `canopy` (0–1), `auto`, `fog` and `particles` (on/off), `burst` (that many screenshots one after another, a frame or two apart, for motion), `phase` (time of day as a share of the day: 0.27 is just after sunrise, 0.34 the game's morning, 0.5 noon) and `haze`, `mist` and `depth` (scales of the authored haze and mist extinction and the mist depth). With `tone=none` the frame is the exposed linear image, so its 10–90% mean log2 luminance is what auto exposure meters.
 
 On macOS 14+, capped modes coordinate display callbacks and the Metal minimum presentation interval. Other platforms/older macOS use the timer fallback. This changes app pacing, not the display's system setting. The normal launch follows the display and uses 50% resolution with 4× MSAA.
 

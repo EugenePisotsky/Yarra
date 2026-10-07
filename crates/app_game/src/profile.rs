@@ -15,6 +15,7 @@ pub(crate) struct ProfileSettings {
     pub bloom: bool,
     pub auto_exposure: bool,
     pub fog: bool,
+    pub particles: bool,
     pub temporal_bypass: bool,
     pub msaa: Msaa,
     pub grass: bool,
@@ -122,6 +123,11 @@ impl ProfileSettings {
             "off" => false,
             _ => return Err("Profile fog must be on or off".into()),
         };
+        let particles = match value("--profile-particles")?.unwrap_or("on") {
+            "on" => true,
+            "off" => false,
+            _ => return Err("Profile particles must be on or off".into()),
+        };
         // Preserve old direct profiling commands; the runner explicitly selects its new default.
         let fullscreen = match value("--profile-window")?.unwrap_or("windowed") {
             "fullscreen" => true,
@@ -152,6 +158,7 @@ impl ProfileSettings {
             bloom,
             auto_exposure,
             fog,
+            particles,
             temporal_bypass: args.iter().any(|a| a == "--profile-temporal-bypass"),
             msaa,
             grass,
@@ -370,6 +377,7 @@ pub(crate) fn apply_runtime_settings(app: &mut App) {
     settings.bloom = profile.bloom;
     settings.auto_exposure = profile.auto_exposure;
     settings.fog = profile.fog;
+    settings.particles = profile.particles;
     if profile.temporal_bypass {
         settings.temporal_debug = upscaling::temporal::TemporalDebug::Bypass;
     }
