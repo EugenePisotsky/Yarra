@@ -10,6 +10,7 @@ use residency::{MAX_PENDING_SOURCE_PAGES, PageState, attachment::PageAttachment}
 mod rebase;
 mod smoke;
 mod source_demand;
+mod valley_mist;
 pub use crate::object_lod::{
     GeneratedEnvironmentObject, ImpostorHandoff, StreamedVisualObject, VisualLodScale,
     spawn_collection_visual,
@@ -79,6 +80,7 @@ impl Plugin for WorldStreamingPlugin {
             .init_resource::<WorldStream>()
             .init_resource::<SourceResidency>()
             .init_resource::<far_objects::FarObjects>()
+            .init_resource::<valley_mist::MistTerrain>()
             .init_resource::<ActiveWorldSpace>()
             .init_resource::<WorldCatalog>()
             .init_resource::<WorldGenerationReload>()
@@ -111,6 +113,7 @@ impl Plugin for WorldStreamingPlugin {
                     residency::cool_and_remove_pages,
                     residency::update_streaming_stats,
                     far_objects::update,
+                    valley_mist::update,
                 )
                     .chain()
                     .in_set(WorldStreamingSystems),
@@ -503,6 +506,7 @@ fn receive_database_results(
     mut residency: ResMut<SourceResidency>,
     mut reload: ResMut<WorldGenerationReload>,
     mut far: ResMut<far_objects::FarObjects>,
+    mut mist: ResMut<valley_mist::MistTerrain>,
 ) {
     let Some(worker) = worker else {
         return;
@@ -510,7 +514,9 @@ fn receive_database_results(
     loop {
         match worker.try_recv() {
             Ok(DatabaseResult::Terrain { request_id, result }) => {
-                if entry.owns_request(request_id) {
+                if valley_mist::MistTerrain::owns_request(request_id) {
+                    mist.receive(request_id, result);
+                } else if entry.owns_request(request_id) {
                     entry.receive(request_id, result);
                 } else {
                     terrain.receive(request_id, result);

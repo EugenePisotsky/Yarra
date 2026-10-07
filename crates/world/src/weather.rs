@@ -216,7 +216,7 @@ pub struct WeatherTransition {
 }
 
 /// Extinction per metre at which 2% contrast remains after one visibility distance.
-const VISIBILITY_EXTINCTION: f32 = 3.912;
+pub const VISIBILITY_EXTINCTION: f32 = 3.912;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WeatherFog {

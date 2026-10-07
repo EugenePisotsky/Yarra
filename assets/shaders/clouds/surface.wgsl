@@ -19,6 +19,10 @@ fn cloud_visibility(p: vec3<f32>, direction: vec3<f32>) -> f32 {
 fn forest_shadow_parameters() -> vec4<f32> {
     return clouds.forest_shadow;
 }
+/// Sky light under the crowns: x the share they hold back (0 off, 1 as their foliage does).
+fn forest_sky_parameters() -> vec4<f32> {
+    return clouds.forest_sky;
+}
 
 /// 1 where rain reaches `p`, 0 under full cover. Bilinear coverage, as on the CPU.
 fn rain_shelter(p: vec3<f32>) -> f32 {

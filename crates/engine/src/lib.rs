@@ -30,10 +30,12 @@ pub use world_vegetation::{
 };
 
 pub use atmosphere::clouds::CloudQuality;
+pub use atmosphere::forest_shadow::ForestSkyOcclusion;
 pub use atmosphere::precipitation::PrecipitationPresentation;
 pub use atmosphere::{
-    ApplyAtmosphere, AtmosphereOwner, AtmospherePresentation, AtmosphereState,
-    WorldEnvironmentCamera, WorldEnvironmentPlugin, WorldEnvironmentView, WorldSun,
+    ApplyAtmosphere, AtmosphereOwner, AtmospherePresentation, AtmosphereState, FogTuning,
+    WORLD_TONEMAPPING, WorldEnvironmentCamera, WorldEnvironmentPlugin, WorldEnvironmentView,
+    WorldSun,
 };
 pub use character::{
     CharacterPresentationPreview, CharacterPresentationPreviewPlugin, CharacterPreviewClip,

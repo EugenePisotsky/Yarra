@@ -52,6 +52,7 @@ pub(crate) struct LaunchOptions {
     /// Render scale at launch (one of `RESOLUTION_SCALES`).
     pub resolution_scale: Option<f32>,
     pub lod_lab: Option<LodLabOptions>,
+    pub look_capture: Option<crate::look_capture::LookCaptureOptions>,
 }
 
 /// `--lod-lab`: one tree's representations compared in place ([`crate::lod_lab`]).
@@ -330,6 +331,21 @@ const FLAGS: &[(&str, bool, &str)] = &[
         "FRAMES: frames drawn before each capture (default 30)",
     ),
     (
+        "--look-capture",
+        true,
+        "DIR: screenshot the start view once per --look-variants presentation, then exit",
+    ),
+    (
+        "--look-variants",
+        true,
+        "NAME[:ev=EV100,tone=tony|agx|neutral|filmic|aces|boring|reinhard|none,ambient=SCALE,sun=SCALE,canopy=0..1,auto=on|off];...",
+    ),
+    (
+        "--look-settle",
+        true,
+        "SECONDS: world drawing time before the first look capture (default 25)",
+    ),
+    (
         "--profile-seconds",
         true,
         "2..3600: timed measurement duration",
@@ -359,6 +375,8 @@ const FLAGS: &[(&str, bool, &str)] = &[
     ("--profile-msaa", true, "1 | 2 | 4"),
     ("--profile-grass", true, "full | off"),
     ("--profile-bloom", true, "on | off"),
+    ("--profile-auto-exposure", true, "on | off"),
+    ("--profile-fog", true, "on | off"),
     (
         "--profile-temporal-bypass",
         false,
@@ -715,11 +733,36 @@ impl LaunchOptions {
                 return Err("Metal capture output already exists".into());
             }
         }
+        let look_capture = match path("--look-capture") {
+            Some(dir) => {
+                if !has("--start-view") {
+                    return Err("--look-capture shows the --start-view".into());
+                }
+                if lod_lab.is_some() || repro.is_some() || profile.is_some() {
+                    return Err(
+                        "--look-capture holds the camera; it cannot share a lab, repro or profile"
+                            .into(),
+                    );
+                }
+                Some(crate::look_capture::LookCaptureOptions {
+                    dir,
+                    variants: crate::look_capture::parse_variants(
+                        value("--look-variants")?.ok_or("--look-capture needs --look-variants")?,
+                    )?,
+                    settle: number("--look-settle", 25.0, 5.0..=600.0)?,
+                })
+            }
+            None if has("--look-variants") || has("--look-settle") => {
+                return Err("--look-variants and --look-settle need --look-capture".into());
+            }
+            None => None,
+        };
         // Measurements and regressions must not change weather unless asked explicitly.
         let weather = weather.unwrap_or(
             if profile.is_some()
                 || repro.is_some()
                 || lod_lab.is_some()
+                || look_capture.is_some()
                 || has("--metal-capture")
                 || has("--streaming-smoke")
             {
@@ -769,6 +812,7 @@ impl LaunchOptions {
             repro,
             resolution_scale,
             lod_lab,
+            look_capture,
         })
     }
 

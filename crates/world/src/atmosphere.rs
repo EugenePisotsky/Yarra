@@ -57,6 +57,9 @@ pub struct AtmosphereProfile {
     pub night: NightLighting,
     #[serde(default)]
     pub clouds: crate::clouds::CloudSettings,
+    /// Ground haze and valley mist.
+    #[serde(default)]
+    pub fog: crate::fog::FogSettings,
     /// Weather presets and random sequence the game plays over this profile.
     #[serde(default)]
     pub weather: crate::weather::WeatherSettings,
@@ -91,23 +94,24 @@ impl Default for AtmosphereProfile {
                     sun_srgb: [1.0, 0.90, 0.72],
                     sun_lux: 100_000.0,
                     ambient_srgb: [0.54, 0.62, 0.82],
-                    ambient_lux: 3000.0,
+                    ambient_lux: 4500.0,
                 },
                 LightingPhase {
                     sun_srgb: [1.0, 0.98, 0.95],
                     sun_lux: 128_000.0,
                     ambient_srgb: [0.60, 0.72, 0.92],
-                    ambient_lux: 6000.0,
+                    ambient_lux: 9000.0,
                 },
                 LightingPhase {
                     sun_srgb: [1.0, 0.80, 0.60],
                     sun_lux: 100_000.0,
                     ambient_srgb: [0.64, 0.55, 0.78],
-                    ambient_lux: 2500.0,
+                    ambient_lux: 3750.0,
                 },
             ],
             night: NightLighting::default(),
             clouds: Default::default(),
+            fog: Default::default(),
             weather: Default::default(),
         }
     }
@@ -149,6 +153,7 @@ impl AtmosphereProfile {
             return Err("Atmosphere settings contain an invalid color, time or physical range");
         }
         self.clouds.validate()?;
+        self.fog.validate()?;
         self.weather.validate()?;
         Ok(())
     }
@@ -166,7 +171,12 @@ pub struct EvaluatedAtmosphere {
     pub moon_lux: f32,
     pub exposure_ev100: f32,
     pub night_weight: f32,
+    /// Valley mist amount, 0..1 (`FogSettings::mist_amount`).
+    pub mist: f32,
 }
+
+/// Sun elevation by which morning and evening mist has thinned to its high-sun amount.
+pub const MIST_BURN_OFF_DEGREES: f32 = 40.0;
 
 pub fn linear_rgb(srgb: [f32; 3]) -> [f32; 3] {
     srgb.map(|v| {
@@ -208,6 +218,19 @@ pub fn evaluate(profile: &AtmosphereProfile, phase: f32) -> EvaluatedAtmosphere 
         )
     };
     let t = t * t * (3.0 - 2.0 * t);
+    // Mist burns off more slowly than the light changes: it lasts well into the morning.
+    let mist = {
+        let amount = &profile.fog.mist_amount;
+        let t = if elevation >= 0.0 {
+            let t = (elevation.to_degrees()
+                / profile.maximum_elevation_degrees.min(MIST_BURN_OFF_DEGREES))
+            .clamp(0.0, 1.0);
+            t * t * (3.0 - 2.0 * t)
+        } else {
+            t
+        };
+        amount[a] + (amount[b] - amount[a]) * t
+    };
     // Adapt only after sunset, reaching the authored night appearance by -12°.
     // Shallow sun paths still reach night at midnight and remain continuous.
     let night =
@@ -253,6 +276,7 @@ pub fn evaluate(profile: &AtmosphereProfile, phase: f32) -> EvaluatedAtmosphere 
         exposure_ev100: profile.exposure_ev100
             + (profile.night.exposure_ev100 - profile.exposure_ev100) * night,
         night_weight: night,
+        mist,
     }
 }
 
@@ -323,6 +347,26 @@ mod tests {
                 }
                 assert!((a.sun_lux - b.sun_lux).abs() < 0.1);
             }
+        }
+    }
+
+    #[test]
+    fn morning_mist_burns_off_as_the_sun_climbs() {
+        let p = AtmosphereProfile::default();
+        let amount = p.fog.mist_amount;
+        assert!((evaluate(&p, 0.25).mist - amount[1]).abs() < 1e-4);
+        assert!((evaluate(&p, 0.5).mist - amount[2]).abs() < 1e-4);
+        assert!((evaluate(&p, 0.75).mist - amount[3]).abs() < 1e-4);
+        assert!((evaluate(&p, 0.0).mist - amount[0]).abs() < 1e-4);
+        // The game's morning still holds part of the dawn mist.
+        let morning = evaluate(&p, p.initial_phase).mist;
+        assert!(
+            morning > amount[2] + 0.2 && morning < amount[1],
+            "{morning}"
+        );
+        for i in 0..1000 {
+            let (a, b) = (i as f32 / 1000.0, (i as f32 + 1.0) / 1000.0);
+            assert!((evaluate(&p, a).mist - evaluate(&p, b).mist).abs() < 0.02);
         }
     }
 

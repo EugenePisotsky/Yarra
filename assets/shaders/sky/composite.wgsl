@@ -1,6 +1,6 @@
 // Everything between the camera and the scene, in one pass over the resolved HDR image: the
-// physical sky and aerial perspective from Bevy's atmosphere tables, the cloud layer and weather
-// fog. Each depth sample is classified, so a pixel on a silhouette gets the sky's light for its
+// physical sky and aerial perspective from Bevy's atmosphere tables, the cloud layer, ground
+// haze, valley mist and weather fog. Each depth sample is classified, so a pixel on a silhouette gets the sky's light for its
 // sky samples and the haze of its own distance for the geometry samples.
 //
 // The pass blends into the image: light is added, and the resolved scene is multiplied by the
@@ -38,6 +38,12 @@ enable dual_source_blending;
 @group(1) @binding(3) var cloud_older: texture_2d<f32>;
 @group(1) @binding(4) var cloud_sampler: sampler;
 @group(1) @binding(5) var<uniform> cloud_blend: vec4<f32>;
+// Where mist pools (`atmosphere::valley_mist`): floor height, valley share, ground height, land
+// share.
+@group(1) @binding(6) var mist_map: texture_2d<f32>;
+@group(1) @binding(7) var mist_sampler: sampler;
+@group(1) @binding(8) var noise: texture_3d<f32>;
+@group(1) @binding(9) var noise_sampler: sampler;
 
 struct Output {
 #ifdef DUAL_SOURCE_BLENDING
@@ -58,10 +64,161 @@ fn in_front(light: vec3<f32>, transmittance: f32, behind: Path) -> Path {
     return Path(light + behind.light * transmittance, behind.transmittance * transmittance);
 }
 
-// Weather fog over the first `distance` metres of the ray.
-fn fogged(distance: f32, behind: Path) -> Path {
-    let transmittance = exp(-clouds.fog.w * distance);
-    return in_front(clouds.fog.rgb * view.exposure * (1.0 - transmittance), transmittance, behind);
+// Ground haze, valley mist and weather fog over the first `distance` metres of a ray, as one
+// medium in front of everything beyond: each adds its optical depth, and the light scattered
+// towards the eye is their mix by optical depth.
+struct Fog {
+    // Exposed light scattered towards the eye where the fog is opaque, and optical depth.
+    light: vec3<f32>,
+    depth: f32,
+}
+
+fn fog_along(ray: vec3<f32>, distance: f32) -> Fog {
+    let weather = clouds.fog.w * distance;
+    let haze = haze_depth(ray, distance);
+    let mist = mist_depth(ray, distance);
+    let depth = weather + haze + mist;
+    if depth <= 0.0 {
+        return Fog(vec3(0.0), 0.0);
+    }
+    let air = clouds.air_light.rgb + clouds.air_sun.rgb * scattering(dot(ray, clouds.sun.xyz));
+    let light = (clouds.fog.rgb * weather + air * (clouds.haze.rgb * haze + vec3(mist))) / depth;
+    return Fog(light * view.exposure, depth);
+}
+
+fn behind_fog(fog: Fog, behind: Path) -> Path {
+    let transmittance = exp(-fog.depth);
+    return in_front(fog.light * (1.0 - transmittance), transmittance, behind);
+}
+
+fn fogged(ray: vec3<f32>, distance: f32, behind: Path) -> Path {
+    return behind_fog(fog_along(ray, distance), behind);
+}
+
+// Phase function of haze and mist droplets: an even share plus a forward lobe, so both glow
+// towards the sun.
+const FORWARD_SHARE: f32 = 0.4;
+const FORWARD_G: f32 = 0.6;
+const INV_FOUR_PI: f32 = 0.07957747;
+fn scattering(cos_angle: f32) -> f32 {
+    let g2 = FORWARD_G * FORWARD_G;
+    let lobe = (1.0 - g2) / pow(1.0 + g2 - 2.0 * FORWARD_G * cos_angle, 1.5);
+    return INV_FOUR_PI * mix(1.0, lobe, FORWARD_SHARE);
+}
+
+// Ground haze is integrated this far at most: near-horizontal rays to the sky.
+const HAZE_RANGE: f32 = 60000.0;
+
+// Optical depth of the ground haze, exponential in height above its base (`haze_depth` in
+// `atmosphere::valley_mist`, which the tests check).
+fn haze_depth(ray: vec3<f32>, distance: f32) -> f32 {
+    let density = clouds.low_haze.x;
+    if density <= 0.0 {
+        return 0.0;
+    }
+    let length = min(distance, HAZE_RANGE);
+    let height = clouds.low_haze.z;
+    let above = max(view.world_position.y - clouds.low_haze.y, 0.0);
+    let start = density * exp(-above / height);
+    // Climb in thinning heights, stopping where the ray would sink below the base.
+    let climb = max(ray.y * length / height, -above / height);
+    if abs(climb) < 1e-4 {
+        return start * length * (1.0 - 0.5 * climb);
+    }
+    return start * length * (1.0 - exp(-climb)) / climb;
+}
+
+// Mist is integrated over this many stretches of the part of a ray low enough to hold it, and
+// this far at most.
+const MIST_STEPS: u32 = 4u;
+const MIST_RANGE: f32 = 20000.0;
+// Open ground holds these shares of a valley's mist depth and density.
+const OPEN_DEPTH: f32 = 0.35;
+const OPEN_DENSITY: f32 = 0.2;
+// Noise lifts and lowers the mist top by up to this share of its depth.
+const WISP_LIFT: f32 = 0.35;
+// Horizontal size of the noise tile, metres; `MIST_NOISE_PERIOD` in `atmosphere::clouds`.
+const MIST_NOISE_PERIOD: f32 = 2048.0;
+
+struct MistColumn {
+    top: f32,
+    // Depth of mist above the floor, and the share of full density it holds.
+    depth: f32,
+    density: f32,
+}
+
+fn mist_column(xz: vec2<f32>) -> MistColumn {
+    let extent = clouds.mist_map.z * vec2<f32>(textureDimensions(mist_map));
+    let m = textureSampleLevel(mist_map, mist_sampler, (xz - clouds.mist_map.xy) / extent, 0.0);
+    let depth = clouds.mist.y * mix(OPEN_DEPTH, 1.0, m.g) * m.a;
+    return MistColumn(m.r + depth, depth, mix(OPEN_DENSITY, 1.0, m.g) * m.a);
+}
+
+// Slowly drifting, world-anchored variation of mist density and height, 0..1.
+fn mist_wisps(p: vec3<f32>) -> f32 {
+    let q = (p.xz + clouds.mist_drift.xy) / MIST_NOISE_PERIOD;
+    let n = textureSampleLevel(noise, noise_sampler, vec3(q.x, p.y / 512.0, q.y), 0.0);
+    return smoothstep(0.2, 0.8, n.r * 0.7 + n.b * 0.3);
+}
+
+// Mean share of full mist density along a straight stretch through the mist's soft top: `ua`
+// and `ub` are its ends in fade widths below the top (`mist_share` in `atmosphere::valley_mist`).
+fn mist_share(ua: f32, ub: f32) -> f32 {
+    if abs(ua - ub) < 1e-4 {
+        return clamp(0.5 * (ua + ub), 0.0, 1.0);
+    }
+    return (mist_integral(ua) - mist_integral(ub)) / (ua - ub);
+}
+
+fn mist_integral(u: f32) -> f32 {
+    if u <= 0.0 {
+        return 0.0;
+    }
+    if u < 1.0 {
+        return 0.5 * u * u;
+    }
+    return u - 0.5;
+}
+
+// Optical depth of valley mist over the first `distance` metres of the ray. Mist fills the
+// ground up to a level top that varies slowly across the map, so a straight ray only holds mist
+// where it runs below the higher of the tops at its two ends: that part is integrated exactly in
+// a few stretches, each with the top and wisps at its middle.
+fn mist_depth(ray: vec3<f32>, distance: f32) -> f32 {
+    if clouds.mist.x <= 0.0 || clouds.mist_map.w < 0.5 {
+        return 0.0;
+    }
+    let origin = view.world_position;
+    let length = min(distance, MIST_RANGE);
+    let ceiling = max(mist_column(origin.xz).top, mist_column(origin.xz + ray.xz * length).top)
+        + clouds.mist.y * WISP_LIFT;
+    var t0 = 0.0;
+    var t1 = length;
+    if ray.y > 1e-5 {
+        t1 = min(t1, (ceiling - origin.y) / ray.y);
+    } else if ray.y < -1e-5 {
+        t0 = max(t0, (origin.y - ceiling) / -ray.y);
+    } else if origin.y >= ceiling {
+        return 0.0;
+    }
+    if t1 <= t0 {
+        return 0.0;
+    }
+    let stretch = (t1 - t0) / f32(MIST_STEPS);
+    var depth = 0.0;
+    for (var i = 0u; i < MIST_STEPS; i += 1u) {
+        let start = t0 + stretch * f32(i);
+        let middle = origin + ray * (start + 0.5 * stretch);
+        let column = mist_column(middle.xz);
+        let wisps = mist_wisps(middle);
+        let top = column.top + (wisps - 0.5) * 2.0 * WISP_LIFT * column.depth;
+        let fade = max(column.depth * 0.6, 3.0);
+        let ua = (top - (origin.y + ray.y * start)) / fade;
+        let ub = (top - (origin.y + ray.y * (start + stretch))) / fade;
+        // Wisps thin the mist to gaps and thicken it into banks.
+        depth += column.density * mix(0.1, 1.8, wisps) * mist_share(ua, ub) * stretch;
+    }
+    return depth * clouds.mist.x;
 }
 
 struct Cloud {
@@ -138,7 +295,7 @@ fn fragment(in: FullscreenVertexOutput) -> Output {
     if any(uv < vec2(0.0)) || any(uv > vec2(1.0)) {
         discard;
     }
-    let fog = clouds.fog.w > 0.0;
+    let fog = clouds.fog.w > 0.0 || clouds.low_haze.x > 0.0 || clouds.mist.x > 0.0;
     // Clouds are traced only above this elevation; `start` is the distance to their base.
     let above = ray.y > 0.01;
     let start = select(1.0e9, max(0.0, (clouds.layer.x - view.world_position.y) / ray.y), above);
@@ -197,7 +354,7 @@ fn fragment(in: FullscreenVertexOutput) -> Output {
 #else
         var path = Path(vec3(0.0), vec3(1.0));
 #endif
-        path = fogged(start, in_front(cloud.light, cloud.transmittance, path));
+        path = fogged(ray, start, in_front(cloud.light, cloud.transmittance, path));
         light += path.light * f32(sky_samples);
         sky_transmittance = path.transmittance;
     }
@@ -211,10 +368,16 @@ fn fragment(in: FullscreenVertexOutput) -> Output {
             if distance >= start {
                 path = in_front(cloud.light, cloud.transmittance, path);
             }
-            path = fogged(min(distance, start), path);
+            path = fogged(ray, min(distance, start), path);
             light += path.light * f32(geometry_samples);
             transmittance = path.transmittance * f32(geometry_samples);
         } else {
+            // A silhouette: fog changes smoothly between the nearest and farthest samples, so it
+            // is integrated at those two and interpolated for the rest.
+            let near = min(nearest, start);
+            let far = min(farthest, start);
+            let near_fog = fog_along(ray, near);
+            let far_fog = fog_along(ray, far);
             for (var i = 0u; i < samples; i += 1u) {
                 let distance = distances[i];
                 if distance < 0.0 {
@@ -224,7 +387,10 @@ fn fragment(in: FullscreenVertexOutput) -> Output {
                 if distance >= start {
                     path = in_front(cloud.light, cloud.transmittance, path);
                 }
-                path = fogged(min(distance, start), path);
+                let t = clamp((min(distance, start) - near) / max(far - near, 1e-3), 0.0, 1.0);
+                let fog = Fog(mix(near_fog.light, far_fog.light, t),
+                    mix(near_fog.depth, far_fog.depth, t));
+                path = behind_fog(fog, path);
                 light += path.light;
                 transmittance += path.transmittance;
             }

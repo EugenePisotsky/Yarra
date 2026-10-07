@@ -15,6 +15,7 @@ mod frame_pacing;
 mod game_render;
 mod launch;
 mod lod_lab;
+mod look_capture;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 mod metal_capture;
 mod profile;
@@ -193,6 +194,7 @@ fn run() -> Result<(), String> {
     repro::install(&mut app);
     profile::apply_runtime_settings(&mut app);
     lod_lab::install(&mut app)?;
+    look_capture::install(&mut app);
     render_audit::install(&mut app);
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     metal_capture::install(&mut app);

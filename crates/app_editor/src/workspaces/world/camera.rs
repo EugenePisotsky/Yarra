@@ -62,6 +62,7 @@ pub(crate) fn setup_world_workspace(
     }
     commands.spawn((
         Camera3d::default(),
+        engine::WORLD_TONEMAPPING,
         start_view.as_ref().map_or_else(
             || engine::WorldStartView::default().projection(),
             |s| s.projection(),

@@ -146,6 +146,7 @@ mod tests {
                 noise: default(),
                 shelter: default(),
                 forest_shadow: default(),
+                mist: default(),
             })
             .add_systems(Update, convert);
         let material = app

@@ -13,6 +13,8 @@ pub(crate) struct ProfileSettings {
     /// Exact physical window size for comparable Retina GPU measurements.
     surface: Option<UVec2>,
     pub bloom: bool,
+    pub auto_exposure: bool,
+    pub fog: bool,
     pub temporal_bypass: bool,
     pub msaa: Msaa,
     pub grass: bool,
@@ -110,6 +112,16 @@ impl ProfileSettings {
             "off" => false,
             _ => return Err("Profile bloom must be on or off".into()),
         };
+        let auto_exposure = match value("--profile-auto-exposure")?.unwrap_or("on") {
+            "on" => true,
+            "off" => false,
+            _ => return Err("Profile auto exposure must be on or off".into()),
+        };
+        let fog = match value("--profile-fog")?.unwrap_or("on") {
+            "on" => true,
+            "off" => false,
+            _ => return Err("Profile fog must be on or off".into()),
+        };
         // Preserve old direct profiling commands; the runner explicitly selects its new default.
         let fullscreen = match value("--profile-window")?.unwrap_or("windowed") {
             "fullscreen" => true,
@@ -138,6 +150,8 @@ impl ProfileSettings {
             size,
             surface,
             bloom,
+            auto_exposure,
+            fog,
             temporal_bypass: args.iter().any(|a| a == "--profile-temporal-bypass"),
             msaa,
             grass,
@@ -354,6 +368,8 @@ pub(crate) fn apply_runtime_settings(app: &mut App) {
     settings.scale_index = if profile.size.is_some() { 0 } else { 2 };
     settings.msaa = profile.msaa;
     settings.bloom = profile.bloom;
+    settings.auto_exposure = profile.auto_exposure;
+    settings.fog = profile.fog;
     if profile.temporal_bypass {
         settings.temporal_debug = upscaling::temporal::TemporalDebug::Bypass;
     }

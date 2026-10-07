@@ -43,6 +43,7 @@ use bevy::{
         renderer::{RenderContext, RenderDevice, ViewQuery},
         storage::GpuShaderBuffer,
         texture::FallbackImage,
+        texture::GpuImage,
         view::{ViewDepthTexture, ViewTarget, ViewUniform, ViewUniformOffset, ViewUniforms},
     },
 };
@@ -298,6 +299,11 @@ fn init(
                     texture_2d(TextureSampleType::Float { filterable: true }),
                     sampler(SamplerBindingType::Filtering),
                     uniform_buffer_sized(false, std::num::NonZeroU64::new(16)),
+                    // Mist map and the cloud noise that shapes the mist.
+                    texture_2d(TextureSampleType::Float { filterable: true }),
+                    sampler(SamplerBindingType::Filtering),
+                    texture_3d(TextureSampleType::Float { filterable: true }),
+                    sampler(SamplerBindingType::Filtering),
                 ),
             ),
         )
@@ -398,6 +404,7 @@ fn draw(
     clouds: Res<CloudTarget>,
     cloud_pipelines: Res<CloudPipelines>,
     fallback: Res<FallbackImage>,
+    images: Res<RenderAssets<GpuImage>>,
     mut ctx: RenderContext,
 ) {
     let (pipeline, target, depth, view_offset, resolution, bindings) = view.into_inner();
@@ -495,6 +502,8 @@ fn draw(
         contents: bytemuck::bytes_of(&[blend, 0.0, 0.0, 0.0]),
         usage: BufferUsages::UNIFORM,
     });
+    let mist = images.get(&assets.mist).unwrap_or(&fallback.d2);
+    let noise = images.get(&assets.noise).unwrap_or(&fallback.d3);
     let composite_group = device.create_bind_group(
         "sky composite",
         &cache.get_bind_group_layout(&pipelines.composite_layout[usize::from(key.multisampled)]),
@@ -505,6 +514,10 @@ fn draw(
             older,
             cloud_pipelines.display_sampler(cached),
             blend.as_entire_binding(),
+            &mist.texture_view,
+            &mist.sampler,
+            &noise.texture_view,
+            &noise.sampler,
         )),
     );
     let size = resolution.map_or(

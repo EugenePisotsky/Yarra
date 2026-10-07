@@ -45,6 +45,10 @@ pub(super) fn install(app: &mut App) {
         .init_resource::<CloudTarget>()
         .add_systems(RenderStartup, init)
         .add_systems(Render, prepare.in_set(RenderSystems::PrepareBindGroups))
+        .add_systems(
+            Render,
+            upload_forest_sky_levels.in_set(RenderSystems::PrepareResources),
+        )
         .add_systems(Core3d, update_shadows.before(Core3dSystems::MainPass))
         .add_systems(
             Core3d,
@@ -53,6 +57,51 @@ pub(super) fn install(app: &mut App) {
                 .before(Core3dSystems::EarlyPostProcess),
         );
 }
+/// Writes the forest map's sky levels into its texture once Bevy has rewritten level 0, and
+/// again whenever the map or its texture changes.
+fn upload_forest_sky_levels(
+    levels: Option<Res<ForestSkyLevels>>,
+    assets: Option<Res<CloudAssets>>,
+    images: Res<RenderAssets<GpuImage>>,
+    queue: Res<RenderQueue>,
+    mut written: Local<Option<(u64, TextureId)>>,
+) {
+    let (Some(levels), Some(assets)) = (levels, assets) else {
+        return;
+    };
+    let Some(image) = images.get(&assets.forest_shadow) else {
+        return;
+    };
+    let key = (levels.revision, image.texture.id());
+    if levels.levels.is_empty() || *written == Some(key) {
+        return;
+    }
+    for (index, data) in levels.levels.iter().enumerate() {
+        let level = index as u32 + 1;
+        let side = crate::forest_shadow::SIZE >> level;
+        queue.write_texture(
+            TexelCopyTextureInfo {
+                texture: &image.texture,
+                mip_level: level,
+                origin: Origin3d::ZERO,
+                aspect: TextureAspect::All,
+            },
+            data,
+            TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(side * 8),
+                rows_per_image: Some(side),
+            },
+            Extent3d {
+                width: side,
+                height: side,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+    *written = Some(key);
+}
+
 fn init(
     mut commands: Commands,
     device: Res<RenderDevice>,
@@ -157,15 +206,16 @@ fn prepare(
     queue: Res<RenderQueue>,
     cache: Res<PipelineCache>,
     layout: Res<CloudShadowLayout>,
-    mut previous: Local<Option<(BufferId, TextureViewId, TextureViewId)>>,
+    mut previous: Local<Option<(BufferId, TextureViewId, TextureViewId, TextureViewId)>>,
 ) {
     let Some(assets) = assets else {
         return;
     };
-    let (Some(buffer), Some(image), Some(shelter)) = (
+    let (Some(buffer), Some(image), Some(shelter), Some(forest)) = (
         buffers.get(&assets.parameters),
         images.get(&assets.shadows),
         images.get(&assets.shelter),
+        images.get(&assets.forest_shadow),
     ) else {
         return;
     };
@@ -174,6 +224,7 @@ fn prepare(
         buffer.buffer.id(),
         image.texture_view.id(),
         shelter.texture_view.id(),
+        forest.texture_view.id(),
     );
     if *previous != Some(key) {
         commands.insert_resource(CloudShadowGpu(device.create_bind_group(
@@ -184,6 +235,8 @@ fn prepare(
                 (121, &image.texture_view),
                 (122, &image.sampler),
                 (123, &shelter.texture_view),
+                (124, &forest.texture_view),
+                (125, &forest.sampler),
             )),
         )));
         *previous = Some(key);
@@ -617,6 +670,11 @@ pub fn surface_layout() -> BindGroupLayoutDescriptor {
                     123,
                     texture_2d(TextureSampleType::Float { filterable: false }),
                 ),
+                (
+                    124,
+                    texture_2d(TextureSampleType::Float { filterable: true }),
+                ),
+                (125, sampler(SamplerBindingType::Filtering)),
             ),
         ),
     )

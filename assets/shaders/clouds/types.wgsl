@@ -13,6 +13,13 @@ struct CloudParams {
     weather: vec4<f32>, // x: surface wetness, y: precipitation intensity
     shelter: vec4<f32>, // rain shelter map: origin xz, metres per texel, enabled
     forest_shadow: vec4<f32>, // forest shadow map: origin xz, metres per texel (0 off), tallest crown top
+    forest_sky: vec4<f32>, // x: share of sky light the crowns above hold back (0 off, 1 full)
+    low_haze: vec4<f32>, // ground haze: extinction / metre at its base, base height, e-folding height
+    mist: vec4<f32>, // valley mist: extinction / metre in full mist (0 off), depth above a valley floor
+    mist_map: vec4<f32>, // mist map: first corner xz in render coordinates, metres per texel, published
+    mist_drift: vec4<f32>, // world-anchored mist noise offset xz, metres
+    air_light: vec4<f32>, // unexposed light haze and mist scatter evenly (sky, moon)
+    air_sun: vec4<f32>, // unexposed sunlight reaching haze and mist, scattered mostly forwards
 }
 
 // Cached sky: azimuth across, square-root warped elevation down from the tracing cutoff (ray.y

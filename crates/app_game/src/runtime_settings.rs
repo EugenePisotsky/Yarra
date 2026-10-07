@@ -141,6 +141,9 @@ pub(crate) struct RuntimeSettings {
     pub(crate) clouds: engine::CloudQuality,
     pub(crate) sky: bool,
     pub(crate) bloom: bool,
+    pub(crate) auto_exposure: bool,
+    /// Ground haze and valley mist.
+    pub(crate) fog: bool,
     pub(crate) hide_terrain: bool,
     pub(crate) hide_objects: bool,
     pub(crate) density: vegetation_render::VegetationDensityMode,
@@ -184,6 +187,8 @@ impl Default for RuntimeSettings {
             clouds: engine::CloudQuality::default(),
             sky: true,
             bloom: true,
+            auto_exposure: true,
+            fog: true,
             hide_terrain: false,
             hide_objects: false,
             density: vegetation_render::VegetationDensityMode::Balanced,
@@ -299,6 +304,8 @@ fn apply_settings(
     *clouds = s.clouds;
     atmosphere.sky_and_haze = s.sky;
     atmosphere.bloom = s.bloom;
+    atmosphere.auto_exposure = s.auto_exposure;
+    atmosphere.low_air = s.fog;
     lod.settings.refine_pixels = [1.0, 2.0, 4.0, 8.0][s.terrain_detail];
     lod.settings.collapse_pixels = lod.settings.refine_pixels * 0.5;
     grass.density_mode = s.density;

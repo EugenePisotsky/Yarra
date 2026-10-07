@@ -74,12 +74,14 @@ impl From<CoreProfile> for AtmosphereProfile {
             phases: p.phases,
             night: p.night,
             clouds: Default::default(),
+            fog: Default::default(),
             weather: Default::default(),
         }
     }
 }
 const CLOUD_EXTENSION: &[u8; 4] = b"CLD1";
 const WEATHER_EXTENSION: &[u8; 4] = b"WTH1";
+const FOG_EXTENSION: &[u8; 4] = b"FOG1";
 pub(super) fn encode(profile: &AtmosphereProfile) -> Result<Vec<u8>, WorldDbError> {
     profile
         .validate()
@@ -98,6 +100,13 @@ pub(super) fn encode(profile: &AtmosphereProfile) -> Result<Vec<u8>, WorldDbErro
         bytes.extend_from_slice(WEATHER_EXTENSION);
         bytes.extend(bincode::serde::encode_to_vec(
             &profile.weather,
+            bincode::config::standard(),
+        )?);
+    }
+    if profile.fog != Default::default() {
+        bytes.extend_from_slice(FOG_EXTENSION);
+        bytes.extend(bincode::serde::encode_to_vec(
+            &profile.fog,
             bincode::config::standard(),
         )?);
     }
@@ -124,6 +133,11 @@ pub(super) fn decode(bytes: &[u8]) -> Result<AtmosphereProfile, WorldDbError> {
     if let Some(extension) = rest.strip_prefix(WEATHER_EXTENSION) {
         let (weather, used) = bincode::serde::decode_from_slice(extension, limit)?;
         p.weather = weather;
+        rest = &extension[used..];
+    }
+    if let Some(extension) = rest.strip_prefix(FOG_EXTENSION) {
+        let (fog, used) = bincode::serde::decode_from_slice(extension, limit)?;
+        p.fog = fog;
         rest = &extension[used..];
     }
     if !rest.is_empty() {
@@ -236,6 +250,25 @@ mod tests {
         assert!(decode(&bytes[..bytes.len() - 1]).is_err());
         let mut invalid = both;
         invalid.weather.presets[0].precipitation = 2.;
+        assert!(encode(&invalid).is_err());
+    }
+    #[test]
+    fn authored_fog_round_trips_alone_and_after_the_other_extensions() {
+        let default = encode(&AtmosphereProfile::default()).unwrap();
+        let mut fog = AtmosphereProfile::default();
+        fog.fog.mist_depth_metres = 65.;
+        fog.fog.mist_amount = [0.1, 0.9, 0.0, 0.5];
+        let bytes = encode(&fog).unwrap();
+        assert_eq!(&bytes[default.len()..default.len() + 4], FOG_EXTENSION);
+        assert_eq!(decode(&bytes).unwrap(), fog);
+        let mut all = fog.clone();
+        all.clouds = world::clouds::CloudSettings::overcast();
+        all.weather.presets[3].cloud_coverage = 0.7;
+        let bytes = encode(&all).unwrap();
+        assert_eq!(decode(&bytes).unwrap(), all);
+        assert!(decode(&bytes[..bytes.len() - 1]).is_err());
+        let mut invalid = all;
+        invalid.fog.haze_height_metres = 0.;
         assert!(encode(&invalid).is_err());
     }
     #[test]

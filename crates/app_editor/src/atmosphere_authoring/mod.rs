@@ -459,6 +459,27 @@ fn draw(
                     color(ui, "Haze tint", &mut edited.haze_srgb);
                     ui.small("Near-ground aerosols in clear weather. Weather adds fog on top of this.");
                 });
+                egui::CollapsingHeader::new("Fog and mist").show(ui, |ui| {
+                    let f = &mut edited.fog;
+                    ui.checkbox(&mut f.enabled, "Ground haze and valley mist");
+                    ui.add(egui::Slider::new(&mut f.haze_visibility_metres, 200.0..=200_000.0)
+                        .logarithmic(true)
+                        .text("Ground haze visibility · m"));
+                    ui.add(egui::Slider::new(&mut f.haze_height_metres, 10.0..=2000.0)
+                        .logarithmic(true)
+                        .text("Ground haze height · m"));
+                    ui.add(egui::Slider::new(&mut f.mist_visibility_metres, 20.0..=5000.0)
+                        .logarithmic(true)
+                        .text("Mist visibility · m"));
+                    ui.add(egui::Slider::new(&mut f.mist_depth_metres, 0.0..=300.0)
+                        .text("Mist depth · m"));
+                    for (amount, name) in f.mist_amount.iter_mut().zip(PHASE_NAMES) {
+                        ui.add(egui::Slider::new(amount, 0.0..=1.0).text(format!("Mist · {name}")));
+                    }
+                    ui.add(egui::Slider::new(&mut f.mist_after_rain, 0.0..=1.0)
+                        .text("Extra mist after rain"));
+                    ui.small("Ground haze thickens towards the sea. Mist pools in valleys under a level top and burns off as the sun climbs; where it pools comes from the cooked terrain.");
+                });
                 egui::CollapsingHeader::new("Presentation").show(ui, |ui| {
                     ui.add(
                         egui::Slider::new(&mut edited.exposure_ev100, 0.0..=20.0)

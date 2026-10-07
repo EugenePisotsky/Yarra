@@ -1,5 +1,6 @@
 #ifdef YARRA_CLOUDS
 #import "shaders/clouds/surface.wgsl"::{cloud_visibility, surface_wetness}
+#import "shaders/clouds/forest_shadow.wgsl"::forest_sky_visibility
 #endif
 #ifdef ATMOSPHERE
 #import bevy_pbr::atmosphere::functions::{clamp_to_surface, calculate_visible_sun_ratio}
@@ -985,7 +986,11 @@ fn shade(input: VertexOutput) -> vec4<f32> {
     // Both sides of a thin leaf receive sky fill; viewer-facing normal flips must not blacken
     // the underside of an otherwise exposed leaf. Directional contrast comes from the sun term.
     let sky_facing = mix(abs(flat_blade_normal.y), clump_normal.y, diffuse_filter);
-    let sky_fill = mix(0.75, 1.0, clamp(sky_facing, 0.0, 1.0));
+    var sky_fill = mix(0.75, 1.0, clamp(sky_facing, 0.0, 1.0));
+#ifdef YARRA_CLOUDS
+    // Under tree crowns most of the sky is hidden, as for the ground below.
+    sky_fill *= forest_sky_visibility(input.world_position);
+#endif
     let foliage_ambient = body_color
         * bounded_ambient
         * mix(0.40, 0.85, ambient_occlusion)

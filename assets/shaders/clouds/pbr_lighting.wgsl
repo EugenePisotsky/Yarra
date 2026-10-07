@@ -56,7 +56,7 @@
 #endif
 #import "shaders/clouds/surface.wgsl"::{cloud_visibility, surface_wetness}
 #ifdef FOREST_SHADOW
-#import "shaders/clouds/forest_shadow.wgsl"::forest_transmittance
+#import "shaders/clouds/forest_shadow.wgsl"::{forest_transmittance, forest_sky_visibility}
 #endif
 fn apply_pbr_lighting(
     input: pbr_types::PbrInput,
@@ -555,7 +555,13 @@ fn apply_pbr_lighting(
         // Yarra: ambient comes from the sky above. Up-facing surfaces keep it all (flat
         // ground is unchanged); vertical ones get 75% and downward ones 50%, so shapes
         // still read when clouds hide the sun.
-        let sky_facing = 0.75 + 0.25 * in.N.y;
+        var sky_facing = 0.75 + 0.25 * in.N.y;
+#ifdef FOREST_SHADOW
+#ifndef TREE_CROWN_SHADING
+        // Under the crowns most of the sky is hidden. Crowns carry their own occlusion.
+        sky_facing *= forest_sky_visibility(in.world_position.xyz);
+#endif
+#endif
         indirect_light += ambient::ambient_light(in.world_position, in.N, in.V, NdotV, diffuse_color, F0, perceptual_roughness, diffuse_occlusion * sky_facing);
     }
 

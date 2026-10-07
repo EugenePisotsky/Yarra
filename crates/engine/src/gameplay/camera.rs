@@ -101,6 +101,7 @@ fn setup_camera(mut commands: Commands, start_view: Res<WorldStartView>) {
     let (camera_rig, environment) = start_rig(start_view.0.as_ref());
     let mut camera = commands.spawn((
         Camera3d::default(),
+        crate::WORLD_TONEMAPPING,
         start_view.projection(),
         environment,
         Msaa::Sample4,

@@ -1,8 +1,10 @@
 //! Distant forest shadows: a coarse top-down map of crowns around the camera. Past the
 //! shadow maps, crowns, trunks and ground march towards the sun through it
 //! (`shaders/clouds/forest_shadow.wgsl`), so distant forests keep the shade their trees cast on
-//! each other and on the ground instead of turning flat and pale where the cascades end.
-//! Callers supply the crowns; the engine rasterizes every far-object tree.
+//! each other and on the ground instead of turning flat and pale where the cascades end. At
+//! every distance the same map holds back the sky light under the crowns
+//! ([`ForestSkyOcclusion`]). Callers supply the crowns; the engine rasterizes every far-object
+//! tree.
 use bevy::{
     asset::RenderAssetUsages,
     image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor},
@@ -18,6 +20,10 @@ pub const METRES_PER_TEXEL: f32 = 4.0;
 const NEIGHBOURHOOD: usize = 24;
 /// Crown heights stored where no crown reaches a texel.
 const OPEN: f32 = -1.0e4;
+/// Mip levels above the map (8, 16 and 32 m texels) for the sky light under the crowns: each
+/// holds the highest crown top, lowest crown base, the average share of the sky level 0's
+/// crowns let through (`exp(-density)`, not density) and the highest canopy top.
+pub const SKY_LEVELS: u32 = 3;
 
 /// One tree's crown as an upright ellipsoid of foliage, in render-local XZ.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -37,6 +43,8 @@ pub struct ForestCrown {
 pub struct ForestShadowMap {
     origin: Vec2,
     texels: Vec<[f32; 4]>,
+    /// [`SKY_LEVELS`] mip levels, finest first.
+    levels: Vec<Vec<[f32; 4]>>,
     tallest: f32,
 }
 
@@ -150,9 +158,11 @@ impl ForestShadowMap {
                     (low..=high).fold(OPEN, |top, v| top.max(rows[v * size + x]));
             }
         }
+        let levels = sky_levels(&texels);
         Self {
             origin,
             texels,
+            levels,
             tallest,
         }
     }
@@ -171,6 +181,16 @@ impl ForestShadowMap {
         } else {
             0.0
         }
+    }
+}
+
+/// How much sky light the crowns above a point hold back from it
+/// (`forest_sky_visibility` in the shader): 1 as their foliage does, 0 none.
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+pub struct ForestSkyOcclusion(pub f32);
+impl Default for ForestSkyOcclusion {
+    fn default() -> Self {
+        Self(1.0)
     }
 }
 
@@ -219,39 +239,99 @@ impl ForestShadow {
     }
 
     pub(crate) fn image() -> Image {
-        let empty = [OPEN, -OPEN, 0.0, OPEN].map(|v| half::f16::from_f32(v).to_bits());
-        let mut image = Image::new_fill(
+        let empty = [OPEN, -OPEN, 0.0, OPEN];
+        let open_sky = [OPEN, -OPEN, 1.0, OPEN];
+        let texels: Vec<[f32; 4]> = (0..=SKY_LEVELS)
+            .flat_map(|level| {
+                let side = (SIZE >> level) as usize;
+                std::iter::repeat_n(if level == 0 { empty } else { open_sky }, side * side)
+            })
+            .collect();
+        let mut image = Image::new(
             Extent3d {
                 width: SIZE,
                 height: SIZE,
                 depth_or_array_layers: 1,
             },
             TextureDimension::D2,
-            bytemuck::cast_slice(&empty),
+            half_floats(&texels[..(SIZE * SIZE) as usize]),
             TextureFormat::Rgba16Float,
             RenderAssetUsages::RENDER_WORLD,
         );
+        // Bevy checks the data against level 0; the mip levels follow it.
+        image.texture_descriptor.mip_level_count = 1 + SKY_LEVELS;
+        image.data = Some(half_floats(&texels));
         image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
             address_mode_u: ImageAddressMode::ClampToEdge,
             address_mode_v: ImageAddressMode::ClampToEdge,
             mag_filter: ImageFilterMode::Linear,
             min_filter: ImageFilterMode::Linear,
+            mipmap_filter: ImageFilterMode::Linear,
             ..default()
         });
         image
     }
 
+    /// The published map's sky levels as half floats, finest first. Bevy rewrites only level 0
+    /// of a texture it already has, so these are uploaded separately (`clouds::render`).
+    pub(crate) fn sky_level_bytes(&self) -> Vec<Vec<u8>> {
+        self.map
+            .as_ref()
+            .map(|map| map.levels.iter().map(|level| half_floats(level)).collect())
+            .unwrap_or_default()
+    }
+
     pub(crate) fn write(&self, image: &mut Image) {
         if let Some(map) = &self.map {
-            let bits: Vec<u16> = map
+            let texels: Vec<[f32; 4]> = map
                 .texels
                 .iter()
-                .flatten()
-                .map(|&v| half::f16::from_f32(v).to_bits())
+                .chain(map.levels.iter().flatten())
+                .copied()
                 .collect();
-            image.data = Some(bytemuck::cast_slice(&bits).to_vec());
+            image.data = Some(half_floats(&texels));
         }
     }
+}
+
+fn half_floats(texels: &[[f32; 4]]) -> Vec<u8> {
+    let bits: Vec<u16> = texels
+        .iter()
+        .flatten()
+        .map(|&v| half::f16::from_f32(v).to_bits())
+        .collect();
+    bytemuck::cast_slice(&bits).to_vec()
+}
+
+/// [`SKY_LEVELS`] mip levels of the map: per 2×2 texels the highest tops, lowest base and the
+/// average share of sky the crowns let through.
+fn sky_levels(texels: &[[f32; 4]]) -> Vec<Vec<[f32; 4]>> {
+    let mut levels: Vec<Vec<[f32; 4]>> = Vec::new();
+    for level in 1..=SKY_LEVELS {
+        let (side, finer) = ((SIZE >> level) as usize, (SIZE >> (level - 1)) as usize);
+        let source = levels.last().map_or(texels, Vec::as_slice);
+        let level_texels = (0..side * side)
+            .map(|i| {
+                let (x, y) = (i % side * 2, i / side * 2);
+                let quad = [
+                    source[y * finer + x],
+                    source[y * finer + x + 1],
+                    source[(y + 1) * finer + x],
+                    source[(y + 1) * finer + x + 1],
+                ];
+                // Level 0 holds foliage density; finer sky levels already hold the sky share.
+                let sky = |t: &[f32; 4]| if level == 1 { (-t[2]).exp() } else { t[2] };
+                [
+                    quad.iter().fold(OPEN, |v, t| v.max(t[0])),
+                    quad.iter().fold(-OPEN, |v, t| v.min(t[1])),
+                    quad.iter().map(sky).sum::<f32>() * 0.25,
+                    quad.iter().fold(OPEN, |v, t| v.max(t[3])),
+                ]
+            })
+            .collect();
+        levels.push(level_texels);
+    }
+    levels
 }
 
 #[cfg(test)]
@@ -302,6 +382,42 @@ mod tests {
             "a crown 50 m away is in the neighbourhood"
         );
         assert_eq!(local_top(200.0), OPEN, "one 190 m away is not");
+    }
+
+    #[test]
+    fn sky_levels_hold_the_sky_share_around_the_crowns() {
+        let map = ForestShadowMap::rasterize(Vec2::ZERO, [crown(10.0, -6.0)]);
+        assert_eq!(map.levels.len(), SKY_LEVELS as usize);
+        let at = |level: usize, x: f32| {
+            let size = (SIZE >> (level + 1)) as f32;
+            let texel = ((Vec2::new(x, -6.0) - map.origin)
+                / (METRES_PER_TEXEL * 2.0 * (1 << level) as f32))
+                .floor()
+                .min(Vec2::splat(size - 1.0));
+            map.levels[level][(texel.y * size + texel.x) as usize]
+        };
+        let [top, _, sky, canopy] = at(0, 10.0);
+        assert!(
+            sky < 0.95 && sky > 0.0,
+            "the crown hides part of the sky: {sky}"
+        );
+        assert_eq!((top, canopy), (18.0, 18.0));
+        assert_eq!(at(0, 600.0)[2], 1.0, "open sky far from it");
+        assert!(
+            at(2, 10.0)[2] > sky,
+            "coarser levels average in the open sky around it"
+        );
+        let data = {
+            let mut shadow = ForestShadow::default();
+            shadow.publish(map);
+            let mut image = ForestShadow::image();
+            shadow.write(&mut image);
+            image.data.unwrap().len()
+        };
+        let texels: usize = (0..=SKY_LEVELS)
+            .map(|l| ((SIZE >> l) * (SIZE >> l)) as usize)
+            .sum();
+        assert_eq!(data, texels * 8, "every mip level is uploaded");
     }
 
     #[test]

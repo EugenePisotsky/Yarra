@@ -349,6 +349,32 @@ User report: when a dissolve begins, the tree's shadow starts fading before the 
 | Less wind farther out (user: far impostors in strong wind looked unnatural) | **Changed.** Full sway only where the impostor takes over from the mesh, then a smooth fall to none at 2.5× that distance (spruce 92 → 230 m, shrubs 36 → 90 m), and never past 450 m. On screen the motion halves by 1.5× the hand-off and is about 13% by 2×. Lab, spruce: at 97.5 m the impostor still matches LOD1 (±2.4 / ±2.4 px, correlation 0.99); at 161 m it sways ±1.2 against the mesh's ±2.6, in step (1.00), and leans 2.5 px less. Pine: ±1.9 / ±2.3 at 132 m, ±1.2 / ±2.5 at 218 m. |
 | Cost | **Below measurement noise.** Paired runs alternating wind on and off, fullscreen game settings, GPU ms: summit 9.00 off, 9.0 on; start 6.90 off, 6.86 on. These runs were slower than the first ones of the day: the machine had heated after about 20 back-to-back profiles. Fresh runs: start 147.5 fps, edge 128, summit 140, pine 114, against 143 / 126 / 132 / 107 before. The extra work is vertex-only: about 60 operations on 6 vertices per impostor inside 450 m, and a branch past it. Vertex data grows by 56 bytes per impostor. |
 
+## Exposure, tonemapping and sky light — October 7
+
+User report: the lighting feels a bit too bright. A look capture (`--look-capture`) compares presentations from one view. Views: the start beach, the forest edge, inside the spruce forest and the summit, sun at 28°, clear authored weather.
+
+| Change | Decision / observation |
+| --- | --- |
+| Nothing clips | At EV 13 no view has white pixels. The beach reads milky and flat rather than overexposed: Tony McMapface compresses the mid-tones. AgX is greyer still; Khronos PBR Neutral keeps colour and contrast at the same EV. |
+| One fixed exposure cannot suit both | Inside the spruce forest the land averages L* 19 against 46 on the beach. Darker or more contrasty settings crush the forest (Neutral at EV 14: 13% black pixels). Metered at EV 13 without tonemapping (log2 exposed luminance): summit −1.3, beach −2.4, forest edge −3.2, pine −3.9, spruce −5.5. |
+| Eye adaptation | **Implemented, on in the game, F1 toggle.** Follows half of a change in metered brightness from the forest edge, within +1.5 / −1 stop; sky weighted 30%. Beach ≈ −0.4 stop, summit ≈ −0.9, spruce forest ≈ +1.1 (L* 19 → 28 with Tony). Bevy's curve check compares segment ends exactly, so the curve's constants are binary fractions. Bevy keeps adapting after `AutoExposure` is removed; off swaps in an identity curve. |
+| Sky light ×1.5–2 | Softens the near-black shadows on open ground; inside the forest it lifts the shade evenly into grey without crown occlusion. **×1.5 chosen**: the default sunrise/day/sunset sky light is now 4,500 / 9,000 / 3,750 lux, and Reteya's profile was rewritten through `ProjectWriter::write_atmospheres` (revision 1 → 2) and re-cooked. |
+| Sky light under the crowns | **Implemented, on.** Trunks, branches and the character darken clearly under the canopy; grass and ground change a few levels, as sun and the grass's bounded ambient dominate there. Five taps per pixel cost a consistent 0.35 ms GPU at the forest edge (5.86 → 6.21 ms, three alternating pairs) and nothing at the beach. Now one read of precomputed mip levels: +0.16 ms with adaptation (5.83 → 5.99 ms, three pairs in alternating order). |
+| Tonemapper | **Khronos PBR Neutral, chosen by the user** with adaptation and sky ×1.5: closest to a sunny day on the beach and in the forest; Tony with adaptation turned the forest milky. Land lightness, today → new: beach 45 → 37, spruce forest 18 → 23, forest edge 37 → 34, summit 54 → 41 (mostly sky, so it meters dark; watch it in play). |
+| Weather with adaptation | No doubling with the weather's own exposure offsets: at the beach overcast goes L* 25 → 27 with adaptation, rain 31 → 30. |
+
+## Ground haze and valley mist — October 7
+
+User request: fog and valley mist. Look captures from the start beach, the start island's ridge looking over the strait, the forest edge and a 494 m ridge above a 1 km-wide valley (floor about 10 m), at the game's 8 am, just after sunrise and at night, clear authored weather unless noted.
+
+| Change | Decision / observation |
+| --- | --- |
+| Ground haze | **Retained**, 30 km at sea level thinning by e every 250 m. At 9 km / 120 m it turned the sea from the summit into a flat grey band with a hard top at the horizon, and at 15 km it washed out the mountains across the strait. 30 km / 250 m layers ridges against hazier lowlands without hiding the distance. |
+| Valley mist | **Retained.** Just after sunrise the valley fills to a level top with ridges rising out of it; at 8 am a thin, broken layer lies on the valley floor. The start beach lies in an enclosed basin and holds valley mist too: with burn-off by 50° of sun elevation 8 am kept ~60% of the dawn amount and the forest 150 m away was half hidden; burn-off by 40° keeps about a third, and the forest's base softens. At night the mist is moonlit blue. Overcast and rain grey it with the light. |
+| Sea mist | **Removed.** Mist over the open sea drew a bright, hard-edged band along every distant shore. Mist now fades out within about 200 m offshore. |
+| Silhouette cost | Grass edges send most pixels at the start through the per-sample path, which evaluated the mist up to four times per pixel: fog on cost 0.69 ms (6.31 → 7.00, one pair). Haze and mist are now evaluated at the nearest and farthest samples and interpolated. |
+| Cost | **About 0.1–0.2 ms.** Fullscreen game settings, three pairs in alternating order, GPU ms off → on: valley 3.71–4.44 → 3.91–4.02, start 5.36–5.57 → 5.55–5.71, forest edge 5.88–6.08 → 6.05–6.19. The map is ready about 1.5 s after the runtime world opens and fades in over 3 s. |
+
 ## Open gates and maintenance
 
 The remaining gates are sustained terrain/whole-game power, Temporal cost and motion quality, field-scale grass lighting, target-PC acceptance, and physical-phone heat/60-FPS delivery. Keep correctness references until their replacements pass the relevant gate. Existing counters often identify less work without demonstrating better delivered frames or lower power.

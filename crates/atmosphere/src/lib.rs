@@ -1,19 +1,22 @@
 //! Shared sky, sun and illumination. Applications supply profile/time inputs;
 //! one ordered presentation system applies them before transform propagation.
+pub mod adaptation;
 pub mod clouds;
 pub mod forest_shadow;
 pub mod precipitation;
 pub mod shelter;
 pub mod sky;
+pub mod valley_mist;
 
 use bevy::{
     camera::Exposure,
+    core_pipeline::tonemapping::Tonemapping,
     light::{
         Atmosphere, CascadeShadowConfigBuilder, SunDisk,
         atmosphere::{Falloff, ScatteringMedium},
     },
     pbr::AtmosphereSettings,
-    post_process::bloom::Bloom,
+    post_process::{auto_exposure::AutoExposure, bloom::Bloom},
     prelude::*,
     render::{extract_resource::ExtractResource, render_resource::TextureUsages},
 };
@@ -22,6 +25,11 @@ use world::{
     atmosphere::{AtmosphereProfile, evaluate, linear_rgb},
     weather::{WeatherFog, WeatherParams, WeatherTransition},
 };
+
+/// The world cameras' display transform. Khronos PBR Neutral keeps mid-tones as lit, so sunny
+/// ground keeps its colour and contrast where Tony McMapface's compression read as milky haze
+/// (docs/EXPERIMENTS.md, October 7).
+pub const WORLD_TONEMAPPING: Tonemapping = Tonemapping::KhronosPbrNeutral;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AtmosphereOwner {
@@ -37,12 +45,37 @@ pub enum AtmosphereOwner {
 pub struct AtmospherePresentation {
     pub sky_and_haze: bool,
     pub bloom: bool,
+    /// Eye adaptation around the profile's exposure ([`adaptation`]); game views only.
+    pub auto_exposure: bool,
+    /// Ground haze and valley mist ([`valley_mist`]); weather fog stays.
+    pub low_air: bool,
 }
 impl Default for AtmospherePresentation {
     fn default() -> Self {
         Self {
             sky_and_haze: true,
             bloom: true,
+            auto_exposure: true,
+            low_air: true,
+        }
+    }
+}
+
+/// Scales over the authored ground haze and valley mist, for side-by-side comparisons (look
+/// captures). The profile itself is restored from the world whenever it differs.
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+pub struct FogTuning {
+    /// Haze and mist extinction, and mist depth.
+    pub haze: f32,
+    pub mist: f32,
+    pub mist_depth: f32,
+}
+impl Default for FogTuning {
+    fn default() -> Self {
+        Self {
+            haze: 1.0,
+            mist: 1.0,
+            mist_depth: 1.0,
         }
     }
 }
@@ -124,6 +157,7 @@ impl WorldEnvironmentPlugin {
 impl Plugin for WorldEnvironmentPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<AtmospherePresentation>()
+            .init_resource::<FogTuning>()
             .add_plugins((
                 clouds::CloudsPlugin,
                 precipitation::PrecipitationPlugin,
@@ -135,6 +169,7 @@ impl Plugin for WorldEnvironmentPlugin {
                 ..default()
             })
             .insert_resource(ShadowCoverage(self.first_cascade, self.shadow_distance))
+            .add_plugins(adaptation::plugin)
             .add_systems(Startup, setup)
             .configure_sets(
                 PostUpdate,
@@ -263,9 +298,11 @@ fn apply(
             Option<&AtmosphereSettings>,
             Option<&mut Bloom>,
             Option<&mut Camera3d>,
+            Option<&mut AutoExposure>,
         ),
         (Without<WorldSun>, Without<WorldMoon>),
     >,
+    adaptation: Option<Res<adaptation::Adaptation>>,
     mut planets: Query<(&Atmosphere, &mut GlobalTransform), With<WorldAtmosphere>>,
     handle: Res<MediumHandle>,
     mut media: ResMut<Assets<ScatteringMedium>>,
@@ -324,7 +361,10 @@ fn apply(
     ambient.color = rgb(value.ambient_linear);
     ambient.brightness = value.ambient_lux;
     let presentation = presentation.as_deref().copied().unwrap_or_default();
-    for (entity, camera, view, mut exposure, settings, bloom, camera_3d) in &mut views {
+    // Eye adaptation in the game only: authoring and studies judge the exposure as set.
+    let adapt =
+        presentation.auto_exposure && state.owner == AtmosphereOwner::Game && profile.outdoor;
+    for (entity, camera, view, mut exposure, settings, bloom, camera_3d, mut auto) in &mut views {
         exposure.ev100 = state
             .exposure_override
             .filter(|v| v.is_finite())
@@ -359,6 +399,18 @@ fn apply(
         }
         // The atmosphere handles both sky and aerial perspective. No second DistanceFog pass.
         commands.entity(entity).remove::<DistanceFog>();
+        if let Some(adaptation) = &adaptation {
+            match auto.as_deref_mut() {
+                Some(auto) if auto.compensation_curve != *adaptation.curve(adapt) => {
+                    auto.compensation_curve = adaptation.curve(adapt).clone();
+                }
+                Some(_) => {}
+                None if adapt => {
+                    commands.entity(entity).insert(adaptation.settings(adapt));
+                }
+                None => {}
+            }
+        }
         let visibility = view
             .visibility_override
             .filter(|v| v.is_finite())
@@ -496,6 +548,8 @@ mod tests {
         *app.world_mut().resource_mut::<AtmospherePresentation>() = AtmospherePresentation {
             sky_and_haze: false,
             bloom: false,
+            auto_exposure: false,
+            low_air: false,
         };
         app.update();
         // Surfaces keep atmosphere lighting; the composite alone stops drawing sky and haze.
