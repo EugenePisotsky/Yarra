@@ -4,9 +4,11 @@ pub mod adaptation;
 pub mod ambient_particles;
 pub mod clouds;
 pub mod forest_shadow;
+pub mod light_shafts;
 pub mod precipitation;
 pub mod shelter;
 pub mod sky;
+pub mod sun_glare;
 pub mod valley_mist;
 
 use bevy::{
@@ -52,6 +54,8 @@ pub struct AtmospherePresentation {
     pub low_air: bool,
     /// Dust motes, seed fluff and falling leaves ([`ambient_particles`]).
     pub particles: bool,
+    /// Sunbeams through haze, mist and the air under crowns ([`light_shafts`]).
+    pub light_shafts: bool,
 }
 impl Default for AtmospherePresentation {
     fn default() -> Self {
@@ -61,6 +65,7 @@ impl Default for AtmospherePresentation {
             auto_exposure: true,
             low_air: true,
             particles: true,
+            light_shafts: true,
         }
     }
 }
@@ -73,6 +78,8 @@ pub struct FogTuning {
     pub haze: f32,
     pub mist: f32,
     pub mist_depth: f32,
+    /// Extinction of the air under crowns that light shafts draw.
+    pub canopy_air: f32,
 }
 impl Default for FogTuning {
     fn default() -> Self {
@@ -80,6 +87,7 @@ impl Default for FogTuning {
             haze: 1.0,
             mist: 1.0,
             mist_depth: 1.0,
+            canopy_air: 1.0,
         }
     }
 }
@@ -167,6 +175,8 @@ impl Plugin for WorldEnvironmentPlugin {
                 precipitation::PrecipitationPlugin,
                 ambient_particles::AmbientParticlesPlugin,
                 sky::SkyCompositePlugin,
+                light_shafts::LightShaftsPlugin,
+                sun_glare::SunGlarePlugin,
             ))
             .insert_resource(ClearColor(Color::BLACK))
             .insert_resource(AtmosphereState {
@@ -556,6 +566,7 @@ mod tests {
             auto_exposure: false,
             low_air: false,
             particles: false,
+            light_shafts: false,
         };
         app.update();
         // Surfaces keep atmosphere lighting; the composite alone stops drawing sky and haze.

@@ -102,6 +102,8 @@ pub struct CloudParams {
     /// scattered evenly; `air_sun` rgb the sunlight that reaches them, scattered mostly forwards.
     pub air_light: [f32; 4],
     pub air_sun: [f32; 4],
+    /// Light shafts: x extinction per metre of the air under crowns (0 off).
+    pub shafts: [f32; 4],
 }
 /// Mist noise tile, metres; `MIST_NOISE_PERIOD` in `shaders/sky/composite.wgsl`.
 pub const MIST_NOISE_PERIOD: f64 = 2048.;
@@ -296,6 +298,7 @@ fn sync(
         mist_drift: [0.; 4],
         air_light: [0.; 4],
         air_sun: [0.; 4],
+        shafts: [0.; 4],
     };
     if state.owner != AtmosphereOwner::Study && profile.outdoor {
         params.weather = [
@@ -358,7 +361,7 @@ fn sync(
         && fog.enabled
         && fog.validate().is_ok()
         && state.owner != AtmosphereOwner::Study
-        && presentation.is_none_or(|p| p.low_air)
+        && presentation.as_ref().is_none_or(|p| p.low_air)
     {
         let tuning = tuning.as_deref().copied().unwrap_or_default();
         params.low_haze = [
@@ -388,6 +391,17 @@ fn sync(
         ];
         params.air_light = (ambient + moon_light * 0.025).extend(0.).to_array();
         params.air_sun = sun_light.extend(0.).to_array();
+        if presentation.is_none_or(|p| p.light_shafts) {
+            // Humid morning air under the crowns holds more.
+            params.shafts = [
+                VISIBILITY_EXTINCTION / fog.canopy_air_visibility_metres
+                    * (0.6 + 0.8 * value.mist.min(1.))
+                    * tuning.canopy_air,
+                0.,
+                0.,
+                0.,
+            ];
+        }
     }
     for (e, view, _) in &views {
         if active && view.is_none() {

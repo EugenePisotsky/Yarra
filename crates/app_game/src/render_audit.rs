@@ -106,6 +106,7 @@ enum Control {
     AutoExposure,
     Fog,
     Particles,
+    LightShafts,
     Terrain,
     Objects,
     Density,
@@ -138,6 +139,7 @@ impl Control {
             Self::AutoExposure => format!("Auto exposure: {}", on_off(s.auto_exposure)),
             Self::Fog => format!("Fog & mist: {}", on_off(s.fog)),
             Self::Particles => format!("Ambient particles: {}", on_off(s.particles)),
+            Self::LightShafts => format!("Light shafts: {}", on_off(s.light_shafts)),
             Self::Terrain => format!("Terrain draws: {}", on_off(!s.hide_terrain)),
             Self::Objects => format!("Object draws: {}", on_off(!s.hide_objects)),
             Self::Density => format!("Grass density: {}", s.density.label()),
@@ -255,6 +257,7 @@ fn buttons(
             Control::AutoExposure => s.auto_exposure = !s.auto_exposure,
             Control::Fog => s.fog = !s.fog,
             Control::Particles => s.particles = !s.particles,
+            Control::LightShafts => s.light_shafts = !s.light_shafts,
             Control::Terrain => s.hide_terrain = !s.hide_terrain,
             Control::Objects => s.hide_objects = !s.hide_objects,
             Control::Density => {

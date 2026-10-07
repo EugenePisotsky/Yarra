@@ -387,6 +387,19 @@ User request: dust close to the character, then the rest of the environment plan
 | Falling leaves | **Retained.** They spawn under crowns of the forest map. In shade they read as dark flecks; in sunbeams and against the sky they show colour. |
 | Cost | **Within noise.** GPU ms, pairs in alternating order, off → on: broadleaf forest 7.16–7.42 → 7.18–7.29, start 5.62–5.95 → 5.73. |
 
+## Light shafts and the sun — October 7
+
+User request: light shafts like The Witcher 3's, and a better sun ("just a circle when it is visible"). Look captures in the broadleaf forest facing the 8 am sun, at the forest edge facing a low sun (phase 0.28, 9°), in the pine and spruce stands and on the start beach; fullscreen 3456×2168.
+
+| Change | Decision / observation |
+| --- | --- |
+| Shafts through haze and mist alone | **Too faint.** The march worked (beams showed at 50× gain), but 30 km haze holds almost nothing to light. |
+| Air under crowns | **Retained at 500 m visibility.** A sweep from 4 km (×1) to 250 m (×16): beams first read clearly at ×8. At ×16, and at ×8 with full sky light, the forest took a flat blue-grey veil; the air's sky light is now 30% of the sky's, tinted by the leaves. |
+| Low sun in the forest | No beams: at 9° the sun is below the canopy and the glare correctly switches off. |
+| Sun disc and glare | **Retained.** The low sun was a small hard disc with a thin ring; it now glows warm with an aureole and glare. A 3% veil washed the whole forest frame in warm haze when the sun stood just above it (auto exposure brightens the dark stand); 1.2% keeps the forest's contrast. A (1 + u)^-1.5 veil drew a visible rim; (1 + u)^-1.25 does not. |
+| Shadow lookups | Interpolated along each ray from its two ends per cascade, and skipped where only ground haze would darken: the start beach cost fell from about 1 ms to 0.5–0.9 ms. |
+| Cost | GPU ms, pairs in alternating order: broadleaf forest 8.2–9.1 ms whether particles and shafts are on or off (within noise); start 5.9–6.5 → 6.6–7.1 with shafts. GPU per-pass timestamps are not reliable on this GPU (the main opaque pass showed 0.12 ms), so only whole-frame pairs count. Not done: screen-space rays for an on-screen sun behind distant ridges and buildings, beyond the shadow maps. |
+
 ## Open gates and maintenance
 
 The remaining gates are sustained terrain/whole-game power, Temporal cost and motion quality, field-scale grass lighting, target-PC acceptance, and physical-phone heat/60-FPS delivery. Keep correctness references until their replacements pass the relevant gate. Existing counters often identify less work without demonstrating better delivered frames or lower power.

@@ -478,7 +478,10 @@ fn draw(
                     }
                     ui.add(egui::Slider::new(&mut f.mist_after_rain, 0.0..=1.0)
                         .text("Extra mist after rain"));
-                    ui.small("Ground haze thickens towards the sea. Mist pools in valleys under a level top and burns off as the sun climbs; where it pools comes from the cooked terrain.");
+                    ui.add(egui::Slider::new(&mut f.canopy_air_visibility_metres, 100.0..=100_000.0)
+                        .logarithmic(true)
+                        .text("Air under crowns visibility · m"));
+                    ui.small("Ground haze thickens towards the sea. Mist pools in valleys under a level top and burns off as the sun climbs; where it pools comes from the cooked terrain. Sunbeams light the haze, the mist and the air under crowns near the camera.");
                 });
                 egui::CollapsingHeader::new("Presentation").show(ui, |ui| {
                     ui.add(

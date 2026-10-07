@@ -90,7 +90,7 @@ def main():
         draw.text((x + 4, y + tile.height + 34),
                   f"EV {f['ev100']:.1f}  {f['tonemapping']}  sky ×{f['ambient']:g}  sun ×{f['sun']:g}  "
                   f"canopy {f.get('canopy', 0):g}  auto {'on' if f.get('auto_exposure') else 'off'}  "
-                  f"fog {'on' if f.get('fog', True) else 'off'}  particles {'on' if f.get('particles', True) else 'off'}  phase {f.get('phase', 0):.2f}   "
+                  f"fog {'on' if f.get('fog', True) else 'off'}  particles {'on' if f.get('particles', True) else 'off'}  shafts {'on' if f.get('shafts', True) else 'off'}  phase {f.get('phase', 0):.2f}   "
                   f"land L* {s['land_lightness']:.0f} (p90 {s['land_p90']:.0f})  white {s['white']:.1%}",
                   fill=(170, 170, 170), font=text)
     out = args.dir / ('sheet-crop.png' if args.crop else 'sheet.png')

@@ -20,6 +20,9 @@ pub struct FogSettings {
     pub mist_amount: [f32; 4],
     /// Amount added on fully wet ground after rain.
     pub mist_after_rain: f32,
+    /// Visibility in the humid air under forest crowns, which sunbeams light up. Only the light
+    /// shafts near the camera draw it; it thickens with the morning mist.
+    pub canopy_air_visibility_metres: f32,
 }
 
 impl Default for FogSettings {
@@ -32,6 +35,7 @@ impl Default for FogSettings {
             mist_depth_metres: 40.,
             mist_amount: [0.7, 1.0, 0.1, 0.3],
             mist_after_rain: 0.4,
+            canopy_air_visibility_metres: 500.,
         }
     }
 }
@@ -44,6 +48,7 @@ impl FogSettings {
             (self.mist_visibility_metres, 20., 5000.),
             (self.mist_depth_metres, 0., 300.),
             (self.mist_after_rain, 0., 1.),
+            (self.canopy_air_visibility_metres, 100., 100_000.),
         ]
         .into_iter()
         .chain(self.mist_amount.map(|a| (a, 0., 1.)))

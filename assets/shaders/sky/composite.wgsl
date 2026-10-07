@@ -16,10 +16,11 @@ enable dual_source_blending;
 #import "shaders/clouds/types.wgsl"::{CloudParams, sky_panorama_uv}
 #ifdef ATMOSPHERE
 #import bevy_pbr::atmosphere::{
-    bindings::view,
+    bindings::{lights, view},
+    bruneton_functions::ray_intersects_ground,
     functions::{
         direction_world_to_atmosphere, get_local_r, get_view_position, sample_aerial_view_lut,
-        sample_density_lut, sample_sky_view_lut, sample_sun_radiance, sample_transmittance_lut,
+        sample_density_lut, sample_sky_view_lut, sample_transmittance_lut,
     },
 }
 #else
@@ -33,7 +34,8 @@ enable dual_source_blending;
 @group(1) @binding(0) var depth: texture_depth_2d;
 #endif
 @group(1) @binding(1) var<storage, read> clouds: CloudParams;
-// Cloud images: the newest and previous complete cache refreshes, and x = cross-fade progress.
+// Cloud images: the newest and previous complete cache refreshes, and x = cross-fade progress;
+// y = light shafts drawn, z = main-pass pixels per shaft texel.
 @group(1) @binding(2) var cloud_newer: texture_2d<f32>;
 @group(1) @binding(3) var cloud_older: texture_2d<f32>;
 @group(1) @binding(4) var cloud_sampler: sampler;
@@ -44,6 +46,13 @@ enable dual_source_blending;
 @group(1) @binding(7) var mist_sampler: sampler;
 @group(1) @binding(8) var noise: texture_3d<f32>;
 @group(1) @binding(9) var noise_sampler: sampler;
+// Light shafts (sky/light_shafts.wgsl): light to add and the transmittance of the air under
+// crowns, and the distance each texel marched to.
+@group(1) @binding(10) var shaft_light: texture_2d<f32>;
+@group(1) @binding(11) var shaft_distance: texture_2d<f32>;
+// The sun as the camera sees it (sky/sun_occlusion.wgsl): x share seen, y on screen, zw its
+// main-pass uv.
+@group(1) @binding(12) var<storage, read> sun_state: vec4<f32>;
 
 struct Output {
 #ifdef DUAL_SOURCE_BLENDING
@@ -95,15 +104,19 @@ fn fogged(ray: vec3<f32>, distance: f32, behind: Path) -> Path {
     return behind_fog(fog_along(ray, distance), behind);
 }
 
-// Phase function of haze and mist droplets: an even share plus a forward lobe, so both glow
-// towards the sun.
+// Phase function of haze and mist droplets: an even share, a forward lobe and the narrow
+// aureole of large droplets, so both glow towards the sun and brightest right around it.
 const FORWARD_SHARE: f32 = 0.4;
 const FORWARD_G: f32 = 0.6;
+const AUREOLE_SHARE: f32 = 0.05;
+const AUREOLE_G: f32 = 0.92;
 const INV_FOUR_PI: f32 = 0.07957747;
+fn lobe(g: f32, cos_angle: f32) -> f32 {
+    return (1.0 - g * g) / pow(1.0 + g * g - 2.0 * g * cos_angle, 1.5);
+}
 fn scattering(cos_angle: f32) -> f32 {
-    let g2 = FORWARD_G * FORWARD_G;
-    let lobe = (1.0 - g2) / pow(1.0 + g2 - 2.0 * FORWARD_G * cos_angle, 1.5);
-    return INV_FOUR_PI * mix(1.0, lobe, FORWARD_SHARE);
+    return INV_FOUR_PI * ((1.0 - FORWARD_SHARE - AUREOLE_SHARE)
+        + FORWARD_SHARE * lobe(FORWARD_G, cos_angle) + AUREOLE_SHARE * lobe(AUREOLE_G, cos_angle));
 }
 
 // Ground haze is integrated this far at most: near-horizontal rays to the sky.
@@ -262,6 +275,73 @@ fn aerial_perspective(ray: vec3<f32>, uv: vec2<f32>, distance: f32) -> Path {
 }
 
 #ifdef ATMOSPHERE
+// The sun and moon discs with Bevy's antialiased edge and total light. The sun darkens towards
+// its limb, where the photosphere is seen at a grazing angle.
+const LIMB_DARKENING: f32 = 0.6;
+fn is_sun(direction: vec3<f32>) -> bool {
+    return dot(direction, clouds.sun.xyz) > 0.995;
+}
+fn discs(ray: vec3<f32>) -> vec3<f32> {
+    let position = get_view_position();
+    let below = ray_intersects_ground(length(position), dot(ray, normalize(position)));
+    var radiance = vec3(0.0);
+    for (var i = 0u; i < lights.n_directional_lights; i += 1u) {
+        let light = &lights.directional_lights[i];
+        let size = (*light).sun_disk_angular_size;
+        let intensity = (*light).sun_disk_intensity;
+        let angle = acos(clamp(dot((*light).direction_to_light, ray), -1.0, 1.0));
+        let w = max(0.5 * fwidth(angle), 1e-6);
+        if size <= 0.0 || intensity <= 0.0 {
+            continue;
+        }
+        let radius = 0.5 * size;
+        let edge = 1.0 - smoothstep(radius - w, radius + w, angle);
+        let x = min(angle / radius, 1.0);
+        let limb = select(1.0,
+            (1.0 - LIMB_DARKENING * (1.0 - sqrt(1.0 - x * x))) / (1.0 - LIMB_DARKENING / 3.0),
+            is_sun((*light).direction_to_light));
+        radiance += (*light).color.rgb / (size * size * 0.25 * 3.14159265) * intensity * edge * limb;
+    }
+    return select(radiance, vec3(0.0), below);
+}
+
+// Exposed disc light is kept within half floats (65504); the glare carries the sun's light
+// beyond its disc.
+const MAX_DISC: f32 = 30000.0;
+
+// Glare of the eye and lens around the sun: a core about a degree wide and a veil over tens of
+// degrees, each holding a share of the sun's light, scaled by the share of the sun seen.
+// Kernels are normalised over the image plane: core (1 + u)^-2 / (pi w^2), veil
+// (1 + u)^-1.25 / (4 pi w^2), u = (angle / w)^2; the veil's slow fall leaves no visible rim.
+const GLARE_CORE_SHARE: f32 = 0.02;
+const GLARE_CORE_WIDTH: f32 = 0.021;
+const GLARE_VEIL_SHARE: f32 = 0.012;
+const GLARE_VEIL_WIDTH: f32 = 0.12;
+fn sun_glare(ray: vec3<f32>) -> vec3<f32> {
+    let visible = sun_state.x;
+    if visible <= 0.0 {
+        return vec3(0.0);
+    }
+    let position = get_view_position();
+    for (var i = 0u; i < lights.n_directional_lights; i += 1u) {
+        let light = &lights.directional_lights[i];
+        if !is_sun((*light).direction_to_light) || (*light).sun_disk_intensity <= 0.0 {
+            continue;
+        }
+        let transmittance = sample_transmittance_lut(length(position),
+            dot((*light).direction_to_light, normalize(position)));
+        let irradiance = (*light).color.rgb * (*light).sun_disk_intensity * transmittance;
+        // Squared angle, close to 2 (1 - cos) well past the veil.
+        let angle2 = 2.0 * (1.0 - dot(ray, (*light).direction_to_light));
+        let core = 1.0 + angle2 / (GLARE_CORE_WIDTH * GLARE_CORE_WIDTH);
+        let veil = 1.0 + angle2 / (GLARE_VEIL_WIDTH * GLARE_VEIL_WIDTH);
+        let kernel = GLARE_CORE_SHARE / (3.14159265 * GLARE_CORE_WIDTH * GLARE_CORE_WIDTH * core * core)
+            + GLARE_VEIL_SHARE / (12.566371 * GLARE_VEIL_WIDTH * GLARE_VEIL_WIDTH * veil * sqrt(sqrt(veil)));
+        return irradiance * kernel * visible * view.exposure;
+    }
+    return vec3(0.0);
+}
+
 // Transmittance of the camera-to-surface segment alone. Bevy's
 // `sample_transmittance_lut_segment` divides two whole-atmosphere transmittances. For
 // near-horizontal rays towards the ground both paths cross hundreds of kilometres of low haze,
@@ -281,6 +361,38 @@ fn extinction(r: f32) -> vec3<f32> {
 }
 #endif
 
+// Light shafts at a pixel `distance` metres deep: the four nearest texels, bilinear but skipping
+// those at a different distance, so beams stop at silhouettes. Sky pixels use 1e6.
+fn light_shafts(position: vec2<f32>, distance: f32) -> vec4<f32> {
+    if cloud_blend.y < 0.5 {
+        return vec4(0.0, 0.0, 0.0, 1.0);
+    }
+    let size = vec2<i32>(textureDimensions(shaft_light));
+    let q = (position - view.main_pass_viewport.xy) / cloud_blend.z - 0.5;
+    let base = vec2<i32>(floor(q));
+    let f = q - floor(q);
+    var sum = vec4(0.0);
+    var weight = 0.0;
+    var nearest = vec4(0.0, 0.0, 0.0, 1.0);
+    var nearest_gap = 1.0e30;
+    for (var i = 0; i < 4; i += 1) {
+        let offset = vec2(i & 1, i >> 1u);
+        let at = clamp(base + offset, vec2(0), size - 1);
+        let d = textureLoad(shaft_distance, at, 0).r;
+        let s = textureLoad(shaft_light, at, 0);
+        let gap = abs(d - distance);
+        let w = select(1.0 - f.x, f.x, offset.x == 1) * select(1.0 - f.y, f.y, offset.y == 1)
+            * exp(-gap / (0.05 * min(d, distance) + 0.3));
+        sum += s * w;
+        weight += w;
+        if gap < nearest_gap {
+            nearest_gap = gap;
+            nearest = s;
+        }
+    }
+    return select(nearest, sum / weight, weight > 1e-4);
+}
+
 @fragment
 fn fragment(in: FullscreenVertexOutput) -> Output {
     let uv = (in.position.xy - view.main_pass_viewport.xy) / view.main_pass_viewport.zw;
@@ -290,7 +402,7 @@ fn fragment(in: FullscreenVertexOutput) -> Output {
     let ray = normalize((view.world_from_view * vec4(near.xyz / near.w, 0.0)).xyz);
 #ifdef ATMOSPHERE
     // The sun and moon disks use derivatives, so evaluate them before any per-pixel branch.
-    let disks = sample_sun_radiance(ray);
+    let disks = discs(ray);
 #endif
     if any(uv < vec2(0.0)) || any(uv > vec2(1.0)) {
         discard;
@@ -350,7 +462,8 @@ fn fragment(in: FullscreenVertexOutput) -> Output {
         let r = length(position);
         let transmittance = sample_transmittance_lut(r, dot(ray, normalize(position)));
         let sky = sample_sky_view_lut(r, direction_world_to_atmosphere(ray));
-        var path = Path((sky + disks * transmittance) * view.exposure, transmittance);
+        var path = Path(sky * view.exposure
+            + min(disks * transmittance * view.exposure, vec3(MAX_DISC)), transmittance);
 #else
         var path = Path(vec3(0.0), vec3(1.0));
 #endif
@@ -400,6 +513,14 @@ fn fragment(in: FullscreenVertexOutput) -> Output {
         transmittance = sky_transmittance;
     }
     light /= f32(samples);
+    // Light shafts lie in front of everything else the pass adds.
+    let shafts = light_shafts(in.position.xy,
+        select(1.0e6, total / f32(max(geometry_samples, 1u)), geometry_samples > 0u));
+    light = light * shafts.a + shafts.rgb;
+    transmittance *= shafts.a;
+#ifdef ATMOSPHERE
+    light += sun_glare(ray);
+#endif
 
 #ifdef DUAL_SOURCE_BLENDING
     return Output(vec4(light, 0.0), vec4(transmittance, 1.0));

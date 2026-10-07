@@ -378,6 +378,7 @@ const FLAGS: &[(&str, bool, &str)] = &[
     ("--profile-auto-exposure", true, "on | off"),
     ("--profile-fog", true, "on | off"),
     ("--profile-particles", true, "on | off"),
+    ("--profile-shafts", true, "on | off"),
     (
         "--profile-temporal-bypass",
         false,

@@ -146,6 +146,8 @@ pub(crate) struct RuntimeSettings {
     pub(crate) fog: bool,
     /// Dust motes, seed fluff and falling leaves.
     pub(crate) particles: bool,
+    /// Sunbeams through haze, mist and the air under crowns.
+    pub(crate) light_shafts: bool,
     pub(crate) hide_terrain: bool,
     pub(crate) hide_objects: bool,
     pub(crate) density: vegetation_render::VegetationDensityMode,
@@ -192,6 +194,7 @@ impl Default for RuntimeSettings {
             auto_exposure: true,
             fog: true,
             particles: true,
+            light_shafts: true,
             hide_terrain: false,
             hide_objects: false,
             density: vegetation_render::VegetationDensityMode::Balanced,
@@ -310,6 +313,7 @@ fn apply_settings(
     atmosphere.auto_exposure = s.auto_exposure;
     atmosphere.low_air = s.fog;
     atmosphere.particles = s.particles;
+    atmosphere.light_shafts = s.light_shafts;
     lod.settings.refine_pixels = [1.0, 2.0, 4.0, 8.0][s.terrain_detail];
     lod.settings.collapse_pixels = lod.settings.refine_pixels * 0.5;
     grass.density_mode = s.density;

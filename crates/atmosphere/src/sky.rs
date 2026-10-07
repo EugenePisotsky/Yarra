@@ -48,6 +48,10 @@ use bevy::{
     },
 };
 
+/// The sky composite's draw in the `Core3d` schedule, for passes that feed it.
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct SkyCompositeDraw;
+
 /// Views that get the sky composite. Required by `WorldEnvironmentView`.
 #[derive(Component, Clone, Copy, Default, ExtractComponent)]
 pub struct SkyCompositeView;
@@ -74,7 +78,8 @@ impl Plugin for SkyCompositePlugin {
             .add_systems(Render, queue.in_set(RenderSystems::Queue))
             .add_systems(
                 Core3d,
-                draw.after(refresh_clouds)
+                draw.in_set(SkyCompositeDraw)
+                    .after(refresh_clouds)
                     .after(Core3dSystems::MainPass)
                     .before(Core3dSystems::EarlyPostProcess),
             );
@@ -174,6 +179,8 @@ struct SkyPipelines {
     fullscreen: FullscreenShader,
     shader: Handle<Shader>,
     dual_source_blending: bool,
+    /// Sun state for views without a measurement: no glare.
+    unseen_sun: Buffer,
 }
 
 impl SpecializedRenderPipeline for SkyPipelines {
@@ -304,6 +311,11 @@ fn init(
                     sampler(SamplerBindingType::Filtering),
                     texture_3d(TextureSampleType::Float { filterable: true }),
                     sampler(SamplerBindingType::Filtering),
+                    // Light shafts and the distance each of their texels marched to.
+                    texture_2d(TextureSampleType::Float { filterable: false }),
+                    texture_2d(TextureSampleType::Float { filterable: false }),
+                    // The sun as the camera sees it.
+                    storage_buffer_read_only_sized(false, std::num::NonZeroU64::new(16)),
                 ),
             ),
         )
@@ -317,6 +329,11 @@ fn init(
         dual_source_blending: device
             .features()
             .contains(WgpuFeatures::DUAL_SOURCE_BLENDING),
+        unseen_sun: device.create_buffer_with_data(&BufferInitDescriptor {
+            label: Some("unseen sun"),
+            contents: bytemuck::bytes_of(&[0.0_f32; 4]),
+            usage: BufferUsages::STORAGE,
+        }),
     });
 }
 
@@ -390,6 +407,8 @@ type CompositeView = (
     &'static ViewUniformOffset,
     Option<&'static MainPassResolutionOverride>,
     Option<AtmosphereBindings>,
+    Option<&'static crate::light_shafts::LightShaftTargets>,
+    Option<&'static crate::sun_glare::SunState>,
 );
 
 #[allow(clippy::too_many_arguments)] // One pass: view, atmosphere, cloud and fallback inputs.
@@ -407,7 +426,8 @@ fn draw(
     images: Res<RenderAssets<GpuImage>>,
     mut ctx: RenderContext,
 ) {
-    let (pipeline, target, depth, view_offset, resolution, bindings) = view.into_inner();
+    let (pipeline, target, depth, view_offset, resolution, bindings, shafts, sun) =
+        view.into_inner();
     if target.main_texture_format() != TextureFormat::Rgba16Float {
         return;
     }
@@ -497,11 +517,21 @@ fn draw(
         Some(display) if key.clouds != Clouds::None => display,
         _ => (&fallback.d2.texture_view, &fallback.d2.texture_view, 0.0),
     };
+    // x: cloud cross-fade; y: light shafts drawn; z: main-pass pixels per shaft texel.
     let blend = device.create_buffer_with_data(&BufferInitDescriptor {
         label: Some("sky composite cloud blend"),
-        contents: bytemuck::bytes_of(&[blend, 0.0, 0.0, 0.0]),
+        contents: bytemuck::bytes_of(&[
+            blend,
+            if shafts.is_some() { 1.0 } else { 0.0 },
+            crate::light_shafts::SCALE as f32,
+            0.0,
+        ]),
         usage: BufferUsages::UNIFORM,
     });
+    let (shaft_light, shaft_distance) = shafts.map_or(
+        (&fallback.d2.texture_view, &fallback.d2.texture_view),
+        |s| (&s.light.default_view, &s.distance.default_view),
+    );
     let mist = images.get(&assets.mist).unwrap_or(&fallback.d2);
     let noise = images.get(&assets.noise).unwrap_or(&fallback.d3);
     let composite_group = device.create_bind_group(
@@ -518,6 +548,10 @@ fn draw(
             &mist.sampler,
             &noise.texture_view,
             &noise.sampler,
+            shaft_light,
+            shaft_distance,
+            sun.map_or(&pipelines.unseen_sun, |s| &s.0)
+                .as_entire_binding(),
         )),
     );
     let size = resolution.map_or(

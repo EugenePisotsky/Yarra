@@ -20,6 +20,7 @@ struct CloudParams {
     mist_drift: vec4<f32>, // world-anchored mist noise offset xz, metres
     air_light: vec4<f32>, // unexposed light haze and mist scatter evenly (sky, moon)
     air_sun: vec4<f32>, // unexposed sunlight reaching haze and mist, scattered mostly forwards
+    shafts: vec4<f32>, // light shafts: x extinction per metre of the air under crowns (0 off)
 }
 
 // Cached sky: azimuth across, square-root warped elevation down from the tracing cutoff (ray.y

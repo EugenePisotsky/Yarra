@@ -47,6 +47,8 @@ pub(crate) struct LookVariant {
     pub(crate) fog: Option<bool>,
     /// Ambient particles; the game's setting when `None`.
     pub(crate) particles: Option<bool>,
+    /// Light shafts; the game's setting when `None`.
+    pub(crate) shafts: Option<bool>,
     /// Screenshots taken one after another, for motion; 1 for a still.
     pub(crate) burst: u32,
     /// Time of day as a phase of the day, 0..1; the world's start time when `None`.
@@ -75,7 +77,7 @@ pub(crate) const TONEMAPPERS: [(&str, Tonemapping); 8] = [
 ];
 
 /// `NAME[:key=value,...]` separated by `;`, keys `ev`, `tone`, `ambient`, `sun`, `canopy`,
-/// `auto`, `fog`, `particles`, `phase`, `haze`, `mist`, `depth` and `burst` (that many
+/// `auto`, `fog`, `particles`, `shafts`, `phase`, `haze`, `mist`, `depth`, `air` (scale of the air under crowns) and `burst` (that many
 /// screenshots one after another, a frame or two apart).
 pub(crate) fn parse_variants(spec: &str) -> Result<Vec<LookVariant>, String> {
     let variants = spec
@@ -94,6 +96,7 @@ pub(crate) fn parse_variants(spec: &str) -> Result<Vec<LookVariant>, String> {
                 auto_exposure: None,
                 fog: None,
                 particles: None,
+                shafts: None,
                 burst: 1,
                 phase: None,
                 tuning: FogTuning::default(),
@@ -120,7 +123,7 @@ pub(crate) fn parse_variants(spec: &str) -> Result<Vec<LookVariant>, String> {
                     "ambient" => variant.ambient = number(0.05..=20.0)?,
                     "sun" => variant.sun = number(0.05..=20.0)?,
                     "canopy" => variant.canopy = Some(number(0.0..=1.0)?),
-                    "auto" | "fog" | "particles" => {
+                    "auto" | "fog" | "particles" | "shafts" => {
                         let on = match value {
                             "1" | "on" => true,
                             "0" | "off" => false,
@@ -133,7 +136,8 @@ pub(crate) fn parse_variants(spec: &str) -> Result<Vec<LookVariant>, String> {
                         match key.trim() {
                             "auto" => variant.auto_exposure = Some(on),
                             "fog" => variant.fog = Some(on),
-                            _ => variant.particles = Some(on),
+                            "particles" => variant.particles = Some(on),
+                            _ => variant.shafts = Some(on),
                         }
                     }
                     "phase" => variant.phase = Some(number(0.0..=0.999)?),
@@ -141,6 +145,7 @@ pub(crate) fn parse_variants(spec: &str) -> Result<Vec<LookVariant>, String> {
                     "haze" => variant.tuning.haze = number(0.0..=20.0)?,
                     "mist" => variant.tuning.mist = number(0.0..=20.0)?,
                     "depth" => variant.tuning.mist_depth = number(0.1..=10.0)?,
+                    "air" => variant.tuning.canopy_air = number(0.0..=50.0)?,
                     "tone" => {
                         variant.tonemapping = Some(
                             TONEMAPPERS
@@ -259,6 +264,10 @@ fn present(
     let particles = variant.particles.unwrap_or(settings.particles);
     if presentation.particles != particles {
         presentation.particles = particles;
+    }
+    let shafts = variant.shafts.unwrap_or(settings.light_shafts);
+    if presentation.light_shafts != shafts {
+        presentation.light_shafts = shafts;
     }
     tuning.set_if_neq(variant.tuning);
     occlusion.set_if_neq(ForestSkyOcclusion(
@@ -388,10 +397,12 @@ fn run(
         "auto_exposure": adapting,
         "fog": variant.fog.unwrap_or(settings.fog),
         "particles": variant.particles.unwrap_or(settings.particles),
+        "shafts": variant.shafts.unwrap_or(settings.light_shafts),
         "phase": variant.phase.unwrap_or(atmosphere.profile.initial_phase),
         "haze": variant.tuning.haze,
         "mist": variant.tuning.mist,
         "depth": variant.tuning.mist_depth,
+        "air": variant.tuning.canopy_air,
     }));
     let path = capture.options.dir.join(&file);
     let (awaiting, saving, failed) = (
@@ -476,6 +487,10 @@ mod tests {
             Some(false)
         );
         assert_eq!(parse_variants("x:burst=12").unwrap()[0].burst, 12);
+        assert_eq!(
+            parse_variants("x:shafts=off").unwrap()[0].shafts,
+            Some(false)
+        );
         assert!(parse_variants("x:tone=sepia").is_err());
         assert!(parse_variants("x:ev=40").is_err());
         assert!(parse_variants(";").is_err());
