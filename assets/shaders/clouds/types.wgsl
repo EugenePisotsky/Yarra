@@ -2,7 +2,7 @@ struct CloudParams {
     layer: vec4<f32>, // base, thickness, body period (weather/shadows span 4x), enabled
     shape: vec4<f32>, // coverage, extinction / metre, erosion, seed offset
     offset: vec4<f32>, // wrapped render origin XZ, wind offset XZ
-    sun: vec4<f32>, // direction, cloud lux after clear-air/horizon attenuation
+    sun: vec4<f32>, // direction, lux at the cloud layer after the atmosphere
     moon: vec4<f32>,
     sun_color: vec4<f32>,
     moon_color: vec4<f32>,
@@ -21,6 +21,7 @@ struct CloudParams {
     air_light: vec4<f32>, // unexposed light haze and mist scatter evenly (sky, moon)
     air_sun: vec4<f32>, // unexposed sunlight reaching haze and mist, scattered mostly forwards
     shafts: vec4<f32>, // light shafts: x extinction per metre of the air under crowns (0 off)
+    near_sun: vec4<f32>, // unexposed sunlight at the camera; sun and sun_color hold it at the clouds
 }
 
 // Cached sky: azimuth across, square-root warped elevation down from the tracing cutoff (ray.y

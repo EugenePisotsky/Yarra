@@ -268,7 +268,7 @@ fn vertex(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance:
         // Lit from the side the light reaches; sunlight seen through the leaf is dimmer.
         let to_camera = normalize(view.world_position - p);
         let facing = dot(normal, sun) * dot(normal, to_camera);
-        let sunlight = clouds.sun_color.rgb * clouds.sun.w
+        let sunlight = clouds.near_sun.rgb
             * shadow_map_visibility(p) * cloud_visibility(p) * abs(dot(normal, sun))
             * select(0.4, 1.0, facing >= 0.0);
         let sky = clouds.ambient.rgb * clouds.ambient.w * sky_visibility(p) * 0.8;
@@ -293,7 +293,7 @@ fn vertex(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance:
         let ray = normalize(p - view.world_position);
         let mu = dot(sun, ray);
         let lit = shadow_map_visibility(p) * cloud_visibility(p) * step(0.0, sun.y);
-        let sunlight = clouds.sun_color.rgb * clouds.sun.w * lit;
+        let sunlight = clouds.near_sun.rgb * lit;
         let open = sky_visibility(p);
         let sky = clouds.ambient.rgb * clouds.ambient.w * open;
         // Motes read only as sunbeams in shade, so they keep to the woods; seeds blow over

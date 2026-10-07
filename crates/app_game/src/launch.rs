@@ -17,6 +17,10 @@ pub(crate) struct LaunchOptions {
     pub clouds: engine::CloudQuality,
     pub density: vegetation_render::VegetationDensityMode,
     pub weather: engine::WeatherStart,
+    /// Day phase to start at instead of the authored time, 0..1.
+    pub time: Option<f32>,
+    /// Whether the time of day passes.
+    pub day_clock: bool,
     pub canopy_path: Option<PathBuf>,
     pub diagnostics: DiagnosticsMode,
     pub panel_open: bool,
@@ -124,6 +128,16 @@ const FLAGS: &[(&str, bool, &str)] = &[
         "--weather",
         true,
         "auto | authored | clear | scattered | overcast | rain | storm; profiles, repros and captures default to authored",
+    ),
+    (
+        "--time",
+        true,
+        "HH:MM: start at this time of day instead of the authored one",
+    ),
+    (
+        "--day-clock",
+        true,
+        "on | off: let the time of day pass; profiles, repros and captures default to off",
     ),
     (
         "--canopy-look",
@@ -584,6 +598,22 @@ impl LaunchOptions {
                     }),
             })
             .transpose()?;
+        let time = value("--time")?
+            .map(|v| {
+                v.split_once(':')
+                    .and_then(|(h, m)| Some((h.parse::<u32>().ok()?, m.parse::<u32>().ok()?)))
+                    .filter(|&(h, m)| h < 24 && m < 60 && v.len() <= 5)
+                    .map(|(h, m)| (h * 60 + m) as f32 / 1440.0)
+                    .ok_or("--time requires HH:MM")
+            })
+            .transpose()?;
+        let day_clock = value("--day-clock")?
+            .map(|v| match v {
+                "on" => Ok(true),
+                "off" => Ok(false),
+                _ => Err("--day-clock requires on or off"),
+            })
+            .transpose()?;
         let diagnostics = match value("--diagnostics")?.unwrap_or("full") {
             "off" => DiagnosticsMode::Off,
             "panel" => DiagnosticsMode::Panel,
@@ -759,20 +789,19 @@ impl LaunchOptions {
             }
             None => None,
         };
-        // Measurements and regressions must not change weather unless asked explicitly.
-        let weather = weather.unwrap_or(
-            if profile.is_some()
-                || repro.is_some()
-                || lod_lab.is_some()
-                || look_capture.is_some()
-                || has("--metal-capture")
-                || has("--streaming-smoke")
-            {
-                engine::WeatherStart::Authored
-            } else {
-                engine::WeatherStart::Automatic
-            },
-        );
+        // Measurements and regressions must not change weather or time unless asked explicitly.
+        let measured = profile.is_some()
+            || repro.is_some()
+            || lod_lab.is_some()
+            || look_capture.is_some()
+            || has("--metal-capture")
+            || has("--streaming-smoke");
+        let weather = weather.unwrap_or(if measured {
+            engine::WeatherStart::Authored
+        } else {
+            engine::WeatherStart::Automatic
+        });
+        let day_clock = day_clock.unwrap_or(!measured);
         Ok(Self {
             help: false,
             world_db: path("--world-db"),
@@ -783,6 +812,8 @@ impl LaunchOptions {
             clouds,
             density,
             weather,
+            time,
+            day_clock,
             canopy_path: path("--canopy-look"),
             diagnostics,
             panel_open: has("--performance-open") || has("--render-audit"),

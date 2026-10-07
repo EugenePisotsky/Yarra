@@ -116,7 +116,7 @@ fn scene_depth(fragment: vec2<f32>) -> f32 {
 // Drops scatter the surrounding sky and sun light, like the haze in front of clouds.
 fn rain_light() -> vec3<f32> {
     return clouds.haze.rgb * (clouds.ambient.rgb * clouds.ambient.w * 0.3
-        + clouds.sun_color.rgb * clouds.sun.w * 0.025
+        + clouds.near_sun.rgb * 0.025
         + clouds.moon_color.rgb * clouds.moon.w * 0.025) * view.exposure * 1.4;
 }
 

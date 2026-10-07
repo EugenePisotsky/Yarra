@@ -55,7 +55,7 @@ impl Plugin for LightShaftsPlugin {
 }
 
 /// Shaft texels for a main pass of `main` pixels.
-fn shaft_size(main: UVec2) -> UVec2 {
+pub(crate) fn shaft_size(main: UVec2) -> UVec2 {
     UVec2::new(main.x.div_ceil(SCALE), main.y.div_ceil(SCALE)).max(UVec2::ONE)
 }
 

@@ -208,3 +208,25 @@ fn weather_defaults_to_automatic_play_and_authored_measurements() {
     assert!(parse(&["--weather", "snow"]).is_err());
     assert!(parse(&["--weather"]).is_err());
 }
+#[test]
+fn time_passes_in_play_and_holds_in_measurements() {
+    let play = parse(&[]).unwrap();
+    assert!(play.day_clock);
+    assert_eq!(play.time, None);
+    assert!(!parse(&["--render-repro", "grass-close"]).unwrap().day_clock);
+    assert!(!parse(&["--profile-seconds", "10"]).unwrap().day_clock);
+    assert!(
+        parse(&["--profile-seconds", "10", "--day-clock", "on"])
+            .unwrap()
+            .day_clock
+    );
+    assert_eq!(parse(&["--time", "18:00"]).unwrap().time, Some(0.75));
+    assert_eq!(
+        parse(&["--time", "06:30"]).unwrap().time,
+        Some(390.0 / 1440.0)
+    );
+    for bad in ["24:00", "7", "7:60", "-1:00", "07:300"] {
+        assert!(parse(&["--time", bad]).is_err(), "{bad}");
+    }
+    assert!(parse(&["--day-clock", "fast"]).is_err());
+}

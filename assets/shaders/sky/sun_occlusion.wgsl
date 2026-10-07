@@ -20,7 +20,8 @@
 @group(0) @binding(5) var shadow_sampler: sampler_comparison;
 @group(0) @binding(6) var cloud_shadow: texture_2d<f32>;
 @group(0) @binding(7) var repeat_sampler: sampler;
-// x: share of the sun seen; y: 1 when its disc is on screen; zw: its position in main-pass uv.
+// x: share of the sun seen; y: share the cloud layer lets through at the camera; zw: the sun's
+// position in main-pass uv.
 @group(0) @binding(8) var<storage, read_write> sun_state: vec4<f32>;
 
 const SAMPLES: u32 = 64u;
@@ -111,7 +112,7 @@ fn occlusion(@builtin(local_invocation_index) i: u32) {
     if i != 0u {
         return;
     }
-    let visible = seen[0] / f32(SAMPLES) * cloud_visibility(view.world_position)
-        * step(-0.02, sun.y);
-    sun_state = vec4(mix(sun_state.x, visible, EASE), select(0.0, 1.0, on_screen), uv);
+    let cloud = cloud_visibility(view.world_position) * step(-0.02, sun.y);
+    let visible = seen[0] / f32(SAMPLES) * cloud;
+    sun_state = vec4(mix(sun_state.x, visible, EASE), cloud, uv);
 }

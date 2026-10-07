@@ -104,6 +104,9 @@ pub struct CloudParams {
     pub air_sun: [f32; 4],
     /// Light shafts: x extinction per metre of the air under crowns (0 off).
     pub shafts: [f32; 4],
+    /// Unexposed sunlight at the camera after the atmosphere, for particles and drops; `sun`
+    /// and `sun_color` hold it at the cloud layer.
+    pub near_sun: [f32; 4],
 }
 /// Mist noise tile, metres; `MIST_NOISE_PERIOD` in `shaders/sky/composite.wgsl`.
 pub const MIST_NOISE_PERIOD: f64 = 2048.;
@@ -211,7 +214,12 @@ fn sync(
     time: Res<Time>,
     quality: Res<CloudQuality>,
     mut params: ResMut<CloudParams>,
-    views: Query<(Entity, Option<&CloudView>, &WorldEnvironmentView)>,
+    views: Query<(
+        Entity,
+        Option<&CloudView>,
+        &WorldEnvironmentView,
+        Option<&GlobalTransform>,
+    )>,
     shelter: Res<crate::shelter::RainShelter>,
     (forest, sky): (
         Res<crate::forest_shadow::ForestShadow>,
@@ -264,9 +272,8 @@ fn sync(
             (travel * f64::from(wind.cos())).rem_euclid(period) as f32,
             (travel * f64::from(wind.sin())).rem_euclid(period) as f32,
         ],
-        sun: sun
-            .extend(cloud_illuminance(value.sun_lux, sun.y))
-            .to_array(),
+        // Lux at the cloud layer, below.
+        sun: sun.extend(0.).to_array(),
         moon: Vec3::from_array(value.direction_to_moon)
             .extend(cloud_illuminance(
                 value.moon_lux,
@@ -282,7 +289,7 @@ fn sync(
             .extend(
                 views
                     .iter()
-                    .find_map(|(_, _, v)| v.visibility_override)
+                    .find_map(|(_, _, v, _)| v.visibility_override)
                     .unwrap_or(state.profile.visibility_metres),
             )
             .to_array(),
@@ -299,7 +306,37 @@ fn sync(
         air_light: [0.; 4],
         air_sun: [0.; 4],
         shafts: [0.; 4],
+        near_sun: [0.; 4],
     };
+    // Sunlight after the atmosphere: dimmed and reddened as Bevy lights surfaces, at the camera
+    // for the air around it and at the middle of the cloud layer for the clouds.
+    let visibility = views
+        .iter()
+        .find_map(|(_, _, v, _)| v.visibility_override)
+        .unwrap_or(profile.visibility_metres);
+    let altitude = views
+        .iter()
+        .find_map(|(_, _, _, t)| t.map(|t| t.translation().y))
+        .unwrap_or(0.);
+    let through = |altitude: f32| {
+        crate::sunlight::sun_transmittance(
+            profile.molecular_density,
+            visibility,
+            altitude,
+            sun.y,
+            0.5 * profile.sun_diameter_degrees.to_radians(),
+        )
+    };
+    let sun_lux = if profile.outdoor { value.sun_lux } else { 0. };
+    let sun_linear = Vec3::from_array(value.sun_linear);
+    let near_sun = sun_linear * sun_lux * through(altitude);
+    let cloud = through(p.base_metres + 0.5 * p.thickness_metres);
+    let cloud_lux = cloud.dot(Vec3::new(0.2126, 0.7152, 0.0722));
+    params.sun[3] = sun_lux * cloud_lux;
+    if cloud_lux > 0. {
+        params.sun_color = (sun_linear * cloud / cloud_lux).extend(0.).to_array();
+    }
+    params.near_sun = near_sun.extend(0.).to_array();
     if state.owner != AtmosphereOwner::Study && profile.outdoor {
         params.weather = [
             state.wetness.clamp(0., 1.),
@@ -336,7 +373,7 @@ fn sync(
     let ambient = ambient.lerp(Vec3::splat(ambient.element_sum() / 3.), overcast * 0.8)
         * value.ambient_lux
         * 0.3;
-    let sun_light = Vec3::from_array(value.sun_linear) * params.sun[3] * (1. - overcast);
+    let sun_light = near_sun * (1. - overcast);
     let moon_light = Vec3::from_array(value.moon_linear) * params.moon[3] * (1. - overcast);
     if let Some(fog) = state
         .weather_fog()
@@ -403,7 +440,7 @@ fn sync(
             ];
         }
     }
-    for (e, view, _) in &views {
+    for (e, view, _, _) in &views {
         if active && view.is_none() {
             commands.entity(e).insert(CloudView);
         } else if !active && view.is_some() {
@@ -482,9 +519,8 @@ fn publish_valley_mist(
     }
 }
 
-/// Approximate clear-air extinction for the cloud lighting path, which does not
-/// sample Bevy's atmosphere LUT. Authored lux is outside the atmosphere; it must
-/// not illuminate clouds or their foreground haze after the light has set.
+/// Approximate clear-air extinction of moonlight for the cloud lighting path. Authored lux is
+/// outside the atmosphere; it must not illuminate clouds or haze after the moon has set.
 fn cloud_illuminance(lux: f32, elevation_sine: f32) -> f32 {
     let horizon = (elevation_sine / 3_f32.to_radians().sin()).clamp(0., 1.);
     let horizon = horizon * horizon * (3. - 2. * horizon);
@@ -606,16 +642,22 @@ mod tests {
     #[test]
     fn twilight_haze_cannot_receive_daylight_from_a_set_sun() {
         let profile = world::atmosphere::AtmosphereProfile::default();
-        for hour in [0., 5.3, 18.3, 23.] {
+        let sunlight = |hour: f32, altitude: f32| {
             let light = evaluate(&profile, hour / 24.);
-            assert_eq!(
-                cloud_illuminance(light.sun_lux, light.direction_to_sun[1]),
-                0.
-            );
+            crate::sunlight::sun_transmittance(
+                1.,
+                profile.visibility_metres,
+                altitude,
+                light.direction_to_sun[1],
+                0.0065,
+            ) * light.sun_lux
+        };
+        for hour in [0., 5.3, 18.3, 23.] {
+            assert_eq!(sunlight(hour, 30.), Vec3::ZERO, "{hour}");
+            assert_eq!(sunlight(hour, 2000.), Vec3::ZERO, "{hour}");
         }
-        let noon = evaluate(&profile, 0.5);
-        assert!(cloud_illuminance(noon.sun_lux, noon.direction_to_sun[1]) > 80_000.);
-        // No switch from full sunlight to zero at the horizon.
+        assert!(sunlight(12., 30.).y > 50_000.);
+        // No switch from full moonlight to zero at the horizon.
         assert!(cloud_illuminance(100_000., 0.0001) < 1.);
         assert_eq!(cloud_illuminance(100_000., -0.0001), 0.);
         let night = evaluate(&profile, 0.);

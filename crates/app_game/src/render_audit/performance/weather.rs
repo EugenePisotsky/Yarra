@@ -1,13 +1,16 @@
-//! F1 weather tools: force presets, follow the random sequence and accelerate its clock.
-//! Weather is scene state like camera and time: A/B captures record it but never restore it.
+//! F1 weather and time tools: force presets, follow the random sequence, accelerate its clock
+//! and set or speed up the time of day. Weather and time are scene state like the camera: A/B
+//! captures record them but never restore them.
 use super::capture::CaptureSession;
 use crate::render_audit::font;
 use bevy::prelude::*;
-use engine::{AtmosphereState, GameWeather, PrecipitationPresentation, WeatherKind};
+use engine::{AtmosphereState, GameDayClock, GameWeather, PrecipitationPresentation, WeatherKind};
 
 // Clouds change region by region over ~40% of a transition; 10 s is for quick checks only.
 const TRANSITIONS: [f32; 3] = [60.0, 10.0, 0.0];
 const CLOCKS: [f32; 4] = [1.0, 10.0, 60.0, 0.0];
+// A 20-minute authored day passes in 2 minutes at 10x and 20 seconds at 60x.
+const DAY_CLOCKS: [f32; 4] = [1.0, 10.0, 60.0, 0.0];
 
 #[derive(Component, Clone, Copy)]
 pub(super) enum WeatherAction {
@@ -18,6 +21,11 @@ pub(super) enum WeatherAction {
     Clock,
     Authored,
     RainRendering,
+    DayClock,
+    /// Move the time of day by this many hours.
+    Hours(i32),
+    /// Jump to one of `world::atmosphere::PHASE_TIMES`.
+    TimeOf(usize),
 }
 #[derive(Component)]
 struct WeatherStatus;
@@ -26,6 +34,7 @@ struct WeatherStatus;
 struct WeatherPanel {
     transition: usize,
     clock: usize,
+    day_clock: usize,
     refreshed: f64,
 }
 
@@ -37,7 +46,7 @@ pub(super) fn install(app: &mut App) {
 
 pub(super) fn spawn(page: &mut ChildSpawnerCommands, button: impl Fn() -> (Node, BackgroundColor)) {
     page.spawn((
-        Text::new("Weather overlays the authored atmosphere: clouds, fog, exposure and the shared grass/tree wind. Fog is drawn with the clouds, so Clouds Off also hides it. Presets blend from the current state and hold it; Auto follows the random sequence. The clock pauses during A/B captures, which record weather but never restore it."),
+        Text::new("Weather overlays the authored atmosphere: clouds, fog, exposure and the shared grass/tree wind. Fog is drawn with the clouds, so Clouds Off also hides it. Presets blend from the current state and hold it; Auto follows the random sequence. The day clock sets how fast the time of day passes (stopped in profiles, repros and captures). Both clocks pause during A/B captures, which record weather and time but never restore them."),
         font(12.0),
     ));
     page.spawn((Text::new(""), font(13.0), WeatherStatus));
@@ -58,7 +67,11 @@ pub(super) fn spawn(page: &mut ChildSpawnerCommands, button: impl Fn() -> (Node,
                 WeatherAction::Clock,
                 WeatherAction::Authored,
                 WeatherAction::RainRendering,
-            ]);
+                WeatherAction::DayClock,
+                WeatherAction::Hours(-1),
+                WeatherAction::Hours(1),
+            ])
+            .chain((0..4).map(WeatherAction::TimeOf));
         for action in actions {
             let (mut node, color) = button();
             node.width = px(218);
@@ -69,32 +82,42 @@ pub(super) fn spawn(page: &mut ChildSpawnerCommands, button: impl Fn() -> (Node,
 }
 
 // Weather is optional composition: the panel also runs in apps without GameWeatherPlugin.
-fn pause_during_capture(session: Res<CaptureSession>, weather: Option<ResMut<GameWeather>>) {
-    let Some(mut weather) = weather else {
-        return;
-    };
+fn pause_during_capture(
+    session: Res<CaptureSession>,
+    weather: Option<ResMut<GameWeather>>,
+    clock: Option<ResMut<GameDayClock>>,
+) {
     let recording = session.recording();
-    if weather.paused != recording {
+    if let Some(mut weather) = weather
+        && weather.paused != recording
+    {
         weather.paused = recording;
+    }
+    if let Some(mut clock) = clock
+        && clock.paused != recording
+    {
+        clock.paused = recording;
     }
 }
 
 fn actions(
     clicks: Query<(&Interaction, &WeatherAction), Changed<Interaction>>,
     session: Res<CaptureSession>,
-    atmosphere: Option<Res<AtmosphereState>>,
+    atmosphere: Option<ResMut<AtmosphereState>>,
     weather: Option<ResMut<GameWeather>>,
     rain: Option<ResMut<PrecipitationPresentation>>,
+    mut clock: Option<ResMut<GameDayClock>>,
     mut panel: ResMut<WeatherPanel>,
 ) {
-    let (Some(atmosphere), Some(mut weather), Some(mut rain)) = (atmosphere, weather, rain) else {
+    let (Some(mut atmosphere), Some(mut weather), Some(mut rain)) = (atmosphere, weather, rain)
+    else {
         return;
     };
     if session.recording() {
         return;
     }
-    let profile = &atmosphere.profile;
     for (_, action) in clicks.iter().filter(|(i, _)| **i == Interaction::Pressed) {
+        let profile = &atmosphere.profile;
         match *action {
             WeatherAction::Preset(kind) => {
                 weather.request(profile, kind, TRANSITIONS[panel.transition]);
@@ -115,6 +138,22 @@ fn actions(
             }
             WeatherAction::Authored => weather.clear(),
             WeatherAction::RainRendering => rain.enabled = !rain.enabled,
+            WeatherAction::DayClock => {
+                if let Some(clock) = clock.as_mut() {
+                    // A measurement's held clock starts at 1x.
+                    panel.day_clock = if clock.running {
+                        (panel.day_clock + 1) % DAY_CLOCKS.len()
+                    } else {
+                        0
+                    };
+                    clock.running = true;
+                    clock.time_scale = DAY_CLOCKS[panel.day_clock];
+                }
+            }
+            WeatherAction::Hours(hours) => {
+                atmosphere.phase = (atmosphere.phase + hours as f32 / 24.0).rem_euclid(1.0);
+            }
+            WeatherAction::TimeOf(i) => atmosphere.phase = world::atmosphere::PHASE_TIMES[i],
         }
         // Show the result immediately rather than at the next periodic refresh.
         panel.refreshed = f64::NEG_INFINITY;
@@ -125,6 +164,7 @@ fn label(
     action: WeatherAction,
     weather: &GameWeather,
     rain: &PrecipitationPresentation,
+    clock: Option<&GameDayClock>,
     panel: &WeatherPanel,
 ) -> String {
     let runtime = weather.runtime();
@@ -166,7 +206,39 @@ fn label(
             "Rain rendering: {}",
             if rain.enabled { "on" } else { "off" }
         ),
+        WeatherAction::DayClock => match clock {
+            Some(clock) if clock.running && clock.time_scale > 0.0 => {
+                format!("Day clock: {:.0}x", clock.time_scale)
+            }
+            Some(_) => "Day clock: stopped".into(),
+            None => "Day clock: unavailable".into(),
+        },
+        WeatherAction::Hours(hours) => format!("Time {hours:+} h"),
+        WeatherAction::TimeOf(i) => {
+            let (h, m) = engine::clock_time(world::atmosphere::PHASE_TIMES[i]);
+            format!("{} ({h:02}:{m:02})", world::atmosphere::PHASE_NAMES[i])
+        }
     }
+}
+
+fn time_status(clock: &GameDayClock, atmosphere: &AtmosphereState) -> String {
+    let profile = &atmosphere.profile;
+    let (h, m) = engine::clock_time(atmosphere.phase);
+    let sun = world::atmosphere::evaluate(profile, atmosphere.phase).direction_to_sun[1]
+        .clamp(-1.0, 1.0)
+        .asin()
+        .to_degrees();
+    let mode = if clock.paused {
+        "paused for capture".to_string()
+    } else if !clock.ticking() {
+        "stopped".to_string()
+    } else {
+        format!("{:.0}x", clock.time_scale)
+    };
+    format!(
+        "Time {h:02}:{m:02} | sun {sun:+.1}° | day {:.0} min | clock {mode}",
+        profile.day_seconds / 60.0
+    )
 }
 
 fn status(weather: &GameWeather, atmosphere: &AtmosphereState) -> String {
@@ -217,6 +289,7 @@ fn status(weather: &GameWeather, atmosphere: &AtmosphereState) -> String {
 fn refresh(
     time: Res<Time<Real>>,
     weather: Option<Res<GameWeather>>,
+    clock: Option<Res<GameDayClock>>,
     atmosphere: Option<Res<AtmosphereState>>,
     rain: Option<Res<PrecipitationPresentation>>,
     mut panel: ResMut<WeatherPanel>,
@@ -234,14 +307,17 @@ fn refresh(
     panel.refreshed = now;
     for entity in &status_text {
         if let Ok(mut text) = texts.get_mut(entity) {
-            let value = status(&weather, &atmosphere);
+            let mut value = status(&weather, &atmosphere);
+            if let Some(clock) = clock.as_deref() {
+                value = format!("{}\n{value}", time_status(clock, &atmosphere));
+            }
             if text.0 != value {
                 text.0 = value;
             }
         }
     }
     for (action, children) in &buttons {
-        let value = label(*action, &weather, &rain, &panel);
+        let value = label(*action, &weather, &rain, clock.as_deref(), &panel);
         for child in children {
             if let Ok(mut text) = texts.get_mut(*child)
                 && text.0 != value

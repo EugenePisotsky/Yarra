@@ -108,7 +108,9 @@ fn run() -> Result<(), String> {
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_nanos() as u64);
     app.insert_resource(engine::GameWeather::new(options.weather, weather_seed))
-        .add_plugins(engine::GameWeatherPlugin);
+        .add_plugins(engine::GameWeatherPlugin)
+        .insert_resource(engine::GameDayClock::new(options.time, options.day_clock))
+        .add_plugins(engine::GameDayClockPlugin);
     app.add_plugins((
         WorldVegetationPlugin,
         engine::TreeWindPlugin,

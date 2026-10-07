@@ -9,6 +9,7 @@ pub mod precipitation;
 pub mod shelter;
 pub mod sky;
 pub mod sun_glare;
+pub mod sunlight;
 pub mod valley_mist;
 
 use bevy::{

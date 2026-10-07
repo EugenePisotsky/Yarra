@@ -50,9 +50,12 @@ enable dual_source_blending;
 // crowns, and the distance each texel marched to.
 @group(1) @binding(10) var shaft_light: texture_2d<f32>;
 @group(1) @binding(11) var shaft_distance: texture_2d<f32>;
-// The sun as the camera sees it (sky/sun_occlusion.wgsl): x share seen, y on screen, zw its
-// main-pass uv.
+// The sun as the camera sees it (sky/sun_occlusion.wgsl): x share seen, y share the cloud layer
+// lets through, zw its main-pass uv.
 @group(1) @binding(12) var<storage, read> sun_state: vec4<f32>;
+// Share of the glare veil reaching each texel (sky/sun_rays.wgsl), at the light shafts' scale;
+// drawn when cloud_blend.w is 1.
+@group(1) @binding(13) var sun_rays: texture_2d<f32>;
 
 struct Output {
 #ifdef DUAL_SOURCE_BLENDING
@@ -251,7 +254,7 @@ fn cloud_layer(ray: vec3<f32>, start: f32, screen_uv: vec2<f32>) -> Cloud {
     let haze = exp(-start * 3.912 / max(clouds.haze.w, 50.0));
     // Haze in front of an opaque cloud must not reintroduce the sun/moon disk behind it.
     let air = clouds.haze.rgb * (clouds.ambient.rgb * clouds.ambient.w * 0.3
-        + clouds.sun_color.rgb * clouds.sun.w * 0.025
+        + clouds.near_sun.rgb * 0.025
         + clouds.moon_color.rgb * clouds.moon.w * 0.025) * view.exposure;
     let color = mix(air * (1.0 - c.a), c.rgb * (1024.0 * view.exposure), haze);
     // Fade the finite ground-view tracing range into the horizon rather than exposing a
@@ -310,16 +313,42 @@ fn discs(ray: vec3<f32>) -> vec3<f32> {
 const MAX_DISC: f32 = 30000.0;
 
 // Glare of the eye and lens around the sun: a core about a degree wide and a veil over tens of
-// degrees, each holding a share of the sun's light, scaled by the share of the sun seen.
+// degrees, each holding a share of the sun's light. The core is scaled by the share of the sun
+// seen, the veil by the share of it reaching the pixel past what lies between, so beams fan out
+// from silhouettes in front of the sun.
 // Kernels are normalised over the image plane: core (1 + u)^-2 / (pi w^2), veil
-// (1 + u)^-1.25 / (4 pi w^2), u = (angle / w)^2; the veil's slow fall leaves no visible rim.
+// (1 + u)^-1.25 / (4 pi w^2) and air glow (1 + u)^-1.5 / (2 pi w^2), u = (angle / w)^2; the
+// veil's slow fall leaves no visible rim.
 const GLARE_CORE_SHARE: f32 = 0.02;
 const GLARE_CORE_WIDTH: f32 = 0.021;
 const GLARE_VEIL_SHARE: f32 = 0.012;
 const GLARE_VEIL_WIDTH: f32 = 0.12;
-fn sun_glare(ray: vec3<f32>) -> vec3<f32> {
+// Sunlit air in front of the scene scattering towards the eye around the sun, shaded like the
+// veil by what lies between, so sunset beams fan out from silhouettes. Drawn with sun rays only,
+// fading out as the sun leaves the image: off screen nothing shows what shades it.
+const AIR_GLOW_SHARE: f32 = 0.08;
+const AIR_GLOW_WIDTH: f32 = 0.15;
+// Depth of air over which the glow builds up in front of a surface, metres, and how much faster
+// it builds up in the air under crowns (as a power of that air's transmittance).
+const AIR_GLOW_DEPTH: f32 = 30.0;
+const AIR_GLOW_CANOPY: f32 = 4.0;
+
+// 1 with the sun in the image, falling to 0 a fifth of the image outside it.
+fn sun_in_view() -> f32 {
+    let clip = view.clip_from_world * vec4(clouds.sun.xyz, 0.0);
+    if clip.w <= 0.0 {
+        return 0.0;
+    }
+    let uv = clip.xy / clip.w * vec2(0.5, -0.5) + 0.5;
+    let outside = max(max(-uv.x, uv.x - 1.0), max(-uv.y, uv.y - 1.0));
+    return 1.0 - smoothstep(0.0, 0.2, outside);
+}
+fn sun_glare(ray: vec3<f32>, pixel: vec2<f32>, air: f32) -> vec3<f32> {
     let visible = sun_state.x;
-    if visible <= 0.0 {
+    let drawn = cloud_blend.w > 0.5;
+    let rays = select(visible, sun_rays_at(pixel), drawn);
+    let glow = select(0.0, AIR_GLOW_SHARE * sun_in_view() * air, drawn);
+    if visible <= 0.0 && rays <= 0.0 {
         return vec3(0.0);
     }
     let position = get_view_position();
@@ -335,9 +364,13 @@ fn sun_glare(ray: vec3<f32>) -> vec3<f32> {
         let angle2 = 2.0 * (1.0 - dot(ray, (*light).direction_to_light));
         let core = 1.0 + angle2 / (GLARE_CORE_WIDTH * GLARE_CORE_WIDTH);
         let veil = 1.0 + angle2 / (GLARE_VEIL_WIDTH * GLARE_VEIL_WIDTH);
+        let air = 1.0 + angle2 / (AIR_GLOW_WIDTH * AIR_GLOW_WIDTH);
         let kernel = GLARE_CORE_SHARE / (3.14159265 * GLARE_CORE_WIDTH * GLARE_CORE_WIDTH * core * core)
-            + GLARE_VEIL_SHARE / (12.566371 * GLARE_VEIL_WIDTH * GLARE_VEIL_WIDTH * veil * sqrt(sqrt(veil)));
-        return irradiance * kernel * visible * view.exposure;
+            * visible
+            + (GLARE_VEIL_SHARE / (12.566371 * GLARE_VEIL_WIDTH * GLARE_VEIL_WIDTH * veil * sqrt(sqrt(veil)))
+            + glow / (6.2831853 * AIR_GLOW_WIDTH * AIR_GLOW_WIDTH * air * sqrt(air)))
+            * rays;
+        return irradiance * kernel * view.exposure;
     }
     return vec3(0.0);
 }
@@ -360,6 +393,19 @@ fn extinction(r: f32) -> vec3<f32> {
     return sample_density_lut(r, 0.0) + sample_density_lut(r, 1.0);
 }
 #endif
+
+// Sun rays at a pixel, bilinear between the four nearest texels.
+fn sun_rays_at(position: vec2<f32>) -> f32 {
+    let size = vec2<i32>(textureDimensions(sun_rays));
+    let q = (position - view.main_pass_viewport.xy) / cloud_blend.z - 0.5;
+    let base = vec2<i32>(floor(q));
+    let f = q - floor(q);
+    let a = textureLoad(sun_rays, clamp(base, vec2(0), size - 1), 0).r;
+    let b = textureLoad(sun_rays, clamp(base + vec2(1, 0), vec2(0), size - 1), 0).r;
+    let c = textureLoad(sun_rays, clamp(base + vec2(0, 1), vec2(0), size - 1), 0).r;
+    let d = textureLoad(sun_rays, clamp(base + vec2(1, 1), vec2(0), size - 1), 0).r;
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
 
 // Light shafts at a pixel `distance` metres deep: the four nearest texels, bilinear but skipping
 // those at a different distance, so beams stop at silhouettes. Sky pixels use 1e6.
@@ -519,7 +565,12 @@ fn fragment(in: FullscreenVertexOutput) -> Output {
     light = light * shafts.a + shafts.rgb;
     transmittance *= shafts.a;
 #ifdef ATMOSPHERE
-    light += sun_glare(ray);
+    // Share of the air glow in front of this pixel: little in front of near surfaces, unless
+    // the humid air under crowns lies between.
+    let near_air = 1.0 - exp(-total / f32(max(geometry_samples, 1u)) / AIR_GLOW_DEPTH)
+        * pow(shafts.a, AIR_GLOW_CANOPY);
+    let air = (f32(sky_samples) + f32(geometry_samples) * near_air) / f32(samples);
+    light += sun_glare(ray, in.position.xy, air);
 #endif
 
 #ifdef DUAL_SOURCE_BLENDING

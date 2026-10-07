@@ -400,6 +400,20 @@ User request: light shafts like The Witcher 3's, and a better sun ("just a circl
 | Shadow lookups | Interpolated along each ray from its two ends per cascade, and skipped where only ground haze would darken: the start beach cost fell from about 1 ms to 0.5–0.9 ms. |
 | Cost | GPU ms, pairs in alternating order: broadleaf forest 8.2–9.1 ms whether particles and shafts are on or off (within noise); start 5.9–6.5 → 6.6–7.1 with shafts. GPU per-pass timestamps are not reliable on this GPU (the main opaque pass showed 0.12 ms), so only whole-frame pairs count. Not done: screen-space rays for an on-screen sun behind distant ridges and buildings, beyond the shadow maps. |
 
+## Time of day and sunset — October 8
+
+User request: time of day and sunset rays like The Witcher 3's (rays fanning out from a tower and trees in front of a low sun). Look captures facing the evening sun (azimuth −118°) at the forest edge, in the broadleaf stand, on a valley summit and on the start beach, at 16:47, 17:16 and 17:38 (sun 15.5°, 9.3° and 4.7°); fullscreen 3456×2168.
+
+| Change | Decision / observation |
+| --- | --- |
+| Day clock | **Retained.** The phase was never advanced in the game, which stayed at the authored 8 am start. It now moves at the profile's day length; measurements hold it. |
+| Grey-white sunset horizon | **Cause: air lit by a grey sun.** Haze, mist, clouds, particles and shafts used `exp(−0.12 / sin elevation)`; Bevy's table gives the ground (0.03, 0.01, 0.001) of the sun at 4.7° with 20 km visibility, against 0.23 grey. Integrating Bevy's medium on the CPU fixed it: the horizon turns pink and orange. At 8 am the air now gets about half the light it had (0.39 vs 0.77 in green); beams in the broadleaf stand stay visible, a little warmer. |
+| Visibility 20 km vs 60 km | **Proposed, not changed** (it is authored: the world's start view sets the camera's visibility). Bevy's sky alone was grey-beige at sunset with 20 km aerosol; 60 km gives an orange sky near the sun and a pink horizon. At 8 am both look alike, because distant haze comes from the ground-haze layer. |
+| Screen-space sun rays | **Retained.** Dimming the glare's 1.2% veil by the sky along each pixel's line to the sun drew radial beams (clear in a ×8 difference image) too faint to see. An air glow around the sun, dimmed the same way, makes them read: 12% washed open views orange from sky to sand; 8%, 0.15 rad wide with a (1 + u)^-1.5 falloff, built up over the first 30 m of depth (faster in the air under crowns), keeps beams through the canopy at 17:16 and from the sun behind a trunk at 17:38 while near ground and hills keep their contrast. |
+| Off-screen sun | Taking the image edge as the line's continuation removed the soft glow above the 8 am forest (the edge is canopy); the share of the sun seen stands in again, and the air glow fades out as the sun leaves the image. |
+| Cost | GPU ms at game scale, pairs in alternating order, shafts and rays on/off: start beach 8 am 6.38, 6.26 / 5.77, 5.62; broadleaf at 17:16 within noise (7.6–9.4); valley at 17:38 3.72, 3.87 / 3.45, 3.48. Rays add at most about 0.3 ms. |
+| Not done | The sea's sun glitter is a narrow bright streak (placeholder ocean, roughness 0.08). Clouds do not cast crepuscular rays on screen (rays see geometry only). |
+
 ## Open gates and maintenance
 
 The remaining gates are sustained terrain/whole-game power, Temporal cost and motion quality, field-scale grass lighting, target-PC acceptance, and physical-phone heat/60-FPS delivery. Keep correctness references until their replacements pass the relevant gate. Existing counters often identify less work without demonstrating better delivered frames or lower power.

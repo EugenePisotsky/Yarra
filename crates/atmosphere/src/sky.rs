@@ -314,8 +314,9 @@ fn init(
                     // Light shafts and the distance each of their texels marched to.
                     texture_2d(TextureSampleType::Float { filterable: false }),
                     texture_2d(TextureSampleType::Float { filterable: false }),
-                    // The sun as the camera sees it.
+                    // The sun as the camera sees it, and the share of its veil each texel gets.
                     storage_buffer_read_only_sized(false, std::num::NonZeroU64::new(16)),
+                    texture_2d(TextureSampleType::Float { filterable: false }),
                 ),
             ),
         )
@@ -409,6 +410,7 @@ type CompositeView = (
     Option<AtmosphereBindings>,
     Option<&'static crate::light_shafts::LightShaftTargets>,
     Option<&'static crate::sun_glare::SunState>,
+    Option<&'static crate::sun_glare::SunRays>,
 );
 
 #[allow(clippy::too_many_arguments)] // One pass: view, atmosphere, cloud and fallback inputs.
@@ -426,7 +428,7 @@ fn draw(
     images: Res<RenderAssets<GpuImage>>,
     mut ctx: RenderContext,
 ) {
-    let (pipeline, target, depth, view_offset, resolution, bindings, shafts, sun) =
+    let (pipeline, target, depth, view_offset, resolution, bindings, shafts, sun, rays) =
         view.into_inner();
     if target.main_texture_format() != TextureFormat::Rgba16Float {
         return;
@@ -517,14 +519,15 @@ fn draw(
         Some(display) if key.clouds != Clouds::None => display,
         _ => (&fallback.d2.texture_view, &fallback.d2.texture_view, 0.0),
     };
-    // x: cloud cross-fade; y: light shafts drawn; z: main-pass pixels per shaft texel.
+    // x: cloud cross-fade; y: light shafts drawn; z: main-pass pixels per shaft texel; w: sun
+    // rays drawn.
     let blend = device.create_buffer_with_data(&BufferInitDescriptor {
         label: Some("sky composite cloud blend"),
         contents: bytemuck::bytes_of(&[
             blend,
             if shafts.is_some() { 1.0 } else { 0.0 },
             crate::light_shafts::SCALE as f32,
-            0.0,
+            if rays.is_some() { 1.0 } else { 0.0 },
         ]),
         usage: BufferUsages::UNIFORM,
     });
@@ -552,6 +555,7 @@ fn draw(
             shaft_distance,
             sun.map_or(&pipelines.unseen_sun, |s| &s.0)
                 .as_entire_binding(),
+            rays.map_or(&fallback.d2.texture_view, |r| &r.texture.default_view),
         )),
     );
     let size = resolution.map_or(
