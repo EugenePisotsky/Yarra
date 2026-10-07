@@ -3,14 +3,22 @@
 //! Every LOD of an object is its own child scene. Bevy's visibility ranges show the LOD
 //! whose distance band contains the camera and dither neighbouring LODs into each other
 //! across a short band around every switch, so LOD changes dissolve instead of popping.
-//! Shadow cascades resolve the same ranges from the main camera.
-use crate::WorldViewCamera;
+//! Shadow cascades resolve the same ranges from the main camera, but Bevy's shadow pass
+//! does not dither: inside a band both LODs cast whole shadows, and the shadow changes
+//! shape at the band's ends. Objects whose last LOD is an impostor instead switch at a
+//! distance and dissolve over time, shadows included ([`timed`]).
+mod timed;
+
+use crate::tree_impostor::ImpostorFades;
+use crate::{WorldCatalog, WorldOrigin, WorldViewCamera};
 use bevy::{
     camera::{
         ShadowLodOrigin,
         visibility::{VisibilityRange, VisibilitySystems},
     },
     gltf::GltfAssetLabel,
+    math::DVec2,
+    mesh::MeshTag,
     prelude::*,
     transform::TransformSystems,
     world_serialization::WorldInstanceReady,
@@ -18,7 +26,7 @@ use bevy::{
 use world::{CellCoord, StableObjectId, WorldSpaceId};
 
 /// Each switch crossfades between 90% and 110% of its switch distance.
-const CROSSFADE_FRACTION: f32 = 0.1;
+pub(crate) const CROSSFADE_FRACTION: f32 = 0.1;
 /// Streamed cells keep their objects resident within this distance of the camera
 /// (`world_streaming::source_demand`).
 pub(crate) const OBJECT_RESIDENCY_METRES: f32 = 192.0;
@@ -58,6 +66,7 @@ impl Plugin for ObjectLodPlugin {
             .init_resource::<LodProjection>()
             .add_observer(range_new_lod_scene)
             .add_observer(shadow_lods_follow_world_view)
+            .add_observer(release_impostor)
             .add_systems(
                 PostUpdate,
                 update_object_lods
@@ -74,6 +83,8 @@ pub(crate) struct ScreenSpaceLod {
     current: usize,
     bounds_height: f32,
     projected_height: f32,
+    /// For objects ending in an impostor: which representation draws, faded over time.
+    timed: Option<timed::TimedLod>,
 }
 
 pub(crate) struct ScreenSpaceLodVariant {
@@ -87,6 +98,29 @@ pub(crate) struct ScreenSpaceLodVariant {
 #[derive(Component)]
 struct LodScene(usize);
 
+/// Overrides which LOD scene of a [`ScreenSpaceLod`] draws, for comparisons
+/// ([`crate::lod_lab`]).
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ForcedLod {
+    /// The distance picks the LOD, as for every other object.
+    Auto,
+    /// Only this variant (by index) draws, at any distance.
+    Only(usize),
+    /// No mesh LOD draws.
+    Nothing,
+}
+
+const NEVER: VisibilityRange = VisibilityRange {
+    start_margin: 0.0..0.0,
+    end_margin: 0.0..0.0,
+    use_aabb: false,
+};
+const ALWAYS: VisibilityRange = VisibilityRange {
+    start_margin: 0.0..0.0,
+    end_margin: f32::MAX..f32::MAX,
+    use_aabb: false,
+};
+
 impl ScreenSpaceLod {
     /// Callers validate nonempty variants and descending thresholds before attachment.
     pub(crate) fn new(variants: Vec<ScreenSpaceLodVariant>, bounds_height: f32) -> Self {
@@ -96,10 +130,19 @@ impl ScreenSpaceLod {
         );
         Self {
             current: variants.len() - 1,
+            timed: variants
+                .last()
+                .is_some_and(|v| v.scene.is_none())
+                .then(timed::TimedLod::default),
             variants,
             bounds_height,
             projected_height: 0.0,
         }
+    }
+
+    /// Dissolving from one representation to another.
+    pub(crate) fn fading(&self) -> bool {
+        self.timed.as_ref().is_some_and(timed::TimedLod::fading)
     }
 
     /// Spawns one child scene per LOD under `entity`. ObjectLodPlugin gives their meshes
@@ -130,13 +173,13 @@ impl ScreenSpaceLod {
         &self.variants
     }
 
-    fn thresholds(&self) -> impl Iterator<Item = f32> + '_ {
+    pub(crate) fn thresholds(&self) -> impl Iterator<Item = f32> + '_ {
         self.variants.iter().map(|v| v.minimum_screen_height)
     }
 
     /// The farthest switch distance: the impostor hand-off when an impostor follows the
     /// meshes, since the cells holding them are not resident much beyond it.
-    fn farthest_switch(&self, handoff: ImpostorHandoff) -> f32 {
+    pub(crate) fn farthest_switch(&self, handoff: ImpostorHandoff) -> f32 {
         if self.variants.last().is_some_and(|v| v.scene.is_none()) {
             handoff.0
         } else {
@@ -188,23 +231,13 @@ impl LodProjection {
     /// A LOD whose switches lie closer together than the crossfade needs is skipped, and
     /// the LOD before it keeps drawing until the skipped LOD's own switch: the next LOD
     /// (or the impostor, which fades in there) must meet a LOD fading out, never a gap.
-    fn range(
+    pub(crate) fn range(
         &self,
         thresholds: &[f32],
         height: f32,
         index: usize,
         farthest: f32,
     ) -> VisibilityRange {
-        const NEVER: VisibilityRange = VisibilityRange {
-            start_margin: 0.0..0.0,
-            end_margin: 0.0..0.0,
-            use_aabb: false,
-        };
-        const ALWAYS: VisibilityRange = VisibilityRange {
-            start_margin: 0.0..0.0,
-            end_margin: f32::MAX..f32::MAX,
-            use_aabb: false,
-        };
         if self.orthographic {
             // Size does not change with distance: one LOD is always the right one.
             return if select(thresholds, self.projected(height, 1.0)) == index {
@@ -262,6 +295,22 @@ fn object_height(lod: &ScreenSpaceLod, scale: Vec3) -> f32 {
     lod.bounds_height * scale.y.abs()
 }
 
+/// The visibility range of LOD `index`, unless a [`ForcedLod`] overrides it.
+fn object_range(
+    forced: Option<ForcedLod>,
+    projection: &LodProjection,
+    thresholds: &[f32],
+    height: f32,
+    index: usize,
+    farthest: f32,
+) -> VisibilityRange {
+    match forced.unwrap_or(ForcedLod::Auto) {
+        ForcedLod::Auto => projection.range(thresholds, height, index, farthest),
+        ForcedLod::Only(only) if only == index => ALWAYS,
+        ForcedLod::Only(_) | ForcedLod::Nothing => NEVER,
+    }
+}
+
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn update_object_lods(
     mut commands: Commands,
@@ -269,11 +318,23 @@ fn update_object_lods(
     handoff: Res<ImpostorHandoff>,
     mut projection: ResMut<LodProjection>,
     camera: Single<(&Camera, &GlobalTransform), With<WorldViewCamera>>,
-    mut objects: Query<(&GlobalTransform, &mut ScreenSpaceLod, Option<&Children>)>,
+    mut objects: Query<(
+        &GlobalTransform,
+        &mut ScreenSpaceLod,
+        Option<&Children>,
+        Option<Ref<ForcedLod>>,
+    )>,
     scenes: Query<(&LodScene, Option<&Children>)>,
     descendants: Query<&Children>,
     meshes: Query<(), With<Mesh3d>>,
+    (time, fades, origin, catalog): (
+        Option<Res<Time>>,
+        Option<ResMut<ImpostorFades>>,
+        Option<Res<WorldOrigin>>,
+        Option<Res<WorldCatalog>>,
+    ),
 ) {
+    let mut fades = fades;
     let (camera, camera_transform) = *camera;
     let Some(viewport) = camera.logical_viewport_size() else {
         return;
@@ -293,20 +354,66 @@ fn update_object_lods(
         *projection = next;
     }
     let eye = camera_transform.translation();
-    for (transform, mut lod, children) in &mut objects {
+    for (transform, mut lod, children, forced) in &mut objects {
         let (scale, _, translation) = transform.to_scale_rotation_translation();
         let height = object_height(&lod, scale);
         let centre = translation + Vec3::Y * height * 0.5;
         lod.projected_height = projection.projected(height, eye.distance(centre));
         let thresholds: Vec<f32> = lod.thresholds().collect();
         lod.current = select(&thresholds, lod.projected_height);
-        if !changed {
+        let farthest = lod.farthest_switch(*handoff);
+        let variants = lod.variants.len();
+        if let Some(timed) = lod.timed.as_mut() {
+            if changed || !timed.has_bands() {
+                timed.set_bands(&projection, &thresholds, height, farthest);
+            }
+            if let Some(fades) = fades.as_deref() {
+                let world = origin
+                    .as_ref()
+                    .zip(catalog.as_ref())
+                    .and_then(|(o, c)| o.to_world(c, translation))
+                    .map(|(_, w)| DVec2::new(w[0], w[2]));
+                timed.link(fades, world);
+            }
+            let forced = forced.map_or(ForcedLod::Auto, |f| *f);
+            let dt = time.as_ref().map_or(0.0, |t| t.delta_secs());
+            timed.step(forced, eye.distance(translation), variants - 1, dt);
+            let Some(levels) = timed.changed_levels(variants) else {
+                continue;
+            };
+            for &child in children.into_iter().flatten() {
+                let Ok((scene, _)) = scenes.get(child) else {
+                    continue;
+                };
+                let level = levels[scene.0];
+                commands.entity(child).try_insert(if level.is_some() {
+                    Visibility::Inherited
+                } else {
+                    Visibility::Hidden
+                });
+                if let Some(level) = level {
+                    tag_meshes(&mut commands, child, level, &descendants, &meshes);
+                }
+            }
+            if let (Some(slot), Some(fades)) = (timed.slot(), fades.as_deref_mut()) {
+                fades.set(slot, Some(levels[variants - 1].unwrap_or(-16)));
+            }
             continue;
         }
+        if !changed && !forced.as_ref().is_some_and(Ref::is_changed) {
+            continue;
+        }
+        let forced = forced.map(|f| *f);
         for &child in children.into_iter().flatten() {
             if let Ok((level, scene_children)) = scenes.get(child) {
-                let range =
-                    projection.range(&thresholds, height, level.0, lod.farthest_switch(*handoff));
+                let range = object_range(
+                    forced,
+                    &projection,
+                    &thresholds,
+                    height,
+                    level.0,
+                    lod.farthest_switch(*handoff),
+                );
                 for &scene_child in scene_children.into_iter().flatten() {
                     apply_range(&mut commands, scene_child, &range, &descendants, &meshes);
                 }
@@ -332,21 +439,43 @@ fn range_new_lod_scene(
     projection: Res<LodProjection>,
     handoff: Res<ImpostorHandoff>,
     scenes: Query<(&LodScene, &ChildOf, Option<&Children>)>,
-    objects: Query<(&ScreenSpaceLod, &Transform)>,
+    objects: Query<(&ScreenSpaceLod, &Transform, Option<&ForcedLod>)>,
     descendants: Query<&Children>,
     meshes: Query<(), With<Mesh3d>>,
 ) {
     let Ok((level, parent, children)) = scenes.get(ready.entity) else {
         return;
     };
-    let Ok((lod, transform)) = objects.get(parent.parent()) else {
+    let Ok((lod, transform, forced)) = objects.get(parent.parent()) else {
         return;
     };
+    if let Some(timed) = lod.timed.as_ref() {
+        // Always in range; the mesh tag carries the fade, from the frame it exists.
+        for &child in children.into_iter().flatten() {
+            apply_range(
+                &mut commands,
+                child,
+                &timed::TIMED_RANGE,
+                &descendants,
+                &meshes,
+            );
+            tag_meshes(
+                &mut commands,
+                child,
+                timed.level(level.0).unwrap_or(0),
+                &descendants,
+                &meshes,
+            );
+        }
+        return;
+    }
     if projection.pixels_per_metre <= 0.0 {
         return; // update_object_lods ranges every scene once the camera is known
     }
     let thresholds: Vec<f32> = lod.thresholds().collect();
-    let range = projection.range(
+    let range = object_range(
+        forced.copied(),
+        &projection,
         &thresholds,
         object_height(lod, transform.scale),
         level.0,
@@ -354,6 +483,36 @@ fn range_new_lod_scene(
     );
     for &child in children.into_iter().flatten() {
         apply_range(&mut commands, child, &range, &descendants, &meshes);
+    }
+}
+
+/// Writes a timed LOD's dither level into its meshes' tags (64 + level).
+fn tag_meshes(
+    commands: &mut Commands,
+    entity: Entity,
+    level: i32,
+    descendants: &Query<&Children>,
+    meshes: &Query<(), With<Mesh3d>>,
+) {
+    let tag = (timed::TAG_BIAS + level.clamp(-16, 16)) as u32;
+    for entity in std::iter::once(entity).chain(descendants.iter_descendants(entity)) {
+        if meshes.contains(entity) {
+            commands.entity(entity).try_insert(MeshTag(tag));
+        }
+    }
+}
+
+/// A timed object leaving (its cell unloaded) gives its impostor back: it draws on its own.
+fn release_impostor(
+    removed: On<Remove, ScreenSpaceLod>,
+    objects: Query<&ScreenSpaceLod>,
+    fades: Option<ResMut<ImpostorFades>>,
+) {
+    let (Ok(lod), Some(mut fades)) = (objects.get(removed.entity), fades) else {
+        return;
+    };
+    if let Some(slot) = lod.timed.as_ref().and_then(timed::TimedLod::slot) {
+        fades.set(slot, None);
     }
 }
 

@@ -49,6 +49,29 @@ pub(crate) struct LaunchOptions {
     pub metal_capture: Option<PathBuf>,
     pub profile: Option<crate::profile::ProfileSettings>,
     pub repro: Option<ReproOptions>,
+    /// Render scale at launch (one of `RESOLUTION_SCALES`).
+    pub resolution_scale: Option<f32>,
+    pub lod_lab: Option<LodLabOptions>,
+}
+
+/// `--lod-lab`: one tree's representations compared in place ([`crate::lod_lab`]).
+#[derive(Clone, Debug)]
+pub(crate) struct LodLabOptions {
+    /// Catalog key (`pack/asset`) of the tree under study.
+    pub asset: String,
+    /// Neighbours around it, as `(asset, count, spacing in metres)`.
+    pub stand: Option<(String, usize, f32)>,
+    /// Captures every switch and the fixed distances there, then exits.
+    pub capture: Option<PathBuf>,
+    /// Saves one window screenshot (panel included) once the trees have drawn, then exits.
+    pub screenshot: Option<PathBuf>,
+    /// Camera bearings from the sun's, in degrees: 0 has the sun behind the camera.
+    pub yaws: Vec<f32>,
+    pub pitch: f32,
+    /// The tree's scale: smaller trees switch nearer.
+    pub scale: f32,
+    pub distances: Vec<f32>,
+    pub settle: u32,
 }
 
 /// Startup composition; Full preserves the existing instrumentation by default.
@@ -247,6 +270,66 @@ const FLAGS: &[(&str, bool, &str)] = &[
     ),
     ("--render-ui-off", false, "Hide UI during a repro"),
     (
+        "--resolution-scale",
+        true,
+        "1|0.75|0.5|0.33: render scale at launch (F1 changes it later)",
+    ),
+    (
+        "--lod-lab",
+        true,
+        "ASSET: study one tree's LODs (catalog key pack/asset) at the --start-view focus",
+    ),
+    (
+        "--lod-lab-stand",
+        true,
+        "ASSET: surround the tree with a stand of this asset",
+    ),
+    (
+        "--lod-lab-stand-count",
+        true,
+        "N: trees in the stand (default 24)",
+    ),
+    (
+        "--lod-lab-spacing",
+        true,
+        "METRES: stand spacing (default 6)",
+    ),
+    (
+        "--lod-lab-capture",
+        true,
+        "DIR: capture every LOD switch from both sides and fixed distances, then exit",
+    ),
+    (
+        "--lod-lab-screenshot",
+        true,
+        "FILE: save the window (panel included) once the trees have drawn, then exit",
+    ),
+    (
+        "--lod-lab-yaws",
+        true,
+        "DEGREES,...: camera bearings from the sun's; 0 has the sun behind the camera (default 0,90,180)",
+    ),
+    (
+        "--lod-lab-scale",
+        true,
+        "SCALE: the tree's scale, 0.25..4 (default 1); smaller trees switch nearer",
+    ),
+    (
+        "--lod-lab-pitch",
+        true,
+        "DEGREES: camera elevation above the tree's root (default 3)",
+    ),
+    (
+        "--lod-lab-distances",
+        true,
+        "METRES,...: fixed capture distances (default 10,25,50,100,200,400,800)",
+    ),
+    (
+        "--lod-lab-settle",
+        true,
+        "FRAMES: frames drawn before each capture (default 30)",
+    ),
+    (
         "--profile-seconds",
         true,
         "2..3600: timed measurement duration",
@@ -361,6 +444,89 @@ impl LaunchOptions {
                     .ok_or("--impostor-handoff requires 0..166 metres")
             })
             .transpose()?;
+        let resolution_scale = value("--resolution-scale")?
+            .map(|v| match v {
+                "1" | "1.0" => Ok(1.0),
+                "0.75" => Ok(0.75),
+                "0.5" => Ok(0.5),
+                "0.33" => Ok(1.0 / 3.0),
+                _ => Err("--resolution-scale requires 1, 0.75, 0.5 or 0.33"),
+            })
+            .transpose()?;
+        let list = |key: &'static str, default: &[f32]| -> Result<Vec<f32>, String> {
+            value(key)?.map_or(Ok(default.to_vec()), |v| {
+                v.split(',')
+                    .map(|n| n.trim().parse::<f32>().ok().filter(|n| n.is_finite()))
+                    .collect::<Option<Vec<_>>>()
+                    .filter(|l| !l.is_empty())
+                    .ok_or_else(|| format!("{key} requires comma-separated numbers"))
+            })
+        };
+        let number = |key: &'static str, default: f32, range: std::ops::RangeInclusive<f32>| {
+            value(key)?.map_or(Ok(default), |v| {
+                v.parse::<f32>()
+                    .ok()
+                    .filter(|n| range.contains(n))
+                    .ok_or_else(|| format!("{key} requires {}..{}", range.start(), range.end()))
+            })
+        };
+        if has("--lod-lab-capture") && has("--lod-lab-screenshot") {
+            return Err(
+                "--lod-lab-screenshot shows the interactive lab; drop --lod-lab-capture".into(),
+            );
+        }
+        let lod_lab = if let Some(asset) = value("--lod-lab")? {
+            if !has("--start-view") {
+                return Err("--lod-lab places the tree at the --start-view focus".into());
+            }
+            if has("--render-repro") || has("--profile-seconds") || has("--streaming-smoke") {
+                return Err(
+                    "--lod-lab owns the camera; it cannot share a repro, profile or smoke run"
+                        .into(),
+                );
+            }
+            let distances = list(
+                "--lod-lab-distances",
+                &[10., 25., 50., 100., 200., 400., 800.],
+            )?;
+            if distances.iter().any(|d| !(2.0..=4000.0).contains(d)) {
+                return Err("--lod-lab-distances must lie within 2..4000 metres".into());
+            }
+            Some(LodLabOptions {
+                asset: asset.to_owned(),
+                stand: value("--lod-lab-stand")?
+                    .map(|stand| -> Result<_, String> {
+                        Ok((
+                            stand.to_owned(),
+                            number("--lod-lab-stand-count", 24.0, 1.0..=400.0)? as usize,
+                            number("--lod-lab-spacing", 6.0, 1.0..=50.0)?,
+                        ))
+                    })
+                    .transpose()?,
+                capture: path("--lod-lab-capture"),
+                screenshot: path("--lod-lab-screenshot"),
+                yaws: list("--lod-lab-yaws", &[0., 90., 180.])?,
+                pitch: number("--lod-lab-pitch", 3.0, -10.0..=80.0)?,
+                scale: number("--lod-lab-scale", 1.0, 0.25..=4.0)?,
+                distances,
+                settle: number("--lod-lab-settle", 30.0, 1.0..=600.0)? as u32,
+            })
+        } else {
+            if FLAGS
+                .iter()
+                .any(|f| f.0.starts_with("--lod-lab-") && has(f.0))
+            {
+                return Err("--lod-lab-* options require --lod-lab".into());
+            }
+            None
+        };
+        if lod_lab.as_ref().is_some_and(|l| l.stand.is_none())
+            && (has("--lod-lab-stand-count") || has("--lod-lab-spacing"))
+        {
+            return Err(
+                "--lod-lab-stand-count and --lod-lab-spacing require --lod-lab-stand".into(),
+            );
+        }
         let upscaler = match value("--upscaler")?.unwrap_or("auto") {
             "auto" => upscaling::UpscaleMethod::Auto,
             "linear" => upscaling::UpscaleMethod::Linear,
@@ -553,6 +719,7 @@ impl LaunchOptions {
         let weather = weather.unwrap_or(
             if profile.is_some()
                 || repro.is_some()
+                || lod_lab.is_some()
                 || has("--metal-capture")
                 || has("--streaming-smoke")
             {
@@ -600,6 +767,8 @@ impl LaunchOptions {
             metal_capture: path("--metal-capture"),
             profile,
             repro,
+            resolution_scale,
+            lod_lab,
         })
     }
 

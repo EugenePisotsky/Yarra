@@ -377,3 +377,94 @@ fn evaluate(@builtin(global_invocation_id) id: vec3<u32>) {
         "world rebasing must preserve structural pose"
     );
 }
+
+#[test]
+#[ignore = "requires native GPU; compares the impostor's trunk lean with the mesh LODs'"]
+fn impostors_lean_as_the_mesh_trunk_does() {
+    let source = include_str!("../../../../assets/shaders/tree_wind.wgsl");
+    let impostor = include_str!("../../../../assets/shaders/tree_impostor.wgsl");
+    let body = format!(
+        "{}\n{}\n{}",
+        &source[source.find("struct WindPose").unwrap()
+            ..source.find("// Use the main camera").unwrap()],
+        &source[source.find("// Structural wind helpers.").unwrap()
+            ..source.find("// End structural helpers.").unwrap()],
+        &impostor[impostor.find("// Impostor wind: begin").unwrap()
+            ..impostor.find("// Impostor wind: end").unwrap()],
+    )
+    .replace(
+        "@group(#{MATERIAL_BIND_GROUP}) @binding(100)\nvar<storage, read> wind: WindFrames;",
+        "",
+    );
+    let shader = format!(
+        "{body}\n{}",
+        r#"
+struct Case { frames: WindFrames, model: mat4x4<f32>, previous_model: mat4x4<f32>, weights: vec4<f32> }
+@group(0) @binding(0) var<storage, read> inputs: array<Case>;
+@group(0) @binding(1) var<storage, read_write> results: array<array<vec4<f32>, 4>>;
+@compute @workgroup_size(1)
+fn evaluate(@builtin(global_invocation_id) id: vec3<u32>) {
+    let c = inputs[id.x];
+    let profile = vec4(1., 3., 1., 1.);
+    let scale = length(c.model[1].xyz);
+    // Along the stem, beside it in the crown, above its top and below the root.
+    let points = array<vec3<f32>, 4>(vec3(0., 7., 0.), vec3(1.5, 10., -.8), vec3(.3, 16., .2), vec3(.5, -.5, .2));
+    for (var i = 0; i < 4; i += 1) {
+        let rest = (c.model * vec4(points[i], 1.)).xyz;
+        let mesh = sway_point(rest, structural_frame(points[i], vec4(0.), 14., c.model, c.frames.current, profile));
+        let quad = sway_point_of_trunk(rest, c.model[3].xyz, 14. * scale, profile, c.frames.current, 1.);
+        results[id.x][i] = vec4(mesh - quad, length(mesh - rest));
+    }
+}
+"#
+    );
+    let mut wind = VegetationWind::default();
+    let sample = |w: &VegetationWind, o| WindPose::sample(w, TreeWindResponse::default(), o);
+    wind.set_phase_seconds(7.);
+    let current = sample(&wind, [0.; 2]);
+    let model = Mat4::from_scale_rotation_translation(
+        Vec3::splat(1.3),
+        Quat::from_rotation_y(0.7),
+        Vec3::new(6., 0., -8.),
+    );
+    let animated = Case {
+        frames: WindFrames {
+            current,
+            previous: current,
+        },
+        model: model.to_cols_array_2d(),
+        previous_model: model.to_cols_array_2d(),
+        weights: [0.; 4],
+    };
+    let rebased = Case {
+        frames: WindFrames {
+            current: sample(&wind, [256., 0.]),
+            previous: current,
+        },
+        model: (Mat4::from_translation(-Vec3::X * 256.) * model).to_cols_array_2d(),
+        ..animated
+    };
+    wind.strength = 2.;
+    let mut strong = sample(&wind, [0.; 2]);
+    strong.hierarchy = [3., 3., 3., 0.4];
+    let strong = Case {
+        frames: WindFrames {
+            current: strong,
+            previous: current,
+        },
+        ..animated
+    };
+    let cases = [animated, rebased, strong];
+    let results = run_shader(&cases, &shader);
+    for r in &results {
+        assert!(r.iter().all(|v| v.is_finite()));
+        for point in r.chunks(4) {
+            assert!(
+                Vec3::from_slice(&point[..3]).length() < 0.001,
+                "an impostor must lean as its mesh trunk does: {point:?}"
+            );
+        }
+        assert!(r[11] > 0.05, "the treetop must move in the wind");
+        assert!(r[15] < 0.001, "below the root nothing moves");
+    }
+}

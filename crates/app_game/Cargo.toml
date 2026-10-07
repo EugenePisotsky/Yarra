@@ -14,6 +14,9 @@ localization.workspace = true
 save.workspace = true
 world.workspace = true
 ron.workspace = true
+serde_json.workspace = true
+bevy_egui.workspace = true
+image = { version = "0.25", default-features = false, features = ["png"] }
 wgpu = { version = "29.0.4", default-features = false }
 terrain-render.workspace = true
 upscaling = { workspace = true, features = ["metalfx"] }

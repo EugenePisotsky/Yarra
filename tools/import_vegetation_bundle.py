@@ -49,6 +49,20 @@ def rows(doc, blob, index):
     return [struct.unpack_from(fmt, blob, start + i * stride) for i in range(a['count'])]
 
 
+WIND_CONVENTION = ('the far mesh LOD\'s structural wind (hierarchy_v2): its materials\' wind_profile '
+                   'and its stem height in object metres (_WIND_PIVOT.w), so the impostor leans as that trunk does')
+
+
+def impostor_wind(doc, blob, name):
+    """The far mesh LOD's trunk wind, which its impostor repeats."""
+    profiles = {tuple(m.get('extras', {}).get('wind_profile') or ()) for m in doc['materials']}
+    heights = {round(v[3], 4) for mesh in doc['meshes'] for p in mesh['primitives']
+               if '_WIND_PIVOT' in p['attributes'] for v in rows(doc, blob, p['attributes']['_WIND_PIVOT'])}
+    if len(profiles) != 1 or len(next(iter(profiles))) != 4 or len(heights) != 1 or min(heights) <= 0:
+        raise ValueError(f'{name}: an impostor needs one wind_profile and one stem height on its far mesh LOD')
+    return {'profile': list(next(iter(profiles))), 'height': heights.pop()}
+
+
 def overwrite(doc, blob, index, values):
     a = doc['accessors'][index]
     assert a['componentType'] == 5126 and a['count'] == len(values)
@@ -212,6 +226,8 @@ def main():
                         shutil.copy2(bundle/uri, source/'textures'/Path(uri).name)
                     im['uri'] = '../textures/'+filename
                 ids = adapt_foliage(doc, blob, args.canopy_blend)
+                if far > 0 and lod == 2:
+                    wind = impostor_wind(doc, blob, name)
                 if first_ids is not None and ids != first_ids:
                     raise ValueError('Rotating-card IDs change between LODs')
                 first_ids = ids
@@ -229,8 +245,8 @@ def main():
                 variants.append(f'(uri: "{pack}/runtime/{name}/{target.name}", bounds: ({bounds[0]:.4f}, {bounds[1]:.4f}, {bounds[2]:.4f}), gpu_bytes_estimate: {len(blob)}, minimum_screen_height: {threshold}),')
             if far > 0:
                 info = json.loads(impostor.read_text())
-                if info.get('version') != 2 or info.get('layout') != 'hemi_octahedral':
-                    raise ValueError(f'{name}: expected a version 2 hemi-octahedral impostor')
+                if info.get('version') != 3 or info.get('layout') != 'hemi_octahedral':
+                    raise ValueError(f'{name}: expected a version 3 hemi-octahedral impostor; rebake it with scripts/bake_impostor.py')
                 folder = stage/'runtime'/name
                 maps = {}
                 for key, srgb in (('albedo', True), ('normal', False)):
@@ -242,11 +258,10 @@ def main():
                     texture(args.ktx, files, folder/maps[key], srgb, False)
                 descriptor = folder/f'{name}.impostor.json'
                 descriptor.write_text(json.dumps({
-                    'version': 1, 'views': info['views'], 'cell': info['cell'], 'centre': info['centre'],
-                    'radius': info['radius'], 'crop': info.get('crop', [0., 0., 1., 1.]),
-                    **({'crown': info['crown']} if 'crown' in info else {}),
-                    'alpha_cutoff': info['alpha_cutoff'], **maps,
-                    'conventions': info['conventions'],
+                    'version': 3, 'views': info['views'], 'cell': info['cell'], 'tile': info['tile'],
+                    'centre': info['centre'], 'radius': info['radius'], 'crop': info['crop'], 'crown': info['crown'],
+                    'alpha_cutoff': info['alpha_cutoff'], **maps, 'wind': wind,
+                    'conventions': {**info['conventions'], 'wind': WIND_CONVENTION},
                 }, indent=1)+'\n')
                 size = sum((folder/m).stat().st_size for m in maps.values())
                 variants.append(f'(uri: "{pack}/runtime/{name}/{descriptor.name}", bounds: ({bounds[0]:.4f}, {bounds[1]:.4f}, {bounds[2]:.4f}), gpu_bytes_estimate: {size}, minimum_screen_height: 0.0),')

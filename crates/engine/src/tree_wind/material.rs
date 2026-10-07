@@ -9,7 +9,7 @@ use bevy::{
     mesh::MeshVertexBufferLayoutRef,
     pbr::{
         ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline,
-        MaterialPlugin,
+        MaterialPlugin, MeshPipelineKey,
     },
     prelude::*,
     render::{
@@ -69,7 +69,23 @@ impl MaterialExtension for TreeWindExtension {
         {
             fragment.shader_defs.push("TREE_BARK_BLEND".into());
         }
+        // LODs faded over time (object_lod) dither by their mesh tag in every pass. Bevy
+        // enables the dither only where visibility ranges crossfade, and never in shadows.
+        if !key
+            .mesh_key
+            .contains(MeshPipelineKey::VISIBILITY_RANGE_DITHER)
+        {
+            for defs in std::iter::once(&mut descriptor.vertex.shader_defs)
+                .chain(descriptor.fragment.as_mut().map(|f| &mut f.shader_defs))
+            {
+                defs.push("VISIBILITY_RANGE_DITHER".into());
+                defs.push("TREE_TAG_FADE".into());
+            }
+        }
         super::cards::specialize(descriptor, layout)
+    }
+    fn prepass_fragment_shader() -> ShaderRef {
+        "shaders/tree_wind_prepass.wgsl".into()
     }
     fn vertex_shader() -> ShaderRef {
         "shaders/tree_wind.wgsl".into()

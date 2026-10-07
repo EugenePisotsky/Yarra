@@ -436,7 +436,29 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     out.instance_index = vertex.instance_index;
 #endif
 #ifdef VISIBILITY_RANGE_DITHER
-    out.visibility_range_dither = mesh_functions::get_visibility_range_dither_level(vertex.instance_index, model[3]);
+    // LODs faded over time (crates/engine/src/object_lod.rs) carry their dither level in
+    // the mesh tag, as 64 + level, in every pass including the shadow cascades. Others keep
+    // Bevy's crossfade by distance; passes Bevy gives no ranges (TREE_TAG_FADE) draw whole.
+    let tag = mesh_functions::get_tag(vertex.instance_index);
+    if tag != 0u {
+        var level = i32(tag) - 64;
+#ifdef TREE_TAG_FADE
+        // Shadows overlap instead: the incoming LOD's is whole by mid-fade and the outgoing
+        // one's stays whole until then, so a tree's shadow never thins while it dissolves.
+        if level < 0 {
+            level = min(0, 2 * level + 16);
+        } else {
+            level = max(0, 2 * level - 16);
+        }
+#endif
+        out.visibility_range_dither = level;
+    } else {
+#ifdef TREE_TAG_FADE
+        out.visibility_range_dither = 0;
+#else
+        out.visibility_range_dither = mesh_functions::get_visibility_range_dither_level(vertex.instance_index, model[3]);
+#endif
+    }
 #endif
     return out;
 }

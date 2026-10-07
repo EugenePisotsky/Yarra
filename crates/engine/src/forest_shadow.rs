@@ -14,6 +14,11 @@ use bevy::{
 /// square, so the 2 km far-object range stays covered.
 const RECENTRE_METRES: f32 = 512.0;
 
+/// An impostor batch left out of the forest shadows, e.g. a LOD lab tree's forced impostor,
+/// which duplicates the batch that shadows, or a hidden lab tree.
+#[derive(Component)]
+pub(crate) struct NoForestShadow;
+
 #[derive(Default)]
 pub(crate) struct ForestShadowBuilder {
     task: Option<Task<ForestShadowMap>>,
@@ -21,21 +26,29 @@ pub(crate) struct ForestShadowBuilder {
     centre: Option<Vec2>,
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(crate) fn rebuild(
     mut builder: Local<ForestShadowBuilder>,
     forest: Option<ResMut<ForestShadow>>,
     cameras: Query<(&Camera, &GlobalTransform), With<WorldViewCamera>>,
-    batches: Query<(&ImpostorBatch, &GlobalTransform), With<ImpostorBatchDone>>,
-    added: Query<(), Added<ImpostorBatchDone>>,
+    batches: Query<
+        (&ImpostorBatch, &GlobalTransform),
+        (With<ImpostorBatchDone>, Without<NoForestShadow>),
+    >,
+    added: Query<(), Or<(Added<ImpostorBatchDone>, Added<NoForestShadow>)>>,
     moved: Query<(), (With<ImpostorBatchDone>, Changed<GlobalTransform>)>,
     mut removed: RemovedComponents<ImpostorBatchDone>,
+    mut restored: RemovedComponents<NoForestShadow>,
     descriptors: Res<Assets<ImpostorDescriptor>>,
 ) {
     let Some(mut forest) = forest else {
         return;
     };
-    if !added.is_empty() || !moved.is_empty() || removed.read().count() > 0 {
+    if !added.is_empty()
+        || !moved.is_empty()
+        || removed.read().count() > 0
+        || restored.read().count() > 0
+    {
         builder.dirty = true;
     }
     let Some((_, camera)) = cameras.iter().find(|(c, _)| c.is_active) else {

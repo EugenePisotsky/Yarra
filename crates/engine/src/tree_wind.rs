@@ -192,8 +192,10 @@ fn sample_wind(
     }
 }
 
+/// This frame's and the previous frame's [`WindPose`], shared by every tree material and
+/// the impostors (`crate::tree_impostor`).
 #[derive(Resource, ExtractResource, Clone)]
-struct WindBuffer(Handle<ShaderBuffer>);
+pub(crate) struct WindBuffer(pub(crate) Handle<ShaderBuffer>);
 #[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
 struct WindFrames {

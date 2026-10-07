@@ -111,7 +111,7 @@ impl RenderPath {
 }
 
 #[derive(Component)]
-struct GameUiCamera;
+pub(crate) struct GameUiCamera;
 
 #[derive(Component)]
 struct GameComposite;

@@ -14,6 +14,7 @@ mod camera_input_trace;
 mod frame_pacing;
 mod game_render;
 mod launch;
+mod lod_lab;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 mod metal_capture;
 mod profile;
@@ -179,10 +180,19 @@ fn run() -> Result<(), String> {
         story::install(&mut app, source)?;
     }
     app.add_plugins(runtime_settings::RuntimeSettingsPlugin);
+    if let Some(scale) = options.resolution_scale {
+        app.world_mut()
+            .resource_mut::<runtime_settings::RuntimeSettings>()
+            .scale_index = game_render::RESOLUTION_SCALES
+            .iter()
+            .position(|&s| (s - scale).abs() < 1e-3)
+            .expect("launch validates the resolution scale");
+    }
     // Explicit precedence: launch defaults, reproduction, then profile settings.
     profile::install(&mut app);
     repro::install(&mut app);
     profile::apply_runtime_settings(&mut app);
+    lod_lab::install(&mut app)?;
     render_audit::install(&mut app);
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     metal_capture::install(&mut app);

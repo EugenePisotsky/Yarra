@@ -9,6 +9,11 @@ mod msaa_store;
 mod object_lod;
 pub use object_lod::{ObjectFootprint, ObjectLodPlugin};
 mod forest_shadow;
+mod lod_lab;
+pub use lod_lab::{
+    LabAsset, LabBand, LabRepresentation, LabTree, LabVariant, LodLabPlugin, despawn_lab_tree,
+    spawn_lab_tree,
+};
 mod tree_impostor;
 mod tree_wind;
 pub use tree_wind::{

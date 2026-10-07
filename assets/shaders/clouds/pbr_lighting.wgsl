@@ -382,7 +382,14 @@ fn apply_pbr_lighting(
                 && ((*light).flags & mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u;
             let shadow_end = (*light).cascades[max(cascades, 1u) - 1u].far_bound;
             let beyond = select(1.0, smoothstep(shadow_end * 0.7, shadow_end, -view_z), shadows_on);
-            if beyond > 0.0 {
+            var weight = beyond;
+#ifdef IMPOSTOR_SELF_SHADOW
+            // Impostors cast nothing into the shadow maps, so near the camera nothing would
+            // shade them and they washed out. Their crown and forest term applies at every
+            // distance; the shadow maps only add what is darker (neighbouring meshes).
+            weight = 1.0;
+#endif
+            if weight > 0.0 {
                 let to_light = (*light).direction_to_light;
 #ifdef TREE_CROWN_SHADING
                 // The authored crown normal faces the sun on exposed sides; the crown's
@@ -394,7 +401,11 @@ fn apply_pbr_lighting(
 #else
                 let far = forest_transmittance(in.world_position.xyz, to_light, 0.25);
 #endif
+#ifdef IMPOSTOR_SELF_SHADOW
+                shadow = mix(min(shadow, far), far, beyond);
+#else
                 shadow = mix(shadow, far, beyond);
+#endif
             }
         }
 #endif

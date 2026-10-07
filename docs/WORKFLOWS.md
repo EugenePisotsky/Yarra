@@ -151,26 +151,85 @@ cargo run --release -p yarra-world-cook -- cook
 cargo run --release -p yarra-app-game -- --start-view content/world.project.views/spruce-stand.ron
 ```
 
-**Impostors.** Distant trees are drawn as hemi-octahedral impostors baked from
-LOD0, not as their last mesh LOD. Bake each bundle in YarraVegetation (no Houdini
-needed, about 8 s per form), then import with an impostor threshold below the
-mesh ones; the descriptor and two KTX2 atlases (~4.4 MB per form) are added as
-the last LOD:
+**Impostors.** Distant trees are drawn as hemi-octahedral impostors. Each is baked from the
+mesh LOD the game draws just before it, so the switch matches: LOD1 for trees (their LOD2 has
+no band of its own at 480/240/200 px), and LOD2 for shrubs and bay. Bake each bundle in
+YarraVegetation (no Houdini needed, about 40 s per form). Then import with an impostor
+threshold below the mesh ones. The descriptor and two KTX2 atlases are added as the last LOD:
 
 ```sh
-uv run --with numpy --with pillow python scripts/bake_impostor.py outputs/spruce_forest/current --leaf-grow 2 --fill 0
-# Bare and dead trees: --leaf-grow 0 --fill 0. Filled crowns (--fill 1) merge needle clusters.
+uv run --with numpy --with pillow python scripts/bake_impostor.py outputs/spruce_forest/current \
+  --leaf-grow 0 --fill 0 --cell 256 --source lod1.glb
+# Shrubs and bay: --source lod2.glb --cell 160 (they hand off at 60 px, where 160 px views keep a texel per screen pixel).
 python3 tools/import_vegetation_bundle.py ... --lod-screen-heights 480 240 --impostor-screen-height 200
 # Shrubs and bay: --lod-screen-heights 480 180 --impostor-screen-height 60
 ```
 
-Each bake also records the crown (base, top, radius, centre, opacity) for the
-distant forest shadows; `--crop-only` adds the coverage crop and the crown to an
-older bake without rendering. Register and cook as
-usual: the cook regroups impostor-drawn objects into far-object blocks, which
-the game streams out to 2 km ([architecture](ARCHITECTURE.md)). To compare
-impostors with their meshes, capture a view twice, once with
-`--impostor-handoff 0` (impostors only).
+The bake samples every texel 4×4 and rescales each view's alpha, so the game's 0.5 cut-out
+keeps the coverage the samples measured: thin needles stay thin. `--cell` is the resolution
+of a whole view. The atlases store only each view's crop, the part any view covers. The
+second atlas holds:
+- an octahedral normal;
+- the surface's depth toward the viewer, so the game lights each pixel where the crown is,
+  not on the quad;
+- crown occlusion.
+
+Each bake also records the crown (base, top, radius, centre, opacity) for the distant forest
+shadows. The importer adds the far mesh LOD's wind profile and stem height, so the impostor
+sways as that trunk does. Register and cook as usual: the cook regroups impostor-drawn objects into far-object
+blocks, which the game streams out to 2 km ([architecture](ARCHITECTURE.md)). Check a new
+bake in the LOD lab (below).
+
+**LOD lab.** To compare a tree's representations, run the game with `--lod-lab`. The tree
+from a catalog is placed at the start view's focus, outside streaming. It is drawn with the
+game's lighting, AA, render scale and LOD projection. `--lod-lab-stand` surrounds it with
+neighbours, e.g. pines over a spruce.
+
+A panel sets:
+- the distance to the root, with buttons for each switch;
+- the bearing from the sun, and the pitch;
+- what the tree draws: the game's choice, one mesh LOD, the impostor or nothing, or a blink
+  between two;
+- the wind (held still unless ticked, so frames differ only by what the lab changes);
+- the sun and the shadows.
+
+It shows the tree's height on screen and the impostor's texels per screen pixel. LOD distances
+follow the window's logical height, so judge them fullscreen.
+
+```sh
+# Interactive (fullscreen the window to match play):
+cargo run --release -p yarra-app-game -- --start-view content/world.project.views/start.ron \
+  --lod-lab yarra_spruces/spruce_forest --lod-lab-stand yarra_longleaf/pine_longleaf --lod-lab-spacing 7
+# Automated, then contact sheets and metrics:
+cargo run --release -p yarra-app-game -- --start-view content/world.project.views/start.ron \
+  --lod-lab yarra_spruces/spruce_forest --lod-lab-capture tmp/lod-lab/spruce --resolution-scale 1
+uv run --with numpy --with pillow python tools/lod_lab_sheet.py tmp/lod-lab/spruce
+```
+
+A capture runs fullscreen. From each `--lod-lab-yaws` bearing (default 0, 90 and 180° from the
+sun) it records:
+- at 0.8–1.2× each switch: the representation on each side forced, and the game's choice;
+- the game's choice at `--lod-lab-distances` (default 10–800 m);
+- for every pose, a frame with the tree hidden, so its pixels and shadow can be isolated.
+
+From the first bearing it adds a strip through each switch in 1.25% steps. Frames are cropped
+to the tree and its shadow, and `manifest.json` lists the poses. A stand capture takes about a
+minute and 0.5 GB.
+
+A capture also records each switch's dissolve: the camera steps just across the switch and back, and frames are taken as fast as they come until the fade ends. Then, with the wind blowing, it samples the last mesh LOD and the impostor in turn for about 5 s, just past the impostor switch and at 1.75× it.
+
+`lod_lab_sheet.py` writes five files:
+- `sheet-bNNN.png`: per switch row, the before, after and game frames, |before − after| ×4, and
+  coverage, brightness, colour (ΔE) and shadow changes, with rows over the limits marked;
+- `strip.png`: the strip, with a brightness curve. Trees with impostors switch at once and dissolve over time, so a step at their switch is expected;
+- `fade.png`: per switch, the dissolve frame by frame, with the time since the camera crossed
+  and the tree's coverage and shadow as shares of the steady frame;
+- `sway.png`: how far the top of the mesh LOD and of the impostor sways over time, at both distances;
+- `metrics.json`: the numbers behind them.
+
+Captures are cleanest in a runtime database without trees (`--world-db`). In the live world,
+the surrounding forest is part of the frame. `--lod-lab-screenshot FILE` saves the
+interactive window once the trees have drawn, then exits.
 
 For another family, adapt the existing `place_spruce_preview.py` or
 `place_longleaf_preview.py` pattern: unique stable sample IDs, terrain-relative

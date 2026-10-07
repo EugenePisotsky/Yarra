@@ -3,6 +3,6 @@
 (uri: "local/yarra_tall_forest/runtime/tall_broadleaf_forest/tall_broadleaf_forest_lod0.gltf", bounds: (11.8827, 24.4580, 14.5196), gpu_bytes_estimate: 1367056, minimum_screen_height: 480.0),
 (uri: "local/yarra_tall_forest/runtime/tall_broadleaf_forest/tall_broadleaf_forest_lod1.gltf", bounds: (11.8827, 24.4580, 14.5196), gpu_bytes_estimate: 452560, minimum_screen_height: 240.0),
 (uri: "local/yarra_tall_forest/runtime/tall_broadleaf_forest/tall_broadleaf_forest_lod2.gltf", bounds: (11.8827, 24.4580, 14.5196), gpu_bytes_estimate: 266784, minimum_screen_height: 200.0),
-(uri: "local/yarra_tall_forest/runtime/tall_broadleaf_forest/tall_broadleaf_forest.impostor.json", bounds: (11.8827, 24.4580, 14.5196), gpu_bytes_estimate: 1712010, minimum_screen_height: 0.0),
+(uri: "local/yarra_tall_forest/runtime/tall_broadleaf_forest/tall_broadleaf_forest.impostor.json", bounds: (11.8827, 24.4580, 14.5196), gpu_bytes_estimate: 3261846, minimum_screen_height: 0.0),
 ]),
 ])

@@ -268,6 +268,87 @@ M2 Max release, Reteya start island planted by `tools/forest_plan.py` (66.9k tre
 | Contrast jump at the end of the shadow maps (user report) | **Fixed with distant forest shadows.** Game shadow maps end at 80 m; beyond, crowns used their baked occlusion as a shadow stand-in and trunks and ground had none, so walking towards trees turned them from pale to dark. Measured with masks of foliage within 50 m, shadow maps against the stand-in forced everywhere (mean 8-bit luminance): pine 74 vs 94, spruce 28 vs 62, broadleaf 43 vs 87, birch 85 vs 100. Most of the darkness is neighbouring crowns and the stand's floor, which a per-tree term cannot know. Now every far-object tree is rasterized into a 1024² map at 4 m (crown top, base, additive density, local canopy top; `atmosphere::forest_shadow`), and past the cascades foliage, trunks, terrain and impostors march 8 steps towards the sun through it (`shaders/clouds/forest_shadow.wgsl`, extinction 0.35/m of opaque crown). Foliage: pine 75, spruce 34, broadleaf 36, birch 77; ground under the stands within 2–16% except spruce (51 vs 39). Two-cone crowns (widest point from the bake) made every stand lighter and were dropped; additive overlap barely changed spruce. Cost by Metal trace, edge view: main opaque fragment 2.35/2.56 → 2.66/2.70 ms, after points with no crown within ~100 m above them skip the march. |
 | Intermittent black frame | **Guarded.** One all-black summit capture; impostor normals that cancel between opposed views could reach lighting as NaN. They now fall back to the view normal; nine later captures were normal. Not proven to be the cause. |
 
+## Far cards between meshes and impostors — October 6
+
+Same machine, island and settings as above; Metal System Trace per-encoder intervals, cards on/off interleaved.
+
+| Change | Decision / observation |
+| --- | --- |
+| Far card LOD between meshes (≤166 m) and impostors (≤400 m) | **Rejected and reverted** (patch kept in `tmp/far-cards/backup`). Per form, LOD0 foliage clustered into 4–16 clumps, three crossed filled cards per clump, plus the trunk; merged per 64 m tile; the vertex shader posed the form from a storage buffer (20 B per vertex, 67 MiB for 9.6k trees after 205 MiB with full copies). In captures the forest read more three-dimensional and denser, but in play the crosses were plain on spruces, the impostor stayed blurry where it took over, and the game was heavier: start view +0.7 ms main fragment, +0.2 ms vertex, 145 → 121 fps uncapped, +0.35 ms main thread, +0.5 ms render prep. |
+| What the user's screenshots showed instead | **Open.** (1) The impostor is magnified where it takes over: LOD distances use the logical viewport (1084 px tall), so a 20 m tree at the 166 m cap is ~158 logical px, ~316 physical px at native, from 160 px views blended four ways. (2) A spruce in the shade of tall pines flips dark ↔ bright at ~60–80 m: its mesh takes the shadow maps while its far LOD is lit as if exposed. (3) Bevy's shadow pass does not dither LOD crossfades, so each caster's shadow changes shape at its switch. (4) Temporal at 50% renders at about the same GPU time as native, so the forest is not pixel-bound. |
+
+## LOD lab: first survey — October 6
+
+`--lod-lab` captures, fullscreen 3456×2168 at native render scale, 4× MSAA, start-view beach in a world without trees, sun at 28°. The figures compare the representation forced on each side of a switch at the switch distance: the tree's coverage of its projected box, its mean brightness and colour (ΔE), and its ground shadow. "Front" has the sun behind the camera; "back" faces the sun.
+
+| Tree (alone unless noted) | Mesh → mesh | Last mesh → impostor | Impostor texels per screen pixel at hand-off |
+| --- | --- | --- | --- |
+| Spruce | LOD0 → LOD1 at 38 m: coverage −4%, brightness +3%, ΔE 0.6; LOD2 has no band | at 92 m: coverage +25%, brightness −31% front, ΔE 7.0 | 0.34 |
+| Spruce among 24 longleaf pines | front −4%/+4%; back −6%/+12% | front: coverage +24%, brightness −28%; side and back: coverage +30%, brightness −1 to −3% | 0.34 |
+| Longleaf pine | at 52 m: within 1–2% | at 124 m: coverage +20 to +24%, brightness −22% front, +8% back | 0.39 |
+| Oak | at 52 m: coverage −6 to −9%, brightness +3% front, +16% back | at 126 m: coverage +22%, brightness −30% front, ΔE 9.0 | 0.36 |
+| Birch | at 40 m: coverage −13 to −14% | at 96 m: coverage +65 to +68%, brightness −31% front | 0.39 |
+
+Every impostor is fuller than the mesh it replaces, darker when lit from behind the camera, and magnified about 2.6× where it takes over. Every hand-off falls at 200 logical (400 physical) px, and the views were baked at 160 px. Mesh-to-mesh switches mostly match. Window size moves every switch: a 1280×720 window put the spruce's at 25 and 61 m against 38 and 92 m fullscreen.
+
+## Impostor fixes, measured in the LOD lab — October 6
+
+Spruce alone, switch LOD1 → impostor at 92 m. Figures are impostor against LOD1, forced on both sides, fullscreen native, 4× MSAA. "Front" has the sun behind the camera; "back" faces it. Coverage is the share of the tree's box covered. Surface brightness counts only pixels both fully cover.
+
+| Change | Front | Back | Decision |
+| --- | --- | --- | --- |
+| Before (160 px views, leaf grow 2, 2×2 samples, from LOD0) | coverage +25%, brightness −31%, ΔE 7.0 | — | baseline |
+| Lighting at the baked depth instead of the quad | −42% | +17% | **Kept, but this misled at first:** it amplified the next bug. With linear normals it changes an isolated tree by 1–2%. |
+| Normal atlas loaded as linear data | coverage +25%, brightness −8%, ΔE 2.5 | −13% | **Fixed, the main cause.** Bevy transcodes UASTC to an sRGB format unless the loader is told otherwise, whatever the KTX2 transfer function says. Normals came out biased low: facing away from the viewer and down. Occlusion (alpha) was unaffected. Isolated by returning single lighting terms from the shared crown shading: N·L −53%, while occlusion matched. |
+| Leaf grow 2 → 0 | coverage +15% | +16% | **Changed.** View resolution 160 → 256 px left coverage unchanged and raised impostor texels per screen pixel from 0.34 to 0.54. |
+| 4×4 samples, each view's alpha rescaled to its sampled coverage | coverage +11% | +11% | **Changed.** 2×2 samples gave thin needles exactly 0.5 alpha, which the cut-out keeps a texel wide. Nearest view only, instead of blending four: no change, so blending is not the cause. |
+| Baked from LOD1, the mesh drawn before the impostor | coverage +6%, brightness −7%, surface −6%, ΔE 1.7 | coverage +8%, surface +3%, ΔE 1.0 | **Changed.** The impostor replaces LOD1, not LOD0. Facing cards' normals now stay unturned in the bake, as in the game. No measurable change. |
+
+| Impostors cast into the shadow cascades | shrub at 36 m: surface +19% → +7%, ΔE 7.1 → 2.3 | shrub: surface +71% → −13%, shadow −100% → +8%; spruce shadow −21% → −3% | **Changed.** In a shadow view, the quad faces the sun and shows the view baked from its direction. The main camera's LOD distances still choose which instances draw. Batches within 320 m of the camera cast; 160 m costs the same. Cost, fullscreen game settings uncapped: start 140 → 132 fps, edge 117 → 109, summit 136 → 129, pine 107 → 101. That is +0.5 ms render prep, mostly the camera block's batches (about one per form) in four cascades. |
+
+All 36 forms were rebaked: trees from LOD1 at 256 px, shrubs and bay from LOD2 at 160 px (they hand off at 60 px). Impostor GPU memory went from 150 to 202 MiB. Impostor against the mesh it replaces, front / back:
+
+| Tree | Coverage | Surface brightness | ΔE | Impostor texels per screen pixel |
+| --- | --- | --- | --- | --- |
+| Spruce (92 m) | +6% / +8% | −6% / −2% | 1.7 / 1.0 | 0.54 |
+| Spruce among pines | +6% / +10% | −11% / +2% (side +1%) | 1.8 / 0.8 | 0.54 |
+| Longleaf pine (124 m) | −6% / −2% | +3% / +7% | 2.7 / 3.2 | 0.62 |
+| Oak (126 m) | +3% / −2% | +2% / +3% | 1.5 / 1.2 | 0.57 |
+| Birch (96 m) | +1% / −1% | +3% / +9% | 1.3 / 1.4 | 0.63 |
+| Shrub (36 m) | −4% / +6% | +7% / −13% | 2.3 / 0.6 | 0.88 |
+
+Remaining:
+- **Magnification:** about 0.55–0.65 texels per screen pixel where trees hand off at native resolution.
+- **Mesh LOD mismatches:** spruce, oak and birch LOD1 are 11–14% brighter than LOD0 when back-lit, and birch LOD1 has 13% less coverage.
+- **Shadow dithering:** Bevy's shadow pass does not dither LOD crossfades.
+
+## LOD fades over time — October 6
+
+User report after the impostor fixes: walking past spruces, large shadow patches popped on and off at once. Some spruces turned near black.
+
+| Change | Decision / observation |
+| --- | --- |
+| Cause of the pops | Bevy's shadow pass does not dither LOD crossfades. During a band both LODs cast whole shadows; at its end one shadow vanishes in one frame. The impostors' shadows, cast since this morning, differed from the meshes'. |
+| Cause of the near-black spruces | Impostors cast as a flat quad facing the sun. Inside the 80 m shadow range, the side of the crown seen against the sun fell in the quad's own shadow, as if the crown were a solid wall. The lab missed it at the spruce's 92 m switch, just outside the range; smaller trees switch inside it. |
+| Switch at a distance, dissolve over 0.4 s | **Retained**, after the user saw the same approach in another game. Trees with impostors keep one representation until the camera is 4% past its band, then dissolve old into new over 0.4 s at any speed. The camera turning back reverses the dissolve from where it got to. Meshes take their level from the mesh tag. Tree shaders apply it in every pass; for foliage shadows that takes a prepass fragment shader of our own, since Bevy's depth-only one only discards. Impostors take their level from a per-instance buffer. Visibility ranges stay constant, so Bevy never rebuilds its range table. Lab fade captures: about 400 ms each way, at 30 ms between frames; a shrub's shadow fades instead of vanishing at its 36 m switch. |
+| Impostor shadow casting | **Removed again.** The shadow difference now fades over 0.4 s instead of popping, and self-shadowing no longer darkens impostors. |
+| Cost | **Faster.** Fullscreen game settings, uncapped: start 143 fps, edge 126, summit 132–139, pine 107–111, against 140 / 117 / 136 / 107 without impostor shadows and with distance crossfades. With distance crossfades, every tree inside a band drew two LODs; now only fading trees do, for 0.4 s. |
+| Trees whose cells are still loading | An impostor instance no resident object controls is drawn. A tree still loading shows its impostor, then fades to its mesh. |
+| Fade time 0.4 → 0.6 s | **Changed** at the user's request after a play test. |
+| Impostors washing out as the camera nears (user report) | **Fixed.** Their crown and forest shading applied only past the shadow range, and without casting into the shadow maps, nothing shaded them nearer. It now applies at every distance, and the shadow maps add only what is darker. LOD lab, spruce at 0.7 scale switching at 64 m, front / back surface brightness: +26% / +69% → +1% / +11%. Shrub at 36 m: +19% / +71% → −4% / +6%. The ground shadow under an impostor inside the shadow range is still missing, but it now dissolves with the tree. |
+
+## Overlapping shadow fades and impostor wind — October 7
+
+User report: when a dissolve begins, the tree's shadow starts fading before the new model has faded in. Request: impostors should sway as the meshes do, near the camera only.
+
+| Change | Decision / observation |
+| --- | --- |
+| Shadow levels doubled in the shadow passes | **Retained.** The incoming LOD's shadow is whole by mid-fade and the outgoing one's stays whole until then. LOD lab, shrub LOD2 → impostor at 36 m, side-lit: before, the shadow was at 50% of its steady value 225 ms into the 0.6 s fade, while the shrub still looked whole. Now it holds until 300 ms, then fades out by 550 ms. The reverse is whole by 300 ms instead of 600 ms. Mesh-to-mesh switches lose no shadow either way: the sum of complementary dithers stays within ±2% in both versions. The spruce's impostor switch at 92 m is past the 80 m shadow range, where the forest shadow already covers both. |
+| Impostors bend with their trunk | **Retained.** The importer copies the far mesh LOD's wind profile and stem height into the descriptor (version 3). The impostor reads the trees' wind buffer and moves each vertex as the mesh's `structural_frame` moves a trunk point at that height. A GPU test checks this against the mesh code within 1 mm: plain wind, maximum wind and a moved origin. The quads gained a middle vertex row (6 vertices, 4 triangles), so the crown follows the arc rather than a shear. With 4 vertices, mid-crown would move about 2.5× too far. Lab sway capture, top of the tree just past the impostor switch, default wind: spruce at 97.5 m, LOD1 ±2.4 px, impostor ±2.4 px, correlation 0.99; longleaf pine at 132 m ±2.3 / ±1.9, 0.96. Oak trunks are stiff: ±0.4 / ±0.6 px. Shrubs move mostly by their branches, which the quad cannot follow: ±1.0 / ±0.7. |
+| Distance limit | Full sway to 300 m, none past 450 m. A spruce top swings about ±0.5 m in the default wind, about 2 physical pixels at 300 m. Farther than that it would only shimmer. The mountain forest seen from the beach stays still. |
+| Less wind farther out (user: far impostors in strong wind looked unnatural) | **Changed.** Full sway only where the impostor takes over from the mesh, then a smooth fall to none at 2.5× that distance (spruce 92 → 230 m, shrubs 36 → 90 m), and never past 450 m. On screen the motion halves by 1.5× the hand-off and is about 13% by 2×. Lab, spruce: at 97.5 m the impostor still matches LOD1 (±2.4 / ±2.4 px, correlation 0.99); at 161 m it sways ±1.2 against the mesh's ±2.6, in step (1.00), and leans 2.5 px less. Pine: ±1.9 / ±2.3 at 132 m, ±1.2 / ±2.5 at 218 m. |
+| Cost | **Below measurement noise.** Paired runs alternating wind on and off, fullscreen game settings, GPU ms: summit 9.00 off, 9.0 on; start 6.90 off, 6.86 on. These runs were slower than the first ones of the day: the machine had heated after about 20 back-to-back profiles. Fresh runs: start 147.5 fps, edge 128, summit 140, pine 114, against 143 / 126 / 132 / 107 before. The extra work is vertex-only: about 60 operations on 6 vertices per impostor inside 450 m, and a branch past it. Vertex data grows by 56 bytes per impostor. |
+
 ## Open gates and maintenance
 
 The remaining gates are sustained terrain/whole-game power, Temporal cost and motion quality, field-scale grass lighting, target-PC acceptance, and physical-phone heat/60-FPS delivery. Keep correctness references until their replacements pass the relevant gate. Existing counters often identify less work without demonstrating better delivered frames or lower power.
