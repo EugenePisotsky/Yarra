@@ -21,10 +21,12 @@ pub struct OceanSurface;
 
 impl Plugin for OceanPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_ocean).add_systems(
-            PostUpdate,
-            follow_world_view.before(TransformSystems::Propagate),
-        );
+        app.init_resource::<atmosphere::SeaSurface>()
+            .add_systems(Startup, spawn_ocean)
+            .add_systems(
+                PostUpdate,
+                follow_world_view.before(TransformSystems::Propagate),
+            );
     }
 }
 
@@ -36,11 +38,13 @@ fn spawn_ocean(
     commands.spawn((
         OceanSurface,
         Mesh3d(meshes.add(sea_disc())),
-        // Deep, glossy water. The shared PBR conversion adds cloud shadows and rain.
+        // The light scattered up from inside deep water; its waves, reflection and glitter are
+        // shaded by the sky composite (`atmosphere::SeaSurface`), so the surface itself has no
+        // specular. The shared PBR conversion adds cloud shadows.
         MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(0.015, 0.055, 0.075),
-            perceptual_roughness: 0.08,
-            reflectance: 0.5,
+            base_color: Color::srgb(0.03, 0.09, 0.10),
+            perceptual_roughness: 1.0,
+            reflectance: 0.0,
             ..default()
         })),
         NotShadowCaster,
@@ -115,6 +119,7 @@ fn follow_world_view(
     active: Res<ActiveWorldSpace>,
     views: Query<(&Camera, &GlobalTransform), With<WorldViewCamera>>,
     mut ocean: Single<(&mut Transform, &mut Visibility), With<OceanSurface>>,
+    mut sea: ResMut<atmosphere::SeaSurface>,
 ) {
     let level = active
         .current()
@@ -125,12 +130,19 @@ fn follow_world_view(
         .find(|(camera, _)| camera.is_active)
         .map(|(_, transform)| transform.translation());
     let (transform, visibility) = &mut *ocean;
-    match (level, view) {
+    let shown = match (level, view) {
         (Some(level), Some(view)) => {
             transform.translation = Vec3::new(view.x, level, view.z);
             **visibility = Visibility::Inherited;
+            Some(level)
         }
-        _ => **visibility = Visibility::Hidden,
+        _ => {
+            **visibility = Visibility::Hidden;
+            None
+        }
+    };
+    if sea.level != shown {
+        sea.level = shown;
     }
 }
 
@@ -176,6 +188,11 @@ mod tests {
             surface(&mut app),
             (Vec3::new(120., 0., -40.), Visibility::Inherited)
         );
+        // The sky composite shades the water at this level.
+        assert_eq!(
+            app.world().resource::<atmosphere::SeaSurface>().level,
+            Some(0.)
+        );
     }
 
     #[test]
@@ -219,5 +236,6 @@ mod tests {
         }
         app.update();
         assert_eq!(surface(&mut app).1, Visibility::Hidden);
+        assert_eq!(app.world().resource::<atmosphere::SeaSurface>().level, None);
     }
 }

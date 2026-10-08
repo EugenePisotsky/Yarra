@@ -77,6 +77,13 @@ impl Default for AtmospherePresentation {
     }
 }
 
+/// The open sea the world view shows, set by the engine: its level in render space, or `None`
+/// without one. The sky composite shades the water's waves, reflection and glitter.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
+pub struct SeaSurface {
+    pub level: Option<f32>,
+}
+
 /// Scales over the authored ground haze and valley mist, for side-by-side comparisons (look
 /// captures). The profile itself is restored from the world whenever it differs.
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
@@ -177,6 +184,7 @@ impl Plugin for WorldEnvironmentPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<AtmospherePresentation>()
             .init_resource::<FogTuning>()
+            .init_resource::<SeaSurface>()
             .add_plugins((
                 clouds::CloudsPlugin,
                 precipitation::PrecipitationPlugin,

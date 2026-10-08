@@ -22,6 +22,8 @@ struct CloudParams {
     air_sun: vec4<f32>, // unexposed sunlight reaching haze and mist, scattered mostly forwards
     shafts: vec4<f32>, // light shafts: x extinction per metre of the air under crowns (0 off)
     near_sun: vec4<f32>, // unexposed sunlight at the camera; sun and sun_color hold it at the clouds
+    ocean: vec4<f32>, // open sea: level, wind direction xz, wave clock seconds
+    ocean_waves: vec4<f32>, // x: 1 with a sea to shade, y: wind strength scale of the waves
 }
 
 // Cached sky: azimuth across, square-root warped elevation down from the tracing cutoff (ray.y

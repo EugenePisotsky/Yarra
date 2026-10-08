@@ -14,6 +14,7 @@ enable dual_source_blending;
 
 #import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput
 #import "shaders/clouds/types.wgsl"::{CloudParams, sky_panorama_uv}
+#import "shaders/water/waves.wgsl"::sea_waves
 #ifdef ATMOSPHERE
 #import bevy_pbr::atmosphere::{
     bindings::{lights, view},
@@ -434,6 +435,101 @@ fn sun_glare(ray: vec3<f32>, pixel: vec2<f32>, air: f32) -> vec3<f32> {
     return vec3(0.0);
 }
 
+// The open sea (`atmosphere::SeaSurface`): the main pass draws the light scattered up from the
+// water body; here a geometry sample on the sea's surface gets the waves' reflection of sky,
+// clouds, sun and moon in front of it, and the body keeps what the reflection leaves.
+struct Sea {
+    // Exposed light reflected towards the eye.
+    light: vec3<f32>,
+    // Share of the water body's light left after the reflection.
+    keep: f32,
+}
+// The sea mesh (engine `ocean.rs`): flat out to FLAT_RADIUS around the view, then bending with
+// the planet, with rings about a tenth of their radius apart.
+const SEA_FLAT_RADIUS: f32 = 10000.0;
+const SEA_PLANET_RADIUS: f32 = 6360000.0;
+const SEA_RING_SPACING: f32 = 0.102;
+const WATER_F0: f32 = 0.02;
+// Size of the noise tile the gust patches come from, metres.
+const SEA_PATCH: f32 = 1200.0;
+// Glitter is kept within half floats like the sun's disc.
+const MAX_GLITTER: f32 = 30000.0;
+fn smith(n_dot_x: f32, alpha2: f32) -> f32 {
+    return 2.0 * n_dot_x / (n_dot_x + sqrt(alpha2 + (1.0 - alpha2) * n_dot_x * n_dot_x));
+}
+fn sea_at(ray: vec3<f32>, distance: f32) -> Sea {
+    if clouds.ocean_waves.x < 0.5 || ray.y >= 0.0 {
+        return Sea(vec3(0.0), 1.0);
+    }
+    let p = view.world_position + ray * distance;
+    let r = length(p.xz - view.world_position.xz);
+    let beyond = max(r - SEA_FLAT_RADIUS, 0.0);
+    let height = clouds.ocean.x - beyond * beyond / (2.0 * SEA_PLANET_RADIUS);
+    let chord = SEA_RING_SPACING * r;
+    let tolerance = 0.05 + distance * 1.0e-5
+        + select(0.0, chord * chord / (8.0 * SEA_PLANET_RADIUS), beyond > 0.0);
+    if abs(p.y - height) > tolerance {
+        return Sea(vec3(0.0), 1.0);
+    }
+    // The pixel's length on the water, stretched where the view grazes it.
+    let pixel = 2.0 / (view.clip_from_view[1][1] * view.main_pass_viewport.w);
+    let footprint = distance * pixel / max(-ray.y, 0.02);
+    // Gusts roughen the water in patches a few hundred metres across, drifting with the wind
+    // like the mist's wisps; calm patches between them read smoother and brighter.
+    let q = (p.xz + clouds.mist_drift.xy) / SEA_PATCH;
+    let gust = textureSampleLevel(noise, noise_sampler, vec3(q.x, 0.37, q.y), 0.0);
+    let patches = mix(0.35, 1.65, smoothstep(0.25, 0.75, gust.r * 0.6 + gust.g * 0.4));
+    let waves = sea_waves(p.xz, clouds.ocean.w, clouds.ocean.yz, clouds.ocean_waves.y * patches,
+        footprint);
+    let n = normalize(vec3(-waves.slope.x, 1.0, -waves.slope.y));
+    let v = -ray;
+    let n_dot_v = max(dot(n, v), 0.02);
+    let fresnel = WATER_F0 + (1.0 - WATER_F0) * pow(1.0 - n_dot_v, 5.0);
+    // Reflections of waves facing away from the eye would point into the sea: keep them just
+    // above the horizon.
+    let bounced = reflect(ray, n);
+    let reflected = normalize(vec3(bounced.x, max(bounced.y, 0.004), bounced.z));
+    let position = get_view_position();
+    var sky = sample_sky_view_lut(length(position), direction_world_to_atmosphere(reflected))
+        * view.exposure;
+#ifdef CLOUDS
+#ifdef CACHED_CLOUDS
+    if reflected.y > 0.01 {
+        let cloud = cloud_layer(reflected, max(0.0, (clouds.layer.x - p.y) / reflected.y),
+            vec2(0.0));
+        sky = cloud.light + cloud.transmittance * sky;
+    }
+#endif
+#endif
+    // Sun and moon glitter: GGX over the resolved waves, widened by the unresolved ones and
+    // the disc's own size; a closing deck hides it.
+    let alpha2 = waves.variance + 0.0006;
+    var glitter = vec3(0.0);
+    for (var i = 0u; i < lights.n_directional_lights; i += 1u) {
+        let light = &lights.directional_lights[i];
+        let l = (*light).direction_to_light;
+        let n_dot_l = dot(n, l);
+        if l.y <= 0.0 || n_dot_l <= 0.0 {
+            continue;
+        }
+        let h = normalize(l + v);
+        let n_dot_h = max(dot(n, h), 0.0);
+        let d = alpha2 / (3.14159265 * pow(n_dot_h * n_dot_h * (alpha2 - 1.0) + 1.0, 2.0));
+        let f = WATER_F0 + (1.0 - WATER_F0) * pow(1.0 - max(dot(v, h), 0.0), 5.0);
+        let g = smith(n_dot_v, alpha2) * smith(n_dot_l, alpha2);
+        let transmittance = sample_transmittance_lut(length(position), dot(l, normalize(position)));
+        glitter += (*light).color.rgb * transmittance * (d * f * g / (4.0 * n_dot_v));
+    }
+    glitter *= 1.0 - clouds.weather.z;
+    return Sea(fresnel * sky + min(glitter * view.exposure, vec3(MAX_GLITTER)), 1.0 - fresnel);
+}
+
+// The sea in front of a geometry sample, behind the air between it and the eye.
+fn with_sea(air: Path, ray: vec3<f32>, distance: f32) -> Path {
+    let sea = sea_at(ray, distance);
+    return Path(air.light + air.transmittance * sea.light, air.transmittance * sea.keep);
+}
+
 // Transmittance of the camera-to-surface segment alone. Bevy's
 // `sample_transmittance_lut_segment` divides two whole-atmosphere transmittances. For
 // near-horizontal rays towards the ground both paths cross hundreds of kilometres of low haze,
@@ -589,6 +685,9 @@ fn fragment(in: FullscreenVertexOutput) -> Output {
             // Usual case: all geometry samples lie at one distance, so shade it once.
             let distance = total / f32(geometry_samples);
             var path = aerial_perspective(ray, uv, distance);
+#ifdef ATMOSPHERE
+            path = with_sea(path, ray, distance);
+#endif
             if distance >= start {
                 path = in_front(cloud.light, cloud.transmittance, path);
             }
@@ -608,6 +707,9 @@ fn fragment(in: FullscreenVertexOutput) -> Output {
                     continue;
                 }
                 var path = aerial_perspective(ray, uv, distance);
+#ifdef ATMOSPHERE
+                path = with_sea(path, ray, distance);
+#endif
                 if distance >= start {
                     path = in_front(cloud.light, cloud.transmittance, path);
                 }

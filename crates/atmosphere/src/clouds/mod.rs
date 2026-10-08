@@ -108,7 +108,15 @@ pub struct CloudParams {
     /// Unexposed sunlight at the camera after the atmosphere, for particles and drops; `sun`
     /// and `sun_color` hold it at the cloud layer.
     pub near_sun: [f32; 4],
+    /// Open sea: level in render space, wind direction XZ, wave clock in seconds (wrapping
+    /// every `WAVE_PERIOD`).
+    pub ocean: [f32; 4],
+    /// x: 1 with a sea to shade; y: wind strength scale of the waves.
+    pub ocean_waves: [f32; 4],
 }
+/// Seconds after which the wave clock wraps; every wave completes whole cycles in it
+/// (`shaders/water/waves.wgsl`).
+pub const WAVE_PERIOD: f64 = 3600.;
 /// Mist noise tile, metres; `MIST_NOISE_PERIOD` in `shaders/sky/composite.wgsl`.
 pub const MIST_NOISE_PERIOD: f64 = 2048.;
 /// Mist drifts slowly with the cloud wind.
@@ -226,10 +234,11 @@ fn sync(
         Res<crate::forest_shadow::ForestShadow>,
         Res<crate::forest_shadow::ForestSkyOcclusion>,
     ),
-    (mist, presentation, tuning): (
+    (mist, presentation, tuning, sea): (
         Res<crate::valley_mist::ValleyMist>,
         Option<Res<crate::AtmospherePresentation>>,
         Option<Res<crate::FogTuning>>,
+        Option<Res<crate::SeaSurface>>,
     ),
     mut mist_fade: Local<(u64, f32)>,
 ) {
@@ -308,7 +317,27 @@ fn sync(
         air_sun: [0.; 4],
         shafts: [0.; 4],
         near_sun: [0.; 4],
+        ocean: [0.; 4],
+        ocean_waves: [0.; 4],
     };
+    if let Some(level) = sea
+        .and_then(|s| s.level)
+        .filter(|_| profile.outdoor && state.owner != AtmosphereOwner::Study)
+    {
+        let wind = p.wind_degrees.to_radians();
+        params.ocean = [
+            level,
+            wind.cos(),
+            wind.sin(),
+            time.elapsed_secs_f64().rem_euclid(WAVE_PERIOD) as f32,
+        ];
+        params.ocean_waves = [
+            1.,
+            state.weather.map_or(1., |w| w.wind_strength).clamp(0.2, 3.),
+            0.,
+            0.,
+        ];
+    }
     // Sunlight after the atmosphere: dimmed and reddened as Bevy lights surfaces, at the camera
     // for the air around it and at the middle of the cloud layer for the clouds.
     let visibility = views
