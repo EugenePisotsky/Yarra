@@ -370,6 +370,13 @@ fn stars(ray: vec3<f32>) -> vec3<f32> {
     return colour * (STAR_PEAK * brightness * night * exp(-offset * offset * 1.4));
 }
 
+// Share of the sun and moon discs a closing deck leaves: their light is so much brighter than
+// the sky that the thinnest gap in a rain deck would show them.
+fn deck_open() -> f32 {
+    let open = 1.0 - clouds.weather.z;
+    return open * open;
+}
+
 // Exposed disc light is kept within half floats (65504); the glare carries the sun's light
 // beyond its disc.
 const MAX_DISC: f32 = 30000.0;
@@ -818,7 +825,7 @@ fn fragment(in: FullscreenVertexOutput) -> Output {
         let transmittance = sample_transmittance_lut(r, dot(ray, normalize(position)));
         let sky = sample_sky_view_lut(r, direction_world_to_atmosphere(ray));
         var path = Path(sky * view.exposure
-            + min(disks * transmittance * view.exposure, vec3(MAX_DISC))
+            + min(disks * transmittance * view.exposure * deck_open(), vec3(MAX_DISC))
             + stars(ray) * transmittance, transmittance);
 #else
         var path = Path(vec3(0.0), vec3(1.0));
