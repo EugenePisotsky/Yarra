@@ -422,7 +422,7 @@ User request: time of day and sunset rays like The Witcher 3's (rays fanning out
 | Clouds at sunset | **Fixed.** Cloud lighting and its shadow march switched off once the sun was not above the horizontal, so clouds went dark exactly at sunset. They now take the light that reaches the cloud layer (none once the sun is below the layer's own horizon) from any direction, marching out through the base towards a sun just below the horizontal: undersides glow red at 18:00. Our low clouds (1.2–1.85 km) see a set sun for only a few minutes, as real low clouds do; pink afterglow belongs to higher clouds. |
 | Sun through rain | **Fixed.** Under rain and storm at 17:16 the sun showed as a bright disc with glare: its disc is so much brighter than the sky that the thinnest gap in the deck let it through, and the glare kept the 12% floor of light scattered through clouds. The discs and glare now fade with the square of the open sky (`deck_open`), with no floor for the sun's own image. |
 | Twilight horizon | The haze takes the brighter of the horizon sky and the night fill instead of their sum. |
-| Not done | The sea's sun glitter is a narrow bright streak (placeholder ocean, roughness 0.08). Clouds do not cast crepuscular rays on screen (rays see geometry only). In sunset light trunks keep a purple cast from the authored purple sunset sky light. |
+| Not done | The sea's sun glitter is a narrow bright streak (placeholder ocean, roughness 0.08). Clouds do not cast crepuscular rays on screen (rays see geometry only). In sunset light trunks keep a purple cast from the authored purple sunset sky light (bluer since; see Night and the moon). |
 
 ## The open sea — October 8
 
@@ -434,6 +434,24 @@ User request: time of day and sunset rays like The Witcher 3's (rays fanning out
 | Foam by depth | **Rejected.** On the start beach the seabed falls 9 cm over 32 m at the waterline, so any band set in metres of depth covered tens of metres in solid white; foam and swash widths are now along the ground, through the slope from the depth buffer (local ripples give 1–3% slopes), with a thin front, faint trailing lace and a soft dry edge. |
 | Overcast | Silver streaks were reflections of Bevy's clear-sky horizon; reflected low sky now blends to the deck's grey, and glitter needs open sky. |
 | Cost | GPU ms at game scale, shader with the sea on / compiled out, alternating: valley view 4.63, 4.54 / 4.34, 4.49 after the wave loop stops at the first unresolved wave (+0.65 ms before); waterline 4.41, 4.50 / 4.20, 4.07. |
+
+## Night and the moon — October 8
+
+User screenshots: right after sunset the scene was purple and dark (purple sky, purple character, saturated green grass), while F1 Night looked right; asked for the whole night to keep that tone. Captures at the forest edge and the start beach facing the sunset and the moon, from sunset to 03:00 and through the moon's phases; fullscreen 3456×2168.
+
+| Change | Decision / observation |
+| --- | --- |
+| Purple after sunset | **Cause: twice-reddened sun and lilac sky light.** With fog off the twilight zenith was brown: each phase's authored sun was already orange, and Bevy's atmosphere reddened it again. Ground, character and the haze over the sky were lit by the authored lilac sunset sky light at near full strength until 12° down. One sun above the atmosphere, sky light taking the night's hue by 4° down (paler until night) and a bluer sunset sky light (0.58, 0.60, 0.80) give a blue hour with a pink-orange horizon glow. |
+| Electric-blue horizon in the blue hour | **Fixed.** The night's blue is authored for full desaturation; before night it lit the haze bright blue. It is half as saturated at the start of night. |
+| Darker after sunset than at night | **Fixed.** Mean linear luminance of the lower frame at the forest edge was 0.016 at 1° down against 0.03–0.05 at night: the exposure still followed the night weight, and the art-directed night is lit brighter. Exposure and colour loss now follow its square root: 0.021 at 1° down, 0.031 at 3°, rising smoothly into the night. |
+| Moon orbit and phases | **Retained.** The moon lags the sun along its path by its age and rises about 50 minutes later each day; crescent, half, gibbous and full moons read clearly, with earthshine on the crescent. |
+| Moon height | Under a moon at 48° the field was 1.8 times as bright as under the midnight moon at 27°. Moonlight above 12° is now partly balanced (open ground 1.4 times, not 3.7, at 50°). Across a month at the forest edge the lower frame ranges from 0.019 (new moon) to 0.05 (a high gibbous moon). |
+| Moon's face | Round sea patches with hard edges read as polka dots; overlapping soft patches merge into seas. At the night exposure a physically lit face saturated to white; it is dimmed at night (`MOON_NIGHT_GAIN`) and drawn as the sunlit moon by day. |
+| Moon glitter on the sea | The old art-directed moonlight made a blown-out white patch; the drawn face's own image made none (the averaged glitter spreads it over the wave field). It is drawn 40 times the face's image: a soft path. |
+| Moonless sky | Added to the sky the glow lifted the moonlit sky well above the F1 look, and the haze and mist in front, lit more dimly, left a bright band at the horizon. It is now a floor under the sky at 15% of the night's sky light. |
+| Hidden lights | **Bevy bug worked around.** Hiding the sun at night (to skip its shadow maps) left it without shadows the next morning: hiding a directional light drops one of its shadow-caster sets but not the other, and they do not rebuild. The moon, hidden by day before, would have lost its shadows from the second night. Lights stay visible; each renders shadow maps only while up and lit. Night in the broadleaf stand, alternating: 12.28, 12.36 ms GPU and 3.67, 3.75 ms render prep without the dark sun's shadow maps against 13.56, 13.43 and 5.38, 5.16 with them; measured while other heavy work ran on the machine, to be repeated. |
+| Schema | Project 29, runtime 28: the atmosphere core gained the sun and the moon's age and lost the per-phase sun and the moon's fixed direction. Reteya was rewritten in place (revision 4) and re-cooked. |
+| Not done | The day's moon is above the bookmark camera's view at most times (pitch 5–80°). Moon colour near the horizon is the sun's through the atmosphere, a little pink. |
 
 ## Open gates and maintenance
 

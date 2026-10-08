@@ -26,6 +26,11 @@ struct CloudParams {
     ocean_waves: vec4<f32>, // x: 1 with a sea to shade, y: wind strength scale of the waves
     lightning: vec4<f32>, // channel top at the cloud base (render space), flash light on clouds
     lightning_channel: vec4<f32>, // x: channel brightness 0..1
+    moon_disc: vec4<f32>, // direction to the moon, angular radius (0: not drawn)
+    moon_frame: vec4<f32>, // the moon's north, earthshine share of a fully lit face
+    moon_sunward: vec4<f32>, // direction to the sun lighting the moon; the drawn face's light as a share of the moon light's
+    moon_face: vec4<f32>, // unexposed light of white ground on the moon lit from straight above
+    night_sky: vec4<f32>, // unexposed moonless night sky light just above the horizon
     lightning_segments: array<vec4<f32>, 32>, // channel segment ends in pairs: xyz, width
 }
 

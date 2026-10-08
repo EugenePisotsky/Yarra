@@ -1,5 +1,6 @@
-//! Game time of day: advances the atmosphere's day phase at the authored day length. Editor
-//! workspaces and studies own the phase themselves and are left alone.
+//! Game time of day: advances the atmosphere's day phase at the authored day length, counting
+//! the days that move the moon. Editor workspaces and studies own the phase themselves and are
+//! left alone.
 use crate::{ActiveWorldSpace, ApplyAtmosphere, AtmosphereOwner, AtmosphereState};
 use bevy::prelude::*;
 
@@ -80,7 +81,7 @@ fn advance_day(
         return;
     }
     let days = time.delta_secs() * clock.time_scale.min(10_000.0) / atmosphere.profile.day_seconds;
-    atmosphere.phase = (atmosphere.phase + days).rem_euclid(1.0);
+    atmosphere.advance(days);
 }
 
 #[cfg(test)]

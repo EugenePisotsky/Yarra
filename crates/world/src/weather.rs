@@ -549,11 +549,12 @@ mod tests {
             assert_eq!(applied.clouds.seed, profile.clouds.seed);
             assert_eq!(applied.clouds.wind_degrees, profile.clouds.wind_degrees);
             assert_eq!(applied.night, profile.night);
+            assert_eq!(
+                (applied.sun_srgb, applied.sun_lux),
+                (profile.sun_srgb, profile.sun_lux)
+            );
             for (a, b) in applied.phases.iter().zip(&profile.phases) {
-                assert_eq!(
-                    (a.sun_srgb, a.sun_lux, a.ambient_lux),
-                    (b.sun_srgb, b.sun_lux, b.ambient_lux)
-                );
+                assert_eq!(a.ambient_lux, b.ambient_lux);
             }
             // The sky model keeps authored clear air; weather visibility is separate fog.
             assert_eq!(applied.visibility_metres, profile.visibility_metres);

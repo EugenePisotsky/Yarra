@@ -29,7 +29,7 @@ use bevy::{
 };
 use std::borrow::Cow;
 use world::{
-    atmosphere::{AtmosphereProfile, evaluate, linear_rgb},
+    atmosphere::{AtmosphereProfile, linear_rgb},
     weather::{WeatherFog, WeatherParams, WeatherTransition},
 };
 
@@ -64,6 +64,9 @@ pub struct AtmospherePresentation {
     pub particles: bool,
     /// Sunbeams through haze, mist and the air under crowns ([`light_shafts`]).
     pub light_shafts: bool,
+    /// Sun and moon shadow maps (render quality). Each light renders them only while it is up
+    /// and lights the scene: a dark sun's shadow passes cost the night forest about 1.2 ms.
+    pub shadows: bool,
 }
 impl Default for AtmospherePresentation {
     fn default() -> Self {
@@ -74,6 +77,7 @@ impl Default for AtmospherePresentation {
             low_air: true,
             particles: true,
             light_shafts: true,
+            shadows: true,
         }
     }
 }
@@ -111,6 +115,8 @@ impl Default for FogTuning {
 pub struct AtmosphereState {
     pub profile: AtmosphereProfile,
     pub phase: f32,
+    /// Days since the game's first; they move the moon. Editors and studies stay on day 0.
+    pub day: i32,
     pub owner: AtmosphereOwner,
     pub direction_override: Option<Vec3>,
     pub exposure_override: Option<f32>,
@@ -129,6 +135,7 @@ impl Default for AtmosphereState {
         let profile = AtmosphereProfile::default();
         Self {
             phase: profile.initial_phase,
+            day: 0,
             profile,
             owner: AtmosphereOwner::Game,
             direction_override: None,
@@ -141,6 +148,35 @@ impl Default for AtmosphereState {
     }
 }
 impl AtmosphereState {
+    /// Moves the time of day by `days` (back when negative), carrying whole days into `day`.
+    pub fn advance(&mut self, days: f32) {
+        let time = self.phase + days;
+        let mut day = self.day + time.floor() as i32;
+        let mut phase = time - time.floor();
+        if phase >= 1.0 {
+            phase = 0.0;
+            day += 1;
+        }
+        self.day = day;
+        self.phase = phase;
+    }
+    /// Moves to the nearest day on which the moon is about `age` days old at the current time of
+    /// day.
+    pub fn set_moon_age(&mut self, age: f32) {
+        let month = world::atmosphere::SYNODIC_MONTH_DAYS;
+        let now = self.profile.night.age_days + (self.day as f32).rem_euclid(month) + self.phase;
+        let ahead = (age - now).rem_euclid(month);
+        let ahead = if ahead > 0.5 * month {
+            ahead - month
+        } else {
+            ahead
+        };
+        self.day += ahead.round() as i32;
+    }
+    /// The atmosphere at the current day and time, for the presented profile.
+    pub fn evaluate(&self, profile: &AtmosphereProfile) -> world::atmosphere::EvaluatedAtmosphere {
+        world::atmosphere::evaluate_at(profile, self.day, self.phase)
+    }
     /// The presented profile: authored, with any game weather overlaid.
     pub fn effective_profile(&self) -> Cow<'_, AtmosphereProfile> {
         match &self.weather {
@@ -294,7 +330,6 @@ fn setup(
         }
         .build(),
         Transform::default(),
-        Visibility::Hidden,
         WorldMoon,
         Name::new("Moon"),
     ));
@@ -314,12 +349,7 @@ fn apply(
         (With<WorldSun>, Without<WorldMoon>),
     >,
     mut moon: Query<
-        (
-            &mut Transform,
-            &mut DirectionalLight,
-            &mut SunDisk,
-            &mut Visibility,
-        ),
+        (&mut Transform, &mut DirectionalLight, &mut SunDisk),
         (With<WorldMoon>, Without<WorldSun>),
     >,
     mut ambient: ResMut<GlobalAmbientLight>,
@@ -345,10 +375,10 @@ fn apply(
 ) {
     if state.owner == AtmosphereOwner::Study {
         // Studies own the shared sun and ambient resources. The world-only moon
-        // must disappear as well, including its contribution to custom grass.
-        for (_, mut light, _, mut visibility) in &mut moon {
+        // must go dark as well, including its contribution to custom grass.
+        for (_, mut light, _) in &mut moon {
             light.illuminance = 0.0;
-            *visibility = Visibility::Hidden;
+            light.shadow_maps_enabled = false;
         }
         return;
     }
@@ -357,13 +387,20 @@ fn apply(
     if profile.validate().is_err() || !state.phase.is_finite() {
         return;
     }
-    let value = evaluate(profile, state.phase);
+    let value = state.evaluate(profile);
     let direction = state
         .direction_override
         .filter(|v| v.is_finite() && v.length_squared() > 0.01)
         .map(Vec3::normalize)
         .unwrap_or(Vec3::from_array(value.direction_to_sun));
-    let mut shadows_enabled = false;
+    let presentation = presentation.as_deref().copied().unwrap_or_default();
+    // Neither light is ever hidden: Bevy 0.19 loses a directional light's shadow casters once it
+    // has been hidden and shown again, so a dark light only stops rendering shadow maps.
+    let casts = |direction: Vec3, diameter_degrees: f32, lux: f32| {
+        presentation.shadows
+            && lux > 0.0
+            && direction.y > -(0.5 * diameter_degrees).to_radians().sin()
+    };
     for (mut transform, mut light, mut disk) in &mut sun {
         let up = if direction.y.abs() > 0.999 {
             Vec3::Z
@@ -376,22 +413,26 @@ fn apply(
         light.color = rgb(value.sun_linear);
         light.illuminance = if profile.outdoor { value.sun_lux } else { 0.0 };
         disk.angular_size = profile.sun_diameter_degrees.to_radians();
-        shadows_enabled = light.shadow_maps_enabled;
-        // Shadow enablement belongs to render quality/audits, not the atmosphere profile.
+        // After sunset it still lights the sky, but nothing on the ground.
+        let shadows = casts(direction, profile.sun_diameter_degrees, light.illuminance);
+        if light.shadow_maps_enabled != shadows {
+            light.shadow_maps_enabled = shadows;
+        }
     }
-    for (mut transform, mut light, mut disk, mut visibility) in &mut moon {
-        transform.rotation = Transform::from_translation(Vec3::from_array(value.direction_to_moon))
+    for (mut transform, mut light, mut disk) in &mut moon {
+        let direction = Vec3::from_array(value.direction_to_moon);
+        transform.rotation = Transform::from_translation(direction)
             .looking_at(Vec3::ZERO, Vec3::Y)
             .rotation;
         light.color = rgb(value.moon_linear);
         light.illuminance = if profile.outdoor { value.moon_lux } else { 0.0 };
-        light.shadow_maps_enabled = shadows_enabled;
+        let shadows = casts(direction, profile.night.diameter_degrees, light.illuminance);
+        if light.shadow_maps_enabled != shadows {
+            light.shadow_maps_enabled = shadows;
+        }
+        // The sky composite draws the moon's face and phase itself.
         disk.angular_size = profile.night.diameter_degrees.to_radians();
-        *visibility = if light.illuminance > 0.0 {
-            Visibility::Visible
-        } else {
-            Visibility::Hidden
-        };
+        disk.intensity = 0.0;
     }
     ambient.color = rgb(value.ambient_linear);
     // A flash lights everything around from the clouds, bluish white.
@@ -404,12 +445,11 @@ fn apply(
             / ambient.brightness.max(1e-3);
         ambient.color = Color::linear_rgb(lit.x, lit.y, lit.z);
     }
-    let presentation = presentation.as_deref().copied().unwrap_or_default();
     // Eye adaptation in the game only: authoring and studies judge the exposure as set.
     let adapt =
         presentation.auto_exposure && state.owner == AtmosphereOwner::Game && profile.outdoor;
     let saturation = if profile.outdoor {
-        1.0 - NIGHT_DESATURATION * value.night_weight
+        1.0 - NIGHT_DESATURATION * value.adaptation
     } else {
         1.0
     };
@@ -556,12 +596,20 @@ mod tests {
             .exposure_override = Some(13.0);
         app.update();
         assert_eq!(app.world().get::<Exposure>(camera).unwrap().ev100, 13.0);
+        // At night only the moon renders shadow maps; neither light is ever hidden.
+        let shadows = |app: &App, light: Entity| {
+            app.world()
+                .get::<DirectionalLight>(light)
+                .unwrap()
+                .shadow_maps_enabled
+        };
+        assert!(shadows(&app, moon) && !shadows(&app, sun));
+        app.world_mut().resource_mut::<AtmosphereState>().phase = 0.5;
+        app.update();
+        assert!(shadows(&app, sun) && !shadows(&app, moon));
+        app.world_mut().resource_mut::<AtmosphereState>().phase = 0.0;
         app.world_mut().resource_mut::<AtmosphereState>().owner = AtmosphereOwner::Study;
         app.update();
-        assert_eq!(
-            app.world().get::<Visibility>(moon),
-            Some(&Visibility::Hidden)
-        );
         assert_eq!(
             app.world()
                 .get::<DirectionalLight>(moon)
@@ -569,21 +617,19 @@ mod tests {
                 .illuminance,
             0.0
         );
+        assert!(!shadows(&app, moon));
         app.world_mut().resource_mut::<AtmosphereState>().owner = AtmosphereOwner::Editor;
         app.world_mut()
-            .get_mut::<DirectionalLight>(sun)
-            .unwrap()
-            .shadow_maps_enabled = false;
+            .resource_mut::<AtmospherePresentation>()
+            .shadows = false;
         app.update();
-        assert_eq!(
-            app.world().get::<Visibility>(moon),
-            Some(&Visibility::Visible)
-        );
+        assert!(!shadows(&app, moon) && !shadows(&app, sun));
         assert!(
-            !app.world()
+            app.world()
                 .get::<DirectionalLight>(moon)
                 .unwrap()
-                .shadow_maps_enabled
+                .illuminance
+                > 0.0
         );
         app.world_mut()
             .resource_mut::<AtmosphereState>()
@@ -591,9 +637,18 @@ mod tests {
             .outdoor = false;
         app.update();
         assert_eq!(
-            app.world().get::<Visibility>(moon),
-            Some(&Visibility::Hidden)
+            app.world()
+                .get::<DirectionalLight>(moon)
+                .unwrap()
+                .illuminance,
+            0.0
         );
+        for light in [sun, moon] {
+            assert_ne!(
+                app.world().get::<Visibility>(light),
+                Some(&Visibility::Hidden)
+            );
+        }
     }
     #[test]
     fn presentation_switches_remove_passes_and_restore_without_editing_profile() {
@@ -615,6 +670,7 @@ mod tests {
             low_air: false,
             particles: false,
             light_shafts: false,
+            shadows: false,
         };
         app.update();
         // Surfaces keep atmosphere lighting; the composite alone stops drawing sky and haze.
@@ -629,7 +685,7 @@ mod tests {
     }
 
     #[test]
-    fn study_owns_lighting_and_world_return_restores_profile_without_changing_shadow_policy() {
+    fn study_owns_lighting_and_world_return_restores_profile_and_shadow_policy() {
         let mut app = App::new();
         app.init_resource::<Assets<ScatteringMedium>>()
             .add_plugins(WorldEnvironmentPlugin::editor());
@@ -662,9 +718,8 @@ mod tests {
         );
         app.world_mut().resource_mut::<AtmosphereState>().owner = AtmosphereOwner::Editor;
         app.world_mut()
-            .get_mut::<DirectionalLight>(sun)
-            .unwrap()
-            .shadow_maps_enabled = false;
+            .resource_mut::<AtmospherePresentation>()
+            .shadows = false;
         app.update();
         assert!(
             app.world()

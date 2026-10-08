@@ -57,6 +57,9 @@ pub(crate) struct LookVariant {
     pub(crate) tuning: FogTuning,
     /// A lightning strike ahead, held this many seconds in; none when `None`.
     pub(crate) lightning: Option<f32>,
+    /// The moon's age in days (0 new, 14.8 full), reached by moving to the nearest day with it;
+    /// the current day when `None`.
+    pub(crate) moon: Option<f32>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -79,7 +82,7 @@ pub(crate) const TONEMAPPERS: [(&str, Tonemapping); 8] = [
 ];
 
 /// `NAME[:key=value,...]` separated by `;`, keys `ev`, `tone`, `ambient`, `sun`, `canopy`,
-/// `auto`, `fog`, `particles`, `shafts`, `phase`, `haze`, `mist`, `depth`, `air` (scale of the air under crowns), `lightning` (a strike ahead held that many seconds in) and `burst` (that many
+/// `auto`, `fog`, `particles`, `shafts`, `phase`, `haze`, `mist`, `depth`, `air` (scale of the air under crowns), `lightning` (a strike ahead held that many seconds in), `moon` (its age in days) and `burst` (that many
 /// screenshots one after another, a frame or two apart).
 pub(crate) fn parse_variants(spec: &str) -> Result<Vec<LookVariant>, String> {
     let variants = spec
@@ -103,6 +106,7 @@ pub(crate) fn parse_variants(spec: &str) -> Result<Vec<LookVariant>, String> {
                 phase: None,
                 tuning: FogTuning::default(),
                 lightning: None,
+                moon: None,
             };
             for setting in settings.split(',').map(str::trim).filter(|s| !s.is_empty()) {
                 let (key, value) = setting.split_once('=').ok_or_else(|| {
@@ -145,6 +149,7 @@ pub(crate) fn parse_variants(spec: &str) -> Result<Vec<LookVariant>, String> {
                     }
                     "phase" => variant.phase = Some(number(0.0..=0.999)?),
                     "lightning" => variant.lightning = Some(number(0.0..=1.1)?),
+                    "moon" => variant.moon = Some(number(0.0..=29.5)?),
                     "burst" => variant.burst = number(1.0..=120.0)? as u32,
                     "haze" => variant.tuning.haze = number(0.0..=20.0)?,
                     "mist" => variant.tuning.mist = number(0.0..=20.0)?,
@@ -264,6 +269,9 @@ fn present(
     let phase = variant.phase.unwrap_or(atmosphere.profile.initial_phase);
     if atmosphere.phase != phase {
         atmosphere.phase = phase;
+    }
+    if let Some(age) = variant.moon {
+        atmosphere.set_moon_age(age);
     }
     let fog = variant.fog.unwrap_or(settings.fog);
     if presentation.low_air != fog {
@@ -414,6 +422,7 @@ fn run(
         "particles": variant.particles.unwrap_or(settings.particles),
         "shafts": variant.shafts.unwrap_or(settings.light_shafts),
         "phase": variant.phase.unwrap_or(atmosphere.profile.initial_phase),
+        "day": atmosphere.day,
         "haze": variant.tuning.haze,
         "mist": variant.tuning.mist,
         "depth": variant.tuning.mist_depth,
@@ -457,7 +466,8 @@ fn run(
         },
         "authored": {
             "ev100": atmosphere.profile.exposure_ev100,
-            "phases": phases.iter().map(|p| json!({"sun_lux": p.sun_lux, "ambient_lux": p.ambient_lux})).collect::<Vec<_>>(),
+            "sun_lux": atmosphere.profile.sun_lux,
+            "phases": phases.iter().map(|p| json!({"ambient_lux": p.ambient_lux})).collect::<Vec<_>>(),
         },
         "sun_elevation_degrees": to_sun.map(|d| d.y.asin().to_degrees()),
         "frames": capture.frames,
@@ -511,6 +521,8 @@ mod tests {
             Some(0.05)
         );
         assert!(parse_variants("x:lightning=2").is_err());
+        assert_eq!(parse_variants("x:moon=14.8").unwrap()[0].moon, Some(14.8));
+        assert!(parse_variants("x:moon=40").is_err());
         assert!(parse_variants("x:tone=sepia").is_err());
         assert!(parse_variants("x:ev=40").is_err());
         assert!(parse_variants(";").is_err());

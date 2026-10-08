@@ -25,8 +25,10 @@ pub(super) enum WeatherAction {
     Lightning,
     /// Move the time of day by this many hours.
     Hours(i32),
-    /// Jump to one of `world::atmosphere::PHASE_TIMES`.
+    /// Jump ahead to one of `world::atmosphere::PHASE_TIMES`.
     TimeOf(usize),
+    /// Move to the day with the moon's next phase, by eighths of a month.
+    MoonPhase,
 }
 #[derive(Component)]
 struct WeatherStatus;
@@ -72,6 +74,7 @@ pub(super) fn spawn(page: &mut ChildSpawnerCommands, button: impl Fn() -> (Node,
                 WeatherAction::DayClock,
                 WeatherAction::Hours(-1),
                 WeatherAction::Hours(1),
+                WeatherAction::MoonPhase,
             ])
             .chain((0..4).map(WeatherAction::TimeOf));
         for action in actions {
@@ -159,10 +162,16 @@ fn actions(
                     lightning.strike_now();
                 }
             }
-            WeatherAction::Hours(hours) => {
-                atmosphere.phase = (atmosphere.phase + hours as f32 / 24.0).rem_euclid(1.0);
+            WeatherAction::Hours(hours) => atmosphere.advance(hours as f32 / 24.0),
+            WeatherAction::TimeOf(i) => {
+                let ahead = world::atmosphere::PHASE_TIMES[i] - atmosphere.phase;
+                atmosphere.advance(ahead.rem_euclid(1.0));
             }
-            WeatherAction::TimeOf(i) => atmosphere.phase = world::atmosphere::PHASE_TIMES[i],
+            WeatherAction::MoonPhase => {
+                let age = atmosphere.evaluate(&atmosphere.profile).moon_age_days;
+                let next = world::atmosphere::moon_phase(age) + 1;
+                atmosphere.set_moon_age(next as f32 / 8.0 * world::atmosphere::SYNODIC_MONTH_DAYS);
+            }
         }
         // Show the result immediately rather than at the next periodic refresh.
         panel.refreshed = f64::NEG_INFINITY;
@@ -228,16 +237,16 @@ fn label(
             let (h, m) = engine::clock_time(world::atmosphere::PHASE_TIMES[i]);
             format!("{} ({h:02}:{m:02})", world::atmosphere::PHASE_NAMES[i])
         }
+        WeatherAction::MoonPhase => "Moon: next phase".into(),
     }
 }
 
 fn time_status(clock: &GameDayClock, atmosphere: &AtmosphereState) -> String {
     let profile = &atmosphere.profile;
     let (h, m) = engine::clock_time(atmosphere.phase);
-    let sun = world::atmosphere::evaluate(profile, atmosphere.phase).direction_to_sun[1]
-        .clamp(-1.0, 1.0)
-        .asin()
-        .to_degrees();
+    let now = atmosphere.evaluate(profile);
+    let elevation = |d: [f32; 3]| d[1].clamp(-1.0, 1.0).asin().to_degrees();
+    let sun = elevation(now.direction_to_sun);
     let mode = if clock.paused {
         "paused for capture".to_string()
     } else if !clock.ticking() {
@@ -246,7 +255,11 @@ fn time_status(clock: &GameDayClock, atmosphere: &AtmosphereState) -> String {
         format!("{:.0}x", clock.time_scale)
     };
     format!(
-        "Time {h:02}:{m:02} | sun {sun:+.1}° | day {:.0} min | clock {mode}",
+        "Day {} {h:02}:{m:02} | sun {sun:+.1}° | {} ({:.0}% lit) {:+.0}° | day {:.0} min | clock {mode}",
+        atmosphere.day + 1,
+        world::atmosphere::MOON_PHASE_NAMES[world::atmosphere::moon_phase(now.moon_age_days)],
+        now.moon_lit * 100.0,
+        elevation(now.direction_to_moon),
         profile.day_seconds / 60.0
     )
 }

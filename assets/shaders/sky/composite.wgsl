@@ -108,7 +108,7 @@ fn haze_light(ray: vec3<f32>, air: vec3<f32>) -> vec3<f32> {
 #ifdef ATMOSPHERE
     let flat = select(vec2(1.0, 0.0), normalize(ray.xz), dot(ray.xz, ray.xz) > 1e-6);
     let horizon = normalize(vec3(flat.x, HORIZON_LIFT, flat.y));
-    let clear = sample_sky_view_lut(length(get_view_position()), direction_world_to_atmosphere(horizon));
+    let clear = clear_sky(horizon);
     // Never below the haze's own sun and sky light: towards the sun that is its bright
     // aureole, which light shafts take back where the haze lies in shadow, and at night the
     // authored fill. Under a closed deck the horizon is the deck's grey, not the clear sky's.
@@ -282,8 +282,7 @@ fn cloud_layer(ray: vec3<f32>, start: f32, screen_uv: vec2<f32>) -> Cloud {
         + clouds.moon_color.rgb * clouds.moon.w * 0.025) * view.exposure;
 #ifdef ATMOSPHERE
     // Under a closing deck far clouds keep the deck's grey.
-    air = mix(sample_sky_view_lut(length(get_view_position()), direction_world_to_atmosphere(ray))
-        * view.exposure, air, clouds.weather.z);
+    air = mix(clear_sky(ray) * view.exposure, air, clouds.weather.z);
 #endif
     var lit = c.rgb * 1024.0;
     // A lightning flash lights the clouds, most near the strike.
@@ -379,6 +378,107 @@ fn discs(ray: vec3<f32>) -> vec3<f32> {
         radiance += (*light).color.rgb / (size * size * 0.25 * 3.14159265) * intensity * edge * limb;
     }
     return select(radiance, vec3(0.0), below);
+}
+
+// The clear sky's light from Bevy's tables, unexposed, at least the moonless night sky's glow:
+// airglow and starlight, brightest towards the horizon, where the eye looks through more of the
+// glowing air. Without it a night with the moon down would have a black sky over lit ground;
+// under the moon its sky is brighter and the glow does not show.
+fn clear_sky(ray: vec3<f32>) -> vec3<f32> {
+    let glow = clouds.night_sky.rgb * mix(1.0, 0.45, sqrt(clamp(ray.y, 0.0, 1.0)));
+    return max(sample_sky_view_lut(length(get_view_position()),
+        direction_world_to_atmosphere(ray)), glow);
+}
+
+// The moon's near side, coarsely: its seas (maria) as overlapping round patches with ragged
+// shores at their real places, and the brightest young craters, Tycho with its rays. Patches
+// are a point in the moon's frame (x east, y north, z towards the earth) and a radius; normal
+// albedo is about 0.13 on the highlands and half that in the darkest seas.
+const MOON_SEAS: array<vec4<f32>, 21> = array<vec4<f32>, 21>(
+    vec4(-0.7912, 0.2588, 0.5540, 0.2967), // Oceanus Procellarum
+    vec4(-0.7233, 0.5736, 0.3846, 0.2094),
+    vec4(-0.7044, -0.0872, 0.7044, 0.2094),
+    vec4(-0.9237, 0.0872, 0.3732, 0.1745),
+    vec4(-0.5523, 0.3420, 0.7602, 0.1396),
+    vec4(-0.2312, 0.5446, 0.8062, 0.2967), // Imbrium
+    vec4(0.2655, 0.4695, 0.8421, 0.1920), // Serenitatis
+    vec4(0.4677, 0.0872, 0.8796, 0.1920), // Tranquillitatis
+    vec4(0.6022, 0.2079, 0.7708, 0.1396),
+    vec4(0.8197, 0.2924, 0.4925, 0.1484), // Crisium
+    vec4(0.7729, -0.1045, 0.6259, 0.1745), // Fecunditatis
+    vec4(0.5609, -0.2588, 0.7864, 0.0960), // Nectaris
+    vec4(-0.2730, -0.3584, 0.8928, 0.1920), // Nubium
+    vec4(-0.5793, -0.4131, 0.7027, 0.1134), // Humorum
+    vec4(-0.2302, 0.8387, 0.4936, 0.0873), // Frigoris
+    vec4(0.0000, 0.8387, 0.5446, 0.0873),
+    vec4(0.2095, 0.8290, 0.5185, 0.0785),
+    vec4(0.0611, 0.2300, 0.9713, 0.0698), // Vaporum
+    vec4(-0.3848, -0.1736, 0.9065, 0.1047), // Cognitum
+    vec4(-0.5106, 0.1305, 0.8498, 0.1222), // Insularum
+    vec4(0.0296, 0.0419, 0.9987, 0.0524), // Sinus Medii
+);
+const MOON_SEA_DARKNESS: array<f32, 21> = array<f32, 21>(0.9, 0.85, 0.85, 0.85, 0.8, 1.0, 0.85,
+    1.0, 0.95, 1.0, 0.85, 0.85, 0.8, 0.9, 0.75, 0.75, 0.7, 0.8, 0.8, 0.8, 0.7);
+const MOON_CRATERS: array<vec4<f32>, 5> = array<vec4<f32>, 5>(
+    vec4(-0.1438, -0.6858, 0.7134, 0.0279), // Tycho
+    vec4(-0.3388, 0.1668, 0.9259, 0.0244), // Copernicus
+    vec4(-0.6095, 0.1409, 0.7801, 0.0175), // Kepler
+    vec4(-0.6740, 0.4019, 0.6198, 0.0157), // Aristarchus
+    vec4(0.7015, 0.2773, 0.6565, 0.0140), // Proclus
+);
+fn moon_albedo(p: vec3<f32>) -> f32 {
+    let broad = textureSampleLevel(noise, noise_sampler, p * 0.9 + 0.31, 0.0);
+    let fine = textureSampleLevel(noise, noise_sampler, p * 3.1 + 0.57, 0.0);
+    // Shores move by a few degrees; neighbouring patches merge into one sea.
+    let ragged = (broad.r - 0.5) * 0.1 + (fine.g - 0.5) * 0.04;
+    var sea = 0.0;
+    for (var i = 0u; i < 21u; i += 1u) {
+        let sea_patch = MOON_SEAS[i];
+        let angle = acos(clamp(dot(p, sea_patch.xyz), -1.0, 1.0)) + ragged;
+        let inside = 1.0 - smoothstep(0.65 * sea_patch.w, 1.25 * sea_patch.w, angle);
+        sea = 1.0 - (1.0 - sea) * (1.0 - inside * MOON_SEA_DARKNESS[i]);
+    }
+    var albedo = mix(0.13, 0.07, sea) * (0.9 + 0.2 * fine.b);
+    for (var i = 0u; i < 5u; i += 1u) {
+        let crater = MOON_CRATERS[i];
+        let angle = acos(clamp(dot(p, crater.xyz), -1.0, 1.0)) / crater.w;
+        albedo += 0.12 * exp(-angle * angle);
+    }
+    let tycho = MOON_CRATERS[0].xyz;
+    let across = normalize(cross(tycho, vec3(0.0, 1.0, 0.0)));
+    let along = cross(tycho, across);
+    let bearing = atan2(dot(p, across), dot(p, along));
+    let distance = acos(clamp(dot(p, tycho), -1.0, 1.0));
+    let rays = pow(max(sin(bearing * 7.0 + 1.3 * sin(bearing * 3.0)), 0.0), 12.0);
+    return albedo + 0.035 * rays * exp(-distance / 0.7) * smoothstep(0.03, 0.08, distance);
+}
+
+// The moon: a sphere lit by the sun with Lommel-Seeliger reflection, as dusty ground reflects,
+// so a full moon is evenly bright to its edge and a crescent dims towards the terminator; its
+// dark side faintly lit by earthshine. rgb its unexposed light, a the share of the pixel it
+// covers, which hides the stars behind it.
+fn moon(ray: vec3<f32>) -> vec4<f32> {
+    let radius = clouds.moon_disc.w;
+    let centre = clouds.moon_disc.xyz;
+    let c = dot(ray, centre);
+    let angle = acos(clamp(c, -1.0, 1.0));
+    let w = max(0.5 * fwidth(angle), 1e-6);
+    let cover = 1.0 - smoothstep(radius - w, radius + w, angle);
+    if radius <= 0.0 || cover <= 0.0 {
+        return vec4(0.0);
+    }
+    let north = clouds.moon_frame.xyz;
+    let east = normalize(cross(centre, north));
+    // The ray's point on the moon: its offset across the disc in radii, then the sphere.
+    let offset = (ray - centre * c) / sin(radius);
+    let x = dot(offset, east);
+    let y = dot(offset, north);
+    let z = sqrt(max(1.0 - x * x - y * y, 0.0));
+    let normal = east * x + north * y - centre * z;
+    let sun = dot(normal, clouds.moon_sunward.xyz);
+    let lit = select(0.0, 2.0 * sun / (sun + max(z, 1e-3)), sun > 0.0);
+    let albedo = moon_albedo(vec3(x, y, z));
+    return vec4(clouds.moon_face.rgb * albedo * (lit + clouds.moon_frame.w), cover);
 }
 
 // Stars: one star at most in each cell of a grid over the sky's directions, at a hashed spot
@@ -613,8 +713,7 @@ fn through_water(air: Path, ray: vec3<f32>, sea_t: f32, distance: f32, at: vec2<
     let bounced = reflect(ray, n);
     let reflected = normalize(vec3(bounced.x, max(bounced.y, 0.004), bounced.z));
     let position = get_view_position();
-    var sky = sample_sky_view_lut(length(position), direction_world_to_atmosphere(reflected))
-        * view.exposure;
+    var sky = clear_sky(reflected) * view.exposure;
     // Under a closing deck the low sky is the deck's grey, as for the haze.
     let deck = clouds.haze.rgb * (clouds.air_light.rgb
         + clouds.air_sun.rgb * scattering(dot(reflected, clouds.sun.xyz))) * view.exposure;
@@ -648,7 +747,10 @@ fn through_water(air: Path, ray: vec3<f32>, sea_t: f32, distance: f32, at: vec2<
         let f = WATER_F0 + (1.0 - WATER_F0) * pow(1.0 - max(dot(v, h), 0.0), 5.0);
         let g = smith(n_dot_v, alpha2) * smith(n_dot_l, alpha2);
         let transmittance = sample_transmittance_lut(length(position), dot(l, normalize(position)));
-        glitter += (*light).color.rgb * transmittance * (d * f * g / (4.0 * n_dot_v));
+        // The moon's image is its drawn face, much dimmer than its art-directed light.
+        let image = select(1.0, clouds.moon_sunward.w,
+            clouds.moon_disc.w > 0.0 && dot(l, clouds.moon_disc.xyz) > 0.9999);
+        glitter += (*light).color.rgb * transmittance * image * (d * f * g / (4.0 * n_dot_v));
     }
     // The glitter is the sun's own image: a closing deck hides it entirely.
     let open = 1.0 - clouds.weather.z;
@@ -793,6 +895,7 @@ fn fragment(in: FullscreenVertexOutput) -> Output {
 #ifdef ATMOSPHERE
     // The sun and moon disks use derivatives, so evaluate them before any per-pixel branch.
     let disks = discs(ray);
+    let moon_disc = moon(ray);
 #endif
     if any(uv < vec2(0.0)) || any(uv > vec2(1.0)) {
         discard;
@@ -866,10 +969,11 @@ fn fragment(in: FullscreenVertexOutput) -> Output {
         let position = get_view_position();
         let r = length(position);
         let transmittance = sample_transmittance_lut(r, dot(ray, normalize(position)));
-        let sky = sample_sky_view_lut(r, direction_world_to_atmosphere(ray));
+        let sky = clear_sky(ray);
         var path = Path(sky * view.exposure
-            + min(disks * transmittance * view.exposure * deck_open(), vec3(MAX_DISC))
-            + stars(ray) * transmittance, transmittance);
+            + min((disks + moon_disc.rgb) * transmittance * view.exposure * deck_open(),
+                vec3(MAX_DISC))
+            + stars(ray) * transmittance * (1.0 - moon_disc.a), transmittance);
 #else
         var path = Path(vec3(0.0), vec3(1.0));
 #endif

@@ -377,6 +377,12 @@ fn draw(
                             egui::Slider::new(&mut edited.sun_diameter_degrees, 0.1..=5.0)
                                 .text("Sun diameter °"),
                         );
+                        color(ui, "Sun tint", &mut edited.sun_srgb);
+                        ui.add(
+                            egui::Slider::new(&mut edited.sun_lux, 0.0..=200_000.0)
+                                .text("Sun · lux"),
+                        );
+                        ui.small("Sunlight above the atmosphere; the air reddens and dims it towards the horizon.");
                         ui.add(
                             egui::Slider::new(&mut edited.molecular_density, 0.1..=4.0)
                                 .text("Air scattering"),
@@ -400,14 +406,6 @@ fn draw(
                             controls.playing = false;
                         }
                         let p = &mut edited.phases[controls.target];
-                        if controls.target != 0 {
-                            color(ui, "Sun tint", &mut p.sun_srgb);
-                            ui.add(
-                                egui::Slider::new(&mut p.sun_lux, 0.0..=200_000.0).text("Sun · lux"),
-                            );
-                        } else {
-                            ui.small("Moonlight is controlled in Night lighting below.");
-                        }
                         color(ui, "Ambient tint", &mut p.ambient_srgb);
                         ui.add(
                             egui::Slider::new(&mut p.ambient_lux, 0.0..=20_000.0)
@@ -423,15 +421,13 @@ fn draw(
                     color(ui, "Moon tint", &mut edited.night.light_srgb);
                     ui.add(egui::Slider::new(&mut edited.night.illuminance_lux, 0.0..=20_000.0)
                         .text("Moon · lux"));
-                    ui.add(egui::Slider::new(&mut edited.night.azimuth_degrees, -180.0..=180.0)
-                        .text("Moon heading °"));
-                    ui.add(egui::Slider::new(&mut edited.night.elevation_degrees, 5.0..=85.0)
-                        .text("Moon elevation °"));
+                    ui.add(egui::Slider::new(&mut edited.night.age_days, 0.0..=29.5)
+                        .text("Moon age on the first day · days"));
                     ui.add(egui::Slider::new(&mut edited.night.diameter_degrees, 0.1..=8.0)
                         .text("Moon diameter °"));
                     ui.add(egui::Slider::new(&mut edited.night.exposure_ev100, 0.0..=20.0)
                         .text("Night exposure · EV100"));
-                    ui.small("Moonlight and exposure blend through twilight. Adjust shadow fill in the Night palette.");
+                    ui.small("The moon follows the sun's path, lagging by its age: 0 new, 7.4 first quarter, 14.8 full, 22.1 last quarter. Moonlight is the full moon's; less of the moon lit gives less. Moonlight and exposure blend through twilight. Adjust shadow fill in the Night palette.");
                 });
                 egui::CollapsingHeader::new("Weather").show(ui, |ui| {
                     weather_editor(ui, &mut edited.weather, controls);

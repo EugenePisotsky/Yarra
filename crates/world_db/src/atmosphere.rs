@@ -20,8 +20,9 @@ pub enum AtmosphereWriteResult {
     },
 }
 
-// Binary compatibility: keep the schema-24/20 core unchanged and append a tagged extension.
-// Older readers reject the trailing bytes rather than misreading a newer profile.
+// The core changes only with the project and runtime schema versions (29 and 28: one sun above
+// the atmosphere, the moon's age); later additions append a tagged extension. Older readers
+// reject the trailing bytes rather than misreading a newer profile.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct CoreProfile {
     outdoor: bool,
@@ -30,6 +31,8 @@ struct CoreProfile {
     azimuth_degrees: f32,
     maximum_elevation_degrees: f32,
     sun_diameter_degrees: f32,
+    sun_srgb: [f32; 3],
+    sun_lux: f32,
     exposure_ev100: f32,
     bloom_intensity: f32,
     visibility_metres: f32,
@@ -47,6 +50,8 @@ impl From<&AtmosphereProfile> for CoreProfile {
             azimuth_degrees: p.azimuth_degrees,
             maximum_elevation_degrees: p.maximum_elevation_degrees,
             sun_diameter_degrees: p.sun_diameter_degrees,
+            sun_srgb: p.sun_srgb,
+            sun_lux: p.sun_lux,
             exposure_ev100: p.exposure_ev100,
             bloom_intensity: p.bloom_intensity,
             visibility_metres: p.visibility_metres,
@@ -66,6 +71,8 @@ impl From<CoreProfile> for AtmosphereProfile {
             azimuth_degrees: p.azimuth_degrees,
             maximum_elevation_degrees: p.maximum_elevation_degrees,
             sun_diameter_degrees: p.sun_diameter_degrees,
+            sun_srgb: p.sun_srgb,
+            sun_lux: p.sun_lux,
             exposure_ev100: p.exposure_ev100,
             bloom_intensity: p.bloom_intensity,
             visibility_metres: p.visibility_metres,
@@ -286,7 +293,8 @@ mod tests {
         }
         let mut writer = ProjectWriter { connection };
         let mut changed = p.clone();
-        changed.phases[1].sun_srgb = [0.8, 0.5, 0.2];
+        changed.sun_srgb = [0.8, 0.5, 0.2];
+        changed.night.age_days = 21.5;
         changed.clouds = world::clouds::CloudSettings::scattered();
         let writes = [
             AtmosphereWrite {

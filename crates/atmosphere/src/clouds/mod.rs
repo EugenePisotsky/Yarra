@@ -18,10 +18,7 @@ use bytemuck::{Pod, Zeroable};
 pub use material::{CloudExtension, CloudMaterial, CloudMaterialOptIn, CloudMaterialSystems};
 pub use render::{CloudShadowGpu, CloudShadowLayout, surface_layout};
 pub(crate) use render::{CloudTarget, Pipelines as CloudPipelines, refresh as refresh_clouds};
-use world::{
-    atmosphere::{evaluate, linear_rgb},
-    weather::VISIBILITY_EXTINCTION,
-};
+use world::{atmosphere::linear_rgb, weather::VISIBILITY_EXTINCTION};
 
 #[derive(Resource, Default)]
 pub struct CloudClock {
@@ -118,9 +115,36 @@ pub struct CloudParams {
     pub lightning: [f32; 4],
     /// x: the channel's brightness 0..1.
     pub lightning_channel: [f32; 4],
+    /// The moon's disc: direction to it and angular radius (0: not drawn).
+    pub moon_disc: [f32; 4],
+    /// The moon's north, square to the direction to it, and the share of a fully lit face's
+    /// light that earthshine gives its dark side.
+    pub moon_frame: [f32; 4],
+    /// Direction to the sun that lights the moon, wherever the sun is, and the moon's drawn
+    /// face's light as a share of its light's: its glitter on the sea is the face's image.
+    pub moon_sunward: [f32; 4],
+    /// Unexposed light of white ground on the moon with the sun straight above it.
+    pub moon_face: [f32; 4],
+    /// Unexposed light of the moonless night sky just above the horizon: airglow and
+    /// starlight, so the sky never turns black.
+    pub night_sky: [f32; 4],
     /// The channel's segments, ends in pairs (xyz, width): `crate::lightning::channel`.
     pub lightning_segments: [[f32; 4]; 2 * crate::lightning::SEGMENTS],
 }
+/// The moon's face is drawn as the sunlit moon by day. At night it is dimmed to stay readable
+/// at the night exposure: its seas show instead of a glare-white disc.
+const MOON_NIGHT_GAIN: f32 = 0.09;
+/// Earthshine on the moon's dark side, as a share of its sunlit face's light with the earth
+/// full as seen from the moon (a new moon from here).
+const EARTHSHINE: f32 = 0.04;
+/// Light of the moonless night sky just above the horizon, as a share of the night's sky light
+/// (as the haze's own light).
+const NIGHT_SKY_GLOW: f32 = 0.15;
+/// Mean normal albedo of the moon's drawn face (`moon_albedo` in `shaders/sky/composite.wgsl`).
+const MOON_MEAN_ALBEDO: f32 = 0.11;
+/// The moon's path on the sea as the eye sees it: each wave facet mirrors the whole disc, which
+/// the sea's averaged glitter spreads into nothing, so its image is drawn this much brighter.
+const MOON_GLITTER: f32 = 40.;
 /// Seconds after which the wave clock wraps; every wave completes whole cycles in it
 /// (`shaders/water/waves.wgsl`).
 pub const WAVE_PERIOD: f64 = 3600.;
@@ -263,7 +287,7 @@ fn sync(
     if active && (state.owner == AtmosphereOwner::Game || clock.playing) {
         clock.seconds += time.delta_secs_f64();
     }
-    let value = evaluate(profile, state.phase);
+    let value = state.evaluate(profile);
     let sun = state
         .direction_override
         .filter(|v| v.is_finite() && v.length_squared() > 0.01)
@@ -332,7 +356,44 @@ fn sync(
         lightning: [0.; 4],
         lightning_channel: [0.; 4],
         lightning_segments: [[0.; 4]; 2 * crate::lightning::SEGMENTS],
+        moon_disc: [0.; 4],
+        moon_frame: [0.; 4],
+        moon_sunward: [0.; 4],
+        moon_face: [0.; 4],
+        night_sky: [0.; 4],
     };
+    if profile.outdoor && profile.night.enabled && state.owner != AtmosphereOwner::Study {
+        let moon = Vec3::from_array(value.direction_to_moon);
+        let sunward = Vec3::from_array(value.direction_to_sun);
+        params.moon_disc = moon
+            .extend((0.5 * profile.night.diameter_degrees).to_radians())
+            .to_array();
+        let earth_lit = 0.5 * (1. + moon.dot(sunward));
+        params.moon_frame = Vec3::from_array(value.moon_north)
+            .extend(EARTHSHINE * earth_lit)
+            .to_array();
+        let gain = 1. + (MOON_NIGHT_GAIN - 1.) * value.adaptation;
+        let face = Vec3::from_array(linear_rgb(profile.sun_srgb)) * profile.sun_lux
+            / std::f32::consts::PI
+            * gain;
+        params.moon_face = face.extend(0.).to_array();
+        let luminance = |c: Vec3| c.dot(Vec3::new(0.2126, 0.7152, 0.0722));
+        let radius = params.moon_disc[3];
+        let light = value.moon_lux * luminance(Vec3::from_array(value.moon_linear))
+            / (std::f32::consts::PI * radius * radius);
+        let image = if light > 0. {
+            luminance(face) * MOON_MEAN_ALBEDO * value.moon_lit * MOON_GLITTER / light
+        } else {
+            0.
+        };
+        params.moon_sunward = sunward.extend(image).to_array();
+        params.night_sky = (Vec3::from_array(value.ambient_linear)
+            * value.ambient_lux
+            * NIGHT_SKY_GLOW
+            * value.night_weight)
+            .extend(0.)
+            .to_array();
+    }
     let flash = state
         .lightning
         .filter(|_| profile.outdoor && state.owner != AtmosphereOwner::Study);
@@ -707,7 +768,7 @@ mod tests {
     fn twilight_haze_cannot_receive_daylight_from_a_set_sun() {
         let profile = world::atmosphere::AtmosphereProfile::default();
         let sunlight = |hour: f32, altitude: f32| {
-            let light = evaluate(&profile, hour / 24.);
+            let light = world::atmosphere::evaluate(&profile, hour / 24.);
             crate::sunlight::sun_transmittance(
                 1.,
                 profile.visibility_metres,
@@ -724,7 +785,7 @@ mod tests {
         // No switch from full moonlight to zero at the horizon.
         assert!(cloud_illuminance(100_000., 0.0001) < 1.);
         assert_eq!(cloud_illuminance(100_000., -0.0001), 0.);
-        let night = evaluate(&profile, 0.);
+        let night = world::atmosphere::evaluate(&profile, 0.);
         assert!(cloud_illuminance(night.moon_lux, night.direction_to_moon[1]) > 0.);
     }
 }

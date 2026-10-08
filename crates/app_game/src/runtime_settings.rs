@@ -5,9 +5,7 @@ use crate::game_render::{
     GameRenderSettings, GameRenderSetup, GameRenderSystems, RESOLUTION_SCALES, RenderPath,
 };
 use bevy::{core_pipeline::prepass::DepthPrepass, light::ShadowFilteringMethod, prelude::*};
-use engine::{
-    GAME_DEPTH_PREPASS_ENABLED, GameInputEnabled, GameplaySystems, WorldSun, WorldViewCamera,
-};
+use engine::{GAME_DEPTH_PREPASS_ENABLED, GameInputEnabled, GameplaySystems, WorldViewCamera};
 use terrain_render::{TerrainMaterial, TerrainShadingMode, composite::TerrainCompositeMaterial};
 use vegetation_render::{
     VegetationDebugSettings, VegetationLightingMode, VegetationProfileMode, VegetationWind,
@@ -287,7 +285,6 @@ fn apply_settings(
     mut commands: Commands,
     s: Res<RuntimeSettings>,
     camera: Single<Entity, With<WorldViewCamera>>,
-    mut sun: Single<&mut DirectionalLight, With<WorldSun>>,
     mut grass: ResMut<VegetationDebugSettings>,
     mut wind: ResMut<VegetationWind>,
     mut prepared: ResMut<terrain_render::TerrainPreparedSettings>,
@@ -326,7 +323,7 @@ fn apply_settings(
     grass.gpu_counters_enabled = s.counters;
     wind.enabled = s.wind;
     prepared.enabled = s.terrain_prepared;
-    sun.shadow_maps_enabled = s.shadows != 2;
+    atmosphere.shadows = s.shadows != 2;
     commands.entity(*camera).insert(if s.shadows == 1 {
         ShadowFilteringMethod::Hardware2x2
     } else {

@@ -302,7 +302,7 @@ CREATE TABLE road_junction_cells (
 ) STRICT;
 CREATE INDEX road_junction_cells_id ON road_junction_cells(junction_id);
 
-PRAGMA user_version = 28;
+PRAGMA user_version = 29;
 "#;
 
 pub const RUNTIME_SCHEMA: &str = r#"
@@ -554,5 +554,5 @@ CREATE TABLE far_object_pages (
     payload BLOB NOT NULL CHECK(length(payload) BETWEEN 1 AND 67108864),
     PRIMARY KEY(world_space_id, block_x, block_z)
 ) STRICT, WITHOUT ROWID;
-PRAGMA user_version = 27;
+PRAGMA user_version = 28;
 "#;
