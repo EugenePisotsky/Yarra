@@ -23,23 +23,6 @@
 #import bevy_pbr::atmosphere::functions::{calculate_visible_sun_ratio, clamp_to_surface}
 #endif
 
-// Yarra: the sunlight left at `P` after the atmosphere and the horizon, as Bevy applies it inside
-// `lighting::directional_light`, for direct light added outside that function. Without it the
-// crowns' wrap-around light stayed white at sunset and lit foliage after the sun had set.
-fn through_atmosphere(P: vec3<f32>, light_id: u32) -> vec3<f32> {
-#ifdef ATMOSPHERE
-    let light = &view_bindings::lights.directional_lights[light_id];
-    let atmosphere = view_bindings::atmosphere;
-    let P_as = (atmosphere.world_to_atmosphere * vec4(P, 1.0)).xyz;
-    let P_clamped = clamp_to_surface(atmosphere, P_as);
-    let r = length(P_clamped);
-    let mu = dot((*light).direction_to_light, normalize(P_clamped));
-    return lighting::sample_transmittance_lut(r, mu)
-        * calculate_visible_sun_ratio(atmosphere, r, mu, (*light).sun_disk_angular_size);
-#else
-    return vec3(1.0);
-#endif
-}
 
 #ifdef STANDARD_MATERIAL_SPECULAR_TRANSMISSION
 #import bevy_pbr::transmission
@@ -77,8 +60,44 @@ fn through_atmosphere(P: vec3<f32>, light_id: u32) -> vec3<f32> {
 #endif
 #import "shaders/clouds/surface.wgsl"::{cloud_visibility, surface_wetness}
 #ifdef FOREST_SHADOW
-#import "shaders/clouds/forest_shadow.wgsl"::{forest_transmittance, forest_sky_visibility}
+#import "shaders/clouds/forest_shadow.wgsl"::{forest_transmittance, forest_sky_light}
 #endif
+
+// Yarra: light reflected towards a surface by the ground around it, as environment radiance
+// (Bevy's ambient colour is used the same way): the ground's albedo times the sun, moon and
+// sky light reaching it. Grass and soil reflect a dim green-gold.
+const GROUND_ALBEDO: vec3<f32> = vec3(0.09, 0.12, 0.05);
+fn ground_light(P: vec3<f32>) -> vec3<f32> {
+    var irradiance = view_bindings::lights.ambient_color.rgb * PI;
+    for (var i = 0u; i < view_bindings::lights.n_directional_lights; i += 1u) {
+        let light = &view_bindings::lights.directional_lights[i];
+        let height = (*light).direction_to_light.y;
+        if height > 0.0 {
+            irradiance += (*light).color.rgb * height * through_atmosphere(P, i)
+                * cloud_visibility(P, (*light).direction_to_light);
+        }
+    }
+    return GROUND_ALBEDO * irradiance / PI;
+}
+
+// Yarra: the sunlight left at `P` after the atmosphere and the horizon, as Bevy applies it inside
+// `lighting::directional_light`, for direct light added outside that function. Without it the
+// crowns' wrap-around light stayed white at sunset and lit foliage after the sun had set.
+fn through_atmosphere(P: vec3<f32>, light_id: u32) -> vec3<f32> {
+#ifdef ATMOSPHERE
+    let light = &view_bindings::lights.directional_lights[light_id];
+    let atmosphere = view_bindings::atmosphere;
+    let P_as = (atmosphere.world_to_atmosphere * vec4(P, 1.0)).xyz;
+    let P_clamped = clamp_to_surface(atmosphere, P_as);
+    let r = length(P_clamped);
+    let mu = dot((*light).direction_to_light, normalize(P_clamped));
+    return lighting::sample_transmittance_lut(r, mu)
+        * calculate_visible_sun_ratio(atmosphere, r, mu, (*light).sun_disk_angular_size);
+#else
+    return vec3(1.0);
+#endif
+}
+
 fn apply_pbr_lighting(
     input: pbr_types::PbrInput,
 ) -> vec4<f32> {
@@ -577,14 +596,26 @@ fn apply_pbr_lighting(
         // Yarra: ambient comes from the sky above. Up-facing surfaces keep it all (flat
         // ground is unchanged); vertical ones get 75% and downward ones 50%, so shapes
         // still read when clouds hide the sun.
-        var sky_facing = 0.75 + 0.25 * in.N.y;
+        var sky_facing = vec3(0.75 + 0.25 * in.N.y);
+#ifdef TREE_CROWN_SHADING
+        indirect_light += ambient::ambient_light(in.world_position, in.N, in.V, NdotV, diffuse_color, F0, perceptual_roughness, diffuse_occlusion * sky_facing);
+#else
+        // Below the horizon of a surface lies sunlit ground, not sky: its lower half sees
+        // the light the ground reflects, so trunks, cliffs and characters are not lit blue
+        // from below. Flat ground is unchanged.
+        let below = 0.5 - 0.5 * in.N.y;
+        sky_facing = vec3(1.0 - below);
+        var ground = ground_light(in.world_position.xyz);
 #ifdef FOREST_SHADOW
-#ifndef TREE_CROWN_SHADING
-        // Under the crowns most of the sky is hidden. Crowns carry their own occlusion.
-        sky_facing *= forest_sky_visibility(in.world_position.xyz);
-#endif
+        // Under the crowns most of the sky is hidden and the ground lies in their shade;
+        // leaf-filtered light stands in for part of it.
+        let canopy = forest_sky_light(in.world_position.xyz);
+        sky_facing *= canopy;
+        ground *= canopy;
 #endif
         indirect_light += ambient::ambient_light(in.world_position, in.N, in.V, NdotV, diffuse_color, F0, perceptual_roughness, diffuse_occlusion * sky_facing);
+        indirect_light += diffuse_color * ground * below * diffuse_occlusion;
+#endif
     }
 
     // we'll use the specular component of the transmitted environment

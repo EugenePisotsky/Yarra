@@ -77,3 +77,15 @@ fn forest_sky_visibility(p: vec3<f32>) -> f32 {
     }
     return mix(1.0, mix(SKY_FLOOR, 1.0, around.b), strength);
 }
+
+// Light that replaces the sky the crowns hide, as a share of the sky's light: daylight passed
+// through and reflected between leaves, so shade under crowns turns green-gold instead of the sky's
+// blue. Dim against the open sky; a closed stand's floor stays dark.
+const CANOPY_FILL: vec3<f32> = vec3(0.08, 0.13, 0.03);
+
+// The sky's light reaching `p` under crowns per channel: the open share of the sky plus the
+// leaf-filtered light standing in for the rest. 1 where no crowns are near.
+fn forest_sky_light(p: vec3<f32>) -> vec3<f32> {
+    let open = forest_sky_visibility(p);
+    return open + (1.0 - open) * CANOPY_FILL;
+}

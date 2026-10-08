@@ -417,8 +417,9 @@ User request: time of day and sunset rays like The Witcher 3's (rays fanning out
 | Day sweep (12 times from 00:00 to 20:24, four views) | Night looked like a blue day (moon 1/55 of the sun at 4.5 stops more exposure, full saturation); crowns were lit after sunset; the twilight horizon glowed with both sky and night fill. |
 | Night | **Retained:** saturation falls by 60% with the night weight, and stars come out. Night exposure EV 8.5 (authored) keeps open ground readable; 9.5 is moodier, 10.5 too dark; forests at night are dark at any of them. |
 | Crowns lit after sunset | **Fixed.** Their wrap-around and see-through light skipped the atmosphere's transmittance and the horizon; it now uses both, as Bevy's own sun term does. |
+| Blue trunks and characters | **Fixed with ground bounce.** With the sky light cut to 5% trunks were warm grey-brown; with the sun cut, strongly blue: vertical surfaces were lit only by uniform sky light (crowns in the broadleaf stand hide about 30% of the sky). Their lower half now sees light reflected by the ground, and under crowns part of the hidden sky is leaf-filtered light. A trunk in the broadleaf stand at noon went from RGB 25, 35, 46 to 38, 47, 35; open ground and slopes are unchanged. |
 | Twilight horizon | The haze takes the brighter of the horizon sky and the night fill instead of their sum. |
-| Not done | The sea's sun glitter is a narrow bright streak (placeholder ocean, roughness 0.08). Clouds do not cast crepuscular rays on screen (rays see geometry only). Bark reads purple-blue in sky light. |
+| Not done | The sea's sun glitter is a narrow bright streak (placeholder ocean, roughness 0.08). Clouds do not cast crepuscular rays on screen (rays see geometry only). In sunset light trunks keep a purple cast from the authored purple sunset sky light. |
 
 ## Open gates and maintenance
 
