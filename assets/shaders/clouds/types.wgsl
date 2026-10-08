@@ -24,6 +24,9 @@ struct CloudParams {
     near_sun: vec4<f32>, // unexposed sunlight at the camera; sun and sun_color hold it at the clouds
     ocean: vec4<f32>, // open sea: level, wind direction xz, wave clock seconds
     ocean_waves: vec4<f32>, // x: 1 with a sea to shade, y: wind strength scale of the waves
+    lightning: vec4<f32>, // channel top at the cloud base (render space), flash light on clouds
+    lightning_channel: vec4<f32>, // x: channel brightness 0..1
+    lightning_segments: array<vec4<f32>, 32>, // channel segment ends in pairs: xyz, width
 }
 
 // Cached sky: azimuth across, square-root warped elevation down from the tracing cutoff (ray.y

@@ -55,6 +55,8 @@ pub(crate) struct LookVariant {
     pub(crate) phase: Option<f32>,
     /// Scales of haze and mist extinction and of mist depth ([`FogTuning`]).
     pub(crate) tuning: FogTuning,
+    /// A lightning strike ahead, held this many seconds in; none when `None`.
+    pub(crate) lightning: Option<f32>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -77,7 +79,7 @@ pub(crate) const TONEMAPPERS: [(&str, Tonemapping); 8] = [
 ];
 
 /// `NAME[:key=value,...]` separated by `;`, keys `ev`, `tone`, `ambient`, `sun`, `canopy`,
-/// `auto`, `fog`, `particles`, `shafts`, `phase`, `haze`, `mist`, `depth`, `air` (scale of the air under crowns) and `burst` (that many
+/// `auto`, `fog`, `particles`, `shafts`, `phase`, `haze`, `mist`, `depth`, `air` (scale of the air under crowns), `lightning` (a strike ahead held that many seconds in) and `burst` (that many
 /// screenshots one after another, a frame or two apart).
 pub(crate) fn parse_variants(spec: &str) -> Result<Vec<LookVariant>, String> {
     let variants = spec
@@ -100,6 +102,7 @@ pub(crate) fn parse_variants(spec: &str) -> Result<Vec<LookVariant>, String> {
                 burst: 1,
                 phase: None,
                 tuning: FogTuning::default(),
+                lightning: None,
             };
             for setting in settings.split(',').map(str::trim).filter(|s| !s.is_empty()) {
                 let (key, value) = setting.split_once('=').ok_or_else(|| {
@@ -141,6 +144,7 @@ pub(crate) fn parse_variants(spec: &str) -> Result<Vec<LookVariant>, String> {
                         }
                     }
                     "phase" => variant.phase = Some(number(0.0..=0.999)?),
+                    "lightning" => variant.lightning = Some(number(0.0..=1.1)?),
                     "burst" => variant.burst = number(1.0..=120.0)? as u32,
                     "haze" => variant.tuning.haze = number(0.0..=20.0)?,
                     "mist" => variant.tuning.mist = number(0.0..=20.0)?,
@@ -244,7 +248,11 @@ fn present(
     capture: Res<Capture>,
     mut atmosphere: ResMut<AtmosphereState>,
     mut occlusion: ResMut<ForestSkyOcclusion>,
-    (mut presentation, mut tuning): (ResMut<engine::AtmospherePresentation>, ResMut<FogTuning>),
+    (mut presentation, mut tuning, lightning): (
+        ResMut<engine::AtmospherePresentation>,
+        ResMut<FogTuning>,
+        Option<ResMut<engine::GameLightning>>,
+    ),
     settings: Res<RuntimeSettings>,
     cameras: Query<(Entity, Option<&Tonemapping>), With<WorldViewCamera>>,
 ) {
@@ -270,6 +278,13 @@ fn present(
         presentation.light_shafts = shafts;
     }
     tuning.set_if_neq(variant.tuning);
+    if let Some(mut lightning) = lightning {
+        match (variant.lightning, lightning.holding()) {
+            (Some(age), held) if held != Some(age) => lightning.hold(age),
+            (None, Some(_)) => lightning.clear(),
+            _ => {}
+        }
+    }
     occlusion.set_if_neq(ForestSkyOcclusion(
         variant.canopy.unwrap_or(ForestSkyOcclusion::default().0),
     ));
@@ -491,6 +506,11 @@ mod tests {
             parse_variants("x:shafts=off").unwrap()[0].shafts,
             Some(false)
         );
+        assert_eq!(
+            parse_variants("x:lightning=0.05").unwrap()[0].lightning,
+            Some(0.05)
+        );
+        assert!(parse_variants("x:lightning=2").is_err());
         assert!(parse_variants("x:tone=sepia").is_err());
         assert!(parse_variants("x:ev=40").is_err());
         assert!(parse_variants(";").is_err());

@@ -5,6 +5,7 @@ pub mod ambient_particles;
 pub mod clouds;
 pub mod forest_shadow;
 pub mod light_shafts;
+pub mod lightning;
 pub mod precipitation;
 pub mod shelter;
 pub mod sky;
@@ -120,6 +121,8 @@ pub struct AtmosphereState {
     pub weather_transition: Option<WeatherTransition>,
     /// 0..1 surface wetness accumulated by game rain; lags precipitation.
     pub wetness: f32,
+    /// A lightning strike in progress, set by the game's weather.
+    pub lightning: Option<lightning::LightningFlash>,
 }
 impl Default for AtmosphereState {
     fn default() -> Self {
@@ -132,6 +135,7 @@ impl Default for AtmosphereState {
             exposure_override: None,
             weather: None,
             weather_transition: None,
+            lightning: None,
             wetness: 0.0,
         }
     }
@@ -390,7 +394,16 @@ fn apply(
         };
     }
     ambient.color = rgb(value.ambient_linear);
-    ambient.brightness = value.ambient_lux;
+    // A flash lights everything around from the clouds, bluish white.
+    let flash = state.lightning.map_or(0.0, |l| l.flash);
+    ambient.brightness = value.ambient_lux + flash * lightning::FLASH_AMBIENT;
+    if flash > 0.0 {
+        let base = Vec3::from_array(value.ambient_linear) * value.ambient_lux;
+        let lit = (base
+            + Vec3::from_array(lightning::FLASH_COLOR) * flash * lightning::FLASH_AMBIENT)
+            / ambient.brightness.max(1e-3);
+        ambient.color = Color::linear_rgb(lit.x, lit.y, lit.z);
+    }
     let presentation = presentation.as_deref().copied().unwrap_or_default();
     // Eye adaptation in the game only: authoring and studies judge the exposure as set.
     let adapt =

@@ -285,12 +285,55 @@ fn cloud_layer(ray: vec3<f32>, start: f32, screen_uv: vec2<f32>) -> Cloud {
     air = mix(sample_sky_view_lut(length(get_view_position()), direction_world_to_atmosphere(ray))
         * view.exposure, air, clouds.weather.z);
 #endif
-    let color = mix(air * (1.0 - c.a), c.rgb * (1024.0 * view.exposure), haze);
+    var lit = c.rgb * 1024.0;
+    // A lightning flash lights the clouds, most near the strike.
+    if clouds.lightning.w > 0.0 {
+        let to_strike = normalize(clouds.lightning.xyz - view.world_position);
+        let near = exp(-(1.0 - dot(ray, to_strike)) * 25.0) + 0.12;
+        lit += LIGHTNING_COLOR * clouds.lightning.w * near * (1.0 - c.a);
+    }
+    let color = mix(air * (1.0 - c.a), lit * view.exposure, haze);
     // Fade the finite ground-view tracing range into the horizon rather than exposing a
     // straight edge at the end of the cloud layer.
     // A closed deck stays to the horizon: fading it showed clear sky beneath.
     let coverage = 1.0 - smoothstep(20000.0, 40000.0, start) * (1.0 - clouds.weather.z);
     return Cloud(color * coverage, 1.0 - coverage * (1.0 - c.a));
+}
+
+// Lightning (`atmosphere::lightning`): the flash's colour, and the channel's exposed brightness
+// at its core, far past white so bloom spreads it.
+const LIGHTNING_COLOR: vec3<f32> = vec3(0.85, 0.9, 1.0);
+const CHANNEL_BRIGHTNESS: f32 = 80.0;
+
+// The lightning channel seen along `ray`, where it lies nearer than `limit` metres: a core about
+// a pixel wide and a halo, dimmed by the haze and rain fog in front.
+fn lightning_glow(ray: vec3<f32>, limit: f32) -> vec3<f32> {
+    let channel = clouds.lightning_channel.x;
+    if channel <= 0.0 {
+        return vec3(0.0);
+    }
+    let pixel = 2.0 / (view.clip_from_view[1][1] * view.main_pass_viewport.w);
+    let o = view.world_position;
+    var glow = 0.0;
+    for (var i = 0u; i < 16u; i += 1u) {
+        let a = clouds.lightning_segments[2u * i];
+        let b = clouds.lightning_segments[2u * i + 1u].xyz;
+        let along = b - a.xyz;
+        let w0 = o - a.xyz;
+        let bd = dot(ray, along);
+        let c = dot(along, along);
+        let denom = max(c - bd * bd, 1e-6);
+        let s = clamp((dot(along, w0) - bd * dot(ray, w0)) / denom, 0.0, 1.0);
+        let q = a.xyz + along * s;
+        let t = dot(q - o, ray);
+        if t <= 0.0 || t > limit {
+            continue;
+        }
+        let px = length(o + ray * t - q) / (t * pixel);
+        let fade = exp(-t * (clouds.fog.w + 3.912 / max(clouds.haze.w, 50.0)));
+        glow += a.w * fade * (exp(-px * px * 0.5) + 0.06 / (1.0 + px * px / 16.0));
+    }
+    return LIGHTNING_COLOR * glow * channel * CHANNEL_BRIGHTNESS;
 }
 
 // Air between the camera and a surface `distance` metres along the ray. The atmosphere entity
@@ -889,6 +932,7 @@ fn fragment(in: FullscreenVertexOutput) -> Output {
         * pow(shafts.a, AIR_GLOW_CANOPY);
     let air = (f32(sky_samples) + f32(geometry_samples) * near_air) / f32(samples);
     light += sun_glare(ray, in.position.xy, air);
+    light += lightning_glow(ray, select(1.0e30, farthest, sky_samples == 0u));
 #endif
 
 #ifdef DUAL_SOURCE_BLENDING

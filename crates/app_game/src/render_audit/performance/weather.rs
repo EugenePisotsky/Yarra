@@ -22,6 +22,7 @@ pub(super) enum WeatherAction {
     Authored,
     RainRendering,
     DayClock,
+    Lightning,
     /// Move the time of day by this many hours.
     Hours(i32),
     /// Jump to one of `world::atmosphere::PHASE_TIMES`.
@@ -67,6 +68,7 @@ pub(super) fn spawn(page: &mut ChildSpawnerCommands, button: impl Fn() -> (Node,
                 WeatherAction::Clock,
                 WeatherAction::Authored,
                 WeatherAction::RainRendering,
+                WeatherAction::Lightning,
                 WeatherAction::DayClock,
                 WeatherAction::Hours(-1),
                 WeatherAction::Hours(1),
@@ -100,6 +102,7 @@ fn pause_during_capture(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // Optional weather, time and lightning resources.
 fn actions(
     clicks: Query<(&Interaction, &WeatherAction), Changed<Interaction>>,
     session: Res<CaptureSession>,
@@ -107,6 +110,7 @@ fn actions(
     weather: Option<ResMut<GameWeather>>,
     rain: Option<ResMut<PrecipitationPresentation>>,
     mut clock: Option<ResMut<GameDayClock>>,
+    mut lightning: Option<ResMut<engine::GameLightning>>,
     mut panel: ResMut<WeatherPanel>,
 ) {
     let (Some(mut atmosphere), Some(mut weather), Some(mut rain)) = (atmosphere, weather, rain)
@@ -148,6 +152,11 @@ fn actions(
                     };
                     clock.running = true;
                     clock.time_scale = DAY_CLOCKS[panel.day_clock];
+                }
+            }
+            WeatherAction::Lightning => {
+                if let Some(lightning) = lightning.as_mut() {
+                    lightning.strike_now();
                 }
             }
             WeatherAction::Hours(hours) => {
@@ -213,6 +222,7 @@ fn label(
             Some(_) => "Day clock: stopped".into(),
             None => "Day clock: unavailable".into(),
         },
+        WeatherAction::Lightning => "Lightning strike".into(),
         WeatherAction::Hours(hours) => format!("Time {hours:+} h"),
         WeatherAction::TimeOf(i) => {
             let (h, m) = engine::clock_time(world::atmosphere::PHASE_TIMES[i]);

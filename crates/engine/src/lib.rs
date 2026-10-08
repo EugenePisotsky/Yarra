@@ -21,6 +21,8 @@ pub use tree_wind::{
 };
 mod day_clock;
 pub use day_clock::{GameDayClock, GameDayClockPlugin, clock_time};
+mod lightning;
+pub use lightning::GameLightning;
 mod weather;
 pub use weather::{GameWeather, GameWeatherPlugin, WeatherStart};
 pub use world::weather::{WeatherKind, WeatherParams};

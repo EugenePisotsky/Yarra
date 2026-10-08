@@ -113,6 +113,13 @@ pub struct CloudParams {
     pub ocean: [f32; 4],
     /// x: 1 with a sea to shade; y: wind strength scale of the waves.
     pub ocean_waves: [f32; 4],
+    /// Lightning: where the channel leaves the cloud base (render space) and the flash's
+    /// unexposed light on the clouds near it (0 without a strike).
+    pub lightning: [f32; 4],
+    /// x: the channel's brightness 0..1.
+    pub lightning_channel: [f32; 4],
+    /// The channel's segments, ends in pairs (xyz, width): `crate::lightning::channel`.
+    pub lightning_segments: [[f32; 4]; 2 * crate::lightning::SEGMENTS],
 }
 /// Seconds after which the wave clock wraps; every wave completes whole cycles in it
 /// (`shaders/water/waves.wgsl`).
@@ -322,7 +329,26 @@ fn sync(
         near_sun: [0.; 4],
         ocean: [0.; 4],
         ocean_waves: [0.; 4],
+        lightning: [0.; 4],
+        lightning_channel: [0.; 4],
+        lightning_segments: [[0.; 4]; 2 * crate::lightning::SEGMENTS],
     };
+    let flash = state
+        .lightning
+        .filter(|_| profile.outdoor && state.owner != AtmosphereOwner::Study);
+    if let Some(flash) = flash {
+        params.lightning = flash
+            .top
+            .extend(flash.flash * crate::lightning::FLASH_SKY)
+            .to_array();
+        params.lightning_channel = [flash.channel, 0., 0., 0.];
+        params.lightning_segments = flash.segments;
+    }
+    // The flash lights the haze and rain fog all around.
+    let flash_air = Vec3::from_array(crate::lightning::FLASH_COLOR)
+        * flash.map_or(0., |f| f.flash)
+        * crate::lightning::FLASH_SKY
+        * 0.015;
     if let Some(level) = sea
         .and_then(|s| s.level)
         .filter(|_| profile.outdoor && state.owner != AtmosphereOwner::Study)
@@ -416,7 +442,7 @@ fn sync(
         .filter(|f| profile.outdoor && f.extinction > 0.)
     {
         let light = ambient + (sun_light + moon_light) * 0.025;
-        params.fog = (Vec3::from_array(fog.tint_linear) * light)
+        params.fog = (Vec3::from_array(fog.tint_linear) * light + flash_air)
             .extend(fog.extinction)
             .to_array();
     }
@@ -462,7 +488,9 @@ fn sync(
             0.,
             0.,
         ];
-        params.air_light = (ambient + moon_light * 0.025).extend(0.).to_array();
+        params.air_light = (ambient + moon_light * 0.025 + flash_air)
+            .extend(0.)
+            .to_array();
         params.air_sun = sun_light.extend(0.).to_array();
         if presentation.is_none_or(|p| p.light_shafts) {
             // Humid morning air under the crowns holds more.

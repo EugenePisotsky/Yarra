@@ -127,6 +127,7 @@ impl Plugin for GameWeatherPlugin {
         if !app.world().contains_resource::<GameWeather>() {
             app.insert_resource(GameWeather::new(WeatherStart::Automatic, 0));
         }
+        crate::lightning::plugin(app);
         app.add_systems(
             PostUpdate,
             (
@@ -317,7 +318,7 @@ fn update_rain_shelter(
     *last = Some(now);
 }
 
-fn advance_weather(
+pub(crate) fn advance_weather(
     time: Res<Time>,
     active: Option<Res<ActiveWorldSpace>>,
     mut weather: ResMut<GameWeather>,

@@ -122,6 +122,14 @@ const NEUTRAL_HAZE_SRGB: [f32; 3] = [0.78, 0.80, 0.82];
 pub const MAX_WIND_RATE: f32 = 2.0;
 
 impl WeatherParams {
+    /// Lightning strikes a minute: storms only, from heavy rain under the densest clouds.
+    pub fn lightning_per_minute(&self) -> f32 {
+        let ramp = |v: f32, lo: f32, hi: f32| {
+            let t = ((v - lo) / (hi - lo)).clamp(0.0, 1.0);
+            t * t * (3.0 - 2.0 * t)
+        };
+        8.0 * ramp(self.precipitation, 0.75, 1.0) * ramp(self.cloud_density, 1.7, 2.1)
+    }
     pub fn lerp(self, to: Self, t: f32) -> Self {
         let m = |a: f32, b: f32| a + (b - a) * t;
         Self {
