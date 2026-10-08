@@ -99,19 +99,18 @@ fn fog_along(ray: vec3<f32>, distance: f32) -> Fog {
 }
 
 // Light that ground haze scatters towards the eye where it is opaque. With the atmosphere it is
-// the sky just above the horizon below the ray, from Bevy's tables: haze and sky are the same
-// air, so distant haze meets the sky without a band at any time of day, orange towards a low
-// sun and grey-blue away from it. At night the authored fill light keeps haze from going black;
-// in twilight the brighter of the two holds, so the horizon does not glow with both.
+// at least the sky just above the horizon below the ray, from Bevy's tables: haze and sky are
+// the same air, so distant haze meets the sky without a band at any time of day.
 fn haze_light(ray: vec3<f32>, air: vec3<f32>) -> vec3<f32> {
 #ifdef ATMOSPHERE
     let flat = select(vec2(1.0, 0.0), normalize(ray.xz), dot(ray.xz, ray.xz) > 1e-6);
     let horizon = normalize(vec3(flat.x, HORIZON_LIFT, flat.y));
     let clear = sample_sky_view_lut(length(get_view_position()), direction_world_to_atmosphere(horizon));
-    // Under a closed deck the horizon is the deck's grey, not the clear sky's.
-    let sky = mix(clear, clouds.haze.rgb * air, clouds.weather.z);
-    let night = 1.0 - smoothstep(-0.1, 0.05, clouds.sun.y);
-    return max(sky, clouds.air_light.rgb * clouds.haze.rgb * night);
+    // Never below the haze's own sun and sky light: towards the sun that is its bright
+    // aureole, which light shafts take back where the haze lies in shadow, and at night the
+    // authored fill. Under a closed deck the horizon is the deck's grey, not the clear sky's.
+    let own = clouds.haze.rgb * air;
+    return mix(max(clear, own), own, clouds.weather.z);
 #else
     return clouds.haze.rgb * air;
 #endif
