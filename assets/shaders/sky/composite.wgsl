@@ -107,7 +107,9 @@ fn haze_light(ray: vec3<f32>, air: vec3<f32>) -> vec3<f32> {
 #ifdef ATMOSPHERE
     let flat = select(vec2(1.0, 0.0), normalize(ray.xz), dot(ray.xz, ray.xz) > 1e-6);
     let horizon = normalize(vec3(flat.x, HORIZON_LIFT, flat.y));
-    let sky = sample_sky_view_lut(length(get_view_position()), direction_world_to_atmosphere(horizon));
+    let clear = sample_sky_view_lut(length(get_view_position()), direction_world_to_atmosphere(horizon));
+    // Under a closed deck the horizon is the deck's grey, not the clear sky's.
+    let sky = mix(clear, clouds.haze.rgb * air, clouds.weather.z);
     let night = 1.0 - smoothstep(-0.1, 0.05, clouds.sun.y);
     return max(sky, clouds.air_light.rgb * clouds.haze.rgb * night);
 #else
@@ -273,18 +275,19 @@ fn cloud_layer(ray: vec3<f32>, start: f32, screen_uv: vec2<f32>) -> Cloud {
     let haze = exp(-start * 3.912 / max(clouds.haze.w, 50.0));
     // Haze in front of an opaque cloud must not reintroduce the sun/moon disk behind it. With
     // the atmosphere, a cloud lost in haze turns into the sky it stands in.
-#ifdef ATMOSPHERE
-    let air = sample_sky_view_lut(length(get_view_position()), direction_world_to_atmosphere(ray))
-        * view.exposure;
-#else
-    let air = clouds.haze.rgb * (clouds.ambient.rgb * clouds.ambient.w * 0.3
+    var air = clouds.haze.rgb * (clouds.ambient.rgb * clouds.ambient.w * 0.3
         + clouds.near_sun.rgb * 0.025
         + clouds.moon_color.rgb * clouds.moon.w * 0.025) * view.exposure;
+#ifdef ATMOSPHERE
+    // Under a closing deck far clouds keep the deck's grey.
+    air = mix(sample_sky_view_lut(length(get_view_position()), direction_world_to_atmosphere(ray))
+        * view.exposure, air, clouds.weather.z);
 #endif
     let color = mix(air * (1.0 - c.a), c.rgb * (1024.0 * view.exposure), haze);
     // Fade the finite ground-view tracing range into the horizon rather than exposing a
     // straight edge at the end of the cloud layer.
-    let coverage = 1.0 - smoothstep(20000.0, 40000.0, start);
+    // A closed deck stays to the horizon: fading it showed clear sky beneath.
+    let coverage = 1.0 - smoothstep(20000.0, 40000.0, start) * (1.0 - clouds.weather.z);
     return Cloud(color * coverage, 1.0 - coverage * (1.0 - c.a));
 }
 
@@ -512,8 +515,13 @@ fn fragment(in: FullscreenVertexOutput) -> Output {
     }
     let fog = clouds.fog.w > 0.0 || clouds.low_haze.x > 0.0 || clouds.mist.x > 0.0;
     // Clouds are traced only above this elevation; `start` is the distance to their base.
-    let above = ray.y > 0.01;
-    let start = select(1.0e9, max(0.0, (clouds.layer.x - view.world_position.y) / ray.y), above);
+    // A closing deck continues down to the horizon at its lowest traced elevation, so no band of
+    // clear sky shows beneath it.
+    let horizon_dip = -sqrt(2.0 * max(view.world_position.y, 0.0) / 6360000.0);
+    let above = ray.y > 0.01 || (clouds.weather.z > 0.0 && ray.y > horizon_dip);
+    let cloud_ray = normalize(vec3(ray.x, max(ray.y, 0.01), ray.z));
+    let start = select(1.0e9, max(0.0, (clouds.layer.x - view.world_position.y) / cloud_ray.y),
+        above);
 #ifndef ATMOSPHERE
     // Without the atmosphere, ground below the horizon only changes in fog.
     if !above && !fog {
@@ -553,7 +561,7 @@ fn fragment(in: FullscreenVertexOutput) -> Output {
     var cloud = Cloud(vec3(0.0), 1.0);
 #ifdef CLOUDS
     if above && (sky_samples > 0u || farthest >= start) {
-        cloud = cloud_layer(ray, start, in.uv);
+        cloud = cloud_layer(cloud_ray, start, in.uv);
     }
 #endif
 

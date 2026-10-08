@@ -10,7 +10,7 @@ struct CloudParams {
     haze: vec4<f32>, // linear RGB, visibility
     fog: vec4<f32>, // weather fog: unexposed in-scattered radiance, extra extinction / metre
     transition: vec4<f32>, // previous coverage, extinction / metre, erosion; linear progress
-    weather: vec4<f32>, // x: surface wetness, y: precipitation intensity
+    weather: vec4<f32>, // x: surface wetness, y: precipitation intensity, z: overcast (0 open, 1 closed deck)
     shelter: vec4<f32>, // rain shelter map: origin xz, metres per texel, enabled
     forest_shadow: vec4<f32>, // forest shadow map: origin xz, metres per texel (0 off), tallest crown top
     forest_sky: vec4<f32>, // x: share of sky light the crowns above hold back (0 off, 1 full)

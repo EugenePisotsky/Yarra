@@ -80,7 +80,8 @@ pub struct CloudParams {
     /// Previous coverage, extinction and erosion, and linear change progress. Each region of
     /// the field blends from these to `shape` at its own time within the change.
     pub transition: [f32; 4],
-    /// Game weather for surfaces and precipitation: wetness, precipitation intensity.
+    /// Game weather for surfaces and precipitation: wetness, precipitation intensity; and how
+    /// closed the cloud deck is (0 open, 1 overcast).
     pub weather: [f32; 4],
     /// Rain shelter map: origin XZ, metres per texel, enabled.
     pub shelter: [f32; 4],
@@ -373,6 +374,9 @@ fn sync(
     let ambient = ambient.lerp(Vec3::splat(ambient.element_sum() / 3.), overcast * 0.8)
         * value.ambient_lux
         * 0.3;
+    // The haze and far clouds take the clear sky's horizon colour; under a closing deck they
+    // turn to its grey instead.
+    params.weather[2] = overcast;
     let sun_light = near_sun * (1. - overcast);
     let moon_light = Vec3::from_array(value.moon_linear) * params.moon[3] * (1. - overcast);
     if let Some(fog) = state
