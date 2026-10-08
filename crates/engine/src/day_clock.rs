@@ -67,7 +67,7 @@ fn advance_day(
     }
     // The authored phase arrives with the first active world space.
     if !clock.started {
-        if !active.is_some_and(|a| a.current().is_some()) {
+        if active.is_none_or(|a| a.current().is_none()) {
             return;
         }
         clock.started = true;

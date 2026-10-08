@@ -215,6 +215,14 @@ fn setup(
         )),
     });
 }
+/// Inputs for the low air and the sea: valley mist, presentation switches, look tuning and the
+/// sea surface.
+type LowAir<'w> = (
+    Res<'w, crate::valley_mist::ValleyMist>,
+    Option<Res<'w, crate::AtmospherePresentation>>,
+    Option<Res<'w, crate::FogTuning>>,
+    Option<Res<'w, crate::SeaSurface>>,
+);
 fn sync(
     mut commands: Commands,
     state: Res<AtmosphereState>,
@@ -234,12 +242,7 @@ fn sync(
         Res<crate::forest_shadow::ForestShadow>,
         Res<crate::forest_shadow::ForestSkyOcclusion>,
     ),
-    (mist, presentation, tuning, sea): (
-        Res<crate::valley_mist::ValleyMist>,
-        Option<Res<crate::AtmospherePresentation>>,
-        Option<Res<crate::FogTuning>>,
-        Option<Res<crate::SeaSurface>>,
-    ),
+    (mist, presentation, tuning, sea): LowAir,
     mut mist_fade: Local<(u64, f32)>,
 ) {
     let profile = state.effective_profile();
