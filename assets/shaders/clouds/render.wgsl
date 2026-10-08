@@ -9,8 +9,11 @@
 // Dimensions only: preserve exact ray directions for odd target sizes and
 // viewport offsets, independently of the selected cloud resolution.
 @group(0) @binding(4) var scene: texture_2d<f32>;
+// Clouds above the ground's horizon still see a sun that has set below it; `light.w` already
+// holds what reaches the cloud layer (none once the sun is below the layer's own horizon), so
+// afterglow lights them from below.
 fn light_at(p:vec3<f32>, ray:vec3<f32>, light:vec4<f32>, color:vec3<f32>) -> vec3<f32> {
-    if light.w<=0.0 || light.y<=0.0 {return vec3(0.0);}
+    if light.w<=0.0 {return vec3(0.0);}
     let t=light_transmission(p,light.xyz,clouds,noise,repeat,5u);
     let mu=dot(ray,light.xyz);
     let g=0.55;

@@ -33,8 +33,10 @@ fn density_at(p: vec3<f32>, c: CloudParams, noise: texture_3d<f32>, repeat: samp
 }
 fn light_transmission(p: vec3<f32>, direction: vec3<f32>, c: CloudParams,
     noise: texture_3d<f32>, repeat: sampler, steps: u32) -> f32 {
-    if direction.y <= 0.0 { return 0.0; }
-    let distance = min((c.layer.x+c.layer.y-p.y)/max(direction.y,0.04),30000.0);
+    // Out through the top towards a light above, or through the base towards one just below the
+    // horizontal (a sun that has set for the ground but not for the clouds).
+    let exit = select(p.y-c.layer.x, c.layer.x+c.layer.y-p.y, direction.y >= 0.0);
+    let distance = min(max(exit,0.0)/max(abs(direction.y),0.04),30000.0);
     let ds = max(distance,0.0)/f32(steps);
     var optical=0.0;
     for(var i=0u;i<steps;i+=1u) {
