@@ -80,7 +80,7 @@ impl Default for AtmosphereProfile {
             sun_diameter_degrees: 0.75,
             exposure_ev100: 13.0,
             bloom_intensity: 0.15,
-            visibility_metres: 20_000.0,
+            visibility_metres: 60_000.0,
             haze_srgb: [0.93, 0.96, 1.0],
             molecular_density: 1.0,
             phases: [

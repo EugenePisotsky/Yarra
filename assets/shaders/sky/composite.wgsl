@@ -94,9 +94,28 @@ fn fog_along(ray: vec3<f32>, distance: f32) -> Fog {
         return Fog(vec3(0.0), 0.0);
     }
     let air = clouds.air_light.rgb + clouds.air_sun.rgb * scattering(dot(ray, clouds.sun.xyz));
-    let light = (clouds.fog.rgb * weather + air * (clouds.haze.rgb * haze + vec3(mist))) / depth;
+    let light = (clouds.fog.rgb * weather + haze_light(ray, air) * haze + air * mist) / depth;
     return Fog(light * view.exposure, depth);
 }
+
+// Light that ground haze scatters towards the eye where it is opaque. With the atmosphere it is
+// the sky just above the horizon below the ray, from Bevy's tables: haze and sky are the same
+// air, so distant haze meets the sky without a band at any time of day, orange towards a low
+// sun and grey-blue away from it. At night the authored fill light keeps haze from going black;
+// in twilight the brighter of the two holds, so the horizon does not glow with both.
+fn haze_light(ray: vec3<f32>, air: vec3<f32>) -> vec3<f32> {
+#ifdef ATMOSPHERE
+    let flat = select(vec2(1.0, 0.0), normalize(ray.xz), dot(ray.xz, ray.xz) > 1e-6);
+    let horizon = normalize(vec3(flat.x, HORIZON_LIFT, flat.y));
+    let sky = sample_sky_view_lut(length(get_view_position()), direction_world_to_atmosphere(horizon));
+    let night = 1.0 - smoothstep(-0.1, 0.05, clouds.sun.y);
+    return max(sky, clouds.air_light.rgb * clouds.haze.rgb * night);
+#else
+    return clouds.haze.rgb * air;
+#endif
+}
+// Sine of the elevation the haze takes its colour from: just above the horizon.
+const HORIZON_LIFT: f32 = 0.004;
 
 fn behind_fog(fog: Fog, behind: Path) -> Path {
     let transmittance = exp(-fog.depth);
@@ -252,10 +271,16 @@ fn cloud_layer(ray: vec3<f32>, start: f32, screen_uv: vec2<f32>) -> Cloud {
     let c = textureSampleLevel(cloud_newer, cloud_sampler, screen_uv, 0.0);
 #endif
     let haze = exp(-start * 3.912 / max(clouds.haze.w, 50.0));
-    // Haze in front of an opaque cloud must not reintroduce the sun/moon disk behind it.
+    // Haze in front of an opaque cloud must not reintroduce the sun/moon disk behind it. With
+    // the atmosphere, a cloud lost in haze turns into the sky it stands in.
+#ifdef ATMOSPHERE
+    let air = sample_sky_view_lut(length(get_view_position()), direction_world_to_atmosphere(ray))
+        * view.exposure;
+#else
     let air = clouds.haze.rgb * (clouds.ambient.rgb * clouds.ambient.w * 0.3
         + clouds.near_sun.rgb * 0.025
         + clouds.moon_color.rgb * clouds.moon.w * 0.025) * view.exposure;
+#endif
     let color = mix(air * (1.0 - c.a), c.rgb * (1024.0 * view.exposure), haze);
     // Fade the finite ground-view tracing range into the horizon rather than exposing a
     // straight edge at the end of the cloud layer.
@@ -306,6 +331,38 @@ fn discs(ray: vec3<f32>) -> vec3<f32> {
         radiance += (*light).color.rgb / (size * size * 0.25 * 3.14159265) * intensity * edge * limb;
     }
     return select(radiance, vec3(0.0), below);
+}
+
+// Stars: one star at most in each cell of a grid over the sky's directions, at a hashed spot
+// away from the cell's edges, so a few thousand show above the horizon, mostly faint. They come
+// out as twilight ends (sun 3 to 11 degrees down), drawn in exposed units about a pixel wide;
+// clouds, haze and the atmosphere in front dim them as they dim the sky.
+const STAR_CELLS: f32 = 160.0;
+const STAR_SHARE: f32 = 0.03;
+const STAR_PEAK: f32 = 6.0;
+fn star_hash(p: vec3<f32>) -> vec3<f32> {
+    var q = fract(p * vec3(0.1031, 0.1030, 0.0973));
+    q += dot(q, q.yxz + 33.33);
+    return fract((q.xxy + q.yxx) * q.zyx);
+}
+fn stars(ray: vec3<f32>) -> vec3<f32> {
+    let night = 1.0 - smoothstep(-0.2, -0.05, clouds.sun.y);
+    if night <= 0.0 || ray.y < -0.01 {
+        return vec3(0.0);
+    }
+    let cell = floor(ray * STAR_CELLS);
+    let pick = star_hash(cell);
+    if pick.x > STAR_SHARE {
+        return vec3(0.0);
+    }
+    let star = normalize(cell + 0.2 + 0.6 * star_hash(cell + 17.0));
+    // Angle to the star against the angle one pixel spans.
+    let pixel = 2.0 / (view.clip_from_view[1][1] * view.main_pass_viewport.w);
+    let offset = length(cross(ray, star)) / max(pixel, 1e-6);
+    // Many faint stars and a few bright ones.
+    let brightness = 0.02 + pow(pick.z, 5.0);
+    let colour = mix(vec3(1.0, 0.82, 0.62), vec3(0.75, 0.85, 1.0), smoothstep(0.2, 0.8, pick.y));
+    return colour * (STAR_PEAK * brightness * night * exp(-offset * offset * 1.4));
 }
 
 // Exposed disc light is kept within half floats (65504); the glare carries the sun's light
@@ -509,7 +566,8 @@ fn fragment(in: FullscreenVertexOutput) -> Output {
         let transmittance = sample_transmittance_lut(r, dot(ray, normalize(position)));
         let sky = sample_sky_view_lut(r, direction_world_to_atmosphere(ray));
         var path = Path(sky * view.exposure
-            + min(disks * transmittance * view.exposure, vec3(MAX_DISC)), transmittance);
+            + min(disks * transmittance * view.exposure, vec3(MAX_DISC))
+            + stars(ray) * transmittance, transmittance);
 #else
         var path = Path(vec3(0.0), vec3(1.0));
 #endif

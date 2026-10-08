@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use world::WorldViewBookmark;
 
 /// Culling distance of world views. Depth is infinite reverse-Z, so this only decides what is
-/// drawn: kilometre-scale terrain and the sea out to the default 20 km haze visibility.
+/// drawn: kilometre-scale terrain across the island. The sea is its own surface out to the horizon.
 pub const WORLD_VIEW_DISTANCE: f32 = 20_000.0;
 
 #[derive(Resource, Default)]

@@ -88,6 +88,13 @@ fn phase(mu: f32, g: f32) -> f32 {
     return (1.0 - g * g) / (FOUR_PI * d * sqrt(d));
 }
 
+// Phase function of a Lambertian sphere, `mu` the cosine of the scattering angle: brightest lit
+// from behind the viewer (its whole lit face), dark against the light.
+fn sphere_phase(mu: f32) -> f32 {
+    let m = clamp(mu, -1.0, 1.0);
+    return 8.0 / (3.0 * 3.14159265) * (sqrt(1.0 - m * m) - acos(m) * m) / FOUR_PI;
+}
+
 // Sunlight past everything the sun's shadow maps hold (terrain, trunks, crowns, the
 // character); 1 beyond them or without a shadowed sun.
 fn shadow_map_visibility(p: vec3<f32>) -> f32 {
@@ -301,11 +308,15 @@ fn vertex(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance:
         alpha *= select(1.0 - smoothstep(0.7, 0.95, open), mix(0.25, 1.0, open), kind == FLUFF);
         let moon = clouds.moon_color.rgb * clouds.moon.w;
         let moon_mu = dot(clouds.moon.xyz, ray);
-        // Motes scatter strongly forwards, so they show most against the light.
+        // Motes scatter strongly forwards, so they show most against the light. Seed heads
+        // also reflect like a pale sphere, so lit from the front they show white against the
+        // sky rather than as dark specks.
         let g = select(0.65, 0.45, kind == FLUFF);
         let albedo = select(0.5, 0.85, kind == FLUFF);
-        let forward = 0.75 * phase(mu, g) + 0.25 / FOUR_PI;
-        let moon_forward = 0.75 * phase(moon_mu, g) + 0.25 / FOUR_PI;
+        let forward = select(0.75 * phase(mu, g) + 0.25 / FOUR_PI,
+            0.5 * phase(mu, g) + 0.5 * sphere_phase(mu), kind == FLUFF);
+        let moon_forward = select(0.75 * phase(moon_mu, g) + 0.25 / FOUR_PI,
+            0.5 * phase(moon_mu, g) + 0.5 * sphere_phase(moon_mu), kind == FLUFF);
         radiance = albedo * (sunlight * forward + moon * moon_forward + sky / (2.0 * 3.14159265));
         if kind == MOTES {
             let flash = 0.5 + 0.5 * wave(mix(1800.0, 5400.0, c.y), b.x);

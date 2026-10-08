@@ -16,10 +16,7 @@ use crate::{
 };
 use bevy::prelude::*;
 use bevy_egui::{EguiPrimaryContextPass, egui};
-use engine::{
-    ApplyAtmosphere, AtmosphereOwner, AtmosphereState, WorldCatalog, WorldEnvironmentView,
-    WorldOrigin,
-};
+use engine::{ApplyAtmosphere, AtmosphereOwner, AtmosphereState, WorldCatalog, WorldOrigin};
 use std::collections::BTreeMap;
 use world::{
     WorldSpaceId,
@@ -220,7 +217,6 @@ fn draw(
     save: Res<EditorSaveCoordinator>,
     project: Res<ProjectEditorStore>,
     mode: Res<PreviewModeState>,
-    mut cameras: Query<&mut WorldEnvironmentView>,
     mut cloud_quality: ResMut<engine::CloudQuality>,
 ) {
     let Some(root) = frame.0.as_mut() else {
@@ -336,16 +332,6 @@ fn draw(
             if controls.weather.is_some() {
                 ui.add(egui::Slider::new(&mut controls.wetness, 0.0..=1.0).text("Preview wetness"))
                     .on_hover_text("In the game, wetness builds up over minutes of rain and dries afterwards.");
-            }
-            for mut view in &mut cameras {
-                if let Some(visibility) = view.visibility_override {
-                    ui.horizontal(|ui| {
-                        ui.label(format!("Bookmark visibility override: {visibility:.0} m"));
-                        if ui.button("Clear").clicked() {
-                            view.visibility_override = None;
-                        }
-                    });
-                }
             }
             ui.separator();
             ui.strong("World settings · saved");

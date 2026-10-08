@@ -49,47 +49,40 @@ pub(super) struct CameraRig {
     pub(super) pitch_offset: f32,
 }
 
-/// The orbit and haze that frame a start view, or the defaults without one.
-fn start_rig(view: Option<&world::WorldViewBookmark>) -> (CameraRig, WorldEnvironmentCamera) {
+/// The orbit that frames a start view, or the default without one. Haze visibility comes from
+/// the world's atmosphere profile, not the view.
+fn start_rig(view: Option<&world::WorldViewBookmark>) -> CameraRig {
     let Some(view) = view else {
-        return (
-            CameraRig {
-                yaw: 45.0_f32.to_radians(),
-                target_yaw: 45.0_f32.to_radians(),
-                distance: CAMERA_DEFAULT_DISTANCE,
-                target_distance: CAMERA_DEFAULT_DISTANCE,
-                pitch_offset: 0.0,
-            },
-            WorldEnvironmentCamera::default(),
-        );
+        return CameraRig {
+            yaw: 45.0_f32.to_radians(),
+            target_yaw: 45.0_f32.to_radians(),
+            distance: CAMERA_DEFAULT_DISTANCE,
+            target_distance: CAMERA_DEFAULT_DISTANCE,
+            pitch_offset: 0.0,
+        };
     };
     let yaw = view.yaw_degrees.to_radians();
-    (
-        CameraRig {
-            yaw,
-            target_yaw: yaw,
-            distance: view.distance,
-            target_distance: view.distance,
-            pitch_offset: view.pitch_degrees.to_radians()
-                - (CAMERA_NEAR_PITCH
-                    + (CAMERA_FAR_PITCH - CAMERA_NEAR_PITCH)
-                        * normalized_camera_zoom(view.distance)),
-        },
-        WorldEnvironmentCamera::with_visibility(view.fog_visibility),
-    )
+    CameraRig {
+        yaw,
+        target_yaw: yaw,
+        distance: view.distance,
+        target_distance: view.distance,
+        pitch_offset: view.pitch_degrees.to_radians()
+            - (CAMERA_NEAR_PITCH
+                + (CAMERA_FAR_PITCH - CAMERA_NEAR_PITCH) * normalized_camera_zoom(view.distance)),
+    }
 }
 
 /// Frames the world's own start once it arrives with the runtime (see `WorldStartAdopted`).
 fn frame_adopted_start(
     mut adopted: MessageReader<crate::WorldStartAdopted>,
-    mut camera: Query<(&mut CameraRig, &mut atmosphere::WorldEnvironmentView), With<MainCamera>>,
+    mut camera: Query<&mut CameraRig, With<MainCamera>>,
 ) {
     let Some(crate::WorldStartAdopted(view)) = adopted.read().last() else {
         return;
     };
-    for (mut rig, mut environment) in &mut camera {
-        (*rig, _) = start_rig(Some(view));
-        environment.visibility_override = Some(view.fog_visibility);
+    for mut rig in &mut camera {
+        *rig = start_rig(Some(view));
     }
 }
 
@@ -98,12 +91,12 @@ fn setup_camera(mut commands: Commands, start_view: Res<WorldStartView>) {
         .0
         .as_ref()
         .map_or(Vec3::ZERO, |v| Vec3::from_array(v.position));
-    let (camera_rig, environment) = start_rig(start_view.0.as_ref());
+    let camera_rig = start_rig(start_view.0.as_ref());
     let mut camera = commands.spawn((
         Camera3d::default(),
         crate::WORLD_TONEMAPPING,
         start_view.projection(),
-        environment,
+        WorldEnvironmentCamera::default(),
         Msaa::Sample4,
         MsaaColorStorePolicy::Automatic,
         camera_transform(start, &camera_rig),

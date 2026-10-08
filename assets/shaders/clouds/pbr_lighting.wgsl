@@ -19,6 +19,27 @@
 #import bevy_pbr::mesh_view_bindings::globals
 #import bevy_pbr::view_transformations::{position_world_to_ndc}
 #import bevy_render::maths::{E, PI, powsafe}
+#ifdef ATMOSPHERE
+#import bevy_pbr::atmosphere::functions::{calculate_visible_sun_ratio, clamp_to_surface}
+#endif
+
+// Yarra: the sunlight left at `P` after the atmosphere and the horizon, as Bevy applies it inside
+// `lighting::directional_light`, for direct light added outside that function. Without it the
+// crowns' wrap-around light stayed white at sunset and lit foliage after the sun had set.
+fn through_atmosphere(P: vec3<f32>, light_id: u32) -> vec3<f32> {
+#ifdef ATMOSPHERE
+    let light = &view_bindings::lights.directional_lights[light_id];
+    let atmosphere = view_bindings::atmosphere;
+    let P_as = (atmosphere.world_to_atmosphere * vec4(P, 1.0)).xyz;
+    let P_clamped = clamp_to_surface(atmosphere, P_as);
+    let r = length(P_clamped);
+    let mu = dot((*light).direction_to_light, normalize(P_clamped));
+    return lighting::sample_transmittance_lut(r, mu)
+        * calculate_visible_sun_ratio(atmosphere, r, mu, (*light).sun_disk_angular_size);
+#else
+    return vec3(1.0);
+#endif
+}
 
 #ifdef STANDARD_MATERIAL_SPECULAR_TRANSMISSION
 #import bevy_pbr::transmission
@@ -419,7 +440,8 @@ fn apply_pbr_lighting(
             let n_dot_l = dot(in.N, (*light).direction_to_light);
             let wrap = max((n_dot_l + 0.5) / 1.5, 0.0) - max(n_dot_l, 0.0);
             let through = max(-n_dot_l, 0.0) * 0.35;
-            light_contrib += diffuse_color * (1.0 / PI) * (*light).color.rgb * (wrap + through);
+            light_contrib += diffuse_color * (1.0 / PI) * (*light).color.rgb * (wrap + through)
+                * through_atmosphere(in.world_position.xyz, i);
         }
 #endif
 

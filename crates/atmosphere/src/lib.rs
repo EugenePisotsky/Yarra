@@ -22,7 +22,9 @@ use bevy::{
     pbr::AtmosphereSettings,
     post_process::{auto_exposure::AutoExposure, bloom::Bloom},
     prelude::*,
-    render::{extract_resource::ExtractResource, render_resource::TextureUsages},
+    render::{
+        extract_resource::ExtractResource, render_resource::TextureUsages, view::ColorGrading,
+    },
 };
 use std::borrow::Cow;
 use world::{
@@ -34,6 +36,10 @@ use world::{
 /// ground keeps its colour and contrast where Tony McMapface's compression read as milky haze
 /// (docs/EXPERIMENTS.md, October 7).
 pub const WORLD_TONEMAPPING: Tonemapping = Tonemapping::KhronosPbrNeutral;
+
+/// Share of colour lost by full night: eyes adapted to moonlight see little colour, so moonlit
+/// scenes stay readable without looking like a blue day.
+pub const NIGHT_DESATURATION: f32 = 0.6;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AtmosphereOwner {
@@ -315,6 +321,7 @@ fn apply(
             Option<&mut Bloom>,
             Option<&mut Camera3d>,
             Option<&mut AutoExposure>,
+            Option<&mut ColorGrading>,
         ),
         (Without<WorldSun>, Without<WorldMoon>),
     >,
@@ -380,7 +387,26 @@ fn apply(
     // Eye adaptation in the game only: authoring and studies judge the exposure as set.
     let adapt =
         presentation.auto_exposure && state.owner == AtmosphereOwner::Game && profile.outdoor;
-    for (entity, camera, view, mut exposure, settings, bloom, camera_3d, mut auto) in &mut views {
+    let saturation = if profile.outdoor {
+        1.0 - NIGHT_DESATURATION * value.night_weight
+    } else {
+        1.0
+    };
+    for (entity, camera, view, mut exposure, settings, bloom, camera_3d, mut auto, grading) in
+        &mut views
+    {
+        match grading {
+            Some(mut grading) => {
+                if grading.global.post_saturation != saturation {
+                    grading.global.post_saturation = saturation;
+                }
+            }
+            None => {
+                let mut grading = ColorGrading::default();
+                grading.global.post_saturation = saturation;
+                commands.entity(entity).insert(grading);
+            }
+        }
         exposure.ev100 = state
             .exposure_override
             .filter(|v| v.is_finite())
