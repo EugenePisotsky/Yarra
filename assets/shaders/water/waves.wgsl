@@ -80,15 +80,22 @@ fn sea_waves(xz: vec2<f32>, time: f32, wind: vec2<f32>, strength: f32, footprint
     let steepness = sqrt(2.0 * variance / f32(WAVES));
     let across = vec2(-wind.y, wind.x);
     var surface = WaveSurface(vec2(0.0), 0.0);
+    let share = 0.5 * steepness * steepness;
     for (var i = 0u; i < WAVES; i += 1u) {
-        let wave = WAVE_TABLE[i];
         let shape = WAVE_SHAPE[i];
+        // Resolved while at least about three pixels span the wave. Waves run from longest to
+        // shortest, so past the first one left out every later one is too, and only their
+        // slope variance remains.
+        let resolved = 1.0 - smoothstep(0.2, 0.4, footprint / shape.x);
+        if resolved <= 0.0 {
+            surface.variance += share * f32(WAVES - i);
+            break;
+        }
+        let wave = WAVE_TABLE[i];
         let direction = wind * wave.x + across * wave.y;
         let phase = wave.z * dot(direction, xz) - wave.w * time + shape.y;
-        // Resolved while at least about three pixels span the wave.
-        let resolved = 1.0 - smoothstep(0.2, 0.4, footprint / shape.x);
         surface.slope += direction * (steepness * cos(phase) * resolved);
-        surface.variance += 0.5 * steepness * steepness * (1.0 - resolved * resolved);
+        surface.variance += share * (1.0 - resolved * resolved);
     }
     return surface;
 }

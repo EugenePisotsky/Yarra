@@ -59,7 +59,7 @@ pub use world_streaming::{
 };
 
 mod ocean;
-pub use ocean::{OceanPlugin, OceanSurface};
+pub use ocean::OceanPlugin;
 mod start_view;
 pub use start_view::{WORLD_VIEW_DISTANCE, WorldStartAdopted, WorldStartView};
 mod gameplay;

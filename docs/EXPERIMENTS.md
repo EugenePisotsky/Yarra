@@ -423,6 +423,17 @@ User request: time of day and sunset rays like The Witcher 3's (rays fanning out
 | Twilight horizon | The haze takes the brighter of the horizon sky and the night fill instead of their sum. |
 | Not done | The sea's sun glitter is a narrow bright streak (placeholder ocean, roughness 0.08). Clouds do not cast crepuscular rays on screen (rays see geometry only). In sunset light trunks keep a purple cast from the authored purple sunset sky light. |
 
+## The open sea — October 8
+
+| Change | Decision / observation |
+| --- | --- |
+| Opaque glossy placeholder | **Replaced.** Under overcast and rain it stayed bright; the sun's reflection was a narrow streak; the shore was a hard edge. |
+| Waves on the sea mesh | **Superseded.** 12 waves in a narrow fan read as parallel stripes; 24 in a wide fan with gust patches read as sea. The cost was 0.3 ms in a view mostly of sea, of which 0.1 ms came from the larger shader. |
+| Transparent sea without a mesh | **Retained.** The terrain carries on below the sea as a shelf to a flat floor at −30 m (about 1 m down per 30 m off the start beach), so the composite sees the seabed in the depth buffer and draws the water column in front of it. |
+| Foam by depth | **Rejected.** On the start beach the seabed falls 9 cm over 32 m at the waterline, so any band set in metres of depth covered tens of metres in solid white; foam and swash widths are now along the ground, through the slope from the depth buffer (local ripples give 1–3% slopes), with a thin front, faint trailing lace and a soft dry edge. |
+| Overcast | Silver streaks were reflections of Bevy's clear-sky horizon; reflected low sky now blends to the deck's grey, and glitter needs open sky. |
+| Cost | GPU ms at game scale, shader with the sea on / compiled out, alternating: valley view 4.63, 4.54 / 4.34, 4.49 after the wave loop stops at the first unresolved wave (+0.65 ms before); waterline 4.41, 4.50 / 4.20, 4.07. |
+
 ## Open gates and maintenance
 
 The remaining gates are sustained terrain/whole-game power, Temporal cost and motion quality, field-scale grass lighting, target-PC acceptance, and physical-phone heat/60-FPS delivery. Keep correctness references until their replacements pass the relevant gate. Existing counters often identify less work without demonstrating better delivered frames or lower power.

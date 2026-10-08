@@ -57,6 +57,8 @@ enable dual_source_blending;
 // Share of the glare veil reaching each texel (sky/sun_rays.wgsl), at the light shafts' scale;
 // drawn when cloud_blend.w is 1.
 @group(1) @binding(13) var sun_rays: texture_2d<f32>;
+@group(1) @binding(14) var cloud_shadow: texture_2d<f32>;
+@group(1) @binding(15) var cloud_shadow_sampler: sampler;
 
 struct Output {
 #ifdef DUAL_SOURCE_BLENDING
@@ -435,45 +437,116 @@ fn sun_glare(ray: vec3<f32>, pixel: vec2<f32>, air: f32) -> vec3<f32> {
     return vec3(0.0);
 }
 
-// The open sea (`atmosphere::SeaSurface`): the main pass draws the light scattered up from the
-// water body; here a geometry sample on the sea's surface gets the waves' reflection of sky,
-// clouds, sun and moon in front of it, and the body keeps what the reflection leaves.
-struct Sea {
-    // Exposed light reflected towards the eye.
-    light: vec3<f32>,
-    // Share of the water body's light left after the reflection.
-    keep: f32,
-}
-// The sea mesh (engine `ocean.rs`): flat out to FLAT_RADIUS around the view, then bending with
-// the planet, with rings about a tenth of their radius apart.
+// The open sea (`atmosphere::SeaSurface`) is drawn here, not by the main pass: each view ray is
+// intersected with the sea's surface, flat out to SEA_FLAT_RADIUS around the view and then
+// bending with the planet, and whatever the main pass drew beyond it (the seabed, the foot of a
+// rock, or nothing far out) is seen through the water. Shallow water shows the sand below; deep
+// water turns into the light its body scatters up; foam runs along the waterline.
 const SEA_FLAT_RADIUS: f32 = 10000.0;
 const SEA_PLANET_RADIUS: f32 = 6360000.0;
-const SEA_RING_SPACING: f32 = 0.102;
+const NO_SEA: f32 = 1.0e30;
 const WATER_F0: f32 = 0.02;
 // Size of the noise tile the gust patches come from, metres.
 const SEA_PATCH: f32 = 1200.0;
 // Glitter is kept within half floats like the sun's disc.
 const MAX_GLITTER: f32 = 30000.0;
+// Clear coastal water: extinction per metre (red is absorbed within a few metres, blue and green
+// carry), and the share of the daylight entering deep water that its body scatters back up.
+const WATER_EXTINCTION: vec3<f32> = vec3(0.45, 0.10, 0.075);
+const WATER_ALBEDO: vec3<f32> = vec3(0.0025, 0.012, 0.016);
+// The seabed's own light comes down through the water, a longer path than straight down.
+const WATER_LIGHT_PATH: f32 = 1.3;
+// Swash: every SWASH_PERIOD seconds (whole cycles per wave period) the water runs up the beach
+// and drains back over SWASH metres of depth, its phase varying along the shore. Foam rides the
+// front and trails behind it; the sand the water has drained from is left wet and darker.
+// Widths are along the ground, in metres, turned into depth by the seabed's slope, so a nearly
+// flat beach gets a thin foam line rather than sheets.
+const SWASH: f32 = 0.12;
+const SWASH_RUN: f32 = 12.0;
+const SWASH_PERIOD: f32 = 9.0;
+const FOAM_FRONT: f32 = 0.35;
+const FOAM_TRAIL: f32 = 2.0;
+const FOAM_ALBEDO: f32 = 0.7;
+const WET_SAND: f32 = 0.6;
+const WET_RUN: f32 = 1.5;
+// Run over which a film of water gains its full reflection and colour.
+const THIN_WATER: f32 = 1.5;
+// Water deeper than this is past the reach of the swash and its foam.
+const SHORE_DEPTH: f32 = 0.3;
+
+// Height of the main pass's surface at a pixel, from its first depth sample.
+fn surface_height(pixel: vec2<i32>) -> vec3<f32> {
+    let z = textureLoad(depth, pixel, 0);
+    let uv = (vec2<f32>(pixel) + 0.5 - view.main_pass_viewport.xy) / view.main_pass_viewport.zw;
+    let world = view.world_from_clip * vec4(uv * vec2(2.0, -2.0) + vec2(-1.0, 1.0), z, 1.0);
+    return world.xyz / world.w;
+}
+
+// Rise of the seabed per metre along the ground at a pixel, averaged over the next pixels'
+// surfaces two pixels away in each direction, at least that of a very flat beach.
+fn seabed_slope(pixel: vec2<i32>, here: vec3<f32>) -> f32 {
+    var rise = 0.0;
+    var count = 0.0;
+    for (var i = 0; i < 4; i += 1) {
+        let offset = select(vec2(0, 2), vec2(2, 0), (i & 1) == 0) * select(1, -1, i >= 2);
+        let other = surface_height(pixel + offset);
+        let run = length(other.xz - here.xz);
+        if run > 1e-3 && run < 20.0 {
+            rise += abs(other.y - here.y) / run;
+            count += 1.0;
+        }
+    }
+    return clamp(rise / max(count, 1.0), 0.002, 1.0);
+}
+
+// Distance along `ray` to the sea's surface, or NO_SEA.
+fn sea_distance(ray: vec3<f32>) -> f32 {
+    if clouds.ocean_waves.x < 0.5 || ray.y >= 0.0 {
+        return NO_SEA;
+    }
+    let height = view.world_position.y - clouds.ocean.x;
+    if height <= 0.0 {
+        return NO_SEA;
+    }
+    let flat = height / -ray.y;
+    let h = length(ray.xz);
+    if flat * h <= SEA_FLAT_RADIUS {
+        return flat;
+    }
+    // Beyond it the surface sinks by (r - F)^2 / 2R; the nearer root of a t^2 + b t + c = 0,
+    // in the form that keeps its precision.
+    let a = h * h / (2.0 * SEA_PLANET_RADIUS);
+    let b = ray.y - SEA_FLAT_RADIUS * h / SEA_PLANET_RADIUS;
+    let c = SEA_FLAT_RADIUS * SEA_FLAT_RADIUS / (2.0 * SEA_PLANET_RADIUS) + height;
+    let disc = b * b - 4.0 * a * c;
+    if disc < 0.0 {
+        return NO_SEA;
+    }
+    return 2.0 * c / (-b + sqrt(disc));
+}
+
+// Share of the sun's direct light the cloud layer lets through to `p`.
+fn sea_cloud_shadow(p: vec3<f32>) -> f32 {
+    let sun = clouds.sun.xyz;
+    if clouds.layer.w < 0.5 || sun.y <= 0.0 {
+        return 1.0;
+    }
+    let hit = p.xz + clouds.offset.xy + sun.xz * (clouds.layer.x - p.y) / max(sun.y, 0.04);
+    return textureSampleLevel(cloud_shadow, cloud_shadow_sampler,
+        (hit - clouds.offset.zw) / (clouds.layer.z * 4.0), 0.0).r;
+}
+
 fn smith(n_dot_x: f32, alpha2: f32) -> f32 {
     return 2.0 * n_dot_x / (n_dot_x + sqrt(alpha2 + (1.0 - alpha2) * n_dot_x * n_dot_x));
 }
-fn sea_at(ray: vec3<f32>, distance: f32) -> Sea {
-    if clouds.ocean_waves.x < 0.5 || ray.y >= 0.0 {
-        return Sea(vec3(0.0), 1.0);
-    }
-    let p = view.world_position + ray * distance;
-    let r = length(p.xz - view.world_position.xz);
-    let beyond = max(r - SEA_FLAT_RADIUS, 0.0);
-    let height = clouds.ocean.x - beyond * beyond / (2.0 * SEA_PLANET_RADIUS);
-    let chord = SEA_RING_SPACING * r;
-    let tolerance = 0.05 + distance * 1.0e-5
-        + select(0.0, chord * chord / (8.0 * SEA_PLANET_RADIUS), beyond > 0.0);
-    if abs(p.y - height) > tolerance {
-        return Sea(vec3(0.0), 1.0);
-    }
+
+// The sea in front of a sample `distance` metres away (NO_SEA for open sky), with its surface
+// `sea_t` metres along the ray and `air` the path in front of the surface.
+fn through_water(air: Path, ray: vec3<f32>, sea_t: f32, distance: f32, at: vec2<i32>) -> Path {
+    let p = view.world_position + ray * sea_t;
     // The pixel's length on the water, stretched where the view grazes it.
     let pixel = 2.0 / (view.clip_from_view[1][1] * view.main_pass_viewport.w);
-    let footprint = distance * pixel / max(-ray.y, 0.02);
+    let footprint = sea_t * pixel / max(-ray.y, 0.02);
     // Gusts roughen the water in patches a few hundred metres across, drifting with the wind
     // like the mist's wisps; calm patches between them read smoother and brighter.
     let q = (p.xz + clouds.mist_drift.xy) / SEA_PATCH;
@@ -492,6 +565,10 @@ fn sea_at(ray: vec3<f32>, distance: f32) -> Sea {
     let position = get_view_position();
     var sky = sample_sky_view_lut(length(position), direction_world_to_atmosphere(reflected))
         * view.exposure;
+    // Under a closing deck the low sky is the deck's grey, as for the haze.
+    let deck = clouds.haze.rgb * (clouds.air_light.rgb
+        + clouds.air_sun.rgb * scattering(dot(reflected, clouds.sun.xyz))) * view.exposure;
+    sky = mix(sky, deck, clouds.weather.z);
 #ifdef CLOUDS
 #ifdef CACHED_CLOUDS
     if reflected.y > 0.01 {
@@ -502,7 +579,10 @@ fn sea_at(ray: vec3<f32>, distance: f32) -> Sea {
 #endif
 #endif
     // Sun and moon glitter: GGX over the resolved waves, widened by the unresolved ones and
-    // the disc's own size; a closing deck hides it.
+    // the disc's own size; clouds shade it.
+    let direct = sea_cloud_shadow(p);
+    // Diffuse daylight keeps a floor of light scattered through the clouds, as surfaces do.
+    let shade = max(direct, 0.12);
     let alpha2 = waves.variance + 0.0006;
     var glitter = vec3(0.0);
     for (var i = 0u; i < lights.n_directional_lights; i += 1u) {
@@ -520,14 +600,73 @@ fn sea_at(ray: vec3<f32>, distance: f32) -> Sea {
         let transmittance = sample_transmittance_lut(length(position), dot(l, normalize(position)));
         glitter += (*light).color.rgb * transmittance * (d * f * g / (4.0 * n_dot_v));
     }
-    glitter *= 1.0 - clouds.weather.z;
-    return Sea(fresnel * sky + min(glitter * view.exposure, vec3(MAX_GLITTER)), 1.0 - fresnel);
+    // The glitter is the sun's own image: a closing deck hides it entirely.
+    let open = 1.0 - clouds.weather.z;
+    glitter *= direct * open * open;
+    // Daylight entering the water, as radiance a white diffuser would send back.
+    let sun = clouds.near_sun.rgb * max(clouds.sun.y, 0.0) * shade
+        + clouds.moon_color.rgb * clouds.moon.w * max(clouds.moon.y, 0.0);
+    let daylight = (sun / 3.14159265 + clouds.ambient.rgb * clouds.ambient.w) * view.exposure;
+    // The water between the surface and what lies beyond, and the seabed's light coming down.
+    let column = max(distance - sea_t, 0.0);
+    let seabed = view.world_position.y + ray.y * distance;
+    let depth = select(1.0e4, max(clouds.ocean.x - seabed, 0.0), distance < NO_SEA);
+    let seen = exp(-WATER_EXTINCTION * min(column, 1.0e4));
+    let lit = exp(-WATER_EXTINCTION * min(depth * WATER_LIGHT_PATH, 1.0e4));
+    let body = WATER_ALBEDO * daylight * (1.0 - seen);
+    let open_water = fresnel * sky + min(glitter * view.exposure, vec3(MAX_GLITTER))
+        + (1.0 - fresnel) * body;
+    // The seabed under the water is wet sand, darker than dry.
+    let open_transmittance = (1.0 - fresnel) * seen * lit * WET_SAND;
+    if depth >= SHORE_DEPTH {
+        return Path(air.light + air.transmittance * open_water,
+            air.transmittance * open_transmittance);
+    }
+    // The swash: a quick run-up and a slow drain, its front at `edge` metres of depth.
+    let along = textureSampleLevel(noise, noise_sampler, vec3(p.xz / 90.0, 0.61), 0.0).r;
+    let cycle = fract(clouds.ocean.w / SWASH_PERIOD + along * 3.0);
+    let surge = select(1.0 - smoothstep(0.25, 1.0, cycle), smoothstep(0.0, 0.25, cycle),
+        cycle < 0.25);
+    // Near the waterline, the seabed's slope turns runs along the ground into depths.
+    var slope = 1.0;
+    if distance < NO_SEA {
+        slope = seabed_slope(at, view.world_position + ray * distance);
+    }
+    let edge = min(SWASH, slope * SWASH_RUN) * (1.0 - surge);
+    let film = smoothstep(edge, edge + slope * THIN_WATER, depth)
+        * smoothstep(0.0, slope * 1.0, depth);
+    var light = film * open_water;
+    var transmittance = mix(vec3(1.0), open_transmittance, film);
+    // Sand the water has just drained from stays wet.
+    let wet = 1.0 - smoothstep(0.0, slope * WET_RUN, depth - edge);
+    transmittance *= mix(1.0, WET_SAND, wet * smoothstep(0.0, 0.01, depth) * (1.0 - film));
+    // Foam rides the front and trails behind it in lace, drifting with the waves.
+    let drift = clouds.ocean.yz * clouds.ocean.w * 0.3;
+    let coarse = textureSampleLevel(noise, noise_sampler, vec3((p.xz + drift) / 6.0, 0.23), 0.0);
+    let fine = textureSampleLevel(noise, noise_sampler, vec3((p.xz - drift) / 1.7, 0.71), 0.0);
+    let pattern = coarse.r * 0.55 + fine.g * 0.45;
+    let front = exp(-pow((depth - edge) / (slope * FOAM_FRONT), 2.0))
+        * smoothstep(0.3, 0.5, pattern);
+    let trail = (1.0 - smoothstep(edge, edge + slope * FOAM_TRAIL, depth))
+        * smoothstep(0.6, 0.8, pattern) * smoothstep(edge, edge + slope * FOAM_FRONT, depth);
+    // Nothing starts hard at the dry edge: the terrain's contour there zigzags.
+    let shore = smoothstep(0.0, slope * 1.0, depth);
+    let foam = clamp(front + 0.35 * trail, 0.0, 1.0) * (0.4 + 0.6 * surge) * shore;
+    light = mix(light, FOAM_ALBEDO * daylight, foam);
+    transmittance *= 1.0 - foam;
+    return Path(air.light + air.transmittance * light, air.transmittance * transmittance);
 }
 
-// The sea in front of a geometry sample, behind the air between it and the eye.
-fn with_sea(air: Path, ray: vec3<f32>, distance: f32) -> Path {
-    let sea = sea_at(ray, distance);
-    return Path(air.light + air.transmittance * sea.light, air.transmittance * sea.keep);
+// Air, then water where the sea lies in front, between the eye and a sample `distance` away.
+fn scene_path(ray: vec3<f32>, uv: vec2<f32>, distance: f32, sea_t: f32, pixel: vec2<i32>)
+    -> Path {
+    var path = aerial_perspective(ray, uv, min(distance, sea_t));
+#ifdef ATMOSPHERE
+    if sea_t < distance {
+        path = through_water(path, ray, sea_t, distance, pixel);
+    }
+#endif
+    return path;
 }
 
 // Transmittance of the camera-to-surface segment alone. Bevy's
@@ -651,6 +790,11 @@ fn fragment(in: FullscreenVertexOutput) -> Output {
         total += distance;
     }
     let geometry_samples = samples - sky_samples;
+#ifdef ATMOSPHERE
+    let sea_t = sea_distance(ray);
+#else
+    let sea_t = NO_SEA;
+#endif
 
     // One cloud lookup serves every sample that can see the cloud base.
     var cloud = Cloud(vec3(0.0), 1.0);
@@ -662,7 +806,12 @@ fn fragment(in: FullscreenVertexOutput) -> Output {
 
     var light = vec3(0.0);
     var sky_transmittance = vec3(1.0);
-    if sky_samples > 0u {
+    if sky_samples > 0u && sea_t < NO_SEA {
+        // Open sea out to the horizon, beyond the world's ground.
+        let path = fogged(ray, min(sea_t, start), scene_path(ray, uv, NO_SEA, sea_t, pixel));
+        light += path.light * f32(sky_samples);
+        sky_transmittance = path.transmittance;
+    } else if sky_samples > 0u {
 #ifdef ATMOSPHERE
         let position = get_view_position();
         let r = length(position);
@@ -684,21 +833,18 @@ fn fragment(in: FullscreenVertexOutput) -> Output {
         if farthest - nearest <= 0.02 * farthest {
             // Usual case: all geometry samples lie at one distance, so shade it once.
             let distance = total / f32(geometry_samples);
-            var path = aerial_perspective(ray, uv, distance);
-#ifdef ATMOSPHERE
-            path = with_sea(path, ray, distance);
-#endif
+            var path = scene_path(ray, uv, distance, sea_t, pixel);
             if distance >= start {
                 path = in_front(cloud.light, cloud.transmittance, path);
             }
-            path = fogged(ray, min(distance, start), path);
+            path = fogged(ray, min(min(distance, sea_t), start), path);
             light += path.light * f32(geometry_samples);
             transmittance = path.transmittance * f32(geometry_samples);
         } else {
             // A silhouette: fog changes smoothly between the nearest and farthest samples, so it
             // is integrated at those two and interpolated for the rest.
-            let near = min(nearest, start);
-            let far = min(farthest, start);
+            let near = min(min(nearest, sea_t), start);
+            let far = min(min(farthest, sea_t), start);
             let near_fog = fog_along(ray, near);
             let far_fog = fog_along(ray, far);
             for (var i = 0u; i < samples; i += 1u) {
@@ -706,14 +852,12 @@ fn fragment(in: FullscreenVertexOutput) -> Output {
                 if distance < 0.0 {
                     continue;
                 }
-                var path = aerial_perspective(ray, uv, distance);
-#ifdef ATMOSPHERE
-                path = with_sea(path, ray, distance);
-#endif
+                var path = scene_path(ray, uv, distance, sea_t, pixel);
                 if distance >= start {
                     path = in_front(cloud.light, cloud.transmittance, path);
                 }
-                let t = clamp((min(distance, start) - near) / max(far - near, 1e-3), 0.0, 1.0);
+                let t = clamp((min(min(distance, sea_t), start) - near) / max(far - near, 1e-3),
+                    0.0, 1.0);
                 let fog = Fog(mix(near_fog.light, far_fog.light, t),
                     mix(near_fog.depth, far_fog.depth, t));
                 path = behind_fog(fog, path);
@@ -728,7 +872,7 @@ fn fragment(in: FullscreenVertexOutput) -> Output {
     light /= f32(samples);
     // Light shafts lie in front of everything else the pass adds.
     let shafts = light_shafts(in.position.xy,
-        select(1.0e6, total / f32(max(geometry_samples, 1u)), geometry_samples > 0u));
+        min(select(1.0e6, total / f32(max(geometry_samples, 1u)), geometry_samples > 0u), sea_t));
     light = light * shafts.a + shafts.rgb;
     transmittance *= shafts.a;
 #ifdef ATMOSPHERE

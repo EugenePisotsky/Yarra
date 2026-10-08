@@ -209,7 +209,10 @@ fn spawn_rain_splashes(
     camera: Query<&GlobalTransform, With<WorldViewCamera>>,
     target: Query<&Transform, With<crate::actor::CameraTarget>>,
     surfaces: Query<&StreamedTerrainSurface>,
-    splashes: Option<ResMut<RainSplashes>>,
+    (splashes, sea): (
+        Option<ResMut<RainSplashes>>,
+        Option<Res<atmosphere::SeaSurface>>,
+    ),
     mut state: Local<(SplashRandom, f32)>,
 ) {
     let (Some(mut splashes), Some(origin), Some(camera)) = (splashes, origin, camera.iter().next())
@@ -243,7 +246,8 @@ fn spawn_rain_splashes(
         else {
             continue;
         };
-        if ground.normal[1] < 0.6 {
+        // Drops falling on the sea leave no splash on the seabed below it.
+        if ground.normal[1] < 0.6 || sea.as_ref().and_then(|s| s.level) > Some(ground.height) {
             continue;
         }
         let impact = Vec3::new(point.x, ground.height, point.y);
