@@ -658,6 +658,15 @@ const WET_RUN: f32 = 1.5;
 const THIN_WATER: f32 = 1.5;
 // Water deeper than this is past the reach of the swash and its foam.
 const SHORE_DEPTH: f32 = 0.3;
+// Relief of the sand, metres: no band of the swash is thinner in depth than this, or on a nearly
+// flat beach its centimetre bumps and hollows cut film, wet sand and foam into hard patches.
+const SAND_RELIEF: f32 = 0.03;
+
+// Depth over which a band of the swash `run` metres wide along the ground lies, on a seabed rising
+// `slope` per metre.
+fn swash_band(slope: f32, run: f32) -> f32 {
+    return max(slope * run, SAND_RELIEF);
+}
 
 // Height of the main pass's surface at a pixel, from its first depth sample.
 fn surface_height(pixel: vec2<i32>) -> vec3<f32> {
@@ -840,9 +849,9 @@ fn surf_at(xz: vec2<f32>, footprint: f32, shade: bool) -> Surf {
     let wide_roller = sqrt(0.035 * 0.035 + blur * blur);
     let roller = 0.035 / wide_roller * exp(-(v * v) / (wide_roller * wide_roller));
     let drift = clouds.ocean.yz * clouds.ocean.w * 0.2;
-    // It thins as it opens.
+    // It thins as it opens, and the bubbles left grow clearer.
     let left = exp(-s * period / SURF_FOAM_LIFE);
-    let trail = left * left * foam_lace(local + drift, 1.0 - left, footprint);
+    let trail = left * left * (0.5 + 0.5 * left) * foam_lace(local + drift, 1.0 - left, footprint);
     surf.foam = clamp(roller + 0.85 * trail, 0.0, 1.0) * surf.broken;
     return surf;
 }
@@ -1035,22 +1044,22 @@ fn through_water(air: Path, ray: vec3<f32>, sea_t: f32, distance: f32, at: vec2<
         slope = seabed_slope(at, view.world_position + ray * distance);
     }
     let edge = min(SWASH, slope * SWASH_RUN) * (1.0 - surge);
-    let film = smoothstep(edge, edge + slope * THIN_WATER, depth)
-        * smoothstep(0.0, slope * 1.0, depth);
+    let film = smoothstep(edge, edge + swash_band(slope, THIN_WATER), depth)
+        * smoothstep(0.0, swash_band(slope, 1.0), depth);
     var light = film * open_water;
     var transmittance = mix(vec3(1.0), open_transmittance, film);
     // Sand the water has just drained from stays wet.
-    let wet = 1.0 - smoothstep(0.0, slope * WET_RUN, depth - edge);
+    let wet = 1.0 - smoothstep(0.0, swash_band(slope, WET_RUN), depth - edge);
     transmittance *= mix(1.0, WET_SAND, wet * smoothstep(0.0, 0.01, depth) * (1.0 - film));
     // Foam rides the front and trails behind it in lace, drifting with the waves.
     let drift = clouds.ocean.yz * clouds.ocean.w * 0.3;
-    let front = exp(-pow((depth - edge) / (slope * FOAM_FRONT), 2.0))
+    let front = exp(-pow((depth - edge) / swash_band(slope, FOAM_FRONT), 2.0))
         * foam_lace(p.xz + drift, 0.3, footprint);
-    let trail = (1.0 - smoothstep(edge, edge + slope * FOAM_TRAIL, depth))
+    let trail = (1.0 - smoothstep(edge, edge + swash_band(slope, FOAM_TRAIL), depth))
         * foam_lace(p.xz - drift, 1.0, footprint)
-        * smoothstep(edge, edge + slope * FOAM_FRONT, depth);
+        * smoothstep(edge, edge + swash_band(slope, FOAM_FRONT), depth);
     // Nothing starts hard at the dry edge: the terrain's contour there zigzags.
-    let shore = smoothstep(0.0, slope * 1.0, depth);
+    let shore = smoothstep(0.0, swash_band(slope, 1.0), depth);
     let foam = clamp(front + 0.25 * trail, 0.0, 1.0) * (0.4 + 0.6 * surge) * shore;
     light = mix(light, FOAM_ALBEDO * daylight, foam);
     transmittance *= 1.0 - foam;

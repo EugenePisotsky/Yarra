@@ -500,7 +500,8 @@ The sea had swash and foam at the waterline but no waves coming ashore. Captures
 | Cotton foam | Value-noise foam read as soft blobs; a Worley lace opens into holes as it ages and fades over 3 s. Aged lace still reads as dark pebbles in a pale veil, and the swash on the start beach's flat (centimetres of relief at the sea level over 30 m) as patches of water sheet: left for the polish pass. |
 | Map accuracy | The 16 m map puts the start beach's waterline about 35 m from the terrain's (0.2 m of height there); surf fades out towards the shore and the swash and the waterline come from the depth buffer, so it does not show. |
 | Cost | Surf view, alternating: 112.4, 111.9 fps before against 98.0, 97.9 with the march to 12 m depth and 106.7 without the march; marching only under 4 m of depth and longer steps gave 99.0. Waterline 137.5 against 126.3. No sea in view: 103.3 against 101.8. The march's cost is in evaluating the surf at about six points per ray, not in the step count. |
-| Not done | The swell has no direction (every shore gets surf, the lee too); refraction and the view from under water. |
+| Swash on the flat | Every band of the swash (film, wet sand, foam) is now at least 3 cm of depth, the sand's relief, so its edges soften; the patches that remain are the flat's own relief a few centimetres either side of the sea level, pools and dry patches the swash runs over. Aged foam turns half clear as it opens. |
+| Not done | The swell has no direction (every shore gets surf, the lee too); the open sea's shortest waves are long-crested, a faint net in shallow water; refraction and the view from under water. |
 
 ## Open gates and maintenance
 
