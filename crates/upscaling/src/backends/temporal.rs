@@ -48,8 +48,12 @@ impl Temporal {
                 .raw_device()
                 .clone();
             let d = MTLFXTemporalScalerDescriptor::new();
-            d.setInputWidth(output.x as usize);
-            d.setInputHeight(output.y as usize);
+            // The input is the region the main pass renders at the top left of its full-size
+            // textures; a scaler for exactly that size skips MetalFX's own copy of the region
+            // (its pre-processing command buffer, 0.5 ms at 50% of 3456x2168) and its main pass
+            // costs 1.09 -> 0.81 ms. A new resolution scale makes a new history and scaler.
+            d.setInputWidth(input.x as usize);
+            d.setInputHeight(input.y as usize);
             d.setOutputWidth(output.x as usize);
             d.setOutputHeight(output.y as usize);
             d.setColorTextureFormat(MTLPixelFormat::RGBA16Float);
@@ -60,10 +64,6 @@ impl Temporal {
             // auto exposure gives MetalFX a different brightness than our tone mapper.
             d.setAutoExposureEnabled(false);
             d.setRequiresSynchronousInitialization(true);
-            d.setInputContentPropertiesEnabled(true);
-            let scale = (output.as_vec2() / input.as_vec2()).max_element();
-            d.setInputContentMinScale(scale);
-            d.setInputContentMaxScale(scale);
             let scaler = d
                 .newTemporalScalerWithDevice(&metal)
                 .ok_or("MetalFX rejected temporal dimensions/formats")?;
@@ -143,8 +143,6 @@ impl Temporal {
             self.scaler.setMotionTexture(Some(&motion));
             self.scaler.setOutputTexture(Some(&output));
             self.scaler.setExposureTexture(Some(&exposure));
-            self.scaler.setInputContentWidth(i.size.x as usize);
-            self.scaler.setInputContentHeight(i.size.y as usize);
             self.scaler.setJitterOffsetX(-i.jitter.x);
             self.scaler.setJitterOffsetY(-i.jitter.y);
             // Shared motion convention: current UV minus previous UV, excluding jitter.
