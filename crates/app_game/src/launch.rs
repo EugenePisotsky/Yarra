@@ -36,8 +36,8 @@ pub(crate) struct LaunchOptions {
     pub input_trace: bool,
     pub streaming_smoke: bool,
     pub debug_world_switch: bool,
-    /// Trees drawn from one instance buffer (performance roadmap prototype).
-    pub tree_instancing: bool,
+    /// Trees drawn as render entities instead of from one instance buffer (comparisons).
+    pub tree_entities: bool,
     /// How many LODs coarser than the drawn one instanced trees cast shadows from.
     pub tree_shadow_lod: usize,
     pub timer_pacing: bool,
@@ -201,9 +201,9 @@ const FLAGS: &[(&str, bool, &str)] = &[
         "Enable the demo Tab world-space switch",
     ),
     (
-        "--tree-instancing",
+        "--tree-entities",
         false,
-        "Draw trees from one instance buffer (prototype)",
+        "Draw trees as one render entity per mesh, the old path (comparisons)",
     ),
     (
         "--tree-shadow-lod",
@@ -439,6 +439,9 @@ impl LaunchOptions {
                     "--vegetation-v2-debug" => "Use F1 Advanced for terrain page gizmos.",
                     "--frame-pacing-display-only" => {
                         "The intermediate display-only pacing experiment was removed."
+                    }
+                    "--tree-instancing" => {
+                        "Instanced trees are the default; --tree-entities draws the old path."
                     }
                     "--terrain-lod" | "--terrain-prepared" => {
                         "This path is already the default; omit the obsolete switch."
@@ -853,7 +856,7 @@ impl LaunchOptions {
             input_trace: has("--trace-camera-input"),
             streaming_smoke: has("--streaming-smoke"),
             debug_world_switch: has("--debug-world-switch"),
-            tree_instancing: has("--tree-instancing"),
+            tree_entities: has("--tree-entities"),
             tree_shadow_lod,
             timer_pacing: has("--frame-pacing-timer"),
             terrain_legacy: has("--terrain-legacy"),

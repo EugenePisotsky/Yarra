@@ -201,7 +201,7 @@ Trees and shrubs would be drawn the way grass is: no render entity per tree, one
 
 | Step | Deliverable | Gate |
 | --- | --- | --- |
-| 1. Prototype | Every resident tree drawn from one instance buffer with its current LOD's mesh, main view only, the entities still casting shadows; vertex pulling from a per-form merged buffer, wind and crown shading through the existing shaders and lighting adapter | **Done** (`--tree-instancing`, `engine::tree_wind::instancing`): same image; see below |
+| 1. Prototype | Every resident tree drawn from one instance buffer with its current LOD's mesh, main view only, the entities still casting shadows; vertex pulling from a per-form merged buffer, wind and crown shading through the existing shaders and lighting adapter | **Done** (`engine::tree_wind::instancing`, the game's default since October 9; `--tree-entities` for the old path; the editor still draws entities): same image; see below |
 | 2. LOD on the GPU | LOD choice from projected height (catalog thresholds as now) and timed fades with their state per instance in compute; impostors drawn by the same renderer, replacing the block meshes and the fade buffer; render entities for trees removed (rain shelter and other CPU users, and later trunk collision, keep a plain per-page list: collision is gameplay data and does not depend on how trees are drawn) | Same transitions and fade timing; CPU render prep and bin unpacking gone for trees |
 | 3. Shadows | Cascades culled per cascade frustum and drawn through Bevy's shadow phase from the instance buffer, one LOD coarser than the main view's | **Done** (same instance buffer, `--tree-shadow-lod`): same image at the same LOD, entities out of every view; one LOD coarser saves a third of cascade time but lightens the forest; see below |
 | 4. Temporal | Depth and motion for MetalFX Temporal from the same instance buffer (previous transforms for rebases, the previous wind pose) | **Done**: the main view's groups also go into Bevy's depth and motion prepass phases; trees are static, rebases reset the history (camera jumps over 8 m), and the shader's previous wind pose drives the motion; same sharpness in motion as entities |
@@ -221,6 +221,8 @@ Open questions for the user:
 - Whether a lighter material far away (no normal map, no forest-shadow march) is acceptable, if it is not visible.
 
 ### After the trees
+
+Target since October 9 (user): 50% render scale with MetalFX Temporal at a stable 60 fps. Broadleaf stand at that setting with instanced trees, Metal System Trace per frame: 13.7 ms, of which the GPU idles 2.2 ms. MetalFX Temporal 1.09 ms plus two unlabelled command buffers of its own (0.54 and 0.91 ms; they vanish with `--profile-temporal-bypass`) and a 1.4 ms wait between them: about 4 ms in all, against 0.45 ms for MetalFX Spatial. Shadow cascades 3.2 ms; main opaque pass 2.6 ms; grass 1.6 ms; depth and motion prepass 1.5 ms (1.8 ms on the start beach); Bevy's atmosphere LUTs about 1.4 ms (overlapping the cascades); bloom about 0.5 ms; sky composite 0.8 ms (1.4 ms on the beach).
 
 | Item | Idea | Expected |
 | --- | --- | --- |

@@ -58,7 +58,7 @@ fn run() -> Result<(), String> {
             world_switch: options.debug_world_switch,
         })
         .insert_resource(engine::TreeInstancing {
-            enabled: options.tree_instancing,
+            enabled: !options.tree_entities,
             shadow_lod: options.tree_shadow_lod,
         })
         .insert_resource(engine::TerrainLodPreview {
