@@ -17,7 +17,10 @@ use bevy::{
     },
     core_pipeline::{
         core_3d::{AlphaMask3d, Opaque3d, Opaque3dBatchSetKey, Opaque3dBinKey},
-        prepass::{OpaqueNoLightmap3dBatchSetKey, OpaqueNoLightmap3dBinKey},
+        prepass::{
+            AlphaMask3dPrepass, Opaque3dPrepass, OpaqueNoLightmap3dBatchSetKey,
+            OpaqueNoLightmap3dBinKey,
+        },
     },
     ecs::{
         query::ROQueryItem,
@@ -34,7 +37,8 @@ use bevy::{
         LightEntity, MATERIAL_BIND_GROUP_INDEX, MaterialBindGroupAllocators, MeshBindGroups,
         MeshMorphBindGroupKey, MeshPipelineKey, PreparedMaterial, SetMeshViewBindGroup,
         SetMeshViewBindingArrayBindGroup, SetPrepassViewBindGroup, SetPrepassViewEmptyBindGroup,
-        Shadow, ShadowBatchSetKey, ShadowBinKey, ViewKeyCache, alpha_mode_pipeline_key,
+        Shadow, ShadowBatchSetKey, ShadowBinKey, ViewKeyCache, ViewKeyPrepassCache,
+        alpha_mode_pipeline_key,
     },
     prelude::*,
     render::{
@@ -45,9 +49,9 @@ use bevy::{
         mesh::{RenderMesh, RenderMeshBufferInfo, allocator::MeshAllocator},
         render_asset::RenderAssets,
         render_phase::{
-            AddRenderCommand, BinnedRenderPhaseType, DrawFunctionId, DrawFunctions,
-            InputUniformIndex, PhaseItem, RenderCommand, RenderCommandResult, SetItemPipeline,
-            TrackedRenderPass, ViewBinnedRenderPhases,
+            AddRenderCommand, BinnedPhaseItem, BinnedRenderPhaseType, DrawFunctionId,
+            DrawFunctions, InputUniformIndex, PhaseItem, RenderCommand, RenderCommandResult,
+            SetItemPipeline, TrackedRenderPass, ViewBinnedRenderPhases,
         },
         render_resource::{binding_types::storage_buffer_read_only_sized, *},
         renderer::{RenderDevice, RenderQueue},
@@ -148,7 +152,9 @@ pub(super) fn plugin(app: &mut App) {
         .init_resource::<TreeInstanceGpu>()
         .add_render_command::<Opaque3d, DrawTreeInstances>()
         .add_render_command::<AlphaMask3d, DrawTreeInstances>()
-        .add_render_command::<Shadow, DrawTreeShadows>()
+        .add_render_command::<Opaque3dPrepass, DrawTreeDepth>()
+        .add_render_command::<AlphaMask3dPrepass, DrawTreeDepth>()
+        .add_render_command::<Shadow, DrawTreeDepth>()
         .add_systems(
             Render,
             (
@@ -500,9 +506,24 @@ fn draw_entities(world: &mut World) -> Vec<Option<(Entity, MainEntity)>> {
     entities
 }
 
-/// Specializes each group's instanced pipeline for every main view, as Bevy specializes the
-/// tree material for its entities but with `TreeWindKey::instanced`, and queues one item per
-/// group into its phase.
+/// Which of a main view's passes a pipeline draws.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Pass {
+    Main,
+    /// The depth and motion prepass, which MetalFX Temporal reads.
+    Prepass,
+}
+
+struct Functions {
+    opaque: DrawFunctionId,
+    mask: DrawFunctionId,
+    opaque_prepass: DrawFunctionId,
+    mask_prepass: DrawFunctionId,
+}
+
+/// Specializes each group's instanced pipelines for every main view (and its prepass, if it
+/// has one), as Bevy specializes the tree material for its entities but with
+/// `TreeWindKey::instanced`, and queues one item per group into each phase.
 fn queue(world: &mut World, mut pipelines: Local<HashMap<PipelineFor, CachedRenderPipelineId>>) {
     let groups = world.resource::<TreeInstanceFrame>().groups.clone();
     let mut views = world.query::<(&ExtractedView, &Msaa)>();
@@ -511,14 +532,12 @@ fn queue(world: &mut World, mut pipelines: Local<HashMap<PipelineFor, CachedRend
         .map(|(view, msaa)| (view.retained_view_entity, *msaa))
         .collect();
     let draw_entities = draw_entities(world);
-    let opaque_function = world
-        .resource::<DrawFunctions<Opaque3d>>()
-        .read()
-        .id::<DrawTreeInstances>();
-    let mask_function = world
-        .resource::<DrawFunctions<AlphaMask3d>>()
-        .read()
-        .id::<DrawTreeInstances>();
+    let functions = Functions {
+        opaque: function::<Opaque3d, DrawTreeInstances>(world),
+        mask: function::<AlphaMask3d, DrawTreeInstances>(world),
+        opaque_prepass: function::<Opaque3dPrepass, DrawTreeDepth>(world),
+        mask_prepass: function::<AlphaMask3dPrepass, DrawTreeDepth>(world),
+    };
     for (view, msaa) in views {
         let Some(view_key) = world.resource::<ViewKeyCache>().get(&view).copied() else {
             continue;
@@ -529,83 +548,138 @@ fn queue(world: &mut World, mut pipelines: Local<HashMap<PipelineFor, CachedRend
         {
             continue;
         }
+        let prepass_key = world
+            .resource::<ViewKeyPrepassCache>()
+            .get(&view)
+            .copied()
+            .filter(|_| {
+                world
+                    .resource::<ViewBinnedRenderPhases<Opaque3dPrepass>>()
+                    .contains_key(&view)
+            });
         // Last frame's items go; this frame's groups come back below.
         for (_, main) in draw_entities.iter().flatten() {
-            if let Some(phase) = world
-                .resource_mut::<ViewBinnedRenderPhases<Opaque3d>>()
-                .get_mut(&view)
-            {
-                phase.remove(*main);
-            }
-            if let Some(phase) = world
-                .resource_mut::<ViewBinnedRenderPhases<AlphaMask3d>>()
-                .get_mut(&view)
-            {
-                phase.remove(*main);
-            }
+            remove::<Opaque3d>(world, &view, *main);
+            remove::<AlphaMask3d>(world, &view, *main);
+            remove::<Opaque3dPrepass>(world, &view, *main);
+            remove::<AlphaMask3dPrepass>(world, &view, *main);
         }
         for (index, group) in groups.iter().enumerate() {
-            let Some((entity, main)) = draw_entities[index] else {
+            let Some(item) = draw_entities[index] else {
                 continue;
             };
-            let Some((pipeline, phase)) =
-                specialize(world, &mut pipelines, view, view_key, msaa, group)
-            else {
-                continue;
-            };
-            match phase {
-                RenderPhaseType::Opaque => {
-                    if let Some(phase) = world
-                        .resource_mut::<ViewBinnedRenderPhases<Opaque3d>>()
-                        .get_mut(&view)
-                    {
-                        phase.add(
-                            Opaque3dBatchSetKey {
-                                draw_function: opaque_function,
-                                pipeline,
-                                material_bind_group_index: None,
-                                lightmap_slab: None,
-                                slabs: default(),
-                            },
-                            Opaque3dBinKey {
-                                asset_id: group.mesh.untyped(),
-                            },
-                            (entity, main),
-                            InputUniformIndex::default(),
-                            BinnedRenderPhaseType::NonMesh,
+            for (pass, key) in [(Pass::Main, Some(view_key)), (Pass::Prepass, prepass_key)] {
+                let Some(key) = key else {
+                    continue;
+                };
+                let Some((pipeline, phase)) =
+                    specialize(world, &mut pipelines, view, pass, key, msaa, group)
+                else {
+                    continue;
+                };
+                let mesh = group.mesh.untyped();
+                match (pass, phase) {
+                    (Pass::Main, RenderPhaseType::Opaque) => {
+                        if let Some(phase) = world
+                            .resource_mut::<ViewBinnedRenderPhases<Opaque3d>>()
+                            .get_mut(&view)
+                        {
+                            phase.add(
+                                Opaque3dBatchSetKey {
+                                    draw_function: functions.opaque,
+                                    pipeline,
+                                    material_bind_group_index: None,
+                                    lightmap_slab: None,
+                                    slabs: default(),
+                                },
+                                Opaque3dBinKey { asset_id: mesh },
+                                item,
+                                InputUniformIndex::default(),
+                                BinnedRenderPhaseType::NonMesh,
+                            );
+                        }
+                    }
+                    (Pass::Main, RenderPhaseType::AlphaMask) => {
+                        add::<AlphaMask3d>(world, &view, functions.mask, pipeline, mesh, item);
+                    }
+                    (Pass::Prepass, RenderPhaseType::Opaque) => {
+                        add::<Opaque3dPrepass>(
+                            world,
+                            &view,
+                            functions.opaque_prepass,
+                            pipeline,
+                            mesh,
+                            item,
                         );
                     }
-                }
-                RenderPhaseType::AlphaMask => {
-                    if let Some(phase) = world
-                        .resource_mut::<ViewBinnedRenderPhases<AlphaMask3d>>()
-                        .get_mut(&view)
-                    {
-                        phase.add(
-                            OpaqueNoLightmap3dBatchSetKey {
-                                draw_function: mask_function,
-                                pipeline,
-                                material_bind_group_index: None,
-                                slabs: default(),
-                            },
-                            OpaqueNoLightmap3dBinKey {
-                                asset_id: group.mesh.untyped(),
-                            },
-                            (entity, main),
-                            InputUniformIndex::default(),
-                            BinnedRenderPhaseType::NonMesh,
+                    (Pass::Prepass, RenderPhaseType::AlphaMask) => {
+                        add::<AlphaMask3dPrepass>(
+                            world,
+                            &view,
+                            functions.mask_prepass,
+                            pipeline,
+                            mesh,
+                            item,
                         );
                     }
+                    _ => {}
                 }
-                _ => {}
             }
         }
+    }
+}
+
+/// The id of draw function `C` in phase `P`.
+fn function<P: PhaseItem, C: 'static>(world: &World) -> DrawFunctionId {
+    world.resource::<DrawFunctions<P>>().read().id::<C>()
+}
+
+fn remove<P: BinnedPhaseItem>(world: &mut World, view: &RetainedViewEntity, entity: MainEntity) {
+    if let Some(phase) = world
+        .resource_mut::<ViewBinnedRenderPhases<P>>()
+        .get_mut(view)
+    {
+        phase.remove(entity);
+    }
+}
+
+/// Queues a group into a phase binned like the alpha-masked and prepass phases.
+fn add<P>(
+    world: &mut World,
+    view: &RetainedViewEntity,
+    draw_function: DrawFunctionId,
+    pipeline: CachedRenderPipelineId,
+    mesh: bevy::asset::UntypedAssetId,
+    item: (Entity, MainEntity),
+) where
+    P: BinnedPhaseItem<
+            BatchSetKey = OpaqueNoLightmap3dBatchSetKey,
+            BinKey = OpaqueNoLightmap3dBinKey,
+        >,
+{
+    if let Some(phase) = world
+        .resource_mut::<ViewBinnedRenderPhases<P>>()
+        .get_mut(view)
+    {
+        phase.add(
+            OpaqueNoLightmap3dBatchSetKey {
+                draw_function,
+                pipeline,
+                material_bind_group_index: None,
+                slabs: default(),
+            },
+            OpaqueNoLightmap3dBinKey { asset_id: mesh },
+            item,
+            InputUniformIndex::default(),
+            BinnedRenderPhaseType::NonMesh,
+        );
     }
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct PipelineFor {
     view: RetainedViewEntity,
+    pass: Pass,
     view_key: u64,
     mesh: AssetId<Mesh>,
     material: AssetId<TreeWindMaterial>,
@@ -629,6 +703,7 @@ fn specialize(
     world: &mut World,
     pipelines: &mut HashMap<PipelineFor, CachedRenderPipelineId>,
     view: RetainedViewEntity,
+    pass: Pass,
     view_key: MeshPipelineKey,
     msaa: Msaa,
     group: &Group,
@@ -640,6 +715,7 @@ fn specialize(
     let phase = properties.render_phase_type;
     let at = PipelineFor {
         view,
+        pass,
         view_key: view_key.bits(),
         mesh: group.mesh,
         material: group.material,
@@ -651,23 +727,34 @@ fn specialize(
         .resource::<RenderAssets<RenderMesh>>()
         .get(group.mesh)?;
     let layout = mesh.layout.clone();
-    let mut material_bits: MeshPipelineKey = properties.mesh_pipeline_key_bits.downcast();
-    material_bits.insert(alpha_mode_pipeline_key(properties.alpha_mode, &msaa));
-    // Timed fades carry a crossfade range for exactly this: Bevy's main pass dithers them by
-    // their tag without the shadows' overlap.
-    let mesh_key = view_key
+    // Timed fades carry a crossfade range for exactly this: Bevy's main and prepass pipelines
+    // dither them by their tag without the shadows' overlap.
+    let mut mesh_key = view_key
         | MeshPipelineKey::from_bits_retain(mesh.key_bits.bits())
-        | material_bits
+        | alpha_mode_pipeline_key(properties.alpha_mode, &msaa)
         | MeshPipelineKey::VISIBILITY_RANGE_DITHER;
+    let specialize = match pass {
+        Pass::Main => {
+            mesh_key |= properties.mesh_pipeline_key_bits.downcast();
+            properties.base_specialize?
+        }
+        Pass::Prepass => {
+            if !matches!(phase, RenderPhaseType::Opaque | RenderPhaseType::AlphaMask) {
+                return None;
+            }
+            // The tree material has its own prepass shaders (`specialize_shadow`).
+            mesh_key |= MeshPipelineKey::PREPASS_READS_MATERIAL;
+            properties.prepass_specialize?
+        }
+    };
     let key = instanced_key(&properties, mesh_key);
-    let base_specialize = properties.base_specialize?;
-    match base_specialize(world, key, &layout, &properties) {
+    match specialize(world, key, &layout, &properties) {
         Ok(pipeline) => {
             pipelines.insert(at, pipeline);
             Some((pipeline, phase))
         }
         Err(error) => {
-            warn_once!("tree instancing: {error}");
+            warn_once!("tree instancing ({pass:?}): {error}");
             None
         }
     }
@@ -685,10 +772,7 @@ fn queue_shadows(world: &mut World, mut pipelines: Local<HashMap<Form, CachedRen
         .map(|(view, _)| view.retained_view_entity)
         .collect();
     let draw_entities = draw_entities(world);
-    let function = world
-        .resource::<DrawFunctions<Shadow>>()
-        .read()
-        .id::<DrawTreeShadows>();
+    let draw_function = function::<Shadow, DrawTreeDepth>(world);
     for view in views {
         let Some(phase) = world
             .resource_mut::<ViewBinnedRenderPhases<Shadow>>()
@@ -715,7 +799,7 @@ fn queue_shadows(world: &mut World, mut pipelines: Local<HashMap<Form, CachedRen
                 .get_mut(&view)
             {
                 phase.add(
-                    shadow_batch_key(pipeline, function),
+                    shadow_batch_key(pipeline, draw_function),
                     ShadowBinKey {
                         asset_id: group.mesh.untyped(),
                     },
@@ -787,7 +871,8 @@ type DrawTreeInstances = (
     DrawTreeGroup,
 );
 
-type DrawTreeShadows = (
+/// Shadow cascades and the depth and motion prepass.
+type DrawTreeDepth = (
     SetItemPipeline,
     SetPrepassViewBindGroup<0>,
     SetPrepassViewEmptyBindGroup<1>,
