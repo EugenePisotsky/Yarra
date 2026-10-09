@@ -8,6 +8,7 @@
 //! shape at the band's ends. Objects whose last LOD is an impostor instead switch at a
 //! distance and dissolve over time, shadows included ([`timed`]).
 mod timed;
+pub(crate) use timed::TIMED_RANGE;
 
 use crate::tree_impostor::ImpostorFades;
 use crate::{WorldCatalog, WorldOrigin, WorldViewCamera};

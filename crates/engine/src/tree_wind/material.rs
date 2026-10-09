@@ -20,10 +20,10 @@ use bevy::{
 };
 use std::collections::{HashMap, HashSet};
 
-type TreeWindMaterial = ExtendedMaterial<CloudMaterial, TreeWindExtension>;
+pub(super) type TreeWindMaterial = ExtendedMaterial<CloudMaterial, TreeWindExtension>;
 #[derive(Asset, AsBindGroup, TypePath, Clone, Debug)]
 #[bind_group_data(TreeWindKey)]
-struct TreeWindExtension {
+pub(super) struct TreeWindExtension {
     // StandardMaterial uses 0–99; CloudMaterial uses 120–122.
     #[storage(100, read_only)]
     wind: Handle<ShaderBuffer>,
@@ -40,15 +40,19 @@ struct TreeWindExtension {
     upper_metallic_roughness: Option<Handle<Image>>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-struct TreeWindKey {
+pub(super) struct TreeWindKey {
     crown_shading: bool,
     bark_blend: bool,
+    /// Drawn from the instance buffer (`super::instancing`) rather than per mesh entity; only
+    /// that path specializes with it.
+    pub(super) instanced: bool,
 }
 impl From<&TreeWindExtension> for TreeWindKey {
     fn from(material: &TreeWindExtension) -> Self {
         Self {
             crown_shading: material.crown_shading,
             bark_blend: material.bark_blend,
+            instanced: false,
         }
     }
 }
@@ -68,6 +72,13 @@ impl MaterialExtension for TreeWindExtension {
             && let Some(fragment) = descriptor.fragment.as_mut()
         {
             fragment.shader_defs.push("TREE_BARK_BLEND".into());
+        }
+        if key.bind_group_data.instanced {
+            descriptor.vertex.shader_defs.push("TREE_INSTANCED".into());
+            if let Some(fragment) = descriptor.fragment.as_mut() {
+                fragment.shader_defs.push("TREE_INSTANCED".into());
+            }
+            descriptor.layout.push(super::instancing::instance_layout());
         }
         // LODs faded over time (object_lod) dither by their mesh tag in every pass. Bevy
         // enables the dither only where visibility ranges crossfade, and never in shadows.

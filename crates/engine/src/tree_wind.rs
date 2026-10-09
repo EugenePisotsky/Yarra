@@ -8,8 +8,10 @@ pub use cards::tree_gltf_plugin;
 mod depth_tests;
 #[cfg(test)]
 mod gpu_tests;
+mod instancing;
 mod material;
 mod tuning;
+pub use instancing::TreeInstancing;
 pub use tuning::TreeWindTuning;
 #[cfg(test)]
 mod scene_tests;
@@ -49,6 +51,7 @@ impl Plugin for TreeWindPlugin {
                     .in_set(TreeWindSystems)
                     .after(bevy::transform::TransformSystems::Propagate),
             );
+        instancing::plugin(app);
         if app.get_sub_app(RenderApp).is_none() {
             return;
         }

@@ -1,5 +1,60 @@
 #import bevy_pbr::{mesh_functions, view_transformations::position_world_to_clip}
 #import bevy_pbr::mesh_view_bindings::view
+
+#ifdef TREE_INSTANCED
+// Trees drawn from one instance buffer (crates/engine/src/tree_wind/instancing.rs) rather than
+// one mesh entity each: their transform and fade come from here, not from the mesh uniforms.
+struct TreeInstance {
+    // Rows of the world-from-local transform.
+    rows: array<vec4<f32>, 3>,
+    tag: u32,
+    flags: u32,
+    padding: vec2<u32>,
+}
+@group(4) @binding(0) var<storage, read> tree_instances: array<TreeInstance>;
+#endif
+
+fn world_from_local(instance_index: u32) -> mat4x4<f32> {
+#ifdef TREE_INSTANCED
+    let r = tree_instances[instance_index].rows;
+    return transpose(mat4x4(r[0], r[1], r[2], vec4(0.0, 0.0, 0.0, 1.0)));
+#else
+    return mesh_functions::get_world_from_local(instance_index);
+#endif
+}
+
+// Instanced trees are only turned and scaled uniformly, so their model matrix turns normals as
+// it turns directions.
+fn normal_to_world(normal: vec3<f32>, model: mat4x4<f32>, instance_index: u32) -> vec3<f32> {
+#ifdef TREE_INSTANCED
+    if any(normal != vec3(0.0)) {
+        return normalize(mat3x3(model[0].xyz, model[1].xyz, model[2].xyz) * normal);
+    }
+    return normal;
+#else
+    return mesh_functions::mesh_normal_local_to_world(normal, instance_index);
+#endif
+}
+
+fn tangent_to_world(tangent: vec4<f32>, model: mat4x4<f32>, instance_index: u32) -> vec4<f32> {
+#ifdef TREE_INSTANCED
+    if any(tangent != vec4(0.0)) {
+        return vec4(normalize(mat3x3(model[0].xyz, model[1].xyz, model[2].xyz) * tangent.xyz),
+            tangent.w);
+    }
+    return tangent;
+#else
+    return mesh_functions::mesh_tangent_local_to_world(model, tangent, instance_index);
+#endif
+}
+
+fn mesh_tag(instance_index: u32) -> u32 {
+#ifdef TREE_INSTANCED
+    return tree_instances[instance_index].tag;
+#else
+    return mesh_functions::get_tag(instance_index);
+#endif
+}
 // Match Bevy 0.19 vertex-output locations, but require invariant clip positions.
 // Colour and depth compile separately; wind arithmetic must not be reassociated
 // differently or opaque fragments can fail their own prepass depth test.
@@ -388,7 +443,7 @@ fn animated_vector(v: vec3<f32>, vertex: Vertex, model: mat4x4<f32>, pose: WindP
 @vertex
 fn vertex(vertex: Vertex) -> VertexOutput {
     var out: VertexOutput;
-    let model = mesh_functions::get_world_from_local(vertex.instance_index);
+    let model = world_from_local(vertex.instance_index);
     out.world_position = animated_position(vertex, model, wind.current);
     out.position = position_world_to_clip(out.world_position.xyz);
 
@@ -411,23 +466,27 @@ fn vertex(vertex: Vertex) -> VertexOutput {
 #ifdef PREPASS_PIPELINE
 #ifdef NORMAL_PREPASS_OR_DEFERRED_PREPASS
 #ifdef VERTEX_NORMALS
-    out.world_normal = animated_vector(mesh_functions::mesh_normal_local_to_world(vertex.normal, vertex.instance_index), vertex, model, wind.current);
+    out.world_normal = animated_vector(normal_to_world(vertex.normal, model, vertex.instance_index), vertex, model, wind.current);
 #endif
 #ifdef VERTEX_TANGENTS
-    let tangent = mesh_functions::mesh_tangent_local_to_world(model, vertex.tangent, vertex.instance_index);
+    let tangent = tangent_to_world(vertex.tangent, model, vertex.instance_index);
     out.world_tangent = vec4(animated_vector(tangent.xyz, vertex, model, wind.current), tangent.w);
 #endif
 #endif
 #ifdef MOTION_VECTOR_PREPASS
+#ifdef TREE_INSTANCED
+    let previous_model = model;
+#else
     let previous_model = mesh_functions::get_previous_world_from_local(vertex.instance_index);
+#endif
     out.previous_world_position = animated_position(vertex, previous_model, wind.previous);
 #endif
 #else
 #ifdef VERTEX_NORMALS
-    out.world_normal = animated_vector(mesh_functions::mesh_normal_local_to_world(vertex.normal, vertex.instance_index), vertex, model, wind.current);
+    out.world_normal = animated_vector(normal_to_world(vertex.normal, model, vertex.instance_index), vertex, model, wind.current);
 #endif
 #ifdef VERTEX_TANGENTS
-    let tangent = mesh_functions::mesh_tangent_local_to_world(model, vertex.tangent, vertex.instance_index);
+    let tangent = tangent_to_world(vertex.tangent, model, vertex.instance_index);
     out.world_tangent = vec4(animated_vector(tangent.xyz, vertex, model, wind.current), tangent.w);
 #endif
 #endif
@@ -439,7 +498,7 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     // LODs faded over time (crates/engine/src/object_lod.rs) carry their dither level in
     // the mesh tag, as 64 + level, in every pass including the shadow cascades. Others keep
     // Bevy's crossfade by distance; passes Bevy gives no ranges (TREE_TAG_FADE) draw whole.
-    let tag = mesh_functions::get_tag(vertex.instance_index);
+    let tag = mesh_tag(vertex.instance_index);
     if tag != 0u {
         var level = i32(tag) - 64;
 #ifdef TREE_TAG_FADE

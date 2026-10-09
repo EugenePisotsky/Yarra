@@ -36,6 +36,8 @@ pub(crate) struct LaunchOptions {
     pub input_trace: bool,
     pub streaming_smoke: bool,
     pub debug_world_switch: bool,
+    /// Trees drawn from one instance buffer (performance roadmap prototype).
+    pub tree_instancing: bool,
     pub timer_pacing: bool,
     pub terrain_legacy: bool,
     pub terrain_reference: bool,
@@ -195,6 +197,11 @@ const FLAGS: &[(&str, bool, &str)] = &[
         "--debug-world-switch",
         false,
         "Enable the demo Tab world-space switch",
+    ),
+    (
+        "--tree-instancing",
+        false,
+        "Draw trees from one instance buffer (prototype)",
     ),
     (
         "--frame-pacing-timer",
@@ -830,6 +837,7 @@ impl LaunchOptions {
             input_trace: has("--trace-camera-input"),
             streaming_smoke: has("--streaming-smoke"),
             debug_world_switch: has("--debug-world-switch"),
+            tree_instancing: has("--tree-instancing"),
             timer_pacing: has("--frame-pacing-timer"),
             terrain_legacy: has("--terrain-legacy"),
             terrain_reference: has("--terrain-reference"),

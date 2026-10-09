@@ -5,6 +5,9 @@
     pbr_fragment::pbr_input_from_standard_material,
     decal::clustered::apply_decals,
 }
+#ifdef TREE_INSTANCED
+#import bevy_pbr::mesh_types
+#endif
 
 #ifdef PREPASS_PIPELINE
 #import bevy_pbr::{
@@ -103,6 +106,12 @@ fn fragment(
 
     // generate a PbrInput struct from the StandardMaterial bindings
     var pbr_input = pbr_input_from_standard_material(in, is_front);
+#ifdef TREE_INSTANCED
+    // Trees drawn from the instance buffer (crates/engine/src/tree_wind/instancing.rs) have no
+    // mesh uniform: like every tree entity they receive shadows and are not mirrored.
+    pbr_input.flags = mesh_types::MESH_FLAGS_SHADOW_RECEIVER_BIT
+        | mesh_types::MESH_FLAGS_SIGN_DETERMINANT_MODEL_3X3_BIT;
+#endif
 
 #ifdef TREE_CROWN_SHADING
 #ifdef VERTEX_COLORS

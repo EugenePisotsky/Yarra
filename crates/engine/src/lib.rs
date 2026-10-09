@@ -17,7 +17,8 @@ pub use lod_lab::{
 mod tree_impostor;
 mod tree_wind;
 pub use tree_wind::{
-    TreeWindPlugin, TreeWindResponse, TreeWindSystems, TreeWindTuning, tree_gltf_plugin,
+    TreeInstancing, TreeWindPlugin, TreeWindResponse, TreeWindSystems, TreeWindTuning,
+    tree_gltf_plugin,
 };
 mod day_clock;
 pub use day_clock::{GameDayClock, GameDayClockPlugin, clock_time};

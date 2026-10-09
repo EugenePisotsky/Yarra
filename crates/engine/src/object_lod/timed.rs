@@ -21,7 +21,7 @@ pub(super) const TAG_BIAS: i32 = 64;
 /// Always drawn as far as visibility ranges go, but with a crossfade margin, so Bevy's main
 /// and prepass pipelines include the dither the mesh tag drives. It never changes, so it
 /// never makes Bevy rebuild its range table.
-pub(super) const TIMED_RANGE: VisibilityRange = VisibilityRange {
+pub(crate) const TIMED_RANGE: VisibilityRange = VisibilityRange {
     start_margin: 0.0..1e-3,
     end_margin: f32::MAX / 2.0..f32::MAX,
     use_aabb: false,
