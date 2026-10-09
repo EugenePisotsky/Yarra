@@ -569,11 +569,12 @@ const GLARE_VEIL_WIDTH: f32 = 0.12;
 // Sunlit air in front of the scene scattering towards the eye around the sun, shaded like the
 // veil by what lies between, so sunset beams fan out from silhouettes. Drawn with sun rays only,
 // fading out as the sun leaves the image: off screen nothing shows what shades it.
-const AIR_GLOW_SHARE: f32 = 0.08;
+const AIR_GLOW_SHARE: f32 = 0.05;
 const AIR_GLOW_WIDTH: f32 = 0.15;
 // Depth of air over which the glow builds up in front of a surface, metres, and how much faster
-// it builds up in the air under crowns (as a power of that air's transmittance).
-const AIR_GLOW_DEPTH: f32 = 30.0;
+// it builds up in the air under crowns (as a power of that air's transmittance). Over 30 m it
+// veiled the ground in front of a low sun; distant land and the air under crowns keep it.
+const AIR_GLOW_DEPTH: f32 = 200.0;
 const AIR_GLOW_CANOPY: f32 = 4.0;
 
 // 1 with the sun in the image, falling to 0 a fifth of the image outside it.

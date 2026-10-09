@@ -469,6 +469,15 @@ Scattered clouds read as lenses: thin streaks near the horizon and soft grey smu
 | Device lost | Launches in quick succession fail now and then with "Cannot allocate sample buffer" (Metal GPU counters, about one run in six, old shaders as well, on an idle machine). Captures pass `--gpu-timing-off`; profiles need the counters and are rerun. |
 | Not done | Overhead clouds are soft at the panorama's resolution. |
 
+## Sunset glow — October 9
+
+The sky around a low sun looked washed out. Captures facing the sun at 16:48, 17:17 and 17:38 in clear weather at the forest edge, start beach, valley and broadleaf stand, with the parts switched off one at a time (look keys `mist`, `haze`, `fog`, `shafts`).
+
+| Change | Decision / observation |
+| --- | --- |
+| Where the glow comes from | The wide orange-white sky is mostly the haze scattering the low sun forwards, then the glare's veil; the art-directed air glow on top of them is a minor part, since auto exposure makes up for it: from 8% to 3% of the sun the top quarter of the frame lost 9% of its light. Haze, mist and shafts together veil the ground in front of the sun. Not retuned now: the haze is physical, left for the final look pass. |
+| Air glow over near ground | **Changed.** The glow built up over the first 30 m of depth, so the field in front of the character took most of it. It builds up over 200 m now (the air under crowns still fills it at once, keeping forest beams) at 5% of the sun: near ground keeps its contrast (log luminance spread of the lower frame 1.09 → 1.26 over the valley). |
+
 ## Open gates and maintenance
 
 The remaining gates are sustained terrain/whole-game power, Temporal cost and motion quality, field-scale grass lighting, target-PC acceptance, and physical-phone heat/60-FPS delivery. Keep correctness references until their replacements pass the relevant gate. Existing counters often identify less work without demonstrating better delivered frames or lower power.
