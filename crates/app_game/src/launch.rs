@@ -115,7 +115,7 @@ const FLAGS: &[(&str, bool, &str)] = &[
     (
         "--fps",
         true,
-        "0 or 15..240: gameplay cap; 0 follows display",
+        "0 or 15..240: gameplay cap (default 60); 0 follows the display",
     ),
     (
         "--upscaler",
@@ -465,8 +465,9 @@ impl LaunchOptions {
                 })
                 .transpose()
         };
+        // Following a 120 Hz display kept the GPU busy whenever it had headroom, and loud.
         let fps = value("--fps")?
-            .unwrap_or("0")
+            .unwrap_or("60")
             .parse::<u32>()
             .map_err(|_| "--fps requires 0 or 15..240")?;
         if fps != 0 && !(15..=240).contains(&fps) {

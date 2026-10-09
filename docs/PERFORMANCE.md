@@ -114,7 +114,7 @@ Precedence is normal defaults → launch options → repro preset → profile pr
 
 | Purpose | Controls |
 | --- | --- |
-| Scene/presentation | `--world-db FILE`, `--start-view FILE`, `--fps 0\|15..240`, `--upscaler auto\|linear\|metalfx-spatial\|metalfx-temporal`, `--cloud-quality off\|balanced\|high`, `--grass-density balanced\|full\|authored`, `--weather auto\|authored\|clear\|scattered\|overcast\|rain\|storm` (profiles, repros, Metal captures and smoke runs default to `authored`) |
+| Scene/presentation | `--world-db FILE`, `--start-view FILE`, `--fps 0\|15..240` (default 60; 0 follows the display), `--upscaler auto\|linear\|metalfx-spatial\|metalfx-temporal`, `--cloud-quality off\|balanced\|high`, `--grass-density balanced\|full\|authored`, `--weather auto\|authored\|clear\|scattered\|overcast\|rain\|storm` (profiles, repros, Metal captures and smoke runs default to `authored`) |
 | Panel/logging | `--diagnostics off\|panel\|full`, `--performance-open`, `--render-audit`, `--render-console`, `--timing-log`, `--gpu-timing-detail`, `--gpu-timing-off`, `--metalfx-timing-log`, `--grass-counters` |
 | Finite repro/output | `--render-repro NAME`, `--render-frames N`, `--render-snapshot PATH`, `--render-snapshot-frames N,N`, `--render-prepass`, `--render-ui-off`, `--metal-capture NAME.gputrace`, `--streaming-smoke` |
 | Timed profile | `--profile-seconds N`, `--profile-warmup N`, `--profile-size game\|WIDTHxHEIGHT`, `--profile-surface WIDTHxHEIGHT`, `--profile-window fullscreen\|windowed`, `--profile-fps N`, `--profile-native-pacing`, `--profile-msaa 1\|2\|4`, `--profile-grass full\|off`, `--profile-objects on\|off`, `--profile-terrain on\|off`, `--profile-bloom on\|off`, `--profile-temporal-bypass`, `--profile-diagnostic` |

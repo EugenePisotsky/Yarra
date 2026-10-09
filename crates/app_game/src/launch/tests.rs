@@ -5,7 +5,7 @@ fn parse(args: &[&str]) -> Result<LaunchOptions, String> {
 #[test]
 fn defaults_and_paths_are_explicit() {
     let options = parse(&[]).unwrap();
-    assert_eq!(options.fps, 0);
+    assert_eq!(options.fps, 60);
     assert!(!options.debug_world_switch);
     assert!(!options.counters);
     assert_eq!(options.upscaler, upscaling::UpscaleMethod::Auto);
