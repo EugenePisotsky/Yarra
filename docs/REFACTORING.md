@@ -186,6 +186,43 @@ Evidence: 232 tests across the gameplay crates and the game, clippy clean, the s
 
 Work in small runnable batches. Replace superseded formats directly and regenerate fixtures. Run the headless scenarios first: [headless play](ARCHITECTURE.md#commands) through the same commands and read models as the game is a requirement for every step. Add a script only for a concrete case that built-in rules express badly.
 
+## Performance roadmap
+
+October 9, 2026. At native resolution the forest ran at about 43 fps uncapped on a cool M2 Max and lower once it heats (the user saw 35). Measurements and the fixes so far are in [Experiments](EXPERIMENTS.md#native-resolution--october-9). What remains, largest first:
+
+- **Trees** cost at every resolution: about 3.7 ms of the forest's opaque pass, 3.2 ms of shadow cascades, 0.6 ms of Bevy's per-mesh GPU preprocessing and most of the 4 ms of CPU render preparation, for about 38,000 render entities (one scene per LOD, one entity per glTF primitive, so about 13 per tree). Impostors also show too close (from 166 m), and mesh LODs are too expensive to push them farther.
+- **Temporal upscaling** adds about 4 ms of GPU and 1.5 ms of CPU at 50% scale: its depth and motion prepass draws the world again.
+- **The sky composite** is one large shader for sky, sea, fog, aerial perspective, shafts and glare at every pixel (about 5.3 ms at native in the forest); stubbing its parts shows its size, more than any one part, sets its cost.
+- **Terrain** shading at native (2.8–4.3 ms), mostly lighting.
+
+### GPU-driven trees
+
+Trees and shrubs would be drawn the way grass is: no render entity per tree, one instance list on the GPU, culling and LOD choice in compute, and a few indirect draws per form and LOD.
+
+| Step | Deliverable | Gate |
+| --- | --- | --- |
+| 1. Prototype | Every resident tree drawn from one instance buffer with its current LOD's mesh, main view only, the entities still casting shadows; vertex pulling from a per-form merged buffer, wind and crown shading through the existing shaders and lighting adapter | Same image at the forest, edge and pine views; render prep and main-thread time with entities hidden against the current path |
+| 2. LOD on the GPU | LOD choice from projected height (catalog thresholds as now) and timed fades with their state per instance in compute; impostors drawn by the same renderer, replacing the block meshes and the fade buffer; render entities for trees removed (rain shelter and other CPU users keep a plain per-page list) | Same transitions and fade timing; CPU render prep and bin unpacking gone for trees |
+| 3. Shadows | Cascades culled per cascade frustum and drawn through Bevy's shadow phase from the instance buffer, one LOD coarser than the main view's | Shadows read the same in the forest views; cascade time against 3.2 ms |
+| 4. Temporal | Depth and motion for MetalFX Temporal from the same instance buffer (previous transforms for rebases, the previous wind pose) | No ghosting on swaying crowns; prepass cost against now |
+| 5. Farther meshes | LOD2 in use and the impostor hand-off moved out, as far as the budget allows; impostor quality revisited with what is left | Impostors not noticeable at the distances the user plays at |
+| 6. Retire | Old per-entity path, `ImpostorBatch`, `ImpostorFades` and the CPU LOD selection removed | Tests and docs |
+
+Expected: CPU render prep and the main thread's LOD work for trees mostly gone (about 3 ms CPU); 0.5 ms of GPU preprocessing gone; shadow cascades down by a third to a half through the coarser LOD; enough headroom for LOD2 and a farther hand-off. Risks: shadow-phase and prepass integration go through Bevy internals (grass has neither); the editor shares the streaming path; visual parity of crossfades and lighting must be checked view by view.
+
+Open questions for the user:
+- Trees deep inside a forest could stop casting into the far cascade, leaving their shade to the forest shadow map: to be judged on the image.
+- Whether a lighter material far away (no normal map, no forest-shadow march) is acceptable, if it is not visible.
+
+### After the trees
+
+| Item | Idea | Expected |
+| --- | --- | --- |
+| Temporal motion | Camera motion from depth and reprojection for static geometry; only moving things (character, swaying foliage) written to the motion target, instead of a second draw of everything | Most of the 4 ms and 1.5 ms at 50% scale |
+| Sky composite split | Sea, sky and air as separate, smaller passes; or the air (fog, aerial perspective, shafts, glare) at half resolution for each pixel block's nearest and farthest depth, interpolated by depth at full resolution | About 2.5–3 ms at native, about 0.7 ms at 50% |
+| Far terrain | Baked albedo and normal and lighter lighting where the detail cannot be seen | 0.5–1 ms at native |
+| Dynamic resolution | Render scale held to the frame budget with MetalFX Temporal, as consoles do | Holds 60 fps as the machine heats |
+
 ## Completed: confirmed leftovers and documentation
 
 - Removed the unreachable 160-second baseline runner, its state, scheduling, button guard and log field. Its request was only set in tests; current F1 A/B capture is a separate implementation and remains.
