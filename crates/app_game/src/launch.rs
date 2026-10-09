@@ -388,6 +388,8 @@ const FLAGS: &[(&str, bool, &str)] = &[
     ),
     ("--profile-msaa", true, "1 | 2 | 4"),
     ("--profile-grass", true, "full | off"),
+    ("--profile-objects", true, "on | off"),
+    ("--profile-terrain", true, "on | off"),
     ("--profile-bloom", true, "on | off"),
     ("--profile-auto-exposure", true, "on | off"),
     ("--profile-fog", true, "on | off"),

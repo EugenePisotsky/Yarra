@@ -58,7 +58,7 @@
 #import bevy_pbr::pbr_functions::calculate_contact_shadow
 #endif
 #endif
-#import "shaders/clouds/surface.wgsl"::{cloud_light, cloud_visibility, surface_wetness}
+#import "shaders/clouds/surface.wgsl"::{cloud_light, ground_celestial_irradiance, surface_wetness}
 #ifdef FOREST_SHADOW
 #import "shaders/clouds/forest_shadow.wgsl"::{forest_transmittance, forest_sky_light, forest_sky_visibility}
 #endif
@@ -68,15 +68,7 @@
 // sky light reaching it. Grass and soil reflect a dim green-gold.
 const GROUND_ALBEDO: vec3<f32> = vec3(0.09, 0.12, 0.05);
 fn ground_light(P: vec3<f32>) -> vec3<f32> {
-    var irradiance = view_bindings::lights.ambient_color.rgb * PI;
-    for (var i = 0u; i < view_bindings::lights.n_directional_lights; i += 1u) {
-        let light = &view_bindings::lights.directional_lights[i];
-        let height = (*light).direction_to_light.y;
-        if height > 0.0 {
-            irradiance += (*light).color.rgb * height * through_atmosphere(P, i)
-                * cloud_visibility(P, (*light).direction_to_light);
-        }
-    }
+    let irradiance = view_bindings::lights.ambient_color.rgb * PI + ground_celestial_irradiance(P);
     return GROUND_ALBEDO * irradiance / PI;
 }
 
@@ -379,6 +371,10 @@ fn apply_pbr_lighting(
         // check if this light should be skipped, which occurs if this light does not intersect with the view
         // note point and spot lights aren't skippable, as the relevant lights are filtered in `assign_lights_to_clusters`
         let light = &view_bindings::lights.directional_lights[i];
+        // Yarra: a light giving no light (the moon by day) costs nothing.
+        if all((*light).color.rgb == vec3(0.0)) {
+            continue;
+        }
 
         // If we're lightmapped, disable diffuse contribution from the light if
         // requested, to avoid double-counting light.

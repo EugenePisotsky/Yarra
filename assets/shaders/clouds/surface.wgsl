@@ -24,6 +24,20 @@ fn cloud_light(p: vec3<f32>, direction: vec3<f32>) -> vec2<f32> {
     let direct = select(t.y,t.x,sun)*open*open;
     return vec2(direct, max(CLOUD_DIFFUSE_FLOOR-direct, 0.0));
 }
+// Sun and moon light on flat ground at `p`, unexposed: their light after the atmosphere at the
+// camera stands in for its light there (the ground around a surface lies within metres of it),
+// past the clouds above `p`.
+fn ground_celestial_irradiance(p: vec3<f32>) -> vec3<f32> {
+    var irradiance = vec3(0.0);
+    if clouds.sun.y > 0.0 {
+        irradiance += clouds.near_sun.rgb * clouds.sun.y * cloud_visibility(p, clouds.sun.xyz);
+    }
+    if clouds.moon.w > 0.0 && clouds.moon.y > 0.0 {
+        irradiance += clouds.moon_color.rgb * clouds.moon.w * clouds.moon.y
+            * cloud_visibility(p, clouds.moon.xyz);
+    }
+    return irradiance;
+}
 // All of it, for light that casts no shadows anyway.
 fn cloud_visibility(p: vec3<f32>, direction: vec3<f32>) -> f32 {
     let light = cloud_light(p, direction);

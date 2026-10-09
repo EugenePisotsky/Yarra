@@ -1185,6 +1185,13 @@ fn fragment(in: FullscreenVertexOutput) -> Output {
     var nearest = 1.0e30;
     var farthest = 0.0;
     var total = 0.0;
+    // A sample's view-space depth from its depth value (the view-from-clip rows that give z and
+    // w), and its distance along this pixel's ray.
+    let to_view_z = vec4(view.view_from_clip[0].z, view.view_from_clip[1].z,
+        view.view_from_clip[2].z, view.view_from_clip[3].z);
+    let to_view_w = vec4(view.view_from_clip[0].w, view.view_from_clip[1].w,
+        view.view_from_clip[2].w, view.view_from_clip[3].w);
+    let per_depth = 1.0 / max(dot(ray, -normalize(view.world_from_view[2].xyz)), 1e-4);
     for (var i = 0u; i < samples; i += 1u) {
         let z = textureLoad(depth, pixel, i32(i));
         if z == 0.0 {
@@ -1192,8 +1199,8 @@ fn fragment(in: FullscreenVertexOutput) -> Output {
             sky_samples += 1u;
             continue;
         }
-        let world = view.world_from_clip * vec4(ndc, z, 1.0);
-        let distance = length(world.xyz / world.w - view.world_position);
+        let clip = vec4(ndc, z, 1.0);
+        let distance = -dot(to_view_z, clip) / dot(to_view_w, clip) * per_depth;
         distances[i] = distance;
         nearest = min(nearest, distance);
         farthest = max(farthest, distance);
@@ -1253,19 +1260,39 @@ fn fragment(in: FullscreenVertexOutput) -> Output {
             transmittance = path.transmittance * f32(geometry_samples);
         } else {
             // A silhouette: fog changes smoothly between the nearest and farthest samples, so it
-            // is integrated at those two and interpolated for the rest.
+            // is integrated at those two and interpolated for the rest. So is the air and water in
+            // front, unless the sea's surface or the cloud base lies between them.
             let near = min(min(nearest, sea_t), start);
             let far = min(min(farthest, sea_t), start);
             let near_fog = fog_along(ray, near);
             let far_fog = fog_along(ray, far);
+            let smooth_path = (sea_t <= nearest || sea_t >= farthest)
+                && (start <= nearest || start > farthest);
+            var near_path = Path(vec3(0.0), vec3(1.0));
+            var far_path = Path(vec3(0.0), vec3(1.0));
+            if smooth_path {
+                near_path = scene_path(ray, uv, nearest, sea_t, pixel);
+                far_path = scene_path(ray, uv, farthest, sea_t, pixel);
+                if nearest >= start {
+                    near_path = in_front(cloud.light, cloud.transmittance, near_path);
+                    far_path = in_front(cloud.light, cloud.transmittance, far_path);
+                }
+            }
             for (var i = 0u; i < samples; i += 1u) {
                 let distance = distances[i];
                 if distance < 0.0 {
                     continue;
                 }
-                var path = scene_path(ray, uv, distance, sea_t, pixel);
-                if distance >= start {
-                    path = in_front(cloud.light, cloud.transmittance, path);
+                var path: Path;
+                if smooth_path {
+                    let k = (distance - nearest) / (farthest - nearest);
+                    path = Path(mix(near_path.light, far_path.light, k),
+                        mix(near_path.transmittance, far_path.transmittance, k));
+                } else {
+                    path = scene_path(ray, uv, distance, sea_t, pixel);
+                    if distance >= start {
+                        path = in_front(cloud.light, cloud.transmittance, path);
+                    }
                 }
                 let t = clamp((min(min(distance, sea_t), start) - near) / max(far - near, 1e-3),
                     0.0, 1.0);

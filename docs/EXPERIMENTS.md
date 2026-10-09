@@ -503,6 +503,20 @@ The sea had swash and foam at the waterline but no waves coming ashore. Captures
 | Swash on the flat | Every band of the swash (film, wet sand, foam) is now at least 3 cm of depth, the sand's relief, so its edges soften; the patches that remain are the flat's own relief a few centimetres either side of the sea level, pools and dry patches the swash runs over. Aged foam turns half clear as it opens. |
 | Not done | The swell has no direction (every shore gets surf, the lee too); the open sea's shortest waves are long-crested, a faint net in shallow water; refraction and the view from under water. |
 
+## Native resolution — October 9
+
+User report: about 35 fps at native resolution in fullscreen, about 50 with vegetation and objects off, fans at full speed soon. The game renders at half scale by default (MetalFX to native), which is what the earlier profiles measured. M2 Max, release, `--profile-size 3456x2168` (native), 4× MSAA, uncapped, Metal System Trace per-encoder intervals over 3 s after 22 s, normalised per frame by the tone-mapping pass.
+
+| Change | Decision / observation |
+| --- | --- |
+| Where the time goes | Broadleaf stand, 46.8 fps uncapped (90 at half scale), GPU 22 ms: opaque pass fragments 9.0–9.9 ms and vertices 1.2–1.35, sky composite 6.3–7.1 (0.52 ms on September 29, before the environment work), shadow cascades 3.4, light shafts 1.1, Bevy's atmosphere tables 0.7–0.8, sun occlusion 0.66, bin unpacking 0.6. Whole runs lose 15% within minutes as the machine heats (forest 47.5 → 40 fps), which is the user's 35. |
+| Opaque pass anatomy | Off one at a time, forest / start beach: objects 3.7 / 2.3 ms, terrain 2.8 / 4.3, grass 0.7, 4× MSAA ~2 ms (MSAA off also saves 2.5 ms in the composite). |
+| Composite anatomy (forest) | Fog (haze and mist) 2.2 ms, light shafts and sun rays read back 1.3, clouds nothing under the trees; the rest ~2.8. Pixels whose MSAA samples lie at different distances (blades, leaves) shaded the air once per sample. |
+| Silhouette pixels | **Retained.** The air in front of a silhouette pixel is worked out at its nearest and farthest samples and interpolated for the rest, as its fog already was (per sample still where the sea's surface or the cloud base lies between them); each sample's distance comes from two rows of the view-from-clip matrix instead of a full transform. Composite 6.31 → 5.77 ms; the image matches but for particles and the character's idle pose. |
+| Dark lights | **Retained.** The moon is a second directional light, dark by day, and every lit surface still evaluated it (BRDF, cloud and forest lookups). Lights giving no light are skipped: opaque pass 9.84, 10.09 → 8.93, 9.06 ms at the start beach and 10.27, 9.22 → 9.18, 8.66 in the forest, alternating. |
+| Ground bounce | **Retained.** The ground's reflected light took each light's atmosphere transmittance and cloud shadow per pixel; it now takes the sun and moon after the atmosphere at the camera (`CloudParams::near_sun`), with one cloud shadow lookup: opaque pass 0.3–1 ms less, the image unchanged (mean difference 0.02–0.34 of 255). |
+| Profile switches | `--profile-objects off` and `--profile-terrain off` hide those draws, to split the opaque pass. |
+
 ## Open gates and maintenance
 
 The remaining gates are sustained terrain/whole-game power, Temporal cost and motion quality, field-scale grass lighting, target-PC acceptance, and physical-phone heat/60-FPS delivery. Keep correctness references until their replacements pass the relevant gate. Existing counters often identify less work without demonstrating better delivered frames or lower power.

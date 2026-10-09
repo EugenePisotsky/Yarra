@@ -20,6 +20,9 @@ pub(crate) struct ProfileSettings {
     pub temporal_bypass: bool,
     pub msaa: Msaa,
     pub grass: bool,
+    /// Object (tree, rock) and terrain draws, for splitting the main pass's cost.
+    pub objects: bool,
+    pub terrain: bool,
     fps: u32,
     warmup: f64,
     seconds: f64,
@@ -158,6 +161,13 @@ impl ProfileSettings {
             "off" => false,
             _ => return Err("Profile grass must be full or off".into()),
         };
+        let switch = |key: &str| match value(key)?.unwrap_or("on") {
+            "on" => Ok(true),
+            "off" => Ok(false),
+            _ => Err(format!("{key} must be on or off")),
+        };
+        let objects = switch("--profile-objects")?;
+        let terrain = switch("--profile-terrain")?;
         Ok(Some(Self {
             size,
             surface,
@@ -169,6 +179,8 @@ impl ProfileSettings {
             temporal_bypass: args.iter().any(|a| a == "--profile-temporal-bypass"),
             msaa,
             grass,
+            objects,
+            terrain,
             fps,
             warmup: duration(value("--profile-warmup")?.unwrap_or("15"), 1.0, 600.0)?,
             seconds: duration(seconds.unwrap_or("2"), 2.0, 3600.0)?,
@@ -394,6 +406,8 @@ pub(crate) fn apply_runtime_settings(app: &mut App) {
     } else {
         vegetation_render::VegetationProfileMode::Disabled
     };
+    settings.hide_objects = !profile.objects;
+    settings.hide_terrain = !profile.terrain;
 }
 
 #[cfg(test)]
