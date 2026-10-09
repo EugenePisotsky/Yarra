@@ -1,15 +1,18 @@
-//! Performance roadmap, step 1 (docs/REFACTORING.md): trees drawn in the main view from one
-//! instance buffer instead of one render entity per mesh, opted into with `--tree-instancing`.
-//! The tree entities stay, so LOD choice, fades and shadows still run through them, but they
-//! leave the main view for render layer 1, which the sun and moon also cast from. Each frame the
-//! ones visible in the main view are gathered into one buffer, grouped by mesh and material, and
-//! each group is drawn with one instanced draw through the tree material's own pipeline,
-//! specialized with `TREE_INSTANCED` so it reads transforms and fades from the buffer instead of
-//! Bevy's mesh uniforms (`shaders/tree_wind.wgsl`, `shaders/clouds/material.wgsl`).
+//! Performance roadmap, steps 1 and 3 (docs/REFACTORING.md): trees drawn from one instance
+//! buffer instead of one render entity per mesh, opted into with `--tree-instancing`. The tree
+//! entities stay, so LOD choice and fades still run through them, but they move to render
+//! layer 1, which no camera or light sees, so Bevy no longer extracts, culls or queues them.
+//! Each frame the meshes visible in the main view, and for every shadow cascade the meshes of
+//! the LOD each tree casts from (`TreeInstancing::shadow_lod` steps coarser than the one drawn),
+//! are gathered into one buffer, grouped by mesh and material, and each group is drawn with
+//! one instanced draw through the tree material's own pipelines, specialized with
+//! `TREE_INSTANCED` so they read transforms and fades from the buffer instead of Bevy's mesh
+//! uniforms (`shaders/tree_wind.wgsl`, `shaders/clouds/material.wgsl`).
 use super::material::TreeWindMaterial;
+use crate::object_lod::{LodScene, ScreenSpaceLod, TAG_BIAS, TIMED_RANGE};
 use bevy::{
     camera::{
-        primitives::{Aabb, Frustum},
+        primitives::{Aabb, CascadesFrusta, Frustum},
         visibility::{RenderLayers, VisibilityRange, VisibilitySystems},
     },
     core_pipeline::{
@@ -20,15 +23,18 @@ use bevy::{
         query::ROQueryItem,
         system::{SystemParamItem, lifetimeless::SRes},
     },
+    light::SimulationLightSystems,
     material::{
-        RenderPhaseType,
+        AlphaMode, RenderPhaseType,
         key::{ErasedMaterialKey, ErasedMaterialPipelineKey, ErasedMeshPipelineKey},
     },
+    math::{Vec3A, primitives::ViewFrustum},
     mesh::{Mesh, MeshTag},
     pbr::{
-        MATERIAL_BIND_GROUP_INDEX, MaterialBindGroupAllocators, MeshBindGroups,
+        LightEntity, MATERIAL_BIND_GROUP_INDEX, MaterialBindGroupAllocators, MeshBindGroups,
         MeshMorphBindGroupKey, MeshPipelineKey, PreparedMaterial, SetMeshViewBindGroup,
-        SetMeshViewBindingArrayBindGroup, ViewKeyCache, alpha_mode_pipeline_key,
+        SetMeshViewBindingArrayBindGroup, SetPrepassViewBindGroup, SetPrepassViewEmptyBindGroup,
+        Shadow, ShadowBatchSetKey, ShadowBinKey, ViewKeyCache, alpha_mode_pipeline_key,
     },
     prelude::*,
     render::{
@@ -39,9 +45,9 @@ use bevy::{
         mesh::{RenderMesh, RenderMeshBufferInfo, allocator::MeshAllocator},
         render_asset::RenderAssets,
         render_phase::{
-            AddRenderCommand, BinnedRenderPhaseType, DrawFunctions, InputUniformIndex, PhaseItem,
-            RenderCommand, RenderCommandResult, SetItemPipeline, TrackedRenderPass,
-            ViewBinnedRenderPhases,
+            AddRenderCommand, BinnedRenderPhaseType, DrawFunctionId, DrawFunctions,
+            InputUniformIndex, PhaseItem, RenderCommand, RenderCommandResult, SetItemPipeline,
+            TrackedRenderPass, ViewBinnedRenderPhases,
         },
         render_resource::{binding_types::storage_buffer_read_only_sized, *},
         renderer::{RenderDevice, RenderQueue},
@@ -52,17 +58,21 @@ use bevy::{
 use bytemuck::{Pod, Zeroable};
 use std::{any::TypeId, collections::HashMap, sync::Arc};
 
-/// Render layer the instanced trees' entities move to: out of the main view, still casting.
+/// Render layer the instanced trees' entities move to, which no camera or light sees.
 const TREE_LAYER: usize = 1;
-/// Draw entities, one per group of instances drawn together (form, LOD and primitive).
+/// Draw entities, one per group of instances drawn together (form, LOD and primitive) in a
+/// view; every view numbers its groups from 0.
 const DRAWS: usize = 512;
 
 /// Whether trees are drawn from the instance buffer (the prototype) or as entities.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TreeInstancing {
     pub enabled: bool,
+    /// How many LODs coarser than the drawn one a tree casts its shadow from (at most its last
+    /// mesh LOD). 0 matches the entities' shadows; 1 saves about a third of the cascades' time
+    /// but the coarser crowns let more light through, and the forest reads lighter.
+    pub shadow_lod: usize,
 }
-
 /// One drawn tree mesh: the rows of its world-from-local transform and its fade tag
 /// (`object_lod`'s `MeshTag`, 64 + dither level while it fades, else 0).
 #[repr(C)]
@@ -74,6 +84,22 @@ pub(super) struct TreeInstance {
     padding: [u32; 2],
 }
 
+impl TreeInstance {
+    fn new(transform: &GlobalTransform, tag: u32) -> Self {
+        let affine = transform.affine();
+        let (m, t) = (affine.matrix3, affine.translation);
+        Self {
+            rows: [
+                [m.x_axis.x, m.y_axis.x, m.z_axis.x, t.x],
+                [m.x_axis.y, m.y_axis.y, m.z_axis.y, t.y],
+                [m.x_axis.z, m.y_axis.z, m.z_axis.z, t.z],
+            ],
+            tag,
+            ..default()
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct Group {
     mesh: AssetId<Mesh>,
@@ -82,18 +108,21 @@ struct Group {
     count: u32,
 }
 
-/// This frame's instances in the main view, by group.
+/// This frame's instances, by view and group.
 #[derive(Resource, Clone, Default, ExtractResource)]
 struct TreeInstanceFrame {
     instances: Arc<Vec<TreeInstance>>,
+    /// The main view's groups.
     groups: Arc<Vec<Group>>,
+    /// Each shadow cascade's groups, by its view.
+    cascades: Arc<HashMap<RetainedViewEntity, Vec<Group>>>,
 }
 
-/// The entity a group's phase item is drawn for; its index is the group's.
+/// The entity a group's phase item is drawn for; its index is the group's in its view.
 #[derive(Component, ExtractComponent, Clone, Copy, Debug)]
 struct TreeInstanceDraw(usize);
 
-/// A tree mesh entity moved out of the main view.
+/// A tree mesh entity moved out of every view.
 #[derive(Component)]
 struct Instanced;
 
@@ -105,6 +134,7 @@ pub(super) fn plugin(app: &mut App) {
             PostUpdate,
             collect
                 .after(VisibilitySystems::CheckVisibility)
+                .after(SimulationLightSystems::UpdateLightFrusta)
                 .after(bevy::transform::TransformSystems::Propagate),
         );
     if app.get_sub_app(RenderApp).is_none() {
@@ -118,10 +148,11 @@ pub(super) fn plugin(app: &mut App) {
         .init_resource::<TreeInstanceGpu>()
         .add_render_command::<Opaque3d, DrawTreeInstances>()
         .add_render_command::<AlphaMask3d, DrawTreeInstances>()
+        .add_render_command::<Shadow, DrawTreeShadows>()
         .add_systems(
             Render,
             (
-                queue.in_set(RenderSystems::Queue),
+                (queue, queue_shadows).in_set(RenderSystems::Queue),
                 prepare.in_set(RenderSystems::PrepareBindGroups),
             ),
         );
@@ -142,12 +173,85 @@ fn spawn_draws(mut commands: Commands) {
     commands.spawn_batch((0..DRAWS).map(|i| (TreeInstanceDraw(i), Name::new("Tree instances"))));
 }
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)] // Tree meshes, lights, camera.
+/// What a group draws: a mesh with a material.
+type Form = (AssetId<Mesh>, AssetId<TreeWindMaterial>);
+/// Instances of one view, by mesh and material.
+type Groups = HashMap<Form, Vec<TreeInstance>>;
+
+/// Appends a view's instances to `instances`, group after group, and empties `groups` for the
+/// next frame (keeping their allocations).
+fn flatten(groups: &mut Groups, instances: &mut Vec<TreeInstance>) -> Vec<Group> {
+    groups.retain(|_, list| !list.is_empty());
+    let mut drawn = Vec::with_capacity(groups.len().min(DRAWS));
+    for (&(mesh, material), list) in groups.iter().take(DRAWS) {
+        drawn.push(Group {
+            mesh,
+            material,
+            first: instances.len() as u32,
+            count: list.len() as u32,
+        });
+        instances.extend_from_slice(list);
+    }
+    for list in groups.values_mut() {
+        list.clear();
+    }
+    drawn
+}
+
+/// The LOD scenes (by variant index) an object casts its shadow from, with their dither
+/// levels: each drawn mesh LOD casts from the one `bias` steps coarser, at most the last mesh
+/// LOD. Two drawn LODs casting from the same scene, in the middle of a fade between them, cast
+/// it whole, so the shadow does not change while the tree dissolves.
+fn shadow_scenes(lod: &ScreenSpaceLod, bias: usize, casts: &mut Vec<(usize, i32)>) {
+    casts.clear();
+    let variants = lod.variants();
+    let Some(last) = variants.iter().rposition(|v| v.scene.is_some()) else {
+        return;
+    };
+    for index in 0..=last {
+        let Some(level) = lod.timed_level(index) else {
+            continue;
+        };
+        let cast = (index + bias).min(last);
+        match casts.iter_mut().find(|(scene, _)| *scene == cast) {
+            Some(both) => both.1 = 0,
+            None => casts.push((cast, level)),
+        }
+    }
+}
+
+/// Whether a sphere touches a shadow cascade, whose near plane does not cull: a caster
+/// between the light and the cascade still shades it.
+fn in_cascade(frustum: &Frustum, centre: Vec3A, radius: f32) -> bool {
+    let centre = centre.extend(1.0);
+    frustum.half_spaces.iter().enumerate().all(|(i, half)| {
+        i == ViewFrustum::NEAR_PLANE_IDX || half.normal_d().dot(centre) + radius > 0.0
+    })
+}
+
+/// One shadow cascade being gathered.
+struct Cascade {
+    view: RetainedViewEntity,
+    frustum: Frustum,
+    groups: Groups,
+}
+
+#[derive(Default)]
+struct Gathering {
+    main: Groups,
+    cascades: Vec<Cascade>,
+    /// Tree mesh entities under each LOD scene, found once its meshes exist.
+    scene_meshes: HashMap<Entity, Vec<Entity>>,
+    casts: Vec<(usize, i32)>,
+    log_in: u32,
+}
+
+#[allow(clippy::type_complexity, clippy::too_many_arguments)] // Tree meshes, LODs, lights.
 fn collect(
     mut commands: Commands,
     settings: Res<TreeInstancing>,
     mut frame: ResMut<TreeInstanceFrame>,
-    camera: Query<(&Frustum, &Camera), With<crate::WorldViewCamera>>,
+    camera: Query<(Entity, &Frustum, &Camera), With<crate::WorldViewCamera>>,
     trees: Query<(
         Entity,
         &Mesh3d,
@@ -159,12 +263,16 @@ fn collect(
         Has<Instanced>,
         Option<&VisibilityRange>,
     )>,
-    lights: Query<
-        (Entity, Option<&RenderLayers>),
-        Or<(With<atmosphere::WorldSun>, With<atmosphere::WorldMoon>)>,
-    >,
-    mut groups: Local<HashMap<(AssetId<Mesh>, AssetId<TreeWindMaterial>), Vec<TreeInstance>>>,
-    mut log_in: Local<u32>,
+    objects: Query<(
+        &ScreenSpaceLod,
+        &Children,
+        &GlobalTransform,
+        &InheritedVisibility,
+    )>,
+    scenes: Query<&LodScene>,
+    descendants: Query<&Children>,
+    lights: Query<(Entity, &DirectionalLight, &CascadesFrusta, &ViewVisibility)>,
+    mut gathering: Local<Gathering>,
 ) {
     if !settings.enabled {
         for (entity, .., instanced, _) in &trees {
@@ -174,27 +282,20 @@ fn collect(
                     .remove::<(Instanced, RenderLayers)>();
             }
         }
-        if !frame.groups.is_empty() {
+        if !frame.groups.is_empty() || !frame.cascades.is_empty() {
             *frame = TreeInstanceFrame::default();
         }
         return;
     }
-    let casting = RenderLayers::from_layers(&[0, TREE_LAYER]);
-    for (light, layers) in &lights {
-        if layers != Some(&casting) {
-            commands.entity(light).insert(casting.clone());
-        }
-    }
-    let frustum = camera
+    let gathering = &mut *gathering;
+    let view = camera
         .iter()
-        .find_map(|(frustum, camera)| camera.is_active.then_some(frustum));
-    for list in groups.values_mut() {
-        list.clear();
-    }
+        .find_map(|(entity, frustum, camera)| camera.is_active.then_some((entity, frustum)));
+
+    // The main view: every visible mesh of an object that fades over time (others keep Bevy's
+    // per-view distance crossfades, so they stay entities).
     for (entity, mesh, material, transform, visible, aabb, tag, instanced, range) in &trees {
-        // Assets that crossfade by distance keep Bevy's per-view ranges, so they stay entities;
-        // timed fades carry a constant range only for the dither.
-        if range.is_some_and(|range| *range != crate::object_lod::TIMED_RANGE) {
+        if range != Some(&TIMED_RANGE) {
             continue;
         }
         if !instanced {
@@ -202,54 +303,138 @@ fn collect(
                 .entity(entity)
                 .insert((Instanced, RenderLayers::layer(TREE_LAYER)));
         }
-        let Some(frustum) = frustum else {
+        let Some((_, frustum)) = view else {
             continue;
         };
-        let affine = transform.affine();
         if !visible.get()
-            || aabb.is_some_and(|aabb| !frustum.intersects_obb(aabb, &affine, true, false))
+            || aabb
+                .is_some_and(|aabb| !frustum.intersects_obb(aabb, &transform.affine(), true, false))
         {
             continue;
         }
-        let (m, t) = (affine.matrix3, affine.translation);
-        groups
+        gathering
+            .main
             .entry((mesh.id(), material.id()))
             .or_default()
-            .push(TreeInstance {
-                rows: [
-                    [m.x_axis.x, m.y_axis.x, m.z_axis.x, t.x],
-                    [m.x_axis.y, m.y_axis.y, m.z_axis.y, t.y],
-                    [m.x_axis.z, m.y_axis.z, m.z_axis.z, t.z],
-                ],
-                tag: tag.map_or(0, |t| t.0),
-                ..default()
-            });
+            .push(TreeInstance::new(transform, tag.map_or(0, |t| t.0)));
     }
-    groups.retain(|_, list| !list.is_empty());
-    let mut instances = Vec::with_capacity(groups.values().map(Vec::len).sum());
-    let mut drawn = Vec::with_capacity(groups.len());
-    for (&(mesh, material), list) in groups.iter().take(DRAWS) {
-        drawn.push(Group {
-            mesh,
-            material,
-            first: instances.len() as u32,
-            count: list.len() as u32,
-        });
-        instances.extend_from_slice(list);
+
+    // Shadows: the world view's cascades of every light that casts.
+    gathering.cascades.retain(|_| false);
+    if let Some((camera, _)) = view {
+        for (light, directional, frusta, light_visible) in &lights {
+            if !directional.shadow_maps_enabled || !light_visible.get() {
+                continue;
+            }
+            for (index, frustum) in frusta.frusta.get(&camera).into_iter().flatten().enumerate() {
+                gathering.cascades.push(Cascade {
+                    view: RetainedViewEntity::new(
+                        MainEntity::from(light),
+                        Some(MainEntity::from(camera)),
+                        index as u32,
+                    ),
+                    frustum: *frustum,
+                    groups: Groups::default(),
+                });
+            }
+        }
     }
-    *log_in = log_in.saturating_sub(1);
-    if *log_in == 0 {
-        *log_in = 600;
+    let mut casting = 0;
+    if !gathering.cascades.is_empty() {
+        for (lod, children, transform, visible) in &objects {
+            if !visible.get() {
+                continue;
+            }
+            // A sphere round the whole tree, as wide as it is tall, picks the cascades it
+            // may shade; each of its meshes is then tested as Bevy tests casters.
+            let (scale, _, translation) = transform.to_scale_rotation_translation();
+            let height = lod.height(scale);
+            let centre = Vec3A::from(translation + Vec3::Y * height * 0.5);
+            let mut touched = 0u32;
+            for (index, cascade) in gathering.cascades.iter().enumerate() {
+                if in_cascade(&cascade.frustum, centre, height) {
+                    touched |= 1 << index;
+                }
+            }
+            if touched == 0 {
+                continue;
+            }
+            shadow_scenes(lod, settings.shadow_lod, &mut gathering.casts);
+            if !gathering.casts.is_empty() {
+                casting += 1;
+            }
+            for &(index, level) in &gathering.casts {
+                let Some(scene) = children
+                    .iter()
+                    .find(|child| scenes.get(*child).is_ok_and(|scene| scene.0 == index))
+                else {
+                    continue;
+                };
+                let meshes = gathering.scene_meshes.entry(scene).or_default();
+                if meshes.is_empty() {
+                    meshes.extend(
+                        descendants
+                            .iter_descendants(scene)
+                            .filter(|entity| trees.contains(*entity)),
+                    );
+                }
+                let tag = (TAG_BIAS + level) as u32;
+                for &entity in meshes.iter() {
+                    let Ok((_, mesh, material, transform, _, aabb, ..)) = trees.get(entity) else {
+                        continue;
+                    };
+                    let affine = transform.affine();
+                    let instance = TreeInstance::new(transform, tag);
+                    for (index, cascade) in gathering.cascades.iter_mut().enumerate() {
+                        if touched & (1 << index) == 0
+                            || aabb.is_some_and(|aabb| {
+                                !cascade.frustum.intersects_obb(aabb, &affine, false, true)
+                            })
+                        {
+                            continue;
+                        }
+                        cascade
+                            .groups
+                            .entry((mesh.id(), material.id()))
+                            .or_default()
+                            .push(instance);
+                    }
+                }
+            }
+        }
+    }
+
+    let mut instances = Vec::new();
+    let groups = flatten(&mut gathering.main, &mut instances);
+    let main_instances = instances.len();
+    let mut cascades = HashMap::with_capacity(gathering.cascades.len());
+    let mut per_cascade = Vec::with_capacity(gathering.cascades.len());
+    for cascade in &mut gathering.cascades {
+        let first = instances.len();
+        cascades.insert(cascade.view, flatten(&mut cascade.groups, &mut instances));
+        per_cascade.push(instances.len() - first);
+    }
+    gathering.log_in = gathering.log_in.saturating_sub(1);
+    if gathering.log_in == 0 {
+        gathering.log_in = 600;
+        // Scenes despawned with their cells leave the cache here.
+        gathering
+            .scene_meshes
+            .retain(|scene, _| scenes.contains(*scene));
         info!(
-            "TREE_INSTANCING groups={} instances={} entities={}",
-            drawn.len(),
-            instances.len(),
-            trees.iter().len()
+            "TREE_INSTANCING groups={} instances={} entities={} casting={} cascades={:?} shadow_lod={}",
+            groups.len(),
+            main_instances,
+            trees.iter().len(),
+            casting,
+            per_cascade,
+            settings.shadow_lod,
         );
     }
     *frame = TreeInstanceFrame {
         instances: Arc::new(instances),
-        groups: Arc::new(drawn),
+        groups: Arc::new(groups),
+        cascades: Arc::new(cascades),
     };
 }
 
@@ -259,6 +444,14 @@ struct TreeInstanceGpu {
     capacity: u64,
     bind_group: Option<BindGroup>,
     groups: Vec<Group>,
+    cascades: HashMap<RetainedViewEntity, Vec<Group>>,
+}
+
+impl TreeInstanceGpu {
+    /// The groups drawn in a view: a shadow cascade's own, else the main view's.
+    fn groups(&self, view: &RetainedViewEntity) -> &[Group] {
+        self.cascades.get(view).unwrap_or(&self.groups)
+    }
 }
 
 fn prepare(
@@ -269,6 +462,7 @@ fn prepare(
     cache: Res<PipelineCache>,
 ) {
     gpu.groups = frame.groups.to_vec();
+    gpu.cascades = (*frame.cascades).clone();
     if frame.instances.is_empty() {
         return;
     }
@@ -294,6 +488,18 @@ fn prepare(
     }
 }
 
+/// The draw entities in the render world, by group index.
+fn draw_entities(world: &mut World) -> Vec<Option<(Entity, MainEntity)>> {
+    let mut draws = world.query::<(Entity, &MainEntity, &TreeInstanceDraw)>();
+    let mut entities = vec![None; DRAWS];
+    for (entity, main, draw) in draws.iter(world) {
+        if draw.0 < DRAWS {
+            entities[draw.0] = Some((entity, *main));
+        }
+    }
+    entities
+}
+
 /// Specializes each group's instanced pipeline for every main view, as Bevy specializes the
 /// tree material for its entities but with `TreeWindKey::instanced`, and queues one item per
 /// group into its phase.
@@ -304,13 +510,7 @@ fn queue(world: &mut World, mut pipelines: Local<HashMap<PipelineFor, CachedRend
         .iter(world)
         .map(|(view, msaa)| (view.retained_view_entity, *msaa))
         .collect();
-    let mut draws = world.query::<(Entity, &MainEntity, &TreeInstanceDraw)>();
-    let mut draw_entities = vec![None; DRAWS];
-    for (entity, main, draw) in draws.iter(world) {
-        if draw.0 < DRAWS {
-            draw_entities[draw.0] = Some((entity, *main));
-        }
-    }
+    let draw_entities = draw_entities(world);
     let opaque_function = world
         .resource::<DrawFunctions<Opaque3d>>()
         .read()
@@ -411,6 +611,20 @@ struct PipelineFor {
     material: AssetId<TreeWindMaterial>,
 }
 
+/// The tree material's key for an instanced pipeline.
+fn instanced_key(
+    properties: &bevy::material::MaterialProperties,
+    mesh_key: MeshPipelineKey,
+) -> ErasedMaterialPipelineKey {
+    let mut data: <TreeWindMaterial as AsBindGroup>::Data = properties.material_key.to_key();
+    data.extension.instanced = true;
+    ErasedMaterialPipelineKey {
+        type_id: TypeId::of::<TreeWindMaterial>(),
+        mesh_key: ErasedMeshPipelineKey::new(mesh_key),
+        material_key: ErasedMaterialKey::new(data),
+    }
+}
+
 fn specialize(
     world: &mut World,
     pipelines: &mut HashMap<PipelineFor, CachedRenderPipelineId>,
@@ -439,15 +653,13 @@ fn specialize(
     let layout = mesh.layout.clone();
     let mut material_bits: MeshPipelineKey = properties.mesh_pipeline_key_bits.downcast();
     material_bits.insert(alpha_mode_pipeline_key(properties.alpha_mode, &msaa));
-    let mesh_key =
-        view_key | MeshPipelineKey::from_bits_retain(mesh.key_bits.bits()) | material_bits;
-    let mut data: <TreeWindMaterial as AsBindGroup>::Data = properties.material_key.to_key();
-    data.extension.instanced = true;
-    let key = ErasedMaterialPipelineKey {
-        type_id: TypeId::of::<TreeWindMaterial>(),
-        mesh_key: ErasedMeshPipelineKey::new(mesh_key),
-        material_key: ErasedMaterialKey::new(data),
-    };
+    // Timed fades carry a crossfade range for exactly this: Bevy's main pass dithers them by
+    // their tag without the shadows' overlap.
+    let mesh_key = view_key
+        | MeshPipelineKey::from_bits_retain(mesh.key_bits.bits())
+        | material_bits
+        | MeshPipelineKey::VISIBILITY_RANGE_DITHER;
+    let key = instanced_key(&properties, mesh_key);
     let base_specialize = properties.base_specialize?;
     match base_specialize(world, key, &layout, &properties) {
         Ok(pipeline) => {
@@ -461,10 +673,124 @@ fn specialize(
     }
 }
 
+/// Queues every shadow cascade's groups into its shadow phase, through the tree material's
+/// shadow pipeline (as Bevy's `specialize_shadows` keys it for a directional light) specialized
+/// for the instance buffer.
+fn queue_shadows(world: &mut World, mut pipelines: Local<HashMap<Form, CachedRenderPipelineId>>) {
+    let cascades = world.resource::<TreeInstanceFrame>().cascades.clone();
+    let mut views = world.query::<(&ExtractedView, &LightEntity)>();
+    let views: Vec<RetainedViewEntity> = views
+        .iter(world)
+        .filter(|(_, light)| matches!(light, LightEntity::Directional { .. }))
+        .map(|(view, _)| view.retained_view_entity)
+        .collect();
+    let draw_entities = draw_entities(world);
+    let function = world
+        .resource::<DrawFunctions<Shadow>>()
+        .read()
+        .id::<DrawTreeShadows>();
+    for view in views {
+        let Some(phase) = world
+            .resource_mut::<ViewBinnedRenderPhases<Shadow>>()
+            .into_inner()
+            .get_mut(&view)
+        else {
+            continue;
+        };
+        for (_, main) in draw_entities.iter().flatten() {
+            phase.remove(*main);
+        }
+        let Some(groups) = cascades.get(&view) else {
+            continue;
+        };
+        for (index, group) in groups.iter().enumerate() {
+            let Some((entity, main)) = draw_entities[index] else {
+                continue;
+            };
+            let Some(pipeline) = specialize_shadow(world, &mut pipelines, group) else {
+                continue;
+            };
+            if let Some(phase) = world
+                .resource_mut::<ViewBinnedRenderPhases<Shadow>>()
+                .get_mut(&view)
+            {
+                phase.add(
+                    shadow_batch_key(pipeline, function),
+                    ShadowBinKey {
+                        asset_id: group.mesh.untyped(),
+                    },
+                    (entity, main),
+                    InputUniformIndex::default(),
+                    BinnedRenderPhaseType::NonMesh,
+                );
+            }
+        }
+    }
+}
+
+fn shadow_batch_key(
+    pipeline: CachedRenderPipelineId,
+    function: DrawFunctionId,
+) -> ShadowBatchSetKey {
+    ShadowBatchSetKey {
+        pipeline,
+        draw_function: function,
+        material_bind_group_index: None,
+        slabs: default(),
+    }
+}
+
+fn specialize_shadow(
+    world: &mut World,
+    pipelines: &mut HashMap<Form, CachedRenderPipelineId>,
+    group: &Group,
+) -> Option<CachedRenderPipelineId> {
+    if let Some(&pipeline) = pipelines.get(&(group.mesh, group.material)) {
+        return Some(pipeline);
+    }
+    let material = world
+        .resource::<ErasedRenderAssets<PreparedMaterial>>()
+        .get(group.material.untyped())?;
+    let properties = material.properties.clone();
+    let mesh = world
+        .resource::<RenderAssets<RenderMesh>>()
+        .get(group.mesh)?;
+    let layout = mesh.layout.clone();
+    // A directional light's key (`check_views_lights_need_specialization`); the tree material
+    // has its own prepass shaders, so its shadow pipeline always reads the material.
+    let mut mesh_key = MeshPipelineKey::DEPTH_PREPASS
+        | MeshPipelineKey::VIEW_PROJECTION_ORTHOGRAPHIC
+        | MeshPipelineKey::UNCLIPPED_DEPTH_ORTHO
+        | MeshPipelineKey::PREPASS_READS_MATERIAL
+        | MeshPipelineKey::from_bits_retain(mesh.key_bits.bits());
+    if !matches!(properties.alpha_mode, AlphaMode::Opaque) {
+        mesh_key |= MeshPipelineKey::MAY_DISCARD;
+    }
+    let key = instanced_key(&properties, mesh_key);
+    let prepass_specialize = properties.prepass_specialize?;
+    match prepass_specialize(world, key, &layout, &properties) {
+        Ok(pipeline) => {
+            pipelines.insert((group.mesh, group.material), pipeline);
+            Some(pipeline)
+        }
+        Err(error) => {
+            warn_once!("tree instancing shadows: {error}");
+            None
+        }
+    }
+}
+
 type DrawTreeInstances = (
     SetItemPipeline,
     SetMeshViewBindGroup<0>,
     SetMeshViewBindingArrayBindGroup<1>,
+    DrawTreeGroup,
+);
+
+type DrawTreeShadows = (
+    SetItemPipeline,
+    SetPrepassViewBindGroup<0>,
+    SetPrepassViewEmptyBindGroup<1>,
     DrawTreeGroup,
 );
 
@@ -479,12 +805,12 @@ impl<P: PhaseItem> RenderCommand<P> for DrawTreeGroup {
         SRes<MeshAllocator>,
         SRes<MeshBindGroups>,
     );
-    type ViewQuery = ();
+    type ViewQuery = &'static ExtractedView;
     type ItemQuery = &'static TreeInstanceDraw;
 
     fn render<'w>(
         _item: &P,
-        _view: ROQueryItem<'w, '_, Self::ViewQuery>,
+        view: ROQueryItem<'w, '_, Self::ViewQuery>,
         draw: Option<ROQueryItem<'w, '_, Self::ItemQuery>>,
         (gpu, materials, allocators, meshes, mesh_allocator, mesh_bind_groups): SystemParamItem<
             'w,
@@ -497,7 +823,7 @@ impl<P: PhaseItem> RenderCommand<P> for DrawTreeGroup {
         let (Some(draw), Some(instances)) = (draw, gpu.bind_group.as_ref()) else {
             return RenderCommandResult::Skip;
         };
-        let Some(group) = gpu.groups.get(draw.0) else {
+        let Some(group) = gpu.groups(&view.retained_view_entity).get(draw.0) else {
             return RenderCommandResult::Skip;
         };
         let materials = materials.into_inner();
@@ -512,9 +838,13 @@ impl<P: PhaseItem> RenderCommand<P> for DrawTreeGroup {
         else {
             return RenderCommandResult::Skip;
         };
+        // The instanced shaders read nothing from the mesh uniforms, but their layout has them;
+        // any phase's bind group fits when this phase has none of its own.
         let phase_groups = match mesh_bind_groups.into_inner() {
             MeshBindGroups::CpuPreprocessing(groups) => Some(groups),
-            MeshBindGroups::GpuPreprocessing(groups) => groups.get(&TypeId::of::<P>()),
+            MeshBindGroups::GpuPreprocessing(groups) => groups
+                .get(&TypeId::of::<P>())
+                .or_else(|| groups.values().next()),
         };
         let Some(mesh_group) = phase_groups.and_then(|groups| {
             groups.get(None, false, MeshMorphBindGroupKey::NoMorphTargets, false)

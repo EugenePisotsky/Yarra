@@ -38,6 +38,8 @@ pub(crate) struct LaunchOptions {
     pub debug_world_switch: bool,
     /// Trees drawn from one instance buffer (performance roadmap prototype).
     pub tree_instancing: bool,
+    /// How many LODs coarser than the drawn one instanced trees cast shadows from.
+    pub tree_shadow_lod: usize,
     pub timer_pacing: bool,
     pub terrain_legacy: bool,
     pub terrain_reference: bool,
@@ -202,6 +204,11 @@ const FLAGS: &[(&str, bool, &str)] = &[
         "--tree-instancing",
         false,
         "Draw trees from one instance buffer (prototype)",
+    ),
+    (
+        "--tree-shadow-lod",
+        true,
+        "0..2: LOD steps coarser that instanced trees cast shadows from (default 0)",
     ),
     (
         "--frame-pacing-timer",
@@ -488,6 +495,15 @@ impl LaunchOptions {
                     .ok_or("--impostor-handoff requires 0..166 metres")
             })
             .transpose()?;
+        let tree_shadow_lod = value("--tree-shadow-lod")?
+            .map(|v| {
+                v.parse::<usize>()
+                    .ok()
+                    .filter(|n| *n <= 2)
+                    .ok_or("--tree-shadow-lod requires 0..2")
+            })
+            .transpose()?
+            .unwrap_or(0);
         let resolution_scale = value("--resolution-scale")?
             .map(|v| match v {
                 "1" | "1.0" => Ok(1.0),
@@ -838,6 +854,7 @@ impl LaunchOptions {
             streaming_smoke: has("--streaming-smoke"),
             debug_world_switch: has("--debug-world-switch"),
             tree_instancing: has("--tree-instancing"),
+            tree_shadow_lod,
             timer_pacing: has("--frame-pacing-timer"),
             terrain_legacy: has("--terrain-legacy"),
             terrain_reference: has("--terrain-reference"),

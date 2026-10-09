@@ -8,7 +8,7 @@
 //! shape at the band's ends. Objects whose last LOD is an impostor instead switch at a
 //! distance and dissolve over time, shadows included ([`timed`]).
 mod timed;
-pub(crate) use timed::TIMED_RANGE;
+pub(crate) use timed::{TAG_BIAS, TIMED_RANGE};
 
 use crate::tree_impostor::ImpostorFades;
 use crate::{WorldCatalog, WorldOrigin, WorldViewCamera};
@@ -97,7 +97,7 @@ pub(crate) struct ScreenSpaceLodVariant {
 
 /// A child scene holding one LOD (by index) of its parent's [`ScreenSpaceLod`].
 #[derive(Component)]
-struct LodScene(usize);
+pub(crate) struct LodScene(pub(crate) usize);
 
 /// Overrides which LOD scene of a [`ScreenSpaceLod`] draws, for comparisons
 /// ([`crate::lod_lab`]).
@@ -172,6 +172,15 @@ impl ScreenSpaceLod {
     }
     pub(crate) fn variants(&self) -> &[ScreenSpaceLodVariant] {
         &self.variants
+    }
+    /// For objects that fade over time, the dither level LOD `index` draws at now (0 whole);
+    /// `None` while it does not draw, and for every LOD of other objects.
+    pub(crate) fn timed_level(&self, index: usize) -> Option<i32> {
+        self.timed.as_ref().and_then(|timed| timed.level(index))
+    }
+    /// Height of the object's bounds at `scale`.
+    pub(crate) fn height(&self, scale: Vec3) -> f32 {
+        object_height(self, scale)
     }
 
     pub(crate) fn thresholds(&self) -> impl Iterator<Item = f32> + '_ {

@@ -16,7 +16,7 @@ pub(crate) const FADE_SECONDS: f32 = 0.6;
 /// A representation keeps drawing until the camera is this share past its band.
 const HYSTERESIS: f32 = 0.04;
 /// Mesh tags carry 64 + the dither level; 0 means no level (distance crossfades).
-pub(super) const TAG_BIAS: i32 = 64;
+pub(crate) const TAG_BIAS: i32 = 64;
 
 /// Always drawn as far as visibility ranges go, but with a crossfade margin, so Bevy's main
 /// and prepass pipelines include the dither the mesh tag drives. It never changes, so it

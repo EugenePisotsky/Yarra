@@ -59,6 +59,7 @@ fn run() -> Result<(), String> {
         })
         .insert_resource(engine::TreeInstancing {
             enabled: options.tree_instancing,
+            shadow_lod: options.tree_shadow_lod,
         })
         .insert_resource(engine::TerrainLodPreview {
             enabled: !options.terrain_legacy,

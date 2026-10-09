@@ -514,6 +514,8 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     } else {
 #ifdef TREE_TAG_FADE
         out.visibility_range_dither = 0;
+#else ifdef TREE_INSTANCED
+        out.visibility_range_dither = 0;
 #else
         out.visibility_range_dither = mesh_functions::get_visibility_range_dither_level(vertex.instance_index, model[3]);
 #endif
