@@ -1,6 +1,6 @@
 #ifdef YARRA_CLOUDS
-#import "shaders/clouds/surface.wgsl"::{cloud_visibility, surface_wetness}
-#import "shaders/clouds/forest_shadow.wgsl"::forest_sky_light
+#import "shaders/clouds/surface.wgsl"::{cloud_light, surface_wetness}
+#import "shaders/clouds/forest_shadow.wgsl"::{forest_sky_light, forest_sky_visibility}
 #endif
 #ifdef ATMOSPHERE
 #import bevy_pbr::atmosphere::functions::{clamp_to_surface, calculate_visible_sun_ratio}
@@ -779,10 +779,21 @@ fn shade(input: VertexOutput) -> vec4<f32> {
         camera.canopy_appearance, camera.canopy_shape, camera.canopy_distance,
         camera.canopy_origin, camera.canopy_appearance.z, input.canopy_coordinates.z, input.canopy_coordinates.w);
     let shadow_visibility = directional_shadow_visibility(input);
-    // Fraction of the direct beam passing the cloud layer at this point.
+    // Sunlight passing the cloud layer at this point, and the share of it in the direct beam
+    // (the rest the clouds pass on diffusely, casting no shadows).
     var cloud_sun = 1.0;
+    var cloud_beam = 1.0;
 #ifdef YARRA_CLOUDS
-    cloud_sun = cloud_visibility(input.world_position, camera.sun_direction.xyz);
+    let cloud = cloud_light(input.world_position, camera.sun_direction.xyz);
+    cloud_sun = cloud.x + cloud.y;
+    cloud_beam = cloud.x;
+#endif
+    // Shadowing of the sun terms: the shadow maps shade the direct beam, while what the clouds
+    // pass on diffusely casts no shadows and crowns hold it back as they do the sky.
+    var sun_shadow = shadow_visibility;
+#ifdef YARRA_CLOUDS
+    sun_shadow = (cloud.x * shadow_visibility + cloud.y * forest_sky_visibility(input.world_position))
+        / max(cloud_sun, 1e-4);
 #endif
     // The old receiver cache could only darken direct light and therefore became almost invisible
     // under the stable authored body color. Let dense/AO-heavy blade regions lose part of that body
@@ -792,7 +803,7 @@ fn shade(input: VertexOutput) -> vec4<f32> {
     let received_shadow = mix(
         1.0,
         mix(shadow_floor, 1.0, shadow_visibility),
-        camera.lighting.w * cloud_sun,
+        camera.lighting.w * cloud_beam,
     );
     let sun_tint = radiance_tint(camera.sun_radiance.xyz, vec3<f32>(1.0));
     let sun_active = camera.sun_direction.w;
@@ -816,18 +827,18 @@ fn shade(input: VertexOutput) -> vec4<f32> {
             * sun_tint
             * wrapped_diffuse
             * camera.lighting.x
-            * shadow_visibility * band_visibility
+            * sun_shadow * band_visibility
             * sun_active;
         let transmission = input.color
             * sun_tint
             * back_light
             * camera.lighting.z
-            * shadow_visibility * band_visibility
+            * sun_shadow * band_visibility
             * sun_active;
         let highlight = sun_tint
             * specular
             * camera.lighting.y
-            * shadow_visibility * band_visibility
+            * sun_shadow * band_visibility
             * sun_active;
         return vec4<f32>((ambient + diffuse + transmission + highlight) * canopy_visibility, 1.0);
     }
@@ -932,7 +943,7 @@ fn shade(input: VertexOutput) -> vec4<f32> {
         * far_highlight_weight
         * specular_energy
         * camera.lighting.y
-        * shadow_visibility * band_visibility
+        * sun_shadow * band_visibility
         * sun_active;
 
     // A leaf's body is a thin sheet. The strongly rounded normal above shapes its waxy gloss;
@@ -955,7 +966,7 @@ fn shade(input: VertexOutput) -> vec4<f32> {
         * exposed_sun_tint
         * wrapped_diffuse
         * diffuse_energy
-        * shadow_visibility * band_visibility
+        * sun_shadow * band_visibility
         * sun_active;
 
     let backscatter_alignment = clamp(dot(-view_direction, light_direction), 0.0, 1.0);
@@ -972,7 +983,7 @@ fn shade(input: VertexOutput) -> vec4<f32> {
         * far_highlight_weight
         * transmission_energy
         * camera.lighting.z
-        * shadow_visibility * band_visibility
+        * sun_shadow * band_visibility
         * sun_active;
 
     // A broad upper-hemisphere fill keeps sky-facing surfaces readable between sun highlights.

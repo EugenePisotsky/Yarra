@@ -166,7 +166,7 @@ fn sun_visibility(sun: Sun, shadow: ShadowRay, along: f32, distance: f32) -> f32
 // Below this extinction per metre, shadow cannot visibly darken the air (thin ground haze).
 const SHADOWED_AIR: f32 = 2e-4;
 
-// Sunlight past the cloud layer's shadow at `p` (`cloud_visibility` in clouds/surface.wgsl).
+// Sunlight past the cloud layer's shadow at `p` (the beam of `cloud_light` in clouds/surface.wgsl).
 fn cloud_visibility(p: vec3<f32>) -> f32 {
     let sun = clouds.sun.xyz;
     if clouds.layer.w < 0.5 || sun.y <= 0.0 || p.y >= clouds.layer.x + clouds.layer.y {
@@ -175,7 +175,10 @@ fn cloud_visibility(p: vec3<f32>) -> f32 {
     let hit = p.xz + clouds.offset.xy + sun.xz * (clouds.layer.x - p.y) / max(sun.y, 0.04);
     let shadow = textureSampleLevel(cloud_shadow, repeat_sampler,
         (hit - clouds.offset.zw) / (clouds.layer.z * 4.0), 0.0).r;
-    return max(shadow, 0.12);
+    // The direct beam only: light the clouds pass on diffusely lights no beams, and a closing
+    // deck hides the beam whatever thin spots the shadow map finds.
+    let open = 1.0 - clouds.weather.z;
+    return shadow * open * open;
 }
 
 // Interleaved gradient noise (Jimenez 2014): offsets each texel's steps so banding becomes

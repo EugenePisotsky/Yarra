@@ -140,7 +140,10 @@ fn cloud_visibility(p: vec3<f32>) -> f32 {
     let hit = p.xz + clouds.offset.xy + sun.xz * (clouds.layer.x - p.y) / max(sun.y, 0.04);
     let shadow = textureSampleLevel(cloud_shadow, repeat_sampler,
         (hit - clouds.offset.zw) / (clouds.layer.z * 4.0), 0.0).r;
-    return max(shadow, 0.12);
+    // The direct beam only: light the clouds pass on diffusely lights no beams, and a closing
+    // deck hides the beam whatever thin spots the shadow map finds.
+    let open = 1.0 - clouds.weather.z;
+    return shadow * open * open;
 }
 
 // Forest map texel under `xz`: highest crown top, lowest crown base, foliage density and

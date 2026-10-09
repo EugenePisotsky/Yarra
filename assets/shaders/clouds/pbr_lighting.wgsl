@@ -58,9 +58,9 @@
 #import bevy_pbr::pbr_functions::calculate_contact_shadow
 #endif
 #endif
-#import "shaders/clouds/surface.wgsl"::{cloud_visibility, surface_wetness}
+#import "shaders/clouds/surface.wgsl"::{cloud_light, cloud_visibility, surface_wetness}
 #ifdef FOREST_SHADOW
-#import "shaders/clouds/forest_shadow.wgsl"::{forest_transmittance, forest_sky_light}
+#import "shaders/clouds/forest_shadow.wgsl"::{forest_transmittance, forest_sky_light, forest_sky_visibility}
 #endif
 
 // Yarra: light reflected towards a surface by the ground around it, as environment radiance
@@ -410,7 +410,7 @@ fn apply_pbr_lighting(
 
         // Yarra: only direct celestial lighting is attenuated. Ambient, emissive,
         // local lights and material response retain the upstream behavior.
-        let cloud = cloud_visibility(in.world_position.xyz, (*light).direction_to_light);
+        let cloud = cloud_light(in.world_position.xyz, (*light).direction_to_light);
 #ifdef FOREST_SHADOW
         if (in.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) != 0u {
             // Past the last shadow cascade nothing casts shadows, and distant forests went
@@ -449,7 +449,13 @@ fn apply_pbr_lighting(
             }
         }
 #endif
-        shadow *= cloud;
+        // The clouds' direct beam is shaded like any sunlight; what they pass on diffusely casts
+        // no shadows, and crowns hold it back as they do the sky.
+        var diffuse = cloud.y;
+#ifdef FOREST_SHADOW
+        diffuse *= forest_sky_visibility(in.world_position.xyz);
+#endif
+        shadow = shadow * cloud.x + diffuse;
         var light_contrib = lighting::directional_light(i, &lighting_input, enable_diffuse);
 #ifdef TREE_CROWN_SHADING
         {
@@ -487,7 +493,7 @@ fn apply_pbr_lighting(
 
         let transmitted_light_contrib =
             lighting::directional_light(i, &transmissive_lighting_input, enable_diffuse);
-        transmitted_light += transmitted_light_contrib * transmitted_shadow * cloud;
+        transmitted_light += transmitted_light_contrib * (transmitted_shadow * cloud.x + diffuse);
 #endif
     }
 

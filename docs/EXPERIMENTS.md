@@ -478,6 +478,16 @@ The sky around a low sun looked washed out. Captures facing the sun at 16:48, 17
 | Where the glow comes from | The wide orange-white sky is mostly the haze scattering the low sun forwards, then the glare's veil; the art-directed air glow on top of them is a minor part, since auto exposure makes up for it: from 8% to 3% of the sun the top quarter of the frame lost 9% of its light. Haze, mist and shafts together veil the ground in front of the sun. Not retuned now: the haze is physical, left for the final look pass. |
 | Air glow over near ground | **Changed.** The glow built up over the first 30 m of depth, so the field in front of the character took most of it. It builds up over 200 m now (the air under crowns still fills it at once, keeping forest beams) at 5% of the sun: near ground keeps its contrast (log luminance spread of the lower frame 1.09 → 1.26 over the valley). |
 
+## Shadows under cloud — October 9
+
+The character kept a sharp sun shadow under overcast and rain. Captures at the start beach at noon and 10:00 (overcast, rain, scattered) and in the broadleaf stand and at the forest edge (overcast, scattered).
+
+| Change | Decision / observation |
+| --- | --- |
+| Cause | **The 12% floor under the cloud shadow was direct light.** It kept overcast scenes modelled, but went through the shadow maps: the character, crowns and everything else cast sharp shadows under a closed deck and in a cloud's shadow. The floor is now light the clouds pass on diffusely: it shades by surface direction, casts no shadows and is held back under crowns as sky light is. |
+| Thin spots in the deck | At noon a faint shadow stayed: overcast and rain decks have thin spots in the cloud shadow map, and the forest floor showed sun dapples under overcast. The direct beam now fades with the deck's closing as the sun's disc does (`(1 − overcast)²`). |
+| Result | No shadow under overcast or rain, morning or noon; a character in a cloud's shadow on a scattered day casts none either; sunlit scattered and clear scenes unchanged. Light shafts and lit motes take only the beam, so a closed deck shows none. |
+
 ## Open gates and maintenance
 
 The remaining gates are sustained terrain/whole-game power, Temporal cost and motion quality, field-scale grass lighting, target-PC acceptance, and physical-phone heat/60-FPS delivery. Keep correctness references until their replacements pass the relevant gate. Existing counters often identify less work without demonstrating better delivered frames or lower power.

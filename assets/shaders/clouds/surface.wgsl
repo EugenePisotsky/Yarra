@@ -4,16 +4,30 @@
 @group(#{MATERIAL_BIND_GROUP}) @binding(122) var cloud_repeat: sampler;
 // Rain shelter around the camera: highest object top above each texel, coverage.
 @group(#{MATERIAL_BIND_GROUP}) @binding(123) var shelter_map: texture_2d<f32>;
-fn cloud_visibility(p: vec3<f32>, direction: vec3<f32>) -> f32 {
-    if clouds.layer.w < 0.5 || direction.y <= 0.0 || p.y >= clouds.layer.x+clouds.layer.y { return 1.0; }
+// Even a thick deck passes on some of the sun's light (the bright patch of cloud around it), so
+// overcast scenes keep a little modelling instead of going flat.
+const CLOUD_DIFFUSE_FLOOR: f32 = 0.12;
+// Sunlight or moonlight at `p` past the cloud layer, as shares of the light above it: x the
+// direct beam, which casts shadows; y the light the clouds pass on diffusely, which still lights
+// surfaces facing the bright sky around the sun but casts none. Kept as a floor under the beam,
+// it gave the character a sharp shadow under a closed deck.
+fn cloud_light(p: vec3<f32>, direction: vec3<f32>) -> vec2<f32> {
+    if clouds.layer.w < 0.5 || direction.y <= 0.0 || p.y >= clouds.layer.x+clouds.layer.y { return vec2(1.0, 0.0); }
     let sun = dot(direction,clouds.sun.xyz)>0.999;
     let moon = dot(direction,clouds.moon.xyz)>0.999;
-    if !sun && !moon {return 1.0;}
+    if !sun && !moon {return vec2(1.0, 0.0);}
     let hit = p.xz+clouds.offset.xy+direction.xz*(clouds.layer.x-p.y)/max(direction.y,0.04);
     let t=textureSampleLevel(cloud_shadow,cloud_repeat,(hit-clouds.offset.zw)/(clouds.layer.z*4.0),0.0).rg;
-    // Even a thick deck lets some direct light through (the bright patch around the sun),
-    // so overcast scenes keep a little modelling instead of going flat.
-    return max(select(t.y,t.x,sun), 0.12);
+    // A closing deck hides the beam whatever thin spots the shadow map finds, as it hides the
+    // sun's disc.
+    let open = 1.0-clouds.weather.z;
+    let direct = select(t.y,t.x,sun)*open*open;
+    return vec2(direct, max(CLOUD_DIFFUSE_FLOOR-direct, 0.0));
+}
+// All of it, for light that casts no shadows anyway.
+fn cloud_visibility(p: vec3<f32>, direction: vec3<f32>) -> f32 {
+    let light = cloud_light(p, direction);
+    return light.x + light.y;
 }
 /// Forest shadow map: origin xz, metres per texel (0 when off), tallest crown top.
 fn forest_shadow_parameters() -> vec4<f32> {
