@@ -438,6 +438,14 @@ struct ImpostorParams {
 }
 
 impl MaterialExtension for ImpostorExtension {
+    // Impostors stand beyond the mesh LODs, where their sway moves them far less than a pixel
+    // a frame: MetalFX Temporal's motion for them comes from the final depth and the camera
+    // (`upscaling::temporal::CompleteTemporalMotion`), and their alpha-tested cards are not
+    // drawn twice.
+    fn enable_prepass() -> bool {
+        false
+    }
+
     fn vertex_shader() -> ShaderRef {
         SHADER.into()
     }

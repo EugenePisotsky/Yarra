@@ -239,6 +239,13 @@ impl From<&TerrainMaterial> for TerrainMaterialKey {
 }
 
 impl Material for TerrainMaterial {
+    // Terrain does not move: MetalFX Temporal's motion for it comes from the final depth and
+    // the camera (`upscaling::temporal::CompleteTemporalMotion`), and the main pass writes its
+    // depth, so it is not drawn twice.
+    fn enable_prepass() -> bool {
+        false
+    }
+
     fn fragment_shader() -> ShaderRef {
         TERRAIN_SHADER.into()
     }

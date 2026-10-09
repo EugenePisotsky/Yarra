@@ -76,6 +76,10 @@ pub struct TemporalMotionTarget {
 }
 #[derive(SystemSet, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct InitializeTemporalMotion;
+/// Motion of static geometry, which leaves the prepass: after Bevy's opaque pass, before custom
+/// renderers write their own motion over it.
+#[derive(SystemSet, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct CompleteTemporalMotion;
 #[derive(SystemSet, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ResolveTemporal;
 
@@ -108,6 +112,15 @@ pub(crate) fn install(app: &mut App) {
         )
         .add_systems(
             Core3d,
+            complete_static_motion
+                .in_set(CompleteTemporalMotion)
+                .in_set(Core3dSystems::MainPass)
+                .after(bevy::core_pipeline::core_3d::main_opaque_pass_3d)
+                .before(bevy::pbr::main_transmissive_pass_3d)
+                .before(bevy::core_pipeline::core_3d::main_transparent_pass_3d),
+        )
+        .add_systems(
+            Core3d,
             initialize_motion
                 .in_set(InitializeTemporalMotion)
                 .after(Core3dSystems::Prepass)
@@ -137,6 +150,8 @@ struct State {
     histories: HashMap<Entity, History>,
     motion_pipeline: wgpu::RenderPipeline,
     motion_layout: wgpu::BindGroupLayout,
+    static_motion_pipeline: wgpu::RenderPipeline,
+    static_motion_layout: wgpu::BindGroupLayout,
     display_pipeline: wgpu::RenderPipeline,
     display_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
@@ -176,11 +191,14 @@ impl FromWorld for State {
             })
         };
         let motion_pipeline = pipeline("motion", TextureFormat::Rg16Float);
+        let static_motion_pipeline = pipeline("static_motion", TextureFormat::Rg16Float);
         let display_pipeline = pipeline("display", TextureFormat::Rgba16Float);
         Self {
             histories: default(),
             motion_layout: motion_pipeline.get_bind_group_layout(0),
             motion_pipeline,
+            static_motion_layout: static_motion_pipeline.get_bind_group_layout(0),
+            static_motion_pipeline,
             display_layout: display_pipeline.get_bind_group_layout(0),
             display_pipeline,
             sampler: device.create_sampler(&wgpu::SamplerDescriptor {
@@ -440,6 +458,70 @@ fn initialize_motion(
             ..default()
         });
     pass.set_pipeline(&state.motion_pipeline);
+    pass.set_bind_group(0, &group, &[]);
+    pass.set_viewport(0., 0., frame.size.x as f32, frame.size.y as f32, 0., 1.);
+    pass.draw(0..3, 0..1);
+}
+/// Static geometry (terrain) is not drawn in the prepass, so its pixels hold the prepass's
+/// motion of whatever moving geometry lies behind it, or the background's. Where the scene's depth
+/// after the opaque pass is nearer than the prepass's, the camera's motion at that depth replaces
+/// it; moving geometry, drawn in both at the same depth, keeps its own.
+fn complete_static_motion(
+    view: ViewQuery<(
+        &TemporalFrame,
+        &TemporalMotionTarget,
+        &ViewPrepassTextures,
+        &ViewDepthTexture,
+    )>,
+    state: Res<State>,
+    mut ctx: RenderContext,
+) {
+    let (frame, target, prepass, scene) = view.into_inner();
+    let Some(depth) = &prepass.depth else {
+        return;
+    };
+    let device = ctx.render_device();
+    let uniform = device.create_buffer_with_data(&BufferInitDescriptor {
+        label: Some("static motion parameters"),
+        contents: bytemuck::bytes_of(&params(frame, frame.size, TemporalDebug::Off)),
+        usage: BufferUsages::UNIFORM,
+    });
+    let group = device
+        .wgpu_device()
+        .create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("static motion inputs"),
+            layout: &state.static_motion_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&depth.texture.default_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::TextureView(scene.view()),
+                },
+            ],
+        });
+    let mut pass = ctx
+        .command_encoder()
+        .begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("static geometry motion"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &target.view,
+                resolve_target: None,
+                depth_slice: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            ..default()
+        });
+    pass.set_pipeline(&state.static_motion_pipeline);
     pass.set_bind_group(0, &group, &[]);
     pass.set_viewport(0., 0., frame.size.x as f32, frame.size.y as f32, 0., 1.);
     pass.draw(0..3, 0..1);

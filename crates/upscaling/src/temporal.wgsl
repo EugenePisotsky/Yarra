@@ -17,6 +17,20 @@ struct Params { previous_from_current: mat4x4<f32>, size: vec4<f32>, jitter_debu
     let previous_uv = previous.xy / previous.w * vec2(0.5,-0.5) + vec2(0.5);
     return uv - previous_uv;
 }
+// Static geometry is not in the prepass (crates/upscaling/src/temporal.rs, `complete_static_motion`).
+@group(0) @binding(5) var scene_depth: texture_depth_2d;
+@fragment fn static_motion(@builtin(position) p: vec4<f32>) -> @location(0) vec2<f32> {
+    let xy = vec2<i32>(p.xy);
+    let scene = textureLoad(scene_depth,xy,0);
+    // Moving geometry lies at the same depth in both passes and keeps its own motion; so does
+    // the background. A small margin allows for vertex positions computed apart.
+    if scene <= textureLoad(depth,xy,0) * 1.0001 { discard; }
+    let uv = (p.xy + params.jitter_debug.xy) / params.size.xy;
+    let previous = params.previous_from_current * vec4(uv * vec2(2.0,-2.0) + vec2(-1.0,1.0),scene,1.0);
+    if previous.w <= 0.00001 { return vec2(0.0); }
+    let previous_uv = previous.xy / previous.w * vec2(0.5,-0.5) + vec2(0.5);
+    return uv - previous_uv;
+}
 @fragment fn display(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
     let uv = p.xy / params.size.zw;
     let xy = vec2<i32>(clamp(uv * params.size.xy,vec2(0.0),params.size.xy - vec2(1.0)));

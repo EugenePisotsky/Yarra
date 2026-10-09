@@ -56,6 +56,7 @@ pub(crate) fn install(app: &mut App) {
         controls_locked: name != "actor-walk",
         counters: options.counters,
         show_ui: !ground && !repro.hide_ui,
+        temporal_debug: repro.temporal_view,
         ..app.world().resource::<RuntimeSettings>().clone()
     };
     if name == "actor-walk" {
@@ -70,7 +71,10 @@ pub(crate) fn install(app: &mut App) {
     if name == "actor-walk" {
         app.add_systems(Update, log_actor_walk);
     }
-    app.insert_resource(ReproView(name.clone()));
+    app.insert_resource(ReproView(name.clone()))
+        .insert_resource(ReproClock {
+            frames: repro.frame_clock,
+        });
     app.add_systems(Update, move_camera.after(GameplaySystems::CameraFollow))
         .add_systems(PostUpdate, synchronize_wind.before(engine::TreeWindSystems));
     let path_frames = if name.ends_with("-stream") {
@@ -109,6 +113,11 @@ const ACTOR_WALK_SPEED_MPS: f32 = 20.;
 
 #[derive(Resource)]
 struct ReproView(String);
+/// Whether routes advance by frame count (at 60 fps) instead of elapsed time.
+#[derive(Resource)]
+struct ReproClock {
+    frames: bool,
+}
 #[derive(Resource)]
 struct ReproOutput {
     frames: Option<u32>,
@@ -188,6 +197,7 @@ fn move_camera(
     time: Res<Time<Real>>,
     profile: Option<Res<crate::profile::ProfileClock>>,
     view: Res<ReproView>,
+    clock: Res<ReproClock>,
     mut camera: Single<&mut Transform, With<WorldViewCamera>>,
     mut active_space: ResMut<ActiveWorldSpace>,
     start_view: Res<engine::WorldStartView>,
@@ -223,7 +233,14 @@ fn move_camera(
     if view.0.starts_with("landscape") {
         let bookmark = start_view.0.as_ref().unwrap();
         let elapsed = profile.as_ref().map_or_else(
-            || (time.elapsed_secs() - 5.).max(0.),
+            || {
+                let seconds = if clock.frames {
+                    frame.0 as f32 / 60.
+                } else {
+                    time.elapsed_secs()
+                };
+                (seconds - 5.).max(0.)
+            },
             |p| p.route_seconds as f32,
         );
         let position = Vec3::from_array(if view.0 == "landscape-descent" {

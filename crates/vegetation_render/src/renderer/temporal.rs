@@ -113,6 +113,7 @@ pub(super) fn install(app: &mut SubApp) {
             Core3d,
             draw.in_set(Core3dSystems::MainPass)
                 .after(bevy::core_pipeline::core_3d::main_opaque_pass_3d)
+                .after(upscaling::temporal::CompleteTemporalMotion)
                 .before(bevy::pbr::main_transmissive_pass_3d)
                 .before(bevy::core_pipeline::core_3d::main_transparent_pass_3d),
         );

@@ -228,6 +228,13 @@ fn composite_image(data: Vec<u8>, srgb: bool) -> Image {
 }
 
 impl Material for TerrainCompositeMaterial {
+    // Terrain does not move: MetalFX Temporal's motion for it comes from the final depth and
+    // the camera (`upscaling::temporal::CompleteTemporalMotion`), and the main pass writes its
+    // depth, so it is not drawn twice.
+    fn enable_prepass() -> bool {
+        false
+    }
+
     fn fragment_shader() -> ShaderRef {
         COMPOSITE_SHADER.into()
     }

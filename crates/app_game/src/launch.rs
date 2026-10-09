@@ -97,6 +97,8 @@ pub(crate) struct ReproOptions {
     pub name: String,
     pub prepass: bool,
     pub hide_ui: bool,
+    pub frame_clock: bool,
+    pub temporal_view: upscaling::temporal::TemporalDebug,
     pub frames: Option<u32>,
     pub snapshot: Option<PathBuf>,
     pub snapshot_frames: Vec<u32>,
@@ -292,6 +294,16 @@ const FLAGS: &[(&str, bool, &str)] = &[
         "N,N: capture frames after warmup and before exit",
     ),
     ("--render-prepass", false, "Enable depth prepass in a repro"),
+    (
+        "--render-frame-clock",
+        false,
+        "Advance a repro's route by frame count at 60 fps, so captures match between builds",
+    ),
+    (
+        "--render-temporal-view",
+        true,
+        "motion | depth: show MetalFX Temporal's motion or depth input in a repro",
+    ),
     (
         "--impostor-handoff",
         true,
@@ -743,10 +755,18 @@ impl LaunchOptions {
             if has("--render-snapshot-frames") && !has("--render-snapshot") {
                 return Err("Snapshot frames require --render-snapshot".into());
             }
+            let temporal_view = match value("--render-temporal-view")? {
+                None => upscaling::temporal::TemporalDebug::Off,
+                Some("motion") => upscaling::temporal::TemporalDebug::Motion,
+                Some("depth") => upscaling::temporal::TemporalDebug::Depth,
+                Some(_) => return Err("--render-temporal-view requires motion or depth".into()),
+            };
             Some(ReproOptions {
                 name: name.into(),
                 prepass: has("--render-prepass"),
                 hide_ui: has("--render-ui-off"),
+                frame_clock: has("--render-frame-clock"),
+                temporal_view,
                 frames,
                 snapshot: path("--render-snapshot"),
                 snapshot_frames,
@@ -758,6 +778,8 @@ impl LaunchOptions {
                 "--render-snapshot-frames",
                 "--render-prepass",
                 "--render-ui-off",
+                "--render-frame-clock",
+                "--render-temporal-view",
             ]
             .iter()
             .any(|k| has(k))
