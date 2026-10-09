@@ -91,7 +91,19 @@ struct Fog {
     depth: f32,
 }
 
-fn fog_along(ray: vec3<f32>, distance: f32) -> Fog {
+// Exposed light each medium scatters towards the eye along a ray where it is opaque: it depends
+// on the ray's direction alone, so a pixel works it out once for all its samples.
+struct FogLight {
+    haze: vec3<f32>,
+    mist: vec3<f32>,
+}
+
+fn fog_light(ray: vec3<f32>) -> FogLight {
+    let air = clouds.air_light.rgb + clouds.air_sun.rgb * scattering(dot(ray, clouds.sun.xyz));
+    return FogLight(haze_light(ray, air) * view.exposure, air * view.exposure);
+}
+
+fn fog_along(ray: vec3<f32>, distance: f32, lights: FogLight) -> Fog {
     let weather = clouds.fog.w * distance;
     let haze = haze_depth(ray, distance);
     let mist = mist_depth(ray, distance);
@@ -99,9 +111,8 @@ fn fog_along(ray: vec3<f32>, distance: f32) -> Fog {
     if depth <= 0.0 {
         return Fog(vec3(0.0), 0.0);
     }
-    let air = clouds.air_light.rgb + clouds.air_sun.rgb * scattering(dot(ray, clouds.sun.xyz));
-    let light = (clouds.fog.rgb * weather + haze_light(ray, air) * haze + air * mist) / depth;
-    return Fog(light * view.exposure, depth);
+    let light = clouds.fog.rgb * view.exposure * weather + lights.haze * haze + lights.mist * mist;
+    return Fog(light / depth, depth);
 }
 
 // Light that ground haze scatters towards the eye where it is opaque. With the atmosphere it is
@@ -129,8 +140,8 @@ fn behind_fog(fog: Fog, behind: Path) -> Path {
     return in_front(fog.light * (1.0 - transmittance), transmittance, behind);
 }
 
-fn fogged(ray: vec3<f32>, distance: f32, behind: Path) -> Path {
-    return behind_fog(fog_along(ray, distance), behind);
+fn fogged(ray: vec3<f32>, distance: f32, lights: FogLight, behind: Path) -> Path {
+    return behind_fog(fog_along(ray, distance, lights), behind);
 }
 
 // Phase function of haze and mist droplets: an even share, a forward lobe and the narrow
@@ -1213,6 +1224,12 @@ fn fragment(in: FullscreenVertexOutput) -> Output {
     let sea_t = NO_SEA;
 #endif
 
+    // The fog's light, once for every sample.
+    var fog_lights = FogLight(vec3(0.0), vec3(0.0));
+    if fog {
+        fog_lights = fog_light(ray);
+    }
+
     // One cloud lookup serves every sample that can see the cloud base.
     var cloud = Cloud(vec3(0.0), 1.0);
 #ifdef CLOUDS
@@ -1225,7 +1242,8 @@ fn fragment(in: FullscreenVertexOutput) -> Output {
     var sky_transmittance = vec3(1.0);
     if sky_samples > 0u && sea_t < NO_SEA {
         // Open sea out to the horizon, beyond the world's ground.
-        let path = fogged(ray, min(sea_t, start), scene_path(ray, uv, NO_SEA, sea_t, pixel));
+        let path = fogged(ray, min(sea_t, start), fog_lights,
+            scene_path(ray, uv, NO_SEA, sea_t, pixel));
         light += path.light * f32(sky_samples);
         sky_transmittance = path.transmittance;
     } else if sky_samples > 0u {
@@ -1241,7 +1259,7 @@ fn fragment(in: FullscreenVertexOutput) -> Output {
 #else
         var path = Path(vec3(0.0), vec3(1.0));
 #endif
-        path = fogged(ray, start, in_front(cloud.light, cloud.transmittance, path));
+        path = fogged(ray, start, fog_lights, in_front(cloud.light, cloud.transmittance, path));
         light += path.light * f32(sky_samples);
         sky_transmittance = path.transmittance;
     }
@@ -1255,7 +1273,7 @@ fn fragment(in: FullscreenVertexOutput) -> Output {
             if distance >= start {
                 path = in_front(cloud.light, cloud.transmittance, path);
             }
-            path = fogged(ray, min(min(distance, sea_t), start), path);
+            path = fogged(ray, min(min(distance, sea_t), start), fog_lights, path);
             light += path.light * f32(geometry_samples);
             transmittance = path.transmittance * f32(geometry_samples);
         } else {
@@ -1264,8 +1282,8 @@ fn fragment(in: FullscreenVertexOutput) -> Output {
             // front, unless the sea's surface or the cloud base lies between them.
             let near = min(min(nearest, sea_t), start);
             let far = min(min(farthest, sea_t), start);
-            let near_fog = fog_along(ray, near);
-            let far_fog = fog_along(ray, far);
+            let near_fog = fog_along(ray, near, fog_lights);
+            let far_fog = fog_along(ray, far, fog_lights);
             let smooth_path = (sea_t <= nearest || sea_t >= farthest)
                 && (start <= nearest || start > farthest);
             var near_path = Path(vec3(0.0), vec3(1.0));
