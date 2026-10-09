@@ -1110,43 +1110,52 @@ fn extinction(r: f32) -> vec3<f32> {
 
 // Sun rays at a pixel, bilinear between the four nearest texels.
 fn sun_rays_at(position: vec2<f32>) -> f32 {
-    let size = vec2<i32>(textureDimensions(sun_rays));
-    let q = (position - view.main_pass_viewport.xy) / cloud_blend.z - 0.5;
-    let base = vec2<i32>(floor(q));
-    let f = q - floor(q);
-    let a = textureLoad(sun_rays, clamp(base, vec2(0), size - 1), 0).r;
-    let b = textureLoad(sun_rays, clamp(base + vec2(1, 0), vec2(0), size - 1), 0).r;
-    let c = textureLoad(sun_rays, clamp(base + vec2(0, 1), vec2(0), size - 1), 0).r;
-    let d = textureLoad(sun_rays, clamp(base + vec2(1, 1), vec2(0), size - 1), 0).r;
-    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+    let size = vec2<f32>(textureDimensions(sun_rays));
+    let uv = (position - view.main_pass_viewport.xy) / cloud_blend.z / size;
+    return textureSampleLevel(sun_rays, mist_sampler, uv, 0.0).r;
 }
 
+// Sky samples' distance as the light shafts store it, within half floats.
+const SHAFT_SKY: f32 = 6.0e4;
+
 // Light shafts at a pixel `distance` metres deep: the four nearest texels, bilinear but skipping
-// those at a different distance, so beams stop at silhouettes. Sky pixels use 1e6.
+// those at a different distance, so beams stop at silhouettes. Where all four lie at the pixel's
+// distance (nearly everywhere) the plain bilinear sample is the same; the four distances come
+// in one gather. Sky pixels use 1e6.
 fn light_shafts(position: vec2<f32>, distance: f32) -> vec4<f32> {
     if cloud_blend.y < 0.5 {
         return vec4(0.0, 0.0, 0.0, 1.0);
+    }
+    let uv = (position - view.main_pass_viewport.xy) / cloud_blend.z
+        / vec2<f32>(textureDimensions(shaft_light));
+    let here = min(distance, SHAFT_SKY);
+    // Texels (0, 0), (1, 0), (0, 1), (1, 1) of the footprint, as gather orders them w, z, x, y.
+    let gathered = textureGather(0, shaft_distance, mist_sampler, uv);
+    let around = vec4(gathered.w, gathered.z, gathered.x, gathered.y);
+    let falloff = 0.05 * min(around, vec4(here)) + 0.3;
+    let gap = abs(around - here);
+    // All four within half the falloff: the weights differ by too little to show.
+    if all(gap < 0.5 * falloff) {
+        return textureSampleLevel(shaft_light, mist_sampler, uv, 0.0);
     }
     let size = vec2<i32>(textureDimensions(shaft_light));
     let q = (position - view.main_pass_viewport.xy) / cloud_blend.z - 0.5;
     let base = vec2<i32>(floor(q));
     let f = q - floor(q);
+    let near_weight = exp(-gap / falloff);
     var sum = vec4(0.0);
     var weight = 0.0;
     var nearest = vec4(0.0, 0.0, 0.0, 1.0);
     var nearest_gap = 1.0e30;
     for (var i = 0; i < 4; i += 1) {
         let offset = vec2(i & 1, i >> 1u);
-        let at = clamp(base + offset, vec2(0), size - 1);
-        let d = textureLoad(shaft_distance, at, 0).r;
-        let s = textureLoad(shaft_light, at, 0);
-        let gap = abs(d - distance);
+        let s = textureLoad(shaft_light, clamp(base + offset, vec2(0), size - 1), 0);
         let w = select(1.0 - f.x, f.x, offset.x == 1) * select(1.0 - f.y, f.y, offset.y == 1)
-            * exp(-gap / (0.05 * min(d, distance) + 0.3));
+            * near_weight[i];
         sum += s * w;
         weight += w;
-        if gap < nearest_gap {
-            nearest_gap = gap;
+        if gap[i] < nearest_gap {
+            nearest_gap = gap[i];
             nearest = s;
         }
     }

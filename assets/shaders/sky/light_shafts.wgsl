@@ -28,7 +28,7 @@
 @group(0) @binding(10) var repeat_sampler: sampler;
 @group(0) @binding(11) var clamp_sampler: sampler;
 @group(0) @binding(12) var light_out: texture_storage_2d<rgba16float, write>;
-@group(0) @binding(13) var distance_out: texture_storage_2d<r32float, write>;
+@group(0) @binding(13) var distance_out: texture_storage_2d<rgba16float, write>;
 
 // Main-pass pixels per texel and steps per ray (`SCALE`, `STEPS` in light_shafts.rs).
 const SCALE: f32 = f32(#{SHAFT_SCALE}u);
@@ -206,7 +206,8 @@ fn march(@builtin(global_invocation_id) id: vec3<u32>) {
         let world = view.world_from_clip * vec4(ndc, z, 1.0);
         distance = length(world.xyz / world.w - view.world_position);
     }
-    textureStore(distance_out, texel, vec4(min(distance, 1.0e6)));
+    // Sky at 60 km, within half floats.
+    textureStore(distance_out, texel, vec4(min(distance, 6.0e4)));
 
     let sun = shadowed_sun();
     let reach = min(distance, min(sun.range, MAX_RANGE));

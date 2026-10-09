@@ -312,11 +312,11 @@ fn init(
                     texture_3d(TextureSampleType::Float { filterable: true }),
                     sampler(SamplerBindingType::Filtering),
                     // Light shafts and the distance each of their texels marched to.
-                    texture_2d(TextureSampleType::Float { filterable: false }),
-                    texture_2d(TextureSampleType::Float { filterable: false }),
+                    texture_2d(TextureSampleType::Float { filterable: true }),
+                    texture_2d(TextureSampleType::Float { filterable: true }),
                     // The sun as the camera sees it, and the share of its veil each texel gets.
                     storage_buffer_read_only_sized(false, std::num::NonZeroU64::new(16)),
-                    texture_2d(TextureSampleType::Float { filterable: false }),
+                    texture_2d(TextureSampleType::Float { filterable: true }),
                     // Cloud shadows, for the sea's sunlight.
                     texture_2d(TextureSampleType::Float { filterable: true }),
                     sampler(SamplerBindingType::Filtering),

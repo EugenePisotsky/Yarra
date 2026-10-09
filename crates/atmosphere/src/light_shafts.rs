@@ -108,7 +108,8 @@ fn prepare(
         commands.entity(entity).insert(LightShaftTargets {
             light: texture("light shafts", TextureFormat::Rgba16Float),
             scratch: texture("light shafts blur", TextureFormat::Rgba16Float),
-            distance: texture("light shaft distance", TextureFormat::R32Float),
+            // Half floats, filterable, so the composite gathers four distances at once.
+            distance: texture("light shaft distance", TextureFormat::Rgba16Float),
             size,
         });
     }
@@ -161,7 +162,7 @@ fn init(
                     sampler(SamplerBindingType::Filtering),
                     sampler(SamplerBindingType::Filtering),
                     texture_storage_2d(TextureFormat::Rgba16Float, StorageTextureAccess::WriteOnly),
-                    texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::WriteOnly),
+                    texture_storage_2d(TextureFormat::Rgba16Float, StorageTextureAccess::WriteOnly),
                 ),
             ),
         )
