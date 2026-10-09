@@ -488,6 +488,20 @@ The character kept a sharp sun shadow under overcast and rain. Captures at the s
 | Thin spots in the deck | At noon a faint shadow stayed: overcast and rain decks have thin spots in the cloud shadow map, and the forest floor showed sun dapples under overcast. The direct beam now fades with the deck's closing as the sun's disc does (`(1 − overcast)²`). |
 | Result | No shadow under overcast or rain, morning or noon; a character in a cloud's shadow on a scattered day casts none either; sunlit scattered and clear scenes unchanged. Light shafts and lit motes take only the beam, so a closed deck shows none. |
 
+## Breaking waves — October 9
+
+The sea had swash and foam at the waterline but no waves coming ashore. Captures at the start beach's waterline (out to sea, along the shore, from above and from 16 m back), six frames 5 s apart, and in clear, scattered and storm weather; fullscreen 3456×2168.
+
+| Change | Decision / observation |
+| --- | --- |
+| Time to the nearest shore | **Rejected.** Off the start beach a 50 m shelf lies 0–0.5 m deep; crossing it is slow, so from offshore the nearest shore in time was another, steeper one, and times rose towards this beach. Arrival times from deep water (20 m) are right by construction: crests come in. |
+| Linear speed at the waterline | Near zero depth crests stalled (32 s over the last 16 m). A broken wave's bore runs at the square root of g times the depth and its height (0.4 m). |
+| Speckled crests far out | **Three causes.** A grazing ray crosses the band the waves fill over hundreds of metres, so 12 samples caught or missed crests at random: crests stand up only where the view falls more steeply than 5°. Crests and foam sharper than a pixel shimmered: they are blurred by the footprint. Each crest's random height came from a `fract(sin(·) · 43758)` hash of a smoothly varying field, so neighbouring pixels drew different heights: a golden-angle sine of the crest's number replaced it. |
+| Cotton foam | Value-noise foam read as soft blobs; a Worley lace opens into holes as it ages and fades over 3 s. Aged lace still reads as dark pebbles in a pale veil, and the swash on the start beach's flat (centimetres of relief at the sea level over 30 m) as patches of water sheet: left for the polish pass. |
+| Map accuracy | The 16 m map puts the start beach's waterline about 35 m from the terrain's (0.2 m of height there); surf fades out towards the shore and the swash and the waterline come from the depth buffer, so it does not show. |
+| Cost | Surf view, alternating: 112.4, 111.9 fps before against 98.0, 97.9 with the march to 12 m depth and 106.7 without the march; marching only under 4 m of depth and longer steps gave 99.0. Waterline 137.5 against 126.3. No sea in view: 103.3 against 101.8. The march's cost is in evaluating the surf at about six points per ray, not in the step count. |
+| Not done | The swell has no direction (every shore gets surf, the lee too); refraction and the view from under water. |
+
 ## Open gates and maintenance
 
 The remaining gates are sustained terrain/whole-game power, Temporal cost and motion quality, field-scale grass lighting, target-PC acceptance, and physical-phone heat/60-FPS delivery. Keep correctness references until their replacements pass the relevant gate. Existing counters often identify less work without demonstrating better delivered frames or lower power.

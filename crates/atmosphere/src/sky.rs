@@ -320,6 +320,8 @@ fn init(
                     // Cloud shadows, for the sea's sunlight.
                     texture_2d(TextureSampleType::Float { filterable: true }),
                     sampler(SamplerBindingType::Filtering),
+                    // How waves come ashore (read with the mist map's sampler).
+                    texture_2d(TextureSampleType::Float { filterable: true }),
                 ),
             ),
         )
@@ -541,6 +543,7 @@ fn draw(
     let mist = images.get(&assets.mist).unwrap_or(&fallback.d2);
     let noise = images.get(&assets.noise).unwrap_or(&fallback.d3);
     let cloud_shadow = images.get(&assets.shadows).unwrap_or(&fallback.d2);
+    let shore = images.get(&assets.shore).unwrap_or(&fallback.d2);
     let composite_group = device.create_bind_group(
         "sky composite",
         &cache.get_bind_group_layout(&pipelines.composite_layout[usize::from(key.multisampled)]),
@@ -562,6 +565,7 @@ fn draw(
             rays.map_or(&fallback.d2.texture_view, |r| &r.texture.default_view),
             &cloud_shadow.texture_view,
             &cloud_shadow.sampler,
+            &shore.texture_view,
         )),
     );
     let size = resolution.map_or(

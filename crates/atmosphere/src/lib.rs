@@ -8,6 +8,7 @@ pub mod light_shafts;
 pub mod lightning;
 pub mod precipitation;
 pub mod shelter;
+pub mod shore;
 pub mod sky;
 pub mod sun_glare;
 pub mod sunlight;

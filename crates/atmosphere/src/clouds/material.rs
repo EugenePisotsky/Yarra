@@ -147,6 +147,7 @@ mod tests {
                 shelter: default(),
                 forest_shadow: default(),
                 mist: default(),
+                shore: default(),
             })
             .add_systems(Update, convert);
         let material = app

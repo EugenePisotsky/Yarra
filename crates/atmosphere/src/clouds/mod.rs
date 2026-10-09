@@ -59,6 +59,8 @@ pub struct CloudAssets {
     pub forest_shadow: Handle<Image>,
     /// Where mist pools over the world; see `crate::valley_mist`.
     pub mist: Handle<Image>,
+    /// How waves come ashore; see `crate::shore`.
+    pub shore: Handle<Image>,
 }
 #[derive(Resource, Clone, Copy, Default, ExtractResource, Pod, Zeroable)]
 #[repr(C)]
@@ -110,6 +112,9 @@ pub struct CloudParams {
     pub ocean: [f32; 4],
     /// x: 1 with a sea to shade; y: wind strength scale of the waves.
     pub ocean_waves: [f32; 4],
+    /// Shore map (`crate::shore`): first corner XZ in render coordinates, metres per texel and
+    /// the swell's period (0 without a map).
+    pub shore_map: [f32; 4],
     /// Lightning: where the channel leaves the cloud base (render space) and the flash's
     /// unexposed light on the clouds near it (0 without a strike).
     pub lightning: [f32; 4],
@@ -164,6 +169,7 @@ impl Plugin for CloudsPlugin {
             .init_resource::<crate::forest_shadow::ForestShadow>()
             .init_resource::<crate::forest_shadow::ForestSkyOcclusion>()
             .init_resource::<crate::valley_mist::ValleyMist>()
+            .init_resource::<crate::shore::Shore>()
             .init_resource::<CloudOrigin>()
             .init_resource::<CloudQuality>()
             .init_resource::<CloudParams>()
@@ -188,6 +194,7 @@ impl Plugin for CloudsPlugin {
                 publish_shelter,
                 publish_forest_shadow,
                 publish_valley_mist,
+                publish_shore,
             )
                 .after(ApplyAtmosphere),
         );
@@ -240,19 +247,21 @@ fn setup(
         shelter: images.add(crate::shelter::RainShelter::image()),
         forest_shadow: images.add(crate::forest_shadow::ForestShadow::image()),
         mist: images.add(crate::valley_mist::ValleyMist::image()),
+        shore: images.add(crate::shore::Shore::image()),
         parameters: buffers.add(ShaderBuffer::new(
             bytemuck::bytes_of(&CloudParams::default()),
             RenderAssetUsages::RENDER_WORLD,
         )),
     });
 }
-/// Inputs for the low air and the sea: valley mist, presentation switches, look tuning and the
-/// sea surface.
+/// Inputs for the low air and the sea: valley mist, presentation switches, look tuning, the
+/// sea surface and its shore.
 type LowAir<'w> = (
     Res<'w, crate::valley_mist::ValleyMist>,
     Option<Res<'w, crate::AtmospherePresentation>>,
     Option<Res<'w, crate::FogTuning>>,
     Option<Res<'w, crate::SeaSurface>>,
+    Res<'w, crate::shore::Shore>,
 );
 fn sync(
     mut commands: Commands,
@@ -273,7 +282,7 @@ fn sync(
         Res<crate::forest_shadow::ForestShadow>,
         Res<crate::forest_shadow::ForestSkyOcclusion>,
     ),
-    (mist, presentation, tuning, sea): LowAir,
+    (mist, presentation, tuning, sea, shore): LowAir,
     mut mist_fade: Local<(u64, f32)>,
 ) {
     let profile = state.effective_profile();
@@ -353,6 +362,7 @@ fn sync(
         near_sun: [0.; 4],
         ocean: [0.; 4],
         ocean_waves: [0.; 4],
+        shore_map: [0.; 4],
         lightning: [0.; 4],
         lightning_channel: [0.; 4],
         lightning_segments: [[0.; 4]; 2 * crate::lightning::SEGMENTS],
@@ -427,6 +437,7 @@ fn sync(
             0.,
             0.,
         ];
+        params.shore_map = shore.parameters(origin.0);
     }
     // Sunlight after the atmosphere: dimmed and reddened as Bevy lights surfaces, at the camera
     // for the air around it and at the middle of the cloud layer for the clouds.
@@ -644,6 +655,25 @@ fn publish_valley_mist(
     }
 }
 
+/// Upload the shore map only when a rebuild changed it.
+fn publish_shore(
+    shore: Res<crate::shore::Shore>,
+    assets: Option<Res<CloudAssets>>,
+    mut images: ResMut<Assets<Image>>,
+    mut published: Local<Option<u64>>,
+) {
+    let Some(assets) = assets else {
+        return;
+    };
+    if *published == Some(shore.revision()) {
+        return;
+    }
+    if let Some(mut image) = images.get_mut(&assets.shore) {
+        shore.write(&mut image);
+        *published = Some(shore.revision());
+    }
+}
+
 /// Approximate clear-air extinction of moonlight for the cloud lighting path. Authored lux is
 /// outside the atmosphere; it must not illuminate clouds or haze after the moon has set.
 fn cloud_illuminance(lux: f32, elevation_sine: f32) -> f32 {
@@ -688,6 +718,7 @@ mod tests {
             .init_resource::<crate::forest_shadow::ForestShadow>()
             .init_resource::<crate::forest_shadow::ForestSkyOcclusion>()
             .init_resource::<crate::valley_mist::ValleyMist>()
+            .init_resource::<crate::shore::Shore>()
             .add_systems(Update, sync);
         app.update();
         let first = app.world().resource::<CloudParams>().offset;
@@ -740,6 +771,7 @@ mod tests {
             .init_resource::<crate::forest_shadow::ForestShadow>()
             .init_resource::<crate::forest_shadow::ForestSkyOcclusion>()
             .init_resource::<crate::valley_mist::ValleyMist>()
+            .init_resource::<crate::shore::Shore>()
             .add_systems(Update, sync);
         app.update();
         let params = *app.world().resource::<CloudParams>();

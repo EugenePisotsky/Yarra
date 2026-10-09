@@ -1,12 +1,15 @@
-//! The valley mist map (`atmosphere::valley_mist`) of the active world space, from its terrain
-//! at one coarse level. Every node of that level is read once per runtime generation through
+//! The valley mist map (`atmosphere::valley_mist`) and shore map (`atmosphere::shore`) of the
+//! active world space, from its terrain at one coarse level. Every node of that level is read once per runtime generation through
 //! the database worker, a few at a time beside the terrain LOD's own requests, and the map is
 //! built off the main thread. Reteya's 10 km takes 400 nodes and makes a 641² map at 16 m.
 use super::{
     ActiveWorldSpace, WorldCatalog,
     database::{DatabaseRequest, TerrainQuery, TerrainReply, WorldDatabaseWorker},
 };
-use atmosphere::valley_mist::{MistMap, ValleyMist};
+use atmosphere::{
+    shore::{Shore, ShoreMap},
+    valley_mist::{MistMap, ValleyMist},
+};
 use bevy::{
     prelude::*,
     tasks::{AsyncComputeTaskPool, Task, block_on, poll_once},
@@ -23,6 +26,9 @@ const IN_FLIGHT: usize = 4;
 /// Set in this module's request ids, which the reply loop routes here.
 const REQUEST_BIT: u64 = 1 << 63;
 
+/// The mist map, and the shore map of a world with a sea.
+type Maps = (MistMap, Option<ShoreMap>);
+
 #[derive(Resource, Default)]
 pub(super) struct MistTerrain {
     /// Runtime generation and world space the map is for, and that space's cell size.
@@ -34,7 +40,7 @@ pub(super) struct MistTerrain {
     next_id: u64,
     expected: usize,
     received: Vec<EncodedTerrainNode>,
-    build: Option<Task<Result<MistMap, String>>>,
+    build: Option<Task<Result<Maps, String>>>,
     done: bool,
 }
 
@@ -127,8 +133,9 @@ pub(super) fn update(
     active_space: Res<ActiveWorldSpace>,
     catalog: Res<WorldCatalog>,
     published: Option<ResMut<ValleyMist>>,
+    shore: Option<ResMut<Shore>>,
 ) {
-    let (Some(worker), Some(mut published)) = (worker, published) else {
+    let (Some(worker), Some(mut published), Some(mut shore)) = (worker, published, shore) else {
         return;
     };
     let Some(space) = active_space.current() else {
@@ -147,6 +154,7 @@ pub(super) fn update(
         };
         published.set_sea_level(info.sea_level);
         published.disable();
+        shore.disable();
         if !mist.request(&worker, TerrainQuery::Roots(space)) {
             // Try again next frame.
             mist.identity = None;
@@ -179,25 +187,28 @@ pub(super) fn update(
         mist.build = None;
         mist.done = true;
         match result {
-            Ok(map) => {
+            Ok((map, shore_map)) => {
                 info!(
                     "valley mist: {}×{} map at {} m",
                     map.size.x, map.size.y, map.metres_per_texel
                 );
                 published.publish(Arc::new(map));
+                if let Some(shore_map) = shore_map {
+                    shore.publish(Arc::new(shore_map));
+                }
             }
             Err(e) => mist.fail(&e),
         }
     }
 }
 
-/// The map of one level's nodes: their samples on one grid, sharing the samples along their
-/// edges.
+/// The maps of one level's nodes: their samples on one grid, sharing the samples along their
+/// edges. Only a world with a sea has a shore map.
 fn build(
     nodes: Vec<EncodedTerrainNode>,
     cell_size: f32,
     sea_level: Option<f32>,
-) -> Result<MistMap, String> {
+) -> Result<Maps, String> {
     let nodes = nodes
         .into_iter()
         .map(|n| n.decode().map_err(|e| e.to_string()))
@@ -242,12 +253,12 @@ fn build(
         f64::from(min_x) * node_metres - spacing * 0.5,
         f64::from(min_z) * node_metres - spacing * 0.5,
     ];
-    Ok(MistMap::from_heights(
-        origin,
-        UVec2::new(width as u32, depth as u32),
-        spacing as f32,
-        &heights,
-        sea_level,
+    let size = UVec2::new(width as u32, depth as u32);
+    let shore = sea_level
+        .map(|level| ShoreMap::from_heights(origin, size, spacing as f32, &heights, level));
+    Ok((
+        MistMap::from_heights(origin, size, spacing as f32, &heights, sea_level),
+        shore,
     ))
 }
 

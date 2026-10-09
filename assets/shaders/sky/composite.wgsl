@@ -59,6 +59,9 @@ enable dual_source_blending;
 @group(1) @binding(13) var sun_rays: texture_2d<f32>;
 @group(1) @binding(14) var cloud_shadow: texture_2d<f32>;
 @group(1) @binding(15) var cloud_shadow_sampler: sampler;
+// How waves come ashore (`atmosphere::shore`): depth below the sea level, seconds a crest takes
+// to get here from deep water and that time's gradient along X and Z. Read with `mist_sampler`.
+@group(1) @binding(16) var shore_map: texture_2d<f32>;
 
 struct Output {
 #ifdef DUAL_SOURCE_BLENDING
@@ -707,6 +710,209 @@ fn sea_distance(ray: vec3<f32>) -> f32 {
     return 2.0 * c / (-b + sqrt(disc));
 }
 
+// Breaking waves. Crests come in from deep water along the shore map's lines of equal arrival
+// time, at its pace: they lie along the shore and close up as the water shallows. A wave grows
+// as it slows (Green's law, the fourth root of the depth's fall) and breaks where its height
+// reaches BREAKING of the depth; from there on its height is held to that share, a white roller
+// runs on its front and it leaves foam behind that breaks up into lace. Before breaking its crest
+// sharpens and its front steepens. SURF_HEIGHT is the swell's height in deep water, scaled by the
+// square of the weather's wind strength.
+const SURF_HEIGHT: f32 = 0.6;
+const SURF_DEPTH: f32 = 12.0;
+const BREAKING: f32 = 0.78;
+// Seconds the foam behind a broken wave lasts, and how far apart along the shore crests arrive
+// at different times, metres.
+const SURF_FOAM_LIFE: f32 = 3.0;
+const SURF_ALONG: f32 = 260.0;
+// Shore map times past this are water no crest reaches (`atmosphere::shore::UNREACHED`).
+const SURF_UNREACHED: f32 = 500.0;
+// Crests stand up out of the water where the view ray falls steeply enough for the march to
+// resolve them (a sine of its descent of SURF_STANDING, faded in from 60% of it): a grazing ray
+// crosses the waves' band over hundreds of metres and caught or missed crests at random. Farther
+// out their slopes and foam draw them on the flat surface, as they do the broad swell beyond
+// SURF_STANDING_DEPTH, where crests are low and their standing up shows little.
+const SURF_STANDING: f32 = 0.09;
+const SURF_STANDING_DEPTH: f32 = 4.0;
+// Steps of the march: about SURF_STEP metres along the view, within these bounds.
+const SURF_STEP: f32 = 1.0;
+const SURF_STEPS: f32 = 8.0;
+// The band the surf fills at the weather's usual wind, metres above and below the sea level: the
+// highest crests (the largest of a set at their breaking point) and the deepest troughs.
+const SURF_CRESTS: f32 = 1.2;
+const SURF_TROUGHS: f32 = 0.6;
+
+// Foam as a network around bubbles: nearly whole when fresh, opening into holes as it ages
+// (0..1) until thin threads are left, the holes at the Worley cells' cores half a metre across. Past a fifth of a cell per
+// pixel it fades into the veil it averages to.
+const LACE_SCALE: f32 = 6.0;
+fn foam_lace(xz: vec2<f32>, age: f32, footprint: f32) -> f32 {
+    let cells = textureSampleLevel(noise, noise_sampler, vec3(xz / LACE_SCALE, 0.41), 0.0).g;
+    let open = mix(0.95, 0.35, age);
+    let lace = 1.0 - smoothstep(open, open + 0.06, cells);
+    let veil = clamp((open - 0.3) / 0.65, 0.0, 1.0);
+    return mix(lace, veil, smoothstep(0.1, 0.5, footprint));
+}
+
+struct Surf {
+    // Depth below the sea level by the shore map.
+    depth: f32,
+    // Height of the surface above the sea level, and its slope.
+    height: f32,
+    slope: vec2<f32>,
+    foam: f32,
+    // How far the waves here have broken, 0..1.
+    broken: f32,
+    // Where the waves are in their cycle: 0 as a crest passes, rising to 1 as the next comes.
+    cycle: f32,
+}
+
+// Three fields varying smoothly along a shore, 0..1, a few hundred metres across: sums of sines
+// in different directions, so they never repeat visibly along it.
+fn along_shore(local: vec2<f32>) -> vec3<f32> {
+    let q = local * (250.0 / SURF_ALONG);
+    let a = sin(dot(q, vec2(0.0213, 0.0137)) + 1.3) + sin(dot(q, vec2(-0.0089, 0.0291)) + 4.1);
+    let b = sin(dot(q, vec2(0.0171, -0.0233)) + 2.7) + sin(dot(q, vec2(0.0307, 0.0071)) + 0.4);
+    let c = sin(dot(q, vec2(-0.0247, -0.0119)) + 5.2) + sin(dot(q, vec2(0.0063, -0.0311)) + 3.3);
+    return 0.5 + 0.25 * vec3(a, b, c);
+}
+
+// `footprint` is the pixel's length on the water along the view, metres: each side of a crest is
+// a Gaussian, blurred over the footprint by adding their variances (keeping its area), so far
+// surf softens instead of breaking up into speckle; the foam's lace fades into an even veil.
+// Without `shade` only the height is worked out, for the march to the surface.
+fn surf_at(xz: vec2<f32>, footprint: f32, shade: bool) -> Surf {
+    var surf = Surf(1.0e4, 0.0, vec2(0.0), 0.0, 0.0, 0.0);
+    if clouds.shore_map.w <= 0.0 {
+        return surf;
+    }
+    let size = vec2<f32>(textureDimensions(shore_map));
+    // World-anchored: from the map's own corner.
+    let local = xz - clouds.shore_map.xy;
+    let map = textureSampleLevel(shore_map, mist_sampler, local / (clouds.shore_map.z * size), 0.0);
+    let depth = map.x;
+    surf.depth = depth;
+    let period = clouds.shore_map.w;
+    let along = along_shore(local);
+    let theta = (clouds.ocean.w - map.y) / period + along.r * 1.5;
+    let s = fract(theta);
+    surf.cycle = s;
+    let weight = 1.0 - smoothstep(SURF_DEPTH * 0.6, SURF_DEPTH, depth);
+    if weight <= 0.0 || map.y >= SURF_UNREACHED || depth <= 0.0 {
+        return surf;
+    }
+    // Sets: each crest its own height (golden-angle steps of a sine, so neighbours differ), which
+    // shifts smoothly along the shore, and some stretches of shore get bigger ones. Between the
+    // crest that has passed and the one coming the water takes after both, so the surface stays
+    // whole across each crest.
+    let passed = floor(theta);
+    let luck = 0.5 + 0.5 * sin(vec2(passed, passed + 1.0) * 2.39996 + along.g * 6.2831853);
+    let strength = clouds.ocean_waves.y;
+    let shoaling = pow(SURF_DEPTH / max(depth, 0.3), 0.25);
+    let shoaled = SURF_HEIGHT * strength * strength * (0.6 + 0.8 * luck) * (0.7 + 0.6 * along.b)
+        * shoaling;
+    let ratio = mix(shoaled.x, shoaled.y, s) / (BREAKING * depth);
+    surf.broken = smoothstep(0.9, 1.2, ratio) * weight;
+    // Heights of the crest behind and the one ahead.
+    let crests = min(shoaled, vec2(BREAKING * depth)) * weight;
+    // Distances to the crest ahead (the front) and behind, in periods; widths of each side, and
+    // the footprint in periods (a period's length is the time's gradient's inverse).
+    let steep = clamp(ratio, 0.0, 1.0);
+    let front = mix(0.2, 0.05, steep * steep);
+    let back = mix(0.2, 0.32, steep);
+    let blur = footprint * length(map.zw) / period;
+    let wide_front = sqrt(front * front + blur * blur);
+    let wide_back = sqrt(back * back + blur * blur);
+    let v = 1.0 - s;
+    let ahead = front / wide_front * exp(-(v * v) / (wide_front * wide_front));
+    let behind = back / wide_back * exp(-(s * s) / (wide_back * wide_back));
+    surf.height = crests.y * ahead + crests.x * behind
+        - 0.886 * (front + back) * mix(crests.x, crests.y, s);
+    if !shade {
+        return surf;
+    }
+    let rise = crests.y * 2.0 * v / (wide_front * wide_front) * ahead
+        - crests.x * 2.0 * s / (wide_back * wide_back) * behind;
+    surf.slope = rise * -map.zw / period;
+    // The roller on a broken wave's front, and the foam it leaves, breaking up into lace.
+    if surf.broken <= 0.0 {
+        return surf;
+    }
+    let wide_roller = sqrt(0.035 * 0.035 + blur * blur);
+    let roller = 0.035 / wide_roller * exp(-(v * v) / (wide_roller * wide_roller));
+    let drift = clouds.ocean.yz * clouds.ocean.w * 0.2;
+    // It thins as it opens.
+    let left = exp(-s * period / SURF_FOAM_LIFE);
+    let trail = left * left * foam_lace(local + drift, 1.0 - left, footprint);
+    surf.foam = clamp(roller + 0.85 * trail, 0.0, 1.0) * surf.broken;
+    return surf;
+}
+
+// Height of the surf as the march to the surface sees it.
+fn standing_surf(xz: vec2<f32>, footprint: f32) -> f32 {
+    let surf = surf_at(xz, footprint, false);
+    return surf.height
+        * (1.0 - smoothstep(0.6 * SURF_STANDING_DEPTH, SURF_STANDING_DEPTH, surf.depth));
+}
+
+// Distance along `ray` to the sea's surface with the surf standing up out of it, or NO_SEA.
+// Near the shore the view ray is marched down through the band the waves fill, from their
+// highest crests to below their troughs, then refined between the samples either side.
+fn sea_surface(ray: vec3<f32>) -> f32 {
+    let flat = sea_distance(ray);
+    let standing = smoothstep(0.6 * SURF_STANDING, SURF_STANDING, -ray.y);
+    if flat >= NO_SEA || standing <= 0.0 || clouds.shore_map.w <= 0.0 {
+        return flat;
+    }
+    let p = view.world_position + ray * flat;
+    let size = vec2<f32>(textureDimensions(shore_map));
+    // The pixel's length on the water along the view, per metre of distance.
+    let spread = 2.0 / (view.clip_from_view[1][1] * view.main_pass_viewport.w) / max(-ray.y, 0.02);
+    let map = textureSampleLevel(shore_map, mist_sampler,
+        (p.xz - clouds.shore_map.xy) / (clouds.shore_map.z * size), 0.0);
+    if map.x >= SURF_STANDING_DEPTH + 1.0 || map.y >= SURF_UNREACHED {
+        return flat;
+    }
+    let strength = clouds.ocean_waves.y;
+    let scale = strength * strength * standing;
+    let height = view.world_position.y - clouds.ocean.x;
+    let first = max(height - SURF_CRESTS * scale, 0.0) / -ray.y;
+    let last = (height + SURF_TROUGHS * scale) / -ray.y;
+    var before = first;
+    var above = height + ray.y * first
+        - standing_surf((view.world_position + ray * first).xz, first * spread) * standing;
+    if above <= 0.0 {
+        return first;
+    }
+    let steps = clamp(ceil((last - first) / SURF_STEP), 4.0, SURF_STEPS);
+    for (var i = 1.0; i <= steps; i += 1.0) {
+        let t = mix(first, last, i / steps);
+        let here = height + ray.y * t
+            - standing_surf((view.world_position + ray * t).xz, t * spread) * standing;
+        if here <= 0.0 {
+            var a = before;
+            var fa = above;
+            var b = t;
+            var fb = here;
+            for (var k = 0u; k < 2u; k += 1u) {
+                let m = a + (b - a) * fa / max(fa - fb, 1e-4);
+                let fm = height + ray.y * m
+                    - standing_surf((view.world_position + ray * m).xz, m * spread) * standing;
+                if fm > 0.0 {
+                    a = m;
+                    fa = fm;
+                } else {
+                    b = m;
+                    fb = fm;
+                }
+            }
+            return a + (b - a) * fa / max(fa - fb, 1e-4);
+        }
+        before = t;
+        above = here;
+    }
+    return flat;
+}
+
 // Share of the sun's direct light the cloud layer lets through to `p`.
 fn sea_cloud_shadow(p: vec3<f32>) -> f32 {
     let sun = clouds.sun.xyz;
@@ -734,9 +940,14 @@ fn through_water(air: Path, ray: vec3<f32>, sea_t: f32, distance: f32, at: vec2<
     let q = (p.xz + clouds.mist_drift.xy) / SEA_PATCH;
     let gust = textureSampleLevel(noise, noise_sampler, vec3(q.x, 0.37, q.y), 0.0);
     let patches = mix(0.35, 1.65, smoothstep(0.25, 0.75, gust.r * 0.6 + gust.g * 0.4));
-    let waves = sea_waves(p.xz, clouds.ocean.w, clouds.ocean.yz, clouds.ocean_waves.y * patches,
-        footprint);
-    let n = normalize(vec3(-waves.slope.x, 1.0, -waves.slope.y));
+    // Near the shore the surf rides on them; broken and shallow water have little wind chop of
+    // their own.
+    let surf = surf_at(p.xz, footprint, true);
+    let calm = (1.0 - 0.6 * surf.broken) * mix(0.15, 1.0, smoothstep(0.0, 2.0, surf.depth));
+    let waves = sea_waves(p.xz, clouds.ocean.w, clouds.ocean.yz,
+        clouds.ocean_waves.y * patches * calm, footprint);
+    let tilt = waves.slope + surf.slope;
+    let n = normalize(vec3(-tilt.x, 1.0, -tilt.y));
     let v = -ray;
     let n_dot_v = max(dot(n, v), 0.02);
     let fresnel = WATER_F0 + (1.0 - WATER_F0) * pow(1.0 - n_dot_v, 5.0);
@@ -797,18 +1008,25 @@ fn through_water(air: Path, ray: vec3<f32>, sea_t: f32, distance: f32, at: vec2<
     let depth = select(1.0e4, max(clouds.ocean.x - seabed, 0.0), distance < NO_SEA);
     let seen = exp(-WATER_EXTINCTION * min(column, 1.0e4));
     let lit = exp(-WATER_EXTINCTION * min(depth * WATER_LIGHT_PATH, 1.0e4));
-    let body = WATER_ALBEDO * daylight * (1.0 - seen);
-    let open_water = fresnel * sky + min(glitter * view.exposure, vec3(MAX_GLITTER))
+    // Broken water is full of bubbles and stirred-up sand, and scatters more light back.
+    let body = WATER_ALBEDO * (1.0 + 3.0 * surf.broken) * daylight * (1.0 - seen);
+    var open_water = fresnel * sky + min(glitter * view.exposure, vec3(MAX_GLITTER))
         + (1.0 - fresnel) * body;
     // The seabed under the water is wet sand, darker than dry.
-    let open_transmittance = (1.0 - fresnel) * seen * lit * WET_SAND;
+    var open_transmittance = (1.0 - fresnel) * seen * lit * WET_SAND;
+    open_water = mix(open_water, FOAM_ALBEDO * daylight, surf.foam);
+    open_transmittance *= 1.0 - surf.foam;
     if depth >= SHORE_DEPTH {
         return Path(air.light + air.transmittance * open_water,
             air.transmittance * open_transmittance);
     }
-    // The swash: a quick run-up and a slow drain, its front at `edge` metres of depth.
-    let along = textureSampleLevel(noise, noise_sampler, vec3(p.xz / 90.0, 0.61), 0.0).r;
-    let cycle = fract(clouds.ocean.w / SWASH_PERIOD + along * 3.0);
+    // The swash: a quick run-up as each broken wave comes ashore and a slow drain, its front at
+    // `edge` metres of depth. Without a shore map it keeps its own time.
+    var cycle = surf.cycle;
+    if clouds.shore_map.w <= 0.0 {
+        let along = textureSampleLevel(noise, noise_sampler, vec3(p.xz / 90.0, 0.61), 0.0).r;
+        cycle = fract(clouds.ocean.w / SWASH_PERIOD + along * 3.0);
+    }
     let surge = select(1.0 - smoothstep(0.25, 1.0, cycle), smoothstep(0.0, 0.25, cycle),
         cycle < 0.25);
     // Near the waterline, the seabed's slope turns runs along the ground into depths.
@@ -826,16 +1044,14 @@ fn through_water(air: Path, ray: vec3<f32>, sea_t: f32, distance: f32, at: vec2<
     transmittance *= mix(1.0, WET_SAND, wet * smoothstep(0.0, 0.01, depth) * (1.0 - film));
     // Foam rides the front and trails behind it in lace, drifting with the waves.
     let drift = clouds.ocean.yz * clouds.ocean.w * 0.3;
-    let coarse = textureSampleLevel(noise, noise_sampler, vec3((p.xz + drift) / 6.0, 0.23), 0.0);
-    let fine = textureSampleLevel(noise, noise_sampler, vec3((p.xz - drift) / 1.7, 0.71), 0.0);
-    let pattern = coarse.r * 0.55 + fine.g * 0.45;
     let front = exp(-pow((depth - edge) / (slope * FOAM_FRONT), 2.0))
-        * smoothstep(0.3, 0.5, pattern);
+        * foam_lace(p.xz + drift, 0.3, footprint);
     let trail = (1.0 - smoothstep(edge, edge + slope * FOAM_TRAIL, depth))
-        * smoothstep(0.6, 0.8, pattern) * smoothstep(edge, edge + slope * FOAM_FRONT, depth);
+        * foam_lace(p.xz - drift, 1.0, footprint)
+        * smoothstep(edge, edge + slope * FOAM_FRONT, depth);
     // Nothing starts hard at the dry edge: the terrain's contour there zigzags.
     let shore = smoothstep(0.0, slope * 1.0, depth);
-    let foam = clamp(front + 0.35 * trail, 0.0, 1.0) * (0.4 + 0.6 * surge) * shore;
+    let foam = clamp(front + 0.25 * trail, 0.0, 1.0) * (0.4 + 0.6 * surge) * shore;
     light = mix(light, FOAM_ALBEDO * daylight, foam);
     transmittance *= 1.0 - foam;
     return Path(air.light + air.transmittance * light, air.transmittance * transmittance);
@@ -976,7 +1192,7 @@ fn fragment(in: FullscreenVertexOutput) -> Output {
     }
     let geometry_samples = samples - sky_samples;
 #ifdef ATMOSPHERE
-    let sea_t = sea_distance(ray);
+    let sea_t = sea_surface(ray);
 #else
     let sea_t = NO_SEA;
 #endif
