@@ -265,12 +265,43 @@ struct Cloud {
     transmittance: f32,
 }
 
-// The cloud layer where the ray crosses its base, `start` metres away.
-fn cloud_layer(ray: vec3<f32>, start: f32, screen_uv: vec2<f32>) -> Cloud {
+#ifdef CACHED_CLOUDS
+// The cloud panorama as a cubic B-spline, in four bilinear taps: drawn bilinearly, sharp cloud
+// edges showed the texels as staircases.
+fn panorama_cubic(panorama: texture_2d<f32>, uv: vec2<f32>) -> vec4<f32> {
+    let size = vec2<f32>(textureDimensions(panorama));
+    let p = uv * size - 0.5;
+    let i = floor(p);
+    let f = p - i;
+    let f2 = f * f;
+    let f3 = f2 * f;
+    let w0 = (1.0 - 3.0 * f + 3.0 * f2 - f3) / 6.0;
+    let w1 = (4.0 - 6.0 * f2 + 3.0 * f3) / 6.0;
+    let w2 = (1.0 + 3.0 * f + 3.0 * f2 - 3.0 * f3) / 6.0;
+    let w3 = f3 / 6.0;
+    let g0 = w0 + w1;
+    let g1 = w2 + w3;
+    let lo = (i - 0.5 + w1 / g0) / size;
+    let hi = (i + 1.5 + w3 / g1) / size;
+    return g0.y * (g0.x * textureSampleLevel(panorama, cloud_sampler, lo, 0.0)
+            + g1.x * textureSampleLevel(panorama, cloud_sampler, vec2(hi.x, lo.y), 0.0))
+        + g1.y * (g0.x * textureSampleLevel(panorama, cloud_sampler, vec2(lo.x, hi.y), 0.0)
+            + g1.x * textureSampleLevel(panorama, cloud_sampler, hi, 0.0));
+}
+#endif
+
+// The cloud layer where the ray crosses its base, `start` metres away; `cubic` for the smooth
+// lookup, which reflections in the waves have no need for.
+fn cloud_layer(ray: vec3<f32>, start: f32, screen_uv: vec2<f32>, cubic: bool) -> Cloud {
 #ifdef CACHED_CLOUDS
     let uv = sky_panorama_uv(ray);
-    let c = mix(textureSampleLevel(cloud_older, cloud_sampler, uv, 0.0),
-        textureSampleLevel(cloud_newer, cloud_sampler, uv, 0.0), cloud_blend.x);
+    var c: vec4<f32>;
+    if cubic {
+        c = mix(panorama_cubic(cloud_older, uv), panorama_cubic(cloud_newer, uv), cloud_blend.x);
+    } else {
+        c = mix(textureSampleLevel(cloud_older, cloud_sampler, uv, 0.0),
+            textureSampleLevel(cloud_newer, cloud_sampler, uv, 0.0), cloud_blend.x);
+    }
 #else
     let c = textureSampleLevel(cloud_newer, cloud_sampler, screen_uv, 0.0);
 #endif
@@ -722,7 +753,7 @@ fn through_water(air: Path, ray: vec3<f32>, sea_t: f32, distance: f32, at: vec2<
 #ifdef CACHED_CLOUDS
     if reflected.y > 0.01 {
         let cloud = cloud_layer(reflected, max(0.0, (clouds.layer.x - p.y) / reflected.y),
-            vec2(0.0));
+            vec2(0.0), false);
         sky = cloud.light + cloud.transmittance * sky;
     }
 #endif
@@ -953,7 +984,7 @@ fn fragment(in: FullscreenVertexOutput) -> Output {
     var cloud = Cloud(vec3(0.0), 1.0);
 #ifdef CLOUDS
     if above && (sky_samples > 0u || farthest >= start) {
-        cloud = cloud_layer(cloud_ray, start, in.uv);
+        cloud = cloud_layer(cloud_ray, start, in.uv, true);
     }
 #endif
 

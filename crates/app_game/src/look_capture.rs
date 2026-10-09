@@ -60,6 +60,8 @@ pub(crate) struct LookVariant {
     /// The moon's age in days (0 new, 14.8 full), reached by moving to the nearest day with it;
     /// the current day when `None`.
     pub(crate) moon: Option<f32>,
+    /// Degrees the camera turns up from the game's view, to see the sky it never shows.
+    pub(crate) tilt: f32,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -82,7 +84,7 @@ pub(crate) const TONEMAPPERS: [(&str, Tonemapping); 8] = [
 ];
 
 /// `NAME[:key=value,...]` separated by `;`, keys `ev`, `tone`, `ambient`, `sun`, `canopy`,
-/// `auto`, `fog`, `particles`, `shafts`, `phase`, `haze`, `mist`, `depth`, `air` (scale of the air under crowns), `lightning` (a strike ahead held that many seconds in), `moon` (its age in days) and `burst` (that many
+/// `auto`, `fog`, `particles`, `shafts`, `phase`, `haze`, `mist`, `depth`, `air` (scale of the air under crowns), `lightning` (a strike ahead held that many seconds in), `moon` (its age in days), `tilt` (degrees the camera turns up) and `burst` (that many
 /// screenshots one after another, a frame or two apart).
 pub(crate) fn parse_variants(spec: &str) -> Result<Vec<LookVariant>, String> {
     let variants = spec
@@ -107,6 +109,7 @@ pub(crate) fn parse_variants(spec: &str) -> Result<Vec<LookVariant>, String> {
                 tuning: FogTuning::default(),
                 lightning: None,
                 moon: None,
+                tilt: 0.0,
             };
             for setting in settings.split(',').map(str::trim).filter(|s| !s.is_empty()) {
                 let (key, value) = setting.split_once('=').ok_or_else(|| {
@@ -150,6 +153,7 @@ pub(crate) fn parse_variants(spec: &str) -> Result<Vec<LookVariant>, String> {
                     "phase" => variant.phase = Some(number(0.0..=0.999)?),
                     "lightning" => variant.lightning = Some(number(0.0..=1.1)?),
                     "moon" => variant.moon = Some(number(0.0..=29.5)?),
+                    "tilt" => variant.tilt = number(-30.0..=90.0)?,
                     "burst" => variant.burst = number(1.0..=120.0)? as u32,
                     "haze" => variant.tuning.haze = number(0.0..=20.0)?,
                     "mist" => variant.tuning.mist = number(0.0..=20.0)?,
@@ -227,6 +231,10 @@ pub(crate) fn install(app: &mut App) {
     .add_systems(Startup, fullscreen)
     .add_systems(Update, run)
     .add_systems(
+        Update,
+        tilt_camera.after(engine::GameplaySystems::CameraFollow),
+    )
+    .add_systems(
         PostUpdate,
         (
             (freeze_wind.before(engine::TreeWindSystems), present).before(engine::ApplyAtmosphere),
@@ -243,6 +251,23 @@ fn fullscreen(mut window: Single<&mut Window, With<PrimaryWindow>>) {
 /// Still wind, so variants differ only in their presentation.
 fn freeze_wind(mut wind: ResMut<vegetation_render::VegetationWind>) {
     wind.set_phase_seconds(0.0);
+}
+
+/// Turns the camera up after the game has placed it, about its own horizontal axis; only a
+/// freshly placed camera, so the turn never adds up over frames.
+fn tilt_camera(
+    capture: Res<Capture>,
+    mut cameras: Query<&mut Transform, (With<WorldViewCamera>, Changed<Transform>)>,
+) {
+    let Some((index, ..)) = capture.current else {
+        return;
+    };
+    let tilt = capture.options.variants[index].tilt;
+    if tilt != 0.0 {
+        for mut transform in &mut cameras {
+            transform.rotate_local_x(tilt.to_radians());
+        }
+    }
 }
 
 /// Holds the current variant's exposure and tonemapper, every frame in case anything else
@@ -523,6 +548,8 @@ mod tests {
         assert!(parse_variants("x:lightning=2").is_err());
         assert_eq!(parse_variants("x:moon=14.8").unwrap()[0].moon, Some(14.8));
         assert!(parse_variants("x:moon=40").is_err());
+        assert_eq!(parse_variants("x:tilt=35").unwrap()[0].tilt, 35.0);
+        assert!(parse_variants("x:tilt=120").is_err());
         assert!(parse_variants("x:tone=sepia").is_err());
         assert!(parse_variants("x:ev=40").is_err());
         assert!(parse_variants(";").is_err());
