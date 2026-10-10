@@ -493,12 +493,6 @@ const FLAGS: &[Flag] = &[
         "Blade preparation capacity",
     ),
     flag(
-        "--terrain-legacy",
-        "",
-        Reference,
-        "Use the legacy nearby world renderer",
-    ),
-    flag(
         "--terrain-reference",
         "",
         Reference,

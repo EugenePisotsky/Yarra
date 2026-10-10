@@ -20,7 +20,7 @@ from grass_profile_report import status, write_report
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULTS = dict(size='game', window='fullscreen', fps=60, msaa=4, warmup=20, seconds=90,
                 view='low-walk', density='balanced', grass='full', counters=False,
-                terrain_lod=True, native_pacing=False, prepass=False)
+                native_pacing=False, prepass=False)
 VIEWS = ['low-walk', 'grass-close', 'grass-away', 'grass-follow', 'grass-follow-far',
          'grass-zoom', 'grass-overhead', 'grass-top-down', 'grass-stream', 'grass-soak']
 INPUTS = {'binary', 'world_db', 'shaders', 'canopy', 'vertex_reference', 'candidate_reference', 'placement_reference', 'terrain_reference', 'prepared_blades'}
@@ -61,7 +61,7 @@ def validate(settings):
         raise ValueError('Invalid MSAA or view')
     if settings['density'] not in ['balanced', 'full', 'authored'] or settings['grass'] not in ['full', 'off']:
         raise ValueError('Invalid density or grass mode')
-    for key in ['counters', 'terrain_lod', 'native_pacing', 'prepass',
+    for key in ['counters', 'native_pacing', 'prepass',
                 *[k for k in INPUTS if k.endswith('_reference')]]:
         if key in settings and not isinstance(settings[key], bool):
             raise ValueError(f'{key} must be boolean')
@@ -122,8 +122,6 @@ def command(inputs, settings):
         result += ['--grass-prepared-blades', str(settings['prepared_blades'])]
     if settings['counters']:
         result.append('--grass-counters')
-    if not settings['terrain_lod']:
-        result.append('--terrain-legacy')
     for key, flag in [('native_pacing', '--profile-native-pacing'),
                       ('prepass', '--render-prepass')]:
         if settings[key]:
@@ -360,9 +358,6 @@ def main():
                 elif key == 'size':
                     p.add_argument('--size', default=default,
                                    help='game = normal world scale (default); WIDTHxHEIGHT = fixed internal pixels')
-                elif key == 'terrain_lod':
-                    p.add_argument('--terrain-legacy', dest=key, action='store_false', default=default,
-                                   help='Use the old local terrain renderer for a diagnostic comparison')
                 elif isinstance(default, bool):
                     p.add_argument('--' + key.replace('_', '-'), action='store_true')
                 else:

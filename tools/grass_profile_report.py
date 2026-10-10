@@ -178,8 +178,6 @@ def analyze_run(directory, power_rows):
                 'grass': 'full' if settings['grass'] == 'full' else 'disabled',
                 'counters': str(settings['counters']).lower(),
                 'prepass': str(settings.get('prepass', False)).lower()}
-    if 'terrain_lod' in settings:
-        expected['terrain_lod'] = str(settings['terrain_lod']).lower()
     if settings.get('native_pacing') and not any(
             e.get('event') == 'config' and e.get('pacing') == 'native' for e in events):
         result['errors'].append('Native presentation pacing was requested but not confirmed')

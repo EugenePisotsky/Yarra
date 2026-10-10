@@ -6,7 +6,7 @@ use super::*;
 ///
 /// Publishing code first atomically replaces the database file, then requests the exact expected
 /// generation here. The worker prepares a second reader while the current one stays live.
-/// With the terrain hierarchy enabled, a complete uploaded cover must also be ready.
+/// A complete uploaded terrain cover must also be ready.
 /// Only a matching worker commit acknowledgement replaces the catalog and source pages;
 /// preparation failures discard the candidate and retain the current generation.
 #[derive(Resource, Debug, Default)]
@@ -21,7 +21,6 @@ pub struct WorldGenerationReload {
     pub(super) committed: bool,
     pub(super) failure: Option<String>,
     pub(super) last_error: Option<String>,
-    pub(super) hierarchy: bool,
 }
 
 impl WorldGenerationReload {
@@ -70,7 +69,6 @@ pub(super) fn request_reload(
     active: Res<ActiveWorldSpace>,
     stream: Res<WorldStream>,
     mut reload: ResMut<WorldGenerationReload>,
-    config: Res<TerrainHierarchy>,
 ) {
     if let Some(candidate) = &reload.candidate
         && let Err(error) =
@@ -97,7 +95,6 @@ pub(super) fn request_reload(
             reload.commit = None;
             reload.committed = false;
             reload.failure = None;
-            reload.hierarchy = config.enabled;
         }
         Err(NotSent::Full) => reload.queued = Some(generation),
         Err(NotSent::Stopped) => {
@@ -122,8 +119,6 @@ pub(super) fn advance_reload(
     mut entry: ResMut<terrain_lod::entry::TerrainEntry>,
     mut terrain: ResMut<terrain_lod::TerrainLodStream>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<TerrainMaterial>>,
-    mut images: ResMut<Assets<Image>>,
     tracker: Res<terrain_lod::UploadTracker>,
 ) {
     let Some((id, expected)) = reload.in_flight.clone() else {
@@ -156,7 +151,7 @@ pub(super) fn advance_reload(
         space,
         local_position: [0.; 3],
     };
-    if reload.hierarchy && !entry.ready_for(&expected, request) {
+    if !entry.ready_for(&expected, request) {
         return;
     }
     if reload.commit.is_none() {
@@ -179,14 +174,7 @@ pub(super) fn advance_reload(
     // Deferred entity changes, catalog identity and completion share this Update.
     let candidate = reload.candidate.take().unwrap();
     let size = candidate.world_space(space).unwrap().cell_size;
-    clear_streamed_pages(
-        &mut commands,
-        &mut meshes,
-        &mut materials,
-        &mut images,
-        &mut stream,
-        &mut residency,
-    );
+    clear_streamed_pages(&mut commands, &mut stream, &mut residency);
     residency.definition_cache.clear();
     adopt_runtime_manifest(
         candidate,
@@ -196,16 +184,14 @@ pub(super) fn advance_reload(
         &mut origin,
         &mut stream,
     );
-    if reload.hierarchy {
-        entry.commit(
-            &mut terrain,
-            &mut commands,
-            &mut meshes,
-            &tracker,
-            origin.cell(),
-            size,
-        );
-    }
+    entry.commit(
+        &mut terrain,
+        &mut commands,
+        &mut meshes,
+        &tracker,
+        origin.cell(),
+        size,
+    );
     reload.in_flight = None;
     reload.commit = None;
     reload.committed = false;
@@ -290,12 +276,6 @@ mod tests {
                 .init_resource::<terrain_lod::entry::TerrainEntry>()
                 .init_resource::<terrain_lod::UploadTracker>()
                 .init_resource::<Assets<Mesh>>()
-                .init_resource::<Assets<TerrainMaterial>>()
-                .init_resource::<Assets<Image>>()
-                .insert_resource(TerrainHierarchy {
-                    enabled: false,
-                    ..default()
-                })
                 .add_systems(
                     Update,
                     (
@@ -354,6 +334,18 @@ mod tests {
             id
         }
         fn prepared(&mut self, id: u64, candidate: RuntimeManifest) {
+            // The terrain hand-off has its own tests; here the destination cover is ready.
+            let world = self.app.world_mut();
+            let space = world.resource::<ActiveWorldSpace>().current.unwrap();
+            world
+                .resource_mut::<terrain_lod::entry::TerrainEntry>()
+                .test_ready(
+                    &candidate.generation_id,
+                    WorldSpaceTransition {
+                        space,
+                        local_position: [0.; 3],
+                    },
+                );
             self.replies
                 .send((id, DatabaseResult::Reloaded(Ok(candidate))))
                 .unwrap();

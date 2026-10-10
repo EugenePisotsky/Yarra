@@ -1,6 +1,6 @@
 use super::*;
 use crate::world_streaming::StreamedTerrainSurface;
-use attachment::attach_height_source;
+use attachment::attach_terrain_source;
 use bevy::ecs::system::RunSystemOnce;
 use world::{CellCoord, PagePayload, TerrainHeightfield, WorldSpaceId};
 use world_db::RuntimeManifest;
@@ -18,7 +18,6 @@ fn space(size: f32) -> world_db::WorldSpaceRecord {
 }
 pub(in crate::world_streaming) fn height_page(key: PageKey) -> PreparedPage {
     PreparedPage {
-        height_only: true,
         terrain: None,
         definitions: vec![],
         dependencies: vec![],
@@ -36,7 +35,7 @@ pub(in crate::world_streaming) fn height_page(key: PageKey) -> PreparedPage {
     }
 }
 #[test]
-fn height_sources_preserve_relief_without_allocating_render_assets() {
+fn terrain_sources_preserve_relief_without_render_assets() {
     let mut world = World::new();
     let mut queue = bevy::ecs::world::CommandQueue::default();
     let mut commands = Commands::new(&mut queue, &world);
@@ -46,16 +45,13 @@ fn height_sources_preserve_relief_without_allocating_render_assets() {
         domain: PageDomain::Terrain,
         lod: 0,
     };
-    let attachment = attach_height_source(&mut commands, height_page(key), 8.).unwrap();
+    let PagePayload::TerrainHeightfield(terrain) = height_page(key).decoded.payload else {
+        unreachable!()
+    };
+    let mut attachment = PageAttachment::default();
+    attach_terrain_source(&mut attachment, &mut commands, key, terrain, None, 8.).unwrap();
     queue.apply(&mut world);
-    assert_eq!(attachment.gpu_bytes_estimate, 0);
-    assert_eq!(attachment.height_only_pages, 1);
-    assert!(
-        attachment.owned_terrain_meshes.is_empty()
-            && attachment.owned_terrain_materials.is_empty()
-            && attachment.owned_terrain_images.is_empty()
-            && attachment.terrain_texture_set.is_none()
-    );
+    assert_eq!(attachment.terrain_source_pages, 1);
     let entity = attachment.entities[0];
     assert!(world.get::<Mesh3d>(entity).is_none());
     let surface = world.get::<StreamedTerrainSurface>(entity).unwrap();
@@ -66,18 +62,11 @@ fn height_sources_preserve_relief_without_allocating_render_assets() {
 fn attachment_app(resident_bytes: u64) -> App {
     let mut app = App::new();
     app.add_plugins((bevy::app::TaskPoolPlugin::default(), AssetPlugin::default()))
-        .init_resource::<Assets<Mesh>>()
-        .init_resource::<Assets<TerrainMaterial>>()
-        .init_asset::<Image>()
         .init_asset::<WorldAsset>()
-        .init_resource::<TerrainMacroVariation>()
         .init_resource::<WorldOrigin>()
         .init_resource::<SourceResidency>()
         .init_resource::<source_demand::SourceView>()
         .init_resource::<crate::object_lod::LodProjection>()
-        .insert_resource(WorldRenderAssets {
-            unit_plane: Handle::default(),
-        })
         .insert_resource(StreamingStats {
             decoded_bytes: resident_bytes,
             ..default()
@@ -180,7 +169,6 @@ fn pages_sharing_an_asset_count_it_once_and_never_count_impostors() {
     ];
     for key in keys {
         let mut page = height_page(key);
-        page.height_only = false;
         page.dependencies = vec![mesh.clone(), impostor.clone()];
         page.decoded.payload = PagePayload::StaticObjects(world::StaticObjectsPage {
             instances: vec![world::StaticObjectInstance {
@@ -237,9 +225,6 @@ fn assert_failed_without_entities(app: &mut App, key: PageKey, message: &str) {
         0,
         "failed attachment must not leave unowned entities"
     );
-    assert!(world.resource::<Assets<Mesh>>().is_empty());
-    assert!(world.resource::<Assets<TerrainMaterial>>().is_empty());
-    assert!(world.resource::<Assets<Image>>().is_empty());
 }
 
 #[test]
@@ -248,7 +233,6 @@ fn invalid_later_gameplay_object_does_not_leave_earlier_entities() {
         let mut app = attachment_app(0);
         let key = key(PageDomain::GameplayObjects, 0);
         let mut page = height_page(key);
-        page.height_only = false;
         let definition = RuntimeObjectDefinition {
             id: ObjectDefinitionId([1; 16]),
             key: "valid".into(),
@@ -294,7 +278,6 @@ fn invalid_later_visual_object_does_not_leave_earlier_entities() {
         let mut app = attachment_app(0);
         let key = key(PageDomain::StaticObjects, 0);
         let mut page = height_page(key);
-        page.height_only = false;
         let dependency = PageDependency {
             asset: world::AssetId([1; 32]),
             asset_lod: 0,
@@ -350,60 +333,11 @@ fn invalid_later_visual_object_does_not_leave_earlier_entities() {
     }
 }
 
-fn rendered_height_page(key: PageKey) -> PreparedPage {
-    let mut page = height_page(key);
-    page.height_only = false;
-    let id = world::TerrainSurfaceId([1; 16]);
-    let textures = world::TerrainTextureSet {
-        id: TerrainTextureSetId([2; 16]),
-        key: "fixture".into(),
-        base_color_universal_uri: "fixture.png".into(),
-        normal_material_universal_uri: "fixture.png".into(),
-        macro_variation_universal_uri: "fixture.png".into(),
-        base_color_astc_uri: "fixture.png".into(),
-        normal_material_astc_uri: "fixture.png".into(),
-        macro_variation_astc_uri: "fixture.png".into(),
-        universal_gpu_bytes: 100,
-        astc_gpu_bytes: 100,
-    };
-    page.terrain = Some(TerrainRenderResources {
-        profile: world::TerrainProfile {
-            space: key.space,
-            texture_set: textures.id,
-            weight_resolution: 1,
-            macro_scales: [1.; 3],
-            macro_contrast: 1.,
-            macro_albedo_strength: 0.,
-            composite_minimum_level: 0,
-        },
-        texture_set: textures,
-        surfaces: vec![world_db::RuntimeTerrainSurface {
-            layer: 0,
-            surface: world::TerrainSurface {
-                id,
-                key: "fixture".into(),
-                display_name: "Fixture".into(),
-                tile_size: 1.,
-                anti_tiling: false,
-                normal_y_sign: 1.,
-                normal_strength: 1.,
-                roughness_min: 0.5,
-                roughness_max: 1.,
-            },
-        }],
-    });
-    let PagePayload::TerrainHeightfield(ref mut terrain) = page.decoded.payload else {
-        unreachable!()
-    };
-    terrain.surfaces.push(id);
-    page
-}
-
 #[test]
-fn invalid_relief_does_not_allocate_terrain_assets() {
+fn invalid_relief_does_not_leave_a_terrain_source() {
     let mut app = attachment_app(0);
     let key = key(PageDomain::Terrain, 0);
-    let mut page = rendered_height_page(key);
+    let mut page = height_page(key);
     let PagePayload::TerrainHeightfield(ref mut terrain) = page.decoded.payload else {
         unreachable!()
     };
@@ -427,39 +361,26 @@ fn lifecycle_app() -> App {
 }
 
 #[test]
-fn cooling_revives_then_releases_owned_assets_and_keeps_shared_textures_accounted_once() {
+fn cooling_revives_then_releases_pages() {
     let mut app = lifecycle_app();
     let first = key(PageDomain::Terrain, 0);
     let second = key(PageDomain::Terrain, 1);
-    queue_page(&mut app, rendered_height_page(first));
-    queue_page(&mut app, rendered_height_page(second));
+    queue_page(&mut app, height_page(first));
+    queue_page(&mut app, height_page(second));
     app.update();
-    let (entity, meshes, materials, images) =
-        match &app.world().resource::<SourceResidency>().pages[&first] {
-            PageState::Resident(a) => (
-                a.entities[0],
-                a.owned_terrain_meshes.clone(),
-                a.owned_terrain_materials.clone(),
-                a.owned_terrain_images.clone(),
-            ),
-            _ => panic!("terrain must attach"),
-        };
+    let entity = match &app.world().resource::<SourceResidency>().pages[&first] {
+        PageState::Resident(a) => a.entities[0],
+        _ => panic!("terrain must attach"),
+    };
     let stats = app.world().resource::<StreamingStats>();
     assert_eq!(stats.resident, 2);
-    assert_eq!(
-        stats.gpu_bytes_estimate, 100,
-        "shared texture set counts once"
-    );
+    assert_eq!(stats.terrain_source_pages, 2);
     app.world_mut()
         .resource_mut::<SourceResidency>()
         .desired
         .remove(&first);
     app.update();
     assert_eq!(app.world().resource::<StreamingStats>().cooling, 1);
-    assert_eq!(
-        app.world().resource::<StreamingStats>().gpu_bytes_estimate,
-        100
-    );
     app.world_mut()
         .resource_mut::<Time>()
         .advance_by(Duration::from_secs(1));
@@ -483,46 +404,17 @@ fn cooling_revives_then_releases_owned_assets_and_keeps_shared_textures_accounte
         .advance_by(Duration::from_secs_f32(COOLING_SECONDS));
     app.update();
     assert!(app.world().get_entity(entity).is_err());
-    assert!(
-        meshes
-            .iter()
-            .all(|h| !app.world().resource::<Assets<Mesh>>().contains(h.id()))
-    );
-    assert!(materials.iter().all(|h| {
-        !app.world()
-            .resource::<Assets<TerrainMaterial>>()
-            .contains(h.id())
-    }));
-    assert!(
-        images
-            .iter()
-            .all(|h| !app.world().resource::<Assets<Image>>().contains(h.id()))
-    );
     let stats = app.world().resource::<StreamingStats>();
     assert_eq!(stats.resident, 1);
     assert_eq!(stats.cooling, 0);
-    assert_eq!(
-        stats.gpu_bytes_estimate, 100,
-        "the other page still owns the shared texture set"
-    );
 }
 
 fn clear_sources(
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<TerrainMaterial>>,
-    mut images: ResMut<Assets<Image>>,
     mut stream: ResMut<WorldStream>,
     mut residency: ResMut<SourceResidency>,
 ) {
-    crate::world_streaming::clear_streamed_pages(
-        &mut commands,
-        &mut meshes,
-        &mut materials,
-        &mut images,
-        &mut stream,
-        &mut residency,
-    );
+    crate::world_streaming::clear_streamed_pages(&mut commands, &mut stream, &mut residency);
 }
 
 #[test]
@@ -530,8 +422,8 @@ fn clearing_sources_releases_resident_and_cooling_pages_and_rejects_old_replies(
     let mut app = lifecycle_app();
     let first = key(PageDomain::Terrain, 0);
     let second = key(PageDomain::Terrain, 1);
-    queue_page(&mut app, rendered_height_page(first));
-    queue_page(&mut app, rendered_height_page(second));
+    queue_page(&mut app, height_page(first));
+    queue_page(&mut app, height_page(second));
     app.update();
     app.world_mut()
         .resource_mut::<SourceResidency>()
@@ -543,7 +435,7 @@ fn clearing_sources_releases_resident_and_cooling_pages_and_rejects_old_replies(
     {
         let mut residency = app.world_mut().resource_mut::<SourceResidency>();
         residency.set_demand(BTreeMap::from([(pending, (0, 0.))]));
-        residency.request_missing(&worker, "old", true).unwrap();
+        residency.request_missing(&worker, "old").unwrap();
         // A pending decode also belongs to the old source lifetime.
         residency.decode_tasks.push(DecodeTask {
             key: first,
@@ -566,10 +458,6 @@ fn clearing_sources_releases_resident_and_cooling_pages_and_rejects_old_replies(
             .count(),
         0
     );
-    assert!(world.resource::<Assets<Mesh>>().is_empty());
-    assert!(world.resource::<Assets<TerrainMaterial>>().is_empty());
-    // Asset-server-owned texture handles may still be pending; only page images are owned here.
-    assert!(world.resource::<Assets<Image>>().is_empty());
     assert!(world.resource::<WorldStream>().requested_index.is_none());
     let mut residency = world.resource_mut::<SourceResidency>();
     assert!(
@@ -578,7 +466,7 @@ fn clearing_sources_releases_resident_and_cooling_pages_and_rejects_old_replies(
             && residency.decode_tasks.is_empty()
     );
     residency.set_demand(BTreeMap::from([(pending, (0, 0.))]));
-    residency.request_missing(&worker, "new", true).unwrap();
+    residency.request_missing(&worker, "new").unwrap();
     let (new_id, DatabaseRequest::ReadPage { .. }) = requests.recv().unwrap() else {
         unreachable!()
     };

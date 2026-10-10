@@ -120,14 +120,10 @@ pub(super) fn run(
                     .map(|cells| cells.into_values().collect())
                     .map_err(|error| error.to_string())
             })),
-            DatabaseRequest::ReadPage {
-                generation,
-                key,
-                height_only,
-            } => DatabaseResult::Page {
+            DatabaseRequest::ReadPage { generation, key } => DatabaseResult::Page {
                 key,
                 result: live(&generation, "source page belongs to a stale generation")
-                    .and_then(|reader| read_page(reader, key, height_only)),
+                    .and_then(|reader| read_page(reader, key)),
             },
             DatabaseRequest::ReadFarObjects {
                 generation,
@@ -150,16 +146,13 @@ pub(super) fn run(
     }
 }
 
-fn read_page(
-    reader: &RuntimeReader,
-    key: PageKey,
-    height_only: bool,
-) -> Result<Option<FetchedPage>, String> {
+fn read_page(reader: &RuntimeReader, key: PageKey) -> Result<Option<FetchedPage>, String> {
     reader
         .read_page(key)
         .and_then(|page| {
             page.map(|page| {
-                let dependencies = if height_only {
+                // Terrain pages are CPU height sources; the hierarchy draws the ground.
+                let dependencies = if key.domain == PageDomain::Terrain {
                     Vec::new()
                 } else {
                     reader.read_dependencies(key)?
@@ -179,7 +172,6 @@ fn read_page(
                     dependencies,
                     definitions,
                     terrain,
-                    height_only,
                 })
             })
             .transpose()

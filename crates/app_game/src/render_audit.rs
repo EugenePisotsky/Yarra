@@ -524,7 +524,7 @@ mod tests {
                 .init_resource::<GamePointerInputBlocked>()
                 .init_resource::<engine::AtmospherePresentation>()
                 .init_resource::<engine::AtmosphereState>()
-                .init_resource::<engine::TerrainHierarchy>()
+                .init_resource::<terrain_render::lod::LodSettings>()
                 .init_resource::<engine::VisualLodScale>()
                 .init_resource::<engine::TerrainLodStats>()
                 .init_resource::<engine::StreamingStats>()

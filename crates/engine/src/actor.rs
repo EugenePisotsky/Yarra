@@ -210,7 +210,6 @@ struct MotorOutput {
 pub(crate) fn advance_character_motors(
     time: Res<Time>,
     player_speed: Option<Res<crate::PlayerMovementSpeed>>,
-    lod_config: Option<Res<crate::TerrainHierarchy>>,
     readiness: Option<Res<crate::TerrainContactReadiness>>,
     origin: Option<Res<crate::WorldOrigin>>,
     lod: Option<Res<crate::world_streaming::terrain_lod::TerrainLodStream>>,
@@ -260,7 +259,7 @@ pub(crate) fn advance_character_motors(
         let proposed =
             transform.translation + Vec3::new(output.displacement.x, 0., output.displacement.y);
         if grounded
-            && lod_config.as_ref().is_some_and(|c| c.enabled)
+            && readiness.as_ref().is_some_and(|r| r.published())
             && !lod
                 .as_ref()
                 .zip(origin.as_ref())
@@ -597,6 +596,7 @@ mod tests {
 
     #[test]
     fn missing_contact_stops_grounded_motion_without_losing_intent() {
+        let space = world::WorldSpaceId(1);
         for speed in [
             crate::PlayerMovementSpeed::Normal,
             crate::PlayerMovementSpeed::Fast,
@@ -606,17 +606,31 @@ mod tests {
             time.advance_by(std::time::Duration::from_secs_f32(DELTA_SECONDS));
             app.insert_resource(time)
                 .insert_resource(speed)
-                .insert_resource(crate::TerrainHierarchy {
-                    enabled: true,
-                    ..default()
-                })
+                .insert_resource(
+                    crate::world_streaming::test_world_resources(
+                        space,
+                        world::CellCoord::ZERO,
+                        None,
+                    )
+                    .1,
+                )
                 .add_systems(Update, advance_character_motors);
+            // Published ground elsewhere: none under the actor yet.
+            let far = world::CellCoord { x: 5, z: 5 };
+            crate::world_streaming::terrain_lod::test_flat_contact(
+                app.world_mut(),
+                space,
+                far,
+                16.,
+                0.,
+            );
             let mut intent = MoveIntent::default();
-            intent.set_destination(Vec3::new(0., 0., 0.0001), CharacterGait::Walk);
+            intent.set_destination(Vec3::new(8., 0., 8.0001), CharacterGait::Walk);
+            let start = Vec3::new(8., 0., 8.);
             let actor = app
                 .world_mut()
                 .spawn((
-                    Transform::default(),
+                    Transform::from_translation(start),
                     intent,
                     test_config(),
                     CharacterMotor::default(),
@@ -628,7 +642,7 @@ mod tests {
             app.update();
             assert_eq!(
                 app.world().get::<Transform>(actor).unwrap().translation,
-                Vec3::ZERO
+                start
             );
             assert_eq!(
                 app.world().get::<MoveIntent>(actor).unwrap().destination(),
@@ -638,9 +652,14 @@ mod tests {
                 app.world().get::<CharacterMotion>(actor).unwrap().phase,
                 CharacterMotionPhase::Idle
             );
-            app.world_mut()
-                .resource_mut::<crate::TerrainHierarchy>()
-                .enabled = false;
+            // The certified cover arrives under the actor: motion resumes.
+            crate::world_streaming::terrain_lod::test_flat_contact(
+                app.world_mut(),
+                space,
+                world::CellCoord::ZERO,
+                16.,
+                0.,
+            );
             app.update();
             assert_eq!(
                 app.world().get::<Transform>(actor).unwrap().translation,

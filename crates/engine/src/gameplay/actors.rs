@@ -1,13 +1,13 @@
 //! Authoritative player root, motor and terrain contact.
 use crate::{
-    DEFAULT_CHARACTER_PRESENTATION_ID, StreamedTerrainSurface, TerrainContactReadiness,
-    TerrainHierarchy, WorldOrigin, WorldRenderRoot, WorldStartView,
+    DEFAULT_CHARACTER_PRESENTATION_ID, TerrainContactReadiness, WorldOrigin, WorldRenderRoot,
+    WorldStartView,
     actor::{
         CameraTarget, CharacterMotion, CharacterMotor, MoveIntent, PlayerControlled,
         TerrainGrounded, WorldStreamFocus,
     },
     character::CharacterPresentationRef,
-    sample_resident_terrain_surface, world_streaming,
+    world_streaming,
 };
 use bevy::prelude::*;
 
@@ -165,29 +165,17 @@ pub(super) fn move_player_to_adopted_start(
     }
 }
 
+/// Actors stand on the drawn cover's certified contact height, never on ground not yet drawn.
 pub(crate) fn ground_characters_to_streamed_terrain(
     origin: Res<WorldOrigin>,
-    terrain_pages: Query<&StreamedTerrainSurface>,
     mut actors: Query<&mut Transform, With<TerrainGrounded>>,
     lod: Res<world_streaming::terrain_lod::TerrainLodStream>,
-    lod_config: Res<TerrainHierarchy>,
     readiness: Res<TerrainContactReadiness>,
 ) {
     for mut transform in &mut actors {
-        if lod_config.enabled {
-            if let Some(height) =
-                lod.sample_contact_height(transform.translation, &origin, &readiness)
-            {
-                transform.translation.y = height;
-            }
-            continue;
-        }
-        if let Some(surface) = sample_resident_terrain_surface(
-            &origin,
-            terrain_pages.iter(),
-            [transform.translation.x, transform.translation.z],
-        ) {
-            transform.translation.y = surface.height;
+        if let Some(height) = lod.sample_contact_height(transform.translation, &origin, &readiness)
+        {
+            transform.translation.y = height;
         }
     }
 }

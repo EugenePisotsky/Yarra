@@ -1,5 +1,5 @@
-//! Default terrain hierarchy shared by the editor and game, with bounded material
-//! streaming and regional live authoring. Legacy rendering is a diagnostic option.
+//! The terrain hierarchy, the ground the editor and game draw, with bounded material
+//! streaming and regional live authoring.
 use super::*;
 use bevy::{
     math::{DMat4, DVec3},
@@ -21,6 +21,8 @@ pub(super) mod entry;
 mod mesh_cache;
 mod transition;
 pub use contact::TerrainContactReadiness;
+#[cfg(test)]
+pub(crate) use contact::test_flat_contact;
 mod authoring;
 use super::database::{RequestId, TerrainQuery, TerrainReply};
 pub use authoring::{LiveTerrainPreview, TerrainPreviewRequest};
@@ -62,21 +64,6 @@ const PLAN_INTERVAL_SECONDS: f64 = 0.1;
 const MAX_BUILDS: usize = 8;
 type Patch = (TerrainNodeKey, StitchEdges);
 
-/// The terrain hierarchy, which draws the whole world in screen-space LOD patches; disabled, the
-/// game draws the older per-page terrain (`--terrain-legacy`).
-#[derive(Resource, Clone)]
-pub struct TerrainHierarchy {
-    pub enabled: bool,
-    pub settings: LodSettings,
-}
-impl Default for TerrainHierarchy {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            settings: LodSettings::default(),
-        }
-    }
-}
 #[derive(Resource, Clone, Debug, Default)]
 pub struct TerrainLodStats {
     pub live_preview_bytes: u64,
@@ -246,7 +233,7 @@ pub(super) fn install(app: &mut App) {
     let tracker = UploadTracker::default();
     contact::install(app);
     app.insert_resource(tracker.clone())
-        .init_resource::<TerrainHierarchy>()
+        .init_resource::<LodSettings>()
         .init_resource::<TerrainLodStats>()
         .init_resource::<TerrainLodStream>()
         .init_resource::<LiveTerrainPreview>()
@@ -788,7 +775,7 @@ impl TerrainLodStream {
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn update(
     mut commands: Commands,
-    config: Res<TerrainHierarchy>,
+    settings: Res<LodSettings>,
     catalog: Res<WorldCatalog>,
     origin: Res<WorldOrigin>,
     active_space: Res<ActiveWorldSpace>,
@@ -802,7 +789,6 @@ fn update(
         ),
         With<WorldViewCamera>,
     >,
-    mut leaves: Query<&mut Visibility, With<StreamedTerrainSurface>>,
     mut stream: ResMut<TerrainLodStream>,
     mut stats: ResMut<TerrainLodStats>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -816,16 +802,6 @@ fn update(
     (tracker, contacts): (Res<UploadTracker>, Res<ContactInputs>),
     (entry, live): (Res<entry::TerrainEntry>, Res<LiveTerrainPreview>),
 ) {
-    if !config.enabled {
-        if stream.identity.is_some() {
-            stream.clear(&mut commands, &mut meshes, &tracker);
-            for mut v in &mut leaves {
-                *v = Visibility::Inherited;
-            }
-        }
-        stats.status = "disabled".into();
-        return;
-    }
     report_stall(&mut stream, &stats, &contacts, time.elapsed_secs_f64());
     let (Some(space), Some(worker)) = (active_space.current(), worker) else {
         return;
@@ -843,18 +819,6 @@ fn update(
         stream.material = Some(materials.add(TerrainCompositeMaterial::default()));
     }
     let visible = camera.iter().any(|(c, _, _)| c.is_active);
-    let ready = stream.roots.is_some()
-        && (!stream.active.is_empty() || stream.roots.as_ref().is_some_and(Vec::is_empty));
-    for mut visibility in &mut leaves {
-        let desired = if ready && visible {
-            Visibility::Hidden
-        } else {
-            Visibility::Inherited
-        };
-        if *visibility != desired {
-            *visibility = desired;
-        }
-    }
     // Position from canonical keys each frame; rebasing never requires terrain reload.
     if stream.position_origin != Some(origin.cell()) || stream.draw_visible != visible {
         stream.place(
@@ -936,19 +900,12 @@ fn update(
         && let Some(view) = &view
         && stream.roots.is_some()
     {
-        stream.start_plan(
-            view,
-            &config.settings,
-            &contacts,
-            &stats,
-            &time,
-            info.cell_size,
-        );
+        stream.start_plan(view, &settings, &contacts, &stats, &time, info.cell_size);
     }
-    if stream.target.is_some()
-        && stream.publish_target(
+    if stream.target.is_some() {
+        stream.publish_target(
             &worker,
-            &config.settings,
+            &settings,
             &mut commands,
             &mut meshes,
             &tracker,
@@ -958,16 +915,7 @@ fn update(
             info.cell_size,
             visible,
             time.delta_secs(),
-        )
-    {
-        // Same deferred-command boundary as the complete replacement group.
-        for mut visibility in &mut leaves {
-            *visibility = if visible {
-                Visibility::Hidden
-            } else {
-                Visibility::Inherited
-            };
-        }
+        );
     }
     if stream.materials_ready(&tracker)
         && let Some(view) = &view
@@ -1178,7 +1126,7 @@ impl TerrainLodStream {
     }
 
     /// Prepares the staged target and, once it has uploaded and any morph has finished,
-    /// swaps it in for the drawn cover. True when it was swapped in.
+    /// swaps it in for the drawn cover.
     #[allow(clippy::too_many_arguments)]
     fn publish_target(
         &mut self,
@@ -1193,9 +1141,9 @@ impl TerrainLodStream {
         cell_size: f32,
         visible: bool,
         delta_seconds: f32,
-    ) -> bool {
+    ) {
         let Some(plan) = &self.target else {
-            return false;
+            return;
         };
         let patches: Vec<_> = plan.patches.iter().map(|(&k, &e)| (k, e)).collect();
         self.prepare_target(
@@ -1225,7 +1173,7 @@ impl TerrainLodStream {
                     &mut stats.contact_handoffs,
                 ));
         if !transition_done {
-            return false;
+            return;
         }
         if self.active.len() != patches.len()
             || patches.iter().any(|p| !self.active.contains_key(p))
@@ -1269,7 +1217,6 @@ impl TerrainLodStream {
         stats.triangles = self.target.as_ref().unwrap().stats.triangles;
         self.target = None;
         self.evict(meshes, tracker);
-        true
     }
 }
 
@@ -1422,7 +1369,6 @@ mod budget_probe;
 mod tests;
 
 fn near_view(
-    config: Res<TerrainHierarchy>,
     catalog: Res<WorldCatalog>,
     origin: Res<WorldOrigin>,
     camera: crate::ActiveWorldView,
@@ -1430,9 +1376,6 @@ fn near_view(
     stream: Res<TerrainLodStream>,
 ) {
     view.identity = None;
-    if !config.enabled {
-        return;
-    }
     let Some(space) = origin.space().and_then(|id| catalog.world_space(id)) else {
         return;
     };

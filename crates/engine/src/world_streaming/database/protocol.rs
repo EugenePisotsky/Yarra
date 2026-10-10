@@ -40,7 +40,6 @@ pub(in crate::world_streaming) enum DatabaseRequest {
     ReadPage {
         generation: String,
         key: PageKey,
-        height_only: bool,
     },
     /// Encoded far-object pages of these blocks (see [`world::far_object_block`]).
     ReadFarObjects {
@@ -72,7 +71,6 @@ pub(in crate::world_streaming) struct FetchedPage {
     pub(in crate::world_streaming) dependencies: Vec<PageDependency>,
     pub(in crate::world_streaming) definitions: Vec<RuntimeObjectDefinition>,
     pub(in crate::world_streaming) terrain: Option<TerrainRenderResources>,
-    pub(in crate::world_streaming) height_only: bool,
 }
 
 #[derive(Clone, Debug)]

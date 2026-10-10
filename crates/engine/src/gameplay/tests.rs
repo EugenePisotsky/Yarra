@@ -2,9 +2,9 @@ use super::camera::MainCamera;
 use super::*;
 use crate::actor::PlayerControlled;
 use crate::{
-    StreamedTerrainSurface, TerrainContactReadiness, TerrainHierarchy,
+    StreamedTerrainSurface,
     actor::{CharacterGait, CharacterMotorConfig, MoveIntent},
-    world_streaming::{terrain_lod::TerrainLodStream, test_world_resources},
+    world_streaming::{terrain_lod::test_flat_contact, test_world_resources},
 };
 use target::TargetIndicator;
 
@@ -22,12 +22,6 @@ fn headless_game(input: bool, camera: bool, marker: bool) -> App {
     .init_asset::<AnimationClip>()
     .init_resource::<Time>()
     .insert_resource(origin)
-    .insert_resource(TerrainHierarchy {
-        enabled: false,
-        ..default()
-    })
-    .init_resource::<TerrainLodStream>()
-    .init_resource::<TerrainContactReadiness>()
     .insert_resource(WorldStartView(Some(world::WorldViewBookmark {
         position: [4., 0., 4.],
         yaw_degrees: 45.,
@@ -52,6 +46,8 @@ fn headless_game(input: bool, camera: bool, marker: bool) -> App {
         plugins = plugins.disable::<MovementTargetPlugin>();
     }
     app.add_plugins(plugins);
+    // The drawn cover grounds actors; the CPU source places pointer targets.
+    ground_at(app.world_mut(), 5.);
     app.world_mut().spawn(StreamedTerrainSurface {
         key: world::PageKey {
             space: world::WorldSpaceId(1),
@@ -64,6 +60,11 @@ fn headless_game(input: bool, camera: bool, marker: bool) -> App {
     });
     tick(&mut app);
     app
+}
+
+fn ground_at(world: &mut World, height: f32) {
+    let space = world::WorldSpaceId(1);
+    test_flat_contact(world, space, world::CellCoord::ZERO, 16., height);
 }
 
 fn tick(app: &mut App) {
@@ -186,13 +187,7 @@ fn freeze_applies_before_movement_while_grounding_and_camera_follow_continue() {
     // Streaming replaces contact data before gameplay, even during an input lock.
     app.add_systems(
         Update,
-        (|mut surfaces: Query<&mut StreamedTerrainSurface>| {
-            for mut surface in &mut surfaces {
-                surface.heightfield =
-                    world::TerrainHeightfield::from_heights(2, &[7.; 4], 7., 7., 16.).unwrap();
-            }
-        })
-        .in_set(WorldStreamingSystems),
+        (|world: &mut World| ground_at(world, 7.)).in_set(WorldStreamingSystems),
     );
     tick(&mut app);
     let frozen = app.world().get::<Transform>(actor).unwrap().translation;

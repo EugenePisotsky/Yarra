@@ -339,7 +339,7 @@ fn apply_settings(
     mut prepared: ResMut<terrain_render::TerrainPreparedSettings>,
     mut clouds: ResMut<engine::CloudQuality>,
     mut atmosphere: ResMut<engine::AtmospherePresentation>,
-    mut lod: ResMut<engine::TerrainHierarchy>,
+    mut lod: ResMut<terrain_render::lod::LodSettings>,
     mut object_lod: ResMut<engine::VisualLodScale>,
     shadow_map: Option<ResMut<bevy::light::DirectionalLightShadowMap>>,
 ) {
@@ -360,8 +360,8 @@ fn apply_settings(
     atmosphere.low_air = s.fog;
     atmosphere.particles = s.particles;
     atmosphere.light_shafts = s.light_shafts;
-    lod.settings.refine_pixels = TERRAIN_ERROR_PIXELS[s.terrain_detail];
-    lod.settings.collapse_pixels = lod.settings.refine_pixels * 0.5;
+    lod.refine_pixels = TERRAIN_ERROR_PIXELS[s.terrain_detail];
+    lod.collapse_pixels = lod.refine_pixels * 0.5;
     grass.density_mode = s.density;
     grass.profile_mode = s.grass_mode();
     grass.lighting_mode = if s.unlit {

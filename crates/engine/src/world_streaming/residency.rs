@@ -11,8 +11,7 @@ use super::{
 };
 use crate::object_lod::ScreenSpaceLod;
 use attachment::{
-    AssetVariantKey, PageAttachment, WorldRenderAssets, attach_page, despawn_attachment,
-    page_asset_variants,
+    AssetVariantKey, PageAttachment, attach_page, despawn_attachment, page_asset_variants,
 };
 use bevy::{
     prelude::*,
@@ -22,8 +21,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     time::Duration,
 };
-use terrain_render::{TerrainMacroVariation, TerrainMaterial};
-use world::{ObjectDefinitionId, PageDomain, PageKey, TerrainTextureSetId};
+use world::{ObjectDefinitionId, PageDomain, PageKey};
 use world_db::{DecodedPage, PageDependency, RuntimeObjectDefinition, TerrainRenderResources};
 
 const COOLING_SECONDS: f32 = 2.0;
@@ -64,7 +62,6 @@ pub(super) struct PreparedPage {
     pub(super) dependencies: Vec<PageDependency>,
     pub(super) definitions: Vec<RuntimeObjectDefinition>,
     pub(super) terrain: Option<TerrainRenderResources>,
-    pub(super) height_only: bool,
 }
 
 struct DecodeTask {
@@ -83,7 +80,6 @@ impl SourceResidency {
         &mut self,
         worker: &WorldDatabaseWorker,
         generation: &str,
-        height_only: bool,
     ) -> Result<(), String> {
         // Bound all fetched, decoding and waiting-to-attach work, not just the worker's
         // channel. Otherwise a full resident budget accumulates an unbounded backlog.
@@ -111,7 +107,6 @@ impl SourceResidency {
             match worker.send(DatabaseRequest::ReadPage {
                 generation: generation.to_owned(),
                 key,
-                height_only: height_only && key.domain == PageDomain::Terrain,
             }) {
                 Ok(request_id) => {
                     self.pages.insert(key, PageState::Loading { request_id });
@@ -149,7 +144,8 @@ impl SourceResidency {
                         .encoded
                         .decode()
                         .map(|mut decoded| {
-                            if fetched.height_only {
+                            // Terrain pages are CPU height sources without GPU resources.
+                            if key.domain == PageDomain::Terrain {
                                 decoded.gpu_bytes_estimate = 0;
                             }
                             PreparedPage {
@@ -157,7 +153,6 @@ impl SourceResidency {
                                 dependencies: fetched.dependencies,
                                 definitions: fetched.definitions,
                                 terrain: fetched.terrain,
-                                height_only: fetched.height_only,
                             }
                         })
                         .map_err(|error| error.to_string())
@@ -179,23 +174,11 @@ impl SourceResidency {
         }
     }
 
-    pub(super) fn clear(
-        &mut self,
-        commands: &mut Commands,
-        terrain_meshes: &mut Assets<Mesh>,
-        terrain_materials: &mut Assets<TerrainMaterial>,
-        terrain_images: &mut Assets<Image>,
-    ) {
+    pub(super) fn clear(&mut self, commands: &mut Commands) {
         for (_, state) in self.pages.drain() {
             match state {
                 PageState::Resident(attachment) | PageState::Cooling { attachment, .. } => {
-                    despawn_attachment(
-                        commands,
-                        terrain_meshes,
-                        terrain_materials,
-                        terrain_images,
-                        attachment,
-                    );
+                    despawn_attachment(commands, attachment);
                 }
                 _ => {}
             }
@@ -242,24 +225,15 @@ pub(super) fn receive_decode_results(mut stream: ResMut<SourceResidency>) {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn attach_prepared_pages(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
-    render_assets: Option<Res<WorldRenderAssets>>,
     stats: Res<StreamingStats>,
-    mut terrain_meshes: ResMut<Assets<Mesh>>,
-    mut terrain_materials: ResMut<Assets<TerrainMaterial>>,
-    mut terrain_images: ResMut<Assets<Image>>,
-    macro_variation: Res<TerrainMacroVariation>,
     origin: Res<WorldOrigin>,
     world: Res<WorldStream>,
     mut stream: ResMut<SourceResidency>,
 ) {
     stream.admission_blocked = 0;
-    let Some(render_assets) = render_assets else {
-        return;
-    };
     let vegetation_catalog = world
         .manifest
         .as_ref()
@@ -280,7 +254,6 @@ pub(super) fn attach_prepared_pages(
     let mut attachment_attempts = 0;
     let mut admitted_decoded_bytes = stats.decoded_bytes;
     let mut admitted_gpu_bytes = stats.gpu_bytes_estimate;
-    let mut admitted_terrain_texture_sets = stats.terrain_texture_sets.clone();
     let mut admitted_asset_variants = stats.asset_variants.clone();
 
     for key in keys {
@@ -312,18 +285,7 @@ pub(super) fn attach_prepared_pages(
                 .iter()
                 .filter(|(key, _)| !admitted_asset_variants.contains(key))
                 .map(|(_, bytes)| bytes)
-                .sum::<u64>()
-            + prepared
-                .terrain
-                .as_ref()
-                .filter(|_| !prepared.height_only)
-                .map_or(0, |terrain| {
-                    if admitted_terrain_texture_sets.contains(&terrain.texture_set.id) {
-                        0
-                    } else {
-                        terrain.texture_set.runtime_gpu_bytes()
-                    }
-                });
+                .sum::<u64>();
         if page_decoded_bytes > MAX_RESIDENT_DECODED_BYTES
             || page_gpu_bytes > MAX_RESIDENT_GPU_BYTES_ESTIMATE
         {
@@ -347,12 +309,7 @@ pub(super) fn attach_prepared_pages(
         match attach_page(
             &mut commands,
             &asset_server,
-            &render_assets,
             vegetation_catalog.as_ref(),
-            &mut terrain_meshes,
-            &mut terrain_materials,
-            &mut terrain_images,
-            *macro_variation,
             origin.cell,
             cell_size,
             prepared,
@@ -367,11 +324,6 @@ pub(super) fn attach_prepared_pages(
                         admitted_gpu_bytes = admitted_gpu_bytes.saturating_add(bytes);
                     }
                 }
-                if let Some((texture_set, gpu_bytes)) = attachment.terrain_texture_set
-                    && admitted_terrain_texture_sets.insert(texture_set)
-                {
-                    admitted_gpu_bytes = admitted_gpu_bytes.saturating_add(gpu_bytes);
-                }
                 stream.pages.insert(key, PageState::Resident(attachment));
             }
             Err(error) => {
@@ -384,9 +336,6 @@ pub(super) fn attach_prepared_pages(
 pub(super) fn cool_and_remove_pages(
     mut commands: Commands,
     time: Res<Time>,
-    mut terrain_meshes: ResMut<Assets<Mesh>>,
-    mut terrain_materials: ResMut<Assets<TerrainMaterial>>,
-    mut terrain_images: ResMut<Assets<Image>>,
     mut stream: ResMut<SourceResidency>,
 ) {
     let now = time.elapsed();
@@ -413,13 +362,7 @@ pub(super) fn cool_and_remove_pages(
                 attachment,
                 remove_at,
             } if now >= remove_at => {
-                despawn_attachment(
-                    &mut commands,
-                    &mut terrain_meshes,
-                    &mut terrain_materials,
-                    &mut terrain_images,
-                    attachment,
-                );
+                despawn_attachment(&mut commands, attachment);
             }
             PageState::Prepared(_) if !demanded => {}
             other => {
@@ -444,12 +387,11 @@ pub struct StreamingStats {
     pub cached_definitions: usize,
     pub gameplay_objects: usize,
     pub vegetation_pages: usize,
-    pub height_only_pages: usize,
+    pub terrain_source_pages: usize,
     pub indexed_cells: usize,
     pub source_demand_error: Option<String>,
     pub budget_waiting: usize,
     pub lod_counts: BTreeMap<u8, usize>,
-    terrain_texture_sets: BTreeSet<TerrainTextureSetId>,
     asset_variants: BTreeSet<AssetVariantKey>,
 }
 
@@ -505,7 +447,7 @@ pub(super) fn update_streaming_stats(
     if let Some(error) = &world.demand_error {
         stats.status = format!("source demand limited: {error}");
     }
-    stats.height_only_pages = 0;
+    stats.terrain_source_pages = 0;
     stats.demanded = stream.desired.len();
     stats.loading = 0;
     stats.prepared = 0;
@@ -518,7 +460,6 @@ pub(super) fn update_streaming_stats(
     stats.cached_definitions = stream.definition_cache.len();
     stats.gameplay_objects = 0;
     stats.vegetation_pages = 0;
-    stats.terrain_texture_sets.clear();
     stats.asset_variants.clear();
     stats.lod_counts.clear();
     for lod in &lod_objects {
@@ -535,7 +476,7 @@ pub(super) fn update_streaming_stats(
                 stats.gpu_bytes_estimate += attachment.gpu_bytes_estimate;
                 stats.gameplay_objects += attachment.gameplay_objects;
                 stats.vegetation_pages += attachment.vegetation_pages;
-                stats.height_only_pages += attachment.height_only_pages;
+                stats.terrain_source_pages += attachment.terrain_source_pages;
                 account_shared_assets(&mut stats, attachment);
             }
             PageState::Cooling { attachment, .. } => {
@@ -545,7 +486,7 @@ pub(super) fn update_streaming_stats(
                 stats.gpu_bytes_estimate += attachment.gpu_bytes_estimate;
                 stats.gameplay_objects += attachment.gameplay_objects;
                 stats.vegetation_pages += attachment.vegetation_pages;
-                stats.height_only_pages += attachment.height_only_pages;
+                stats.terrain_source_pages += attachment.terrain_source_pages;
                 account_shared_assets(&mut stats, attachment);
             }
             PageState::Failed(error) => {
@@ -561,11 +502,5 @@ fn account_shared_assets(stats: &mut StreamingStats, attachment: &PageAttachment
         if stats.asset_variants.insert(key) {
             stats.gpu_bytes_estimate = stats.gpu_bytes_estimate.saturating_add(bytes);
         }
-    }
-    let Some((texture_set, gpu_bytes)) = attachment.terrain_texture_set else {
-        return;
-    };
-    if stats.terrain_texture_sets.insert(texture_set) {
-        stats.gpu_bytes_estimate = stats.gpu_bytes_estimate.saturating_add(gpu_bytes);
     }
 }

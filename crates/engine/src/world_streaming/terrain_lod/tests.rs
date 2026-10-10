@@ -72,18 +72,6 @@ fn metadata_limit_holds_everything_a_full_budget_retains() {
 }
 
 #[test]
-fn hierarchy_is_default_and_configuration_is_explicit() {
-    assert!(TerrainHierarchy::default().enabled);
-    assert!(
-        !TerrainHierarchy {
-            enabled: false,
-            ..default()
-        }
-        .enabled
-    );
-}
-
-#[test]
 fn late_database_reply_cannot_enter_a_new_world_or_generation() {
     let mut stream = TerrainLodStream {
         identity: Some(("new-generation".into(), WorldSpaceId(2))),
@@ -220,7 +208,6 @@ fn mountain_cover_uploads_draws_moves_and_rebases() {
     }
     app.finish();
     app.cleanup();
-    assert!(app.world().resource::<TerrainHierarchy>().enabled);
     settle(&mut app, deadline);
     let first = app.world().resource::<TerrainLodStats>().clone();
     assert!(first.patches >= 4);
@@ -425,20 +412,17 @@ fn mountain_cover_uploads_draws_moves_and_rebases() {
     assert_eq!(world.resource::<TerrainLodStats>().blocked_actors, 0);
     // A smaller geometry budget must shed visual detail while keeping the actor's
     // certified surface through an actual uploaded cover replacement.
-    let original_settings = app.world().resource::<TerrainHierarchy>().settings.clone();
+    let original_settings = app.world().resource::<LodSettings>().clone();
     // Make distant detail compete even in this small 512-pixel test view.
     {
-        let mut config = app.world_mut().resource_mut::<TerrainHierarchy>();
-        config.settings.refine_pixels = 0.125;
-        config.settings.collapse_pixels = 0.0625;
+        let mut settings = app.world_mut().resource_mut::<LodSettings>();
+        settings.refine_pixels = 0.125;
+        settings.collapse_pixels = 0.0625;
     }
     settle(&mut app, deadline);
     let before_budget = app.world().resource::<TerrainLodStats>().triangles;
     assert!(before_budget > 128 * 2048);
-    app.world_mut()
-        .resource_mut::<TerrainHierarchy>()
-        .settings
-        .max_triangles = 128 * 2048;
+    app.world_mut().resource_mut::<LodSettings>().max_triangles = 128 * 2048;
     settle(&mut app, deadline);
     let limited = app.world().resource::<TerrainLodStats>();
     println!(
@@ -451,7 +435,7 @@ fn mountain_cover_uploads_draws_moves_and_rebases() {
         *app.world().get::<Visibility>(actor).unwrap(),
         Visibility::Inherited
     );
-    app.world_mut().resource_mut::<TerrainHierarchy>().settings = original_settings;
+    *app.world_mut().resource_mut::<LodSettings>() = original_settings;
     settle(&mut app, deadline);
     let world = app.world();
     // An obsolete coarse target must not take away an actor's certified ground.
@@ -498,9 +482,9 @@ fn mountain_cover_uploads_draws_moves_and_rebases() {
         let w = app.world_mut();
         let stats = w.resource::<StreamingStats>();
         assert!(
-            stats.height_only_pages > 49,
+            stats.terrain_source_pages > 49,
             "camera sources did not extend beyond the local index: {}",
-            stats.height_only_pages
+            stats.terrain_source_pages
         );
         assert_eq!(
             stats.gpu_bytes_estimate, 0,
@@ -509,12 +493,16 @@ fn mountain_cover_uploads_draws_moves_and_rebases() {
         assert!(stats.source_demand_error.is_none());
         assert_eq!(stats.budget_waiting, 0);
         eprintln!(
-            "LOD sources: {} indexed cells, {} height-only pages, {} decoded bytes",
-            stats.indexed_cells, stats.height_only_pages, stats.decoded_bytes
+            "LOD sources: {} indexed cells, {} terrain source pages, {} decoded bytes",
+            stats.indexed_cells, stats.terrain_source_pages, stats.decoded_bytes
         );
         let mut surfaces = w.query_filtered::<Option<&Mesh3d>, With<StreamedTerrainSurface>>();
         assert!(surfaces.iter(w).all(|mesh| mesh.is_none()));
-        assert_eq!(w.resource::<Assets<TerrainMaterial>>().len(), 0);
+        assert_eq!(
+            w.resource::<Assets<terrain_render::TerrainMaterial>>()
+                .len(),
+            0
+        );
     }
     let before: BTreeSet<_> = app
         .world()

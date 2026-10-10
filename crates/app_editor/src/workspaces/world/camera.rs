@@ -14,8 +14,8 @@ use bevy::{
     render::view::Msaa,
 };
 use engine::{
-    WorldCatalog, WorldDetailDemand, WorldEnvironmentCamera, WorldOrigin, WorldStreamingConfig,
-    WorldViewCamera, WorldViewpoint,
+    WorldCatalog, WorldDetailDemand, WorldEnvironmentCamera, WorldOrigin, WorldViewCamera,
+    WorldViewpoint,
 };
 use std::f32::consts::FRAC_PI_4;
 use world::{CellCoord, WorldPosition};
@@ -91,7 +91,6 @@ pub(crate) fn update_editor_camera(
     mouse_scroll: Res<AccumulatedMouseScroll>,
     mut pinch_gestures: MessageReader<PinchGesture>,
     capture: Res<EditorInputCapture>,
-    streaming_config: Res<WorldStreamingConfig>,
     catalog: Res<WorldCatalog>,
     origin: Res<WorldOrigin>,
     mut viewpoint: ResMut<WorldViewpoint>,
@@ -248,11 +247,7 @@ pub(crate) fn update_editor_camera(
 
     camera.0.focus = Some(focus);
     viewpoint.set(focus);
-    let render_origin = anticipated_render_origin(
-        origin.cell(),
-        focus.cell,
-        streaming_config.floating_origin_threshold_cells(),
-    );
+    let render_origin = anticipated_render_origin(origin.cell(), focus.cell);
     *camera.1 = editor_camera_transform(&camera.0, render_origin, space.cell_size);
 }
 
@@ -274,12 +269,8 @@ fn detail_demand_enabled(enabled: bool, distance: f32) -> bool {
     }
 }
 
-fn anticipated_render_origin(
-    current: CellCoord,
-    focus: CellCoord,
-    threshold: Option<u32>,
-) -> CellCoord {
-    if threshold.is_some_and(|threshold| current.chebyshev_distance(focus) > threshold) {
+fn anticipated_render_origin(current: CellCoord, focus: CellCoord) -> CellCoord {
+    if current.chebyshev_distance(focus) > engine::FLOATING_ORIGIN_THRESHOLD_CELLS {
         focus
     } else {
         current
@@ -361,10 +352,7 @@ mod tests {
             x: 1_000_000,
             z: -1_000_000,
         };
-        assert_eq!(
-            anticipated_render_origin(CellCoord::ZERO, far, Some(8)),
-            far
-        );
+        assert_eq!(anticipated_render_origin(CellCoord::ZERO, far), far);
     }
     #[test]
     fn editor_frame_pacing_is_reactive_and_input_driven() {

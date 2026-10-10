@@ -25,6 +25,23 @@ impl TerrainEntry {
     pub(super) fn test_fail(&mut self, error: &str) {
         self.stream.error = Some(error.into());
     }
+    /// Stages an empty, uploaded destination cover for `generation`, so a test can hand off
+    /// without terrain IO.
+    #[cfg(test)]
+    pub(in crate::world_streaming) fn test_ready(
+        &mut self,
+        generation: &str,
+        transition: WorldSpaceTransition,
+    ) {
+        self.request = Some((generation.into(), transition));
+        self.stream.target = Some(PlannedCover {
+            patches: Default::default(),
+            requests: Vec::new(),
+            stats: Default::default(),
+            balanced: true,
+        });
+        self.ready = true;
+    }
     pub(super) fn pending(&self) -> bool {
         self.request.is_some()
     }
@@ -111,7 +128,7 @@ impl TerrainEntry {
 #[allow(clippy::too_many_arguments)]
 pub(in crate::world_streaming) fn prepare(
     mut commands: Commands,
-    config: Res<TerrainHierarchy>,
+    settings: Res<LodSettings>,
     catalog: Res<WorldCatalog>,
     mut active_space: ResMut<ActiveWorldSpace>,
     worker: Option<Res<WorldDatabaseWorker>>,
@@ -130,7 +147,7 @@ pub(in crate::world_streaming) fn prepare(
         reload
             .candidate
             .as_ref()
-            .filter(|_| reload.hierarchy && reload.failure.is_none())
+            .filter(|_| reload.failure.is_none())
             .map(|m| {
                 (
                     m.generation_id.clone(),
@@ -143,7 +160,7 @@ pub(in crate::world_streaming) fn prepare(
     } else {
         active_space
             .requested
-            .filter(|t| config.enabled && Some(t.space) != active_space.current)
+            .filter(|t| Some(t.space) != active_space.current)
             .map(|t| (catalog.generation_id().to_owned(), t))
     };
     if entry.request != request {
@@ -255,7 +272,7 @@ pub(in crate::world_streaming) fn prepare(
             collapse_pixels: f64::MAX / 2.,
             exact_radius: 0.,
             contact_radius: 0.,
-            ..config.settings.clone()
+            ..settings.clone()
         };
         let view = LodView {
             clip_from_world: DMat4::IDENTITY,

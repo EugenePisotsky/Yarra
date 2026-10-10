@@ -1,4 +1,4 @@
-//! Translate source payloads into ECS entities and explicitly owned terrain assets.
+//! Translate source payloads into ECS entities.
 use super::PreparedPage;
 use crate::object_lod::{ObjectFootprint, ScreenSpaceLod, ScreenSpaceLodVariant};
 use crate::world_streaming::{
@@ -7,24 +7,14 @@ use crate::world_streaming::{
 };
 use bevy::prelude::*;
 use std::collections::HashMap;
-#[cfg(not(target_os = "ios"))]
-use terrain_render::build_heightfield_mesh;
-use terrain_render::{
-    PrepareTerrainMaterialContext, TerrainMacroVariation, TerrainMaterial, TerrainSurfaceLayer,
-    prepare_terrain_material,
-};
+use terrain_render::TerrainSurfaceLayer;
 use vegetation::VegetationCatalog;
-use world::{
-    AssetId, CellCoord, ObjectActivationPolicy, PageKey, PagePayload, TerrainTextureSetId,
-};
+use world::{AssetId, CellCoord, ObjectActivationPolicy, PageKey, PagePayload};
 use world_db::{PageDependency, RuntimeObjectDefinition};
 
 #[derive(Default)]
 pub(in crate::world_streaming) struct PageAttachment {
     pub(in crate::world_streaming) entities: Vec<Entity>,
-    pub(in crate::world_streaming) owned_terrain_meshes: Vec<Handle<Mesh>>,
-    pub(in crate::world_streaming) owned_terrain_materials: Vec<Handle<TerrainMaterial>>,
-    pub(in crate::world_streaming) owned_terrain_images: Vec<Handle<Image>>,
     pub(in crate::world_streaming) decoded_bytes: u64,
     /// The page's own GPU bytes; shared assets are in `asset_variants`.
     pub(in crate::world_streaming) gpu_bytes_estimate: u64,
@@ -33,8 +23,7 @@ pub(in crate::world_streaming) struct PageAttachment {
     pub(in crate::world_streaming) asset_variants: Vec<(AssetVariantKey, u64)>,
     pub(in crate::world_streaming) gameplay_objects: usize,
     pub(in crate::world_streaming) vegetation_pages: usize,
-    pub(in crate::world_streaming) height_only_pages: usize,
-    pub(in crate::world_streaming) terrain_texture_set: Option<(TerrainTextureSetId, u64)>,
+    pub(in crate::world_streaming) terrain_source_pages: usize,
 }
 
 pub(in crate::world_streaming) type AssetVariantKey = (world::AssetId, u8);
@@ -51,43 +40,15 @@ pub(in crate::world_streaming) fn page_asset_variants(
         .collect()
 }
 
-#[derive(Resource)]
-pub(in crate::world_streaming) struct WorldRenderAssets {
-    /// iOS draws terrain cells flat on this plane.
-    #[cfg_attr(not(target_os = "ios"), allow(dead_code))]
-    pub(super) unit_plane: Handle<Mesh>,
-}
-
-pub(in crate::world_streaming) fn create_world_render_assets(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-) {
-    let mut unit_plane = Plane3d::default().mesh().size(1.0, 1.0).build();
-    unit_plane
-        .generate_tangents()
-        .expect("the built-in terrain plane must support tangent generation");
-    commands.insert_resource(WorldRenderAssets {
-        unit_plane: meshes.add(unit_plane),
-    });
-}
-
-#[allow(clippy::too_many_arguments)] // The page, where it goes, and the assets terrain owns.
+/// The page, and where it goes.
 pub(super) fn attach_page(
     commands: &mut Commands,
     asset_server: &AssetServer,
-    render_assets: &WorldRenderAssets,
     vegetation_catalog: Option<&VegetationCatalog>,
-    terrain_meshes: &mut Assets<Mesh>,
-    terrain_materials: &mut Assets<TerrainMaterial>,
-    terrain_images: &mut Assets<Image>,
-    macro_variation: TerrainMacroVariation,
     origin_cell: CellCoord,
     cell_size: f32,
     prepared: PreparedPage,
 ) -> Result<PageAttachment, String> {
-    if prepared.height_only {
-        return attach_height_source(commands, prepared, cell_size);
-    }
     let key = prepared.decoded.key;
     let mut attachment = PageAttachment {
         decoded_bytes: prepared.decoded.decoded_bytes,
@@ -96,18 +57,13 @@ pub(super) fn attach_page(
         ..default()
     };
     match prepared.decoded.payload {
-        PagePayload::TerrainHeightfield(terrain) => attach_terrain(
+        PagePayload::TerrainHeightfield(terrain) => attach_terrain_source(
             &mut attachment,
             commands,
-            asset_server,
-            render_assets,
-            (terrain_meshes, terrain_materials, terrain_images),
-            macro_variation,
-            origin_cell,
-            cell_size,
             key,
             terrain,
-            prepared.terrain.as_ref(),
+            prepared.terrain,
+            cell_size,
         )?,
         PagePayload::StaticObjects(objects) => attach_static_objects(
             &mut attachment,
@@ -146,124 +102,6 @@ pub(super) fn attach_page(
         )?,
     }
     Ok(attachment)
-}
-
-/// A terrain cell drawn as its own relief mesh (flat on iOS), with its CPU heightfield.
-#[allow(clippy::too_many_arguments)]
-fn attach_terrain(
-    attachment: &mut PageAttachment,
-    commands: &mut Commands,
-    asset_server: &AssetServer,
-    _render_assets: &WorldRenderAssets,
-    (_terrain_meshes, terrain_materials, terrain_images): (
-        &mut Assets<Mesh>,
-        &mut Assets<TerrainMaterial>,
-        &mut Assets<Image>,
-    ),
-    macro_variation: TerrainMacroVariation,
-    origin_cell: CellCoord,
-    cell_size: f32,
-    key: PageKey,
-    terrain: world::TerrainHeightfieldPage,
-    resources: Option<&world_db::TerrainRenderResources>,
-) -> Result<(), String> {
-    terrain
-        .heightfield
-        .validate()
-        .map_err(|error| error.to_string())?;
-    let resources =
-        resources.ok_or_else(|| "terrain page has no fetched render resources".to_owned())?;
-    if resources.profile.space != key.space
-        || resources.profile.texture_set != resources.texture_set.id
-    {
-        return Err("terrain page render resources are inconsistent".into());
-    }
-    attachment.terrain_texture_set = Some((
-        resources.texture_set.id,
-        resources.texture_set.runtime_gpu_bytes(),
-    ));
-    let surface_lookup: HashMap<_, _> = resources
-        .surfaces
-        .iter()
-        .map(|runtime| (runtime.surface.id, runtime))
-        .collect();
-    let surface_layers = terrain
-        .surfaces
-        .iter()
-        .map(|surface| {
-            let runtime = surface_lookup
-                .get(surface)
-                .ok_or_else(|| format!("terrain page has unresolved surface {:?}", surface))?;
-            Ok(TerrainSurfaceLayer {
-                surface: runtime.surface.clone(),
-                layer: runtime.layer,
-            })
-        })
-        .collect::<Result<Vec<_>, String>>()?;
-    let [x, z] = key.cell.offset_from(origin_cell, cell_size);
-    let center = [x as f32 + cell_size * 0.5, z as f32 + cell_size * 0.5];
-    #[cfg(not(target_os = "ios"))]
-    let heightfield_mesh = build_heightfield_mesh(&terrain.heightfield, cell_size)?;
-    #[cfg(target_os = "ios")]
-    let streamed_heightfield =
-        world::TerrainHeightfield::from_heights(2, &[0.0; 4], 0.0, 0.0, cell_size)
-            .map_err(|error| error.to_string())?;
-    let prepared_material = prepare_terrain_material(PrepareTerrainMaterialContext {
-        asset_server,
-        images: terrain_images,
-        materials: terrain_materials,
-        cell: key.cell,
-        origin_cell,
-        cell_size,
-        page_surfaces: &terrain.surfaces,
-        weight_pages: &terrain.weight_pages,
-        profile: &resources.profile,
-        texture_set: &resources.texture_set,
-        surfaces: &surface_layers,
-        macro_variation,
-    })?;
-    #[cfg(target_os = "ios")]
-    let (mesh, transform, terrain_name) = (
-        _render_assets.unit_plane.clone(),
-        Transform::from_xyz(center[0], 0.0, center[1])
-            .with_scale(Vec3::new(cell_size, 1.0, cell_size)),
-        format!("Flat terrain cell {}, {}", key.cell.x, key.cell.z),
-    );
-    #[cfg(not(target_os = "ios"))]
-    let (mesh, transform, terrain_name) = {
-        let mesh = _terrain_meshes.add(heightfield_mesh);
-        (
-            mesh,
-            Transform::from_xyz(center[0], 0.0, center[1]),
-            format!("Relief terrain cell {}, {}", key.cell.x, key.cell.z),
-        )
-    };
-    #[cfg(not(target_os = "ios"))]
-    let streamed_heightfield = terrain.heightfield;
-    let entity = commands
-        .spawn((
-            Mesh3d(mesh.clone()),
-            MeshMaterial3d(prepared_material.material.clone()),
-            transform,
-            StreamedTerrainSurface {
-                key,
-                cell_size,
-                heightfield: streamed_heightfield,
-            },
-            StreamedPageEntity(key),
-            Name::new(terrain_name),
-        ))
-        .id();
-    attachment.entities.push(entity);
-    #[cfg(not(target_os = "ios"))]
-    attachment.owned_terrain_meshes.push(mesh);
-    attachment
-        .owned_terrain_materials
-        .push(prepared_material.material);
-    attachment
-        .owned_terrain_images
-        .push(prepared_material.weight_image);
-    Ok(())
 }
 
 /// Placed objects, each a screen-space LOD whose mesh scenes load as it nears.
@@ -424,17 +262,21 @@ fn attach_gameplay_objects(
     Ok(())
 }
 
-/// Keep CPU relief and surface inputs; GPU near shading admits its own bounded subset.
-pub(super) fn attach_height_source(
+/// A terrain cell's CPU relief and surface inputs; the hierarchy draws the ground, and GPU
+/// near shading admits its own bounded subset of these sources.
+pub(super) fn attach_terrain_source(
+    attachment: &mut PageAttachment,
     commands: &mut Commands,
-    page: PreparedPage,
+    key: PageKey,
+    terrain: world::TerrainHeightfieldPage,
+    resources: Option<world_db::TerrainRenderResources>,
     cell_size: f32,
-) -> Result<PageAttachment, String> {
-    let key = page.decoded.key;
-    let (heightfield, surfaces, weights) = match page.decoded.payload {
-        PagePayload::TerrainHeightfield(t) => (t.heightfield, t.surfaces, t.weight_pages),
-        _ => return Err("height-only request returned a non-terrain page".into()),
-    };
+) -> Result<(), String> {
+    let world::TerrainHeightfieldPage {
+        heightfield,
+        surfaces,
+        weight_pages: weights,
+    } = terrain;
     heightfield.validate().map_err(|e| e.to_string())?;
     let bounds = [
         heightfield
@@ -448,8 +290,7 @@ pub(super) fn attach_height_source(
             .copied()
             .fold(f32::NEG_INFINITY, f32::max),
     ];
-    let near = page
-        .terrain
+    let near = resources
         .map(|resources| {
             let layers = surfaces
                 .iter()
@@ -491,31 +332,13 @@ pub(super) fn attach_height_source(
     if let Some(near) = near {
         commands.entity(entity).insert(near);
     }
-    Ok(PageAttachment {
-        entities: vec![entity],
-        decoded_bytes: page.decoded.decoded_bytes,
-        height_only_pages: 1,
-        ..default()
-    })
+    attachment.entities.push(entity);
+    attachment.terrain_source_pages = 1;
+    Ok(())
 }
 
-pub(super) fn despawn_attachment(
-    commands: &mut Commands,
-    terrain_meshes: &mut Assets<Mesh>,
-    terrain_materials: &mut Assets<TerrainMaterial>,
-    terrain_images: &mut Assets<Image>,
-    attachment: PageAttachment,
-) {
+pub(super) fn despawn_attachment(commands: &mut Commands, attachment: PageAttachment) {
     for entity in attachment.entities {
         commands.entity(entity).despawn();
-    }
-    for mesh in attachment.owned_terrain_meshes {
-        terrain_meshes.remove(mesh.id());
-    }
-    for material in attachment.owned_terrain_materials {
-        terrain_materials.remove(material.id());
-    }
-    for image in attachment.owned_terrain_images {
-        terrain_images.remove(image.id());
     }
 }

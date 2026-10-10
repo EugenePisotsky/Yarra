@@ -132,7 +132,8 @@ fn corners(bounds: [DVec3; 2]) -> [DVec3; 8] {
     })
 }
 
-#[derive(Clone, Debug, PartialEq)]
+/// The world's terrain cover targets and budgets; F1 changes the pixel errors.
+#[derive(bevy::prelude::Resource, Clone, Debug, PartialEq)]
 pub struct LodSettings {
     pub refine_pixels: f64,
     pub collapse_pixels: f64,

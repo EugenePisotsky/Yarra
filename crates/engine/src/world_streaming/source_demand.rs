@@ -59,7 +59,6 @@ pub(super) fn windows(
     position: WorldPosition,
     space: &world_db::WorldSpaceRecord,
     view: &SourceView,
-    hierarchy: bool,
 ) -> Result<Vec<Window>, String> {
     let c = position.cell;
     let mut windows = vec![[
@@ -74,7 +73,7 @@ pub(super) fn windows(
     ]];
     // Query only cheap descriptors in XZ; use each compiled cell's actual height
     // bounds below. Authored world height ranges are not a culling certificate.
-    if hierarchy && view.space == Some(position.space) {
+    if view.space == Some(position.space) {
         let size = f64::from(space.cell_size);
         let radius = view.radius.max(OBJECT_VISIBILITY_METERS);
         let coordinate = |v: f64| -> Result<i32, String> {
@@ -140,7 +139,6 @@ pub(super) fn demand(
     camera: Option<&Frustum>,
     detail: bool,
     gameplay: bool,
-    hierarchy: bool,
     view: &SourceView,
 ) -> BTreeMap<PageKey, Priority> {
     let mut result = BTreeMap::new();
@@ -149,33 +147,17 @@ pub(super) fn demand(
         let local = cell_distance <= VISUAL_SOURCE_RESIDENCY_RADIUS_CELLS;
         let active = cell_distance <= GAMEPLAY_PRELOAD_RADIUS_CELLS;
         let source_distance = distance_squared(view.eye, d, cell_size);
-        let object_near = if hierarchy {
-            view.space == Some(position.space)
-                && source_distance <= OBJECT_VISIBILITY_METERS.powi(2)
-        } else {
-            local
-        };
+        let object_near = view.space == Some(position.space)
+            && source_distance <= OBJECT_VISIBILITY_METERS.powi(2);
         let visible = object_near
             && detail
             && camera.is_some_and(|f| cell_intersects_frustum(f, d, origin, cell_size));
         // A tree behind the camera may still cast a shadow onto visible ground. Keep
         // the bounded object neighborhood resident, even across a long camera turn.
         // Frustum visibility prioritizes loading; it must not drive caster lifetime.
-        let objects = if hierarchy {
-            object_near && detail
-        } else {
-            visible
-        };
-        let near = if hierarchy {
-            view.space == Some(position.space) && source_distance <= view.radius.powi(2)
-        } else {
-            local
-        };
-        let terrain = if hierarchy {
-            near || if gameplay { active } else { local }
-        } else {
-            visible || local
-        };
+        let objects = object_near && detail;
+        let near = view.space == Some(position.space) && source_distance <= view.radius.powi(2);
+        let terrain = near || if gameplay { active } else { local };
         let priority = if active || (!gameplay && local) {
             (0, f64::from(cell_distance))
         } else {
@@ -245,7 +227,7 @@ pub(super) fn request_cell_index(
         return;
     };
     let generation = manifest.generation_id.clone();
-    let windows = match source_demand::windows(position, space, &source_view, stream.height_only) {
+    let windows = match source_demand::windows(position, space, &source_view) {
         Ok(windows) => {
             stream.demand_error = None;
             windows
@@ -322,7 +304,6 @@ pub(super) fn calculate_page_demand(
         camera.active().map(|view| view.frustum),
         detail_demand.enabled(),
         config.gameplay_pages,
-        stream.height_only,
         &source_view,
     );
     residency.set_demand(priorities);
@@ -330,7 +311,7 @@ pub(super) fn calculate_page_demand(
     let Some(worker) = worker else {
         return;
     };
-    if let Err(error) = residency.request_missing(&worker, &generation, stream.height_only) {
+    if let Err(error) = residency.request_missing(&worker, &generation) {
         stream.phase = StreamPhase::Failed(error);
     }
 }
@@ -423,7 +404,6 @@ mod tests {
             Some(&frustum),
             true,
             true,
-            true,
             &view,
         );
         let mut order: Vec<_> = selected.into_iter().collect();
@@ -470,9 +450,6 @@ mod tests {
         let mut view = view(DVec3::new(-10., 5., 0.));
         let mut app = App::new();
         app.init_resource::<Time>()
-            .init_resource::<Assets<Mesh>>()
-            .init_resource::<Assets<terrain_render::TerrainMaterial>>()
-            .init_resource::<Assets<Image>>()
             .init_resource::<SourceResidency>()
             .add_systems(Update, cool_and_remove_pages);
         let entity = app.world_mut().spawn_empty().id();
@@ -493,7 +470,6 @@ mod tests {
                 8.,
                 CellCoord::ZERO,
                 Some(camera),
-                true,
                 true,
                 true,
                 view,
@@ -541,7 +517,7 @@ mod tests {
     #[test]
     fn small_cells_cover_forest_and_blade_ranges_without_distant_gameplay() {
         let view = view(DVec3::new(1., 2., 1.));
-        let windows = windows(position(), &space(8.), &view, true).unwrap();
+        let windows = windows(position(), &space(8.), &view).unwrap();
         assert_eq!(windows.len(), 1);
         assert!(windows[0][0].x <= -14 && windows[0][1].x >= 14);
         let distant = descriptor(CellCoord { x: 10, z: 0 });
@@ -553,7 +529,6 @@ mod tests {
             8.,
             CellCoord::ZERO,
             Some(&frustum),
-            true,
             true,
             true,
             &view,
@@ -571,18 +546,6 @@ mod tests {
         assert!(has(CellCoord { x: 10, z: 0 }, PageDomain::StaticObjects));
         assert!(!has(CellCoord { x: 10, z: 0 }, PageDomain::GameplayObjects));
         assert!(has(CellCoord::ZERO, PageDomain::GameplayObjects));
-        let legacy = demand(
-            &[descriptor(CellCoord { x: 10, z: 0 })],
-            position(),
-            8.,
-            CellCoord::ZERO,
-            Some(&frustum),
-            true,
-            true,
-            false,
-            &view,
-        );
-        assert!(legacy.is_empty());
     }
     #[test]
     fn forest_range_is_in_metres_and_does_not_expand_grass_or_gameplay() {
@@ -597,7 +560,7 @@ mod tests {
                 x: (224. / size) as i32,
                 z: 0,
             };
-            let windows = windows(position(), &space(size), &view, true).unwrap();
+            let windows = windows(position(), &space(size), &view).unwrap();
             assert!(windows.iter().any(|w| contains(*w, [inside; 2])));
             let selected = demand(
                 &[descriptor(inside), descriptor(outside)],
@@ -605,7 +568,6 @@ mod tests {
                 size,
                 CellCoord::ZERO,
                 Some(&frustum),
-                true,
                 true,
                 true,
                 &view,
@@ -625,7 +587,6 @@ mod tests {
                 Some(&frustum),
                 false,
                 true,
-                true,
                 &view,
             );
             assert!(disabled.is_empty());
@@ -634,10 +595,7 @@ mod tests {
     #[test]
     fn elevated_views_keep_local_consumers_but_do_not_load_valley_grass() {
         let view = view(DVec3::new(1., 1000., 1.));
-        assert_eq!(
-            windows(position(), &space(8.), &view, true).unwrap().len(),
-            1
-        );
+        assert_eq!(windows(position(), &space(8.), &view).unwrap().len(), 1);
         let selected = demand(
             &[
                 descriptor(CellCoord::ZERO),
@@ -647,7 +605,6 @@ mod tests {
             8.,
             CellCoord::ZERO,
             None,
-            true,
             true,
             true,
             &view,
@@ -662,17 +619,17 @@ mod tests {
     #[test]
     fn detached_camera_queries_separate_windows_and_rejects_oversized_ranges() {
         let view = view(DVec3::new(-100_000., 2., 100_000.));
-        let windows = windows(position(), &space(8.), &view, true).unwrap();
+        let windows = windows(position(), &space(8.), &view).unwrap();
         assert_eq!(windows.len(), 2);
         assert!(
             !windows
                 .iter()
                 .any(|w| contains(*w, [CellCoord { x: -5000, z: 5000 }; 2]))
         );
-        assert!(super::windows(position(), &space(0.01), &view, true).is_err());
+        assert!(super::windows(position(), &space(0.01), &view).is_err());
         let mut huge = view;
         huge.radius = 1e20;
-        assert!(super::windows(position(), &space(8.), &huge, true).is_err());
+        assert!(super::windows(position(), &space(8.), &huge).is_err());
     }
     #[test]
     fn pending_work_is_prioritized_by_consumer_and_distance() {
@@ -687,7 +644,6 @@ mod tests {
             8.,
             CellCoord::ZERO,
             None,
-            true,
             true,
             true,
             &view,
@@ -720,7 +676,6 @@ mod tests {
             .insert_resource(view(DVec3::ZERO))
             .insert_resource(WorldStream {
                 phase: StreamPhase::Ready,
-                height_only: true,
                 manifest: Some(RuntimeManifest {
                     schema_version: world::RUNTIME_SCHEMA_VERSION,
                     generation_id: "test".into(),

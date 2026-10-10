@@ -33,8 +33,7 @@ use world_space::WorldSpaceTransition;
 pub(crate) use world_space::sync_world_atmosphere;
 pub(crate) mod terrain_lod;
 pub use terrain_lod::{
-    LiveTerrainPreview, TerrainContactReadiness, TerrainHierarchy, TerrainLodStats,
-    TerrainPreviewRequest,
+    LiveTerrainPreview, TerrainContactReadiness, TerrainLodStats, TerrainPreviewRequest,
 };
 
 use std::path::PathBuf;
@@ -45,7 +44,6 @@ use bevy::{
     transform::TransformSystems,
 };
 use crossbeam_channel::TryRecvError;
-use terrain_render::TerrainMaterial;
 use vegetation::{VegetationCatalog, VegetationFieldPageData};
 use world::{
     CellCoord, ObjectDefinitionId, PageDomain, PageKey, StableObjectId, TerrainHeightfield,
@@ -56,7 +54,7 @@ use world_db::{CellDescriptor, RuntimeManifest};
 use crate::actor::{CharacterMotion, CharacterMotor, MoveIntent, WorldStreamFocus};
 
 const INDEX_RADIUS_CELLS: i32 = 3;
-// Local tools/contact and the legacy diagnostic retain their existing cell window.
+// Local tools and contact keep a cell window around the focus.
 // Normal camera source and object visibility radii are separate and measured in metres.
 const VISUAL_SOURCE_RESIDENCY_RADIUS_CELLS: u32 = 3;
 const GAMEPLAY_PRELOAD_RADIUS_CELLS: u32 = 1;
@@ -107,7 +105,6 @@ impl Plugin for WorldStreamingPlugin {
             .init_resource::<StreamingStats>()
             .init_resource::<WorldDebugControls>()
             .add_plugins(crate::object_lod::ObjectLodPlugin)
-            .add_systems(Startup, residency::attachment::create_world_render_assets)
             .add_systems(
                 Update,
                 (
@@ -149,11 +146,14 @@ pub struct WorldDebugControls {
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct WorldStreamingSystems;
 
+/// The render origin moves to the focus's cell once the focus is more than this many cells
+/// away, keeping render coordinates small anywhere in a large world.
+pub const FLOATING_ORIGIN_THRESHOLD_CELLS: u32 = 8;
+
 #[derive(Resource, Clone, Copy, Debug)]
 pub struct WorldStreamingConfig {
     gameplay_pages: bool,
     keyboard_world_space_cycle: bool,
-    floating_origin_threshold_cells: Option<u32>,
 }
 
 impl WorldStreamingConfig {
@@ -161,7 +161,6 @@ impl WorldStreamingConfig {
         Self {
             gameplay_pages: true,
             keyboard_world_space_cycle: true,
-            floating_origin_threshold_cells: None,
         }
     }
 
@@ -169,12 +168,7 @@ impl WorldStreamingConfig {
         Self {
             gameplay_pages: false,
             keyboard_world_space_cycle: false,
-            floating_origin_threshold_cells: Some(8),
         }
-    }
-
-    pub const fn floating_origin_threshold_cells(self) -> Option<u32> {
-        self.floating_origin_threshold_cells
     }
 }
 
@@ -210,7 +204,6 @@ struct WorldStream {
     phase: StreamPhase,
     manifest: Option<RuntimeManifest>,
     index_windows: Option<Vec<source_demand::Window>>,
-    height_only: bool,
     demand_error: Option<String>,
     requested_index: Option<(RequestId, WorldSpaceId)>,
     descriptors: Vec<CellDescriptor>,
@@ -226,13 +219,10 @@ enum StreamPhase {
 
 fn clear_streamed_pages(
     commands: &mut Commands,
-    terrain_meshes: &mut Assets<Mesh>,
-    terrain_materials: &mut Assets<TerrainMaterial>,
-    terrain_images: &mut Assets<Image>,
     stream: &mut WorldStream,
     residency: &mut SourceResidency,
 ) {
-    residency.clear(commands, terrain_meshes, terrain_materials, terrain_images);
+    residency.clear(commands);
     stream.demand_error = None;
     stream.descriptors.clear();
     stream.index_windows = None;

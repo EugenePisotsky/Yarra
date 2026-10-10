@@ -93,7 +93,6 @@ impl TerrainLodStream {
 pub(super) fn update(
     mut commands: Commands,
     mut live: ResMut<LiveTerrainPreview>,
-    config: Res<TerrainHierarchy>,
     catalog: Res<WorldCatalog>,
     origin: Res<WorldOrigin>,
     mut stream: ResMut<TerrainLodStream>,
@@ -103,9 +102,10 @@ pub(super) fn update(
     tracker: Res<UploadTracker>,
     entry: Res<entry::TerrainEntry>,
 ) {
-    let request = live.request.clone().filter(|r| {
-        config.enabled && r.generation == catalog.generation_id() && Some(r.space) == origin.space()
-    });
+    let request = live
+        .request
+        .clone()
+        .filter(|r| r.generation == catalog.generation_id() && Some(r.space) == origin.space());
     if live
         .stage
         .as_ref()

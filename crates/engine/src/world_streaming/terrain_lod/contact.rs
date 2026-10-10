@@ -41,7 +41,9 @@ struct ContactPage {
 /// refreshed before extraction/visibility and also gates prospective actor steps.
 #[derive(Resource, Default)]
 pub struct TerrainContactReadiness {
-    enabled: bool,
+    /// False until the hierarchy first publishes its cover; apps without terrain (tests) then
+    /// accept every region.
+    published: bool,
     space: Option<WorldSpaceId>,
     identity: Option<(String, WorldSpaceId)>,
     cell_size: f64,
@@ -53,7 +55,7 @@ pub struct TerrainContactReadiness {
 }
 impl TerrainContactReadiness {
     pub fn permits(&self, region: &ContactRegion) -> bool {
-        if !self.enabled {
+        if !self.published {
             return true;
         }
         if self.blocked || !region.validate() {
@@ -61,8 +63,11 @@ impl TerrainContactReadiness {
         }
         self.index.accepts(region)
     }
+    pub(crate) fn published(&self) -> bool {
+        self.published
+    }
     pub(crate) fn actor_ready(&self, position: Vec3, origin: &WorldOrigin) -> bool {
-        if !self.enabled {
+        if !self.published {
             return true;
         }
         if origin.space() != self.space {
@@ -270,7 +275,7 @@ fn distance(point: DVec3, bounds: [DVec3; 2]) -> f64 {
 }
 #[allow(clippy::too_many_arguments)]
 fn collect(
-    config: Res<TerrainHierarchy>,
+    settings: Res<LodSettings>,
     catalog: Res<WorldCatalog>,
     origin: Res<WorldOrigin>,
     active_space: Res<ActiveWorldSpace>,
@@ -292,11 +297,7 @@ fn collect(
     inputs.error = None;
     inputs.camera = None;
     inputs.view = None;
-    let Some((projection, camera, resolution)) = camera
-        .iter()
-        .find(|(c, _, _)| c.is_active)
-        .filter(|_| config.enabled)
-    else {
+    let Some((projection, camera, resolution)) = camera.iter().find(|(c, _, _)| c.is_active) else {
         return;
     };
     let Some(space) = active_space
@@ -325,7 +326,7 @@ fn collect(
         inputs.required.push(actor_region(point, ACTOR_RADIUS));
         inputs.planning.push(actor_region(
             point,
-            config.settings.exact_radius.max(ACTOR_RADIUS) + GUARD_METERS,
+            settings.exact_radius.max(ACTOR_RADIUS) + GUARD_METERS,
         ));
         if inputs.planning.len() > MAX_CONTACT_REGIONS {
             inputs.error = Some("too many terrain contact regions".into());
@@ -517,7 +518,7 @@ impl TerrainLodStream {
         origin: &WorldOrigin,
         readiness: &TerrainContactReadiness,
     ) -> Option<f32> {
-        if !readiness.enabled || !readiness.actor_ready(position, origin) {
+        if !readiness.actor_ready(position, origin) {
             return None;
         }
         let space = readiness.space?;
@@ -548,13 +549,58 @@ impl TerrainLodStream {
     }
 }
 
+/// Certified flat ground at `height` over one cell, as a drawn cover publishes it, for tests of
+/// systems that ground or hold actors without terrain IO.
+#[cfg(test)]
+pub(crate) fn test_flat_contact(
+    world: &mut World,
+    space: WorldSpaceId,
+    cell: CellCoord,
+    cell_size: f32,
+    height: f32,
+) {
+    let key = TerrainNodeKey::leaf(space, cell);
+    let field = TerrainHeightfield::from_heights(2, &[height; 4], height, height, cell_size)
+        .expect("a flat test cell is valid");
+    let identity = Some(("test".to_owned(), space));
+    {
+        let mut stream = world.get_resource_or_init::<TerrainLodStream>();
+        stream.identity = identity.clone();
+        stream
+            .nodes
+            .insert(key, world::TerrainNode::leaf(key, &field, 2).unwrap());
+    }
+    let [x, z] = cell.origin(cell_size);
+    let size = f64::from(cell_size);
+    let y = f64::from(height);
+    let bounds = [DVec3::new(x, y, z), DVec3::new(x + size, y, z + size)];
+    let mut index = ContactIndex::new(space, size);
+    index.insert_domain(key, bounds);
+    index.insert_certificate(
+        key,
+        ContactCertificate {
+            bounds,
+            error: 0.,
+            exact: true,
+        },
+    );
+    world.insert_resource(TerrainContactReadiness {
+        published: true,
+        space: Some(space),
+        identity,
+        cell_size: size,
+        index,
+        ..default()
+    });
+}
+
 #[derive(Component)]
 struct ContactHidden(Visibility);
 
 #[allow(clippy::too_many_arguments)]
 fn publish(
     mut commands: Commands,
-    config: Res<TerrainHierarchy>,
+    settings: Res<LodSettings>,
     catalog: Res<WorldCatalog>,
     origin: Res<WorldOrigin>,
     stream: Res<TerrainLodStream>,
@@ -573,7 +619,7 @@ fn publish(
     >,
     mut stats: ResMut<TerrainLodStats>,
 ) {
-    readiness.enabled = config.enabled;
+    readiness.published = true;
     readiness.space = stream.identity.as_ref().map(|i| i.1);
     readiness.identity = stream.identity.clone();
     readiness.cell_size = readiness
@@ -602,10 +648,9 @@ fn publish(
     });
     stats.blocked_actors = 0;
     for (entity, transform, mut visibility, hidden) in &mut actors {
-        let ready = !readiness.enabled
-            || stream
-                .sample_contact_height(transform.translation(), &origin, &readiness)
-                .is_some_and(|h| (h - transform.translation().y).abs() <= 0.001);
+        let ready = stream
+            .sample_contact_height(transform.translation(), &origin, &readiness)
+            .is_some_and(|h| (h - transform.translation().y).abs() <= 0.001);
         if ready {
             if let Some(previous) = hidden {
                 *visibility = previous.0;
@@ -623,7 +668,7 @@ fn publish(
     stats.mismatched_grass_pages = 0;
     if let Some(mut gate) = gate {
         let mut next = VegetationTerrainGate::default();
-        if readiness.enabled && inputs.camera.is_some() {
+        if inputs.camera.is_some() {
             next.block_all = inputs.error.is_some() || stream.active.is_empty();
             if let Some(scene) = scene {
                 let mut samples = 0;
@@ -645,8 +690,8 @@ fn publish(
                             stats.contact_source_samples += count as u64;
                         }
                     }
-                    let tolerance = config.settings.contact_tolerance
-                        - page.source_error.unwrap_or(f32::INFINITY);
+                    let tolerance =
+                        settings.contact_tolerance - page.source_error.unwrap_or(f32::INFINITY);
                     let region = ContactRegion {
                         bounds: page.bounds,
                         exact: true,
@@ -659,7 +704,7 @@ fn publish(
                     }
                     if page
                         .source_error
-                        .is_some_and(|e| e > config.settings.contact_tolerance)
+                        .is_some_and(|e| e > settings.contact_tolerance)
                         || page.key.is_none()
                     {
                         stats.mismatched_grass_pages += 1;
@@ -794,10 +839,7 @@ mod tests {
         scene.pages.truncate(1);
         scene.pages[0].origin_xz = [0.; 2];
         let size = scene.pages[0].size;
-        world.insert_resource(TerrainHierarchy {
-            enabled: true,
-            ..default()
-        });
+        world.init_resource::<LodSettings>();
         world.insert_resource(WorldCatalog {
             generation_id: "one".into(),
             world_spaces: vec![WorldSpaceInfo {
@@ -988,7 +1030,7 @@ mod tests {
             },
         );
         let readiness = TerrainContactReadiness {
-            enabled: true,
+            published: true,
             space: Some(space),
             cell_size: size,
             index,
@@ -1044,7 +1086,7 @@ mod tests {
             },
         );
         let mut readiness = TerrainContactReadiness {
-            enabled: true,
+            published: true,
             space: Some(WorldSpaceId(1)),
             cell_size: 32.,
             index,

@@ -67,11 +67,8 @@ pub(super) fn request_world_space_from_keyboard(
 #[allow(clippy::too_many_arguments)]
 pub(super) fn apply_world_space_transition(
     mut commands: Commands,
-    mut terrain_meshes: ResMut<Assets<Mesh>>,
-    mut terrain_materials: ResMut<Assets<TerrainMaterial>>,
-    mut terrain_images: ResMut<Assets<Image>>,
+    mut meshes: ResMut<Assets<Mesh>>,
     mut active_space: ResMut<ActiveWorldSpace>,
-    config: Res<WorldStreamingConfig>,
     mut viewpoint: ResMut<WorldViewpoint>,
     mut origin: ResMut<WorldOrigin>,
     mut stream: ResMut<WorldStream>,
@@ -88,16 +85,14 @@ pub(super) fn apply_world_space_transition(
     mut entry: ResMut<terrain_lod::entry::TerrainEntry>,
     mut terrain: ResMut<terrain_lod::TerrainLodStream>,
     tracker: Res<terrain_lod::UploadTracker>,
-    lod_config: Res<TerrainHierarchy>,
     reload: Res<WorldGenerationReload>,
 ) {
     if reload.active() {
         return;
     }
-    if lod_config.enabled
-        && active_space
-            .requested
-            .is_some_and(|t| Some(t.space) != active_space.current)
+    if active_space
+        .requested
+        .is_some_and(|t| Some(t.space) != active_space.current)
         && !active_space.requested.is_some_and(|t| {
             stream
                 .manifest
@@ -129,14 +124,7 @@ pub(super) fn apply_world_space_transition(
 
     let changed_space = active_space.current != Some(transition.space);
     if changed_space {
-        clear_streamed_pages(
-            &mut commands,
-            &mut terrain_meshes,
-            &mut terrain_materials,
-            &mut terrain_images,
-            &mut stream,
-            &mut residency,
-        );
+        clear_streamed_pages(&mut commands, &mut stream, &mut residency);
     }
 
     active_space.current = Some(transition.space);
@@ -152,20 +140,11 @@ pub(super) fn apply_world_space_transition(
     viewpoint.set(position);
     if changed_space {
         origin.space = Some(transition.space);
-        origin.cell = if rebase::effective_config(*config, lod_config.enabled)
-            .floating_origin_threshold_cells
-            .is_some()
-        {
-            position.cell
-        } else {
-            CellCoord::ZERO
-        };
-    }
-    if changed_space && lod_config.enabled {
+        origin.cell = position.cell;
         entry.commit(
             &mut terrain,
             &mut commands,
-            &mut terrain_meshes,
+            &mut meshes,
             &tracker,
             origin.cell,
             space.cell_size,

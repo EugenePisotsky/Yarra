@@ -1,5 +1,5 @@
 //! Where render space is: the logical viewpoint streaming follows, and the world cell at the
-//! render origin, which moves with the viewpoint in the editor (floating origin).
+//! render origin, which follows the viewpoint (floating origin).
 use super::*;
 
 /// Logical position around which the world index and preload set are requested.
@@ -108,16 +108,10 @@ pub(super) fn sync_stream_focus_to_viewpoint(
     ));
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn update_world_origin(
     mut commands: Commands,
-    config: Res<WorldStreamingConfig>,
-    terrain_lod: Res<TerrainHierarchy>,
     viewpoint: Res<WorldViewpoint>,
     mut origin: ResMut<WorldOrigin>,
-    mut terrain_meshes: ResMut<Assets<Mesh>>,
-    mut terrain_materials: ResMut<Assets<TerrainMaterial>>,
-    mut terrain_images: ResMut<Assets<Image>>,
     mut stream: ResMut<WorldStream>,
     mut residency: ResMut<SourceResidency>,
     mut roots: rebase::Roots,
@@ -125,15 +119,8 @@ pub(super) fn update_world_origin(
     let Some(position) = viewpoint.position else {
         return;
     };
-    let desired_cell = desired_origin_cell(
-        rebase::effective_config(*config, terrain_lod.enabled),
-        *origin,
-        position,
-    );
-    if origin.space == Some(position.space)
-        && origin.cell == desired_cell
-        && stream.height_only == terrain_lod.enabled
-    {
+    let desired_cell = desired_origin_cell(*origin, position);
+    if origin.space == Some(position.space) && origin.cell == desired_cell {
         return;
     }
 
@@ -141,8 +128,7 @@ pub(super) fn update_world_origin(
     origin.space = Some(position.space);
     origin.cell = desired_cell;
     // CPU source pages use canonical keys. Keep them and their pending work on a
-    // same-space rebase; only render roots need translating. The editable renderer
-    // still rebuilds its materials using the editor's existing origin contract.
+    // same-space rebase; only render roots need translating.
     if previous.space == origin.space
         && let Some(size) = stream
             .manifest
@@ -150,45 +136,24 @@ pub(super) fn update_world_origin(
             .and_then(|m| m.world_space(position.space))
             .map(|s| s.cell_size)
     {
-        rebase::shift_roots(
-            &mut roots,
-            previous.cell,
-            origin.cell,
-            size,
-            terrain_lod.enabled && stream.height_only,
-        );
+        rebase::shift_roots(&mut roots, previous.cell, origin.cell, size);
     }
-    if previous.space != origin.space || !terrain_lod.enabled || !stream.height_only {
-        clear_streamed_pages(
-            &mut commands,
-            &mut terrain_meshes,
-            &mut terrain_materials,
-            &mut terrain_images,
-            &mut stream,
-            &mut residency,
-        );
+    if previous.space != origin.space {
+        clear_streamed_pages(&mut commands, &mut stream, &mut residency);
     }
-    stream.height_only = terrain_lod.enabled;
     info!(
         "rebased render origin from {:?}:{:?} to {:?}:{:?}",
         previous.space, previous.cell, origin.space, origin.cell
     );
 }
 
-pub(super) fn desired_origin_cell(
-    config: WorldStreamingConfig,
-    origin: WorldOrigin,
-    position: WorldPosition,
-) -> CellCoord {
-    match config.floating_origin_threshold_cells {
-        Some(threshold)
-            if origin.space != Some(position.space)
-                || origin.cell.chebyshev_distance(position.cell) > threshold =>
-        {
-            position.cell
-        }
-        Some(_) => origin.cell,
-        None => CellCoord::ZERO,
+pub(super) fn desired_origin_cell(origin: WorldOrigin, position: WorldPosition) -> CellCoord {
+    if origin.space != Some(position.space)
+        || origin.cell.chebyshev_distance(position.cell) > FLOATING_ORIGIN_THRESHOLD_CELLS
+    {
+        position.cell
+    } else {
+        origin.cell
     }
 }
 
@@ -215,7 +180,7 @@ mod tests {
     }
 
     #[test]
-    fn editor_origin_rebases_only_after_its_threshold() {
+    fn origin_rebases_only_after_its_threshold() {
         let origin = WorldOrigin {
             space: Some(WorldSpaceId(1)),
             cell: CellCoord { x: 10, z: 20 },
@@ -230,17 +195,7 @@ mod tests {
             ..nearby
         };
 
-        assert_eq!(
-            desired_origin_cell(WorldStreamingConfig::editor(), origin, nearby),
-            origin.cell
-        );
-        assert_eq!(
-            desired_origin_cell(WorldStreamingConfig::editor(), origin, remote),
-            remote.cell
-        );
-        assert_eq!(
-            desired_origin_cell(WorldStreamingConfig::game(), origin, remote),
-            CellCoord::ZERO
-        );
+        assert_eq!(desired_origin_cell(origin, nearby), origin.cell);
+        assert_eq!(desired_origin_cell(origin, remote), remote.cell);
     }
 }

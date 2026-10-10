@@ -33,7 +33,6 @@ pub(super) type Roots<'w, 's> = Query<
         &'static mut Transform,
         Option<&'static mut GlobalTransform>,
         Option<&'static mut MoveIntent>,
-        Has<StreamedPageEntity>,
     ),
     (
         Without<ChildOf>,
@@ -41,31 +40,10 @@ pub(super) type Roots<'w, 's> = Query<
     ),
 >;
 
-pub(super) fn effective_config(
-    mut config: WorldStreamingConfig,
-    hierarchy: bool,
-) -> WorldStreamingConfig {
-    // Keep normal launches on their existing material/authoring path until its
-    // world-space texture and wind phase contracts are implemented.
-    if config.gameplay_pages && hierarchy {
-        config.floating_origin_threshold_cells = Some(8);
-    }
-    config
-}
-
-pub(super) fn shift_roots(
-    roots: &mut Roots,
-    old: CellCoord,
-    new: CellCoord,
-    size: f32,
-    keep_sources: bool,
-) {
+pub(super) fn shift_roots(roots: &mut Roots, old: CellCoord, new: CellCoord, size: f32) {
     let [x, z] = old.offset_from(new, size);
     let shift = Vec3::new(x as f32, 0., z as f32);
-    for (mut transform, global, intent, source) in roots {
-        if source && !keep_sources {
-            continue;
-        }
+    for (mut transform, global, intent) in roots {
         transform.translation += shift;
         // Pointer rays in this Update must see the same origin as terrain queries.
         // Child transforms are propagated normally before rendering.
@@ -88,10 +66,6 @@ mod tests {
         let space = WorldSpaceId(1);
         let mut app = App::new();
         app.insert_resource(WorldStreamingConfig::game())
-            .insert_resource(TerrainHierarchy {
-                enabled: true,
-                ..default()
-            })
             .insert_resource(ActiveWorldSpace {
                 current: Some(space),
                 ..default()
@@ -102,11 +76,7 @@ mod tests {
             })
             .init_resource::<WorldViewpoint>()
             .init_resource::<SourceResidency>()
-            .init_resource::<Assets<Mesh>>()
-            .init_resource::<Assets<TerrainMaterial>>()
-            .init_resource::<Assets<Image>>()
             .insert_resource(WorldStream {
-                height_only: true,
                 // Cleared pages would drop the index request too.
                 requested_index: Some((7, space)),
                 manifest: Some(RuntimeManifest {
@@ -237,21 +207,5 @@ mod tests {
             app.world().get::<Transform>(actor).unwrap().translation.x,
             17.
         );
-        // Switching renderer mode must shift game roots even though source pages
-        // are being recreated under a different representation contract.
-        app.world_mut().resource_mut::<TerrainHierarchy>().enabled = false;
-        app.update();
-        assert_eq!(app.world().resource::<WorldOrigin>().cell, CellCoord::ZERO);
-        assert_eq!(
-            app.world().get::<Transform>(actor).unwrap().translation.x,
-            625.
-        );
-        app.world_mut().resource_mut::<TerrainHierarchy>().enabled = true;
-        app.update();
-        assert_eq!(
-            app.world().get::<Transform>(actor).unwrap().translation.x,
-            17.
-        );
-        assert_eq!(app.world().resource::<WorldViewpoint>().position, position);
     }
 }
