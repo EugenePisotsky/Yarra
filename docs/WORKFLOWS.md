@@ -44,7 +44,7 @@ Ground layers are either imported or painted. An imported layer names a mask (ed
 
 Re-importing after a change in Houdini rewrites only cells whose heights or imported coverage changed, so the cook that follows is incremental. Objects, roads and painted layers in the project are kept; a cell the new footprint no longer covers is removed and fails if it still holds objects or roads. Sculpt in Houdini, not in the editor: a re-import replaces heights.
 
-To stress streaming on foot, `--render-repro actor-walk --start-view VIEW` walks the player along the view's `route` at 20 m/s. The camera follows, holds its heading for 60 s, then looks back and forth every 20 s. The game caps at 60 fps unless `--fps` says otherwise (0 follows the display). Trees, their shadow cascades and their temporal depth and motion are drawn from one instance buffer; `--tree-entities` draws them as one render entity per mesh instead (the old path, for comparisons), and `--tree-shadow-lod 1` casts their shadows from one LOD coarser. `ACTOR_WALK` lines log progress. Whenever an actor waits more than 5 s for ground, the game logs `TERRAIN_STALL` with the loader's state; a loader that stops for good logs `TERRAIN_LOD_FAILED`. To send a log of a normal session: `cargo run --release -p yarra-app-game 2>&1 | tee tmp/walk.log`.
+To stress streaming on foot, `--render-repro actor-walk --start-view VIEW` walks the player along the view's `route` at 20 m/s. The camera follows, holds its heading for 60 s, then looks back and forth every 20 s. The game caps at 60 fps unless `--fps` says otherwise (0 follows the display). Trees, their shadow cascades and their temporal depth and motion are drawn from one instance buffer (the editor still draws one render entity per mesh); `--tree-shadow-lod 1` casts their shadows from one LOD coarser. `ACTOR_WALK` lines log progress. Whenever an actor waits more than 5 s for ground, the game logs `TERRAIN_STALL` with the loader's state; a loader that stops for good logs `TERRAIN_LOD_FAILED`. To send a log of a normal session: `cargo run --release -p yarra-app-game 2>&1 | tee tmp/walk.log`.
 
 ### World map
 
@@ -73,7 +73,7 @@ Names are laid out first, and symbols keep clear of them; a name with no room is
 - F1 or **Performance** opens the panel; Escape closes it or cancels capture. `--performance-open` starts open. `--diagnostics panel` keeps F1 with frame/app timing only; `--diagnostics off` omits F1 and timing instrumentation. Full diagnostics remain the default.
 - The persistent **FPS limit** button cycles Follow display → 30 → 60 → 120. `--fps N` accepts 0 or 15–240; Reset restores the launch cap, including custom values. VSync remains enabled.
 - **Movement** below FPS limit toggles Normal / Fast (10×) for island exploration. It speeds up the player with WASD, gamepad and click-to-move; NPC speeds stay unchanged and unloaded terrain still stops movement. It lasts for this session; **Reset launch settings** restores Normal.
-- Quality controls resolution (100/75/50/33%), upscaler, MSAA, density and terrain/object detail. Auto/Spatial/Linear are normal choices; Temporal remains an explicit prototype.
+- Quality controls resolution (100/75/50/33%), upscaler, MSAA, density and terrain/object detail. Auto, Spatial, Temporal and Linear are all supported; Temporal's open cost and blur issues are in the [ledger](EXPERIMENTS.md).
 - **Auto exposure** (Features) turns eye adaptation on or off; the correction eases out over about a second.
 - **Ambient particles** (Features) hides dust motes, seed fluff and falling leaves.
 - **Light shafts and sun rays** (Features) skips the sunbeam passes; the sun's glare stays. The air under crowns that beams light up is authored in the editor's **Fog and mist** section.
@@ -90,7 +90,7 @@ uv run --with numpy --with pillow python tools/look_sheet.py tmp/look/start
 
 Keys: `ev` (EV100), `tone` (tony, agx, neutral, filmic, aces, boring, reinhard, none), `ambient` and `sun` (scales of the sky and sun light), `canopy` (0–1), `auto`, `fog`, `particles` and `shafts` (on/off), `air` (scale of the air under crowns), `burst` (that many screenshots one after another, a frame or two apart, for motion), `lightning` (a strike ahead of the camera held that many seconds in, 0–1.1; storms need `--weather storm` for their light), `phase` (time of day as a share of the day: 0.27 is just after sunrise, 0.34 the game's morning, 0.5 noon), `tilt` (degrees the camera turns up, −30–90) and `haze`, `mist` and `depth` (scales of the authored haze and mist extinction and the mist depth). With `tone=none` the frame is the exposed linear image, so its 10–90% mean log2 luminance is what auto exposure meters.
 
-On macOS 14+, capped modes coordinate display callbacks and the Metal minimum presentation interval. Other platforms/older macOS use the timer fallback. This changes app pacing, not the display's system setting. The normal launch follows the display and uses 50% resolution with 4× MSAA.
+On macOS 14+, capped modes coordinate display callbacks and the Metal minimum presentation interval. Other platforms/older macOS use the timer fallback. This changes app pacing, not the display's system setting. The normal launch caps at 60 fps (`--fps 0` follows the display) and uses 50% resolution with 4× MSAA.
 
 F1 Advanced owns terrain macro variation, terrain page gizmos and canopy reload. Reset and A/B restore include those settings and the actual canopy values. B/G/H/U/V and the old X/P/O/L/K/I renderer handlers were removed. Normal grass always uses the published catalog; separate legacy overlays and banding controls are gone.
 
@@ -98,7 +98,7 @@ F1 Advanced owns terrain macro variation, terrain page gizmos and canopy reload.
 
 World and Inspector are the default windows. Tools opens optional Assets, Navigator and Diagnostics. Switching workspaces retains source drafts/history; opening a window does not automatically activate its authoring tool.
 
-Navigation: right/middle drag orbits, Shift+right drag pans, wheel/pinch zooms, and right mouse + WASD/QE flies. Navigator bookmarks can be passed to either app as `--start-view FILE`; the file stores a logical view rather than a screenshot.
+Navigation: right/middle drag orbits, Shift+right drag pans, wheel/pinch zooms, and right mouse + WASD/QE flies. View files (`content/world.project.views/*.ron`, written by the heightfield import and `tools/forest_plan.py --apply`) can be passed to either app as `--start-view FILE`; a file stores a logical view rather than a screenshot.
 
 **Objects:** select visible objects or stable IDs in the bounded asset tree. Shift/Cmd-click builds a multi-selection. 1/2/3 selects move/yaw/uniform-scale gizmos. Delete/Backspace is undoable. Cmd+Z / Cmd+Shift+Z undo/redo; Cmd+S saves. The inspector affects the active object; gizmo operations can apply to selected companions. Source changes are represented by temporary proxies until publication.
 
@@ -117,21 +117,27 @@ species, and the LOD/wind contract. Start there for shape changes. Use
 `houdini_export_tree.py` and Forest Tree Starter Kit paths below reproduce
 separate legacy assets.
 
-| Current family | Runtime pack / tracked catalog under `assets/packs/` | Review view |
-| --- | --- | --- |
-| Birch: leafy, sparse, bare, crown, pendulous, double, triple | `yarra_birches/birches.catalog.ron` | See birch placement workflow below |
-| Oak: forest, spreading, sparse | `yarra_oaks/oaks.catalog.ron` | See oak placement workflow below |
-| Maple: forest, spreading, sparse | `yarra_maples/maples.catalog.ron` | See maple placement workflow below |
-| Tall layered broadleaf | `yarra_tall_forest/tall_forest.catalog.ron` | `tall-forest-stand` |
-| Generic forest shrubs: rounded, spreading, sparse; medium rounded/spreading/upright (medium forms under review) | `yarra_shrubs/shrubs.catalog.ron` | `shrubs-stand`, `shrubs-medium-stand` |
-| Bay shrub | `yarra_bay/bay.catalog.ron` | `bay-stand` |
-| Longleaf: healthy, tall-bole, broad, leaning, flat-top, half-bare, nearly-bare, one-sided | `yarra_longleaf/longleaf.catalog.ron` | `longleaf-kit` |
-| Norway spruce | `yarra_spruces/spruces.catalog.ron` | `spruce-stand` |
-| Dead broadleaf: upright, spreading, split, slender, double, triple | `yarra_dead_trees/dead_trees.catalog.ron` | `dead-trees-stand`, `dead-trees-slender-stand` |
+| Current family | Runtime pack / tracked catalog under `assets/packs/` |
+| --- | --- |
+| Birch: leafy, sparse, bare, crown, pendulous, double, triple | `yarra_birches/birches.catalog.ron` |
+| Oak: forest, spreading, sparse | `yarra_oaks/oaks.catalog.ron` |
+| Maple: forest, spreading, sparse | `yarra_maples/maples.catalog.ron` |
+| Tall layered broadleaf | `yarra_tall_forest/tall_forest.catalog.ron` |
+| Generic forest shrubs: rounded, spreading, sparse; medium rounded/spreading/upright (medium forms under review) | `yarra_shrubs/shrubs.catalog.ron` |
+| Bay shrub | `yarra_bay/bay.catalog.ron` |
+| Longleaf: healthy, tall-bole, broad, leaning, flat-top, half-bare, nearly-bare, one-sided | `yarra_longleaf/longleaf.catalog.ron` |
+| Norway spruce | `yarra_spruces/spruces.catalog.ron` |
+| Dead broadleaf: upright, spreading, split, slender, double, triple | `yarra_dead_trees/dead_trees.catalog.ron` |
 
 These are 29 approved forms plus three medium shrub studies and four longleaf shape variants under review, each with three mesh LODs and an impostor. Legacy pine packs and branch-study
-assets remain archived; do not restore their retired preview placements when
-adding new pine variants. The current pine scaffold is `pine_longleaf`.
+assets remain archived. The current pine scaffold is `pine_longleaf`.
+
+Review a form in the LOD lab (below) by its catalog key, `pack/asset` (e.g.
+`--lod-lab yarra_spruces/spruce_forest`), and in the world after
+`tools/forest_plan.py --apply` plants the kit's trees and shrubs. The per-family
+placement and capture scripts (`place_*_preview.py`, `render_*_preview.py`) and
+their review bookmarks were written for the earlier `Island` world and were
+removed on October 10 (recoverable from Git at `7208dd6`).
 
 1. Build and validate the selected family in YarraVegetation. Keep the seed,
    source package and settings in a preset, with a separate output name for an
@@ -142,10 +148,10 @@ adding new pine variants. The current pine scaffold is `pine_longleaf`.
    with Khronos KTX 4.4.2, and preserves coverage mipmaps. Use an explicit
    `--output` and `--catalog`; their defaults target the birch pack. Split
    variants into separate packs if they intentionally use different atlases.
-3. Register the regenerated catalog, then place only genuinely new samples and
-   cook the world. Re-register even if URIs are unchanged: mesh memory estimates
-   can change when vertex attributes change. Registration preserves placements;
-   it does not publish by itself. Existing shape updates need no placement rerun.
+3. Register the regenerated catalog, then cook the world. Re-register even if
+   URIs are unchanged: mesh memory estimates can change when vertex attributes
+   change. Registration preserves placements; it does not publish by itself.
+   Existing shape updates need no new placements.
 4. Restart the game for a reliable check of new meshes/materials. Do not restart
    a user's active tuning session without coordinating it: F1 wind settings are
    temporary. Save requested tuning as source defaults separately.
@@ -159,10 +165,9 @@ python3 tools/import_vegetation_bundle.py --ktx /path/to/ktx \
   --output assets/local/yarra_spruces \
   --catalog assets/packs/yarra_spruces/spruces.catalog.ron
 cargo run --release -p yarra-world-cook -- import-assets assets/packs/yarra_spruces/spruces.catalog.ron
-# Only needed to create missing preview instances/views:
-python3 tools/place_spruce_preview.py
 cargo run --release -p yarra-world-cook -- cook
-cargo run --release -p yarra-app-game -- --start-view content/world.project.views/spruce-stand.ron
+cargo run --release -p yarra-app-game -- --start-view content/world.project.views/start.ron \
+  --lod-lab yarra_spruces/spruce_forest
 ```
 
 **Impostors.** Distant trees are drawn as hemi-octahedral impostors. Each is baked from the
@@ -245,15 +250,6 @@ Captures are cleanest in a runtime database without trees (`--world-db`). In the
 the surrounding forest is part of the frame. `--lod-lab-screenshot FILE` saves the
 interactive window once the trees have drawn, then exits.
 
-For another family, adapt the existing `place_spruce_preview.py` or
-`place_longleaf_preview.py` pattern: unique stable sample IDs, terrain-relative
-placement, a source SQLite backup, and preservation of unrelated objects and
-existing bookmark edits. Keep new review samples near the birches/longleaf row
-around X 2474–2551, Z 4346, with room between crowns. Add whole/close/below/far/
-overhead bookmarks. A few rotated/scaled samples help review a shape; they do
-not substitute for independently authored variants. Preview scripts describe
-local world edits; Git does not carry the resulting SQLite files.
-
 Check identifiable leaves/needles and mesh-to-card joins at character scale,
 the whole silhouette from several directions, moving-camera facing behavior,
 LOD transitions and reduced internal resolution. Test calm and strong wind,
@@ -288,13 +284,10 @@ python3 tools/import_vegetation_bundle.py \
   --bundle /path/to/vegetation/outputs/birch_double/current \
   --bundle /path/to/vegetation/outputs/birch_triple/current
 cargo run --release -p yarra-world-cook -- import-assets assets/packs/yarra_birches/birches.catalog.ron
-python3 tools/place_birch_preview.py
-python3 tools/place_birch_variants_preview.py
 cargo run --release -p yarra-world-cook -- cook
-cargo run --release -p yarra-app-game -- --start-view content/world.project.views/birch-near.ron
 ```
 
-The placement helper is specific to the current 32 m island world: it adds nine samples in three groups near the start, saves a source backup and placement IDs under `tmp/birch-placement-*/`, and preserves existing samples on reruns. Six are leafy, two sparse and one bare. Bookmarks `birch-near`, `birch-west`, `birch-east`, and `birch-overhead` cover the groups and an elevated view. The revised catalog has three mesh LODs (3,104–3,212 / 922 / 366–414 triangles, depending on foliage state), with provisional 480/180/0 logical-pixel thresholds. Billboard view selection and the separate translucency map are not integrated; the last mesh LOD remains active at distance. These placements are an appearance check, not a dense-forest or device-performance benchmark.
+The revised catalog has three mesh LODs (3,104–3,212 / 922 / 366–414 triangles, depending on foliage state) and an impostor. The separate translucency map is not integrated.
 
 The refined birch uses smaller leaves, doubled baked twig thickness and 20% thicker mesh branches. The original broad-leaf look remains in authoring presets `generic_deciduous_leafy/sparse/bare`. Birch selects 25% of LOD0 leafy clusters from the inner crown (54 leafy / 11 sparse / 0 bare) and retains them at every mesh LOD. These two-triangle clusters rotate around their centers and use eight dedicated stemless atlas tiles; structural cards stay fixed. The shared foliage atlas is now 2048×3072, with the original tile detail and no additional material. In Houdini, **Moving share of leafy cards** can be set to 0.20–0.30; changing it reuses the atlas. **Stemless moving foliage** retains leaves and fine twigs but removes the main stem and attachment bases. `_CARD_FACING.xy` stores mode (0 legacy axis, 1 camera facing) and elevation follow (0 preserve tilt, 1 full facing). Change **Facing & detail** in Houdini and rebuild, or compare elevation live in the generated browser preview. Older exports without this optional attribute retain legacy behavior. All passes use the main camera; previous-camera poses drive temporal motion, and culling uses each mesh's measured rotation radius. The current lighting is unchanged.
 
@@ -305,16 +298,7 @@ separate ground-planted stems of different heights and lean. All four share
 the original birch atlas, use connected wind and bake crown occlusion for
 `crown_v2`. Their fixed card scales stay constant through LODs. Import all seven
 birch bundles together, since each import replaces the complete local pack.
-`place_birch_variants_preview.py` adds four samples at X 2490 / 2504 / 2519 /
-2535, Z 4356, beside the conifer review row. It preserves existing placements
-and bookmark edits; source backups stay under `tmp/birch-variants-placement-*`.
-Use `birch-variants-stand`, `crown`, `pendulous`, `double`, `triple`, `close`,
-`bare`, `roots`, `overhead` and `far` bookmarks (all share the prefix).
-`birch-variants-walk` starts normal play between the hanging birch and double clump.
-`render_birch_variants_preview.py` captures native and reduced-resolution views
-under ignored `tmp/birch-variants-review/`. These are appearance checks; the
-clumps contain multiple stems and are more expensive than one tree. Dense
-forest cost remains unmeasured.
+The clumps contain multiple stems and are more expensive than one tree.
 
 **Oak prototypes:** Forest, spreading and sparse oaks use the same importer and existing crown lighting. All three share six compressed textures and the same eight shoot recipes, each with leafy, bare and stemless tiles. Imported triangle counts are 2,616/784/374 (forest), 2,814/858/424 (spreading), and 2,616/736/286 (sparse). The original 25% moving subset is supplemented by 24 forest / 40 spreading interior stemless quads, giving 63 / 79 / 15 facing cards at every mesh LOD. IDs and pivots stay stable across LODs. Added fill reuses the same atlas; transparent overlap still needs dense-forest profiling.
 
@@ -328,12 +312,10 @@ python3 tools/import_vegetation_bundle.py \
   --output assets/local/yarra_oaks \
   --catalog assets/packs/yarra_oaks/oaks.catalog.ron
 cargo run --release -p yarra-world-cook -- import-assets assets/packs/yarra_oaks/oaks.catalog.ron
-python3 tools/place_oak_preview.py
 cargo run --release -p yarra-world-cook -- cook
-cargo run --release -p yarra-app-game -- --start-view content/world.project.views/oak-spreading.ron
 ```
 
-`place_oak_preview.py` adds three samples east of the birch stand, preserving existing scenery and edits on repeat runs. It backs up the source to `tmp/oak-placement-*/` and creates `oak-forest`, `oak-spreading`, `oak-sparse`, and `oak-overhead` bookmarks. Ground and overhead captures are under local `tmp/oak-playtest/`. These are art/correctness checks; dense-forest performance is not yet measured. Existing LOD stippling remains visible. Billboard selection and the separate translucency texture are still pending runtime work.
+An impostor follows the three mesh LODs. The separate translucency texture is still pending runtime work.
 
 **Maple prototypes:** Forest, spreading and sparse forms use paired maple shoots from two supplied leaf sheets, an upright leader and smoother rising forks. All three share six compressed runtime maps. Elm bark is a provisional stand-in. Counts are 2,612/754/362 (forest), 2,968/858/406 (spreading), and 2,630/722/292 (sparse). Their 58/71/17 centered facing cards persist at each mesh LOD, including 16/24/0 density-aware filler cards. The current lighting and renderer are unchanged.
 
@@ -345,12 +327,10 @@ python3 tools/import_vegetation_bundle.py \
   --output assets/local/yarra_maples \
   --catalog assets/packs/yarra_maples/maples.catalog.ron
 cargo run --release -p yarra-world-cook -- import-assets assets/packs/yarra_maples/maples.catalog.ron
-python3 tools/place_maple_preview.py
 cargo run --release -p yarra-world-cook -- cook
-cargo run --release -p yarra-app-game -- --start-view content/world.project.views/maple-spreading.ron
 ```
 
-The maple samples stand east of the oaks. `place_maple_preview.py` preserves existing placements/bookmarks and backs up the source to `tmp/maple-placement-*/`. It creates `maple-forest`, `maple-spreading`, `maple-sparse`, and `maple-overhead` bookmarks. Art review is pending; native captures go under local `tmp/maple-playtest/`. The same billboard and dense-forest profiling limitations as oak apply.
+As for oak, an impostor follows the three mesh LODs.
 
 The maple spacing revision reduces each baked spray from 49–65 overlapping leaves to 29–39, with more space between pairs and slightly smaller leaves. The existing sample placements, card counts, mesh LOD budgets and shading remain unchanged. Reimport the three bundles together to refresh their shared texture set and updated mesh bounds.
 
@@ -364,12 +344,10 @@ python3 tools/import_vegetation_bundle.py \
   --output assets/local/yarra_tall_forest \
   --catalog assets/packs/yarra_tall_forest/tall_forest.catalog.ron
 cargo run --release -p yarra-world-cook -- import-assets assets/packs/yarra_tall_forest/tall_forest.catalog.ron
-python3 tools/place_tall_forest_preview.py
 cargo run --release -p yarra-world-cook -- cook
-cargo run --release -p yarra-app-game -- --start-view content/world.project.views/tall-forest-stand.ron
 ```
 
-Three samples of the same shape at different rotations/scales stand east of the maples, at x=2712/2736/2760, z≈4310. The placement helper backs up the source, uses stable IDs and preserves edits on repeat runs. It creates `tall-forest`, `tall-forest-stand` and `tall-forest-overhead` bookmarks. Native captures go under local `tmp/tall-forest-playtest/`. The authoring billboard is exported but is not imported into the runtime yet.
+An impostor follows the three mesh LODs.
 
 **Tall-tree lighting trial:** The approved art checkpoint is vegetation `a0818aa` / Yarra `d48e5fd`. The subsequent local trial enables **Crown lighting → Bake crown occlusion**, strength 0.9, for the tall preset. Rebuild and import with the same commands above. The importer selects `crown_v2` only for `crown_sky_v1` source materials; other species retain legacy shading. Broad sky visibility is baked into existing vertex colors from the complete crown before LOD thinning. Beyond dynamic-shadow coverage, the shader uses this data and stable crown normals to preserve sun-responsive contrast. Geometry and original foliage textures are unchanged. Restart the rebuilt game to load the new material pipeline and imported assets. Local native before/after captures and bookmarks are under `tmp/crown-occlusion/`; close, 35/65/100/150 m and overhead views were checked. The distant effect approximates crown self-shadowing; it does not extend cast ground shadows. Full weather/sun and dense-forest device profiling remain pending.
 
@@ -393,25 +371,17 @@ For grass streaming/history regression, run `cargo test -p yarra-vegetation-rend
 
 **Roads:** activate Roads, choose a style, then New cart road and place two points. Edit control points, tangents and widths; extend/split with the tool controls. Road styles define wheel/center/shoulder wear, retained grass, ground mixtures and rut/relief variation. Explicit junctions connect compatible 2–4-arm endpoints. Save checkpoints roads and painter changes together; publication derives ground, grass and relief from the same source.
 
-**Atmosphere:** open World → Atmosphere for the active space's profile and preview time/weather. **Weather** edits each preset (clouds, visibility, fog and skylight grey, exposure, wind, rain) and the random sequence (change and hold durations, next-state weights); the preview row shows any preset with a chosen wetness, without saving. Apply authored profile edits through normal undo/save/publication. Preview transport and temporary quality controls do not rewrite startup time/weather merely by being adjusted. Clouds Off removes rendering/shadows, not the weather's ambient response.
+**Atmosphere:** open World → Atmosphere for the active space's profile and preview time/weather. **Weather** edits each preset (clouds, visibility, fog and skylight grey, exposure, wind, rain) and the random sequence (change and hold durations, next-state weights); the preview row shows any preset with a chosen wetness, without saving. Apply authored profile edits through normal undo/save/publication. Preview transport and temporary quality controls do not rewrite startup time/weather merely by being adjusted. **Game start** holds the phase the game starts at, with clouds running, as the game would first show the world; turn it off to edit. Clouds Off removes rendering/shadows, not the weather's ambient response.
 
 **Areas:** choose Areas in the World window to paint the named places gameplay reacts to. **Draw new area**, click corners on the terrain, then click the first corner or press Enter to close the shape; Backspace takes the last corner back and Esc cancels. Click an area to select it, drag a corner to move it, click an edge to add a corner there, and press Delete to remove the corner clicked last. The Areas window renames the selected area (lowercase letters, digits and `_ - / .`, the name gameplay content uses, e.g. `guard/gate_post`), optionally limits it to a height range for places under a bridge or on one floor, and deletes it. Areas save with everything else and have ordinary undo; publishing them recompiles no terrain. Outlines are drawn within 800 m of the camera.
 
 Save conflicts indicate newer source revisions: resolve/reload the draft rather than forcing a stale overwrite. Recovery data under `.editor` is separate from saved source. Generated preview failures must remain visible as stale/error state; they are not publication success.
 
-## Vegetation and animation studies
+## Canopy look and animation preview
 
-The Vegetation workspace renders isolated specimens/fields with camera, wind/time, catalog, palette, ground, density/LOD and reference-image controls. Shape and Colors edit the draft; **Save study** stores local reproduction settings, while **Save & Publish** applies authored catalog changes to the world. Linked image zoom is not camera movement. Use a full field and multiple views/motion for appearance acceptance, not only an attractive close specimen.
+The grass study workspace, its saved studies, reference photographs and capture tools were retired on October 10 (recoverable from Git at `7208dd6`); grass is judged in the world and in the game.
 
-```sh
-python3 tools/vegetation_study.py open --load content/vegetation/distance-01.ron
-python3 tools/vegetation_study.py capture --camera overhead --time 0
-python3 tools/vegetation_study.py capture --camera low --character --time 2.5
-```
-
-The helper builds the debug editor unless `--no-build` is supplied. `--output DIR` selects a fresh capture directory. Captures contain `viewport.png`, `editor.png`, `study.ron` and diagnostics. Replay loads an unsaved draft; it does not silently save a catalog. Matching pixels require the same renderer/assets/device. Reference originals live under `.editor/vegetation/references`; capture/study data is local. Study versions 1 and 2 remain readable.
-
-Canopy controls isolate combined/ground/blade treatment. **Save canopy look** writes `content/vegetation/canopy-look.ron`; the game loads it at startup or **F1 → Advanced → Reload canopy look**. This is an artistic approximation, not a shadow solution. Shader-level banding studies remain experimental; normal-game controls were removed. The Animation workspace independently previews catalog models/clips and transport without changing gameplay actor authority.
+The World workspace's Vegetation window opens **Canopy…** (*Canopy · ground and grass*). With the Vegetation tool's live preview active, it shows the combined, ground-only or blade-only treatment on world terrain and grass and sets the distance gradient. **Save canopy look** writes `content/vegetation/canopy-look.ron`; the game loads it at startup or **F1 → Advanced → Reload canopy look**. This is an artistic approximation, not a shadow solution. The Animation workspace independently previews catalog models/clips and transport without changing gameplay actor authority.
 
 ### Bay shrub prototype
 
@@ -427,18 +397,10 @@ python3 tools/import_vegetation_bundle.py \
   --output assets/local/yarra_bay \
   --catalog assets/packs/yarra_bay/bay.catalog.ron
 cargo run --release -p yarra-world-cook -- import-assets assets/packs/yarra_bay/bay.catalog.ron
-python3 tools/place_bay_preview.py
 cargo run --release -p yarra-world-cook -- cook
-cargo run --release -p yarra-app-game -- --start-view content/world.project.views/bay-near.ron
 ```
 
-Three samples stand east of the tall-tree stand at x=2782/2793/2804, z≈4310,
-with different rotations/scales. The placement helper backs up the source and
-preserves existing placements/bookmarks on repeat runs. Review bookmarks are
-`bay-near`, `bay-stand`, and `bay-overhead`; native captures are under
-`tmp/bay-playtest/`. As with the other kit assets, the authoring billboard is
-exported but not registered in the game pending runtime view selection. This
-small stand is an art check, not a dense-forest performance benchmark.
+An impostor baked from LOD2 follows the three mesh LODs (see Impostors above).
 
 ### Current longleaf pine kit
 
@@ -459,29 +421,13 @@ python3 tools/import_vegetation_bundle.py \
   --output assets/local/yarra_longleaf \
   --catalog assets/packs/yarra_longleaf/longleaf.catalog.ron
 target/release/yarra-world-cook import-assets assets/packs/yarra_longleaf/longleaf.catalog.ron
-python3 tools/place_longleaf_preview.py
 target/release/yarra-world-cook cook
-python3 tools/render_longleaf_preview.py
 ```
 
-The healthy tree is beside the birches at X 2510, Z 4346. Half-bare, nearly-bare,
-and one-sided forms are at X 2474, 2486, and 2498 on the same row. They retain
-the approved shape and needle scale, with 11 / 3 surviving limbs for the first
-two forms; the one-sided form retains 15% of its opposite-side groups.
+The half-bare, nearly-bare and one-sided forms retain the approved shape and
+needle scale, with 11 / 3 surviving limbs for the first two forms; the one-sided
+form retains 15% of its opposite-side groups.
 
-`longleaf-kit` shows the lineup. Individual bookmarks are `longleaf-half`,
-`longleaf-nearly`, `longleaf-one-sided`, and `longleaf-bare-close`.
-Healthy-tree bookmarks:
-`longleaf-whole`, `longleaf-close`, `longleaf-side`, `longleaf-overhead`,
-`longleaf-far`. The whole/far views offset their focus along the viewing ray
-because bookmarks allow at most a 24 m orbit distance. Placement removes the
-six known old-pine and two branch-study preview IDs in the same transaction as
-adding the new forms. It backs up SQLite first and verifies unrelated objects
-are unchanged. Reruns preserve existing longleaf placements and bookmark edits.
-
-Captures go to `tmp/longleaf-review`; use `--view close --mode half` for a
-reduced-resolution check. The helper verifies fresh, non-black output. These
-are visual checks; GPU/frame timings during a capture are not a forest benchmark.
 The eight longleaf forms are the active pine kit: four healthy shapes grown from
 their own seeds and four needle-loss forms of the approved tree. Old source assets
 remain archived. `tools/forest_plan.py` mixes all eight in pine stands.
@@ -489,7 +435,7 @@ remain archived. `tools/forest_plan.py` mixes all eight in pine stands.
 ### Norway spruce prototype
 
 Build `spruce_forest` in the vegetation project with `scripts/build.py`, then run
-`hython scripts/validate_spruce.py`. Import and place the resulting bundle:
+`hython scripts/validate_spruce.py`. Import the resulting bundle:
 
 ```sh
 python3 tools/import_vegetation_bundle.py \
@@ -497,26 +443,15 @@ python3 tools/import_vegetation_bundle.py \
   --output assets/local/yarra_spruces \
   --catalog assets/packs/yarra_spruces/spruces.catalog.ron
 target/release/yarra-world-cook import-assets assets/packs/yarra_spruces/spruces.catalog.ron
-python3 tools/place_spruce_preview.py
 target/release/yarra-world-cook cook
-python3 tools/render_spruce_preview.py
 ```
-
-Three rotated/scaled instances of the same forest preset sit at X 2525 / 2538 /
-2551, Z 4346, continuing the longleaf row near the birches. The helper backs up
-the source database and preserves existing placements and bookmark edits.
-Bookmarks: `spruce-stand`, `spruce-whole`, `spruce-close`, `spruce-below`,
-`spruce-overhead`, and `spruce-far`. Whole/stand/far views offset the focus to
-work around the 24 m orbit cap; below uses a low focus at the supported 5° pitch.
 
 The generator uses photographed qgpvu2 spruce shoots, fixed V-shaped branches,
 hanging side sprays and a small share of stemless facing fillers. Main sprays
 retain their size and fold at every LOD. Pine bark is a provisional stand-in.
 It uses existing crown lighting, cutout coverage mips and foliage shaders.
-Only three mesh LODs are registered; runtime billboard selection remains pending.
-Captures go to `tmp/spruce-review`; `--view close --mode half` tests reduced
-resolution. The spruce passed user art review on 2026-10-03; dense-forest
-profiling remains pending.
+Three mesh LODs and an impostor are registered. The spruce passed user art
+review on 2026-10-03.
 
 ### Common nettle
 
@@ -536,19 +471,10 @@ python3 tools/import_vegetation_bundle.py \
   --catalog assets/packs/yarra_nettles/nettles.catalog.ron \
   --canopy-blend 0 --lod-screen-heights 100 35
 cargo run --release -p yarra-world-cook -- import-assets assets/packs/yarra_nettles/nettles.catalog.ron
-python3 tools/place_nettles_preview.py
 cargo run --release -p yarra-world-cook -- cook
-cargo run --release -p yarra-app-game -- --start-view content/world.project.views/nettles-walk.ron
 ```
 
-Samples at X 2490/2493/2496, Z 4353 sit beside the sorrel and birches. Placement
-backs up the project database and preserves existing editor adjustments.
-Bookmarks use `nettles-`: `stand`, `young`, `mature`, `patch`, `close`, `side`,
-`overhead`, `far`, and `walk` for normal play. Capture with
-`tools/render_nettles_preview.py --view close --mode native` or `--view patch --mode half`
-for MetalFX Temporal; pass `--game /path/to/executable` for an existing build.
-Images/logs stay ignored in `tmp/nettles-review/`. Keep the preview window focused.
-This foliage pass has no flower/seed clusters. Dense-scene GPU cost is unmeasured.
+Ground cover has no impostor; its last mesh LOD stays drawn. This foliage pass has no flower/seed clusters. Dense-scene GPU cost is unmeasured.
 
 ### Wood-sorrel ground cover
 
@@ -568,20 +494,11 @@ python3 tools/import_vegetation_bundle.py \
   --catalog assets/packs/yarra_sorrel/sorrel.catalog.ron \
   --canopy-blend 0 --lod-screen-heights 80 25
 cargo run --release -p yarra-world-cook -- import-assets assets/packs/yarra_sorrel/sorrel.catalog.ron
-python3 tools/place_sorrel_preview.py
 cargo run --release -p yarra-world-cook -- cook
-cargo run --release -p yarra-app-game -- --start-view content/world.project.views/sorrel-walk.ron
 ```
 
-Samples at X 2490/2493/2496, Z 4350 sit beside the lilies/ferns. Placement is
-additive, backs up the project database and preserves existing editor adjustments.
-Bookmarks use the `sorrel-` prefix: `stand`, `open`, `full`, `patch`, `close`,
-`side`, `overhead`, `far`; `sorrel-walk` starts normal play. Run
-`tools/render_sorrel_preview.py --view close --mode native` or `--mode half`
-for MetalFX Temporal. Supply `--game /path/to/executable` to use an existing build.
-Captures are ignored under `tmp/sorrel-review/`. Keep the macOS preview window
-focused during capture. Native close/overhead and temporal patch views were
-reviewed for this first pass. Dense-patch overdraw/performance remains unmeasured.
+Native close/overhead and temporal patch views were reviewed for this first
+pass. Dense-patch overdraw/performance remains unmeasured.
 
 ### Lily-of-the-valley foliage
 
@@ -600,22 +517,11 @@ python3 tools/import_vegetation_bundle.py \
   --catalog assets/packs/yarra_lilies/lilies.catalog.ron \
   --canopy-blend 0 --lod-screen-heights 100 35
 cargo run --release -p yarra-world-cook -- import-assets assets/packs/yarra_lilies/lilies.catalog.ron
-python3 tools/place_lilies_preview.py
 cargo run --release -p yarra-world-cook -- cook
-cargo run --release -p yarra-app-game -- --start-view content/world.project.views/lilies-walk.ron
 ```
 
 All leaves survive the 8/5/3-section LODs, retaining their source shape, leaf ID
-and wind root. Review plants are at X 2490/2493/2496, Z 4346, in front of the
-ferns. Existing scenery and later editor adjustments are preserved. Review
-bookmarks start with `lilies-`: `stand`, `open`, `full`, `patch`, `close`, `side`,
-`overhead`, `far`. `lilies-walk` starts normal play.
-
-`tools/render_lilies_preview.py` supports `--view close --mode half` for
-MetalFX Temporal and `--game /path/to/executable` for an existing build.
-Captures stay in ignored `tmp/lilies-review/`. Keep the preview window focused
-while capturing on macOS; a background window may produce a black snapshot.
-Native close/patch/far and temporal close captures were reviewed for the first
+and wind root. Native close/patch/far and temporal close captures were reviewed for the first
 pass; the upright revision was checked in native close and temporal patch views.
 User art review and dense-area performance checks remain pending.
 
@@ -637,9 +543,7 @@ python3 tools/import_vegetation_bundle.py \
   --output assets/local/yarra_ferns \
   --catalog assets/packs/yarra_ferns/ferns.catalog.ron --canopy-blend 0 --lod-screen-heights 140 45
 cargo run --release -p yarra-world-cook -- import-assets assets/packs/yarra_ferns/ferns.catalog.ron
-python3 tools/place_ferns_preview.py
 cargo run --release -p yarra-world-cook -- cook
-cargo run --release -p yarra-app-game -- --start-view content/world.project.views/ferns-walk.ron
 ```
 
 Fronds use 12/8/4 curve sections. The 140/45 screen-height thresholds retain
@@ -647,14 +551,7 @@ smooth arches at player distance; generic tree thresholds remain 480/180.
 The sparse form is full-sized with fewer fronds, and the spreading form is
 about 2.5 m across. No extra material or texture set is needed.
 
-Review samples: X 2490 / 2494 / 2498, Z 4342, in the gap beside the birches and
-shrubs. Stable placement IDs preserve existing scenery and editor adjustments.
-Bookmarks: `ferns-stand`, `ferns-upright`, `ferns-spreading`, `ferns-sparse`,
-`ferns-close`, `ferns-side`, `ferns-overhead`, `ferns-far`. `ferns-walk` is normal
-play. Use `tools/render_ferns_preview.py --view close --mode half` to check
-MetalFX Temporal; `--game` accepts an existing executable. Captures are local
-under `tmp/ferns-review`. The revised forms passed user art review on
-2026-10-03; large-area scattering/performance has not been assessed. Flower and other ground-cover species are separate work.
+The revised forms passed user art review on 2026-10-03; large-area scattering/performance has not been assessed. Flower and other ground-cover species are separate work.
 
 ### Generic forest shrubs
 
@@ -666,7 +563,7 @@ hython scripts/build_shrubs.py
 hython scripts/validate_shrubs.py
 ```
 
-Then import all six together and cook their nearby review row:
+Then import all six together and cook:
 
 ```sh
 python3 tools/import_vegetation_bundle.py \
@@ -679,32 +576,16 @@ python3 tools/import_vegetation_bundle.py \
   --output assets/local/yarra_shrubs \
   --catalog assets/packs/yarra_shrubs/shrubs.catalog.ron
 cargo run --release -p yarra-world-cook -- import-assets assets/packs/yarra_shrubs/shrubs.catalog.ron
-python3 tools/place_shrubs_preview.py
 cargo run --release -p yarra-world-cook -- cook
-cargo run --release -p yarra-app-game -- --start-view content/world.project.views/shrubs-walk.ron
 ```
 
-The rounded, low spreading and sparse woody samples sit at X 2490 / 2496 / 2502,
-Z 4328, between the birches and pines. Stable placement IDs and source backups
-preserve older scenery and subsequent editor changes. Review bookmarks are
-`shrubs-stand`, `shrubs-rounded`, `shrubs-spreading`, `shrubs-sparse`,
-`shrubs-close`, `shrubs-roots`, `shrubs-overhead` and `shrubs-far`.
-
-The medium forms extend the same row west at X 2466 / 2474 / 2482, Z 4328.
-They are about 3.1 / 2.5 / 3.5 m tall, retaining the small leaf scale with more
-stems and shoots. Use `shrubs-medium-walk` for normal play, or
-`shrubs-medium-stand`, `shrubs-medium-rounded`, `shrubs-medium-spreading`,
-`shrubs-medium-upright`, `shrubs-medium-close`, `shrubs-medium-overhead` and
-`shrubs-medium-far` for review.
-
-`tools/render_shrubs_preview.py` captures these views; `--view close --mode half`
-checks MetalFX Temporal. Pass `--game /path/to/executable` when using an existing
-build outside `target/release`. Captures stay in ignored `tmp/shrubs-review/`.
+The medium forms are about 3.1 / 2.5 / 3.5 m tall, retaining the small leaf
+scale with more stems and shoots.
 
 The pack shares one oval-leaf atlas and existing crown lighting/wind shaders.
 Retained cards never enlarge at LOD changes. Bare fans and terminal sprays stay
-at all three LODs. All six forms are included in the accepted kit. Dense-forest profiling and
-runtime billboard selection remain pending.
+at all three LODs, followed by an impostor baked from LOD2. All six forms are
+included in the accepted kit.
 
 ### Dead broadleaf forms
 
@@ -723,25 +604,12 @@ python3 tools/import_vegetation_bundle.py \
   --output assets/local/yarra_dead_trees \
   --catalog assets/packs/yarra_dead_trees/dead_trees.catalog.ron
 target/release/yarra-world-cook import-assets assets/packs/yarra_dead_trees/dead_trees.catalog.ron
-python3 tools/place_dead_trees_preview.py
 target/release/yarra-world-cook cook
-python3 tools/render_dead_trees_preview.py
 ```
 
-The original three samples sit at X 2428 / 2443 / 2458, Z 4344, west of the longleaf row.
-Slender single/double/triple forms sit in a clear patch farther west at
-X 2390 / 2402 / 2414, Z 4338, with thin
-trunks, ascending limbs and distinct planted feet. Their shared materials and
-wind path need no engine changes. The richer, wider forms were approved on 2026-10-03.
-The placement helper backs up the source database and preserves edited objects
-and bookmarks. `dead-trees-walk` starts normal play near the spreading tree.
-Other bookmarks are `stand`, `upright`, `spreading`, `split`, `close`, `bark`,
-`twigs`, `overhead` and `far`, all prefixed `dead-trees-`. Captures go to ignored
-`tmp/dead-trees-review/`; the close view also runs at reduced internal resolution.
-New bookmarks are `slender-walk`, `slender-stand`, `slender`, `double`, `triple`,
-`slender-roots`, `slender-close`, `slender-overhead` and `slender-far`, with the same
-`dead-trees-` prefix. The capture helper accepts these names through `--view`;
-use `--view slender-close --mode half` to check Temporal reconstruction.
+The slender single/double/triple forms have thin trunks, ascending limbs and
+distinct planted feet. Their shared materials and wind path need no engine
+changes. The richer, wider forms were approved on 2026-10-03.
 
 These trees reuse the existing elm bark package with curved bare twig cards.
 `vegetation_surface: bare_wood` opts masked materials into existing `plain`
@@ -752,8 +620,8 @@ cards retain their rest positions through all mesh LODs while wood tessellation
 reduces. Budgets are 3660/1988/1120, 4094/2214/1246 and 3966/2168/1228 triangles
 respectively for the original forms. Slender/double/triple use 2500/1362/750,
 3616/1964/1088 and 4614/2496/1380 triangles, with 106/144/171 fixed cards retained at
-every LOD. Only the three mesh LODs are registered; runtime billboards remain
-pending. Existing living-tree material conversion is unchanged.
+every LOD. An impostor follows the three mesh LODs. Existing living-tree
+material conversion is unchanged.
 The slender forms use smaller staggered twig fans along limbs and upper stems;
 their authoring `Twig richness` control changes this fill without rebaking.
 Crown-width settings are about 25% higher than in the initial slender study, with slightly
@@ -780,25 +648,6 @@ case; the fixed shader produced zero in all six cases. The compute tests under
 `tree_wind::gpu_tests` separately cover attached card roots and deformation
 history. Native Temporal captures are in `tmp/dead-trees-review/`; this is
 correctness coverage, not a dense-forest performance measurement.
-
-### Removing retired pine imports
-
-The old native-scene pines, six shared-pipeline experiments and two isolated
-branch studies have been removed from the game's tracked catalogs and helpers.
-Existing local project databases retain imported catalog rows until migrated:
-
-```sh
-# Close game/editor first. This preserves a source backup and unrelated scenery.
-python3 tools/remove_retired_pines.py
-cargo run --release -p yarra-world-cook -- cook
-```
-
-The helper removes retired asset definitions, variants and any placements using
-them. It also moves obsolete local packs/import backups and `pine-*` bookmarks
-out of the asset tree into ignored `tmp/retired-pines-*` storage. Repeated runs
-are safe. It refuses serialized environment-collection references that need
-explicit editing. The current `yarra_longleaf` kit and `longleaf-*` bookmarks
-remain available; `tools/place_longleaf_preview.py` handles its four forms.
 
 ## Explicit fixtures and catalog tools
 

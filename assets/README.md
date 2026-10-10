@@ -205,7 +205,6 @@ it does not extend ground-shadow range or implement runtime billboards.
 The bay shrub trial is rebuilt from vegetation's `bay_upright` bundle using
 `tools/import_vegetation_bundle.py`, with tracked catalog
 `packs/yarra_bay/bay.catalog.ron` and local textures/geometry in `local/yarra_bay`.
-`tools/place_bay_preview.py` adds its review stand without replacing existing trees.
 
 `packs/yarra_longleaf/longleaf.catalog.ron` registers the current four-form pine
 kit: healthy, half bare, nearly bare with top needles, and mostly one-sided.
@@ -214,16 +213,12 @@ It uses rfefw2 needle scans on upward forked sprays, with 2,662 / 1,346 / 676
 triangles and 23 centered facing cards. Every branch group retains a fixed spray
 at far LOD. The existing renderer and other tree assets are unchanged by this
 kit. All four forms share their textures and woody scaffold; bare fork cards
-remain fixed. `tools/place_longleaf_preview.py` plants the variants beside the
-healthy tree near the birches, preserving existing scenery after a source-world
-backup. The `longleaf-kit` bookmark shows the lineup.
+remain fixed. Review the forms in the LOD lab or in a forest planted by
+`tools/forest_plan.py` ([workflows](../docs/WORKFLOWS.md#creating-and-revising-trees)).
 
 The earlier native-scene pine pack, shared-pipeline pine experiments and isolated
-branch studies have been removed from game assets. For an existing local world,
-run `python3 tools/remove_retired_pines.py`, then recook. The helper unregisters
-retired definitions/assets and moves obsolete imports/bookmarks to an ignored
-backup outside the asset tree. Authoring experiments remain in YarraVegetation
-for historical reference; use the longleaf kit for game content.
+branch studies have been removed from game assets. Authoring experiments remain
+in YarraVegetation for historical reference; use the longleaf kit for game content.
 
 ## Map symbols and lettering
 
