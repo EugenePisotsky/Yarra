@@ -1,5 +1,7 @@
 use super::*;
-use environment::{LayerId, Preset, PresetId, PresetKind};
+#[cfg(test)]
+use environment::{LayerId, PresetId};
+use environment::{Preset, PresetKind};
 const MAX_LIBRARY_BYTES: usize = 4 * 1024 * 1024;
 
 pub(crate) fn read_library(connection: &Connection) -> Result<PresetLibrary, WorldDbError> {
@@ -135,6 +137,7 @@ pub(super) fn revisioned_library(
     result.presets.sort_by_key(|p| p.id);
     Ok(result)
 }
+#[cfg(test)]
 #[derive(Debug, Clone)]
 pub struct EnvironmentPresetLayers {
     pub library_revision: u64,
@@ -147,6 +150,7 @@ impl ProjectReader {
         read_library(&tx)
     }
     /// Reverse transitive dependencies, including repeated/nested uses and uses in other worlds.
+    #[cfg(test)]
     pub fn read_environment_preset_layers(
         &self,
         preset: PresetId,

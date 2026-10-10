@@ -200,6 +200,7 @@ impl RoadReadSnapshot {
             .collect()
     }
 }
+#[cfg(test)]
 #[derive(Debug, Clone)]
 pub struct RoadDependencyPage {
     pub road_revision: u64,

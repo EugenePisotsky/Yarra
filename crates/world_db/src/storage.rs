@@ -109,7 +109,9 @@ pub(crate) fn decode_f32_blob(bytes: &[u8], field: &'static str) -> rusqlite::Re
         ));
     }
     Ok(bytes
-        .chunks_exact(size_of::<f32>())
-        .map(|bytes| f32::from_le_bytes(bytes.try_into().expect("four-byte chunk")))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|bytes| f32::from_le_bytes(*bytes))
         .collect())
 }

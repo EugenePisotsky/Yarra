@@ -34,6 +34,7 @@ pub enum EnvironmentSourceWriteResult {
 }
 
 impl ProjectWriter {
+    #[cfg(test)]
     pub fn replace_environment_definition_if_revision(
         &mut self,
         expected: Option<u64>,

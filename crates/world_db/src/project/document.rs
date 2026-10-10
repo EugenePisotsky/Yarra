@@ -19,7 +19,7 @@ use world::{CellCoord, ObjectDefinitionId, PROJECT_SCHEMA_VERSION, StableObjectI
 pub fn write_project_database(path: &Path, document: &ProjectDocument) -> Result<(), WorldDbError> {
     ensure_new_database_path(path)?;
     let mut connection = Connection::open(path)?;
-    connection.execute_batch(schema::PROJECT_SCHEMA)?;
+    schema::create_project_schema(&connection)?;
     let transaction = connection.transaction()?;
     write_project_document(&transaction, document)?;
     transaction.commit()?;

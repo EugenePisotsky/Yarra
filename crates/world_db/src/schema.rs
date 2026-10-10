@@ -1,16 +1,39 @@
-pub const PROJECT_SCHEMA: &str = r#"
+use crate::catalog::VEGETATION_CATALOG_FORMAT_VERSION;
+use rusqlite::Connection;
+use world::{PROJECT_SCHEMA_VERSION, RUNTIME_SCHEMA_VERSION};
+
+/// Creates a project database's tables and stamps its schema version. Versions come from the
+/// Rust constants, so a bump touches one place.
+pub(crate) fn create_project_schema(connection: &Connection) -> rusqlite::Result<()> {
+    connection.execute_batch(PROJECT_SCHEMA)?;
+    create_vegetation_catalog(connection)?;
+    connection.pragma_update(None, "user_version", PROJECT_SCHEMA_VERSION)
+}
+
+/// Creates a runtime database's tables and stamps its schema version.
+pub(crate) fn create_runtime_schema(connection: &Connection) -> rusqlite::Result<()> {
+    connection.execute_batch(RUNTIME_SCHEMA)?;
+    create_vegetation_catalog(connection)?;
+    connection.pragma_update(None, "user_version", RUNTIME_SCHEMA_VERSION)
+}
+
+fn create_vegetation_catalog(connection: &Connection) -> rusqlite::Result<()> {
+    connection.execute_batch(&format!(
+        "CREATE TABLE vegetation_catalog (
+    singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+    format_version INTEGER NOT NULL CHECK(format_version = {VEGETATION_CATALOG_FORMAT_VERSION}),
+    payload BLOB NOT NULL
+) STRICT;"
+    ))
+}
+
+const PROJECT_SCHEMA: &str = r#"
 PRAGMA foreign_keys = ON;
 PRAGMA journal_mode = WAL;
 
 CREATE TABLE project_metadata (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
-) STRICT;
-
-CREATE TABLE vegetation_catalog (
-    singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
-    format_version INTEGER NOT NULL CHECK(format_version = 7),
-    payload BLOB NOT NULL
 ) STRICT;
 
 CREATE TABLE world_spaces (
@@ -302,10 +325,9 @@ CREATE TABLE road_junction_cells (
 ) STRICT;
 CREATE INDEX road_junction_cells_id ON road_junction_cells(junction_id);
 
-PRAGMA user_version = 30;
 "#;
 
-pub const RUNTIME_SCHEMA: &str = r#"
+const RUNTIME_SCHEMA: &str = r#"
 PRAGMA foreign_keys = ON;
 PRAGMA journal_mode = DELETE;
 
@@ -333,12 +355,6 @@ CREATE TABLE runtime_metadata (
     start_view BLOB CHECK(start_view IS NULL OR length(start_view) BETWEEN 1 AND 65536),
     -- Named places gameplay reacts to (an encoded GameplayArea list), also outside the hash.
     gameplay_areas BLOB NOT NULL CHECK(length(gameplay_areas) BETWEEN 1 AND 4194304)
-) STRICT;
-
-CREATE TABLE vegetation_catalog (
-    singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
-    format_version INTEGER NOT NULL CHECK(format_version = 7),
-    payload BLOB NOT NULL
 ) STRICT;
 
 CREATE TABLE cells (
@@ -554,5 +570,4 @@ CREATE TABLE far_object_pages (
     payload BLOB NOT NULL CHECK(length(payload) BETWEEN 1 AND 67108864),
     PRIMARY KEY(world_space_id, block_x, block_z)
 ) STRICT, WITHOUT ROWID;
-PRAGMA user_version = 29;
 "#;

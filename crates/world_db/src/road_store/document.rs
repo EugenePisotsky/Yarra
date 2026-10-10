@@ -255,6 +255,7 @@ impl RoadDocumentIndex {
             cells,
         })
     }
+    #[cfg(test)]
     pub fn cell_snapshot(
         &self,
         space: WorldSpaceId,

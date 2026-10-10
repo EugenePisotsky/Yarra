@@ -226,7 +226,7 @@ mod tests {
 
     fn runtime() -> Connection {
         let connection = Connection::open_in_memory().unwrap();
-        connection.execute_batch(schema::RUNTIME_SCHEMA).unwrap();
+        schema::create_runtime_schema(&connection).unwrap();
         connection
             .execute(
                 "INSERT INTO world_spaces VALUES (1,'test',8,-1,1,?1,1,NULL)",

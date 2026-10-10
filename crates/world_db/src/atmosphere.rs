@@ -136,7 +136,7 @@ mod tests {
     #[test]
     fn conflict_rolls_back_the_entire_batch_and_round_trips_colors_and_clouds() {
         let connection = Connection::open_in_memory().unwrap();
-        connection.execute_batch(schema::PROJECT_SCHEMA).unwrap();
+        schema::create_project_schema(&connection).unwrap();
         let p = AtmosphereProfile::default();
         for id in [1, 2] {
             connection

@@ -47,6 +47,7 @@ impl SourceEnvironmentCellRecord {
 }
 
 /// Keyset page of cells affected by one layer, for bounded invalidation after a definition edit.
+#[cfg(test)]
 #[derive(Debug, Clone)]
 pub struct EnvironmentLayerCells {
     pub definition_revision: u64,
@@ -54,6 +55,7 @@ pub struct EnvironmentLayerCells {
     pub next_cursor: Option<CellCoord>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone)]
 pub struct SourceEnvironmentCellQuery {
     pub records: Vec<SourceEnvironmentCellRecord>,
@@ -111,6 +113,7 @@ pub enum DenseSourceWriteTransactionResult {
     },
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum EnvironmentDefinitionWriteResult {
     Committed(EnvironmentDefinition),
@@ -384,6 +387,7 @@ impl ProjectReader {
         Ok((plants, presets, definitions))
     }
 
+    #[cfg(test)]
     pub fn read_environment_layer_cells(
         &self,
         space: WorldSpaceId,
@@ -457,6 +461,7 @@ impl ProjectReader {
         read_snapshot(&transaction, space, cells)
     }
 
+    #[cfg(test)]
     pub fn read_environment_cells_in_cells(
         &self,
         space: WorldSpaceId,
@@ -519,6 +524,7 @@ impl ProjectReader {
 mod presence;
 pub use presence::{EnvironmentLayerPresence, MAX_ENVIRONMENT_PRESENCE_ROWS};
 mod presets;
+#[cfg(test)]
 pub use presets::EnvironmentPresetLayers;
 pub(crate) use presets::read_library;
 use presets::{revisioned_library, store_library, validate_library_references};

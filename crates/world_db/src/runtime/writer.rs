@@ -12,7 +12,7 @@ use std::path::Path;
 pub fn write_runtime_database(path: &Path, build: &RuntimeBuild) -> Result<(), WorldDbError> {
     ensure_new_database_path(path)?;
     let mut connection = Connection::open(path)?;
-    connection.execute_batch(schema::RUNTIME_SCHEMA)?;
+    schema::create_runtime_schema(&connection)?;
     let transaction = connection.transaction()?;
     write_runtime_build(&transaction, build)?;
     super::far_objects::rebuild(&transaction)?;
@@ -220,7 +220,7 @@ impl RuntimeCookWriter {
         }
         ensure_new_database_path(path)?;
         let connection = Connection::open(path)?;
-        connection.execute_batch(schema::RUNTIME_SCHEMA)?;
+        schema::create_runtime_schema(&connection)?;
         connection
             .execute_batch("PRAGMA cache_size=-8192; PRAGMA temp_store=FILE; BEGIN IMMEDIATE;")?;
         write_runtime_header(&connection, header)?;

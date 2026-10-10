@@ -100,6 +100,7 @@ impl ProjectReader {
         let tx = self.connection.unchecked_transaction()?;
         read_snapshot(&tx, space, bounds)
     }
+    #[cfg(test)]
     pub fn read_road_records(
         &self,
         keys: &[RoadRecordKey],
@@ -125,6 +126,7 @@ impl ProjectReader {
         let roads = read_snapshot(&tx, space, bounds)?;
         Ok(RoadEnvironmentSnapshot { environment, roads })
     }
+    #[cfg(test)]
     pub fn read_road_dependency_spans(
         &self,
         selector: RoadDependencySelector,

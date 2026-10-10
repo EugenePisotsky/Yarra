@@ -203,6 +203,7 @@ impl TerrainCookStore {
         }
         Ok(())
     }
+    #[cfg(test)]
     pub fn insert_leaf(
         &self,
         key: TerrainNodeKey,
@@ -219,6 +220,7 @@ impl TerrainCookStore {
         self.write(&node, false)
     }
     /// Children are loaded and released per parent; no whole level of sample data is retained.
+    #[cfg(test)]
     pub fn build_parent(&self, key: TerrainNodeKey) -> Result<(), WorldDbError> {
         let children = self.children(key)?;
         let children = children

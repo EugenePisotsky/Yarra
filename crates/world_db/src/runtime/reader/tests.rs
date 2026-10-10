@@ -4,7 +4,7 @@ use crate::{atmosphere, schema};
 #[test]
 fn runtime_cell_windows_are_bounded_and_seek_both_spatial_axes() {
     let connection = Connection::open_in_memory().unwrap();
-    connection.execute_batch(schema::RUNTIME_SCHEMA).unwrap();
+    schema::create_runtime_schema(&connection).unwrap();
     connection
         .execute(
             "INSERT INTO world_spaces VALUES (1,'test',8,-1,1,?1,1,NULL)",

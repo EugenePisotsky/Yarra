@@ -152,7 +152,7 @@ mod tests {
 
     fn writer() -> ProjectWriter {
         let connection = Connection::open_in_memory().unwrap();
-        connection.execute_batch(schema::PROJECT_SCHEMA).unwrap();
+        schema::create_project_schema(&connection).unwrap();
         connection
             .execute(
                 "INSERT INTO world_spaces VALUES (1,'main',32.0,-10.0,100.0,?1,1,NULL)",

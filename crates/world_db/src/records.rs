@@ -54,12 +54,6 @@ pub struct SourceCellQuery {
 }
 
 #[derive(Debug, Clone)]
-pub struct SourceObjectQuery {
-    pub records: Vec<SourceObjectRecord>,
-    pub truncated: bool,
-}
-
-#[derive(Debug, Clone)]
 pub struct SourceObjectViewQuery {
     pub records: Vec<SourceObjectViewRecord>,
     pub truncated: bool,

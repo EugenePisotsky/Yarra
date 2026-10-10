@@ -460,15 +460,14 @@ fn descriptor(
     let k = key.0;
     k.cell_bounds().map_err(|e| invalid(e.to_string()))?;
     let d = connection.query_row("SELECT c.fingerprint,c.checksum,length(c.payload),c.decoded_bytes,c.gpu_bytes,n.minimum_y,n.maximum_y FROM terrain_composites c JOIN terrain_nodes n USING(world_space_id,level,node_x,node_z) WHERE world_space_id=?1 AND level=?2 AND node_x=?3 AND node_z=?4",params![k.space.0,k.level,k.x,k.z],|r| Ok(TerrainCompositeDescriptor {key,fingerprint:blob_array(r.get_ref(0)?.as_blob()?,"composite fingerprint")?,checksum:blob_array(r.get_ref(1)?.as_blob()?,"composite checksum")?,encoded_bytes:r.get::<_,i64>(2)? as u64,decoded_bytes:r.get::<_,i64>(3)? as u64,gpu_bytes:r.get::<_,i64>(4)? as u64,height_bounds:[r.get(5)?,r.get(6)?]})).optional()?;
-    if let Some(d) = &d {
-        if !d.height_bounds.iter().all(|v| v.is_finite())
+    if let Some(d) = &d
+        && (!d.height_bounds.iter().all(|v| v.is_finite())
             || d.height_bounds[0] > d.height_bounds[1]
             || !(1..=MAX_TERRAIN_COMPOSITE_BYTES as u64).contains(&d.decoded_bytes)
             || !(1..=MAX_TERRAIN_COMPOSITE_BYTES as u64).contains(&d.encoded_bytes)
-            || d.gpu_bytes != TerrainComposite::gpu_bytes() as u64
-        {
-            return Err(invalid("composite descriptor byte limits"));
-        }
+            || d.gpu_bytes != TerrainComposite::gpu_bytes() as u64)
+    {
+        return Err(invalid("composite descriptor byte limits"));
     }
     Ok(d)
 }

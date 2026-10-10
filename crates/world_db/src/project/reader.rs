@@ -1,13 +1,12 @@
 use crate::catalog::{query_world_spaces, read_vegetation_catalog};
 use crate::project::query::{
-    query_sql_limit, source_cell_from_row, source_object_from_row, source_object_palette_from_row,
+    query_sql_limit, source_cell_from_row, source_object_palette_from_row,
     source_object_view_from_row, validate_spatial_query,
 };
 use crate::storage::ensure_schema_version;
 use crate::{
     ProjectManifest, SourceCellQuery, SourceObjectOutlinerCursor, SourceObjectOutlinerPage,
-    SourceObjectPaletteCursor, SourceObjectPalettePage, SourceObjectQuery, SourceObjectViewQuery,
-    WorldDbError,
+    SourceObjectPaletteCursor, SourceObjectPalettePage, SourceObjectViewQuery, WorldDbError,
 };
 use rusqlite::{Connection, OpenFlags, params};
 use std::path::Path;
@@ -91,47 +90,6 @@ impl ProjectReader {
         let truncated = records.len() > maximum_records;
         records.truncate(maximum_records);
         Ok(SourceCellQuery { records, truncated })
-    }
-
-    pub fn read_objects_in_cells(
-        &self,
-        space: WorldSpaceId,
-        minimum: CellCoord,
-        maximum: CellCoord,
-        maximum_records: usize,
-    ) -> Result<SourceObjectQuery, WorldDbError> {
-        validate_spatial_query(minimum, maximum, maximum_records)?;
-        let sql_limit = query_sql_limit(maximum_records)?;
-        let sql = "SELECT o.object_id, o.world_space_id, o.owner_cell_x, o.owner_cell_z, \
-                    o.definition_id, o.local_x, o.local_y, o.local_z, o.yaw, o.scale, \
-                    o.source_revision \
-             FROM object_placements o \
-             WHERE o.world_space_id = ?1 \
-               AND o.owner_cell_x BETWEEN ?2 AND ?3 \
-               AND o.owner_cell_z BETWEEN ?4 AND ?5 \
-             UNION \
-             SELECT o.object_id, o.world_space_id, o.owner_cell_x, o.owner_cell_z, \
-                    o.definition_id, o.local_x, o.local_y, o.local_z, o.yaw, o.scale, \
-                    o.source_revision \
-             FROM object_cell_overlaps overlap \
-             JOIN object_placements o ON o.object_id = overlap.object_id \
-             WHERE overlap.world_space_id = ?1 \
-               AND overlap.cell_x BETWEEN ?2 AND ?3 \
-               AND overlap.cell_z BETWEEN ?4 AND ?5 \
-             ORDER BY object_id \
-             LIMIT ?6";
-        let mut statement = self.connection.prepare_cached(sql)?;
-        let mut records = statement
-            .query_map(
-                params![
-                    space.0, minimum.x, maximum.x, minimum.z, maximum.z, sql_limit
-                ],
-                source_object_from_row,
-            )?
-            .collect::<Result<Vec<_>, _>>()?;
-        let truncated = records.len() > maximum_records;
-        records.truncate(maximum_records);
-        Ok(SourceObjectQuery { records, truncated })
     }
 
     pub fn read_object_views_in_cells(

@@ -166,9 +166,7 @@ mod tests {
     }
     fn writer() -> ProjectWriter {
         let connection = rusqlite::Connection::open_in_memory().unwrap();
-        connection
-            .execute_batch(crate::schema::PROJECT_SCHEMA)
-            .unwrap();
+        crate::schema::create_project_schema(&connection).unwrap();
         ProjectWriter { connection }
     }
     #[test]
