@@ -144,7 +144,7 @@ fn init(
     let compute = cache.queue_compute_pipeline(ComputePipelineDescriptor {
         label: Some("cloud sun/moon transmittance".into()),
         layout: vec![compute_layout.clone()],
-        shader: server.load("shaders/clouds/shadows.wgsl"),
+        shader: server.load("shaders/clouds/shadows.wesl"),
         ..default()
     });
     let render = std::array::from_fn(|i| {
@@ -153,7 +153,7 @@ fn init(
             layout: vec![render_layout.clone()],
             vertex: fullscreen.to_vertex_state(),
             fragment: Some(FragmentState {
-                shader: server.load("shaders/clouds/render.wgsl"),
+                shader: server.load("shaders/clouds/render.wesl"),
                 shader_defs: if i == 1 {
                     vec!["CACHED_SKY".into()]
                 } else {

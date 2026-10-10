@@ -12,6 +12,7 @@ members = [
     "crates/gameplay",
     "crates/save",
     "crates/scripting",
+    "crates/shader_check",
     "crates/terrain_render",
     "crates/upscaling",
     "crates/vegetation",
@@ -38,6 +39,7 @@ game-types = { package = "yarra-game-types", path = "crates/game_types" }
 localization = { package = "yarra-localization", path = "crates/localization" }
 gameplay = { package = "yarra-gameplay", path = "crates/gameplay" }
 save = { package = "yarra-save", path = "crates/save" }
+shader-check = { package = "yarra-shader-check", path = "crates/shader_check" }
 scripting = { package = "yarra-scripting", path = "crates/scripting" }
 fluent-bundle = "0.16"
 fluent-syntax = { version = "0.12", features = ["serde"] }
@@ -45,8 +47,8 @@ unic-langid = "0.9"
 
 anyhow = "1"
 atmosphere = { package = "yarra-atmosphere", path = "crates/atmosphere" }
-bevy = { version = "0.19", default-features = false, features = ["3d", "basis-universal", "ktx2", "png", "ui", "zstd_rust"] }
-bevy_egui = "0.41.1"
+bevy = { version = "0.20", default-features = false, features = ["3d", "basis-universal", "ktx2", "png", "ui", "zstd_rust"] }
+bevy_egui = "0.43.0"
 blake3 = "1"
 bincode = { version = "2", features = ["serde"] }
 bytemuck = { version = "1", features = ["derive"] }
@@ -54,7 +56,7 @@ crossbeam-channel = "0.5"
 engine = { package = "yarra-engine", path = "crates/engine" }
 environment = { package = "yarra-environment", path = "crates/environment" }
 environment-compile = { package = "yarra-environment-compile", path = "crates/environment_compile" }
-glam = "0.32"
+glam = "0.33"
 terrain-render = { package = "yarra-terrain-render", path = "crates/terrain_render" }
 upscaling = { package = "yarra-upscaling", path = "crates/upscaling" }
 vegetation = { package = "yarra-vegetation", path = "crates/vegetation" }
@@ -62,7 +64,7 @@ vegetation-compile = { package = "yarra-vegetation-compile", path = "crates/vege
 vegetation-render = { package = "yarra-vegetation-render", path = "crates/vegetation_render" }
 world = { package = "yarra-world", path = "crates/world" }
 log = { version = "0.4", features = ["max_level_debug", "release_max_level_warn"] }
-naga = { version = "29", features = ["wgsl-in"] }
+naga = { version = "30", features = ["wgsl-in"] }
 rusqlite = { version = "0.40.1", features = ["bundled", "backup"] }
 ron = "0.12"
 serde = { version = "1", features = ["derive"] }

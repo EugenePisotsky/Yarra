@@ -726,7 +726,10 @@ fn generated_instances(app: &App) -> Vec<Vec<[u32; 8]>> {
     device.poll(PollType::wait_indefinitely()).unwrap();
     receiver.recv().unwrap().unwrap();
     let result = {
-        let mapped = readback.slice(..).get_mapped_range();
+        let mapped = readback
+            .slice(..)
+            .get_mapped_range()
+            .expect("readback is mapped");
         let args: &[u32] = bytemuck::cast_slice(&mapped[..DRAW_ARGS_SIZE as usize]);
         let instances: &[[u32; 8]] = bytemuck::cast_slice(&mapped[DRAW_ARGS_SIZE as usize..]);
         (0..4)
@@ -1008,7 +1011,10 @@ fn temporal_grass_motion_tracks_wind_camera_and_fallback() {
             })
             .unwrap();
         rx.recv_timeout(Duration::from_secs(10)).unwrap().unwrap();
-        let data = readback.slice(..).get_mapped_range();
+        let data = readback
+            .slice(..)
+            .get_mapped_range()
+            .expect("readback is mapped");
         let values = data
             .chunks_exact(2)
             .map(|b| {
@@ -1093,7 +1099,7 @@ fn temporal_grass_motion_tracks_wind_camera_and_fallback() {
 #[test]
 #[ignore = "requires native GPU; validates camera motion numerically against final depth"]
 fn temporal_strafe_motion_matches_reprojection() {
-    use bevy::render::view::ViewDepthTexture;
+    use bevy::render::view::ViewDepthStencilTexture;
     use upscaling::temporal::{TemporalDebug, TemporalFrame, TemporalMotionTarget, TemporalView};
     let mut app = test_app();
     app.update();
@@ -1153,7 +1159,11 @@ fn temporal_strafe_motion_matches_reprojection() {
             app.update();
             let world = app.sub_app_mut(RenderApp).world_mut();
             let (frame, motion, depth) = world
-                .query::<(&TemporalFrame, &TemporalMotionTarget, &ViewDepthTexture)>()
+                .query::<(
+                    &TemporalFrame,
+                    &TemporalMotionTarget,
+                    &ViewDepthStencilTexture,
+                )>()
                 .single(world)
                 .unwrap();
             assert!(
@@ -1161,7 +1171,7 @@ fn temporal_strafe_motion_matches_reprojection() {
                 "ordinary camera translation must retain history"
             );
             let motion = read_temporal_texture(world, &motion.texture);
-            let depth = read_temporal_texture(world, &depth.texture);
+            let depth = read_temporal_texture(world, depth.texture());
             let previous_from_raster =
                 frame.previous_clip_from_world * frame.raster_clip_from_world.inverse();
             let mut errors = Vec::new();
@@ -1259,7 +1269,11 @@ fn read_temporal_texture(
         })
         .unwrap();
     rx.recv_timeout(Duration::from_secs(10)).unwrap().unwrap();
-    let bytes = buffer.slice(..).get_mapped_range().to_vec();
+    let bytes = buffer
+        .slice(..)
+        .get_mapped_range()
+        .expect("readback is mapped")
+        .to_vec();
     buffer.unmap();
     bytes
 }

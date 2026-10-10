@@ -34,7 +34,7 @@ def main():
         if source.name != 'shaders':
             (assets / source.name).symlink_to(source, target_is_directory=source.is_dir())
     shutil.copytree(ROOT / 'assets/shaders', assets / 'shaders')
-    for source in args.shaders.glob('*.wgsl'):
+    for source in args.shaders.glob('*.wesl'):
         shutil.copy2(source, assets / 'shaders' / source.name)
     command = [str(args.binary.resolve()), '--world-db',
                str(args.world_db.resolve()), '--render-repro', args.view,
@@ -48,7 +48,7 @@ def main():
                               else 'deterministic_frame_clock'),
         'database_sha256': hashlib.sha256(args.world_db.read_bytes()).hexdigest(),
         'shader_sha256': {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
-                          for p in sorted((assets / 'shaders').glob('*.wgsl'))},
+                          for p in sorted((assets / 'shaders').glob('*.wesl'))},
         'binary_sha256': hashlib.sha256(args.binary.read_bytes()).hexdigest(),
     }
     (output / 'run.json').write_text(json.dumps(metadata, indent=2) + '\n')

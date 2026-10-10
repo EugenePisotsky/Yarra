@@ -7,7 +7,7 @@
 //! are gathered into one buffer, grouped by mesh and material, and each group is drawn with
 //! one instanced draw through the tree material's own pipelines, specialized with
 //! `TREE_INSTANCED` so they read transforms and fades from the buffer instead of Bevy's mesh
-//! uniforms (`shaders/tree_wind.wgsl`, `shaders/clouds/material.wgsl`).
+//! uniforms (`shaders/tree_wind.wesl`, `shaders/clouds/material.wesl`).
 use super::material::TreeWindMaterial;
 use crate::object_lod::{LodScene, ScreenSpaceLod, TAG_BIAS, TIMED_RANGE};
 use bevy::{
@@ -31,14 +31,13 @@ use bevy::{
         AlphaMode, RenderPhaseType,
         key::{ErasedMaterialKey, ErasedMaterialPipelineKey, ErasedMeshPipelineKey},
     },
-    math::{Vec3A, primitives::ViewFrustum},
+    math::Vec3A,
     mesh::{Mesh, MeshTag},
     pbr::{
-        LightEntity, MATERIAL_BIND_GROUP_INDEX, MaterialBindGroupAllocators, MeshBindGroups,
-        MeshMorphBindGroupKey, MeshPipelineKey, PreparedMaterial, SetMeshViewBindGroup,
-        SetMeshViewBindingArrayBindGroup, SetPrepassViewBindGroup, SetPrepassViewEmptyBindGroup,
-        Shadow, ShadowBatchSetKey, ShadowBinKey, ViewKeyCache, ViewKeyPrepassCache,
-        alpha_mode_pipeline_key,
+        LightEntity, MATERIAL_BIND_GROUP_INDEX, MeshBindGroups, MeshMorphBindGroupKey,
+        MeshPipelineKey, PreparedMaterial, SetMeshViewBindGroup, SetMeshViewBindingArrayBindGroup,
+        SetPrepassViewBindGroup, SetPrepassViewEmptyBindGroup, Shadow, ShadowBatchSetKey,
+        ShadowBinKey, ViewKeyCache, ViewKeyPrepassCache, alpha_mode_pipeline_key,
     },
     prelude::*,
     render::{
@@ -46,7 +45,10 @@ use bevy::{
         erased_render_asset::ErasedRenderAssets,
         extract_component::{ExtractComponent, ExtractComponentPlugin},
         extract_resource::{ExtractResource, ExtractResourcePlugin},
-        mesh::{RenderMesh, RenderMeshBufferInfo, allocator::MeshAllocator},
+        material_bind_groups::MaterialBindGroupAllocators,
+        mesh::{
+            MeshMetadataFallbackBuffer, RenderMesh, RenderMeshBufferInfo, allocator::MeshAllocator,
+        },
         render_asset::RenderAssets,
         render_phase::{
             AddRenderCommand, BinnedPhaseItem, BinnedRenderPhaseType, DrawFunctionId,
@@ -58,6 +60,7 @@ use bevy::{
         sync_world::MainEntity,
         view::{ExtractedView, RetainedViewEntity},
     },
+    shape::ViewFrustum,
 };
 use bytemuck::{Pod, Zeroable};
 use std::{any::TypeId, collections::HashMap, sync::Arc};
@@ -114,6 +117,7 @@ struct Group {
 
 /// This frame's instances, by view and group.
 #[derive(Resource, Clone, Default, ExtractResource)]
+#[extract_app(bevy::render::RenderApp)]
 struct TreeInstanceFrame {
     instances: Arc<Vec<TreeInstance>>,
     /// The main view's groups.
@@ -124,6 +128,7 @@ struct TreeInstanceFrame {
 
 /// The entity a group's phase item is drawn for; its index is the group's in its view.
 #[derive(Component, ExtractComponent, Clone, Copy, Debug)]
+#[extract_app(bevy::render::RenderApp)]
 struct TreeInstanceDraw(usize);
 
 /// A tree mesh entity moved out of every view.
@@ -322,7 +327,7 @@ fn collect(
             .main
             .entry((mesh.id(), material.id()))
             .or_default()
-            .push(TreeInstance::new(transform, tag.map_or(0, |t| t.0)));
+            .push(TreeInstance::new(transform, tag.map_or(0, |t| t.value)));
     }
 
     // Shadows: the world view's cascades of every light that casts.
@@ -733,10 +738,11 @@ fn specialize(
         | MeshPipelineKey::from_bits_retain(mesh.key_bits.bits())
         | alpha_mode_pipeline_key(properties.alpha_mode, &msaa)
         | MeshPipelineKey::VISIBILITY_RANGE_DITHER;
-    let specialize = match pass {
+    let specialized = match pass {
         Pass::Main => {
             mesh_key |= properties.mesh_pipeline_key_bits.downcast();
-            properties.base_specialize?
+            let key = instanced_key(&properties, mesh_key);
+            (properties.base_specialize?)(world, key, &layout, &properties)
         }
         Pass::Prepass => {
             if !matches!(phase, RenderPhaseType::Opaque | RenderPhaseType::AlphaMask) {
@@ -744,11 +750,11 @@ fn specialize(
             }
             // The tree material has its own prepass shaders (`specialize_shadow`).
             mesh_key |= MeshPipelineKey::PREPASS_READS_MATERIAL;
-            properties.prepass_specialize?
+            let key = instanced_key(&properties, mesh_key);
+            (properties.prepass_specialize?)(world, &key, &layout, &properties)
         }
     };
-    let key = instanced_key(&properties, mesh_key);
-    match specialize(world, key, &layout, &properties) {
+    match specialized {
         Ok(pipeline) => {
             pipelines.insert(at, pipeline);
             Some((pipeline, phase))
@@ -852,7 +858,7 @@ fn specialize_shadow(
     }
     let key = instanced_key(&properties, mesh_key);
     let prepass_specialize = properties.prepass_specialize?;
-    match prepass_specialize(world, key, &layout, &properties) {
+    match prepass_specialize(world, &key, &layout, &properties) {
         Ok(pipeline) => {
             pipelines.insert((group.mesh, group.material), pipeline);
             Some(pipeline)
@@ -889,6 +895,7 @@ impl<P: PhaseItem> RenderCommand<P> for DrawTreeGroup {
         SRes<RenderAssets<RenderMesh>>,
         SRes<MeshAllocator>,
         SRes<MeshBindGroups>,
+        SRes<MeshMetadataFallbackBuffer>,
     );
     type ViewQuery = &'static ExtractedView;
     type ItemQuery = &'static TreeInstanceDraw;
@@ -897,7 +904,7 @@ impl<P: PhaseItem> RenderCommand<P> for DrawTreeGroup {
         _item: &P,
         view: ROQueryItem<'w, '_, Self::ViewQuery>,
         draw: Option<ROQueryItem<'w, '_, Self::ItemQuery>>,
-        (gpu, materials, allocators, meshes, mesh_allocator, mesh_bind_groups): SystemParamItem<
+        (gpu, materials, allocators, meshes, mesh_allocator, mesh_bind_groups, metadata_fallback): SystemParamItem<
             'w,
             '_,
             Self::Param,
@@ -931,12 +938,23 @@ impl<P: PhaseItem> RenderCommand<P> for DrawTreeGroup {
                 .get(&TypeId::of::<P>())
                 .or_else(|| groups.values().next()),
         };
+        // Since Bevy 0.20 mesh bind groups are per metadata slab, as in `SetMeshBindGroup`.
+        let mesh_allocator = mesh_allocator.into_inner();
+        let metadata_slab = mesh_allocator
+            .mesh_slabs(&group.mesh)
+            .and_then(|slabs| slabs.metadata_slab_id)
+            .unwrap_or(metadata_fallback.slab_id);
         let Some(mesh_group) = phase_groups.and_then(|groups| {
-            groups.get(None, false, MeshMorphBindGroupKey::NoMorphTargets, false)
+            groups.get(
+                metadata_slab,
+                None,
+                false,
+                MeshMorphBindGroupKey::NoMorphTargets,
+                false,
+            )
         }) else {
             return RenderCommandResult::Skip;
         };
-        let mesh_allocator = mesh_allocator.into_inner();
         let (Some(mesh), Some(vertices)) = (
             meshes.into_inner().get(group.mesh),
             mesh_allocator.mesh_vertex_slice(&group.mesh),

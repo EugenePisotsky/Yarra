@@ -87,7 +87,7 @@ def snapshot(destination, settings):
         shader_dir = source(settings['shaders'], '')
         if not shader_dir.is_dir():
             raise ValueError(f'No shader directory: {shader_dir}')
-        for p in shader_dir.glob('*.wgsl'):
+        for p in shader_dir.glob('*.wesl'):
             shutil.copy2(p, assets / 'shaders' / p.name)
     binary = source(settings.get('binary'), 'target/release/yarra-app-game')
     canopy = source(settings.get('canopy'), 'content/vegetation/canopy-look.ron')
@@ -102,7 +102,7 @@ def snapshot(destination, settings):
         'binary_sha256': digest(destination / 'game'),
         'database_sha256': digest(destination / 'runtime.sqlite'),
         'canopy_sha256': digest(destination / 'canopy.ron'),
-        'shader_sha256': {p.name: digest(p) for p in sorted((assets / 'shaders').glob('*.wgsl'))},
+        'shader_sha256': {p.name: digest(p) for p in sorted((assets / 'shaders').glob('*.wesl'))},
         'original_sources': {'binary': str(binary), 'database': str(database), 'canopy': str(canopy)},
         'asset_scope': 'Binary, DB, shaders and canopy copied; other assets linked to workspace and must remain unchanged',
     }

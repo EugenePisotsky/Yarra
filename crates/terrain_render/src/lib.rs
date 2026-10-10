@@ -19,6 +19,18 @@ use bevy::{
     shader::ShaderRef,
 };
 pub use composite::TerrainCompositeMaterial;
+
+/// A value's bytes in WGSL storage-buffer layout, as `ShaderBuffer::from` encoded it before
+/// Bevy 0.20 (whose `ShaderBuffer` now takes plain-old-data vectors).
+pub(crate) fn storage_bytes<T>(value: &T) -> Vec<u8>
+where
+    T: bevy::render::render_resource::ShaderType
+        + bevy::render::render_resource::encase::internal::WriteInto,
+{
+    let mut buffer = bevy::render::render_resource::encase::StorageBuffer::new(Vec::new());
+    buffer.write(value).expect("table fits its storage layout");
+    buffer.into_inner()
+}
 use world::{
     CellCoord, TerrainHeightfield, TerrainProfile, TerrainSurface, TerrainSurfaceId,
     TerrainTextureSet, TerrainWeightPage,
@@ -33,7 +45,7 @@ pub use prepared::{TerrainPreparedSettings, TerrainPreparedStats};
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TerrainMaterialPreparation;
 
-const TERRAIN_SHADER: &str = "shaders/terrain_material.wgsl";
+const TERRAIN_SHADER: &str = "shaders/terrain_material.wesl";
 
 /// Installs the small, page-oriented terrain material renderer.
 ///
@@ -361,7 +373,7 @@ pub fn prepare_terrain_material(
         prepared_albedo: false,
         source_weights: weight_image.clone(),
         source_base_color_array: base_color_array.clone(),
-        stochastic_cache: Handle::default(),
+        stochastic_cache: stochastic_cache::fallback(),
         canopy_bounds: Vec4::ZERO,
         canopy_shading: Default::default(),
         canopy_coverage: None,

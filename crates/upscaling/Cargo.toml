@@ -11,7 +11,7 @@ metalfx = ["dep:objc2", "dep:objc2-metal", "dep:objc2-metal-fx", "wgpu/metal"]
 [dependencies]
 bevy.workspace = true
 bytemuck.workspace = true
-wgpu = { version = "29.0.4", default-features = false }
+wgpu = { version = "30.0.1", default-features = false }
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 objc2 = { version = "0.6.4", optional = true }

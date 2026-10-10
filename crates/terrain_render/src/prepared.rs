@@ -242,6 +242,7 @@ struct Request {
     albedo: AssetId<Image>,
 }
 #[derive(Resource, Default, Clone, ExtractResource)]
+#[extract_app(bevy::render::RenderApp)]
 struct Requests {
     controls: Vec<Request>,
     albedos: HashSet<AssetId<Image>>,
@@ -541,7 +542,7 @@ fn initialize(mut commands: Commands, server: Res<AssetServer>, cache: Res<Pipel
     let pipeline = cache.queue_compute_pipeline(ComputePipelineDescriptor {
         label: Some("terrain control preparation".into()),
         layout: vec![layout.clone()],
-        shader: server.load("shaders/terrain_prepare_control.wgsl"),
+        shader: server.load("shaders/terrain_prepare_control.wesl"),
         entry_point: Some("prepare".into()),
         ..default()
     });

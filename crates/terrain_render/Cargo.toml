@@ -11,3 +11,6 @@ world.workspace = true
 ron.workspace = true
 serde.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+glam.workspace = true

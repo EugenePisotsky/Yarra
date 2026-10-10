@@ -11,9 +11,13 @@ fn displaying_a_running_clock_does_not_pause_or_quantize_it() {
     controls.cloud_speed = 10.;
     for _ in 0..120 {
         let phase = controls.phase;
-        let _ = context.run_ui(Default::default(), |ui| {
-            preview_hour(ui, &mut controls);
-        });
+        context
+            .run_ui(Default::default(), |ui| {
+                preview_hour(ui, &mut controls);
+            })
+            // Headless: no renderer consumes the font atlas upload.
+            .textures_delta
+            .clear();
         assert!(controls.playing, "rendering an idle slider stopped Play");
         assert_eq!(controls.phase, phase);
         controls.advance(1. / 60., 1200.);

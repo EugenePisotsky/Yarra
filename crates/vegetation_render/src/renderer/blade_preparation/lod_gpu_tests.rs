@@ -23,7 +23,7 @@ fn lod_boundary_preserves_width_and_endpoints() {
     let device = resources.0.wgpu_device();
     let shader = format!(
         "{}\n{}",
-        include_str!("../../../../../assets/shaders/vegetation_blade.wgsl"),
+        include_str!("../../../../../assets/shaders/vegetation_blade.wesl"),
         include_str!("lod_comparison.wgsl")
     );
     let module = device.create_shader_module(ShaderModuleDescriptor {
@@ -75,7 +75,10 @@ fn lod_boundary_preserves_width_and_endpoints() {
         .map_async(MapMode::Read, move |result| sender.send(result).unwrap());
     device.poll(PollType::wait_indefinitely()).unwrap();
     receiver.recv().unwrap().unwrap();
-    let data = readback.slice(..).get_mapped_range();
+    let data = readback
+        .slice(..)
+        .get_mapped_range()
+        .expect("readback is mapped");
     let results: &[[f32; 4]] = bytemuck::cast_slice(&data);
     let mut partial_fades = 0;
     for (case, &[high_width, low_width, full_width, endpoint_error]) in results.iter().enumerate() {

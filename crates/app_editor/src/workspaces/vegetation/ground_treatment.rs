@@ -18,7 +18,6 @@ use vegetation::{candidate_density_retention, candidate_domain, random01, sample
 use vegetation_render::{VegetationLighting, VegetationSceneState};
 
 const SHADER: Handle<Shader> = uuid_handle!("08d0e6d7-04e5-4197-92ca-27eb09d40b4e");
-const TERRAIN: &str = include_str!("../../../../../assets/shaders/terrain_material.wgsl");
 const DETAIL_SOURCE: &str =
     "assets/local/terrain/temperate_meadow/source/uncut_grass_oilpt20/normal_material.png";
 // Calibrated against the accepted 44 roots/m² specimen, not against its render LOD.
@@ -76,38 +75,12 @@ pub(super) struct TreatmentAssets {
     rebuilds: u32,
 }
 
-fn shader_source() -> String {
-    let hook = "#ifdef TERRAIN_SURFACE_UNLIT\n    // Retain the production albedo blend";
-    assert_eq!(
-        TERRAIN.matches(hook).count(),
-        1,
-        "terrain material hook changed"
-    );
-    let source = TERRAIN.replace(
-        hook,
-        r#"
-    if study_ground.controls.x > 0.5 && study_ground.controls.x < 3.5 {
-        let coverage = study_ground_coverage(in.world_position.xz);
-        if study_ground.controls.x > 2.5 {
-            out.color = vec4(vec3(coverage), 1.0);
-            return out;
-        }
-        base = vec4(base.rgb * study_ground_multiplier(in.world_position.xz, coverage), 1.0);
-    }
-#ifdef TERRAIN_SURFACE_UNLIT
-    // Retain the production albedo blend"#,
-    );
-    // Attenuate shaded ground radiance, including its highlights, before tonemapping.
-    // Old trials retain their albedo treatment for an honest before/after comparison.
-    let source = source.replace(
-        "out.color = apply_pbr_lighting(pbr_input);",
-        "out.color = apply_pbr_lighting(pbr_input);\n    out.color = vec4(out.color.rgb * study_canopy_visibility(in.world_position.xyz), out.color.a);",
-    ).replace(
-        "out.color = base;",
-        "out.color = vec4(base.rgb * study_canopy_visibility(in.world_position.xyz), base.a);",
-    );
-    format!("{source}\n{}", include_str!("ground_treatment.wgsl"))
-}
+/// The production terrain shader the study shader imports from. A shader inserted directly
+/// into `Assets<Shader>` does not load its imports, so the editor keeps this module loaded.
+#[derive(Resource)]
+struct StudyShaderImports(
+    #[expect(dead_code, reason = "held to keep the module loaded")] Handle<Shader>,
+);
 
 pub(super) fn register(app: &mut App) {
     app.add_plugins(MaterialPlugin::<StudyMaterial>::default())
@@ -118,11 +91,19 @@ pub(super) fn register(app: &mut App) {
             sync.after(super::viewport::sync)
                 .run_if(in_state(EditorWorkspace::Vegetation)),
         );
+    let terrain = app
+        .world()
+        .resource::<AssetServer>()
+        .load::<Shader>("shaders/terrain_material.wesl");
+    app.insert_resource(StudyShaderImports(terrain));
     app.world_mut()
         .resource_mut::<Assets<Shader>>()
         .insert(
             SHADER.id(),
-            Shader::from_wgsl(shader_source(), "editor/ground_treatment.wgsl"),
+            Shader::from_wesl(
+                include_str!("ground_treatment.wesl"),
+                "editor/ground_treatment.wesl",
+            ),
         )
         .expect("fixed study shader handle");
 }
@@ -546,9 +527,5 @@ mod tests {
         assert_eq!(local[20 * size + 25], 0.0);
         assert!(canopy[20 * size + 25] > 30.0);
         assert_eq!(canopy[20 * size + 5], 0.0);
-    }
-    #[test]
-    fn production_shader_hook_is_unique() {
-        assert!(shader_source().contains("base.rgb * study_ground_multiplier"));
     }
 }

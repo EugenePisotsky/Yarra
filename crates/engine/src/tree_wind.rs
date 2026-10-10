@@ -89,6 +89,7 @@ const FLUTTER_FREQUENCY: [f64; 2] = [1.91, -1.37];
 const FLUTTER_SPEED: f64 = 6.5;
 
 #[derive(Resource, ExtractResource, Clone, Copy, Default, Pod, Zeroable, Debug, PartialEq)]
+#[extract_app(bevy::render::RenderApp)]
 #[repr(C)]
 struct WindPose {
     // direction XZ, broad frequency, enabled strength
@@ -198,6 +199,7 @@ fn sample_wind(
 /// This frame's and the previous frame's [`WindPose`], shared by every tree material and
 /// the impostors (`crate::tree_impostor`).
 #[derive(Resource, ExtractResource, Clone)]
+#[extract_app(bevy::render::RenderApp)]
 pub(crate) struct WindBuffer(pub(crate) Handle<ShaderBuffer>);
 #[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
@@ -207,7 +209,7 @@ struct WindFrames {
 }
 fn setup_buffer(mut commands: Commands, mut buffers: ResMut<Assets<ShaderBuffer>>) {
     commands.insert_resource(WindBuffer(buffers.add(ShaderBuffer::new(
-        bytemuck::bytes_of(&WindFrames::zeroed()),
+        vec![WindFrames::zeroed()],
         RenderAssetUsages::RENDER_WORLD,
     ))));
 }

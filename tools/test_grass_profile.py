@@ -349,7 +349,7 @@ class RunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / 'assets/shaders').mkdir(parents=True)
-            (root / 'assets/shaders/grass.wgsl').write_text('shader')
+            (root / 'assets/shaders/grass.wesl').write_text('shader')
             (root / 'game').write_text('binary')
             (root / 'look.ron').write_text('look')
             db = sqlite3.connect(root / 'world.sqlite')
@@ -364,7 +364,7 @@ class RunnerTests(unittest.TestCase):
             with sqlite3.connect(root / 'snapshot/runtime.sqlite') as copy:
                 self.assertEqual(copy.execute('select value from density').fetchone(), (72,))
             self.assertEqual(meta['canopy_sha256'], runner.digest(root / 'look.ron'))
-            self.assertEqual((root / 'snapshot/assets/shaders/grass.wgsl').read_text(), 'shader')
+            self.assertEqual((root / 'snapshot/assets/shaders/grass.wesl').read_text(), 'shader')
             db.close()
 
 

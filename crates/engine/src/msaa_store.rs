@@ -21,7 +21,7 @@ use bevy::{
         render_phase::{ViewBinnedRenderPhases, ViewSortedRenderPhases},
         render_resource::{PipelineCache, RenderPassDescriptor, StoreOp},
         renderer::{RenderContext, ViewQuery},
-        view::{ExtractedView, ViewDepthTexture, ViewTarget, ViewUniformOffset},
+        view::{ExtractedView, ViewDepthStencilTexture, ViewTarget, ViewUniformOffset},
     },
 };
 
@@ -29,6 +29,7 @@ use bevy::{
 /// built-in later consumers are absent. Custom passes that load multisample
 /// color must set this to `Preserve`. Cameras without this component preserve it.
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq, ExtractComponent)]
+#[extract_app(bevy::render::RenderApp)]
 pub enum MsaaColorStorePolicy {
     #[default]
     Preserve,
@@ -53,7 +54,7 @@ impl Plugin for MsaaColorStorePlugin {
         // Replace the uninitialized system in its existing graph slot. Removing
         // and re-adding it would lose ordering edges from transmission, atmosphere,
         // deferred lighting and third-party plugins attached to Bevy's system set.
-        // Revisit this adapter when updating Bevy; it is intentionally 0.19-specific.
+        // Revisit this adapter when updating Bevy; it is intentionally 0.20-specific.
         assert!(!schedule.graph().systems.is_initialized());
         let original_type = IntoSystem::into_system(main_opaque_pass_3d).system_type();
         let matches: Vec<_> = schedule
@@ -120,7 +121,7 @@ fn can_discard_color(
     transparent_empty && transmissive_empty && wireframe_empty
 }
 
-// Adapted from Bevy 0.19.1 main_opaque_pass_3d (MIT; see third_party/BEVY-MIT.txt).
+// Adapted from Bevy 0.20.0 main_opaque_pass_3d (MIT; see third_party/BEVY-MIT.txt).
 // Draw ordering, viewport, skybox, depth and diagnostic spans match upstream.
 fn opaque_pass(
     world: &World,
@@ -128,7 +129,7 @@ fn opaque_pass(
         &ExtractedCamera,
         &ExtractedView,
         &ViewTarget,
-        &ViewDepthTexture,
+        &ViewDepthStencilTexture,
         Option<&SkyboxPipelineId>,
         Option<&SkyboxBindGroup>,
         &ViewUniformOffset,

@@ -25,7 +25,9 @@ use bevy::{
     post_process::{auto_exposure::AutoExposure, bloom::Bloom},
     prelude::*,
     render::{
-        extract_resource::ExtractResource, render_resource::TextureUsages, view::ColorGrading,
+        extract_resource::ExtractResource,
+        render_resource::{TextureUsages, TextureView},
+        view::{ColorGrading, ViewDepthStencilTexture},
     },
 };
 use std::borrow::Cow;
@@ -54,6 +56,7 @@ pub enum AtmosphereOwner {
 /// sky and haze keeps Bevy's atmosphere tables, which also light surfaces; only the sky
 /// composite stops drawing them.
 #[derive(Resource, Clone, Copy, Debug, ExtractResource)]
+#[extract_app(bevy::render::RenderApp)]
 pub struct AtmospherePresentation {
     pub sky_and_haze: bool,
     pub bloom: bool,
@@ -548,6 +551,16 @@ fn apply(
             ));
         }
     }
+}
+
+/// The view of a camera's depth texture that passes sample. Since Bevy 0.20 a depth texture may
+/// carry a stencil aspect, which a binding cannot include.
+pub fn sampled_depth(depth: &ViewDepthStencilTexture) -> &TextureView {
+    depth
+        .attachment
+        .depth_stencil_views()
+        .depth_only_view()
+        .expect("view depth textures have a depth aspect")
 }
 
 #[cfg(test)]

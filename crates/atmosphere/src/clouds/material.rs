@@ -22,10 +22,10 @@ pub struct CloudExtension {
 }
 impl MaterialExtension for CloudExtension {
     fn fragment_shader() -> ShaderRef {
-        "shaders/clouds/material.wgsl".into()
+        "shaders/clouds/material.wesl".into()
     }
     /// With 4x MSAA, LOD crossfades cover samples instead of dithering whole pixels
-    /// (`shaders/crossfade.wgsl`); the main pass resolves them into a smooth blend. Every
+    /// (`shaders/crossfade.wesl`); the main pass resolves them into a smooth blend. Every
     /// cloud material binds the forest shadow map (`FOREST_SHADOW`).
     fn specialize(
         _pipeline: &MaterialExtensionPipeline,

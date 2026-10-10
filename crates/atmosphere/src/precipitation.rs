@@ -17,13 +17,14 @@ use bevy::{
         render_resource::{binding_types::*, *},
         renderer::{RenderContext, ViewQuery},
         storage::GpuShaderBuffer,
-        view::{ViewDepthTexture, ViewTarget, ViewUniform, ViewUniformOffset, ViewUniforms},
+        view::{ViewDepthStencilTexture, ViewTarget, ViewUniform, ViewUniformOffset, ViewUniforms},
     },
 };
 use bytemuck::{Pod, Zeroable};
 
 /// Temporary presentation switch for measurements. Weather still computes precipitation.
 #[derive(Resource, Clone, Copy, Debug, ExtractResource)]
+#[extract_app(bevy::render::RenderApp)]
 pub struct PrecipitationPresentation {
     pub enabled: bool,
 }
@@ -35,6 +36,7 @@ impl Default for PrecipitationPresentation {
 
 /// Views that draw rain this frame.
 #[derive(Component, Clone, ExtractComponent)]
+#[extract_app(bevy::render::RenderApp)]
 pub struct PrecipitationView;
 
 pub const SPLASH_CAPACITY: usize = 512;
@@ -48,6 +50,7 @@ const SPLASH_VERTICES: u32 = 5 * 6;
 /// seed. Callers that know the ground (terrain, shelter) spawn them; the rain pass draws a
 /// ripple lying on the surface and droplets thrown from it.
 #[derive(Resource, Clone, ExtractResource)]
+#[extract_app(bevy::render::RenderApp)]
 pub struct RainSplashes {
     instances: Vec<[f32; 8]>,
     next: usize,
@@ -181,6 +184,7 @@ struct RainUniform {
 }
 
 #[derive(Resource, Clone, Copy, Default, ExtractResource)]
+#[extract_app(bevy::render::RenderApp)]
 struct RainFrame {
     uniform: RainUniform,
     active: [u32; 3],
@@ -317,7 +321,7 @@ fn init(mut commands: Commands, server: Res<AssetServer>, cache: Res<PipelineCac
             ),
         )
     });
-    let shader = server.load("shaders/weather/rain.wgsl");
+    let shader = server.load("shaders/weather/rain.wesl");
     let render = std::array::from_fn(|kind| {
         std::array::from_fn(|i| {
             let defs = if i == 1 {
@@ -338,6 +342,7 @@ fn init(mut commands: Commands, server: Res<AssetServer>, cache: Res<PipelineCac
                     shader_defs: defs.clone(),
                     entry_point: Some(vertex.into()),
                     buffers: vec![],
+                    ..default()
                 },
                 fragment: Some(FragmentState {
                     shader: shader.clone(),
@@ -349,6 +354,7 @@ fn init(mut commands: Commands, server: Res<AssetServer>, cache: Res<PipelineCac
                         blend: Some(BlendState::PREMULTIPLIED_ALPHA_BLENDING),
                         write_mask: ColorWrites::ALL,
                     })],
+                    ..default()
                 }),
                 ..default()
             })
@@ -362,7 +368,7 @@ fn draw(
     view: ViewQuery<(
         &PrecipitationView,
         &ViewTarget,
-        &ViewDepthTexture,
+        &ViewDepthStencilTexture,
         &ViewUniformOffset,
         &Msaa,
     )>,
@@ -415,7 +421,7 @@ fn draw(
             uniform.as_entire_binding(),
             clouds.buffer.as_entire_binding(),
             view_binding,
-            depth.view(),
+            crate::sampled_depth(depth),
             &shelter.texture_view,
             splash_buffer.as_entire_binding(),
         )),

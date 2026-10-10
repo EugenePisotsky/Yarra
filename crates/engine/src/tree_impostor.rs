@@ -39,7 +39,7 @@ use bevy::{
 use serde::Deserialize;
 use std::collections::HashMap;
 
-const SHADER: &str = "shaders/tree_impostor.wgsl";
+const SHADER: &str = "shaders/tree_impostor.wesl";
 /// Per-vertex instance data: yaw, uniform scale, switch (height over threshold) and the
 /// quad corner (0-3). Custom, so the main pass and the prepass read the same location.
 const ATTRIBUTE_INSTANCE: MeshVertexAttribute = MeshVertexAttribute::new(
@@ -94,7 +94,7 @@ pub struct ImpostorDescriptor {
     /// The foliage, for distant forest shadows (`crate::forest_shadow`).
     pub crown: ImpostorCrown,
     /// The far mesh LOD's structural wind profile and stem height (object metres), so the
-    /// quad leans as that trunk does (`shaders/tree_wind.wgsl`, `structural_frame`).
+    /// quad leans as that trunk does (`shaders/tree_wind.wesl`, `structural_frame`).
     pub wind_profile: Vec4,
     pub wind_height: f32,
     pub albedo: Handle<Image>,
@@ -391,7 +391,7 @@ struct ImpostorSlots {
 }
 
 fn release_slots(
-    removed: On<Remove, ImpostorSlots>,
+    removed: On<Remove<ImpostorSlots>>,
     slots: Query<&ImpostorSlots>,
     mut fades: ResMut<ImpostorFades>,
 ) {
@@ -629,7 +629,7 @@ fn complete_batches(
         commands.entity(entity).insert((
             Mesh3d(meshes.add(mesh)),
             MeshMaterial3d(material),
-            MeshTag(base),
+            MeshTag::new(base),
             aabb,
             NoAutoAabb,
             NotShadowCaster,

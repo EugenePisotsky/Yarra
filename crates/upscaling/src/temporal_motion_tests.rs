@@ -245,7 +245,10 @@ struct Output { @location(0) color:vec4<f32>, @location(1) motion:vec2<f32> }
             rx.recv_timeout(std::time::Duration::from_secs(10))
                 .unwrap()
                 .unwrap();
-            let bytes = readback.slice(..).get_mapped_range();
+            let bytes = readback
+                .slice(..)
+                .get_mapped_range()
+                .expect("readback is mapped");
             let mut squared = 0.0f64;
             let mut n = 0;
             for y in 48..208 {

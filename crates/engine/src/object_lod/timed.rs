@@ -5,7 +5,7 @@
 //! Here the distance only decides which representation draws (with a little hysteresis);
 //! a change dissolves the old one into the new over [`FADE_SECONDS`] at any speed. Fading
 //! meshes carry their dither level in their mesh tag, which the tree shaders read in every
-//! pass, shadows included (`shaders/tree_wind.wgsl`). The impostor's level goes to its
+//! pass, shadows included (`shaders/tree_wind.wesl`). The impostor's level goes to its
 //! instance's slot in [`ImpostorFades`], found by world position. An object whose cell has
 //! just loaded fades in from its impostor, which drew while it was missing.
 use super::{ForcedLod, LodProjection};

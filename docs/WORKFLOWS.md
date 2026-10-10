@@ -767,7 +767,7 @@ Resolved wind depth mismatch (2026-10-03): Strong wind exposed dark patches on
 both bare and living trees when the depth prepass was enabled. Bypassing MetalFX
 reconstruction left the patches intact. The independently compiled depth and
 colour vertex variants could evaluate wind arithmetic differently; colour
-fragments then failed against their own prepass depth. `tree_wind.wgsl` now owns
+fragments then failed against their own prepass depth. `tree_wind.wesl` now owns
 the Bevy-compatible vertex output layouts and marks both clip positions
 `@invariant`. Keep these locations synchronized with Bevy's forward/prepass IO
 when upgrading Bevy. Wind motion, material lighting and pass counts are unchanged.
@@ -1034,6 +1034,20 @@ cargo run -p yarra-app-game -- --world-db tmp/smoke.runtime.sqlite --streaming-s
 ```
 
 Add `--terrain-legacy` to exercise the older renderer with the same fixture.
+
+### Shaders
+
+Shaders are [WESL](https://wesl-lang.dev) (`.wesl`), which Bevy 0.20 composes at runtime when a pipeline is first specialized. `assets/shaders/a/b.wesl` is the module `package::shaders::a::b`; Bevy's own modules are named by crate and path (`bevy_pbr::render::pbr_functions`). A shader definition switches `@if(NAME)` / `@elif` / `@else` on whole declarations, struct members, parameters and statements (an `@if(X) { … }` block does not scope its `let`s), and an integer definition is also `constants::NAME`. Mixed bitwise and arithmetic operators need parentheses (`(a * K) ^ (b * L)`). The few plain-wgpu shaders (`crates/upscaling`, test harnesses) stay `.wgsl`.
+
+A broken branch otherwise shows up only when some view first needs that variant, so check shaders without the game:
+
+```sh
+cargo run -p yarra-shader-check                     # every variant in crates/shader_check/entries.ron
+cargo run -p yarra-shader-check -- --parse-all      # every .wesl file parses
+cargo run -p yarra-shader-check -- shaders/sky/composite.wesl --defs "ATMOSPHERE,CLOUDS,MULTISAMPLED" --each-flag
+```
+
+It runs Bevy's compiler (`wesl`, same options and global definitions) against Bevy's crate sources and validates with naga; `--each-flag` also flips each flag the shader tests, one at a time (some flips are combinations the game never builds), and `--print` shows the composed WGSL. `entries.ron` holds the definition sets the game specializes each shader with; refresh it from a `YARRA_SPIKE_LOG` run, whose `kind=pipeline` lines name each pipeline's shaders and definitions. `cargo test -p yarra-shader-check` runs the same checks. Shaders forked from Bevy (`clouds/pbr_lighting`, `clouds/material`, `tree_wind`, `tree_wind_prepass`, the sky composite's lookups) are re-merged on each Bevy upgrade: diff ours against the old Bevy original, rebuild from the new one.
 
 Native GPU/large-fixture tests are ignored by default and run explicitly for relevant changes. For example:
 

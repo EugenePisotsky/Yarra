@@ -181,7 +181,6 @@ pub fn covered(region: &ContactRegion, cover: impl Iterator<Item = [DVec3; 2]>) 
 mod tests {
     use super::*;
     use crate::lod::{LodSettings, LodView, plan_cover_with_contacts};
-    use bevy::math::DMat4;
     use std::collections::BTreeSet;
     use world::WorldSpaceId;
     fn key(level: u8, x: i32, z: i32) -> TerrainNodeKey {
@@ -234,8 +233,8 @@ mod tests {
             }
         }
         let view = LodView {
-            clip_from_world: DMat4::orthographic_rh(-1., 1., -1., 1., 0.1, 10000.)
-                * DMat4::look_at_rh(
+            clip_from_world: bevy::math::dproj::orthographic(-1., 1., -1., 1., 0.1, 10000.)
+                * glam::dcamera::rh::view::look_at_mat4(
                     DVec3::new(1000., 1000., 1000.),
                     DVec3::new(1000., 0., 1000.),
                     DVec3::Z,

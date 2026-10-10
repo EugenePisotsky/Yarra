@@ -19,7 +19,10 @@ use bevy::{
         render_resource::{binding_types::*, *},
         renderer::{CurrentView, RenderContext, RenderDevice, ViewQuery},
         texture::{FallbackImage, GpuImage},
-        view::{ExtractedView, ViewTarget, ViewUniform, ViewUniformOffset, ViewUniforms},
+        view::{
+            ExtractedView, ResolvedCompositingSpace, ViewTarget, ViewUniform, ViewUniformOffset,
+            ViewUniforms,
+        },
     },
     shader::ShaderDefVal,
 };
@@ -29,6 +32,7 @@ use bevy::{
 /// must own its full output target; viewports, output blending and non-linear
 /// compositing use Bevy's standard path. Remove this before adding LDR effects.
 #[derive(Component, Clone, ExtractComponent)]
+#[extract_app(bevy::render::RenderApp)]
 pub struct DirectTonemapOutput;
 
 #[derive(Resource)]
@@ -66,7 +70,7 @@ impl SpecializedRenderPipeline for Pipeline {
         }
         defs.push(
             match k.tone {
-                Tonemapping::None => "TONEMAP_METHOD_NONE",
+                Tonemapping::None | Tonemapping::Linear => "TONEMAP_METHOD_LINEAR",
                 Tonemapping::Reinhard => "TONEMAP_METHOD_REINHARD",
                 Tonemapping::ReinhardLuminance => "TONEMAP_METHOD_REINHARD_LUMINANCE",
                 Tonemapping::AcesFitted => "TONEMAP_METHOD_ACES_FITTED",
@@ -125,7 +129,7 @@ pub(super) fn finish(app: &mut App) {
         .expect("Core3d plugin is required");
     // Add a condition in place: preserve all ordering edges and let the normal
     // startup initialize these systems, including the game's timing adapters.
-    // This adapter, like the engine's opaque-pass adapter, targets Bevy 0.19.
+    // This adapter, like the engine's opaque-pass adapter, targets Bevy 0.20.
     assert!(!schedule.graph().systems.is_initialized());
     for system_type in [
         IntoSystem::into_system(tonemapping::tonemapping).system_type(),
@@ -176,7 +180,7 @@ fn init(
         layout: BindGroupLayoutDescriptor::new("temporal tone map inputs", &entries),
         sampler: device.create_sampler(&SamplerDescriptor::default()),
         fullscreen: fullscreen.clone(),
-        shader: assets.load("embedded://bevy_core_pipeline/tonemapping/tonemapping.wgsl"),
+        shader: assets.load("embedded://bevy_core_pipeline/tonemapping/tonemapping_frag.wesl"),
     });
 }
 #[allow(clippy::type_complexity)]
@@ -194,9 +198,10 @@ fn prepare(
         Option<&DirectTonemapOutput>,
         Option<&Tonemapping>,
         Option<&DebandDither>,
+        Option<&ResolvedCompositingSpace>,
     )>,
 ) {
-    for (e, camera, view, target, temporal, direct, tone, dither) in &views {
+    for (e, camera, view, target, temporal, direct, tone, dither, space) in &views {
         let supported = direct.is_some()
             && temporal.is_some()
             && camera.hdr
@@ -209,7 +214,7 @@ fn prepare(
                 }
             )
             && matches!(
-                camera.compositing_space,
+                ResolvedCompositingSpace::space(space),
                 None | Some(CompositingSpace::Linear)
             )
             && tone.is_some_and(Tonemapping::is_enabled);

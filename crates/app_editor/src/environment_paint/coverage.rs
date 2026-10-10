@@ -23,7 +23,7 @@ pub(super) struct CoverageMaterial {
 }
 impl Material for CoverageMaterial {
     fn fragment_shader() -> ShaderRef {
-        "shaders/environment_coverage.wgsl".into()
+        "shaders/environment_coverage.wesl".into()
     }
     fn alpha_mode(&self) -> AlphaMode {
         AlphaMode::Blend

@@ -98,7 +98,14 @@ pub(super) fn begin_telemetry_readback(
             }
 
             {
-                let mapped = buffer.slice(..).get_mapped_range();
+                let mapped = match buffer.slice(..).get_mapped_range() {
+                    Ok(mapped) => mapped,
+                    Err(error) => {
+                        warn!("vegetation-v2 telemetry readback failed: {error}");
+                        buffer.unmap();
+                        return;
+                    }
+                };
                 let words: &[u32] = bytemuck::cast_slice(&mapped);
                 let required_words = (TELEMETRY_READBACK_SIZE / size_of::<u32>() as u64) as usize;
                 if words.len() >= required_words {

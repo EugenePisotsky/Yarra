@@ -1,13 +1,12 @@
 //! Measurements keep their source-frame identity across the render thread and async readback.
-//! System wrappers preserve access, conditions, ordering and deferred commands (Bevy 0.19).
+//! System wrappers preserve access, conditions, ordering and deferred commands (Bevy 0.20).
 #[path = "timing/gpu.rs"]
 mod gpu;
 use bevy::{
     ecs::{
         change_detection::{CheckChangeTicks, Tick},
-        query::FilteredAccessSet,
         schedule::{InternedSystemSet, SystemWithAccess},
-        system::{IntoSystem, RunSystemError, System, SystemStateFlags},
+        system::{IntoSystem, RunSystemError, System, SystemAccess, SystemStateFlags},
         world::{DeferredWorld, unsafe_world_cell::UnsafeWorldCell},
     },
     prelude::*,
@@ -29,6 +28,7 @@ use std::{
 
 const HISTORY: usize = 8192;
 #[derive(Resource, ExtractResource, Clone, Copy, Debug, Default)]
+#[extract_app(bevy::render::RenderApp)]
 pub(super) struct Stamp {
     pub frame: u32,
     pub epoch: u64,
@@ -390,7 +390,7 @@ impl System for Measured {
             .fetch_add(start.elapsed().as_nanos() as u64, Ordering::Relaxed);
         gpu::wrap_pending(world, previous, &self.probe.name);
     }
-    fn initialize(&mut self, world: &mut World) -> FilteredAccessSet {
+    fn initialize(&mut self, world: &mut World) -> SystemAccess {
         self.inner.initialize(world)
     }
     fn check_change_tick(&mut self, check: CheckChangeTicks) {
@@ -493,7 +493,7 @@ fn log_pipelines(
     use bevy::render::render_resource::{CachedPipelineState, PipelineDescriptor};
     use bevy::shader::ShaderDefVal;
     let definition = |def: &ShaderDefVal| match def {
-        ShaderDefVal::Bool(name, true) => name.clone(),
+        ShaderDefVal::Bool(name, true) => name.to_string(),
         ShaderDefVal::Bool(name, false) => format!("!{name}"),
         ShaderDefVal::Int(name, value) => format!("{name}={value}"),
         ShaderDefVal::UInt(name, value) => format!("{name}={value}"),
@@ -506,7 +506,12 @@ fn log_pipelines(
             continue;
         }
         ready[id] = true;
-        let (label, mut definitions) = match &pipeline.descriptor {
+        let shader = |handle: &bevy::asset::Handle<bevy::shader::Shader>| {
+            handle
+                .path()
+                .map_or_else(|| format!("{:?}", handle.id()), ToString::to_string)
+        };
+        let (label, mut definitions, shaders) = match &pipeline.descriptor {
             PipelineDescriptor::RenderPipelineDescriptor(d) => (
                 d.label.clone(),
                 d.vertex
@@ -515,18 +520,39 @@ fn log_pipelines(
                     .chain(d.fragment.iter().flat_map(|f| &f.shader_defs))
                     .map(definition)
                     .collect::<Vec<_>>(),
+                std::iter::once(shader(&d.vertex.shader))
+                    .chain(d.fragment.iter().map(|f| shader(&f.shader)))
+                    .collect::<Vec<_>>(),
             ),
             PipelineDescriptor::ComputePipelineDescriptor(d) => (
                 d.label.clone(),
                 d.shader_defs.iter().map(definition).collect(),
+                vec![shader(&d.shader)],
+            ),
+            PipelineDescriptor::MeshPipelineDescriptor(d) => (
+                d.label.clone(),
+                d.task
+                    .iter()
+                    .flat_map(|t| &t.shader_defs)
+                    .chain(&d.mesh.shader_defs)
+                    .chain(d.fragment.iter().flat_map(|f| &f.shader_defs))
+                    .map(definition)
+                    .collect(),
+                d.task
+                    .iter()
+                    .map(|t| shader(&t.shader))
+                    .chain([shader(&d.mesh.shader)])
+                    .chain(d.fragment.iter().map(|f| shader(&f.shader)))
+                    .collect(),
             ),
         };
         definitions.sort();
         definitions.dedup();
         warn!(
-            "FRAME_SPIKE kind=pipeline frame={} id={id} label={} defs=[{}]",
+            "FRAME_SPIKE kind=pipeline frame={} id={id} label={} shaders=[{}] defs=[{}]",
             stamp.frame,
             label.as_deref().unwrap_or("unnamed"),
+            shaders.join(" "),
             definitions.join(" ")
         );
     }

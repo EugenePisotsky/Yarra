@@ -237,6 +237,25 @@ A lighter prepass: terrain (`TerrainMaterial`, `TerrainCompositeMaterial`) and t
 | Far terrain | Baked albedo and normal and lighter lighting where the detail cannot be seen | 0.5–1 ms at native |
 | Dynamic resolution | Render scale held to the frame budget with MetalFX Temporal, as consoles do | Holds 60 fps as the machine heats |
 
+### Bevy 0.20 features
+
+October 10, 2026, on the upgrade to Bevy 0.20 (wgpu 30, Rust 1.99). In use from the upgrade itself: WESL shaders checked offline (`yarra-shader-check`, [Workflows](WORKFLOWS.md#shaders)), Bevy's weakly ordered render schedule, retained UI extraction and per-column change ticks in its mesh extraction.
+
+Measured against the 0.19 build (same world, alternating runs, fullscreen at 50% scale, uncapped): with MetalFX Spatial 0.20 is about 6% faster (start beach 122 → 129 fps). With MetalFX Temporal it is 2–3% slower (beach 89 → 87, broadleaf stand 72 → 70 fps): pass times are unchanged, but the GPU waits longer for MetalFX's own post-processing command buffer (about 1.9 ms in 95% of frames against 1.3 ms in 58%, Metal System Trace). Bevy now finishes every pass's commands in parallel when it submits (encoding 3.0 → 0.5 ms, submission 0.3 → 2.0 ms), which may delay MetalFX's helper thread; submitting the frame early, right after MetalFX, did not help. The render thread's own CPU time fell by about 0.5 ms. Images match the 0.19 build within run-to-run noise in twelve look-capture views (`tmp/bevy020/cap.sh`).
+
+| Feature | Fit for this game | Decision |
+| --- | --- | --- |
+| Mesh shaders (`MeshPipelineDescriptor`, `draw_mesh_tasks`) for grass | wgpu 30 exposes them on this M2 Max (256 vertices and primitives per meshlet), but Apple accelerates mesh shading in hardware only from M3, and Bevy offers a bare pipeline: no material, prepass, shadow or motion-vector integration, all of which grass has. Grass is bound by fragments (about 0.7 ms of the native opaque pass, 1.6 ms at 50%); a mesh shader would only fold the blade-preparation compute pass into the draw | Not now. A one-day spike measuring prepare + vertex time against a task/mesh shader on M2 and an M3+ machine first, if grass vertex work ever becomes a top item |
+| Real leaves instead of cards (mesh shaders, meshlets) | A broadleaf has 10⁵ leaves and a pine about 10⁶ needles, against a few thousand cards per crown now: 30–300× the triangles, drawn again into four cascades, mostly smaller than a pixel beyond 30 m (quad and MSAA waste). Cluster culling does not simplify foliage (aggregate geometry needs voxel or card LODs anyway) | No. Cheaper lever for the same cost centre: cutout meshes fitted to the leaf silhouette (fewer discarded fragments, which on a tile-deferred GPU also defeat hidden-surface removal), baked in Houdini |
+| Compressed vertex attributes (`MeshAttributeCompressionFlags`, Bevy's `VERTEX_*_COMPRESSED`) | Tree shadow cascades (3.2 ms) are mostly vertex work; positions, normals and UVs at 16 bits halve their fetch. `tree_wind.wesl` would have to decode them, and the custom wind and card attributes would be quantized by us | Candidate after measuring the cascades' vertex-fetch limiter in a Metal trace |
+| Synchronous pipeline compilation on macOS (unchanged in 0.20) | WESL composition costs more than naga_oil did: startup compiles about 310 ms of pipelines against 210 ms, and a variant first needed mid-game stalls its frame for longer | Candidate: compile the known variants while the world loads (the pipeline log now names each pipeline's shaders and definitions) |
+| WESL modules | The sky composite (1,358 lines) and the grass draw and compute shaders (about 1,100 lines each) can now be split into modules without name clashes | Do it with the planned sky composite split (sea, sky, air as separate passes) |
+| Catching panics (`FallbackErrorHandler`) | A panic in an editor tool loses unsaved authoring | Candidate for the editor: log and continue |
+| `despawn_all` | Faster batched despawns when streaming unloads object and grass pages | Candidate if page unloads show in `YARRA_SPIKE_LOG` |
+| Schedule randomization (`shuffle_seed`) | Finds order-dependent bugs in streaming and gameplay systems | Use in tests when such a bug is suspected |
+| Texture compression (`ctt`: BC7/ASTC with mip chains) | KTX2 UASTC is transcoded at load; BC7 on the Mac and ASTC on iOS would skip that | Later, with the iOS build |
+| Solari (path tracing), BSN, Feathers widgets, pan-orbit camera | Path tracing is beyond the frame budget and has no macOS denoiser; the editor UI is egui | No |
+
 ## Completed: confirmed leftovers and documentation
 
 - Removed the unreachable 160-second baseline runner, its state, scheduling, button guard and log field. Its request was only set in tests; current F1 A/B capture is a separate implementation and remains.

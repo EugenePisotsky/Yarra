@@ -29,8 +29,8 @@ fn metadata(root: TerrainNodeKey) -> BTreeMap<TerrainNodeKey, PatchMetadata> {
 }
 fn view(position: DVec3, target: DVec3) -> LodView {
     LodView {
-        clip_from_world: DMat4::perspective_rh(1.0, 16.0 / 9.0, 0.1, 10000.0)
-            * DMat4::look_at_rh(position, target, DVec3::Z),
+        clip_from_world: bevy::math::dproj::perspective(1.0, 16.0 / 9.0, 0.1, 10000.0)
+            * glam::dcamera::rh::view::look_at_mat4(position, target, DVec3::Z),
         viewport: [2560, 1440],
         contact_position: position,
     }
@@ -421,8 +421,8 @@ fn elevated_valley_uses_three_dimensional_distance_and_orthographic_projection()
     .unwrap();
     assert_eq!(high.patches.len(), 1);
     v.contact_position.y = 8.0;
-    v.clip_from_world = DMat4::orthographic_rh(-50., 50., -50., 50., 0.1, 2000.)
-        * DMat4::look_at_rh(
+    v.clip_from_world = bevy::math::dproj::orthographic(-50., 50., -50., 50., 0.1, 2000.)
+        * glam::dcamera::rh::view::look_at_mat4(
             DVec3::new(32., 1500., 32.),
             DVec3::new(32., 0., 32.),
             DVec3::Z,
@@ -482,8 +482,12 @@ fn hysteresis_preserves_refinement_and_bad_budgets_fail_explicitly() {
     let m = metadata(root);
     let mut v = view(DVec3::new(8., 100., 8.), DVec3::ZERO);
     // A horizontal look makes vertical terrain error affect projected height.
-    v.clip_from_world = DMat4::orthographic_rh(-256., 256., -120., 120., 0.1, 2000.)
-        * DMat4::look_at_rh(DVec3::new(8., 20., 100.), DVec3::new(8., 20., 0.), DVec3::Y);
+    v.clip_from_world = bevy::math::dproj::orthographic(-256., 256., -120., 120., 0.1, 2000.)
+        * glam::dcamera::rh::view::look_at_mat4(
+            DVec3::new(8., 20., 100.),
+            DVec3::new(8., 20., 0.),
+            DVec3::Y,
+        );
     let before = plan_cover(&[root], &m, &BTreeSet::new(), &v, 8.0, &settings()).unwrap();
     let refined = root.children().unwrap().unwrap().into_iter().collect();
     let after = plan_cover(&[root], &m, &refined, &v, 8.0, &settings()).unwrap();

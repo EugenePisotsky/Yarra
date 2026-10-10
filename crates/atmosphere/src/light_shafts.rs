@@ -17,7 +17,7 @@ use bevy::{
         renderer::{RenderContext, RenderDevice, ViewQuery},
         storage::GpuShaderBuffer,
         texture::{CachedTexture, GpuImage, TextureCache},
-        view::{ViewDepthTexture, ViewTarget, ViewUniform, ViewUniformOffset, ViewUniforms},
+        view::{ViewDepthStencilTexture, ViewTarget, ViewUniform, ViewUniformOffset, ViewUniforms},
     },
 };
 
@@ -178,7 +178,7 @@ fn init(
             ),
         ),
     );
-    let shader = server.load("shaders/sky/light_shafts.wgsl");
+    let shader = server.load("shaders/sky/light_shafts.wesl");
     let compute = |label: &'static str, layout: &BindGroupLayoutDescriptor, entry, defs| {
         cache.queue_compute_pipeline(ComputePipelineDescriptor {
             label: Some(label.into()),
@@ -235,7 +235,7 @@ fn init(
 fn draw(
     view: ViewQuery<(
         &LightShaftTargets,
-        &ViewDepthTexture,
+        &ViewDepthStencilTexture,
         &ViewUniformOffset,
         &ViewLightsUniformOffset,
         &ViewShadowBindings,
@@ -283,7 +283,7 @@ fn draw(
         &BindGroupEntries::sequential((
             view_binding,
             clouds.buffer.as_entire_binding(),
-            depth.view(),
+            crate::sampled_depth(depth),
             light_binding,
             &shadows.directional_light_depth_texture_view,
             &shadow_samplers.directional_light_comparison_sampler,

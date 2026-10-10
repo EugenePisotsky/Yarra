@@ -268,7 +268,7 @@ impl NearAtlas {
         let weights = images.add(image(WEIGHT_SIDE));
         let canopy = images.add(image(CANOPY_SIDE));
         let table = buffers.add(ShaderBuffer::with_size(
-            (NearEntry::min_size().get() * NEAR_TABLE as u64) as usize,
+            NearEntry::min_size().get() * NEAR_TABLE as u64,
             RenderAssetUsages::RENDER_WORLD,
         ));
         let shared = Arc::new(Mutex::new(Shared {
@@ -306,7 +306,7 @@ impl NearAtlas {
         let mut s = self.shared.lock().unwrap();
         assert!(s.pending.is_none());
         s.pending = Some(Update {
-            table: ShaderBuffer::from(table).data.unwrap(),
+            table: crate::storage_bytes(&table),
             tiles,
         });
     }

@@ -21,7 +21,7 @@ use bevy::{
         renderer::{RenderContext, ViewQuery},
         storage::GpuShaderBuffer,
         texture::GpuImage,
-        view::{ViewDepthTexture, ViewTarget, ViewUniform, ViewUniformOffset, ViewUniforms},
+        view::{ViewDepthStencilTexture, ViewTarget, ViewUniform, ViewUniformOffset, ViewUniforms},
     },
 };
 use bytemuck::{Pod, Zeroable};
@@ -29,6 +29,7 @@ use world::atmosphere::evaluate;
 
 /// Views that draw ambient particles this frame.
 #[derive(Component, Clone, ExtractComponent)]
+#[extract_app(bevy::render::RenderApp)]
 pub struct AmbientParticlesView;
 
 struct Kind {
@@ -89,6 +90,7 @@ struct AmbientUniform {
 }
 
 #[derive(Resource, Clone, Copy, Default, ExtractResource)]
+#[extract_app(bevy::render::RenderApp)]
 struct AmbientFrame {
     uniform: AmbientUniform,
     /// Instances to draw per kind; the last few fade with the amount.
@@ -258,7 +260,7 @@ fn init(
             ),
         )
     });
-    let shader = server.load("shaders/weather/ambient.wgsl");
+    let shader = server.load("shaders/weather/ambient.wesl");
     let render = std::array::from_fn(|i| {
         let defs = if i == 1 {
             vec!["MULTISAMPLED".into()]
@@ -273,6 +275,7 @@ fn init(
                 shader_defs: defs.clone(),
                 entry_point: Some("vertex".into()),
                 buffers: vec![],
+                ..default()
             },
             fragment: Some(FragmentState {
                 shader: shader.clone(),
@@ -283,6 +286,7 @@ fn init(
                     blend: Some(BlendState::PREMULTIPLIED_ALPHA_BLENDING),
                     write_mask: ColorWrites::ALL,
                 })],
+                ..default()
             }),
             ..default()
         })
@@ -311,7 +315,7 @@ fn draw(
     view: ViewQuery<(
         &AmbientParticlesView,
         &ViewTarget,
-        &ViewDepthTexture,
+        &ViewDepthStencilTexture,
         &ViewUniformOffset,
         &ViewLightsUniformOffset,
         &ViewShadowBindings,
@@ -363,7 +367,7 @@ fn draw(
             uniform.as_entire_binding(),
             clouds.buffer.as_entire_binding(),
             view_binding,
-            depth.view(),
+            crate::sampled_depth(depth),
             light_binding,
             &shadows.directional_light_depth_texture_view,
             &shadow_samplers.directional_light_comparison_sampler,

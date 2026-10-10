@@ -114,7 +114,7 @@ mod tests {
 
     #[test]
     fn folded_pair_cpu_gpu_index_ranges_and_triangle_budget_agree() {
-        let compute = include_str!("../../../../assets/shaders/vegetation_debug_compute.wgsl");
+        let compute = include_str!("../../../../assets/shaders/vegetation_debug_compute.wesl");
         for (name, value) in [
             ("SPLIT_HIGH_INDEX_COUNT", SPLIT_HIGH_INDEX_COUNT),
             ("SPLIT_LOW_INDEX_COUNT", SPLIT_LOW_INDEX_COUNT),
@@ -138,7 +138,7 @@ mod tests {
         assert_eq!(
             density,
             retention(include_str!(
-                "../../../../assets/shaders/vegetation_blade.wgsl"
+                "../../../../assets/shaders/vegetation_blade.wesl"
             ))
         );
         assert!(density * SPLIT_LOW_INDEX_COUNT as f32 <= 0.65 * 9.0 + 1e-6);

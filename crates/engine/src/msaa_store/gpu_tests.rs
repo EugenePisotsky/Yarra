@@ -81,6 +81,8 @@ fn resolve_only_matches_stored_color_and_preserves_later_consumers() {
                 Camera::default(),
                 RenderTarget::Image(target.clone().into()),
                 Msaa::Sample4,
+                // Opt-in since Bevy 0.20; the transmission case needs its pass.
+                bevy::pbr::ScreenSpaceTransmission::default(),
                 policy,
                 pose,
             ))

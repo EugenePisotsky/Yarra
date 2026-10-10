@@ -1,6 +1,6 @@
 # Yarra Metal presentation interval
 
-This is the crates.io source distribution of **wgpu-hal 29.0.4**, vendored under
+This is the crates.io source distribution of **wgpu-hal 30.0.1**, vendored under
 its original MIT/Apache-2.0 licenses. The root Cargo manifest patches that exact
 dependency so the change is reproducible without editing Cargo's shared cache.
 

@@ -17,7 +17,7 @@ ron.workspace = true
 serde_json.workspace = true
 bevy_egui.workspace = true
 image = { version = "0.25", default-features = false, features = ["png"] }
-wgpu = { version = "29.0.4", default-features = false }
+wgpu = { version = "30.0.1", default-features = false }
 terrain-render.workspace = true
 upscaling = { workspace = true, features = ["metalfx"] }
 vegetation.workspace = true
@@ -26,7 +26,7 @@ vegetation-render.workspace = true
 [target.'cfg(target_vendor = "apple")'.dependencies]
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSObject", "NSProcessInfo", "NSString", "NSURL", "NSPathUtilities"] }
 objc2-metal = { version = "0.3.2", default-features = false, features = ["std", "MTLCaptureManager", "MTLDevice"] }
-wgpu = { version = "29.0.4", default-features = false, features = ["metal"] }
+wgpu = { version = "30.0.1", default-features = false, features = ["metal"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.4"

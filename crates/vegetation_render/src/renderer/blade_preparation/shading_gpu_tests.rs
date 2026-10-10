@@ -11,7 +11,7 @@ fn shading_matches_reference_in_frozen_scene() {
     );
     let mut app = test_app();
     settled_pixels(&mut app);
-    let names = ["vegetation_debug_draw.wgsl", "grass_canopy.wgsl"];
+    let names = ["vegetation_debug_draw.wesl", "grass_canopy.wesl"];
     let handles: Vec<Handle<Shader>> = names
         .iter()
         .map(|name| {
@@ -33,7 +33,7 @@ fn shading_matches_reference_in_frozen_scene() {
     let baseline: Vec<_> = names
         .iter()
         .map(|name| {
-            Shader::from_wgsl(
+            Shader::from_wesl(
                 std::fs::read_to_string(reference.join(name)).unwrap(),
                 format!("shaders/{name}"),
             )

@@ -19,9 +19,9 @@ use bevy::{
 };
 use std::borrow::Cow;
 
-const COMPUTE_SHADER_PATH: &str = "shaders/vegetation_debug_compute.wgsl";
-const SCHEDULE_SHADER_PATH: &str = "shaders/vegetation_schedule_compute.wgsl";
-const DRAW_SHADER_PATH: &str = "shaders/vegetation_debug_draw.wgsl";
+const COMPUTE_SHADER_PATH: &str = "shaders/vegetation_debug_compute.wesl";
+const SCHEDULE_SHADER_PATH: &str = "shaders/vegetation_schedule_compute.wesl";
+const DRAW_SHADER_PATH: &str = "shaders/vegetation_debug_draw.wesl";
 
 #[derive(Resource)]
 pub(super) struct VegetationPipelines {

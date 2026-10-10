@@ -54,6 +54,7 @@ impl UpscaleMethod {
 /// When `TemporalView` is attached, this spatial pass is bypassed; the camera writes
 /// its native-sized LDR target after temporal HDR reconstruction.
 #[derive(Component, Clone, ExtractComponent, PartialEq)]
+#[extract_app(bevy::render::RenderApp)]
 #[require(UpscaleStatus)]
 pub struct UpscaleView {
     pub input: Handle<Image>,

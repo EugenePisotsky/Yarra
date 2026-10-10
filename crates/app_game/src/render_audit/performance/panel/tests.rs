@@ -58,7 +58,7 @@ fn tick(app: &mut App, seconds: f64) {
 }
 
 fn click(app: &mut App, action: Action) {
-    let button = app.world_mut().spawn((Interaction::Pressed, action)).id();
+    let button = app.world_mut().spawn((Pressed, action)).id();
     tick(app, 0.01);
     app.world_mut().despawn(button);
 }
@@ -80,7 +80,10 @@ fn movement_button_toggles_player_speed_and_reset_restores_normal() {
         engine::PlayerMovementSpeed::Normal
     );
     for expected in [true, false, true] {
-        *app.world_mut().get_mut::<Interaction>(button).unwrap() = Interaction::Pressed;
+        app.world_mut()
+            .entity_mut(button)
+            .remove::<Pressed>()
+            .insert(Pressed);
         tick(&mut app, 0.01);
         assert_eq!(
             app.world().resource::<RuntimeSettings>().fast_movement,
@@ -104,10 +107,7 @@ fn movement_button_toggles_player_speed_and_reset_restores_normal() {
             }
         );
     }
-    let reset = app
-        .world_mut()
-        .spawn((Interaction::Pressed, Control::Reset))
-        .id();
+    let reset = app.world_mut().spawn((Pressed, Control::Reset)).id();
     tick(&mut app, 0.01);
     app.world_mut().despawn(reset);
     assert_eq!(
@@ -138,14 +138,8 @@ fn f1_and_escape_cancel_without_replacing_results_or_losing_prior_controls() {
             assert!(!app.world().resource::<RuntimeSettings>().gpu_pass_timings);
             // Other controls and restore must not change settings mid-capture.
             let rate = app.world().resource::<FramePacing>().rate;
-            let reset = app
-                .world_mut()
-                .spawn((Interaction::Pressed, Control::Reset))
-                .id();
-            let fps = app
-                .world_mut()
-                .spawn((Interaction::Pressed, Control::FrameRate))
-                .id();
+            let reset = app.world_mut().spawn((Pressed, Control::Reset)).id();
+            let fps = app.world_mut().spawn((Pressed, Control::FrameRate)).id();
             click(&mut app, Action::Restore(0));
             app.world_mut().despawn(reset);
             app.world_mut().despawn(fps);

@@ -10,7 +10,7 @@
 //! for less than the land ([`metering_mask`]).
 use bevy::{
     asset::RenderAssetUsages,
-    math::cubic_splines::LinearSpline,
+    curve::cubic_splines::LinearSpline,
     post_process::auto_exposure::{
         AutoExposure, AutoExposureCompensationCurve, AutoExposurePlugin,
     },

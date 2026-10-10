@@ -140,8 +140,8 @@ fn texture_demand_refines_flat_geometry_and_respects_altitude_and_capacity() {
     let view = |height| {
         let eye = DVec3::new(-64., height, 64.);
         LodView {
-            clip_from_world: DMat4::perspective_rh(1., 1., 0.1, 10000.)
-                * DMat4::look_at_rh(eye, DVec3::new(-64., 0., 64.), DVec3::Z),
+            clip_from_world: bevy::math::dproj::perspective(1., 1., 0.1, 10000.)
+                * glam::dcamera::rh::view::look_at_mat4(eye, DVec3::new(-64., 0., 64.), DVec3::Z),
             viewport: [800, 800],
             contact_position: eye,
         }
@@ -205,8 +205,8 @@ fn texture_demand_refines_flat_geometry_and_respects_altitude_and_capacity() {
         let eye = initial.contact_position;
         for direction in [DVec3::Y, DVec3::X, DVec3::NEG_Y] {
             let turned = LodView {
-                clip_from_world: DMat4::perspective_rh(1., 1., 0.1, 10000.)
-                    * DMat4::look_at_rh(eye, eye + direction, DVec3::Z),
+                clip_from_world: bevy::math::dproj::perspective(1., 1., 0.1, 10000.)
+                    * glam::dcamera::rh::view::look_at_mat4(eye, eye + direction, DVec3::Z),
                 ..initial.clone()
             };
             let selected = selection::plan(
@@ -277,8 +277,8 @@ fn texture_demand_stops_at_the_finest_published_level() {
     }
     let eye = DVec3::new(-64., 40., 64.);
     let view = LodView {
-        clip_from_world: DMat4::perspective_rh(1., 1., 0.1, 10000.)
-            * DMat4::look_at_rh(eye, DVec3::new(-64., 0., 64.), DVec3::Z),
+        clip_from_world: bevy::math::dproj::perspective(1., 1., 0.1, 10000.)
+            * glam::dcamera::rh::view::look_at_mat4(eye, DVec3::new(-64., 0., 64.), DVec3::Z),
         viewport: [800, 800],
         contact_position: eye,
     };

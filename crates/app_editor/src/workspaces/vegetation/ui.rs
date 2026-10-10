@@ -43,12 +43,10 @@ pub(super) fn ui(
     let enabled = state.pending == 0;
     if enabled {
         for drop in context.input(|i| i.raw.dropped_files.clone()) {
-            if let Some(path) = drop.path {
-                state.refs.error = state.refs.import(&path).err();
-                if state.refs.error.is_none() {
-                    let index = state.refs.selected;
-                    state.match_reference(index);
-                }
+            state.refs.error = state.refs.import(drop.path()).err();
+            if state.refs.error.is_none() {
+                let index = state.refs.selected;
+                state.match_reference(index);
             }
         }
     } else {

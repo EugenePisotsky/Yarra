@@ -66,7 +66,7 @@ fn deformation_history_handles_animation_pause_disable_and_rebase() {
     };
     let cases = [animated, paused, fixed_bark, disabled, rebased];
 
-    let source = include_str!("../../../../assets/shaders/tree_wind.wgsl");
+    let source = include_str!("../../../../assets/shaders/tree_wind.wesl");
     // Only the Bevy matrix helper needs a stand-in; evaluate the actual field/deformation
     // implementation, not a second copy of its math. Full vertex variants run in game QA.
     let body = format!(
@@ -77,7 +77,7 @@ fn deformation_history_handles_animation_pause_disable_and_rebase() {
     );
     let body = body
         .replace(
-            "@group(#{MATERIAL_BIND_GROUP}) @binding(100)\nvar<storage, read> wind: WindFrames;",
+            "@group(constants::MATERIAL_BIND_GROUP) @binding(100)\nvar<storage, read> wind: WindFrames;",
             "",
         )
         .replace(
@@ -218,51 +218,38 @@ fn run_shader(cases: &[Case], shader: &str) -> Vec<[f32; 16]> {
         .map_async(MapMode::Read, move |result| sender.send(result).unwrap());
     device.poll(PollType::wait_indefinitely()).unwrap();
     receiver.recv().unwrap().unwrap();
-    let data = readback.slice(..).get_mapped_range();
+    let data = readback
+        .slice(..)
+        .get_mapped_range()
+        .expect("readback is mapped");
     bytemuck::cast_slice(&data).to_vec()
 }
 
 #[test]
 #[ignore = "requires native GPU; evaluates production hierarchy and pinned card roots"]
 fn structural_cards_follow_wood_and_keep_roots_and_history() {
-    let source = include_str!("../../../../assets/shaders/tree_wind.wgsl");
+    let source = include_str!("../../../../assets/shaders/tree_wind.wesl");
     let source = &source
         [source.find("struct WindPose").unwrap()..source.find("@vertex\nfn vertex").unwrap()];
     // Enable the actual production card path without Bevy's vertex IO/imports.
-    let mut stack = vec![true];
-    let mut body = String::new();
-    for line in source.lines() {
-        if let Some(key) = line.strip_prefix("#ifdef ") {
-            stack.push(
-                *stack.last().unwrap()
-                    && matches!(
-                        key,
-                        "TREE_HIERARCHY"
-                            | "TREE_BRANCH_CARDS"
-                            | "TREE_CARD_FACING"
-                            | "VERTEX_UVS_B"
-                    ),
-            );
-        } else if line == "#else" {
-            let i = stack.len() - 1;
-            stack[i] = stack[i - 1] && !stack[i];
-        } else if line == "#endif" {
-            stack.pop();
-        } else if *stack.last().unwrap() {
-            body.push_str(line);
-            body.push('\n');
-        }
-    }
-    body = body
+    let source = source
         .replace(
-            "@group(#{MATERIAL_BIND_GROUP}) @binding(100)\nvar<storage, read> wind: WindFrames;",
+            "@group(constants::MATERIAL_BIND_GROUP) @binding(100)\nvar<storage, read> wind: WindFrames;",
             "",
         )
         .replace(
-            "@group(#{MATERIAL_BIND_GROUP}) @binding(105) var<uniform> tree_profile: vec4<f32>;",
+            "@group(constants::MATERIAL_BIND_GROUP) @binding(105) var<uniform> tree_profile: vec4<f32>;",
             "const tree_profile = vec4(1., 3., 1., 1.);",
         )
         .replace("view.lod_view_world_position", "vec3(0., 4., 20.)");
+    let body = shader_check::resolve_conditions(
+        &source,
+        &shader_check::Def::parse_list(
+            "TREE_HIERARCHY,TREE_BRANCH_CARDS,TREE_CARD_FACING,VERTEX_UVS_B",
+        )
+        .unwrap(),
+    )
+    .unwrap();
     let shader = format!(
         "{body}\n{}",
         r#"
@@ -381,8 +368,8 @@ fn evaluate(@builtin(global_invocation_id) id: vec3<u32>) {
 #[test]
 #[ignore = "requires native GPU; compares the impostor's trunk lean with the mesh LODs'"]
 fn impostors_lean_as_the_mesh_trunk_does() {
-    let source = include_str!("../../../../assets/shaders/tree_wind.wgsl");
-    let impostor = include_str!("../../../../assets/shaders/tree_impostor.wgsl");
+    let source = include_str!("../../../../assets/shaders/tree_wind.wesl");
+    let impostor = include_str!("../../../../assets/shaders/tree_impostor.wesl");
     let body = format!(
         "{}\n{}\n{}",
         &source[source.find("struct WindPose").unwrap()
@@ -393,7 +380,7 @@ fn impostors_lean_as_the_mesh_trunk_does() {
             ..impostor.find("// Impostor wind: end").unwrap()],
     )
     .replace(
-        "@group(#{MATERIAL_BIND_GROUP}) @binding(100)\nvar<storage, read> wind: WindFrames;",
+        "@group(constants::MATERIAL_BIND_GROUP) @binding(100)\nvar<storage, read> wind: WindFrames;",
         "",
     );
     let shader = format!(

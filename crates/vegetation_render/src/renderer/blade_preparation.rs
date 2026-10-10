@@ -25,7 +25,7 @@ pub(super) const BLADE_CAPACITY: u64 = 131_072;
 pub(super) const BLADE_BYTES: u64 = 128;
 #[cfg(test)]
 const ARENA_BYTES: u64 = PROCEDURAL_INSTANCE_CAPACITY as u64 * 4 + BLADE_CAPACITY * BLADE_BYTES;
-const SHADER: &str = "shaders/vegetation_prepare_blades.wgsl";
+const SHADER: &str = "shaders/vegetation_prepare_blades.wesl";
 
 #[derive(Resource)]
 pub(super) struct BladePreparation {

@@ -5,7 +5,7 @@
 //! valley), the valley share (how far the ground lies below its surroundings) and the land share
 //! (mist stays over land and near shores, not out at sea). The amount
 //! and depth of mist come from the atmosphere profile (`world::atmosphere::FogSettings`); the
-//! sky composite integrates it along each view ray (`shaders/sky/composite.wgsl`).
+//! sky composite integrates it along each view ray (`shaders/sky/composite.wesl`).
 use bevy::{
     asset::RenderAssetUsages,
     image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor},

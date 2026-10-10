@@ -444,8 +444,10 @@ mod tests {
     #[test]
     fn normal_startup_scales_the_world_and_preserves_ui_across_render_path_changes() {
         let mut app = App::new();
-        app.init_resource::<Assets<Image>>()
-            .add_plugins((bevy::render::sync_world::SyncWorldPlugin, GameRenderPlugin));
+        app.init_resource::<Assets<Image>>().add_plugins((
+            bevy::extract::sync_world::SyncWorldPlugin::<bevy::render::RenderApp>::default(),
+            GameRenderPlugin,
+        ));
         let window = app
             .world_mut()
             .spawn((
@@ -748,7 +750,10 @@ mod tests {
                 upscaler: upscaling::UpscaleMethod::Linear,
                 ..default()
             })
-            .add_plugins((bevy::render::sync_world::SyncWorldPlugin, GameRenderPlugin));
+            .add_plugins((
+                bevy::extract::sync_world::SyncWorldPlugin::<bevy::render::RenderApp>::default(),
+                GameRenderPlugin,
+            ));
         app.world_mut().spawn((
             Window {
                 resolution: WindowResolution::new(1200, 900),

@@ -30,7 +30,7 @@ fn early_rejection_preserves_accepted_candidates_and_diagnostics() {
     let queue = &resources.1;
     let shader = format!(
         "{}\n{}",
-        include_str!("../../../../assets/shaders/vegetation_debug_compute.wgsl"),
+        include_str!("../../../../assets/shaders/vegetation_debug_compute.wesl"),
         include_str!("placement_comparison.wgsl")
     );
     let module = device.create_shader_module(ShaderModuleDescriptor {
@@ -92,7 +92,7 @@ fn early_rejection_preserves_accepted_candidates_and_diagnostics() {
         (Vec3::new(40.0, 1.730, -20.0), Vec3::new(50.0, 0.0, -20.0)),
     ] {
         let projection =
-            Mat4::perspective_infinite_reverse_rh(std::f32::consts::FRAC_PI_3, 2.16, 0.1);
+            bevy::math::proj::perspective_infinite_reverse(std::f32::consts::FRAC_PI_3, 2.16, 0.1);
         let transform = Transform::from_translation(position).looking_at(target, Vec3::Y);
         let camera = CameraGpu {
             clip_from_world: (projection * transform.to_matrix().inverse()).to_cols_array(),
@@ -159,7 +159,10 @@ fn early_rejection_preserves_accepted_candidates_and_diagnostics() {
             device.poll(PollType::wait_indefinitely()).unwrap();
             receiver.recv().unwrap().unwrap();
             {
-                let data = readback.slice(..).get_mapped_range();
+                let data = readback
+                    .slice(..)
+                    .get_mapped_range()
+                    .expect("readback is mapped");
                 let words: &[u32] = bytemuck::cast_slice(&data);
                 assert!(
                     words.iter().all(|&word| word < 4),
@@ -189,7 +192,7 @@ fn surface_sampling_matches_cpu_on_a_nonplanar_quad() {
     let queue = &resources.1;
     let shader = format!(
         "{}\n{}",
-        include_str!("../../../../assets/shaders/vegetation_debug_compute.wgsl"),
+        include_str!("../../../../assets/shaders/vegetation_debug_compute.wesl"),
         r#"
 @group(0) @binding(14) var<storage, read_write> surface_comparison: array<vec4<f32>>;
 @compute @workgroup_size(64)
@@ -292,7 +295,10 @@ fn compare_surface(@builtin(global_invocation_id) id: vec3<u32>) {
     device.poll(PollType::wait_indefinitely()).unwrap();
     receiver.recv().unwrap().unwrap();
     {
-        let data = readback.slice(..).get_mapped_range();
+        let data = readback
+            .slice(..)
+            .get_mapped_range()
+            .expect("readback is mapped");
         let values: &[f32] = bytemuck::cast_slice(&data);
         for i in 0..169 {
             let p = [
@@ -344,7 +350,7 @@ fn gpu_scheduler_ignores_retired_records_and_keeps_dispatch_without_telemetry() 
     let shader = device.create_shader_module(ShaderModuleDescriptor {
         label: Some("scheduler regression"),
         source: ShaderSource::Wgsl(
-            include_str!("../../../../assets/shaders/vegetation_schedule_compute.wgsl").into(),
+            include_str!("../../../../assets/shaders/vegetation_schedule_compute.wesl").into(),
         ),
     });
     let pipeline = device.create_compute_pipeline(&RawComputePipelineDescriptor {
@@ -427,7 +433,10 @@ fn gpu_scheduler_ignores_retired_records_and_keeps_dispatch_without_telemetry() 
         device.poll(PollType::wait_indefinitely()).unwrap();
         receiver.recv().unwrap().unwrap();
         {
-            let data = readback.slice(..).get_mapped_range();
+            let data = readback
+                .slice(..)
+                .get_mapped_range()
+                .expect("readback is mapped");
             let words: &[u32] = bytemuck::cast_slice(&data);
             assert_eq!(
                 words[1], live_count,

@@ -14,7 +14,7 @@ use bevy::{
         render_resource::*,
         renderer::{RenderContext, RenderDevice, ViewQuery},
         sync_world::MainEntity,
-        view::{ExtractedView, ViewDepthTexture, ViewTarget, prepare_view_targets},
+        view::{ExtractedView, ViewDepthStencilTexture, ViewTarget, prepare_view_targets},
     },
 };
 
@@ -46,6 +46,7 @@ impl TemporalDebug {
     }
 }
 #[derive(Component, Clone, ExtractComponent, PartialEq)]
+#[extract_app(bevy::render::RenderApp)]
 #[require(
     TemporalJitter,
     MipBias,
@@ -471,7 +472,7 @@ fn complete_static_motion(
         &TemporalFrame,
         &TemporalMotionTarget,
         &ViewPrepassTextures,
-        &ViewDepthTexture,
+        &ViewDepthStencilTexture,
     )>,
     state: Res<State>,
     mut ctx: RenderContext,
@@ -502,7 +503,7 @@ fn complete_static_motion(
                 },
                 wgpu::BindGroupEntry {
                     binding: 5,
-                    resource: wgpu::BindingResource::TextureView(scene.view()),
+                    resource: wgpu::BindingResource::TextureView(sampled_depth(scene)),
                 },
             ],
         });
@@ -533,7 +534,7 @@ fn resolve(
         &TemporalFrame,
         &TemporalMotionTarget,
         &ViewTarget,
-        &ViewDepthTexture,
+        &ViewDepthStencilTexture,
     )>,
     mut state: ResMut<State>,
     bridge: Res<Bridge>,
@@ -567,7 +568,7 @@ fn resolve(
             ctx.render_device(),
             Inputs {
                 color: pp.source_texture,
-                depth: &depth.texture,
+                depth: depth.texture(),
                 motion: &motion.texture,
                 output: pp.destination_texture,
                 output_view: pp.destination,
@@ -618,7 +619,7 @@ fn resolve(
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
-                        resource: wgpu::BindingResource::TextureView(depth.view()),
+                        resource: wgpu::BindingResource::TextureView(sampled_depth(depth)),
                     },
                     wgpu::BindGroupEntry {
                         binding: 3,
@@ -666,6 +667,16 @@ fn resolve(
         },
     );
 }
+/// The view of the main pass depth that passes sample; since Bevy 0.20 a depth texture may carry
+/// a stencil aspect, which a binding cannot include.
+fn sampled_depth(depth: &ViewDepthStencilTexture) -> &wgpu::TextureView {
+    depth
+        .attachment
+        .depth_stencil_views()
+        .depth_only_view()
+        .expect("view depth textures have a depth aspect")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

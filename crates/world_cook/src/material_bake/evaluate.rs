@@ -281,7 +281,7 @@ fn weights(map: &TerrainWeightPage, uv: [f64; 2]) -> [f32; 2] {
 }
 
 // Reference stochastic path for a mixed plain/anti-tiling page; the usual all-
-// anti-tiling case uses the prepared torus above. Constants match terrain_stochastic.wgsl.
+// anti-tiling case uses the prepared torus above. Constants match terrain_stochastic.wesl.
 fn stochastic(inputs: &Inputs, layer: usize, uv: [f64; 2], footprint: f64) -> [f32; 4] {
     let lattice = [uv[0] + uv[1] * 0.5773502692, uv[1] * 1.1547005384];
     let cell = lattice.map(f64::floor);

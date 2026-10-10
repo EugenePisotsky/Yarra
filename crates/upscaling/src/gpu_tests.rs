@@ -144,7 +144,10 @@ fn spatial_backends_preserve_colour_orientation_and_updates() {
             rx.recv_timeout(std::time::Duration::from_secs(10))
                 .unwrap()
                 .unwrap();
-            let bytes = readback.slice(..).get_mapped_range();
+            let bytes = readback
+                .slice(..)
+                .get_mapped_range()
+                .expect("readback is mapped");
             for (quadrant, expected) in colours.iter().enumerate() {
                 let x = out_width * (if quadrant % 2 == 0 { 1 } else { 3 }) / 4;
                 let y = out_height * (if quadrant < 2 { 1 } else { 3 }) / 4;
@@ -291,7 +294,10 @@ fn temporal_preserves_hdr_and_resets_history() {
         rx.recv_timeout(std::time::Duration::from_secs(10))
             .unwrap()
             .unwrap();
-        let data = readback.slice(..).get_mapped_range();
+        let data = readback
+            .slice(..)
+            .get_mapped_range()
+            .expect("readback is mapped");
         for (channel, expected) in expected.iter().enumerate() {
             let offset = 32 * 512 + 32 * 8 + channel * 2;
             let half = u16::from_le_bytes([data[offset], data[offset + 1]]);

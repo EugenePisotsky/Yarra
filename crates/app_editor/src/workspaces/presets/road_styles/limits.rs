@@ -317,11 +317,14 @@ mod tests {
         p.edge_softness = 1.87;
         let before = p.clone();
         let ctx = egui::Context::default();
-        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+        ctx.run_ui(egui::RawInput::default(), |ui| {
             for field in FIELDS {
                 field.control(ui, &mut p, limits());
             }
-        });
+        })
+        // Headless: no renderer consumes the font atlas upload.
+        .textures_delta
+        .clear();
         assert_eq!(p, before);
     }
 
@@ -333,7 +336,7 @@ mod tests {
         let range = limits().range(GeometryField::Softness, &p).unwrap();
         let mut id = None;
         let mut frame = |events| {
-            let _ = ctx.run_ui(
+            ctx.run_ui(
                 egui::RawInput {
                     events,
                     ..Default::default()
@@ -344,7 +347,10 @@ mod tests {
                         id = Some(response.id);
                     });
                 },
-            );
+            )
+            // Headless: no renderer consumes the font atlas upload.
+            .textures_delta
+            .clear();
             (value, id.unwrap())
         };
         let (_, id) = frame(vec![]);

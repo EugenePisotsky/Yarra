@@ -651,7 +651,7 @@ fn setup(
             prepared_albedo: false,
             source_weights: weights.clone(),
             source_base_color_array: array.clone(),
-            stochastic_cache: Handle::default(),
+            stochastic_cache: crate::stochastic_cache::fallback(),
             canopy_bounds: Vec4::ZERO,
             canopy_shading: Default::default(),
             canopy_coverage: None,

@@ -33,6 +33,7 @@ pub use renderer::terrain_contact_radius;
 /// Per-source-page terrain readiness. This gate changes rendering, never authored
 /// coverage or placement data. Empty means all pages are permitted.
 #[derive(Resource, ExtractResource, Clone, Debug, Default, PartialEq, Eq)]
+#[extract_app(bevy::render::RenderApp)]
 pub struct VegetationTerrainGate {
     pub block_all: bool,
     pub blocked_pages: std::collections::BTreeSet<[u32; 3]>,
@@ -112,12 +113,14 @@ impl Plugin for VegetationRenderPlugin {
 /// Optional render-space focus for gameplay grass detail. A free editor camera can leave
 /// this unset; an orbit camera supplies its subject so zoom never moves detail behind it.
 #[derive(Resource, ExtractResource, Clone, Copy, Debug, Default)]
+#[extract_app(bevy::render::RenderApp)]
 pub struct VegetationLodFocus {
     pub position: Option<Vec3>,
 }
 
 /// Canonical XZ offset of render coordinates, for world-anchored wind and shading.
 #[derive(Resource, ExtractResource, Default, Clone, Copy, Debug)]
+#[extract_app(bevy::render::RenderApp)]
 pub struct VegetationRenderOrigin {
     pub world_xz: [f64; 2],
 }
@@ -133,6 +136,7 @@ impl Default for VegetationPreparationCapacity {
 
 /// Prepare shared curve and wind values once per blade, with a bounded GPU cache.
 #[derive(Resource, ExtractResource, Clone, Copy, Debug)]
+#[extract_app(bevy::render::RenderApp)]
 pub struct VegetationBladePreparation {
     pub enabled: bool,
 }
@@ -148,6 +152,7 @@ impl Default for VegetationBladePreparation {
 /// the renderer applies the world's directional light and its received shadows to that authored
 /// material response.
 #[derive(Resource, ExtractResource, Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[extract_app(bevy::render::RenderApp)]
 pub struct VegetationLighting {
     pub diffuse_strength: f32,
     pub specular_strength: f32,
@@ -178,6 +183,7 @@ impl Default for VegetationLighting {
 /// travelling wave without a texture dependency. Ribbons use bounded rotations of their resting
 /// curves; broad leaves retain longitudinal detail. This resource supplies the shared field.
 #[derive(Resource, ExtractResource, Debug, Clone, Copy)]
+#[extract_app(bevy::render::RenderApp)]
 pub struct VegetationWind {
     /// External study/replay transport owns phase and disables diagnostic keyboard shortcuts.
     /// Default false preserves the game clock and controls.
@@ -273,6 +279,7 @@ fn advance_vegetation_wind(time: Res<Time>, mut wind: ResMut<VegetationWind>) {
 /// units for the stylized clear-day look; weather that opens exposure under cloud raises that
 /// bound by the same factor, so grass keeps pace with PBR terrain, trees and characters.
 #[derive(Resource, ExtractResource, Debug, Clone, Copy, PartialEq)]
+#[extract_app(bevy::render::RenderApp)]
 pub struct VegetationAmbientGain(pub f32);
 impl Default for VegetationAmbientGain {
     fn default() -> Self {
@@ -282,6 +289,7 @@ impl Default for VegetationAmbientGain {
 
 /// Render-facing snapshot of the strongest directional light and the global ambient fill.
 #[derive(Resource, ExtractResource, Debug, Clone, Copy)]
+#[extract_app(bevy::render::RenderApp)]
 pub(crate) struct VegetationSun {
     direction_to_light: Vec3,
     radiance: Vec3,
@@ -603,6 +611,7 @@ fn default_band_density() -> f32 {
 /// Applications own the UI: the game uses F1 and the editor uses workspace controls.
 /// Keep this serialized type and its fields compatible with existing vegetation study files.
 #[derive(Resource, ExtractResource, Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[extract_app(bevy::render::RenderApp)]
 pub struct VegetationDebugSettings {
     pub mode: VegetationDebugMode,
     pub profile_mode: VegetationProfileMode,
@@ -648,6 +657,7 @@ impl Default for VegetationDebugSettings {
 
 /// Immutable render-facing vegetation snapshot shared by gameplay, editor previews and probes.
 #[derive(Resource, ExtractResource, Clone, Debug)]
+#[extract_app(bevy::render::RenderApp)]
 pub struct VegetationSceneState {
     // Immutable snapshots are shared with extraction and contact certification.
     // Copying every field on every render extraction scales with resident area.
@@ -725,6 +735,7 @@ impl VegetationSceneState {
 
 /// Opts a camera into vegetation rendering. Diagnostics are configured separately.
 #[derive(Component, ExtractComponent, Clone, Copy, Debug, Default)]
+#[extract_app(bevy::render::RenderApp)]
 pub struct VegetationView;
 
 /// Excludes non-vegetation editor cameras from automatic scene attachment.
@@ -732,6 +743,7 @@ pub struct VegetationView;
 pub struct VegetationViewDisabled;
 
 #[derive(Component, ExtractComponent, Clone, Copy, Debug, Default)]
+#[extract_app(bevy::render::RenderApp)]
 pub(crate) struct VegetationDraw;
 
 fn attach_default_views(

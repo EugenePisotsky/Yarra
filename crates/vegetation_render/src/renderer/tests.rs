@@ -2,118 +2,62 @@
 use crate::VegetationBladeBands;
 use bevy::prelude::*;
 
-// Standalone validation does not run Bevy's import/define preprocessor.
-fn preprocess_variant(source: &str, mode: VegetationBladeBands, temporal: bool) -> String {
-    let mut enabled = vec![true];
-    let mut output = String::new();
-    for line in source.lines() {
-        match line {
-            "#ifdef TEMPORAL_GRASS" => enabled.push(temporal),
-            "#ifdef ATMOSPHERE" | "#ifdef YARRA_CLOUDS" => enabled.push(false),
-            "#ifdef BLADE_BAND_STUDY" => enabled.push(mode != VegetationBladeBands::Off),
-            "#ifdef BLADE_BAND_MASK" => enabled.push(matches!(
-                mode,
-                VegetationBladeBands::Mask | VegetationBladeBands::MotionMask
-            )),
-            "#else" => {
-                let last = enabled.last_mut().unwrap();
-                *last = !*last;
-            }
-            "#endif" => {
-                enabled.pop();
-            }
-            _ if enabled.iter().all(|v| *v) => {
-                output.push_str(line);
-                output.push('\n');
-            }
-            _ => {}
+use shader_check::{Def, Shaders};
+
+/// The draw shader's definitions as `pipelines.rs` specializes it.
+fn draw_variant(mode: VegetationBladeBands, temporal: bool, clouds: bool) -> Vec<Def> {
+    let mut defs = vec![Def::Flag("SHADOW_FILTER_METHOD_HARDWARE_2X2".into(), true)];
+    if clouds {
+        defs.push(Def::Flag("YARRA_CLOUDS".into(), true));
+        defs.push(Def::Int("MATERIAL_BIND_GROUP".into(), 2));
+        defs.push(Def::Flag("ATMOSPHERE".into(), true));
+    }
+    if temporal {
+        defs.push(Def::Flag("TEMPORAL_GRASS".into(), true));
+    }
+    if mode != VegetationBladeBands::Off {
+        defs.push(Def::Flag("BLADE_BAND_STUDY".into(), true));
+        let strength = if mode == VegetationBladeBands::Subtle {
+            54
+        } else {
+            82
+        };
+        defs.push(Def::Int("BLADE_BAND_STRENGTH".into(), strength));
+        if matches!(
+            mode,
+            VegetationBladeBands::Mask | VegetationBladeBands::MotionMask
+        ) {
+            defs.push(Def::Flag("BLADE_BAND_MASK".into(), true));
         }
     }
-    assert_eq!(enabled, vec![true]);
-    output.replace(
-        "#{BLADE_BAND_STRENGTH}",
-        if mode == VegetationBladeBands::Subtle {
-            "54"
-        } else {
-            "82"
-        },
-    )
+    defs
 }
 
 #[test]
-fn shaders_parse_as_wgsl() {
-    for source in [
-        include_str!("../../../../assets/shaders/vegetation_schedule_compute.wgsl"),
-        include_str!("../../../../assets/shaders/vegetation_debug_compute.wgsl"),
+fn shaders_compose_and_validate() {
+    let shaders = Shaders::get();
+    for compute in [
+        "shaders/vegetation_schedule_compute.wesl",
+        "shaders/vegetation_debug_compute.wesl",
+        "shaders/vegetation_prepare_blades.wesl",
     ] {
-        let module = naga::front::wgsl::parse_str(source).unwrap();
-        naga::valid::Validator::new(
-            naga::valid::ValidationFlags::all(),
-            naga::valid::Capabilities::all(),
-        )
-        .validate(&module)
-        .unwrap();
+        shaders.check(compute, &[]).unwrap();
     }
-
-    let preparation = include_str!("../../../../assets/shaders/vegetation_prepare_blades.wgsl");
-    let preparation = format!(
-        "{}\n{}",
-        include_str!("../../../../assets/shaders/vegetation_blade.wgsl"),
-        &preparation[preparation.find("struct DrawArgs").unwrap()..]
-    );
-    let module = naga::front::wgsl::parse_str(&preparation).unwrap();
-    naga::valid::Validator::new(
-        naga::valid::ValidationFlags::all(),
-        naga::valid::Capabilities::all(),
-    )
-    .validate(&module)
-    .unwrap();
-
-    // Naga's standalone WGSL parser does not run Bevy's #import preprocessor. Validate the
-    // complete draw shader with only the imported CSM adapter replaced by an identity stub.
-    let draw = include_str!("../../../../assets/shaders/vegetation_debug_draw.wgsl");
-    let declarations = draw.find("// Vegetation V2 procedural").unwrap();
-    let shadow_adapter = draw.find("fn directional_shadow_visibility").unwrap();
-    let post_adapter = draw.find("fn radiance_tint").unwrap();
-    let sanitized = format!(
-        "{}\n{}fn directional_shadow_visibility(_input: VertexOutput) -> f32 {{ return 1.0; }}\n{}",
-        include_str!("../../../../assets/shaders/vegetation_blade.wgsl"),
-        format!(
-            "{}\n{}",
-            include_str!("../../../../assets/shaders/grass_canopy.wgsl"),
-            &draw[declarations..shadow_adapter]
-        ),
-        &draw[post_adapter..],
-    )
-    .replace("pbr_lighting::D_GGX", "test_d_ggx")
-    .replace(
-        "pbr_lighting::V_SmithGGXCorrelated",
-        "test_v_smith_ggx_correlated",
-    )
-    .replace("view_bindings::view.exposure", "1.0");
-    let sanitized = format!(
-        "fn test_d_ggx(_roughness: f32, _n_dot_h: f32) -> f32 {{ return 1.0; }}\n\
-         fn test_v_smith_ggx_correlated(_roughness: f32, _n_dot_v: f32, _n_dot_l: f32) -> f32 {{ return 1.0; }}\n\
-         {sanitized}"
-    );
-    for (mode, temporal) in VegetationBladeBands::ALL
-        .into_iter()
-        .flat_map(|m| [(m, false), (m, true)])
-    {
-        let variant = preprocess_variant(&sanitized, mode, temporal);
-        let module = naga::front::wgsl::parse_str(&variant).unwrap();
-        naga::valid::Validator::new(
-            naga::valid::ValidationFlags::all(),
-            naga::valid::Capabilities::all(),
-        )
-        .validate(&module)
-        .unwrap();
+    for mode in VegetationBladeBands::ALL {
+        for temporal in [false, true] {
+            for clouds in [false, true] {
+                let defs = draw_variant(mode, temporal, clouds);
+                if let Err(error) = shaders.check("shaders/vegetation_debug_draw.wesl", &defs) {
+                    panic!("{mode:?} temporal={temporal} clouds={clouds}: {error}");
+                }
+            }
+        }
     }
 }
 
 #[test]
 fn production_generation_classifies_each_candidate_once() {
-    let compute = include_str!("../../../../assets/shaders/vegetation_debug_compute.wgsl");
+    let compute = include_str!("../../../../assets/shaders/vegetation_debug_compute.wesl");
     assert_eq!(compute.matches("evaluate_candidate(").count(), 2);
     assert!(compute.contains("fn generate("));
     assert!(!compute.contains("fn count("));
@@ -124,11 +68,11 @@ fn production_generation_classifies_each_candidate_once() {
 
 #[test]
 fn lod_uses_the_full_authored_blade_envelope() {
-    let schedule = include_str!("../../../../assets/shaders/vegetation_schedule_compute.wgsl");
-    let compute = include_str!("../../../../assets/shaders/vegetation_debug_compute.wgsl");
+    let schedule = include_str!("../../../../assets/shaders/vegetation_schedule_compute.wesl");
+    let compute = include_str!("../../../../assets/shaders/vegetation_debug_compute.wesl");
     let draw = concat!(
-        include_str!("../../../../assets/shaders/vegetation_debug_draw.wgsl"),
-        include_str!("../../../../assets/shaders/vegetation_blade.wgsl")
+        include_str!("../../../../assets/shaders/vegetation_debug_draw.wesl"),
+        include_str!("../../../../assets/shaders/vegetation_blade.wesl")
     );
 
     assert!(schedule.contains("fn maximum_projected_extent("));
@@ -191,7 +135,7 @@ fn lod_uses_the_full_authored_blade_envelope() {
 
 #[test]
 fn production_draw_uses_exposure_aware_rounded_gloss_and_shadow_reception() {
-    let draw = include_str!("../../../../assets/shaders/vegetation_debug_draw.wgsl");
+    let draw = include_str!("../../../../assets/shaders/vegetation_debug_draw.wesl");
     assert!(draw.contains("shadows::fetch_directional_shadow("));
     assert!(draw.contains("camera.sun_direction.xyz"));
     assert!(draw.contains("let received_shadow = mix("));
@@ -219,11 +163,11 @@ fn production_draw_uses_exposure_aware_rounded_gloss_and_shadow_reception() {
 
 #[test]
 fn strong_wind_deforms_one_shared_curve_and_expands_visibility_bounds() {
-    let schedule = include_str!("../../../../assets/shaders/vegetation_schedule_compute.wgsl");
-    let compute = include_str!("../../../../assets/shaders/vegetation_debug_compute.wgsl");
+    let schedule = include_str!("../../../../assets/shaders/vegetation_schedule_compute.wesl");
+    let compute = include_str!("../../../../assets/shaders/vegetation_debug_compute.wesl");
     let draw = concat!(
-        include_str!("../../../../assets/shaders/vegetation_debug_draw.wgsl"),
-        include_str!("../../../../assets/shaders/vegetation_blade.wgsl")
+        include_str!("../../../../assets/shaders/vegetation_debug_draw.wesl"),
+        include_str!("../../../../assets/shaders/vegetation_blade.wesl")
     );
 
     assert!(schedule.contains("item.bounds.x * camera.wind.z * 1.65"));

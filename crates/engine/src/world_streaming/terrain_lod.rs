@@ -233,7 +233,7 @@ fn acknowledge_pipelines(
                 .chain(
                     shadow
                         .values()
-                        .filter_map(|v| v.get(&entity).map(|(p, _)| *p)),
+                        .filter_map(|v| v.get(&entity).map(|(p, _, _)| *p)),
                 )
                 .all(|p| pipelines.get_render_pipeline(p).is_some())
     };
@@ -316,9 +316,7 @@ fn build_bounded_patch_mesh(
 ) -> Result<(Mesh, Aabb), String> {
     use bevy::camera::primitives::MeshAabb;
     let mut mesh = lod::build_patch_mesh(field, extent, edges)?;
-    let bounds = mesh
-        .compute_aabb()
-        .ok_or("terrain patch without positions")?;
+    let bounds = mesh.get_aabb().ok_or("terrain patch without positions")?;
     mesh.asset_usage = bevy::asset::RenderAssetUsages::RENDER_WORLD;
     Ok((mesh, bounds))
 }

@@ -190,7 +190,11 @@ fn begin(
                     });
             }
             4 => {
-                let data = slot.readback.slice(..).get_mapped_range();
+                let Ok(data) = slot.readback.slice(..).get_mapped_range() else {
+                    slot.readback.unmap();
+                    slot.state.store(0, Ordering::Release);
+                    continue;
+                };
                 let times: Vec<u64> = data
                     .chunks_exact(8)
                     .take(slot.used as usize)
@@ -245,7 +249,12 @@ pub(super) fn take_pending(mut world: DeferredWorld, enabled: bool) -> Option<Ve
     {
         return None;
     }
-    Some(world.resource_mut::<PendingCommandBuffers>().take())
+    Some(
+        world
+            .resource_mut::<PendingCommandBuffers>()
+            .finish()
+            .collect(),
+    )
 }
 pub(super) fn wrap_pending(
     mut world: DeferredWorld,
@@ -255,7 +264,10 @@ pub(super) fn wrap_pending(
     let Some(previous) = previous else {
         return;
     };
-    let commands = world.resource_mut::<PendingCommandBuffers>().take();
+    let commands: Vec<_> = world
+        .resource_mut::<PendingCommandBuffers>()
+        .finish()
+        .collect();
     let device = world.resource::<RenderDevice>().clone();
     let pair = if commands.is_empty() {
         None
@@ -294,7 +306,7 @@ fn resolve(
     let slot = &timer.slots[index];
     let pipeline = timer.marker_pipeline.as_ref().unwrap();
     // All renderer commands are encoded before queue submission. Presentation is outside this span.
-    let commands = pending.take();
+    let commands: Vec<_> = pending.finish().collect();
     pending.push([marker(&device, pipeline, &slot.queries, 0)]);
     pending.push(commands);
     pending.push([marker(&device, pipeline, &slot.queries, 1)]);

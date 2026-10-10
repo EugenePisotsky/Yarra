@@ -99,7 +99,7 @@ pub(super) fn queue(
                 slabs: default(),
             },
             Opaque3dBinKey {
-                asset_id: AssetId::<Mesh>::invalid().untyped(),
+                asset_id: AssetId::<Mesh>::default().untyped(),
             },
             (draw_entity, *draw_main_entity),
             InputUniformIndex::default(),

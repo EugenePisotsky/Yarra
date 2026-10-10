@@ -3,7 +3,7 @@
 //! captures record them but never restore them.
 use super::capture::CaptureSession;
 use crate::render_audit::font;
-use bevy::prelude::*;
+use bevy::{prelude::*, ui::Pressed, ui_widgets::Button};
 use engine::{AtmosphereState, GameDayClock, GameWeather, PrecipitationPresentation, WeatherKind};
 
 // Clouds change region by region over ~40% of a transition; 10 s is for quick checks only.
@@ -107,7 +107,7 @@ fn pause_during_capture(
 
 #[allow(clippy::too_many_arguments)] // Optional weather, time and lightning resources.
 fn actions(
-    clicks: Query<(&Interaction, &WeatherAction), Changed<Interaction>>,
+    clicks: Query<&WeatherAction, Added<Pressed>>,
     session: Res<CaptureSession>,
     atmosphere: Option<ResMut<AtmosphereState>>,
     weather: Option<ResMut<GameWeather>>,
@@ -123,7 +123,7 @@ fn actions(
     if session.recording() {
         return;
     }
-    for (_, action) in clicks.iter().filter(|(i, _)| **i == Interaction::Pressed) {
+    for action in &clicks {
         let profile = &atmosphere.profile;
         match *action {
             WeatherAction::Preset(kind) => {
@@ -368,7 +368,7 @@ mod tests {
             .world_mut()
             .spawn((
                 WeatherAction::Preset(WeatherKind::Storm),
-                Interaction::Pressed,
+                Pressed,
                 children![Text::new("")],
             ))
             .id();

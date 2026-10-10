@@ -437,7 +437,7 @@ fn update_object_lods(
 /// Bevy uses the camera that renders to the window: the UI camera at the world origin,
 /// since world views render to an image. Casters near the world camera were then dithered
 /// away, and shadows vanished as the camera moved.
-fn shadow_lods_follow_world_view(added: On<Add, WorldViewCamera>, mut commands: Commands) {
+fn shadow_lods_follow_world_view(added: On<Add<WorldViewCamera>>, mut commands: Commands) {
     commands.entity(added.entity).insert(ShadowLodOrigin);
 }
 
@@ -507,14 +507,14 @@ fn tag_meshes(
     let tag = (timed::TAG_BIAS + level.clamp(-16, 16)) as u32;
     for entity in std::iter::once(entity).chain(descendants.iter_descendants(entity)) {
         if meshes.contains(entity) {
-            commands.entity(entity).try_insert(MeshTag(tag));
+            commands.entity(entity).try_insert(MeshTag::new(tag));
         }
     }
 }
 
 /// A timed object leaving (its cell unloaded) gives its impostor back: it draws on its own.
 fn release_impostor(
-    removed: On<Remove, ScreenSpaceLod>,
+    removed: On<Remove<ScreenSpaceLod>>,
     objects: Query<&ScreenSpaceLod>,
     fades: Option<ResMut<ImpostorFades>>,
 ) {

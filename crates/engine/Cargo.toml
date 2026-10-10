@@ -20,4 +20,6 @@ world.workspace = true
 world-db.workspace = true
 
 [dev-dependencies]
+glam.workspace = true
+shader-check.workspace = true
 world-cook.workspace = true

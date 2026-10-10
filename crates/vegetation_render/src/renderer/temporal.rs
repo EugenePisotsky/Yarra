@@ -22,7 +22,7 @@ use bevy::{
             binding_types::{storage_buffer_read_only_sized, uniform_buffer_sized},
         },
         renderer::{RenderContext, RenderDevice, RenderGraph, RenderQueue, ViewQuery},
-        view::{ViewDepthTexture, ViewTarget},
+        view::{ViewDepthStencilTexture, ViewTarget},
     },
 };
 use bytemuck::{Pod, Zeroable};
@@ -215,7 +215,7 @@ fn draw(
         &TemporalFrame,
         &TemporalMotionTarget,
         &ViewTarget,
-        &ViewDepthTexture,
+        &ViewDepthStencilTexture,
         &bevy::pbr::MeshViewBindGroup,
     )>,
     state: Res<State>,

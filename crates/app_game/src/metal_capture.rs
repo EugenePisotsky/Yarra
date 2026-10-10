@@ -19,6 +19,7 @@ use objc2_foundation::{NSString, NSURL};
 use objc2_metal::{MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager};
 
 #[derive(Resource, Clone, Default, ExtractResource)]
+#[extract_app(bevy::render::RenderApp)]
 struct CaptureMainFrame(u32);
 
 fn record_main_frame(

@@ -1,0 +1,16 @@
+[package]
+name = "yarra-shader-check"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# Composes the project's WESL shaders the way Bevy's shader cache does (same `wesl` compiler,
+# Bevy's own modules read from its crate sources) and validates the result with naga, without
+# a GPU or a running game. Used by tests and from the command line.
+
+[dependencies]
+naga.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+ron.workspace = true
+wesl = { version = "0.6", features = ["naga-ext"] }

@@ -78,7 +78,7 @@ fn app(camera: Transform) -> App {
         WorldViewCamera,
         Camera {
             computed: bevy::camera::ComputedCameraValues {
-                clip_from_view: Mat4::perspective_infinite_reverse_rh(FRAC_PI_4, 1., 0.1),
+                clip_from_view: bevy::math::proj::perspective_infinite_reverse(FRAC_PI_4, 1., 0.1),
                 target_info: Some(bevy::camera::RenderTargetInfo {
                     physical_size: UVec2::splat(1000),
                     scale_factor: 1.,

@@ -1,7 +1,11 @@
 //! Session wind experiments on the native F1 panel.
 use super::capture::CaptureSession;
 use crate::render_audit::font;
-use bevy::{prelude::*, ui::RelativeCursorPosition};
+use bevy::{
+    prelude::*,
+    ui::{Pressed, RelativeCursorPosition},
+    ui_widgets::Button,
+};
 use engine::TreeWindTuning;
 use vegetation_render::VegetationWind;
 
@@ -145,7 +149,7 @@ pub(super) fn spawn(page: &mut ChildSpawnerCommands, button: impl Fn() -> (Node,
     }
 }
 fn actions(
-    clicks: Query<(&Interaction, &Action), Changed<Interaction>>,
+    clicks: Query<&Action, Added<Pressed>>,
     tuning: Option<ResMut<TreeWindTuning>>,
     wind: Option<Res<VegetationWind>>,
     session: Res<CaptureSession>,
@@ -156,10 +160,7 @@ fn actions(
     if session.recording() {
         return;
     }
-    for (click, action) in &clicks {
-        if *click != Interaction::Pressed {
-            continue;
-        }
+    for action in &clicks {
         match action {
             Action::Weather => t.manual = false,
             Action::Reset => *t = TreeWindTuning::default(),
@@ -178,7 +179,7 @@ fn actions(
     }
 }
 fn drag(
-    tracks: Query<(&Interaction, &RelativeCursorPosition, &Track)>,
+    tracks: Query<(Has<Pressed>, &RelativeCursorPosition, &Track)>,
     tuning: Option<ResMut<TreeWindTuning>>,
     wind: Option<Res<VegetationWind>>,
     session: Res<CaptureSession>,
@@ -189,10 +190,8 @@ fn drag(
     if session.recording() {
         return;
     }
-    for (interaction, cursor, track) in &tracks {
-        if *interaction == Interaction::Pressed
-            && let Some(p) = cursor.normalized
-        {
+    for (pressed, cursor, track) in &tracks {
+        if pressed && let Some(p) = cursor.normalized {
             let (_, lo, hi) = track.0.info();
             if matches!(track.0, Knob::Strength | Knob::Gusts | Knob::Heading) {
                 begin_manual(&mut t, wind.as_deref());

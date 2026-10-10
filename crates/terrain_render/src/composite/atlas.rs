@@ -99,7 +99,7 @@ impl DetailAtlas {
         let color = images.add(image(true));
         let response = images.add(image(false));
         let table = buffers.add(ShaderBuffer::with_size(
-            TABLE_SIZE * 32,
+            (TABLE_SIZE * 32) as u64,
             RenderAssetUsages::RENDER_WORLD,
         ));
         let shared = Arc::new(Mutex::new(Shared {
@@ -142,7 +142,7 @@ impl DetailAtlas {
         let mut s = self.shared.lock().unwrap();
         assert!(s.pending.is_none());
         s.pending = Some(Update {
-            table: ShaderBuffer::from(entries).data.unwrap(),
+            table: crate::storage_bytes(&entries),
             tiles,
         });
     }
@@ -173,7 +173,7 @@ fn fallback_buffer(
     });
     let near_fallback = near_fallback.get_or_insert_with(|| {
         buffers.add(ShaderBuffer::with_size(
-            crate::near::gpu::NearEntry::min_size().get() as usize,
+            crate::near::gpu::NearEntry::min_size().get(),
             RenderAssetUsages::RENDER_WORLD,
         ))
     });

@@ -335,7 +335,7 @@ fn compile_inner(
     job: &Input,
     token: &AtomicU64,
 ) -> anyhow::Result<Arc<Snapshot>> {
-    use anyhow::{Context, bail};
+    use anyhow::bail;
     let cancelled = || token.load(Ordering::Relaxed) != job.revision;
     let reader = RuntimeReader::open_immutable(runtime)?;
     if reader.manifest().generation_id != job.context.4 {
@@ -377,7 +377,10 @@ fn compile_inner(
             if key.level == 0 {
                 cells.insert(CellCoord { x: key.x, z: key.z });
             } else {
-                pending.extend(key.children()?.context("terrain children")?);
+                pending.extend(
+                    key.children()?
+                        .ok_or_else(|| anyhow::anyhow!("terrain children"))?,
+                );
             }
             if cells.len() > MAX_PREVIEW_CELLS {
                 bail!(
@@ -470,7 +473,7 @@ fn compile_inner(
             )
             .map_err(anyhow::Error::msg)?
             .pop()
-            .context("missing compiled terrain cell")?
+            .ok_or_else(|| anyhow::anyhow!("missing compiled terrain cell"))?
         };
         bytes += compiled_bytes(&result);
         objects += result.objects.len();
@@ -513,7 +516,7 @@ fn compile_inner(
                     e.insert(Arc::new(
                         reader
                             .read_terrain_node(key)?
-                            .context("missing published undo node")?
+                            .ok_or_else(|| anyhow::anyhow!("missing published undo node"))?
                             .decode()?,
                     ));
                 }
@@ -523,7 +526,7 @@ fn compile_inner(
                     e.insert(Arc::new(
                         reader
                             .read_terrain_composite(key)?
-                            .context("missing published undo material")?
+                            .ok_or_else(|| anyhow::anyhow!("missing published undo material"))?
                             .decode()?,
                     ));
                 }

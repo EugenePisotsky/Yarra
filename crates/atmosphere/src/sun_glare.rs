@@ -19,7 +19,7 @@ use bevy::{
         renderer::{RenderContext, RenderDevice, ViewQuery},
         storage::GpuShaderBuffer,
         texture::{CachedTexture, GpuImage, TextureCache},
-        view::{ViewDepthTexture, ViewTarget, ViewUniform, ViewUniformOffset, ViewUniforms},
+        view::{ViewDepthStencilTexture, ViewTarget, ViewUniform, ViewUniformOffset, ViewUniforms},
     },
 };
 
@@ -155,7 +155,7 @@ fn init(
             ),
         )
     });
-    let shader = server.load("shaders/sky/sun_occlusion.wgsl");
+    let shader = server.load("shaders/sky/sun_occlusion.wesl");
     let occlusion = std::array::from_fn(|multisampled| {
         cache.queue_compute_pipeline(ComputePipelineDescriptor {
             label: Some("sun occlusion".into()),
@@ -194,7 +194,7 @@ fn init(
             ),
         )
     });
-    let rays_shader = server.load("shaders/sky/sun_rays.wgsl");
+    let rays_shader = server.load("shaders/sky/sun_rays.wesl");
     let rays = std::array::from_fn(|multisampled| {
         cache.queue_compute_pipeline(ComputePipelineDescriptor {
             label: Some("sun rays".into()),
@@ -229,7 +229,7 @@ fn init(
 type DrawnView = (
     &'static SunState,
     Option<&'static SunRays>,
-    &'static ViewDepthTexture,
+    &'static ViewDepthStencilTexture,
     &'static ViewUniformOffset,
     &'static ViewLightsUniformOffset,
     &'static ViewShadowBindings,
@@ -270,7 +270,7 @@ fn draw(
         &BindGroupEntries::sequential((
             view_binding.clone(),
             clouds.buffer.as_entire_binding(),
-            depth.view(),
+            crate::sampled_depth(depth),
             light_binding,
             &shadows.directional_light_depth_texture_view,
             &shadow_samplers.directional_light_comparison_sampler,
@@ -289,7 +289,7 @@ fn draw(
                 &BindGroupEntries::sequential((
                     view_binding,
                     clouds.buffer.as_entire_binding(),
-                    depth.view(),
+                    crate::sampled_depth(depth),
                     state.0.as_entire_binding(),
                     &rays.texture.default_view,
                 )),

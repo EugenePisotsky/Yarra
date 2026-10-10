@@ -8,7 +8,7 @@ use crate::game_render::{
     GameRenderAssets as AuditAssets, RESOLUTION_SCALES, RenderPath as AuditRenderPath,
 };
 use crate::runtime_settings::{RuntimeSettings, RuntimeSettingsApply, Scene};
-use bevy::{prelude::*, window::PrimaryWindow};
+use bevy::{prelude::*, ui::Pressed, window::PrimaryWindow};
 use engine::{GamePointerInputBlocked, GameplaySystems};
 use terrain_render::TerrainShadingMode;
 use vegetation_render::VegetationProfileMode;
@@ -222,7 +222,7 @@ fn font(size: f32) -> TextFont {
 
 fn buttons(
     options: Option<Res<crate::launch::LaunchOptions>>,
-    interactions: Query<(&Interaction, &Control), Changed<Interaction>>,
+    presses: Query<&Control, Added<Pressed>>,
     mut s: ResMut<RuntimeSettings>,
     time: Res<Time>,
     mut session: ResMut<performance::CaptureSession>,
@@ -231,10 +231,7 @@ fn buttons(
     if session.recording() {
         return;
     }
-    for (interaction, control) in &interactions {
-        if *interaction != Interaction::Pressed {
-            continue;
-        }
+    for control in &presses {
         match control {
             Control::MovementSpeed => s.fast_movement = !s.fast_movement,
             Control::FrameRate => {
@@ -599,8 +596,7 @@ mod tests {
             );
             if mode == DiagnosticsMode::Panel {
                 // Baseline must be captured after runtime initialization, not before it.
-                app.world_mut()
-                    .spawn((Interaction::Pressed, Control::Reset));
+                app.world_mut().spawn((Pressed, Control::Reset));
                 app.update();
                 assert!(app.world().resource::<GameInputEnabled>().0);
                 assert_eq!(
@@ -656,10 +652,7 @@ mod tests {
                 },
                 FrameRate::default(),
             );
-        let button = app
-            .world_mut()
-            .spawn((Interaction::Pressed, Control::ReloadCanopy))
-            .id();
+        let button = app.world_mut().spawn((Pressed, Control::ReloadCanopy)).id();
         app.update();
         assert_eq!(
             app.world()
@@ -670,7 +663,8 @@ mod tests {
         std::fs::remove_file(path).unwrap();
         app.world_mut()
             .entity_mut(button)
-            .insert((Interaction::Pressed, Control::TerrainMacro));
+            .remove::<Pressed>()
+            .insert((Pressed, Control::TerrainMacro));
         app.update();
         assert_eq!(
             *app.world()
@@ -679,7 +673,8 @@ mod tests {
         );
         app.world_mut()
             .entity_mut(button)
-            .insert((Interaction::Pressed, Control::Reset));
+            .remove::<Pressed>()
+            .insert((Pressed, Control::Reset));
         app.update();
         assert_eq!(
             app.world()
@@ -722,10 +717,7 @@ mod tests {
             .remember_launch(&RuntimeSettings::default(), FrameRate::new(45));
         app.update();
         let before = app.world().resource::<SceneWrites>().0;
-        let button = app
-            .world_mut()
-            .spawn((Interaction::Pressed, Control::FrameRate))
-            .id();
+        let button = app.world_mut().spawn((Pressed, Control::FrameRate)).id();
         app.update();
         assert_eq!(app.world().resource::<FramePacing>().rate.fps(), 0);
         assert_eq!(app.world().resource::<SceneWrites>().0, before);
@@ -734,7 +726,10 @@ mod tests {
             "FPS limit: Follow display"
         );
         app.world_mut().entity_mut(button).insert(Control::Reset);
-        *app.world_mut().get_mut::<Interaction>(button).unwrap() = Interaction::Pressed;
+        app.world_mut()
+            .entity_mut(button)
+            .remove::<Pressed>()
+            .insert(Pressed);
         app.update();
         assert_eq!(app.world().resource::<FramePacing>().rate.fps(), 45);
         // Profiling must retain the launch rate even if a user presses the control.
@@ -742,7 +737,10 @@ mod tests {
         app.world_mut()
             .entity_mut(button)
             .insert(Control::FrameRate);
-        *app.world_mut().get_mut::<Interaction>(button).unwrap() = Interaction::Pressed;
+        app.world_mut()
+            .entity_mut(button)
+            .remove::<Pressed>()
+            .insert(Pressed);
         app.update();
         assert_eq!(app.world().resource::<FramePacing>().rate.fps(), 45);
         assert!(

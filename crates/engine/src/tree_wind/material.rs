@@ -96,16 +96,16 @@ impl MaterialExtension for TreeWindExtension {
         super::cards::specialize(descriptor, layout)
     }
     fn prepass_fragment_shader() -> ShaderRef {
-        "shaders/tree_wind_prepass.wgsl".into()
+        "shaders/tree_wind_prepass.wesl".into()
     }
     fn vertex_shader() -> ShaderRef {
-        "shaders/tree_wind.wgsl".into()
+        "shaders/tree_wind.wesl".into()
     }
     fn prepass_vertex_shader() -> ShaderRef {
-        "shaders/tree_wind.wgsl".into()
+        "shaders/tree_wind.wesl".into()
     }
     fn deferred_vertex_shader() -> ShaderRef {
-        "shaders/tree_wind.wgsl".into()
+        "shaders/tree_wind.wesl".into()
     }
 }
 

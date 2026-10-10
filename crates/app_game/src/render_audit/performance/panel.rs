@@ -11,6 +11,7 @@ use crate::{
 };
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
+use bevy::{ui::Pressed, ui_widgets::Button};
 use engine::WorldViewCamera;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -196,7 +197,7 @@ fn button_color() -> Color {
 
 fn actions(
     keys: Res<ButtonInput<KeyCode>>,
-    clicks: Query<(&Interaction, &Action), Changed<Interaction>>,
+    clicks: Query<&Action, Added<Pressed>>,
     mut state: ResMut<PanelState>,
     mut session: ResMut<CaptureSession>,
     mut settings: ResMut<RuntimeSettings>,
@@ -210,11 +211,7 @@ fn actions(
             pos.y = (pos.y - wheel.delta.y * 24.0).max(0.0);
         }
     }
-    let mut actions: Vec<_> = clicks
-        .iter()
-        .filter(|(i, _)| **i == Interaction::Pressed)
-        .map(|(_, a)| *a)
-        .collect();
+    let mut actions: Vec<_> = clicks.iter().copied().collect();
     if keys.just_pressed(KeyCode::F1)
         || (keys.just_pressed(KeyCode::Escape) && (state.open || session.recording()))
     {

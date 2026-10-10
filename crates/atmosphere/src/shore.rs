@@ -3,7 +3,7 @@
 //! there from deep water, with its gradient. Wave crests are the lines of equal time: they turn
 //! to lie along the shore, wrap into bays and close up as the water shallows and slows them, as
 //! swell does over a sloping seabed. The sky composite turns the map into breaking waves, their
-//! foam and the swash on the beach (`shaders/sky/composite.wgsl`).
+//! foam and the swash on the beach (`shaders/sky/composite.wesl`).
 use bevy::{
     asset::RenderAssetUsages,
     image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor},

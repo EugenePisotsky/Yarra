@@ -1,6 +1,6 @@
 //! Residency churn must not discard unrelated pixels' temporal history.
 use super::*;
-use bevy::render::view::ViewDepthTexture;
+use bevy::render::view::ViewDepthStencilTexture;
 use upscaling::temporal::{TemporalDebug, TemporalFrame, TemporalMotionTarget, TemporalView};
 
 #[test]
@@ -176,11 +176,15 @@ fn temporal_offscreen_grass_streaming_preserves_history() {
 
 fn assert_camera_motion(world: &mut World) {
     let (frame, motion, depth) = world
-        .query::<(&TemporalFrame, &TemporalMotionTarget, &ViewDepthTexture)>()
+        .query::<(
+            &TemporalFrame,
+            &TemporalMotionTarget,
+            &ViewDepthStencilTexture,
+        )>()
         .single(world)
         .unwrap();
     let motion = read_temporal_texture(world, &motion.texture);
-    let depth = read_temporal_texture(world, &depth.texture);
+    let depth = read_temporal_texture(world, depth.texture());
     let previous_from_raster =
         frame.previous_clip_from_world * frame.raster_clip_from_world.inverse();
     let mut errors = Vec::new();

@@ -23,7 +23,7 @@ use bevy::{
 
 use super::{TerrainMaterial, TerrainMaterialUniform};
 
-const CACHE_SHADER: &str = "shaders/terrain_stochastic_cache.wgsl";
+const CACHE_SHADER: &str = "shaders/terrain_stochastic_cache.wesl";
 const MAX_SIDE: u32 = 128;
 const BUILDS_PER_FRAME: usize = 8;
 
@@ -75,6 +75,7 @@ pub(super) fn install(app: &mut App) {
         .init_resource::<CacheRequests>()
         .insert_resource(stats.clone())
         .add_plugins(ExtractResourcePlugin::<CacheRequests>::default())
+        .add_systems(Startup, insert_fallback)
         .add_systems(
             PostUpdate,
             maintain.after(super::TerrainMaterialPreparation),
@@ -151,10 +152,22 @@ struct Entry {
     buffer: Handle<ShaderBuffer>,
 }
 #[derive(Resource, Default)]
-struct CacheEntries(
-    HashMap<AssetId<TerrainMaterial>, Entry>,
-    Option<Handle<ShaderBuffer>>,
-);
+struct CacheEntries(HashMap<AssetId<TerrainMaterial>, Entry>);
+
+/// The cache binding of a material without a built table. It always exists: Bevy 0.20 binds a
+/// one-byte stand-in for a storage buffer that is not prepared, which wgpu 30 rejects.
+pub(crate) fn fallback() -> Handle<ShaderBuffer> {
+    bevy::asset::uuid_handle!("cd29473e-120d-4b74-979f-f190f68cd486")
+}
+
+fn insert_fallback(mut buffers: ResMut<Assets<ShaderBuffer>>) {
+    buffers
+        .insert(
+            fallback().id(),
+            ShaderBuffer::with_size(16, RenderAssetUsages::RENDER_WORLD),
+        )
+        .expect("fixed stochastic cache fallback handle");
+}
 
 #[derive(Clone)]
 struct Request {
@@ -162,6 +175,7 @@ struct Request {
     layout: Layout,
 }
 #[derive(Resource, Clone, Default, ExtractResource)]
+#[extract_app(bevy::render::RenderApp)]
 struct CacheRequests(Vec<Request>);
 
 fn maintain(
@@ -172,12 +186,7 @@ fn maintain(
     mut materials: ResMut<Assets<TerrainMaterial>>,
     mut buffers: ResMut<Assets<ShaderBuffer>>,
 ) {
-    let fallback = entries
-        .1
-        .get_or_insert_with(|| {
-            buffers.add(ShaderBuffer::with_size(16, RenderAssetUsages::RENDER_WORLD))
-        })
-        .clone();
+    let fallback = fallback();
     let wanted: HashMap<_, _> = materials
         .iter()
         .filter_map(|(id, m)| {
@@ -206,10 +215,9 @@ fn maintain(
         {
             continue;
         }
-        let mut buffer =
-            ShaderBuffer::with_size(layout.bytes() as usize, RenderAssetUsages::RENDER_WORLD);
-        buffer.buffer_description.label = Some("terrain stochastic transforms");
-        buffer.buffer_description.usage = BufferUsages::STORAGE;
+        let mut buffer = ShaderBuffer::with_size(layout.bytes(), RenderAssetUsages::RENDER_WORLD);
+        buffer.label = "terrain stochastic transforms".into();
+        buffer.buffer_usage = BufferUsages::STORAGE;
         entries.0.insert(
             id,
             Entry {

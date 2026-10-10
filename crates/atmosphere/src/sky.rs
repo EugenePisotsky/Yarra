@@ -44,7 +44,7 @@ use bevy::{
         storage::GpuShaderBuffer,
         texture::FallbackImage,
         texture::GpuImage,
-        view::{ViewDepthTexture, ViewTarget, ViewUniform, ViewUniformOffset, ViewUniforms},
+        view::{ViewDepthStencilTexture, ViewTarget, ViewUniform, ViewUniformOffset, ViewUniforms},
     },
 };
 
@@ -54,6 +54,7 @@ pub(crate) struct SkyCompositeDraw;
 
 /// Views that get the sky composite. Required by `WorldEnvironmentView`.
 #[derive(Component, Clone, Copy, Default, ExtractComponent)]
+#[extract_app(bevy::render::RenderApp)]
 pub struct SkyCompositeView;
 
 /// Render-world marker: Bevy's sky pass was found and replaced, so nothing but its opaque pass
@@ -107,7 +108,7 @@ impl Plugin for SkyCompositePlugin {
 /// plugins attached to it stay valid. The pass is private to `bevy_pbr`, so it is found by its
 /// ordering: the only system whose sole constraints are "after the opaque pass" and "before the
 /// transparent pass", besides the public transmissive pass. Like `MsaaColorStorePlugin`, this
-/// adapter is specific to Bevy 0.19 and fails loudly if the graph changes shape. Returns
+/// adapter is specific to Bevy 0.20 and fails loudly if the graph changes shape. Returns
 /// whether it was found.
 fn replace_bevy_sky_pass(schedule: &mut Schedule) -> bool {
     assert!(!schedule.graph().systems.is_initialized());
@@ -331,7 +332,7 @@ fn init(
         view_layout,
         composite_layout,
         fullscreen: fullscreen.clone(),
-        shader: server.load("shaders/sky/composite.wgsl"),
+        shader: server.load("shaders/sky/composite.wesl"),
         dual_source_blending: device
             .features()
             .contains(WgpuFeatures::DUAL_SOURCE_BLENDING),
@@ -409,7 +410,7 @@ struct AtmosphereBuffers<'w> {
 type CompositeView = (
     &'static SkyPipeline,
     &'static ViewTarget,
-    &'static ViewDepthTexture,
+    &'static ViewDepthStencilTexture,
     &'static ViewUniformOffset,
     Option<&'static MainPassResolutionOverride>,
     Option<AtmosphereBindings>,
@@ -548,7 +549,7 @@ fn draw(
         "sky composite",
         &cache.get_bind_group_layout(&pipelines.composite_layout[usize::from(key.multisampled)]),
         &BindGroupEntries::sequential((
-            depth.view(),
+            crate::sampled_depth(depth),
             parameters.buffer.as_entire_binding(),
             newer,
             older,

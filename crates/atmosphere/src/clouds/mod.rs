@@ -28,6 +28,7 @@ pub struct CloudClock {
 }
 /// Presentation quality, independent of the authored weather profile.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq, ExtractResource)]
+#[extract_app(bevy::render::RenderApp)]
 pub enum CloudQuality {
     Off,
     #[default]
@@ -49,6 +50,7 @@ impl CloudQuality {
 #[derive(Resource, Default)]
 pub struct CloudOrigin(pub [f64; 2]);
 #[derive(Resource, Clone, ExtractResource)]
+#[extract_app(bevy::render::RenderApp)]
 pub struct CloudAssets {
     pub parameters: Handle<ShaderBuffer>,
     pub shadows: Handle<Image>,
@@ -63,6 +65,7 @@ pub struct CloudAssets {
     pub shore: Handle<Image>,
 }
 #[derive(Resource, Clone, Copy, Default, ExtractResource, Pod, Zeroable)]
+#[extract_app(bevy::render::RenderApp)]
 #[repr(C)]
 pub struct CloudParams {
     pub layer: [f32; 4],
@@ -145,21 +148,22 @@ const EARTHSHINE: f32 = 0.04;
 /// Light of the moonless night sky just above the horizon, as a share of the night's sky light
 /// (as the haze's own light).
 const NIGHT_SKY_GLOW: f32 = 0.15;
-/// Mean normal albedo of the moon's drawn face (`moon_albedo` in `shaders/sky/composite.wgsl`).
+/// Mean normal albedo of the moon's drawn face (`moon_albedo` in `shaders/sky/composite.wesl`).
 const MOON_MEAN_ALBEDO: f32 = 0.11;
 /// The moon's path on the sea as the eye sees it: each wave facet mirrors the whole disc, which
 /// the sea's averaged glitter spreads into nothing, so its image is drawn this much brighter.
 const MOON_GLITTER: f32 = 40.;
 /// Seconds after which the wave clock wraps; every wave completes whole cycles in it
-/// (`shaders/water/waves.wgsl`).
+/// (`shaders/water/waves.wesl`).
 pub const WAVE_PERIOD: f64 = 3600.;
-/// Mist noise tile, metres; `MIST_NOISE_PERIOD` in `shaders/sky/composite.wgsl`.
+/// Mist noise tile, metres; `MIST_NOISE_PERIOD` in `shaders/sky/composite.wesl`.
 pub const MIST_NOISE_PERIOD: f64 = 2048.;
 /// Mist drifts slowly with the cloud wind.
 const MIST_DRIFT_METRES_PER_SECOND: f64 = 0.6;
 /// A newly published mist map fades in rather than appearing at once.
 const MIST_FADE_SECONDS: f32 = 3.;
 #[derive(Component, Clone, bevy::render::extract_component::ExtractComponent)]
+#[extract_app(bevy::render::RenderApp)]
 pub struct CloudView;
 pub struct CloudsPlugin;
 impl Plugin for CloudsPlugin {
@@ -249,7 +253,7 @@ fn setup(
         mist: images.add(crate::valley_mist::ValleyMist::image()),
         shore: images.add(crate::shore::Shore::image()),
         parameters: buffers.add(ShaderBuffer::new(
-            bytemuck::bytes_of(&CloudParams::default()),
+            vec![CloudParams::default()],
             RenderAssetUsages::RENDER_WORLD,
         )),
     });
@@ -607,6 +611,7 @@ fn publish_shelter(
 /// The forest map's sky levels (mip levels 1 and up) for the render world to upload, since
 /// Bevy rewrites only level 0 of an existing texture.
 #[derive(Resource, Clone, Default, ExtractResource)]
+#[extract_app(bevy::render::RenderApp)]
 pub struct ForestSkyLevels {
     pub revision: u64,
     pub levels: std::sync::Arc<Vec<Vec<u8>>>,
@@ -831,7 +836,7 @@ pub fn init_fallback(mut buffers: ResMut<Assets<ShaderBuffer>>) {
         .insert(
             fallback_parameters().id(),
             ShaderBuffer::new(
-                bytemuck::bytes_of(&CloudParams::default()),
+                vec![CloudParams::default()],
                 RenderAssetUsages::RENDER_WORLD,
             ),
         )
