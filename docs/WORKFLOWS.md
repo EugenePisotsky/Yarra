@@ -114,8 +114,7 @@ not in this game's runtime exporter. Its
 records the current recipes, branch/card design lessons, how to add variants or
 species, and the LOD/wind contract. Start there for shape changes. Use
 `tools/import_vegetation_bundle.py` for the current kit; the older
-`houdini_export_tree.py` and Forest Tree Starter Kit paths below reproduce
-separate legacy assets.
+`houdini_export_tree.py` path below reproduces separate legacy assets.
 
 | Current family | Runtime pack / tracked catalog under `assets/packs/` |
 | --- | --- |
@@ -270,7 +269,7 @@ triangle counts and a few trees at a capped frame rate are not forest budgets.
 
 ### Existing forest packs and species recipes
 
-**Forest assets:** Follow [asset setup](../assets/README.md) to export the Forest Tree Starter Kit, then run `cargo run -p yarra-world-cook -- import-assets assets/packs/forest_tree_starter_kit/summer.catalog.ron [PROJECT_DB]` (omit the optional project argument for the current world). This registers 11 summer trees and 8 shrubs, each with four authored mesh LODs. Restart the editor to refresh the palette; search “Forest” for manual placement or select the assets in a collection. Registration preserves existing world placements and does not publish automatically. Save & Publish after authoring. The normal renderer retains object pages within 192 m in all directions, subject to residency budgets, and uses their mesh LODs. Off-screen trees remain available to cast shadows after camera turns; Bevy still culls individual draws. Visible pages load before off-screen ones; there are no usable billboards yet. Legacy terrain diagnostics retain their old local object window.
+**Forest assets:** Register a pack's tracked catalog with `cargo run -p yarra-world-cook -- import-assets assets/packs/<pack>/<name>.catalog.ron [PROJECT_DB]` (omit the optional project argument for the current world); its runtime files must already be under `assets/local/` (see [asset setup](../assets/README.md)). Restart the editor to refresh the palette, then place the assets manually or select them in a collection. Registration preserves existing world placements and does not publish automatically; Save & Publish after authoring. The renderer keeps object pages within 192 m in all directions, subject to residency budgets, and draws their mesh LODs and impostors.
 
 **Birch prototype:** `tools/import_vegetation_bundle.py` imports the vegetation project's built `birch_leafy`, `birch_sparse`, and `birch_bare` bundles. It preserves geometry, UVs, wind weights and the authored rotating-card identities; adapts normals to the current experimental `crown_v1` material; and compresses six shared textures to mipmapped UASTC KTX2. Foliage color uses the baker's per-cell alpha-coverage mip levels. `--canopy-blend` controls the import's normal blend (default 0.85); this is not a final lighting decision. Source and converted binaries stay under ignored `assets/local/yarra_birches/`.
 
@@ -874,15 +873,13 @@ cargo test --offline --workspace
 python3 -m unittest discover -s tools -p test_grass_profile.py
 ```
 
-`--streaming-smoke` explicitly installs `StreamingSmokePlugin`; ordinary game/editor composition contains no smoke state or exit system. It runs the demo-world traversal, cooling/ownership and second-world gameplay checks, then exits. Use the cooked overworld/interior fixture (zero initial gameplay objects, one interior object), not arbitrary authored worlds. It accepts both hierarchy and `--terrain-legacy`; traversal checks canonical destination cells and current source demand after rebasing. The existing 3/7.5/11-second checkpoints are readiness assertions, not performance measurements. It cannot share control/exit ownership with a profile, repro or capture. The default island is not a smoke fixture; run against a separately cooked historical demo. With unused database paths:
+`--streaming-smoke` explicitly installs `StreamingSmokePlugin`; ordinary game/editor composition contains no smoke state or exit system. It runs the demo-world traversal, cooling/ownership and second-world gameplay checks, then exits. Use the cooked overworld/interior fixture (zero initial gameplay objects, one interior object), not arbitrary authored worlds. Traversal checks canonical destination cells and current source demand after rebasing. The existing 3/7.5/11-second checkpoints are readiness assertions, not performance measurements. It cannot share control/exit ownership with a profile, repro or capture. The default island is not a smoke fixture; run against a separately cooked historical demo. With unused database paths:
 
 ```sh
 cargo run -p yarra-world-cook -- create-demo tmp/smoke.project.sqlite
 cargo run -p yarra-world-cook -- cook tmp/smoke.project.sqlite tmp/smoke.runtime.sqlite
 cargo run -p yarra-app-game -- --world-db tmp/smoke.runtime.sqlite --streaming-smoke --diagnostics off
 ```
-
-Add `--terrain-legacy` to exercise the older renderer with the same fixture.
 
 ### Shaders
 

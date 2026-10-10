@@ -1,7 +1,6 @@
 /target
 /tmp/
 __pycache__/
-/.editor/
 /assets/local/
 /assets/generated/
 /content/*.project.sqlite

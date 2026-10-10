@@ -122,7 +122,7 @@ One mode holds the camera and ends the run: play, a repro route (`--render-repro
 | Look captures | `--look-capture DIR`, `--look-variants LIST`, `--look-settle SECONDS` |
 | LOD lab | `--lod-lab PACK/ASSET`, `--lod-lab-stand ASSET`, `--lod-lab-stand-count N`, `--lod-lab-spacing METRES`, `--lod-lab-capture DIR`, `--lod-lab-screenshot FILE`, `--lod-lab-yaws DEGREES,...`, `--lod-lab-scale 0.25..4`, `--lod-lab-pitch DEGREES`, `--lod-lab-distances METRES,...`, `--lod-lab-settle FRAMES` |
 | Grass references | `--grass-vertex-reference`, `--grass-placement-reference`, `--grass-candidate-reference`, `--grass-prepared-blades 32768..524288` |
-| Terrain, output and pacing references | `--terrain-legacy`, `--terrain-reference`, `--terrain-procedural`, `--terrain-prepared-universal`, `--terrain-near-off`, `--msaa-store-reference`, `--temporal-standard-output`, `--frame-pacing-timer` |
+| Terrain, output and pacing references | `--terrain-reference`, `--terrain-procedural`, `--terrain-prepared-universal`, `--terrain-near-off`, `--msaa-store-reference`, `--temporal-standard-output`, `--frame-pacing-timer` |
 | Input and demo controls | `--trace-camera-input`, `--debug-world-switch` |
 
 `--render-frame-clock` advances a route by frame count at 60 fps, so two builds capture the same camera; `--render-temporal-view` shows MetalFX Temporal's motion or depth input instead of the image. Look captures are described in [Workflows](WORKFLOWS.md#game-and-f1) and the LOD lab in [creating and revising trees](WORKFLOWS.md#creating-and-revising-trees).
