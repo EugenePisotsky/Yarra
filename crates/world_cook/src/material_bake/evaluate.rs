@@ -7,6 +7,9 @@ use anyhow::{Context, Result, bail};
 use world::*;
 use world_db::TerrainRenderResources;
 
+/// Fine height samples per side of each stratified sample where surfaces blend.
+const BLEND_SAMPLES: usize = 3;
+
 pub(super) fn leaf(
     key: TerrainMaterialKey,
     size: f32,
@@ -73,8 +76,9 @@ impl<'a> LeafPlan<'a> {
         }
         let profile = &resources.profile;
         let mut hash = blake3::Hasher::new();
-        // v3: up to eight surfaces, height-blended three at a time.
-        hash.update(b"terrain-composite-leaf-v3");
+        // v4: up to eight surfaces, height-blended three at a time over fine heights.
+        hash.update(b"terrain-composite-leaf-v4");
+        hash.update(&(BLEND_SAMPLES as u32).to_le_bytes());
         hash.update(&inputs.hash);
         hash.update(&bincode::serde::encode_to_vec(
             (
@@ -178,10 +182,39 @@ impl<'a> LeafPlan<'a> {
                             (s, color, material)
                         })
                     });
-                    let blend = terrain_height_blend(
-                        candidates.map(|c| c.1),
-                        shaded.map(|s| s.map_or(0., |(_, color, _)| color[3])),
-                    );
+                    let weights = candidates.map(|c| c.1);
+                    let blend = if weights.iter().filter(|&&w| w > 0.).count() < 2 {
+                        weights
+                    } else {
+                        // Near detail blends every point by the scans' fine heights. The mean
+                        // of those blends, not the blend of this footprint's mean heights, is
+                        // each surface's share: flattened heights let the flatter surface win
+                        // wherever weights are close (coastal grass vanished into sand).
+                        let step = footprint / 2. / BLEND_SAMPLES as f64;
+                        let mut sum = [0.; TERRAIN_BLEND_SURFACES];
+                        for j in 0..BLEND_SAMPLES {
+                            for i in 0..BLEND_SAMPLES {
+                                let offset =
+                                    |k: usize| (k as f64 + 0.5 - BLEND_SAMPLES as f64 / 2.) * step;
+                                let at = [world[0] + offset(i), world[1] + offset(j)];
+                                let heights = candidates.map(|(index, weight)| {
+                                    if weight <= 0. {
+                                        return 0.;
+                                    }
+                                    let s = surfaces[index];
+                                    let tile = s.surface.tile_size.max(0.001) as f64;
+                                    let u = at.map(|x| x / tile);
+                                    inputs.height(s.layer as usize, u)
+                                });
+                                for (total, share) in
+                                    sum.iter_mut().zip(terrain_height_blend(weights, heights))
+                                {
+                                    *total += share;
+                                }
+                            }
+                        }
+                        sum.map(|v| v / (BLEND_SAMPLES * BLEND_SAMPLES) as f32)
+                    };
                     for ((s, color, material), weight) in shaded
                         .into_iter()
                         .zip(blend)

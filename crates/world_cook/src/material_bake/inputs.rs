@@ -187,6 +187,23 @@ impl Inputs {
     pub fn macro_variation(&self) -> usize {
         self.chains() - 1
     }
+    /// Bilinear alpha of a base colour's finest level, repeating: the surface's blend height
+    /// at full detail. One channel of one level, for the many samples blending averages.
+    pub fn height(&self, layer: usize, uv: [f64; 2]) -> f32 {
+        let start = 56 + self.base_color(layer) * CHAIN_BYTES;
+        let p = uv.map(|x| x.rem_euclid(1.) * SIZE as f64 - 0.5);
+        let x = p[0].floor();
+        let y = p[1].floor();
+        let (fx, fy) = ((p[0] - x) as f32, (p[1] - y) as f32);
+        let at = |dx: i32, dy: i32| {
+            let column = (x as i32 + dx).rem_euclid(SIZE as i32) as usize;
+            let row = (y as i32 + dy).rem_euclid(SIZE as i32) as usize;
+            f32::from(self.data[start + (row * SIZE + column) * 4 + 3]) / 255.
+        };
+        let top = at(0, 0) + (at(1, 0) - at(0, 0)) * fx;
+        let bottom = at(0, 1) + (at(1, 1) - at(0, 1)) * fx;
+        top + (bottom - top) * fy
+    }
     /// Repeat + bilinear + trilinear, matching source mip semantics. Coordinates
     /// remain f64 until wrapping; rebasing can never change the baked pattern.
     pub fn sample(&self, texture: usize, uv: [f64; 2], footprint: f64, color: bool) -> [f32; 4] {
@@ -194,6 +211,7 @@ impl Inputs {
         let lod = (footprint * SIZE as f64).max(1.).log2().clamp(0., 7.);
         let a = lod.floor() as usize;
         let b = (a + 1).min(7);
+        let decode = decode_table();
         let sample = |level| {
             let n = SIZE >> level;
             let offset: usize = (0..level).map(|l| (SIZE >> l).pow(2) * 4).sum();
@@ -209,18 +227,31 @@ impl Inputs {
                     let weight = (if x == 0 { 1. - f[0] } else { f[0] })
                         * (if y == 0 { 1. - f[1] } else { f[1] });
                     for (c, channel) in result.iter_mut().enumerate() {
-                        let v = self.data[56 + texture * CHAIN_BYTES + offset + index + c] as f32
-                            / 255.;
-                        *channel += (if color && c < 3 { linear(v) } else { v }) * weight as f32;
+                        let v = self.data[56 + texture * CHAIN_BYTES + offset + index + c];
+                        let v = if color && c < 3 {
+                            decode[usize::from(v)]
+                        } else {
+                            f32::from(v) / 255.
+                        };
+                        *channel += v * weight as f32;
                     }
                 }
             }
             result
         };
         let lo = sample(a);
+        let t = (lod - a as f64) as f32;
+        if t == 0. || a == b {
+            return lo;
+        }
         let hi = sample(b);
-        std::array::from_fn(|c| lo[c] + (hi[c] - lo[c]) * (lod - a as f64) as f32)
+        std::array::from_fn(|c| lo[c] + (hi[c] - lo[c]) * t)
     }
+}
+/// `linear` of every sRGB byte, as `sample` decodes texels.
+fn decode_table() -> &'static [f32; 256] {
+    static TABLE: std::sync::OnceLock<[f32; 256]> = std::sync::OnceLock::new();
+    TABLE.get_or_init(|| std::array::from_fn(|i| linear(i as f32 / 255.)))
 }
 pub(super) fn linear(v: f32) -> f32 {
     if v <= 0.04045 {

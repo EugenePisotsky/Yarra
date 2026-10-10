@@ -13,8 +13,8 @@
 # - `blend_height`: how strongly the surface's height map wins where surfaces overlap.
 #   Stones and needles poke through sand and moss; flat sand or dirt fills the gaps.
 # - `anti_tiling`: stochastic albedo for surfaces whose repetition shows.
-# - `color_match`: optional source whose mean colour and contrast this surface takes, so
-#   variants of one material (flat and rippled sand) agree.
+# - `color_match`: optional source whose mean colour this surface takes, so variants of one
+#   material (flat and rippled sand) agree, or a mean sRGB colour.
 pack_key = "baltic"
 storage = "local-ignored"
 sources = "~/Dev/Assets/terrain/sources"
@@ -67,6 +67,8 @@ anti_tiling = false
 key = "meadow"
 name = "Meadow"
 source = "wild_grass_oeeci0_4k"
+# Ground under the grass: the scan's light yellow-green read too bright between the blades.
+color_match = [0.21, 0.24, 0.1]
 tile_size = 1.5
 normal_strength = 0.45
 roughness = [0.75, 1.0]
@@ -77,6 +79,7 @@ anti_tiling = true
 key = "dry-meadow"
 name = "Dry meadow"
 source = "grass_dried_omgqg0_4k"
+color_match = [0.27, 0.23, 0.15]
 tile_size = 1.2
 normal_strength = 0.45
 roughness = [0.8, 1.0]

@@ -113,8 +113,10 @@ def import_surface(surface: dict, sources: Path, output: Path, size: int) -> dic
 
     color = srgb_to_linear(resample(load(maps['color'], size, 'RGB'), size))
     if match := surface.get('color_match'):
-        # Albedo scales multiplicatively, which keeps the scan's own relative contrast.
-        target = mean_color(sources / match, size)
+        # Another scan's mean, or a mean sRGB colour. Albedo scales multiplicatively, which
+        # keeps the scan's own relative contrast.
+        target = (srgb_to_linear(np.asarray(match, np.float32)) if isinstance(match, list)
+                  else mean_color(sources / match, size))
         color = color * (target / np.maximum(color.reshape(-1, 3).mean(axis=0), 1e-6))
     height = resample(load(maps['height'], size, 'L'), size)[..., 0]
     low, high = np.percentile(height, [0.5, 99.5])

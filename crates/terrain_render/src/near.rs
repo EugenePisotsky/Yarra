@@ -11,8 +11,8 @@ pub(crate) const NEAR_TABLE: usize = 256;
 /// Largest ground weight map near detail holds: a 32 m cell compiles 65 samples.
 pub(crate) const WEIGHT_SIDE: u32 = 129;
 pub(crate) const CANOPY_SIDE: u32 = 130;
-pub(crate) const NEAR_END: f32 = 40.;
-pub(crate) const NEAR_START: f32 = 24.;
+pub(crate) const NEAR_END: f32 = 80.;
+pub(crate) const NEAR_START: f32 = 48.;
 
 /// Published source data only. No mesh or render assets until admitted by the near cache.
 #[derive(Component, Clone, Debug)]
