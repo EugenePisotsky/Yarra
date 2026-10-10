@@ -284,7 +284,7 @@ fn road_relief_preview_save_cook_and_undo_share_heights_without_modifying_base_t
         .find(|p| {
             p.key.space == WorldSpaceId(1)
                 && p.key.cell == CellCoord::ZERO
-                && p.key.domain == world::PageDomain::TerrainRender
+                && p.key.domain == world::PageDomain::Terrain
         })
         .unwrap()
         .clone()
@@ -605,7 +605,7 @@ fn junction_branch_move_save_recovery_cook_and_delete_are_atomic() {
         .find(|p| {
             p.key.space == WorldSpaceId(1)
                 && p.key.cell == CellCoord::ZERO
-                && p.key.domain == world::PageDomain::TerrainRender
+                && p.key.domain == world::PageDomain::Terrain
         })
         .unwrap()
         .clone()

@@ -20,103 +20,12 @@ pub enum AtmosphereWriteResult {
     },
 }
 
-// The core changes only with the project and runtime schema versions (29 and 28: one sun above
-// the atmosphere, the moon's age); later additions append a tagged extension. Older readers
-// reject the trailing bytes rather than misreading a newer profile.
-#[derive(serde::Serialize, serde::Deserialize)]
-struct CoreProfile {
-    outdoor: bool,
-    initial_phase: f32,
-    day_seconds: f32,
-    azimuth_degrees: f32,
-    maximum_elevation_degrees: f32,
-    sun_diameter_degrees: f32,
-    sun_srgb: [f32; 3],
-    sun_lux: f32,
-    exposure_ev100: f32,
-    bloom_intensity: f32,
-    visibility_metres: f32,
-    haze_srgb: [f32; 3],
-    molecular_density: f32,
-    phases: [world::atmosphere::LightingPhase; 4],
-    night: world::atmosphere::NightLighting,
-}
-impl From<&AtmosphereProfile> for CoreProfile {
-    fn from(p: &AtmosphereProfile) -> Self {
-        Self {
-            outdoor: p.outdoor,
-            initial_phase: p.initial_phase,
-            day_seconds: p.day_seconds,
-            azimuth_degrees: p.azimuth_degrees,
-            maximum_elevation_degrees: p.maximum_elevation_degrees,
-            sun_diameter_degrees: p.sun_diameter_degrees,
-            sun_srgb: p.sun_srgb,
-            sun_lux: p.sun_lux,
-            exposure_ev100: p.exposure_ev100,
-            bloom_intensity: p.bloom_intensity,
-            visibility_metres: p.visibility_metres,
-            haze_srgb: p.haze_srgb,
-            molecular_density: p.molecular_density,
-            phases: p.phases.clone(),
-            night: p.night.clone(),
-        }
-    }
-}
-impl From<CoreProfile> for AtmosphereProfile {
-    fn from(p: CoreProfile) -> Self {
-        Self {
-            outdoor: p.outdoor,
-            initial_phase: p.initial_phase,
-            day_seconds: p.day_seconds,
-            azimuth_degrees: p.azimuth_degrees,
-            maximum_elevation_degrees: p.maximum_elevation_degrees,
-            sun_diameter_degrees: p.sun_diameter_degrees,
-            sun_srgb: p.sun_srgb,
-            sun_lux: p.sun_lux,
-            exposure_ev100: p.exposure_ev100,
-            bloom_intensity: p.bloom_intensity,
-            visibility_metres: p.visibility_metres,
-            haze_srgb: p.haze_srgb,
-            molecular_density: p.molecular_density,
-            phases: p.phases,
-            night: p.night,
-            clouds: Default::default(),
-            fog: Default::default(),
-            weather: Default::default(),
-        }
-    }
-}
-const CLOUD_EXTENSION: &[u8; 4] = b"CLD1";
-const WEATHER_EXTENSION: &[u8; 4] = b"WTH1";
-const FOG_EXTENSION: &[u8; 4] = b"FOG1";
+/// The whole profile; any change to it moves the project and runtime schema versions.
 pub(super) fn encode(profile: &AtmosphereProfile) -> Result<Vec<u8>, WorldDbError> {
     profile
         .validate()
         .map_err(|e| WorldDbError::Cook(e.into()))?;
-    let mut bytes =
-        bincode::serde::encode_to_vec(CoreProfile::from(profile), bincode::config::standard())?;
-    // Preserve the exact checkpoint encoding when the extension is unused.
-    if profile.clouds != Default::default() {
-        bytes.extend_from_slice(CLOUD_EXTENSION);
-        bytes.extend(bincode::serde::encode_to_vec(
-            &profile.clouds,
-            bincode::config::standard(),
-        )?);
-    }
-    if profile.weather != Default::default() {
-        bytes.extend_from_slice(WEATHER_EXTENSION);
-        bytes.extend(bincode::serde::encode_to_vec(
-            &profile.weather,
-            bincode::config::standard(),
-        )?);
-    }
-    if profile.fog != Default::default() {
-        bytes.extend_from_slice(FOG_EXTENSION);
-        bytes.extend(bincode::serde::encode_to_vec(
-            &profile.fog,
-            bincode::config::standard(),
-        )?);
-    }
+    let bytes = bincode::serde::encode_to_vec(profile, bincode::config::standard())?;
     if bytes.len() > 4096 {
         return Err(WorldDbError::Cook("atmosphere exceeds 4096 bytes".into()));
     }
@@ -126,31 +35,10 @@ pub(super) fn decode(bytes: &[u8]) -> Result<AtmosphereProfile, WorldDbError> {
     if bytes.len() > 4096 {
         return Err(WorldDbError::Cook("atmosphere exceeds 4096 bytes".into()));
     }
-    let (core, consumed): (CoreProfile, _) =
+    let (p, consumed): (AtmosphereProfile, _) =
         bincode::serde::decode_from_slice(bytes, bincode::config::standard().with_limit::<4096>())?;
-    let mut p = AtmosphereProfile::from(core);
-    // Tagged extensions follow the core in a fixed order, each at most once.
-    let mut rest = &bytes[consumed..];
-    let limit = bincode::config::standard().with_limit::<4096>();
-    if let Some(extension) = rest.strip_prefix(CLOUD_EXTENSION) {
-        let (clouds, used) = bincode::serde::decode_from_slice(extension, limit)?;
-        p.clouds = clouds;
-        rest = &extension[used..];
-    }
-    if let Some(extension) = rest.strip_prefix(WEATHER_EXTENSION) {
-        let (weather, used) = bincode::serde::decode_from_slice(extension, limit)?;
-        p.weather = weather;
-        rest = &extension[used..];
-    }
-    if let Some(extension) = rest.strip_prefix(FOG_EXTENSION) {
-        let (fog, used) = bincode::serde::decode_from_slice(extension, limit)?;
-        p.fog = fog;
-        rest = &extension[used..];
-    }
-    if !rest.is_empty() {
-        return Err(WorldDbError::Cook(
-            "unknown or trailing atmosphere extension".into(),
-        ));
+    if consumed != bytes.len() {
+        return Err(WorldDbError::Cook("trailing atmosphere bytes".into()));
     }
     p.validate().map_err(|e| WorldDbError::Cook(e.into()))?;
     Ok(p)
@@ -220,61 +108,28 @@ mod tests {
     use crate::{catalog::query_world_spaces, schema};
     use rusqlite::Connection;
     #[test]
-    fn checkpoint_and_tagged_cloud_profiles_round_trip_without_accepting_corruption() {
-        let p = AtmosphereProfile::default();
-        let legacy =
-            bincode::serde::encode_to_vec(CoreProfile::from(&p), bincode::config::standard())
-                .unwrap();
-        assert_eq!(decode(&legacy).unwrap(), p);
-        assert_eq!(encode(&p).unwrap(), legacy);
-        let mut clouds = p.clone();
-        clouds.clouds = world::clouds::CloudSettings::overcast();
-        clouds.clouds.seed = u32::MAX;
-        let bytes = encode(&clouds).unwrap();
-        assert_eq!(decode(&bytes).unwrap(), clouds);
+    fn authored_profiles_round_trip_without_accepting_corruption() {
+        let mut p = AtmosphereProfile::default();
+        assert_eq!(decode(&encode(&p).unwrap()).unwrap(), p);
+        p.clouds = world::clouds::CloudSettings::overcast();
+        p.clouds.seed = u32::MAX;
+        p.weather.presets[3].cloud_coverage = 0.7;
+        p.weather.schedule.transition_seconds = [120., 300.];
+        p.fog.mist_depth_metres = 65.;
+        p.fog.mist_amount = [0.1, 0.9, 0.0, 0.5];
+        let bytes = encode(&p).unwrap();
+        assert_eq!(decode(&bytes).unwrap(), p);
         assert!(decode(&bytes[..bytes.len() - 1]).is_err());
-        let mut unknown = bytes.clone();
-        unknown[legacy.len() + 3] = b'2';
-        assert!(decode(&unknown).is_err());
         let mut trailing = bytes;
         trailing.push(0);
         assert!(decode(&trailing).is_err());
-        clouds.clouds.density = f32::INFINITY;
-        assert!(encode(&clouds).is_err());
-    }
-    #[test]
-    fn authored_weather_round_trips_alone_and_after_clouds() {
-        let mut weather = AtmosphereProfile::default();
-        weather.weather.presets[3].cloud_coverage = 0.7;
-        weather.weather.schedule.transition_seconds = [120., 300.];
-        let bytes = encode(&weather).unwrap();
-        assert_eq!(decode(&bytes).unwrap(), weather);
-        let mut both = weather.clone();
-        both.clouds = world::clouds::CloudSettings::overcast();
-        let bytes = encode(&both).unwrap();
-        assert!(bytes.len() <= 4096);
-        assert_eq!(decode(&bytes).unwrap(), both);
-        assert!(decode(&bytes[..bytes.len() - 1]).is_err());
-        let mut invalid = both;
+        let mut invalid = p.clone();
+        invalid.clouds.density = f32::INFINITY;
+        assert!(encode(&invalid).is_err());
+        let mut invalid = p.clone();
         invalid.weather.presets[0].precipitation = 2.;
         assert!(encode(&invalid).is_err());
-    }
-    #[test]
-    fn authored_fog_round_trips_alone_and_after_the_other_extensions() {
-        let default = encode(&AtmosphereProfile::default()).unwrap();
-        let mut fog = AtmosphereProfile::default();
-        fog.fog.mist_depth_metres = 65.;
-        fog.fog.mist_amount = [0.1, 0.9, 0.0, 0.5];
-        let bytes = encode(&fog).unwrap();
-        assert_eq!(&bytes[default.len()..default.len() + 4], FOG_EXTENSION);
-        assert_eq!(decode(&bytes).unwrap(), fog);
-        let mut all = fog.clone();
-        all.clouds = world::clouds::CloudSettings::overcast();
-        all.weather.presets[3].cloud_coverage = 0.7;
-        let bytes = encode(&all).unwrap();
-        assert_eq!(decode(&bytes).unwrap(), all);
-        assert!(decode(&bytes[..bytes.len() - 1]).is_err());
-        let mut invalid = all;
+        let mut invalid = p;
         invalid.fog.haze_height_metres = 0.;
         assert!(encode(&invalid).is_err());
     }

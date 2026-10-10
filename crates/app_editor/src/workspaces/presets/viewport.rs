@@ -272,7 +272,7 @@ pub(super) fn update(
         state.phase = (state.phase + time.delta_secs().min(0.1)).rem_euclid(4096.0);
     }
     wind.set_phase_seconds(state.phase);
-    let Some((catalog, _, revision)) = plants.study_source() else {
+    let Some((catalog, _, revision)) = plants.working_catalog() else {
         preview.current = false;
         return;
     };

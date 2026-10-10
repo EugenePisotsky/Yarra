@@ -110,7 +110,4 @@ impl Driver {
         self.unspent = Duration::ZERO;
         self.trace.clear();
     }
-    pub fn into_session(self) -> GameSession {
-        self.session
-    }
 }

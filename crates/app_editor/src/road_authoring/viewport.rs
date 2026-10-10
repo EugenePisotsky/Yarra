@@ -1,9 +1,6 @@
 use super::*;
 use crate::{
-    preview::{EditorPreviewMode, PreviewModeState},
-    publication::RuntimePublicationState,
-    saving::EditorSaveCoordinator,
-    shell::EditorInputCapture,
+    publication::RuntimePublicationState, saving::EditorSaveCoordinator, shell::EditorInputCapture,
     workspaces::world::EditorOverlayGizmos,
 };
 use bevy::{ecs::system::SystemParam, window::PrimaryWindow};
@@ -28,7 +25,6 @@ pub(super) struct Input<'w, 's> {
     terrain: Query<'w, 's, (Entity, &'static StreamedTerrainSurface)>,
     origin: Res<'w, WorldOrigin>,
     workspace: Res<'w, State<EditorWorkspace>>,
-    mode: Res<'w, PreviewModeState>,
     tools: Res<'w, EditorToolRegistry>,
     capture: Res<'w, EditorInputCapture>,
     buttons: Res<'w, ButtonInput<MouseButton>>,
@@ -40,7 +36,6 @@ pub(super) struct Input<'w, 's> {
 }
 fn active(input: &Input) -> bool {
     *input.workspace.get() == EditorWorkspace::World
-        && input.mode.active() == Some(EditorPreviewMode::Authoring)
         && input
             .tools
             .active(EditorWorkspace::World)

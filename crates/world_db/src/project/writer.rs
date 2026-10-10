@@ -4,15 +4,15 @@ use crate::catalog::{
 use crate::project::query::source_object_from_row;
 use crate::storage::ensure_schema_version;
 use crate::{
-    MAX_OBJECT_WRITES_PER_TRANSACTION, ObjectTransformWriteResult, ObjectWriteTransactionResult,
-    SourceObjectTransform, SourceObjectWrite, SourceObjectWriteCommit,
-    VegetationCatalogWriteResult, WorldDbError, environment_store,
+    MAX_OBJECT_WRITES_PER_TRANSACTION, ObjectWriteTransactionResult, SourceObjectTransform,
+    SourceObjectWrite, SourceObjectWriteCommit, VegetationCatalogWriteResult, WorldDbError,
+    environment_store,
 };
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use std::collections::HashSet;
 use std::path::Path;
 use vegetation::VegetationCatalog;
-use world::{PROJECT_SCHEMA_VERSION, StableObjectId};
+use world::PROJECT_SCHEMA_VERSION;
 
 /// Narrow transactional writer used by the editor's authoring worker.
 ///
@@ -83,30 +83,6 @@ impl ProjectWriter {
         )?;
         transaction.commit()?;
         Ok(VegetationCatalogWriteResult::Committed)
-    }
-
-    pub fn update_object_transform(
-        &mut self,
-        object: StableObjectId,
-        expected_source_revision: i64,
-        transform: SourceObjectTransform,
-    ) -> Result<ObjectTransformWriteResult, WorldDbError> {
-        let result = self.apply_object_transaction(&[SourceObjectWrite::UpdateTransform {
-            object,
-            expected_source_revision,
-            transform,
-        }])?;
-        match result {
-            ObjectWriteTransactionResult::Committed(mut commits) => match commits.pop() {
-                Some(SourceObjectWriteCommit::Updated(object)) => {
-                    Ok(ObjectTransformWriteResult::Updated(object))
-                }
-                _ => Err(WorldDbError::InvalidObjectTransaction),
-            },
-            ObjectWriteTransactionResult::Conflict { actual, .. } => {
-                Ok(ObjectTransformWriteResult::Conflict { actual })
-            }
-        }
     }
 
     pub fn apply_object_transaction(

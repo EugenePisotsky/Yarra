@@ -50,7 +50,6 @@ pub(super) struct CoverageSource<'w, 's> {
     dense: Res<'w, DenseDomainWorkingSets>,
     origin: Res<'w, WorldOrigin>,
     workspace: Res<'w, State<EditorWorkspace>>,
-    mode: Res<'w, PreviewModeState>,
     tools: Res<'w, EditorToolRegistry>,
     terrain: Query<
         'w,
@@ -74,7 +73,6 @@ pub(super) fn update_coverage(
 ) {
     let active = paint.show_coverage
         && *source.workspace.get() == EditorWorkspace::World
-        && source.mode.active() == Some(EditorPreviewMode::Authoring)
         && source
             .tools
             .active(EditorWorkspace::World)

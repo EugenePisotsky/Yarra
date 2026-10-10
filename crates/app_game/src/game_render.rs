@@ -17,7 +17,7 @@ impl Plugin for GameRenderPlugin {
             .add_systems(PostStartup, setup.in_set(GameRenderSetup))
             .add_systems(
                 Update,
-                apply_render_path
+                apply_settings
                     .in_set(GameRenderSystems)
                     .before(GameplaySystems::CameraInput),
             );
@@ -40,7 +40,6 @@ pub(crate) struct GameRenderSettings {
     /// Explicit internal pixel dimensions for controlled profiling, independent of Retina scaling.
     pub(crate) render_size: Option<UVec2>,
     pub(crate) msaa: Msaa,
-    pub(crate) render_path: RenderPath,
     pub(crate) show_ui: bool,
     pub(crate) direct_temporal_output: bool,
 }
@@ -53,7 +52,6 @@ impl Default for GameRenderSettings {
             upscaler: upscaling::UpscaleMethod::Auto,
             render_size: None,
             msaa: Msaa::Sample4,
-            render_path: RenderPath::Composite,
             show_ui: true,
             direct_temporal_output: true,
         }
@@ -62,25 +60,17 @@ impl Default for GameRenderSettings {
 
 impl GameRenderSettings {
     fn linear_composition(&self) -> bool {
-        self.render_path == RenderPath::Composite
-            && self.upscaler == upscaling::UpscaleMethod::Linear
+        self.upscaler == upscaling::UpscaleMethod::Linear
     }
 
     fn target_size(&self, window: &Window) -> UVec2 {
         self.render_size.unwrap_or_else(|| {
             // Round up so odd output dimensions don't exceed the requested upscale ratio.
-            (window.physical_size().as_vec2() * self.scale())
+            (window.physical_size().as_vec2() * self.resolution_scale)
                 .ceil()
                 .as_uvec2()
                 .max(UVec2::ONE)
         })
-    }
-
-    fn scale(&self) -> f32 {
-        match self.render_path {
-            RenderPath::Direct => 1.0,
-            RenderPath::Composite => self.resolution_scale,
-        }
     }
 }
 
@@ -91,22 +81,6 @@ fn linear_status(input_size: UVec2, output_size: UVec2) -> upscaling::UpscaleSta
         reason: Some("Linear filtering during UI composition".into()),
         input_size,
         output_size,
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum RenderPath {
-    #[default]
-    Composite,
-    Direct,
-}
-
-impl RenderPath {
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            Self::Composite => "composite",
-            Self::Direct => "direct",
-        }
     }
 }
 
@@ -123,24 +97,17 @@ struct SavedUiVisibility(Visibility);
 pub(crate) struct GameRenderAssets {
     pub(crate) target: Handle<Image>,
     pub(crate) upscaled: Handle<Image>,
-    original_target: RenderTarget,
-    original_camera_order: isize,
 }
 
 fn setup(
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
     window: Single<&Window, With<PrimaryWindow>>,
-    mut camera: Single<(Entity, &mut Camera, &RenderTarget), With<WorldViewCamera>>,
+    mut camera: Single<(Entity, &mut Camera), With<WorldViewCamera>>,
     settings: Res<GameRenderSettings>,
 ) {
     // Scale only the world; the composite and gameplay UI use the native window.
-    // Direct rendering keeps a tiny placeholder until scaling is requested.
-    let initial_size = if settings.render_path == RenderPath::Composite {
-        settings.target_size(&window)
-    } else {
-        UVec2::ONE
-    };
+    let initial_size = settings.target_size(&window);
     let mut image = Image::new_target_texture(
         initial_size.x,
         initial_size.y,
@@ -150,21 +117,17 @@ fn setup(
     image.sampler = ImageSampler::linear();
     let target = images.add(image);
     let linear = settings.linear_composition();
-    let upscaled = images.add(upscaling::output_image(
-        if settings.render_path == RenderPath::Composite && !linear {
-            window.physical_size()
-        } else {
-            UVec2::ONE
-        },
-    ));
-    let original_target = camera.2.clone();
-    let original_camera_order = camera.1.order;
+    let upscaled = images.add(upscaling::output_image(if linear {
+        UVec2::ONE
+    } else {
+        window.physical_size()
+    }));
     camera.1.order = -1;
     commands
         .entity(camera.0)
         .insert(RenderTarget::Image(ImageRenderTarget {
             handle: target.clone(),
-            scale_factor: window.scale_factor() * settings.scale(),
+            scale_factor: window.scale_factor() * settings.resolution_scale,
         }));
     if linear {
         commands
@@ -175,7 +138,7 @@ fn setup(
             input: target.clone(),
             output: upscaled.clone(),
             method: settings.upscaler,
-            enabled: settings.render_path == RenderPath::Composite,
+            enabled: true,
         });
     }
     commands.spawn((
@@ -200,25 +163,19 @@ fn setup(
         GlobalZIndex(-100),
         GameComposite,
     ));
-    commands.insert_resource(GameRenderAssets {
-        target,
-        upscaled,
-        original_target,
-        original_camera_order,
-    });
+    commands.insert_resource(GameRenderAssets { target, upscaled });
 }
 
 #[allow(clippy::type_complexity)] // Disjoint camera/UI queries and saved root visibility.
-fn apply_render_path(
+fn apply_settings(
     mut commands: Commands,
     s: Res<GameRenderSettings>,
     assets: Res<GameRenderAssets>,
     mut images: ResMut<Assets<Image>>,
     window: Single<&Window, With<PrimaryWindow>>,
-    mut camera: Single<
+    camera: Single<
         (
             Entity,
-            &mut Camera,
             &RenderTarget,
             Option<&upscaling::temporal::TemporalView>,
             Option<&upscaling::UpscaleView>,
@@ -226,26 +183,22 @@ fn apply_render_path(
         ),
         With<WorldViewCamera>,
     >,
-    mut ui_camera: Single<(Entity, &mut Camera), (With<GameUiCamera>, Without<WorldViewCamera>)>,
-    mut composite: Single<(&mut Visibility, &mut ImageNode), With<GameComposite>>,
+    mut composite: Single<&mut ImageNode, With<GameComposite>>,
     mut ui_roots: Query<
         (Entity, &mut Visibility, Option<&SavedUiVisibility>),
         (With<Node>, Without<ChildOf>, Without<GameComposite>),
     >,
 ) {
-    let scale = s.scale();
     let size = s.target_size(&window);
     let linear = s.linear_composition();
-    let temporal = s.render_path == RenderPath::Composite
-        && s.upscaler == upscaling::UpscaleMethod::MetalFxTemporal;
+    let temporal = s.upscaler == upscaling::UpscaleMethod::MetalFxTemporal;
     let target_scale = if temporal {
         window.scale_factor()
     } else if s.render_size.is_some() {
         size.y as f32 / window.height().max(1.0)
     } else {
-        window.scale_factor() * scale
+        window.scale_factor() * s.resolution_scale
     };
-    let composite_path = s.render_path == RenderPath::Composite;
     // Linear filtering is already performed by the composite's image sampler.
     // Avoid the redundant native-sized intermediate and fullscreen copy pass.
     let upscale_size = if linear {
@@ -253,9 +206,7 @@ fn apply_render_path(
     } else {
         window.physical_size().max(UVec2::ONE)
     };
-    if composite_path
-        && images.get(&assets.upscaled).expect("upscale target").size() != upscale_size
-    {
+    if images.get(&assets.upscaled).expect("upscale target").size() != upscale_size {
         images.get_mut(&assets.upscaled).unwrap().resize(Extent3d {
             width: upscale_size.x,
             height: upscale_size.y,
@@ -273,8 +224,8 @@ fn apply_render_path(
     } else {
         &assets.upscaled
     };
-    if &composite.1.image != presentation {
-        composite.1.image = presentation.clone();
+    if &composite.image != presentation {
+        composite.image = presentation.clone();
     }
     if temporal {
         let request = upscaling::temporal::TemporalView {
@@ -282,7 +233,7 @@ fn apply_render_path(
             reset_epoch: 0,
             debug: s.temporal_debug,
         };
-        if camera.3 != Some(&request) {
+        if camera.2 != Some(&request) {
             commands
                 .entity(camera.0)
                 .insert((request, bevy::camera::MainPassResolutionOverride(size)));
@@ -294,7 +245,7 @@ fn apply_render_path(
                     .insert(upscaling::DirectTonemapOutput);
             }
         }
-    } else if camera.3.is_some() {
+    } else if camera.2.is_some() {
         commands.entity(camera.0).remove::<(
             upscaling::temporal::TemporalView,
             upscaling::DirectTonemapOutput,
@@ -304,9 +255,9 @@ fn apply_render_path(
             bevy::core_pipeline::prepass::MotionVectorPrepass,
         )>();
     }
-    let needs_image_target = !matches!(camera.2, RenderTarget::Image(target)
+    let needs_image_target = !matches!(camera.1, RenderTarget::Image(target)
         if &target.handle == world_target && target.scale_factor == target_scale);
-    if composite_path && needs_image_target {
+    if needs_image_target {
         // Preserve logical viewport dimensions (and tree LOD) while varying physical pixels.
         commands
             .entity(camera.0)
@@ -315,12 +266,11 @@ fn apply_render_path(
                 scale_factor: target_scale,
             }));
     }
-    if composite_path
-        && images
-            .get(&assets.target)
-            .expect("game render target")
-            .size()
-            != image_size
+    if images
+        .get(&assets.target)
+        .expect("game render target")
+        .size()
+        != image_size
     {
         let mut image = images.get_mut(&assets.target).expect("game render target");
         image.resize(Extent3d {
@@ -330,11 +280,11 @@ fn apply_render_path(
         });
     }
     if linear {
-        if camera.4.is_some() {
+        if camera.3.is_some() {
             commands.entity(camera.0).remove::<upscaling::UpscaleView>();
         }
         let status = linear_status(size, window.physical_size());
-        if camera.5 != Some(&status) {
+        if camera.4 != Some(&status) {
             commands.entity(camera.0).insert(status);
         }
     }
@@ -346,32 +296,12 @@ fn apply_render_path(
             input: assets.target.clone(),
             output: assets.upscaled.clone(),
             method: s.upscaler,
-            enabled: composite_path,
+            enabled: true,
         });
     }
     commands
         .entity(camera.0)
         .insert(if temporal { Msaa::Off } else { s.msaa });
-    camera.1.order = if composite_path {
-        -1
-    } else {
-        assets.original_camera_order
-    };
-    ui_camera.1.is_active = composite_path;
-    if composite_path {
-        commands.entity(camera.0).remove::<IsDefaultUiCamera>();
-        commands.entity(ui_camera.0).insert(IsDefaultUiCamera);
-    } else {
-        commands
-            .entity(camera.0)
-            .insert((assets.original_target.clone(), IsDefaultUiCamera));
-        commands.entity(ui_camera.0).remove::<IsDefaultUiCamera>();
-    }
-    *composite.0 = if composite_path {
-        Visibility::Inherited
-    } else {
-        Visibility::Hidden
-    };
     for (entity, mut visibility, saved) in &mut ui_roots {
         if s.show_ui {
             if let Some(saved) = saved {
@@ -411,14 +341,6 @@ mod tests {
             };
             assert_eq!(settings.target_size(&window), input);
             assert!((input * 3).cmpge(output).all());
-            assert_eq!(
-                GameRenderSettings {
-                    render_path: RenderPath::Direct,
-                    ..settings.clone()
-                }
-                .target_size(&window),
-                output
-            );
         }
     }
 
@@ -442,7 +364,7 @@ mod tests {
     }
 
     #[test]
-    fn normal_startup_scales_the_world_and_preserves_ui_across_render_path_changes() {
+    fn normal_startup_scales_the_world_and_preserves_ui_across_settings_changes() {
         let mut app = App::new();
         app.init_resource::<Assets<Image>>().add_plugins((
             bevy::extract::sync_world::SyncWorldPlugin::<bevy::render::RenderApp>::default(),
@@ -606,14 +528,10 @@ mod tests {
 
         {
             let mut settings = app.world_mut().resource_mut::<GameRenderSettings>();
-            settings.render_path = RenderPath::Direct;
+            settings.upscaler = upscaling::UpscaleMethod::MetalFxSpatial;
             settings.show_ui = false;
         }
         app.update();
-        assert!(matches!(
-            app.world().get::<RenderTarget>(main),
-            Some(RenderTarget::Window(_))
-        ));
         assert!(
             app.world()
                 .get::<upscaling::temporal::TemporalView>(main)
@@ -635,19 +553,9 @@ mod tests {
                 .is_none()
         );
         assert_eq!(app.world().get::<Msaa>(main), Some(&Msaa::Sample4));
-        assert_eq!(app.world().get::<Camera>(main).unwrap().order, 0);
-        assert!(
-            !app.world()
-                .get::<upscaling::UpscaleView>(main)
-                .unwrap()
-                .enabled
-        );
-        assert!(!app.world().get::<Camera>(ui).unwrap().is_active);
-        assert!(app.world().get::<IsDefaultUiCamera>(main).is_some());
-        assert!(app.world().get::<IsDefaultUiCamera>(ui).is_none());
         assert_eq!(
-            app.world().get::<Visibility>(composite),
-            Some(&Visibility::Hidden)
+            app.world().get::<ImageNode>(composite).unwrap().image,
+            upscaled
         );
         assert_eq!(
             app.world().get::<Visibility>(label),
@@ -656,7 +564,6 @@ mod tests {
 
         {
             let mut settings = app.world_mut().resource_mut::<GameRenderSettings>();
-            settings.render_path = RenderPath::Composite;
             settings.resolution_scale = 0.5;
             settings.upscaler = upscaling::UpscaleMethod::Linear;
             settings.show_ui = true;

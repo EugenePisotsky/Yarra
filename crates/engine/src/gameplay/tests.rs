@@ -56,7 +56,7 @@ fn headless_game(input: bool, camera: bool, marker: bool) -> App {
         key: world::PageKey {
             space: world::WorldSpaceId(1),
             cell: world::CellCoord::ZERO,
-            domain: world::PageDomain::TerrainRender,
+            domain: world::PageDomain::Terrain,
             lod: 0,
         },
         cell_size: 16.,

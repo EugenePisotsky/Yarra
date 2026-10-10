@@ -6,9 +6,6 @@ import package::shaders::clouds::density::{density_at,light_transmission};
 @group(0) @binding(1) var noise: texture_3d<f32>;
 @group(0) @binding(2) var repeat: sampler;
 @group(0) @binding(3) var<uniform> view: View;
-// Dimensions only: preserve exact ray directions for odd target sizes and
-// viewport offsets, independently of the selected cloud resolution.
-@group(0) @binding(4) var scene: texture_2d<f32>;
 // Weight of the light scattered many times inside the cloud, against the direct beam's phase.
 const MULTIPLE: f32 = 0.35;
 // Sunlit land and sea below light the clouds from beneath (albedo about 0.1 over the island): at

@@ -1,6 +1,6 @@
-//! Performance roadmap, steps 1 and 3 (docs/REFACTORING.md): trees drawn from one instance
-//! buffer instead of one render entity per mesh, opted into with `--tree-instancing`. The tree
-//! entities stay, so LOD choice and fades still run through them, but they move to render
+//! Performance roadmap, steps 1, 3 and 4 (docs/REFACTORING.md): the game draws trees from one
+//! instance buffer instead of one render entity per mesh (the editor still draws entities).
+//! The tree entities stay, so LOD choice and fades still run through them, but they move to render
 //! layer 1, which no camera or light sees, so Bevy no longer extracts, culls or queues them.
 //! Each frame the meshes visible in the main view, and for every shadow cascade the meshes of
 //! the LOD each tree casts from (`TreeInstancing::shadow_lod` steps coarser than the one drawn),
@@ -71,7 +71,8 @@ const TREE_LAYER: usize = 1;
 /// view; every view numbers its groups from 0.
 const DRAWS: usize = 512;
 
-/// Whether trees are drawn from the instance buffer (the prototype) or as entities.
+/// Whether trees are drawn from the instance buffer (the game) or as entities (the editor),
+/// fixed at startup.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TreeInstancing {
     pub enabled: bool,
@@ -287,16 +288,6 @@ fn collect(
     mut gathering: Local<Gathering>,
 ) {
     if !settings.enabled {
-        for (entity, .., instanced, _, _) in &trees {
-            if instanced {
-                commands
-                    .entity(entity)
-                    .remove::<(Instanced, RenderLayers)>();
-            }
-        }
-        if !frame.groups.is_empty() || !frame.cascades.is_empty() {
-            *frame = TreeInstanceFrame::default();
-        }
         return;
     }
     let gathering = &mut *gathering;
@@ -440,7 +431,7 @@ fn collect(
         gathering
             .scene_meshes
             .retain(|scene, _| scenes.contains(*scene));
-        info!(
+        debug!(
             "TREE_INSTANCING groups={} instances={} entities={} casting={} cascades={:?} shadow_lod={}",
             groups.len(),
             main_instances,

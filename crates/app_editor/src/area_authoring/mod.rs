@@ -11,7 +11,6 @@ pub(crate) mod working;
 use crate::{
     domain_editing::DenseDomainWorkingSets,
     editing::EditorHistory,
-    preview::{EditorPreviewMode, PreviewModeState},
     project_store::{ProjectEditorStore, ProjectStoreUpdate},
     publication::RuntimePublicationState,
     saving::EditorSaveCoordinator,
@@ -206,7 +205,6 @@ fn window(
     origin: Res<WorldOrigin>,
     catalog: Res<WorldCatalog>,
     tools: Res<EditorToolRegistry>,
-    mode: Res<PreviewModeState>,
     mut dense: ResMut<DenseDomainWorkingSets>,
     mut history: ResMut<EditorHistory>,
     mut state: ResMut<AreaToolState>,
@@ -252,10 +250,6 @@ fn window(
                 "Named places the game's rules react to. Gameplay content refers to an area \
                  by its name. Save & Publish updates the game.",
             );
-            if mode.active() != Some(EditorPreviewMode::Authoring) {
-                ui.label("Return to Authoring preview to edit areas.");
-                return;
-            }
             if let Some(theirs) = dense.areas.conflict.as_ref().map(|c| c.areas.len()) {
                 ui.colored_label(
                     ui.visuals().warn_fg_color,

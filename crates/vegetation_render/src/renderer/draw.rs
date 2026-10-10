@@ -77,7 +77,6 @@ pub(super) fn queue(
                 msaa: *msaa,
                 target_format: view.target_format,
                 view_layout_bits: MeshPipelineViewLayoutKey::from(*mesh_view_key).bits(),
-                blade_bands: settings.blade_bands,
                 clouds: clouds.is_some(),
                 temporal: temporal.is_some(),
             },

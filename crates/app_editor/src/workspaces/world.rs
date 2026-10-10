@@ -7,8 +7,6 @@ use crate::{
         EditorHistory, EditorObjectWorkingSet, EditorSelection, TransformInspectorDraft,
         process_project_save_completion,
     },
-    overview::OverviewPlugin,
-    preview::{PreviewModesPlugin, authoring_preview_active},
     saving::{EditorSaveCoordinator, drive_editor_save},
     shell::{EditorUiSet, EditorWindowRegistry},
     tools::{
@@ -20,7 +18,7 @@ use crate::{
     workspaces::{
         EditorWorkspace,
         world::{
-            camera::{EditorCameraDrag, setup_world_workspace},
+            camera::{EditorCameraDrag, limit_detail_demand, setup_world_workspace},
             gizmo::{
                 GizmoEditTransaction, apply_promoted_gizmo, configure_transform_gizmo,
                 editor_gizmo_enabled, prepare_builtin_transform_gizmo_renderer,
@@ -45,7 +43,7 @@ use bevy::{
 };
 use bevy_egui::EguiPrimaryContextPass;
 
-pub(crate) use camera::{EditorCamera, EditorCameraFocusRequest, update_editor_camera};
+pub(crate) use camera::{EditorCameraFocusRequest, update_editor_camera};
 pub(crate) use input::handle_editor_shortcuts;
 pub(crate) use overlay::EditorOverlayGizmos;
 mod camera;
@@ -103,8 +101,6 @@ impl Plugin for WorldWorkspacePlugin {
             .init_gizmo_group::<EditorOverlayGizmos>()
             .add_plugins((
                 TransformGizmoPlugin,
-                OverviewPlugin,
-                PreviewModesPlugin,
                 VegetationAuthoringPlugin,
                 crate::environment_paint::EnvironmentPaintPlugin,
                 crate::road_authoring::RoadAuthoringPlugin,
@@ -122,7 +118,12 @@ impl Plugin for WorldWorkspacePlugin {
                 Update,
                 reconcile_editor_selection.run_if(object_tool_active),
             )
-            .add_systems(Update, update_editor_camera.run_if(world_workspace_active))
+            .add_systems(
+                Update,
+                (update_editor_camera, limit_detail_demand)
+                    .chain()
+                    .run_if(world_workspace_active),
+            )
             .add_systems(
                 Update,
                 (
@@ -141,15 +142,12 @@ impl Plugin for WorldWorkspacePlugin {
             )
             .add_systems(
                 Update,
-                handle_editor_shortcuts
-                    .run_if(world_workspace_active)
-                    .run_if(authoring_preview_active),
+                handle_editor_shortcuts.run_if(world_workspace_active),
             )
             .add_systems(
                 Update,
                 pick_source_object
                     .run_if(world_workspace_active)
-                    .run_if(authoring_preview_active)
                     .run_if(object_tool_active),
             )
             .add_systems(
@@ -157,7 +155,7 @@ impl Plugin for WorldWorkspacePlugin {
                 (sync_promoted_editor_object, sync_cooked_visual_visibility)
                     .chain()
                     .before(TransformGizmoSystems)
-                    .run_if(authoring_preview_active)
+                    .run_if(world_workspace_active)
                     .run_if(object_tool_active),
             )
             .add_systems(
@@ -165,7 +163,6 @@ impl Plugin for WorldWorkspacePlugin {
                 apply_promoted_gizmo
                     .after(TransformGizmoSystems)
                     .run_if(world_workspace_active)
-                    .run_if(authoring_preview_active)
                     .run_if(object_tool_active),
             )
             .add_systems(
@@ -180,7 +177,6 @@ impl Plugin for WorldWorkspacePlugin {
                     .chain()
                     .after(apply_promoted_gizmo)
                     .run_if(world_workspace_active)
-                    .run_if(authoring_preview_active)
                     .run_if(object_tool_active),
             )
             .add_systems(

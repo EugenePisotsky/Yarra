@@ -35,7 +35,6 @@ const ALL_CONTROLS: &[Control] = &[
     Control::Shading,
     Control::Counters,
     Control::GpuPassTimings,
-    Control::RenderPath,
     Control::Scene,
     Control::PageGizmos,
     Control::TerrainMacro,

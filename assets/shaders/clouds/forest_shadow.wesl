@@ -4,7 +4,7 @@
 // within about 100 m). Foliage met between them dims the sun, so distant crowns shade each other
 // and the ground below as the shadow maps do near the camera. Points with no crown nearby
 // above them skip the march. At every distance the same map holds back sky light under the
-// crowns (forest_sky_visibility). Only pipelines that bind the map define FOREST_SHADOW.
+// crowns (forest_sky_visibility). Materials that light through pbr_lighting bind the map.
 import package::shaders::clouds::surface::{forest_shadow_parameters, forest_sky_parameters};
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(124) var forest_map: texture_2d<f32>;

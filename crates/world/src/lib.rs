@@ -26,9 +26,9 @@ pub const DEFAULT_RUNTIME_DATABASE: &str = "generated/world.runtime.sqlite";
 
 pub const DEFAULT_CELL_SIZE: f32 = 32.0;
 pub const MAX_DECODED_PAGE_BYTES: u64 = 64 * 1024 * 1024;
-pub const PROJECT_SCHEMA_VERSION: i64 = 29;
-pub const RUNTIME_SCHEMA_VERSION: i64 = 28;
-pub const PAGE_PAYLOAD_VERSION: u16 = 9;
+pub const PROJECT_SCHEMA_VERSION: i64 = 30;
+pub const RUNTIME_SCHEMA_VERSION: i64 = 29;
+pub const PAGE_PAYLOAD_VERSION: u16 = 10;
 pub const MAX_TERRAIN_SURFACES_PER_CELL: usize = 8;
 
 /// An asset's last LOD variant may be an impostor: a descriptor of baked views drawn as one
@@ -175,12 +175,8 @@ pub struct AssetId(pub [u8; 32]);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[repr(i64)]
 pub enum PageDomain {
-    TerrainRender = 1,
+    Terrain = 1,
     StaticObjects = 2,
-    Foliage = 3,
-    Collision = 5,
-    Navigation = 6,
-    ShadowCasters = 7,
     GameplayObjects = 8,
     Vegetation = 9,
 }
@@ -190,12 +186,8 @@ impl TryFrom<i64> for PageDomain {
 
     fn try_from(value: i64) -> Result<Self, Self::Error> {
         match value {
-            1 => Ok(Self::TerrainRender),
+            1 => Ok(Self::Terrain),
             2 => Ok(Self::StaticObjects),
-            3 => Ok(Self::Foliage),
-            5 => Ok(Self::Collision),
-            6 => Ok(Self::Navigation),
-            7 => Ok(Self::ShadowCasters),
             8 => Ok(Self::GameplayObjects),
             9 => Ok(Self::Vegetation),
             _ => Err(UnknownPageDomain(value)),
@@ -334,15 +326,6 @@ pub struct TerrainProfile {
 pub struct TerrainWeightPage {
     pub resolution: u16,
     pub rgba: Vec<u8>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct TerrainRenderPage {
-    pub height: f32,
-    /// Local material slots. Their order maps directly to RGBA channels in
-    /// `weight_pages`, four surfaces per page.
-    pub surfaces: Vec<TerrainSurfaceId>,
-    pub weight_pages: Vec<TerrainWeightPage>,
 }
 
 /// Endpoint-inclusive terrain samples for one streamed cell.
@@ -667,12 +650,9 @@ pub struct GameplayObjectsPage {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum PagePayload {
-    TerrainRender(TerrainRenderPage),
-    StaticObjects(StaticObjectsPage),
-    ShadowCasters(StaticObjectsPage),
-    GameplayObjects(GameplayObjectsPage),
-    /// Appended to preserve the serialized discriminants of all legacy variants.
     TerrainHeightfield(TerrainHeightfieldPage),
+    StaticObjects(StaticObjectsPage),
+    GameplayObjects(GameplayObjectsPage),
     /// Terrain-independent V2 coverage fields, joined to the resident terrain page at runtime.
     Vegetation(VegetationFieldPageData),
 }
@@ -680,11 +660,9 @@ pub enum PagePayload {
 impl PagePayload {
     pub fn domain(&self) -> PageDomain {
         match self {
-            Self::TerrainRender(_) => PageDomain::TerrainRender,
+            Self::TerrainHeightfield(_) => PageDomain::Terrain,
             Self::StaticObjects(_) => PageDomain::StaticObjects,
-            Self::ShadowCasters(_) => PageDomain::ShadowCasters,
             Self::GameplayObjects(_) => PageDomain::GameplayObjects,
-            Self::TerrainHeightfield(_) => PageDomain::TerrainRender,
             Self::Vegetation(_) => PageDomain::Vegetation,
         }
     }
@@ -939,20 +917,6 @@ mod tests {
     }
 
     #[test]
-    fn page_payload_round_trips_with_version() {
-        let payload = PagePayload::TerrainRender(TerrainRenderPage {
-            height: 2.0,
-            surfaces: vec![TerrainSurfaceId([4; 16]), TerrainSurfaceId([5; 16])],
-            weight_pages: vec![TerrainWeightPage {
-                resolution: 2,
-                rgba: vec![255, 0, 0, 0, 128, 127, 0, 0, 64, 191, 0, 0, 0, 255, 0, 0],
-            }],
-        });
-        let bytes = encode_page_payload(&payload).unwrap();
-        assert_eq!(decode_page_payload(&bytes).unwrap(), payload);
-    }
-
-    #[test]
     fn heightfield_payload_round_trips_and_samples_relief() {
         let heightfield = TerrainHeightfield::from_heights(
             3,
@@ -968,9 +932,14 @@ mod tests {
             weight_pages: Vec::new(),
         });
 
-        let bytes = encode_page_payload(&payload).unwrap();
+        let mut bytes = encode_page_payload(&payload).unwrap();
         assert_eq!(decode_page_payload(&bytes).unwrap(), payload);
-        assert_eq!(payload.domain(), PageDomain::TerrainRender);
+        assert_eq!(payload.domain(), PageDomain::Terrain);
+        bytes[..2].copy_from_slice(&(PAGE_PAYLOAD_VERSION - 1).to_le_bytes());
+        assert!(matches!(
+            decode_page_payload(&bytes),
+            Err(PagePayloadDecodeError::UnsupportedVersion(_))
+        ));
 
         let center = heightfield.sample([2.0, 2.0], 4.0);
         assert!((center.height - 2.0).abs() < 0.001);

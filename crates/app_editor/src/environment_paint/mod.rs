@@ -12,7 +12,6 @@ pub(crate) use preview::EnvironmentPreview;
 use crate::{
     domain_editing::{DenseDomainWorkingSets, reconcile_dense_working_sets},
     editing::{EditorHistory, EditorObjectWorkingSet},
-    preview::{EditorPreviewMode, PreviewModeState},
     project_store::{ProjectEditorStore, ProjectStoreUpdate},
     publication::RuntimePublicationState,
     saving::{EditorSaveCoordinator, drive_editor_save},
@@ -43,17 +42,13 @@ impl Plugin for EnvironmentPaintPlugin {
             .add_systems(Update, layer_browser::update.after(ProjectStoreUpdate))
             .init_resource::<EnvironmentPreview>()
             .init_resource::<preview::live::LivePreviewState>()
-            .init_resource::<preview::PreviewMaterials>()
             .init_resource::<coverage::CoverageOverlays>()
             .add_plugins(MaterialPlugin::<coverage::CoverageMaterial>::default())
             .add_systems(
                 Update,
                 (
                     preview::live::update,
-                    preview::receive_preview,
                     paint_input,
-                    preview::queue_preview,
-                    preview::apply_ground_preview,
                     preview::live::apply_sources,
                     coverage::update_coverage,
                 )
@@ -80,7 +75,6 @@ struct Stroke {
 #[derive(Clone, Copy)]
 struct BrushHit {
     point: Vec3,
-    cell: CellCoord,
 }
 #[derive(Resource)]
 pub(crate) struct EnvironmentPaintState {
@@ -152,7 +146,6 @@ struct PaintInput<'w, 's> {
     terrain: Query<'w, 's, (Entity, &'static StreamedTerrainSurface)>,
     origin: Res<'w, WorldOrigin>,
     workspace: Res<'w, State<EditorWorkspace>>,
-    mode: Res<'w, PreviewModeState>,
     tools: Res<'w, EditorToolRegistry>,
     capture: Res<'w, EditorInputCapture>,
     buttons: Res<'w, ButtonInput<MouseButton>>,
@@ -170,7 +163,6 @@ fn paint_input(
     mut paint: ResMut<EnvironmentPaintState>,
 ) {
     let enabled = *input.workspace.get() == EditorWorkspace::World
-        && input.mode.active() == Some(EditorPreviewMode::Authoring)
         && input
             .tools
             .active(EditorWorkspace::World)
@@ -291,10 +283,7 @@ fn paint_input(
         origin[0] + f64::from(point.x),
         origin[1] + f64::from(point.z),
     ];
-    paint.hover = Some(BrushHit {
-        point,
-        cell: terrain.key.cell,
-    });
+    paint.hover = Some(BrushHit { point });
     project.focus_environment(space, terrain.key.cell);
     let brush = paint
         .stroke

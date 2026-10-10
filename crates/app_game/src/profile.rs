@@ -390,7 +390,6 @@ pub(crate) fn apply_runtime_settings(app: &mut App) {
     let mut settings = app
         .world_mut()
         .resource_mut::<crate::runtime_settings::RuntimeSettings>();
-    settings.render_path = crate::game_render::RenderPath::Composite;
     settings.scale_index = if profile.size.is_some() { 0 } else { 2 };
     settings.msaa = profile.msaa;
     settings.bloom = profile.bloom;

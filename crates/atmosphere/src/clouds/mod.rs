@@ -292,7 +292,7 @@ fn sync(
     let profile = state.effective_profile();
     let profile = profile.as_ref();
     let p = &profile.clouds;
-    let active = state.owner != AtmosphereOwner::Study
+    let active = state.owner != AtmosphereOwner::Isolated
         && *quality != CloudQuality::Off
         && profile.outdoor
         && p.enabled
@@ -376,7 +376,7 @@ fn sync(
         moon_face: [0.; 4],
         night_sky: [0.; 4],
     };
-    if profile.outdoor && profile.night.enabled && state.owner != AtmosphereOwner::Study {
+    if profile.outdoor && profile.night.enabled && state.owner != AtmosphereOwner::Isolated {
         let moon = Vec3::from_array(value.direction_to_moon);
         let sunward = Vec3::from_array(value.direction_to_sun);
         params.moon_disc = moon
@@ -410,7 +410,7 @@ fn sync(
     }
     let flash = state
         .lightning
-        .filter(|_| profile.outdoor && state.owner != AtmosphereOwner::Study);
+        .filter(|_| profile.outdoor && state.owner != AtmosphereOwner::Isolated);
     if let Some(flash) = flash {
         params.lightning = flash
             .top
@@ -426,7 +426,7 @@ fn sync(
         * 0.015;
     if let Some(level) = sea
         .and_then(|s| s.level)
-        .filter(|_| profile.outdoor && state.owner != AtmosphereOwner::Study)
+        .filter(|_| profile.outdoor && state.owner != AtmosphereOwner::Isolated)
     {
         let wind = p.wind_degrees.to_radians();
         params.ocean = [
@@ -472,7 +472,7 @@ fn sync(
         params.sun_color = (sun_linear * cloud / cloud_lux).extend(0.).to_array();
     }
     params.near_sun = near_sun.extend(0.).to_array();
-    if state.owner != AtmosphereOwner::Study && profile.outdoor {
+    if state.owner != AtmosphereOwner::Isolated && profile.outdoor {
         params.weather = [
             state.wetness.clamp(0., 1.),
             state.weather.map_or(0., |w| w.precipitation.clamp(0., 1.)),
@@ -483,7 +483,7 @@ fn sync(
     params.transition = [params.shape[0], params.shape[1], params.shape[2], 1.];
     if let Some(change) = state
         .weather_transition
-        .filter(|_| state.owner != AtmosphereOwner::Study)
+        .filter(|_| state.owner != AtmosphereOwner::Isolated)
     {
         let from = change.from.apply(&state.profile).clouds;
         let to = change.to.apply(&state.profile).clouds;
@@ -523,7 +523,7 @@ fn sync(
             .to_array();
     }
     // The map also gives falling leaves their ground.
-    if profile.outdoor && state.owner != AtmosphereOwner::Study {
+    if profile.outdoor && state.owner != AtmosphereOwner::Isolated {
         params.mist_map = mist.parameters(origin.0);
     }
     // Ground haze and valley mist in every weather; rain fog adds to them.
@@ -535,7 +535,7 @@ fn sync(
     if profile.outdoor
         && fog.enabled
         && fog.validate().is_ok()
-        && state.owner != AtmosphereOwner::Study
+        && state.owner != AtmosphereOwner::Isolated
         && presentation.as_ref().is_none_or(|p| p.low_air)
     {
         let tuning = tuning.as_deref().copied().unwrap_or_default();
@@ -746,7 +746,7 @@ mod tests {
         assert_eq!(app.world().resource::<CloudParams>().layer[3], 0.);
         assert_eq!(app.world().resource::<CloudClock>().seconds, 31.);
         *app.world_mut().resource_mut::<CloudQuality>() = CloudQuality::High;
-        app.world_mut().resource_mut::<AtmosphereState>().owner = AtmosphereOwner::Study;
+        app.world_mut().resource_mut::<AtmosphereState>().owner = AtmosphereOwner::Isolated;
         app.update();
         assert_eq!(app.world().resource::<CloudParams>().layer[3], 0.);
         assert_eq!(app.world().resource::<CloudClock>().seconds, 31.);

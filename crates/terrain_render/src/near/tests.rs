@@ -22,7 +22,7 @@ fn source(cell: CellCoord) -> NearSource {
         key: PageKey {
             space: WorldSpaceId(1),
             cell,
-            domain: PageDomain::TerrainRender,
+            domain: PageDomain::Terrain,
             lod: 0,
         },
         cell_size: 8.,

@@ -37,24 +37,6 @@ pub(crate) const OBJECT_RESIDENCY_METRES: f32 = 192.0;
 pub(crate) const IMPOSTOR_HANDOFF_METRES: f32 =
     OBJECT_RESIDENCY_METRES / (1.0 + CROSSFADE_FRACTION) - 8.0;
 
-/// The farthest distance any object keeps a mesh LOD before its impostor, at most
-/// [`IMPOSTOR_HANDOFF_METRES`]. Lowering it is a diagnostic: 0 draws only impostors.
-#[derive(Resource, Clone, Copy, Debug, PartialEq)]
-pub struct ImpostorHandoff(f32);
-impl ImpostorHandoff {
-    pub fn new(metres: f32) -> Self {
-        Self(metres.clamp(0.0, IMPOSTOR_HANDOFF_METRES))
-    }
-    pub fn metres(self) -> f32 {
-        self.0
-    }
-}
-impl Default for ImpostorHandoff {
-    fn default() -> Self {
-        Self(IMPOSTOR_HANDOFF_METRES)
-    }
-}
-
 /// Installs object LOD ranges after transform propagation. Requires a WorldViewCamera.
 /// WorldStreamingPlugin includes this plugin for both game and editor applications.
 /// Applications without streaming can install it for collection previews.
@@ -63,7 +45,6 @@ impl Plugin for ObjectLodPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(crate::tree_impostor::TreeImpostorPlugin)
             .init_resource::<VisualLodScale>()
-            .init_resource::<ImpostorHandoff>()
             .init_resource::<LodProjection>()
             .add_observer(range_new_lod_scene)
             .add_observer(shadow_lods_follow_world_view)
@@ -167,6 +148,7 @@ impl ScreenSpaceLod {
     pub(crate) fn current_lod(&self) -> u8 {
         self.variants[self.current].lod
     }
+    #[cfg(test)]
     pub(crate) fn projected_height(&self) -> f32 {
         self.projected_height
     }
@@ -189,9 +171,9 @@ impl ScreenSpaceLod {
 
     /// The farthest switch distance: the impostor hand-off when an impostor follows the
     /// meshes, since the cells holding them are not resident much beyond it.
-    pub(crate) fn farthest_switch(&self, handoff: ImpostorHandoff) -> f32 {
+    pub(crate) fn farthest_switch(&self) -> f32 {
         if self.variants.last().is_some_and(|v| v.scene.is_none()) {
-            handoff.0
+            IMPOSTOR_HANDOFF_METRES
         } else {
             f32::INFINITY
         }
@@ -325,7 +307,6 @@ fn object_range(
 fn update_object_lods(
     mut commands: Commands,
     lod_scale: Res<VisualLodScale>,
-    handoff: Res<ImpostorHandoff>,
     mut projection: ResMut<LodProjection>,
     camera: Single<(&Camera, &GlobalTransform), With<WorldViewCamera>>,
     mut objects: Query<(
@@ -356,8 +337,7 @@ fn update_object_lods(
     };
     // Window size, field of view and Object detail change the switch distances; they
     // change rarely, so only then are ranges rewritten.
-    let changed = handoff.is_changed()
-        || next.orthographic != projection.orthographic
+    let changed = next.orthographic != projection.orthographic
         || (next.pixels_per_metre - projection.pixels_per_metre).abs()
             > 0.005 * projection.pixels_per_metre.max(f32::EPSILON);
     if changed {
@@ -371,7 +351,7 @@ fn update_object_lods(
         lod.projected_height = projection.projected(height, eye.distance(centre));
         let thresholds: Vec<f32> = lod.thresholds().collect();
         lod.current = select(&thresholds, lod.projected_height);
-        let farthest = lod.farthest_switch(*handoff);
+        let farthest = lod.farthest_switch();
         let variants = lod.variants.len();
         if let Some(timed) = lod.timed.as_mut() {
             if changed || !timed.has_bands() {
@@ -422,7 +402,7 @@ fn update_object_lods(
                     &thresholds,
                     height,
                     level.0,
-                    lod.farthest_switch(*handoff),
+                    lod.farthest_switch(),
                 );
                 for &scene_child in scene_children.into_iter().flatten() {
                     apply_range(&mut commands, scene_child, &range, &descendants, &meshes);
@@ -447,7 +427,6 @@ fn range_new_lod_scene(
     ready: On<WorldInstanceReady>,
     mut commands: Commands,
     projection: Res<LodProjection>,
-    handoff: Res<ImpostorHandoff>,
     scenes: Query<(&LodScene, &ChildOf, Option<&Children>)>,
     objects: Query<(&ScreenSpaceLod, &Transform, Option<&ForcedLod>)>,
     descendants: Query<&Children>,
@@ -489,7 +468,7 @@ fn range_new_lod_scene(
         &thresholds,
         object_height(lod, transform.scale),
         level.0,
-        lod.farthest_switch(*handoff),
+        lod.farthest_switch(),
     );
     for &child in children.into_iter().flatten() {
         apply_range(&mut commands, child, &range, &descendants, &meshes);

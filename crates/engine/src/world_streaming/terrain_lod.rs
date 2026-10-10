@@ -1240,7 +1240,7 @@ fn update(
     };
     if time.elapsed_secs_f64() - stream.last_report > 2.0 {
         stream.last_report = time.elapsed_secs_f64();
-        info!("TERRAIN_LOD {stats:?}");
+        debug!("TERRAIN_LOD {stats:?}");
     }
 }
 

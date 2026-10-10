@@ -255,7 +255,7 @@ mod tests {
                     PageKey {
                         space: WorldSpaceId(1),
                         cell: CellCoord::ZERO,
-                        domain: PageDomain::TerrainRender,
+                        domain: PageDomain::Terrain,
                         lod: 0,
                     },
                     PageState::Resident(PageAttachment {

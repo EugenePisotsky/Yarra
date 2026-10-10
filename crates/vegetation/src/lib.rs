@@ -30,9 +30,6 @@ pub enum TopologyFamily {
     Ribbon,
     RibbonTuft,
     BroadLeafCluster,
-    StemAndHead,
-    CardImpostor,
-    AuthoredMesh,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -263,8 +260,6 @@ impl VegetationHeightProfile {
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum RepresentationKind {
     Procedural(TopologyFamily),
-    CardImpostor,
-    AuthoredMesh,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -327,8 +322,8 @@ impl VegetationSpecies {
             {
                 return false;
             }
-            if let RepresentationKind::Procedural(family) = level.kind
-                && family != topology_family
+            let RepresentationKind::Procedural(family) = level.kind;
+            if family != topology_family
                 && !(topology_family == TopologyFamily::RibbonTuft
                     && family == TopologyFamily::Ribbon)
             {
@@ -820,12 +815,6 @@ impl VegetationSurfaceField {
             normals_oct: vec![encode_octahedral_normal(normal); sample_count],
             validity: vec![u8::MAX; sample_count],
         }
-    }
-
-    pub fn set_flat(&mut self, height: f32, normal: [f32; 3]) {
-        self.heights.fill(height);
-        self.normals_oct.fill(encode_octahedral_normal(normal));
-        self.validity.fill(u8::MAX);
     }
 
     pub fn sample(

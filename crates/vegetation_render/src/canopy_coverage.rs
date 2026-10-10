@@ -1,4 +1,4 @@
-//! Static source-root coverage, using the same footprint as the full-field study.
+//! Static source-root coverage.
 //! Each tile includes neighboring roots and a one-texel border. Neither camera,
 //! wind nor emitted LOD density changes the result.
 mod boundary;

@@ -49,7 +49,9 @@ pub const NIGHT_DESATURATION: f32 = 0.6;
 pub enum AtmosphereOwner {
     Game,
     Editor,
-    Study,
+    /// An editor workspace that shows content apart from the world (animation, presets):
+    /// no clouds, weather or particles.
+    Isolated,
 }
 
 /// Temporary presentation switches. Authored lighting and weather are preserved. Hiding the
@@ -184,7 +186,7 @@ impl AtmosphereState {
     /// The presented profile: authored, with any game weather overlaid.
     pub fn effective_profile(&self) -> Cow<'_, AtmosphereProfile> {
         match &self.weather {
-            Some(weather) if self.owner != AtmosphereOwner::Study => {
+            Some(weather) if self.owner != AtmosphereOwner::Isolated => {
                 Cow::Owned(weather.apply(&self.profile))
             }
             _ => Cow::Borrowed(&self.profile),
@@ -193,7 +195,7 @@ impl AtmosphereState {
     /// Reduced-visibility fog from game weather, in front of the authored clear-air haze.
     pub fn weather_fog(&self) -> Option<WeatherFog> {
         match &self.weather {
-            Some(weather) if self.owner != AtmosphereOwner::Study => {
+            Some(weather) if self.owner != AtmosphereOwner::Isolated => {
                 Some(weather.fog(&self.profile))
             }
             _ => None,
@@ -377,7 +379,7 @@ fn apply(
     mut media: ResMut<Assets<ScatteringMedium>>,
     mut previous_medium: Local<Option<(f32, f32, [f32; 3])>>,
 ) {
-    if state.owner == AtmosphereOwner::Study {
+    if state.owner == AtmosphereOwner::Isolated {
         // Studies own the shared sun and ambient resources. The world-only moon
         // must go dark as well, including its contribution to custom grass.
         for (_, mut light, _) in &mut moon {
@@ -622,7 +624,7 @@ mod tests {
         app.update();
         assert!(shadows(&app, sun) && !shadows(&app, moon));
         app.world_mut().resource_mut::<AtmosphereState>().phase = 0.0;
-        app.world_mut().resource_mut::<AtmosphereState>().owner = AtmosphereOwner::Study;
+        app.world_mut().resource_mut::<AtmosphereState>().owner = AtmosphereOwner::Isolated;
         app.update();
         assert_eq!(
             app.world()
@@ -699,7 +701,7 @@ mod tests {
     }
 
     #[test]
-    fn study_owns_lighting_and_world_return_restores_profile_and_shadow_policy() {
+    fn isolated_owns_lighting_and_world_return_restores_profile_and_shadow_policy() {
         let mut app = App::new();
         app.init_resource::<Assets<ScatteringMedium>>()
             .add_plugins(WorldEnvironmentPlugin::editor());
@@ -717,7 +719,7 @@ mod tests {
             .single(app.world())
             .unwrap();
         assert!(app.world().get::<AtmosphereSettings>(camera).is_some());
-        app.world_mut().resource_mut::<AtmosphereState>().owner = AtmosphereOwner::Study;
+        app.world_mut().resource_mut::<AtmosphereState>().owner = AtmosphereOwner::Isolated;
         app.world_mut()
             .get_mut::<DirectionalLight>(sun)
             .unwrap()

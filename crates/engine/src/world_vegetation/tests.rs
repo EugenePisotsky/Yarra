@@ -7,7 +7,7 @@ pub(super) fn surface(space: i64, x: i32, height: f32) -> StreamedTerrainSurface
         key: PageKey {
             space: WorldSpaceId(space),
             cell: CellCoord { x, z: 0 },
-            domain: world::PageDomain::TerrainRender,
+            domain: world::PageDomain::Terrain,
             lod: 0,
         },
         cell_size: 16.,

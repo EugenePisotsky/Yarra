@@ -137,7 +137,6 @@ fn init(
                 texture_3d(TextureSampleType::Float { filterable: true }),
                 sampler(SamplerBindingType::Filtering),
                 uniform_buffer::<ViewUniform>(true),
-                texture_2d(TextureSampleType::Float { filterable: true }),
             ),
         ),
     );
@@ -591,7 +590,6 @@ pub(crate) fn refresh(
                 &noise.texture_view,
                 &pipelines.sampler,
                 view_binding.clone(),
-                view.main_texture_view(),
             )),
         );
         let full = region == sky_cache::Region::Full;

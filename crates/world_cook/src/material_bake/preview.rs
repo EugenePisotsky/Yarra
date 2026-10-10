@@ -23,7 +23,7 @@ pub fn published_terrain_leaf(
     let key = PageKey {
         space,
         cell,
-        domain: PageDomain::TerrainRender,
+        domain: PageDomain::Terrain,
         lod: 0,
     };
     let Some(page) = reader.read_page(key)? else {
@@ -31,24 +31,6 @@ pub fn published_terrain_leaf(
     };
     match page.decode()?.payload {
         PagePayload::TerrainHeightfield(page) => Ok(Some(page)),
-        PagePayload::TerrainRender(page) => {
-            let size = reader
-                .manifest()
-                .world_space(space)
-                .context("missing terrain space")?
-                .cell_size;
-            Ok(Some(TerrainHeightfieldPage {
-                heightfield: TerrainHeightfield::from_heights(
-                    2,
-                    &[page.height; 4],
-                    page.height,
-                    page.height,
-                    size,
-                )?,
-                surfaces: page.surfaces,
-                weight_pages: page.weight_pages,
-            }))
-        }
         _ => bail!("unexpected terrain leaf payload"),
     }
 }
@@ -342,7 +324,7 @@ fn published_core(
         let resources = reader.read_terrain_resources(PageKey {
             space: key.0.space,
             cell,
-            domain: PageDomain::TerrainRender,
+            domain: PageDomain::Terrain,
             lod: 0,
         })?;
         let texture_set = library.get(&resources.texture_set)?;

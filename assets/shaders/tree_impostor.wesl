@@ -1,25 +1,19 @@
-// Impostor LOD (crates/engine/src/tree_impostor.rs): each instance is four vertices at its
+// Impostor LOD (crates/engine/src/tree_impostor.rs): each instance is six vertices at its
 // root, spread here into a quad facing the camera. The baked views lie on a hemi-octahedral
 // grid (YarraVegetation scripts/bake_impostor.py), each stored as the tile of its crop: the
 // four views nearest the camera's direction are blended, then lit with the trees' crown
 // shading where the baked depth puts the crown's surface, not on the quad. Near the camera
 // the quad bends in the wind as its mesh LODs' trunk does.
 import bevy_pbr::{render::mesh_functions, render::mesh_view_bindings::view, render::view_transformations::position_world_to_clip};
-// Depth-only passes (the shadow cascades) have no outputs, only discards.
-@if(PREPASS_PIPELINE && PREPASS_FRAGMENT)
-import bevy_pbr::prepass::io::FragmentOutput;
-@if(PREPASS_PIPELINE && MOTION_VECTOR_PREPASS)
-import bevy_pbr::prepass::bindings::previous_view_uniforms;
-@if(!PREPASS_PIPELINE)
+// Impostors draw in the main pass only: no prepass (tree_impostor.rs `enable_prepass`) and
+// no shadows.
 import bevy_pbr::{render::pbr_types, render::pbr_functions::{calculate_view, main_pass_post_lighting_processing}, render::mesh_types::MESH_FLAGS_SHADOW_RECEIVER_BIT};
-@if(!PREPASS_PIPELINE)
 import package::shaders::clouds::pbr_lighting::apply_pbr_lighting;
-@if(!PREPASS_PIPELINE && CROSSFADE_SAMPLE_MASK)
+@if(CROSSFADE_SAMPLE_MASK)
 import package::shaders::crossfade::crossfade_sample_mask;
 
 // The forward pass's output (Bevy's forward_io::FragmentOutput), with the crossfade's covered
 // samples where the view crossfades by sample mask.
-@if(!PREPASS_PIPELINE)
 struct ForwardOutput {
     @location(0) color: vec4<f32>,
     @if(CROSSFADE_SAMPLE_MASK)
@@ -141,12 +135,6 @@ struct Varyings {
     @location(6) @interpolate(flat) dither: i32,
     // The views' half size in metres, which the baked depth is a share of.
     @location(7) @interpolate(flat) radius: f32,
-    // Shadow casters in front of a cascade's near plane clamp to it rather than vanish.
-    @if(UNCLIPPED_DEPTH_ORTHO_EMULATION)
-    @location(8) unclipped_depth: f32,
-    // In the previous frame's wind.
-    @if(PREPASS_PIPELINE && MOTION_VECTOR_PREPASS)
-    @location(9) previous_world_position: vec4<f32>,
 }
 
 // Bevy's Quat::from_rotation_y.
@@ -188,9 +176,7 @@ fn vertex(v: Vertex) -> Varyings {
         return out;
     }
 
-    // Shadow cascades are orthographic views from the sun: there the quad faces the sun and
-    // shows the view baked from its direction, so impostors cast their crowns' shadows.
-    // Which instances draw still follows the main camera's LOD distances (above).
+    // An orthographic view's quads all face along it.
     var toward_view: vec3<f32>;
     if view.clip_from_view[3].w == 1.0 {
         toward_view = normalize(view.world_from_view[2].xyz);
@@ -219,17 +205,7 @@ fn vertex(v: Vertex) -> Varyings {
     if sway > 0.0 {
         out.world_position = vec4(sway_point_of_trunk(rest, root, height, impostor.wind_profile, wind.current, sway), 1.0);
     }
-@if(PREPASS_PIPELINE && MOTION_VECTOR_PREPASS) {
-    out.previous_world_position = out.world_position;
-    if sway > 0.0 {
-        out.previous_world_position = vec4(sway_point_of_trunk(rest, root, height, impostor.wind_profile, wind.previous, sway), 1.0);
-    }
-}
     out.position = position_world_to_clip(out.world_position.xyz);
-@if(UNCLIPPED_DEPTH_ORTHO_EMULATION) {
-    out.unclipped_depth = out.position.z;
-    out.position.z = min(out.position.z, 1.0);
-}
 
     // The view direction in object space, below the horizon clamped to it, on the grid.
     let d = rotate_y(toward_view, -yaw);
@@ -329,32 +305,13 @@ fn surface(in: Varyings, ddx_uv: vec2<f32>, ddy_uv: vec2<f32>) -> Surface {
     return out;
 }
 
-// Depth-only passes (the shadow cascades): the fade's and the crown's discards only.
-@if(PREPASS_PIPELINE && !PREPASS_FRAGMENT)
 @fragment
-fn fragment(in: Varyings) {
+fn fragment(in: Varyings) -> ForwardOutput {
     // Derivatives before any discard, while every fragment of the quad is still running.
     let tile = impostor.settings.x * (impostor.crop.zw - impostor.crop.xy);
     let ddx_uv = dpdx(in.corner) / tile;
     let ddy_uv = dpdy(in.corner) / tile;
-    dither_discard(in.position, in.dither);
-    let s = surface(in, ddx_uv, ddy_uv);
-}
-
-// The prepass's outputs (Bevy's prepass_io::FragmentOutput), or the forward pass's.
-@if(PREPASS_PIPELINE && PREPASS_FRAGMENT)
-alias ImpostorOutput = FragmentOutput;
-@elif(!PREPASS_PIPELINE)
-alias ImpostorOutput = ForwardOutput;
-
-@if(!PREPASS_PIPELINE || PREPASS_FRAGMENT)
-@fragment
-fn fragment(in: Varyings) -> ImpostorOutput {
-    // Derivatives before any discard, while every fragment of the quad is still running.
-    let tile = impostor.settings.x * (impostor.crop.zw - impostor.crop.xy);
-    let ddx_uv = dpdx(in.corner) / tile;
-    let ddy_uv = dpdy(in.corner) / tile;
-@if(!PREPASS_PIPELINE && CROSSFADE_SAMPLE_MASK) {
+@if(CROSSFADE_SAMPLE_MASK) {
     let crossfade_mask = crossfade_sample_mask(in.position, in.dither);
     if crossfade_mask == 0u {
         discard;
@@ -363,22 +320,7 @@ fn fragment(in: Varyings) -> ImpostorOutput {
 @else
     dither_discard(in.position, in.dither);
     let s = surface(in, ddx_uv, ddy_uv);
-    var out: ImpostorOutput;
-@if(PREPASS_PIPELINE) {
-@if(NORMAL_PREPASS)
-    out.normal = vec4(s.normal * 0.5 + 0.5, 1.0);
-@if(MOTION_VECTOR_PREPASS) {
-    // The quad turns with the camera, which reprojection ignores; the wind it follows.
-    // Both clip positions unjittered, as Bevy's calculate_motion_vector takes them (since 0.20
-    // the previous view's clip_from_world carries that frame's jitter).
-    let clip = view.unjittered_clip_from_world * in.world_position;
-    let previous = previous_view_uniforms.unjittered_clip_from_world * in.previous_world_position;
-    out.motion_vector = (clip.xy / clip.w - previous.xy / previous.w) * vec2(0.5, -0.5);
-}
-@if(UNCLIPPED_DEPTH_ORTHO_EMULATION)
-    out.frag_depth = in.unclipped_depth;
-}
-@else {
+    var out: ForwardOutput;
     var pbr_input = pbr_types::pbr_input_new();
     pbr_input.material.base_color = vec4(s.colour, 1.0);
     pbr_input.material.perceptual_roughness = 0.85;
@@ -400,6 +342,5 @@ fn fragment(in: Varyings) -> ImpostorOutput {
     out.color = main_pass_post_lighting_processing(pbr_input, out.color);
 @if(CROSSFADE_SAMPLE_MASK)
     out.sample_mask = crossfade_mask;
-}
     return out;
 }

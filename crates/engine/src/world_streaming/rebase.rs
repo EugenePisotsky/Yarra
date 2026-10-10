@@ -175,7 +175,7 @@ mod tests {
             .spawn((StreamedPageEntity(key), Transform::from_xyz(310., 0., 8.)))
             .id();
         let pending = PageKey {
-            domain: PageDomain::TerrainRender,
+            domain: PageDomain::Terrain,
             ..key
         };
         {

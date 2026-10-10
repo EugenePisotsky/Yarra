@@ -118,7 +118,6 @@ pub fn output_image(size: UVec2) -> Image {
 #[derive(Default)]
 struct Messages {
     statuses: HashMap<Entity, UpscaleStatus>,
-    capabilities: UpscalingCapabilities,
 }
 #[derive(Resource, Clone, Default)]
 struct Bridge(Arc<Mutex<Messages>>);
@@ -139,7 +138,6 @@ impl Plugin for UpscalingPlugin {
         }
         let bridge = Bridge::default();
         app.insert_resource(bridge.clone())
-            .init_resource::<UpscalingCapabilities>()
             .add_plugins(ExtractComponentPlugin::<UpscaleView>::default())
             .add_systems(First, receive);
         render::install(app, bridge);
@@ -150,17 +148,10 @@ impl Plugin for UpscalingPlugin {
         output::finish(app);
     }
 }
-fn receive(
-    bridge: Res<Bridge>,
-    mut capabilities: ResMut<UpscalingCapabilities>,
-    mut views: Query<(Entity, &UpscaleView, &mut UpscaleStatus)>,
-) {
+fn receive(bridge: Res<Bridge>, mut views: Query<(Entity, &UpscaleView, &mut UpscaleStatus)>) {
     let Ok(mut messages) = bridge.0.lock() else {
         return;
     };
-    if *capabilities != messages.capabilities {
-        *capabilities = messages.capabilities.clone();
-    }
     for (entity, view, mut status) in &mut views {
         if let Some(value) = messages.statuses.remove(&entity) {
             // A delayed render result must not label a newly requested backend as active.

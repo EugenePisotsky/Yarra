@@ -42,7 +42,7 @@ save = { package = "yarra-save", path = "crates/save" }
 shader-check = { package = "yarra-shader-check", path = "crates/shader_check" }
 scripting = { package = "yarra-scripting", path = "crates/scripting" }
 fluent-bundle = "0.16"
-fluent-syntax = { version = "0.12", features = ["serde"] }
+fluent-syntax = "0.12"
 unic-langid = "0.9"
 
 anyhow = "1"

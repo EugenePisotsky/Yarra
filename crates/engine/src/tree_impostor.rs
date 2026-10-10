@@ -7,9 +7,9 @@
 //! drawn only from far-object blocks (`world_streaming::far_objects`), whose instances of
 //! one impostor share a mesh, so distant trees cost no entities of their own. The meshes'
 //! final LOD ends where the impostor starts, both dithering over the same band and both
-//! limited to the [`ImpostorHandoff`] ([`crate::object_lod`]), so the handover neither
-//! gaps nor doubles.
-use crate::object_lod::{ImpostorHandoff, LodProjection};
+//! limited to `object_lod::IMPOSTOR_HANDOFF_METRES`, so the handover neither gaps nor
+//! doubles.
+use crate::object_lod::{IMPOSTOR_HANDOFF_METRES, LodProjection};
 use crate::{WorldCatalog, WorldOrigin, tree_wind::WindBuffer};
 use atmosphere::clouds::{CloudAssets, CloudExtension, CloudMaterial};
 use bevy::{
@@ -41,7 +41,7 @@ use std::collections::HashMap;
 
 const SHADER: &str = "shaders/tree_impostor.wesl";
 /// Per-vertex instance data: yaw, uniform scale, switch (height over threshold) and the
-/// quad corner (0-3). Custom, so the main pass and the prepass read the same location.
+/// quad corner (0-5) plus eight times the instance's index within the batch.
 const ATTRIBUTE_INSTANCE: MeshVertexAttribute = MeshVertexAttribute::new(
     "Impostor_Instance",
     0x5952_5241_494d_0001,
@@ -441,8 +441,11 @@ impl MaterialExtension for ImpostorExtension {
     // Impostors stand beyond the mesh LODs, where their sway moves them far less than a pixel
     // a frame: MetalFX Temporal's motion for them comes from the final depth and the camera
     // (`upscaling::temporal::CompleteTemporalMotion`), and their alpha-tested cards are not
-    // drawn twice.
+    // drawn twice. They cast no shadows (`NotShadowCaster`).
     fn enable_prepass() -> bool {
+        false
+    }
+    fn enable_shadows() -> bool {
         false
     }
 
@@ -450,12 +453,6 @@ impl MaterialExtension for ImpostorExtension {
         SHADER.into()
     }
     fn fragment_shader() -> ShaderRef {
-        SHADER.into()
-    }
-    fn prepass_vertex_shader() -> ShaderRef {
-        SHADER.into()
-    }
-    fn prepass_fragment_shader() -> ShaderRef {
         SHADER.into()
     }
     fn specialize(
@@ -486,34 +483,26 @@ struct ImpostorMaterials {
     by_descriptor: HashMap<AssetId<ImpostorDescriptor>, Handle<ImpostorMaterial>>,
     pixels_per_metre: f32,
     orthographic: bool,
-    handoff: f32,
 }
 
-/// Keeps impostor switch distances equal to the mesh LODs' as window, field of view,
-/// object detail or the hand-off change.
+/// Keeps impostor switch distances equal to the mesh LODs' as window, field of view or
+/// object detail change.
 fn follow_projection(
     projection: Res<LodProjection>,
-    handoff: Res<ImpostorHandoff>,
     mut cache: ResMut<ImpostorMaterials>,
     mut materials: ResMut<Assets<ImpostorMaterial>>,
 ) {
     let (ppm, orthographic) = (projection.pixels_per_metre(), projection.orthographic());
-    let handoff = handoff.metres();
-    if ppm == cache.pixels_per_metre
-        && orthographic == cache.orthographic
-        && handoff == cache.handoff
-    {
+    if ppm == cache.pixels_per_metre && orthographic == cache.orthographic {
         return;
     }
     cache.pixels_per_metre = ppm;
     cache.orthographic = orthographic;
-    cache.handoff = handoff;
     for handle in cache.by_descriptor.values() {
         if let Some(mut material) = materials.get_mut(handle) {
             let settings = &mut material.extension.params.settings;
             settings.y = ppm;
             settings.z = f32::from(u8::from(orthographic));
-            settings.w = handoff;
         }
     }
 }
@@ -557,8 +546,7 @@ fn complete_batches(
         let Some(descriptor) = descriptors.get(&batch.descriptor) else {
             continue;
         };
-        let (ppm, orthographic, handoff) =
-            (cache.pixels_per_metre, cache.orthographic, cache.handoff);
+        let (ppm, orthographic) = (cache.pixels_per_metre, cache.orthographic);
         let material = cache
             .by_descriptor
             .entry(batch.descriptor.id())
@@ -586,7 +574,7 @@ fn complete_batches(
                                 descriptor.views as f32,
                                 ppm,
                                 f32::from(u8::from(orthographic)),
-                                handoff,
+                                IMPOSTOR_HANDOFF_METRES,
                             ),
                             wind_profile: descriptor.wind_profile,
                             wind_height: Vec4::new(descriptor.wind_height, 0.0, 0.0, 0.0),

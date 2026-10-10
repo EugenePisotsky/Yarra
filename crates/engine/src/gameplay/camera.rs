@@ -4,7 +4,7 @@ use crate::{
     MsaaColorStorePolicy, WorldEnvironmentCamera, WorldRenderRoot, WorldStartView, WorldViewCamera,
     actor::CameraTarget,
 };
-use bevy::{core_pipeline::prepass::DepthPrepass, prelude::*, render::view::Msaa};
+use bevy::{prelude::*, render::view::Msaa};
 
 /// Spawns and follows the gameplay camera. Requires GameplayPlugin; input is optional.
 pub struct GameCameraPlugin;
@@ -21,13 +21,6 @@ impl Plugin for GameCameraPlugin {
             );
     }
 }
-
-/// Only MetalFX Temporal consumes prepass depth and motion, and the game adds the
-/// prepass while Temporal is active. Otherwise it is pure cost: alpha-tested leaves
-/// are drawn twice and Bevy 0.19 copies the full-resolution depth texture every
-/// frame. On M2 Max with 4× MSAA it cost ~0.7 ms on the grass route at 2560×1440 and
-/// ~1.0 ms of GPU time facing the forest in third person at 3456×1942.
-pub const GAME_DEPTH_PREPASS_ENABLED: bool = false;
 
 pub(super) const CAMERA_MIN_DISTANCE: f32 = 4.0;
 pub(super) const CAMERA_MAX_DISTANCE: f32 = 17.6;
@@ -92,7 +85,7 @@ fn setup_camera(mut commands: Commands, start_view: Res<WorldStartView>) {
         .as_ref()
         .map_or(Vec3::ZERO, |v| Vec3::from_array(v.position));
     let camera_rig = start_rig(start_view.0.as_ref());
-    let mut camera = commands.spawn((
+    commands.spawn((
         Camera3d::default(),
         crate::WORLD_TONEMAPPING,
         start_view.projection(),
@@ -106,9 +99,6 @@ fn setup_camera(mut commands: Commands, start_view: Res<WorldStartView>) {
         WorldRenderRoot,
         Name::new("Main camera"),
     ));
-    if GAME_DEPTH_PREPASS_ENABLED {
-        camera.insert(DepthPrepass);
-    }
 }
 
 fn update_camera_transform(

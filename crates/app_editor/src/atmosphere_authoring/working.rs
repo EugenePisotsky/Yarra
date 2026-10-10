@@ -71,10 +71,10 @@ impl WorkingSet {
             .values()
             .filter_map(|entry| {
                 let mut entry = entry.clone();
-                if let Some((space, before)) = &self.gesture {
-                    if *space == entry.space {
-                        entry.current = before.clone();
-                    }
+                if let Some((space, before)) = &self.gesture
+                    && *space == entry.space
+                {
+                    entry.current = before.clone();
                 }
                 (entry.base != entry.current).then_some(entry)
             })

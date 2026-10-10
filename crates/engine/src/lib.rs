@@ -11,8 +11,7 @@ pub use object_lod::{ObjectFootprint, ObjectLodPlugin};
 mod forest_shadow;
 mod lod_lab;
 pub use lod_lab::{
-    LabAsset, LabBand, LabRepresentation, LabTree, LabVariant, LodLabPlugin, despawn_lab_tree,
-    spawn_lab_tree,
+    LabAsset, LabBand, LabRepresentation, LabTree, LabVariant, LodLabPlugin, spawn_lab_tree,
 };
 mod tree_impostor;
 mod tree_wind;
@@ -52,8 +51,8 @@ pub use character_catalog::{
 };
 pub use msaa_store::{MsaaColorStorePlugin, MsaaColorStorePolicy};
 pub use world_streaming::{
-    ActiveWorldSpace, GameplayObject, GeneratedEnvironmentObject, ImpostorHandoff,
-    LiveTerrainPreview, StreamedTerrainSurface, StreamedVegetationFieldPage, StreamedVisualObject,
+    ActiveWorldSpace, GameplayObject, GeneratedEnvironmentObject, LiveTerrainPreview,
+    StreamedTerrainSurface, StreamedVegetationFieldPage, StreamedVisualObject,
     StreamingSmokePlugin, StreamingStats, TerrainContactReadiness, TerrainLodPreview,
     TerrainLodStats, TerrainPreviewRequest, VisualLodScale, WorldCatalog, WorldDebugControls,
     WorldDetailDemand, WorldGenerationReload, WorldOrigin, WorldRenderRoot, WorldSpaceInfo,
@@ -68,8 +67,7 @@ pub use start_view::{WORLD_VIEW_DISTANCE, WorldStartAdopted, WorldStartView};
 mod gameplay;
 pub use actor::{MoveIntent, PlayerControlled, TerrainGrounded};
 pub use gameplay::{
-    GAME_DEPTH_PREPASS_ENABLED, GameCameraPlugin, GameInputEnabled, GameInputPlugin,
-    GamePointerInputBlocked, GameplayPlugin, GameplayPlugins, GameplaySystems, MinimalGamePlugin,
-    MovementTargetPlugin, PlayerMovementSpeed, PlayerMovementSuspended, PlayerRoute,
-    standing_character,
+    GameCameraPlugin, GameInputEnabled, GameInputPlugin, GamePointerInputBlocked, GameplayPlugin,
+    GameplayPlugins, GameplaySystems, MinimalGamePlugin, MovementTargetPlugin, PlayerMovementSpeed,
+    PlayerMovementSuspended, PlayerRoute, standing_character,
 };

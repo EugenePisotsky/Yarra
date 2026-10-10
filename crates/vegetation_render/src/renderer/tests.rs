@@ -1,11 +1,10 @@
 //! Shader contract checks for production and diagnostic variants.
-use crate::VegetationBladeBands;
 use bevy::prelude::*;
 
 use shader_check::{Def, Shaders};
 
 /// The draw shader's definitions as `pipelines.rs` specializes it.
-fn draw_variant(mode: VegetationBladeBands, temporal: bool, clouds: bool) -> Vec<Def> {
+fn draw_variant(temporal: bool, clouds: bool) -> Vec<Def> {
     let mut defs = vec![Def::Flag("SHADOW_FILTER_METHOD_HARDWARE_2X2".into(), true)];
     if clouds {
         defs.push(Def::Flag("YARRA_CLOUDS".into(), true));
@@ -14,21 +13,6 @@ fn draw_variant(mode: VegetationBladeBands, temporal: bool, clouds: bool) -> Vec
     }
     if temporal {
         defs.push(Def::Flag("TEMPORAL_GRASS".into(), true));
-    }
-    if mode != VegetationBladeBands::Off {
-        defs.push(Def::Flag("BLADE_BAND_STUDY".into(), true));
-        let strength = if mode == VegetationBladeBands::Subtle {
-            54
-        } else {
-            82
-        };
-        defs.push(Def::Int("BLADE_BAND_STRENGTH".into(), strength));
-        if matches!(
-            mode,
-            VegetationBladeBands::Mask | VegetationBladeBands::MotionMask
-        ) {
-            defs.push(Def::Flag("BLADE_BAND_MASK".into(), true));
-        }
     }
     defs
 }
@@ -43,13 +27,11 @@ fn shaders_compose_and_validate() {
     ] {
         shaders.check(compute, &[]).unwrap();
     }
-    for mode in VegetationBladeBands::ALL {
-        for temporal in [false, true] {
-            for clouds in [false, true] {
-                let defs = draw_variant(mode, temporal, clouds);
-                if let Err(error) = shaders.check("shaders/vegetation_debug_draw.wesl", &defs) {
-                    panic!("{mode:?} temporal={temporal} clouds={clouds}: {error}");
-                }
+    for temporal in [false, true] {
+        for clouds in [false, true] {
+            let defs = draw_variant(temporal, clouds);
+            if let Err(error) = shaders.check("shaders/vegetation_debug_draw.wesl", &defs) {
+                panic!("temporal={temporal} clouds={clouds}: {error}");
             }
         }
     }
@@ -97,9 +79,6 @@ fn lod_uses_the_full_authored_blade_envelope() {
     assert!(compute.contains("fn projected_population_spacing_pixels("));
     assert!(compute.contains("fn population_lod_density("));
     assert!(compute.contains("fn balanced_population_lod_density("));
-    assert!(compute.contains("fn mobile_population_lod_density("));
-    assert!(compute.contains("MOBILE_POPULATION_LOD_BIT"));
-    assert!(compute.contains("FORCE_LOW_TOPOLOGY_BIT"));
     assert!(compute.contains("fn population_lod_retention_limit("));
     assert!(compute.contains("debug_config.values.y == DENSITY_MODE_BALANCED"));
     assert!(schedule.contains("debug_config.values.y != 0u"));
@@ -156,7 +135,6 @@ fn production_draw_uses_exposure_aware_rounded_gloss_and_shadow_reception() {
     assert!(draw.contains("dot(diffuse_normal, light_direction)"));
     assert!(draw.contains("let upper_ribbon = smoothstep("));
     assert!(draw.contains("let far_highlight_weight = mix("));
-    assert!(draw.contains("debug_config.values.z == LIGHTING_MODE_LEGACY"));
     assert!(draw.contains("debug_config.values.z == LIGHTING_MODE_UNLIT_DIAGNOSTIC"));
     assert!(draw.contains("debug_config.values.z == LIGHTING_MODE_VERTEX_ONLY_DIAGNOSTIC"));
 }

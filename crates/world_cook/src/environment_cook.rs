@@ -388,7 +388,7 @@ mod tests {
             .find(|p| {
                 p.key.space == definition.space
                     && p.key.cell == cell
-                    && p.key.domain == PageDomain::TerrainRender
+                    && p.key.domain == PageDomain::Terrain
             })
             .unwrap()
             .clone()

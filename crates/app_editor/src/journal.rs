@@ -26,7 +26,6 @@ use crate::{
 };
 
 const JOURNAL_SCHEMA_VERSION: u32 = 15;
-const OLDEST_SUPPORTED_JOURNAL_SCHEMA_VERSION: u32 = 12;
 const JOURNAL_CHANNEL_CAPACITY: usize = 1;
 
 pub(crate) struct EditorJournalPlugin {
@@ -130,7 +129,7 @@ impl Drop for JournalWorker {
 enum JournalRequest {
     Write {
         revision: JournalRevision,
-        file: JournalFile,
+        file: Box<JournalFile>,
     },
     Clear {
         revision: JournalRevision,
@@ -139,7 +138,7 @@ enum JournalRequest {
 }
 
 enum JournalResult {
-    Loaded(Result<Option<JournalFile>, String>),
+    Loaded(Result<Option<Box<JournalFile>>, String>),
     Written {
         revision: JournalRevision,
         result: Result<(), String>,
@@ -149,7 +148,6 @@ enum JournalResult {
 #[derive(Debug, Serialize, Deserialize)]
 struct JournalFile {
     atmospheres: Vec<crate::atmosphere_authoring::working::Snapshot>,
-    #[serde(default)]
     areas: Option<crate::area_authoring::working::Snapshot>,
     roads: Vec<crate::road_authoring::working::RoadEntry>,
     presets: Option<DirtyPresetSnapshot>,
@@ -157,7 +155,6 @@ struct JournalFile {
     schema_version: u32,
     project_database: PathBuf,
     entries: Vec<JournalEntry>,
-    #[serde(default)]
     dense_entries: Vec<JournalDenseEntry>,
 }
 
@@ -363,10 +360,9 @@ fn journal_worker(
     requests: Receiver<JournalRequest>,
     results: Sender<JournalResult>,
 ) {
-    let _ = results.send(JournalResult::Loaded(load_journal(
-        &path,
-        &project_database,
-    )));
+    let _ = results.send(JournalResult::Loaded(
+        load_journal(&path, &project_database).map(|file| file.map(Box::new)),
+    ));
     while let Ok(request) = requests.recv() {
         let (revision, result) = match request {
             JournalRequest::Write { revision, file } => {
@@ -392,9 +388,7 @@ fn load_journal(path: &Path, project_database: &Path) -> Result<Option<JournalFi
     };
     let file: JournalFile = ron::from_str(&source)
         .map_err(|error| format!("could not parse {}: {error}", path.display()))?;
-    if !(OLDEST_SUPPORTED_JOURNAL_SCHEMA_VERSION..=JOURNAL_SCHEMA_VERSION)
-        .contains(&file.schema_version)
-    {
+    if file.schema_version != JOURNAL_SCHEMA_VERSION {
         return Err(format!(
             "unsupported journal schema {} in {}",
             file.schema_version,
@@ -595,7 +589,7 @@ fn dispatch_dirty_journal(
     } else {
         JournalRequest::Write {
             revision,
-            file: JournalFile {
+            file: Box::new(JournalFile {
                 atmospheres,
                 areas,
                 roads,
@@ -605,7 +599,7 @@ fn dispatch_dirty_journal(
                 entries,
                 dense_entries,
                 definition_entries,
-            },
+            }),
         }
     };
     match worker.requests.try_send(request) {

@@ -7,7 +7,6 @@ fn selection_distinguishes_requested_backend_from_fallback() {
             method: UpscaleMethod::MetalFxSpatial,
             supported: false,
             reason: Some("Unavailable on this device".into()),
-            requirements: SPATIAL_REQUIREMENTS,
         }],
     };
     for request in [UpscaleMethod::Auto, UpscaleMethod::MetalFxSpatial] {

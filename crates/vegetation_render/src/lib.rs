@@ -185,7 +185,8 @@ impl Default for VegetationLighting {
 #[derive(Resource, ExtractResource, Debug, Clone, Copy)]
 #[extract_app(bevy::render::RenderApp)]
 pub struct VegetationWind {
-    /// External study/replay transport owns phase and disables diagnostic keyboard shortcuts.
+    /// An external transport (editor previews, tests) owns phase and disables diagnostic
+    /// keyboard shortcuts.
     /// Default false preserves the game clock and controls.
     pub externally_driven: bool,
     pub enabled: bool,
@@ -426,7 +427,7 @@ impl VegetationDiagnostics {
 }
 
 /// What the V2 GPU placement diagnostic visualizes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u32)]
 pub enum VegetationDebugMode {
     /// Procedural curved blades emitted into single- and split-blade indirect bins.
@@ -460,7 +461,7 @@ impl VegetationDebugMode {
 /// full/compute frame. It is meaningful only with a fixed camera and stable residency.
 /// `Full` automatically reuses placement when its inputs are unchanged; `ComputeOnly` and
 /// `ScheduleOnly` always execute so their isolated workload remains measurable.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u32)]
 pub enum VegetationProfileMode {
     #[default]
@@ -485,7 +486,7 @@ impl VegetationProfileMode {
 }
 
 /// Selects the population-density policy independently from procedural geometry LOD.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u32)]
 pub enum VegetationDensityMode {
     /// Use the density fractions and projected thresholds authored on each representation.
@@ -508,14 +509,12 @@ impl VegetationDensityMode {
 }
 
 /// Selects the foliage-lighting response without changing authored material data.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u32)]
 pub enum VegetationLightingMode {
     /// Exposure-aware rounded blade highlights blended into a stable clump response.
     #[default]
     RoundedGloss = 0,
-    /// The previous empirical response, retained only for runtime visual comparison.
-    Legacy = 1,
     /// Minimal fragment path used to separate geometry/coverage cost from foliage lighting.
     UnlitDiagnostic = 2,
     /// Keeps all vertex invocations but skips procedural instance reads and deformation.
@@ -526,91 +525,15 @@ impl VegetationLightingMode {
     pub fn label(self) -> &'static str {
         match self {
             Self::RoundedGloss => "rounded + clump gloss",
-            Self::Legacy => "legacy",
             Self::UnlitDiagnostic => "unlit diagnostic",
             Self::VertexOnlyDiagnostic => "minimal vertex diagnostic",
         }
     }
 }
 
-/// Shape-only comparison for a bounded study. Every active mode uses high topology but retains
-/// production candidate acceptance, density fade, and width compensation. It is not a cost preset.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
-#[repr(u32)]
-pub enum VegetationShapeInspection {
-    #[default]
-    Off = 0,
-    Current = 1,
-    Full = 2,
-    Low = 3,
-    Morph = 4,
-    Cause = 5,
-}
-
-impl VegetationShapeInspection {
-    pub const ALL: [Self; 6] = [
-        Self::Off,
-        Self::Current,
-        Self::Full,
-        Self::Low,
-        Self::Morph,
-        Self::Cause,
-    ];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Off => "Production",
-            Self::Current => "Current shape",
-            Self::Full => "Full shape",
-            Self::Low => "Low shape",
-            Self::Morph => "Morph weight",
-            Self::Cause => "Simplification cause",
-        }
-    }
-}
-
-/// Opt-in material experiment. Off specializes out all band arithmetic and varyings.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
-)]
-pub enum VegetationBladeBands {
-    #[default]
-    Off,
-    Subtle,
-    Medium,
-    Mask,
-    /// Hold geometry at wind time zero to inspect marks moving over fixed blades.
-    MotionMask,
-}
-
-impl VegetationBladeBands {
-    pub const ALL: [Self; 5] = [
-        Self::Off,
-        Self::Subtle,
-        Self::Medium,
-        Self::Mask,
-        Self::MotionMask,
-    ];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Off => "Off",
-            Self::Subtle => "Subtle",
-            Self::Medium => "Medium",
-            Self::Mask => "Band mask",
-            Self::MotionMask => "Motion mask (fixed blades)",
-        }
-    }
-}
-
-fn default_band_density() -> f32 {
-    1.0
-}
-
 /// Shared rendering controls, including production quality and explicit diagnostic overrides.
 /// Applications own the UI: the game uses F1 and the editor uses workspace controls.
-/// Keep this serialized type and its fields compatible with existing vegetation study files.
-#[derive(Resource, ExtractResource, Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[derive(Resource, ExtractResource, Debug, Clone, Copy)]
 #[extract_app(bevy::render::RenderApp)]
 pub struct VegetationDebugSettings {
     pub mode: VegetationDebugMode,
@@ -624,16 +547,6 @@ pub struct VegetationDebugSettings {
     pub early_rejection: bool,
     /// Cache stable candidate acceptance across camera movement, with a bounded reference fallback.
     pub candidate_cache_enabled: bool,
-    #[serde(default)]
-    pub shape_inspection: VegetationShapeInspection,
-    /// Isolate view opening in a shape study without editing the species catalog.
-    #[serde(default)]
-    pub inspection_disable_opening: bool,
-    #[serde(default)]
-    pub blade_bands: VegetationBladeBands,
-    /// Authored source density relative to the study's 44 roots/m² baseline, never LOD retention.
-    #[serde(default = "default_band_density")]
-    pub blade_band_density: f32,
 }
 
 impl Default for VegetationDebugSettings {
@@ -647,10 +560,6 @@ impl Default for VegetationDebugSettings {
             gpu_counters_enabled: false,
             early_rejection: true,
             candidate_cache_enabled: true,
-            shape_inspection: default(),
-            inspection_disable_opening: false,
-            blade_bands: default(),
-            blade_band_density: default_band_density(),
         }
     }
 }

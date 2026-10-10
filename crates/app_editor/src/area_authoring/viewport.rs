@@ -22,7 +22,6 @@ pub(super) struct Input<'w, 's> {
     origin: Res<'w, WorldOrigin>,
     catalog: Res<'w, WorldCatalog>,
     workspace: Res<'w, State<EditorWorkspace>>,
-    mode: Res<'w, PreviewModeState>,
     tools: Res<'w, EditorToolRegistry>,
     capture: Res<'w, EditorInputCapture>,
     buttons: Res<'w, ButtonInput<MouseButton>>,
@@ -42,9 +41,7 @@ struct Trace {
 
 impl Input<'_, '_> {
     fn active(&self) -> bool {
-        *self.workspace.get() == EditorWorkspace::World
-            && self.mode.active() == Some(EditorPreviewMode::Authoring)
-            && tool_active(&self.tools)
+        *self.workspace.get() == EditorWorkspace::World && tool_active(&self.tools)
     }
 
     fn ground(&self, render: Vec3) -> Option<f32> {

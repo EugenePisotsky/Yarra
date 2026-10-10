@@ -58,7 +58,7 @@ fn run() -> Result<(), String> {
             world_switch: options.debug_world_switch,
         })
         .insert_resource(engine::TreeInstancing {
-            enabled: !options.tree_entities,
+            enabled: true,
             shadow_lod: options.tree_shadow_lod,
         })
         .insert_resource(engine::TerrainLodPreview {
@@ -180,9 +180,6 @@ fn run() -> Result<(), String> {
             .enabled = false;
     }
     app.insert_resource(options.clouds);
-    if let Some(metres) = options.impostor_handoff {
-        app.insert_resource(engine::ImpostorHandoff::new(metres));
-    }
     if let Some(source) = &options.story {
         story::install(&mut app, source)?;
     }
@@ -288,7 +285,7 @@ fn draw_streamed_terrain_page_diagnostics(
 
 fn game_window() -> Window {
     let window = Window {
-        title: "Yarra — SQLite World Streaming".into(),
+        title: "Yarra".into(),
         resolution: WindowResolution::new(1280, 720),
         present_mode: PresentMode::AutoVsync,
         ..default()

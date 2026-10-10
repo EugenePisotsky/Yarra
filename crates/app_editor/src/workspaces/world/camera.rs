@@ -14,8 +14,8 @@ use bevy::{
     render::view::Msaa,
 };
 use engine::{
-    WorldCatalog, WorldEnvironmentCamera, WorldOrigin, WorldStreamingConfig, WorldViewCamera,
-    WorldViewpoint,
+    WorldCatalog, WorldDetailDemand, WorldEnvironmentCamera, WorldOrigin, WorldStreamingConfig,
+    WorldViewCamera, WorldViewpoint,
 };
 use std::f32::consts::FRAC_PI_4;
 use world::{CellCoord, WorldPosition};
@@ -23,11 +23,15 @@ use world::{CellCoord, WorldPosition};
 const MIN_CAMERA_DISTANCE: f32 = 1.0;
 const MAX_CAMERA_DISTANCE: f32 = 4_000.0;
 const MIN_CAMERA_NAVIGATION_SCALE: f32 = 6.0;
+/// Beyond this distance the camera keeps only the local preload ring, not detailed frustum
+/// demand across the whole view; it returns below the exit distance.
+const DETAIL_DEMAND_EXIT_DISTANCE: f32 = 768.0;
+const DETAIL_DEMAND_RETURN_DISTANCE: f32 = 576.0;
 
 #[derive(Component, Debug)]
 pub(crate) struct EditorCamera {
     focus: Option<WorldPosition>,
-    pub(crate) distance: f32,
+    distance: f32,
     yaw: f32,
     pitch: f32,
 }
@@ -252,6 +256,24 @@ pub(crate) fn update_editor_camera(
     *camera.1 = editor_camera_transform(&camera.0, render_origin, space.cell_size);
 }
 
+pub(crate) fn limit_detail_demand(
+    camera: Single<&EditorCamera, With<WorldViewCamera>>,
+    mut demand: ResMut<WorldDetailDemand>,
+) {
+    let enabled = detail_demand_enabled(demand.enabled(), camera.distance);
+    if enabled != demand.enabled() {
+        demand.set_enabled(enabled);
+    }
+}
+
+fn detail_demand_enabled(enabled: bool, distance: f32) -> bool {
+    if enabled {
+        distance < DETAIL_DEMAND_EXIT_DISTANCE
+    } else {
+        distance <= DETAIL_DEMAND_RETURN_DISTANCE
+    }
+}
+
 fn anticipated_render_origin(
     current: CellCoord,
     focus: CellCoord,
@@ -330,6 +352,14 @@ mod tests {
     use engine::WorldViewCamera;
     use std::time::Duration;
     use world::CellCoord;
+
+    #[test]
+    fn detail_demand_switch_uses_hysteresis() {
+        assert!(!detail_demand_enabled(true, DETAIL_DEMAND_EXIT_DISTANCE));
+        assert!(!detail_demand_enabled(false, 700.0));
+        assert!(detail_demand_enabled(false, DETAIL_DEMAND_RETURN_DISTANCE));
+        assert!(detail_demand_enabled(true, 700.0));
+    }
 
     #[test]
     fn anticipated_origin_keeps_remote_camera_coordinates_small() {

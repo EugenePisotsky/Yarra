@@ -268,9 +268,6 @@ impl Material for TerrainMaterial {
         _layout: &MeshVertexBufferLayoutRef,
         key: MaterialPipelineKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
-        if let Some(fragment) = descriptor.fragment.as_mut() {
-            fragment.shader_defs.push("FOREST_SHADOW".into());
-        }
         if key.bind_group_data.canopy
             && let Some(fragment) = descriptor.fragment.as_mut()
         {

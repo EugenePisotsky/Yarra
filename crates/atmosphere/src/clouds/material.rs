@@ -25,19 +25,17 @@ impl MaterialExtension for CloudExtension {
         "shaders/clouds/material.wesl".into()
     }
     /// With 4x MSAA, LOD crossfades cover samples instead of dithering whole pixels
-    /// (`shaders/crossfade.wesl`); the main pass resolves them into a smooth blend. Every
-    /// cloud material binds the forest shadow map (`FOREST_SHADOW`).
+    /// (`shaders/crossfade.wesl`); the main pass resolves them into a smooth blend.
     fn specialize(
         _pipeline: &MaterialExtensionPipeline,
         descriptor: &mut RenderPipelineDescriptor,
         _layout: &MeshVertexBufferLayoutRef,
         key: MaterialExtensionKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
-        if let Some(fragment) = descriptor.fragment.as_mut() {
-            fragment.shader_defs.push("FOREST_SHADOW".into());
-            if key.mesh_key.msaa_samples() == 4 {
-                fragment.shader_defs.push("CROSSFADE_SAMPLE_MASK".into());
-            }
+        if key.mesh_key.msaa_samples() == 4
+            && let Some(fragment) = descriptor.fragment.as_mut()
+        {
+            fragment.shader_defs.push("CROSSFADE_SAMPLE_MASK".into());
         }
         Ok(())
     }
@@ -47,8 +45,8 @@ pub struct CloudMaterialPlugin;
 /// Scene-material conversion completes before optional surface effects compose with it.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CloudMaterialSystems;
-/// Request this material pipeline in isolated studies for extensions that compose
-/// with it. Study atmosphere already disables cloud transmission in the shared data.
+/// Request this material pipeline in isolated workspaces for extensions that compose
+/// with it. An isolated atmosphere already disables cloud transmission in the shared data.
 #[derive(Component)]
 pub struct CloudMaterialOptIn;
 #[derive(Component)]
@@ -66,7 +64,7 @@ impl Plugin for CloudMaterialPlugin {
     }
 }
 // Keep source handles alive and mirror edits. Unlit/editor overlay materials retain
-// their normal path. Study meshes are never converted while a study owns lighting.
+// their normal path. Other meshes are never converted while an isolated workspace owns lighting.
 fn convert(
     mut commands: Commands,
     assets: Option<Res<CloudAssets>>,
@@ -97,7 +95,7 @@ fn convert(
     let live: std::collections::HashSet<_> = retained.iter().map(|p| p.0.id()).collect();
     cache.retain(|id, _| live.contains(id));
     for (e, handle, opt_in) in &meshes {
-        if state.owner == AtmosphereOwner::Study && !opt_in {
+        if state.owner == AtmosphereOwner::Isolated && !opt_in {
             continue;
         }
         let Some(base) = source.get(handle) else {
@@ -131,13 +129,13 @@ fn convert(
 mod tests {
     use super::*;
     #[test]
-    fn study_conversion_requires_explicit_composition_opt_in() {
+    fn isolated_conversion_requires_explicit_composition_opt_in() {
         let mut app = App::new();
         app.init_resource::<Assets<StandardMaterial>>()
             .init_resource::<Assets<CloudMaterial>>()
             .add_message::<AssetEvent<StandardMaterial>>()
             .insert_resource(AtmosphereState {
-                owner: AtmosphereOwner::Study,
+                owner: AtmosphereOwner::Isolated,
                 ..default()
             })
             .insert_resource(CloudAssets {

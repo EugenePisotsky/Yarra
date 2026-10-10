@@ -1,4 +1,4 @@
-//! Species shape/material controls and the focused palette view.
+//! Species shape and material controls.
 use crate::vegetation_authoring::{
     VegetationAuthoringState,
     curve::draw_ribbon_curve_editor,
@@ -7,42 +7,6 @@ use crate::vegetation_authoring::{
 use bevy::prelude::*;
 use bevy_egui::egui;
 use vegetation::{TopologyProfile, VegetationCatalog};
-
-/// Focused palette view over the same validated draft used by the full inspector.
-pub(crate) fn draw_population_colors(ui: &mut egui::Ui, state: &mut VegetationAuthoringState) {
-    let Some(mut candidate) = state.working.clone() else {
-        ui.weak("Waiting for the vegetation catalog…");
-        return;
-    };
-    let Some(population) = candidate.populations.get(state.selected_population) else {
-        ui.weak("Select a grass population in the inspector.");
-        return;
-    };
-    ui.strong(&population.key);
-    ui.small("Each species blends from its root color to its tip color. Clump variation changes the tint between groups.");
-    let mut changed = false;
-    for (index, species) in candidate.species.iter_mut().enumerate() {
-        if !population
-            .species
-            .iter()
-            .any(|choice| choice.species == species.id && choice.weight > 0.0)
-        {
-            continue;
-        }
-        ui.push_id(index, |ui| {
-            ui.group(|ui| {
-                ui.label(&species.key);
-                changed |= draw_species_colors(ui, &mut species.material);
-            });
-        });
-    }
-    if changed {
-        state.apply(candidate);
-    }
-    if let Some(error) = &state.validation_error {
-        ui.colored_label(egui::Color32::LIGHT_RED, error);
-    }
-}
 
 fn draw_species_colors(
     ui: &mut egui::Ui,

@@ -12,7 +12,7 @@ use vegetation_render::{
     VegetationDebugSettings, VegetationDiagnostics, VegetationDiagnosticsSnapshot,
 };
 
-use super::{AuditAssets, AuditRenderPath, RuntimeSettings};
+use super::{GameRenderAssets, RuntimeSettings};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct PowerState {
@@ -119,7 +119,7 @@ pub(super) fn log_status(
         ),
         With<WorldViewCamera>,
     >,
-    assets: Res<AuditAssets>,
+    assets: Res<GameRenderAssets>,
     images: Res<Assets<Image>>,
     meshes: Res<Assets<Mesh>>,
     vegetation: Res<VegetationDiagnostics>,
@@ -161,13 +161,10 @@ pub(super) fn log_status(
         |_| "unavailable".into(),
         |duration| duration.as_millis().to_string(),
     );
-    let size = match settings.render_path {
-        AuditRenderPath::Composite => images
-            .get(&assets.target)
-            .map(Image::size)
-            .unwrap_or(UVec2::ZERO),
-        AuditRenderPath::Direct => window.physical_size(),
-    };
+    let size = images
+        .get(&assets.target)
+        .map(Image::size)
+        .unwrap_or(UVec2::ZERO);
     let position = camera.0.translation();
     let rotation = camera.0.rotation();
     let msaa_samples = camera.1.samples();
@@ -177,7 +174,6 @@ pub(super) fn log_status(
     let gpu = gpu_readback_fields(snapshot);
     let ground_shader = format!("{:?}", settings.terrain_shading());
     let macro_state = terrain_macro.label();
-    let render_path = settings.render_path.label();
     let ui = if settings.show_ui { "on" } else { "off" };
     let focused = window.focused;
     let present_mode = window.present_mode;
@@ -247,7 +243,7 @@ pub(super) fn log_status(
     let generation_dispatches = snapshot.generation_dispatches;
     let generation_reuses = snapshot.generation_reuses;
     warn!(
-        "RENDER_AUDIT v=1 event={event} seq={} unix_ms={unix_ms} elapsed_s={now:.3} main_frame={} app_fps_window={app_fps} window_s={window_s:.3} since_change_s={:.3} thermal={} low_power={} scene={:?} grass={} unlit={} ground_shader={ground_shader} terrain_lod={terrain_lod} terrain_near={terrain_near} terrain_macro={macro_state} shadows={} shadow_map={} prepass={} scale={} msaa_samples={msaa_samples} requested_msaa_samples={requested_msaa_samples} msaa_store_policy={msaa_store_policy:?} counters={} wind={} locked={} render_path={render_path} ui={ui} render_px={}x{} surface_px={}x{} {display_fields} focused={focused} present_mode={present_mode:?} camera_pos={:.3},{:.3},{:.3} camera_rot={:.4},{:.4},{:.4},{:.4} density={:?} lighting={:?} far_width_compensation={} entities={} mesh_assets={} image_assets={} source_revision={} source_pages={} source_work_items={} source_repacks={} source_reallocs={} last_source_upload_bytes={} source_capacity_bytes={} instance_capacity={} instance_capacity_bytes={} generation_dispatches={generation_dispatches} generation_reuses={generation_reuses} early_rejection={early_rejection} {candidate_cache} {terrain_cache_fields} {blade_preparation} {gpu} os={} debug_assertions={}",
+        "RENDER_AUDIT v=1 event={event} seq={} unix_ms={unix_ms} elapsed_s={now:.3} main_frame={} app_fps_window={app_fps} window_s={window_s:.3} since_change_s={:.3} thermal={} low_power={} scene={:?} grass={} unlit={} ground_shader={ground_shader} terrain_lod={terrain_lod} terrain_near={terrain_near} terrain_macro={macro_state} shadows={} shadow_map={} prepass={} scale={} msaa_samples={msaa_samples} requested_msaa_samples={requested_msaa_samples} msaa_store_policy={msaa_store_policy:?} counters={} wind={} locked={} ui={ui} render_px={}x{} surface_px={}x{} {display_fields} focused={focused} present_mode={present_mode:?} camera_pos={:.3},{:.3},{:.3} camera_rot={:.4},{:.4},{:.4},{:.4} density={:?} lighting={:?} far_width_compensation={} entities={} mesh_assets={} image_assets={} source_revision={} source_pages={} source_work_items={} source_repacks={} source_reallocs={} last_source_upload_bytes={} source_capacity_bytes={} instance_capacity={} instance_capacity_bytes={} generation_dispatches={generation_dispatches} generation_reuses={generation_reuses} early_rejection={early_rejection} {candidate_cache} {terrain_cache_fields} {blade_preparation} {gpu} os={} debug_assertions={}",
         state.sequence,
         frame.0,
         now - state.changed_at_s,

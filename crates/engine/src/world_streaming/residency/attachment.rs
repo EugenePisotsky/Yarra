@@ -14,10 +14,7 @@ use terrain_render::{
     prepare_terrain_material,
 };
 use vegetation::VegetationCatalog;
-use world::{
-    AssetId, CellCoord, ObjectActivationPolicy, PagePayload, TerrainHeightfield,
-    TerrainTextureSetId,
-};
+use world::{AssetId, CellCoord, ObjectActivationPolicy, PagePayload, TerrainTextureSetId};
 use world_db::PageDependency;
 
 #[derive(Default)]
@@ -54,6 +51,8 @@ pub(in crate::world_streaming) fn page_asset_variants(
 
 #[derive(Resource)]
 pub(in crate::world_streaming) struct WorldRenderAssets {
+    /// iOS draws terrain cells flat on this plane.
+    #[cfg_attr(not(target_os = "ios"), allow(dead_code))]
     pub(super) unit_plane: Handle<Mesh>,
 }
 
@@ -73,7 +72,7 @@ pub(in crate::world_streaming) fn create_world_render_assets(
 pub(super) fn attach_page(
     commands: &mut Commands,
     asset_server: &AssetServer,
-    render_assets: &WorldRenderAssets,
+    _render_assets: &WorldRenderAssets,
     vegetation_catalog: Option<&VegetationCatalog>,
     _terrain_meshes: &mut Assets<Mesh>,
     terrain_materials: &mut Assets<TerrainMaterial>,
@@ -98,85 +97,6 @@ pub(super) fn attach_page(
     let mut vegetation_pages = 0;
     let mut terrain_texture_set = None;
     match prepared.decoded.payload {
-        PagePayload::TerrainRender(terrain) => {
-            let resources = prepared
-                .terrain
-                .as_ref()
-                .ok_or_else(|| "terrain page has no fetched render resources".to_owned())?;
-            if resources.profile.space != key.space
-                || resources.profile.texture_set != resources.texture_set.id
-            {
-                return Err("terrain page render resources are inconsistent".into());
-            }
-            terrain_texture_set = Some((
-                resources.texture_set.id,
-                resources.texture_set.runtime_gpu_bytes(),
-            ));
-            let surface_lookup: HashMap<_, _> = resources
-                .surfaces
-                .iter()
-                .map(|runtime| (runtime.surface.id, runtime))
-                .collect();
-            let surface_layers = terrain
-                .surfaces
-                .iter()
-                .map(|surface| {
-                    let runtime = surface_lookup.get(surface).ok_or_else(|| {
-                        format!("terrain page has unresolved surface {:?}", surface)
-                    })?;
-                    Ok(TerrainSurfaceLayer {
-                        surface: runtime.surface.clone(),
-                        layer: runtime.layer,
-                    })
-                })
-                .collect::<Result<Vec<_>, String>>()?;
-            let center = [
-                (i64::from(key.cell.x) - i64::from(origin_cell.x)) as f32 * cell_size
-                    + cell_size * 0.5,
-                (i64::from(key.cell.z) - i64::from(origin_cell.z)) as f32 * cell_size
-                    + cell_size * 0.5,
-            ];
-            let heightfield = TerrainHeightfield::from_heights(
-                2,
-                &[terrain.height; 4],
-                terrain.height,
-                terrain.height,
-                cell_size,
-            )
-            .map_err(|error| error.to_string())?;
-            let prepared_material = prepare_terrain_material(PrepareTerrainMaterialContext {
-                asset_server,
-                images: terrain_images,
-                materials: terrain_materials,
-                cell: key.cell,
-                origin_cell,
-                cell_size,
-                page_surfaces: &terrain.surfaces,
-                weight_pages: &terrain.weight_pages,
-                profile: &resources.profile,
-                texture_set: &resources.texture_set,
-                surfaces: &surface_layers,
-                macro_variation,
-            })?;
-            let entity = commands
-                .spawn((
-                    Mesh3d(render_assets.unit_plane.clone()),
-                    MeshMaterial3d(prepared_material.material.clone()),
-                    Transform::from_xyz(center[0], terrain.height, center[1])
-                        .with_scale(Vec3::new(cell_size, 1.0, cell_size)),
-                    StreamedTerrainSurface {
-                        key,
-                        cell_size,
-                        heightfield,
-                    },
-                    StreamedPageEntity(key),
-                    Name::new(format!("Terrain cell {}, {}", key.cell.x, key.cell.z)),
-                ))
-                .id();
-            entities.push(entity);
-            owned_terrain_materials.push(prepared_material.material);
-            owned_terrain_images.push(prepared_material.weight_image);
-        }
         PagePayload::TerrainHeightfield(terrain) => {
             terrain
                 .heightfield
@@ -223,7 +143,7 @@ pub(super) fn attach_page(
             let heightfield_mesh = build_heightfield_mesh(&terrain.heightfield, cell_size)?;
             #[cfg(target_os = "ios")]
             let streamed_heightfield =
-                TerrainHeightfield::from_heights(2, &[0.0; 4], 0.0, 0.0, cell_size)
+                world::TerrainHeightfield::from_heights(2, &[0.0; 4], 0.0, 0.0, cell_size)
                     .map_err(|error| error.to_string())?;
             let prepared_material = prepare_terrain_material(PrepareTerrainMaterialContext {
                 asset_server,
@@ -241,7 +161,7 @@ pub(super) fn attach_page(
             })?;
             #[cfg(target_os = "ios")]
             let (mesh, transform, terrain_name) = (
-                render_assets.unit_plane.clone(),
+                _render_assets.unit_plane.clone(),
                 Transform::from_xyz(center[0], 0.0, center[1])
                     .with_scale(Vec3::new(cell_size, 1.0, cell_size)),
                 format!("Flat terrain cell {}, {}", key.cell.x, key.cell.z),
@@ -394,9 +314,6 @@ pub(super) fn attach_page(
             entities.push(entity);
             vegetation_pages = 1;
         }
-        PagePayload::ShadowCasters(_) => {
-            return Err("shadow-caster page attachment is not enabled in the first slice".into());
-        }
         PagePayload::GameplayObjects(objects) => {
             let definitions: HashMap<_, _> = prepared
                 .definitions
@@ -472,12 +389,6 @@ pub(super) fn attach_height_source(
     let key = page.decoded.key;
     let (heightfield, surfaces, weights) = match page.decoded.payload {
         PagePayload::TerrainHeightfield(t) => (t.heightfield, t.surfaces, t.weight_pages),
-        PagePayload::TerrainRender(t) => (
-            TerrainHeightfield::from_heights(2, &[t.height; 4], t.height, t.height, cell_size)
-                .map_err(|e| e.to_string())?,
-            t.surfaces,
-            t.weight_pages,
-        ),
         _ => return Err("height-only request returned a non-terrain page".into()),
     };
     heightfield.validate().map_err(|e| e.to_string())?;

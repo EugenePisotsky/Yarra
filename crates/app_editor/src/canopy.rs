@@ -1,4 +1,4 @@
-//! Shared canopy controls and world-terrain integration.
+//! Canopy controls and world-terrain integration.
 
 use crate::{
     shell::{
@@ -77,7 +77,7 @@ fn world_ui(
         .open(&mut open).default_width(350.0)
         .default_pos(rect.left_top() + egui::vec2(30.0, 90.0))
         .constrain_to(rect).vscroll(true).show(root.ctx(), |ui| {
-            ui.label("Shared with the grass study. Changes preview on world terrain and grass.");
+            ui.label("Changes preview on world terrain and grass.");
             if scene.scene().pages.is_empty() {
                 ui.label("Activate the Vegetation tool with Live preview to show grass and its ground shading.");
             }
@@ -88,7 +88,7 @@ fn world_ui(
     windows.set_open(CANOPY_WINDOW.id, open);
 }
 
-pub(crate) fn density_controls(ui: &mut egui::Ui, settings: &mut VegetationDebugSettings) {
+fn density_controls(ui: &mut egui::Ui, settings: &mut VegetationDebugSettings) {
     ui.separator();
     ui.label("Grass density · geometry LOD stays enabled");
     ui.horizontal(|ui| {
@@ -103,17 +103,13 @@ pub(crate) fn density_controls(ui: &mut egui::Ui, settings: &mut VegetationDebug
             "Balanced",
         );
     });
-    ui.small("Keep all roots isolates canopy from density thinning. This choice is saved with the study, separately from the canopy look.");
+    ui.small("Keep all roots isolates canopy from density thinning. This choice is not part of the saved canopy look.");
 }
 
-pub(crate) fn draw_controls(
-    ui: &mut egui::Ui,
-    look: &mut CanopyShading,
-    message: &mut Option<String>,
-) {
+fn draw_controls(ui: &mut egui::Ui, look: &mut CanopyShading, message: &mut Option<String>) {
     ui.horizontal(|ui| {
         ui.checkbox(&mut look.enabled, "Enabled");
-        if ui.button("Reset experiment").clicked() {
+        if ui.button("Reset").clicked() {
             *look = vegetation::CanopyShading::experiment();
         }
     });
@@ -151,9 +147,7 @@ pub(crate) fn draw_controls(
     look.distance_end = look.distance_end.max(look.distance_start + 0.1);
     ui.add(egui::Slider::new(&mut look.patch_growth, 0.0..=1.0).text("Pocket expansion"));
     ui.add(egui::Slider::new(&mut look.edge_width, 0.05..=4.0).text("Grass edge fade · m"));
-    ui.small(
-        "Nearby shade 0 leaves close ground normal. Linked zoom in Study only magnifies the image.",
-    );
+    ui.small("Nearby shade 0 leaves close ground normal.");
     ui.separator();
     let path = look_path();
     ui.horizontal(|ui| {

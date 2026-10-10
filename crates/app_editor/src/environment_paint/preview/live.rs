@@ -118,12 +118,12 @@ pub(crate) fn update(
     mut preview: ResMut<EnvironmentPreview>,
     mut live: ResMut<LiveTerrainPreview>,
 ) {
-    if !source.lod.enabled || *source.workspace.get() != EditorWorkspace::World {
+    if *source.workspace.get() != EditorWorkspace::World {
         return;
     }
     let (Some(space), Some((plants, _, plants_revision)), Some(presets)) = (
         source.origin.space(),
-        source.plants.study_source(),
+        source.plants.working_catalog(),
         source.dense.presets(),
     ) else {
         return;
@@ -554,7 +554,6 @@ fn compile_inner(
 /// Height-only LOD sources have no Mesh3d. Keep CPU picking, vegetation roots and
 /// near-material inputs on the exact same accepted edit as the hierarchy.
 pub(crate) fn apply_sources(
-    config: Res<engine::TerrainLodPreview>,
     preview: Res<EnvironmentPreview>,
     state: Res<LivePreviewState>,
     project: Res<ProjectEditorStore>,
@@ -563,9 +562,6 @@ pub(crate) fn apply_sources(
         Option<&mut terrain_render::near::NearSource>,
     )>,
 ) {
-    if !config.enabled {
-        return;
-    }
     for (mut surface, near) in &mut terrain {
         let page = state
             .accepted

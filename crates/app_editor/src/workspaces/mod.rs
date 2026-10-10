@@ -8,7 +8,6 @@
 mod animation;
 pub(crate) mod presets;
 pub(crate) use presets::{PresetWorkspaceCamera, PresetWorkspacePlugin};
-mod vegetation;
 pub(crate) mod world;
 
 use std::collections::HashSet;
@@ -16,44 +15,23 @@ use std::collections::HashSet;
 use bevy::prelude::*;
 
 pub(crate) use animation::{AnimationWorkspaceCamera, AnimationWorkspacePlugin};
-pub(crate) use vegetation::{VegetationWorkspaceCamera, VegetationWorkspacePlugin};
 pub(crate) use world::WorldWorkspacePlugin;
-
-/// Reproducible lighting for a fresh asset study, independent of world time/weather.
-fn apply_study_daylight(
-    transform: &mut Transform,
-    light: &mut DirectionalLight,
-    ambient: &mut GlobalAmbientLight,
-) {
-    *transform = Transform::from_xyz(12.0, 20.0, 30.0).looking_at(Vec3::ZERO, Vec3::Y);
-    light.color = Color::srgb(1.0, 0.98, 0.95);
-    light.illuminance = 128_000.0;
-    ambient.color = Color::srgb(0.60, 0.72, 0.92);
-    ambient.brightness = 6000.0;
-}
 
 #[derive(States, Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum EditorWorkspace {
     #[default]
     World,
     Animation,
-    Vegetation,
     Presets,
 }
 
 impl EditorWorkspace {
-    pub(crate) const ALL: [Self; 4] = [
-        Self::World,
-        Self::Animation,
-        Self::Vegetation,
-        Self::Presets,
-    ];
+    pub(crate) const ALL: [Self; 3] = [Self::World, Self::Animation, Self::Presets];
 
     pub(crate) const fn label(self) -> &'static str {
         match self {
             Self::World => "World",
             Self::Animation => "Animation",
-            Self::Vegetation => "Vegetation",
             Self::Presets => "Presets",
         }
     }
@@ -80,8 +58,6 @@ impl Plugin for EditorWorkspacesPlugin {
 pub(crate) enum FramePacingOwner {
     AtmospherePreview,
     AnimationWorkspace,
-    WorldGameplayPreview,
-    VegetationWorkspace,
 }
 
 #[derive(Resource, Default)]
@@ -128,7 +104,7 @@ mod tests {
         assert_eq!(EditorWorkspace::default(), EditorWorkspace::World);
         assert_eq!(
             EditorWorkspace::ALL.map(EditorWorkspace::label),
-            ["World", "Animation", "Vegetation", "Presets"]
+            ["World", "Animation", "Presets"]
         );
     }
 

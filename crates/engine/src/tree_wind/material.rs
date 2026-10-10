@@ -201,7 +201,7 @@ fn foliage_base(source: &CloudMaterial, shading: FoliageShading) -> CloudMateria
 }
 
 // Collections in the Presets workspace also need the composed material while
-// study lighting disables cloud transmission. Do not change unrelated study meshes.
+// isolated lighting disables cloud transmission. Do not change unrelated meshes.
 fn opt_in(
     mut commands: Commands,
     candidates: Query<

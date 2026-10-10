@@ -1,12 +1,9 @@
 //! World toolbar and floating-window composition. Visibility does not activate authoring tools.
 use crate::{
-    derived_jobs::{DerivedArtifactStore, DerivedJobScheduler},
     domain_editing::DenseDomainWorkingSets,
     editing::{EditorHistory, EditorObjectWorkingSet, EditorSelection, TransformInspectorDraft},
     journal::EditorJournalStatus,
     navigation::ProjectNavigationStore,
-    overview::OverviewState,
-    preview::{EditorPreviewMode, PreviewModeState, PreviewRuntimeDiagnostics},
     project_store::ProjectEditorStore,
     publication::RuntimePublicationState,
     saving::EditorSaveCoordinator,
@@ -84,8 +81,6 @@ pub(crate) struct WorldWorkspaceUiResources<'w> {
     viewpoint: Res<'w, WorldViewpoint>,
     origin: Res<'w, WorldOrigin>,
     stats: Res<'w, StreamingStats>,
-    derived_jobs: Res<'w, DerivedJobScheduler>,
-    derived_artifacts: Res<'w, DerivedArtifactStore>,
     dense_domains: ResMut<'w, DenseDomainWorkingSets>,
     vegetation: ResMut<'w, VegetationAuthoringState>,
     roads: ResMut<'w, crate::road_authoring::RoadToolState>,
@@ -96,9 +91,6 @@ pub(crate) struct WorldWorkspaceUiResources<'w> {
     environment_preview: Res<'w, crate::environment_paint::EnvironmentPreview>,
     journal: Res<'w, EditorJournalStatus>,
     navigation: ResMut<'w, ProjectNavigationStore>,
-    overview: Res<'w, OverviewState>,
-    preview: ResMut<'w, PreviewModeState>,
-    preview_runtime: Res<'w, PreviewRuntimeDiagnostics>,
     publication: ResMut<'w, RuntimePublicationState>,
     save: ResMut<'w, EditorSaveCoordinator>,
     project: ResMut<'w, ProjectEditorStore>,
@@ -125,8 +117,6 @@ pub(crate) fn world_workspace_ui(
         viewpoint,
         origin,
         stats,
-        derived_jobs,
-        derived_artifacts,
         mut dense_domains,
         vegetation,
         mut roads,
@@ -137,9 +127,6 @@ pub(crate) fn world_workspace_ui(
         environment_preview,
         journal,
         mut navigation,
-        overview,
-        mut preview,
-        preview_runtime,
         publication,
         mut save,
         mut project,
@@ -272,20 +259,6 @@ pub(crate) fn world_workspace_ui(
                     "3 Scale",
                 );
             });
-            ui.separator();
-            egui::ComboBox::from_id_salt("world_preview_mode")
-                .selected_text(format!("Preview: {}", preview.requested().label()))
-                .show_ui(ui, |ui| {
-                    for mode in EditorPreviewMode::ALL {
-                        if ui
-                            .selectable_label(preview.requested() == mode, mode.label())
-                            .clicked()
-                        {
-                            preview.request(mode);
-                            ui.close();
-                        }
-                    }
-                });
 
             if save.active()
                 || project.save_in_flight()
@@ -408,7 +381,7 @@ pub(crate) fn world_workspace_ui(
                     &mut layer_browser,
                     &environment_preview,
                     origin.space(),
-                    vegetation.study_source().map(|(catalog, _, _)| catalog),
+                    vegetation.working_catalog().map(|(catalog, _, _)| catalog),
                     save.active()
                         || publication.active()
                         || project.save_in_flight()
@@ -456,14 +429,10 @@ pub(crate) fn world_workspace_ui(
             .show(&context, |ui| {
                 draw_navigator(
                     ui,
-                    &catalog,
-                    &viewpoint,
-                    &overview,
                     &mut navigation,
                     &mut selection,
                     &mut objects,
                     &mut transform_draft,
-                    &mut focus_request,
                     &mut tools,
                 );
             });
@@ -491,14 +460,9 @@ pub(crate) fn world_workspace_ui(
                     &viewpoint,
                     &origin,
                     &stats,
-                    &derived_jobs,
-                    &derived_artifacts,
                     &dense_domains,
                     &journal,
                     &navigation,
-                    &overview,
-                    &preview,
-                    &preview_runtime,
                     &publication,
                     &project,
                     &objects,

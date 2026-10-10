@@ -43,7 +43,7 @@ import bevy_pbr::render::pbr_functions::{calculate_diffuse_color, calculate_F0, 
 @if(STANDARD_MATERIAL_ANISOTROPY) import bevy_pbr::render::pbr_functions::bend_normal_for_anisotropy;
 @if(CONTACT_SHADOWS && DEPTH_PREPASS) import bevy_pbr::render::pbr_functions::calculate_contact_shadow;
 import package::shaders::clouds::surface::{cloud_light, ground_celestial_irradiance, surface_wetness};
-@if(FOREST_SHADOW) import package::shaders::clouds::forest_shadow::{forest_transmittance, forest_sky_light, forest_sky_visibility};
+import package::shaders::clouds::forest_shadow::{forest_transmittance, forest_sky_light, forest_sky_visibility};
 
 // Yarra: light reflected towards a surface by the ground around it, as environment radiance
 // (Bevy's ambient colour is used the same way): the ground's albedo times the sun, moon and
@@ -383,7 +383,6 @@ fn apply_pbr_lighting(
         // Yarra: only direct celestial lighting is attenuated. Ambient, emissive,
         // local lights and material response retain the upstream behavior.
         let cloud = cloud_light(in.world_position.xyz, (*light).direction_to_light);
-        @if(FOREST_SHADOW)
         if (in.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) != 0u {
             // Past the last shadow cascade nothing casts shadows, and distant forests went
             // flat and pale. There the forest shadow map stands in for the shadow maps,
@@ -422,9 +421,7 @@ fn apply_pbr_lighting(
         }
         // The clouds' direct beam is shaded like any sunlight; what they pass on diffusely casts
         // no shadows, and crowns hold it back as they do the sky.
-        var diffuse = cloud.y;
-        @if(FOREST_SHADOW)
-        diffuse *= forest_sky_visibility(in.world_position.xyz);
+        let diffuse = cloud.y * forest_sky_visibility(in.world_position.xyz);
         shadow = shadow * cloud.x + diffuse;
         var light_contrib = lighting::directional_light(i, &lighting_input, enable_diffuse);
         @if(TREE_CROWN_SHADING) {
@@ -591,11 +588,9 @@ fn apply_pbr_lighting(
             var ground = ground_light(in.world_position.xyz);
             // Under the crowns most of the sky is hidden and the ground lies in their shade;
             // leaf-filtered light stands in for part of it.
-            @if(FOREST_SHADOW) {
-                let canopy = forest_sky_light(in.world_position.xyz);
-                sky_facing *= canopy;
-                ground *= canopy;
-            }
+            let canopy = forest_sky_light(in.world_position.xyz);
+            sky_facing *= canopy;
+            ground *= canopy;
             indirect_light += ambient::ambient_light(in.world_position, in.N, in.V, NdotV, diffuse_color, F0, perceptual_roughness, diffuse_occlusion * sky_facing);
             indirect_light += diffuse_color * ground * below * diffuse_occlusion;
         }

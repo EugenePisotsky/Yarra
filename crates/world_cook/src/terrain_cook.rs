@@ -374,7 +374,7 @@ mod tests {
         let reader = RuntimeReader::open_immutable(&output.path()).unwrap();
         let mut deformed = 0;
         for page in &build.pages {
-            if page.key.domain != world::PageDomain::TerrainRender {
+            if page.key.domain != world::PageDomain::Terrain {
                 continue;
             }
             let PagePayload::TerrainHeightfield(page) = page.clone().decode().unwrap().payload
@@ -393,7 +393,7 @@ mod tests {
         for leaf in build
             .pages
             .iter()
-            .filter(|p| p.key.domain == world::PageDomain::TerrainRender)
+            .filter(|p| p.key.domain == world::PageDomain::Terrain)
         {
             let PagePayload::TerrainHeightfield(page) = leaf.clone().decode().unwrap().payload
             else {
@@ -425,7 +425,7 @@ mod tests {
         build
             .pages
             .iter_mut()
-            .find(|p| p.key.domain == world::PageDomain::TerrainRender)
+            .find(|p| p.key.domain == world::PageDomain::Terrain)
             .unwrap()
             .payload
             .pop();

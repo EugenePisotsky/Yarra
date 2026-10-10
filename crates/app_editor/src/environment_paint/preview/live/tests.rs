@@ -41,7 +41,7 @@ fn live_road_edit_move_save_undo_and_cancel() {
         .read_terrain_resources(world::PageKey {
             space,
             cell: CellCoord::ZERO,
-            domain: world::PageDomain::TerrainRender,
+            domain: world::PageDomain::Terrain,
             lod: 0,
         })
         .unwrap();

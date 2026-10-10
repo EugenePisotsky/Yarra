@@ -19,7 +19,6 @@ use world_db::{
     VegetationCatalogWriteResult,
 };
 
-use crate::preview::{EditorPreviewMode, PreviewModeState};
 use crate::tools::{EditorSourceDomain, EditorToolRegistry};
 use crate::workspaces::EditorWorkspace;
 
@@ -1079,24 +1078,16 @@ fn validate_project_catalog(runtime: Res<WorldCatalog>, mut store: ResMut<Projec
 fn update_project_query_demand(
     viewpoint: Res<WorldViewpoint>,
     workspace: Res<State<EditorWorkspace>>,
-    preview: Res<PreviewModeState>,
     tools: Res<EditorToolRegistry>,
     mut store: ResMut<ProjectEditorStore>,
 ) {
     if !matches!(store.phase, ProjectStorePhase::Ready) || store.catalog_compatible == Some(false) {
         return;
     }
-    let Some(active_preview) = preview.active() else {
+    let Some(tool) = tools.active(*workspace.get()) else {
         return;
     };
-    let desired_domains = if active_preview == EditorPreviewMode::Authoring {
-        let Some(tool) = tools.active(*workspace.get()) else {
-            return;
-        };
-        ProjectSourceDomains::from_tool(tool)
-    } else {
-        ProjectSourceDomains::from_domains(active_preview.descriptor().domains)
-    };
+    let desired_domains = ProjectSourceDomains::from_tool(tool);
     if !desired_domains.any() {
         return;
     }

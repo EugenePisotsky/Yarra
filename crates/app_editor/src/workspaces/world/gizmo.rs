@@ -1,7 +1,6 @@
 //! Transform-gizmo rendering and grouped undoable edit transactions.
 use crate::{
     editing::{EditorHistory, EditorObjectWorkingSet, EditorSelection},
-    preview::{EditorPreviewMode, PreviewModeState},
     tools::{EditorToolRegistry, OBJECT_TOOL},
     workspaces::{
         EditorWorkspace,
@@ -69,13 +68,11 @@ pub(crate) fn configure_transform_gizmo(
 
 pub(crate) fn editor_gizmo_enabled(
     workspace: Res<State<EditorWorkspace>>,
-    preview: Res<PreviewModeState>,
     tools: Res<EditorToolRegistry>,
     selection: Res<EditorSelection>,
     objects: Res<EditorObjectWorkingSet>,
 ) -> bool {
     *workspace.get() == EditorWorkspace::World
-        && preview.active() == Some(EditorPreviewMode::Authoring)
         && tools
             .active(EditorWorkspace::World)
             .is_some_and(|tool| tool.id == OBJECT_TOOL.id)

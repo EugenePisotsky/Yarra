@@ -149,8 +149,6 @@ struct CandidateEvaluation {
     lod_morph: f32,
     population_density: f32,
     eligible: u32,
-    // Projected and budget extents, expressed as multiples of the high threshold.
-    shape_extents: vec2<f32>,
 }
 
 struct Telemetry {
@@ -253,10 +251,6 @@ const SINGLE_HIGH_FIRST_INDEX: u32 = 6u;
 const SINGLE_LOW_FIRST_INDEX: u32 = 54u;
 const SPLIT_HIGH_FIRST_INDEX: u32 = 72u;
 const SPLIT_LOW_FIRST_INDEX: u32 = 111u;
-// Packed above the lighting mode in DebugConfig.values.z. This preserves the accepted population
-// while measuring the existing low topology across the complete field.
-const FORCE_LOW_TOPOLOGY_BIT: u32 = 0x00000100u;
-const MOBILE_POPULATION_LOD_BIT: u32 = 0x00000200u;
 const DENSITY_MODE_BALANCED: u32 = 1u;
 const DENSITY_MODE_FULL_REFERENCE: u32 = 2u;
 const SPECIES_INDEX_MASK: u32 = 0x0000ffffu;
@@ -270,10 +264,6 @@ const BALANCED_DENSITY_FAR_FRACTION: f32 = 0.30;
 const BALANCED_DENSITY_FADE_BAND: f32 = 0.10;
 // Retain the established distant population with the original three-triangle low pair.
 const SPLIT_LOW_DENSITY_BUDGET_SCALE: f32 = 0.65;
-// Deliberately aggressive calibration point for mobile. If one quarter of the roots on the
-// cheapest topology cannot materially change frame rate, a gentler ribbon LOD cannot reach the
-// target and the far field needs a different representation.
-const MOBILE_DIAGNOSTIC_DENSITY_FRACTION: f32 = 0.25;
 
 fn hash32(value: u32) -> u32 {
     var x = value;
@@ -816,22 +806,14 @@ fn balanced_population_lod_density(projected_spacing: f32) -> f32 {
     );
 }
 
-fn mobile_population_lod_density() -> f32 {
-    return MOBILE_DIAGNOSTIC_DENSITY_FRACTION;
-}
-
 fn population_lod_retention_limit(population_density: f32, topology_class: u32) -> f32 {
     // Balanced mode keeps a narrow, stable rank band alive so the draw shader can contract retiring
     // blades laterally. Centering that band on the target approximately preserves integrated width.
-    if ((debug_config.values.z & MOBILE_POPULATION_LOD_BIT) != 0u) {
-        return population_density;
-    }
     if (
         debug_config.values.y == DENSITY_MODE_BALANCED
         && population_density < 0.999
     ) {
-        let budget_scale = 1.0;
-        return min(population_density + BALANCED_DENSITY_FADE_BAND * budget_scale * 0.5, 1.0);
+        return min(population_density + BALANCED_DENSITY_FADE_BAND * 0.5, 1.0);
     }
     return population_density;
 }
@@ -880,11 +862,7 @@ fn evaluate_candidate(item: WorkItem, candidate_index: u32, early_rejection: boo
     let authored_population_density = population_lod_density(choice, projected_spacing);
     var population_density = authored_population_density;
     if (debug_config.values.y == DENSITY_MODE_BALANCED) {
-        population_density = select(
-            balanced_population_lod_density(projected_spacing),
-            mobile_population_lod_density(),
-            (debug_config.values.z & MOBILE_POPULATION_LOD_BIT) != 0u,
-        );
+        population_density = balanced_population_lod_density(projected_spacing);
     } else if (debug_config.values.y == DENSITY_MODE_FULL_REFERENCE) {
         population_density = 1.0;
     }
@@ -899,10 +877,7 @@ fn evaluate_candidate(item: WorkItem, candidate_index: u32, early_rejection: boo
         population_density *= mix(SPLIT_LOW_DENSITY_BUDGET_SCALE, 1.0, near_scale);
     }
     var lod = 0u;
-    if (
-        projected_extent < choice.threshold.y
-        || (debug_config.values.z & FORCE_LOW_TOPOLOGY_BIT) != 0u
-    ) {
+    if (projected_extent < choice.threshold.y) {
         lod = 1u;
     }
     let lod_morph = select(
@@ -930,10 +905,6 @@ fn evaluate_candidate(item: WorkItem, candidate_index: u32, early_rejection: boo
     } else if (debug_config.values.x == 4u && item.peers.w == 0u) {
         eligible = 0u;
     }
-    var inspection_extents = vec2<f32>(0.0);
-    if (debug_config.values.x == 0u && ((debug_config.workload.w >> 4u) & 15u) != 0u) {
-        inspection_extents = extent_limits / max(choice.threshold.y, 1e-5);
-    }
     return CandidateEvaluation(
         candidate,
         surface,
@@ -944,7 +915,6 @@ fn evaluate_candidate(item: WorkItem, candidate_index: u32, early_rejection: boo
         lod_morph,
         population_density,
         eligible,
-        inspection_extents,
     );
 }
 
@@ -1013,23 +983,20 @@ fn generate(@builtin(global_invocation_id) invocation: vec3<u32>) {
     if (evaluation.eligible == 0u) {
         return;
     }
-    // Promote topology only after production culling/retention. All inspection modes retain the
-    // exact same root identities and original packed morph/density. Limited high arenas still apply.
-    let inspection = debug_config.values.x == 0u && ((debug_config.workload.w >> 4u) & 15u) != 0u;
-    let draw_bin = select(evaluation.bin, evaluation.bin & ~1u, inspection);
+    let bin = evaluation.bin;
     if (debug_config.workload.y != 0u) {
-        atomicAdd(&telemetry.values[2u + draw_bin], 1u);
+        atomicAdd(&telemetry.values[2u + bin], 1u);
     }
 
-    let local_slot = atomicAdd(&draw_args[draw_bin].instance_count, 1u);
-    if (local_slot >= active_capacity(draw_bin)) {
+    let local_slot = atomicAdd(&draw_args[bin].instance_count, 1u);
+    if (local_slot >= active_capacity(bin)) {
         if (debug_config.workload.y != 0u) {
-            atomicAdd(&telemetry.values[6u + draw_bin], 1u);
+            atomicAdd(&telemetry.values[6u + bin], 1u);
         }
         return;
     }
     if (debug_config.values.x == 0u) {
-        let slot = instance_offset(draw_bin) + local_slot;
+        let slot = instance_offset(bin) + local_slot;
         procedural_instances[slot].root_clump = vec4<f32>(
             evaluation.candidate.root.x,
             evaluation.surface.height,
@@ -1039,13 +1006,6 @@ fn generate(@builtin(global_invocation_id) invocation: vec3<u32>) {
                 evaluation.candidate.lod_rank,
             ))),
         );
-        if (inspection) {
-            // High bins together fit the existing 65,536-record diagnostic buffer.
-            // No extra allocation or production writes; retain the full seed for native inspection.
-            diagnostic_instances[slot].root_direction = procedural_instances[slot].root_clump;
-            diagnostic_instances[slot].direction_species = vec4<f32>(bitcast<f32>(evaluation.candidate.seed), f32(evaluation.species_index), f32(evaluation.bin), evaluation.lod_morph);
-            diagnostic_instances[slot].diagnostics = vec4<f32>(evaluation.shape_extents, evaluation.population_density, evaluation.candidate.lod_rank);
-        }
         procedural_instances[slot].geometry = vec4<u32>(
             pack2x16snorm(evaluation.candidate.direction),
             (evaluation.species_index & SPECIES_INDEX_MASK)

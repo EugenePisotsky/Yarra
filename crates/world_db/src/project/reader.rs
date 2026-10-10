@@ -6,14 +6,13 @@ use crate::project::query::{
 use crate::storage::ensure_schema_version;
 use crate::{
     ProjectManifest, SourceCellQuery, SourceObjectOutlinerCursor, SourceObjectOutlinerPage,
-    SourceObjectPaletteCursor, SourceObjectPalettePage, SourceObjectPaletteQuery,
-    SourceObjectQuery, SourceObjectRecord, SourceObjectViewQuery, SourceObjectViewRecord,
+    SourceObjectPaletteCursor, SourceObjectPalettePage, SourceObjectQuery, SourceObjectViewQuery,
     WorldDbError,
 };
-use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
+use rusqlite::{Connection, OpenFlags, params};
 use std::path::Path;
 use vegetation::VegetationCatalog;
-use world::{CellCoord, PROJECT_SCHEMA_VERSION, StableObjectId, WorldSpaceId};
+use world::{CellCoord, PROJECT_SCHEMA_VERSION, WorldSpaceId};
 
 /// Read-only, query-shaped access to a mutable authoring database.
 ///
@@ -22,7 +21,6 @@ use world::{CellCoord, PROJECT_SCHEMA_VERSION, StableObjectId, WorldSpaceId};
 pub struct ProjectReader {
     pub(crate) connection: Connection,
     manifest: ProjectManifest,
-    has_spatial_object_overlap_index: bool,
 }
 
 impl ProjectReader {
@@ -44,14 +42,6 @@ impl ProjectReader {
         {
             return Err(WorldDbError::UnknownDefaultWorldSpace(default_world_space));
         }
-        let has_spatial_object_overlap_index = connection.query_row(
-            "SELECT EXISTS( \
-                SELECT 1 FROM pragma_index_list('object_cell_overlaps') \
-                WHERE name = 'object_cell_overlaps_cells' \
-             )",
-            [],
-            |row| row.get(0),
-        )?;
         Ok(Self {
             connection,
             manifest: ProjectManifest {
@@ -59,7 +49,6 @@ impl ProjectReader {
                 default_world_space,
                 world_spaces,
             },
-            has_spatial_object_overlap_index,
         })
     }
 
@@ -113,8 +102,7 @@ impl ProjectReader {
     ) -> Result<SourceObjectQuery, WorldDbError> {
         validate_spatial_query(minimum, maximum, maximum_records)?;
         let sql_limit = query_sql_limit(maximum_records)?;
-        let sql = if self.has_spatial_object_overlap_index {
-            "SELECT o.object_id, o.world_space_id, o.owner_cell_x, o.owner_cell_z, \
+        let sql = "SELECT o.object_id, o.world_space_id, o.owner_cell_x, o.owner_cell_z, \
                     o.definition_id, o.local_x, o.local_y, o.local_z, o.yaw, o.scale, \
                     o.source_revision \
              FROM object_placements o \
@@ -131,20 +119,7 @@ impl ProjectReader {
                AND overlap.cell_x BETWEEN ?2 AND ?3 \
                AND overlap.cell_z BETWEEN ?4 AND ?5 \
              ORDER BY object_id \
-             LIMIT ?6"
-        } else {
-            // Early version-7 databases do not have the optional overlap spatial index.
-            // Owner-cell queries remain indexed; scanning every object in a space does not.
-            "SELECT o.object_id, o.world_space_id, o.owner_cell_x, o.owner_cell_z, \
-                    o.definition_id, o.local_x, o.local_y, o.local_z, o.yaw, o.scale, \
-                    o.source_revision \
-             FROM object_placements o \
-             WHERE o.world_space_id = ?1 \
-               AND o.owner_cell_x BETWEEN ?2 AND ?3 \
-               AND o.owner_cell_z BETWEEN ?4 AND ?5 \
-             ORDER BY o.object_id \
-             LIMIT ?6"
-        };
+             LIMIT ?6";
         let mut statement = self.connection.prepare_cached(sql)?;
         let mut records = statement
             .query_map(
@@ -159,22 +134,6 @@ impl ProjectReader {
         Ok(SourceObjectQuery { records, truncated })
     }
 
-    pub fn read_object(
-        &self,
-        object: StableObjectId,
-    ) -> Result<Option<SourceObjectRecord>, WorldDbError> {
-        self.connection
-            .query_row(
-                "SELECT object_id, world_space_id, owner_cell_x, owner_cell_z, definition_id, \
-                        local_x, local_y, local_z, yaw, scale, source_revision \
-                 FROM object_placements WHERE object_id = ?1",
-                params![object.0.as_slice()],
-                source_object_from_row,
-            )
-            .optional()
-            .map_err(Into::into)
-    }
-
     pub fn read_object_views_in_cells(
         &self,
         space: WorldSpaceId,
@@ -184,8 +143,7 @@ impl ProjectReader {
     ) -> Result<SourceObjectViewQuery, WorldDbError> {
         validate_spatial_query(minimum, maximum, maximum_records)?;
         let sql_limit = query_sql_limit(maximum_records)?;
-        let sql = if self.has_spatial_object_overlap_index {
-            "SELECT o.object_id, o.world_space_id, o.owner_cell_x, o.owner_cell_z, \
+        let sql = "SELECT o.object_id, o.world_space_id, o.owner_cell_x, o.owner_cell_z, \
                     o.definition_id, o.local_x, o.local_y, o.local_z, o.yaw, o.scale, \
                     o.source_revision, d.definition_key, d.display_name, d.visual_asset_id, \
                     d.activation_policy, v.uri, v.bounds_x, v.bounds_y, v.bounds_z \
@@ -210,24 +168,7 @@ impl ProjectReader {
                AND overlap.cell_x BETWEEN ?2 AND ?3 \
                AND overlap.cell_z BETWEEN ?4 AND ?5 \
              ORDER BY object_id \
-             LIMIT ?6"
-        } else {
-            // Early version-7 databases do not have the optional overlap spatial index.
-            // Owner-cell queries remain indexed; scanning every object in a space does not.
-            "SELECT o.object_id, o.world_space_id, o.owner_cell_x, o.owner_cell_z, \
-                    o.definition_id, o.local_x, o.local_y, o.local_z, o.yaw, o.scale, \
-                    o.source_revision, d.definition_key, d.display_name, d.visual_asset_id, \
-                    d.activation_policy, v.uri, v.bounds_x, v.bounds_y, v.bounds_z \
-             FROM object_placements o \
-             JOIN object_definitions d ON d.definition_id = o.definition_id \
-             LEFT JOIN source_asset_variants v \
-                    ON v.asset_id = d.visual_asset_id AND v.lod = 0 \
-             WHERE o.world_space_id = ?1 \
-               AND o.owner_cell_x BETWEEN ?2 AND ?3 \
-               AND o.owner_cell_z BETWEEN ?4 AND ?5 \
-             ORDER BY o.object_id \
-             LIMIT ?6"
-        };
+             LIMIT ?6";
         let mut statement = self.connection.prepare_cached(sql)?;
         let mut records = statement
             .query_map(
@@ -240,28 +181,6 @@ impl ProjectReader {
         let truncated = records.len() > maximum_records;
         records.truncate(maximum_records);
         Ok(SourceObjectViewQuery { records, truncated })
-    }
-
-    pub fn read_object_view(
-        &self,
-        object: StableObjectId,
-    ) -> Result<Option<SourceObjectViewRecord>, WorldDbError> {
-        self.connection
-            .query_row(
-                "SELECT o.object_id, o.world_space_id, o.owner_cell_x, o.owner_cell_z, \
-                        o.definition_id, o.local_x, o.local_y, o.local_z, o.yaw, o.scale, \
-                        o.source_revision, d.definition_key, d.display_name, d.visual_asset_id, \
-                        d.activation_policy, v.uri, v.bounds_x, v.bounds_y, v.bounds_z \
-                 FROM object_placements o \
-                 JOIN object_definitions d ON d.definition_id = o.definition_id \
-                 LEFT JOIN source_asset_variants v \
-                        ON v.asset_id = d.visual_asset_id AND v.lod = 0 \
-                 WHERE o.object_id = ?1",
-                params![object.0.as_slice()],
-                source_object_view_from_row,
-            )
-            .optional()
-            .map_err(Into::into)
     }
 
     /// Reads one stable owner-cell-ordered outliner page without materializing the project tree.
@@ -325,31 +244,6 @@ impl ProjectReader {
             records,
             next_cursor,
         })
-    }
-
-    pub fn read_object_palette(
-        &self,
-        maximum_records: usize,
-    ) -> Result<SourceObjectPaletteQuery, WorldDbError> {
-        if maximum_records == 0 {
-            return Err(WorldDbError::InvalidQueryLimit);
-        }
-        let sql_limit = query_sql_limit(maximum_records)?;
-        let mut statement = self.connection.prepare_cached(
-            "SELECT d.definition_id, d.definition_key, d.display_name, d.visual_asset_id, \
-                    d.activation_policy, v.uri, v.bounds_x, v.bounds_y, v.bounds_z \
-             FROM object_definitions d \
-             LEFT JOIN source_asset_variants v \
-                    ON v.asset_id = d.visual_asset_id AND v.lod = 0 \
-             ORDER BY d.definition_key \
-             LIMIT ?1",
-        )?;
-        let mut records = statement
-            .query_map(params![sql_limit], source_object_palette_from_row)?
-            .collect::<Result<Vec<_>, _>>()?;
-        let truncated = records.len() > maximum_records;
-        records.truncate(maximum_records);
-        Ok(SourceObjectPaletteQuery { records, truncated })
     }
 
     /// Reads one searchable definition page using a stable key/ID cursor.

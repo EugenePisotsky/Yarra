@@ -291,9 +291,6 @@ impl TerrainMaterialCookStore {
             |r| r.get(0),
         )?)
     }
-    pub fn put_core(&self, key: TerrainMaterialKey, bytes: &[u8]) -> Result<(), WorldDbError> {
-        self.put_core_payload(key, &StagedCore::compress(bytes)?)
-    }
     /// Stores a core compressed elsewhere, for example on a worker thread.
     pub fn put_core_payload(
         &self,

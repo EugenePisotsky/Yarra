@@ -15,7 +15,7 @@ use super::{
     pipelines::VegetationPipelines,
 };
 use crate::{
-    VegetationBladeBands, VegetationDebugSettings, VegetationDiagnostics, VegetationLighting,
+    VegetationDebugSettings, VegetationDiagnostics, VegetationLighting, VegetationLightingMode,
     VegetationProfileMode, VegetationSceneState, VegetationSun, VegetationView, VegetationWind,
 };
 use bevy::{
@@ -389,7 +389,7 @@ pub(super) fn prepare(
     };
     buffers.preparation_enabled = blade_settings.enabled
         && settings.mode as u32 == 0
-        && settings.lighting_mode as u32 != 3
+        && settings.lighting_mode != VegetationLightingMode::VertexOnlyDiagnostic
         && matches!(
             settings.profile_mode,
             VegetationProfileMode::Full | VegetationProfileMode::DrawFrozen
@@ -408,11 +408,7 @@ pub(super) fn prepare(
             u32::from(settings.gpu_counters_enabled),
             u32::from(buffers.preparation_enabled),
             u32::from(settings.early_rejection)
-                | (u32::from(settings.candidate_cache_enabled) << 1)
-                | ((settings.shape_inspection as u32) << 4)
-                | (u32::from(settings.inspection_disable_opening) << 8)
-                | (u32::from(settings.blade_bands == VegetationBladeBands::MotionMask) << 9)
-                | (((settings.blade_band_density.clamp(0.0, 1.0) * 255.0).round() as u32) << 16),
+                | (u32::from(settings.candidate_cache_enabled) << 1),
         ],
     };
     render_queue.write_buffer(&buffers.camera, 0, bytemuck::bytes_of(&camera_gpu));

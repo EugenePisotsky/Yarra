@@ -34,7 +34,7 @@ impl BoundaryField {
         min: Vec2,
         max: Vec2,
     ) -> Self {
-        // The normal resident world uses 25 cm texels. Bound unusual study extents as well.
+        // The normal resident world uses 25 cm texels. Bound unusual extents as well.
         let step = STEP.max(((max - min).max_element() + MARGIN * 2.0) / 2048.0);
         let minimum = ((min - Vec2::splat(MARGIN)) / step).floor() * step;
         let size = ((max + Vec2::splat(MARGIN) - minimum) / step)

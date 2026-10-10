@@ -19,7 +19,6 @@ use engine::{WorldEnvironmentPlugin, WorldStreamingPlugin, WorldViewCamera};
 use terrain_render::TerrainRenderPlugin;
 
 use crate::{
-    derived_jobs::DerivedJobsPlugin,
     journal::EditorJournalPlugin,
     navigation::ProjectNavigationPlugin,
     project_store::ProjectEditorStorePlugin,
@@ -27,8 +26,7 @@ use crate::{
     tools::EditorToolsPlugin,
     workspaces::{
         AnimationWorkspaceCamera, AnimationWorkspacePlugin, EditorFramePacing, EditorWorkspace,
-        EditorWorkspacesPlugin, PresetWorkspaceCamera, PresetWorkspacePlugin,
-        VegetationWorkspaceCamera, VegetationWorkspacePlugin, WorldWorkspacePlugin,
+        EditorWorkspacesPlugin, PresetWorkspaceCamera, PresetWorkspacePlugin, WorldWorkspacePlugin,
     },
 };
 
@@ -49,14 +47,9 @@ pub(crate) fn run() -> std::result::Result<(), String> {
         None
     };
     let start_view = engine::WorldStartView::load(start_path.as_deref())?;
-    let terrain_lod = engine::TerrainLodPreview {
-        enabled: !std::env::args_os().any(|a| a == "--terrain-legacy"),
-        ..default()
-    };
     crate::startup::validate_databases(&project_database, &runtime_database)?;
     App::new()
         .insert_resource(start_view)
-        .insert_resource(terrain_lod)
         .insert_resource(ClearColor(Color::srgb(0.055, 0.065, 0.075)))
         .insert_resource(editor_winit_settings())
         .insert_resource(EguiGlobalSettings {
@@ -88,14 +81,10 @@ pub(crate) fn run() -> std::result::Result<(), String> {
             WorldEnvironmentPlugin::editor(),
             TerrainRenderPlugin,
             EguiPlugin::default(),
-            DerivedJobsPlugin::new(project_database.clone()),
             EditorToolsPlugin,
             EditorWorkspacesPlugin,
             WorldWorkspacePlugin,
             AnimationWorkspacePlugin,
-            VegetationWorkspacePlugin {
-                runtime_database: runtime_database.clone(),
-            },
             WorldStreamingPlugin::editor(runtime_database.clone()),
             ProjectEditorStorePlugin::new(project_database.clone()),
             ProjectNavigationPlugin::new(project_database.clone()),
@@ -238,7 +227,6 @@ pub(crate) fn sync_workspace_cameras(
             Without<PresetWorkspaceCamera>,
             With<WorldViewCamera>,
             Without<AnimationWorkspaceCamera>,
-            Without<VegetationWorkspaceCamera>,
         ),
     >,
     mut animation_cameras: Query<
@@ -247,16 +235,6 @@ pub(crate) fn sync_workspace_cameras(
             Without<PresetWorkspaceCamera>,
             With<AnimationWorkspaceCamera>,
             Without<WorldViewCamera>,
-            Without<VegetationWorkspaceCamera>,
-        ),
-    >,
-    mut vegetation_cameras: Query<
-        &mut Camera,
-        (
-            Without<PresetWorkspaceCamera>,
-            With<VegetationWorkspaceCamera>,
-            Without<WorldViewCamera>,
-            Without<AnimationWorkspaceCamera>,
         ),
     >,
     mut preset_cameras: Query<
@@ -265,7 +243,6 @@ pub(crate) fn sync_workspace_cameras(
             With<PresetWorkspaceCamera>,
             Without<WorldViewCamera>,
             Without<AnimationWorkspaceCamera>,
-            Without<VegetationWorkspaceCamera>,
         ),
     >,
 ) {
@@ -278,9 +255,6 @@ pub(crate) fn sync_workspace_cameras(
     }
     for mut camera in &mut animation_cameras {
         camera.is_active = *workspace.get() == EditorWorkspace::Animation;
-    }
-    for mut camera in &mut vegetation_cameras {
-        camera.is_active = *workspace.get() == EditorWorkspace::Vegetation;
     }
 }
 

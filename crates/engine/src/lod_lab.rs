@@ -9,7 +9,7 @@
 use crate::WorldRenderRoot;
 use crate::forest_shadow::NoForestShadow;
 use crate::object_lod::{
-    CROSSFADE_FRACTION, ForcedLod, ImpostorHandoff, LodProjection, ScreenSpaceLod,
+    CROSSFADE_FRACTION, ForcedLod, IMPOSTOR_HANDOFF_METRES, LodProjection, ScreenSpaceLod,
     ScreenSpaceLodVariant,
 };
 use crate::tree_impostor::{
@@ -175,8 +175,7 @@ pub struct LabTree {
     batch: Option<Entity>,
 }
 
-/// Spawns `asset` at `transform` (render space) drawing as the game would. Despawning the
-/// returned entity leaves its impostor batch; use [`despawn_lab_tree`].
+/// Spawns `asset` at `transform` (render space) drawing as the game would.
 pub fn spawn_lab_tree(
     commands: &mut Commands,
     server: &AssetServer,
@@ -246,13 +245,6 @@ pub fn spawn_lab_tree(
         .id()
 }
 
-pub fn despawn_lab_tree(commands: &mut Commands, entity: Entity, tree: &LabTree) {
-    if let Some(batch) = tree.batch {
-        commands.entity(batch).despawn();
-    }
-    commands.entity(entity).despawn();
-}
-
 fn apply_representation(
     mut commands: Commands,
     mut trees: Query<(&LabRepresentation, &LabTree, &mut ForcedLod), Changed<LabRepresentation>>,
@@ -283,7 +275,6 @@ fn apply_representation(
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn report(
     projection: Res<LodProjection>,
-    handoff: Res<ImpostorHandoff>,
     descriptors: Res<Assets<ImpostorDescriptor>>,
     images: Res<Assets<Image>>,
     mut trees: Query<(
@@ -300,7 +291,7 @@ fn report(
         let scale = transform.to_scale_rotation_translation().0.y.abs();
         let height = tree.asset.bounds[1] * scale;
         let thresholds: Vec<f32> = lod.thresholds().collect();
-        let farthest = lod.farthest_switch(*handoff);
+        let farthest = lod.farthest_switch();
         let mut bands = Vec::new();
         if projection.pixels_per_metre() > 0.0 && !projection.orthographic() {
             for index in 0..tree.asset.meshes() {
@@ -315,7 +306,8 @@ fn report(
                 });
             }
             if let Some(switch) = tree.asset.impostor_switch() {
-                let start = (switch * scale * projection.pixels_per_metre()).min(handoff.metres());
+                let start =
+                    (switch * scale * projection.pixels_per_metre()).min(IMPOSTOR_HANDOFF_METRES);
                 bands.push(LabBand {
                     representation: LabRepresentation::Impostor,
                     fade_in: start * (1.0 - CROSSFADE_FRACTION)..start * (1.0 + CROSSFADE_FRACTION),

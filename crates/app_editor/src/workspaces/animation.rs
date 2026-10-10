@@ -86,8 +86,21 @@ fn enter_animation_lighting(
 ) {
     if let (Ok((mut transform, mut light)), Some(mut ambient)) = (sun.single_mut(), ambient) {
         saved.0 = Some((*transform, *light, (*ambient).clone()));
-        super::apply_study_daylight(&mut transform, &mut light, &mut ambient);
+        apply_preview_daylight(&mut transform, &mut light, &mut ambient);
     }
+}
+
+/// Reproducible lighting for the character preview, independent of world time and weather.
+fn apply_preview_daylight(
+    transform: &mut Transform,
+    light: &mut DirectionalLight,
+    ambient: &mut GlobalAmbientLight,
+) {
+    *transform = Transform::from_xyz(12.0, 20.0, 30.0).looking_at(Vec3::ZERO, Vec3::Y);
+    light.color = Color::srgb(1.0, 0.98, 0.95);
+    light.illuminance = 128_000.0;
+    ambient.color = Color::srgb(0.60, 0.72, 0.92);
+    ambient.brightness = 6000.0;
 }
 
 fn exit_animation_lighting(

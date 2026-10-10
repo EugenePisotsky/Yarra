@@ -226,7 +226,7 @@ fn worker_keeps_both_snapshots_until_commit_and_rejects_stale_source_work() {
                 key: PageKey {
                     space: WorldSpaceId(1),
                     cell: CellCoord::ZERO,
-                    domain: PageDomain::TerrainRender,
+                    domain: PageDomain::Terrain,
                     lod: 0,
                 },
                 height_only: true,

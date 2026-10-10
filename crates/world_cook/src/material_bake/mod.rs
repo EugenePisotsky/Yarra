@@ -365,7 +365,7 @@ fn leaf_inputs(store: &TerrainMaterialCookStore, key: TerrainMaterialKey) -> Res
             x: key.0.x,
             z: key.0.z,
         },
-        domain: PageDomain::TerrainRender,
+        domain: PageDomain::Terrain,
         lod: 0,
     };
     let PagePayload::TerrainHeightfield(page) = store

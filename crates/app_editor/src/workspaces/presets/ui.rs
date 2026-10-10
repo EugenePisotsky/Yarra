@@ -133,7 +133,7 @@ pub(super) fn draw(mut frame: ResMut<EditorUiFrame>, resources: Resources) -> Re
                                     added = Some(controls::new_ground(base));
                                     ui.close();
                                 }
-                                if let Some((catalog, _, _)) = plants.study_source()
+                                if let Some((catalog, _, _)) = plants.working_catalog()
                                     && let Some(a) = catalog.assemblages.first()
                                     && ui.button("Foliage").clicked()
                                 {
@@ -252,7 +252,7 @@ pub(super) fn draw(mut frame: ResMut<EditorUiFrame>, resources: Resources) -> Re
                                     &mut selected,
                                     definition,
                                     &project,
-                                    plants.study_source().map(|(c, _, _)| c),
+                                    plants.working_catalog().map(|(c, _, _)| c),
                                     &mut navigation,
                                     &preview.assets,
                                 );

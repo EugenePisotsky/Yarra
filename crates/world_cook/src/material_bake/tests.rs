@@ -60,7 +60,7 @@ fn regional_live_paint_rebuilds_ancestors_and_gutters_without_geometry_or_drift(
         .read_terrain_resources(PageKey {
             space: WorldSpaceId(1),
             cell: CellCoord { x: -1, z: -1 },
-            domain: PageDomain::TerrainRender,
+            domain: PageDomain::Terrain,
             lod: 0,
         })
         .unwrap();
@@ -165,7 +165,7 @@ fn regional_live_relief_checks_external_borders_and_rebuilds_only_changed_paths(
         .read_terrain_resources(PageKey {
             space: WorldSpaceId(1),
             cell: CellCoord { x: -1, z: -1 },
-            domain: PageDomain::TerrainRender,
+            domain: PageDomain::Terrain,
             lod: 0,
         })
         .unwrap();
@@ -492,7 +492,7 @@ fn road_composite_uses_final_ground_weights_and_keeps_relief_out_of_albedo() {
     for p in build
         .pages
         .iter()
-        .filter(|p| p.key.domain == PageDomain::TerrainRender && p.key.lod == 0)
+        .filter(|p| p.key.domain == PageDomain::Terrain && p.key.lod == 0)
     {
         let PagePayload::TerrainHeightfield(mut page) = p.clone().decode().unwrap().payload else {
             continue;
@@ -673,7 +673,7 @@ fn composite_minimum_level_publishes_coarser_tiles_unchanged_and_previews_still_
     let page_key = PageKey {
         space: WorldSpaceId(1),
         cell,
-        domain: PageDomain::TerrainRender,
+        domain: PageDomain::Terrain,
         lod: 0,
     };
     let resources = reader.read_terrain_resources(page_key).unwrap();

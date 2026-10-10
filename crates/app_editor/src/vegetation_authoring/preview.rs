@@ -29,10 +29,7 @@ pub(super) fn sync_live_preview(
     mut previous: Local<Option<PreviewSignature>>,
     render_origin: Option<ResMut<vegetation_render::VegetationRenderOrigin>>,
 ) {
-    if matches!(
-        *workspace.get(),
-        EditorWorkspace::Vegetation | EditorWorkspace::Presets
-    ) {
+    if *workspace.get() == EditorWorkspace::Presets {
         if let Some(mut render_origin) = render_origin {
             render_origin.world_xz = [0.; 2];
         }

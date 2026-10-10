@@ -1,7 +1,5 @@
 // Production terrain material. Its fragment is split into `terrain_ground`, `terrain_pbr_input`
-// and `terrain_post_lighting` so that the editor's ground treatment
-// (crates/app_editor/src/workspaces/vegetation/ground_treatment.wesl) shades the same ground
-// through its own entry point, importing these from this module.
+// and `terrain_post_lighting`.
 import package::shaders::clouds::pbr_lighting::apply_pbr_lighting;
 import package::shaders::weather::ground_wetness::apply_rain_puddles;
 import bevy_pbr::render::mesh_view_bindings as canopy_view;

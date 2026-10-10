@@ -92,7 +92,6 @@ struct NavigationWorker {
 
 impl Drop for NavigationWorker {
     fn drop(&mut self) {
-        drop(self.requests.clone());
         if let Some(thread) = self.thread.take() {
             // The application owns the final sender. Replacing it disconnects the worker without
             // an unbounded or blocking shutdown request.

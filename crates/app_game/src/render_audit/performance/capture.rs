@@ -5,7 +5,6 @@ use super::{
 };
 use crate::{
     frame_pacing::{FramePacing, FrameRate},
-    game_render::RenderPath,
     runtime_settings::RuntimeSettings,
 };
 use bevy::{prelude::*, window::PrimaryWindow};
@@ -213,10 +212,9 @@ pub(super) fn sample(
     let busy = pending.count() > 0
         || streaming.loading > 0
         || terrain.quality_pending
-        || upscaler.single().is_ok_and(|s| {
-            settings.render_path == RenderPath::Composite
-                && (s.active.is_none() || s.requested != settings.upscaler)
-        });
+        || upscaler
+            .single()
+            .is_ok_and(|s| s.active.is_none() || s.requested != settings.upscaler);
     let mut cancel = None;
     let mut done = false;
     if !window.focused {

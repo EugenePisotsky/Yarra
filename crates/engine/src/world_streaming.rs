@@ -12,8 +12,7 @@ mod smoke;
 mod source_demand;
 mod valley_mist;
 pub use crate::object_lod::{
-    GeneratedEnvironmentObject, ImpostorHandoff, StreamedVisualObject, VisualLodScale,
-    spawn_collection_visual,
+    GeneratedEnvironmentObject, StreamedVisualObject, VisualLodScale, spawn_collection_visual,
 };
 pub use rebase::WorldRenderRoot;
 pub use smoke::StreamingSmokePlugin;
@@ -157,10 +156,6 @@ impl WorldStreamingConfig {
             keyboard_world_space_cycle: false,
             floating_origin_threshold_cells: Some(8),
         }
-    }
-
-    pub const fn loads_gameplay_pages(self) -> bool {
-        self.gameplay_pages
     }
 
     pub const fn floating_origin_threshold_cells(self) -> Option<u32> {
@@ -1227,7 +1222,7 @@ mod tests {
             key: PageKey {
                 space,
                 cell,
-                domain: PageDomain::TerrainRender,
+                domain: PageDomain::Terrain,
                 lod: 0,
             },
             cell_size: 32.0,

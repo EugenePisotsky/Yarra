@@ -779,172 +779,86 @@ fn paired_lod_boundary_matches_rendered_shape_and_lighting() {
         profile.longitudinal_power = 0.92;
     }
     let packed = pack_species(&species, [12.0, 12.0]);
-    for bands in [VegetationBladeBands::Off, VegetationBladeBands::Medium] {
-        app.world_mut()
-            .resource_mut::<VegetationDebugSettings>()
-            .blade_bands = bands;
-        for overhead in [false, true] {
-            {
-                let world = app.world_mut();
-                let mut cameras =
-                    world.query_filtered::<(&mut Msaa, &mut Transform), With<Camera3d>>();
-                for (mut msaa, mut transform) in cameras.iter_mut(world) {
-                    *msaa = Msaa::Off;
-                    *transform = if overhead {
-                        Transform::from_xyz(0.0, 4.0, 0.01).looking_at(Vec3::ZERO, Vec3::Y)
-                    } else {
-                        Transform::from_xyz(0.0, 1.2, 4.0)
-                            .looking_at(Vec3::new(0.0, 0.2, 0.0), Vec3::Y)
-                    };
-                }
-                let mut wind = world.resource_mut::<VegetationWind>();
-                wind.enabled = true;
-                wind.phase_seconds = 1.73;
+    for overhead in [false, true] {
+        {
+            let world = app.world_mut();
+            let mut cameras = world.query_filtered::<(&mut Msaa, &mut Transform), With<Camera3d>>();
+            for (mut msaa, mut transform) in cameras.iter_mut(world) {
+                *msaa = Msaa::Off;
+                *transform = if overhead {
+                    Transform::from_xyz(0.0, 4.0, 0.01).looking_at(Vec3::ZERO, Vec3::Y)
+                } else {
+                    Transform::from_xyz(0.0, 1.2, 4.0).looking_at(Vec3::new(0.0, 0.2, 0.0), Vec3::Y)
+                };
             }
-            for density in [255u32, 166] {
-                let mut captures = Vec::new();
-                for low in [false, true] {
-                    let instances = (0..16u32)
-                        .map(|i| ProceduralInstanceGpu {
-                            root_clump: [
-                                (i % 4) as f32 * 0.45 - 0.7,
-                                0.0,
-                                (i / 4) as f32 * 0.45 - 0.7,
-                                f32::from_bits(24_000 | ((i * 4_000) << 16)),
-                            ],
-                            geometry: [
-                                32_767,
-                                if low { 1 << 31 } else { 0 },
-                                0,
-                                12_345 + i * 37 | (density << 24),
-                            ],
-                        })
-                        .collect::<Vec<_>>();
-                    let render_world = app.sub_app(RenderApp).world();
-                    let buffers = render_world.resource::<VegetationBuffers>();
-                    let queue = render_world.resource::<RenderQueue>();
-                    queue.write_buffer(&buffers.species, 0, bytemuck::bytes_of(&packed));
-                    queue.write_buffer(
-                        &buffers.procedural_instances,
-                        0,
-                        bytemuck::cast_slice(&instances),
-                    );
-                    let mut args = [0u32; 20];
-                    args[0] = if low {
-                        SPLIT_LOW_INDEX_COUNT
-                    } else {
-                        SPLIT_HIGH_INDEX_COUNT
-                    };
-                    args[1] = instances.len() as u32;
-                    args[2] = if low {
-                        SPLIT_LOW_FIRST_INDEX
-                    } else {
-                        SPLIT_HIGH_FIRST_INDEX
-                    };
-                    queue.write_buffer(&buffers.args, 0, bytemuck::cast_slice(&args));
-                    captures.push(settled_pixels(&mut app));
-                }
-                let errors = captures[0]
-                    .iter()
-                    .zip(&captures[1])
-                    .map(|(a, b)| a.abs_diff(*b))
+            let mut wind = world.resource_mut::<VegetationWind>();
+            wind.enabled = true;
+            wind.phase_seconds = 1.73;
+        }
+        for density in [255u32, 166] {
+            let mut captures = Vec::new();
+            for low in [false, true] {
+                let instances = (0..16u32)
+                    .map(|i| ProceduralInstanceGpu {
+                        root_clump: [
+                            (i % 4) as f32 * 0.45 - 0.7,
+                            0.0,
+                            (i / 4) as f32 * 0.45 - 0.7,
+                            f32::from_bits(24_000 | ((i * 4_000) << 16)),
+                        ],
+                        geometry: [
+                            32_767,
+                            if low { 1 << 31 } else { 0 },
+                            0,
+                            12_345 + i * 37 | (density << 24),
+                        ],
+                    })
                     .collect::<Vec<_>>();
-                let mean = errors.iter().map(|&e| f64::from(e)).sum::<f64>() / errors.len() as f64;
-                let changed = errors.iter().filter(|&&e| e > 2).count();
-                eprintln!(
-                    "paired LOD raster boundary: bands={bands:?}, overhead={overhead}, density={density}, mean byte error={mean:.6}, channels over 2={changed}"
+                let render_world = app.sub_app(RenderApp).world();
+                let buffers = render_world.resource::<VegetationBuffers>();
+                let queue = render_world.resource::<RenderQueue>();
+                queue.write_buffer(&buffers.species, 0, bytemuck::bytes_of(&packed));
+                queue.write_buffer(
+                    &buffers.procedural_instances,
+                    0,
+                    bytemuck::cast_slice(&instances),
                 );
-                assert!(
-                    mean < 0.08 && changed < 200,
-                    "high/low raster seam: mean={mean}, changed={changed}"
-                );
-                let first = &captures[0][..4];
-                assert!(
-                    captures[0].chunks_exact(4).filter(|p| *p != first).count() > 500,
-                    "must render visible grass"
-                );
+                let mut args = [0u32; 20];
+                args[0] = if low {
+                    SPLIT_LOW_INDEX_COUNT
+                } else {
+                    SPLIT_HIGH_INDEX_COUNT
+                };
+                args[1] = instances.len() as u32;
+                args[2] = if low {
+                    SPLIT_LOW_FIRST_INDEX
+                } else {
+                    SPLIT_HIGH_FIRST_INDEX
+                };
+                queue.write_buffer(&buffers.args, 0, bytemuck::cast_slice(&args));
+                captures.push(settled_pixels(&mut app));
             }
+            let errors = captures[0]
+                .iter()
+                .zip(&captures[1])
+                .map(|(a, b)| a.abs_diff(*b))
+                .collect::<Vec<_>>();
+            let mean = errors.iter().map(|&e| f64::from(e)).sum::<f64>() / errors.len() as f64;
+            let changed = errors.iter().filter(|&&e| e > 2).count();
+            eprintln!(
+                "paired LOD raster boundary: overhead={overhead}, density={density}, mean byte error={mean:.6}, channels over 2={changed}"
+            );
+            assert!(
+                mean < 0.08 && changed < 200,
+                "high/low raster seam: mean={mean}, changed={changed}"
+            );
+            let first = &captures[0][..4];
+            assert!(
+                captures[0].chunks_exact(4).filter(|p| *p != first).count() > 500,
+                "must render visible grass"
+            );
         }
     }
-}
-
-#[test]
-#[ignore = "requires a native GPU; validates shape inspection against production placement"]
-fn shape_inspection_preserves_production_population_and_density() {
-    let mut app = test_app();
-    settled_pixels(&mut app);
-    let flatten = |bins: Vec<Vec<[u32; 8]>>| {
-        let mut records = bins.into_iter().flatten().collect::<Vec<_>>();
-        records.sort_unstable();
-        records
-    };
-    let production = flatten(generated_instances(&app));
-    assert!(production.len() > 100);
-    assert!(
-        production.iter().any(|r| r[5] >> 31 != 0),
-        "exercise promotion from low bins"
-    );
-    assert!(
-        production.iter().any(|r| r[5] >> 31 == 0),
-        "exercise high bins"
-    );
-    let mut images = Vec::new();
-    for mode in [
-        VegetationShapeInspection::Current,
-        VegetationShapeInspection::Full,
-        VegetationShapeInspection::Low,
-        VegetationShapeInspection::Morph,
-        VegetationShapeInspection::Cause,
-    ] {
-        app.world_mut()
-            .resource_mut::<VegetationDebugSettings>()
-            .shape_inspection = mode;
-        images.push(settled_pixels(&mut app));
-        let bins = generated_instances(&app);
-        assert!(bins[1].is_empty() && bins[3].is_empty());
-        assert_eq!(
-            flatten(bins),
-            production,
-            "{mode:?} changed roots, seeds, species, density or original morph"
-        );
-        assert_eq!(snapshot(&app).capacity_dropped_instances, [0; 4]);
-        // Preparation and fallback must honor the same override, including the cached low shoulder.
-        app.world_mut()
-            .resource_mut::<VegetationBladePreparation>()
-            .enabled = false;
-        let fallback = settled_pixels(&mut app);
-        let prepared = images.last().unwrap();
-        let errors = prepared
-            .iter()
-            .zip(&fallback)
-            .map(|(a, b)| a.abs_diff(*b))
-            .collect::<Vec<_>>();
-        let mean = errors.iter().map(|&v| f64::from(v)).sum::<f64>() / errors.len() as f64;
-        assert!(mean < 0.01, "{mode:?} preparation mismatch: {mean}");
-        app.world_mut()
-            .resource_mut::<VegetationBladePreparation>()
-            .enabled = true;
-    }
-    assert_ne!(images[0], images[1], "full override had no effect");
-    assert_ne!(images[1], images[2], "low override had no effect");
-    assert_ne!(images[3], images[4], "cause and morph views must differ");
-    {
-        let mut settings = app.world_mut().resource_mut::<VegetationDebugSettings>();
-        settings.shape_inspection = VegetationShapeInspection::Full;
-        settings.inspection_disable_opening = true;
-    }
-    let closed = settled_pixels(&mut app);
-    assert_eq!(flatten(generated_instances(&app)), production);
-    assert_ne!(closed, images[1], "opening isolation had no effect");
-    app.world_mut()
-        .resource_mut::<VegetationDebugSettings>()
-        .shape_inspection = VegetationShapeInspection::Off;
-    settled_pixels(&mut app);
-    assert_eq!(
-        flatten(generated_instances(&app)),
-        production,
-        "returning to production changed placement"
-    );
 }
 
 #[test]

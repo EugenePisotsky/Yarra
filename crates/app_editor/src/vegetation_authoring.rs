@@ -12,8 +12,6 @@ use vegetation::VegetationScene;
 use vegetation_render::{VegetationRenderPlugin, VegetationSceneState};
 
 pub(crate) use model::{VegetationAuthoringState, process_vegetation_save_completion};
-pub(crate) use species::draw_population_colors;
-pub(crate) use ui::draw_vegetation_authoring;
 mod curve;
 mod model;
 mod population;

@@ -2,10 +2,10 @@
 //! CLI setup, reproductions and F1 edit the same snapshot. This module owns no panel,
 //! capture state, timing probes or argument parsing; it also works without diagnostics.
 use crate::game_render::{
-    GameRenderSettings, GameRenderSetup, GameRenderSystems, RESOLUTION_SCALES, RenderPath,
+    GameRenderSettings, GameRenderSetup, GameRenderSystems, RESOLUTION_SCALES,
 };
 use bevy::{core_pipeline::prepass::DepthPrepass, light::ShadowFilteringMethod, prelude::*};
-use engine::{GAME_DEPTH_PREPASS_ENABLED, GameInputEnabled, GameplaySystems, WorldViewCamera};
+use engine::{GameInputEnabled, GameplaySystems, WorldViewCamera};
 use terrain_render::{TerrainMaterial, TerrainShadingMode, composite::TerrainCompositeMaterial};
 use vegetation_render::{
     VegetationDebugSettings, VegetationLightingMode, VegetationProfileMode, VegetationWind,
@@ -123,6 +123,9 @@ pub(crate) struct RuntimeSettings {
     pub(crate) shadows: u8,
     /// Index into `SHADOW_MAP_SIZES`.
     pub(crate) shadow_map: usize,
+    /// A depth prepass without MetalFX Temporal (which always has one). Otherwise it is pure
+    /// cost: alpha-tested leaves are drawn twice. On M2 Max with 4× MSAA it cost ~0.7 ms on
+    /// the grass route at 2560×1440 and ~1.0 ms of GPU time facing the forest at 3456×1942.
     pub(crate) prepass: bool,
     pub(crate) scale_index: usize,
     pub(crate) upscaler: upscaling::UpscaleMethod,
@@ -133,7 +136,6 @@ pub(crate) struct RuntimeSettings {
     pub(crate) wind: bool,
     pub(crate) controls_locked: bool,
     pub(crate) fast_movement: bool,
-    pub(crate) render_path: RenderPath,
     pub(crate) show_ui: bool,
     pub(crate) changed_at: f64,
     pub(crate) clouds: engine::CloudQuality,
@@ -169,7 +171,7 @@ impl Default for RuntimeSettings {
             terrain_prepared: true,
             shadows: 0,
             shadow_map: 0,
-            prepass: GAME_DEPTH_PREPASS_ENABLED,
+            prepass: false,
             scale_index: RESOLUTION_SCALES
                 .iter()
                 .position(|&scale| scale == render.resolution_scale)
@@ -183,7 +185,6 @@ impl Default for RuntimeSettings {
             wind: true,
             controls_locked: false,
             fast_movement: false,
-            render_path: render.render_path,
             show_ui: render.show_ui,
             changed_at: 0.0,
             clouds: engine::CloudQuality::default(),
@@ -209,13 +210,9 @@ impl Default for RuntimeSettings {
 impl RuntimeSettings {
     pub(crate) fn temporal_active(&self) -> bool {
         self.upscaler == upscaling::UpscaleMethod::MetalFxTemporal
-            && self.render_path == RenderPath::Composite
     }
     pub(crate) fn scale(&self) -> f32 {
-        match self.render_path {
-            RenderPath::Direct => 1.0,
-            RenderPath::Composite => RESOLUTION_SCALES[self.scale_index],
-        }
+        RESOLUTION_SCALES[self.scale_index]
     }
 
     pub(crate) fn terrain_shading(&self) -> TerrainShadingMode {
@@ -258,7 +255,6 @@ fn sync_render_settings(
             temporal_debug: s.temporal_debug,
             render_size: profile.as_ref().and_then(|p| p.size),
             msaa: s.msaa,
-            render_path: s.render_path,
             show_ui: s.show_ui,
         });
     }

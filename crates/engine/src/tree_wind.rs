@@ -230,6 +230,6 @@ fn upload_wind(
     // One shared GPU buffer per frame; never dirty/rebind every material to advance time.
     queue.write_buffer(&buffer.buffer, 0, bytemuck::bytes_of(&frames));
     // Keep the last submitted pose, including settings and origin. Time-delta reconstruction
-    // cannot handle paused study transport, toggles, scrubbing or an origin change correctly.
+    // cannot handle a paused external transport, toggles, scrubbing or an origin change correctly.
     *previous = Some(*pose);
 }

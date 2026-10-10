@@ -1,6 +1,5 @@
 //! Compute layouts and draw-pipeline specialization for view, lighting and temporal variants.
 use super::temporal;
-use crate::VegetationBladeBands;
 use bevy::{
     core_pipeline::core_3d::CORE_3D_DEPTH_FORMAT,
     pbr::{MeshPipelineViewLayoutKey, MeshPipelineViewLayouts},
@@ -191,7 +190,6 @@ pub(super) struct VegetationPipelineKey {
     pub(super) msaa: Msaa,
     pub(super) target_format: TextureFormat,
     pub(super) view_layout_bits: u32,
-    pub(super) blade_bands: VegetationBladeBands,
     pub(super) clouds: bool,
     pub(super) temporal: bool,
 }
@@ -262,32 +260,6 @@ impl Specializer<RenderPipeline> for VegetationPipelineSpecializer {
                 .unwrap()
                 .shader_defs
                 .push("ATMOSPHERE".into());
-        }
-        if key.blade_bands != VegetationBladeBands::Off {
-            let mut defs = vec![
-                ShaderDefVal::Bool("BLADE_BAND_STUDY".into(), true),
-                ShaderDefVal::UInt(
-                    "BLADE_BAND_STRENGTH".into(),
-                    if key.blade_bands == VegetationBladeBands::Subtle {
-                        54
-                    } else {
-                        82
-                    },
-                ),
-            ];
-            if matches!(
-                key.blade_bands,
-                VegetationBladeBands::Mask | VegetationBladeBands::MotionMask
-            ) {
-                defs.push(ShaderDefVal::Bool("BLADE_BAND_MASK".into(), true));
-            }
-            descriptor.vertex.shader_defs.extend(defs.clone());
-            descriptor
-                .fragment
-                .as_mut()
-                .unwrap()
-                .shader_defs
-                .extend(defs);
         }
         descriptor.fragment.as_mut().unwrap().targets[0]
             .as_mut()

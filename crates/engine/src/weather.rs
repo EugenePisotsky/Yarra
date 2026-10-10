@@ -58,9 +58,6 @@ impl GameWeather {
     pub fn runtime(&self) -> Option<&WeatherRuntime> {
         self.runtime.as_ref()
     }
-    pub fn runtime_mut(&mut self) -> Option<&mut WeatherRuntime> {
-        self.runtime.as_mut()
-    }
     /// The running weather, starting settled near the authored cloud layer if needed.
     fn running(&mut self, profile: &AtmosphereProfile) -> &mut WeatherRuntime {
         self.runtime.get_or_insert_with(|| {

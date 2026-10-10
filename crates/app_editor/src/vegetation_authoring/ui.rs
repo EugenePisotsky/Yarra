@@ -17,6 +17,7 @@ use vegetation_render::{
     VegetationLighting, VegetationLightingMode, VegetationProfileMode,
 };
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn vegetation_authoring_ui(
     mut frame: ResMut<EditorUiFrame>,
     mut windows: ResMut<EditorWindowRegistry>,
@@ -58,14 +59,14 @@ pub(super) fn vegetation_authoring_ui(
                 &mut lighting,
                 &mut save,
                 &mut project,
-                true,
             );
         });
     windows.set_open(VEGETATION_WINDOW.id, open);
     Ok(())
 }
 
-pub(crate) fn draw_vegetation_authoring(
+#[allow(clippy::too_many_arguments)]
+fn draw_vegetation_authoring(
     ui: &mut egui::Ui,
     tools: &mut EditorToolRegistry,
     state: &mut VegetationAuthoringState,
@@ -74,18 +75,15 @@ pub(crate) fn draw_vegetation_authoring(
     lighting: &mut VegetationLighting,
     save: &mut EditorSaveCoordinator,
     project: &mut ProjectEditorStore,
-    world_controls: bool,
 ) {
     let active = tools
         .active(EditorWorkspace::World)
         .is_some_and(|tool| tool.id == VEGETATION_TOOL.id);
     ui.horizontal(|ui| {
-        if world_controls && ui.selectable_label(active, "Activate tool").clicked() {
+        if ui.selectable_label(active, "Activate tool").clicked() {
             tools.set_active(EditorWorkspace::World, VEGETATION_TOOL.id);
         }
-        if world_controls {
-            ui.checkbox(&mut state.preview_enabled, "Live preview");
-        }
+        ui.checkbox(&mut state.preview_enabled, "Live preview");
         if ui
             .add_enabled(state.dirty, egui::Button::new("Revert draft"))
             .on_hover_text("Discard unsaved edits and restore the project catalog")
@@ -249,7 +247,6 @@ fn draw_preview_controls(
                     .show_ui(ui, |ui| {
                         for mode in [
                             VegetationLightingMode::RoundedGloss,
-                            VegetationLightingMode::Legacy,
                             VegetationLightingMode::UnlitDiagnostic,
                             VegetationLightingMode::VertexOnlyDiagnostic,
                         ] {

@@ -65,12 +65,6 @@ pub struct SourceObjectViewQuery {
     pub truncated: bool,
 }
 
-#[derive(Debug, Clone)]
-pub struct SourceObjectPaletteQuery {
-    pub records: Vec<SourceObjectPaletteRecord>,
-    pub truncated: bool,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceObjectOutlinerCursor {
     pub owner_cell: CellCoord,
@@ -210,12 +204,6 @@ impl From<&SourceObjectRecord> for SourceObjectTransform {
             scale: object.scale,
         }
     }
-}
-
-#[derive(Debug, Clone)]
-pub enum ObjectTransformWriteResult {
-    Updated(SourceObjectRecord),
-    Conflict { actual: Option<SourceObjectRecord> },
 }
 
 #[derive(Debug, Clone, PartialEq)]

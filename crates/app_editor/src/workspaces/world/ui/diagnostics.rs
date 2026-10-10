@@ -1,12 +1,9 @@
 //! Read-only world, streaming, source and publication diagnostics.
 use crate::{
-    derived_jobs::{DerivedArtifactStore, DerivedJobScheduler},
     domain_editing::DenseDomainWorkingSets,
     editing::{EditorHistory, EditorObjectWorkingSet},
     journal::EditorJournalStatus,
     navigation::ProjectNavigationStore,
-    overview::{OverviewProductKind, OverviewState},
-    preview::{EditorPreviewMode, PreviewModeState, PreviewRuntimeDiagnostics},
     project_store::{ProjectEditorStore, ProjectQueryWindow},
     publication::RuntimePublicationState,
     tools::EditorToolRegistry,
@@ -27,14 +24,9 @@ pub(super) fn draw_world_diagnostics(
     viewpoint: &WorldViewpoint,
     origin: &WorldOrigin,
     stats: &StreamingStats,
-    derived_jobs: &DerivedJobScheduler,
-    derived_artifacts: &DerivedArtifactStore,
     dense_domains: &DenseDomainWorkingSets,
     journal: &EditorJournalStatus,
     navigation: &ProjectNavigationStore,
-    overview: &OverviewState,
-    preview: &PreviewModeState,
-    preview_runtime: &PreviewRuntimeDiagnostics,
     publication: &RuntimePublicationState,
     project: &ProjectEditorStore,
     objects: &EditorObjectWorkingSet,
@@ -100,10 +92,9 @@ pub(super) fn draw_world_diagnostics(
     ui.label(project.status());
     if let Some(active_tool) = tools.active(EditorWorkspace::World) {
         ui.small(format!(
-            "{} · {} source domain(s) · {:?}",
+            "{} · {} source domain(s)",
             active_tool.label,
             active_tool.source_domains.len(),
-            active_tool.pinning
         ));
     }
     ui.small(format!(
@@ -116,16 +107,6 @@ pub(super) fn draw_world_diagnostics(
         "{} · recovered this session {}",
         journal.message(),
         journal.recovered_entries()
-    ));
-    ui.small(format!(
-        "Derived: {} pending / {} running · {} accepted / {} failed · {} cancelled / {} stale / {} capacity retries",
-        derived_jobs.pending_count(),
-        derived_jobs.running_count(),
-        derived_artifacts.accepted_count(),
-        derived_artifacts.failed_jobs(),
-        derived_jobs.cancelled_count(),
-        derived_jobs.stale_results(),
-        derived_jobs.capacity_rejections()
     ));
     ui.small(format!(
         "{} · {} stale navigation result(s)",
@@ -191,53 +172,6 @@ pub(super) fn draw_world_diagnostics(
             egui::Color32::YELLOW,
             "Source result reached its hard cache limit; authoring detail is incomplete.",
         );
-    }
-
-    ui.separator();
-    ui.heading("Overview and preview");
-    let ready_products = overview
-        .products()
-        .iter()
-        .filter(|product| product.state == crate::overview::OverviewProductState::Ready)
-        .count();
-    ui.small(format!(
-        "{:?} · {} coarse tiles · {ready_products}/{} products ready",
-        overview.mode(),
-        overview.tiles().len(),
-        overview.products().len()
-    ));
-    ui.small(
-        OverviewProductKind::ALL
-            .into_iter()
-            .map(|kind| {
-                let ready = overview
-                    .products()
-                    .iter()
-                    .filter(|product| {
-                        product.kind == kind
-                            && product.state == crate::overview::OverviewProductState::Ready
-                    })
-                    .count();
-                format!("{} {ready}/{}", kind.label(), overview.tiles().len())
-            })
-            .collect::<Vec<_>>()
-            .join(" · "),
-    );
-    let preview_descriptor = preview.requested().descriptor();
-    ui.small(format!(
-        "{} preview · generation {} · {} domain(s) · isolated simulation {}",
-        preview.requested().label(),
-        preview.generation(),
-        preview_descriptor.domains.len(),
-        preview_descriptor.isolated_simulation
-    ));
-    if preview.requested() != EditorPreviewMode::Authoring {
-        ui.small(format!(
-            "Preview host: {} cell(s), {} object(s), {} fixed simulation tick(s)",
-            preview_runtime.rendered_cells,
-            preview_runtime.rendered_objects,
-            preview_runtime.simulation_ticks,
-        ));
     }
 
     ui.separator();

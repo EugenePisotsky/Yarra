@@ -75,14 +75,10 @@ pub struct TemporalMotionTarget {
     pub texture: Texture,
     pub view: TextureView,
 }
-#[derive(SystemSet, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct InitializeTemporalMotion;
 /// Motion of static geometry, which leaves the prepass: after Bevy's opaque pass, before custom
 /// renderers write their own motion over it.
 #[derive(SystemSet, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct CompleteTemporalMotion;
-#[derive(SystemSet, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct ResolveTemporal;
 
 #[cfg_attr(
     not(all(feature = "metalfx", any(target_os = "macos", target_os = "ios"))),
@@ -123,16 +119,10 @@ pub(crate) fn install(app: &mut App) {
         .add_systems(
             Core3d,
             initialize_motion
-                .in_set(InitializeTemporalMotion)
                 .after(Core3dSystems::Prepass)
                 .before(Core3dSystems::MainPass),
         )
-        .add_systems(
-            Core3d,
-            resolve
-                .in_set(ResolveTemporal)
-                .in_set(Core3dSystems::EarlyPostProcess),
-        );
+        .add_systems(Core3d, resolve.in_set(Core3dSystems::EarlyPostProcess));
 }
 struct History {
     size: UVec2,

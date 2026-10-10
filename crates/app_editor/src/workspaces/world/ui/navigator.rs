@@ -1,26 +1,19 @@
-//! Project-object navigation and overview tile focus.
+//! Project-object navigation.
 use crate::{
     editing::{EditorObjectWorkingSet, EditorSelection, TransformInspectorDraft},
     navigation::ProjectNavigationStore,
-    overview::{OverviewMode, OverviewState},
     tools::{EditorToolRegistry, OBJECT_TOOL},
-    workspaces::{EditorWorkspace, world::camera::EditorCameraFocusRequest},
+    workspaces::EditorWorkspace,
 };
 use bevy::prelude::*;
 use bevy_egui::egui;
-use engine::{WorldCatalog, WorldViewpoint};
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn draw_navigator(
     ui: &mut egui::Ui,
-    catalog: &WorldCatalog,
-    viewpoint: &WorldViewpoint,
-    overview: &OverviewState,
     navigation: &mut ProjectNavigationStore,
     selection: &mut EditorSelection,
     objects: &mut EditorObjectWorkingSet,
     transform_draft: &mut TransformInspectorDraft,
-    focus_request: &mut EditorCameraFocusRequest,
     tools: &mut EditorToolRegistry,
 ) {
     ui.heading("Project objects");
@@ -75,26 +68,4 @@ pub(super) fn draw_navigator(
             navigation.outliner_next();
         }
     });
-
-    if overview.mode() == OverviewMode::Overview
-        && let Some(current) = viewpoint.position()
-        && let Some(space) = catalog.world_space(current.space)
-    {
-        ui.separator();
-        ui.heading("Overview tiles");
-        let tiles = overview.tiles().to_vec();
-        egui::Grid::new("overview_tile_jump_grid")
-            .num_columns(5)
-            .show(ui, |ui| {
-                for (index, tile) in tiles.into_iter().enumerate() {
-                    if ui.button(format!("{}, {}", tile.x, tile.z)).clicked() {
-                        focus_request.0 =
-                            Some(overview.focus_position(tile, current, space.cell_size));
-                    }
-                    if index % 5 == 4 {
-                        ui.end_row();
-                    }
-                }
-            });
-    }
 }

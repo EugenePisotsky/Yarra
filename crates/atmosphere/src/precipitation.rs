@@ -234,7 +234,7 @@ fn sync(
     let camera_velocity = camera.update(reference.0, time.delta_secs());
     let precipitation = state
         .weather
-        .filter(|_| state.owner != AtmosphereOwner::Study && state.profile.outdoor)
+        .filter(|_| state.owner != AtmosphereOwner::Isolated && state.profile.outdoor)
         .map_or(0.0, |w| w.precipitation.clamp(0.0, 1.0));
     let wind = state.weather.map_or(1.0, |w| w.wind_strength);
     let direction = state.profile.clouds.wind_degrees.to_radians();
@@ -504,9 +504,17 @@ mod tests {
         assert_eq!(storm.active, LAYERS.map(|l| l.count));
         let (rain, _) = run(Some(WeatherKind::Rain), game, 0.016, 1);
         assert!(rain.active[0] > 0 && rain.active[0] < LAYERS[0].count);
-        // Editors preview weather they set explicitly; studies never show it.
+        // Editors preview weather they set explicitly; isolated workspaces never show it.
         assert!(run(Some(WeatherKind::Storm), AtmosphereOwner::Editor, 0.016, 1).1);
-        assert!(!run(Some(WeatherKind::Storm), AtmosphereOwner::Study, 0.016, 1).1);
+        assert!(
+            !run(
+                Some(WeatherKind::Storm),
+                AtmosphereOwner::Isolated,
+                0.016,
+                1
+            )
+            .1
+        );
     }
 
     #[test]

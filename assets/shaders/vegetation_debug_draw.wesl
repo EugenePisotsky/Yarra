@@ -9,11 +9,11 @@ import package::shaders::grass_canopy::{canopy_visibility_at};
 
 import package::shaders::vegetation_blade::{
     ProceduralInstance, DebugInstance, Species, Camera, DebugConfig, PreparedBlade, PreparedArena,
-    PI, SPECIES_INDEX_MASK, LOD_MORPH_MASK, LOD_MORPH_SHIFT, LIGHTING_MODE_LEGACY,
+    PI, SPECIES_INDEX_MASK, LOD_MORPH_MASK, LOD_MORPH_SHIFT,
     LIGHTING_MODE_UNLIT_DIAGNOSTIC, LIGHTING_MODE_VERTEX_ONLY_DIAGNOSTIC,
     FAR_WIDTH_TARGET_HALF_PIXELS, FAR_WIDTH_MAXIMUM_SCALE,
     FAR_WIDTH_FADE_START_METERS, FAR_WIDTH_FADE_END_METERS,
-    hash32, random01, normalize3_or, prepare_blade, paired_base_width, paired_ribbon_linear_t, shape_inspection_mode, inspected_shape_morph, inspected_opening,
+    random01, normalize3_or, prepare_blade, paired_base_width, paired_ribbon_linear_t,
 };
 
 import bevy_pbr::render::{
@@ -51,9 +51,6 @@ struct VertexOutput {
     @location(7) ribbon_side_rounding: vec4<f32>,
     // Height above root plane, camera distance, grass-boundary depth, horizontal camera distance.
     @location(10) canopy_coordinates: vec4<f32>,
-    // Physical curve t, relative height, authored width / length, bounded wind drift.
-    @if(BLADE_BAND_STUDY) @location(8) band_coordinates: vec4<f32>,
-    @if(BLADE_BAND_STUDY) @location(9) @interpolate(flat) band_seed: u32,
 }
 
 // Group zero is Bevy's mesh-view bind group, including directional shadow cascades.
@@ -152,12 +149,10 @@ fn geometry_pose(vertex_index: u32, instance_index: u32, pose_camera: Camera, pr
         instance.root_clump.x += camera.render_origin.x - pose_camera.render_origin.x;
         instance.root_clump.z += camera.render_origin.y - pose_camera.render_origin.y;
     }
-    let inspection = shape_inspection_mode(debug_config);
-    let low_lod = (instance.geometry.y >> 31u) != 0u && inspection == 0u;
+    let low_lod = (instance.geometry.y >> 31u) != 0u;
     let profile = species[instance.geometry.y & SPECIES_INDEX_MASK];
-    let production_morph = f32((instance.geometry.y >> LOD_MORPH_SHIFT) & LOD_MORPH_MASK)
+    let lod_morph = f32((instance.geometry.y >> LOD_MORPH_SHIFT) & LOD_MORPH_MASK)
         / f32(LOD_MORPH_MASK);
-    let lod_morph = inspected_shape_morph(production_morph, debug_config);
     let is_broad_leaf = profile.root_color.w >= 1.5;
     let blade_index = (vertex_index >> 5u) & 1u;
     var topology_row = (vertex_index >> 1u) & 15u;
@@ -210,7 +205,7 @@ fn geometry_pose(vertex_index: u32, instance_index: u32, pose_camera: Camera, pr
     let t = pow(linear_t, max(profile.topology.w, 0.2));
     // Production low paired blades have morph zero: the low-mesh branches below supply
     // their complete position and physical frame. Avoid building a cubic/view-opened ribbon
-    // that those branches immediately replace. Keep inspection and all morphing paths intact.
+    // that those branches immediately replace. Keep all morphing paths intact.
     let fully_low_paired = low_lod && paired_ribbon && lod_morph == 0.0;
     var world_position = p0;
     var physical_normal = surface_normal;
@@ -262,7 +257,7 @@ fn geometry_pose(vertex_index: u32, instance_index: u32, pose_camera: Camera, pr
         // to observe. shape_secondary.z stores tan(maximum angle), allowing an exact bounded rotation
         // without trigonometry in the vertex shader.
         var rendered_ribbon_side = local_ribbon_side;
-        if (!is_broad_leaf && inspected_opening(profile, debug_config) > 0.0) {
+        if (!is_broad_leaf && profile.shape_secondary.z > 0.0) {
             let unaligned_camera_side = normalize3_or(
                 cross(curve_tangent, to_camera),
                 local_ribbon_side,
@@ -277,7 +272,7 @@ fn geometry_pose(vertex_index: u32, instance_index: u32, pose_camera: Camera, pr
             let opening_remainder = camera_ribbon_side - local_ribbon_side * alignment;
             let remainder_length = length(opening_remainder);
             let requested_tangent = remainder_length / max(alignment, 1e-4);
-            let opening_tangent = min(inspected_opening(profile, debug_config), requested_tangent);
+            let opening_tangent = min(profile.shape_secondary.z, requested_tangent);
             let opening_direction = opening_remainder / max(remainder_length, 1e-4);
             rendered_ribbon_side = normalize3_or(
                 local_ribbon_side + opening_direction * opening_tangent,
@@ -399,39 +394,7 @@ fn geometry_pose(vertex_index: u32, instance_index: u32, pose_camera: Camera, pr
     output.blade_u = shading_side * 0.5 + 0.5;
     output.surface_normal_clump = vec4<f32>(surface_normal, clump_variant);
     output.ribbon_side_rounding = vec4<f32>(local_ribbon_side, profile.material.w);
-    @if(BLADE_BAND_STUDY) {
-        // Identity excludes the high byte (LOD density) and compacted instance_index.
-        let band_seed = hash32(instance.geometry.w & 0x00ffffffu);
-        let h = vec3<f32>(dot(p1 - p0, surface_normal), dot(p2 - p0, surface_normal), dot(p3 - p0, surface_normal));
-        // Cheap estimate of this blade's crown, not a measurement of neighboring occluders.
-        let crown = max(0.05, max(h.z, max(dot(h, vec3(0.375, 0.375, 0.125)), dot(h, vec3(0.140625, 0.421875, 0.421875)))));
-        let relative_height = dot(world_position - p0, surface_normal) / crown;
-        let band_length = select(max(length(p3 - p0), 0.01), -blade.p3_amplitude.w, paired_ribbon);
-        let normalized_width = clamp(2.0 * authored_half_width / band_length, 0.008, 0.085);
-        let phase = pose_camera.wind.w * pose_camera.wind_shape.y
-            + dot(instance.root_clump.xz + pose_camera.render_origin.xy, pose_camera.wind.xy) * pose_camera.wind_shape.x
-            + f32(band_seed & 255u) * (2.0 * PI / 255.0);
-        let drift = normalized_width * min(pose_camera.wind.z, 1.0)
-            * (0.75 * sin(phase) + 0.25 * sin(phase * 1.37 + 1.2));
-        output.band_coordinates = vec4<f32>(select(shading_t, -shading_t, blade_index != 0u), relative_height, normalized_width, drift);
-        output.band_seed = band_seed;
-    }
-    if (inspection == 4u || inspection == 5u) {
-        // Green: full shape. Red: low endpoint. Orange: budget, blue: projected extent.
-        output.color = mix(vec3(0.95, 0.04, 0.08), vec3(0.05, 0.90, 0.15), production_morph);
-        if (inspection == 5u) {
-            let decision = diagnostic_instances[instance_index].diagnostics;
-            let limiting_color = select(vec3(0.05, 0.35, 1.0), vec3(1.0, 0.35, 0.03), decision.y < decision.x);
-            output.color = select(limiting_color, vec3(0.05, 0.90, 0.15), production_morph >= 0.999);
-        }
-        output.material.w = 0.0;
-    }
-
     return output;
-}
-
-fn geometry_vertex(vertex_index: u32, instance_index: u32) -> VertexOutput {
-    return geometry_pose(vertex_index, instance_index, camera, false);
 }
 
 fn diagnostic_vertex(vertex_index: u32, instance_index: u32) -> VertexOutput {
@@ -666,68 +629,10 @@ fn ggx_foliage_specular(
     return min(fresnel * distribution * visibility * n_dot_l, 1.5);
 }
 
-// Advect the sampling coordinate, not a center trapped inside a stationary slot.
-// Neighboring cells allow independently tilted marks to cross cell boundaries.
-@if(BLADE_BAND_STUDY)
-fn study_band_mask(input: VertexOutput) -> f32 {
-    let mark_seed = hash32(input.band_seed ^ select(0u, 0x9e3779b9u, input.band_coordinates.x < 0.0));
-    let blade_random = vec3<f32>(f32(mark_seed & 255u),
-        f32((mark_seed >> 8u) & 255u), f32((mark_seed >> 16u) & 255u)) / 255.0;
-    let count = mix(5.0, 10.0, blade_random.x);
-    let warp = mix(0.20, 0.70, blade_random.y);
-    let t = abs(input.band_coordinates.x);
-    let width = input.band_coordinates.z;
-    let height = input.band_coordinates.y;
-    // At full wind a mark travels up to 1.25 authored widths from its rest position.
-    let sample_t = t - 1.25 * input.band_coordinates.w;
-    let slope = count * (1.0 + warp - 2.0 * warp * sample_t);
-    let axis = count * sample_t * (1.0 + warp - warp * sample_t) + blade_random.z;
-    let across = (input.blade_u - 0.5) * min(width * slope, 0.70);
-    // Derivatives of continuous coordinates only; hashing/floor must not enter AA.
-    let dx = vec2<f32>(dpdx(axis), dpdx(across));
-    let dy = vec2<f32>(dpdy(axis), dpdy(across));
-    let cell = i32(floor(axis));
-    let density = f32((debug_config.workload.w >> 16u) & 255u) / 255.0;
-    // Even dense grass has missing marks. Varying centers and spacing avoids a comb.
-    let probability = density * mix(0.82, 0.62, smoothstep(0.2, 0.85, height));
-    var mask = 0.0;
-    for (var offset = -1; offset <= 1; offset += 1) {
-        let candidate = cell + offset;
-        let seed = hash32(mark_seed ^ (bitcast<u32>(candidate) * 0x85ebca6bu));
-        let r = vec4<f32>(f32(seed & 255u), f32((seed >> 8u) & 255u),
-            f32((seed >> 16u) & 255u), f32(seed >> 24u)) / 255.0;
-        let center = 0.15 + 0.70 * r.x;
-        let tilt = (2.0 * r.y - 1.0) * 1.80;
-        let local = axis - f32(candidate) + across * tilt;
-        let pixel_span = abs(dot(dx, vec2(1.0, tilt))) + abs(dot(dy, vec2(1.0, tilt)));
-        let band_width = clamp(width * slope * (0.55 + r.z * 0.85), 0.025, 0.52);
-        let feather = min(0.11, max(band_width * 0.20, pixel_span * 0.60));
-        let shape = 1.0 - smoothstep(band_width * 0.5 - feather, band_width * 0.5 + feather, abs(local - center));
-        let resolved = smoothstep(0.7, 2.0, band_width / max(pixel_span, 0.00001));
-        let presence = 1.0 - smoothstep(probability - 0.08, probability + 0.08, r.w);
-        mask = max(mask, shape * resolved * presence * mix(0.75, 1.0, r.z));
-    }
-    // Max reach: 0.35*1.8 tilt + 0.52/2 width + 0.11 feather = 1 cell.
-    // Centers stay in [0.15,0.85], so the three candidates include every contributor.
-    let crown_clearance = 1.0 - smoothstep(0.70, 1.05, height);
-    let height_strength = mix(1.0, 0.55, smoothstep(0.20, 0.85, height));
-    let root_clearance = smoothstep(0.005, 0.025, t);
-    return mask * crown_clearance * height_strength
-        * root_clearance * smoothstep(0.0, 0.15, density);
-}
-
 fn shade(input: VertexOutput) -> vec4<f32> {
     if (input.material.w < 0.5) {
         return vec4<f32>(input.color, 1.0);
     }
-    @if(BLADE_BAND_STUDY)
-    let band_mask = study_band_mask(input);
-    @if(BLADE_BAND_STUDY && BLADE_BAND_MASK)
-    return vec4<f32>(vec3<f32>(1.0 - band_mask), 1.0);
-    @if(BLADE_BAND_STUDY)
-    let band_visibility = 1.0 - band_mask * (f32(constants::BLADE_BAND_STRENGTH) / 100.0);
-    @else
-    let band_visibility = 1.0;
     if (debug_config.values.z == LIGHTING_MODE_UNLIT_DIAGNOSTIC) {
         return vec4<f32>(input.color, 1.0);
     }
@@ -799,41 +704,6 @@ fn shade(input: VertexOutput) -> vec4<f32> {
     );
     let sun_tint = radiance_tint(camera.sun_radiance.xyz, vec3<f32>(1.0));
     let sun_active = camera.sun_direction.w;
-
-    if (debug_config.values.z == LIGHTING_MODE_LEGACY) {
-        let ambient_tint = radiance_tint(camera.ambient_radiance.xyz, vec3<f32>(1.0));
-        let ambient = input.color
-            * ambient_tint
-            * mix(0.22, 0.42, ambient_occlusion)
-            * received_shadow
-            * mix(1.0, band_visibility, 0.65);
-        let wrapped_diffuse = clamp((dot(normal, light_direction) + 0.48) / 1.48, 0.0, 1.0);
-        let back_light = pow(max(dot(-normal, light_direction), 0.0), 1.5)
-            * input.material.y;
-        let roughness = clamp(input.material.x, 0.04, 1.0);
-        let specular_power = mix(96.0, 4.0, roughness);
-        let specular = pow(max(dot(normal, half_direction), 0.0), specular_power)
-            * mix(0.24, 0.035, roughness)
-            * (1.0 - distance_stability);
-        let diffuse = input.color
-            * sun_tint
-            * wrapped_diffuse
-            * camera.lighting.x
-            * sun_shadow * band_visibility
-            * sun_active;
-        let transmission = input.color
-            * sun_tint
-            * back_light
-            * camera.lighting.z
-            * sun_shadow * band_visibility
-            * sun_active;
-        let highlight = sun_tint
-            * specular
-            * camera.lighting.y
-            * sun_shadow * band_visibility
-            * sun_active;
-        return vec4<f32>((ambient + diffuse + transmission + highlight) * canopy_visibility, 1.0);
-    }
 
     // Wet blades darken like wet PBR surfaces, a little less since grass is already dark.
     var body_color = input.color;
@@ -934,7 +804,7 @@ fn shade(input: VertexOutput) -> vec4<f32> {
         * far_highlight_weight
         * specular_energy
         * camera.lighting.y
-        * sun_shadow * band_visibility
+        * sun_shadow
         * sun_active;
 
     // A leaf's body is a thin sheet. The strongly rounded normal above shapes its waxy gloss;
@@ -957,7 +827,7 @@ fn shade(input: VertexOutput) -> vec4<f32> {
         * exposed_sun_tint
         * wrapped_diffuse
         * diffuse_energy
-        * sun_shadow * band_visibility
+        * sun_shadow
         * sun_active;
 
     let backscatter_alignment = clamp(dot(-view_direction, light_direction), 0.0, 1.0);
@@ -974,7 +844,7 @@ fn shade(input: VertexOutput) -> vec4<f32> {
         * far_highlight_weight
         * transmission_energy
         * camera.lighting.z
-        * sun_shadow * band_visibility
+        * sun_shadow
         * sun_active;
 
     // A broad upper-hemisphere fill keeps sky-facing surfaces readable between sun highlights.
@@ -996,8 +866,7 @@ fn shade(input: VertexOutput) -> vec4<f32> {
         * bounded_ambient
         * mix(0.40, 0.85, ambient_occlusion)
         * sky_fill
-        * received_shadow
-        * mix(1.0, band_visibility, 0.65);
+        * received_shadow;
 
     return vec4<f32>((foliage_ambient + diffuse + transmission + highlight) * canopy_visibility, 1.0);
 }

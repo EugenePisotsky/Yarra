@@ -122,7 +122,7 @@ impl Plugin for AmbientParticlesPlugin {
 /// Share of each kind present: motes and fluff need a dry day, and wind stirs up fluff and
 /// shakes leaves loose while it scatters the motes.
 fn amounts(state: &AtmosphereState) -> [f32; 3] {
-    if state.owner == AtmosphereOwner::Study || !state.profile.outdoor {
+    if state.owner == AtmosphereOwner::Isolated || !state.profile.outdoor {
         return [0.0; 3];
     }
     let sun = evaluate(&state.profile, state.phase).direction_to_sun[1];
@@ -431,11 +431,11 @@ mod tests {
         let rain = amounts(&state(Some(WeatherKind::Rain), 0.34));
         assert_eq!((rain[MOTES], rain[FLUFF]), (0.0, 0.0));
         assert!(rain[LEAVES] > morning[LEAVES], "wind shakes leaves loose");
-        let study = AtmosphereState {
-            owner: AtmosphereOwner::Study,
+        let isolated = AtmosphereState {
+            owner: AtmosphereOwner::Isolated,
             ..state(None, 0.34)
         };
-        assert_eq!(amounts(&study), [0.0; 3]);
+        assert_eq!(amounts(&isolated), [0.0; 3]);
     }
 
     fn run(presentation: AtmospherePresentation, frames: u32) -> (AmbientFrame, bool) {

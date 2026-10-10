@@ -18,13 +18,6 @@ pub(super) struct SourceView {
     radius: f64,
 }
 
-impl SourceView {
-    /// The camera in world coordinates, when the view is in `space`.
-    pub(super) fn eye_in(&self, space: WorldSpaceId) -> Option<DVec3> {
-        (self.space == Some(space)).then_some(self.eye)
-    }
-}
-
 pub(super) fn collect_view(
     origin: Res<WorldOrigin>,
     catalog: Res<WorldCatalog>,
@@ -188,7 +181,7 @@ pub(super) fn demand(
             (1, source_distance)
         };
         for (domain, needed) in [
-            (PageDomain::TerrainRender, terrain),
+            (PageDomain::Terrain, terrain),
             (PageDomain::Vegetation, near),
             (PageDomain::StaticObjects, objects),
             (PageDomain::GameplayObjects, gameplay && active),
@@ -259,7 +252,7 @@ mod tests {
             minimum_y: 0.,
             maximum_y: 1.,
             domain_mask: [
-                PageDomain::TerrainRender,
+                PageDomain::Terrain,
                 PageDomain::Vegetation,
                 PageDomain::StaticObjects,
                 PageDomain::GameplayObjects,
@@ -433,7 +426,7 @@ mod tests {
             })
         };
         assert!(has(CellCoord { x: 10, z: 0 }, PageDomain::Vegetation));
-        assert!(has(CellCoord { x: 10, z: 0 }, PageDomain::TerrainRender));
+        assert!(has(CellCoord { x: 10, z: 0 }, PageDomain::Terrain));
         assert!(has(CellCoord { x: 10, z: 0 }, PageDomain::StaticObjects));
         assert!(!has(CellCoord { x: 10, z: 0 }, PageDomain::GameplayObjects));
         assert!(has(CellCoord::ZERO, PageDomain::GameplayObjects));

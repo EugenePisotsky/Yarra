@@ -94,9 +94,11 @@ fn preview_is_transient_and_color_drag_is_one_undo_across_a_save() {
 #[test]
 fn recovery_and_conflict_keep_the_local_profile() {
     let mut set = working::WorkingSet::default();
-    let mut changed = AtmosphereProfile::default();
-    changed.exposure_ev100 = 12.0;
-    changed.clouds = world::clouds::CloudSettings::overcast();
+    let changed = AtmosphereProfile {
+        exposure_ev100: 12.0,
+        clouds: world::clouds::CloudSettings::overcast(),
+        ..Default::default()
+    };
     let id = WorldSpaceId(1);
     let snapshot = working::Snapshot {
         space: id,

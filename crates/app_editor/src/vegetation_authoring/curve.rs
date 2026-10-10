@@ -4,6 +4,7 @@ use bevy::prelude::*;
 use bevy_egui::egui;
 use vegetation::RibbonCurveProfile;
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn draw_ribbon_curve_editor(
     ui: &mut egui::Ui,
     label: &str,
@@ -25,8 +26,8 @@ pub(super) fn draw_ribbon_curve_editor(
     let canvas = CurveCanvas::new(rect.shrink(10.0), chart_extent.clamp(0.6, 3.0));
     let original_controls = ribbon_preview_controls(*curve);
 
-    for control_index in 1..=3 {
-        let point = canvas.to_screen(original_controls[control_index]);
+    for (control_index, control) in original_controls.into_iter().enumerate().skip(1) {
+        let point = canvas.to_screen(control);
         let control_name = match control_index {
             1 => "Root handle",
             2 => "Tip handle",
@@ -47,7 +48,7 @@ pub(super) fn draw_ribbon_curve_editor(
             update_ribbon_curve_control(
                 curve,
                 control_index,
-                canvas.from_screen(pointer),
+                canvas.to_curve(pointer),
                 &tip_tilt_range,
             );
             changed = true;
@@ -173,7 +174,7 @@ impl CurveCanvas {
         )
     }
 
-    fn from_screen(self, point: egui::Pos2) -> [f32; 2] {
+    fn to_curve(self, point: egui::Pos2) -> [f32; 2] {
         [
             (point.x - self.origin.x) / self.pixels_per_unit,
             (self.origin.y - point.y) / self.pixels_per_unit,
@@ -221,12 +222,10 @@ fn update_ribbon_curve_control(
                 &mut curve.tip_handle_length,
             );
         }
-        3 => {
-            if point[0].hypot(point[1]) > 1e-4 {
-                curve.tip_tilt_radians = point[0]
-                    .atan2(point[1])
-                    .clamp(*tip_tilt_range.start(), *tip_tilt_range.end());
-            }
+        3 if point[0].hypot(point[1]) > 1e-4 => {
+            curve.tip_tilt_radians = point[0]
+                .atan2(point[1])
+                .clamp(*tip_tilt_range.start(), *tip_tilt_range.end());
         }
         _ => {}
     }

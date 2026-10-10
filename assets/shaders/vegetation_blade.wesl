@@ -109,7 +109,6 @@ const SPLIT_LOW_DENSITY_BUDGET_SCALE: f32 = 0.65;
 // Artistic width compensation is separate from the retained population. Full inverse-density
 // compensation (1 / 0.65) made the first lower-detail blades too broad at their shoulder.
 const SPLIT_LOW_COVERAGE_WIDTH_SCALE: f32 = 1.30;
-const LIGHTING_MODE_LEGACY: u32 = 1u;
 const LIGHTING_MODE_UNLIT_DIAGNOSTIC: u32 = 2u;
 const LIGHTING_MODE_VERTEX_ONLY_DIAGNOSTIC: u32 = 3u;
 const FAR_WIDTH_TARGET_HALF_PIXELS: f32 = 0.60;
@@ -166,24 +165,6 @@ struct PreparedArena {
     blades: array<PreparedBlade>,
 }
 
-// workload.w bits 4..7 are a bounded shape study; bit 8 isolates ribbon view opening.
-// Keep production density decisions in the packed instance, independent of the displayed shape.
-fn shape_inspection_mode(config: DebugConfig) -> u32 {
-    return select(0u, (config.workload.w >> 4u) & 15u, config.values.x == 0u);
-}
-
-fn inspected_shape_morph(original: f32, config: DebugConfig) -> f32 {
-    let mode = shape_inspection_mode(config);
-    if (mode == 2u) { return 1.0; }
-    if (mode == 3u) { return 0.0; }
-    return original;
-}
-
-fn inspected_opening(profile: Species, config: DebugConfig) -> f32 {
-    return select(profile.shape_secondary.z, 0.0,
-        shape_inspection_mode(config) != 0u && (config.workload.w & 256u) != 0u);
-}
-
 // Spend fixed samples around the authored bend. These schedules retain the authoring power
 // control; the companion schedule avoids wasting a third of its budget on the straight stem.
 fn paired_ribbon_linear_t(row: u32, sections: u32, main: bool) -> f32 {
@@ -207,13 +188,9 @@ fn prepare_blade(
     instance: ProceduralInstance, profile: Species, camera: Camera,
     debug_config: DebugConfig, blade_index: u32,
 ) -> PreparedBlade {
-    // Motion-mask diagnostic freezes geometry while the draw shader keeps its live clock.
-    let shape_wind_time = select(camera.wind.w, 0.0, (debug_config.workload.w & 512u) != 0u);
-    let production_low_lod = (instance.geometry.y >> 31u) != 0u;
-    let low_lod = production_low_lod && shape_inspection_mode(debug_config) == 0u;
+    let low_lod = (instance.geometry.y >> 31u) != 0u;
     let lod_morph = f32((instance.geometry.y >> LOD_MORPH_SHIFT) & LOD_MORPH_MASK)
         / f32(LOD_MORPH_MASK);
-    let geometry_morph = inspected_shape_morph(lod_morph, debug_config);
     let root = instance.root_clump.xyz;
     let variants = unpack2x16unorm(bitcast<u32>(instance.root_clump.w));
     let clump_variant = variants.x;
@@ -310,7 +287,7 @@ fn prepare_blade(
         );
     }
     let high_transition_width = mix(balanced_low_width, 1.0, lod_morph);
-    let density_width = select(high_transition_width, balanced_low_width, production_low_lod);
+    let density_width = select(high_transition_width, balanced_low_width, low_lod);
     let silhouette_coordinate = mix(
         random01(shape_seed ^ 0x27d4eb2fu),
         random01(group_key ^ 0x7b7d159cu),
@@ -396,9 +373,9 @@ fn prepare_blade(
         let frequency = camera.wind_shape.x;
         let wind_speed = camera.wind_shape.y;
         let broad_phase = dot(root.xz + camera.render_origin.xy, wind_direction) * frequency
-            - shape_wind_time * wind_speed;
+            - camera.wind.w * wind_speed;
         let cross_phase = dot(root.xz + camera.render_origin.xy, cross_direction) * frequency * 0.71
-            + shape_wind_time * wind_speed * 0.37;
+            + camera.wind.w * wind_speed * 0.37;
         let broad_wave = sin(broad_phase + sin(cross_phase) * 0.85);
         let gust_wave = sin(broad_phase * 0.43 - cross_phase * 0.61);
         let broad_amount = broad_wave * 0.5 + 0.5;
@@ -421,12 +398,12 @@ fn prepare_blade(
         let blade_phase = random01(blade_seed ^ 0x3c6ef372u) * 2.0 * PI;
         let mixed_phase = mix(clump_phase, blade_phase, 0.72);
         let bob = sin(
-            shape_wind_time * wind_speed * 2.15
+            camera.wind.w * wind_speed * 2.15
                 + cross_phase * 1.31
                 + mixed_phase,
         );
         let flutter = sin(
-            shape_wind_time * wind_speed * 4.10
+            camera.wind.w * wind_speed * 4.10
                 + broad_phase * 2.13
                 + blade_phase,
         );
@@ -467,7 +444,7 @@ fn prepare_blade(
             p3 += coherent_push + bob_offset + flutter_offset * 1.08;
 
             animated_wind_forward = wind_forward;
-            blade_wind_phase = shape_wind_time * wind_speed * 3.25
+            blade_wind_phase = camera.wind.w * wind_speed * 3.25
                 + broad_phase * 1.71
                 + blade_phase;
             blade_wind_amplitude = height
@@ -485,7 +462,7 @@ fn prepare_blade(
     if (!is_broad_leaf && !paired_main) {
         let canopy_midpoint = (p0 + 3.0 * p1 + 3.0 * p2 + p3) * 0.125;
         let canopy_lift = max(dot(canopy_midpoint - p3, surface_normal), 0.0);
-        p3 += surface_normal * canopy_lift * (1.0 - geometry_morph);
+        p3 += surface_normal * canopy_lift * (1.0 - lod_morph);
     }
 
     let low_section_count = select(
@@ -510,7 +487,7 @@ fn prepare_blade(
         coverage_scale = mix(low_coverage_scale * budget_width_scale, 1.0, lod_morph);
     }
     var low_shoulder = vec3<f32>(0.0);
-    if ((paired_main || paired_companion) && geometry_morph < 1.0) {
+    if ((paired_main || paired_companion) && lod_morph < 1.0) {
         let t = select(0.0, pow(0.5, max(profile.topology.w, 0.2)), paired_main);
         let u = 1.0 - t;
         low_shoulder = p0 * u * u * u + p1 * 3.0 * u * u * t
@@ -525,7 +502,7 @@ fn prepare_blade(
         let aligned = select(-camera_side, camera_side, alignment >= 0.0);
         let remainder = aligned - side * abs(alignment);
         let remainder_length = length(remainder);
-        let opening = min(inspected_opening(profile, debug_config), remainder_length / max(abs(alignment), 1e-4));
+        let opening = min(profile.shape_secondary.z, remainder_length / max(abs(alignment), 1e-4));
         side = normalize3_or(side + remainder / max(remainder_length, 1e-4) * opening, side);
         var width_scale = 1.0;
         if (camera.projection.w > 0.5) {
@@ -543,7 +520,7 @@ fn prepare_blade(
         // quadratic width integral (2/3). The shared high root does not redefine this width.
         animated_wind_forward = side * authored_half_width * select(1.0, 4.0 / 3.0, paired_main) * width_scale;
     }
-    if (paired_companion && !low_lod && geometry_morph < 1.0) {
+    if (paired_companion && !low_lod && lod_morph < 1.0) {
         // Ribbons have no per-vertex flutter; reuse that phase word for the first high row.
         // The low triangle expands from that row while the shared root collapses to a point.
         let high_sections = clamp(u32(profile.topology.x + 0.5), 2u, 3u);

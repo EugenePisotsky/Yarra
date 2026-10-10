@@ -42,8 +42,6 @@ pub(super) struct SourceResidency {
     pub(super) definition_cache: HashMap<ObjectDefinitionId, RuntimeObjectDefinition>,
     decode_tasks: Vec<DecodeTask>,
     next_request_id: u64,
-    /// Trees attached after the camera passed their impostor hand-off, since start.
-    late_objects: u64,
 }
 
 pub(super) enum PageState {
@@ -116,7 +114,7 @@ impl SourceResidency {
                 generation: generation.to_owned(),
                 request_id,
                 key,
-                height_only: height_only && key.domain == PageDomain::TerrainRender,
+                height_only: height_only && key.domain == PageDomain::Terrain,
             }) {
                 Ok(()) => {
                     self.next_request_id = request_id;
@@ -260,10 +258,6 @@ pub(super) fn attach_prepared_pages(
     origin: Res<WorldOrigin>,
     world: Res<WorldStream>,
     mut stream: ResMut<SourceResidency>,
-    (view, projection): (
-        Res<source_demand::SourceView>,
-        Res<crate::object_lod::LodProjection>,
-    ),
 ) {
     stream.admission_blocked = 0;
     let Some(render_assets) = render_assets else {
@@ -353,10 +347,6 @@ pub(super) fn attach_prepared_pages(
             continue;
         }
         attachment_attempts += 1;
-        if let Some(eye) = view.eye_in(key.space) {
-            let late = late_objects(&prepared, eye, cell_size, &projection);
-            stream.late_objects += late;
-        }
         match attach_page(
             &mut commands,
             &asset_server,
@@ -392,58 +382,6 @@ pub(super) fn attach_prepared_pages(
             }
         }
     }
-}
-
-/// Objects attached after the camera came within their impostor hand-off: until now
-/// neither their impostor (faded out) nor their mesh drew them.
-fn late_objects(
-    prepared: &PreparedPage,
-    eye: bevy::math::DVec3,
-    cell_size: f32,
-    projection: &crate::object_lod::LodProjection,
-) -> u64 {
-    let world::PagePayload::StaticObjects(objects) = &prepared.decoded.payload else {
-        return 0;
-    };
-    let key = prepared.decoded.key;
-    let mut late = 0;
-    for instance in &objects.instances {
-        let variants: Vec<_> = prepared
-            .dependencies
-            .iter()
-            .filter(|d| d.asset == instance.asset)
-            .collect();
-        let Some(mesh) = variants
-            .iter()
-            .rev()
-            .skip(1)
-            .find(|d| !world::is_impostor_uri(&d.uri))
-            .filter(|_| {
-                variants
-                    .last()
-                    .is_some_and(|d| world::is_impostor_uri(&d.uri))
-            })
-        else {
-            continue;
-        };
-        let height = variants.iter().map(|d| d.bounds[1]).fold(0.0_f32, f32::max);
-        let handoff = f64::from(
-            (height * instance.scale * projection.pixels_per_metre() / mesh.minimum_screen_height)
-                .min(crate::object_lod::IMPOSTOR_HANDOFF_METRES),
-        );
-        let position = bevy::math::DVec3::new(
-            f64::from(key.cell.x) * f64::from(cell_size) + f64::from(instance.translation[0]),
-            f64::from(instance.translation[1]),
-            f64::from(key.cell.z) * f64::from(cell_size) + f64::from(instance.translation[2]),
-        );
-        if eye.distance(position) < handoff * 0.9 {
-            late += 1;
-        }
-    }
-    if late > 0 {
-        debug!("{late} objects of {key:?} attached inside their impostor hand-off");
-    }
-    late
 }
 
 pub(super) fn cool_and_remove_pages(
@@ -512,14 +450,8 @@ pub struct StreamingStats {
     pub height_only_pages: usize,
     pub indexed_cells: usize,
     pub source_demand_error: Option<String>,
-    pub pending_decoded_bytes: u64,
     pub budget_waiting: usize,
     pub lod_counts: BTreeMap<u8, usize>,
-    pub minimum_projected_height: f32,
-    pub maximum_projected_height: f32,
-    /// Objects that appeared after the camera passed their impostor hand-off (popped in),
-    /// since start. Nonzero while the world first loads.
-    pub late_objects: u64,
     terrain_texture_sets: BTreeSet<TerrainTextureSetId>,
     asset_variants: BTreeSet<AssetVariantKey>,
 }
@@ -570,14 +502,12 @@ pub(super) fn update_streaming_stats(
     }
     stats.source_demand_error = world.demand_error.clone();
     stats.budget_waiting = stream.admission_blocked;
-    stats.late_objects = stream.late_objects;
     if stream.admission_blocked > 0 {
         stats.status.push_str(" | source residency budget full");
     }
     if let Some(error) = &world.demand_error {
         stats.status = format!("source demand limited: {error}");
     }
-    stats.pending_decoded_bytes = 0;
     stats.height_only_pages = 0;
     stats.demanded = stream.desired.len();
     stats.loading = 0;
@@ -594,23 +524,13 @@ pub(super) fn update_streaming_stats(
     stats.terrain_texture_sets.clear();
     stats.asset_variants.clear();
     stats.lod_counts.clear();
-    stats.minimum_projected_height = f32::INFINITY;
-    stats.maximum_projected_height = 0.0;
     for lod in &lod_objects {
         *stats.lod_counts.entry(lod.current_lod()).or_default() += 1;
-        stats.minimum_projected_height = stats.minimum_projected_height.min(lod.projected_height());
-        stats.maximum_projected_height = stats.maximum_projected_height.max(lod.projected_height());
-    }
-    if stats.lod_counts.is_empty() {
-        stats.minimum_projected_height = 0.0;
     }
     for state in stream.pages.values() {
         match state {
             PageState::Loading { .. } | PageState::Decoding { .. } => stats.loading += 1,
-            PageState::Prepared(p) => {
-                stats.prepared += 1;
-                stats.pending_decoded_bytes += p.decoded.decoded_bytes;
-            }
+            PageState::Prepared(_) => stats.prepared += 1,
             PageState::Resident(attachment) => {
                 stats.resident += 1;
                 stats.owned_entities += attachment.entities.len();

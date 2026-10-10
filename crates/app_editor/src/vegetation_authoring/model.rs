@@ -44,26 +44,10 @@ impl Default for VegetationAuthoringState {
 }
 
 impl VegetationAuthoringState {
-    pub(crate) fn study_source(&self) -> Option<(&VegetationCatalog, usize, u64)> {
+    pub(crate) fn working_catalog(&self) -> Option<(&VegetationCatalog, usize, u64)> {
         self.working
             .as_ref()
             .map(|catalog| (catalog, self.selected_population, self.revision))
-    }
-
-    /// Explicit replay import replaces the draft while retaining the project's save baseline.
-    pub(crate) fn import_study_catalog(&mut self, catalog: VegetationCatalog, population: &str) {
-        self.selected_population = catalog
-            .populations
-            .iter()
-            .position(|p| p.key == population)
-            .unwrap_or(0);
-        self.selected_species = catalog
-            .populations
-            .get(self.selected_population)
-            .and_then(|p| p.species.first())
-            .and_then(|s| catalog.species.iter().position(|v| v.id == s.species))
-            .unwrap_or(0);
-        self.apply(catalog);
     }
 
     fn install(&mut self, catalog: VegetationCatalog) {
@@ -255,20 +239,5 @@ mod tests {
         state.reset();
         assert_eq!(state.working, Some(catalog));
         assert!(!state.dirty);
-    }
-    #[test]
-    fn study_import_keeps_project_baseline_and_existing_save_request() {
-        let catalog = vegetation::fixtures::reference_catalog();
-        let mut state = VegetationAuthoringState::default();
-        state.install(catalog.clone());
-        state.save_request = Some(17);
-        let mut study = catalog.clone();
-        study.populations[3].density_per_square_meter = 25.0;
-        state.import_study_catalog(study.clone(), "short_split_fill");
-        assert_eq!(state.baseline, Some(catalog));
-        assert_eq!(state.working, Some(study));
-        assert_eq!(state.selected_population, 3);
-        assert_eq!(state.save_request, Some(17));
-        assert!(state.dirty);
     }
 }

@@ -10,7 +10,7 @@ use crate::VegetationWind;
 use bevy::prelude::*;
 use std::collections::HashMap;
 use vegetation::{
-    GrowthPattern, RepresentationKind, TopologyFamily, TopologyProfile, VegetationGroupingProfile,
+    GrowthPattern, TopologyFamily, TopologyProfile, VegetationGroupingProfile,
     candidate_density_retention, candidate_domain_for_extent, decode_octahedral_normal,
 };
 
@@ -190,7 +190,6 @@ pub fn terrain_contact_radius(
             .fold(0., f32::max)
 }
 
-#[cfg(test)]
 #[cfg(test)]
 pub(super) fn pack_scene(scene: &vegetation::VegetationScene) -> PackedScene {
     pack_scene_with_gate(scene, &default(), [0.; 2])
@@ -522,9 +521,6 @@ fn topology_code(family: TopologyFamily) -> f32 {
         TopologyFamily::Ribbon => 0.0,
         TopologyFamily::RibbonTuft => 1.0,
         TopologyFamily::BroadLeafCluster => 2.0,
-        TopologyFamily::StemAndHead => 3.0,
-        TopologyFamily::CardImpostor => 4.0,
-        TopologyFamily::AuthoredMesh => 5.0,
     }
 }
 
@@ -545,11 +541,7 @@ struct ProceduralLodProfile {
 }
 
 fn procedural_lod_profile(species: &vegetation::VegetationSpecies) -> ProceduralLodProfile {
-    let procedural_levels = species
-        .representations
-        .iter()
-        .filter(|level| matches!(level.kind, RepresentationKind::Procedural(_)))
-        .collect::<Vec<_>>();
+    let procedural_levels = species.representations.iter().collect::<Vec<_>>();
     let high = procedural_levels
         .first()
         .copied()

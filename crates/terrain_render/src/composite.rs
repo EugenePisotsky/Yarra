@@ -246,7 +246,6 @@ impl Material for TerrainCompositeMaterial {
         key: MaterialPipelineKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
         if let Some(fragment) = descriptor.fragment.as_mut() {
-            fragment.shader_defs.push("FOREST_SHADOW".into());
             let define = match key.bind_group_data.shading {
                 TerrainShadingMode::Production => None,
                 TerrainShadingMode::SurfaceUnlit => Some("TERRAIN_SURFACE_UNLIT"),

@@ -197,7 +197,7 @@ pub(super) fn run(
                                 } else {
                                     Vec::new()
                                 };
-                                let terrain = if key.domain == PageDomain::TerrainRender {
+                                let terrain = if key.domain == PageDomain::Terrain {
                                     Some(reader.read_terrain_resources(key)?)
                                 } else {
                                     None

@@ -49,11 +49,9 @@ struct State {
 impl FromWorld for State {
     fn from_world(world: &mut World) -> Self {
         let device = world.resource::<RenderDevice>();
-        let capabilities = UpscalingCapabilities::detect(device);
-        world.resource::<Bridge>().0.lock().unwrap().capabilities = capabilities.clone();
         Self {
             linear: Linear::new(device),
-            capabilities,
+            capabilities: UpscalingCapabilities::detect(device),
             views: HashMap::new(),
         }
     }

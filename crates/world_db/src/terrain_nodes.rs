@@ -275,7 +275,7 @@ impl TerrainCookStore {
             PageKey {
                 space,
                 cell,
-                domain: PageDomain::TerrainRender,
+                domain: PageDomain::Terrain,
                 lod: 0,
             },
         )
@@ -348,7 +348,7 @@ impl TerrainCookStore {
                             x: r.get(0)?,
                             z: r.get(1)?,
                         },
-                        domain: PageDomain::TerrainRender,
+                        domain: PageDomain::Terrain,
                         lod: 0,
                     })
                 },
@@ -667,7 +667,7 @@ mod tests {
                         minimum_y: 0.0,
                         maximum_y: 0.0,
                         source_revision: 1,
-                        domain_mask: domain_bit(PageDomain::TerrainRender),
+                        domain_mask: domain_bit(PageDomain::Terrain),
                         terrain_resolution: 2,
                     })
                     .collect(),
@@ -676,7 +676,7 @@ mod tests {
                         key: PageKey {
                             space,
                             cell: CellCoord { x, z: 0 },
-                            domain: PageDomain::TerrainRender,
+                            domain: PageDomain::Terrain,
                             lod: 0,
                         },
                         codec: PageCodec::Raw,

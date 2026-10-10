@@ -2926,7 +2926,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "54f0d287c53ffd184d04d8677f590f4ac5379785529e5e08b1c8083acdd5c198"
 dependencies = [
  "memchr",
- "serde",
  "thiserror 2.0.20",
 ]
 
@@ -3537,8 +3536,6 @@ dependencies = [
  "num-traits",
  "png",
  "tiff",
- "zune-core",
- "zune-jpeg",
 ]
 
 [[package]]
@@ -7127,7 +7124,6 @@ dependencies = [
  "bevy_egui",
  "blake3",
  "crossbeam-channel",
- "image",
  "ron",
  "serde",
  "uuid",
@@ -7150,7 +7146,6 @@ dependencies = [
  "bevy",
  "bevy_egui",
  "block2 0.6.2",
- "image",
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
@@ -7362,7 +7357,6 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "bytemuck",
- "naga",
  "ron",
  "serde",
  "yarra-atmosphere",

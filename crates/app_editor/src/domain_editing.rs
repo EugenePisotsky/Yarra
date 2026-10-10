@@ -401,6 +401,7 @@ impl DenseDomainWorkingSets {
         adopted
     }
 
+    #[cfg(test)]
     pub(crate) fn current_records(&self) -> Vec<DenseSourceRecord> {
         self.entries
             .values()
@@ -418,6 +419,7 @@ impl DenseDomainWorkingSets {
             .collect()
     }
 
+    #[cfg(test)]
     pub(crate) fn runtime_divergent_records(&self) -> Vec<DenseSourceRecord> {
         self.entries
             .values()
@@ -624,7 +626,7 @@ pub(crate) fn reconcile_dense_working_sets(
     working_sets.reconcile_definitions(
         &project,
         plants
-            .study_source()
+            .working_catalog()
             .map(|(catalog, _, _)| catalog)
             .or_else(|| project.vegetation_catalog()),
     );

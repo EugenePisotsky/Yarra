@@ -1,112 +1,15 @@
-//! Deterministic, renderer-independent compilation and reference placement for vegetation V2.
+//! Deterministic, renderer-independent reference placement for vegetation.
 //!
-//! The runtime renderer will perform equivalent placement on the GPU. Keeping a CPU reference
-//! here gives cooking tools, tests, and diagnostics a single definition of page ownership,
-//! population competition, and stable thinning.
-
-use std::collections::BTreeMap;
+//! The runtime renderer performs equivalent placement on the GPU. This CPU reference gives
+//! tests and diagnostics a single definition of page ownership, population competition and
+//! stable thinning.
 
 use thiserror::Error;
 use vegetation::{
     CandidateSample, SceneValidationError, VegetationCatalog, VegetationFieldPage,
-    VegetationFieldPageData, VegetationPopulationField, VegetationPopulationId,
-    VegetationSpeciesId, candidate_density_retention, candidate_domain, choose_species, random01,
-    sample_candidate,
+    VegetationPopulationField, VegetationPopulationId, VegetationSpeciesId,
+    candidate_density_retention, candidate_domain, choose_species, random01, sample_candidate,
 };
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct SourcePopulationMask {
-    pub population: VegetationPopulationId,
-    pub resolution: u16,
-    pub coverage: Vec<u8>,
-    pub flow_direction: [f32; 2],
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct SourceFieldPage {
-    /// Repeated population masks are combined with a maximum operation.
-    pub masks: Vec<SourcePopulationMask>,
-}
-
-/// Compiles authoring masks into the renderer-neutral page contract.
-///
-/// Maximum blending makes repeated strokes idempotent. Flow directions are accumulated and
-/// normalized, which prevents source layer order from changing the cooked result.
-pub fn compile_page(
-    catalog: &VegetationCatalog,
-    source: SourceFieldPage,
-) -> Result<VegetationFieldPageData, CompileError> {
-    catalog.validate()?;
-    let mut merged = BTreeMap::<VegetationPopulationId, MergedMask>::new();
-    for mask in source.masks {
-        if catalog.population(mask.population).is_none() {
-            return Err(CompileError::MissingPopulation(mask.population));
-        }
-        let resolution = usize::from(mask.resolution);
-        if resolution == 0
-            || resolution > 256
-            || mask.coverage.len() != resolution * resolution
-            || !mask.flow_direction.into_iter().all(f32::is_finite)
-        {
-            return Err(CompileError::InvalidMask(mask.population));
-        }
-
-        match merged.entry(mask.population) {
-            std::collections::btree_map::Entry::Vacant(entry) => {
-                entry.insert(MergedMask {
-                    resolution: mask.resolution,
-                    coverage: mask.coverage,
-                    flow_directions: vec![mask.flow_direction],
-                });
-            }
-            std::collections::btree_map::Entry::Occupied(mut entry) => {
-                let merged = entry.get_mut();
-                if merged.resolution != mask.resolution {
-                    return Err(CompileError::ResolutionMismatch(mask.population));
-                }
-                for (destination, source) in merged.coverage.iter_mut().zip(mask.coverage) {
-                    *destination = (*destination).max(source);
-                }
-                merged.flow_directions.push(mask.flow_direction);
-            }
-        }
-    }
-
-    let page = VegetationFieldPageData {
-        fields: merged
-            .into_iter()
-            .map(|(population, mask)| VegetationPopulationField {
-                population,
-                resolution: mask.resolution,
-                coverage: mask.coverage,
-                flow_direction: stable_average_direction(mask.flow_directions),
-            })
-            .collect(),
-    };
-    page.validate(catalog).map_err(CompileError::InvalidPage)?;
-    Ok(page)
-}
-
-#[derive(Debug, Clone, PartialEq)]
-struct MergedMask {
-    resolution: u16,
-    coverage: Vec<u8>,
-    flow_directions: Vec<[f32; 2]>,
-}
-
-#[derive(Debug, Error, Clone, PartialEq)]
-pub enum CompileError {
-    #[error(transparent)]
-    InvalidCatalog(#[from] vegetation::CatalogValidationError),
-    #[error("source mask references missing vegetation population {0:?}")]
-    MissingPopulation(VegetationPopulationId),
-    #[error("source mask for vegetation population {0:?} is invalid")]
-    InvalidMask(VegetationPopulationId),
-    #[error("source masks for vegetation population {0:?} use different resolutions")]
-    ResolutionMismatch(VegetationPopulationId),
-    #[error(transparent)]
-    InvalidPage(#[from] vegetation::PageValidationError),
-}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DebugPlacement {
@@ -238,26 +141,6 @@ pub enum PlacementError {
     Page(#[from] vegetation::PageValidationError),
 }
 
-fn stable_average_direction(mut directions: Vec<[f32; 2]>) -> [f32; 2] {
-    directions.sort_by(|left, right| {
-        left[0]
-            .total_cmp(&right[0])
-            .then_with(|| left[1].total_cmp(&right[1]))
-    });
-    let sum = directions.into_iter().fold([0.0_f64; 2], |sum, value| {
-        [sum[0] + f64::from(value[0]), sum[1] + f64::from(value[1])]
-    });
-    let length_squared = sum[0] * sum[0] + sum[1] * sum[1];
-    if length_squared <= 1e-10 {
-        return [0.0, 0.0];
-    }
-    let inverse_length = length_squared.sqrt().recip();
-    [
-        (sum[0] * inverse_length) as f32,
-        (sum[1] * inverse_length) as f32,
-    ]
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
@@ -265,33 +148,6 @@ mod tests {
     use vegetation::{VegetationScene, fixtures};
 
     use super::*;
-
-    #[test]
-    fn repeated_masks_are_max_blended_and_flow_is_order_independent() {
-        let catalog = fixtures::reference_catalog();
-        let first = SourcePopulationMask {
-            population: fixtures::DRY_TUFT_POPULATION_ID,
-            resolution: 2,
-            coverage: vec![10, 240, 30, 40],
-            flow_direction: [1.0, 0.0],
-        };
-        let second = SourcePopulationMask {
-            population: fixtures::DRY_TUFT_POPULATION_ID,
-            resolution: 2,
-            coverage: vec![20, 30, 220, 5],
-            flow_direction: [0.0, 1.0],
-        };
-        let source = |masks| SourceFieldPage { masks };
-
-        let forward = compile_page(&catalog, source(vec![first.clone(), second.clone()])).unwrap();
-        let reverse = compile_page(&catalog, source(vec![second, first])).unwrap();
-
-        assert_eq!(forward, reverse);
-        assert_eq!(forward.fields[0].coverage, vec![20, 240, 220, 40]);
-        assert!(
-            (forward.fields[0].flow_direction[0] - std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-6
-        );
-    }
 
     #[test]
     fn split_pages_match_one_combined_world_lattice() {

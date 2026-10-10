@@ -43,7 +43,7 @@ fn height_sources_preserve_relief_without_allocating_render_assets() {
     let key = PageKey {
         space: WorldSpaceId(1),
         cell: CellCoord { x: -3, z: 2 },
-        domain: PageDomain::TerrainRender,
+        domain: PageDomain::Terrain,
         lod: 0,
     };
     let attachment = attach_height_source(&mut commands, height_page(key), 8.).unwrap();
@@ -103,7 +103,7 @@ fn queue_height(app: &mut App, order: i32, bytes: u64) -> PageKey {
     let key = PageKey {
         space: WorldSpaceId(1),
         cell: CellCoord { x: order, z: 0 },
-        domain: PageDomain::TerrainRender,
+        domain: PageDomain::Terrain,
         lod: 0,
     };
     let mut page = height_page(key);
@@ -400,15 +400,14 @@ fn rendered_height_page(key: PageKey) -> PreparedPage {
 }
 
 #[test]
-fn invalid_flat_relief_does_not_allocate_terrain_assets() {
+fn invalid_relief_does_not_allocate_terrain_assets() {
     let mut app = attachment_app(0);
-    let key = key(PageDomain::TerrainRender, 0);
+    let key = key(PageDomain::Terrain, 0);
     let mut page = rendered_height_page(key);
-    page.decoded.payload = PagePayload::TerrainRender(world::TerrainRenderPage {
-        height: f32::NAN,
-        surfaces: vec![world::TerrainSurfaceId([1; 16])],
-        weight_pages: vec![],
-    });
+    let PagePayload::TerrainHeightfield(ref mut terrain) = page.decoded.payload else {
+        unreachable!()
+    };
+    terrain.heightfield.heights[0] = f32::NAN;
     queue_page(&mut app, page);
     assert_failed_without_entities(&mut app, key, "heightfield");
 }
@@ -430,8 +429,8 @@ fn lifecycle_app() -> App {
 #[test]
 fn cooling_revives_then_releases_owned_assets_and_keeps_shared_textures_accounted_once() {
     let mut app = lifecycle_app();
-    let first = key(PageDomain::TerrainRender, 0);
-    let second = key(PageDomain::TerrainRender, 1);
+    let first = key(PageDomain::Terrain, 0);
+    let second = key(PageDomain::Terrain, 1);
     queue_page(&mut app, rendered_height_page(first));
     queue_page(&mut app, rendered_height_page(second));
     app.update();
@@ -529,8 +528,8 @@ fn clear_sources(
 #[test]
 fn clearing_sources_releases_resident_and_cooling_pages_and_rejects_old_replies() {
     let mut app = lifecycle_app();
-    let first = key(PageDomain::TerrainRender, 0);
-    let second = key(PageDomain::TerrainRender, 1);
+    let first = key(PageDomain::Terrain, 0);
+    let second = key(PageDomain::Terrain, 1);
     queue_page(&mut app, rendered_height_page(first));
     queue_page(&mut app, rendered_height_page(second));
     app.update();
@@ -540,7 +539,7 @@ fn clearing_sources_releases_resident_and_cooling_pages_and_rejects_old_replies(
         .remove(&first);
     app.update();
     let (worker, requests, _replies) = WorldDatabaseWorker::test_channel_pair(2, 1);
-    let pending = key(PageDomain::TerrainRender, 2);
+    let pending = key(PageDomain::Terrain, 2);
     {
         let mut residency = app.world_mut().resource_mut::<SourceResidency>();
         residency.set_demand(BTreeMap::from([(pending, (0, 0.))]));
@@ -614,7 +613,7 @@ fn decode_completion_requires_current_identity_and_demand_before_caching_or_prep
     {
         let mut residency = app.world_mut().resource_mut::<SourceResidency>();
         for n in 0..3 {
-            let key = key(PageDomain::TerrainRender, n);
+            let key = key(PageDomain::Terrain, n);
             let mut page = height_page(key);
             page.definitions.push(RuntimeObjectDefinition {
                 id: ObjectDefinitionId([n as u8; 16]),
@@ -655,16 +654,12 @@ fn decode_completion_requires_current_identity_and_demand_before_caching_or_prep
     }
     let residency = app.world().resource::<SourceResidency>();
     assert!(matches!(
-        residency.pages[&key(PageDomain::TerrainRender, 0)],
+        residency.pages[&key(PageDomain::Terrain, 0)],
         PageState::Decoding { request_id: 2 }
     ));
-    assert!(
-        !residency
-            .pages
-            .contains_key(&key(PageDomain::TerrainRender, 1))
-    );
+    assert!(!residency.pages.contains_key(&key(PageDomain::Terrain, 1)));
     assert!(matches!(
-        residency.pages[&key(PageDomain::TerrainRender, 2)],
+        residency.pages[&key(PageDomain::Terrain, 2)],
         PageState::Prepared(_)
     ));
     assert_eq!(residency.definition_cache.len(), 1);

@@ -182,7 +182,7 @@ fn cook_snapshot_options(
                 let ground = PageKey {
                     space: world.id,
                     cell: *cell,
-                    domain: PageDomain::TerrainRender,
+                    domain: PageDomain::Terrain,
                     lod: 0,
                 };
                 if stats.incremental {

@@ -10,8 +10,8 @@ use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded};
 use engine::WorldGenerationReload;
 
 use crate::{
-    derived_jobs::DerivedArtifactStore, domain_editing::DenseDomainWorkingSets,
-    editing::EditorObjectWorkingSet, project_store::ProjectEditorStore,
+    domain_editing::DenseDomainWorkingSets, editing::EditorObjectWorkingSet,
+    project_store::ProjectEditorStore,
 };
 
 const PUBLICATION_CHANNEL_CAPACITY: usize = 1;
@@ -187,7 +187,6 @@ fn start_publication_worker(mut commands: Commands, paths: Res<RuntimePublicatio
     let (result_sender, result_receiver) = bounded(PUBLICATION_CHANNEL_CAPACITY);
     let project_database = paths.project_database.clone();
     let runtime_database = paths.runtime_database.clone();
-    // A diagnostic renderer choice must never strip materials from the publication.
     let bake_root = Some(paths.asset_root.clone());
     let worker_thread = thread::Builder::new()
         .name("yarra-runtime-publisher".into())
@@ -289,7 +288,6 @@ fn receive_publication_result(
     mut state: ResMut<RuntimePublicationState>,
     mut objects: ResMut<EditorObjectWorkingSet>,
     mut dense: ResMut<DenseDomainWorkingSets>,
-    mut artifacts: ResMut<DerivedArtifactStore>,
 ) {
     if let Some(worker) = worker {
         loop {
@@ -365,7 +363,6 @@ fn receive_publication_result(
         Ok(adopted) if adopted == generation => {
             objects.adopt_runtime_generation();
             dense.adopt_runtime_generation();
-            artifacts.clear_failures_for_generation_adoption();
             state.phase = PublicationPhase::Published {
                 generation: adopted,
             };
@@ -464,7 +461,7 @@ mod tests {
     }
 
     #[test]
-    fn normal_and_legacy_editor_publication_both_require_material_inputs() {
+    fn editor_publication_requires_material_inputs() {
         let directory = std::env::temp_dir().join(format!(
             "yarra-default-publication-{}",
             uuid::Uuid::new_v4()
@@ -474,37 +471,31 @@ mod tests {
         world_cook::create_demo_project(&project).unwrap();
         let runtime = directory.join("runtime.sqlite");
         fs::write(&runtime, b"previous generation").unwrap();
-        for enabled in [true, false] {
-            let mut app = App::new();
-            app.insert_resource(engine::TerrainLodPreview {
-                enabled,
-                ..default()
+        let mut app = App::new();
+        app.insert_resource(RuntimePublicationPaths {
+            project_database: project.clone(),
+            runtime_database: runtime.clone(),
+            asset_root: directory.join("missing-assets"),
+        })
+        .add_systems(Startup, start_publication_worker);
+        app.update();
+        let worker = app.world().resource::<RuntimePublicationWorker>();
+        worker
+            .requests
+            .send(PublicationRequest::Publish {
+                request_id: 1,
+                source_epoch: 1,
             })
-            .insert_resource(RuntimePublicationPaths {
-                project_database: project.clone(),
-                runtime_database: runtime.clone(),
-                asset_root: directory.join("missing-assets"),
-            })
-            .add_systems(Startup, start_publication_worker);
-            app.update();
-            let worker = app.world().resource::<RuntimePublicationWorker>();
+            .unwrap();
+        assert!(
             worker
-                .requests
-                .send(PublicationRequest::Publish {
-                    request_id: 1,
-                    source_epoch: 1,
-                })
-                .unwrap();
-            assert!(
-                worker
-                    .results
-                    .recv_timeout(std::time::Duration::from_secs(10))
-                    .unwrap()
-                    .result
-                    .is_err()
-            );
-            assert_eq!(fs::read(&runtime).unwrap(), b"previous generation");
-        }
+                .results
+                .recv_timeout(std::time::Duration::from_secs(10))
+                .unwrap()
+                .result
+                .is_err()
+        );
+        assert_eq!(fs::read(&runtime).unwrap(), b"previous generation");
         fs::remove_dir_all(directory).unwrap();
     }
 

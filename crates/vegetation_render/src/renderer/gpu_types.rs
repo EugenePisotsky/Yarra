@@ -179,8 +179,7 @@ pub(super) struct DebugConfigGpu {
     // Mirrors the two WGSL `vec4<u32>` fields exactly.
     pub(super) values: [u32; 4],
     // x: live work-item count, y: diagnostic atomics, z: prepared blade data available,
-    // w: bit 0 early rejection, bit 1 candidate cache, bits 4..7 shape mode, bit 8 opening;
-    // bits 16..23 source density for the optional blade-band material (not placement).
+    // w: bit 0 early rejection, bit 1 candidate cache.
     pub(super) workload: [u32; 4],
 }
 

@@ -1,8 +1,9 @@
-//! Reproducible low-camera movement from log9, opt-in and separate from the UI baseline.
+//! Reproducible camera routes for profiles and captures, opt-in and separate from the UI
+//! baseline.
 use bevy::{diagnostic::FrameCount, prelude::*};
 use engine::{ActiveWorldSpace, GameplaySystems, WorldViewCamera};
 
-use crate::game_render::{RESOLUTION_SCALES, RenderPath as AuditRenderPath};
+use crate::game_render::RESOLUTION_SCALES;
 use crate::runtime_settings::{RuntimeSettings, Scene};
 
 pub(crate) const NAMES: &[&str] = &[
@@ -19,10 +20,6 @@ pub(crate) const NAMES: &[&str] = &[
     "landscape",
     "landscape-turn",
     "landscape-descent",
-    "ground-low",
-    "ground-overhead",
-    "ground-walk",
-    "ground-stream",
     // The player walks the start view's route with the normal follow camera.
     "actor-walk",
 ];
@@ -36,34 +33,20 @@ pub(crate) fn install(app: &mut App) {
         return;
     };
     let name = repro.name;
-    let ground = name.starts_with("ground-");
-    // Same 75%/4x/no-prepass setup as log9. Leave both optimization switches independent.
+    // 4× MSAA and no prepass unless asked for.
     *app.world_mut().resource_mut::<RuntimeSettings>() = RuntimeSettings {
-        scene: if ground {
-            Scene::Ground
-        } else {
-            Scene::Current
-        },
-        render_path: if ground {
-            AuditRenderPath::Direct
-        } else {
-            AuditRenderPath::Composite
-        },
+        scene: Scene::Current,
         // 75% unless `--resolution-scale` names another of the game's scales.
-        scale_index: if ground {
-            0
-        } else {
-            options
-                .resolution_scale
-                .and_then(|scale| RESOLUTION_SCALES.iter().position(|&s| s == scale))
-                .unwrap_or(1)
-        },
+        scale_index: options
+            .resolution_scale
+            .and_then(|scale| RESOLUTION_SCALES.iter().position(|&s| s == scale))
+            .unwrap_or(1),
         msaa: Msaa::Sample4,
         prepass: repro.prepass,
         // A scripted walk needs the character to move.
         controls_locked: name != "actor-walk",
         counters: options.counters,
-        show_ui: !ground && !repro.hide_ui,
+        show_ui: !repro.hide_ui,
         temporal_debug: repro.temporal_view,
         ..app.world().resource::<RuntimeSettings>().clone()
     };
@@ -96,7 +79,7 @@ pub(crate) fn install(app: &mut App) {
     };
     let settings = app.world().resource::<RuntimeSettings>();
     warn!(
-        "RENDER_REPRO name={name} version=9 warmup_frames=300 path_frames={path_frames} prepass={} ui={}; ground scenes use native resolution, no UI, no grass; low-walk retains 75% composite",
+        "RENDER_REPRO name={name} version=9 warmup_frames=300 path_frames={path_frames} prepass={} ui={}",
         settings.prepass, settings.show_ui
     );
     let frames = repro.frames;
@@ -280,7 +263,6 @@ fn move_camera(
     }
     let frame = profile.as_ref().map_or(frame.0, |p| p.reference_frame());
     **camera = match view.0.as_str() {
-        "ground-low" => pose(0),
         "grass-close" | "grass-away" => {
             // Match the minimum-distance third-person rig, including its elevated focus.
             // The opposite orbit exposes body lighting without the strong sun reflection.
@@ -305,17 +287,15 @@ fn move_camera(
         // Separate vertical inspection from the oblique gameplay/overhead views. NEG_Z
         // avoids a collinear look/up basis while preserving +X toward screen right.
         "grass-top-down" => Transform::from_xyz(0.0, 18.0, 0.0).looking_at(Vec3::ZERO, Vec3::NEG_Z),
-        "ground-overhead" | "grass-overhead" => {
-            Transform::from_xyz(-12.0, 18.0, 16.0).looking_at(Vec3::ZERO, Vec3::Y)
-        }
-        "ground-stream" | "grass-stream" => stream_pose(frame),
+        "grass-overhead" => Transform::from_xyz(-12.0, 18.0, 16.0).looking_at(Vec3::ZERO, Vec3::Y),
+        "grass-stream" => stream_pose(frame),
         _ => pose(frame),
     };
     if (view.0.ends_with("-stream") || view.0 == "grass-soak")
         && let Some(space) = active_space.current()
     {
-        // Drive the actual residency focus too. Camera-only ground-walk stays in
-        // the original preload ring and cannot validate page streaming.
+        // Drive the actual residency focus too. A camera-only route stays in the original
+        // preload ring and cannot validate page streaming.
         let position = if view.0 == "grass-soak" {
             soak_focus(frame)
         } else {

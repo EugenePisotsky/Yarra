@@ -49,8 +49,6 @@ fn shading_matches_reference_in_frozen_scene() {
         Prepared,
         Fallback,
         Overflow,
-        Inspection(VegetationShapeInspection),
-        Bands,
         Lighting(VegetationLightingMode),
     }
     let mut exercised_bins = [false; 4];
@@ -75,30 +73,24 @@ fn shading_matches_reference_in_frozen_scene() {
             DrawPath::Prepared,
         )
     })
-    // Use the same shader A/B comparison for promoted inspection geometry and both
-    // ways the production low mesh can reach procedural preparation. Overflow is last.
+    // Use the same shader A/B comparison for both ways the production low mesh can reach
+    // procedural preparation. Overflow is last.
     .chain(
-        VegetationShapeInspection::ALL
-            .into_iter()
-            .skip(1)
-            .map(DrawPath::Inspection)
-            .chain([
-                DrawPath::Bands,
-                DrawPath::Lighting(VegetationLightingMode::Legacy),
-                DrawPath::Lighting(VegetationLightingMode::UnlitDiagnostic),
-                DrawPath::Fallback,
-                DrawPath::Overflow,
-            ])
-            .map(|path| {
-                (
-                    Vec3::new(12.0, 3.0, 18.0),
-                    Msaa::Sample4,
-                    true,
-                    0.24,
-                    0.0,
-                    path,
-                )
-            }),
+        [
+            DrawPath::Lighting(VegetationLightingMode::UnlitDiagnostic),
+            DrawPath::Fallback,
+            DrawPath::Overflow,
+        ]
+        .map(|path| {
+            (
+                Vec3::new(12.0, 3.0, 18.0),
+                Msaa::Sample4,
+                true,
+                0.24,
+                0.0,
+                path,
+            )
+        }),
     )
     .enumerate()
     {
@@ -127,15 +119,6 @@ fn shading_matches_reference_in_frozen_scene() {
                 !matches!(path, DrawPath::Fallback);
             let mut settings = world.resource_mut::<VegetationDebugSettings>();
             settings.profile_mode = VegetationProfileMode::Full;
-            settings.shape_inspection = match path {
-                DrawPath::Inspection(mode) => mode,
-                _ => VegetationShapeInspection::Off,
-            };
-            settings.blade_bands = if matches!(path, DrawPath::Bands) {
-                VegetationBladeBands::Medium
-            } else {
-                VegetationBladeBands::Off
-            };
             settings.lighting_mode = match path {
                 DrawPath::Lighting(mode) => mode,
                 _ => VegetationLightingMode::RoundedGloss,
@@ -148,19 +131,17 @@ fn shading_matches_reference_in_frozen_scene() {
         let actual = settled_pixels(&mut app);
         let stats = snapshot(&app);
         let counts = stats.emitted_instances;
-        if !matches!(path, DrawPath::Inspection(_)) {
-            assert!(
-                counts[3] > 100,
-                "must exercise production low paired blades"
-            );
-            for (seen, count) in exercised_bins.iter_mut().zip(counts) {
-                *seen |= count > 0;
-            }
-            exercised_morph |= generated_instances(&app).iter().flatten().any(|r| {
-                let morph = (r[5] >> 16) & 0x7fff;
-                r[5] >> 31 == 0 && morph > 0 && morph < 0x7fff
-            });
+        assert!(
+            counts[3] > 100,
+            "must exercise production low paired blades"
+        );
+        for (seen, count) in exercised_bins.iter_mut().zip(counts) {
+            *seen |= count > 0;
         }
+        exercised_morph |= generated_instances(&app).iter().flatten().any(|r| {
+            let morph = (r[5] >> 16) & 0x7fff;
+            r[5] >> 31 == 0 && morph > 0 && morph < 0x7fff
+        });
         match path {
             DrawPath::Fallback => assert!(!stats.blade_preparation_enabled),
             DrawPath::Overflow => {

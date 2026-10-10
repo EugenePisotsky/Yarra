@@ -565,7 +565,7 @@ fn build_compiled_runtime(
         let terrain_key = PageKey {
             space: source_cell.space,
             cell: source_cell.cell,
-            domain: PageDomain::TerrainRender,
+            domain: PageDomain::Terrain,
             lod: 0,
         };
         let surfaces = terrain_slots.iter().map(|slot| slot.surface).collect();
@@ -623,7 +623,7 @@ fn build_compiled_runtime(
             }
         }
 
-        let mut domain_mask = domain_bit(PageDomain::TerrainRender);
+        let mut domain_mask = domain_bit(PageDomain::Terrain);
         if let Some(source_page) =
             vegetation_pages_by_cell.get(&(source_cell.space, source_cell.cell))
         {
@@ -1644,7 +1644,7 @@ mod tests {
                 .find(|page| {
                     page.key.space == WorldSpaceId(1)
                         && page.key.cell == cell
-                        && page.key.domain == PageDomain::TerrainRender
+                        && page.key.domain == PageDomain::Terrain
                 })
                 .unwrap()
                 .clone()

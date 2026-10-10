@@ -29,7 +29,7 @@ fn defaults_and_paths_are_explicit() {
     assert!(audit.panel_open && audit.audit_log);
 }
 #[test]
-fn malformed_and_retired_options_fail_before_startup() {
+fn malformed_options_fail_before_startup() {
     for args in [
         vec!["--typo"],
         vec!["--fps"],
@@ -37,12 +37,6 @@ fn malformed_and_retired_options_fail_before_startup() {
         vec!["--fps", "14"],
         vec!["--fps", "60", "--fps", "120"],
         vec!["--upscaler", "magic"],
-        vec!["--grass-field-baseline"],
-        vec!["--grass-bands", "off"],
-        vec!["--vegetation-v2-debug"],
-        vec!["--terrain-lod"],
-        vec!["--terrain-prepared"],
-        vec!["--frame-pacing-display-only"],
         vec!["--grass-prepared-blades", "1"],
         vec!["--gpu-timing-off", "--gpu-timing-detail"],
     ] {

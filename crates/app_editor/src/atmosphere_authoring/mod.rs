@@ -5,7 +5,6 @@ pub(crate) mod working;
 use crate::{
     domain_editing::DenseDomainWorkingSets,
     editing::EditorHistory,
-    preview::{EditorPreviewMode, PreviewModeState},
     project_store::{ProjectEditorStore, ProjectStoreUpdate},
     publication::RuntimePublicationState,
     saving::EditorSaveCoordinator,
@@ -93,6 +92,8 @@ impl Controls {
 #[derive(Resource, Default)]
 struct Preview {
     worlds: BTreeMap<WorldSpaceId, Controls>,
+    /// Shows the edited profile as the game starts: its initial phase, clouds running.
+    game_start: bool,
     gameplay: Option<(WorldSpaceId, AtmosphereProfile, f32)>,
 }
 fn reconcile(
@@ -105,11 +106,11 @@ fn reconcile(
             dense.atmospheres.pin(source);
         }
     }
-    if let Some((id, result)) = project.atmosphere_completion.take() {
-        if dense.atmospheres.saving == Some(id) {
-            let committed = dense.atmospheres.complete(result);
-            save.transaction_finished(committed);
-        }
+    if let Some((id, result)) = project.atmosphere_completion.take()
+        && dense.atmospheres.saving == Some(id)
+    {
+        let committed = dense.atmospheres.complete(result);
+        save.transaction_finished(committed);
     }
 }
 #[allow(clippy::too_many_arguments)]
@@ -121,7 +122,6 @@ fn sync(
     mut preview: ResMut<Preview>,
     mut state: ResMut<AtmosphereState>,
     time: Res<Time>,
-    mode: Res<PreviewModeState>,
     mut pacing: ResMut<EditorFramePacing>,
     mut cloud_clock: Option<ResMut<atmosphere::clouds::CloudClock>>,
 ) {
@@ -132,7 +132,7 @@ fn sync(
     // Weather is only ever a deliberate preview in the editor.
     clear_weather(&mut state);
     if *workspace.get() != EditorWorkspace::World {
-        state.owner = AtmosphereOwner::Study;
+        state.owner = AtmosphereOwner::Isolated;
         for controls in preview.worlds.values_mut() {
             controls.playing = false;
             controls.clouds_playing = false;
@@ -147,7 +147,7 @@ fn sync(
     let Some(entry) = dense.atmospheres.entries.get(&id) else {
         return;
     };
-    if mode.active() == Some(EditorPreviewMode::Gameplay) {
+    if preview.game_start {
         if preview
             .gameplay
             .as_ref()
@@ -161,7 +161,8 @@ fn sync(
         if let Some(clock) = cloud_clock.as_deref_mut() {
             clock.playing = true;
         }
-        // Match the standalone game's fixed startup phase until game-clock ownership lands.
+        pacing.request(FramePacingOwner::AtmospherePreview);
+        // Hold the phase the game starts at; its day clock advances from there.
         let (_, profile, phase) = preview.gameplay.as_ref().unwrap();
         state.profile = profile.clone();
         state.phase = *phase;
@@ -216,7 +217,6 @@ fn draw(
     publication: Res<RuntimePublicationState>,
     save: Res<EditorSaveCoordinator>,
     project: Res<ProjectEditorStore>,
-    mode: Res<PreviewModeState>,
     mut cloud_quality: ResMut<engine::CloudQuality>,
 ) {
     let Some(root) = frame.0.as_mut() else {
@@ -228,10 +228,9 @@ fn draw(
     if !root.ctx().input(|i| i.pointer.any_down())
         && (!root.ctx().text_edit_focused()
             || root.ctx().input(|i| i.key_pressed(egui::Key::Enter)))
+        && let Some((id, before, after)) = dense.atmospheres.finish_gesture()
     {
-        if let Some((id, before, after)) = dense.atmospheres.finish_gesture() {
-            history.record_atmosphere(id, before, after);
-        }
+        history.record_atmosphere(id, before, after);
     }
     let mut open = windows.is_open(WINDOW.id);
     if !open {
@@ -258,16 +257,18 @@ fn draw(
             let before = entry.current.clone();
             let mut edited = before.clone();
             let saved = entry.base.clone();
+            ui.strong(catalog.world_space(id).map_or("World", |s| s.name.as_str()));
+            ui.small("Changes preview on the landscape. Save & Publish updates the game.");
+            ui.checkbox(&mut preview.game_start, "Game start")
+                .on_hover_text("Show the edited profile as the game starts: its initial phase, clouds running.");
+            if preview.game_start {
+                ui.label("Turn off Game start to edit atmosphere.");
+                return;
+            }
             let controls = preview
                 .worlds
                 .entry(id)
                 .or_insert_with(|| Controls::new(&before));
-            ui.strong(catalog.world_space(id).map_or("World", |s| s.name.as_str()));
-            ui.small("Changes preview on the landscape. Save & Publish updates the game.");
-            if mode.active() != Some(EditorPreviewMode::Authoring) {
-                ui.label("Return to Authoring preview to edit atmosphere.");
-                return;
-            }
             ui.separator();
             ui.strong("Preview · temporary");
             ui.horizontal(|ui| {

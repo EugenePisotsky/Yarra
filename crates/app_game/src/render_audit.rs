@@ -4,9 +4,7 @@ mod performance;
 mod timing;
 
 use crate::frame_pacing::{FramePacing, FrameRate};
-use crate::game_render::{
-    GameRenderAssets as AuditAssets, RESOLUTION_SCALES, RenderPath as AuditRenderPath,
-};
+use crate::game_render::{GameRenderAssets, RESOLUTION_SCALES};
 use crate::runtime_settings::{RuntimeSettings, RuntimeSettingsApply, Scene};
 use bevy::{prelude::*, ui::Pressed, window::PrimaryWindow};
 use engine::{GamePointerInputBlocked, GameplaySystems};
@@ -98,7 +96,6 @@ enum Control {
     Wind,
     Lock,
     Reset,
-    RenderPath,
     Antialiasing,
     Clouds,
     Sky,
@@ -191,7 +188,6 @@ impl Control {
             Self::Wind => format!("Vegetation wind: {}", on_off(s.wind)),
             Self::Lock => format!("Lock controls: {}", on_off(s.controls_locked)),
             Self::Reset => "Reset launch settings".into(),
-            Self::RenderPath => format!("Render: {}", s.render_path.label()),
             Self::Antialiasing => {
                 if s.temporal_active() {
                     "AA: temporal (MSAA off)".into()
@@ -337,7 +333,6 @@ fn buttons(
             }
             Control::Prepass => s.prepass = !s.prepass,
             Control::Scale => {
-                s.render_path = AuditRenderPath::Composite;
                 s.scale_index = (s.scale_index + 1) % RESOLUTION_SCALES.len();
             }
             Control::TemporalDebug => {
@@ -368,13 +363,6 @@ fn buttons(
             }
             Control::Reset => {
                 session.reset(&mut s, &mut pacing);
-            }
-            Control::RenderPath => {
-                s.render_path = match s.render_path {
-                    AuditRenderPath::Composite => AuditRenderPath::Direct,
-                    AuditRenderPath::Direct => AuditRenderPath::Composite,
-                };
-                s.scale_index = 0;
             }
             Control::Antialiasing => {
                 s.msaa = match s.msaa {

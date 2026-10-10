@@ -16,7 +16,6 @@ world.workspace = true
 ron.workspace = true
 serde_json.workspace = true
 bevy_egui.workspace = true
-image = { version = "0.25", default-features = false, features = ["png"] }
 wgpu = { version = "30.0.1", default-features = false }
 terrain-render.workspace = true
 upscaling = { workspace = true, features = ["metalfx"] }

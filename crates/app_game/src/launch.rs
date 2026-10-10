@@ -36,8 +36,6 @@ pub(crate) struct LaunchOptions {
     pub input_trace: bool,
     pub streaming_smoke: bool,
     pub debug_world_switch: bool,
-    /// Trees drawn as render entities instead of from one instance buffer (comparisons).
-    pub tree_entities: bool,
     /// How many LODs coarser than the drawn one instanced trees cast shadows from.
     pub tree_shadow_lod: usize,
     pub timer_pacing: bool,
@@ -46,8 +44,6 @@ pub(crate) struct LaunchOptions {
     pub terrain_procedural: bool,
     pub terrain_universal: bool,
     pub terrain_near_off: bool,
-    /// Diagnostic: the farthest tree mesh before impostors, in metres.
-    pub impostor_handoff: Option<f32>,
     pub vertex_reference: bool,
     pub placement_reference: bool,
     pub candidate_reference: bool,
@@ -203,11 +199,6 @@ const FLAGS: &[(&str, bool, &str)] = &[
         "Enable the demo Tab world-space switch",
     ),
     (
-        "--tree-entities",
-        false,
-        "Draw trees as one render entity per mesh, the old path (comparisons)",
-    ),
-    (
         "--tree-shadow-lod",
         true,
         "0..2: LOD steps coarser that instanced trees cast shadows from (default 0)",
@@ -303,11 +294,6 @@ const FLAGS: &[(&str, bool, &str)] = &[
         "--render-temporal-view",
         true,
         "motion | depth: show MetalFX Temporal's motion or depth input in a repro",
-    ),
-    (
-        "--impostor-handoff",
-        true,
-        "METRES: farthest tree mesh before impostors, 0..166 (diagnostic; 0 draws only impostors)",
     ),
     ("--render-ui-off", false, "Hide UI during a repro"),
     (
@@ -441,26 +427,9 @@ impl LaunchOptions {
             let name = arg.to_str().ok_or("Option names must be UTF-8")?;
             let name = if name == "-h" { "--help" } else { name };
             let Some(&(key, takes_value, _)) = FLAGS.iter().find(|f| f.0 == name) else {
-                let reason = match name {
-                    "--grass-field-baseline" => {
-                        "The previous-catalog experiment was removed; use the published catalog."
-                    }
-                    "--grass-bands" => {
-                        "The standalone blade-band experiment controls were removed."
-                    }
-                    "--vegetation-v2-debug" => "Use F1 Advanced for terrain page gizmos.",
-                    "--frame-pacing-display-only" => {
-                        "The intermediate display-only pacing experiment was removed."
-                    }
-                    "--tree-instancing" => {
-                        "Instanced trees are the default; --tree-entities draws the old path."
-                    }
-                    "--terrain-lod" | "--terrain-prepared" => {
-                        "This path is already the default; omit the obsolete switch."
-                    }
-                    _ => "Use --help to list supported options.",
-                };
-                return Err(format!("Unknown or retired option {name:?}. {reason}"));
+                return Err(format!(
+                    "Unknown option {name:?}. Use --help to list supported options."
+                ));
             };
             let value = if takes_value {
                 let value = args
@@ -502,14 +471,6 @@ impl LaunchOptions {
         if fps != 0 && !(15..=240).contains(&fps) {
             return Err("--fps requires 0 or 15..240".into());
         }
-        let impostor_handoff = value("--impostor-handoff")?
-            .map(|v| {
-                v.parse::<f32>()
-                    .ok()
-                    .filter(|m| (0.0..=166.0).contains(m))
-                    .ok_or("--impostor-handoff requires 0..166 metres")
-            })
-            .transpose()?;
         let tree_shadow_lod = value("--tree-shadow-lod")?
             .map(|v| {
                 v.parse::<usize>()
@@ -878,7 +839,6 @@ impl LaunchOptions {
             input_trace: has("--trace-camera-input"),
             streaming_smoke: has("--streaming-smoke"),
             debug_world_switch: has("--debug-world-switch"),
-            tree_entities: has("--tree-entities"),
             tree_shadow_lod,
             timer_pacing: has("--frame-pacing-timer"),
             terrain_legacy: has("--terrain-legacy"),
@@ -886,7 +846,6 @@ impl LaunchOptions {
             terrain_procedural: has("--terrain-procedural"),
             terrain_universal: has("--terrain-prepared-universal"),
             terrain_near_off: has("--terrain-near-off"),
-            impostor_handoff,
             vertex_reference: has("--grass-vertex-reference"),
             placement_reference: has("--grass-placement-reference"),
             candidate_reference: has("--grass-candidate-reference"),

@@ -2,7 +2,7 @@
 use crate::{TerrainNodeKey, terrain_hierarchy::TerrainHierarchyError};
 use serde::{Deserialize, Serialize};
 
-/// Version 2 stores rain hollowness in colour alpha; version 1 pages decode with none.
+/// Version 2 stores rain hollowness in colour alpha.
 pub const TERRAIN_COMPOSITE_VERSION: u16 = 2;
 pub const TERRAIN_COMPOSITE_INTERIOR: usize = 64;
 pub const TERRAIN_COMPOSITE_GUTTER: usize = 4;
@@ -72,31 +72,16 @@ pub fn decode_terrain_composite(bytes: &[u8]) -> Result<TerrainComposite, String
     if bytes.len() > MAX_TERRAIN_COMPOSITE_BYTES {
         return Err("terrain composite size limit".into());
     }
-    let ((version, mut value), read): ((u16, TerrainComposite), usize) =
+    let ((version, value), read): ((u16, TerrainComposite), usize) =
         bincode::serde::decode_from_slice(
             bytes,
             bincode::config::standard().with_limit::<MAX_TERRAIN_COMPOSITE_BYTES>(),
         )
         .map_err(|e| e.to_string())?;
-    if !(1..=TERRAIN_COMPOSITE_VERSION).contains(&version) || read != bytes.len() {
+    if version != TERRAIN_COMPOSITE_VERSION || read != bytes.len() {
         return Err("terrain composite version/trailing bytes".into());
     }
     value.validate().map_err(|e| e.to_string())?;
-    if version == 1 {
-        // Opaque alpha predates hollowness: publish no standing water until re-cooked.
-        if value
-            .mips
-            .iter()
-            .any(|m| m.color.chunks_exact(4).any(|c| c[3] != 255))
-        {
-            return Err("terrain composite version 1 requires opaque alpha".into());
-        }
-        for mip in &mut value.mips {
-            for texel in mip.color.chunks_exact_mut(4) {
-                texel[3] = 0;
-            }
-        }
-    }
     Ok(value)
 }
 
@@ -106,12 +91,12 @@ mod tests {
     use crate::{CellCoord, TerrainNodeKey, WorldSpaceId};
 
     #[test]
-    fn version_one_pages_decode_without_standing_water() {
+    fn composites_round_trip_and_other_versions_are_rejected() {
         let mips = (0..TERRAIN_COMPOSITE_MIPS)
             .map(|level| {
                 let texels = TerrainComposite::mip_size(level).pow(2);
                 TerrainCompositeMip {
-                    color: [90, 80, 70, 255].repeat(texels),
+                    color: [90, 80, 70, 17].repeat(texels),
                     response: [128, 128, 200, 255].repeat(texels),
                 }
             })
@@ -124,23 +109,10 @@ mod tests {
             fingerprint: [7; 32],
             mips,
         };
+        let bytes = encode_terrain_composite(&tile).unwrap();
+        assert_eq!(decode_terrain_composite(&bytes).unwrap(), tile);
         let v1 =
             bincode::serde::encode_to_vec((1_u16, &tile), bincode::config::standard()).unwrap();
-        let decoded = decode_terrain_composite(&v1).unwrap();
-        assert!(decoded.mips.iter().all(|m| {
-            m.color
-                .chunks_exact(4)
-                .all(|c| c[..3] == [90, 80, 70] && c[3] == 0)
-        }));
-        let v2 = encode_terrain_composite(&tile).unwrap();
-        assert_eq!(decode_terrain_composite(&v2).unwrap(), tile);
-        let mut hollow = tile.clone();
-        hollow.mips[0].color[3] = 17;
-        let v1 =
-            bincode::serde::encode_to_vec((1_u16, &hollow), bincode::config::standard()).unwrap();
-        assert!(
-            decode_terrain_composite(&v1).is_err(),
-            "v1 alpha was always opaque"
-        );
+        assert!(decode_terrain_composite(&v1).is_err());
     }
 }

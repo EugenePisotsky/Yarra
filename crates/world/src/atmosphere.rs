@@ -62,15 +62,11 @@ pub struct AtmosphereProfile {
     /// Sky light at Night, Sunrise, Day, Sunset. Sunrise and sunset share an elevation, not a
     /// palette.
     pub phases: [LightingPhase; 4],
-    #[serde(default)]
     pub night: NightLighting,
-    #[serde(default)]
     pub clouds: crate::clouds::CloudSettings,
     /// Ground haze and valley mist.
-    #[serde(default)]
     pub fog: crate::fog::FogSettings,
     /// Weather presets and random sequence the game plays over this profile.
-    #[serde(default)]
     pub weather: crate::weather::WeatherSettings,
 }
 
