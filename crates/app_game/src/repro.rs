@@ -2,7 +2,7 @@
 use bevy::{diagnostic::FrameCount, prelude::*};
 use engine::{ActiveWorldSpace, GameplaySystems, WorldViewCamera};
 
-use crate::game_render::RenderPath as AuditRenderPath;
+use crate::game_render::{RESOLUTION_SCALES, RenderPath as AuditRenderPath};
 use crate::runtime_settings::{RuntimeSettings, Scene};
 
 pub(crate) const NAMES: &[&str] = &[
@@ -49,7 +49,15 @@ pub(crate) fn install(app: &mut App) {
         } else {
             AuditRenderPath::Composite
         },
-        scale_index: if ground { 0 } else { 1 },
+        // 75% unless `--resolution-scale` names another of the game's scales.
+        scale_index: if ground {
+            0
+        } else {
+            options
+                .resolution_scale
+                .and_then(|scale| RESOLUTION_SCALES.iter().position(|&s| s == scale))
+                .unwrap_or(1)
+        },
         msaa: Msaa::Sample4,
         prepass: repro.prepass,
         // A scripted walk needs the character to move.
