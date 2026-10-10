@@ -273,6 +273,7 @@ fn collect(
         Option<&MeshTag>,
         Has<Instanced>,
         Option<&VisibilityRange>,
+        &Visibility,
     )>,
     objects: Query<(
         &ScreenSpaceLod,
@@ -286,7 +287,7 @@ fn collect(
     mut gathering: Local<Gathering>,
 ) {
     if !settings.enabled {
-        for (entity, .., instanced, _) in &trees {
+        for (entity, .., instanced, _, _) in &trees {
             if instanced {
                 commands
                     .entity(entity)
@@ -305,7 +306,7 @@ fn collect(
 
     // The main view: every visible mesh of an object that fades over time (others keep Bevy's
     // per-view distance crossfades, so they stay entities).
-    for (entity, mesh, material, transform, visible, aabb, tag, instanced, range) in &trees {
+    for (entity, mesh, material, transform, visible, aabb, tag, instanced, range, _) in &trees {
         if range != Some(&TIMED_RANGE) {
             continue;
         }
@@ -391,9 +392,16 @@ fn collect(
                 }
                 let tag = (TAG_BIAS + level) as u32;
                 for &entity in meshes.iter() {
-                    let Ok((_, mesh, material, transform, _, aabb, ..)) = trees.get(entity) else {
+                    // Timed LOD hides whole scenes, which may still cast; a mesh hidden itself
+                    // (F1 Objects off, the Ground and Grass scenes) casts nothing, as entities do.
+                    let Ok((_, mesh, material, transform, _, aabb, .., visibility)) =
+                        trees.get(entity)
+                    else {
                         continue;
                     };
+                    if *visibility == Visibility::Hidden {
+                        continue;
+                    }
                     let affine = transform.affine();
                     let instance = TreeInstance::new(transform, tag);
                     for (index, cascade) in gathering.cascades.iter_mut().enumerate() {
