@@ -2,9 +2,9 @@
 // camera-anchored boxes that wrap a world-fixed lattice (crates/atmosphere/src/ambient_particles.rs).
 // Drawn over the resolved HDR scene with a soft depth test, like the rain.
 import bevy_pbr::render::mesh_view_types::{Lights, DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT};
-import package::shaders::clouds::maps::{cloud_beam, forest_sky_share};
+import package::shaders::environment::maps::{cloud_beam, forest_sky_share};
 import package::shaders::sky::sun::cascade_visibility;
-import package::shaders::weather::particles::{clouds, view, random3, scene_depth};
+import package::shaders::weather::particles::{environment, view, random3, scene_depth};
 
 struct Ambient {
     time: vec4<f32>, // x: fraction of the motion period, y: the period in seconds
@@ -85,7 +85,7 @@ fn shadow_map_visibility(p: vec3<f32>) -> f32 {
     for (var i = 0u; i < lights.n_directional_lights; i += 1u) {
         let light = &lights.directional_lights[i];
         if ((*light).flags & DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u
-            && dot((*light).direction_to_light, clouds.sun.xyz) > 0.995 {
+            && dot((*light).direction_to_light, environment.sun.xyz) > 0.995 {
             index = i32(i);
             break;
         }
@@ -111,14 +111,14 @@ fn shadow_map_visibility(p: vec3<f32>) -> f32 {
 
 // Sunlight past the cloud layer's shadow, as surfaces see it.
 fn cloud_visibility(p: vec3<f32>) -> f32 {
-    return cloud_beam(cloud_shadow, repeat_sampler, clouds.layer, clouds.offset, clouds.sun.xyz,
-        clouds.weather.z, p);
+    return cloud_beam(cloud_shadow, repeat_sampler, environment.layer, environment.offset, environment.sun.xyz,
+        environment.weather.z, p);
 }
 
 // Forest map texel under `xz`: highest crown top, lowest crown base, foliage density and
 // canopy top (atmosphere/src/forest_shadow.rs). Density 0 off the map.
 fn crown_at(xz: vec2<f32>) -> vec4<f32> {
-    let parameters = clouds.forest_shadow;
+    let parameters = environment.forest_shadow;
     if parameters.z <= 0.0 {
         return vec4(0.0);
     }
@@ -132,16 +132,16 @@ fn crown_at(xz: vec2<f32>) -> vec4<f32> {
 
 // Share of the sky's light reaching `p` past the crowns, as surfaces under them see it.
 fn sky_visibility(p: vec3<f32>) -> f32 {
-    return forest_sky_share(forest_map, clamp_sampler, clouds.forest_shadow, clouds.forest_sky.x,
+    return forest_sky_share(forest_map, clamp_sampler, environment.forest_shadow, environment.forest_sky.x,
         p);
 }
 
 // Ground height of the mist map, or `fallback` off it.
 fn ground_at(xz: vec2<f32>, fallback: f32) -> f32 {
-    if clouds.mist_map.w < 0.5 {
+    if environment.mist_map.w < 0.5 {
         return fallback;
     }
-    let uv = (xz - clouds.mist_map.xy) / (clouds.mist_map.z * vec2<f32>(textureDimensions(mist_map)));
+    let uv = (xz - environment.mist_map.xy) / (environment.mist_map.z * vec2<f32>(textureDimensions(mist_map)));
     if any(uv <= vec2(0.0)) || any(uv >= vec2(1.0)) {
         return fallback;
     }
@@ -197,7 +197,7 @@ fn vertex(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance:
     let edge = abs(p - anchor) / (0.5 * size);
     alpha *= 1.0 - smoothstep(0.7, 1.0, max(edge.x, edge.z));
 
-    let sun = clouds.sun.xyz;
+    let sun = environment.sun.xyz;
     let corner = vertex % 6u;
     let cx = select(-1.0, 1.0, corner == 1u || corner == 2u || corner == 4u);
     let cy = select(-1.0, 1.0, corner == 2u || corner == 4u || corner == 5u);
@@ -234,11 +234,11 @@ fn vertex(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance:
         // Lit from the side the light reaches; sunlight seen through the leaf is dimmer.
         let to_camera = normalize(view.world_position - p);
         let facing = dot(normal, sun) * dot(normal, to_camera);
-        let sunlight = clouds.near_sun.rgb
+        let sunlight = environment.near_sun.rgb
             * shadow_map_visibility(p) * cloud_visibility(p) * abs(dot(normal, sun))
             * select(0.4, 1.0, facing >= 0.0);
-        let sky = clouds.ambient.rgb * clouds.ambient.w * sky_visibility(p) * 0.8;
-        let moon = clouds.moon_color.rgb * clouds.moon.w * 0.5;
+        let sky = environment.ambient.rgb * environment.ambient.w * sky_visibility(p) * 0.8;
+        let moon = environment.moon_color.rgb * environment.moon.w * 0.5;
         radiance = leaf_albedo(c.x, sprig) / 3.14159265 * (sunlight + sky + moon);
     } else {
         if kind == FLUFF {
@@ -259,14 +259,14 @@ fn vertex(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance:
         let ray = normalize(p - view.world_position);
         let mu = dot(sun, ray);
         let lit = shadow_map_visibility(p) * cloud_visibility(p) * step(0.0, sun.y);
-        let sunlight = clouds.near_sun.rgb * lit;
+        let sunlight = environment.near_sun.rgb * lit;
         let open = sky_visibility(p);
-        let sky = clouds.ambient.rgb * clouds.ambient.w * open;
+        let sky = environment.ambient.rgb * environment.ambient.w * open;
         // Motes read only as sunbeams in shade, so they keep to the woods; seeds blow over
         // open ground.
         alpha *= select(1.0 - smoothstep(0.7, 0.95, open), mix(0.25, 1.0, open), kind == FLUFF);
-        let moon = clouds.moon_color.rgb * clouds.moon.w;
-        let moon_mu = dot(clouds.moon.xyz, ray);
+        let moon = environment.moon_color.rgb * environment.moon.w;
+        let moon_mu = dot(environment.moon.xyz, ray);
         // Motes scatter strongly forwards, so they show most against the light. Seed heads
         // also reflect like a pale sphere, so lit from the front they show white against the
         // sky rather than as dark specks.
@@ -295,7 +295,7 @@ fn vertex(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance:
         let drawn = max(true_radius, select(1.5, 2.0, kind == FLUFF));
         alpha *= DOT_NORMAL * (true_radius / drawn) * (true_radius / drawn);
         // Particles brushing past the lens would fill the screen.
-        alpha *= smoothstep(0.2, 0.6, centre.w) * exp(-clouds.fog.w * centre.w);
+        alpha *= smoothstep(0.2, 0.6, centre.w) * exp(-environment.fog.w * centre.w);
         if alpha < 1e-5 { return out; }
         let pixel = centre.xy / centre.w * half_size + vec2(cx, cy) * drawn;
         out.position = vec4(pixel / half_size * centre.w, 0.5 * centre.w, centre.w);
@@ -308,7 +308,7 @@ fn vertex(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance:
     }
     let clip = view.unjittered_clip_from_world * vec4(world_corner, 1.0);
     if clip.w < 0.2 { return out; }
-    alpha *= smoothstep(0.3, 1.0, clip.w) * exp(-clouds.fog.w * clip.w);
+    alpha *= smoothstep(0.3, 1.0, clip.w) * exp(-environment.fog.w * clip.w);
     out.position = clip;
     out.coords = vec2(cx, cy);
     out.view_depth = clip.w;

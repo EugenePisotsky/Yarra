@@ -6,7 +6,8 @@
 //! and fall to the ground of the mist map. Drawn on the resolved HDR image with the rain.
 use crate::{
     ApplyAtmosphere, AtmosphereOwner, AtmospherePresentation, AtmosphereState,
-    WorldEnvironmentView, clouds::CloudAssets,
+    WorldEnvironmentView,
+    environment::{EnvironmentAssets, EnvironmentParams},
 };
 use bevy::{
     core_pipeline::{Core3dSystems, schedule::Core3d},
@@ -238,9 +239,7 @@ fn init(
                     ),
                     storage_buffer_read_only_sized(
                         false,
-                        std::num::NonZeroU64::new(
-                            std::mem::size_of::<crate::clouds::CloudParams>() as u64,
-                        ),
+                        std::num::NonZeroU64::new(std::mem::size_of::<EnvironmentParams>() as u64),
                     ),
                     uniform_buffer::<ViewUniform>(true),
                     if i == 0 {
@@ -322,7 +321,7 @@ fn draw(
         &Msaa,
     )>,
     frame: Res<AmbientFrame>,
-    assets: Option<Res<CloudAssets>>,
+    assets: Option<Res<EnvironmentAssets>>,
     buffers: Res<RenderAssets<GpuShaderBuffer>>,
     images: Res<RenderAssets<GpuImage>>,
     pipelines: Res<Pipelines>,

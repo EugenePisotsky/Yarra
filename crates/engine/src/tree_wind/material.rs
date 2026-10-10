@@ -1,5 +1,7 @@
 use super::{MAX_DISPLACEMENT, WindBuffer};
-use atmosphere::clouds::{CloudMaterial, CloudMaterialOptIn, CloudMaterialSystems};
+use atmosphere::environment::{
+    EnvironmentMaterial, EnvironmentMaterialOptIn, EnvironmentMaterialSystems,
+};
 use bevy::{
     asset::AssetEventSystems,
     camera::{primitives::Aabb, visibility::VisibilitySystems},
@@ -20,11 +22,11 @@ use bevy::{
 };
 use std::collections::{HashMap, HashSet};
 
-pub(super) type TreeWindMaterial = ExtendedMaterial<CloudMaterial, TreeWindExtension>;
+pub(super) type TreeWindMaterial = ExtendedMaterial<EnvironmentMaterial, TreeWindExtension>;
 #[derive(Asset, AsBindGroup, TypePath, Clone, Debug)]
 #[bind_group_data(TreeWindKey)]
 pub(super) struct TreeWindExtension {
-    // StandardMaterial uses 0–99; CloudMaterial uses 120–122.
+    // StandardMaterial uses 0–99; EnvironmentMaterial uses 120–122.
     #[storage(100, read_only)]
     wind: Handle<ShaderBuffer>,
     crown_shading: bool,
@@ -113,11 +115,11 @@ pub(super) struct TreeWindMaterialPlugin;
 impl Plugin for TreeWindMaterialPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(MaterialPlugin::<TreeWindMaterial>::default())
-            .add_systems(PostUpdate, opt_in.before(CloudMaterialSystems))
+            .add_systems(PostUpdate, opt_in.before(EnvironmentMaterialSystems))
             .add_systems(
                 PostUpdate,
                 convert
-                    .after(CloudMaterialSystems)
+                    .after(EnvironmentMaterialSystems)
                     .before(AssetEventSystems),
             )
             .add_systems(
@@ -134,7 +136,7 @@ struct WindChecked;
 #[derive(Component)]
 struct WindBoundsPending;
 #[derive(Component)]
-struct SourceMaterial(Handle<CloudMaterial>);
+struct SourceMaterial(Handle<EnvironmentMaterial>);
 
 fn extra_is(extras: &str, key: &str, value: &str) -> bool {
     serde_json::from_str::<serde_json::Value>(extras)
@@ -159,7 +161,7 @@ fn wind_profile(extras: &str) -> Vec4 {
         .unwrap_or(Vec4::new(1., 3., 1., 1.))
 }
 
-/// How tagged foliage is lit (see TREE_CROWN_SHADING in the cloud material shaders).
+/// How tagged foliage is lit (see TREE_CROWN_SHADING in the shaders under `shaders/lighting/`).
 /// Tagged modes treat vertex colour as crown occlusion, not an albedo tint.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum FoliageShading {
@@ -188,7 +190,7 @@ fn foliage_shading(extras: &str) -> FoliageShading {
     }
 }
 
-fn foliage_base(source: &CloudMaterial, shading: FoliageShading) -> CloudMaterial {
+fn foliage_base(source: &EnvironmentMaterial, shading: FoliageShading) -> EnvironmentMaterial {
     let mut material = source.clone();
     if matches!(
         shading,
@@ -208,13 +210,13 @@ fn opt_in(
         (Entity, &GltfMaterialExtras),
         (
             With<MeshMaterial3d<StandardMaterial>>,
-            Without<CloudMaterialOptIn>,
+            Without<EnvironmentMaterialOptIn>,
         ),
     >,
 ) {
     for (entity, extras) in &candidates {
         if uses_wind(&extras.value) {
-            commands.entity(entity).insert(CloudMaterialOptIn);
+            commands.entity(entity).insert(EnvironmentMaterialOptIn);
         }
     }
 }
@@ -225,20 +227,22 @@ fn convert(
     buffer: Option<Res<WindBuffer>>,
     meshes: Res<Assets<Mesh>>,
     server: Option<Res<AssetServer>>,
-    source: Res<Assets<CloudMaterial>>,
+    source: Res<Assets<EnvironmentMaterial>>,
     mut target: ResMut<Assets<TreeWindMaterial>>,
-    mut events: MessageReader<AssetEvent<CloudMaterial>>,
+    mut events: MessageReader<AssetEvent<EnvironmentMaterial>>,
     candidates: Query<
         (
             Entity,
             &GltfMaterialExtras,
             &Mesh3d,
-            &MeshMaterial3d<CloudMaterial>,
+            &MeshMaterial3d<EnvironmentMaterial>,
         ),
         Without<WindChecked>,
     >,
     retained: Query<&SourceMaterial>,
-    mut cache: Local<HashMap<AssetId<CloudMaterial>, (Handle<TreeWindMaterial>, FoliageShading)>>,
+    mut cache: Local<
+        HashMap<AssetId<EnvironmentMaterial>, (Handle<TreeWindMaterial>, FoliageShading)>,
+    >,
 ) {
     let Some(buffer) = buffer else {
         return;
@@ -308,7 +312,7 @@ fn convert(
         // leave a bare trunk for a frame on every tree LOD switch.
         commands
             .entity(entity)
-            .remove::<MeshMaterial3d<CloudMaterial>>()
+            .remove::<MeshMaterial3d<EnvironmentMaterial>>()
             .insert((
                 SourceMaterial(handle.0.clone()),
                 MeshMaterial3d(converted),
@@ -361,7 +365,7 @@ mod tests {
 
     #[test]
     fn crown_shading_keeps_back_faces_without_flipping_and_pads_keep_the_flip() {
-        let source = CloudMaterial {
+        let source = EnvironmentMaterial {
             base: StandardMaterial {
                 double_sided: true,
                 cull_mode: None,
@@ -392,9 +396,9 @@ mod tests {
     fn scene_instances_share_materials_and_lod_replacements_keep_cloud_updates() {
         let mut app = App::new();
         app.init_resource::<Assets<Mesh>>()
-            .init_resource::<Assets<CloudMaterial>>()
+            .init_resource::<Assets<EnvironmentMaterial>>()
             .init_resource::<Assets<TreeWindMaterial>>()
-            .add_message::<AssetEvent<CloudMaterial>>()
+            .add_message::<AssetEvent<EnvironmentMaterial>>()
             .insert_resource(WindBuffer(Handle::default()))
             .add_systems(Update, (convert, expand_bounds).chain());
         let mesh = Mesh::new(
@@ -406,8 +410,8 @@ mod tests {
         let mesh = app.world_mut().resource_mut::<Assets<Mesh>>().add(mesh);
         let material = app
             .world_mut()
-            .resource_mut::<Assets<CloudMaterial>>()
-            .add(CloudMaterial {
+            .resource_mut::<Assets<EnvironmentMaterial>>()
+            .add(EnvironmentMaterial {
                 base: StandardMaterial {
                     alpha_mode: AlphaMode::Mask(0.5),
                     ..default()
@@ -447,20 +451,20 @@ mod tests {
         );
         assert!(
             app.world()
-                .get::<MeshMaterial3d<CloudMaterial>>(unrelated)
+                .get::<MeshMaterial3d<EnvironmentMaterial>>(unrelated)
                 .is_some()
         );
         assert!(app.world().get::<Aabb>(a).unwrap().half_extents.x > 2.);
         app.world_mut().despawn(a);
         let new_lod = spawn(&mut app, r#"{"yarra_wind":"foliage_uv1_v1"}"#);
         app.world_mut()
-            .resource_mut::<Assets<CloudMaterial>>()
+            .resource_mut::<Assets<EnvironmentMaterial>>()
             .get_mut(&material)
             .unwrap()
             .base
             .perceptual_roughness = 0.17;
         app.world_mut()
-            .write_message(AssetEvent::<CloudMaterial>::Modified { id: material.id() });
+            .write_message(AssetEvent::<EnvironmentMaterial>::Modified { id: material.id() });
         app.update();
         assert_eq!(
             app.world()

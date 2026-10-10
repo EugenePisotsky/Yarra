@@ -2,9 +2,9 @@
 // bindings 1-3 of their group, random numbers and the scene's depth for their soft depth test.
 // Binding 0 is each pass's own uniform.
 import bevy_render::view::View;
-import package::shaders::clouds::types::CloudParams;
+import package::shaders::environment::params::EnvironmentParams;
 
-@group(0) @binding(1) var<storage, read> clouds: CloudParams;
+@group(0) @binding(1) var<storage, read> environment: EnvironmentParams;
 @group(0) @binding(2) var<uniform> view: View;
 @if(MULTISAMPLED)
 @group(0) @binding(3) var depth: texture_depth_multisampled_2d;

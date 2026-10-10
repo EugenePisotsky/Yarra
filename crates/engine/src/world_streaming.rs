@@ -18,7 +18,7 @@ pub use rebase::WorldRenderRoot;
 pub use smoke::StreamingSmokePlugin;
 pub(crate) mod terrain_lod;
 pub use terrain_lod::{
-    LiveTerrainPreview, TerrainContactReadiness, TerrainLodPreview, TerrainLodStats,
+    LiveTerrainPreview, TerrainContactReadiness, TerrainHierarchy, TerrainLodStats,
     TerrainPreviewRequest,
 };
 
@@ -288,7 +288,7 @@ pub struct WorldCatalog {
 ///
 /// Publishing code first atomically replaces the database file, then requests the exact expected
 /// generation here. The worker prepares a second reader while the current one stays live.
-/// With the hierarchy preview enabled, a complete uploaded cover must also be ready.
+/// With the terrain hierarchy enabled, a complete uploaded cover must also be ready.
 /// Only a matching worker commit acknowledgement replaces the catalog and source pages;
 /// preparation failures discard the candidate and retain the current generation.
 #[derive(Resource, Debug, Default)]
@@ -409,7 +409,7 @@ enum StreamPhase {
 /// CPU-readable relief carried by a resident streamed terrain entity.
 ///
 /// This is the bridge for vegetation, character grounding, interactions, and later shadow proxies:
-/// every consumer samples the canonical cooked surface. In the hierarchy preview
+/// every consumer samples the canonical cooked surface. With the terrain hierarchy
 /// this entity owns only CPU data; it does not also create a ground mesh.
 #[derive(Component, Debug, Clone)]
 pub struct StreamedTerrainSurface {
@@ -758,7 +758,7 @@ fn apply_world_space_transition(
     mut entry: ResMut<terrain_lod::entry::TerrainEntry>,
     mut terrain: ResMut<terrain_lod::TerrainLodStream>,
     tracker: Res<terrain_lod::UploadTracker>,
-    lod_config: Res<TerrainLodPreview>,
+    lod_config: Res<TerrainHierarchy>,
     reload: Res<WorldGenerationReload>,
 ) {
     if reload.active() {
@@ -889,7 +889,7 @@ fn sync_stream_focus_to_viewpoint(
 fn update_world_origin(
     mut commands: Commands,
     config: Res<WorldStreamingConfig>,
-    terrain_lod: Res<TerrainLodPreview>,
+    terrain_lod: Res<TerrainHierarchy>,
     viewpoint: Res<WorldViewpoint>,
     mut origin: ResMut<WorldOrigin>,
     mut terrain_meshes: ResMut<Assets<Mesh>>,

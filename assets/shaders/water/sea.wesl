@@ -7,12 +7,12 @@ import bevy_pbr::atmosphere::{
     bindings::{lights, view},
     functions::{get_view_position, sample_transmittance_lut},
 };
-import package::shaders::clouds::maps::cloud_shadow_texel;
+import package::shaders::environment::maps::cloud_shadow_texel;
 import package::shaders::sky::air::scattering;
 import package::shaders::sky::celestial::clear_sky;
 import package::shaders::sky::cloud_layer::cloud_layer;
 import package::shaders::sky::composite_common::{
-    clouds, cloud_shadow, cloud_shadow_sampler, depth, mist_sampler, noise, noise_sampler,
+    environment, cloud_shadow, cloud_shadow_sampler, depth, mist_sampler, noise, noise_sampler,
     shore_map, Path, NO_SEA,
 };
 import package::shaders::water::waves::sea_waves;
@@ -84,10 +84,10 @@ fn seabed_slope(pixel: vec2<i32>, here: vec3<f32>) -> f32 {
 
 // Distance along `ray` to the sea's surface, or NO_SEA.
 fn sea_distance(ray: vec3<f32>) -> f32 {
-    if clouds.ocean_waves.x < 0.5 || ray.y >= 0.0 {
+    if environment.ocean_waves.x < 0.5 || ray.y >= 0.0 {
         return NO_SEA;
     }
-    let height = view.world_position.y - clouds.ocean.x;
+    let height = view.world_position.y - environment.ocean.x;
     if height <= 0.0 {
         return NO_SEA;
     }
@@ -180,18 +180,18 @@ fn along_shore(local: vec2<f32>) -> vec3<f32> {
 // Without `shade` only the height is worked out, for the march to the surface.
 fn surf_at(xz: vec2<f32>, footprint: f32, shade: bool) -> Surf {
     var surf = Surf(1.0e4, 0.0, vec2(0.0), 0.0, 0.0, 0.0);
-    if clouds.shore_map.w <= 0.0 {
+    if environment.shore_map.w <= 0.0 {
         return surf;
     }
     let size = vec2<f32>(textureDimensions(shore_map));
     // World-anchored: from the map's own corner.
-    let local = xz - clouds.shore_map.xy;
-    let map = textureSampleLevel(shore_map, mist_sampler, local / (clouds.shore_map.z * size), 0.0);
+    let local = xz - environment.shore_map.xy;
+    let map = textureSampleLevel(shore_map, mist_sampler, local / (environment.shore_map.z * size), 0.0);
     let depth = map.x;
     surf.depth = depth;
-    let period = clouds.shore_map.w;
+    let period = environment.shore_map.w;
     let along = along_shore(local);
-    let theta = (clouds.ocean.w - map.y) / period + along.r * 1.5;
+    let theta = (environment.ocean.w - map.y) / period + along.r * 1.5;
     let s = fract(theta);
     surf.cycle = s;
     let weight = 1.0 - smoothstep(SURF_DEPTH * 0.6, SURF_DEPTH, depth);
@@ -204,7 +204,7 @@ fn surf_at(xz: vec2<f32>, footprint: f32, shade: bool) -> Surf {
     // whole across each crest.
     let passed = floor(theta);
     let luck = 0.5 + 0.5 * sin(vec2(passed, passed + 1.0) * 2.39996 + along.g * 6.2831853);
-    let strength = clouds.ocean_waves.y;
+    let strength = environment.ocean_waves.y;
     let shoaling = pow(SURF_DEPTH / max(depth, 0.3), 0.25);
     let shoaled = SURF_HEIGHT * strength * strength * (0.6 + 0.8 * luck) * (0.7 + 0.6 * along.b)
         * shoaling;
@@ -237,7 +237,7 @@ fn surf_at(xz: vec2<f32>, footprint: f32, shade: bool) -> Surf {
     }
     let wide_roller = sqrt(0.035 * 0.035 + blur * blur);
     let roller = 0.035 / wide_roller * exp(-(v * v) / (wide_roller * wide_roller));
-    let drift = clouds.ocean.yz * clouds.ocean.w * 0.2;
+    let drift = environment.ocean.yz * environment.ocean.w * 0.2;
     // It thins as it opens, and the bubbles left grow clearer.
     let left = exp(-s * period / SURF_FOAM_LIFE);
     let trail = left * left * (0.5 + 0.5 * left) * foam_lace(local + drift, 1.0 - left, footprint);
@@ -258,7 +258,7 @@ fn standing_surf(xz: vec2<f32>, footprint: f32) -> f32 {
 fn sea_surface(ray: vec3<f32>) -> f32 {
     let flat = sea_distance(ray);
     let standing = smoothstep(0.6 * SURF_STANDING, SURF_STANDING, -ray.y);
-    if flat >= NO_SEA || standing <= 0.0 || clouds.shore_map.w <= 0.0 {
+    if flat >= NO_SEA || standing <= 0.0 || environment.shore_map.w <= 0.0 {
         return flat;
     }
     let p = view.world_position + ray * flat;
@@ -266,13 +266,13 @@ fn sea_surface(ray: vec3<f32>) -> f32 {
     // The pixel's length on the water along the view, per metre of distance.
     let spread = 2.0 / (view.clip_from_view[1][1] * view.main_pass_viewport.w) / max(-ray.y, 0.02);
     let map = textureSampleLevel(shore_map, mist_sampler,
-        (p.xz - clouds.shore_map.xy) / (clouds.shore_map.z * size), 0.0);
+        (p.xz - environment.shore_map.xy) / (environment.shore_map.z * size), 0.0);
     if map.x >= SURF_STANDING_DEPTH + 1.0 || map.y >= SURF_UNREACHED {
         return flat;
     }
-    let strength = clouds.ocean_waves.y;
+    let strength = environment.ocean_waves.y;
     let scale = strength * strength * standing;
-    let height = view.world_position.y - clouds.ocean.x;
+    let height = view.world_position.y - environment.ocean.x;
     let first = max(height - SURF_CRESTS * scale, 0.0) / -ray.y;
     let last = (height + SURF_TROUGHS * scale) / -ray.y;
     var before = first;
@@ -313,11 +313,11 @@ fn sea_surface(ray: vec3<f32>) -> f32 {
 
 // Share of the sun's direct light the cloud layer lets through to `p`.
 fn sea_cloud_shadow(p: vec3<f32>) -> f32 {
-    let sun = clouds.sun.xyz;
-    if clouds.layer.w < 0.5 || sun.y <= 0.0 {
+    let sun = environment.sun.xyz;
+    if environment.layer.w < 0.5 || sun.y <= 0.0 {
         return 1.0;
     }
-    return cloud_shadow_texel(cloud_shadow, cloud_shadow_sampler, clouds.layer, clouds.offset, sun,
+    return cloud_shadow_texel(cloud_shadow, cloud_shadow_sampler, environment.layer, environment.offset, sun,
         p).r;
 }
 
@@ -334,15 +334,15 @@ fn through_water(air: Path, ray: vec3<f32>, sea_t: f32, distance: f32, at: vec2<
     let footprint = sea_t * pixel / max(-ray.y, 0.02);
     // Gusts roughen the water in patches a few hundred metres across, drifting with the wind
     // like the mist's wisps; calm patches between them read smoother and brighter.
-    let q = (p.xz + clouds.mist_drift.xy) / SEA_PATCH;
+    let q = (p.xz + environment.mist_drift.xy) / SEA_PATCH;
     let gust = textureSampleLevel(noise, noise_sampler, vec3(q.x, 0.37, q.y), 0.0);
     let patches = mix(0.35, 1.65, smoothstep(0.25, 0.75, gust.r * 0.6 + gust.g * 0.4));
     // Near the shore the surf rides on them; broken and shallow water have little wind chop of
     // their own.
     let surf = surf_at(p.xz, footprint, true);
     let calm = (1.0 - 0.6 * surf.broken) * mix(0.15, 1.0, smoothstep(0.0, 2.0, surf.depth));
-    let waves = sea_waves(p.xz, clouds.ocean.w, clouds.ocean.yz,
-        clouds.ocean_waves.y * patches * calm, footprint);
+    let waves = sea_waves(p.xz, environment.ocean.w, environment.ocean.yz,
+        environment.ocean_waves.y * patches * calm, footprint);
     let tilt = waves.slope + surf.slope;
     let n = normalize(vec3(-tilt.x, 1.0, -tilt.y));
     let v = -ray;
@@ -355,12 +355,12 @@ fn through_water(air: Path, ray: vec3<f32>, sea_t: f32, distance: f32, at: vec2<
     let position = get_view_position();
     var sky = clear_sky(reflected) * view.exposure;
     // Under a closing deck the low sky is the deck's grey, as for the haze.
-    let deck = clouds.haze.rgb * (clouds.air_light.rgb
-        + clouds.air_sun.rgb * scattering(dot(reflected, clouds.sun.xyz))) * view.exposure;
-    sky = mix(sky, deck, clouds.weather.z);
+    let deck = environment.haze.rgb * (environment.air_light.rgb
+        + environment.air_sun.rgb * scattering(dot(reflected, environment.sun.xyz))) * view.exposure;
+    sky = mix(sky, deck, environment.weather.z);
     @if(CLOUDS && CACHED_CLOUDS)
     if reflected.y > 0.01 {
-        let cloud = cloud_layer(reflected, max(0.0, (clouds.layer.x - p.y) / reflected.y),
+        let cloud = cloud_layer(reflected, max(0.0, (environment.layer.x - p.y) / reflected.y),
             vec2(0.0), false);
         sky = cloud.light + cloud.transmittance * sky;
     }
@@ -385,21 +385,21 @@ fn through_water(air: Path, ray: vec3<f32>, sea_t: f32, distance: f32, at: vec2<
         let g = smith(n_dot_v, alpha2) * smith(n_dot_l, alpha2);
         let transmittance = sample_transmittance_lut(length(position), dot(l, normalize(position)));
         // The moon's image is its drawn face, much dimmer than its art-directed light.
-        let image = select(1.0, clouds.moon_sunward.w,
-            clouds.moon_disc.w > 0.0 && dot(l, clouds.moon_disc.xyz) > 0.9999);
+        let image = select(1.0, environment.moon_sunward.w,
+            environment.moon_disc.w > 0.0 && dot(l, environment.moon_disc.xyz) > 0.9999);
         glitter += (*light).color.rgb * transmittance * image * (d * f * g / (4.0 * n_dot_v));
     }
     // The glitter is the sun's own image: a closing deck hides it entirely.
-    let open = 1.0 - clouds.weather.z;
+    let open = 1.0 - environment.weather.z;
     glitter *= direct * open * open;
     // Daylight entering the water, as radiance a white diffuser would send back.
-    let sun = clouds.near_sun.rgb * max(clouds.sun.y, 0.0) * shade
-        + clouds.moon_color.rgb * clouds.moon.w * max(clouds.moon.y, 0.0);
-    let daylight = (sun / 3.14159265 + clouds.ambient.rgb * clouds.ambient.w) * view.exposure;
+    let sun = environment.near_sun.rgb * max(environment.sun.y, 0.0) * shade
+        + environment.moon_color.rgb * environment.moon.w * max(environment.moon.y, 0.0);
+    let daylight = (sun / 3.14159265 + environment.ambient.rgb * environment.ambient.w) * view.exposure;
     // The water between the surface and what lies beyond, and the seabed's light coming down.
     let column = max(distance - sea_t, 0.0);
     let seabed = view.world_position.y + ray.y * distance;
-    let depth = select(1.0e4, max(clouds.ocean.x - seabed, 0.0), distance < NO_SEA);
+    let depth = select(1.0e4, max(environment.ocean.x - seabed, 0.0), distance < NO_SEA);
     let seen = exp(-WATER_EXTINCTION * min(column, 1.0e4));
     let lit = exp(-WATER_EXTINCTION * min(depth * WATER_LIGHT_PATH, 1.0e4));
     // Broken water is full of bubbles and stirred-up sand, and scatters more light back.
@@ -417,9 +417,9 @@ fn through_water(air: Path, ray: vec3<f32>, sea_t: f32, distance: f32, at: vec2<
     // The swash: a quick run-up as each broken wave comes ashore and a slow drain, its front at
     // `edge` metres of depth. Without a shore map it keeps its own time.
     var cycle = surf.cycle;
-    if clouds.shore_map.w <= 0.0 {
+    if environment.shore_map.w <= 0.0 {
         let along = textureSampleLevel(noise, noise_sampler, vec3(p.xz / 90.0, 0.61), 0.0).r;
-        cycle = fract(clouds.ocean.w / SWASH_PERIOD + along * 3.0);
+        cycle = fract(environment.ocean.w / SWASH_PERIOD + along * 3.0);
     }
     let surge = select(1.0 - smoothstep(0.25, 1.0, cycle), smoothstep(0.0, 0.25, cycle),
         cycle < 0.25);
@@ -437,7 +437,7 @@ fn through_water(air: Path, ray: vec3<f32>, sea_t: f32, distance: f32, at: vec2<
     let wet = 1.0 - smoothstep(0.0, swash_band(slope, WET_RUN), depth - edge);
     transmittance *= mix(1.0, WET_SAND, wet * smoothstep(0.0, 0.01, depth) * (1.0 - film));
     // Foam rides the front and trails behind it in lace, drifting with the waves.
-    let drift = clouds.ocean.yz * clouds.ocean.w * 0.3;
+    let drift = environment.ocean.yz * environment.ocean.w * 0.3;
     let front = exp(-pow((depth - edge) / swash_band(slope, FOAM_FRONT), 2.0))
         * foam_lace(p.xz + drift, 0.3, footprint);
     let trail = (1.0 - smoothstep(edge, edge + swash_band(slope, FOAM_TRAIL), depth))

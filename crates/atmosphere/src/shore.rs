@@ -13,7 +13,7 @@ use bevy::{
 use std::{cmp::Reverse, collections::BinaryHeap, sync::Arc};
 
 /// Period of the swell coming ashore, seconds. The wave clock wraps after whole periods
-/// (`crate::clouds::WAVE_PERIOD`).
+/// (`crate::environment::WAVE_PERIOD`).
 pub const SURF_PERIOD: f32 = 9.0;
 /// Depth taken for ground missing from the map: open sea.
 const OPEN_SEA_DEPTH: f32 = 50.0;

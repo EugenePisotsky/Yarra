@@ -1,6 +1,6 @@
 //! Distant forest shadows: a coarse top-down map of crowns around the camera. Past the
 //! shadow maps, crowns, trunks and ground march towards the sun through it
-//! (`shaders/clouds/forest_shadow.wesl`), so distant forests keep the shade their trees cast on
+//! (`shaders/lighting/forest_shadow.wesl`), so distant forests keep the shade their trees cast on
 //! each other and on the ground instead of turning flat and pale where the cascades end. At
 //! every distance the same map holds back the sky light under the crowns
 //! ([`ForestSkyOcclusion`]). Callers supply the crowns; the engine rasterizes every far-object
@@ -273,7 +273,7 @@ impl ForestShadow {
     }
 
     /// The published map's sky levels as half floats, finest first. Bevy rewrites only level 0
-    /// of a texture it already has, so these are uploaded separately (`clouds::render`).
+    /// of a texture it already has, so these are uploaded separately (`environment::surface`).
     pub(crate) fn sky_level_bytes(&self) -> Vec<Vec<u8>> {
         self.map
             .as_ref()

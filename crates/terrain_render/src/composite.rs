@@ -19,7 +19,7 @@ pub struct TerrainCompositeMaterial {
     // These storage buffers are read only by the fragment shader. Exposing them
     // to the motion prepass can exhaust Metal's available vertex buffer slots.
     #[storage(120, read_only, visibility(fragment))]
-    pub(super) cloud_parameters: Handle<ShaderBuffer>,
+    pub(super) environment: Handle<ShaderBuffer>,
     #[texture(121)]
     #[sampler(122)]
     pub(super) cloud_shadows: Option<Handle<Image>>,
@@ -70,7 +70,7 @@ pub struct TerrainCompositeMaterial {
 impl Default for TerrainCompositeMaterial {
     fn default() -> Self {
         Self {
-            cloud_parameters: atmosphere::clouds::fallback_parameters(),
+            environment: atmosphere::environment::fallback_parameters(),
             cloud_shadows: None,
             rain_shelter: None,
             forest_shadow: None,

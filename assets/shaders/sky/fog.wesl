@@ -3,7 +3,7 @@ import package::shaders::sky::air::{
     scattering, OPEN_DEPTH, OPEN_DENSITY, WISP_LIFT, mist_texel, mist_wisps,
 };
 import package::shaders::sky::composite_common::{
-    clouds, mist_map, mist_sampler, noise, noise_sampler, Path, in_front,
+    environment, mist_map, mist_sampler, noise, noise_sampler, Path, in_front,
 };
 @if(ATMOSPHERE)
 import bevy_pbr::atmosphere::bindings::view;
@@ -29,19 +29,19 @@ struct FogLight {
 }
 
 fn fog_light(ray: vec3<f32>) -> FogLight {
-    let air = clouds.air_light.rgb + clouds.air_sun.rgb * scattering(dot(ray, clouds.sun.xyz));
+    let air = environment.air_light.rgb + environment.air_sun.rgb * scattering(dot(ray, environment.sun.xyz));
     return FogLight(haze_light(ray, air) * view.exposure, air * view.exposure);
 }
 
 fn fog_along(ray: vec3<f32>, distance: f32, lights: FogLight) -> Fog {
-    let weather = clouds.fog.w * distance;
+    let weather = environment.fog.w * distance;
     let haze = haze_depth(ray, distance);
     let mist = mist_depth(ray, distance);
     let depth = weather + haze + mist;
     if depth <= 0.0 {
         return Fog(vec3(0.0), 0.0);
     }
-    let light = clouds.fog.rgb * view.exposure * weather + lights.haze * haze + lights.mist * mist;
+    let light = environment.fog.rgb * view.exposure * weather + lights.haze * haze + lights.mist * mist;
     return Fog(light / depth, depth);
 }
 
@@ -59,11 +59,11 @@ fn haze_light(ray: vec3<f32>, air: vec3<f32>) -> vec3<f32> {
     // aureole, which light shafts take back where the haze lies in shadow, and at night the
     // authored fill. Under a closed deck the horizon is the deck's grey, not the clear sky's.
     @if(ATMOSPHERE)
-    let own = clouds.haze.rgb * air;
+    let own = environment.haze.rgb * air;
     @if(ATMOSPHERE)
-    return mix(max(clear, own), own, clouds.weather.z);
+    return mix(max(clear, own), own, environment.weather.z);
     @else
-    return clouds.haze.rgb * air;
+    return environment.haze.rgb * air;
 }
 // Sine of the elevation the haze takes its colour from: just above the horizon.
 const HORIZON_LIFT: f32 = 0.004;
@@ -83,13 +83,13 @@ const HAZE_RANGE: f32 = 60000.0;
 // Optical depth of the ground haze, exponential in height above its base (`haze_depth` in
 // `atmosphere::valley_mist`, which the tests check).
 fn haze_depth(ray: vec3<f32>, distance: f32) -> f32 {
-    let density = clouds.low_haze.x;
+    let density = environment.low_haze.x;
     if density <= 0.0 {
         return 0.0;
     }
     let length = min(distance, HAZE_RANGE);
-    let height = clouds.low_haze.z;
-    let above = max(view.world_position.y - clouds.low_haze.y, 0.0);
+    let height = environment.low_haze.z;
+    let above = max(view.world_position.y - environment.low_haze.y, 0.0);
     let start = density * exp(-above / height);
     // Climb in thinning heights, stopping where the ray would sink below the base.
     let climb = max(ray.y * length / height, -above / height);
@@ -112,8 +112,8 @@ struct MistColumn {
 }
 
 fn mist_column(xz: vec2<f32>) -> MistColumn {
-    let m = mist_texel(mist_map, mist_sampler, clouds.mist_map, xz);
-    let depth = clouds.mist.y * mix(OPEN_DEPTH, 1.0, m.g) * m.a;
+    let m = mist_texel(mist_map, mist_sampler, environment.mist_map, xz);
+    let depth = environment.mist.y * mix(OPEN_DEPTH, 1.0, m.g) * m.a;
     return MistColumn(m.r + depth, depth, mix(OPEN_DENSITY, 1.0, m.g) * m.a);
 }
 
@@ -141,13 +141,13 @@ fn mist_integral(u: f32) -> f32 {
 // where it runs below the higher of the tops at its two ends: that part is integrated exactly in
 // a few stretches, each with the top and wisps at its middle.
 fn mist_depth(ray: vec3<f32>, distance: f32) -> f32 {
-    if clouds.mist.x <= 0.0 || clouds.mist_map.w < 0.5 {
+    if environment.mist.x <= 0.0 || environment.mist_map.w < 0.5 {
         return 0.0;
     }
     let origin = view.world_position;
     let length = min(distance, MIST_RANGE);
     let ceiling = max(mist_column(origin.xz).top, mist_column(origin.xz + ray.xz * length).top)
-        + clouds.mist.y * WISP_LIFT;
+        + environment.mist.y * WISP_LIFT;
     var t0 = 0.0;
     var t1 = length;
     if ray.y > 1e-5 {
@@ -166,7 +166,7 @@ fn mist_depth(ray: vec3<f32>, distance: f32) -> f32 {
         let start = t0 + stretch * f32(i);
         let middle = origin + ray * (start + 0.5 * stretch);
         let column = mist_column(middle.xz);
-        let wisps = mist_wisps(noise, noise_sampler, clouds.mist_drift.xy, middle);
+        let wisps = mist_wisps(noise, noise_sampler, environment.mist_drift.xy, middle);
         let top = column.top + (wisps - 0.5) * 2.0 * WISP_LIFT * column.depth;
         let fade = max(column.depth * 0.6, 3.0);
         let ua = (top - (origin.y + ray.y * start)) / fade;
@@ -174,5 +174,5 @@ fn mist_depth(ray: vec3<f32>, distance: f32) -> f32 {
         // Wisps thin the mist to gaps and thicken it into banks.
         depth += column.density * mix(0.1, 1.8, wisps) * mist_share(ua, ub) * stretch;
     }
-    return depth * clouds.mist.x;
+    return depth * environment.mist.x;
 }

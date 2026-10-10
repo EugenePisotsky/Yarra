@@ -4,7 +4,11 @@
 //! everywhere, and the humid air under crowns, which only this pass draws, scatters sunlight
 //! where it reaches and sky light everywhere. The result is blurred along the image and the sky
 //! composite blends it in with a depth-aware upsample, so there is no extra full-screen pass.
-use crate::{AtmospherePresentation, clouds::CloudAssets, sky::SkyCompositeView};
+use crate::{
+    AtmospherePresentation,
+    environment::{EnvironmentAssets, EnvironmentParams},
+    sky::SkyCompositeView,
+};
 use bevy::{
     camera::MainPassResolutionOverride,
     core_pipeline::{Core3d, Core3dSystems},
@@ -142,9 +146,7 @@ fn init(
                     uniform_buffer::<ViewUniform>(true),
                     storage_buffer_read_only_sized(
                         false,
-                        std::num::NonZeroU64::new(
-                            std::mem::size_of::<crate::clouds::CloudParams>() as u64,
-                        ),
+                        std::num::NonZeroU64::new(std::mem::size_of::<EnvironmentParams>() as u64),
                     ),
                     if multisampled == 1 {
                         texture_depth_2d_multisampled()
@@ -198,7 +200,7 @@ fn init(
         let mut defs = vec![
             bevy::shader::ShaderDefVal::UInt("SHAFT_SCALE".into(), SCALE),
             bevy::shader::ShaderDefVal::UInt("SHAFT_STEPS".into(), STEPS),
-            crate::clouds::mist_noise_period_def(),
+            crate::environment::mist_noise_period_def(),
         ];
         if multisampled == 1 {
             defs.push("MULTISAMPLED".into());
@@ -259,7 +261,7 @@ fn draw(
         &ViewShadowBindings,
         &Msaa,
     )>,
-    assets: Option<Res<CloudAssets>>,
+    assets: Option<Res<EnvironmentAssets>>,
     buffers: Res<RenderAssets<GpuShaderBuffer>>,
     images: Res<RenderAssets<GpuImage>>,
     pipelines: Res<Pipelines>,

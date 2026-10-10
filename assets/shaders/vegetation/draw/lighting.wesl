@@ -1,9 +1,9 @@
 // Foliage lighting: rounded blade normals, the sun's diffuse, specular and transmitted light after
 // clouds, shadows and the atmosphere, and bounded sky fill.
-@if(YARRA_CLOUDS)
-import package::shaders::clouds::surface::{cloud_light, surface_wetness};
-@if(YARRA_CLOUDS)
-import package::shaders::clouds::forest_shadow::{forest_sky_light, forest_sky_visibility};
+@if(ENVIRONMENT_SURFACE)
+import package::shaders::lighting::surface::{cloud_light, surface_wetness};
+@if(ENVIRONMENT_SURFACE)
+import package::shaders::lighting::forest_shadow::{forest_sky_light, forest_sky_visibility};
 @if(ATMOSPHERE)
 import bevy_pbr::atmosphere::functions::{clamp_to_surface, calculate_visible_sun_ratio};
 
@@ -318,16 +318,16 @@ fn shade(input: VertexOutput) -> vec4<f32> {
     // (the rest the clouds pass on diffusely, casting no shadows).
     var cloud_sun = 1.0;
     var cloud_beam = 1.0;
-    @if(YARRA_CLOUDS)
+    @if(ENVIRONMENT_SURFACE)
     let cloud = cloud_light(input.world_position, camera.sun_direction.xyz);
-    @if(YARRA_CLOUDS) {
+    @if(ENVIRONMENT_SURFACE) {
         cloud_sun = cloud.x + cloud.y;
         cloud_beam = cloud.x;
     }
     // Shadowing of the sun terms: the shadow maps shade the direct beam, while what the clouds
     // pass on diffusely casts no shadows and crowns hold it back as they do the sky.
     var sun_shadow = shadow_visibility;
-    @if(YARRA_CLOUDS)
+    @if(ENVIRONMENT_SURFACE)
     sun_shadow = (cloud.x * shadow_visibility + cloud.y * forest_sky_visibility(input.world_position))
         / max(cloud_sun, 1e-4);
     // The old receiver cache could only darken direct light and therefore became almost invisible
@@ -345,7 +345,7 @@ fn shade(input: VertexOutput) -> vec4<f32> {
 
     // Wet blades darken like wet PBR surfaces, a little less since grass is already dark.
     var body_color = input.color;
-    @if(YARRA_CLOUDS)
+    @if(ENVIRONMENT_SURFACE)
     body_color *= mix(1.0, 0.7, surface_wetness(input.world_position, vec3<f32>(0.0, 1.0, 0.0)));
 
     // Direct-light energy must use the same camera exposure as Bevy's PBR path. Normalizing the
@@ -411,7 +411,7 @@ fn shade(input: VertexOutput) -> vec4<f32> {
     let sky_facing = mix(abs(flat_blade_normal.y), clump_normal.y, diffuse_filter);
     var sky_fill = vec3(mix(0.75, 1.0, clamp(sky_facing, 0.0, 1.0)));
     // Under tree crowns most of the sky is hidden, as for the ground below.
-    @if(YARRA_CLOUDS)
+    @if(ENVIRONMENT_SURFACE)
     sky_fill *= forest_sky_light(input.world_position);
     let foliage_ambient = body_color
         * bounded_ambient

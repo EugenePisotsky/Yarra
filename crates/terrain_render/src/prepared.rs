@@ -161,7 +161,7 @@ mod tests {
     fn only_control_inputs_invalidate_and_non_finite_pages_fall_back() {
         let mut material = TerrainMaterial {
             source_only: false,
-            cloud_parameters: atmosphere::clouds::fallback_parameters(),
+            environment: atmosphere::environment::fallback_parameters(),
             cloud_shadows: None,
             rain_shelter: None,
             forest_shadow: None,

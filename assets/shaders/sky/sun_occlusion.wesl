@@ -6,12 +6,12 @@
 // shadows does not switch the glare on and off.
 import bevy_render::view::View;
 import bevy_pbr::render::mesh_view_types::{Lights, DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT};
-import package::shaders::clouds::types::CloudParams;
-import package::shaders::clouds::maps::cloud_beam;
+import package::shaders::environment::params::EnvironmentParams;
+import package::shaders::environment::maps::cloud_beam;
 import package::shaders::sky::sun::cascade_visibility;
 
 @group(0) @binding(0) var<uniform> view: View;
-@group(0) @binding(1) var<storage, read> clouds: CloudParams;
+@group(0) @binding(1) var<storage, read> environment: EnvironmentParams;
 @if(MULTISAMPLED)
 @group(0) @binding(2) var depth: texture_depth_multisampled_2d;
 @else
@@ -38,7 +38,7 @@ fn sun_index() -> i32 {
     for (var i = 0u; i < lights.n_directional_lights; i += 1u) {
         let light = &lights.directional_lights[i];
         if ((*light).flags & DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u
-            && dot((*light).direction_to_light, clouds.sun.xyz) > 0.995 {
+            && dot((*light).direction_to_light, environment.sun.xyz) > 0.995 {
             return i32(i);
         }
     }
@@ -60,7 +60,7 @@ fn shadow_at(index: i32, p: vec3<f32>) -> f32 {
 
 @compute @workgroup_size(64)
 fn occlusion(@builtin(local_invocation_index) i: u32) {
-    let sun = clouds.sun.xyz;
+    let sun = environment.sun.xyz;
     let index = sun_index();
     let clip = view.clip_from_world * vec4(sun, 0.0);
     let ndc = clip.xy / max(clip.w, 1e-6);
@@ -99,8 +99,8 @@ fn occlusion(@builtin(local_invocation_index) i: u32) {
         return;
     }
     // The sun's own image: no floor of light scattered through the clouds.
-    let cloud = cloud_beam(cloud_shadow, repeat_sampler, clouds.layer, clouds.offset, sun,
-        clouds.weather.z, view.world_position) * step(-0.02, sun.y);
+    let cloud = cloud_beam(cloud_shadow, repeat_sampler, environment.layer, environment.offset, sun,
+        environment.weather.z, view.world_position) * step(-0.02, sun.y);
     let visible = seen[0] / f32(SAMPLES) * cloud;
     sun_state = vec4(mix(sun_state.x, visible, EASE), cloud, uv);
 }

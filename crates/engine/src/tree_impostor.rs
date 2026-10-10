@@ -11,7 +11,7 @@
 //! doubles.
 use crate::object_lod::{IMPOSTOR_HANDOFF_METRES, LodProjection};
 use crate::{WorldCatalog, WorldOrigin, tree_wind::WindBuffer};
-use atmosphere::clouds::{CloudAssets, CloudExtension, CloudMaterial};
+use atmosphere::environment::{EnvironmentAssets, EnvironmentExtension, EnvironmentMaterial};
 use bevy::{
     asset::{AssetLoader, LoadContext, RenderAssetUsages, io::Reader},
     camera::{primitives::Aabb, visibility::NoAutoAabb},
@@ -258,11 +258,11 @@ pub(crate) struct ImpostorBatch {
 #[derive(Component)]
 pub(crate) struct ImpostorBatchDone;
 
-type ImpostorMaterial = ExtendedMaterial<CloudMaterial, ImpostorExtension>;
+type ImpostorMaterial = ExtendedMaterial<EnvironmentMaterial, ImpostorExtension>;
 
 #[derive(Asset, AsBindGroup, TypePath, Clone, Debug)]
 struct ImpostorExtension {
-    // StandardMaterial uses 0-99, tree wind 100-105, CloudMaterial 120-125.
+    // StandardMaterial uses 0-99, tree wind 100-105, EnvironmentMaterial 120-125.
     #[uniform(130)]
     params: ImpostorParams,
     #[texture(131)]
@@ -511,7 +511,7 @@ fn follow_projection(
 fn complete_batches(
     mut commands: Commands,
     server: Res<AssetServer>,
-    clouds: Option<Res<CloudAssets>>,
+    environment: Option<Res<EnvironmentAssets>>,
     descriptors: Res<Assets<ImpostorDescriptor>>,
     mut cache: ResMut<ImpostorMaterials>,
     mut materials: ResMut<Assets<ImpostorMaterial>>,
@@ -526,7 +526,7 @@ fn complete_batches(
     ),
 ) {
     // Impostors draw with the cloud-lit trees and their wind (TreeWindPlugin).
-    let (Some(clouds), Some(wind)) = (clouds, wind) else {
+    let (Some(environment), Some(wind)) = (environment, wind) else {
         return;
     };
     let fade_buffer = fades.buffer(&device);
@@ -552,18 +552,18 @@ fn complete_batches(
             .entry(batch.descriptor.id())
             .or_insert_with(|| {
                 materials.add(ImpostorMaterial {
-                    base: CloudMaterial {
+                    base: EnvironmentMaterial {
                         base: StandardMaterial {
                             alpha_mode: AlphaMode::Mask(0.5),
                             perceptual_roughness: 0.85,
                             reflectance: 0.25,
                             ..default()
                         },
-                        extension: CloudExtension {
-                            parameters: clouds.parameters.clone(),
-                            shadows: clouds.shadows.clone(),
-                            shelter: clouds.shelter.clone(),
-                            forest_shadow: clouds.forest_shadow.clone(),
+                        extension: EnvironmentExtension {
+                            parameters: environment.parameters.clone(),
+                            shadows: environment.shadows.clone(),
+                            shelter: environment.shelter.clone(),
+                            forest_shadow: environment.forest_shadow.clone(),
                         },
                     },
                     extension: ImpostorExtension {

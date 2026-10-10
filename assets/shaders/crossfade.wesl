@@ -1,4 +1,4 @@
-// LOD crossfades as 4x MSAA sample masks (CROSSFADE_SAMPLE_MASK, set by the cloud material
+// LOD crossfades as 4x MSAA sample masks (CROSSFADE_SAMPLE_MASK, set by the environment material
 // for 4-sample views). Bevy's visibility-range dither keeps or discards whole pixels in a
 // 4x4 pattern, which reads as a stipple without temporal AA. Here an object fading out
 // covers a pixel's low samples and the one fading in the remaining high ones, by the same

@@ -53,7 +53,7 @@ pub use msaa_store::{MsaaColorStorePlugin, MsaaColorStorePolicy};
 pub use world_streaming::{
     ActiveWorldSpace, GameplayObject, GeneratedEnvironmentObject, LiveTerrainPreview,
     StreamedTerrainSurface, StreamedVegetationFieldPage, StreamedVisualObject,
-    StreamingSmokePlugin, StreamingStats, TerrainContactReadiness, TerrainLodPreview,
+    StreamingSmokePlugin, StreamingStats, TerrainContactReadiness, TerrainHierarchy,
     TerrainLodStats, TerrainPreviewRequest, VisualLodScale, WorldCatalog, WorldDebugControls,
     WorldDetailDemand, WorldGenerationReload, WorldOrigin, WorldRenderRoot, WorldSpaceInfo,
     WorldStreamingConfig, WorldStreamingPlugin, WorldStreamingSystems, WorldViewCamera,

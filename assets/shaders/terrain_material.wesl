@@ -1,6 +1,6 @@
 // Production terrain material. Its fragment is split into `terrain_ground`, `terrain_pbr_input`
 // and `terrain_post_lighting`.
-import package::shaders::clouds::pbr_lighting::apply_pbr_lighting;
+import package::shaders::lighting::pbr_lighting::apply_pbr_lighting;
 import package::shaders::weather::ground_wetness::apply_rain_puddles;
 import bevy_pbr::render::mesh_view_bindings as canopy_view;
 import package::shaders::grass_canopy::{canopy_visibility_at};

@@ -2,9 +2,9 @@ use super::*;
 use bevy::{
     core_pipeline::{Core3dSystems, FullscreenShader, schedule::Core3d},
     render::{
-        Render, RenderApp, RenderStartup, RenderSystems,
+        RenderApp, RenderStartup,
         render_asset::RenderAssets,
-        renderer::{RenderContext, RenderDevice, RenderQueue, ViewQuery},
+        renderer::{RenderContext, RenderDevice, ViewQuery},
         storage::GpuShaderBuffer,
         texture::GpuImage,
         view::{ExtractedView, ViewTarget, ViewUniform, ViewUniformOffset, ViewUniforms},
@@ -12,10 +12,6 @@ use bevy::{
 };
 use binding_types::*;
 
-#[derive(Resource)]
-pub struct CloudShadowLayout(pub BindGroupLayoutDescriptor);
-#[derive(Resource)]
-pub struct CloudShadowGpu(pub BindGroup);
 #[derive(Resource)]
 pub(crate) struct Pipelines {
     compute_layout: BindGroupLayoutDescriptor,
@@ -44,11 +40,6 @@ pub(super) fn install(app: &mut App) {
     render
         .init_resource::<CloudTarget>()
         .add_systems(RenderStartup, init)
-        .add_systems(Render, prepare.in_set(RenderSystems::PrepareBindGroups))
-        .add_systems(
-            Render,
-            upload_forest_sky_levels.in_set(RenderSystems::PrepareResources),
-        )
         .add_systems(Core3d, update_shadows.before(Core3dSystems::MainPass))
         .add_systems(
             Core3d,
@@ -57,51 +48,6 @@ pub(super) fn install(app: &mut App) {
                 .before(Core3dSystems::EarlyPostProcess),
         );
 }
-/// Writes the forest map's sky levels into its texture once Bevy has rewritten level 0, and
-/// again whenever the map or its texture changes.
-fn upload_forest_sky_levels(
-    levels: Option<Res<ForestSkyLevels>>,
-    assets: Option<Res<CloudAssets>>,
-    images: Res<RenderAssets<GpuImage>>,
-    queue: Res<RenderQueue>,
-    mut written: Local<Option<(u64, TextureId)>>,
-) {
-    let (Some(levels), Some(assets)) = (levels, assets) else {
-        return;
-    };
-    let Some(image) = images.get(&assets.forest_shadow) else {
-        return;
-    };
-    let key = (levels.revision, image.texture.id());
-    if levels.levels.is_empty() || *written == Some(key) {
-        return;
-    }
-    for (index, data) in levels.levels.iter().enumerate() {
-        let level = index as u32 + 1;
-        let side = crate::forest_shadow::SIZE >> level;
-        queue.write_texture(
-            TexelCopyTextureInfo {
-                texture: &image.texture,
-                mip_level: level,
-                origin: Origin3d::ZERO,
-                aspect: TextureAspect::All,
-            },
-            data,
-            TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(side * 8),
-                rows_per_image: Some(side),
-            },
-            Extent3d {
-                width: side,
-                height: side,
-                depth_or_array_layers: 1,
-            },
-        );
-    }
-    *written = Some(key);
-}
-
 fn init(
     mut commands: Commands,
     device: Res<RenderDevice>,
@@ -112,10 +58,11 @@ fn init(
     let params = || {
         storage_buffer_read_only_sized(
             false,
-            Some(std::num::NonZeroU64::new(std::mem::size_of::<CloudParams>() as u64).unwrap()),
+            Some(
+                std::num::NonZeroU64::new(std::mem::size_of::<EnvironmentParams>() as u64).unwrap(),
+            ),
         )
     };
-    let shadow_layout = surface_layout();
     let compute_layout = BindGroupLayoutDescriptor::new(
         "cloud shadow compute",
         &BindGroupLayoutEntries::sequential(
@@ -168,7 +115,6 @@ fn init(
             ..default()
         })
     });
-    commands.insert_resource(CloudShadowLayout(shadow_layout));
     commands.insert_resource(Pipelines {
         compute_layout,
         render_layout,
@@ -195,60 +141,14 @@ fn init(
         }),
     });
 }
-fn prepare(
-    mut commands: Commands,
-    assets: Option<Res<CloudAssets>>,
-    params: Res<CloudParams>,
-    buffers: Res<RenderAssets<GpuShaderBuffer>>,
-    images: Res<RenderAssets<GpuImage>>,
-    device: Res<RenderDevice>,
-    queue: Res<RenderQueue>,
-    cache: Res<PipelineCache>,
-    layout: Res<CloudShadowLayout>,
-    mut previous: Local<Option<(BufferId, TextureViewId, TextureViewId, TextureViewId)>>,
-) {
-    let Some(assets) = assets else {
-        return;
-    };
-    let (Some(buffer), Some(image), Some(shelter), Some(forest)) = (
-        buffers.get(&assets.parameters),
-        images.get(&assets.shadows),
-        images.get(&assets.shelter),
-        images.get(&assets.forest_shadow),
-    ) else {
-        return;
-    };
-    queue.write_buffer(&buffer.buffer, 0, bytemuck::bytes_of(&*params));
-    let key = (
-        buffer.buffer.id(),
-        image.texture_view.id(),
-        shelter.texture_view.id(),
-        forest.texture_view.id(),
-    );
-    if *previous != Some(key) {
-        commands.insert_resource(CloudShadowGpu(device.create_bind_group(
-            "cloud surface bind group",
-            &cache.get_bind_group_layout(&layout.0),
-            &BindGroupEntries::with_indices((
-                (120, buffer.buffer.as_entire_binding()),
-                (121, &image.texture_view),
-                (122, &image.sampler),
-                (123, &shelter.texture_view),
-                (124, &forest.texture_view),
-                (125, &forest.sampler),
-            )),
-        )));
-        *previous = Some(key);
-    }
-}
 fn update_shadows(
     view: ViewQuery<&CloudView>,
-    assets: Option<Res<CloudAssets>>,
+    assets: Option<Res<EnvironmentAssets>>,
     pipelines: Res<Pipelines>,
     cache: Res<PipelineCache>,
     buffers: Res<RenderAssets<GpuShaderBuffer>>,
     images: Res<RenderAssets<GpuImage>>,
-    params: Res<CloudParams>,
+    params: Res<EnvironmentParams>,
     mut previous: Local<
         Option<(
             ShadowInputs,
@@ -313,8 +213,8 @@ struct ShadowInputs {
     transition: [f32; 4],
     lights: [[f32; 4]; 2],
 }
-impl From<&CloudParams> for ShadowInputs {
-    fn from(p: &CloudParams) -> Self {
+impl From<&EnvironmentParams> for ShadowInputs {
+    fn from(p: &EnvironmentParams) -> Self {
         Self {
             layer: p.layer,
             shape: p.shape,
@@ -341,8 +241,8 @@ struct SkyCacheKey {
     enabled: f32,
     seed: f32,
 }
-impl From<&CloudParams> for SkyCacheKey {
-    fn from(p: &CloudParams) -> Self {
+impl From<&EnvironmentParams> for SkyCacheKey {
+    fn from(p: &EnvironmentParams) -> Self {
         Self {
             base: p.layer[0],
             period: p.layer[2],
@@ -377,7 +277,7 @@ mod tests {
     }
     #[test]
     fn weather_evolution_refreshes_the_sky_progressively_but_field_changes_do_not() {
-        let mut p = CloudParams {
+        let mut p = EnvironmentParams {
             layer: [1200., 650., 7200., 1.],
             shape: [0.48, 0.02, 0.3, 7.],
             ..default()
@@ -390,10 +290,10 @@ mod tests {
         p.offset = [1000., 2000., 500., 750.];
         assert_eq!(SkyCacheKey::from(&p), key);
         for change in [
-            |p: &mut CloudParams| p.layer[0] = 1500.,
-            |p: &mut CloudParams| p.layer[2] = 8000.,
-            |p: &mut CloudParams| p.layer[3] = 0.,
-            |p: &mut CloudParams| p.shape[3] = 3.,
+            |p: &mut EnvironmentParams| p.layer[0] = 1500.,
+            |p: &mut EnvironmentParams| p.layer[2] = 8000.,
+            |p: &mut EnvironmentParams| p.layer[3] = 0.,
+            |p: &mut EnvironmentParams| p.shape[3] = 3.,
         ] {
             let mut changed = p;
             change(&mut changed);
@@ -402,7 +302,7 @@ mod tests {
     }
     #[test]
     fn wind_origin_and_exposure_reuse_shadows_but_density_and_light_changes_do_not() {
-        let mut p = CloudParams::default();
+        let mut p = EnvironmentParams::default();
         p.layer = [1200., 650., 7200., 1.];
         p.shape = [0.48, 0.02, 0.3, 7.];
         p.sun = [0.5, 0.7, 0.5, 100000.];
@@ -501,7 +401,7 @@ pub(crate) fn refresh(
         &ViewUniformOffset,
         Option<&bevy::camera::MainPassResolutionOverride>,
     )>,
-    assets: Option<Res<CloudAssets>>,
+    assets: Option<Res<EnvironmentAssets>>,
     pipelines: Res<Pipelines>,
     cache: Res<PipelineCache>,
     buffers: Res<RenderAssets<GpuShaderBuffer>>,
@@ -509,7 +409,7 @@ pub(crate) fn refresh(
     uniforms: Res<ViewUniforms>,
     mut target: ResMut<CloudTarget>,
     quality: Res<CloudQuality>,
-    params: Res<CloudParams>,
+    params: Res<EnvironmentParams>,
     mut ctx: RenderContext,
 ) {
     let (_, extracted, view, offset, resolution) = view.into_inner();
@@ -641,39 +541,4 @@ pub(crate) fn refresh(
     } else {
         1.0
     };
-}
-
-pub fn surface_layout() -> BindGroupLayoutDescriptor {
-    BindGroupLayoutDescriptor::new(
-        "cloud shared surface input",
-        &BindGroupLayoutEntries::with_indices(
-            ShaderStages::FRAGMENT,
-            (
-                (
-                    120,
-                    storage_buffer_read_only_sized(
-                        false,
-                        Some(
-                            std::num::NonZeroU64::new(std::mem::size_of::<CloudParams>() as u64)
-                                .unwrap(),
-                        ),
-                    ),
-                ),
-                (
-                    121,
-                    texture_2d(TextureSampleType::Float { filterable: true }),
-                ),
-                (122, sampler(SamplerBindingType::Filtering)),
-                (
-                    123,
-                    texture_2d(TextureSampleType::Float { filterable: false }),
-                ),
-                (
-                    124,
-                    texture_2d(TextureSampleType::Float { filterable: true }),
-                ),
-                (125, sampler(SamplerBindingType::Filtering)),
-            ),
-        ),
-    )
 }

@@ -209,7 +209,7 @@ struct MotorOutput {
 pub(crate) fn advance_character_motors(
     time: Res<Time>,
     player_speed: Option<Res<crate::PlayerMovementSpeed>>,
-    lod_config: Option<Res<crate::TerrainLodPreview>>,
+    lod_config: Option<Res<crate::TerrainHierarchy>>,
     readiness: Option<Res<crate::TerrainContactReadiness>>,
     origin: Option<Res<crate::WorldOrigin>>,
     lod: Option<Res<crate::world_streaming::terrain_lod::TerrainLodStream>>,
@@ -605,7 +605,7 @@ mod tests {
             time.advance_by(std::time::Duration::from_secs_f32(DELTA_SECONDS));
             app.insert_resource(time)
                 .insert_resource(speed)
-                .insert_resource(crate::TerrainLodPreview {
+                .insert_resource(crate::TerrainHierarchy {
                     enabled: true,
                     ..default()
                 })
@@ -638,7 +638,7 @@ mod tests {
                 CharacterMotionPhase::Idle
             );
             app.world_mut()
-                .resource_mut::<crate::TerrainLodPreview>()
+                .resource_mut::<crate::TerrainHierarchy>()
                 .enabled = false;
             app.update();
             assert_eq!(

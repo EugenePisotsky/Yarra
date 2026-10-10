@@ -1,7 +1,7 @@
 // The cloud layer as the sky composite sees it: the cached panorama or this frame's clouds.
-import package::shaders::clouds::types::sky_panorama_uv;
+import package::shaders::clouds::panorama::sky_panorama_uv;
 import package::shaders::sky::composite_common::{
-    clouds, cloud_newer, cloud_older, cloud_sampler, composite_settings, LIGHTNING_COLOR,
+    environment, cloud_newer, cloud_older, cloud_sampler, composite_settings, LIGHTNING_COLOR,
 };
 @if(ATMOSPHERE)
 import bevy_pbr::atmosphere::bindings::view;
@@ -55,26 +55,26 @@ fn cloud_layer(ray: vec3<f32>, start: f32, screen_uv: vec2<f32>, cubic: bool) ->
     }
     @if(!CACHED_CLOUDS)
     let c = textureSampleLevel(cloud_newer, cloud_sampler, screen_uv, 0.0);
-    let haze = exp(-start * 3.912 / max(clouds.haze.w, 50.0));
+    let haze = exp(-start * 3.912 / max(environment.haze.w, 50.0));
     // Haze in front of an opaque cloud must not reintroduce the sun/moon disk behind it. With
     // the atmosphere, a cloud lost in haze turns into the sky it stands in.
-    var air = clouds.haze.rgb * (clouds.ambient.rgb * clouds.ambient.w * 0.3
-        + clouds.near_sun.rgb * 0.025
-        + clouds.moon_color.rgb * clouds.moon.w * 0.025) * view.exposure;
+    var air = environment.haze.rgb * (environment.ambient.rgb * environment.ambient.w * 0.3
+        + environment.near_sun.rgb * 0.025
+        + environment.moon_color.rgb * environment.moon.w * 0.025) * view.exposure;
     // Under a closing deck far clouds keep the deck's grey.
     @if(ATMOSPHERE)
-    air = mix(clear_sky(ray) * view.exposure, air, clouds.weather.z);
+    air = mix(clear_sky(ray) * view.exposure, air, environment.weather.z);
     var lit = c.rgb * 1024.0;
     // A lightning flash lights the clouds, most near the strike.
-    if clouds.lightning.w > 0.0 {
-        let to_strike = normalize(clouds.lightning.xyz - view.world_position);
+    if environment.lightning.w > 0.0 {
+        let to_strike = normalize(environment.lightning.xyz - view.world_position);
         let near = exp(-(1.0 - dot(ray, to_strike)) * 25.0) + 0.12;
-        lit += LIGHTNING_COLOR * clouds.lightning.w * near * (1.0 - c.a);
+        lit += LIGHTNING_COLOR * environment.lightning.w * near * (1.0 - c.a);
     }
     let color = mix(air * (1.0 - c.a), lit * view.exposure, haze);
     // Fade the finite ground-view tracing range into the horizon rather than exposing a
     // straight edge at the end of the cloud layer.
     // A closed deck stays to the horizon: fading it showed clear sky beneath.
-    let coverage = 1.0 - smoothstep(20000.0, 40000.0, start) * (1.0 - clouds.weather.z);
+    let coverage = 1.0 - smoothstep(20000.0, 40000.0, start) * (1.0 - environment.weather.z);
     return Cloud(color * coverage, 1.0 - coverage * (1.0 - c.a));
 }

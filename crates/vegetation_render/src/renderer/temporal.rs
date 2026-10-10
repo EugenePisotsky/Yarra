@@ -221,7 +221,7 @@ fn draw(
     state: Res<State>,
     buffers: Res<VegetationBuffers>,
     cache: Res<PipelineCache>,
-    clouds: Option<Res<atmosphere::clouds::CloudShadowGpu>>,
+    environment: Option<Res<atmosphere::environment::EnvironmentSurfaceGpu>>,
     mut ctx: RenderContext,
 ) {
     let (id, frame, motion, target, depth, mesh) = view.into_inner();
@@ -261,8 +261,8 @@ fn draw(
     pass.set_pipeline(pipeline);
     pass.set_bind_group(0, &*mesh.main, &mesh.main_offsets);
     pass.set_bind_group(1, &*buffers.draw_bind_group, &[]);
-    if let Some(clouds) = &clouds {
-        pass.set_bind_group(2, &*clouds.0, &[]);
+    if let Some(environment) = &environment {
+        pass.set_bind_group(2, &*environment.0, &[]);
     }
     let Some(group) = &state.group else {
         return;

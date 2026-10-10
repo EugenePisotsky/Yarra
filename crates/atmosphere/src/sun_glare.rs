@@ -6,7 +6,11 @@
 //! With light shafts on, sun rays follow: at a quarter of the main-pass resolution, each texel
 //! measures the sky along its line towards the sun on screen, and the composite dims the glare's
 //! wide veil by it, so beams fan out from the silhouettes in front of the sun.
-use crate::{AtmospherePresentation, clouds::CloudAssets, sky::SkyCompositeView};
+use crate::{
+    AtmospherePresentation,
+    environment::{EnvironmentAssets, EnvironmentParams},
+    sky::SkyCompositeView,
+};
 use bevy::{
     camera::MainPassResolutionOverride,
     core_pipeline::{Core3d, Core3dSystems},
@@ -136,9 +140,7 @@ fn init(
                     uniform_buffer::<ViewUniform>(true),
                     storage_buffer_read_only_sized(
                         false,
-                        std::num::NonZeroU64::new(
-                            std::mem::size_of::<crate::clouds::CloudParams>() as u64,
-                        ),
+                        std::num::NonZeroU64::new(std::mem::size_of::<EnvironmentParams>() as u64),
                     ),
                     if multisampled == 1 {
                         texture_depth_2d_multisampled()
@@ -179,9 +181,7 @@ fn init(
                     uniform_buffer::<ViewUniform>(true),
                     storage_buffer_read_only_sized(
                         false,
-                        std::num::NonZeroU64::new(
-                            std::mem::size_of::<crate::clouds::CloudParams>() as u64,
-                        ),
+                        std::num::NonZeroU64::new(std::mem::size_of::<EnvironmentParams>() as u64),
                     ),
                     if multisampled == 1 {
                         texture_depth_2d_multisampled()
@@ -239,7 +239,7 @@ type DrawnView = (
 #[allow(clippy::too_many_arguments)] // Independent render-world resources.
 fn draw(
     view: ViewQuery<DrawnView>,
-    assets: Option<Res<CloudAssets>>,
+    assets: Option<Res<EnvironmentAssets>>,
     buffers: Res<RenderAssets<GpuShaderBuffer>>,
     images: Res<RenderAssets<GpuImage>>,
     pipelines: Res<Pipelines>,

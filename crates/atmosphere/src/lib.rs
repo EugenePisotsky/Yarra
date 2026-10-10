@@ -3,6 +3,7 @@
 pub mod adaptation;
 pub mod ambient_particles;
 pub mod clouds;
+pub mod environment;
 pub mod forest_shadow;
 pub mod light_shafts;
 pub mod lightning;
@@ -232,6 +233,7 @@ impl Plugin for WorldEnvironmentPlugin {
             .init_resource::<FogTuning>()
             .init_resource::<SeaSurface>()
             .add_plugins((
+                environment::EnvironmentPlugin,
                 clouds::CloudsPlugin,
                 precipitation::PrecipitationPlugin,
                 ambient_particles::AmbientParticlesPlugin,

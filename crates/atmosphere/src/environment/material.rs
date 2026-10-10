@@ -8,7 +8,7 @@ use bevy::{
 };
 use std::collections::HashMap;
 #[derive(Asset, AsBindGroup, TypePath, Debug, Clone, Default)]
-pub struct CloudExtension {
+pub struct EnvironmentExtension {
     #[storage(120, read_only)]
     pub parameters: Handle<ShaderBuffer>,
     #[texture(121)]
@@ -20,9 +20,9 @@ pub struct CloudExtension {
     #[sampler(125)]
     pub forest_shadow: Handle<Image>,
 }
-impl MaterialExtension for CloudExtension {
+impl MaterialExtension for EnvironmentExtension {
     fn fragment_shader() -> ShaderRef {
-        "shaders/clouds/material.wesl".into()
+        "shaders/lighting/material.wesl".into()
     }
     /// With 4x MSAA, LOD crossfades cover samples instead of dithering whole pixels
     /// (`shaders/crossfade.wesl`); the main pass resolves them into a smooth blend.
@@ -40,24 +40,24 @@ impl MaterialExtension for CloudExtension {
         Ok(())
     }
 }
-pub type CloudMaterial = ExtendedMaterial<StandardMaterial, CloudExtension>;
-pub struct CloudMaterialPlugin;
+pub type EnvironmentMaterial = ExtendedMaterial<StandardMaterial, EnvironmentExtension>;
+pub struct EnvironmentMaterialPlugin;
 /// Scene-material conversion completes before optional surface effects compose with it.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct CloudMaterialSystems;
+pub struct EnvironmentMaterialSystems;
 /// Request this material pipeline in isolated workspaces for extensions that compose
 /// with it. An isolated atmosphere already disables cloud transmission in the shared data.
 #[derive(Component)]
-pub struct CloudMaterialOptIn;
+pub struct EnvironmentMaterialOptIn;
 #[derive(Component)]
 struct OriginalMaterial(Handle<StandardMaterial>);
-impl Plugin for CloudMaterialPlugin {
+impl Plugin for EnvironmentMaterialPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(bevy::pbr::MaterialPlugin::<CloudMaterial>::default())
+        app.add_plugins(bevy::pbr::MaterialPlugin::<EnvironmentMaterial>::default())
             .add_systems(
                 PostUpdate,
                 convert
-                    .in_set(CloudMaterialSystems)
+                    .in_set(EnvironmentMaterialSystems)
                     .after(ApplyAtmosphere)
                     .before(AssetEventSystems),
             );
@@ -67,18 +67,18 @@ impl Plugin for CloudMaterialPlugin {
 // their normal path. Other meshes are never converted while an isolated workspace owns lighting.
 fn convert(
     mut commands: Commands,
-    assets: Option<Res<CloudAssets>>,
+    assets: Option<Res<EnvironmentAssets>>,
     state: Res<AtmosphereState>,
     mut events: MessageReader<AssetEvent<StandardMaterial>>,
     source: Res<Assets<StandardMaterial>>,
-    mut target: ResMut<Assets<CloudMaterial>>,
+    mut target: ResMut<Assets<EnvironmentMaterial>>,
     meshes: Query<(
         Entity,
         &MeshMaterial3d<StandardMaterial>,
-        Has<CloudMaterialOptIn>,
+        Has<EnvironmentMaterialOptIn>,
     )>,
     retained: Query<&OriginalMaterial>,
-    mut cache: Local<HashMap<AssetId<StandardMaterial>, Handle<CloudMaterial>>>,
+    mut cache: Local<HashMap<AssetId<StandardMaterial>, Handle<EnvironmentMaterial>>>,
 ) {
     let Some(assets) = assets else {
         return;
@@ -107,9 +107,9 @@ fn convert(
         let material = cache
             .entry(handle.id())
             .or_insert_with(|| {
-                target.add(CloudMaterial {
+                target.add(EnvironmentMaterial {
                     base: base.clone(),
-                    extension: CloudExtension {
+                    extension: EnvironmentExtension {
                         parameters: assets.parameters.clone(),
                         shadows: assets.shadows.clone(),
                         shelter: assets.shelter.clone(),
@@ -132,13 +132,13 @@ mod tests {
     fn isolated_conversion_requires_explicit_composition_opt_in() {
         let mut app = App::new();
         app.init_resource::<Assets<StandardMaterial>>()
-            .init_resource::<Assets<CloudMaterial>>()
+            .init_resource::<Assets<EnvironmentMaterial>>()
             .add_message::<AssetEvent<StandardMaterial>>()
             .insert_resource(AtmosphereState {
                 owner: AtmosphereOwner::Isolated,
                 ..default()
             })
-            .insert_resource(CloudAssets {
+            .insert_resource(EnvironmentAssets {
                 parameters: default(),
                 shadows: default(),
                 noise: default(),
@@ -155,7 +155,7 @@ mod tests {
         let ordinary = app.world_mut().spawn(MeshMaterial3d(material.clone())).id();
         let composed = app
             .world_mut()
-            .spawn((MeshMaterial3d(material), CloudMaterialOptIn))
+            .spawn((MeshMaterial3d(material), EnvironmentMaterialOptIn))
             .id();
         app.update();
         assert!(
@@ -165,7 +165,7 @@ mod tests {
         );
         assert!(
             app.world()
-                .get::<MeshMaterial3d<CloudMaterial>>(composed)
+                .get::<MeshMaterial3d<EnvironmentMaterial>>(composed)
                 .is_some()
         );
     }

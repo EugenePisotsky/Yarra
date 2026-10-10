@@ -62,12 +62,14 @@ const PLAN_INTERVAL_SECONDS: f64 = 0.1;
 const MAX_BUILDS: usize = 8;
 type Patch = (TerrainNodeKey, StitchEdges);
 
+/// The terrain hierarchy, which draws the whole world in screen-space LOD patches; disabled, the
+/// game draws the older per-page terrain (`--terrain-legacy`).
 #[derive(Resource, Clone)]
-pub struct TerrainLodPreview {
+pub struct TerrainHierarchy {
     pub enabled: bool,
     pub settings: LodSettings,
 }
-impl Default for TerrainLodPreview {
+impl Default for TerrainHierarchy {
     fn default() -> Self {
         Self {
             enabled: true,
@@ -244,7 +246,7 @@ pub(super) fn install(app: &mut App) {
     let tracker = UploadTracker::default();
     contact::install(app);
     app.insert_resource(tracker.clone())
-        .init_resource::<TerrainLodPreview>()
+        .init_resource::<TerrainHierarchy>()
         .init_resource::<TerrainLodStats>()
         .init_resource::<TerrainLodStream>()
         .init_resource::<LiveTerrainPreview>()
@@ -794,7 +796,7 @@ impl TerrainLodStream {
 #[allow(clippy::too_many_arguments)]
 fn update(
     mut commands: Commands,
-    config: Res<TerrainLodPreview>,
+    config: Res<TerrainHierarchy>,
     catalog: Res<WorldCatalog>,
     origin: Res<WorldOrigin>,
     active_space: Res<ActiveWorldSpace>,
@@ -1310,7 +1312,7 @@ mod budget_probe;
 mod tests;
 
 fn near_view(
-    config: Res<TerrainLodPreview>,
+    config: Res<TerrainHierarchy>,
     catalog: Res<WorldCatalog>,
     origin: Res<WorldOrigin>,
     cameras: Query<(&Camera, &GlobalTransform), With<WorldViewCamera>>,

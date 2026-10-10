@@ -7,7 +7,7 @@
 //! are gathered into one buffer, grouped by mesh and material, and each group is drawn with
 //! one instanced draw through the tree material's own pipelines, specialized with
 //! `TREE_INSTANCED` so they read transforms and fades from the buffer instead of Bevy's mesh
-//! uniforms (`shaders/tree_wind.wesl`, `shaders/clouds/material.wesl`).
+//! uniforms (`shaders/tree_wind.wesl`, `shaders/lighting/material.wesl`).
 use super::material::TreeWindMaterial;
 use crate::object_lod::{LodScene, ScreenSpaceLod, TAG_BIAS, TIMED_RANGE};
 use bevy::{

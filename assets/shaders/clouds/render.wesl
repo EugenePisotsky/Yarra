@@ -1,8 +1,9 @@
 import bevy_render::view::View;
 import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput;
-import package::shaders::clouds::types::{CloudParams,sky_panorama_ray};
+import package::shaders::environment::params::EnvironmentParams;
+import package::shaders::clouds::panorama::sky_panorama_ray;
 import package::shaders::clouds::density::{density_at,light_transmission};
-@group(0) @binding(0) var<storage,read> clouds: CloudParams;
+@group(0) @binding(0) var<storage,read> environment: EnvironmentParams;
 @group(0) @binding(1) var noise: texture_3d<f32>;
 @group(0) @binding(2) var repeat: sampler;
 @group(0) @binding(3) var<uniform> view: View;
@@ -16,7 +17,7 @@ const GROUND_BOUNCE: f32 = 0.02;
 // afterglow lights them from below.
 fn light_at(p:vec3<f32>, ray:vec3<f32>, light:vec4<f32>, color:vec3<f32>) -> vec3<f32> {
     if light.w<=0.0 {return vec3(0.0);}
-    let t=light_transmission(p,light.xyz,clouds,noise,repeat,5u);
+    let t=light_transmission(p,light.xyz,environment,noise,repeat,5u);
     let mu=dot(ray,light.xyz);
     let g=0.55;
     let phase=(1.0-g*g)/pow(1.0+g*g-2.0*g*mu,1.5);
@@ -40,10 +41,10 @@ fn light_at(p:vec3<f32>, ray:vec3<f32>, light:vec4<f32>, color:vec3<f32>) -> vec
     let point=view.world_from_clip*ndc;
     @if(!CACHED_SKY)
     let ray=normalize(point.xyz/point.w-view.world_position);
-    let camera=view.world_position+vec3(clouds.offset.x,0.0,clouds.offset.y);
-    if ray.y<=0.01 || camera.y>=clouds.layer.x+clouds.layer.y {return vec4(0.0,0.0,0.0,1.0);}
-    let start=max(0.0,(clouds.layer.x-camera.y)/ray.y);
-    let end=min((clouds.layer.x+clouds.layer.y-camera.y)/ray.y,40000.0);
+    let camera=view.world_position+vec3(environment.offset.x,0.0,environment.offset.y);
+    if ray.y<=0.01 || camera.y>=environment.layer.x+environment.layer.y {return vec4(0.0,0.0,0.0,1.0);}
+    let start=max(0.0,(environment.layer.x-camera.y)/ray.y);
+    let end=min((environment.layer.x+environment.layer.y-camera.y)/ray.y,40000.0);
     if end<=start {return vec4(0.0,0.0,0.0,1.0);}
     // About 25 m steps, at least 48: a long grazing path through the layer needs more of them,
     // or sharp-edged clouds break into slices. Traced every frame (High), at most 80.
@@ -56,14 +57,14 @@ fn light_at(p:vec3<f32>, ray:vec3<f32>, light:vec4<f32>, color:vec3<f32>) -> vec
     var t=1.0;var color=vec3(0.0);
     for(var i=0u;i<steps;i+=1u) {
         let p=camera+ray*(start+(f32(i)+0.5)*ds);
-        let density=density_at(p,clouds,noise,repeat);
+        let density=density_at(p,environment,noise,repeat);
         if density>0.001 {
-            let a=1.0-exp(-density*clouds.shape.y*ds);
-            let h=clamp((p.y-clouds.layer.x)/clouds.layer.y,0.0,1.0);
-            let sky=clouds.ambient.rgb*clouds.ambient.w;
-            let ground=clouds.near_sun.rgb*max(clouds.sun.y,0.0)*(1.0-clouds.weather.z)+sky;
+            let a=1.0-exp(-density*environment.shape.y*ds);
+            let h=clamp((p.y-environment.layer.x)/environment.layer.y,0.0,1.0);
+            let sky=environment.ambient.rgb*environment.ambient.w;
+            let ground=environment.near_sun.rgb*max(environment.sun.y,0.0)*(1.0-environment.weather.z)+sky;
             let ambient=sky*mix(0.06,0.22,h)+ground*GROUND_BOUNCE*(1.0-h);
-            let illumination=ambient+light_at(p,ray,clouds.sun,clouds.sun_color.rgb)+light_at(p,ray,clouds.moon,clouds.moon_color.rgb);
+            let illumination=ambient+light_at(p,ray,environment.sun,environment.sun_color.rgb)+light_at(p,ray,environment.moon,environment.moon_color.rgb);
             color += t*a*illumination;
             t *= 1.0-a;
             // Once opaque, discard the tiny residual transmission too. Leaving a

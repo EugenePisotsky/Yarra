@@ -93,7 +93,7 @@ impl TerrainLodStream {
 pub(super) fn update(
     mut commands: Commands,
     mut live: ResMut<LiveTerrainPreview>,
-    config: Res<TerrainLodPreview>,
+    config: Res<TerrainHierarchy>,
     catalog: Res<WorldCatalog>,
     origin: Res<WorldOrigin>,
     mut stream: ResMut<TerrainLodStream>,

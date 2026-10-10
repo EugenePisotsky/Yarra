@@ -32,7 +32,7 @@ use bevy::{
 use bytemuck::{Pod, Zeroable};
 use vegetation_render::{VegetationRenderOrigin, VegetationWind};
 
-/// Requires the atmosphere/cloud material pipeline and VegetationRenderPlugin's clock.
+/// Requires the atmosphere environment material pipeline and VegetationRenderPlugin's clock.
 /// Installed explicitly by game/editor composition, independently of world streaming.
 pub struct TreeWindPlugin;
 /// Wind producers that run in PostUpdate must finish before this snapshot is taken.

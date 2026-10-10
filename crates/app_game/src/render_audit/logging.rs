@@ -121,7 +121,7 @@ pub(super) fn log_status(
     images: Res<Assets<Image>>,
     meshes: Res<Assets<Mesh>>,
     vegetation: Res<VegetationDiagnostics>,
-    terrain_modes: (Res<TerrainMacroVariation>, Res<engine::TerrainLodPreview>),
+    terrain_modes: (Res<TerrainMacroVariation>, Res<engine::TerrainHierarchy>),
     terrain_cache: Res<TerrainCacheStats>,
     terrain_prepared: Res<terrain_render::TerrainPreparedStats>,
     entities: Query<Entity>,

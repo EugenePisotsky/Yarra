@@ -4,7 +4,8 @@
 //! never makes drops jump. Occlusion is a soft test against the scene depth; there is no
 //! shelter under trees yet.
 use crate::{
-    ApplyAtmosphere, AtmosphereOwner, AtmosphereState, WorldEnvironmentView, clouds::CloudAssets,
+    ApplyAtmosphere, AtmosphereOwner, AtmosphereState, WorldEnvironmentView,
+    environment::{EnvironmentAssets, EnvironmentParams},
 };
 use bevy::{
     core_pipeline::{Core3dSystems, schedule::Core3d},
@@ -302,9 +303,7 @@ fn init(mut commands: Commands, server: Res<AssetServer>, cache: Res<PipelineCac
                     ),
                     storage_buffer_read_only_sized(
                         false,
-                        std::num::NonZeroU64::new(
-                            std::mem::size_of::<crate::clouds::CloudParams>() as u64,
-                        ),
+                        std::num::NonZeroU64::new(std::mem::size_of::<EnvironmentParams>() as u64),
                     ),
                     uniform_buffer::<ViewUniform>(true),
                     if i == 0 {
@@ -374,7 +373,7 @@ fn draw(
     )>,
     rain: Res<RainFrame>,
     splashes: Res<RainSplashes>,
-    assets: Option<Res<CloudAssets>>,
+    assets: Option<Res<EnvironmentAssets>>,
     buffers: Res<RenderAssets<GpuShaderBuffer>>,
     images: Res<RenderAssets<bevy::render::texture::GpuImage>>,
     pipelines: Res<Pipelines>,

@@ -286,7 +286,7 @@ fn apply_settings(
     mut prepared: ResMut<terrain_render::TerrainPreparedSettings>,
     mut clouds: ResMut<engine::CloudQuality>,
     mut atmosphere: ResMut<engine::AtmospherePresentation>,
-    mut lod: ResMut<engine::TerrainLodPreview>,
+    mut lod: ResMut<engine::TerrainHierarchy>,
     mut object_lod: ResMut<engine::VisualLodScale>,
     shadow_map: Option<ResMut<bevy::light::DirectionalLightShadowMap>>,
 ) {

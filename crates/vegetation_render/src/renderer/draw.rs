@@ -45,7 +45,7 @@ pub(super) fn queue(
         With<VegetationView>,
     >,
     draw_entity: Query<(Entity, &MainEntity), With<VegetationDraw>>,
-    clouds: Option<Res<atmosphere::clouds::CloudShadowGpu>>,
+    environment: Option<Res<atmosphere::environment::EnvironmentSurfaceGpu>>,
 ) {
     let Ok((draw_entity, draw_main_entity)) = draw_entity.single() else {
         return;
@@ -77,7 +77,7 @@ pub(super) fn queue(
                 msaa: *msaa,
                 target_format: view.target_format,
                 view_layout_bits: MeshPipelineViewLayoutKey::from(*mesh_view_key).bits(),
-                clouds: clouds.is_some(),
+                environment: environment.is_some(),
                 temporal: temporal.is_some(),
             },
         ) else {
@@ -119,7 +119,7 @@ impl<P: PhaseItem> RenderCommand<P> for DrawVegetationIndirect {
     type Param = (
         SRes<VegetationBuffers>,
         Option<SRes<DiagnosticsRecorder>>,
-        Option<SRes<atmosphere::clouds::CloudShadowGpu>>,
+        Option<SRes<atmosphere::environment::EnvironmentSurfaceGpu>>,
     );
     type ViewQuery = ();
     type ItemQuery = ();
@@ -128,7 +128,7 @@ impl<P: PhaseItem> RenderCommand<P> for DrawVegetationIndirect {
         _item: &P,
         _view: ROQueryItem<'w, '_, Self::ViewQuery>,
         _entity: Option<ROQueryItem<'w, '_, Self::ItemQuery>>,
-        (buffers, diagnostics, clouds): SystemParamItem<'w, '_, Self::Param>,
+        (buffers, diagnostics, environment): SystemParamItem<'w, '_, Self::Param>,
         pass: &mut TrackedRenderPass<'w>,
     ) -> RenderCommandResult {
         let buffers = buffers.into_inner();
@@ -138,8 +138,8 @@ impl<P: PhaseItem> RenderCommand<P> for DrawVegetationIndirect {
         let diagnostics = diagnostics.as_deref();
         let draw_span = diagnostics.pass_span(pass, "vegetation_draw");
         pass.set_bind_group(1, &buffers.draw_bind_group, &[]);
-        if let Some(clouds) = clouds {
-            pass.set_bind_group(2, &clouds.into_inner().0, &[]);
+        if let Some(environment) = environment {
+            pass.set_bind_group(2, &environment.into_inner().0, &[]);
         }
         pass.set_index_buffer(buffers.topology_indices.slice(..), IndexFormat::Uint16);
         pass.draw_indexed_indirect(&buffers.args, 0);

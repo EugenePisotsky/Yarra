@@ -201,7 +201,7 @@ pub(super) struct VegetationPipelineKey {
     pub(super) msaa: Msaa,
     pub(super) target_format: TextureFormat,
     pub(super) view_layout_bits: u32,
-    pub(super) clouds: bool,
+    pub(super) environment: bool,
     pub(super) temporal: bool,
 }
 
@@ -224,22 +224,24 @@ impl Specializer<RenderPipeline> for VegetationPipelineSpecializer {
                     key.view_layout_bits,
                 ));
         descriptor.layout = vec![view_layout.main_layout, self.draw_layout.clone()];
-        if key.clouds {
-            descriptor.layout.push(atmosphere::clouds::surface_layout());
+        if key.environment {
+            descriptor
+                .layout
+                .push(atmosphere::environment::surface_layout());
             descriptor.vertex.shader_defs.extend([
-                "YARRA_CLOUDS".into(),
+                "ENVIRONMENT_SURFACE".into(),
                 ShaderDefVal::UInt("MATERIAL_BIND_GROUP".into(), 2),
             ]);
             descriptor.fragment.as_mut().unwrap().shader_defs.extend([
-                "YARRA_CLOUDS".into(),
+                "ENVIRONMENT_SURFACE".into(),
                 ShaderDefVal::UInt("MATERIAL_BIND_GROUP".into(), 2),
             ]);
         }
         if key.temporal {
-            if !key.clouds {
+            if !key.environment {
                 descriptor
                     .layout
-                    .push(BindGroupLayoutDescriptor::new("unused clouds", &[]));
+                    .push(BindGroupLayoutDescriptor::new("unused environment", &[]));
             }
             descriptor.layout.push(temporal::layout());
             descriptor.vertex.shader_defs.push("TEMPORAL_GRASS".into());

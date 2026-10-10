@@ -59,7 +59,7 @@ fn source(cell: CellCoord) -> NearSource {
 fn material(s: &NearSource) -> TerrainMaterial {
     TerrainMaterial {
         source_only: true,
-        cloud_parameters: atmosphere::clouds::fallback_parameters(),
+        environment: atmosphere::environment::fallback_parameters(),
         cloud_shadows: None,
         rain_shelter: None,
         forest_shadow: None,

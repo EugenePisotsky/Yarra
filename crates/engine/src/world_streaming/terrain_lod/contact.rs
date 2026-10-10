@@ -269,7 +269,7 @@ fn distance(point: DVec3, bounds: [DVec3; 2]) -> f64 {
     point.distance(point.clamp(bounds[0], bounds[1]))
 }
 fn collect(
-    config: Res<TerrainLodPreview>,
+    config: Res<TerrainHierarchy>,
     catalog: Res<WorldCatalog>,
     origin: Res<WorldOrigin>,
     active_space: Res<ActiveWorldSpace>,
@@ -552,7 +552,7 @@ struct ContactHidden(Visibility);
 
 fn publish(
     mut commands: Commands,
-    config: Res<TerrainLodPreview>,
+    config: Res<TerrainHierarchy>,
     catalog: Res<WorldCatalog>,
     origin: Res<WorldOrigin>,
     stream: Res<TerrainLodStream>,
@@ -792,7 +792,7 @@ mod tests {
         scene.pages.truncate(1);
         scene.pages[0].origin_xz = [0.; 2];
         let size = scene.pages[0].size;
-        world.insert_resource(TerrainLodPreview {
+        world.insert_resource(TerrainHierarchy {
             enabled: true,
             ..default()
         });

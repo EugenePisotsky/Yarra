@@ -10,10 +10,10 @@ pub(super) fn sync_vegetation_origin(
     origin: Res<WorldOrigin>,
     catalog: Res<WorldCatalog>,
     vegetation: Option<ResMut<vegetation_render::VegetationRenderOrigin>>,
-    clouds: Option<ResMut<atmosphere::clouds::CloudOrigin>>,
+    environment: Option<ResMut<atmosphere::environment::EnvironmentOrigin>>,
 ) {
-    if let Some(mut clouds) = clouds {
-        clouds.0 = origin
+    if let Some(mut environment) = environment {
+        environment.0 = origin
             .space()
             .and_then(|id| catalog.world_space(id))
             .map_or([0.; 2], |space| origin.cell().origin(space.cell_size));
@@ -91,7 +91,7 @@ mod tests {
         let space = WorldSpaceId(1);
         let mut app = App::new();
         app.insert_resource(WorldStreamingConfig::game())
-            .insert_resource(TerrainLodPreview {
+            .insert_resource(TerrainHierarchy {
                 enabled: true,
                 ..default()
             })
@@ -237,14 +237,14 @@ mod tests {
         );
         // Switching renderer mode must shift game roots even though source pages
         // are being recreated under a different representation contract.
-        app.world_mut().resource_mut::<TerrainLodPreview>().enabled = false;
+        app.world_mut().resource_mut::<TerrainHierarchy>().enabled = false;
         app.update();
         assert_eq!(app.world().resource::<WorldOrigin>().cell, CellCoord::ZERO);
         assert_eq!(
             app.world().get::<Transform>(actor).unwrap().translation.x,
             625.
         );
-        app.world_mut().resource_mut::<TerrainLodPreview>().enabled = true;
+        app.world_mut().resource_mut::<TerrainHierarchy>().enabled = true;
         app.update();
         assert_eq!(
             app.world().get::<Transform>(actor).unwrap().translation.x,

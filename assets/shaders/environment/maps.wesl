@@ -1,10 +1,11 @@
 // Lookups into the environment's maps: the cloud layer's shadow, rain shelter and the forest map.
-// Materials bind the maps in their material group (clouds/surface.wesl, clouds/forest_shadow.wesl)
-// and passes in their own groups, so each lookup takes its map and the placement it needs.
+// Materials bind the maps in their material group (lighting/surface.wesl,
+// lighting/forest_shadow.wesl) and passes in their own groups, so each lookup takes its map and
+// the placement it needs.
 
 // The cloud layer's shadow map (atmosphere/src/clouds) where a ray from `p` towards `direction`
 // meets the layer's base: r the sun's direct beam the clouds let through, g the moon's. `layer`
-// and `offset` are the cloud parameters of the same names.
+// and `offset` are the environment parameters of the same names.
 fn cloud_shadow_texel(map: texture_2d<f32>, map_sampler: sampler, layer: vec4<f32>,
     offset: vec4<f32>, direction: vec3<f32>, p: vec3<f32>) -> vec4<f32> {
     let hit = p.xz + offset.xy + direction.xz * (layer.x - p.y) / max(direction.y, 0.04);

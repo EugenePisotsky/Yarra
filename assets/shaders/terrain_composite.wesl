@@ -1,6 +1,6 @@
-import package::shaders::clouds::pbr_lighting::apply_pbr_lighting;
+import package::shaders::lighting::pbr_lighting::apply_pbr_lighting;
 import package::shaders::weather::ground_wetness::apply_rain_puddles;
-import package::shaders::clouds::surface::surface_weather;
+import package::shaders::lighting::surface::surface_weather;
 // World-projected composites with an independently resident close-up surface cache.
 import package::shaders::terrain_near::{close_ground, map_sampler};
 import bevy_pbr::{

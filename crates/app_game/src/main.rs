@@ -61,7 +61,7 @@ fn run() -> Result<(), String> {
             enabled: true,
             shadow_lod: options.tree_shadow_lod,
         })
-        .insert_resource(engine::TerrainLodPreview {
+        .insert_resource(engine::TerrainHierarchy {
             enabled: !options.terrain_legacy,
             ..default()
         })

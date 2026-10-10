@@ -62,8 +62,8 @@ impl Plugin for TerrainRenderPlugin {
         composite::atlas::install(app);
         near::install(app);
         app.init_resource::<TerrainMacroVariation>()
-            .add_systems(Startup, atmosphere::clouds::init_fallback)
-            .add_systems(PostUpdate, sync_cloud_inputs)
+            .add_systems(Startup, atmosphere::environment::init_fallback)
+            .add_systems(PostUpdate, sync_environment_inputs)
             .add_plugins(MaterialPlugin::<TerrainMaterial>::default())
             .add_plugins(MaterialPlugin::<TerrainCompositeMaterial>::default())
             .add_systems(Update, apply_macro_variation);
@@ -162,7 +162,7 @@ pub struct TerrainMaterial {
     // Shading-only buffers must not consume vertex slots in the motion prepass.
     // On Metal, that can collide with the vertex buffer's reserved binding.
     #[storage(120, read_only, visibility(fragment))]
-    cloud_parameters: Handle<ShaderBuffer>,
+    environment: Handle<ShaderBuffer>,
     #[texture(121)]
     #[sampler(122)]
     cloud_shadows: Option<Handle<Image>>,
@@ -360,7 +360,7 @@ pub fn prepare_terrain_material(
     let second = context.surfaces.get(1).unwrap_or(first);
     let material = context.materials.add(TerrainMaterial {
         source_only: false,
-        cloud_parameters: atmosphere::clouds::fallback_parameters(),
+        environment: atmosphere::environment::fallback_parameters(),
         cloud_shadows: None,
         rain_shelter: None,
         forest_shadow: None,
@@ -571,36 +571,36 @@ mod tests {
     }
 }
 
-fn sync_cloud_inputs(
-    clouds: Option<Res<atmosphere::clouds::CloudAssets>>,
+fn sync_environment_inputs(
+    environment: Option<Res<atmosphere::environment::EnvironmentAssets>>,
     mut near: ResMut<Assets<TerrainMaterial>>,
     mut far: ResMut<Assets<TerrainCompositeMaterial>>,
 ) {
-    let Some(clouds) = clouds else {
+    let Some(environment) = environment else {
         return;
     };
     let ids: Vec<_> = near
         .iter()
-        .filter(|(_, m)| m.cloud_parameters != clouds.parameters)
+        .filter(|(_, m)| m.environment != environment.parameters)
         .map(|(id, _)| id)
         .collect();
     for id in ids {
         let mut m = near.get_mut(id).unwrap();
-        m.cloud_parameters = clouds.parameters.clone();
-        m.cloud_shadows = Some(clouds.shadows.clone());
-        m.rain_shelter = Some(clouds.shelter.clone());
-        m.forest_shadow = Some(clouds.forest_shadow.clone());
+        m.environment = environment.parameters.clone();
+        m.cloud_shadows = Some(environment.shadows.clone());
+        m.rain_shelter = Some(environment.shelter.clone());
+        m.forest_shadow = Some(environment.forest_shadow.clone());
     }
     let ids: Vec<_> = far
         .iter()
-        .filter(|(_, m)| m.cloud_parameters != clouds.parameters)
+        .filter(|(_, m)| m.environment != environment.parameters)
         .map(|(id, _)| id)
         .collect();
     for id in ids {
         let mut m = far.get_mut(id).unwrap();
-        m.cloud_parameters = clouds.parameters.clone();
-        m.cloud_shadows = Some(clouds.shadows.clone());
-        m.rain_shelter = Some(clouds.shelter.clone());
-        m.forest_shadow = Some(clouds.forest_shadow.clone());
+        m.environment = environment.parameters.clone();
+        m.cloud_shadows = Some(environment.shadows.clone());
+        m.rain_shelter = Some(environment.shelter.clone());
+        m.forest_shadow = Some(environment.forest_shadow.clone());
     }
 }

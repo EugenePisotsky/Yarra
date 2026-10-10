@@ -1,7 +1,7 @@
 //! Authoritative player root, motor and terrain contact.
 use crate::{
     DEFAULT_CHARACTER_PRESENTATION_ID, StreamedTerrainSurface, TerrainContactReadiness,
-    TerrainLodPreview, WorldOrigin, WorldRenderRoot, WorldStartView,
+    TerrainHierarchy, WorldOrigin, WorldRenderRoot, WorldStartView,
     actor::{
         CameraTarget, CharacterMotion, CharacterMotor, MoveIntent, PlayerControlled,
         TerrainGrounded, WorldStreamFocus,
@@ -170,7 +170,7 @@ pub(crate) fn ground_characters_to_streamed_terrain(
     terrain_pages: Query<&StreamedTerrainSurface>,
     mut actors: Query<&mut Transform, With<TerrainGrounded>>,
     lod: Res<world_streaming::terrain_lod::TerrainLodStream>,
-    lod_config: Res<TerrainLodPreview>,
+    lod_config: Res<TerrainHierarchy>,
     readiness: Res<TerrainContactReadiness>,
 ) {
     for mut transform in &mut actors {

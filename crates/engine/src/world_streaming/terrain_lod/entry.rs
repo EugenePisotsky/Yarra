@@ -110,7 +110,7 @@ impl TerrainEntry {
 
 pub(in crate::world_streaming) fn prepare(
     mut commands: Commands,
-    config: Res<TerrainLodPreview>,
+    config: Res<TerrainHierarchy>,
     catalog: Res<WorldCatalog>,
     mut active_space: ResMut<ActiveWorldSpace>,
     worker: Option<Res<WorldDatabaseWorker>>,

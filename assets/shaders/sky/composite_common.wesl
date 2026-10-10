@@ -1,7 +1,7 @@
 // The sky composite's bindings (crates/atmosphere/src/sky.rs) and what its modules pass between
 // them. Without Bevy's atmosphere the view is bound here; with it, the atmosphere's bindings hold
 // it.
-import package::shaders::clouds::types::CloudParams;
+import package::shaders::environment::params::EnvironmentParams;
 @if(!ATMOSPHERE) import bevy_render::view::View;
 
 @if(!ATMOSPHERE)
@@ -12,7 +12,7 @@ import package::shaders::clouds::types::CloudParams;
 @else
 @group(1) @binding(0) var depth: texture_depth_2d;
 
-@group(1) @binding(1) var<storage, read> clouds: CloudParams;
+@group(1) @binding(1) var<storage, read> environment: EnvironmentParams;
 // Cloud images: the newest and previous complete cache refreshes.
 @group(1) @binding(2) var cloud_newer: texture_2d<f32>;
 @group(1) @binding(3) var cloud_older: texture_2d<f32>;

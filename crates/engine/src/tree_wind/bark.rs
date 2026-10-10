@@ -2,8 +2,10 @@
 //! its own textures to an upper bark, whose textures `yarra_bark_upper` lists by asset
 //! path, by the vertex colour's alpha. A pine trunk turns from plated bark at its foot
 //! to thin orange bark higher up without per-tree textures; the generator writes the
-//! weight (see TREE_BARK_BLEND in the cloud material shader).
-use atmosphere::clouds::{CloudMaterial, CloudMaterialOptIn, CloudMaterialSystems};
+//! weight (see TREE_BARK_BLEND in `shaders/lighting/material.wesl`).
+use atmosphere::environment::{
+    EnvironmentMaterial, EnvironmentMaterialOptIn, EnvironmentMaterialSystems,
+};
 use bevy::{
     asset::AssetEventSystems,
     gltf::GltfMaterialExtras,
@@ -23,10 +25,10 @@ use bevy::{
 };
 use std::collections::{HashMap, HashSet};
 
-type TreeBarkMaterial = ExtendedMaterial<CloudMaterial, TreeBarkExtension>;
+type TreeBarkMaterial = ExtendedMaterial<EnvironmentMaterial, TreeBarkExtension>;
 #[derive(Asset, AsBindGroup, TypePath, Clone, Debug)]
 struct TreeBarkExtension {
-    // StandardMaterial uses 0–99, tree wind 100 and CloudMaterial 120–123.
+    // StandardMaterial uses 0–99, tree wind 100 and EnvironmentMaterial 120–123.
     #[texture(101)]
     #[sampler(102)]
     upper_color: Handle<Image>,
@@ -75,11 +77,11 @@ pub(super) struct TreeBarkPlugin;
 impl Plugin for TreeBarkPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(MaterialPlugin::<TreeBarkMaterial>::default())
-            .add_systems(PostUpdate, opt_in.before(CloudMaterialSystems))
+            .add_systems(PostUpdate, opt_in.before(EnvironmentMaterialSystems))
             .add_systems(
                 PostUpdate,
                 convert
-                    .after(CloudMaterialSystems)
+                    .after(EnvironmentMaterialSystems)
                     .before(AssetEventSystems),
             );
     }
@@ -88,7 +90,7 @@ impl Plugin for TreeBarkPlugin {
 #[derive(Component)]
 struct BarkChecked;
 #[derive(Component)]
-struct SourceMaterial(Handle<CloudMaterial>);
+struct SourceMaterial(Handle<EnvironmentMaterial>);
 
 // Isolated collection studies need the composed material too.
 #[allow(clippy::type_complexity)]
@@ -98,13 +100,13 @@ fn opt_in(
         (Entity, &GltfMaterialExtras),
         (
             With<MeshMaterial3d<StandardMaterial>>,
-            Without<CloudMaterialOptIn>,
+            Without<EnvironmentMaterialOptIn>,
         ),
     >,
 ) {
     for (entity, extras) in &candidates {
         if upper_bark(&extras.value).is_some() {
-            commands.entity(entity).insert(CloudMaterialOptIn);
+            commands.entity(entity).insert(EnvironmentMaterialOptIn);
         }
     }
 }
@@ -130,15 +132,19 @@ pub(super) fn load_tiling(server: &AssetServer, path: &str, srgb: bool) -> Handl
 fn convert(
     mut commands: Commands,
     server: Res<AssetServer>,
-    source: Res<Assets<CloudMaterial>>,
+    source: Res<Assets<EnvironmentMaterial>>,
     mut target: ResMut<Assets<TreeBarkMaterial>>,
-    mut events: MessageReader<AssetEvent<CloudMaterial>>,
+    mut events: MessageReader<AssetEvent<EnvironmentMaterial>>,
     candidates: Query<
-        (Entity, &GltfMaterialExtras, &MeshMaterial3d<CloudMaterial>),
+        (
+            Entity,
+            &GltfMaterialExtras,
+            &MeshMaterial3d<EnvironmentMaterial>,
+        ),
         Without<BarkChecked>,
     >,
     retained: Query<&SourceMaterial>,
-    mut cache: Local<HashMap<AssetId<CloudMaterial>, Handle<TreeBarkMaterial>>>,
+    mut cache: Local<HashMap<AssetId<EnvironmentMaterial>, Handle<TreeBarkMaterial>>>,
 ) {
     for event in events.read() {
         if let AssetEvent::Modified { id } = event
@@ -183,7 +189,7 @@ fn convert(
         // is prepared in the same frame and the trunk never drops out.
         commands
             .entity(entity)
-            .remove::<MeshMaterial3d<CloudMaterial>>()
+            .remove::<MeshMaterial3d<EnvironmentMaterial>>()
             .insert((SourceMaterial(handle.0.clone()), MeshMaterial3d(converted)));
     }
 }

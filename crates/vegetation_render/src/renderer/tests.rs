@@ -27,11 +27,11 @@ pub(super) fn grass_defs() -> Vec<Def> {
 }
 
 /// The draw shader's definitions as `pipelines.rs` specializes it.
-fn draw_variant(temporal: bool, clouds: bool) -> Vec<Def> {
+fn draw_variant(temporal: bool, environment: bool) -> Vec<Def> {
     let mut defs = grass_defs();
     defs.push(Def::Flag("SHADOW_FILTER_METHOD_HARDWARE_2X2".into(), true));
-    if clouds {
-        defs.push(Def::Flag("YARRA_CLOUDS".into(), true));
+    if environment {
+        defs.push(Def::Flag("ENVIRONMENT_SURFACE".into(), true));
         defs.push(Def::Int("MATERIAL_BIND_GROUP".into(), 2));
         defs.push(Def::Flag("ATMOSPHERE".into(), true));
     }

@@ -2,7 +2,7 @@
 // shaders before shared PBR lighting, which adds general surface wetness on top.
 import bevy_pbr::render::pbr_types::PbrInput;
 import bevy_pbr::render::mesh_view_bindings::{globals, view};
-import package::shaders::clouds::surface::{rain_shelter, surface_origin, surface_weather};
+import package::shaders::lighting::surface::{rain_shelter, surface_origin, surface_weather};
 
 fn cell_hash(cell: vec2<f32>) -> vec2<f32> {
     let c = vec2<u32>(vec2<i32>(cell) + vec2(1 << 15));

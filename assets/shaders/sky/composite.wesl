@@ -17,7 +17,7 @@
 import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput;
 import package::shaders::sky::cloud_layer::{Cloud, cloud_layer};
 import package::shaders::sky::composite_common::{
-    clouds, composite_settings, depth, mist_sampler, shaft_distance, shaft_light, Path, in_front,
+    environment, composite_settings, depth, mist_sampler, shaft_distance, shaft_light, Path, in_front,
     NO_SEA,
 };
 import package::shaders::sky::fog::{Fog, FogLight, behind_fog, fog_along, fog_light, fogged};
@@ -137,14 +137,14 @@ fn fragment(in: FullscreenVertexOutput) -> Output {
     if any(uv < vec2(0.0)) || any(uv > vec2(1.0)) {
         discard;
     }
-    let fog = clouds.fog.w > 0.0 || clouds.low_haze.x > 0.0 || clouds.mist.x > 0.0;
+    let fog = environment.fog.w > 0.0 || environment.low_haze.x > 0.0 || environment.mist.x > 0.0;
     // Clouds are traced only above this elevation; `start` is the distance to their base.
     // A closing deck continues down to the horizon at its lowest traced elevation, so no band of
     // clear sky shows beneath it.
     let horizon_dip = -sqrt(2.0 * max(view.world_position.y, 0.0) / 6360000.0);
-    let above = ray.y > 0.01 || (clouds.weather.z > 0.0 && ray.y > horizon_dip);
+    let above = ray.y > 0.01 || (environment.weather.z > 0.0 && ray.y > horizon_dip);
     let cloud_ray = normalize(vec3(ray.x, max(ray.y, 0.01), ray.z));
-    let start = select(1.0e9, max(0.0, (clouds.layer.x - view.world_position.y) / cloud_ray.y),
+    let start = select(1.0e9, max(0.0, (environment.layer.x - view.world_position.y) / cloud_ray.y),
         above);
     // Without the atmosphere, ground below the horizon only changes in fog.
     @if(!ATMOSPHERE)

@@ -27,7 +27,7 @@ pub(super) fn request_reload(
     active: Res<ActiveWorldSpace>,
     stream: Res<WorldStream>,
     mut reload: ResMut<WorldGenerationReload>,
-    config: Res<TerrainLodPreview>,
+    config: Res<TerrainHierarchy>,
 ) {
     if let Some(candidate) = &reload.candidate {
         if let Err(error) =
@@ -235,7 +235,7 @@ mod tests {
                 .init_resource::<Assets<Mesh>>()
                 .init_resource::<Assets<TerrainMaterial>>()
                 .init_resource::<Assets<Image>>()
-                .insert_resource(TerrainLodPreview {
+                .insert_resource(TerrainHierarchy {
                     enabled: false,
                     ..default()
                 })

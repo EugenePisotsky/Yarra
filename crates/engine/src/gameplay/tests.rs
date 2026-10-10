@@ -2,7 +2,7 @@ use super::camera::MainCamera;
 use super::*;
 use crate::actor::PlayerControlled;
 use crate::{
-    StreamedTerrainSurface, TerrainContactReadiness, TerrainLodPreview,
+    StreamedTerrainSurface, TerrainContactReadiness, TerrainHierarchy,
     actor::{CharacterGait, CharacterMotorConfig, MoveIntent},
     world_streaming::{terrain_lod::TerrainLodStream, test_world_resources},
 };
@@ -22,7 +22,7 @@ fn headless_game(input: bool, camera: bool, marker: bool) -> App {
     .init_asset::<AnimationClip>()
     .init_resource::<Time>()
     .insert_resource(origin)
-    .insert_resource(TerrainLodPreview {
+    .insert_resource(TerrainHierarchy {
         enabled: false,
         ..default()
     })

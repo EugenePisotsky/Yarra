@@ -5,11 +5,11 @@
 // through, to a sun behind distant ridges. Each texel, at a quarter of the main-pass
 // resolution, sums the sky seen along its line towards the sun, weighted by the veil there.
 import bevy_render::view::View;
-import package::shaders::clouds::types::CloudParams;
+import package::shaders::environment::params::EnvironmentParams;
 import package::shaders::sky::sun::{GLARE_VEIL_WIDTH, gradient_noise};
 
 @group(0) @binding(0) var<uniform> view: View;
-@group(0) @binding(1) var<storage, read> clouds: CloudParams;
+@group(0) @binding(1) var<storage, read> environment: EnvironmentParams;
 @if(MULTISAMPLED)
 @group(0) @binding(2) var depth: texture_depth_multisampled_2d;
 @else
@@ -28,7 +28,7 @@ fn sun_rays(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     let viewport = view.main_pass_viewport;
     let pixel = (vec2<f32>(id.xy) + 0.5) * viewport.zw / vec2<f32>(size);
-    let clip = view.clip_from_world * vec4(clouds.sun.xyz, 0.0);
+    let clip = view.clip_from_world * vec4(environment.sun.xyz, 0.0);
     var visible = sun_state.x;
     if clip.w > 1e-4 {
         let sun = (clip.xy / clip.w * vec2(0.5, -0.5) + 0.5) * viewport.zw;

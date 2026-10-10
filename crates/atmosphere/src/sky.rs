@@ -8,7 +8,8 @@
 //! and classifies every depth sample, so silhouettes against the sky are exact.
 use crate::{
     AtmospherePresentation,
-    clouds::{CloudAssets, CloudPipelines, CloudQuality, CloudTarget, CloudView, refresh_clouds},
+    clouds::{CloudPipelines, CloudQuality, CloudTarget, CloudView, refresh_clouds},
+    environment::{EnvironmentAssets, EnvironmentParams},
 };
 use bevy::{
     camera::MainPassResolutionOverride,
@@ -188,7 +189,7 @@ impl SpecializedRenderPipeline for SkyPipelines {
     type Key = SkyKey;
 
     fn specialize(&self, key: SkyKey) -> RenderPipelineDescriptor {
-        let mut shader_defs = vec![crate::clouds::mist_noise_period_def()];
+        let mut shader_defs = vec![crate::environment::mist_noise_period_def()];
         if key.multisampled {
             shader_defs.push("MULTISAMPLED".into());
         }
@@ -299,9 +300,7 @@ fn init(
                     },
                     storage_buffer_read_only_sized(
                         false,
-                        std::num::NonZeroU64::new(
-                            std::mem::size_of::<crate::clouds::CloudParams>() as u64,
-                        ),
+                        std::num::NonZeroU64::new(std::mem::size_of::<EnvironmentParams>() as u64),
                     ),
                     texture_2d(TextureSampleType::Float { filterable: true }),
                     texture_2d(TextureSampleType::Float { filterable: true }),
@@ -426,7 +425,7 @@ fn draw(
     cache: Res<PipelineCache>,
     uniforms: Res<ViewUniforms>,
     atmosphere: AtmosphereBuffers,
-    assets: Option<Res<CloudAssets>>,
+    assets: Option<Res<EnvironmentAssets>>,
     buffers: Res<RenderAssets<GpuShaderBuffer>>,
     clouds: Res<CloudTarget>,
     cloud_pipelines: Res<CloudPipelines>,

@@ -1,7 +1,7 @@
 // Rain streaks: instanced camera-facing quads in camera-anchored boxes that wrap around a
 // world-fixed drop lattice. Drawn over the resolved HDR scene with a soft depth test.
-import package::shaders::clouds::maps::shelter_exposure;
-import package::shaders::weather::particles::{clouds, view, random3, scene_depth};
+import package::shaders::environment::maps::shelter_exposure;
+import package::shaders::weather::particles::{environment, view, random3, scene_depth};
 
 struct Rain {
     velocity: vec4<f32>, // xyz m/s, w streak seconds
@@ -48,7 +48,7 @@ fn vertex(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance:
     // Like a camera shutter: streaks follow the drop's motion relative to the camera.
     let tail = head - rain.streak.xyz * rain.velocity.w * mix(0.75, 1.25, variation.x);
     // No rain below a canopy: drops above the tree top still fall.
-    let exposure = shelter_exposure(shelter_map, clouds.shelter, head);
+    let exposure = shelter_exposure(shelter_map, environment.shelter, head);
     if exposure < 0.02 { return out; }
 
     // Unjittered: streaks are drawn after temporal reconstruction.
@@ -78,7 +78,7 @@ fn vertex(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance:
     out.position = vec4(pixel / half_size * w, 0.5 * w, w);
     out.coords = vec2(along, side);
     out.view_depth = w;
-    let fog = exp(-clouds.fog.w * w);
+    let fog = exp(-environment.fog.w * w);
     // Drops brushing past the lens would become huge streaks; fade them out.
     let near_fade = smoothstep(0.4, 1.5, min(tail_clip.w, head_clip.w));
     out.alpha = rain.layers[layer].y * rain.shape.y * (true_width / width) * fog * exposure
@@ -88,9 +88,9 @@ fn vertex(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance:
 
 // Drops scatter the surrounding sky and sun light, like the haze in front of clouds.
 fn rain_light() -> vec3<f32> {
-    return clouds.haze.rgb * (clouds.ambient.rgb * clouds.ambient.w * 0.3
-        + clouds.near_sun.rgb * 0.025
-        + clouds.moon_color.rgb * clouds.moon.w * 0.025) * view.exposure * 1.4;
+    return environment.haze.rgb * (environment.ambient.rgb * environment.ambient.w * 0.3
+        + environment.near_sun.rgb * 0.025
+        + environment.moon_color.rgb * environment.moon.w * 0.025) * view.exposure * 1.4;
 }
 
 @fragment
@@ -168,7 +168,7 @@ fn vertex_splash(@builtin(vertex_index) vertex: u32, @builtin(instance_index) in
     out.coords = vec2(corner_x, corner_y);
     out.view_depth = clip.w;
     out.age = age;
-    out.alpha = rain.shape.y * exp(-clouds.fog.w * clip.w);
+    out.alpha = rain.shape.y * exp(-environment.fog.w * clip.w);
     return out;
 }
 
@@ -180,7 +180,7 @@ fn fragment_splash(in: Splash) -> @location(0) vec4<f32> {
         // water; dry soil mostly shows the thrown droplets.
         let radius = mix(0.15, 1.0, sqrt(in.age));
         let ring = abs(length(in.coords) - radius);
-        let wet = mix(0.15, 1.0, clamp(clouds.weather.x, 0.0, 1.0));
+        let wet = mix(0.15, 1.0, clamp(environment.weather.x, 0.0, 1.0));
         shape = (1.0 - smoothstep(0.0, mix(0.12, 0.05, in.age), ring)) * (1.0 - in.age) * 0.2 * wet;
     } else {
         shape = (1.0 - smoothstep(0.3, 1.0, length(in.coords))) * (1.0 - in.age * in.age) * 0.4;

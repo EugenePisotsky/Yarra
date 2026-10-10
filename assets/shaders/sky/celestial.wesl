@@ -11,7 +11,7 @@ import bevy_pbr::atmosphere::{
     },
 };
 import package::shaders::sky::composite_common::{
-    clouds, composite_settings, mist_sampler, noise, noise_sampler, sun_rays, sun_state,
+    environment, composite_settings, mist_sampler, noise, noise_sampler, sun_rays, sun_state,
     LIGHTNING_COLOR,
 };
 import package::shaders::sky::sun::{
@@ -23,7 +23,7 @@ import package::shaders::sky::sun::{
 // its limb, where the photosphere is seen at a grazing angle.
 const LIMB_DARKENING: f32 = 0.6;
 fn is_sun(direction: vec3<f32>) -> bool {
-    return dot(direction, clouds.sun.xyz) > 0.995;
+    return dot(direction, environment.sun.xyz) > 0.995;
 }
 fn discs(ray: vec3<f32>) -> vec3<f32> {
     let position = get_view_position();
@@ -54,7 +54,7 @@ fn discs(ray: vec3<f32>) -> vec3<f32> {
 // glowing air. Without it a night with the moon down would have a black sky over lit ground;
 // under the moon its sky is brighter and the glow does not show.
 fn clear_sky(ray: vec3<f32>) -> vec3<f32> {
-    let glow = clouds.night_sky.rgb * mix(1.0, 0.45, sqrt(clamp(ray.y, 0.0, 1.0)));
+    let glow = environment.night_sky.rgb * mix(1.0, 0.45, sqrt(clamp(ray.y, 0.0, 1.0)));
     return max(sample_sky_view_lut(length(get_view_position()),
         direction_world_to_atmosphere(ray)), glow);
 }
@@ -127,8 +127,8 @@ fn moon_albedo(p: vec3<f32>) -> f32 {
 // dark side faintly lit by earthshine. rgb its unexposed light, a the share of the pixel it
 // covers, which hides the stars behind it.
 fn moon(ray: vec3<f32>) -> vec4<f32> {
-    let radius = clouds.moon_disc.w;
-    let centre = clouds.moon_disc.xyz;
+    let radius = environment.moon_disc.w;
+    let centre = environment.moon_disc.xyz;
     let c = dot(ray, centre);
     let angle = acos(clamp(c, -1.0, 1.0));
     let w = max(0.5 * fwidth(angle), 1e-6);
@@ -136,7 +136,7 @@ fn moon(ray: vec3<f32>) -> vec4<f32> {
     if radius <= 0.0 || cover <= 0.0 {
         return vec4(0.0);
     }
-    let north = clouds.moon_frame.xyz;
+    let north = environment.moon_frame.xyz;
     let east = normalize(cross(centre, north));
     // The ray's point on the moon: its offset across the disc in radii, then the sphere.
     let offset = (ray - centre * c) / sin(radius);
@@ -144,10 +144,10 @@ fn moon(ray: vec3<f32>) -> vec4<f32> {
     let y = dot(offset, north);
     let z = sqrt(max(1.0 - x * x - y * y, 0.0));
     let normal = east * x + north * y - centre * z;
-    let sun = dot(normal, clouds.moon_sunward.xyz);
+    let sun = dot(normal, environment.moon_sunward.xyz);
     let lit = select(0.0, 2.0 * sun / (sun + max(z, 1e-3)), sun > 0.0);
     let albedo = moon_albedo(vec3(x, y, z));
-    return vec4(clouds.moon_face.rgb * albedo * (lit + clouds.moon_frame.w), cover);
+    return vec4(environment.moon_face.rgb * albedo * (lit + environment.moon_frame.w), cover);
 }
 
 // Stars: one star at most in each cell of a grid over the sky's directions, at a hashed spot
@@ -163,7 +163,7 @@ fn star_hash(p: vec3<f32>) -> vec3<f32> {
     return fract((q.xxy + q.yxx) * q.zyx);
 }
 fn stars(ray: vec3<f32>) -> vec3<f32> {
-    let night = 1.0 - smoothstep(-0.2, -0.05, clouds.sun.y);
+    let night = 1.0 - smoothstep(-0.2, -0.05, environment.sun.y);
     if night <= 0.0 || ray.y < -0.01 {
         return vec3(0.0);
     }
@@ -185,7 +185,7 @@ fn stars(ray: vec3<f32>) -> vec3<f32> {
 // Share of the sun and moon discs a closing deck leaves: their light is so much brighter than
 // the sky that the thinnest gap in a rain deck would show them.
 fn deck_open() -> f32 {
-    let open = 1.0 - clouds.weather.z;
+    let open = 1.0 - environment.weather.z;
     return open * open;
 }
 
@@ -201,7 +201,7 @@ const AIR_GLOW_CANOPY: f32 = 4.0;
 
 // 1 with the sun in the image, falling to 0 a fifth of the image outside it.
 fn sun_in_view() -> f32 {
-    let clip = view.clip_from_world * vec4(clouds.sun.xyz, 0.0);
+    let clip = view.clip_from_world * vec4(environment.sun.xyz, 0.0);
     if clip.w <= 0.0 {
         return 0.0;
     }
@@ -254,7 +254,7 @@ const CHANNEL_BRIGHTNESS: f32 = 80.0;
 // The lightning channel seen along `ray`, where it lies nearer than `limit` metres: a core about
 // a pixel wide and a halo, dimmed by the haze and rain fog in front.
 fn lightning_glow(ray: vec3<f32>, limit: f32) -> vec3<f32> {
-    let channel = clouds.lightning_channel.x;
+    let channel = environment.lightning_channel.x;
     if channel <= 0.0 {
         return vec3(0.0);
     }
@@ -262,8 +262,8 @@ fn lightning_glow(ray: vec3<f32>, limit: f32) -> vec3<f32> {
     let o = view.world_position;
     var glow = 0.0;
     for (var i = 0u; i < 16u; i += 1u) {
-        let a = clouds.lightning_segments[2u * i];
-        let b = clouds.lightning_segments[2u * i + 1u].xyz;
+        let a = environment.lightning_segments[2u * i];
+        let b = environment.lightning_segments[2u * i + 1u].xyz;
         let along = b - a.xyz;
         let w0 = o - a.xyz;
         let bd = dot(ray, along);
@@ -276,7 +276,7 @@ fn lightning_glow(ray: vec3<f32>, limit: f32) -> vec3<f32> {
             continue;
         }
         let px = length(o + ray * t - q) / (t * pixel);
-        let fade = exp(-t * (clouds.fog.w + 3.912 / max(clouds.haze.w, 50.0)));
+        let fade = exp(-t * (environment.fog.w + 3.912 / max(environment.haze.w, 50.0)));
         glow += a.w * fade * (exp(-px * px * 0.5) + 0.06 / (1.0 + px * px / 16.0));
     }
     return LIGHTNING_COLOR * glow * channel * CHANNEL_BRIGHTNESS;

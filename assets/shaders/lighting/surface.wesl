@@ -1,6 +1,6 @@
-import package::shaders::clouds::types::CloudParams;
-import package::shaders::clouds::maps::{cloud_shadow_texel, shelter_exposure};
-@group(constants::MATERIAL_BIND_GROUP) @binding(120) var<storage,read> clouds: CloudParams;
+import package::shaders::environment::params::EnvironmentParams;
+import package::shaders::environment::maps::{cloud_shadow_texel, shelter_exposure};
+@group(constants::MATERIAL_BIND_GROUP) @binding(120) var<storage,read> environment: EnvironmentParams;
 @group(constants::MATERIAL_BIND_GROUP) @binding(121) var cloud_shadow: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(122) var cloud_repeat: sampler;
 // Rain shelter around the camera: highest object top above each texel, coverage.
@@ -13,14 +13,14 @@ const CLOUD_DIFFUSE_FLOOR: f32 = 0.12;
 // surfaces facing the bright sky around the sun but casts none. Kept as a floor under the beam,
 // it gave the character a sharp shadow under a closed deck.
 fn cloud_light(p: vec3<f32>, direction: vec3<f32>) -> vec2<f32> {
-    if clouds.layer.w < 0.5 || direction.y <= 0.0 || p.y >= clouds.layer.x+clouds.layer.y { return vec2(1.0, 0.0); }
-    let sun = dot(direction,clouds.sun.xyz)>0.999;
-    let moon = dot(direction,clouds.moon.xyz)>0.999;
+    if environment.layer.w < 0.5 || direction.y <= 0.0 || p.y >= environment.layer.x+environment.layer.y { return vec2(1.0, 0.0); }
+    let sun = dot(direction,environment.sun.xyz)>0.999;
+    let moon = dot(direction,environment.moon.xyz)>0.999;
     if !sun && !moon {return vec2(1.0, 0.0);}
-    let t = cloud_shadow_texel(cloud_shadow, cloud_repeat, clouds.layer, clouds.offset, direction, p).rg;
+    let t = cloud_shadow_texel(cloud_shadow, cloud_repeat, environment.layer, environment.offset, direction, p).rg;
     // A closing deck hides the beam whatever thin spots the shadow map finds, as it hides the
     // sun's disc.
-    let open = 1.0-clouds.weather.z;
+    let open = 1.0-environment.weather.z;
     let direct = select(t.y,t.x,sun)*open*open;
     return vec2(direct, max(CLOUD_DIFFUSE_FLOOR-direct, 0.0));
 }
@@ -29,12 +29,12 @@ fn cloud_light(p: vec3<f32>, direction: vec3<f32>) -> vec2<f32> {
 // past the clouds above `p`.
 fn ground_celestial_irradiance(p: vec3<f32>) -> vec3<f32> {
     var irradiance = vec3(0.0);
-    if clouds.sun.y > 0.0 {
-        irradiance += clouds.near_sun.rgb * clouds.sun.y * cloud_visibility(p, clouds.sun.xyz);
+    if environment.sun.y > 0.0 {
+        irradiance += environment.near_sun.rgb * environment.sun.y * cloud_visibility(p, environment.sun.xyz);
     }
-    if clouds.moon.w > 0.0 && clouds.moon.y > 0.0 {
-        irradiance += clouds.moon_color.rgb * clouds.moon.w * clouds.moon.y
-            * cloud_visibility(p, clouds.moon.xyz);
+    if environment.moon.w > 0.0 && environment.moon.y > 0.0 {
+        irradiance += environment.moon_color.rgb * environment.moon.w * environment.moon.y
+            * cloud_visibility(p, environment.moon.xyz);
     }
     return irradiance;
 }
@@ -45,30 +45,30 @@ fn cloud_visibility(p: vec3<f32>, direction: vec3<f32>) -> f32 {
 }
 /// Forest shadow map: origin xz, metres per texel (0 when off), tallest crown top.
 fn forest_shadow_parameters() -> vec4<f32> {
-    return clouds.forest_shadow;
+    return environment.forest_shadow;
 }
 /// Sky light under the crowns: x the share they hold back (0 off, 1 as their foliage does).
 fn forest_sky_parameters() -> vec4<f32> {
-    return clouds.forest_sky;
+    return environment.forest_sky;
 }
 
 /// 1 where rain reaches `p`, 0 under full cover. Bilinear coverage, as on the CPU.
 fn rain_shelter(p: vec3<f32>) -> f32 {
-    return shelter_exposure(shelter_map, clouds.shelter, p);
+    return shelter_exposure(shelter_map, environment.shelter, p);
 }
 
 /// Rain wetness of a surface: sky-facing surfaces soak fully, vertical ones partly, and
 /// anything under a canopy stays drier.
 fn surface_wetness(p: vec3<f32>, normal: vec3<f32>) -> f32 {
-    return clamp(clouds.weather.x, 0.0, 1.0) * rain_shelter(p)
+    return clamp(environment.weather.x, 0.0, 1.0) * rain_shelter(p)
         * mix(0.35, 1.0, smoothstep(-0.2, 0.7, normal.y));
 }
 
 /// x: wetness, y: precipitation intensity.
 fn surface_weather() -> vec4<f32> {
-    return clouds.weather;
+    return environment.weather;
 }
 /// Wrapped world origin XZ: world-anchored surface patterns survive origin rebases.
 fn surface_origin() -> vec2<f32> {
-    return clouds.offset.xy;
+    return environment.offset.xy;
 }

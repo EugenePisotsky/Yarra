@@ -42,8 +42,8 @@ import bevy_render::maths::{E, PI, powsafe};
 import bevy_pbr::render::pbr_functions::{calculate_diffuse_color, calculate_F0, calculate_F0_dielectric};
 @if(STANDARD_MATERIAL_ANISOTROPY) import bevy_pbr::render::pbr_functions::bend_normal_for_anisotropy;
 @if(CONTACT_SHADOWS && DEPTH_PREPASS) import bevy_pbr::render::pbr_functions::calculate_contact_shadow;
-import package::shaders::clouds::surface::{cloud_light, ground_celestial_irradiance, surface_wetness};
-import package::shaders::clouds::forest_shadow::{forest_transmittance, forest_sky_light, forest_sky_visibility};
+import package::shaders::lighting::surface::{cloud_light, ground_celestial_irradiance, surface_wetness};
+import package::shaders::lighting::forest_shadow::{forest_transmittance, forest_sky_light, forest_sky_visibility};
 
 // Yarra: light reflected towards a surface by the ground around it, as environment radiance
 // (Bevy's ambient colour is used the same way): the ground's albedo times the sun, moon and

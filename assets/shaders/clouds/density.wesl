@@ -1,4 +1,4 @@
-import package::shaders::clouds::types::CloudParams;
+import package::shaders::environment::params::EnvironmentParams;
 // Broken cloud is cumulus. The body noise is sampled stretched upwards, so each cloud is a
 // column with one footprint from its flat base, and the threshold rising with height rounds its
 // top: strong cores tower, edges stay low. Sampled at the layer's share of the noise period (5x
@@ -15,7 +15,7 @@ const DECK_BILLOW_DEPTH: f32 = 0.18;
 const EDGE: f32 = 0.08;
 // Cumulus cores are denser than a deck's average.
 const CUMULUS_DENSITY: f32 = 2.5;
-fn density_at(p: vec3<f32>, c: CloudParams, noise: texture_3d<f32>, repeat: sampler) -> f32 {
+fn density_at(p: vec3<f32>, c: EnvironmentParams, noise: texture_3d<f32>, repeat: sampler) -> f32 {
     let h = (p.y-c.layer.x)/c.layer.y;
     if h <= 0.0 || h >= 1.0 || c.layer.w < 0.5 || max(c.shape.x, c.transition.x) <= 0.0 { return 0.0; }
     let seed = vec3(c.shape.w, c.shape.w*0.37, c.shape.w*0.73);
@@ -50,7 +50,7 @@ fn density_at(p: vec3<f32>, c: CloudParams, noise: texture_3d<f32>, repeat: samp
     let extinction = select(1.0, mix(c.transition.y, c.shape.y, local)/c.shape.y, c.shape.y > 1e-6);
     return mix(cumulus, max(eaten,0.0), overcast)*profile*extinction;
 }
-fn light_transmission(p: vec3<f32>, direction: vec3<f32>, c: CloudParams,
+fn light_transmission(p: vec3<f32>, direction: vec3<f32>, c: EnvironmentParams,
     noise: texture_3d<f32>, repeat: sampler, steps: u32) -> f32 {
     // Out through the top towards a light above, or through the base towards one just below the
     // horizontal (a sun that has set for the ground but not for the clouds).

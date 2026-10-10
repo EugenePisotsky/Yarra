@@ -8,15 +8,15 @@
 // the air under crowns, and the distance it marched to, for the depth-aware blur and upsample.
 import bevy_render::view::View;
 import bevy_pbr::render::mesh_view_types::{Lights, DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT};
-import package::shaders::clouds::types::CloudParams;
-import package::shaders::clouds::maps::{cloud_beam, SKY_FLOOR};
+import package::shaders::environment::params::EnvironmentParams;
+import package::shaders::environment::maps::{cloud_beam, SKY_FLOOR};
 import package::shaders::sky::air::{
     scattering, OPEN_DEPTH, OPEN_DENSITY, WISP_LIFT, mist_texel, mist_wisps,
 };
 import package::shaders::sky::sun::{cascade_visibility, gradient_noise};
 
 @group(0) @binding(0) var<uniform> view: View;
-@group(0) @binding(1) var<storage, read> clouds: CloudParams;
+@group(0) @binding(1) var<storage, read> environment: EnvironmentParams;
 @if(MULTISAMPLED)
 @group(0) @binding(2) var depth: texture_depth_multisampled_2d;
 @else
@@ -43,20 +43,20 @@ const MAX_RANGE: f32 = 150.0;
 // density at a point.
 // Highest the mist can reach in a column, wisps included.
 fn mist_ceiling(xz: vec2<f32>) -> f32 {
-    let m = mist_texel(mist_map, clamp_sampler, clouds.mist_map, xz);
-    return m.r + clouds.mist.y * mix(OPEN_DEPTH, 1.0, m.g) * m.a * (1.0 + WISP_LIFT);
+    let m = mist_texel(mist_map, clamp_sampler, environment.mist_map, xz);
+    return m.r + environment.mist.y * mix(OPEN_DEPTH, 1.0, m.g) * m.a * (1.0 + WISP_LIFT);
 }
 fn mist_density(p: vec3<f32>) -> f32 {
-    let m = mist_texel(mist_map, clamp_sampler, clouds.mist_map, p.xz);
-    let column_depth = clouds.mist.y * mix(OPEN_DEPTH, 1.0, m.g) * m.a;
-    let wisps = mist_wisps(noise, repeat_sampler, clouds.mist_drift.xy, p);
+    let m = mist_texel(mist_map, clamp_sampler, environment.mist_map, p.xz);
+    let column_depth = environment.mist.y * mix(OPEN_DEPTH, 1.0, m.g) * m.a;
+    let wisps = mist_wisps(noise, repeat_sampler, environment.mist_drift.xy, p);
     let top = m.r + column_depth + (wisps - 0.5) * 2.0 * WISP_LIFT * column_depth;
     let share = clamp((top - p.y) / max(column_depth * 0.6, 3.0), 0.0, 1.0);
-    return clouds.mist.x * mix(OPEN_DENSITY, 1.0, m.g) * m.a * mix(0.1, 1.8, wisps) * share;
+    return environment.mist.x * mix(OPEN_DENSITY, 1.0, m.g) * m.a * mix(0.1, 1.8, wisps) * share;
 }
 
 fn haze_density(y: f32) -> f32 {
-    return clouds.low_haze.x * exp(-max(y - clouds.low_haze.y, 0.0) / clouds.low_haze.z);
+    return environment.low_haze.x * exp(-max(y - environment.low_haze.y, 0.0) / environment.low_haze.z);
 }
 
 // Air under crowns: the share of the sky the crowns around hold back (forest map levels 1-3),
@@ -65,8 +65,8 @@ fn haze_density(y: f32) -> f32 {
 const CANOPY_TINT: vec3<f32> = vec3(0.7, 1.0, 0.55);
 const CANOPY_SKY: f32 = 0.3;
 fn canopy_air(p: vec3<f32>) -> vec2<f32> {
-    let parameters = clouds.forest_shadow;
-    if clouds.shafts.x <= 0.0 || parameters.z <= 0.0 {
+    let parameters = environment.forest_shadow;
+    if environment.shafts.x <= 0.0 || parameters.z <= 0.0 {
         return vec2(0.0, 1.0);
     }
     let uv = (p.xz - parameters.xy) / (parameters.z * vec2<f32>(textureDimensions(forest_map)));
@@ -78,8 +78,8 @@ fn canopy_air(p: vec3<f32>) -> vec2<f32> {
         return vec2(0.0, 1.0);
     }
     let cover = 1.0 - around.b;
-    let sky = mix(1.0, mix(SKY_FLOOR, 1.0, around.b), clouds.forest_sky.x);
-    return vec2(clouds.shafts.x * cover, sky);
+    let sky = mix(1.0, mix(SKY_FLOOR, 1.0, around.b), environment.forest_sky.x);
+    return vec2(environment.shafts.x * cover, sky);
 }
 
 struct Sun {
@@ -116,7 +116,7 @@ fn shadowed_sun() -> Sun {
         let light = &lights.directional_lights[i];
         if ((*light).flags & DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u
             && (*light).num_cascades > 0u
-            && dot((*light).direction_to_light, clouds.sun.xyz) > 0.995 {
+            && dot((*light).direction_to_light, environment.sun.xyz) > 0.995 {
             return Sun(i32(i), (*light).cascades[(*light).num_cascades - 1u].far_bound);
         }
     }
@@ -165,13 +165,13 @@ fn march(@builtin(global_invocation_id) id: vec3<u32>) {
     let sun = shadowed_sun();
     let reach = min(distance, min(sun.range, MAX_RANGE));
     let origin = view.world_position;
-    let lit = sun.index >= 0 && clouds.sun.y > 0.0;
-    let beam = cloud_beam(cloud_shadow, repeat_sampler, clouds.layer, clouds.offset,
-        clouds.sun.xyz, clouds.weather.z, origin);
-    let sunlight = select(vec3(0.0), clouds.air_sun.rgb * scattering(dot(ray, clouds.sun.xyz))
+    let lit = sun.index >= 0 && environment.sun.y > 0.0;
+    let beam = cloud_beam(cloud_shadow, repeat_sampler, environment.layer, environment.offset,
+        environment.sun.xyz, environment.weather.z, origin);
+    let sunlight = select(vec3(0.0), environment.air_sun.rgb * scattering(dot(ray, environment.sun.xyz))
         * beam, lit);
     var mist_top = -1.0e9;
-    if clouds.mist.x > 0.0 && clouds.mist_map.w > 0.5 {
+    if environment.mist.x > 0.0 && environment.mist_map.w > 0.5 {
         mist_top = max(mist_ceiling(origin.xz), mist_ceiling(origin.xz + ray.xz * reach));
     }
     var shadow: ShadowRay;
@@ -180,7 +180,7 @@ fn march(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     let forward = dot(ray, normalize(-view.world_from_view[2].xyz));
     let luminance = vec3(0.2126, 0.7152, 0.0722);
-    let skylight = dot(clouds.air_light.rgb, luminance) * CANOPY_SKY * CANOPY_TINT
+    let skylight = dot(environment.air_light.rgb, luminance) * CANOPY_SKY * CANOPY_TINT
         / dot(CANOPY_TINT, luminance);
     // Each texel's steps are offset; the blur removes the noise.
     let jitter = gradient_noise(vec2<f32>(id.xy));
@@ -205,10 +205,10 @@ fn march(@builtin(global_invocation_id) id: vec3<u32>) {
         }
         // Haze and mist in shadow give back the composite's sunlight; the air under crowns adds
         // the sunlight that reaches it and its share of sky light.
-        let lost = (clouds.haze.rgb * haze + vec3(droplets)) * (1.0 - visible);
+        let lost = (environment.haze.rgb * haze + vec3(droplets)) * (1.0 - visible);
         let added = canopy.x * (visible * sunlight + skylight * canopy.y);
         light += seen * dt * (added - lost * sunlight);
-        let extinction = haze + droplets + canopy.x + clouds.fog.w;
+        let extinction = haze + droplets + canopy.x + environment.fog.w;
         seen *= exp(-extinction * dt);
         canopy_seen *= exp(-canopy.x * dt);
     }

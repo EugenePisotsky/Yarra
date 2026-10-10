@@ -21,7 +21,7 @@ import bevy_pbr::render::{
     pbr_functions::main_pass_post_lighting_processing,
     pbr_types::STANDARD_MATERIAL_FLAGS_UNLIT_BIT,
 };
-@if(!PREPASS_PIPELINE) import package::shaders::clouds::pbr_lighting::apply_pbr_lighting;
+@if(!PREPASS_PIPELINE) import package::shaders::lighting::pbr_lighting::apply_pbr_lighting;
 
 @if(VISIBILITY_RANGE_DITHER)
 import bevy_pbr::render::pbr_functions::visibility_range_dither;

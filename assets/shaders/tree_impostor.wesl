@@ -8,7 +8,7 @@ import bevy_pbr::{render::mesh_functions, render::mesh_view_bindings::view, rend
 // Impostors draw in the main pass only: no prepass (tree_impostor.rs `enable_prepass`) and
 // no shadows.
 import bevy_pbr::{render::pbr_types, render::pbr_functions::{calculate_view, main_pass_post_lighting_processing}, render::mesh_types::MESH_FLAGS_SHADOW_RECEIVER_BIT};
-import package::shaders::clouds::pbr_lighting::apply_pbr_lighting;
+import package::shaders::lighting::pbr_lighting::apply_pbr_lighting;
 import package::shaders::crossfade::{crossfade_sample_mask, dither_discard};
 import package::shaders::tree::wind::{WindFrames, sway_point_of_trunk};
 
