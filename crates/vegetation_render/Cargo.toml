@@ -13,5 +13,6 @@ upscaling.workspace = true
 serde.workspace = true
 
 [dev-dependencies]
+naga.workspace = true
 shader-check.workspace = true
 ron.workspace = true

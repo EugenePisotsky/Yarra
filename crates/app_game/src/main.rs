@@ -7,7 +7,7 @@ use bevy::{
     window::{PresentMode, WindowResolution},
 };
 use engine::{MinimalGamePlugin, StreamedTerrainSurface, WorldVegetationPlugin};
-use vegetation_render::VegetationDebugSettings;
+use vegetation_render::VegetationSettings;
 
 #[cfg(target_os = "macos")]
 mod camera_input_trace;
@@ -129,7 +129,7 @@ fn run() -> Result<(), String> {
         .resource_mut::<vegetation_render::VegetationLighting>()
         .canopy = canopy;
     app.world_mut()
-        .resource_mut::<VegetationDebugSettings>()
+        .resource_mut::<VegetationSettings>()
         .density_mode = options.density;
     app.add_systems(
         Update,
@@ -143,19 +143,19 @@ fn run() -> Result<(), String> {
     }
     if options.candidate_reference {
         app.world_mut()
-            .resource_mut::<VegetationDebugSettings>()
+            .resource_mut::<VegetationSettings>()
             .candidate_cache_enabled = false;
     }
     if options.placement_reference {
         app.world_mut()
-            .resource_mut::<VegetationDebugSettings>()
+            .resource_mut::<VegetationSettings>()
             .early_rejection = false;
     }
     app.world_mut()
         .resource_mut::<terrain_render::TerrainPreparedSettings>()
         .enabled = !options.terrain_reference;
     app.world_mut()
-        .resource_mut::<VegetationDebugSettings>()
+        .resource_mut::<VegetationSettings>()
         .gpu_counters_enabled = options.counters;
     if options.terrain_universal {
         app.world_mut()

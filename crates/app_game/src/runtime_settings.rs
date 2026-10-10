@@ -8,7 +8,7 @@ use bevy::{core_pipeline::prepass::DepthPrepass, light::ShadowFilteringMethod, p
 use engine::{GameInputEnabled, GameplaySystems, WorldViewCamera};
 use terrain_render::{TerrainMaterial, TerrainShadingMode, composite::TerrainCompositeMaterial};
 use vegetation_render::{
-    VegetationDebugSettings, VegetationLightingMode, VegetationProfileMode, VegetationWind,
+    VegetationLightingMode, VegetationProfileMode, VegetationSettings, VegetationWind,
 };
 
 pub(crate) fn load_canopy(path: &std::path::Path) -> Result<vegetation::CanopyShading, String> {
@@ -70,7 +70,7 @@ impl Plugin for RuntimeSettingsPlugin {
 fn initialize(
     mut settings: ResMut<RuntimeSettings>,
     clouds: Res<engine::CloudQuality>,
-    grass: Res<VegetationDebugSettings>,
+    grass: Res<VegetationSettings>,
     lighting: Res<vegetation_render::VegetationLighting>,
     variation: Res<terrain_render::TerrainMacroVariation>,
 ) {
@@ -281,7 +281,7 @@ fn apply_settings(
     mut commands: Commands,
     s: Res<RuntimeSettings>,
     camera: Single<Entity, With<WorldViewCamera>>,
-    mut grass: ResMut<VegetationDebugSettings>,
+    mut grass: ResMut<VegetationSettings>,
     mut wind: ResMut<VegetationWind>,
     mut prepared: ResMut<terrain_render::TerrainPreparedSettings>,
     mut clouds: ResMut<engine::CloudQuality>,

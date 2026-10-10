@@ -1,6 +1,6 @@
 use super::*;
 use crate::world_streaming::test_world_resources;
-use vegetation_render::{VegetationDebugSettings, VegetationLighting, VegetationProfileMode};
+use vegetation_render::{VegetationLighting, VegetationProfileMode, VegetationSettings};
 
 pub(super) fn surface(space: i64, x: i32, height: f32) -> StreamedTerrainSurface {
     StreamedTerrainSurface {
@@ -164,7 +164,7 @@ fn disabled_grass_stays_current_through_rebase_world_change_and_resume() {
         [160., 0.]
     );
     app.world_mut()
-        .resource_mut::<VegetationDebugSettings>()
+        .resource_mut::<VegetationSettings>()
         .profile_mode = VegetationProfileMode::Disabled;
     let (catalog, origin) = test_world_resources(
         WorldSpaceId(1),
@@ -202,7 +202,7 @@ fn disabled_grass_stays_current_through_rebase_world_change_and_resume() {
     );
     let revision = scene.revision();
     app.world_mut()
-        .resource_mut::<VegetationDebugSettings>()
+        .resource_mut::<VegetationSettings>()
         .profile_mode = VegetationProfileMode::Full;
     app.update();
     assert_eq!(

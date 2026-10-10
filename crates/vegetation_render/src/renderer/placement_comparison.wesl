@@ -1,4 +1,7 @@
-// Appended to the actual production compute shader by the native GPU regression test.
+// Runs the production placement classification both ways for the native GPU regression test.
+import package::shaders::vegetation::placement::evaluate_candidate;
+import package::shaders::vegetation::placement::bindings::{work_items, config};
+
 @group(0) @binding(14) var<storage, read_write> comparison: array<u32>;
 
 @compute @workgroup_size(64)
@@ -27,5 +30,5 @@ fn compare_candidates(@builtin(global_invocation_id) id: vec3<u32>) {
             || any(a.surface.normal != b.surface.normal)
             || a.surface.validity != b.surface.validity) { result |= 8u; }
     }
-    comparison[id.y * debug_config.workload.w + id.x] = result;
+    comparison[id.y * config.workload.w + id.x] = result;
 }

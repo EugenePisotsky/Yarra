@@ -990,3 +990,6 @@ impl<P: PhaseItem> RenderCommand<P> for DrawTreeGroup {
         RenderCommandResult::Success
     }
 }
+
+#[cfg(test)]
+mod tests;

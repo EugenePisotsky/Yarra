@@ -148,7 +148,7 @@ const EARTHSHINE: f32 = 0.04;
 /// Light of the moonless night sky just above the horizon, as a share of the night's sky light
 /// (as the haze's own light).
 const NIGHT_SKY_GLOW: f32 = 0.15;
-/// Mean normal albedo of the moon's drawn face (`moon_albedo` in `shaders/sky/composite.wesl`).
+/// Mean normal albedo of the moon's drawn face (`moon_albedo` in `shaders/sky/celestial.wesl`).
 const MOON_MEAN_ALBEDO: f32 = 0.11;
 /// The moon's path on the sea as the eye sees it: each wave facet mirrors the whole disc, which
 /// the sea's averaged glitter spreads into nothing, so its image is drawn this much brighter.
@@ -156,8 +156,12 @@ const MOON_GLITTER: f32 = 40.;
 /// Seconds after which the wave clock wraps; every wave completes whole cycles in it
 /// (`shaders/water/waves.wesl`).
 pub const WAVE_PERIOD: f64 = 3600.;
-/// Mist noise tile, metres; `MIST_NOISE_PERIOD` in `shaders/sky/composite.wesl`.
+/// Mist noise tile, metres: a whole number, which the mist's shaders read as
+/// `constants::MIST_NOISE_PERIOD` (`shaders/sky/air.wesl`).
 pub const MIST_NOISE_PERIOD: f64 = 2048.;
+pub(crate) fn mist_noise_period_def() -> bevy::shader::ShaderDefVal {
+    bevy::shader::ShaderDefVal::UInt("MIST_NOISE_PERIOD".into(), MIST_NOISE_PERIOD as u32)
+}
 /// Mist drifts slowly with the cloud wind.
 const MIST_DRIFT_METRES_PER_SECOND: f64 = 0.6;
 /// A newly published mist map fades in rather than appearing at once.

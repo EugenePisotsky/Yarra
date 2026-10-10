@@ -6,6 +6,7 @@
 // resolution, sums the sky seen along its line towards the sun, weighted by the veil there.
 import bevy_render::view::View;
 import package::shaders::clouds::types::CloudParams;
+import package::shaders::sky::sun::{GLARE_VEIL_WIDTH, gradient_noise};
 
 @group(0) @binding(0) var<uniform> view: View;
 @group(0) @binding(1) var<storage, read> clouds: CloudParams;
@@ -18,12 +19,6 @@ import package::shaders::clouds::types::CloudParams;
 @group(0) @binding(4) var rays: texture_storage_2d<rgba16float, write>;
 
 const SAMPLES: u32 = 32u;
-// GLARE_VEIL_WIDTH in composite.wesl, radians.
-const VEIL_WIDTH: f32 = 0.12;
-
-fn gradient_noise(p: vec2<f32>) -> f32 {
-    return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
-}
 
 @compute @workgroup_size(8, 8)
 fn sun_rays(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -47,7 +42,7 @@ fn sun_rays(@builtin(global_invocation_id) id: vec3<u32>) {
             // the spacing (2t) and the veil there.
             let t = (f32(i) + jitter) / f32(SAMPLES);
             let q = sun + (pixel - sun) * t * t;
-            let u = length(q - sun) / (focal * VEIL_WIDTH);
+            let u = length(q - sun) / (focal * GLARE_VEIL_WIDTH);
             let w = t / ((1.0 + u * u) * sqrt(sqrt(1.0 + u * u)));
             // Off screen, the share of the sun seen stands in.
             var sky = sun_state.x;

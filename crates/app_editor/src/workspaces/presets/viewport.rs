@@ -15,7 +15,7 @@ use terrain_render::{
     prepare_terrain_material,
 };
 use vegetation_render::{
-    VegetationDebugSettings, VegetationLighting, VegetationSceneState, VegetationWind,
+    VegetationLighting, VegetationSceneState, VegetationSettings, VegetationWind,
 };
 
 const LAYER: usize = 30;
@@ -25,7 +25,7 @@ pub(crate) struct PresetWorkspaceCamera;
 struct PreviewGround;
 struct SavedWorld {
     scene: VegetationSceneState,
-    settings: VegetationDebugSettings,
+    settings: VegetationSettings,
     wind: VegetationWind,
     lighting: VegetationLighting,
     sun: (Entity, Transform, DirectionalLight, Option<RenderLayers>),
@@ -131,7 +131,7 @@ pub(super) fn setup(
 #[derive(bevy::ecs::system::SystemParam)]
 pub(super) struct SharedRender<'w, 's> {
     scene: ResMut<'w, VegetationSceneState>,
-    settings: ResMut<'w, VegetationDebugSettings>,
+    settings: ResMut<'w, VegetationSettings>,
     wind: ResMut<'w, VegetationWind>,
     lighting: ResMut<'w, VegetationLighting>,
     ambient: ResMut<'w, GlobalAmbientLight>,
@@ -168,7 +168,7 @@ pub(super) fn enter(
     light.illuminance = 15_000.0;
     shared.ambient.color = Color::WHITE;
     shared.ambient.brightness = 300.0;
-    *shared.settings = VegetationDebugSettings::default();
+    *shared.settings = VegetationSettings::default();
     *shared.lighting = VegetationLighting::default();
     shared.lighting.canopy_origin = [0.0; 2];
     *shared.wind = VegetationWind::default();

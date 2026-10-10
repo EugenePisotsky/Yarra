@@ -21,11 +21,12 @@ fn lod_boundary_preserves_width_and_endpoints() {
         &WgpuSettings::default(),
     ));
     let device = resources.0.wgpu_device();
-    let shader = format!(
-        "{}\n{}",
-        include_str!("../../../../../assets/shaders/vegetation_blade.wesl"),
-        include_str!("lod_comparison.wgsl")
-    );
+    let shader = shader_check::Shaders::get()
+        .compose_source(
+            include_str!("lod_comparison.wesl"),
+            &crate::renderer::tests::grass_defs(),
+        )
+        .unwrap();
     let module = device.create_shader_module(ShaderModuleDescriptor {
         label: Some("grass LOD boundary comparison"),
         source: ShaderSource::Wgsl(shader.into()),

@@ -653,7 +653,7 @@ pub enum PagePayload {
     TerrainHeightfield(TerrainHeightfieldPage),
     StaticObjects(StaticObjectsPage),
     GameplayObjects(GameplayObjectsPage),
-    /// Terrain-independent V2 coverage fields, joined to the resident terrain page at runtime.
+    /// Terrain-independent vegetation coverage fields, joined to the resident terrain page at runtime.
     Vegetation(VegetationFieldPageData),
 }
 

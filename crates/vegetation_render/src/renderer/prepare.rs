@@ -3,20 +3,22 @@ use super::{
     blade_preparation,
     buffers::{
         VegetationBuffers, create_compute_bind_group, create_draw_bind_group,
-        create_schedule_bind_group, grow_storage, update_storage, writable_storage,
+        create_schedule_bind_group, diagnostic_instances, grow_storage, update_storage,
+        writable_storage,
     },
     candidate_cache,
     generation::GenerationInputs,
     gpu_types::{
-        CameraGpu, DRAW_ARGS_SIZE, DebugConfigGpu, PROCEDURAL_INSTANCE_CAPACITY,
+        CameraGpu, ConfigGpu, DRAW_ARGS_SIZE, DiagnosticInstanceGpu, PROCEDURAL_INSTANCE_CAPACITY,
         ProceduralInstanceGpu, SINGLE_HIGH_CAPACITY, SPLIT_HIGH_CAPACITY, SurfaceSampleGpu,
     },
     packing::{apply_terrain_gate, pack_coverage, pack_items, pack_lod_focus, pack_surface},
     pipelines::VegetationPipelines,
 };
 use crate::{
-    VegetationDebugSettings, VegetationDiagnostics, VegetationLighting, VegetationLightingMode,
-    VegetationProfileMode, VegetationSceneState, VegetationSun, VegetationView, VegetationWind,
+    VegetationDiagnosticMode, VegetationDiagnostics, VegetationLighting, VegetationLightingMode,
+    VegetationProfileMode, VegetationSceneState, VegetationSettings, VegetationSun, VegetationView,
+    VegetationWind,
 };
 use bevy::{
     prelude::*,
@@ -31,7 +33,7 @@ use std::mem::size_of;
 #[allow(clippy::too_many_arguments)] // Bevy render-world system parameters are independent resources.
 pub(super) fn prepare(
     scene: Option<Res<VegetationSceneState>>,
-    settings: Res<VegetationDebugSettings>,
+    settings: Res<VegetationSettings>,
     blade_settings: Res<crate::VegetationBladePreparation>,
     blade_preparation: Res<blade_preparation::BladePreparation>,
     lighting: Res<VegetationLighting>,
@@ -66,22 +68,16 @@ pub(super) fn prepare(
         buffers.active = false;
         return;
     };
-    if buffers
-        .canopy_boundary
-        .update(&scene, &lighting, &render_device, &render_queue)
+    let mut rebind =
+        buffers
+            .canopy_boundary
+            .update(&scene, &lighting, &render_device, &render_queue);
+    let diagnostic = settings.diagnostic_mode != VegetationDiagnosticMode::ProceduralGeometry;
+    if (buffers.diagnostic_instances.size() > size_of::<DiagnosticInstanceGpu>() as u64)
+        != diagnostic
     {
-        let layout = pipeline_cache.get_bind_group_layout(&pipelines.draw_layout);
-        buffers.draw_bind_group = create_draw_bind_group(
-            &render_device,
-            &layout,
-            &buffers.procedural_instances,
-            &buffers.diagnostic_instances,
-            &buffers.species,
-            &buffers.camera,
-            &buffers.debug_config,
-            &blade_preparation.arena,
-            &buffers.canopy_boundary.buffer,
-        );
+        buffers.diagnostic_instances = diagnostic_instances(&render_device, diagnostic);
+        rebind = true;
     }
     let gate_changed = *terrain_gate != buffers.uploaded_terrain_gate;
     if gate_changed {
@@ -111,12 +107,12 @@ pub(super) fn prepare(
             Err(regrow) => {
                 (buffers.surfaces, buffers.surfaces_capacity) = writable_storage(
                     &render_device,
-                    "vegetation-v2 surface fields",
+                    "vegetation surface fields",
                     regrow.surface_samples * size_of::<SurfaceSampleGpu>() as u64,
                 );
                 (buffers.coverage, buffers.coverage_capacity) = writable_storage(
                     &render_device,
-                    "vegetation-v2 coverage fields",
+                    "vegetation coverage fields",
                     regrow.coverage_samples * size_of::<f32>() as u64,
                 );
                 replaced_buffers += 2;
@@ -156,9 +152,6 @@ pub(super) fn prepare(
             render_origin.world_xz,
             &plan.layouts,
         );
-        let schedule_layout = pipeline_cache.get_bind_group_layout(&pipelines.schedule_layout);
-        let compute_layout = pipeline_cache.get_bind_group_layout(&pipelines.compute_layout);
-        let draw_layout = pipeline_cache.get_bind_group_layout(&pipelines.draw_layout);
         let position = views
             .iter()
             .next()
@@ -174,7 +167,7 @@ pub(super) fn prepare(
             &render_queue,
             &buffers.work_items,
             buffers.work_items_capacity,
-            "vegetation-v2 work items",
+            "vegetation work items",
             work_items,
         ) {
             buffers.work_items = buffer;
@@ -184,7 +177,7 @@ pub(super) fn prepare(
         if let Some((buffer, capacity)) = grow_storage(
             &render_device,
             buffers.visible_work_items_capacity,
-            "vegetation-v2 visible work queue",
+            "vegetation visible work queue",
             packed.work_items.len() as u64 * size_of::<u32>() as u64,
         ) {
             buffers.visible_work_items = buffer;
@@ -199,7 +192,7 @@ pub(super) fn prepare(
             &render_queue,
             &buffers.choices,
             buffers.choices_capacity,
-            "vegetation-v2 species choices",
+            "vegetation species choices",
             choices,
         ) {
             buffers.choices = buffer;
@@ -214,7 +207,7 @@ pub(super) fn prepare(
             &render_queue,
             &buffers.species,
             buffers.species_capacity,
-            "vegetation-v2 species",
+            "vegetation species",
             species,
         ) {
             buffers.species = buffer;
@@ -222,49 +215,7 @@ pub(super) fn prepare(
             replaced_buffers += 1;
         }
 
-        if replaced_buffers > 0 {
-            buffers.schedule_bind_group = create_schedule_bind_group(
-                &render_device,
-                &schedule_layout,
-                &buffers.work_items,
-                &buffers.visible_work_items,
-                &buffers.candidate_dispatch_args,
-                &buffers.camera,
-                &buffers.gpu_telemetry,
-                &buffers.debug_config,
-            );
-            buffers.compute_bind_group = create_compute_bind_group(
-                &render_device,
-                &compute_layout,
-                [
-                    &buffers.work_items,
-                    &buffers.choices,
-                    &buffers.coverage,
-                    &buffers.surfaces,
-                    &buffers.procedural_instances,
-                    &buffers.diagnostic_instances,
-                    &buffers.args,
-                    &buffers.visible_work_items,
-                    &buffers.debug_config,
-                    &buffers.camera,
-                    &buffers.gpu_telemetry,
-                    &candidate_cache.entries,
-                    &candidate_cache.acceptance_bits,
-                    &candidate_cache.build_items,
-                ],
-            );
-            buffers.draw_bind_group = create_draw_bind_group(
-                &render_device,
-                &draw_layout,
-                &buffers.procedural_instances,
-                &buffers.diagnostic_instances,
-                &buffers.species,
-                &buffers.camera,
-                &buffers.debug_config,
-                &blade_preparation.arena,
-                &buffers.canopy_boundary.buffer,
-            );
-        }
+        rebind |= replaced_buffers > 0;
         buffers.work_item_count = packed.work_items.len() as u32;
         buffers.maximum_candidate_count = packed.maximum_candidate_count;
         buffers.low_detail_capacities = packed.low_detail_capacities;
@@ -311,6 +262,49 @@ pub(super) fn prepare(
         }
         buffers.source_serial = buffers.source_serial.wrapping_add(1);
         buffers.uploaded_terrain_gate = terrain_gate.clone();
+    }
+    if rebind {
+        buffers.schedule_bind_group = create_schedule_bind_group(
+            &render_device,
+            &pipeline_cache.get_bind_group_layout(&pipelines.schedule_layout),
+            &buffers.work_items,
+            &buffers.visible_work_items,
+            &buffers.candidate_dispatch_args,
+            &buffers.camera,
+            &buffers.gpu_telemetry,
+            &buffers.config,
+        );
+        buffers.compute_bind_group = create_compute_bind_group(
+            &render_device,
+            &pipeline_cache.get_bind_group_layout(&pipelines.compute_layout),
+            [
+                &buffers.work_items,
+                &buffers.choices,
+                &buffers.coverage,
+                &buffers.surfaces,
+                &buffers.procedural_instances,
+                &buffers.diagnostic_instances,
+                &buffers.args,
+                &buffers.visible_work_items,
+                &buffers.config,
+                &buffers.camera,
+                &buffers.gpu_telemetry,
+                &candidate_cache.entries,
+                &candidate_cache.acceptance_bits,
+                &candidate_cache.build_items,
+            ],
+        );
+        buffers.draw_bind_group = create_draw_bind_group(
+            &render_device,
+            &pipeline_cache.get_bind_group_layout(&pipelines.draw_layout),
+            &buffers.procedural_instances,
+            &buffers.diagnostic_instances,
+            &buffers.species,
+            &buffers.camera,
+            &buffers.config,
+            &blade_preparation.arena,
+            &buffers.canopy_boundary.buffer,
+        );
     }
 
     let Some((view, resolution)) = views.iter().next() else {
@@ -388,7 +382,7 @@ pub(super) fn prepare(
         ],
     };
     buffers.preparation_enabled = blade_settings.enabled
-        && settings.mode as u32 == 0
+        && !diagnostic
         && settings.lighting_mode != VegetationLightingMode::VertexOnlyDiagnostic
         && matches!(
             settings.profile_mode,
@@ -396,9 +390,9 @@ pub(super) fn prepare(
         )
         && blade_preparation.available(&pipeline_cache);
     buffers.preparation_camera = Some(camera_gpu);
-    let config_gpu = DebugConfigGpu {
+    let config_gpu = ConfigGpu {
         values: [
-            settings.mode as u32,
+            settings.diagnostic_mode as u32,
             settings.density_mode as u32,
             settings.lighting_mode as u32,
             buffers.low_detail_capacities[0],
@@ -412,7 +406,7 @@ pub(super) fn prepare(
         ],
     };
     render_queue.write_buffer(&buffers.camera, 0, bytemuck::bytes_of(&camera_gpu));
-    render_queue.write_buffer(&buffers.debug_config, 0, bytemuck::bytes_of(&config_gpu));
+    render_queue.write_buffer(&buffers.config, 0, bytemuck::bytes_of(&config_gpu));
     buffers.generation_inputs = Some(GenerationInputs::new(
         buffers.source_serial,
         camera_gpu,

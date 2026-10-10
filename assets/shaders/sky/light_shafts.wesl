@@ -6,80 +6,55 @@
 // only this pass draws, scatters sunlight where it reaches and sky light everywhere. Each texel
 // stores the light to add (exposed; negative where shadow darkens haze) and the transmittance of
 // the air under crowns, and the distance it marched to, for the depth-aware blur and upsample.
-@if(MARCH) import bevy_render::view::View;
-@if(MARCH) import bevy_pbr::render::mesh_view_types::{Lights, DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT};
-@if(MARCH) import package::shaders::clouds::types::CloudParams;
+import bevy_render::view::View;
+import bevy_pbr::render::mesh_view_types::{Lights, DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT};
+import package::shaders::clouds::types::CloudParams;
+import package::shaders::clouds::maps::{cloud_beam, SKY_FLOOR};
+import package::shaders::sky::air::{
+    scattering, OPEN_DEPTH, OPEN_DENSITY, WISP_LIFT, mist_texel, mist_wisps,
+};
+import package::shaders::sky::sun::{cascade_visibility, gradient_noise};
 
-@if(MARCH) @group(0) @binding(0) var<uniform> view: View;
-@if(MARCH) @group(0) @binding(1) var<storage, read> clouds: CloudParams;
-@if(MARCH && MULTISAMPLED)
+@group(0) @binding(0) var<uniform> view: View;
+@group(0) @binding(1) var<storage, read> clouds: CloudParams;
+@if(MULTISAMPLED)
 @group(0) @binding(2) var depth: texture_depth_multisampled_2d;
-@elif(MARCH)
+@else
 @group(0) @binding(2) var depth: texture_depth_2d;
-@if(MARCH) @group(0) @binding(3) var<uniform> lights: Lights;
-@if(MARCH) @group(0) @binding(4) var shadow_maps: texture_depth_2d_array;
-@if(MARCH) @group(0) @binding(5) var shadow_sampler: sampler_comparison;
-@if(MARCH) @group(0) @binding(6) var cloud_shadow: texture_2d<f32>;
-@if(MARCH) @group(0) @binding(7) var forest_map: texture_2d<f32>;
-@if(MARCH) @group(0) @binding(8) var mist_map: texture_2d<f32>;
-@if(MARCH) @group(0) @binding(9) var noise: texture_3d<f32>;
-@if(MARCH) @group(0) @binding(10) var repeat_sampler: sampler;
-@if(MARCH) @group(0) @binding(11) var clamp_sampler: sampler;
-@if(MARCH) @group(0) @binding(12) var light_out: texture_storage_2d<rgba16float, write>;
-@if(MARCH) @group(0) @binding(13) var distance_out: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(3) var<uniform> lights: Lights;
+@group(0) @binding(4) var shadow_maps: texture_depth_2d_array;
+@group(0) @binding(5) var shadow_sampler: sampler_comparison;
+@group(0) @binding(6) var cloud_shadow: texture_2d<f32>;
+@group(0) @binding(7) var forest_map: texture_2d<f32>;
+@group(0) @binding(8) var mist_map: texture_2d<f32>;
+@group(0) @binding(9) var noise: texture_3d<f32>;
+@group(0) @binding(10) var repeat_sampler: sampler;
+@group(0) @binding(11) var clamp_sampler: sampler;
+@group(0) @binding(12) var light_out: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(13) var distance_out: texture_storage_2d<rgba16float, write>;
 
 // Main-pass pixels per texel and steps per ray (`SCALE`, `STEPS` in light_shafts.rs).
-@if(MARCH) const SCALE: f32 = f32(constants::SHAFT_SCALE);
-@if(MARCH) const STEPS: u32 = constants::SHAFT_STEPS;
+const SCALE: f32 = f32(constants::SHAFT_SCALE);
+const STEPS: u32 = constants::SHAFT_STEPS;
 // Beyond the shadow maps nothing is shadowed and the composite's lighting is right.
-@if(MARCH) const MAX_RANGE: f32 = 150.0;
+const MAX_RANGE: f32 = 150.0;
 
-// The composite's phase function for haze and mist (`scattering` in sky/composite.wesl).
-@if(MARCH) const FORWARD_SHARE: f32 = 0.4;
-@if(MARCH) const FORWARD_G: f32 = 0.6;
-@if(MARCH) const AUREOLE_SHARE: f32 = 0.05;
-@if(MARCH) const AUREOLE_G: f32 = 0.92;
-@if(MARCH) const INV_FOUR_PI: f32 = 0.07957747;
-@if(MARCH)
-fn lobe(g: f32, cos_angle: f32) -> f32 {
-    return (1.0 - g * g) / pow(1.0 + g * g - 2.0 * g * cos_angle, 1.5);
-}
-@if(MARCH)
-fn scattering(cos_angle: f32) -> f32 {
-    return INV_FOUR_PI * ((1.0 - FORWARD_SHARE - AUREOLE_SHARE)
-        + FORWARD_SHARE * lobe(FORWARD_G, cos_angle) + AUREOLE_SHARE * lobe(AUREOLE_G, cos_angle));
-}
-
-// Valley mist as the composite draws it (`mist_column`, `mist_wisps`, `mist_depth`), as a
+// Valley mist as the composite draws it (`mist_column`, `mist_depth` in sky/fog.wesl), as a
 // density at a point.
-@if(MARCH) const OPEN_DEPTH: f32 = 0.35;
-@if(MARCH) const OPEN_DENSITY: f32 = 0.2;
-@if(MARCH) const WISP_LIFT: f32 = 0.35;
-@if(MARCH) const MIST_NOISE_PERIOD: f32 = 2048.0;
-@if(MARCH)
-fn mist_at(xz: vec2<f32>) -> vec4<f32> {
-    let extent = clouds.mist_map.z * vec2<f32>(textureDimensions(mist_map));
-    return textureSampleLevel(mist_map, clamp_sampler, (xz - clouds.mist_map.xy) / extent, 0.0);
-}
 // Highest the mist can reach in a column, wisps included.
-@if(MARCH)
 fn mist_ceiling(xz: vec2<f32>) -> f32 {
-    let m = mist_at(xz);
+    let m = mist_texel(mist_map, clamp_sampler, clouds.mist_map, xz);
     return m.r + clouds.mist.y * mix(OPEN_DEPTH, 1.0, m.g) * m.a * (1.0 + WISP_LIFT);
 }
-@if(MARCH)
 fn mist_density(p: vec3<f32>) -> f32 {
-    let m = mist_at(p.xz);
+    let m = mist_texel(mist_map, clamp_sampler, clouds.mist_map, p.xz);
     let column_depth = clouds.mist.y * mix(OPEN_DEPTH, 1.0, m.g) * m.a;
-    let q = (p.xz + clouds.mist_drift.xy) / MIST_NOISE_PERIOD;
-    let n = textureSampleLevel(noise, repeat_sampler, vec3(q.x, p.y / 512.0, q.y), 0.0);
-    let wisps = smoothstep(0.2, 0.8, n.r * 0.7 + n.b * 0.3);
+    let wisps = mist_wisps(noise, repeat_sampler, clouds.mist_drift.xy, p);
     let top = m.r + column_depth + (wisps - 0.5) * 2.0 * WISP_LIFT * column_depth;
     let share = clamp((top - p.y) / max(column_depth * 0.6, 3.0), 0.0, 1.0);
     return clouds.mist.x * mix(OPEN_DENSITY, 1.0, m.g) * m.a * mix(0.1, 1.8, wisps) * share;
 }
 
-@if(MARCH)
 fn haze_density(y: f32) -> f32 {
     return clouds.low_haze.x * exp(-max(y - clouds.low_haze.y, 0.0) / clouds.low_haze.z);
 }
@@ -87,9 +62,8 @@ fn haze_density(y: f32) -> f32 {
 // Air under crowns: the share of the sky the crowns around hold back (forest map levels 1-3),
 // below their canopy top. Returns density and the sky light share reaching the point.
 // Light under crowns has passed through and off leaves: dimmer and greener than the sky's.
-@if(MARCH) const CANOPY_TINT: vec3<f32> = vec3(0.7, 1.0, 0.55);
-@if(MARCH) const CANOPY_SKY: f32 = 0.3;
-@if(MARCH)
+const CANOPY_TINT: vec3<f32> = vec3(0.7, 1.0, 0.55);
+const CANOPY_SKY: f32 = 0.3;
 fn canopy_air(p: vec3<f32>) -> vec2<f32> {
     let parameters = clouds.forest_shadow;
     if clouds.shafts.x <= 0.0 || parameters.z <= 0.0 {
@@ -104,27 +78,24 @@ fn canopy_air(p: vec3<f32>) -> vec2<f32> {
         return vec2(0.0, 1.0);
     }
     let cover = 1.0 - around.b;
-    let sky = mix(1.0, mix(0.15, 1.0, around.b), clouds.forest_sky.x);
+    let sky = mix(1.0, mix(SKY_FLOOR, 1.0, around.b), clouds.forest_sky.x);
     return vec2(clouds.shafts.x * cover, sky);
 }
 
-@if(MARCH)
 struct Sun {
     index: i32,
     // Distance the cascades cover.
     range: f32,
 }
 
-@if(MARCH) const MAX_CASCADES: u32 = 4u;
+const MAX_CASCADES: u32 = 4u;
 // Shadow-map coordinates of a ray's two ends in each cascade. The cascades are orthographic, so
 // coordinates along the ray are a straight blend of them.
-@if(MARCH)
 struct ShadowRay {
     start: array<vec3<f32>, MAX_CASCADES>,
     end: array<vec3<f32>, MAX_CASCADES>,
 }
 
-@if(MARCH)
 fn shadow_ray(sun: Sun, origin: vec3<f32>, ray: vec3<f32>, reach: f32) -> ShadowRay {
     var out: ShadowRay;
     let light = &lights.directional_lights[sun.index];
@@ -140,7 +111,6 @@ fn shadow_ray(sun: Sun, origin: vec3<f32>, ray: vec3<f32>, reach: f32) -> Shadow
     return out;
 }
 
-@if(MARCH)
 fn shadowed_sun() -> Sun {
     for (var i = 0u; i < lights.n_directional_lights; i += 1u) {
         let light = &lights.directional_lights[i];
@@ -155,51 +125,21 @@ fn shadowed_sun() -> Sun {
 
 // Sunlight past everything in the shadow maps, a share `along` of the way along the ray and
 // `distance` from the camera along the view.
-@if(MARCH)
 fn sun_visibility(sun: Sun, shadow: ShadowRay, along: f32, distance: f32) -> f32 {
     let light = &lights.directional_lights[sun.index];
     for (var c = 0u; c < min((*light).num_cascades, MAX_CASCADES); c += 1u) {
         if distance >= (*light).cascades[c].far_bound {
             continue;
         }
-        let ndc = mix(shadow.start[c], shadow.end[c], along);
-        if any(abs(ndc.xy) > vec2(1.0)) || ndc.z < 0.0 || ndc.z > 1.0 {
-            return 1.0;
-        }
-        let uv = ndc.xy * vec2(0.5, -0.5) + 0.5;
-        return textureSampleCompareLevel(
-            shadow_maps, shadow_sampler, uv, i32((*light).depth_texture_base_index + c), ndc.z);
+        return cascade_visibility(shadow_maps, shadow_sampler,
+            i32((*light).depth_texture_base_index + c), mix(shadow.start[c], shadow.end[c], along));
     }
     return 1.0;
 }
 
 // Below this extinction per metre, shadow cannot visibly darken the air (thin ground haze).
-@if(MARCH) const SHADOWED_AIR: f32 = 2e-4;
+const SHADOWED_AIR: f32 = 2e-4;
 
-// Sunlight past the cloud layer's shadow at `p` (the beam of `cloud_light` in clouds/surface.wesl).
-@if(MARCH)
-fn cloud_visibility(p: vec3<f32>) -> f32 {
-    let sun = clouds.sun.xyz;
-    if clouds.layer.w < 0.5 || sun.y <= 0.0 || p.y >= clouds.layer.x + clouds.layer.y {
-        return 1.0;
-    }
-    let hit = p.xz + clouds.offset.xy + sun.xz * (clouds.layer.x - p.y) / max(sun.y, 0.04);
-    let shadow = textureSampleLevel(cloud_shadow, repeat_sampler,
-        (hit - clouds.offset.zw) / (clouds.layer.z * 4.0), 0.0).r;
-    // The direct beam only: light the clouds pass on diffusely lights no beams, and a closing
-    // deck hides the beam whatever thin spots the shadow map finds.
-    let open = 1.0 - clouds.weather.z;
-    return shadow * open * open;
-}
-
-// Interleaved gradient noise (Jimenez 2014): offsets each texel's steps so banding becomes
-// fine noise that the blur removes.
-@if(MARCH)
-fn gradient_noise(texel: vec2<f32>) -> f32 {
-    return fract(52.9829189 * fract(dot(texel, vec2(0.06711056, 0.00583715))));
-}
-
-@if(MARCH)
 @compute @workgroup_size(8, 8)
 fn march(@builtin(global_invocation_id) id: vec3<u32>) {
     let size = textureDimensions(light_out);
@@ -226,8 +166,10 @@ fn march(@builtin(global_invocation_id) id: vec3<u32>) {
     let reach = min(distance, min(sun.range, MAX_RANGE));
     let origin = view.world_position;
     let lit = sun.index >= 0 && clouds.sun.y > 0.0;
+    let beam = cloud_beam(cloud_shadow, repeat_sampler, clouds.layer, clouds.offset,
+        clouds.sun.xyz, clouds.weather.z, origin);
     let sunlight = select(vec3(0.0), clouds.air_sun.rgb * scattering(dot(ray, clouds.sun.xyz))
-        * cloud_visibility(origin), lit);
+        * beam, lit);
     var mist_top = -1.0e9;
     if clouds.mist.x > 0.0 && clouds.mist_map.w > 0.5 {
         mist_top = max(mist_ceiling(origin.xz), mist_ceiling(origin.xz + ray.xz * reach));
@@ -240,6 +182,7 @@ fn march(@builtin(global_invocation_id) id: vec3<u32>) {
     let luminance = vec3(0.2126, 0.7152, 0.0722);
     let skylight = dot(clouds.air_light.rgb, luminance) * CANOPY_SKY * CANOPY_TINT
         / dot(CANOPY_TINT, luminance);
+    // Each texel's steps are offset; the blur removes the noise.
     let jitter = gradient_noise(vec2<f32>(id.xy));
     var light = vec3(0.0);
     var seen = 1.0;
@@ -270,44 +213,4 @@ fn march(@builtin(global_invocation_id) id: vec3<u32>) {
         canopy_seen *= exp(-canopy.x * dt);
     }
     textureStore(light_out, texel, vec4(light * view.exposure, canopy_seen));
-}
-
-// Without MARCH: the depth-aware blur.
-@if(!MARCH) @group(0) @binding(0) var source: texture_2d<f32>;
-@if(!MARCH) @group(0) @binding(1) var distances: texture_2d<f32>;
-@if(!MARCH) @group(0) @binding(2) var destination: texture_storage_2d<rgba16float, write>;
-
-// A 9-tap Gaussian (sigma 2 texels) that skips texels at a different distance, so beams do not
-// bleed across silhouettes.
-@if(!MARCH) const RADIUS: i32 = 4;
-@if(!MARCH)
-fn blur(id: vec2<u32>, step: vec2<i32>) {
-    let size = vec2<i32>(textureDimensions(destination));
-    let texel = vec2<i32>(id);
-    if any(texel >= size) {
-        return;
-    }
-    let centre = textureLoad(distances, texel, 0).r;
-    var sum = vec4(0.0);
-    var weight = 0.0;
-    for (var i = -RADIUS; i <= RADIUS; i += 1) {
-        let at = clamp(texel + step * i, vec2(0), size - 1);
-        let d = textureLoad(distances, at, 0).r;
-        let w = exp(-f32(i * i) / 8.0) * exp(-abs(d - centre) / (0.05 * min(centre, d) + 0.3));
-        sum += textureLoad(source, at, 0) * w;
-        weight += w;
-    }
-    textureStore(destination, texel, sum / weight);
-}
-
-@if(!MARCH)
-@compute @workgroup_size(8, 8)
-fn blur_x(@builtin(global_invocation_id) id: vec3<u32>) {
-    blur(id.xy, vec2(1, 0));
-}
-
-@if(!MARCH)
-@compute @workgroup_size(8, 8)
-fn blur_y(@builtin(global_invocation_id) id: vec3<u32>) {
-    blur(id.xy, vec2(0, 1));
 }

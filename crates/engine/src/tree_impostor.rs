@@ -94,7 +94,7 @@ pub struct ImpostorDescriptor {
     /// The foliage, for distant forest shadows (`crate::forest_shadow`).
     pub crown: ImpostorCrown,
     /// The far mesh LOD's structural wind profile and stem height (object metres), so the
-    /// quad leans as that trunk does (`shaders/tree_wind.wesl`, `structural_frame`).
+    /// quad leans as that trunk does (`shaders/tree/wind.wesl`, `sway_point_of_trunk`).
     pub wind_profile: Vec4,
     pub wind_height: f32,
     pub albedo: Handle<Image>,

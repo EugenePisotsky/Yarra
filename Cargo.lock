@@ -7357,6 +7357,7 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "bytemuck",
+ "naga",
  "ron",
  "serde",
  "yarra-atmosphere",

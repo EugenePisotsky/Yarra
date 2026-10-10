@@ -1,4 +1,5 @@
-import package::shaders::clouds::types::{CloudParams, shelter_exposure};
+import package::shaders::clouds::types::CloudParams;
+import package::shaders::clouds::maps::{cloud_shadow_texel, shelter_exposure};
 @group(constants::MATERIAL_BIND_GROUP) @binding(120) var<storage,read> clouds: CloudParams;
 @group(constants::MATERIAL_BIND_GROUP) @binding(121) var cloud_shadow: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(122) var cloud_repeat: sampler;
@@ -16,8 +17,7 @@ fn cloud_light(p: vec3<f32>, direction: vec3<f32>) -> vec2<f32> {
     let sun = dot(direction,clouds.sun.xyz)>0.999;
     let moon = dot(direction,clouds.moon.xyz)>0.999;
     if !sun && !moon {return vec2(1.0, 0.0);}
-    let hit = p.xz+clouds.offset.xy+direction.xz*(clouds.layer.x-p.y)/max(direction.y,0.04);
-    let t=textureSampleLevel(cloud_shadow,cloud_repeat,(hit-clouds.offset.zw)/(clouds.layer.z*4.0),0.0).rg;
+    let t = cloud_shadow_texel(cloud_shadow, cloud_repeat, clouds.layer, clouds.offset, direction, p).rg;
     // A closing deck hides the beam whatever thin spots the shadow map finds, as it hides the
     // sun's disc.
     let open = 1.0-clouds.weather.z;

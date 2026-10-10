@@ -1,4 +1,12 @@
-//! CPU/WGSL layouts and shared allocation limits. Keep field order and shader constants in sync.
+//! CPU/WGSL layouts and shared allocation limits. Keep field order in sync with
+//! `assets/shaders/vegetation/types.wesl`; the shaders take the limits from [`shader_defs`].
+use super::topology::{
+    DIAGNOSTIC_FIRST_INDEX, DIAGNOSTIC_INDEX_COUNT, MAX_LOW_RENDER_SECTIONS, MAX_RENDER_SECTIONS,
+    SINGLE_HIGH_FIRST_INDEX, SINGLE_HIGH_INDEX_COUNT, SINGLE_LOW_FIRST_INDEX,
+    SINGLE_LOW_INDEX_COUNT, SPLIT_HIGH_FIRST_INDEX, SPLIT_HIGH_INDEX_COUNT, SPLIT_LOW_FIRST_INDEX,
+    SPLIT_LOW_INDEX_COUNT,
+};
+use bevy::shader::ShaderDefVal;
 use bytemuck::{Pod, Zeroable};
 use std::mem::size_of;
 
@@ -22,6 +30,45 @@ pub(super) const DRAW_ARGS_SIZE: u64 =
     TOPOLOGY_BIN_COUNT as u64 * DRAW_INDEXED_ARGS_WORD_COUNT * size_of::<u32>() as u64;
 #[cfg(not(target_os = "ios"))]
 pub(super) const TELEMETRY_READBACK_SIZE: u64 = GPU_TELEMETRY_SIZE + DRAW_ARGS_SIZE;
+const _: () = assert!(
+    crate::PROCEDURAL_DISTANCE_METERS as u32 as f32 == crate::PROCEDURAL_DISTANCE_METERS,
+    "the shaders take the procedural distance in whole metres"
+);
+
+/// The limits every vegetation shader reads as `constants::NAME`.
+pub(super) fn shader_defs() -> Vec<ShaderDefVal> {
+    [
+        ("SINGLE_HIGH_CAPACITY", SINGLE_HIGH_CAPACITY),
+        ("SPLIT_HIGH_CAPACITY", SPLIT_HIGH_CAPACITY),
+        ("LOW_DETAIL_CAPACITY", LOW_DETAIL_CAPACITY),
+        ("LOW_DETAIL_MINIMUM_PARTITION", LOW_DETAIL_MINIMUM_PARTITION),
+        ("PROCEDURAL_INSTANCE_CAPACITY", PROCEDURAL_INSTANCE_CAPACITY),
+        ("MAX_DIAGNOSTIC_INSTANCES", MAX_DIAGNOSTIC_INSTANCES),
+        ("WORKGROUP_SIZE", WORKGROUP_SIZE),
+        ("DIAGNOSTIC_INDEX_COUNT", DIAGNOSTIC_INDEX_COUNT),
+        ("SINGLE_HIGH_INDEX_COUNT", SINGLE_HIGH_INDEX_COUNT),
+        ("SINGLE_LOW_INDEX_COUNT", SINGLE_LOW_INDEX_COUNT),
+        ("SPLIT_HIGH_INDEX_COUNT", SPLIT_HIGH_INDEX_COUNT),
+        ("SPLIT_LOW_INDEX_COUNT", SPLIT_LOW_INDEX_COUNT),
+        ("DIAGNOSTIC_FIRST_INDEX", DIAGNOSTIC_FIRST_INDEX),
+        ("SINGLE_HIGH_FIRST_INDEX", SINGLE_HIGH_FIRST_INDEX),
+        ("SINGLE_LOW_FIRST_INDEX", SINGLE_LOW_FIRST_INDEX),
+        ("SPLIT_HIGH_FIRST_INDEX", SPLIT_HIGH_FIRST_INDEX),
+        ("SPLIT_LOW_FIRST_INDEX", SPLIT_LOW_FIRST_INDEX),
+        ("MAX_RENDER_SECTIONS", u32::from(MAX_RENDER_SECTIONS)),
+        (
+            "MAX_LOW_RENDER_SECTIONS",
+            u32::from(MAX_LOW_RENDER_SECTIONS),
+        ),
+        (
+            "PROCEDURAL_DISTANCE_METERS",
+            crate::PROCEDURAL_DISTANCE_METERS as u32,
+        ),
+    ]
+    .into_iter()
+    .map(|(name, value)| ShaderDefVal::UInt(name.into(), value))
+    .collect()
+}
 
 #[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
@@ -122,7 +169,7 @@ pub(super) struct ProceduralInstanceGpu {
 
 #[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
-pub(super) struct DebugInstanceGpu {
+pub(super) struct DiagnosticInstanceGpu {
     // xyz: root, w: rest direction x
     pub(super) root_direction: [f32; 4],
     // x: rest direction z, y: clump variant, z: species index as f32, w: packed surface normal xz
@@ -173,8 +220,8 @@ impl CameraGpu {
 
 #[derive(Clone, Copy, PartialEq, Pod, Zeroable)]
 #[repr(C)]
-pub(super) struct DebugConfigGpu {
-    // x: VegetationDebugMode; y: VegetationDensityMode; z: VegetationLightingMode;
+pub(super) struct ConfigGpu {
+    // x: VegetationDiagnosticMode; y: VegetationDensityMode; z: VegetationLightingMode;
     // w: scene-adaptive single-low arena capacity.
     // Mirrors the two WGSL `vec4<u32>` fields exactly.
     pub(super) values: [u32; 4],
@@ -194,9 +241,9 @@ mod tests {
         assert_eq!(size_of::<SpeciesGpu>(), 192);
         assert_eq!(size_of::<SurfaceSampleGpu>(), 32);
         assert_eq!(size_of::<ProceduralInstanceGpu>(), 32);
-        assert_eq!(size_of::<DebugInstanceGpu>(), 64);
+        assert_eq!(size_of::<DiagnosticInstanceGpu>(), 64);
         assert_eq!(size_of::<CameraGpu>(), 288);
-        assert_eq!(size_of::<DebugConfigGpu>(), 32);
+        assert_eq!(size_of::<ConfigGpu>(), 32);
         assert_eq!(GPU_TELEMETRY_SIZE, 64);
         assert_eq!(DRAW_ARGS_SIZE, 80);
         assert_eq!(TELEMETRY_READBACK_SIZE, 144);

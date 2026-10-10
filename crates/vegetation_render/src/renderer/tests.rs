@@ -1,11 +1,35 @@
-//! Shader contract checks for production and diagnostic variants.
-use bevy::prelude::*;
-
+//! Shader contract checks: every variant the renderer builds composes and validates, and the
+//! composed modules keep the structure and values the Rust side relies on.
+use super::gpu_types::shader_defs;
+use crate::{VegetationDensityMode, VegetationLightingMode};
+use bevy::shader::ShaderDefVal;
+use naga::{Expression, Literal, Module, Statement};
 use shader_check::{Def, Shaders};
+
+const COMPUTE_SHADERS: [&str; 4] = [
+    "shaders/vegetation/schedule.wesl",
+    "shaders/vegetation/placement.wesl",
+    "shaders/vegetation/candidate_cache.wesl",
+    "shaders/vegetation/prepare.wesl",
+];
+const DRAW_SHADER: &str = "shaders/vegetation/draw.wesl";
+
+/// The definitions every vegetation pipeline passes, as the shader checker spells them.
+pub(super) fn grass_defs() -> Vec<Def> {
+    shader_defs()
+        .into_iter()
+        .map(|def| match def {
+            ShaderDefVal::UInt(name, value) => Def::Int(name.into(), value.into()),
+            ShaderDefVal::Int(name, value) => Def::Int(name.into(), value.into()),
+            ShaderDefVal::Bool(name, on) => Def::Flag(name.into(), on),
+        })
+        .collect()
+}
 
 /// The draw shader's definitions as `pipelines.rs` specializes it.
 fn draw_variant(temporal: bool, clouds: bool) -> Vec<Def> {
-    let mut defs = vec![Def::Flag("SHADOW_FILTER_METHOD_HARDWARE_2X2".into(), true)];
+    let mut defs = grass_defs();
+    defs.push(Def::Flag("SHADOW_FILTER_METHOD_HARDWARE_2X2".into(), true));
     if clouds {
         defs.push(Def::Flag("YARRA_CLOUDS".into(), true));
         defs.push(Def::Int("MATERIAL_BIND_GROUP".into(), 2));
@@ -17,147 +41,132 @@ fn draw_variant(temporal: bool, clouds: bool) -> Vec<Def> {
     defs
 }
 
+/// A composed and validated vegetation shader.
+pub(super) fn composed(shader: &str, defs: &[Def]) -> Module {
+    let wgsl = Shaders::get()
+        .check(shader, defs)
+        .unwrap_or_else(|error| panic!("{error}"));
+    shader_check::validate(&wgsl).unwrap()
+}
+
+/// A module-scope constant's value; composition prefixes imported names, so match the suffix.
+pub(super) fn constant(module: &Module, name: &str) -> f64 {
+    let (_, constant) = module
+        .constants
+        .iter()
+        .find(|(_, c)| c.name.as_deref().is_some_and(|n| n.ends_with(name)))
+        .unwrap_or_else(|| panic!("no constant {name}"));
+    match module.global_expressions[constant.init] {
+        Expression::Literal(Literal::U32(value)) => value.into(),
+        Expression::Literal(Literal::F32(value)) => value.into(),
+        ref other => panic!("{name} is not a literal: {other:?}"),
+    }
+}
+
+fn calls(module: &Module, block: &naga::Block, name: &str) -> usize {
+    block
+        .iter()
+        .map(|statement| match statement {
+            Statement::Call { function, .. } => usize::from(
+                module.functions[*function]
+                    .name
+                    .as_deref()
+                    .is_some_and(|n| n.ends_with(name)),
+            ),
+            Statement::Block(block) => calls(module, block, name),
+            Statement::If { accept, reject, .. } => {
+                calls(module, accept, name) + calls(module, reject, name)
+            }
+            Statement::Switch { cases, .. } => {
+                cases.iter().map(|c| calls(module, &c.body, name)).sum()
+            }
+            Statement::Loop {
+                body, continuing, ..
+            } => calls(module, body, name) + calls(module, continuing, name),
+            _ => 0,
+        })
+        .sum()
+}
+
 #[test]
 fn shaders_compose_and_validate() {
-    let shaders = Shaders::get();
-    for compute in [
-        "shaders/vegetation_schedule_compute.wesl",
-        "shaders/vegetation_debug_compute.wesl",
-        "shaders/vegetation_prepare_blades.wesl",
-    ] {
-        shaders.check(compute, &[]).unwrap();
+    for shader in COMPUTE_SHADERS {
+        composed(shader, &grass_defs());
     }
     for temporal in [false, true] {
         for clouds in [false, true] {
-            let defs = draw_variant(temporal, clouds);
-            if let Err(error) = shaders.check("shaders/vegetation_debug_draw.wesl", &defs) {
-                panic!("temporal={temporal} clouds={clouds}: {error}");
+            composed(DRAW_SHADER, &draw_variant(temporal, clouds));
+        }
+    }
+}
+
+#[test]
+fn checked_variants_carry_the_renderer_definitions() {
+    let jobs = shader_check::entries::load(Shaders::get()).unwrap();
+    let grass = grass_defs();
+    for shader in COMPUTE_SHADERS.into_iter().chain([DRAW_SHADER]) {
+        let variants: Vec<_> = jobs.iter().filter(|(s, _)| s == shader).collect();
+        assert!(!variants.is_empty(), "entries.ron does not check {shader}");
+        for (_, defs) in variants {
+            for def in &grass {
+                assert!(defs.contains(def), "{shader}: entries.ron lacks {def:?}");
             }
         }
     }
 }
 
 #[test]
-fn production_generation_classifies_each_candidate_once() {
-    let compute = include_str!("../../../../assets/shaders/vegetation_debug_compute.wesl");
-    assert_eq!(compute.matches("evaluate_candidate(").count(), 2);
-    assert!(compute.contains("fn generate("));
-    assert!(!compute.contains("fn count("));
-    assert!(!compute.contains("fn plan("));
-    assert!(!compute.contains("fn emit("));
-    assert!(!compute.contains("capacity_histogram"));
+fn placement_classifies_each_candidate_once() {
+    let module = composed("shaders/vegetation/placement.wesl", &grass_defs());
+    let entries: Vec<_> = module
+        .entry_points
+        .iter()
+        .map(|e| e.name.as_str())
+        .collect();
+    assert_eq!(entries, ["generate", "finalize"]);
+    let generate = &module.entry_points[0].function;
+    assert_eq!(calls(&module, &generate.body, "evaluate_candidate"), 1);
 }
 
 #[test]
-fn lod_uses_the_full_authored_blade_envelope() {
-    let schedule = include_str!("../../../../assets/shaders/vegetation_schedule_compute.wesl");
-    let compute = include_str!("../../../../assets/shaders/vegetation_debug_compute.wesl");
-    let draw = concat!(
-        include_str!("../../../../assets/shaders/vegetation_debug_draw.wesl"),
-        include_str!("../../../../assets/shaders/vegetation_blade.wesl")
-    );
-
-    assert!(schedule.contains("fn maximum_projected_extent("));
-    assert!(compute.contains("fn projected_blade_extent_pixels("));
-    assert!(compute.contains("fn blade_extent_limits_pixels("));
-    assert!(!draw.contains("fn projected_blade_extent_pixels("));
-    assert!(!draw.contains("fn blade_extent_limits_pixels("));
-    assert!(compute.contains("evaluation.lod_morph"));
-    assert!(draw.contains("let lod_morph = f32((instance.geometry.y"));
-    assert!(compute.contains("let maximum_reach = bitcast<f32>(choice.metadata.z)"));
-    assert!(compute.contains("maximum_height * camera.wind.z * 1.65"));
-    assert!(compute.contains("fn generated_candidate_height("));
-    assert!(compute.contains("fn candidate_topology_class("));
-    assert!(compute.contains("candidate.seed & 0x00ffffffu"));
-    assert!(compute.contains("choice.packing.y, choice.packing.z"));
-    assert!(compute.contains("topology_class * 2u + lod"));
-    assert!(draw.contains("let seed = instance.geometry.w & 0x00ffffffu;"));
-    assert!(draw.contains("let source_height_coordinate = mix("));
-    assert!(draw.contains("let height_exponent = exp2(-2.0 * profile.height_packing.x);"));
-    assert!(draw.contains("blade_count = select(1u, 2u, height <= profile.height_packing.y);"));
-    assert!(schedule.contains("fn maximum_projected_population_spacing("));
-    assert!(compute.contains("fn projected_population_spacing_pixels("));
-    assert!(compute.contains("fn population_lod_density("));
-    assert!(compute.contains("fn balanced_population_lod_density("));
-    assert!(compute.contains("fn population_lod_retention_limit("));
-    assert!(compute.contains("debug_config.values.y == DENSITY_MODE_BALANCED"));
-    assert!(schedule.contains("debug_config.values.y != 0u"));
-    assert!(draw.contains("let population_density = f32(instance.geometry.w >> 24u) / 255.0;"));
-    assert!(draw.contains("let density_width = select("));
-    assert!(draw.contains("let authored_half_width = mix("));
-    assert!(draw.contains("let projected_authored_half_width = authored_half_width"));
-    assert!(draw.contains("FAR_WIDTH_TARGET_HALF_PIXELS"));
-    assert!(draw.contains("FAR_WIDTH_MAXIMUM_SCALE"));
-    assert!(draw.contains("LOW_LOD_COVERAGE_WIDTH_EXPONENT"));
-    assert!(draw.contains("let low_lod_coverage_scale = blade.topology.z;"));
-    assert!(draw.contains("half_width * far_width_scale * taper"));
-    assert!(draw.contains("let half_band = BALANCED_DENSITY_FADE_BAND * 0.5;"));
-    assert!(!draw.contains("let density_scale = select("));
-    assert!(compute.contains("let staggered_high_radius = bounded_high_radius * mix("));
-    assert!(!draw.contains("let staggered_high_radius = bounded_high_radius * mix("));
-    assert!(draw.contains("local_ribbon_side = normalize3_or("));
-    assert!(draw.contains("let signed_alignment = dot("));
-    assert!(draw.contains("let opening_tangent = min("));
-    assert!(draw.contains("var rendered_ribbon_side = local_ribbon_side;"));
-    assert!(draw.contains("rendered_ribbon_side = normalize3_or("));
-    assert!(draw.contains("output.world_normal = physical_normal;"));
-    assert!(draw.contains("output.ribbon_side_rounding = vec4<f32>("));
-    assert!(!draw.contains("let view_opening_weight = smoothstep("));
-    assert!(!draw.contains("cross(rendered_ribbon_side, curve_tangent)"));
-    assert!(draw.contains("dot(input.world_normal, view_direction) >= 0.0"));
-    assert!(!draw.contains("@builtin(front_facing)"));
-    assert!(!draw.contains("fn apply_edge_on_fullness("));
-    assert!(!draw.contains("let view_fullness = mix(1.0, 1.24"));
-    assert!(!compute.contains("fn projected_height_pixels("));
-    assert!(!schedule.contains("fn maximum_projected_height("));
+fn drawing_reuses_the_placement_lod() {
+    // The draw reads each instance's topology bin and morph; it never projects blades again.
+    for temporal in [false, true] {
+        let module = composed(DRAW_SHADER, &draw_variant(temporal, true));
+        for (_, function) in module.functions.iter() {
+            let name = function.name.as_deref().unwrap_or_default();
+            assert!(
+                !name.ends_with("projected_blade_extent_pixels")
+                    && !name.ends_with("blade_extent_limits_pixels"),
+                "the draw shader calls {name}"
+            );
+        }
+    }
 }
 
 #[test]
-fn production_draw_uses_exposure_aware_rounded_gloss_and_shadow_reception() {
-    let draw = include_str!("../../../../assets/shaders/vegetation_debug_draw.wesl");
-    assert!(draw.contains("shadows::fetch_directional_shadow("));
-    assert!(draw.contains("camera.sun_direction.xyz"));
-    assert!(draw.contains("let received_shadow = mix("));
-    assert!(draw.contains("let shadow_floor = mix(0.16, 0.42, ambient_occlusion);"));
-    assert!(draw.contains("lighting as pbr_lighting"));
-    assert!(draw.contains("view_bindings::view.exposure"));
-    assert!(draw.contains("fn stable_clump_normal("));
-    assert!(draw.contains("fn analytic_rounded_normal("));
-    assert!(draw.contains("fn ggx_foliage_specular("));
-    assert!(draw.contains("let shading_normal = normalize3_or("));
-    assert!(draw.contains("mix(blade_normal, clump_normal, distance_stability)"));
-    assert!(draw.contains("let filtered_alpha_roughness = clamp("));
-    assert!(draw.contains("let filtered_broad_specular = ggx_foliage_specular("));
-    assert!(draw.contains("local_sheen_specular = ggx_foliage_specular("));
-    assert!(draw.contains("let local_sheen_weight = 1.0 - smoothstep("));
-    assert!(draw.contains("let broad_specular_weight = mix(0.16, 0.26, distance_stability);"));
-    assert!(draw.contains("local_sheen_specular * local_sheen_weight"));
-    assert!(draw.contains("dot(diffuse_normal, light_direction)"));
-    assert!(draw.contains("let upper_ribbon = smoothstep("));
-    assert!(draw.contains("let far_highlight_weight = mix("));
-    assert!(draw.contains("debug_config.values.z == LIGHTING_MODE_UNLIT_DIAGNOSTIC"));
-    assert!(draw.contains("debug_config.values.z == LIGHTING_MODE_VERTEX_ONLY_DIAGNOSTIC"));
-}
-
-#[test]
-fn strong_wind_deforms_one_shared_curve_and_expands_visibility_bounds() {
-    let schedule = include_str!("../../../../assets/shaders/vegetation_schedule_compute.wesl");
-    let compute = include_str!("../../../../assets/shaders/vegetation_debug_compute.wesl");
-    let draw = concat!(
-        include_str!("../../../../assets/shaders/vegetation_debug_draw.wesl"),
-        include_str!("../../../../assets/shaders/vegetation_blade.wesl")
-    );
-
-    assert!(schedule.contains("item.bounds.x * camera.wind.z * 1.65"));
-    assert!(compute.contains("maximum_height * camera.wind.z * 1.65"));
-    assert!(draw.contains("let broad_wave = sin("));
-    assert!(draw.contains("let gust_wave = sin("));
-    assert!(draw.contains("1.0 - smoothstep(24.0, 72.0, camera_distance)"));
-    assert!(draw.contains("let mixed_phase = mix(clump_phase, blade_phase, 0.72);"));
-    assert!(draw.contains("let forward_phase = blade_wind_phase + t * 3.20;"));
-    assert!(draw.contains("p1 += coherent_push * 0.06;"));
-    assert!(draw.contains("p2 += coherent_push * 0.58"));
-    assert!(draw.contains("p3 += coherent_push + bob_offset"));
-    assert!(draw.contains("bob * 0.072"));
-    assert!(draw.contains("sin(side_phase) * 0.76"));
+fn shader_modes_match_the_renderer() {
+    let placement = composed("shaders/vegetation/placement.wesl", &grass_defs());
+    for (name, mode) in [
+        ("DENSITY_MODE_BALANCED", VegetationDensityMode::Balanced),
+        (
+            "DENSITY_MODE_FULL_REFERENCE",
+            VegetationDensityMode::FullReference,
+        ),
+    ] {
+        assert_eq!(constant(&placement, name), f64::from(mode as u32));
+    }
+    let draw = composed(DRAW_SHADER, &draw_variant(false, false));
+    for (name, mode) in [
+        (
+            "LIGHTING_MODE_UNLIT_DIAGNOSTIC",
+            VegetationLightingMode::UnlitDiagnostic,
+        ),
+        (
+            "LIGHTING_MODE_VERTEX_ONLY_DIAGNOSTIC",
+            VegetationLightingMode::VertexOnlyDiagnostic,
+        ),
+    ] {
+        assert_eq!(constant(&draw, name), f64::from(mode as u32));
+    }
 }

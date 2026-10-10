@@ -1,4 +1,9 @@
-import package::shaders::vegetation_blade::{ProceduralInstance, Species, Camera, DebugConfig, PreparedArena, SPECIES_INDEX_MASK, prepare_blade};
+// Blade preparation: each emitted blade's curve, width and wind pose, once per frame, for the draw
+// shader to read. Blades past the arena's capacity are left to the draw shader.
+import package::shaders::vegetation::types::{
+    ProceduralInstance, Species, Camera, Config, SPECIES_INDEX_MASK,
+};
+import package::shaders::vegetation::blade::{PreparedArena, prepare_blade};
 
 struct DrawArgs {
     index_count: u32, instance_count: u32, first_index: u32, base_vertex: u32, first_instance: u32,
@@ -7,11 +12,13 @@ struct DispatchArgs { x: u32, y: u32, z: u32 }
 @group(0) @binding(0) var<storage, read> instances: array<ProceduralInstance>;
 @group(0) @binding(1) var<storage, read> species: array<Species>;
 @group(0) @binding(2) var<uniform> camera: Camera;
-@group(0) @binding(3) var<uniform> debug_config: DebugConfig;
+@group(0) @binding(3) var<uniform> config: Config;
 @group(0) @binding(4) var<storage, read> draw_args: array<DrawArgs, 4>;
 @group(0) @binding(5) var<storage, read_write> arena: PreparedArena;
 @group(0) @binding(6) var<storage, read_write> dispatch_args: DispatchArgs;
 @group(0) @binding(7) var<storage, read_write> telemetry: array<u32, 16>;
+
+const WORKGROUP_SIZE: u32 = constants::WORKGROUP_SIZE;
 
 @compute @workgroup_size(1)
 fn prepare_dispatch() {
@@ -26,12 +33,12 @@ fn prepare_dispatch() {
         prepared += min(count, (capacity - min(blades, capacity)) / per_instance) * per_instance;
         blades += count * per_instance;
     }
-    dispatch_args = DispatchArgs((total + 63u) / 64u, 1u, 1u);
-    telemetry[11] = select(0u, prepared, debug_config.workload.y != 0u);
-    telemetry[12] = select(0u, blades - prepared, debug_config.workload.y != 0u);
+    dispatch_args = DispatchArgs((total + WORKGROUP_SIZE - 1u) / WORKGROUP_SIZE, 1u, 1u);
+    telemetry[11] = select(0u, prepared, config.workload.y != 0u);
+    telemetry[12] = select(0u, blades - prepared, config.workload.y != 0u);
 }
 
-@compute @workgroup_size(64)
+@compute @workgroup_size(WORKGROUP_SIZE)
 fn prepare(@builtin(global_invocation_id) id: vec3<u32>) {
     var local = id.x;
     var base = 0u;
@@ -52,9 +59,9 @@ fn prepare(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     let instance = instances[index];
     let profile = species[instance.geometry.y & SPECIES_INDEX_MASK];
-    arena.blades[first] = prepare_blade(instance, profile, camera, debug_config, 0u);
+    arena.blades[first] = prepare_blade(instance, profile, camera, config, 0u);
     if (per_instance == 2u) {
-        arena.blades[first + 1u] = prepare_blade(instance, profile, camera, debug_config, 1u);
+        arena.blades[first + 1u] = prepare_blade(instance, profile, camera, config, 1u);
     }
     arena.indices[index] = first + 1u;
 }

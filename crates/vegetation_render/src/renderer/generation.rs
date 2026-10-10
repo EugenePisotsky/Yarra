@@ -2,10 +2,10 @@
 use super::{
     buffers::VegetationBuffers,
     candidate_cache,
-    gpu_types::{CameraGpu, DebugConfigGpu, WORKGROUP_SIZE},
+    gpu_types::{CameraGpu, ConfigGpu, WORKGROUP_SIZE},
     pipelines::VegetationPipelines,
 };
-use crate::{VegetationDebugSettings, VegetationDiagnostics, VegetationProfileMode};
+use crate::{VegetationDiagnostics, VegetationProfileMode, VegetationSettings};
 use bevy::{
     prelude::*,
     render::{
@@ -19,20 +19,15 @@ use bevy::{
 pub(super) struct GenerationInputs {
     source_revision: u64,
     camera: CameraGpu,
-    pub(super) config: DebugConfigGpu,
+    pub(super) config: ConfigGpu,
 }
 
 impl GenerationInputs {
-    pub(super) fn new(
-        source_revision: u64,
-        mut camera: CameraGpu,
-        mut config: DebugConfigGpu,
-    ) -> Self {
+    pub(super) fn new(source_revision: u64, mut camera: CameraGpu, config: ConfigGpu) -> Self {
         // Placement uses wind strength for conservative bounds, but wind phase is evaluated
         // only by blade preparation/drawing. Animate existing blades without rebuilding them.
         camera.wind[3] = 0.0;
         camera = camera.geometry_cache_key();
-        config.workload[3] &= !(255 << 16);
         Self {
             source_revision,
             camera,
@@ -54,7 +49,7 @@ pub(super) fn generate(
     pipeline_cache: Res<PipelineCache>,
     pipelines: Res<VegetationPipelines>,
     mut buffers: ResMut<VegetationBuffers>,
-    settings: Res<VegetationDebugSettings>,
+    settings: Res<VegetationSettings>,
     candidate_cache: Res<candidate_cache::CandidateCache>,
     vegetation_diagnostics: Res<VegetationDiagnostics>,
 ) {
@@ -116,10 +111,10 @@ pub(super) fn generate(
         render_context
             .command_encoder()
             .begin_compute_pass(&ComputePassDescriptor {
-                label: Some("vegetation-v2 visible work scheduling"),
+                label: Some("vegetation visible work scheduling"),
                 ..default()
             });
-    let schedule_span = diagnostics.pass_span(&mut schedule_pass, "vegetation_v2_schedule");
+    let schedule_span = diagnostics.pass_span(&mut schedule_pass, "vegetation_schedule");
     schedule_pass.set_bind_group(0, &buffers.schedule_bind_group, &[]);
     schedule_pass.set_pipeline(schedule_pipeline);
     schedule_pass.dispatch_workgroups(buffers.work_item_count.div_ceil(WORKGROUP_SIZE), 1, 1);
@@ -132,15 +127,15 @@ pub(super) fn generate(
     let mut pass = render_context
         .command_encoder()
         .begin_compute_pass(&ComputePassDescriptor {
-            label: Some("vegetation-v2 deterministic visible generation"),
+            label: Some("vegetation deterministic visible generation"),
             ..default()
         });
-    let generate_span = diagnostics.pass_span(&mut pass, "vegetation_v2_generate");
+    let generate_span = diagnostics.pass_span(&mut pass, "vegetation_generate");
     pass.set_bind_group(0, &buffers.compute_bind_group, &[]);
     pass.set_pipeline(generate_pipeline);
     pass.dispatch_workgroups_indirect(&buffers.candidate_dispatch_args, 0);
     generate_span.end(&mut pass);
-    let finalize_span = diagnostics.pass_span(&mut pass, "vegetation_v2_finalize");
+    let finalize_span = diagnostics.pass_span(&mut pass, "vegetation_finalize");
     pass.set_pipeline(finalize_pipeline);
     pass.dispatch_workgroups(1, 1, 1);
     finalize_span.end(&mut pass);
@@ -159,7 +154,7 @@ mod tests {
     #[test]
     fn placement_cache_ignores_animation_phase_but_tracks_generation_inputs() {
         let camera = CameraGpu::zeroed();
-        let config = DebugConfigGpu::zeroed();
+        let config = ConfigGpu::zeroed();
         let baseline = GenerationInputs::new(1, camera, config);
         let mut shaded = camera;
         shaded.canopy = vegetation::CanopyShading::experiment().packed([32.0, -64.0]);
@@ -171,10 +166,6 @@ mod tests {
         let mut animated = camera;
         animated.wind[3] = 12.5;
         assert!(baseline == GenerationInputs::new(1, animated, config));
-
-        let mut material_only = config;
-        material_only.workload[3] |= 173 << 16;
-        assert!(baseline == GenerationInputs::new(1, camera, material_only));
 
         let mut moved = camera;
         moved.clip_from_world[12] = 0.01;

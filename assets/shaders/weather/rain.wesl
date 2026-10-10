@@ -1,7 +1,7 @@
 // Rain streaks: instanced camera-facing quads in camera-anchored boxes that wrap around a
 // world-fixed drop lattice. Drawn over the resolved HDR scene with a soft depth test.
-import bevy_render::view::View;
-import package::shaders::clouds::types::{CloudParams, shelter_exposure};
+import package::shaders::clouds::maps::shelter_exposure;
+import package::shaders::weather::particles::{clouds, view, random3, scene_depth};
 
 struct Rain {
     velocity: vec4<f32>, // xyz m/s, w streak seconds
@@ -12,12 +12,7 @@ struct Rain {
     splash: vec4<f32>, // current time, lifetime s, size m
 }
 @group(0) @binding(0) var<uniform> rain: Rain;
-@group(0) @binding(1) var<storage, read> clouds: CloudParams;
-@group(0) @binding(2) var<uniform> view: View;
-@if(MULTISAMPLED)
-@group(0) @binding(3) var depth: texture_depth_multisampled_2d;
-@else
-@group(0) @binding(3) var depth: texture_depth_2d;
+// Bindings 1-3 (clouds, view, depth): weather/particles.wesl.
 @group(0) @binding(4) var shelter_map: texture_2d<f32>;
 // Recent impacts, two entries each: position and spawn time; surface normal and seed.
 @group(0) @binding(5) var<storage, read> splashes: array<vec4<f32>>;
@@ -28,18 +23,6 @@ struct Streak {
     @location(0) coords: vec2<f32>,
     @location(1) view_depth: f32,
     @location(2) alpha: f32,
-}
-
-fn pcg(v: u32) -> u32 {
-    let state = v * 747796405u + 2891336453u;
-    let word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
-    return (word >> 22u) ^ word;
-}
-fn random3(seed: u32) -> vec3<f32> {
-    let a = pcg(seed);
-    let b = pcg(a);
-    let c = pcg(b);
-    return vec3(f32(a), f32(b), f32(c)) / 4294967295.0;
 }
 
 @vertex
@@ -101,15 +84,6 @@ fn vertex(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance:
     out.alpha = rain.layers[layer].y * rain.shape.y * (true_width / width) * fog * exposure
         * near_fade * mix(0.6, 1.0, variation.y);
     return out;
-}
-
-// Linear scene depth under a fragment. Scene depth may be at a lower resolution after
-// temporal reconstruction.
-fn scene_depth(fragment: vec2<f32>) -> f32 {
-    let scale = view.main_pass_viewport.zw / view.viewport.zw;
-    let texel = vec2<i32>((fragment - view.viewport.xy) * scale + view.main_pass_viewport.xy);
-    let z = textureLoad(depth, texel, 0);
-    return select(1.0e9, view.clip_from_view[3][2] / z, z > 0.0);
 }
 
 // Drops scatter the surrounding sky and sun light, like the haze in front of clouds.

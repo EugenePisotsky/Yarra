@@ -66,28 +66,9 @@ fn deformation_history_handles_animation_pause_disable_and_rebase() {
     };
     let cases = [animated, paused, fixed_bark, disabled, rebased];
 
-    let source = include_str!("../../../../assets/shaders/tree_wind.wesl");
-    // Only the Bevy matrix helper needs a stand-in; evaluate the actual field/deformation
-    // implementation, not a second copy of its math. Full vertex variants run in game QA.
-    let body = format!(
-        "{}\n{}",
-        &source[source.find("struct WindPose").unwrap()..source.find("fn facing_camera").unwrap()],
-        &source[source.find("fn displaced_position").unwrap()
-            ..source.find("// Structural wind helpers.").unwrap()]
-    );
-    let body = body
-        .replace(
-            "@group(constants::MATERIAL_BIND_GROUP) @binding(100)\nvar<storage, read> wind: WindFrames;",
-            "",
-        )
-        .replace(
-            "mesh_functions::mesh_position_local_to_world",
-            "position_local_to_world",
-        );
-    let shader = format!(
-        "{body}\n{}",
+    let shader = harness(
         r#"
-fn position_local_to_world(model: mat4x4<f32>, p: vec4<f32>) -> vec4<f32> { return model * p; }
+import package::shaders::tree::wind::{WindFrames, displaced_position, turn_camera};
 struct Case { frames: WindFrames, model: mat4x4<f32>, previous_model: mat4x4<f32>, weights: vec4<f32> }
 struct Result { current: vec4<f32>, previous: vec4<f32>, full_facing: vec4<f32>, keep_tilt: vec4<f32> }
 @group(0) @binding(0) var<storage, read> inputs: array<Case>;
@@ -103,7 +84,8 @@ fn evaluate(@builtin(global_invocation_id) id: vec3<u32>) {
     results[id.x].full_facing = vec4(turn_camera(rest, rest, directions[id.x], 1.), 0.);
     results[id.x].keep_tilt = vec4(turn_camera(rest, rest, directions[id.x], 0.), 0.);
 }
-"#
+"#,
+        "",
     );
     let results = run_shader(&cases, &shader);
     let delta = |i: usize, offset: Vec3| {
@@ -150,6 +132,15 @@ fn evaluate(@builtin(global_invocation_id) id: vec3<u32>) {
             "yaw-only mode must preserve tilt"
         );
     }
+}
+
+/// A compute harness importing the production wind module (`shaders/tree/wind.wesl`),
+/// composed as Bevy composes the tree shaders, with these definitions.
+fn harness(source: &str, defs: &str) -> String {
+    let defs = shader_check::Def::parse_list(defs).unwrap();
+    shader_check::Shaders::get()
+        .compose_source(source, &defs)
+        .unwrap_or_else(|error| panic!("{error}"))
 }
 
 fn run_shader(cases: &[Case], shader: &str) -> Vec<[f32; 16]> {
@@ -228,32 +219,12 @@ fn run_shader(cases: &[Case], shader: &str) -> Vec<[f32; 16]> {
 #[test]
 #[ignore = "requires native GPU; evaluates production hierarchy and pinned card roots"]
 fn structural_cards_follow_wood_and_keep_roots_and_history() {
-    let source = include_str!("../../../../assets/shaders/tree_wind.wesl");
-    let source = &source
-        [source.find("struct WindPose").unwrap()..source.find("@vertex\nfn vertex").unwrap()];
-    // Enable the actual production card path without Bevy's vertex IO/imports.
-    let source = source
-        .replace(
-            "@group(constants::MATERIAL_BIND_GROUP) @binding(100)\nvar<storage, read> wind: WindFrames;",
-            "",
-        )
-        .replace(
-            "@group(constants::MATERIAL_BIND_GROUP) @binding(105) var<uniform> tree_profile: vec4<f32>;",
-            "const tree_profile = vec4(1., 3., 1., 1.);",
-        )
-        .replace("view.lod_view_world_position", "vec3(0., 4., 20.)");
-    let body = shader_check::resolve_conditions(
-        &source,
-        &shader_check::Def::parse_list(
-            "TREE_HIERARCHY,TREE_BRANCH_CARDS,TREE_CARD_FACING,VERTEX_UVS_B",
-        )
-        .unwrap(),
-    )
-    .unwrap();
-    let shader = format!(
-        "{body}\n{}",
+    // The production card path, with a fixed profile and viewer in place of their bindings.
+    let shader = harness(
         r#"
-struct Vertex { position: vec3<f32>, wind_pivot: vec4<f32>, wind_axis: vec4<f32>, card_pivot: vec3<f32>, card_axis: vec3<f32>, card_normal: vec3<f32>, card_facing: vec2<f32>, uv_b: vec2<f32> }
+import package::shaders::tree::wind::{TreeVertex, WindFrames, animated_position, structural_frame, sway_point};
+const PROFILE = vec4(1., 3., 1., 1.);
+const VIEWER = vec3(0., 4., 20.);
 struct Case { frames: WindFrames, model: mat4x4<f32>, previous_model: mat4x4<f32>, weights: vec4<f32> }
 struct Result { card: vec4<f32>, previous: vec4<f32>, wood: vec4<f32>, root: vec4<f32> }
 @group(0) @binding(0) var<storage, read> inputs: array<Case>;
@@ -261,7 +232,7 @@ struct Result { card: vec4<f32>, previous: vec4<f32>, wood: vec4<f32>, root: vec
 @compute @workgroup_size(1)
 fn evaluate(@builtin(global_invocation_id) id: vec3<u32>) {
     let c = inputs[id.x];
-    var card: Vertex;
+    var card: TreeVertex;
     card.position = vec3(3., 8.5, 0.);
     card.wind_pivot = vec4(0., 8., 0., 14.);
     card.wind_axis = vec4(normalize(vec3(1., .2, 0.)), 1.);
@@ -270,14 +241,15 @@ fn evaluate(@builtin(global_invocation_id) id: vec3<u32>) {
     card.card_normal = vec3(0., 0., 1.);
     card.card_facing = vec2(1., 1.);
     card.uv_b = vec2(1.);
-    results[id.x].card = animated_position(card, c.model, c.frames.current);
-    results[id.x].previous = animated_position(card, c.previous_model, c.frames.previous);
-    let limb = structural_frame(card.wind_pivot.xyz, card.wind_axis, 14., c.model, c.frames.current, tree_profile);
+    results[id.x].card = animated_position(card, c.model, c.frames.current, PROFILE, VIEWER);
+    results[id.x].previous = animated_position(card, c.previous_model, c.frames.previous, PROFILE, VIEWER);
+    let limb = structural_frame(card.wind_pivot.xyz, card.wind_axis, 14., c.model, c.frames.current, PROFILE);
     results[id.x].wood = vec4(sway_point((c.model * vec4(card.position, 1.)).xyz, limb), 1.);
-    let root = structural_frame(vec3(0.), vec4(0.), 14., c.model, c.frames.current, tree_profile);
+    let root = structural_frame(vec3(0.), vec4(0.), 14., c.model, c.frames.current, PROFILE);
     results[id.x].root = vec4(sway_point(c.model[3].xyz, root), 1.);
 }
-"#
+"#,
+        "TREE_HIERARCHY,TREE_BRANCH_CARDS,TREE_CARD_FACING,VERTEX_UVS_B",
     );
     let mut wind = VegetationWind::default();
     let sample = |w: &VegetationWind, o| WindPose::sample(w, TreeWindResponse::default(), o);
@@ -368,24 +340,9 @@ fn evaluate(@builtin(global_invocation_id) id: vec3<u32>) {
 #[test]
 #[ignore = "requires native GPU; compares the impostor's trunk lean with the mesh LODs'"]
 fn impostors_lean_as_the_mesh_trunk_does() {
-    let source = include_str!("../../../../assets/shaders/tree_wind.wesl");
-    let impostor = include_str!("../../../../assets/shaders/tree_impostor.wesl");
-    let body = format!(
-        "{}\n{}\n{}",
-        &source[source.find("struct WindPose").unwrap()
-            ..source.find("// Use the main camera").unwrap()],
-        &source[source.find("// Structural wind helpers.").unwrap()
-            ..source.find("// End structural helpers.").unwrap()],
-        &impostor[impostor.find("// Impostor wind: begin").unwrap()
-            ..impostor.find("// Impostor wind: end").unwrap()],
-    )
-    .replace(
-        "@group(constants::MATERIAL_BIND_GROUP) @binding(100)\nvar<storage, read> wind: WindFrames;",
-        "",
-    );
-    let shader = format!(
-        "{body}\n{}",
+    let shader = harness(
         r#"
+import package::shaders::tree::wind::{WindFrames, structural_frame, sway_point, sway_point_of_trunk};
 struct Case { frames: WindFrames, model: mat4x4<f32>, previous_model: mat4x4<f32>, weights: vec4<f32> }
 @group(0) @binding(0) var<storage, read> inputs: array<Case>;
 @group(0) @binding(1) var<storage, read_write> results: array<array<vec4<f32>, 4>>;
@@ -403,7 +360,8 @@ fn evaluate(@builtin(global_invocation_id) id: vec3<u32>) {
         results[id.x][i] = vec4(mesh - quad, length(mesh - rest));
     }
 }
-"#
+"#,
+        "",
     );
     let mut wind = VegetationWind::default();
     let sample = |w: &VegetationWind, o| WindPose::sample(w, TreeWindResponse::default(), o);

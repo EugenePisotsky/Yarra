@@ -1,3 +1,10 @@
+// Runs the production blade preparation on both sides of the topology boundary.
+import package::shaders::vegetation::types::{
+    ProceduralInstance, Species, Camera, Config, DENSITY_MODE_BALANCED, LOD_MORPH_MASK,
+    LOD_MORPH_SHIFT,
+};
+import package::shaders::vegetation::blade::{prepare_blade, paired_base_width};
+
 @group(0) @binding(0) var<storage, read_write> comparison: array<vec4<f32>>;
 
 @compute @workgroup_size(64)
@@ -19,7 +26,7 @@ fn compare_lod(@builtin(global_invocation_id) invocation: vec3<u32>) {
     camera.projection.w = 1.0;
     camera.wind = vec4(0.924, 0.382, 0.82, f32(index) * 0.11);
     camera.wind_shape = vec4(0.12, 2.4, 0.95, 0.28);
-    var config: DebugConfig;
+    var config: Config;
     config.values.y = DENSITY_MODE_BALANCED;
     var instance: ProceduralInstance;
     instance.root_clump.w = bitcast<f32>(pack2x16unorm(vec2(0.37, rank)));

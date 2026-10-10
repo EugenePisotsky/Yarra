@@ -13,8 +13,8 @@ use crate::{
 use bevy::prelude::*;
 use bevy_egui::egui;
 use vegetation_render::{
-    VegetationDebugMode, VegetationDebugSettings, VegetationDensityMode, VegetationDiagnostics,
-    VegetationLighting, VegetationLightingMode, VegetationProfileMode,
+    VegetationDensityMode, VegetationDiagnosticMode, VegetationDiagnostics, VegetationLighting,
+    VegetationLightingMode, VegetationProfileMode, VegetationSettings,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -24,7 +24,7 @@ pub(super) fn vegetation_authoring_ui(
     mut tools: ResMut<EditorToolRegistry>,
     mut state: ResMut<VegetationAuthoringState>,
     diagnostics: Res<VegetationDiagnostics>,
-    mut settings: ResMut<VegetationDebugSettings>,
+    mut settings: ResMut<VegetationSettings>,
     mut lighting: ResMut<VegetationLighting>,
     mut save: ResMut<EditorSaveCoordinator>,
     mut project: ResMut<ProjectEditorStore>,
@@ -71,7 +71,7 @@ fn draw_vegetation_authoring(
     tools: &mut EditorToolRegistry,
     state: &mut VegetationAuthoringState,
     diagnostics: vegetation_render::VegetationDiagnosticsSnapshot,
-    settings: &mut VegetationDebugSettings,
+    settings: &mut VegetationSettings,
     lighting: &mut VegetationLighting,
     save: &mut EditorSaveCoordinator,
     project: &mut ProjectEditorStore,
@@ -178,7 +178,7 @@ fn draw_vegetation_authoring(
 
 fn draw_preview_controls(
     ui: &mut egui::Ui,
-    settings: &mut VegetationDebugSettings,
+    settings: &mut VegetationSettings,
     lighting: &mut VegetationLighting,
 ) {
     ui.heading("Preview");
@@ -186,17 +186,17 @@ fn draw_preview_controls(
         .num_columns(2)
         .show(ui, |ui| {
             ui.label("Visualization");
-            egui::ComboBox::from_id_salt("vegetation_debug_mode")
-                .selected_text(settings.mode.label())
+            egui::ComboBox::from_id_salt("vegetation_diagnostic_mode")
+                .selected_text(settings.diagnostic_mode.label())
                 .show_ui(ui, |ui| {
                     for mode in [
-                        VegetationDebugMode::ProceduralGeometry,
-                        VegetationDebugMode::AcceptedSpecies,
-                        VegetationDebugMode::ParentLinks,
-                        VegetationDebugMode::CandidateOutcomes,
-                        VegetationDebugMode::GroupStructure,
+                        VegetationDiagnosticMode::ProceduralGeometry,
+                        VegetationDiagnosticMode::AcceptedSpecies,
+                        VegetationDiagnosticMode::ParentLinks,
+                        VegetationDiagnosticMode::CandidateOutcomes,
+                        VegetationDiagnosticMode::GroupStructure,
                     ] {
-                        ui.selectable_value(&mut settings.mode, mode, mode.label());
+                        ui.selectable_value(&mut settings.diagnostic_mode, mode, mode.label());
                     }
                 });
             ui.end_row();

@@ -418,7 +418,7 @@ pub struct StreamedTerrainSurface {
     pub heightfield: TerrainHeightfield,
 }
 
-/// Terrain-independent V2 fields attached for one resident streamed cell.
+/// Terrain-independent vegetation fields attached for one resident streamed cell.
 ///
 /// Consumers join this component with the matching [`StreamedTerrainSurface`] by page key. No
 /// height or normal samples are duplicated in the vegetation payload.

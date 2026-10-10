@@ -188,7 +188,7 @@ impl SpecializedRenderPipeline for SkyPipelines {
     type Key = SkyKey;
 
     fn specialize(&self, key: SkyKey) -> RenderPipelineDescriptor {
-        let mut shader_defs = Vec::new();
+        let mut shader_defs = vec![crate::clouds::mist_noise_period_def()];
         if key.multisampled {
             shader_defs.push("MULTISAMPLED".into());
         }
@@ -527,8 +527,8 @@ fn draw(
     };
     // x: cloud cross-fade; y: light shafts drawn; z: main-pass pixels per shaft texel; w: sun
     // rays drawn.
-    let blend = device.create_buffer_with_data(&BufferInitDescriptor {
-        label: Some("sky composite cloud blend"),
+    let settings = device.create_buffer_with_data(&BufferInitDescriptor {
+        label: Some("sky composite settings"),
         contents: bytemuck::bytes_of(&[
             blend,
             if shafts.is_some() { 1.0 } else { 0.0 },
@@ -554,7 +554,7 @@ fn draw(
             newer,
             older,
             cloud_pipelines.display_sampler(cached),
-            blend.as_entire_binding(),
+            settings.as_entire_binding(),
             &mist.texture_view,
             &mist.sampler,
             &noise.texture_view,

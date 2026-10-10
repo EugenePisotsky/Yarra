@@ -4,7 +4,9 @@ use super::{
     gpu_types::WorkItemGpu,
     pipelines::VegetationPipelines,
 };
-use crate::{VegetationDebugSettings, VegetationDiagnostics, VegetationProfileMode};
+use crate::{
+    VegetationDiagnosticMode, VegetationDiagnostics, VegetationProfileMode, VegetationSettings,
+};
 use bevy::{
     prelude::*,
     render::{
@@ -122,11 +124,11 @@ pub(super) fn build(
     pipelines: Res<VegetationPipelines>,
     pipeline_cache: Res<PipelineCache>,
     queue: Res<RenderQueue>,
-    settings: Res<VegetationDebugSettings>,
+    settings: Res<VegetationSettings>,
     diagnostics: Res<VegetationDiagnostics>,
 ) {
     let enabled = settings.candidate_cache_enabled
-        && settings.mode as u32 == 0
+        && settings.diagnostic_mode == VegetationDiagnosticMode::ProceduralGeometry
         && matches!(
             settings.profile_mode,
             VegetationProfileMode::Full | VegetationProfileMode::ComputeOnly

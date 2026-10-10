@@ -332,7 +332,7 @@ fn reuse_previous(
         buffers.diagnostic_instances.id(),
         buffers.species.id(),
         buffers.camera.id(),
-        buffers.debug_config.id(),
+        buffers.config.id(),
         preparation.arena.id(),
         buffers.canopy_boundary.buffer.id(),
     ];
@@ -349,7 +349,7 @@ fn reuse_previous(
                 &buffers.diagnostic_instances,
                 &buffers.species,
                 &buffers.camera,
-                &buffers.debug_config,
+                &buffers.config,
                 &preparation.arena,
                 &buffers.canopy_boundary.buffer,
             )
@@ -401,7 +401,7 @@ fn prepare_previous(
                 buffers.procedural_instances.as_entire_binding(),
                 buffers.species.as_entire_binding(),
                 state.uniform.as_entire_binding(),
-                buffers.debug_config.as_entire_binding(),
+                buffers.config.as_entire_binding(),
                 buffers.args.as_entire_binding(),
                 arena.as_entire_binding(),
             )),

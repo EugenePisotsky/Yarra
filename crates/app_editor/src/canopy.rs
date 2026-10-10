@@ -11,7 +11,7 @@ use bevy_egui::{EguiPrimaryContextPass, egui};
 use std::path::PathBuf;
 use vegetation::CanopyShading;
 use vegetation_render::{
-    VegetationDebugSettings, VegetationDensityMode, VegetationLighting, VegetationSceneState,
+    VegetationDensityMode, VegetationLighting, VegetationSceneState, VegetationSettings,
 };
 
 pub(crate) const CANOPY_WINDOW: EditorWindowDescriptor = EditorWindowDescriptor {
@@ -60,7 +60,7 @@ fn world_ui(
     mut frame: ResMut<EditorUiFrame>,
     mut windows: ResMut<EditorWindowRegistry>,
     mut lighting: ResMut<VegetationLighting>,
-    mut settings: ResMut<VegetationDebugSettings>,
+    mut settings: ResMut<VegetationSettings>,
     scene: Res<VegetationSceneState>,
     mut message: Local<Option<String>>,
 ) {
@@ -88,7 +88,7 @@ fn world_ui(
     windows.set_open(CANOPY_WINDOW.id, open);
 }
 
-fn density_controls(ui: &mut egui::Ui, settings: &mut VegetationDebugSettings) {
+fn density_controls(ui: &mut egui::Ui, settings: &mut VegetationSettings) {
     ui.separator();
     ui.label("Grass density · geometry LOD stays enabled");
     ui.horizontal(|ui| {

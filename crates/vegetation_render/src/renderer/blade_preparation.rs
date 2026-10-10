@@ -1,7 +1,7 @@
 //! Per-blade curve preparation. Overflow uses the original vertex calculation, not fewer blades.
 use super::{
     buffers::VegetationBuffers,
-    gpu_types::{CameraGpu, DebugConfigGpu, PROCEDURAL_INSTANCE_CAPACITY},
+    gpu_types::{CameraGpu, ConfigGpu, PROCEDURAL_INSTANCE_CAPACITY, shader_defs},
 };
 use crate::VegetationDiagnostics;
 use bevy::{
@@ -25,7 +25,7 @@ pub(super) const BLADE_CAPACITY: u64 = 131_072;
 pub(super) const BLADE_BYTES: u64 = 128;
 #[cfg(test)]
 const ARENA_BYTES: u64 = PROCEDURAL_INSTANCE_CAPACITY as u64 * 4 + BLADE_CAPACITY * BLADE_BYTES;
-const SHADER: &str = "shaders/vegetation_prepare_blades.wesl";
+const SHADER: &str = "shaders/vegetation/prepare.wesl";
 
 #[derive(Resource)]
 pub(super) struct BladePreparation {
@@ -48,7 +48,7 @@ struct PreparationKey {
     generation: u64,
     source: u64,
     camera: CameraGpu,
-    config: DebugConfigGpu,
+    config: ConfigGpu,
     pipelines: [ComputePipelineId; 2],
 }
 
@@ -57,11 +57,11 @@ impl PreparationKey {
         generation: u64,
         source: u64,
         mut camera: CameraGpu,
-        config: DebugConfigGpu,
+        config: ConfigGpu,
         pipelines: [ComputePipelineId; 2],
     ) -> Self {
         camera = camera.geometry_cache_key();
-        if camera.wind[2] <= 1e-5 || config.workload[3] & (1 << 9) != 0 {
+        if camera.wind[2] <= 1e-5 {
             camera.wind[3] = 0.0;
         }
         Self {
@@ -130,7 +130,7 @@ impl FromWorld for BladePreparation {
         let arena_bytes = PROCEDURAL_INSTANCE_CAPACITY as u64 * 4 + capacity * BLADE_BYTES;
         assert!(
             arena_bytes <= u64::from(device.limits().max_storage_buffer_binding_size),
-            "prepared-blade experiment exceeds device storage-buffer limit"
+            "prepared blades exceed the device storage-buffer limit"
         );
         let arena = device.create_buffer(&BufferDescriptor {
             label: Some("vegetation bounded prepared blades"),
@@ -187,6 +187,7 @@ impl FromWorld for BladePreparation {
                     layout.clone()
                 }],
                 shader: shader.clone(),
+                shader_defs: shader_defs(),
                 entry_point: Some(entry.into()),
                 ..default()
             })
@@ -264,7 +265,7 @@ pub(super) fn run(
                 buffers.procedural_instances.as_entire_binding(),
                 buffers.species.as_entire_binding(),
                 buffers.camera.as_entire_binding(),
-                buffers.debug_config.as_entire_binding(),
+                buffers.config.as_entire_binding(),
                 buffers.args.as_entire_binding(),
                 preparation.arena.as_entire_binding(),
                 preparation.dispatch.as_entire_binding(),
@@ -278,7 +279,7 @@ pub(super) fn run(
                 buffers.procedural_instances.as_entire_binding(),
                 buffers.species.as_entire_binding(),
                 buffers.camera.as_entire_binding(),
-                buffers.debug_config.as_entire_binding(),
+                buffers.config.as_entire_binding(),
                 buffers.args.as_entire_binding(),
                 preparation.arena.as_entire_binding(),
             )),
@@ -299,7 +300,7 @@ pub(super) fn run(
             ..default()
         });
     let recorder_ref = recorder.as_deref();
-    let span = recorder_ref.pass_span(&mut pass, "vegetation_v2_prepare_blades");
+    let span = recorder_ref.pass_span(&mut pass, "vegetation_prepare_blades");
     pass.set_bind_group(0, &preparation.bind_groups[binding_index].1, &[]);
     pass.set_pipeline(setup);
     pass.dispatch_workgroups(1, 1, 1);
@@ -321,7 +322,7 @@ mod tests {
     fn prepared_pose_ignores_lighting_but_tracks_wind_and_placement_identity() {
         let mut camera = CameraGpu::zeroed();
         camera.wind[2] = 1.0;
-        let config = DebugConfigGpu::zeroed();
+        let config = ConfigGpu::zeroed();
         let pipelines = [ComputePipelineId::new(), ComputePipelineId::new()];
         let key = PreparationKey::new(5, 2, camera, config, pipelines);
         camera.sun_radiance = [100.0; 4];
@@ -335,25 +336,9 @@ mod tests {
     }
 
     #[test]
-    fn motion_mask_reuses_fixed_geometry_but_switching_back_restores_live_wind() {
-        let mut camera = CameraGpu::zeroed();
-        camera.wind[2] = 0.82;
-        let live = DebugConfigGpu::zeroed();
-        let mut fixed = live;
-        fixed.workload[3] |= 1 << 9;
-        let pipelines = [ComputePipelineId::new(), ComputePipelineId::new()];
-        let fixed_key = PreparationKey::new(1, 1, camera, fixed, pipelines);
-        let live_key = PreparationKey::new(1, 1, camera, live, pipelines);
-        camera.wind[3] = 0.5;
-        assert!(fixed_key == PreparationKey::new(1, 1, camera, fixed, pipelines));
-        assert!(live_key != PreparationKey::new(1, 1, camera, live, pipelines));
-        assert!(fixed_key != PreparationKey::new(1, 1, camera, live, pipelines));
-    }
-
-    #[test]
     fn idle_wind_reuses_but_animation_movement_generation_and_reloads_invalidate() {
         let camera = CameraGpu::zeroed();
-        let config = DebugConfigGpu::zeroed();
+        let config = ConfigGpu::zeroed();
         let pipelines = [ComputePipelineId::new(), ComputePipelineId::new()];
         let key = PreparationKey::new(1, 1, camera, config, pipelines);
         let mut shaded = camera;

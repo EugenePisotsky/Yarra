@@ -1,51 +1,14 @@
-// Vegetation V2 view scheduler.
+// Visible work scheduling.
 //
 // Resident page fields remain persistent source data. This pass compacts only the fields that can
 // affect the current view and writes the indirect candidate-dispatch dimensions. Placement work
 // therefore scales with visible streamed coverage rather than every resident field.
-
-struct WorkItem {
-    page: vec4<f32>,
-    domain: vec4<i32>,
-    candidate_layout: vec4<u32>,
-    population: vec4<u32>,
-    growth: vec4<f32>,
-    direction_weights: vec4<f32>,
-    flow_density: vec4<f32>,
-    grouping: vec4<f32>,
-    group_density: vec4<f32>,
-    orientation: vec4<f32>,
-    peers: vec4<u32>,
-    // xy: surface offset/resolution, zw: minimum/maximum page height as f32 bits
-    surface: vec4<u32>,
-    // x: maximum height, y: maximum horizontal reach, z: minimum high-LOD threshold,
-    // w: maximum low-LOD density
-    bounds: vec4<f32>,
-}
-
-struct Camera {
-    clip_from_world: mat4x4<f32>,
-    // xyz: world position, w: viewport height
-    camera_position: vec4<f32>,
-    // x: vertical focal length in pixels, y: viewport width, z: viewport height
-    projection: vec4<f32>,
-    // Draw-only environment values keep one camera layout across all vegetation passes.
-    sun_direction: vec4<f32>,
-    sun_radiance: vec4<f32>,
-    ambient_radiance: vec4<f32>,
-    lighting: vec4<f32>,
-    // xy: world-XZ direction, z: maximum tip displacement / height, w: phase seconds
-    wind: vec4<f32>,
-    // x: spatial frequency, y: speed, z: gustiness, w: hashed blade flutter
-    wind_shape: vec4<f32>,
-    // xy: canonical XZ offset of render coordinates.
-    render_origin: vec4<f32>,
-    lod_focus: vec4<f32>,
-    canopy_appearance: vec4<f32>,
-    canopy_shape: vec4<f32>,
-    canopy_distance: vec4<f32>,
-    canopy_origin: vec4<f32>,
-}
+import package::shaders::vegetation::types::{
+    WorkItem, Camera, Config, Telemetry, QUARTER_LOD_FLAG, MAX_PROCEDURAL_DISTANCE,
+};
+import package::shaders::vegetation::lod::{
+    WIND_REACH, projected_distance_pixels, quarter_candidate_count,
+};
 
 struct DispatchIndirectArgs {
     workgroup_count_x: atomic<u32>,
@@ -53,68 +16,20 @@ struct DispatchIndirectArgs {
     workgroup_count_z: atomic<u32>,
 }
 
-struct Telemetry {
-    values: array<atomic<u32>, 16>,
-}
-
-struct DebugConfig {
-    // x: diagnostic mode, y: density mode, z: lighting mode,
-    // w: scene-adaptive single-low arena capacity
-    values: vec4<u32>,
-    // x: live work items, y: diagnostic counters enabled
-    workload: vec4<u32>,
-}
-
 @group(0) @binding(0) var<storage, read> work_items: array<WorkItem>;
 @group(0) @binding(1) var<storage, read_write> visible_work_items: array<u32>;
 @group(0) @binding(2) var<storage, read_write> candidate_dispatch: DispatchIndirectArgs;
 @group(0) @binding(3) var<uniform> camera: Camera;
 @group(0) @binding(4) var<storage, read_write> telemetry: Telemetry;
-@group(0) @binding(5) var<uniform> debug_config: DebugConfig;
+@group(0) @binding(5) var<uniform> config: Config;
 
-
-const WORKGROUP_SIZE: u32 = 64u;
-const MAX_PROCEDURAL_DISTANCE: f32 = 96.0;
-const QUARTER_LOD_FLAG: u32 = 0x80000000u;
-
-fn floor_div_two(value: i32) -> i32 {
-    if (value < 0 && (value & 1) != 0) {
-        return (value - 1) / 2;
-    }
-    return value / 2;
-}
-
-fn quarter_candidate_count(item: WorkItem) -> u32 {
-    if (item.peers.z != 0u) {
-        return item.candidate_layout.y / 4u;
-    }
-    let minimum = item.domain.xy;
-    let maximum = minimum + item.domain.zw;
-    let block_minimum = vec2<i32>(floor_div_two(minimum.x), floor_div_two(minimum.y));
-    let block_maximum = vec2<i32>(
-        floor_div_two(maximum.x - 1) + 1,
-        floor_div_two(maximum.y - 1) + 1,
-    );
-    let block_count = vec2<u32>(block_maximum - block_minimum);
-    return block_count.x * block_count.y;
-}
-
-fn projected_distance_pixels(origin: vec3<f32>, endpoint: vec3<f32>) -> f32 {
-    let origin_clip = camera.clip_from_world * vec4<f32>(origin, 1.0);
-    let endpoint_clip = camera.clip_from_world * vec4<f32>(endpoint, 1.0);
-    if (origin_clip.w <= 1e-5 || endpoint_clip.w <= 1e-5) {
-        return 1e30;
-    }
-    return length(
-        endpoint_clip.xy / endpoint_clip.w - origin_clip.xy / origin_clip.w,
-    ) * camera.camera_position.w * 0.5;
-}
+const WORKGROUP_SIZE: u32 = constants::WORKGROUP_SIZE;
 
 fn maximum_projected_extent(item: WorkItem) -> f32 {
     let minimum_height = bitcast<f32>(item.surface.z);
     let maximum_height = bitcast<f32>(item.surface.w);
     let blade_height = item.bounds.x;
-    let blade_reach = item.bounds.y + blade_height * camera.wind.z * 1.65;
+    let blade_reach = item.bounds.y + blade_height * camera.wind.z * WIND_REACH;
     var maximum_pixels = 0.0;
     for (var elevation = 0u; elevation < 2u; elevation += 1u) {
         let root_height = select(minimum_height, maximum_height, elevation != 0u);
@@ -124,23 +39,23 @@ fn maximum_projected_extent(item: WorkItem) -> f32 {
             let root = vec3<f32>(x, root_height, z);
             maximum_pixels = max(
                 maximum_pixels,
-                projected_distance_pixels(root, root + vec3<f32>(0.0, blade_height, 0.0)),
+                projected_distance_pixels(root, root + vec3<f32>(0.0, blade_height, 0.0), camera),
             );
             maximum_pixels = max(
                 maximum_pixels,
-                projected_distance_pixels(root, root + vec3<f32>(blade_reach, 0.0, 0.0)),
+                projected_distance_pixels(root, root + vec3<f32>(blade_reach, 0.0, 0.0), camera),
             );
             maximum_pixels = max(
                 maximum_pixels,
-                projected_distance_pixels(root, root - vec3<f32>(blade_reach, 0.0, 0.0)),
+                projected_distance_pixels(root, root - vec3<f32>(blade_reach, 0.0, 0.0), camera),
             );
             maximum_pixels = max(
                 maximum_pixels,
-                projected_distance_pixels(root, root + vec3<f32>(0.0, 0.0, blade_reach)),
+                projected_distance_pixels(root, root + vec3<f32>(0.0, 0.0, blade_reach), camera),
             );
             maximum_pixels = max(
                 maximum_pixels,
-                projected_distance_pixels(root, root - vec3<f32>(0.0, 0.0, blade_reach)),
+                projected_distance_pixels(root, root - vec3<f32>(0.0, 0.0, blade_reach), camera),
             );
         }
     }
@@ -187,8 +102,8 @@ fn can_schedule_quarter_lod(item: WorkItem) -> bool {
     // The balanced and full-reference modes must schedule the complete candidate lattice; a quarter
     // dispatch cannot recover roots omitted before generation.
     if (
-        debug_config.values.x != 0u
-        || debug_config.values.y != 0u
+        config.values.x != 0u
+        || config.values.y != 0u
         || item.bounds.w > 0.2501
     ) {
         return false;
@@ -212,7 +127,7 @@ fn item_is_visible(item: WorkItem) -> bool {
     let center_xz = item.page.xy + vec2<f32>(half_size);
     let minimum_height = bitcast<f32>(item.surface.z);
     let maximum_height = bitcast<f32>(item.surface.w);
-    let wind_reach = item.bounds.x * camera.wind.z * 1.65;
+    let wind_reach = item.bounds.x * camera.wind.z * WIND_REACH;
     let blade_reach = item.bounds.y + wind_reach;
     let horizontal_radius = half_size * 1.41421356 + blade_reach;
 
@@ -267,13 +182,13 @@ fn item_is_visible(item: WorkItem) -> bool {
     return !(outside_left || outside_right || outside_bottom || outside_top);
 }
 
-@compute @workgroup_size(64, 1, 1)
+@compute @workgroup_size(WORKGROUP_SIZE, 1, 1)
 fn schedule(@builtin(global_invocation_id) invocation: vec3<u32>) {
     if (invocation.x == 0u) {
         atomicStore(&candidate_dispatch.workgroup_count_z, 1u);
     }
     // The grow-only buffer may contain retired page records after a scene shrinks.
-    if (invocation.x >= debug_config.workload.x) {
+    if (invocation.x >= config.workload.x) {
         return;
     }
 
@@ -289,7 +204,7 @@ fn schedule(@builtin(global_invocation_id) invocation: vec3<u32>) {
     );
     let visible_slot = atomicAdd(&candidate_dispatch.workgroup_count_y, 1u);
     visible_work_items[visible_slot] = invocation.x | select(0u, QUARTER_LOD_FLAG, quarter_lod);
-    if (debug_config.workload.y != 0u) {
+    if (config.workload.y != 0u) {
         atomicAdd(&telemetry.values[0], 1u);
     }
     let workgroup_count = (candidate_count + WORKGROUP_SIZE - 1u) / WORKGROUP_SIZE;
@@ -297,7 +212,7 @@ fn schedule(@builtin(global_invocation_id) invocation: vec3<u32>) {
         &candidate_dispatch.workgroup_count_x,
         workgroup_count,
     );
-    if (debug_config.workload.y != 0u) {
+    if (config.workload.y != 0u) {
         atomicMax(&telemetry.values[10], workgroup_count);
     }
 }

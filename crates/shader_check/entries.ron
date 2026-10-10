@@ -3,7 +3,11 @@
 // (YARRA_SPIKE_LOG lines `kind=pipeline`); refresh from a current log when pipelines change.
 // `@name` expands a base list. Bevy's global definitions are added by the checker.
 (
-    bases: {},
+    bases: {
+        // The vegetation limits every grass pipeline passes (vegetation_render gpu_types::shader_defs;
+        // its tests check that these match).
+        "grass": ["SINGLE_HIGH_CAPACITY=32768", "SPLIT_HIGH_CAPACITY=32768", "LOW_DETAIL_CAPACITY=786432", "LOW_DETAIL_MINIMUM_PARTITION=32768", "PROCEDURAL_INSTANCE_CAPACITY=851968", "MAX_DIAGNOSTIC_INSTANCES=65536", "WORKGROUP_SIZE=64", "DIAGNOSTIC_INDEX_COUNT=6", "SINGLE_HIGH_INDEX_COUNT=48", "SINGLE_LOW_INDEX_COUNT=18", "SPLIT_HIGH_INDEX_COUNT=39", "SPLIT_LOW_INDEX_COUNT=9", "DIAGNOSTIC_FIRST_INDEX=0", "SINGLE_HIGH_FIRST_INDEX=6", "SINGLE_LOW_FIRST_INDEX=54", "SPLIT_HIGH_FIRST_INDEX=72", "SPLIT_LOW_FIRST_INDEX=111", "MAX_RENDER_SECTIONS=8", "MAX_LOW_RENDER_SECTIONS=3", "PROCEDURAL_DISTANCE_METERS=96"],
+    },
     entries: [
         (shader: "shaders/clouds/material.wesl", variants: [
             ["ATMOSPHERE", "CROSSFADE_SAMPLE_MASK", "IRRADIANCE_VOLUMES_ARE_USABLE", "MATERIAL_BIND_GROUP=3", "MESH_PIPELINE", "MULTIPLE_LIGHTMAPS_IN_ARRAY", "MULTIPLE_LIGHT_PROBES_IN_ARRAY", "MULTISAMPLED", "SCREEN_SPACE_SPECULAR_TRANSMISSION_BLUR_TAPS=8", "SHADOW_FILTER_METHOD_GAUSSIAN", "SKINNED", "VERTEX_NORMALS", "VERTEX_OUTPUT_INSTANCE_INDEX", "VERTEX_POSITIONS", "VERTEX_TANGENTS", "VERTEX_UVS", "VERTEX_UVS_A", "VIEW_PROJECTION_PERSPECTIVE"],
@@ -21,13 +25,15 @@
             [],
         ]),
         (shader: "shaders/sky/composite.wesl", variants: [
-            ["ATMOSPHERE", "CACHED_CLOUDS", "CLOUDS", "DUAL_SOURCE_BLENDING", "MULTISAMPLED"],
-            ["ATMOSPHERE", "DUAL_SOURCE_BLENDING"],
+            ["ATMOSPHERE", "CACHED_CLOUDS", "CLOUDS", "DUAL_SOURCE_BLENDING", "MIST_NOISE_PERIOD=2048", "MULTISAMPLED"],
+            ["ATMOSPHERE", "DUAL_SOURCE_BLENDING", "MIST_NOISE_PERIOD=2048"],
         ]),
         (shader: "shaders/sky/light_shafts.wesl", variants: [
+            ["MIST_NOISE_PERIOD=2048", "MULTISAMPLED", "SHAFT_SCALE=4", "SHAFT_STEPS=32"],
+            ["MIST_NOISE_PERIOD=2048", "SHAFT_SCALE=4", "SHAFT_STEPS=32"],
+        ]),
+        (shader: "shaders/sky/light_shafts_blur.wesl", variants: [
             [],
-            ["MARCH", "MULTISAMPLED", "SHAFT_SCALE=4", "SHAFT_STEPS=32"],
-            ["MARCH", "SHAFT_SCALE=4", "SHAFT_STEPS=32"],
         ]),
         (shader: "shaders/sky/sun_occlusion.wesl", variants: [
             [],
@@ -85,20 +91,23 @@
             ["DEPTH_PREPASS", "MATERIAL_BIND_GROUP=3", "MULTIPLE_LIGHTMAPS_IN_ARRAY", "PREPASS_PIPELINE", "TREE_HIERARCHY", "TREE_INSTANCED", "TREE_TAG_FADE", "VERTEX_COLORS", "VERTEX_OUTPUT_INSTANCE_INDEX", "VERTEX_POSITIONS", "VERTEX_UVS", "VERTEX_UVS_A", "VERTEX_UVS_B", "VIEW_PROJECTION_ORTHOGRAPHIC", "VISIBILITY_RANGE_DITHER"],
             ["DEPTH_PREPASS", "MATERIAL_BIND_GROUP=3", "MULTIPLE_LIGHTMAPS_IN_ARRAY", "PREPASS_PIPELINE", "TREE_HIERARCHY", "TREE_TAG_FADE", "VERTEX_COLORS", "VERTEX_OUTPUT_INSTANCE_INDEX", "VERTEX_POSITIONS", "VERTEX_UVS", "VERTEX_UVS_A", "VERTEX_UVS_B", "VIEW_PROJECTION_ORTHOGRAPHIC", "VISIBILITY_RANGE_DITHER"],
         ]),
-        (shader: "shaders/vegetation_debug_compute.wesl", variants: [
-            [],
+        (shader: "shaders/vegetation/candidate_cache.wesl", variants: [
+            ["@grass"],
         ]),
-        (shader: "shaders/vegetation_debug_draw.wesl", variants: [
-            ["ATMOSPHERE", "MATERIAL_BIND_GROUP=2", "SHADOW_FILTER_METHOD_HARDWARE_2X2", "TEMPORAL_GRASS", "YARRA_CLOUDS"],
-            ["ATMOSPHERE", "MATERIAL_BIND_GROUP=2", "SHADOW_FILTER_METHOD_HARDWARE_2X2", "YARRA_CLOUDS"],
-            ["ATMOSPHERE", "SHADOW_FILTER_METHOD_HARDWARE_2X2", "TEMPORAL_GRASS"],
-            ["ATMOSPHERE", "SHADOW_FILTER_METHOD_HARDWARE_2X2"],
+        (shader: "shaders/vegetation/draw.wesl", variants: [
+            ["@grass", "ATMOSPHERE", "MATERIAL_BIND_GROUP=2", "SHADOW_FILTER_METHOD_HARDWARE_2X2", "TEMPORAL_GRASS", "YARRA_CLOUDS"],
+            ["@grass", "ATMOSPHERE", "MATERIAL_BIND_GROUP=2", "SHADOW_FILTER_METHOD_HARDWARE_2X2", "YARRA_CLOUDS"],
+            ["@grass", "ATMOSPHERE", "SHADOW_FILTER_METHOD_HARDWARE_2X2", "TEMPORAL_GRASS"],
+            ["@grass", "ATMOSPHERE", "SHADOW_FILTER_METHOD_HARDWARE_2X2"],
         ]),
-        (shader: "shaders/vegetation_prepare_blades.wesl", variants: [
-            [],
+        (shader: "shaders/vegetation/placement.wesl", variants: [
+            ["@grass"],
         ]),
-        (shader: "shaders/vegetation_schedule_compute.wesl", variants: [
-            [],
+        (shader: "shaders/vegetation/prepare.wesl", variants: [
+            ["@grass"],
+        ]),
+        (shader: "shaders/vegetation/schedule.wesl", variants: [
+            ["@grass"],
         ]),
         (shader: "shaders/weather/ambient.wesl", variants: [
             [],

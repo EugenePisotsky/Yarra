@@ -1,5 +1,5 @@
 //! Compute layouts and draw-pipeline specialization for view, lighting and temporal variants.
-use super::temporal;
+use super::{gpu_types::shader_defs, temporal};
 use bevy::{
     core_pipeline::core_3d::CORE_3D_DEPTH_FORMAT,
     pbr::{MeshPipelineViewLayoutKey, MeshPipelineViewLayouts},
@@ -18,9 +18,10 @@ use bevy::{
 };
 use std::borrow::Cow;
 
-const COMPUTE_SHADER_PATH: &str = "shaders/vegetation_debug_compute.wesl";
-const SCHEDULE_SHADER_PATH: &str = "shaders/vegetation_schedule_compute.wesl";
-const DRAW_SHADER_PATH: &str = "shaders/vegetation_debug_draw.wesl";
+const SCHEDULE_SHADER_PATH: &str = "shaders/vegetation/schedule.wesl";
+const PLACEMENT_SHADER_PATH: &str = "shaders/vegetation/placement.wesl";
+const CANDIDATE_CACHE_SHADER_PATH: &str = "shaders/vegetation/candidate_cache.wesl";
+const DRAW_SHADER_PATH: &str = "shaders/vegetation/draw.wesl";
 
 #[derive(Resource)]
 pub(super) struct VegetationPipelines {
@@ -38,13 +39,14 @@ pub(super) struct VegetationPipelines {
 impl FromWorld for VegetationPipelines {
     fn from_world(world: &mut World) -> Self {
         let asset_server = world.resource::<AssetServer>();
-        let compute_shader = asset_server.load(COMPUTE_SHADER_PATH);
         let schedule_shader = asset_server.load(SCHEDULE_SHADER_PATH);
+        let placement_shader = asset_server.load(PLACEMENT_SHADER_PATH);
+        let candidate_cache_shader = asset_server.load(CANDIDATE_CACHE_SHADER_PATH);
         let draw_shader = asset_server.load(DRAW_SHADER_PATH);
         let pipeline_cache = world.resource::<PipelineCache>();
         let view_layouts = world.resource::<MeshPipelineViewLayouts>().clone();
         let schedule_layout = BindGroupLayoutDescriptor::new(
-            "vegetation-v2 visible work scheduling",
+            "vegetation visible work scheduling",
             &BindGroupLayoutEntries::sequential(
                 ShaderStages::COMPUTE,
                 (
@@ -58,7 +60,7 @@ impl FromWorld for VegetationPipelines {
             ),
         );
         let compute_layout = BindGroupLayoutDescriptor::new(
-            "vegetation-v2 debug generation",
+            "vegetation placement",
             &BindGroupLayoutEntries::sequential(
                 ShaderStages::COMPUTE,
                 (
@@ -80,7 +82,7 @@ impl FromWorld for VegetationPipelines {
             ),
         );
         let draw_layout = BindGroupLayoutDescriptor::new(
-            "vegetation-v2 debug draw",
+            "vegetation draw",
             &BindGroupLayoutEntries::sequential(
                 ShaderStages::VERTEX_FRAGMENT,
                 (
@@ -95,52 +97,61 @@ impl FromWorld for VegetationPipelines {
             ),
         );
         let schedule = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
-            label: Some("vegetation-v2 visible work scheduling".into()),
+            label: Some("vegetation visible work scheduling".into()),
             layout: vec![schedule_layout.clone()],
             shader: schedule_shader,
+            shader_defs: shader_defs(),
             entry_point: Some(Cow::Borrowed("schedule")),
             ..default()
         });
-        let generate = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
-            label: Some("vegetation-v2 classify once and emit".into()),
-            layout: vec![compute_layout.clone()],
-            shader: compute_shader.clone(),
-            entry_point: Some(Cow::Borrowed("generate")),
-            ..default()
-        });
-        let finalize = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
-            label: Some("vegetation-v2 debug finalize".into()),
-            layout: vec![compute_layout.clone()],
-            shader: compute_shader.clone(),
-            entry_point: Some(Cow::Borrowed("finalize")),
-            ..default()
-        });
-        let cache_pipeline = |entry: &'static str| {
-            pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
-                label: Some(format!("vegetation candidate {entry}").into()),
-                layout: vec![compute_layout.clone()],
-                shader: compute_shader.clone(),
-                entry_point: Some(entry.into()),
-                ..default()
-            })
-        };
-        let cache_build = cache_pipeline("build_candidate_cache");
-        let cache_finish = cache_pipeline("finish_candidate_cache");
+        let placement_pipeline =
+            |label: &'static str, shader: &Handle<Shader>, entry: &'static str| {
+                pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
+                    label: Some(label.into()),
+                    layout: vec![compute_layout.clone()],
+                    shader: shader.clone(),
+                    shader_defs: shader_defs(),
+                    entry_point: Some(entry.into()),
+                    ..default()
+                })
+            };
+        let generate = placement_pipeline(
+            "vegetation classify once and emit",
+            &placement_shader,
+            "generate",
+        );
+        let finalize = placement_pipeline(
+            "vegetation placement finalize",
+            &placement_shader,
+            "finalize",
+        );
+        let cache_build = placement_pipeline(
+            "vegetation candidate build_candidate_cache",
+            &candidate_cache_shader,
+            "build_candidate_cache",
+        );
+        let cache_finish = placement_pipeline(
+            "vegetation candidate finish_candidate_cache",
+            &candidate_cache_shader,
+            "finish_candidate_cache",
+        );
+        let mut draw_defs = shader_defs();
+        draw_defs.push("SHADOW_FILTER_METHOD_HARDWARE_2X2".into());
         let draw_descriptor = RenderPipelineDescriptor {
-            label: Some("vegetation-v2 placement debug".into()),
+            label: Some("vegetation draw".into()),
             // The exact mesh-view layout is selected per camera by the pipeline specializer.
             layout: Vec::new(),
             vertex: VertexState {
                 shader: draw_shader.clone(),
                 entry_point: Some(Cow::Borrowed("vertex")),
-                shader_defs: vec!["SHADOW_FILTER_METHOD_HARDWARE_2X2".into()],
+                shader_defs: draw_defs.clone(),
                 buffers: Vec::new(),
                 ..default()
             },
             fragment: Some(FragmentState {
                 shader: draw_shader,
                 entry_point: Some(Cow::Borrowed("fragment")),
-                shader_defs: vec!["SHADOW_FILTER_METHOD_HARDWARE_2X2".into()],
+                shader_defs: draw_defs,
                 targets: vec![Some(ColorTargetState {
                     format: TextureFormat::Rgba16Float,
                     blend: None,

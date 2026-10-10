@@ -213,7 +213,7 @@ fn preset_workspace_restores_scene_lighting_wind_and_camera_ownership() {
         .init_resource::<viewport::PreviewState>()
         .insert_resource(original.clone())
         .insert_resource(wind)
-        .init_resource::<VegetationDebugSettings>()
+        .init_resource::<VegetationSettings>()
         .init_resource::<VegetationLighting>()
         .init_resource::<GlobalAmbientLight>()
         .init_resource::<Assets<Image>>()

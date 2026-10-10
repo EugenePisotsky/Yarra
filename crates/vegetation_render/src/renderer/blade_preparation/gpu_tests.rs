@@ -61,7 +61,7 @@ fn prepared_blades_match_reference_with_wind_msaa_and_overflow() {
     assert!(stats.emitted_instances.iter().sum::<u32>() > 100);
     // Keep the same emitted instances for exact A/B comparisons, including compaction order.
     app.world_mut()
-        .resource_mut::<VegetationDebugSettings>()
+        .resource_mut::<VegetationSettings>()
         .profile_mode = VegetationProfileMode::DrawFrozen;
     let mut previous = Vec::new();
     for variant in 0..4 {
@@ -166,7 +166,7 @@ fn prepared_blades_match_reference_with_wind_msaa_and_overflow() {
         .resource_mut::<VegetationBladePreparation>()
         .enabled = true;
     app.world_mut()
-        .resource_mut::<VegetationDebugSettings>()
+        .resource_mut::<VegetationSettings>()
         .profile_mode = VegetationProfileMode::Full;
     let before = snapshot(&app).generation_dispatches;
     let mut scene = vegetation::fixtures::reference_scene();
@@ -184,7 +184,7 @@ fn prepared_blades_match_reference_with_wind_msaa_and_overflow() {
         VegetationProfileMode::Full,
     ] {
         app.world_mut()
-            .resource_mut::<VegetationDebugSettings>()
+            .resource_mut::<VegetationSettings>()
             .profile_mode = mode;
         settled_pixels(&mut app);
         assert_eq!(
@@ -404,7 +404,7 @@ fn replace_arena(app: &mut App, blades: u64) {
                 &buffers.diagnostic_instances,
                 &buffers.species,
                 &buffers.camera,
-                &buffers.debug_config,
+                &buffers.config,
                 &preparation.arena,
                 &buffers.canopy_boundary.buffer,
             );
@@ -457,7 +457,7 @@ fn test_app() -> App {
     )
     .add_plugins((VegetationRenderPlugin, upscaling::UpscalingPlugin))
     // Counters are opt-in in the renderer, but these tests assert on GPU readbacks.
-    .insert_resource(VegetationDebugSettings {
+    .insert_resource(VegetationSettings {
         gpu_counters_enabled: true,
         ..default()
     })
@@ -520,7 +520,7 @@ fn contact_gate_clears_frozen_roots_and_elevated_views_cull_grass() {
         "restored image: {mean}, {changed}"
     );
     app.world_mut()
-        .resource_mut::<VegetationDebugSettings>()
+        .resource_mut::<VegetationSettings>()
         .profile_mode = VegetationProfileMode::DrawFrozen;
     app.world_mut()
         .resource_mut::<VegetationTerrainGate>()
@@ -535,7 +535,7 @@ fn contact_gate_clears_frozen_roots_and_elevated_views_cull_grass() {
     // regeneration when full rendering resumes.
     *app.world_mut().resource_mut::<VegetationTerrainGate>() = default();
     app.world_mut()
-        .resource_mut::<VegetationDebugSettings>()
+        .resource_mut::<VegetationSettings>()
         .profile_mode = VegetationProfileMode::Full;
     let resumed = settled_pixels(&mut app);
     assert!(snapshot(&app).emitted_instances.iter().sum::<u32>() > 100);
@@ -594,7 +594,7 @@ fn candidate_cache_preserves_population_images_and_source_lifetime() {
             .resource_mut::<VegetationWind>()
             .phase_seconds = 1.73 + variant as f32;
         app.world_mut()
-            .resource_mut::<VegetationDebugSettings>()
+            .resource_mut::<VegetationSettings>()
             .density_mode = density;
         compare_candidate_images(&mut app);
         assert_eq!(
@@ -635,28 +635,28 @@ fn candidate_cache_preserves_population_images_and_source_lifetime() {
     );
     compare_candidate_images(&mut app);
     for mode in [
-        VegetationDebugMode::AcceptedSpecies,
-        VegetationDebugMode::CandidateOutcomes,
-        VegetationDebugMode::ProceduralGeometry,
+        VegetationDiagnosticMode::AcceptedSpecies,
+        VegetationDiagnosticMode::CandidateOutcomes,
+        VegetationDiagnosticMode::ProceduralGeometry,
     ] {
         app.world_mut()
-            .resource_mut::<VegetationDebugSettings>()
-            .mode = mode;
+            .resource_mut::<VegetationSettings>()
+            .diagnostic_mode = mode;
         compare_candidate_images(&mut app);
     }
 }
 
 fn compare_candidate_images(app: &mut App) {
     app.world_mut()
-        .resource_mut::<VegetationDebugSettings>()
+        .resource_mut::<VegetationSettings>()
         .candidate_cache_enabled = true;
     let cached = settled_pixels(app);
     let cached_stats = snapshot(app);
-    let production = app.world().resource::<VegetationDebugSettings>().mode
-        == VegetationDebugMode::ProceduralGeometry;
+    let production = app.world().resource::<VegetationSettings>().diagnostic_mode
+        == VegetationDiagnosticMode::ProceduralGeometry;
     let cached_instances = production.then(|| generated_instances(app));
     app.world_mut()
-        .resource_mut::<VegetationDebugSettings>()
+        .resource_mut::<VegetationSettings>()
         .candidate_cache_enabled = false;
     let reference = settled_pixels(app);
     let reference_stats = snapshot(app);
@@ -752,7 +752,7 @@ fn paired_lod_boundary_matches_rendered_shape_and_lighting() {
     let mut app = test_app();
     settled_pixels(&mut app);
     app.world_mut()
-        .resource_mut::<VegetationDebugSettings>()
+        .resource_mut::<VegetationSettings>()
         .profile_mode = VegetationProfileMode::DrawFrozen;
     app.world_mut()
         .resource_mut::<VegetationBladePreparation>()
@@ -1058,7 +1058,7 @@ fn temporal_strafe_motion_matches_reprojection() {
             Visibility::Visible
         };
         app.world_mut()
-            .resource_mut::<VegetationDebugSettings>()
+            .resource_mut::<VegetationSettings>()
             .profile_mode = if grass {
             VegetationProfileMode::Full
         } else {

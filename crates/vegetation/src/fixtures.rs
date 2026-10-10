@@ -1,7 +1,7 @@
 //! Small, deterministic fixtures shared by contract, compiler, and renderer tests.
 //!
 //! These are deliberately code-authored reference and initial-project presets. They exercise the
-//! V2 model without making the fixture the authority after a project catalog has been saved.
+//! vegetation model without making the fixture the authority after a project catalog has been saved.
 
 use crate::{
     BroadLeafTopologyProfile, GrowthPattern, RepresentationKind, RepresentationLevel,

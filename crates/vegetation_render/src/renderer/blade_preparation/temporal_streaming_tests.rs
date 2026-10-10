@@ -120,7 +120,7 @@ fn temporal_offscreen_grass_streaming_preserves_history() {
                         .unwrap();
                 } else {
                     app.world_mut()
-                        .resource_mut::<VegetationDebugSettings>()
+                        .resource_mut::<VegetationSettings>()
                         .profile_mode = if enabled {
                         VegetationProfileMode::Full
                     } else {

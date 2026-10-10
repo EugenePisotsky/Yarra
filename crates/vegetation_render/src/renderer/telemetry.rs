@@ -15,7 +15,7 @@ use super::{
     },
 };
 #[cfg(not(target_os = "ios"))]
-use crate::{VegetationDebugSettings, VegetationDiagnostics, VegetationSceneState};
+use crate::{VegetationDiagnostics, VegetationSceneState, VegetationSettings};
 #[cfg(not(target_os = "ios"))]
 use bevy::render::{
     render_resource::{BufferDescriptor, BufferUsages, MapMode},
@@ -53,7 +53,7 @@ impl Default for VegetationTelemetryStaging {
 #[cfg(not(target_os = "ios"))]
 pub(super) fn prepare_telemetry_staging(
     render_device: Res<RenderDevice>,
-    settings: Res<VegetationDebugSettings>,
+    settings: Res<VegetationSettings>,
     scene: Option<Res<VegetationSceneState>>,
     mut staging: ResMut<VegetationTelemetryStaging>,
 ) {
@@ -69,7 +69,7 @@ pub(super) fn prepare_telemetry_staging(
         return;
     }
     staging.buffer = Some(render_device.create_buffer(&BufferDescriptor {
-        label: Some("vegetation-v2 telemetry readback"),
+        label: Some("vegetation telemetry readback"),
         size: TELEMETRY_READBACK_SIZE,
         usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
         mapped_at_creation: false,
@@ -93,7 +93,7 @@ pub(super) fn begin_telemetry_readback(
         .slice(..)
         .map_async(MapMode::Read, move |result| {
             if let Err(error) = result {
-                warn!("vegetation-v2 telemetry readback failed: {error}");
+                warn!("vegetation telemetry readback failed: {error}");
                 return;
             }
 
@@ -101,7 +101,7 @@ pub(super) fn begin_telemetry_readback(
                 let mapped = match buffer.slice(..).get_mapped_range() {
                     Ok(mapped) => mapped,
                     Err(error) => {
-                        warn!("vegetation-v2 telemetry readback failed: {error}");
+                        warn!("vegetation telemetry readback failed: {error}");
                         buffer.unmap();
                         return;
                     }

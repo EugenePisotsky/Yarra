@@ -164,6 +164,19 @@ impl ScreenSpaceLod {
     pub(crate) fn height(&self, scale: Vec3) -> f32 {
         object_height(self, scale)
     }
+    /// For tests of what draws: variant `index` of an object that fades over time drawn
+    /// whole, or dissolving into it from `from`, `progress` (0 to 1) of the way.
+    #[cfg(test)]
+    pub(crate) fn set_timed(&mut self, index: usize, from: Option<(usize, f32)>) {
+        assert!(
+            self.timed.is_some(),
+            "only objects ending in an impostor fade over time"
+        );
+        self.timed = Some(match from {
+            Some((from, progress)) => timed::TimedLod::dissolving(from, index, progress),
+            None => timed::TimedLod::showing(index),
+        });
+    }
 
     pub(crate) fn thresholds(&self) -> impl Iterator<Item = f32> + '_ {
         self.variants.iter().map(|v| v.minimum_screen_height)

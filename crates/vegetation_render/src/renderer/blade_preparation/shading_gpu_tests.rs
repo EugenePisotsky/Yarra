@@ -1,48 +1,75 @@
 //! Opt-in shader A/B check with identical frozen instances, camera, wind and MSAA samples.
+//!
+//! `YARRA_GRASS_REFERENCE_SHADERS` mirrors `assets/shaders`: each `.wesl` file in it replaces the
+//! shader at the same path, or joins them as a module of the reference's own. A reference for the
+//! whole grass pipeline also regenerates placement and compares the instances.
 use super::*;
 use bevy::shader::Shader;
+
+fn reference_files(root: &std::path::Path, directory: &std::path::Path, files: &mut Vec<String>) {
+    for entry in std::fs::read_dir(directory).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            reference_files(root, &path, files);
+        } else if path.extension().is_some_and(|e| e == "wesl") {
+            let relative = path.strip_prefix(root).unwrap();
+            files.push(relative.to_string_lossy().replace('\\', "/"));
+        }
+    }
+}
 
 #[test]
 #[ignore = "requires a native GPU and YARRA_GRASS_REFERENCE_SHADERS containing compatible baseline shaders"]
 fn shading_matches_reference_in_frozen_scene() {
     let reference = std::path::PathBuf::from(
         std::env::var_os("YARRA_GRASS_REFERENCE_SHADERS")
-            .expect("set the directory containing baseline draw and canopy shaders"),
+            .expect("set the directory containing baseline shaders, laid out as assets/shaders"),
     );
     let mut app = test_app();
     settled_pixels(&mut app);
-    let names = ["vegetation_debug_draw.wesl", "grass_canopy.wesl"];
-    let handles: Vec<Handle<Shader>> = names
+    let mut names = Vec::new();
+    reference_files(&reference, &reference, &mut names);
+    names.sort();
+    let shaders = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/shaders");
+    let mut handles: Vec<Handle<Shader>> = Vec::new();
+    let mut current = Vec::new();
+    let mut baseline = Vec::new();
+    for name in &names {
+        let path = format!("shaders/{name}");
+        let source = Shader::from_wesl(
+            std::fs::read_to_string(reference.join(name)).unwrap(),
+            path.clone(),
+        );
+        if shaders.join(name).is_file() {
+            let handle = app.world().resource::<AssetServer>().load(path);
+            current.push(Some(
+                app.world()
+                    .resource::<Assets<Shader>>()
+                    .get(&handle)
+                    .unwrap_or_else(|| panic!("{name} is not loaded"))
+                    .clone(),
+            ));
+            handles.push(handle);
+        } else {
+            // A module only the reference has; nothing current imports it.
+            handles.push(
+                app.world_mut()
+                    .resource_mut::<Assets<Shader>>()
+                    .add(source.clone()),
+            );
+            current.push(None);
+        }
+        baseline.push(Some(source));
+    }
+    let placement = ["vegetation/placement.wesl", "vegetation/schedule.wesl"]
         .iter()
-        .map(|name| {
-            app.world()
-                .resource::<AssetServer>()
-                .load(format!("shaders/{name}"))
-        })
-        .collect();
-    let current: Vec<_> = handles
-        .iter()
-        .map(|handle| {
-            app.world()
-                .resource::<Assets<Shader>>()
-                .get(handle)
-                .unwrap()
-                .clone()
-        })
-        .collect();
-    let baseline: Vec<_> = names
-        .iter()
-        .map(|name| {
-            Shader::from_wesl(
-                std::fs::read_to_string(reference.join(name)).unwrap(),
-                format!("shaders/{name}"),
-            )
-        })
-        .collect();
-    let install = |app: &mut App, sources: &[Shader]| {
+        .all(|name| names.iter().any(|n| n == name));
+    let install = |app: &mut App, sources: &[Option<Shader>]| {
         let mut assets = app.world_mut().resource_mut::<Assets<Shader>>();
         for (handle, source) in handles.iter().zip(sources) {
-            assets.insert(handle.id(), source.clone()).unwrap();
+            if let Some(source) = source {
+                assets.insert(handle.id(), source.clone()).unwrap();
+            }
         }
     };
     enum DrawPath {
@@ -117,7 +144,7 @@ fn shading_matches_reference_in_frozen_scene() {
             };
             world.resource_mut::<VegetationBladePreparation>().enabled =
                 !matches!(path, DrawPath::Fallback);
-            let mut settings = world.resource_mut::<VegetationDebugSettings>();
+            let mut settings = world.resource_mut::<VegetationSettings>();
             settings.profile_mode = VegetationProfileMode::Full;
             settings.lighting_mode = match path {
                 DrawPath::Lighting(mode) => mode,
@@ -126,9 +153,10 @@ fn shading_matches_reference_in_frozen_scene() {
         }
         settled_pixels(&mut app);
         app.world_mut()
-            .resource_mut::<VegetationDebugSettings>()
+            .resource_mut::<VegetationSettings>()
             .profile_mode = VegetationProfileMode::DrawFrozen;
         let actual = settled_pixels(&mut app);
+        let instances = generated_instances(&app);
         let stats = snapshot(&app);
         let counts = stats.emitted_instances;
         assert!(
@@ -138,7 +166,7 @@ fn shading_matches_reference_in_frozen_scene() {
         for (seen, count) in exercised_bins.iter_mut().zip(counts) {
             *seen |= count > 0;
         }
-        exercised_morph |= generated_instances(&app).iter().flatten().any(|r| {
+        exercised_morph |= instances.iter().flatten().any(|r| {
             let morph = (r[5] >> 16) & 0x7fff;
             r[5] >> 31 == 0 && morph > 0 && morph < 0x7fff
         });
@@ -182,6 +210,23 @@ fn shading_matches_reference_in_frozen_scene() {
             actual,
             "unstable frozen scene: case={case}"
         );
+        if placement {
+            install(&mut app, &baseline);
+            app.world_mut()
+                .resource_mut::<VegetationSettings>()
+                .profile_mode = VegetationProfileMode::Full;
+            settled_pixels(&mut app);
+            assert_eq!(
+                generated_instances(&app),
+                instances,
+                "placement changed: case={case}"
+            );
+            install(&mut app, &current);
+            settled_pixels(&mut app);
+            app.world_mut()
+                .resource_mut::<VegetationSettings>()
+                .profile_mode = VegetationProfileMode::DrawFrozen;
+        }
         if case == 1 {
             // Ensure this fixture exercises visible canopy shading, rather than comparing
             // two images whose boundary field or material never became active.

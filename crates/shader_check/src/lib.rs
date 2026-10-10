@@ -126,7 +126,26 @@ impl Shaders {
 
     /// Composes an asset shader (`shaders/x/y.wesl`) into WGSL with these definitions.
     pub fn compose(&self, asset_path: &str, defs: &[Def]) -> Result<String, String> {
-        let module = asset_module(asset_path)?;
+        self.compose_module(&asset_module(asset_path)?, None, defs)
+    }
+
+    /// Composes `source` as a root module of its own that imports the project's and Bevy's
+    /// modules: for tests that run production shader functions from a harness of their own
+    /// (a root without entry points composes to nothing).
+    pub fn compose_source(&self, source: &str, defs: &[Def]) -> Result<String, String> {
+        let root = ModulePath {
+            origin: PathOrigin::Absolute,
+            components: vec!["harness".into()],
+        };
+        self.compose_module(&root, Some(source), defs)
+    }
+
+    fn compose_module(
+        &self,
+        module: &ModulePath,
+        source: Option<&str>,
+        defs: &[Def],
+    ) -> Result<String, String> {
         let mut options = wesl::CompileOptions {
             imports: true,
             condcomp: true,
@@ -153,8 +172,9 @@ impl Shaders {
         let resolver = Resolver {
             shaders: self,
             constants,
+            root: source.map(|source| (module.clone(), source)),
         };
-        wesl::compile(&module, &options, &resolver)
+        wesl::compile(module, &options, &resolver)
             .map(|compiled| compiled.to_string())
             .map_err(|error| error.diagnostic().render_plain())
     }
@@ -225,43 +245,6 @@ impl Shaders {
         }
         Ok(flags)
     }
-}
-
-/// Applies only WESL conditional compilation (`@if`/`@elif`/`@else`) to a piece of shader text,
-/// for tests that evaluate a slice of a production shader without its imports or bindings.
-pub fn resolve_conditions(source: &str, defs: &[Def]) -> Result<String, String> {
-    struct Text<'a>(&'a str);
-    impl wesl::Resolver for Text<'_> {
-        fn resolve_source<'b>(
-            &'b self,
-            _: &ModulePath,
-        ) -> Result<Cow<'b, str>, wesl::error::ResolveError> {
-            Ok(Cow::Borrowed(self.0))
-        }
-    }
-    let mut options = wesl::CompileOptions {
-        imports: false,
-        condcomp: true,
-        visibility: false,
-        strip: false,
-        validate: false,
-        sourcemap: false,
-        ..Default::default()
-    };
-    for def in defs {
-        let on = !matches!(def, Def::Flag(_, false));
-        options
-            .features
-            .flags
-            .insert(def.name().to_string(), on.into());
-    }
-    let root = ModulePath {
-        origin: PathOrigin::Absolute,
-        components: vec!["slice".into()],
-    };
-    wesl::compile(&root, &options, &Text(source))
-        .map(|compiled| compiled.to_string())
-        .map_err(|error| error.diagnostic().render_plain())
 }
 
 /// Definitions Bevy adds to every composition on this Mac, ahead of a pipeline's own: the
@@ -382,6 +365,8 @@ fn project_imports(source: &str, file: &Path, assets: &Path) -> Vec<PathBuf> {
 struct Resolver<'a> {
     shaders: &'a Shaders,
     constants: String,
+    /// A root module given as text (`Shaders::compose_source`).
+    root: Option<(ModulePath, &'a str)>,
 }
 
 impl wesl::Resolver for Resolver<'_> {
@@ -395,6 +380,11 @@ impl wesl::Resolver for Resolver<'_> {
             PathOrigin::Package(package) if package.rsplit('/').next() == Some("constants"));
         if constants && path.components.is_empty() {
             return Ok(Cow::Borrowed(&self.constants));
+        }
+        if let Some((root, source)) = &self.root
+            && root == path
+        {
+            return Ok(Cow::Borrowed(source));
         }
         let not_found = |why: String| wesl::error::ResolveError::ModuleNotFound(path.clone(), why);
         let file = self

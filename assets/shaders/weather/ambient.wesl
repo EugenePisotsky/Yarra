@@ -1,9 +1,10 @@
 // Ambient particles: dust motes, seed fluff and falling leaves as instanced quads in
 // camera-anchored boxes that wrap a world-fixed lattice (crates/atmosphere/src/ambient_particles.rs).
 // Drawn over the resolved HDR scene with a soft depth test, like the rain.
-import bevy_render::view::View;
 import bevy_pbr::render::mesh_view_types::{Lights, DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT};
-import package::shaders::clouds::types::CloudParams;
+import package::shaders::clouds::maps::{cloud_beam, forest_sky_share};
+import package::shaders::sky::sun::cascade_visibility;
+import package::shaders::weather::particles::{clouds, view, random3, scene_depth};
 
 struct Ambient {
     time: vec4<f32>, // x: fraction of the motion period, y: the period in seconds
@@ -13,12 +14,7 @@ struct Ambient {
     amounts: vec4<f32>, // share of each kind present
 }
 @group(0) @binding(0) var<uniform> ambient: Ambient;
-@group(0) @binding(1) var<storage, read> clouds: CloudParams;
-@group(0) @binding(2) var<uniform> view: View;
-@if(MULTISAMPLED)
-@group(0) @binding(3) var depth: texture_depth_multisampled_2d;
-@else
-@group(0) @binding(3) var depth: texture_depth_2d;
+// Bindings 1-3 (clouds, view, depth): weather/particles.wesl.
 @group(0) @binding(4) var<uniform> lights: Lights;
 @group(0) @binding(5) var shadow_maps: texture_depth_2d_array;
 @group(0) @binding(6) var shadow_sampler: sampler_comparison;
@@ -52,18 +48,6 @@ struct Particle {
     @location(4) @interpolate(flat) kind: u32,
     // Leaves: 0 a broad leaf, 1 a needle sprig.
     @location(5) @interpolate(flat) shape: f32,
-}
-
-fn pcg(v: u32) -> u32 {
-    let state = v * 747796405u + 2891336453u;
-    let word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
-    return (word >> 22u) ^ word;
-}
-fn random3(seed: u32) -> vec3<f32> {
-    let a = pcg(seed);
-    let b = pcg(a);
-    let c = pcg(b);
-    return vec3(f32(a), f32(b), f32(c)) / 4294967295.0;
 }
 
 // A periodic motion of `cycles` whole turns per motion period, so the wrapping clock never
@@ -119,30 +103,16 @@ fn shadow_map_visibility(p: vec3<f32>) -> f32 {
         // Particles cast no shadow; the offset only keeps clear of the depth's precision.
         let lifted = p + (*light).direction_to_light * ((*light).shadow_depth_bias + 2.0 * (*cascade).texel_size);
         let clip = (*cascade).clip_from_world * vec4(lifted, 1.0);
-        let ndc = clip.xyz / clip.w;
-        if any(abs(ndc.xy) > vec2(1.0)) || ndc.z < 0.0 || ndc.z > 1.0 {
-            return 1.0;
-        }
-        let uv = ndc.xy * vec2(0.5, -0.5) + 0.5;
-        return textureSampleCompareLevel(
-            shadow_maps, shadow_sampler, uv, i32((*light).depth_texture_base_index + c), ndc.z);
+        return cascade_visibility(shadow_maps, shadow_sampler,
+            i32((*light).depth_texture_base_index + c), clip.xyz / clip.w);
     }
     return 1.0;
 }
 
 // Sunlight past the cloud layer's shadow, as surfaces see it.
 fn cloud_visibility(p: vec3<f32>) -> f32 {
-    let sun = clouds.sun.xyz;
-    if clouds.layer.w < 0.5 || sun.y <= 0.0 || p.y >= clouds.layer.x + clouds.layer.y {
-        return 1.0;
-    }
-    let hit = p.xz + clouds.offset.xy + sun.xz * (clouds.layer.x - p.y) / max(sun.y, 0.04);
-    let shadow = textureSampleLevel(cloud_shadow, repeat_sampler,
-        (hit - clouds.offset.zw) / (clouds.layer.z * 4.0), 0.0).r;
-    // The direct beam only: light the clouds pass on diffusely lights no beams, and a closing
-    // deck hides the beam whatever thin spots the shadow map finds.
-    let open = 1.0 - clouds.weather.z;
-    return shadow * open * open;
+    return cloud_beam(cloud_shadow, repeat_sampler, clouds.layer, clouds.offset, clouds.sun.xyz,
+        clouds.weather.z, p);
 }
 
 // Forest map texel under `xz`: highest crown top, lowest crown base, foliage density and
@@ -160,23 +130,10 @@ fn crown_at(xz: vec2<f32>) -> vec4<f32> {
     return textureLoad(forest_map, texel, 0);
 }
 
-// Share of the sky's light reaching `p` past the crowns, as surfaces under them see it
-// (forest_sky_visibility in clouds/forest_shadow.wesl).
+// Share of the sky's light reaching `p` past the crowns, as surfaces under them see it.
 fn sky_visibility(p: vec3<f32>) -> f32 {
-    let parameters = clouds.forest_shadow;
-    let strength = clouds.forest_sky.x;
-    if strength <= 0.0 || parameters.z <= 0.0 {
-        return 1.0;
-    }
-    let uv = (p.xz - parameters.xy) / (parameters.z * vec2<f32>(textureDimensions(forest_map)));
-    if any(uv <= vec2(0.0)) || any(uv >= vec2(1.0)) {
-        return 1.0;
-    }
-    let around = textureSampleLevel(forest_map, clamp_sampler, uv, 1.5);
-    if around.a <= p.y {
-        return 1.0;
-    }
-    return mix(1.0, mix(0.15, 1.0, around.b), strength);
+    return forest_sky_share(forest_map, clamp_sampler, clouds.forest_shadow, clouds.forest_sky.x,
+        p);
 }
 
 // Ground height of the mist map, or `fallback` off it.
@@ -359,15 +316,6 @@ fn vertex(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance:
     out.alpha = alpha;
     out.kind = kind;
     return out;
-}
-
-// Linear scene depth under a fragment. Scene depth may be at a lower resolution after
-// temporal reconstruction.
-fn scene_depth(fragment: vec2<f32>) -> f32 {
-    let scale = view.main_pass_viewport.zw / view.viewport.zw;
-    let texel = vec2<i32>((fragment - view.viewport.xy) * scale + view.main_pass_viewport.xy);
-    let z = textureLoad(depth, texel, 0);
-    return select(1.0e9, view.clip_from_view[3][2] / z, z > 0.0);
 }
 
 @fragment

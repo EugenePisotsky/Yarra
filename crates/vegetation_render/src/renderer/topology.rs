@@ -113,35 +113,19 @@ mod tests {
     }
 
     #[test]
-    fn folded_pair_cpu_gpu_index_ranges_and_triangle_budget_agree() {
-        let compute = include_str!("../../../../assets/shaders/vegetation_debug_compute.wesl");
-        for (name, value) in [
-            ("SPLIT_HIGH_INDEX_COUNT", SPLIT_HIGH_INDEX_COUNT),
-            ("SPLIT_LOW_INDEX_COUNT", SPLIT_LOW_INDEX_COUNT),
-            ("SPLIT_HIGH_FIRST_INDEX", SPLIT_HIGH_FIRST_INDEX),
-            ("SPLIT_LOW_FIRST_INDEX", SPLIT_LOW_FIRST_INDEX),
-        ] {
-            assert!(compute.contains(&format!("const {name}: u32 = {value}u;")));
-        }
-        let retention = |source: &str| -> f32 {
-            source
-                .split("const SPLIT_LOW_DENSITY_BUDGET_SCALE: f32 = ")
-                .nth(1)
-                .unwrap()
-                .split(';')
-                .next()
-                .unwrap()
-                .parse()
-                .unwrap()
-        };
-        let density = retention(compute);
-        assert_eq!(
-            density,
-            retention(include_str!(
-                "../../../../assets/shaders/vegetation_blade.wesl"
-            ))
+    fn retained_low_pairs_stay_within_the_original_triangle_budget() {
+        let placement = crate::renderer::tests::composed(
+            "shaders/vegetation/placement.wesl",
+            &crate::renderer::tests::grass_defs(),
         );
-        assert!(density * SPLIT_LOW_INDEX_COUNT as f32 <= 0.65 * 9.0 + 1e-6);
+        // The shaders take the index ranges from these constants.
+        assert_eq!(
+            crate::renderer::tests::constant(&placement, "SPLIT_LOW_INDEX_COUNT"),
+            f64::from(SPLIT_LOW_INDEX_COUNT)
+        );
+        let density =
+            crate::renderer::tests::constant(&placement, "SPLIT_LOW_DENSITY_BUDGET_SCALE");
+        assert!(density * f64::from(SPLIT_LOW_INDEX_COUNT) <= 0.65 * 9.0 + 1e-6);
     }
 
     #[test]

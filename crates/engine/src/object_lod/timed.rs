@@ -216,6 +216,25 @@ impl TimedLod {
 }
 
 #[cfg(test)]
+impl TimedLod {
+    /// Variant `index` drawn whole.
+    pub(super) fn showing(index: usize) -> Self {
+        Self {
+            shown: Some(index),
+            ..Self::default()
+        }
+    }
+
+    /// Dissolving from variant `from` into `to`, `progress` (0 to 1) of the way.
+    pub(super) fn dissolving(from: usize, to: usize, progress: f32) -> Self {
+        Self {
+            fade: Some(Fade { from, to, progress }),
+            ..Self::default()
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

@@ -9,8 +9,8 @@ import bevy_pbr::{render::mesh_functions, render::mesh_view_bindings::view, rend
 // no shadows.
 import bevy_pbr::{render::pbr_types, render::pbr_functions::{calculate_view, main_pass_post_lighting_processing}, render::mesh_types::MESH_FLAGS_SHADOW_RECEIVER_BIT};
 import package::shaders::clouds::pbr_lighting::apply_pbr_lighting;
-@if(CROSSFADE_SAMPLE_MASK)
-import package::shaders::crossfade::crossfade_sample_mask;
+import package::shaders::crossfade::{crossfade_sample_mask, dither_discard};
+import package::shaders::tree::wind::{WindFrames, sway_point_of_trunk};
 
 // The forward pass's output (Bevy's forward_io::FragmentOutput), with the crossfade's covered
 // samples where the view crossfades by sample mask.
@@ -45,73 +45,13 @@ const MINIMUM_PIXELS: f32 = 1.0;
 // The mesh tag of a batch without fade slots.
 const NO_SLOTS: u32 = 0xffffffffu;
 
-// tree_wind.wesl's wind, shared with every tree (tree_wind.rs WindBuffer).
-struct WindPose {
-    field: vec4<f32>,
-    phases: vec4<f32>,
-    response: vec4<f32>,
-    camera: vec4<f32>,
-    hierarchy: vec4<f32>,
-    sway_phases: vec4<f32>,
-}
-struct WindFrames {
-    current: WindPose,
-    previous: WindPose,
-}
+// The wind every tree shares (tree_wind.rs WindBuffer).
 @group(constants::MATERIAL_BIND_GROUP) @binding(135) var<storage, read> wind: WindFrames;
 // Impostors sway as fully as their mesh LODs where they take over from them, so the
 // dissolve matches, then less with distance: not at all by WIND_SPAN times that distance,
 // nor past WIND_END metres. A whole crown swinging as one reads as a card far away.
 const WIND_SPAN: f32 = 2.5;
 const WIND_END: f32 = 450.0;
-
-// Impostor wind: begin (tree_wind/gpu_tests.rs checks it against the mesh LODs' wind)
-fn sway_turn(v: vec3<f32>, axis: vec3<f32>, angle: f32) -> vec3<f32> {
-    let c = cos(angle);
-    return v * c + cross(axis, v) * sin(angle) + axis * dot(axis, v) * (1.0 - c);
-}
-
-// tree_wind.wesl sway_signal, for a tree rooted at `root`.
-fn sway_wave(root: vec3<f32>, pose: WindPose, period: f32) -> f32 {
-    let frequencies = vec4(0.55, 1.3, 2.7, 4.3);
-    let spatial = vec4(0.035, 0.07, 0.14, 0.28);
-    let phase = pose.sway_phases + dot(root.xz, pose.field.xy) * spatial;
-    let ratio = frequencies * max(0.5, period * pose.hierarchy.w) / 6.2831853;
-    let spring = vec4(1.0) - ratio * ratio;
-    let damping = 1.5 * ratio;
-    let gain = inverseSqrt(spring * spring + damping * damping);
-    let lag = atan2(damping, spring);
-    return dot(sin(phase + lag) * gain, vec4(0.65, 0.38, 0.19, 0.09));
-}
-
-// Where the wind moves `point` of an upright tree rooted at `root`, with a stem `height`
-// metres tall: as tree_wind.wesl's structural_frame and sway_point move a point of its
-// trunk. The stem bends into an arc and points beside it turn with it; `amount` scales the
-// lean.
-fn sway_point_of_trunk(point: vec3<f32>, root: vec3<f32>, height: f32, profile: vec4<f32>,
-                       pose: WindPose, amount: f32) -> vec3<f32> {
-    let up = vec3(0.0, 1.0, 0.0);
-    let direction = vec3(pose.field.x, 0.0, pose.field.y);
-    var bend_axis = cross(up, direction);
-    if dot(bend_axis, bend_axis) < 1e-8 { bend_axis = vec3(0.0, 0.0, 1.0); }
-    bend_axis = normalize(bend_axis);
-    let pressure = pose.field.w * pose.field.w;
-    let wave = sway_wave(root, pose, profile.y);
-    let lean = amount * clamp(0.11 * pressure * profile.x * profile.w * pose.hierarchy.x
-                              * (1.0 + pose.response.x * wave), -0.15, 0.8);
-    let tree_height = max(0.1, height);
-    let y = max(0.0, point.y - root.y);
-    let angle = lean * clamp(y / tree_height, 0.0, 1.0);
-    let curvature = lean / tree_height;
-    var center = up * y;
-    if abs(curvature) > 1e-6 {
-        center = up * (sin(angle) / curvature)
-                 + cross(bend_axis, up) * ((1.0 - cos(angle)) / curvature);
-        center += sway_turn(up, bend_axis, angle) * max(0.0, y - tree_height);
-    }
-    return root + center + sway_turn(point - root - up * y, bend_axis, angle);
-}
-// Impostor wind: end
 
 struct Vertex {
     @builtin(instance_index) instance_index: u32,
@@ -222,23 +162,6 @@ fn vertex(v: Vertex) -> Varyings {
     out.up = up;
     out.toward_view = toward_view;
     return out;
-}
-
-const DITHER_THRESHOLD_MAP: vec4<u32> = vec4(0x0a020800, 0x060e040c, 0x09010b03, 0x050d070f);
-
-// Bevy's visibility_range_dither, so impostor and mesh crossfades share one pattern.
-fn dither_discard(frag_coord: vec4<f32>, dither: i32) {
-    if dither == 0 {
-        return;
-    }
-    if dither <= -16 || dither >= 16 {
-        discard;
-    }
-    let coords = vec2<u32>(floor(frag_coord.xy)) % 4u;
-    let threshold = i32((DITHER_THRESHOLD_MAP[coords.y] >> (coords.x * 8u)) & 0xffu);
-    if (dither >= 0 && dither + threshold >= 16) || (dither < 0 && 1 + dither + threshold <= 0) {
-        discard;
-    }
 }
 
 struct Surface {

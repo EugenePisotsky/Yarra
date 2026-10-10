@@ -1,7 +1,8 @@
 //! Compare every accepted candidate's data on the GPU, independent of atomic append order.
 use super::{
-    gpu_types::{CameraGpu, DebugConfigGpu, GPU_TELEMETRY_SIZE, SurfaceSampleGpu},
+    gpu_types::{CameraGpu, ConfigGpu, GPU_TELEMETRY_SIZE, SurfaceSampleGpu},
     packing::pack_scene,
+    tests::grass_defs,
 };
 use bevy::{
     prelude::*,
@@ -28,11 +29,9 @@ fn early_rejection_preserves_accepted_candidates_and_diagnostics() {
     ));
     let device = resources.0.wgpu_device();
     let queue = &resources.1;
-    let shader = format!(
-        "{}\n{}",
-        include_str!("../../../../assets/shaders/vegetation_debug_compute.wesl"),
-        include_str!("placement_comparison.wgsl")
-    );
+    let shader = shader_check::Shaders::get()
+        .compose_source(include_str!("placement_comparison.wesl"), &grass_defs())
+        .unwrap();
     let module = device.create_shader_module(ShaderModuleDescriptor {
         label: Some("placement rejection comparison"),
         source: ShaderSource::Wgsl(shader.into()),
@@ -109,7 +108,7 @@ fn early_rejection_preserves_accepted_candidates_and_diagnostics() {
         for (mode, density) in [(0, 1), (0, 0), (0, 2), (1, 1), (2, 1), (3, 1), (4, 1)] {
             let config = resources.0.create_buffer_with_data(&BufferInitDescriptor {
                 label: None,
-                contents: bytemuck::bytes_of(&DebugConfigGpu {
+                contents: bytemuck::bytes_of(&ConfigGpu {
                     values: [mode, density, 0, packed.low_detail_capacities[0]],
                     workload: [
                         packed.work_items.len() as u32,
@@ -190,10 +189,12 @@ fn surface_sampling_matches_cpu_on_a_nonplanar_quad() {
     ));
     let device = resources.0.wgpu_device();
     let queue = &resources.1;
-    let shader = format!(
-        "{}\n{}",
-        include_str!("../../../../assets/shaders/vegetation_debug_compute.wesl"),
-        r#"
+    let shader = shader_check::Shaders::get()
+        .compose_source(
+            r#"
+import package::shaders::vegetation::types::WorkItem;
+import package::shaders::vegetation::placement::sampling::sample_surface;
+
 @group(0) @binding(14) var<storage, read_write> surface_comparison: array<vec4<f32>>;
 @compute @workgroup_size(64)
 fn compare_surface(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -206,8 +207,10 @@ fn compare_surface(@builtin(global_invocation_id) id: vec3<u32>) {
     surface_comparison[id.x * 2u] = vec4<f32>(result.height, result.normal);
     surface_comparison[id.x * 2u + 1u] = vec4<f32>(result.validity, 0.0, 0.0, 0.0);
 }
-"#
-    );
+"#,
+            &grass_defs(),
+        )
+        .unwrap();
     let module = device.create_shader_module(ShaderModuleDescriptor {
         label: Some("terrain triangle interpolation comparison"),
         source: ShaderSource::Wgsl(shader.into()),
@@ -350,7 +353,10 @@ fn gpu_scheduler_ignores_retired_records_and_keeps_dispatch_without_telemetry() 
     let shader = device.create_shader_module(ShaderModuleDescriptor {
         label: Some("scheduler regression"),
         source: ShaderSource::Wgsl(
-            include_str!("../../../../assets/shaders/vegetation_schedule_compute.wesl").into(),
+            shader_check::Shaders::get()
+                .compose("shaders/vegetation/schedule.wesl", &grass_defs())
+                .unwrap()
+                .into(),
         ),
     });
     let pipeline = device.create_compute_pipeline(&RawComputePipelineDescriptor {
@@ -379,7 +385,7 @@ fn gpu_scheduler_ignores_retired_records_and_keeps_dispatch_without_telemetry() 
     for (live_count, counters) in [(64u32, 1u32), (5, 1), (5, 0), (0, 1)] {
         let config = resources.0.create_buffer_with_data(&BufferInitDescriptor {
             label: None,
-            contents: bytemuck::bytes_of(&DebugConfigGpu {
+            contents: bytemuck::bytes_of(&ConfigGpu {
                 values: [0, 1, 0, 0],
                 workload: [live_count, counters, 0, 0],
             }),

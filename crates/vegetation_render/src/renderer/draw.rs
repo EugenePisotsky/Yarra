@@ -4,7 +4,7 @@ use super::{
     pipelines::{VegetationPipelineKey, VegetationPipelines},
     temporal,
 };
-use crate::{VegetationDebugSettings, VegetationDraw, VegetationProfileMode, VegetationView};
+use crate::{VegetationDraw, VegetationProfileMode, VegetationSettings, VegetationView};
 use bevy::{
     asset::AssetId,
     core_pipeline::core_3d::{Opaque3d, Opaque3dBatchSetKey, Opaque3dBinKey},
@@ -31,7 +31,7 @@ pub(super) fn queue(
     mut commands: Commands,
     pipeline_cache: Res<PipelineCache>,
     mut pipelines: ResMut<VegetationPipelines>,
-    settings: Res<VegetationDebugSettings>,
+    settings: Res<VegetationSettings>,
     mut opaque_phases: ResMut<ViewBinnedRenderPhases<Opaque3d>>,
     draw_functions: Res<DrawFunctions<Opaque3d>>,
     view_key_cache: Res<ViewKeyCache>,
@@ -50,7 +50,7 @@ pub(super) fn queue(
     let Ok((draw_entity, draw_main_entity)) = draw_entity.single() else {
         return;
     };
-    let draw_function = draw_functions.read().id::<DrawVegetationDebug>();
+    let draw_function = draw_functions.read().id::<DrawVegetation>();
     for (view_entity, view, msaa, temporal) in &views {
         commands.entity(view_entity).remove::<temporal::Pipeline>();
         let (Some(phase), Some(mesh_view_key)) = (
@@ -107,15 +107,15 @@ pub(super) fn queue(
     }
 }
 
-pub(super) type DrawVegetationDebug = (
+pub(super) type DrawVegetation = (
     SetItemPipeline,
     SetMeshViewBindGroup<0>,
-    DrawVegetationDebugIndirect,
+    DrawVegetationIndirect,
 );
 
-pub(super) struct DrawVegetationDebugIndirect;
+pub(super) struct DrawVegetationIndirect;
 
-impl<P: PhaseItem> RenderCommand<P> for DrawVegetationDebugIndirect {
+impl<P: PhaseItem> RenderCommand<P> for DrawVegetationIndirect {
     type Param = (
         SRes<VegetationBuffers>,
         Option<SRes<DiagnosticsRecorder>>,
@@ -136,7 +136,7 @@ impl<P: PhaseItem> RenderCommand<P> for DrawVegetationDebugIndirect {
             return RenderCommandResult::Success;
         }
         let diagnostics = diagnostics.as_deref();
-        let draw_span = diagnostics.pass_span(pass, "vegetation_v2_draw");
+        let draw_span = diagnostics.pass_span(pass, "vegetation_draw");
         pass.set_bind_group(1, &buffers.draw_bind_group, &[]);
         if let Some(clouds) = clouds {
             pass.set_bind_group(2, &clouds.into_inner().0, &[]);

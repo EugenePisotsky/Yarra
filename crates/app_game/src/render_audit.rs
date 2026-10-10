@@ -487,7 +487,7 @@ mod tests {
         use crate::game_render::GameRenderSettings;
         use crate::launch::{DiagnosticsMode, LaunchOptions};
         use crate::runtime_settings::RuntimeSettingsPlugin;
-        use vegetation_render::{VegetationDebugSettings, VegetationLighting, VegetationWind};
+        use vegetation_render::{VegetationLighting, VegetationSettings, VegetationWind};
         let canopy = vegetation::CanopyShading {
             strength: 0.27,
             ..default()
@@ -524,7 +524,7 @@ mod tests {
                     canopy,
                     ..default()
                 })
-                .insert_resource(VegetationDebugSettings {
+                .insert_resource(VegetationSettings {
                     density_mode: vegetation_render::VegetationDensityMode::Authored,
                     ..default()
                 })
@@ -573,9 +573,7 @@ mod tests {
                     .contains::<bevy::core_pipeline::prepass::DepthPrepass>()
             );
             assert_eq!(
-                app.world()
-                    .resource::<VegetationDebugSettings>()
-                    .profile_mode,
+                app.world().resource::<VegetationSettings>().profile_mode,
                 VegetationProfileMode::Disabled
             );
             assert_eq!(
@@ -592,9 +590,7 @@ mod tests {
                     engine::CloudQuality::Off
                 );
                 assert_eq!(
-                    app.world()
-                        .resource::<VegetationDebugSettings>()
-                        .density_mode,
+                    app.world().resource::<VegetationSettings>().density_mode,
                     vegetation_render::VegetationDensityMode::Authored
                 );
                 assert_eq!(app.world().resource::<VegetationLighting>().canopy, canopy);

@@ -8,9 +8,7 @@ use bevy::{
 };
 use engine::WorldViewCamera;
 use terrain_render::{TerrainCacheStats, TerrainMacroVariation};
-use vegetation_render::{
-    VegetationDebugSettings, VegetationDiagnostics, VegetationDiagnosticsSnapshot,
-};
+use vegetation_render::{VegetationDiagnostics, VegetationDiagnosticsSnapshot, VegetationSettings};
 
 use super::{GameRenderAssets, RuntimeSettings};
 
@@ -106,7 +104,7 @@ fn gpu_readback_fields(snapshot: VegetationDiagnosticsSnapshot) -> String {
 #[allow(clippy::too_many_arguments)] // Independent, read-only Bevy diagnostic resources.
 pub(super) fn log_status(
     settings: Res<RuntimeSettings>,
-    grass: Res<VegetationDebugSettings>,
+    grass: Res<VegetationSettings>,
     time: Res<Time<Real>>,
     frame: Res<FrameCount>,
     window: Single<(&Window, Option<&OnMonitor>), With<PrimaryWindow>>,

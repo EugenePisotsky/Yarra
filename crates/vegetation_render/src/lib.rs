@@ -1,4 +1,4 @@
-//! Bevy/WGPU integration for vegetation V2.
+//! Bevy/WGPU rendering of procedural grass and ground cover.
 //!
 //! The renderer schedules resident population fields on the GPU, classifies each candidate once,
 //! emits compact instances into bounded topology/LOD bins, finalizes indexed indirect arguments,
@@ -53,7 +53,7 @@ pub const PROCEDURAL_DISTANCE_METERS: f32 = 96.0;
 static NEXT_SCENE_REVISION: AtomicU64 = AtomicU64::new(1);
 static NEXT_PAGE_KEY: AtomicU64 = AtomicU64::new(1);
 
-/// Installs the independent vegetation V2 render path.
+/// Installs the vegetation render path.
 /// Timing instrumentation is an application choice; this plugin never installs GPU probes.
 ///
 /// It remains dormant until a [`VegetationSceneState`] resource exists and a camera carries
@@ -68,7 +68,7 @@ impl Plugin for VegetationRenderPlugin {
         app.insert_resource(diagnostics.clone());
         app.add_plugins((
             ExtractResourcePlugin::<VegetationSceneState>::default(),
-            ExtractResourcePlugin::<VegetationDebugSettings>::default(),
+            ExtractResourcePlugin::<VegetationSettings>::default(),
             ExtractResourcePlugin::<VegetationLighting>::default(),
             ExtractResourcePlugin::<VegetationWind>::default(),
             ExtractResourcePlugin::<VegetationLodFocus>::default(),
@@ -80,7 +80,7 @@ impl Plugin for VegetationRenderPlugin {
             ExtractComponentPlugin::<VegetationView>::default(),
             ExtractComponentPlugin::<VegetationDraw>::default(),
         ))
-        .init_resource::<VegetationDebugSettings>()
+        .init_resource::<VegetationSettings>()
         .init_resource::<VegetationLighting>()
         .init_resource::<VegetationWind>()
         .init_resource::<VegetationLodFocus>()
@@ -350,7 +350,7 @@ fn sync_vegetation_sun(
     vegetation_sun.active = light.illuminance > 0.0;
 }
 
-/// A low-frequency snapshot of V2 source lifetime and GPU placement work.
+/// A low-frequency snapshot of source lifetime and GPU placement work.
 ///
 /// GPU values are copied into a tiny staging buffer without waiting for the device, so they are
 /// normally one or more frames behind the scene counters. This is intentional: diagnostics must
@@ -426,10 +426,10 @@ impl VegetationDiagnostics {
     }
 }
 
-/// What the V2 GPU placement diagnostic visualizes.
+/// Production geometry, or what a GPU placement diagnostic visualizes instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u32)]
-pub enum VegetationDebugMode {
+pub enum VegetationDiagnosticMode {
     /// Procedural curved blades emitted into single- and split-blade indirect bins.
     #[default]
     ProceduralGeometry = 0,
@@ -443,7 +443,7 @@ pub enum VegetationDebugMode {
     GroupStructure = 4,
 }
 
-impl VegetationDebugMode {
+impl VegetationDiagnosticMode {
     pub fn label(self) -> &'static str {
         match self {
             Self::ProceduralGeometry => "procedural geometry",
@@ -455,7 +455,7 @@ impl VegetationDebugMode {
     }
 }
 
-/// Selects an isolated V2 workload for target-hardware measurements.
+/// Selects an isolated workload for target-hardware measurements.
 ///
 /// `DrawFrozen` intentionally retains the instances and indirect arguments produced by the last
 /// full/compute frame. It is meaningful only with a fixed camera and stable residency.
@@ -535,8 +535,8 @@ impl VegetationLightingMode {
 /// Applications own the UI: the game uses F1 and the editor uses workspace controls.
 #[derive(Resource, ExtractResource, Debug, Clone, Copy)]
 #[extract_app(bevy::render::RenderApp)]
-pub struct VegetationDebugSettings {
-    pub mode: VegetationDebugMode,
+pub struct VegetationSettings {
+    pub diagnostic_mode: VegetationDiagnosticMode,
     pub profile_mode: VegetationProfileMode,
     pub density_mode: VegetationDensityMode,
     pub lighting_mode: VegetationLightingMode,
@@ -549,10 +549,10 @@ pub struct VegetationDebugSettings {
     pub candidate_cache_enabled: bool,
 }
 
-impl Default for VegetationDebugSettings {
+impl Default for VegetationSettings {
     fn default() -> Self {
         Self {
-            mode: default(),
+            diagnostic_mode: default(),
             profile_mode: default(),
             density_mode: default(),
             lighting_mode: default(),
@@ -724,16 +724,14 @@ mod tests {
         wind.set_phase_seconds(7.125);
         app.insert_resource(time)
             .insert_resource(wind)
-            .init_resource::<VegetationDebugSettings>()
+            .init_resource::<VegetationSettings>()
             .add_systems(Update, advance_vegetation_wind);
         app.update();
         let wind = app.world().resource::<VegetationWind>();
         assert_eq!(wind.phase_seconds(), 7.125);
         assert!(wind.enabled);
         assert_eq!(
-            app.world()
-                .resource::<VegetationDebugSettings>()
-                .density_mode,
+            app.world().resource::<VegetationSettings>().density_mode,
             VegetationDensityMode::Balanced
         );
         app.world_mut()

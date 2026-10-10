@@ -31,7 +31,7 @@ pub use packing::terrain_contact_radius;
 pub(crate) fn install(render_app: &mut SubApp) {
     temporal::install(render_app);
     render_app
-        .add_render_command::<Opaque3d, draw::DrawVegetationDebug>()
+        .add_render_command::<Opaque3d, draw::DrawVegetation>()
         .add_systems(
             Render,
             (

@@ -7,6 +7,8 @@
 import bevy_render::view::View;
 import bevy_pbr::render::mesh_view_types::{Lights, DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT};
 import package::shaders::clouds::types::CloudParams;
+import package::shaders::clouds::maps::cloud_beam;
+import package::shaders::sky::sun::cascade_visibility;
 
 @group(0) @binding(0) var<uniform> view: View;
 @group(0) @binding(1) var<storage, read> clouds: CloudParams;
@@ -52,26 +54,8 @@ fn shadow_at(index: i32, p: vec3<f32>) -> f32 {
     let cascade = &(*light).cascades[0];
     let lifted = p + (*light).direction_to_light * ((*light).shadow_depth_bias + 2.0 * (*cascade).texel_size);
     let clip = (*cascade).clip_from_world * vec4(lifted, 1.0);
-    let ndc = clip.xyz / clip.w;
-    if any(abs(ndc.xy) > vec2(1.0)) || ndc.z < 0.0 || ndc.z > 1.0 {
-        return 1.0;
-    }
-    return textureSampleCompareLevel(shadow_maps, shadow_sampler, ndc.xy * vec2(0.5, -0.5) + 0.5,
-        i32((*light).depth_texture_base_index), ndc.z);
-}
-
-fn cloud_visibility(p: vec3<f32>) -> f32 {
-    let sun = clouds.sun.xyz;
-    if clouds.layer.w < 0.5 || sun.y <= 0.0 || p.y >= clouds.layer.x + clouds.layer.y {
-        return 1.0;
-    }
-    let hit = p.xz + clouds.offset.xy + sun.xz * (clouds.layer.x - p.y) / max(sun.y, 0.04);
-    let shadow = textureSampleLevel(cloud_shadow, repeat_sampler,
-        (hit - clouds.offset.zw) / (clouds.layer.z * 4.0), 0.0).r;
-    // The sun's own image: no floor of light scattered through the clouds, and a closing deck
-    // hides it whatever gaps the shadow map finds.
-    let open = 1.0 - clouds.weather.z;
-    return shadow * open * open;
+    return cascade_visibility(shadow_maps, shadow_sampler, i32((*light).depth_texture_base_index),
+        clip.xyz / clip.w);
 }
 
 @compute @workgroup_size(64)
@@ -114,7 +98,9 @@ fn occlusion(@builtin(local_invocation_index) i: u32) {
     if i != 0u {
         return;
     }
-    let cloud = cloud_visibility(view.world_position) * step(-0.02, sun.y);
+    // The sun's own image: no floor of light scattered through the clouds.
+    let cloud = cloud_beam(cloud_shadow, repeat_sampler, clouds.layer, clouds.offset, sun,
+        clouds.weather.z, view.world_position) * step(-0.02, sun.y);
     let visible = seen[0] / f32(SAMPLES) * cloud;
     sun_state = vec4(mix(sun_state.x, visible, EASE), cloud, uv);
 }

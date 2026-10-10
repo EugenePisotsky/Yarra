@@ -178,8 +178,13 @@ fn init(
             ),
         ),
     );
-    let shader = server.load("shaders/sky/light_shafts.wesl");
-    let compute = |label: &'static str, layout: &BindGroupLayoutDescriptor, entry, defs| {
+    let march_shader = server.load("shaders/sky/light_shafts.wesl");
+    let blur_shader = server.load("shaders/sky/light_shafts_blur.wesl");
+    let compute = |label: &'static str,
+                   layout: &BindGroupLayoutDescriptor,
+                   shader: &Handle<Shader>,
+                   entry,
+                   defs| {
         cache.queue_compute_pipeline(ComputePipelineDescriptor {
             label: Some(label.into()),
             layout: vec![layout.clone()],
@@ -191,9 +196,9 @@ fn init(
     };
     let march = std::array::from_fn(|multisampled| {
         let mut defs = vec![
-            "MARCH".into(),
             bevy::shader::ShaderDefVal::UInt("SHAFT_SCALE".into(), SCALE),
             bevy::shader::ShaderDefVal::UInt("SHAFT_STEPS".into(), STEPS),
+            crate::clouds::mist_noise_period_def(),
         ];
         if multisampled == 1 {
             defs.push("MULTISAMPLED".into());
@@ -201,13 +206,26 @@ fn init(
         compute(
             "light shaft march",
             &march_layout[multisampled],
+            &march_shader,
             "march".into(),
             defs,
         )
     });
     let blur = [
-        compute("light shaft blur", &blur_layout, "blur_x".into(), vec![]),
-        compute("light shaft blur", &blur_layout, "blur_y".into(), vec![]),
+        compute(
+            "light shaft blur",
+            &blur_layout,
+            &blur_shader,
+            "blur_x".into(),
+            vec![],
+        ),
+        compute(
+            "light shaft blur",
+            &blur_layout,
+            &blur_shader,
+            "blur_y".into(),
+            vec![],
+        ),
     ];
     let filtered = |address_mode| {
         device.create_sampler(&SamplerDescriptor {

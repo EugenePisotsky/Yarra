@@ -77,7 +77,7 @@ pub(super) fn draw_world_diagnostics(
             diagnostic_row(ui, "Cooling", stats.cooling);
             diagnostic_row(ui, "Failed", stats.failed);
             diagnostic_row(ui, "Page entities", stats.owned_entities);
-            diagnostic_row(ui, "Vegetation V2 pages", stats.vegetation_pages);
+            diagnostic_row(ui, "Vegetation pages", stats.vegetation_pages);
             ui.label("Decoded");
             ui.monospace(format_bytes(stats.decoded_bytes));
             ui.end_row();
