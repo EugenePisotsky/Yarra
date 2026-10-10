@@ -1,8 +1,5 @@
 //! Builds a page's terrain material from its surfaces, weights and texture set.
-use crate::{
-    TerrainMacroVariation, TerrainMaterial, TerrainMaterialUniform, TerrainShadingMode,
-    stochastic_cache,
-};
+use crate::{TerrainMacroVariation, TerrainMaterial, TerrainMaterialUniform, TerrainShadingMode};
 use bevy::{
     asset::RenderAssetUsages,
     image::{
@@ -46,14 +43,17 @@ pub struct PrepareTerrainMaterialContext<'a> {
     pub macro_variation: TerrainMacroVariation,
 }
 
+/// A page's terrain material. Hierarchy terrain reads every surface of the page through near
+/// detail; a material drawn directly (the editor's preset preview) shades its first two.
 pub fn prepare_terrain_material(
     context: PrepareTerrainMaterialContext<'_>,
 ) -> Result<PreparedTerrainMaterial, String> {
-    if !(1..=2).contains(&context.surfaces.len())
+    if !(1..=world::MAX_TERRAIN_SURFACES_PER_CELL).contains(&context.surfaces.len())
         || context.page_surfaces.len() != context.surfaces.len()
     {
         return Err(format!(
-            "the initial terrain renderer supports one or two surfaces, got {}",
+            "terrain pages have one to {} surfaces, got {}",
+            world::MAX_TERRAIN_SURFACES_PER_CELL,
             context.surfaces.len()
         ));
     }
@@ -80,18 +80,10 @@ pub fn prepare_terrain_material(
         rain_shelter: None,
         forest_shadow: None,
         shading_mode: TerrainShadingMode::Production,
-        stochastic_cached: false,
-        prepared: false,
-        prepared_albedo: false,
-        source_weights: weight_image.clone(),
-        source_base_color_array: base_color_array.clone(),
-        stochastic_cache: stochastic_cache::fallback(),
         canopy_bounds: Vec4::ZERO,
         canopy_shading: Default::default(),
         canopy_coverage: None,
         settings: TerrainMaterialUniform {
-            cache_origins: Vec4::ZERO,
-            cache_size: UVec4::ZERO,
             chunk_minimum: Vec2::new(
                 (i64::from(context.cell.x) - i64::from(context.origin_cell.x)) as f32
                     * context.cell_size,
@@ -180,11 +172,7 @@ pub(crate) fn make_weight_image(
     Ok(image)
 }
 
-pub(crate) fn load_repeat_image(
-    asset_server: &AssetServer,
-    uri: &str,
-    is_srgb: bool,
-) -> Handle<Image> {
+fn load_repeat_image(asset_server: &AssetServer, uri: &str, is_srgb: bool) -> Handle<Image> {
     asset_server
         .load_builder()
         .with_settings(move |settings: &mut ImageLoaderSettings| {

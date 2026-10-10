@@ -7,7 +7,7 @@ use bevy::{
     window::{Monitor, OnMonitor, PrimaryWindow, WindowMode},
 };
 use engine::WorldViewCamera;
-use terrain_render::{TerrainCacheStats, TerrainMacroVariation};
+use terrain_render::TerrainMacroVariation;
 use vegetation_render::{VegetationDiagnostics, VegetationDiagnosticsSnapshot, VegetationSettings};
 
 use super::{GameRenderAssets, RuntimeSettings};
@@ -122,8 +122,6 @@ pub(super) fn log_status(
     meshes: Res<Assets<Mesh>>,
     vegetation: Res<VegetationDiagnostics>,
     terrain_macro: Res<TerrainMacroVariation>,
-    terrain_cache: Res<TerrainCacheStats>,
-    terrain_prepared: Res<terrain_render::TerrainPreparedStats>,
     entities: Query<Entity>,
     mut state: Local<LogState>,
 ) {
@@ -193,26 +191,6 @@ pub(super) fn log_status(
         window.height(),
         window.scale_factor()
     );
-    let cache = terrain_cache.snapshot();
-    let prepared = terrain_prepared.snapshot();
-    let terrain_cache_fields = format!(
-        "terrain_cache={} terrain_cache_tables={} terrain_cache_ready={} terrain_cache_bytes={} terrain_cache_builds={} terrain_cache_reused_frames={} terrain_prepared={} terrain_prepared_pages={} terrain_prepared_active={} terrain_prepared_albedo_active={} terrain_prepared_bytes={} terrain_prepared_builds={} terrain_prepared_albedo_bytes={} terrain_prepared_albedo_images={} terrain_prepared_astc8x8_images={}",
-        cache.enabled,
-        cache.tables,
-        cache.ready,
-        cache.bytes,
-        cache.builds,
-        cache.reused_frames,
-        prepared.enabled,
-        prepared.pages,
-        prepared.active,
-        prepared.albedo_active,
-        prepared.bytes,
-        prepared.builds,
-        prepared.albedo_bytes,
-        prepared.albedo_images,
-        prepared.astc_8x8_images
-    );
     let blade_preparation = format!(
         "blade_preparation={} blade_preparation_bytes={} blade_preparation_dispatches={} blade_preparation_reuses={} sampled_prepared_blades={} sampled_preparation_fallback_blades={}",
         snapshot.blade_preparation_enabled,
@@ -239,7 +217,7 @@ pub(super) fn log_status(
     let generation_dispatches = snapshot.generation_dispatches;
     let generation_reuses = snapshot.generation_reuses;
     warn!(
-        "RENDER_AUDIT v=1 event={event} seq={} unix_ms={unix_ms} elapsed_s={now:.3} main_frame={} app_fps_window={app_fps} window_s={window_s:.3} since_change_s={:.3} thermal={} low_power={} scene={:?} grass={} unlit={} ground_shader={ground_shader} terrain_near={terrain_near} terrain_macro={macro_state} shadows={} shadow_map={} prepass={} scale={} msaa_samples={msaa_samples} requested_msaa_samples={requested_msaa_samples} msaa_store_policy={msaa_store_policy:?} counters={} wind={} locked={} ui={ui} render_px={}x{} surface_px={}x{} {display_fields} focused={focused} present_mode={present_mode:?} camera_pos={:.3},{:.3},{:.3} camera_rot={:.4},{:.4},{:.4},{:.4} density={:?} lighting={:?} far_width_compensation={} entities={} mesh_assets={} image_assets={} source_revision={} source_pages={} source_work_items={} source_repacks={} source_reallocs={} last_source_upload_bytes={} source_capacity_bytes={} instance_capacity={} instance_capacity_bytes={} generation_dispatches={generation_dispatches} generation_reuses={generation_reuses} early_rejection={early_rejection} {candidate_cache} {terrain_cache_fields} {blade_preparation} {gpu} os={} debug_assertions={}",
+        "RENDER_AUDIT v=1 event={event} seq={} unix_ms={unix_ms} elapsed_s={now:.3} main_frame={} app_fps_window={app_fps} window_s={window_s:.3} since_change_s={:.3} thermal={} low_power={} scene={:?} grass={} unlit={} ground_shader={ground_shader} terrain_near={terrain_near} terrain_macro={macro_state} shadows={} shadow_map={} prepass={} scale={} msaa_samples={msaa_samples} requested_msaa_samples={requested_msaa_samples} msaa_store_policy={msaa_store_policy:?} counters={} wind={} locked={} ui={ui} render_px={}x{} surface_px={}x{} {display_fields} focused={focused} present_mode={present_mode:?} camera_pos={:.3},{:.3},{:.3} camera_rot={:.4},{:.4},{:.4},{:.4} density={:?} lighting={:?} far_width_compensation={} entities={} mesh_assets={} image_assets={} source_revision={} source_pages={} source_work_items={} source_repacks={} source_reallocs={} last_source_upload_bytes={} source_capacity_bytes={} instance_capacity={} instance_capacity_bytes={} generation_dispatches={generation_dispatches} generation_reuses={generation_reuses} early_rejection={early_rejection} {candidate_cache} {blade_preparation} {gpu} os={} debug_assertions={}",
         state.sequence,
         frame.0,
         now - state.changed_at_s,

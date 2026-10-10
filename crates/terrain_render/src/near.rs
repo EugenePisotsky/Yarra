@@ -8,7 +8,8 @@ use gpu::{NearAtlas, NearEntry, NearUploadHub, Pack};
 
 pub(crate) const NEAR_SLOTS: usize = 64;
 pub(crate) const NEAR_TABLE: usize = 256;
-pub(crate) const WEIGHT_SIDE: u32 = 257;
+/// Largest ground weight map near detail holds: a 32 m cell compiles 65 samples.
+pub(crate) const WEIGHT_SIDE: u32 = 129;
 pub(crate) const CANOPY_SIDE: u32 = 130;
 pub(crate) const NEAR_END: f32 = 40.;
 pub(crate) const NEAR_START: f32 = 24.;
@@ -185,17 +186,12 @@ fn select_sources(
             break;
         };
         let (_, s) = sources.get(e).unwrap();
-        if !(1..=2).contains(&s.surfaces.len())
-            || (s.surfaces.len() == 2
-                && !s.weights.first().is_some_and(|w| {
-                    (2..=WEIGHT_SIDE as u16).contains(&w.resolution)
-                        && w.rgba.len() == usize::from(w.resolution).pow(2) * 4
-                }))
-        {
+        if !valid_source(s) {
             cache.failed.insert(e);
-            stats.error = Some(
-                "near terrain requires one or two surfaces and weights up to 257 samples".into(),
-            );
+            stats.error = Some(format!(
+                "near terrain requires one to {} surfaces and weights up to {WEIGHT_SIDE} samples",
+                world::MAX_TERRAIN_SURFACES_PER_CELL
+            ));
             continue;
         }
         // Existing source stream owns decoded-byte admission. Shared texture packs
@@ -233,7 +229,6 @@ fn select_sources(
                 prepared.weight_image = weight.clone();
                 let mut m = materials.get_mut(&prepared.material).unwrap();
                 m.source_only = true;
-                m.source_weights = weight.clone();
                 m.weights = weight;
                 commands
                     .entity(e)
@@ -317,8 +312,7 @@ fn update(
     let pack = cache
         .pages
         .values()
-        .filter_map(|p| source_materials.get(&p.material))
-        .max_by_key(|m| m.prepared_albedo)
+        .find_map(|p| source_materials.get(&p.material))
         .map(Pack::from_material);
     let Some(pack) = pack.or_else(|| cache.pack.clone()) else {
         return;
@@ -345,7 +339,6 @@ fn update(
     if !atlas.ready() {
         if let Some(error) = [&pack.base, &pack.normal, &pack.macro_image]
             .into_iter()
-            .chain(pack.prepared.as_ref())
             .find_map(|h| match server.load_state(h.id()) {
                 bevy::asset::LoadState::Failed(e) => Some(e.to_string()),
                 _ => None,
@@ -386,7 +379,7 @@ fn update(
         if !p.uploaded {
             continue;
         }
-        let mut entry = gpu::entry(source, m, &pack, p.slot, p.fade);
+        let mut entry = gpu::entry(source, m, p.slot, p.fade);
         // Canopy is disabled until its corresponding pixels join this transaction.
         if p.canopy.is_none() {
             entry.canopy.appearance.x = 0.;
@@ -415,6 +408,21 @@ fn update(
     for id in ids {
         materials.get_mut(id).unwrap().set_near(atlas);
     }
+}
+/// One to eight surfaces with their texture layers; blended pages carry one RGBA weight page
+/// per four surfaces, all at one resolution the weight atlas holds.
+fn valid_source(s: &NearSource) -> bool {
+    let count = s.surfaces.len();
+    if !(1..=world::MAX_TERRAIN_SURFACES_PER_CELL).contains(&count) || s.layers.len() != count {
+        return false;
+    }
+    count == 1
+        || (s.weights.len() == count.div_ceil(4)
+            && s.weights.iter().all(|w| {
+                w.resolution == s.weights[0].resolution
+                    && (2..=WEIGHT_SIDE as u16).contains(&w.resolution)
+                    && w.rgba.len() == usize::from(w.resolution).pow(2) * 4
+            }))
 }
 fn hash(cell: CellCoord) -> usize {
     crate::composite::atlas::hash(world::TerrainNodeKey::leaf(WorldSpaceId(0), cell))

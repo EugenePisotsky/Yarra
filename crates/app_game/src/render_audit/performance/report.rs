@@ -30,7 +30,6 @@ const ALL_CONTROLS: &[Control] = &[
     Control::TerrainDetail,
     Control::ObjectDetail,
     Control::Near,
-    Control::GroundMaterial,
     Control::Prepass,
     Control::Shading,
     Control::Counters,

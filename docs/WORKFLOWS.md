@@ -4,11 +4,12 @@ Commands run from the repository root. [Architecture](ARCHITECTURE.md) describes
 
 ## Prepare, edit and publish
 
-Restore local assets according to [pack contracts](../assets/README.md). Licensed sources and generated databases stay ignored. After restoring terrain inputs:
+Restore local assets according to [pack contracts](../assets/README.md). Licensed sources and generated databases stay ignored. After restoring the terrain surfaces (see [Terrain surfaces](#terrain-surfaces)):
 
 ```sh
-python3 tools/compile_terrain_textures.py
-python3 tools/prepare_terrain_bake.py
+uv run --with numpy --with pillow python tools/import_terrain_surfaces.py
+uv run python tools/compile_terrain_textures.py
+uv run --with numpy --with pillow python tools/prepare_terrain_bake.py
 cargo run -p yarra-world-cook -- init
 cargo run -p yarra-app-editor
 cargo run --release -p yarra-app-game
@@ -40,11 +41,50 @@ The script exports the display node's `height` volume (or `--node SOP`; `--heigh
 
 `import-heightfield MANIFEST [PROJECT_DB] [RUNTIME_DB]` creates the project if it is missing, then cooks. It samples the heightfield every metre with smooth (Catmull-Rom) interpolation and masks linearly. The world is widened to whole 1 km blocks of flat sea so the terrain hierarchy closes. The `--start` point (by default the shore nearest the centre) becomes the world's start: the game and editor begin there unless `--start-view` overrides it. `start` and `summit` views are also written beside the project. Moving the start recooks nothing.
 
-Ground layers are either imported or painted. An imported layer names a mask (editor: Environment → Layer settings → **Coverage from terrain import**), and every import rewrites its coverage from that mask; the editor does not paint it, so touch-ups go on a painted layer above. Painted layers are never touched by imports. New worlds bind the three meadow layers to masks generated from height and slope: `land` (Dry meadow), `green` (Green meadow) and `bare` (Clearing). An exported mask with one of those names replaces the generated one. The import prints masks no layer reads, and fails if a layer reads a mask it doesn't provide. Bind a new mask in the editor, save, then re-import. Imported coverage fades out over the world's last 48 m.
+Ground layers are either imported or painted. An imported layer names a mask (editor: Environment → Layer settings → **Coverage from terrain import**), and every import rewrites its coverage from that mask; the editor does not paint it, so touch-ups go on a painted layer above. Painted layers are never touched by imports. New island worlds bind these layers, lowest first, each with its ground and the share of meadow grass it keeps:
+
+| Layer | Mask | Ground | Grass kept |
+|---|---|---|---|
+| Dry meadow | `land` | dry meadow, dry grass | all |
+| Green meadow | `green` | meadow, green grass | all |
+| Coastal grass | `coast` | coastal grass | 60% |
+| Pine forest floor | `pine_forest` | moss and pine needles | 35% |
+| Spruce forest floor | `spruce_forest` | forest floor and needles | 15% |
+| Broadleaf forest floor | `broadleaf_forest` | leaf litter and forest floor | 40% |
+| Dunes | `dune` | dune sand | 10% |
+| Beach | `beach` | beach sand | none |
+| Scree | `scree` | stony moss and rocky ground | 20% |
+| Rock | `rock` | rock and lichen rock | none |
+
+Without an exported mask of the same name, `land` and `green` come from height and slope, `beach`, `scree` and `rock` from rough height and slope rules, and the others are empty. The import prints masks no layer reads, and fails if a layer reads a mask it neither provides nor generates. Bind a new mask in the editor, save, then re-import. Imported coverage fades out over the world's last 48 m.
+
+The island's Houdini export has `sand`, `rock` and `scree`; `tools/island_masks.py` derives the rest and writes a manifest that adds them, referring to the export's own files by absolute path:
+
+```sh
+manifest=~/Dev/Assets/reteya_island/outputs/game_1m/current/heightfield.json
+uv run --with numpy --with scipy --with pillow python tools/forest_plan.py $manifest tmp/island/forest
+uv run --with numpy --with scipy python tools/island_masks.py $manifest tmp/island/masks \
+  --forest tmp/island/forest/forest.json
+cargo run --release -p yarra-world-cook -- import-heightfield tmp/island/masks/heightfield.json
+```
+
+Sand splits by height into `beach` (below about 2.5 m, and the whole seabed) and `dune`; `coast` fades inland over about 40 m from the sand; the forest floors are the planned trees of each kind (forms by name: pines, spruces, and birches/oaks/maples/dead trees as broadleaf), blurred so a single tree or a small grove gets litter too. Re-run both after replanting, then `forest_plan.py --apply` plants the same seed.
 
 Re-importing after a change in Houdini rewrites only cells whose heights or imported coverage changed, so the cook that follows is incremental. Objects, roads and painted layers in the project are kept; a cell the new footprint no longer covers is removed and fails if it still holds objects or roads. Sculpt in Houdini, not in the editor: a re-import replaces heights.
 
 To stress streaming on foot, `--render-repro actor-walk --start-view VIEW` walks the player along the view's `route` at 20 m/s. The camera follows, holds its heading for 60 s, then looks back and forth every 20 s. The game caps at 60 fps unless `--fps` says otherwise (0 follows the display). Trees, their shadow cascades and their temporal depth and motion are drawn from one instance buffer (the editor still draws one render entity per mesh); `--tree-shadow-lod 1` casts their shadows from one LOD coarser. `ACTOR_WALK` lines log progress. Whenever an actor waits more than 5 s for ground, the game logs `TERRAIN_STALL` with the loader's state; a loader that stops for good logs `TERRAIN_LOD_FAILED`. To send a log of a normal session: `cargo run --release -p yarra-app-game 2>&1 | tee tmp/walk.log`.
+
+### Terrain surfaces
+
+Terrain packs are tracked in `assets/packs/terrain/<pack>.toml`: surfaces in texture-array order, each with its Megascans source folder under `~/Dev/Assets/terrain/sources` (licensed, local only) and its parameters (tile size, normal strength, roughness range, blend height, anti-tiling, optional colour match). The Baltic pack has fifteen: beach and dune sand, coastal grass, gravel, meadow, dry meadow, forest moss, pine needles, forest floor, leaf litter, dirt, rocky ground, rock, lichen rock and stony moss. To change or add a surface, edit the pack and rebuild its local files:
+
+```sh
+uv run --with numpy --with pillow python tools/import_terrain_surfaces.py [--only KEY…]
+uv run python tools/compile_terrain_textures.py
+uv run --with numpy --with pillow python tools/prepare_terrain_bake.py
+```
+
+The import resamples each scan to 1024² in linear light with wrapped borders, stores the height map (normalised, times `blend_height`) in base colour alpha, packs normal/AO/roughness, and turns every normal into the engine's frame (+U along world X, +V along world Z), detecting each scan's green convention from its height map (`import-report.json` records the decision). `color_match` scales a surface's albedo to another scan's mean, as dune sand takes the beach sand's colour. New worlds copy the pack's surfaces; an existing world keeps its own parameters until it is rebuilt. Fifteen 1024² layers take about 43 MB of GPU memory on desktop.
 
 ### World map
 

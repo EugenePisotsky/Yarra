@@ -19,7 +19,159 @@ pub(crate) type MaskFn<'a> = dyn Fn(Vec2) -> f32 + Sync + 'a;
 
 /// Masks every island world has, generated from height and slope by `paint`. An imported
 /// mask of the same name replaces one.
-const GENERATED_MASKS: [&str; 3] = ["land", "green", "bare"];
+const GENERATED_MASKS: [&str; 11] = [
+    "land",
+    "green",
+    "bare",
+    "coast",
+    "pine_forest",
+    "spruce_forest",
+    "broadleaf_forest",
+    "dune",
+    "beach",
+    "scree",
+    "rock",
+];
+
+/// An island ground layer above the meadows: its name, the mask it reads, its surfaces and
+/// the share of meadow grass it keeps.
+struct IslandGround {
+    name: &'static str,
+    mask: &'static str,
+    surfaces: &'static [(&'static str, f32)],
+    grass: f32,
+}
+
+/// Island ground layers, lowest first. Houdini supplies sand, rock and scree;
+/// `tools/island_masks.py` derives the coast, dunes, beach and forest floors from them and
+/// from `tools/forest_plan.py`'s stands.
+const ISLAND_GROUND: [IslandGround; 8] = [
+    IslandGround {
+        name: "Coastal grass",
+        mask: "coast",
+        surfaces: &[("coastal-grass", 1.0)],
+        grass: 0.6,
+    },
+    IslandGround {
+        name: "Pine forest floor",
+        mask: "pine_forest",
+        surfaces: &[("forest-moss", 0.55), ("pine-needles", 0.45)],
+        grass: 0.35,
+    },
+    IslandGround {
+        name: "Spruce forest floor",
+        mask: "spruce_forest",
+        surfaces: &[("forest-floor", 0.6), ("pine-needles", 0.4)],
+        grass: 0.15,
+    },
+    IslandGround {
+        name: "Broadleaf forest floor",
+        mask: "broadleaf_forest",
+        surfaces: &[("leaf-litter", 0.6), ("forest-floor", 0.4)],
+        grass: 0.4,
+    },
+    IslandGround {
+        name: "Dunes",
+        mask: "dune",
+        surfaces: &[("dune-sand", 1.0)],
+        grass: 0.1,
+    },
+    IslandGround {
+        name: "Beach",
+        mask: "beach",
+        surfaces: &[("beach-sand", 1.0)],
+        grass: 0.0,
+    },
+    IslandGround {
+        name: "Scree",
+        mask: "scree",
+        surfaces: &[("stony-moss", 0.5), ("rocky-ground", 0.5)],
+        grass: 0.2,
+    },
+    IslandGround {
+        name: "Rock",
+        mask: "rock",
+        surfaces: &[("rock", 0.75), ("lichen-rock", 0.25)],
+        grass: 0.0,
+    },
+];
+
+/// Adds the island ground layers above the meadows: a ground preset, a grass exclusion and
+/// their composition for each, and a layer reading its mask.
+fn island_ground(project: &mut ProjectDocument) {
+    use environment::{
+        ChannelId, Exclusion, GroundTreatment, Layer, LayerId, OutputId, Preset, PresetId,
+        PresetKind, PresetUse, PresetUseId, SurfaceWeight,
+    };
+    let pack = TerrainPack::baltic();
+    let channel = ChannelId(stable_id("ground-grass-channel"));
+    let definition = &mut project.environments[0];
+    let first = definition.layers.len() as i32;
+    for (index, ground) in ISLAND_GROUND.iter().enumerate() {
+        let id = |part: &str| stable_id(&format!("island-ground/{}/{part}", ground.mask));
+        let preset = |part: &str, name: String, kind| Preset {
+            id: PresetId(id(part)),
+            revision: 1,
+            name,
+            kind,
+        };
+        let soil = preset(
+            "ground",
+            format!("{} ground", ground.name),
+            PresetKind::Ground(GroundTreatment {
+                id: OutputId(id("ground-output")),
+                strength: 1.0,
+                surfaces: ground
+                    .surfaces
+                    .iter()
+                    .map(|&(key, weight)| SurfaceWeight {
+                        surface: pack.surface(key),
+                        weight,
+                    })
+                    .collect(),
+            }),
+        );
+        let thinning = preset(
+            "grass",
+            format!("{} grass", ground.name),
+            PresetKind::Exclusion(Exclusion {
+                id: OutputId(id("grass-output")),
+                channel,
+                strength: 1.0 - ground.grass,
+            }),
+        );
+        let child = |part: &str, name: &str, preset: &Preset| PresetUse {
+            id: PresetUseId(id(part)),
+            name: name.into(),
+            preset: preset.id,
+            overrides: vec![],
+        };
+        let composition = preset(
+            "composition",
+            ground.name.into(),
+            PresetKind::Composition(vec![
+                child("ground-use", "Ground", &soil),
+                child("grass-use", "Grass", &thinning),
+            ]),
+        );
+        definition.layers.push(Layer {
+            id: LayerId(id("layer")),
+            revision: 1,
+            name: ground.name.into(),
+            preset: composition.id,
+            overrides: vec![],
+            order: first + index as i32,
+            seed: 42,
+            enabled: true,
+            opacity: 1.0,
+            imported_mask: Some(ground.mask.into()),
+        });
+        project
+            .presets
+            .presets
+            .extend([soil, thinning, composition]);
+    }
+}
 
 /// Where an imported layer's coverage comes from.
 #[derive(Clone, Copy)]
@@ -97,16 +249,20 @@ pub(crate) fn base_document(name: &str, bounds: [f32; 2], sea_level: f32) -> Pro
     let definition = &mut project.environments[0];
     definition.cell_size = DEFAULT_CELL_SIZE;
     definition.mask_resolution = MASK_SIDE as u16;
-    // The meadow layers follow the generated masks, so imports keep them up to date.
+    // The meadow layers follow masks, so imports keep them up to date. Island ground layers
+    // replace the demo's clearing.
+    definition
+        .layers
+        .retain(|l| l.preset != environment::fixtures::CLEARING);
     for layer in &mut definition.layers {
         let mask = match layer.preset {
             environment::fixtures::DRY_MEADOW => "land",
             environment::fixtures::GREEN_MEADOW => "green",
-            environment::fixtures::CLEARING => "bare",
             _ => continue,
         };
         layer.imported_mask = Some(mask.into());
     }
+    island_ground(&mut project);
     project.terrain_profiles.retain(|p| p.space == space);
     project.terrain_profiles[0].composite_minimum_level = COMPOSITE_MINIMUM_LEVEL;
     project.cells.clear();
@@ -149,9 +305,11 @@ pub(crate) fn push_cell(project: &mut ProjectDocument, imported: ImportedTerrain
     }
 }
 
-/// Dry meadow on land, green meadow in the lowlands and bare ground on the beach, steep
-/// slopes and summits. There are no sand or rock textures yet.
-fn paint(p: Vec2, height: f32, slope: f32) -> [f32; 3] {
+/// The generated masks in `GENERATED_MASKS` order: dry meadow on land, green meadow in the
+/// lowlands, bare ground on the shore, steep slopes and summits, sand along the shore (also
+/// under water), scree and rock on steep slopes. Coast, dune and forest floors come only from
+/// imported masks.
+fn paint(p: Vec2, height: f32, slope: f32) -> [f32; 11] {
     let land = smoothstep(0.6, 2.0, height);
     let moist = (0.5 + 0.9 * terrain_fbm(p / 450., 0x6b8e_2d17)).clamp(0., 1.);
     let green = land * (1. - smoothstep(110., 320., height)) * moist;
@@ -159,7 +317,10 @@ fn paint(p: Vec2, height: f32, slope: f32) -> [f32; 3] {
         * (1. - smoothstep(1.8, 4.5, height))
             .max(smoothstep(0.62, 0.95, slope))
             .max(smoothstep(520., 640., height));
-    [land, green, bare]
+    let rock = smoothstep(0.75, 0.95, slope);
+    let scree = smoothstep(0.55, 0.75, slope) * (1. - rock);
+    let beach = (1. - smoothstep(1.8, 3.5, height)) * (1. - smoothstep(0.45, 0.7, slope));
+    [land, green, bare, 0., 0., 0., 0., 0., beach, scree, rock]
 }
 
 /// Heights and the coverage of imported `layers` in one cell, sampled every metre on the

@@ -2,12 +2,15 @@
 import bevy_pbr::render::mesh_view_bindings as near_view;
 import package::shaders::grass_canopy::canopy_visibility_at;
 import package::shaders::terrain_stochastic::{quarter_turn, stochastic_vertex_turn, stochastic_vertex_offset};
+import package::shaders::terrain_blend::height_blend;
 struct NearCanopy { appearance: vec4<f32>, shape: vec4<f32>, distance_settings: vec4<f32>, origin: vec4<f32>, }
+// One of a page's up to eight surfaces. `surface`: array layer, metres per repetition,
+// anti-tiling (0/1), normal strength. `material`: normal Y sign, roughness minimum/maximum.
+// `phase`/`lattice`: this page's UV and anti-tiling lattice offsets for the surface's tile size.
+struct NearSlot { surface: vec4<f32>, material: vec4<f32>, phase: vec4<f32>, lattice: vec4<f32>, }
 struct NearEntry {
-    key: vec4<i32>, state: vec4<f32>, layers: vec4<f32>, sizes: vec4<f32>,
-    normals: vec4<f32>, roughness: vec4<f32>, macro_scales: vec4<f32>, macro_settings: vec4<f32>,
-    phase_a: vec4<f32>, phase_b: vec4<f32>, lattice_a: vec4<f32>, lattice_b: vec4<f32>,
-    macro_a: vec4<f32>, macro_b: vec4<f32>, macro_c: vec4<f32>, canopy: NearCanopy,
+    key: vec4<i32>, state: vec4<f32>, macro_scales: vec4<f32>, macro_settings: vec4<f32>,
+    macro_a: vec4<f32>, macro_b: vec4<f32>, macro_c: vec4<f32>, slots: array<NearSlot, 8>, canopy: NearCanopy,
 }
 @group(constants::MATERIAL_BIND_GROUP) @binding(8) var near_weights: texture_2d_array<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(9) var near_canopy: texture_2d_array<f32>;
@@ -17,11 +20,10 @@ struct NearEntry {
 @group(constants::MATERIAL_BIND_GROUP) @binding(13) var near_normal: texture_2d_array<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(14) var near_macro: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(15) var repeat_sampler: sampler;
-@group(constants::MATERIAL_BIND_GROUP) @binding(16) var near_prepared: texture_2d_array<f32>;
 // This sampler belongs to the coarse maps and clamps rather than repeating controls.
 @group(constants::MATERIAL_BIND_GROUP) @binding(2) var map_sampler: sampler;
 
-// Probe only keys. Returning the 304-byte entry through a dynamic loop also
+// Probe only keys. Returning the whole entry through a dynamic loop also
 // carried every surface/canopy parameter through neighbour-only lookups.
 fn near_lookup(key: vec2<i32>) -> u32 {
     var h = (u32(key.x) * 0x9e3779b9u) ^ (u32(key.y) * 0x85ebca6bu);
@@ -63,30 +65,57 @@ fn stochastic(uv: vec2<f32>, lattice: vec2<f32>, origin: vec2<f32>, layer: i32, 
     }
     return result;
 }
+// `color.a` is the surface's blend height.
 struct Surface { color: vec4<f32>, normal: vec3<f32>, ao: f32, roughness: f32, }
 fn surface(index: u32, slot: u32, local: vec2<f32>, world_dx: vec2<f32>, world_dy: vec2<f32>) -> Surface {
-    let size = max(near_table[index].sizes[slot], 0.001);
-    let phase = select(near_table[index].phase_a, near_table[index].phase_b, slot==1u);
-    let lattice = select(near_table[index].lattice_a, near_table[index].lattice_b, slot==1u);
-    let layer = i32(near_table[index].layers[slot]+0.5);
-    let uv = local/size + phase.xy;
+    let s = near_table[index].slots[slot];
+    let size = max(s.surface.y, 0.001);
+    let layer = i32(s.surface.x+0.5);
+    let uv = local/size + s.phase.xy;
     let dx = world_dx/size; let dy = world_dy/size;
     var color: vec4<f32>;
-    if near_table[index].state.w > 0.0 {
-        let prepared_uv = triangular(local/size)/near_table[index].state.w + phase.zw;
-        color = textureSampleGrad(near_prepared, repeat_sampler, prepared_uv, layer, triangular(dx)/near_table[index].state.w, triangular(dy)/near_table[index].state.w);
-    } else if near_table[index].layers[slot+2u] >= 0.5 {
-        color = stochastic(uv, triangular(local/size)+lattice.zw, lattice.xy, layer, dx, dy);
+    if s.surface.z >= 0.5 {
+        color = stochastic(uv, triangular(local/size)+s.lattice.zw, s.lattice.xy, layer, dx, dy);
     } else { color = textureSampleGrad(near_base, repeat_sampler, uv, layer, dx, dy); }
     let packed = textureSampleGrad(near_normal, repeat_sampler, uv, layer, dx, dy);
     let oct = packed.rg*2.0-1.0;
     var n = vec3(oct, 1.0-abs(oct.x)-abs(oct.y));
     let fold = clamp(-n.z,0.0,1.0);
     n.x += select(fold,-fold,n.x>=0.0); n.y += select(fold,-fold,n.y>=0.0);
-    n = normalize(n); n.y *= near_table[index].normals[slot*2u];
-    n = normalize(vec3(n.xy*clamp(near_table[index].normals[slot*2u+1u],0.0,1.0), max(n.z,0.001)));
-    let rough = mix(near_table[index].roughness[slot*2u],near_table[index].roughness[slot*2u+1u],packed.a);
+    n = normalize(n); n.y *= s.material.x;
+    n = normalize(vec3(n.xy*clamp(s.surface.w,0.0,1.0), max(n.z,0.001)));
+    let rough = mix(s.material.y,s.material.z,packed.a);
     return Surface(color,n,packed.b,rough);
+}
+// Weighted sum of up to three shaded surfaces.
+fn mix_surfaces(a: Surface, b: Surface, c: Surface, w: vec3<f32>) -> Surface {
+    return Surface(a.color*w.x+b.color*w.y+c.color*w.z,
+        normalize(a.normal*w.x+b.normal*w.y+c.normal*w.z),
+        a.ao*w.x+b.ao*w.y+c.ao*w.z, a.roughness*w.x+b.roughness*w.y+c.roughness*w.z);
+}
+// The page's ground: its three largest weights here, blended by surface height.
+fn blended_surfaces(index: u32, uv: vec2<f32>, local: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) -> Surface {
+    let count = u32(near_table[index].state.z+0.5);
+    if count <= 1u { return surface(index,0u,local,dx,dy); }
+    let wuv = (vec2(0.5)+uv*(near_table[index].state.y-1.0))/near_settings.w;
+    let layer = (near_table[index].key.w-1)*2;
+    let first = textureSampleLevel(near_weights,map_sampler,wuv,layer,0.0);
+    var second = vec4(0.0);
+    if count > 4u { second = textureSampleLevel(near_weights,map_sampler,wuv,layer+1,0.0); }
+    var weights = array<f32,8>(first.x,first.y,first.z,first.w,second.x,second.y,second.z,second.w);
+    // Largest first; ties keep the lower slot, as world::terrain_blend_candidates does.
+    var pick = vec3<u32>(0u); var best = vec3(0.0);
+    for (var i=0u; i<count; i+=1u) {
+        let w = weights[i];
+        if w > best.x { best = vec3(w,best.xy); pick = vec3(i,pick.xy); }
+        else if w > best.y { best = vec3(best.x,w,best.y); pick = vec3(pick.x,i,pick.y); }
+        else if w > best.z { best.z = w; pick.z = i; }
+    }
+    let a = surface(index,pick.x,local,dx,dy);
+    var b = a; var c = a;
+    if best.y > 0.0 { b = surface(index,pick.y,local,dx,dy); }
+    if best.z > 0.0 { c = surface(index,pick.z,local,dx,dy); }
+    return mix_surfaces(a,b,c,height_blend(best,vec3(a.color.a,b.color.a,c.color.a)));
 }
 fn rotate_medium(p: vec2<f32>) -> vec2<f32> { return vec2(p.x*0.819-p.y*0.574, p.x*0.574+p.y*0.819); }
 fn rotate_large(p: vec2<f32>) -> vec2<f32> { return vec2(p.x*-0.342-p.y*0.940, p.x*0.940+p.y*-0.342); }
@@ -118,14 +147,7 @@ fn close_ground(world: vec3<f32>, geometry_normal: vec3<f32>, dx: vec2<f32>, dy:
     for(var i=0u;i<4u;i+=1u) {
         if edges[i] < 1.0 { availability = min(availability,mix(near_availability(cell+offsets[i]),1.0,smoothstep(0.0,1.0,edges[i]))); }
     }
-    let a = surface(index,0u,local,dx,dy); var s = a;
-    if near_table[index].state.z > 1.5 {
-        let wuv = (vec2(0.5)+uv*(near_table[index].state.y-1.0))/257.0;
-        var weights = textureSampleLevel(near_weights,map_sampler,wuv,near_table[index].key.w-1,0.0).rg;
-        weights /= max(weights.x+weights.y,0.000001);
-        let b = surface(index,1u,local,dx,dy);
-        s = Surface(a.color*weights.x+b.color*weights.y,normalize(a.normal*weights.x+b.normal*weights.y),a.ao*weights.x+b.ao*weights.y,a.roughness*weights.x+b.roughness*weights.y);
-    }
+    let s = blended_surfaces(index,uv,local,dx,dy);
     result.color = vec4(clamp(s.color.rgb*macro_response(index,local,dx,dy),vec3(0.0),vec3(1.0)),1.0);
     // World-X tangent with the same +Z bitangent as the original heightfield UVs.
     let n = normalize(geometry_normal);

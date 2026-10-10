@@ -7389,6 +7389,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "toml",
  "yarra-environment",
  "yarra-environment-compile",
  "yarra-vegetation",

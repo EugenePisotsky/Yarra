@@ -505,15 +505,40 @@ fn unsupported_material_counts_and_work_budgets_are_errors() {
         PresetId([99; 16]),
         PresetKind::Ground(ground(third)),
     );
+    // Eight surfaces fit one cell, four per RGBA weight page.
     let plan = CompilePlan::new(&definition, &plants, &library, profile()).unwrap();
-    assert!(matches!(
-        plan.compile_cells(&CELLS, &source),
-        Err(CompileError::SurfaceLimit {
-            required: 3,
-            maximum: 2,
-            ..
-        })
-    ));
+    let cells = plan.compile_cells(&CELLS, &source).unwrap();
+    assert!(
+        cells
+            .iter()
+            .any(|c| c.ground.surfaces.len() == 3 && c.ground.weight_pages.len() == 1)
+    );
+    // Past the budget a cell keeps its heaviest surfaces, with weights shared among them.
+    let mut two = profile();
+    two.max_surfaces_per_cell = 2;
+    let plan = CompilePlan::new(&definition, &plants, &library, two).unwrap();
+    for (narrow, full) in plan
+        .compile_cells(&CELLS, &source)
+        .unwrap()
+        .iter()
+        .zip(&cells)
+    {
+        assert!(narrow.ground.surfaces.len() <= 2);
+        assert!(
+            narrow
+                .ground
+                .surfaces
+                .iter()
+                .all(|s| full.ground.surfaces.contains(s))
+        );
+        if let [page] = &narrow.ground.weight_pages[..] {
+            assert!(
+                page.rgba
+                    .chunks(4)
+                    .all(|w| w[0] as u32 + w[1] as u32 == 255)
+            );
+        }
+    }
     for restriction in 0..4 {
         let mut limits = profile();
         match restriction {

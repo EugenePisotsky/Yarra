@@ -14,6 +14,7 @@ glam.workspace = true
 ron.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+toml.workspace = true
 vegetation.workspace = true
 world.workspace = true
 world-db.workspace = true

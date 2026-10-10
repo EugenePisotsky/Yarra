@@ -19,8 +19,9 @@ These are the five maintained project documents. Update them instead of adding i
 Restore the ignored local assets described in [asset setup](assets/README.md), then prepare and initialize the world from the repository root:
 
 ```sh
-python3 tools/compile_terrain_textures.py
-python3 tools/prepare_terrain_bake.py
+uv run --with numpy --with pillow python tools/import_terrain_surfaces.py
+uv run python tools/compile_terrain_textures.py
+uv run --with numpy --with pillow python tools/prepare_terrain_bake.py
 cargo run -p yarra-world-cook -- init
 cargo run -p yarra-app-editor
 ```

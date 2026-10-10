@@ -42,8 +42,8 @@ use world::{
     MAX_TERRAIN_WEIGHT_PAGES, MAX_TERRAIN_WEIGHT_RESOLUTION, ObjectActivationPolicy,
     ObjectDefinitionId, PageCodec, PageDomain, PageKey, PagePayload, RUNTIME_SCHEMA_VERSION,
     StableObjectId, StaticObjectInstance, StaticObjectsPage, TerrainHeightfieldPage,
-    TerrainProfile, TerrainSurface, TerrainSurfaceId, TerrainTextureLayer, TerrainTextureSet,
-    TerrainTextureSetId, TerrainWeightPage, WorldSpaceId, encode_page_payload,
+    TerrainProfile, TerrainSurface, TerrainSurfaceId, TerrainTextureSet, TerrainTextureSetId,
+    TerrainWeightPage, WorldSpaceId, encode_page_payload,
 };
 use world_db::{
     AssetVariantRecord, EncodedPage, PageDependencyRecord, PageObjectDefinitionRecord,
@@ -62,12 +62,13 @@ const DEMO_WORLD_CELL_RANGE: std::ops::Range<i32> = -8..8;
 // Half-metre source masks and endpoint-inclusive compiled ground weights.
 const DEMO_TERRAIN_WEIGHT_RESOLUTION: u16 = 65;
 const DEMO_TERRAIN_HEIGHTFIELD_RESOLUTION: u16 = 33;
-const DEMO_TERRAIN_TEXTURE_ROOT: &str = "local/terrain/temperate_meadow/runtime";
 const DEMO_TERRAIN_MINIMUM_HEIGHT: f32 = -4.0;
 const DEMO_TERRAIN_MAXIMUM_HEIGHT: f32 = 4.0;
 
 mod road_demo;
+mod terrain_pack;
 pub use road_demo::create_road_demo_project;
+use terrain_pack::TerrainPack;
 
 /// Initialize the default world: for now the Phase 0 island, with start views in a sibling
 /// `.views` directory. The small 8 m authoring world remains `create-road-demo`.
@@ -229,9 +230,10 @@ fn demo_project_document() -> ProjectDocument {
     };
     let overworld_id = overworld.id;
     let interior_id = interior.id;
-    let terrain_texture_set = TerrainTextureSetId(stable_id("temperate-meadow-texture-set"));
-    let uncut_grass = TerrainSurfaceId(stable_id("uncut-grass-oilpt20"));
-    let dried_grass = TerrainSurfaceId(stable_id("grass-dried-pjwhw0"));
+    let pack = TerrainPack::baltic();
+    let terrain_texture_set = pack.texture_set.id;
+    let meadow = pack.surface("meadow");
+    let dry_meadow = pack.surface("dry-meadow");
     let tree = demo_tree();
     let tree_asset = AssetId(*blake3::hash(tree.key.as_bytes()).as_bytes());
     let tree_definition = definition_id("demo-tree");
@@ -301,7 +303,7 @@ fn demo_project_document() -> ProjectDocument {
     });
 
     let (presets, environments, environment_cells) =
-        demo_environment(overworld_id, interior_id, uncut_grass, dried_grass);
+        demo_environment(overworld_id, interior_id, &pack, meadow, dry_meadow);
     ProjectDocument {
         default_world_space: overworld.id,
         start_view: None,
@@ -309,66 +311,9 @@ fn demo_project_document() -> ProjectDocument {
         world_spaces: vec![overworld, interior],
         vegetation_catalog: Some(vegetation::fixtures::reference_catalog()),
         cells,
-        terrain_surfaces: vec![
-            TerrainSurface {
-                id: uncut_grass,
-                key: "uncut-grass-oilpt20".into(),
-                display_name: "Uncut grass".into(),
-                // The legacy prototype meadow applied a 1.6x area-wide
-                // appearance multiplier to this surface's 2 m source scale.
-                tile_size: 3.2,
-                anti_tiling: true,
-                normal_y_sign: 1.0,
-                normal_strength: 0.48,
-                roughness_min: 0.82,
-                roughness_max: 0.98,
-            },
-            TerrainSurface {
-                id: dried_grass,
-                key: "grass-dried-pjwhw0".into(),
-                display_name: "Dried grass".into(),
-                tile_size: 1.6,
-                anti_tiling: true,
-                normal_y_sign: 1.0,
-                normal_strength: 0.42,
-                roughness_min: 0.86,
-                roughness_max: 1.0,
-            },
-        ],
-        terrain_texture_sets: vec![TerrainTextureSet {
-            id: terrain_texture_set,
-            key: "temperate-meadow".into(),
-            base_color_universal_uri: format!(
-                "{DEMO_TERRAIN_TEXTURE_ROOT}/universal/base_color_array.ktx2"
-            ),
-            normal_material_universal_uri: format!(
-                "{DEMO_TERRAIN_TEXTURE_ROOT}/universal/normal_material_array.ktx2"
-            ),
-            macro_variation_universal_uri: format!(
-                "{DEMO_TERRAIN_TEXTURE_ROOT}/universal/macro_variation.ktx2"
-            ),
-            base_color_astc_uri: format!("{DEMO_TERRAIN_TEXTURE_ROOT}/astc/base_color_array.ktx2"),
-            normal_material_astc_uri: format!(
-                "{DEMO_TERRAIN_TEXTURE_ROOT}/astc/normal_material_array.ktx2"
-            ),
-            macro_variation_astc_uri: format!(
-                "{DEMO_TERRAIN_TEXTURE_ROOT}/astc/macro_variation.ktx2"
-            ),
-            universal_gpu_bytes: 6_554_120,
-            astc_gpu_bytes: 3_846_512,
-        }],
-        terrain_texture_layers: vec![
-            TerrainTextureLayer {
-                texture_set: terrain_texture_set,
-                surface: uncut_grass,
-                layer: 0,
-            },
-            TerrainTextureLayer {
-                texture_set: terrain_texture_set,
-                surface: dried_grass,
-                layer: 1,
-            },
-        ],
+        terrain_surfaces: pack.surfaces,
+        terrain_texture_sets: vec![pack.texture_set],
+        terrain_texture_layers: pack.layers,
         terrain_profiles: vec![
             TerrainProfile {
                 space: overworld_id,

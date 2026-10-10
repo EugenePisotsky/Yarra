@@ -12,52 +12,54 @@ use bevy::{
     },
 };
 use std::sync::{Arc, Mutex, Weak};
+use world::MAX_TERRAIN_SURFACES_PER_CELL;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Pack {
     pub base: Handle<Image>,
     pub normal: Handle<Image>,
     pub macro_image: Handle<Image>,
-    pub prepared: Option<Handle<Image>>,
-    pub period: f32,
 }
 impl Pack {
     pub(crate) fn from_material(m: &TerrainMaterial) -> Self {
         Self {
-            base: m.source_base_color_array.clone(),
+            base: m.base_color_array.clone(),
             normal: m.normal_material_array.clone(),
             macro_image: m.macro_variation.clone(),
-            prepared: m.prepared_albedo.then(|| m.base_color_array.clone()),
-            period: m.settings.surface_layers.w,
         }
     }
     pub fn matches(&self, m: &TerrainMaterial) -> bool {
-        self.base == m.source_base_color_array
+        self.base == m.base_color_array
             && self.normal == m.normal_material_array
             && self.macro_image == m.macro_variation
     }
 }
+/// One of a page's surfaces, as `terrain_near.wesl` reads it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, ShaderType)]
+pub(crate) struct NearSlot {
+    /// Array layer, metres per repetition, anti-tiling (0/1), normal strength.
+    pub surface: Vec4,
+    /// Normal Y sign, roughness minimum and maximum.
+    pub material: Vec4,
+    pub phase: Vec4,
+    pub lattice: Vec4,
+}
 #[derive(Clone, Copy, Debug, Default, PartialEq, ShaderType)]
 pub(crate) struct NearEntry {
     pub key: IVec4,
+    /// Fade, weight resolution, surface count.
     pub state: Vec4,
-    pub layers: Vec4,
-    pub sizes: Vec4,
-    pub normals: Vec4,
-    pub roughness: Vec4,
     pub macro_scales: Vec4,
     pub macro_settings: Vec4,
-    pub phase0: Vec4,
-    pub phase1: Vec4,
-    pub lattice0: Vec4,
-    pub lattice1: Vec4,
     pub macro0: Vec4,
     pub macro1: Vec4,
     pub macro2: Vec4,
+    pub slots: [NearSlot; MAX_TERRAIN_SURFACES_PER_CELL],
     pub canopy: TerrainCanopyShading,
 }
 pub(super) fn bytes() -> u64 {
-    u64::from(WEIGHT_SIDE * WEIGHT_SIDE + CANOPY_SIDE * CANOPY_SIDE) * 2 * NEAR_SLOTS as u64
+    // Two RGBA weight layers and one RG canopy layer per slot.
+    u64::from(WEIGHT_SIDE * WEIGHT_SIDE * 8 + CANOPY_SIDE * CANOPY_SIDE * 2) * NEAR_SLOTS as u64
         + NearEntry::min_size().get() * NEAR_TABLE as u64
 }
 fn phase(v: [f64; 2]) -> Vec2 {
@@ -66,14 +68,14 @@ fn phase(v: [f64; 2]) -> Vec2 {
 fn transformed(p: [f64; 2]) -> [f64; 2] {
     [p[0] + p[1] * 0.5773502692, p[1] * 1.1547005384]
 }
-fn uv_phase(p: [f64; 2], size: f32, period: f32) -> (Vec4, Vec4) {
+/// UV phase (XY) and the anti-tiling lattice cell and phase of a page's origin `p`.
+fn uv_phase(p: [f64; 2], size: f32) -> (Vec4, Vec4) {
     let uv = p.map(|v| v / f64::from(size.max(0.001)));
     let lattice = transformed(uv);
     let a = phase(uv);
-    let b = phase(lattice.map(|v| v / f64::from(period.max(1.))));
     let f = phase(lattice);
     (
-        Vec4::new(a.x, a.y, b.x, b.y),
+        Vec4::new(a.x, a.y, 0., 0.),
         Vec4::new(
             lattice[0].floor() as f32,
             lattice[1].floor() as f32,
@@ -82,24 +84,30 @@ fn uv_phase(p: [f64; 2], size: f32, period: f32) -> (Vec4, Vec4) {
         ),
     )
 }
-pub(super) fn entry(
-    s: &NearSource,
-    m: &TerrainMaterial,
-    pack: &Pack,
-    slot: u32,
-    fade: f32,
-) -> NearEntry {
+pub(super) fn entry(s: &NearSource, m: &TerrainMaterial, slot: u32, fade: f32) -> NearEntry {
     let settings = m.settings;
     let p = s.key.cell.origin(s.cell_size);
-    let period = if settings.macro_settings.z >= 0.5
-        && (s.layers.len() == 1 || settings.macro_settings.w >= 0.5)
-    {
-        pack.period
-    } else {
-        0.
-    };
-    let (phase0, lattice0) = uv_phase(p, settings.tile_sizes.x, period);
-    let (phase1, lattice1) = uv_phase(p, settings.tile_sizes.y, period);
+    let mut slots = [NearSlot::default(); MAX_TERRAIN_SURFACES_PER_CELL];
+    for (slot, layer) in slots.iter_mut().zip(&s.layers) {
+        let surface = &layer.surface;
+        let (phase, lattice) = uv_phase(p, surface.tile_size);
+        *slot = NearSlot {
+            surface: Vec4::new(
+                f32::from(layer.layer),
+                surface.tile_size,
+                f32::from(surface.anti_tiling),
+                surface.normal_strength,
+            ),
+            material: Vec4::new(
+                surface.normal_y_sign,
+                surface.roughness_min,
+                surface.roughness_max,
+                0.,
+            ),
+            phase,
+            lattice,
+        };
+    }
     let macro_phase = |i, p: [f64; 2]| {
         phase(p.map(|v| v / f64::from(settings.macro_scales[i])))
             .extend(0.)
@@ -115,28 +123,10 @@ pub(super) fn entry(
                 s.weights[0].resolution as f32
             },
             s.surfaces.len() as f32,
-            period,
-        ),
-        layers: Vec4::new(
-            settings.surface_layers.x,
-            settings.surface_layers.y,
-            settings.macro_settings.z,
-            settings.macro_settings.w,
-        ),
-        sizes: Vec4::new(
-            settings.tile_sizes.x,
-            settings.tile_sizes.y,
-            s.cell_size,
             0.,
         ),
-        normals: settings.normal_settings,
-        roughness: settings.roughness_ranges,
         macro_scales: settings.macro_scales,
         macro_settings: settings.macro_settings,
-        phase0,
-        phase1,
-        lattice0,
-        lattice1,
         macro0: macro_phase(0, p),
         macro1: macro_phase(
             1,
@@ -146,12 +136,14 @@ pub(super) fn entry(
             2,
             [p[0] * -0.342 - p[1] * 0.940, p[0] * 0.940 + p[1] * -0.342],
         ),
+        slots,
         canopy: m.canopy_shading,
     }
 }
 pub(super) struct Tile {
     slot: u32,
-    weights: Vec<u8>,
+    /// Two RGBA layers of surface weights, four surfaces each.
+    pub(super) weights: [Vec<u8>; 2],
     weight_side: u32,
     canopy: Vec<u8>,
 }
@@ -163,18 +155,15 @@ pub(super) fn tile(
     origin: CellCoord,
 ) -> Tile {
     let (weight_side, weights) = if s.surfaces.len() == 1 {
-        (1, vec![255, 0])
+        (1, [vec![255, 0, 0, 0], vec![0; 4]])
     } else {
-        let w = &s.weights[0];
-        (
-            w.resolution as u32,
-            w.rgba
-                .as_chunks::<4>()
-                .0
-                .iter()
-                .flat_map(|p| [p[0], p[1]])
-                .collect(),
-        )
+        let side = s.weights[0].resolution as u32;
+        let page = |i: usize| {
+            s.weights
+                .get(i)
+                .map_or_else(|| vec![0; (side * side * 4) as usize], |w| w.rgba.clone())
+        };
+        (side, [page(0), page(1)])
     };
     let minimum = [
         i64::from(s.key.cell.x) - i64::from(origin.x),
@@ -248,15 +237,15 @@ impl NearAtlas {
         hub: &NearUploadHub,
         pack: Pack,
     ) -> Self {
-        let image = |side| {
+        let image = |side, format, layers| {
             let mut image = Image::new_uninit(
                 Extent3d {
                     width: side,
                     height: side,
-                    depth_or_array_layers: NEAR_SLOTS as u32,
+                    depth_or_array_layers: layers,
                 },
                 TextureDimension::D2,
-                TextureFormat::Rg8Unorm,
+                format,
                 RenderAssetUsages::RENDER_WORLD,
             );
             image.texture_view_descriptor = Some(TextureViewDescriptor {
@@ -270,8 +259,9 @@ impl NearAtlas {
             });
             image
         };
-        let weights = images.add(image(WEIGHT_SIDE));
-        let canopy = images.add(image(CANOPY_SIDE));
+        let slots = NEAR_SLOTS as u32;
+        let weights = images.add(image(WEIGHT_SIDE, TextureFormat::Rgba8Unorm, slots * 2));
+        let canopy = images.add(image(CANOPY_SIDE, TextureFormat::Rg8Unorm, slots));
         let table = buffers.add(ShaderBuffer::with_size(
             NearEntry::min_size().get() * NEAR_TABLE as u64,
             RenderAssetUsages::RENDER_WORLD,
@@ -345,7 +335,6 @@ fn upload(
         };
         if [&s.pack.base, &s.pack.normal, &s.pack.macro_image]
             .into_iter()
-            .chain(s.pack.prepared.as_ref())
             .any(|h| images.get(h).is_none())
         {
             return true;
@@ -354,10 +343,12 @@ fn upload(
             return true;
         };
         for t in &update.tiles {
-            for (image, side, data) in [
-                (weights, t.weight_side, &t.weights),
-                (canopy, CANOPY_SIDE, &t.canopy),
-            ] {
+            let layers = [
+                (weights, t.weight_side, 4, t.slot * 2, &t.weights[0]),
+                (weights, t.weight_side, 4, t.slot * 2 + 1, &t.weights[1]),
+                (canopy, CANOPY_SIDE, 2, t.slot, &t.canopy),
+            ];
+            for (image, side, bytes, layer, data) in layers {
                 queue.write_texture(
                     TexelCopyTextureInfo {
                         texture: &image.texture,
@@ -365,14 +356,14 @@ fn upload(
                         origin: Origin3d {
                             x: 0,
                             y: 0,
-                            z: t.slot,
+                            z: layer,
                         },
                         aspect: TextureAspect::All,
                     },
                     data,
                     TexelCopyBufferLayout {
                         offset: 0,
-                        bytes_per_row: Some(side * 2),
+                        bytes_per_row: Some(side * bytes),
                         rows_per_image: Some(side),
                     },
                     Extent3d {

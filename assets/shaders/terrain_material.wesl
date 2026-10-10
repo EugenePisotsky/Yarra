@@ -8,6 +8,7 @@ import package::shaders::grass_canopy::{canopy_visibility_at};
 import package::shaders::terrain_stochastic::{
     quarter_turn, stochastic_vertex_turn, stochastic_vertex_offset,
 };
+import package::shaders::terrain_blend::height_blend;
 
 import bevy_pbr::{
     decal::clustered::apply_decals,
@@ -29,8 +30,6 @@ struct TerrainMaterialSettings {
     roughness_ranges: vec4<f32>,
     macro_scales: vec4<f32>,
     macro_settings: vec4<f32>,
-    cache_origins: vec4<f32>,
-    cache_size: vec4<u32>,
 }
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(0) var<uniform> settings: TerrainMaterialSettings;
@@ -40,7 +39,6 @@ struct TerrainMaterialSettings {
 @group(constants::MATERIAL_BIND_GROUP) @binding(4) var surface_sampler: sampler;
 @group(constants::MATERIAL_BIND_GROUP) @binding(5) var normal_material_array: texture_2d_array<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(6) var macro_variation_texture: texture_2d<f32>;
-@group(constants::MATERIAL_BIND_GROUP) @binding(7) var<storage, read> stochastic_cache: array<vec4<f32>>;
 
 @if(TERRAIN_CANOPY)
 struct TerrainCanopyShading {
@@ -79,21 +77,13 @@ struct StochasticUvPlan {
     weights: vec3<f32>,
 }
 
-fn stochastic_transform(vertex: vec2<f32>, layer: i32, slot: i32) -> vec3<f32> {
-    @if(TERRAIN_STOCHASTIC_CACHED) {
-        let origin = select(settings.cache_origins.xy, settings.cache_origins.zw, slot == 1);
-        let index = vec2<u32>(vertex - origin);
-        return stochastic_cache[index.x + settings.cache_size.x * (index.y + u32(slot) * settings.cache_size.y)].xyz;
-    }
-    @else {
-        return vec3(stochastic_vertex_offset(vertex, layer), stochastic_vertex_turn(vertex, layer));
-    }
+fn stochastic_transform(vertex: vec2<f32>, layer: i32) -> vec3<f32> {
+    return vec3(stochastic_vertex_offset(vertex, layer), stochastic_vertex_turn(vertex, layer));
 }
 
 fn make_stochastic_uv_plan(
     uv: vec2<f32>,
     material_layer: i32,
-    slot: i32,
     uv_dx: vec2<f32>,
     uv_dy: vec2<f32>,
 ) -> StochasticUvPlan {
@@ -121,11 +111,11 @@ fn make_stochastic_uv_plan(
     let squared = max(raw_weights * raw_weights, vec3(0.0));
     let shaped = squared * squared;
     let weights = shaped / max(shaped.x + shaped.y + shaped.z, 0.000001);
-    let transform_0 = stochastic_transform(vertex_0, material_layer, slot);
+    let transform_0 = stochastic_transform(vertex_0, material_layer);
     let turn_0 = transform_0.z;
-    let transform_1 = stochastic_transform(vertex_1, material_layer, slot);
+    let transform_1 = stochastic_transform(vertex_1, material_layer);
     let turn_1 = transform_1.z;
-    let transform_2 = stochastic_transform(vertex_2, material_layer, slot);
+    let transform_2 = stochastic_transform(vertex_2, material_layer);
     let turn_2 = transform_2.z;
     var plan: StochasticUvPlan;
     plan.uv_0 = quarter_turn(uv, turn_0) + transform_0.xy;
@@ -191,7 +181,6 @@ fn sample_surface(
     world_xz: vec2<f32>,
     tile_size: f32,
     layer: i32,
-    slot: i32,
     normal_y_sign: f32,
     normal_strength: f32,
     roughness_min: f32,
@@ -201,19 +190,10 @@ fn sample_surface(
     let uv = world_xz / max(tile_size, 0.001);
     let uv_dx = dpdx(uv);
     let uv_dy = dpdy(uv);
-    // Offline bake uses a periodic triangular lattice, including its wrap edges.
-    @if(TERRAIN_PREPARED_ALBEDO)
-    let period = settings.surface_layers.w;
-    @if(TERRAIN_PREPARED_ALBEDO)
-    let prepared_uv = vec2(uv.x + uv.y * 0.5773502692, uv.y * 1.1547005384) / period;
-    @if(TERRAIN_PREPARED_ALBEDO)
-    let base = sample_base_color_plain(prepared_uv, layer, dpdx(prepared_uv), dpdy(prepared_uv));
-    @else
     var base = sample_base_color_plain(uv, layer, uv_dx, uv_dy);
-    @if(!TERRAIN_PREPARED_ALBEDO)
     if anti_tiling {
         base = sample_base_color_stochastic(
-            make_stochastic_uv_plan(uv, layer, slot, uv_dx, uv_dy),
+            make_stochastic_uv_plan(uv, layer, uv_dx, uv_dy),
             layer,
         );
     }
@@ -288,16 +268,6 @@ fn single_texture_color(world_xz: vec2<f32>) -> vec4<f32> {
 // The blended surface layers with macro variation applied to the albedo.
 fn terrain_ground(world_xz: vec2<f32>) -> SurfaceSample {
     var blend = vec2(1.0, 0.0);
-    @if(TERRAIN_PREPARED)
-    let control_uv = clamp((world_xz - settings.chunk_minimum) / settings.chunk_extent, vec2(0.0), vec2(1.0));
-    @if(TERRAIN_PREPARED)
-    let control = textureSample(weight_map, weight_sampler, (control_uv * 256.0 + 8.0) / 272.0);
-    @if(TERRAIN_PREPARED)
-    if settings.surface_layers.z > 1.5 {
-        blend = max(control.rg, vec2(0.0));
-        blend /= max(blend.x + blend.y, 0.000001);
-    }
-    @else
     if settings.surface_layers.z > 1.5 {
         let control_uv = clamp(
             (world_xz - settings.chunk_minimum) / settings.chunk_extent,
@@ -314,7 +284,6 @@ fn terrain_ground(world_xz: vec2<f32>) -> SurfaceSample {
         world_xz,
         settings.tile_sizes.x,
         i32(settings.surface_layers.x + 0.5),
-        0,
         settings.normal_settings.x,
         settings.normal_settings.y,
         settings.roughness_ranges.x,
@@ -330,13 +299,14 @@ fn terrain_ground(world_xz: vec2<f32>) -> SurfaceSample {
             world_xz,
             settings.tile_sizes.y,
             i32(settings.surface_layers.y + 0.5),
-            1,
             settings.normal_settings.z,
             settings.normal_settings.w,
             settings.roughness_ranges.z,
             settings.roughness_ranges.w,
             settings.macro_settings.w >= 0.5,
         );
+        // Base colour alpha is each surface's blend height, as in near detail.
+        blend = height_blend(vec3(blend, 0.0), vec3(first.base_color.a, second.base_color.a, 0.0)).xy;
         base = first.base_color * blend.x + second.base_color * blend.y;
         tangent_normal = normalize(
             first.tangent_normal * blend.x + second.tangent_normal * blend.y,
@@ -346,9 +316,6 @@ fn terrain_ground(world_xz: vec2<f32>) -> SurfaceSample {
         roughness = first.roughness * blend.x + second.roughness * blend.y;
     }
 
-    @if(TERRAIN_PREPARED)
-    let signal = select(0.0, dot(control.ba, vec2(256.0 / 257.0, 1.0 / 257.0)) * 2.0 - 1.0, settings.macro_settings.y >= 0.5);
-    @else
     let signal = macro_signal(world_xz);
     let variation = clamp(
         signal * settings.macro_settings.x,

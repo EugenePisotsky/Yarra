@@ -245,6 +245,7 @@ pub(super) fn compile_environment(project: &ProjectDocument) -> Result<CookedEnv
 pub(super) fn demo_environment(
     overworld: WorldSpaceId,
     interior: WorldSpaceId,
+    pack: &super::TerrainPack,
     green: TerrainSurfaceId,
     dry: TerrainSurfaceId,
 ) -> (
@@ -264,7 +265,7 @@ pub(super) fn demo_environment(
         revision: 1,
         cell_size: super::DEFAULT_CELL_SIZE,
         mask_resolution: super::DEMO_TERRAIN_WEIGHT_RESOLUTION,
-        surfaces: vec![green, dry],
+        surfaces: pack.surface_ids(),
         base_surface: dry,
         layers: roots
             .iter()

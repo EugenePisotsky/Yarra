@@ -158,17 +158,18 @@ impl CompilePlan {
                 }
             }
         }
-        let palette: Vec<_> = used
+        let mut palette: Vec<_> = used
             .iter()
             .enumerate()
             .filter_map(|(i, used)| used.then_some(i))
             .collect();
         if palette.len() > self.profile.max_surfaces_per_cell {
-            return Err(CompileError::SurfaceLimit {
-                cell,
-                required: palette.len(),
-                maximum: self.profile.max_surfaces_per_cell,
-            });
+            palette = keep_heaviest(
+                &mut samples,
+                surface_count,
+                &palette,
+                self.profile.max_surfaces_per_cell,
+            );
         }
         let mut weight_pages = Vec::new();
         if palette.len() > 1 {
@@ -267,6 +268,40 @@ impl CompilePlan {
         page.validate(&self.catalog)?;
         Ok(page)
     }
+}
+
+/// Where more surfaces meet in a cell than its weight pages hold, keeps the `maximum` with the
+/// most weight in the cell and shares each sample among those. The dropped surfaces are slivers:
+/// shading shows at most three surfaces at a point anyway. Returns the kept palette, in order.
+fn keep_heaviest(
+    samples: &mut [u8],
+    surface_count: usize,
+    palette: &[usize],
+    maximum: usize,
+) -> Vec<usize> {
+    let mut totals = vec![0_u64; surface_count];
+    for weights in samples.chunks(surface_count) {
+        for (total, &w) in totals.iter_mut().zip(weights) {
+            *total += u64::from(w);
+        }
+    }
+    let mut kept = palette.to_vec();
+    // Heaviest first; equal totals keep the lower surface index.
+    kept.sort_by(|&a, &b| totals[b].cmp(&totals[a]).then(a.cmp(&b)));
+    kept.truncate(maximum);
+    let heaviest = kept[0];
+    kept.sort_unstable();
+    for weights in samples.chunks_mut(surface_count) {
+        let mut shares = vec![0.0; surface_count];
+        for &i in &kept {
+            shares[i] = f64::from(weights[i]);
+        }
+        if shares.iter().all(|&w| w == 0.0) {
+            shares[heaviest] = 1.0;
+        }
+        weights.copy_from_slice(&quantize(&shares));
+    }
+    kept
 }
 
 /// Largest-remainder quantization preserves sum=255, with stable surface-ID tie breaking.

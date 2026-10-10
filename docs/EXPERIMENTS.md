@@ -524,6 +524,21 @@ User report: about 35 fps at native resolution in fullscreen, about 50 with vege
 | Temporal upscaling | At the default 50% scale, MetalFX Temporal against Spatial: 71.6, 71.3 against 91.6, 90.9 fps in the forest (GPU 13.1 against 9.3 ms, render prep 5.3 against 3.8 ms): its depth and motion prepass draws the world again. |
 | Fixed costs | At 50% scale about 5.5 of 9.3 ms do not depend on resolution (tree shadows 3.2, geometry 1.2, atmosphere tables 0.7, sun occlusion 0.66, mesh preprocessing 0.6, output-size passes); walking the forest route at 20 m/s at 1080p ran 95 fps median, 77 at worst, main thread 4.5 ms median and 17 ms at worst. |
 
+## Ground surfaces — October 10
+
+The island had two terrain surfaces (uncut and dried grass) and the cook took at most two per 32 m cell, so its beach, cliffs and summits were dried grass. Fifteen Megascans surfaces (the `baltic` pack: beach and dune sand, coastal grass, gravel, meadow, dry meadow, forest moss, pine needles, forest floor, leaf litter, dirt, rocky ground, rock, lichen rock, stony moss) replace them, up to eight per cell, blended by height. Island rebuilt into `tmp/island` from the Houdini export plus `island_masks.py` masks and the same forest plan (77,720 placements).
+
+| Change | Decision / observation |
+| --- | --- |
+| Height blending | **Retained.** Three largest ground weights per pixel, score = weight share + 0.5 × blend height, surfaces within 0.12 of the best show (`terrain_blend.wesl`, `world::terrain_height_blend`, identical in the composite cooker). Blend height is the scan's height map times the pack's `blend_height`, stored in base colour alpha: no extra texture reads. |
+| Normal conventions | Every Megascans scan here has green up; the import detects it from the height map (agreement 0.55–0.96 for all fifteen) and stores normals in the engine's frame. The two old surfaces had used the scan's green unflipped. |
+| Nine surfaces in a cell | Where beach, dunes, coastal grass, both meadows, scree and rock meet, one cell needed nine. Cells now keep the eight with the most weight instead of failing the cook. |
+| Prepared albedo and terrain caches | **Retired.** Fifteen 4096² prepared albedo layers would take ~330 MB; the anti-tiling lattice cache and prepared controls served only directly drawn page materials (the editor's preset preview). Anti-tiling surfaces sample three lattice cells at run time, as before without the cache. |
+| Cost | Same build, old world against new, game settings (50% + MetalFX Temporal), alternating: start 11.29, 11.65 → 11.64, 11.64 ms GPU; forest edge 11.60, 11.54 → 11.62, 11.60. Within noise. Fifteen 1024² layers take about 43 MB of GPU memory (two arrays). |
+| Distance | Beyond near detail (24–40 m) the ground is the composite: 2 m texels from level 2, so crisp rock with moss turns into its mean grey. The stored composite matches the near surfaces' mean (rock 0.37 sRGB), but the change of detail shows on rock. **Open:** one detail sample of the dominant surface out to ~150 m. |
+| Steep faces | Planar projection stretches rock on 35–45° slopes. **Open:** triplanar or biplanar sampling for rock surfaces. |
+| Not done | Wet sand at the waterline (the terrain shader has no sea level yet); dune grass (grass rewrite); the procedural island's masks are rough height and slope rules. |
+
 ## Open gates and maintenance
 
 The remaining gates are sustained terrain/whole-game power, Temporal cost and motion quality, field-scale grass lighting, target-PC acceptance, and physical-phone heat/60-FPS delivery. Keep correctness references until their replacements pass the relevant gate. Existing counters often identify less work without demonstrating better delivered frames or lower power.

@@ -549,6 +549,81 @@ fn road_composite_uses_final_ground_weights_and_keeps_relief_out_of_albedo() {
 }
 
 #[test]
+fn many_surface_pages_blend_from_both_weight_pages() {
+    let project = road_demo::document();
+    let inputs = TerrainBakeLibrary::fixture(&project.terrain_texture_sets[0]);
+    // Every surface of the pack, as a runtime lists those of a page.
+    let resources = world_db::TerrainRenderResources {
+        profile: project.terrain_profiles[0].clone(),
+        texture_set: project.terrain_texture_sets[0].clone(),
+        surfaces: project
+            .terrain_texture_layers
+            .iter()
+            .map(|l| world_db::RuntimeTerrainSurface {
+                surface: project
+                    .terrain_surfaces
+                    .iter()
+                    .find(|s| s.id == l.surface)
+                    .unwrap()
+                    .clone(),
+                layer: l.layer,
+            })
+            .collect(),
+    };
+    let inputs = inputs.get(&resources.texture_set).unwrap();
+    let build = crate::build_runtime(project).unwrap();
+    let p = build
+        .pages
+        .iter()
+        .find(|p| p.key.domain == PageDomain::Terrain && p.key.lod == 0)
+        .unwrap();
+    let PagePayload::TerrainHeightfield(page) = p.clone().decode().unwrap().payload else {
+        panic!("terrain page");
+    };
+    // Fixture layers alternate green and brown; take six surfaces in array order.
+    let mut layers: Vec<_> = resources.surfaces.iter().collect();
+    layers.sort_by_key(|s| s.layer);
+    let ids: Vec<_> = layers.iter().take(6).map(|s| s.surface.id).collect();
+    assert_eq!(ids.len(), 6);
+    let mean = |surfaces: &[world::TerrainSurfaceId], weights: &[[u8; 4]]| {
+        let mut page = page.clone();
+        page.surfaces = surfaces.to_vec();
+        page.weight_pages = weights
+            .iter()
+            .map(|w| TerrainWeightPage {
+                resolution: 2,
+                rgba: w.repeat(4),
+            })
+            .collect();
+        let key = TerrainMaterialKey(TerrainNodeKey::leaf(p.key.space, p.key.cell));
+        let core = evaluate::leaf(key, 8., &page, &resources, inputs).unwrap();
+        let sum = core.pixels.iter().fold([0.; 3], |a, p| {
+            [a[0] + p.color[0], a[1] + p.color[1], a[2] + p.color[2]]
+        });
+        sum.map(|v| v / core.pixels.len() as f32)
+    };
+    let close = |a: [f32; 3], b: [f32; 3]| a.iter().zip(b).all(|(a, b)| (a - b).abs() < 1e-3);
+    // The sixth surface lives in the second weight page.
+    let only_sixth = mean(&ids, &[[0, 0, 0, 0], [0, 255, 0, 0]]);
+    assert!(close(only_sixth, mean(&ids[5..6], &[])));
+    // Equal weights at equal heights blend evenly; a clear majority wins outright.
+    let (green, brown) = (mean(&ids[..1], &[]), mean(&ids[1..2], &[]));
+    let even = mean(&ids[..2], &[[128, 128, 0, 0]]);
+    assert!(close(
+        even,
+        std::array::from_fn(|c| (green[c] + brown[c]) * 0.5)
+    ));
+    assert!(close(mean(&ids[..2], &[[200, 55, 0, 0]]), green));
+    // Only the three largest are shaded: three equal weights split evenly (two green, one
+    // brown) and a barely smaller fourth (brown) is left out.
+    let thirds = mean(&ids, &[[64, 64, 64, 63], [0, 0, 0, 0]]);
+    assert!(close(
+        thirds,
+        std::array::from_fn(|c| (green[c] * 2. + brown[c]) / 3.)
+    ));
+}
+
+#[test]
 fn incomplete_material_pass_rolls_back_and_decode_checks_declared_bytes() {
     let project = small_project();
     let f = Fixture::new(&project);

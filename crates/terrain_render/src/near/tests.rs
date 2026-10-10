@@ -74,8 +74,6 @@ fn material(s: &NearSource) -> TerrainMaterial {
             roughness_ranges: Vec4::new(0.6, 1., 0.6, 1.),
             macro_scales: Vec4::new(7., 19., 43., 0.3),
             macro_settings: Vec4::ONE,
-            cache_origins: Vec4::ZERO,
-            cache_size: UVec4::ZERO,
         })
     }
 }
@@ -85,24 +83,17 @@ fn phases_keep_large_negative_cell_boundaries_and_altitude_stops_near_demand() {
         let a = source(CellCoord { x, z: -7 });
         let b = source(CellCoord { x: x + 1, z: -7 });
         let m = material(&a);
-        let mut pack = Pack::from_material(&m);
-        pack.period = 4.;
-        let ea = gpu::entry(&a, &m, &pack, 0, 1.);
-        let eb = gpu::entry(&b, &m, &pack, 1, 1.);
+        let ea = gpu::entry(&a, &m, 0, 1.);
+        let eb = gpu::entry(&b, &m, 1, 1.);
         let circular_error = |a: f64, b: f64| {
             let e = (a - b).rem_euclid(1.);
             e.min(1. - e)
         };
         assert!(
             circular_error(
-                ea.phase0.x as f64 + a.cell_size as f64 / m.settings.tile_sizes.x as f64,
-                eb.phase0.x as f64
-            ) < 0.00001
-        );
-        assert!(
-            circular_error(
-                ea.phase0.z as f64 + a.cell_size as f64 / m.settings.tile_sizes.x as f64 / 4.,
-                eb.phase0.z as f64
+                ea.slots[0].phase.x as f64
+                    + a.cell_size as f64 / a.layers[0].surface.tile_size as f64,
+                eb.slots[0].phase.x as f64
             ) < 0.00001
         );
         let min = a.key.cell.origin(8.);
@@ -116,6 +107,51 @@ fn phases_keep_large_negative_cell_boundaries_and_altitude_stops_near_demand() {
         );
     }
     assert!(gpu::bytes() < 12 * 1024 * 1024);
+}
+
+#[test]
+fn pages_carry_up_to_eight_surfaces_in_two_weight_layers() {
+    let mut s = source(CellCoord { x: 3, z: -2 });
+    let template = s.layers[0].clone();
+    s.layers = (0..6)
+        .map(|i| TerrainSurfaceLayer {
+            layer: 5 - i,
+            surface: TerrainSurface {
+                id: TerrainSurfaceId([i as u8; 16]),
+                tile_size: 1. + i as f32,
+                anti_tiling: i % 2 == 0,
+                ..template.surface.clone()
+            },
+        })
+        .collect();
+    s.surfaces = s.layers.iter().map(|l| l.surface.id).collect();
+    // Four surfaces per RGBA page: the second page holds surfaces four and five.
+    s.weights = vec![
+        TerrainWeightPage {
+            resolution: 2,
+            rgba: [10, 20, 30, 40].repeat(4),
+        },
+        TerrainWeightPage {
+            resolution: 2,
+            rgba: [50, 105, 0, 0].repeat(4),
+        },
+    ];
+    assert!(valid_source(&s));
+    let m = material(&s);
+    let entry = gpu::entry(&s, &m, 7, 1.);
+    assert_eq!(entry.state.z, 6.);
+    for (i, slot) in entry.slots.iter().enumerate().take(6) {
+        assert_eq!(slot.surface.x, 5. - i as f32);
+        assert_eq!(slot.surface.y, 1. + i as f32);
+        assert_eq!(slot.surface.z, f32::from(i % 2 == 0));
+    }
+    assert_eq!(entry.slots[6], gpu::NearSlot::default());
+    let tile = gpu::tile(7, &s, &m, None, CellCoord::ZERO);
+    assert_eq!(tile.weights[1][..4], [50, 105, 0, 0]);
+    // A page whose second weight page is missing is rejected.
+    let mut missing = s.clone();
+    missing.weights.pop();
+    assert!(!valid_source(&missing));
 }
 
 #[derive(Resource, Default, Clone)]
@@ -327,7 +363,6 @@ fn near_surface_streams_on_unchanged_mesh_and_returns_to_baked_ground() {
     {
         let mut images = app.world_mut().resource_mut::<Assets<Image>>();
         m.base_color_array = images.add(array([[220, 70, 25, 255], [40, 170, 30, 255]], true));
-        m.source_base_color_array = m.base_color_array.clone();
         m.normal_material_array =
             images.add(array([[180, 128, 255, 220], [180, 128, 255, 220]], false));
         m.macro_variation = images.add(Image::new(
@@ -342,7 +377,6 @@ fn near_surface_streams_on_unchanged_mesh_and_returns_to_baked_ground() {
             RenderAssetUsages::default(),
         ));
         m.weights = images.add(crate::make_weight_image(&s.surfaces, &s.weights).unwrap());
-        m.source_weights = m.weights.clone();
     }
     let material = app
         .world_mut()
@@ -566,12 +600,15 @@ fn near_surface_streams_on_unchanged_mesh_and_returns_to_baked_ground() {
         app.world().resource::<NearStats>().tile_uploads,
         "stationary inputs reuploaded"
     );
-    app.world_mut()
-        .resource_mut::<Assets<TerrainMaterial>>()
-        .get_mut(&material)
+    // Surface parameters come from the page's own surfaces.
+    for layer in &mut app
+        .world_mut()
+        .get_mut::<NearSource>(entity)
         .unwrap()
-        .settings
-        .normal_settings = Vec4::new(1., 0., 1., 0.);
+        .layers
+    {
+        layer.surface.normal_strength = 0.;
+    }
     let flat = settle(&mut app);
     assert_ne!(near, flat, "micro normals had no lighting effect");
     let origin = CellCoord { x: -9, z: 7 };
@@ -628,14 +665,6 @@ fn near_surface_streams_on_unchanged_mesh_and_returns_to_baked_ground() {
         light(&shaded) < light(&rebased) * 9 / 10,
         "canopy coverage did not shade the ground"
     );
-    let mut prepared_source = app
-        .world()
-        .resource::<Assets<TerrainMaterial>>()
-        .get(&material)
-        .unwrap()
-        .clone();
-    prepared_source.canopy_coverage = None;
-    prepared_source.canopy_shading = default();
     app.world_mut().despawn(entity);
     let retired = settle(&mut app);
     assert!(
@@ -643,67 +672,4 @@ fn near_surface_streams_on_unchanged_mesh_and_returns_to_baked_ground() {
         "removed source left stale near shading"
     );
     assert_eq!(app.world().resource::<NearStats>().pages, 0);
-    // Exercise the optional periodic prepared albedo and its phase across another
-    // rebase, without needing the development machine's local texture pack.
-    app.world_mut().resource_mut::<NearView>().identity = None;
-    let mut pack = Pack::from_material(&prepared_source);
-    pack.prepared = Some(pack.base.clone());
-    pack.period = 4.;
-    let hub = app.world().resource::<NearUploadHub>().clone();
-    let atlas = app
-        .world_mut()
-        .resource_scope(|w, mut images: Mut<Assets<Image>>| {
-            NearAtlas::new(
-                &mut images,
-                &mut w.resource_mut::<Assets<ShaderBuffer>>(),
-                &hub,
-                pack.clone(),
-            )
-        });
-    while !atlas.ready() {
-        assert!(std::time::Instant::now() < deadline);
-        app.update();
-    }
-    app.world_mut()
-        .resource_mut::<Assets<TerrainCompositeMaterial>>()
-        .get_mut(&composite)
-        .unwrap()
-        .set_near(&atlas);
-    let mut table = vec![NearEntry::default(); NEAR_TABLE];
-    table[hash(s.key.cell)] = gpu::entry(&s, &prepared_source, &pack, 0, 0.);
-    atlas.submit(
-        table.clone(),
-        vec![gpu::tile(0, &s, &prepared_source, None, origin)],
-    );
-    let unavailable = settle(&mut app);
-    assert_eq!(
-        unavailable, retired,
-        "unavailable prepared inputs must keep baked shading"
-    );
-    table[hash(s.key.cell)].state.x = 1.;
-    atlas.submit(table, vec![]);
-    let prepared = settle(&mut app);
-    assert_ne!(prepared, retired);
-    let next_origin = CellCoord { x: 13, z: -17 };
-    let delta = Vec3::new(
-        (next_origin.x - origin.x) as f32 * 8.,
-        0.,
-        (next_origin.z - origin.z) as f32 * 8.,
-    );
-    for e in [camera, ground] {
-        app.world_mut().get_mut::<Transform>(e).unwrap().translation -= delta;
-    }
-    app.world_mut()
-        .resource_mut::<Assets<TerrainCompositeMaterial>>()
-        .get_mut(&composite)
-        .unwrap()
-        .set_origin(next_origin, 8.);
-    let moved = settle(&mut app);
-    assert!(
-        prepared
-            .iter()
-            .zip(&moved)
-            .all(|(a, b)| a.abs_diff(*b) <= 2),
-        "prepared pattern moved after rebasing"
-    );
 }

@@ -1,4 +1,4 @@
-//! The near-page terrain material: one or two of the world's eight authored surface slots
+//! The page terrain material. Drawn directly, it shades the first two of a page's surfaces
 //! blended by a page-local weight map, with macro variation, anti-tiling and canopy shading.
 use bevy::{
     mesh::MeshVertexBufferLayoutRef,
@@ -72,9 +72,6 @@ pub(crate) struct TerrainMaterialUniform {
     pub(crate) macro_scales: Vec4,
     /// Contrast, macro enabled, then anti-tiling flags for slots 0 and 1.
     pub(crate) macro_settings: Vec4,
-    /// Integer lattice origins for the two anti-tiling lookup layers.
-    pub(crate) cache_origins: Vec4,
-    pub(crate) cache_size: UVec4,
 }
 
 /// Separate compiled fragment variants for measuring terrain costs without changing geometry.
@@ -116,11 +113,6 @@ pub struct TerrainMaterial {
     #[sampler(125)]
     pub(crate) forest_shadow: Option<Handle<Image>>,
     pub shading_mode: TerrainShadingMode,
-    pub(crate) stochastic_cached: bool,
-    pub(crate) prepared: bool,
-    pub(crate) prepared_albedo: bool,
-    pub(crate) source_weights: Handle<Image>,
-    pub(crate) source_base_color_array: Handle<Image>,
     #[uniform(0)]
     pub(crate) settings: TerrainMaterialUniform,
     #[texture(1)]
@@ -133,8 +125,6 @@ pub struct TerrainMaterial {
     pub(crate) normal_material_array: Handle<Image>,
     #[texture(6)]
     pub(crate) macro_variation: Handle<Image>,
-    #[storage(7, read_only, visibility(fragment))]
-    pub(crate) stochastic_cache: Handle<ShaderBuffer>,
     #[uniform(11)]
     pub(crate) canopy_shading: TerrainCanopyShading,
     #[uniform(8)]
@@ -184,16 +174,10 @@ impl TerrainMaterial {
             rain_shelter: None,
             forest_shadow: None,
             shading_mode: TerrainShadingMode::Production,
-            stochastic_cached: false,
-            prepared: false,
-            prepared_albedo: false,
-            source_weights: default(),
-            source_base_color_array: default(),
             weights: default(),
             base_color_array: default(),
             normal_material_array: default(),
             macro_variation: default(),
-            stochastic_cache: default(),
             canopy_bounds: Vec4::ZERO,
             canopy_shading: default(),
             canopy_coverage: None,
@@ -206,9 +190,6 @@ impl TerrainMaterial {
 pub struct TerrainMaterialKey {
     canopy: bool,
     shading: TerrainShadingMode,
-    stochastic_cached: bool,
-    prepared: bool,
-    prepared_albedo: bool,
 }
 
 impl From<&TerrainMaterial> for TerrainMaterialKey {
@@ -216,9 +197,6 @@ impl From<&TerrainMaterial> for TerrainMaterialKey {
         Self {
             shading: material.shading_mode,
             canopy: material.canopy_coverage.is_some(),
-            stochastic_cached: material.stochastic_cached,
-            prepared: material.prepared,
-            prepared_albedo: material.prepared_albedo,
         }
     }
 }
@@ -245,22 +223,6 @@ impl Material for TerrainMaterial {
             && let Some(fragment) = descriptor.fragment.as_mut()
         {
             fragment.shader_defs.push("TERRAIN_CANOPY".into());
-        }
-        if key.bind_group_data.prepared
-            && let Some(fragment) = descriptor.fragment.as_mut()
-        {
-            fragment.shader_defs.push("TERRAIN_PREPARED".into());
-        }
-        if key.bind_group_data.prepared_albedo {
-            if let Some(fragment) = descriptor.fragment.as_mut() {
-                fragment.shader_defs.push("TERRAIN_PREPARED_ALBEDO".into());
-            }
-        } else if key.bind_group_data.stochastic_cached
-            && let Some(fragment) = descriptor.fragment.as_mut()
-        {
-            fragment
-                .shader_defs
-                .push("TERRAIN_STOCHASTIC_CACHED".into());
         }
         let define = match key.bind_group_data.shading {
             TerrainShadingMode::Production => None,

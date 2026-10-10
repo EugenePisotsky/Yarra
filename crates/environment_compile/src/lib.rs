@@ -37,7 +37,7 @@ impl Default for CompileProfile {
         Self {
             terrain_resolution: 65,
             vegetation_resolution: 64,
-            max_surfaces_per_cell: 2,
+            max_surfaces_per_cell: world::MAX_TERRAIN_SURFACES_PER_CELL,
             max_layers: 128,
             max_population_bindings: 256,
             max_fields_per_cell: 64,
@@ -108,12 +108,6 @@ pub enum CompileError {
     },
     #[error("cell coordinate has no representable dependency halo")]
     CoordinateRange,
-    #[error("cell {cell:?} needs {required} surfaces; target supports {maximum}")]
-    SurfaceLimit {
-        cell: CellCoord,
-        required: usize,
-        maximum: usize,
-    },
     #[error("derived population identity collision: {0:?}")]
     BindingCollision(VegetationPopulationId),
     #[error("invalid derived vegetation catalog: {0}")]

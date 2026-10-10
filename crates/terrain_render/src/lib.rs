@@ -5,8 +5,6 @@ pub mod lod;
 mod material;
 pub mod near;
 mod page_material;
-mod prepared;
-mod stochastic_cache;
 // Submodules share these through `use super::*`.
 use bevy::mesh::MeshVertexBufferLayoutRef;
 use bevy::{
@@ -30,13 +28,11 @@ pub(crate) use material::{TerrainCanopyShading, TerrainMaterialUniform};
 pub use material::{
     TerrainMacroVariation, TerrainMaterial, TerrainMaterialKey, TerrainShadingMode,
 };
+pub(crate) use page_material::make_weight_image;
 pub use page_material::{
     PrepareTerrainMaterialContext, PreparedTerrainMaterial, TerrainSurfaceLayer,
     prepare_terrain_material,
 };
-pub(crate) use page_material::{load_repeat_image, make_weight_image};
-pub use prepared::{TerrainPreparedSettings, TerrainPreparedStats};
-pub use stochastic_cache::{TerrainCacheSettings, TerrainCacheStats};
 use world::{CellCoord, TerrainProfile, TerrainSurfaceId, TerrainTextureSet, TerrainWeightPage};
 
 /// A value's bytes in WGSL storage-buffer layout, as `ShaderBuffer::from` encoded it before
@@ -62,8 +58,6 @@ pub struct TerrainRenderPlugin;
 
 impl Plugin for TerrainRenderPlugin {
     fn build(&self, app: &mut App) {
-        stochastic_cache::install(app);
-        prepared::install(app);
         composite::atlas::install(app);
         near::install(app);
         app.init_resource::<TerrainMacroVariation>()

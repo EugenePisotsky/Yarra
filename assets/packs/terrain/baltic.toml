@@ -1,0 +1,174 @@
+# Terrain surfaces of the Baltic coast island: beach and dunes, meadows, pine and mixed
+# forest floors, paths and rock. Each surface is one layer of the texture arrays, in this order.
+#
+# Sources are Megascans surfaces under ~/Dev/Assets/terrain/sources (licensed, local only).
+# `tools/import_terrain_surfaces.py` converts them into assets/local/terrain/baltic/source,
+# `tools/compile_terrain_textures.py --pack baltic` builds the runtime arrays and
+# `tools/prepare_terrain_bake.py --pack baltic` the cooker's inputs.
+#
+# Per surface:
+# - `tile_size`: metres of one texture repetition (the scan's physical size unless noted).
+# - `normal_strength`: 0..1 scale of the tangent normal's slope.
+# - `roughness`: the roughness map is remapped to this range.
+# - `blend_height`: how strongly the surface's height map wins where surfaces overlap.
+#   Stones and needles poke through sand and moss; flat sand or dirt fills the gaps.
+# - `anti_tiling`: stochastic albedo for surfaces whose repetition shows.
+# - `color_match`: optional source whose mean colour and contrast this surface takes, so
+#   variants of one material (flat and rippled sand) agree.
+pack_key = "baltic"
+storage = "local-ignored"
+sources = "~/Dev/Assets/terrain/sources"
+redistribution_license = "Megascans (Fab Standard License); not redistributable"
+texture_size = 1024
+macro_variation = "macro_variation.png"
+
+[[surfaces]]
+key = "beach-sand"
+name = "Beach sand"
+source = "beach_sand_uinladeo_8k"
+tile_size = 4.0
+normal_strength = 0.6
+roughness = [0.55, 1.0]
+blend_height = 0.15
+anti_tiling = false
+
+[[surfaces]]
+key = "dune-sand"
+name = "Dune sand"
+source = "rippled_sand_dune_vd3mbbus_4k"
+color_match = "beach_sand_uinladeo_8k"
+tile_size = 3.0
+normal_strength = 0.8
+roughness = [0.55, 1.0]
+blend_height = 0.25
+anti_tiling = false
+
+[[surfaces]]
+key = "coastal-grass"
+name = "Coastal grass"
+source = "coast_rauk_ground_grass_02_wffqcefbw_4k"
+tile_size = 2.0
+normal_strength = 0.6
+roughness = [0.6, 1.0]
+blend_height = 0.6
+anti_tiling = true
+
+[[surfaces]]
+key = "gravel"
+name = "Gravel"
+source = "coast_rauk_ground_gravel_patchy_01_wffqag3_4k"
+tile_size = 2.0
+normal_strength = 0.9
+roughness = [0.4, 1.0]
+blend_height = 0.9
+anti_tiling = false
+
+[[surfaces]]
+key = "meadow"
+name = "Meadow"
+source = "wild_grass_oeeci0_4k"
+tile_size = 1.5
+normal_strength = 0.45
+roughness = [0.75, 1.0]
+blend_height = 0.5
+anti_tiling = true
+
+[[surfaces]]
+key = "dry-meadow"
+name = "Dry meadow"
+source = "grass_dried_omgqg0_4k"
+tile_size = 1.2
+normal_strength = 0.45
+roughness = [0.8, 1.0]
+blend_height = 0.5
+anti_tiling = true
+
+[[surfaces]]
+key = "forest-moss"
+name = "Forest moss"
+source = "forest_moss_tjjoabyr_4k"
+tile_size = 2.0
+normal_strength = 0.5
+roughness = [0.7, 1.0]
+blend_height = 0.4
+anti_tiling = true
+
+[[surfaces]]
+key = "pine-needles"
+name = "Pine needles"
+source = "pine_forest_floor_wjxsbax_4k"
+tile_size = 2.0
+normal_strength = 0.7
+roughness = [0.6, 1.0]
+blend_height = 0.7
+anti_tiling = true
+
+[[surfaces]]
+key = "forest-floor"
+name = "Forest floor"
+source = "forest_floor_sfjmafua_8k"
+tile_size = 2.0
+normal_strength = 0.6
+roughness = [0.6, 1.0]
+blend_height = 0.5
+anti_tiling = true
+
+[[surfaces]]
+key = "leaf-litter"
+name = "Leaf litter"
+source = "twigs_and_leaves_olsgr0_4k"
+tile_size = 1.4
+normal_strength = 0.7
+roughness = [0.55, 1.0]
+blend_height = 0.7
+anti_tiling = true
+
+[[surfaces]]
+key = "dirt"
+name = "Dirt"
+source = "dirt_ground_xdhhdgd_4k"
+tile_size = 2.0
+normal_strength = 0.7
+roughness = [0.5, 1.0]
+blend_height = 0.2
+anti_tiling = false
+
+[[surfaces]]
+key = "rocky-ground"
+name = "Rocky ground"
+source = "rocky_forest_floor_vl0lecrlw_4k"
+tile_size = 2.5
+normal_strength = 0.9
+roughness = [0.45, 1.0]
+blend_height = 0.9
+anti_tiling = false
+
+[[surfaces]]
+key = "rock"
+name = "Rock"
+source = "mossy_rock_cliff_vmbibbgg_8k"
+tile_size = 10.0
+normal_strength = 1.0
+roughness = [0.4, 1.0]
+blend_height = 1.0
+anti_tiling = false
+
+[[surfaces]]
+key = "lichen-rock"
+name = "Lichen rock"
+source = "lichen_covered_rock_umdjeijew_4k"
+tile_size = 3.0
+normal_strength = 0.9
+roughness = [0.45, 1.0]
+blend_height = 0.9
+anti_tiling = false
+
+[[surfaces]]
+key = "stony-moss"
+name = "Stony moss"
+source = "stony_moss_ground_shslddfa_4k"
+tile_size = 2.0
+normal_strength = 0.8
+roughness = [0.55, 1.0]
+blend_height = 0.7
+anti_tiling = true

@@ -88,7 +88,6 @@ enum Control {
     Grass,
     GrassEnabled,
     Shading,
-    GroundMaterial,
     Shadows,
     ShadowMap,
     Prepass,
@@ -169,14 +168,6 @@ impl Control {
                 format!("Ground: {}", s.terrain_shading().label())
             }
             Self::Shading => format!("Shading: {}", if s.unlit { "unlit" } else { "production" }),
-            Self::GroundMaterial => format!(
-                "Ground material: {}",
-                if s.terrain_prepared {
-                    "prepared"
-                } else {
-                    "reference"
-                }
-            ),
             Self::Shadows => ["PBR shadows: Gaussian", "PBR shadows: 2x2", "Shadows: off"]
                 [s.shadows as usize]
                 .into(),
@@ -341,7 +332,6 @@ fn buttons(
                 };
             }
             Control::Shading => s.unlit = !s.unlit,
-            Control::GroundMaterial => s.terrain_prepared = !s.terrain_prepared,
             Control::Shadows => s.shadows = (s.shadows + 1) % 3,
             Control::ShadowMap => {
                 s.shadow_map = (s.shadow_map + 1) % crate::runtime_settings::SHADOW_MAP_SIZES.len()
@@ -530,7 +520,6 @@ mod tests {
                 .init_resource::<engine::StreamingStats>()
                 .init_resource::<VegetationWind>()
                 .init_resource::<vegetation_render::VegetationDiagnostics>()
-                .init_resource::<terrain_render::TerrainPreparedSettings>()
                 .init_resource::<terrain_render::TerrainMacroVariation>()
                 .init_resource::<Assets<terrain_render::TerrainMaterial>>()
                 .init_resource::<Assets<terrain_render::composite::TerrainCompositeMaterial>>()

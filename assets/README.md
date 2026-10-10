@@ -55,14 +55,16 @@ assets/local/yarra_trees/
   runtime/forest_b/forest_b_lod{0,1,2,3}.{gltf,bin}
 ```
 
-The terrain pack follows the same local-only rule:
+Terrain packs follow the same local-only rule. `assets/packs/terrain/baltic.toml` tracks the
+surfaces, their Megascans sources under `~/Dev/Assets/terrain/sources` and their parameters;
+`assets/packs/terrain/bake.ron` names the cooker's inputs:
 
 ```text
-assets/local/terrain/temperate_meadow/
-  source/uncut_grass_oilpt20/{base_color.jpg,normal_material.png}
-  source/grass_dried_pjwhw0/{base_color.jpg,normal_material.png}
-  source/macro_variation.png
+assets/local/terrain/baltic/
+  source/<surface>/{base_color.png,normal_material.png}   # tools/import_terrain_surfaces.py
+  source/macro_variation.png, source/import-report.json
   runtime/{universal,astc}/{base_color_array,normal_material_array,macro_variation}.ktx2
+  runtime/material-inputs.terrain-bake                    # tools/prepare_terrain_bake.py
 ```
 
 The first character presentation is also restored from the legacy project into
@@ -83,16 +85,10 @@ presentation profiles. It may reference ignored local assets, but it never
 changes their licensing or redistribution policy. See the
 [character runtime contract](../docs/ARCHITECTURE.md#characters-and-editor-lifecycle).
 
-After restoring the five source images from the legacy repository, compile the
-portable UASTC and native iOS ASTC variants with:
-
-```bash
-python3 tools/compile_terrain_textures.py
-```
-
-Layer order and source hashes are tracked in
-`assets/packs/terrain/temperate_meadow.toml`. The SQLite terrain catalog refers
-to these runtime URIs; source images and compiled KTX2 files remain ignored.
+Build the KTX2 arrays (portable UASTC and native iOS ASTC) with
+`uv run python tools/compile_terrain_textures.py`; see
+[Terrain surfaces](../docs/WORKFLOWS.md#terrain-surfaces). The SQLite terrain catalog refers to
+these runtime URIs; source images and compiled KTX2 files remain ignored.
 
 ## Houdini trees
 

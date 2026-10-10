@@ -492,24 +492,6 @@ const FLAGS: &[Flag] = &[
         GrassReference,
         "Blade preparation capacity",
     ),
-    flag(
-        "--terrain-reference",
-        "",
-        Reference,
-        "Use reference terrain material preparation",
-    ),
-    flag(
-        "--terrain-procedural",
-        "",
-        Reference,
-        "Disable the stochastic lookup cache",
-    ),
-    flag(
-        "--terrain-prepared-universal",
-        "",
-        Reference,
-        "Prefer portable prepared textures over native ASTC",
-    ),
     flag("--terrain-near-off", "", Reference, "Disable hierarchy near detail"),
     flag(
         "--msaa-store-reference",

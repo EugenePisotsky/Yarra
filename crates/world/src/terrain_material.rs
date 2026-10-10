@@ -13,6 +13,50 @@ pub const TERRAIN_HOLLOW_DEPTH_METRES: f32 = 0.15;
 /// Radius of the surrounding ground that hollowness compares against.
 pub const TERRAIN_HOLLOW_RADIUS_METRES: f32 = 1.5;
 
+/// Overlapping surfaces blend by height. Each surface's base colour alpha is its blend height,
+/// 0 to 1 (the import scales the height map by the surface's `blend_height`), so stones and
+/// needles rise through sand and moss instead of cross-fading with them. A surface's score is
+/// its share of the ground weights plus this multiple of its height.
+/// `shaders/terrain_blend.wesl` mirrors these values and [`terrain_height_blend`].
+pub const TERRAIN_BLEND_HEIGHT: f32 = 0.5;
+/// Score range below the highest surface that still shows; narrower is crisper.
+pub const TERRAIN_BLEND_DEPTH: f32 = 0.12;
+/// Surfaces shaded at one point: the largest ground weights, as the GPU evaluates them.
+pub const TERRAIN_BLEND_SURFACES: usize = 3;
+
+/// Indices and weights of the [`TERRAIN_BLEND_SURFACES`] largest `weights`, largest first.
+/// Ties keep the lower index; unused entries have zero weight.
+pub fn terrain_blend_candidates(weights: &[f32]) -> [(usize, f32); TERRAIN_BLEND_SURFACES] {
+    let mut best = [(0, 0.0_f32); TERRAIN_BLEND_SURFACES];
+    for (index, &weight) in weights.iter().enumerate() {
+        if let Some(rank) = best.iter().position(|&(_, w)| weight > w) {
+            best.copy_within(rank..TERRAIN_BLEND_SURFACES - 1, rank + 1);
+            best[rank] = (index, weight);
+        }
+    }
+    best
+}
+
+/// Blend weights of surfaces with ground weights `weights` (any positive scale) and blend
+/// heights `heights`. Zero-weight surfaces stay zero; the result sums to one.
+pub fn terrain_height_blend<const N: usize>(weights: [f32; N], heights: [f32; N]) -> [f32; N] {
+    let sum: f32 = weights.iter().sum();
+    if sum <= 0.0 {
+        return weights;
+    }
+    let scores: [f32; N] = std::array::from_fn(|i| {
+        if weights[i] > 0.0 {
+            weights[i] / sum + heights[i] * TERRAIN_BLEND_HEIGHT
+        } else {
+            f32::NEG_INFINITY
+        }
+    });
+    let top = scores.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    let raw: [f32; N] = std::array::from_fn(|i| (scores[i] - top + TERRAIN_BLEND_DEPTH).max(0.0));
+    let total: f32 = raw.iter().sum();
+    raw.map(|v| v / total)
+}
+
 /// The grid matches terrain addressing, but this key never selects geometry detail.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct TerrainMaterialKey(pub TerrainNodeKey);
@@ -114,5 +158,33 @@ mod tests {
         let v1 =
             bincode::serde::encode_to_vec((1_u16, &tile), bincode::config::standard()).unwrap();
         assert!(decode_terrain_composite(&v1).is_err());
+    }
+
+    #[test]
+    fn blend_candidates_are_the_largest_weights_with_stable_ties() {
+        assert_eq!(
+            terrain_blend_candidates(&[0.1, 0.4, 0.0, 0.4, 0.1]),
+            [(1, 0.4), (3, 0.4), (0, 0.1)]
+        );
+        assert_eq!(
+            terrain_blend_candidates(&[1.0]),
+            [(0, 1.0), (0, 0.0), (0, 0.0)]
+        );
+    }
+
+    #[test]
+    fn taller_surfaces_rise_through_lower_ones() {
+        // Equal heights blend only near equal weights; the larger weight otherwise wins.
+        assert_eq!(terrain_height_blend([0.8, 0.2], [0.5, 0.5]), [1.0, 0.0]);
+        let even = terrain_height_blend([0.5, 0.5], [0.5, 0.5]);
+        assert!((even[0] - 0.5).abs() < 1e-6);
+        // A stone top (height 1) dominates where it covers only 30% (sand height 0.1).
+        let stone = terrain_height_blend([0.7, 0.3], [0.1, 1.0]);
+        assert!(stone[1] > 0.6, "{stone:?}");
+        // ...but a trace of it does not.
+        assert_eq!(terrain_height_blend([0.95, 0.05], [0.1, 1.0])[1], 0.0);
+        // Absent surfaces stay absent whatever their height.
+        assert_eq!(terrain_height_blend([1.0, 0.0], [0.0, 1.0]), [1.0, 0.0]);
+        assert_eq!(terrain_height_blend([0.0, 0.0], [0.0, 1.0]), [0.0, 0.0]);
     }
 }

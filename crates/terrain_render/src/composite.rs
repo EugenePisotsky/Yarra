@@ -63,8 +63,6 @@ pub struct TerrainCompositeMaterial {
     near_normal: Option<Handle<Image>>,
     #[texture(14)]
     near_macro: Option<Handle<Image>>,
-    #[texture(16, dimension = "2d_array")]
-    near_prepared: Option<Handle<Image>>,
 }
 
 impl Default for TerrainCompositeMaterial {
@@ -91,7 +89,6 @@ impl Default for TerrainCompositeMaterial {
             near_base: None,
             near_normal: None,
             near_macro: None,
-            near_prepared: None,
         }
     }
 }
@@ -171,7 +168,6 @@ impl TerrainCompositeMaterial {
         self.near_base = None;
         self.near_normal = None;
         self.near_macro = None;
-        self.near_prepared = None;
         self.near_settings = Vec4::ZERO;
     }
     pub(crate) fn has_near(&self, atlas: &crate::near::gpu::NearAtlas) -> bool {
@@ -184,8 +180,12 @@ impl TerrainCompositeMaterial {
         self.near_base = Some(atlas.pack.base.clone());
         self.near_normal = Some(atlas.pack.normal.clone());
         self.near_macro = Some(atlas.pack.macro_image.clone());
-        self.near_prepared = atlas.pack.prepared.clone();
-        self.near_settings = Vec4::new(crate::near::NEAR_START, crate::near::NEAR_END, 1., 0.);
+        self.near_settings = Vec4::new(
+            crate::near::NEAR_START,
+            crate::near::NEAR_END,
+            1.,
+            crate::near::WEIGHT_SIDE as f32,
+        );
     }
 
     pub fn set_detail_atlas(&mut self, atlas: &atlas::DetailAtlas) {

@@ -6,7 +6,9 @@ use std::{
 };
 use world::TerrainTextureSet;
 
-const MAX_INPUT_BYTES: u64 = 4 * 1024 * 1024;
+const MAX_INPUT_BYTES: u64 = 8 * 1024 * 1024;
+/// Texture array layers one input may describe.
+const MAX_LAYERS: usize = 32;
 const MAX_LIBRARY_BYTES: usize = 16 * 1024 * 1024;
 const SIZE: usize = 128;
 const CHAIN_BYTES: usize = 21845 * 4;
@@ -98,25 +100,26 @@ impl TerrainBakeLibrary {
         }
         Ok(inputs)
     }
+    /// Sixteen layers alternating two contrasting surfaces: even layers green, odd brown, at
+    /// equal blend heights.
     #[cfg(test)]
     pub(super) fn fixture(set: &TerrainTextureSet) -> Self {
+        const LAYERS: usize = 16;
         let mut entries = BTreeMap::new();
         let mut bytes = b"YTRBAKE\0".to_vec();
-        for n in [1_u32, 128, 2] {
+        for n in [2_u32, 128, LAYERS as u32] {
             bytes.extend(n.to_le_bytes());
         }
-        bytes.extend(4_f32.to_le_bytes());
+        bytes.extend(0_f32.to_le_bytes());
         bytes.extend([0; 32]);
-        // Contrasting known linear-light means; BA supplies AO/roughness data.
-        for rgba in [
-            [40, 130, 25, 255],
-            [180, 120, 70, 255],
-            [40, 130, 25, 255],
-            [180, 120, 70, 255],
-            [128, 128, 255, 100],
-            [128, 128, 200, 200],
-            [128, 128, 128, 255],
-        ] {
+        // Known linear-light means; BA supplies AO/roughness data; the macro field is neutral.
+        let base = [[40, 130, 25, 255], [180, 120, 70, 255]];
+        let material = [[128, 128, 255, 100], [128, 128, 200, 200]];
+        let chains = (0..LAYERS)
+            .map(|l| base[l % 2])
+            .chain((0..LAYERS).map(|l| material[l % 2]))
+            .chain([[128, 128, 128, 255]]);
+        for rgba in chains {
             for _ in 0..CHAIN_BYTES / 4 {
                 bytes.extend(rgba);
             }
@@ -146,10 +149,11 @@ fn read_limited(path: &Path, limit: u64) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
+/// 128-pixel mip chains of a texture set's surfaces, in array-layer order: base colours (each
+/// surface's blend height in alpha), normal/material images, then the macro variation.
 pub(super) struct Inputs {
     data: Vec<u8>,
     pub layers: usize,
-    pub period: f64,
     pub hash: [u8; 32],
 }
 impl Inputs {
@@ -159,28 +163,34 @@ impl Inputs {
         }
         let number = |i| u32::from_le_bytes(data[i..i + 4].try_into().unwrap());
         let layers = number(16) as usize;
-        let period = f32::from_bits(number(20)) as f64;
-        if number(8) != 1
-            || number(12) != SIZE as u32
-            || !(1..=8).contains(&layers)
-            || !period.is_finite()
-            || !(2.0..=16.0).contains(&period)
-            || data.len() != 56 + (layers * 3 + 1) * CHAIN_BYTES
+        if number(8) != 2 {
+            bail!("terrain bake input version; rebuild it with tools/prepare_terrain_bake.py");
+        }
+        if number(12) != SIZE as u32
+            || !(1..=MAX_LAYERS).contains(&layers)
+            || data.len() != 56 + (layers * 2 + 1) * CHAIN_BYTES
         {
-            bail!("terrain bake input dimensions/version/period");
+            bail!("terrain bake input dimensions");
         }
         let hash = *blake3::hash(&data).as_bytes();
-        Ok(Self {
-            data,
-            layers,
-            period,
-            hash,
-        })
+        Ok(Self { data, layers, hash })
+    }
+    fn chains(&self) -> usize {
+        (self.data.len() - 56) / CHAIN_BYTES
+    }
+    pub fn base_color(&self, layer: usize) -> usize {
+        layer
+    }
+    pub fn normal_material(&self, layer: usize) -> usize {
+        self.chains() - 1 - self.layers + layer
+    }
+    pub fn macro_variation(&self) -> usize {
+        self.chains() - 1
     }
     /// Repeat + bilinear + trilinear, matching source mip semantics. Coordinates
     /// remain f64 until wrapping; rebasing can never change the baked pattern.
     pub fn sample(&self, texture: usize, uv: [f64; 2], footprint: f64, color: bool) -> [f32; 4] {
-        assert!(texture < self.layers * 3 + 1);
+        assert!(texture < self.chains());
         let lod = (footprint * SIZE as f64).max(1.).log2().clamp(0., 7.);
         let a = lod.floor() as usize;
         let b = (a + 1).min(7);

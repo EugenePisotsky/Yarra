@@ -13,7 +13,7 @@ use vegetation_render::{
 };
 
 /// Launch options applied once to the resources they configure, before [`RuntimeSettingsPlugin`]
-/// reads them. Settings F1 also changes (prepared terrain, counters) are written by
+/// reads them. Settings F1 also changes (counters) are written by
 /// [`apply_settings`] alone.
 pub(crate) fn apply_launch_options(app: &mut App) -> Result<(), String> {
     let options = app.world().resource::<LaunchOptions>().clone();
@@ -38,16 +38,6 @@ pub(crate) fn apply_launch_options(app: &mut App) -> Result<(), String> {
     if options.vertex_reference {
         world
             .resource_mut::<vegetation_render::VegetationBladePreparation>()
-            .enabled = false;
-    }
-    if options.terrain_universal {
-        world
-            .resource_mut::<terrain_render::TerrainPreparedSettings>()
-            .prefer_native_astc = false;
-    }
-    if options.terrain_procedural {
-        world
-            .resource_mut::<terrain_render::TerrainCacheSettings>()
             .enabled = false;
     }
     app.insert_resource(options.clouds);
@@ -79,7 +69,6 @@ impl Plugin for RuntimeSettingsPlugin {
         let options = app.world().resource::<LaunchOptions>();
         let settings = RuntimeSettings {
             terrain_near_disabled: options.terrain_near_off,
-            terrain_prepared: !options.terrain_reference,
             upscaler: options.upscaler,
             counters: options.counters,
             gpu_pass_timings: options.gpu_detail,
@@ -177,7 +166,6 @@ pub(crate) struct RuntimeSettings {
     pub(crate) unlit: bool,
     pub(crate) ground_shading: TerrainShadingMode,
     pub(crate) terrain_near_disabled: bool,
-    pub(crate) terrain_prepared: bool,
     pub(crate) shadows: u8,
     /// Index into `SHADOW_MAP_SIZES`.
     pub(crate) shadow_map: usize,
@@ -226,7 +214,6 @@ impl Default for RuntimeSettings {
             unlit: false,
             ground_shading: TerrainShadingMode::Production,
             terrain_near_disabled: false,
-            terrain_prepared: true,
             shadows: 0,
             shadow_map: 0,
             prepass: false,
@@ -336,7 +323,6 @@ fn apply_settings(
     camera: Single<Entity, With<WorldViewCamera>>,
     mut grass: ResMut<VegetationSettings>,
     mut wind: ResMut<VegetationWind>,
-    mut prepared: ResMut<terrain_render::TerrainPreparedSettings>,
     mut clouds: ResMut<engine::CloudQuality>,
     mut atmosphere: ResMut<engine::AtmospherePresentation>,
     mut lod: ResMut<terrain_render::lod::LodSettings>,
@@ -371,7 +357,6 @@ fn apply_settings(
     };
     grass.gpu_counters_enabled = s.counters;
     wind.enabled = s.wind;
-    prepared.enabled = s.terrain_prepared;
     atmosphere.shadows = s.shadows != 2;
     commands.entity(*camera).insert(if s.shadows == 1 {
         ShadowFilteringMethod::Hardware2x2

@@ -38,12 +38,13 @@ impl<'a> LeafPlan<'a> {
         inputs: &Inputs,
     ) -> Result<Self> {
         page.heightfield.validate()?;
+        let count = page.surfaces.len();
         if key.0.level != 0
-            || !(1..=2).contains(&page.surfaces.len())
+            || !(1..=MAX_TERRAIN_SURFACES_PER_CELL).contains(&count)
             || !size.is_finite()
             || size <= 0.
         {
-            bail!("composite baker supports one or two surfaces on valid leaf terrain");
+            bail!("composite baker supports one to eight surfaces on valid leaf terrain");
         }
         let surfaces = page
             .surfaces
@@ -56,21 +57,24 @@ impl<'a> LeafPlan<'a> {
                     .context("missing composite surface")
             })
             .collect::<Result<Vec<_>>>()?;
-        let blended = surfaces.len() == 2;
         if surfaces.iter().any(|s| s.layer as usize >= inputs.layers) {
             bail!("composite surface array layer out of range");
         }
-        if blended
-            && (page.weight_pages.len() != 1
-                || page.weight_pages[0].resolution < 2
-                || page.weight_pages[0].rgba.len()
-                    != (page.weight_pages[0].resolution as usize).pow(2) * 4)
+        let resolution = page.weight_pages.first().map(|w| w.resolution);
+        if count > 1
+            && (page.weight_pages.len() != count.div_ceil(4)
+                || page.weight_pages.iter().any(|w| {
+                    Some(w.resolution) != resolution
+                        || w.resolution < 2
+                        || w.rgba.len() != (w.resolution as usize).pow(2) * 4
+                }))
         {
             bail!("invalid composite ground weights");
         }
         let profile = &resources.profile;
         let mut hash = blake3::Hasher::new();
-        hash.update(b"terrain-composite-leaf-v2");
+        // v3: up to eight surfaces, height-blended three at a time.
+        hash.update(b"terrain-composite-leaf-v3");
         hash.update(&inputs.hash);
         hash.update(&bincode::serde::encode_to_vec(
             (
@@ -123,10 +127,7 @@ impl<'a> LeafPlan<'a> {
             ..
         } = *self;
         let surfaces = &self.surfaces;
-        let blended = surfaces.len() == 2;
-        // Prepared albedo is selected for both slots only when both opt into it,
-        // matching TerrainMaterial's production prepared path.
-        let prepared = surfaces.iter().all(|s| s.surface.anti_tiling);
+        let count = surfaces.len();
         let footprint = size as f64 / N as f64;
         let mut pixels = Vec::with_capacity(N * N);
         for y in 0..N {
@@ -142,11 +143,12 @@ impl<'a> LeafPlan<'a> {
                         (key.0.x as f64 + uv[0]) * size as f64,
                         (key.0.z as f64 + uv[1]) * size as f64,
                     ];
-                    let blend = if blended {
-                        weights(&page.weight_pages[0], uv)
+                    let mut ground = [0.; MAX_TERRAIN_SURFACES_PER_CELL];
+                    if count == 1 {
+                        ground[0] = 1.;
                     } else {
-                        [1., 0.]
-                    };
+                        weights(&page.weight_pages, uv, &mut ground[..count]);
+                    }
                     let local = [uv[0] as f32 * size, uv[1] as f32 * size];
                     let mut p = Pixel {
                         normal: page.heightfield.sample(local, size).normal,
@@ -154,34 +156,44 @@ impl<'a> LeafPlan<'a> {
                         valid: true,
                         ..Default::default()
                     };
-                    for (i, s) in surfaces.iter().enumerate() {
-                        let tile = s.surface.tile_size.max(0.001) as f64;
-                        let layer = s.layer as usize;
-                        let u = world.map(|x| x / tile);
-                        let color = if prepared {
-                            inputs.sample(
-                                inputs.layers + layer,
-                                [
-                                    (u[0] + u[1] * 0.5773502692) / inputs.period,
-                                    u[1] * 1.1547005384 / inputs.period,
-                                ],
-                                footprint / tile * 1.1547005384 / inputs.period,
-                                true,
-                            )
-                        } else if s.surface.anti_tiling {
-                            stochastic(inputs, layer, u, footprint / tile)
-                        } else {
-                            inputs.sample(layer, u, footprint / tile, true)
-                        };
-                        let material =
-                            inputs.sample(inputs.layers * 2 + layer, u, footprint / tile, false);
+                    // The three largest weights, blended by surface height as the GPU does.
+                    let candidates = terrain_blend_candidates(&ground[..count]);
+                    let shaded = candidates.map(|(i, weight)| {
+                        (weight > 0.).then(|| {
+                            let s = surfaces[i];
+                            let tile = s.surface.tile_size.max(0.001) as f64;
+                            let layer = s.layer as usize;
+                            let u = world.map(|x| x / tile);
+                            let color = if s.surface.anti_tiling {
+                                stochastic(inputs, layer, u, footprint / tile)
+                            } else {
+                                inputs.sample(inputs.base_color(layer), u, footprint / tile, true)
+                            };
+                            let material = inputs.sample(
+                                inputs.normal_material(layer),
+                                u,
+                                footprint / tile,
+                                false,
+                            );
+                            (s, color, material)
+                        })
+                    });
+                    let blend = terrain_height_blend(
+                        candidates.map(|c| c.1),
+                        shaded.map(|s| s.map_or(0., |(_, color, _)| color[3])),
+                    );
+                    for ((s, color, material), weight) in shaded
+                        .into_iter()
+                        .zip(blend)
+                        .filter_map(|(s, w)| Some((s?, w)))
+                    {
                         for (channel, value) in p.color.iter_mut().zip(color) {
-                            *channel += value * blend[i];
+                            *channel += value * weight;
                         }
-                        p.ao += material[2] * blend[i];
+                        p.ao += material[2] * weight;
                         p.roughness += (s.surface.roughness_min
                             + (s.surface.roughness_max - s.surface.roughness_min) * material[3])
-                            * blend[i];
+                            * weight;
                     }
                     let transforms = [
                         world,
@@ -200,7 +212,7 @@ impl<'a> LeafPlan<'a> {
                     for i in 0..3 {
                         let scale = profile.macro_scales[i].max(0.001) as f64;
                         let v = inputs.sample(
-                            inputs.layers * 3,
+                            inputs.macro_variation(),
                             [
                                 transforms[i][0] / scale + offsets[i][0],
                                 transforms[i][1] / scale + offsets[i][1],
@@ -260,24 +272,26 @@ fn hollow_rings() -> &'static [[f32; 2]; 18] {
     })
 }
 
-fn weights(map: &TerrainWeightPage, uv: [f64; 2]) -> [f32; 2] {
-    let n = map.resolution as usize;
+/// Bilinear ground weights of the page's surfaces at `uv`, four per RGBA page, normalised.
+fn weights(pages: &[TerrainWeightPage], uv: [f64; 2], result: &mut [f32]) {
+    let n = pages[0].resolution as usize;
     let p = uv.map(|x| x * (n - 1) as f64);
     let a = p.map(|x| x.floor() as usize);
     let f = [p[0] - a[0] as f64, p[1] - a[1] as f64];
-    let mut result = [0.; 2];
     for y in 0..2 {
         for x in 0..2 {
             let i = ((a[1] + y).min(n - 1) * n + (a[0] + x).min(n - 1)) * 4;
             let w = ((if x == 0 { 1. - f[0] } else { f[0] })
                 * (if y == 0 { 1. - f[1] } else { f[1] })) as f32;
-            for (c, value) in result.iter_mut().enumerate() {
-                *value += map.rgba[i + c] as f32 / 255. * w;
+            for (surface, value) in result.iter_mut().enumerate() {
+                *value += pages[surface / 4].rgba[i + surface % 4] as f32 / 255. * w;
             }
         }
     }
-    let sum = (result[0] + result[1]).max(0.000001);
-    result.map(|x| x / sum)
+    let sum = result.iter().sum::<f32>().max(0.000001);
+    for value in result {
+        *value /= sum;
+    }
 }
 
 // Reference stochastic path for a mixed plain/anti-tiling page; the usual all-
@@ -325,7 +339,7 @@ fn stochastic(inputs: &Inputs, layer: usize, uv: [f64; 2], footprint: f64) -> [f
             hash_2d([v[0] + 5., v[1] + 29.]) * 31.,
         ];
         let color = inputs.sample(
-            layer,
+            inputs.base_color(layer),
             [rotated[0] + offset[0] as f64, rotated[1] + offset[1] as f64],
             footprint,
             true,

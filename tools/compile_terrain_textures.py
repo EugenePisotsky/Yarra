@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Compile the local two-surface terrain pack into mipmapped KTX2 assets."""
+"""Compile a terrain pack's surfaces into mipmapped KTX2 texture arrays.
+
+`assets/packs/terrain/<pack>.toml` lists the surfaces in array order; their sources are the
+`base_color.png` (sRGB albedo, height in alpha) and `normal_material.png` images written by
+`tools/import_terrain_surfaces.py`. Outputs go to `assets/local/terrain/<pack>/runtime`.
+"""
 
 from __future__ import annotations
 
@@ -10,11 +15,11 @@ import os
 import shutil
 import struct
 import subprocess
+import tomllib
 from pathlib import Path
 
 
 KTX_VERSION = "4.4.2"
-SURFACES = ("uncut_grass_oilpt20", "grass_dried_pjwhw0")
 ASTC_BLOCK_EXTENTS = {
     vk_format: extent
     for index, extent in enumerate(
@@ -107,52 +112,66 @@ def compile_image(
     }
 
 
+def load_pack(repository: Path, pack: str) -> dict:
+    return tomllib.loads((repository / f"assets/packs/terrain/{pack}.toml").read_text())
+
+
+def pack_sources(repository: Path, pack: str) -> tuple[Path, list[Path], list[Path], Path]:
+    """The pack's local root, then its base colour and normal/material sources in array
+    order, then its macro variation."""
+    manifest = load_pack(repository, pack)
+    root = repository / "assets/local/terrain" / pack
+    keys = [surface["key"] for surface in manifest["surfaces"]]
+    return (
+        root,
+        [root / "source" / key / "base_color.png" for key in keys],
+        [root / "source" / key / "normal_material.png" for key in keys],
+        root / "source" / manifest["macro_variation"],
+    )
+
+
+def gpu_bytes(size: int, layers: int, bytes_per_texel: float) -> int:
+    texels = 0
+    while size >= 1:
+        texels += size * size
+        size //= 2
+    return int(texels * layers * bytes_per_texel)
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--pack", default="baltic")
     parser.add_argument("--ktx")
     parser.add_argument("--repository", type=Path)
     args = parser.parse_args()
     repository = (args.repository or Path(__file__).resolve().parents[1]).resolve()
     ktx = find_ktx(repository, args.ktx)
-    root = repository / "assets/local/terrain/temperate_meadow"
-    source = root / "source"
+    root, colors, normals, macro = pack_sources(repository, args.pack)
+    size = int(load_pack(repository, args.pack)["texture_size"])
     records: list[dict[str, object]] = []
     for family in ("universal", "astc"):
         output = root / "runtime" / family
-        records.append(
-            compile_image(
-                ktx,
-                [source / surface / "base_color.jpg" for surface in SURFACES],
-                output / "base_color_array.ktx2",
-                family,
-                "color",
-                1024,
-            )
-        )
-        records.append(
-            compile_image(
-                ktx,
-                [source / surface / "normal_material.png" for surface in SURFACES],
-                output / "normal_material_array.ktx2",
-                family,
-                "normal-material",
-                1024,
-            )
-        )
-        records.append(
-            compile_image(
-                ktx,
-                [source / "macro_variation.png"],
-                output / "macro_variation.ktx2",
-                family,
-                "data",
-                1024,
-            )
-        )
-    report = root / "runtime/build-report.json"
-    report.parent.mkdir(parents=True, exist_ok=True)
-    report.write_text(json.dumps(records, indent=2) + "\n", encoding="utf-8")
-    print(report)
+        records.append(compile_image(ktx, colors, output / "base_color_array.ktx2", family, "color", size))
+        records.append(compile_image(ktx, normals, output / "normal_material_array.ktx2", family, "normal-material", size))
+        records.append(compile_image(ktx, [macro], output / "macro_variation.ktx2", family, "data", 1024))
+    layers = len(colors)
+    report = {
+        "pack": args.pack,
+        "layers": layers,
+        "texture_size": size,
+        # Resident bytes after transcoding: UASTC becomes BC7 on desktop (1 byte per texel);
+        # iOS keeps ASTC 8x8 colour/data (0.125) and 4x4 normal/material (1).
+        "gpu_bytes": {
+            "universal": gpu_bytes(size, layers * 2, 1.0) + gpu_bytes(1024, 1, 1.0),
+            "astc": gpu_bytes(size, layers, 0.125) + gpu_bytes(size, layers, 1.0)
+            + gpu_bytes(1024, 1, 0.125),
+        },
+        "outputs": records,
+    }
+    path = root / "runtime/build-report.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    print(path)
     return 0
 
 

@@ -334,10 +334,11 @@ fn routes_suppress_only_the_named_channel_and_material_budget_still_applies() {
         },
     )
     .unwrap();
-    assert!(matches!(
-        narrow.compile_cells_with_roads(&CELLS, &c, &r, Default::default()),
-        Err(CompileError::SurfaceLimit { .. })
-    ));
+    // Past the budget a cell keeps its heaviest surfaces, so the road still compiles.
+    let cells = narrow
+        .compile_cells_with_roads(&CELLS, &c, &r, Default::default())
+        .unwrap();
+    assert!(cells.iter().all(|c| c.ground.surfaces.len() == 1));
 }
 #[test]
 fn detail_below_output_resolution_is_rejected_instead_of_losing_wheel_tracks() {
