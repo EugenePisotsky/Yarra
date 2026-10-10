@@ -2,8 +2,8 @@
 // shader computes them itself for blades the bounded arena could not hold.
 import package::shaders::vegetation::types::{
     ProceduralInstance, Species, Camera, Config, PI, DENSITY_MODE_BALANCED,
-    DENSITY_MODE_FULL_REFERENCE, LOD_MORPH_MASK, LOD_MORPH_SHIFT, BALANCED_DENSITY_FADE_BAND,
-    SPLIT_LOW_DENSITY_BUDGET_SCALE,
+    DENSITY_MODE_FULL_REFERENCE, LOD_MORPH_MASK, LOD_MORPH_SHIFT, SPLIT_TOPOLOGY_BIT,
+    BALANCED_DENSITY_FADE_BAND, SPLIT_LOW_DENSITY_BUDGET_SCALE,
 };
 import package::shaders::vegetation::random::{hash32, random01};
 import package::shaders::vegetation::lod::near_field_coverage;
@@ -379,14 +379,11 @@ fn prepare_blade(
         height_exponent,
     );
     var height = mix(profile.bounds.x, profile.bounds.y, height_coordinate);
-    // One blade, a folded ribbon pair or a broad leaf. Keep the pair decision beside the height it
-    // compares: moved into a function, the compiler evaluated that height differently and blades at
-    // the threshold changed topology (generation classifies the same height into the blade's bin).
+    // One blade, a folded ribbon pair or a broad leaf. Placement compared the height with the pair
+    // threshold once and binned the root; the bin's index template and preparation hold that many
+    // blades. Repeating the float comparison here could round the other way at the threshold.
     let is_broad_leaf = profile.root_color.w >= 1.5;
-    var blade_count = clamp(u32(profile.topology.z + 0.5), 1u, 2u);
-    if (!is_broad_leaf && profile.height_packing.y > 0.0) {
-        blade_count = select(1u, 2u, height <= profile.height_packing.y);
-    }
+    let blade_count = select(1u, 2u, (instance.geometry.y & SPLIT_TOPOLOGY_BIT) != 0u);
     let paired_main = !is_broad_leaf && blade_count > 1u && blade_index == 0u;
     let paired_companion = !is_broad_leaf && blade_count > 1u && blade_index != 0u;
     let sections = section_counts(

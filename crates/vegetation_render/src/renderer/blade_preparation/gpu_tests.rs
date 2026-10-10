@@ -4,8 +4,8 @@ use crate::renderer::{
     buffers::{VegetationBuffers, create_draw_bind_group},
     candidate_cache,
     gpu_types::{
-        DRAW_ARGS_SIZE, PROCEDURAL_INSTANCE_CAPACITY, ProceduralInstanceGpu, SpeciesChoiceGpu,
-        SpeciesGpu, WorkItemGpu,
+        DRAW_ARGS_SIZE, PROCEDURAL_INSTANCE_CAPACITY, ProceduralInstanceGpu, SPECIES_INDEX_MASK,
+        SPLIT_TOPOLOGY_BIT, SpeciesChoiceGpu, SpeciesGpu, WorkItemGpu,
     },
     packing::{pack_scene, pack_species},
     pipelines::VegetationPipelines,
@@ -396,13 +396,17 @@ fn settled_pixels(app: &mut App) -> Vec<u8> {
 }
 
 fn replace_arena(app: &mut App, blades: u64) {
+    install_arena(app, blades, BufferUsages::STORAGE);
+}
+
+fn install_arena(app: &mut App, blades: u64, usage: BufferUsages) {
     app.sub_app_mut(RenderApp).world_mut().resource_scope(
         |world, mut preparation: Mut<BladePreparation>| {
             let device = world.resource::<RenderDevice>();
             preparation.arena = device.create_buffer(&BufferDescriptor {
                 label: Some("test bounded overflow"),
                 size: PROCEDURAL_INSTANCE_CAPACITY as u64 * 4 + blades * BLADE_BYTES,
-                usage: BufferUsages::STORAGE,
+                usage,
                 mapped_at_creation: false,
             });
             preparation.bind_groups.clear();
@@ -830,7 +834,7 @@ fn paired_lod_boundary_matches_rendered_shape_and_lighting() {
                         ],
                         geometry: [
                             32_767,
-                            if low { 1 << 31 } else { 0 },
+                            SPLIT_TOPOLOGY_BIT | if low { 1 << 31 } else { 0 },
                             0,
                             (12_345 + i * 37) | (density << 24),
                         ],
@@ -1220,4 +1224,173 @@ fn read_temporal_texture(
         .to_vec();
     buffer.unmap();
     bytes
+}
+
+/// Copies whole GPU buffers back to the CPU.
+fn read_buffers(app: &App, sources: &[&bevy::render::render_resource::Buffer]) -> Vec<Vec<u8>> {
+    use bevy::render::render_resource::{CommandEncoderDescriptor, PollType};
+    let world = app.sub_app(RenderApp).world();
+    let device = world.resource::<RenderDevice>();
+    let queue = world.resource::<RenderQueue>();
+    let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor::default());
+    let readbacks = sources
+        .iter()
+        .map(|source| {
+            let readback = device.create_buffer(&BufferDescriptor {
+                label: Some("test readback"),
+                size: source.size(),
+                usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            encoder.copy_buffer_to_buffer(source, 0, &readback, 0, source.size());
+            readback
+        })
+        .collect::<Vec<_>>();
+    queue.submit([encoder.finish()]);
+    readbacks
+        .iter()
+        .map(|readback| {
+            let (sender, receiver) = std::sync::mpsc::channel();
+            readback
+                .slice(..)
+                .map_async(MapMode::Read, move |result| sender.send(result).unwrap());
+            device.poll(PollType::wait_indefinitely()).unwrap();
+            receiver.recv().unwrap().unwrap();
+            let bytes = readback
+                .slice(..)
+                .get_mapped_range()
+                .expect("readback is mapped")
+                .to_vec();
+            readback.unmap();
+            bytes
+        })
+        .collect()
+}
+
+#[test]
+#[ignore = "requires a native GPU; run when changing topology classification"]
+fn prepared_blades_take_the_form_of_their_placement_bin() {
+    // Ribbon heights within a few hundred ulps of each species' pair threshold. Placement bins
+    // every root by that comparison; the bin fixes the index template and how many blades are
+    // prepared, so the prepared blade must have the same form (paired below, single above).
+    let mut scene = vegetation::fixtures::reference_scene();
+    for species in &mut scene.catalog.species {
+        let threshold = species.height.pair_below_height;
+        if threshold > 0.0 {
+            species.bounds.minimum_height = threshold * (1.0 - 2e-5);
+            species.bounds.maximum_height = threshold * (1.0 + 2e-5);
+        }
+    }
+    let mut species = pack_scene(&scene).species;
+    let ribbon = species
+        .iter()
+        .map(|species| species.root_color[3] < 1.5)
+        .collect::<Vec<_>>();
+    let mut app = test_app();
+    app.world_mut()
+        .resource_mut::<VegetationSceneState>()
+        .replace(scene)
+        .unwrap();
+    settled_pixels(&mut app);
+    install_arena(
+        &mut app,
+        super::BLADE_CAPACITY,
+        BufferUsages::STORAGE | BufferUsages::COPY_SRC,
+    );
+    settled_pixels(&mut app);
+    app.world_mut()
+        .resource_mut::<VegetationSettings>()
+        .profile_mode = VegetationProfileMode::DrawFrozen;
+    let placed = settled_pixels(&mut app);
+    // With placement frozen, give preparation heights 1e-5 higher than placement's, as a
+    // differently rounded evaluation would: blades just below the threshold now compute heights
+    // above it, yet must keep the form of the bin they were placed in.
+    for species in &mut species {
+        species.bounds[0] *= 1.0 + 1e-5;
+        species.bounds[1] *= 1.0 + 1e-5;
+    }
+    {
+        let render_world = app.sub_app_mut(RenderApp).world_mut();
+        let buffers = render_world.resource::<VegetationBuffers>();
+        render_world.resource::<RenderQueue>().write_buffer(
+            &buffers.species,
+            0,
+            bytemuck::cast_slice(&species),
+        );
+        render_world.resource_mut::<BladePreparation>().last_key = None;
+    }
+    let shifted = settled_pixels(&mut app);
+    // A blade drawn with another bin's index template loses its tip or its companion; heights
+    // 1e-5 apart are otherwise invisible at this distance.
+    let changed = placed
+        .iter()
+        .zip(&shifted)
+        .filter(|(a, b)| a.abs_diff(**b) > 2)
+        .count();
+    eprintln!("channels changed by the height shift: {changed}");
+    let render_world = app.sub_app(RenderApp).world();
+    let buffers = render_world.resource::<VegetationBuffers>();
+    let preparation = render_world.resource::<BladePreparation>();
+    let [args, instances, arena] = read_buffers(
+        &app,
+        &[
+            &buffers.args,
+            &buffers.procedural_instances,
+            &preparation.arena,
+        ],
+    )
+    .try_into()
+    .unwrap();
+    let args: &[u32] = bytemuck::cast_slice(&args[..DRAW_ARGS_SIZE as usize]);
+    let instances: &[ProceduralInstanceGpu] = bytemuck::cast_slice(&instances);
+    let indices: &[u32] = bytemuck::cast_slice(&arena[..PROCEDURAL_INSTANCE_CAPACITY as usize * 4]);
+    let blades: &[[f32; 32]] =
+        bytemuck::cast_slice(&arena[PROCEDURAL_INSTANCE_CAPACITY as usize * 4..]);
+    let (mut checked, mut wrong) = ([0u32; 4], [0u32; 4]);
+    for bin in 0..4 {
+        let (count, first) = (args[bin * 5 + 1] as usize, args[bin * 5 + 4] as usize);
+        for index in first..first + count {
+            let species = (instances[index].geometry[1] & SPECIES_INDEX_MASK) as usize;
+            if !ribbon[species] || indices[index] == 0 {
+                continue;
+            }
+            // topology.y is negative for a folded pair.
+            let paired = blades[indices[index] as usize - 1][29] < 0.0;
+            checked[bin] += 1;
+            if paired != (bin >= 2) {
+                wrong[bin] += 1;
+            }
+        }
+    }
+    eprintln!("ribbon roots checked per bin {checked:?}, prepared in the other form {wrong:?}");
+    // The draw shader's own fallback for blades the arena did not hold decides in the vertex
+    // stage; the same frozen instances must render alike through either path.
+    let prepared = settled_pixels(&mut app);
+    app.world_mut()
+        .resource_mut::<VegetationBladePreparation>()
+        .enabled = false;
+    let fallback = settled_pixels(&mut app);
+    let errors = prepared
+        .iter()
+        .zip(&fallback)
+        .map(|(a, b)| a.abs_diff(*b))
+        .collect::<Vec<_>>();
+    let changed = errors.iter().filter(|&&e| e > 2).count();
+    let mean = errors.iter().map(|&e| f64::from(e)).sum::<f64>() / errors.len() as f64;
+    eprintln!(
+        "prepared/fallback at the threshold: mean byte error={mean:.6}, channels over 2={changed}"
+    );
+    assert!(
+        checked[0] + checked[1] > 100 && checked[2] + checked[3] > 100,
+        "heights must straddle the threshold: {checked:?}"
+    );
+    assert_eq!(
+        wrong, [0; 4],
+        "blades prepared in another form than their bin"
+    );
+    assert!(changed < 50, "the height shift changed {changed} channels");
+    assert!(
+        changed == 0 && mean < 0.05,
+        "the draw fallback built other forms: mean={mean}, changed={changed}"
+    );
 }

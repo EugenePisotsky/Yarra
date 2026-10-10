@@ -1,7 +1,7 @@
 // Runs the production blade preparation on both sides of the topology boundary.
 import package::shaders::vegetation::types::{
     ProceduralInstance, Species, Camera, Config, DENSITY_MODE_BALANCED, LOD_MORPH_MASK,
-    LOD_MORPH_SHIFT,
+    LOD_MORPH_SHIFT, SPLIT_TOPOLOGY_BIT,
 };
 import package::shaders::vegetation::blade::{prepare_blade, paired_base_width};
 
@@ -15,13 +15,13 @@ fn compare_lod(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let rank = f32(index % 33u) / 32.0;
     var profile: Species;
     profile.bounds = vec4(0.35, 0.65, 0.008, 0.020);
-    profile.topology = vec4(5.0, 2.0, 2.0, 0.92);
+    profile.topology = vec4(5.0, 2.0, 0.0, 0.92);
     profile.shape = vec4(1.45, 1.50, 0.0, 0.0);
     profile.shape_secondary = vec4(0.08, 0.45, 1.0, 0.65);
     profile.curve_variant_a = vec4(0.15, 0.40, -0.20, 0.20);
     profile.curve_variant_b = vec4(0.25, 0.40, -0.22, 0.18);
     profile.group_response = vec4(0.20, 0.12, 0.40, 0.0);
-    profile.height_packing = vec4(0.0, 0.65, 12.0, 12.0);
+    profile.height_packing = vec4(0.0, 0.0, 12.0, 12.0);
     var camera: Camera;
     camera.projection.w = 1.0;
     camera.wind = vec4(0.924, 0.382, 0.82, f32(index) * 0.11);
@@ -32,10 +32,12 @@ fn compare_lod(@builtin(global_invocation_id) invocation: vec3<u32>) {
     instance.root_clump.w = bitcast<f32>(pack2x16unorm(vec2(0.37, rank)));
     instance.geometry.x = pack2x16snorm(vec2(1.0, 0.0));
     instance.geometry.w = 12345u | (u32(round(density * 255.0)) << 24u);
+    // A folded pair: placement binned the root as a split render unit.
+    instance.geometry.y = SPLIT_TOPOLOGY_BIT;
     let high = prepare_blade(instance, profile, camera, config, index & 1u);
-    instance.geometry.y = 0x80000000u;
+    instance.geometry.y = 0x80000000u | SPLIT_TOPOLOGY_BIT;
     let low = prepare_blade(instance, profile, camera, config, index & 1u);
-    instance.geometry.y = LOD_MORPH_MASK << LOD_MORPH_SHIFT;
+    instance.geometry.y = (LOD_MORPH_MASK << LOD_MORPH_SHIFT) | SPLIT_TOPOLOGY_BIT;
     let full = prepare_blade(instance, profile, camera, config, index & 1u);
     var endpoint_error = max(length(high.p0_width.xyz - low.p0_width.xyz),
         length(high.p3_amplitude.xyz - low.p3_amplitude.xyz));

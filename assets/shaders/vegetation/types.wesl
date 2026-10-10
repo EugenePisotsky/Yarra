@@ -25,7 +25,7 @@ struct WorkItem {
 struct ProceduralInstance {
     // xyz: root, w: packed clump variant and nested LOD rank
     root_clump: vec4<f32>,
-    // x: packed rest direction, y: species index + LOD morph + low flag,
+    // x: packed rest direction, y: species index + split-topology flag + LOD morph + low flag,
     // z: packed surface normal xz,
     // w: low 24 bits seed + high 8 bits population-density target
     geometry: vec4<u32>,
@@ -50,7 +50,7 @@ struct Species {
     tip_color_height: vec4<f32>,
     // xy: height range, zw: half-width range
     bounds: vec4<f32>,
-    // x: high sections, y: low sections, z: blades/render unit, w: longitudinal power
+    // x: high sections, y: low sections, z: reserved, w: longitudinal power
     topology: vec4<f32>,
     // xy: tilt range; zw: broad-leaf droop range
     shape: vec4<f32>,
@@ -68,7 +68,7 @@ struct Species {
     shading: vec4<f32>,
     // xyz: group coherence for height, complete silhouette, and lateral curve
     group_response: vec4<f32>,
-    // x: short/tall height bias, y: pair-below height, zw: single/split high-topology radii
+    // x: short/tall height bias, y: reserved, zw: single/split high-topology radii
     height_packing: vec4<f32>,
 }
 
@@ -123,7 +123,9 @@ const DENSITY_MODE_BALANCED: u32 = 1u;
 const DENSITY_MODE_FULL_REFERENCE: u32 = 2u;
 const LIGHTING_MODE_UNLIT_DIAGNOSTIC: u32 = 2u;
 const LIGHTING_MODE_VERTEX_ONLY_DIAGNOSTIC: u32 = 3u;
-const SPECIES_INDEX_MASK: u32 = 0x0000ffffu;
+const SPECIES_INDEX_MASK: u32 = constants::SPECIES_INDEX_MASK;
+// Placement binned the root as a split render unit: two blades, a folded pair or a broad leaf.
+const SPLIT_TOPOLOGY_BIT: u32 = constants::SPLIT_TOPOLOGY_BIT;
 const LOD_MORPH_MASK: u32 = 0x00007fffu;
 const LOD_MORPH_SHIFT: u32 = 16u;
 // A visible work-item entry with this bit schedules the quarter lattice.

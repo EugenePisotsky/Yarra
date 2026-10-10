@@ -1,7 +1,7 @@
 //! Pure CPU scene packing, LOD budgets and conservative visibility bounds.
 use super::gpu_types::{
-    LOW_DETAIL_CAPACITY, LOW_DETAIL_MINIMUM_PARTITION, SINGLE_HIGH_CAPACITY, SPLIT_HIGH_CAPACITY,
-    SpeciesChoiceGpu, SpeciesGpu, SurfaceSampleGpu, WorkItemGpu,
+    LOW_DETAIL_CAPACITY, LOW_DETAIL_MINIMUM_PARTITION, SINGLE_HIGH_CAPACITY, SPECIES_INDEX_MASK,
+    SPLIT_HIGH_CAPACITY, SpeciesChoiceGpu, SpeciesGpu, SurfaceSampleGpu, WorkItemGpu,
 };
 use bevy::prelude::*;
 use species::{effective_horizontal_reach, fallback_topology_bin, procedural_lod_profile};
@@ -225,6 +225,12 @@ pub(super) fn pack_items(
     debug_assert_eq!(layouts.len(), scene.pages.len());
     let high_detail_radii = high_detail_radii(scene);
     let low_detail_capacities = low_detail_capacities(scene);
+    // Instances carry the species index in SPECIES_INDEX_MASK's bits.
+    assert!(
+        scene.catalog.species.len() <= SPECIES_INDEX_MASK as usize + 1,
+        "a vegetation catalog holds at most {} species",
+        SPECIES_INDEX_MASK + 1
+    );
     let species_indices = scene
         .catalog
         .species

@@ -5,8 +5,8 @@
 // capacities are emergency guards, not population controls: a nonzero capacity-drop counter rejects
 // the content/device budget and must be fixed rather than accepted as normal rendering behavior.
 import package::shaders::vegetation::types::{
-    WorkItem, QUARTER_LOD_FLAG, SPECIES_INDEX_MASK, LOD_MORPH_MASK, LOD_MORPH_SHIFT,
-    DENSITY_MODE_BALANCED, DENSITY_MODE_FULL_REFERENCE, SPLIT_LOW_DENSITY_BUDGET_SCALE,
+    WorkItem, QUARTER_LOD_FLAG, SPECIES_INDEX_MASK, SPLIT_TOPOLOGY_BIT, LOD_MORPH_MASK,
+    LOD_MORPH_SHIFT, DENSITY_MODE_BALANCED, DENSITY_MODE_FULL_REFERENCE, SPLIT_LOW_DENSITY_BUDGET_SCALE,
 };
 import package::shaders::vegetation::random::random01;
 import package::shaders::vegetation::lod::{
@@ -254,6 +254,7 @@ fn generate(@builtin(global_invocation_id) invocation: vec3<u32>) {
         procedural_instances[slot].geometry = vec4<u32>(
             pack2x16snorm(evaluation.candidate.direction),
             (evaluation.species_index & SPECIES_INDEX_MASK)
+                | select(0u, SPLIT_TOPOLOGY_BIT, evaluation.bin >= 2u)
                 | (u32(round(clamp(evaluation.lod_morph, 0.0, 1.0) * f32(LOD_MORPH_MASK)))
                     << LOD_MORPH_SHIFT)
                 | ((evaluation.bin & 1u) << 31u),

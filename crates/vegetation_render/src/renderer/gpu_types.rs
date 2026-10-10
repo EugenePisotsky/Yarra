@@ -35,6 +35,12 @@ const _: () = assert!(
     "the shaders take the procedural distance in whole metres"
 );
 
+/// Bits 0..15 of an instance's `geometry.y`, below the LOD morph and the low-LOD bit 31: the
+/// species index, and whether placement binned the root as a split render unit (a folded ribbon
+/// pair or a broad leaf). Preparation and drawing take the blade count from that flag.
+pub(super) const SPECIES_INDEX_MASK: u32 = 0x7fff;
+pub(super) const SPLIT_TOPOLOGY_BIT: u32 = 0x8000;
+
 /// The limits every vegetation shader reads as `constants::NAME`.
 pub(super) fn shader_defs() -> Vec<ShaderDefVal> {
     [
@@ -43,6 +49,8 @@ pub(super) fn shader_defs() -> Vec<ShaderDefVal> {
         ("LOW_DETAIL_CAPACITY", LOW_DETAIL_CAPACITY),
         ("LOW_DETAIL_MINIMUM_PARTITION", LOW_DETAIL_MINIMUM_PARTITION),
         ("PROCEDURAL_INSTANCE_CAPACITY", PROCEDURAL_INSTANCE_CAPACITY),
+        ("SPECIES_INDEX_MASK", SPECIES_INDEX_MASK),
+        ("SPLIT_TOPOLOGY_BIT", SPLIT_TOPOLOGY_BIT),
         ("MAX_DIAGNOSTIC_INSTANCES", MAX_DIAGNOSTIC_INSTANCES),
         ("WORKGROUP_SIZE", WORKGROUP_SIZE),
         ("DIAGNOSTIC_INDEX_COUNT", DIAGNOSTIC_INDEX_COUNT),
@@ -161,7 +169,7 @@ pub(super) struct SurfaceSampleGpu {
 pub(super) struct ProceduralInstanceGpu {
     // xyz: root, w: packed clump variant and nested LOD rank
     pub(super) root_clump: [f32; 4],
-    // x: packed rest direction, y: species index + LOD morph + low flag,
+    // x: packed rest direction, y: species index + split-topology flag + LOD morph + low flag,
     // z: packed surface normal xz,
     // w: low 24 bits seed + high 8 bits population-density target
     pub(super) geometry: [u32; 4],

@@ -133,7 +133,7 @@ pub(in crate::renderer) fn pack_species(
                 [
                     f32::from(profile.high_section_count.min(MAX_RENDER_SECTIONS)),
                     f32::from(profile.low_section_count.min(MAX_LOW_RENDER_SECTIONS)),
-                    f32::from(profile.blades_per_render_unit.min(2)),
+                    0.0,
                     profile.longitudinal_power,
                 ],
                 [
@@ -155,7 +155,7 @@ pub(in crate::renderer) fn pack_species(
                 [
                     f32::from(profile.high_section_count.min(MAX_RENDER_SECTIONS)),
                     f32::from(profile.low_section_count.min(MAX_LOW_RENDER_SECTIONS)),
-                    2.0,
+                    0.0,
                     0.72,
                 ],
                 [
@@ -216,9 +216,11 @@ pub(in crate::renderer) fn pack_species(
             species.group_response.lateral_curve_coherence,
             0.0,
         ],
+        // The pair threshold is placement's alone (`SpeciesChoiceGpu::packing`); it bins each root
+        // and the instance carries the result.
         height_packing: [
             species.height.distribution_bias,
-            species.height.pair_below_height,
+            0.0,
             high_detail_radii[0],
             high_detail_radii[1],
         ],
