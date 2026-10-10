@@ -76,12 +76,6 @@ fn track_draws(
 }
 
 #[test]
-#[ignore = "requires native GPU and locally imported Forest Tree Starter Kit"]
-fn imported_tree_lod_materials_remain_drawable() {
-    check_lods((0..4).map(|i| format!("local/forest_tree_starter_kit/runtime/tree_07/summer/tree_07_summer_lod{i}.gltf")).collect());
-}
-
-#[test]
 #[ignore = "requires native GPU and locally rebuilt spruce wind bundle"]
 fn connected_spruce_lods_compile_colour_depth_and_motion() {
     check_lods(

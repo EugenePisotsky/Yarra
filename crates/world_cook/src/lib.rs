@@ -53,18 +53,11 @@ use world_db::{
     WorldSpaceRecord, domain_bit, write_project_database,
 };
 
-pub const DEMO_TREE_KEY: &str = "forest_tree_starter_kit/tree_07";
-pub const DEMO_TREE_SOURCE_URI: &str =
-    "local/forest_tree_starter_kit/source/tree_07/DA_Forest_Tree_11364_Tris.FBX";
-pub const DEMO_TREE_LOD_URIS: [&str; 4] = [
-    "local/forest_tree_starter_kit/runtime/tree_07/summer/tree_07_summer_lod0.gltf",
-    "local/forest_tree_starter_kit/runtime/tree_07/summer/tree_07_summer_lod1.gltf",
-    "local/forest_tree_starter_kit/runtime/tree_07/summer/tree_07_summer_lod2.gltf",
-    "local/forest_tree_starter_kit/runtime/tree_07/summer/tree_07_summer_lod3.gltf",
-];
-const DEMO_TREE_MINIMUM_SCREEN_HEIGHTS: [f32; 4] = [320.0, 160.0, 80.0, 0.0];
-const DEMO_TREE_GPU_BYTES: [u64; 4] = [593_464, 324_612, 175_064, 85_164];
-const DEMO_TREE_BOUNDS: [f32; 3] = [7.9161, 15.9346, 5.5864];
+/// The demo world's tree, from its tracked pack catalog: the smallest leafy tree of the current
+/// kit, three mesh LODs and an impostor, as the island's trees are drawn. Its runtime files live
+/// under `assets/local/yarra_bay`.
+const DEMO_TREE_KEY: &str = "yarra_bay/bay_upright";
+const DEMO_TREE_CATALOG: &str = include_str!("../../../assets/packs/yarra_bay/bay.catalog.ron");
 const DEMO_WORLD_CELL_RANGE: std::ops::Range<i32> = -8..8;
 // Half-metre source masks and endpoint-inclusive compiled ground weights.
 const DEMO_TERRAIN_WEIGHT_RESOLUTION: u16 = 65;
@@ -200,6 +193,16 @@ fn finish_runtime_publication_with_materials(
     Ok((manifest, stats, hierarchy_seconds))
 }
 
+fn demo_tree() -> world_db::AssetImport {
+    let catalog: world_db::AssetImportCatalog =
+        ron::from_str(DEMO_TREE_CATALOG).expect("the tracked tree catalog parses");
+    catalog
+        .assets
+        .into_iter()
+        .find(|asset| asset.key == DEMO_TREE_KEY)
+        .expect("the demo tree is in its catalog")
+}
+
 fn demo_project_document() -> ProjectDocument {
     let overworld = WorldSpaceRecord {
         atmosphere: Default::default(),
@@ -229,7 +232,8 @@ fn demo_project_document() -> ProjectDocument {
     let terrain_texture_set = TerrainTextureSetId(stable_id("temperate-meadow-texture-set"));
     let uncut_grass = TerrainSurfaceId(stable_id("uncut-grass-oilpt20"));
     let dried_grass = TerrainSurfaceId(stable_id("grass-dried-pjwhw0"));
-    let tree_asset = AssetId(*blake3::hash(DEMO_TREE_KEY.as_bytes()).as_bytes());
+    let tree = demo_tree();
+    let tree_asset = AssetId(*blake3::hash(tree.key.as_bytes()).as_bytes());
     let tree_definition = definition_id("demo-tree");
     let proximity_marker_definition = definition_id("demo-proximity-marker");
     let mut cells = Vec::new();
@@ -269,7 +273,7 @@ fn demo_project_document() -> ProjectDocument {
                         DEFAULT_CELL_SIZE * 0.5,
                     ],
                     yaw: ((x * 17 + z * 31).rem_euclid(360) as f32).to_radians(),
-                    scale: 0.55,
+                    scale: 1.0,
                     source_revision: 1,
                 });
             }
@@ -390,25 +394,26 @@ fn demo_project_document() -> ProjectDocument {
         environment_cells,
         roads: Default::default(),
         terrain_cell_heightfields,
-        assets: vec![SourceAssetRecord {
-            id: tree_asset,
-            key: DEMO_TREE_KEY.into(),
-            kind: "gltf-scene".into(),
-            source_uri: DEMO_TREE_SOURCE_URI.into(),
-        }],
-        asset_variants: DEMO_TREE_LOD_URIS
+        asset_variants: tree
+            .variants
             .iter()
             .enumerate()
-            .map(|(lod, uri)| SourceAssetVariantRecord {
+            .map(|(lod, variant)| SourceAssetVariantRecord {
                 asset: tree_asset,
                 lod: lod as u8,
-                uri: (*uri).into(),
-                bounds: DEMO_TREE_BOUNDS,
-                gpu_bytes_estimate: DEMO_TREE_GPU_BYTES[lod],
+                uri: variant.uri.clone(),
+                bounds: variant.bounds,
+                gpu_bytes_estimate: variant.gpu_bytes_estimate,
                 shadow_policy: 1,
-                minimum_screen_height: DEMO_TREE_MINIMUM_SCREEN_HEIGHTS[lod],
+                minimum_screen_height: variant.minimum_screen_height,
             })
             .collect(),
+        assets: vec![SourceAssetRecord {
+            id: tree_asset,
+            key: tree.key,
+            kind: "gltf-scene".into(),
+            source_uri: tree.source_uri,
+        }],
         definitions: vec![
             SourceObjectDefinitionRecord {
                 id: tree_definition,
@@ -668,9 +673,6 @@ fn stable_id(key: &str) -> [u8; 16] {
 mod tests {
     use super::*;
 
-    const DEMO_TREE_PACK_MANIFEST: &str =
-        include_str!("../../../assets/packs/forest_tree_starter_kit/tree_07.toml");
-
     #[test]
     fn demo_cook_is_large_logically_but_page_addressable() {
         let project = demo_project_document();
@@ -769,38 +771,36 @@ mod tests {
     }
 
     #[test]
-    fn forest_summer_catalog_is_importable_with_complete_lod_chains() {
-        let catalog: world_db::AssetImportCatalog = ron::from_str(include_str!(
-            "../../../assets/packs/forest_tree_starter_kit/summer.catalog.ron"
-        ))
-        .unwrap();
-        catalog.validate().unwrap();
-        assert_eq!(catalog.assets.len(), 19);
-        assert!(catalog.assets.iter().all(|asset| asset.variants.len() == 4));
-        let tree = catalog
-            .assets
-            .iter()
-            .find(|asset| asset.key == DEMO_TREE_KEY)
-            .unwrap();
-        assert_eq!(
-            tree.variants
-                .iter()
-                .map(|v| v.uri.as_str())
-                .collect::<Vec<_>>(),
-            DEMO_TREE_LOD_URIS
-        );
+    fn tracked_pack_catalogs_import() {
+        let packs = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/packs");
+        let mut checked = 0;
+        for pack in fs::read_dir(packs).unwrap() {
+            let pack = pack.unwrap().path();
+            if !pack.is_dir() {
+                continue;
+            }
+            for file in fs::read_dir(pack).unwrap() {
+                let path = file.unwrap().path();
+                if !path.to_string_lossy().ends_with(".catalog.ron") {
+                    continue;
+                }
+                let catalog: world_db::AssetImportCatalog =
+                    ron::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+                catalog
+                    .validate()
+                    .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+                checked += 1;
+            }
+        }
+        assert!(checked > 0);
     }
 
     #[test]
-    fn demo_tree_lod_uris_match_the_tracked_pack_contract() {
-        for uri in DEMO_TREE_LOD_URIS {
-            let expected = format!("runtime_uri = \"{uri}\"");
-            assert!(
-                DEMO_TREE_PACK_MANIFEST
-                    .lines()
-                    .any(|line| line.trim() == expected),
-                "the demo URI {uri} and tree pack manifest must change together"
-            );
-        }
+    fn demo_tree_has_mesh_lods_and_an_impostor() {
+        let tree = demo_tree();
+        let (impostor, meshes) = tree.variants.split_last().unwrap();
+        assert!(world::is_impostor_uri(&impostor.uri));
+        assert_eq!(meshes.len(), 3);
+        assert!(meshes.iter().all(|v| v.uri.ends_with(".gltf")));
     }
 }

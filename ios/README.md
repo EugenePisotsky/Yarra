@@ -6,7 +6,7 @@ From the repository root, restore local assets and initialize the world using [w
 rustup target add aarch64-apple-ios
 ```
 
-Open `Yarra/Yarra.xcodeproj`, select a physical iPhone and run **Yarra**. Its build phase cooks `content/world.project.sqlite`, cross-compiles Rust and packages the runtime database/shaders/local runtime assets. Existing source edits are retained.
+Open `Yarra/Yarra.xcodeproj`, select a physical iPhone and run **Yarra**. Its build phase cooks `content/world.project.sqlite`, cross-compiles Rust and packages the runtime database/shaders/local runtime assets (character and terrain; vegetation packs are not bundled yet). Existing source edits are retained.
 
 Use **Yarra Performance** for measurements: Release with LLDB console, Metal API validation/GPU capture/thread checkers disabled. The ordinary **Yarra** scheme remains for debugging/captures. Debug builds and the optional simulator (`aarch64-apple-ios-sim`) are unsuitable for GPU performance acceptance.
 

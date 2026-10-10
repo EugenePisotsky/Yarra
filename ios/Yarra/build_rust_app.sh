@@ -75,7 +75,6 @@ ASSET_DESTINATION="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/assets"
     "$ASSET_DESTINATION/shaders" \
     "$ASSET_DESTINATION/packs/terrain" \
     "$ASSET_DESTINATION/local/characters/female_main" \
-    "$ASSET_DESTINATION/local/forest_tree_starter_kit/runtime/tree_07" \
     "$ASSET_DESTINATION/local/terrain/temperate_meadow/runtime"
 /usr/bin/install -m 644 "$RUNTIME_DATABASE" "$ASSET_DESTINATION/generated/world.runtime.sqlite"
 /usr/bin/ditto "$REPOSITORY_ROOT/assets/shaders" "$ASSET_DESTINATION/shaders"
@@ -83,9 +82,8 @@ ASSET_DESTINATION="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/assets"
 /usr/bin/install -m 644 \
     "$REPOSITORY_ROOT/assets/local/characters/female_main/female_main_locomotion.glb" \
     "$ASSET_DESTINATION/local/characters/female_main/female_main_locomotion.glb"
-/usr/bin/ditto \
-    "$REPOSITORY_ROOT/assets/local/forest_tree_starter_kit/runtime/tree_07/summer" \
-    "$ASSET_DESTINATION/local/forest_tree_starter_kit/runtime/tree_07/summer"
+# Vegetation packs (trees, shrubs, ground cover) are not bundled yet: about 580 MB for the
+# island, better delivered as downloadable content than inside the app.
 /usr/bin/ditto \
     "$REPOSITORY_ROOT/assets/local/terrain/temperate_meadow/runtime" \
     "$ASSET_DESTINATION/local/terrain/temperate_meadow/runtime"
