@@ -20,7 +20,7 @@ use terrain_render::TerrainRenderPlugin;
 
 use crate::{
     journal::EditorJournalPlugin,
-    navigation::ProjectNavigationPlugin,
+    listings::ProjectListingsPlugin,
     project_store::ProjectEditorStorePlugin,
     publication::RuntimePublicationPlugin,
     tools::EditorToolsPlugin,
@@ -87,11 +87,16 @@ pub(crate) fn run() -> std::result::Result<(), String> {
             AnimationWorkspacePlugin,
             WorldStreamingPlugin::editor(runtime_database.clone()),
             ProjectEditorStorePlugin::new(project_database.clone()),
-            ProjectNavigationPlugin::new(project_database.clone()),
+            ProjectListingsPlugin::new(project_database.clone()),
             EditorJournalPlugin::new(project_database.clone()),
             RuntimePublicationPlugin::new(project_database, runtime_database, asset_root),
         ))
         .add_plugins(PresetWorkspacePlugin)
+        // The editor draws trees as entities.
+        .insert_resource(engine::TreeInstancing {
+            enabled: false,
+            ..default()
+        })
         .add_plugins((engine::TreeWindPlugin, engine::OceanPlugin))
         .configure_sets(
             EguiPrimaryContextPass,

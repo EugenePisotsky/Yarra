@@ -8,7 +8,8 @@ use bevy::{
     prelude::*,
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
-pub use boundary::{BoundaryField, MARGIN, MAX_DEPTH};
+pub use boundary::MARGIN;
+pub(crate) use boundary::{BoundaryField, MAX_DEPTH};
 use vegetation::{
     VegetationCatalog, VegetationFieldPage, candidate_density_retention, candidate_domain,
     random01, sample_candidate,

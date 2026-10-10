@@ -62,8 +62,8 @@ pub enum WorldDbError {
     InvalidObjectTransform,
     #[error("object transaction must contain 1 to 256 unique object writes")]
     InvalidObjectTransaction,
-    #[error("dense source transaction must contain 1 to 64 unique environment cell writes")]
-    InvalidDenseSourceTransaction,
+    #[error("environment cell transaction must contain 1 to 64 unique cell writes")]
+    InvalidEnvironmentCellTransaction,
     #[error("environment cell has invalid coverage or revision")]
-    InvalidDenseSourceRecord,
+    InvalidEnvironmentCellRecord,
 }

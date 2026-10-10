@@ -22,7 +22,7 @@ pub(crate) struct Pack {
     pub period: f32,
 }
 impl Pack {
-    pub fn from_material(m: &TerrainMaterial) -> Self {
+    pub(crate) fn from_material(m: &TerrainMaterial) -> Self {
         Self {
             base: m.source_base_color_array.clone(),
             normal: m.normal_material_array.clone(),
@@ -168,7 +168,12 @@ pub(super) fn tile(
         let w = &s.weights[0];
         (
             w.resolution as u32,
-            w.rgba.chunks_exact(4).flat_map(|p| [p[0], p[1]]).collect(),
+            w.rgba
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .flat_map(|p| [p[0], p[1]])
+                .collect(),
         )
     };
     let minimum = [

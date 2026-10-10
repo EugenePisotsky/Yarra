@@ -44,7 +44,7 @@ pub const WORLD_TONEMAPPING: Tonemapping = Tonemapping::KhronosPbrNeutral;
 
 /// Share of colour lost by full night: eyes adapted to moonlight see little colour, so moonlit
 /// scenes stay readable without looking like a blue day.
-pub const NIGHT_DESATURATION: f32 = 0.6;
+pub(crate) const NIGHT_DESATURATION: f32 = 0.6;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AtmosphereOwner {
@@ -122,13 +122,13 @@ impl Default for FogTuning {
 pub struct AtmosphereState {
     pub profile: AtmosphereProfile,
     pub phase: f32,
-    /// Days since the game's first; they move the moon. Editors and studies stay on day 0.
+    /// Days since the game's first; they move the moon. Editors stay on day 0.
     pub day: i32,
     pub owner: AtmosphereOwner,
     pub direction_override: Option<Vec3>,
     pub exposure_override: Option<f32>,
     /// Weather overlaid on the authored profile: the game's sequence or an editor preview.
-    /// None presents the profile as authored; studies never apply it.
+    /// None presents the profile as authored; isolated workspaces never apply it.
     pub weather: Option<WeatherParams>,
     /// Both ends of the current weather change, for the region-by-region cloud field.
     pub weather_transition: Option<WeatherTransition>,
@@ -180,6 +180,11 @@ impl AtmosphereState {
         };
         self.day += ahead.round() as i32;
     }
+    /// Whether an isolated editor workspace owns lighting: no clouds, weather, particles,
+    /// lightning or sea, and the world's moon stays dark.
+    pub fn isolated(&self) -> bool {
+        self.owner == AtmosphereOwner::Isolated
+    }
     /// The atmosphere at the current day and time, for the presented profile.
     pub fn evaluate(&self, profile: &AtmosphereProfile) -> world::atmosphere::EvaluatedAtmosphere {
         world::atmosphere::evaluate_at(profile, self.day, self.phase)
@@ -187,18 +192,14 @@ impl AtmosphereState {
     /// The presented profile: authored, with any game weather overlaid.
     pub fn effective_profile(&self) -> Cow<'_, AtmosphereProfile> {
         match &self.weather {
-            Some(weather) if self.owner != AtmosphereOwner::Isolated => {
-                Cow::Owned(weather.apply(&self.profile))
-            }
+            Some(weather) if !self.isolated() => Cow::Owned(weather.apply(&self.profile)),
             _ => Cow::Borrowed(&self.profile),
         }
     }
     /// Reduced-visibility fog from game weather, in front of the authored clear-air haze.
     pub fn weather_fog(&self) -> Option<WeatherFog> {
         match &self.weather {
-            Some(weather) if self.owner != AtmosphereOwner::Isolated => {
-                Some(weather.fog(&self.profile))
-            }
+            Some(weather) if !self.isolated() => Some(weather.fog(&self.profile)),
             _ => None,
         }
     }
@@ -261,7 +262,7 @@ struct ShadowCoverage(f32, f32);
 #[derive(Component)]
 pub struct WorldSun;
 #[derive(Component)]
-pub struct WorldMoon;
+pub(crate) struct WorldMoon;
 #[derive(Component, Default)]
 #[require(sky::SkyCompositeView)]
 pub struct WorldEnvironmentView {
@@ -282,7 +283,8 @@ impl Default for WorldEnvironmentCamera {
     }
 }
 impl WorldEnvironmentCamera {
-    pub fn with_visibility(visibility: f32) -> Self {
+    #[cfg(test)]
+    pub(crate) fn with_visibility(visibility: f32) -> Self {
         Self {
             view: WorldEnvironmentView {
                 visibility_override: Some(visibility),
@@ -381,8 +383,8 @@ fn apply(
     mut media: ResMut<Assets<ScatteringMedium>>,
     mut previous_medium: Local<Option<(f32, f32, [f32; 3])>>,
 ) {
-    if state.owner == AtmosphereOwner::Isolated {
-        // Studies own the shared sun and ambient resources. The world-only moon
+    if state.isolated() {
+        // Isolated workspaces own the shared sun and ambient resources. The world-only moon
         // must go dark as well, including its contribution to custom grass.
         for (_, mut light, _) in &mut moon {
             light.illuminance = 0.0;
@@ -442,18 +444,12 @@ fn apply(
         disk.angular_size = profile.night.diameter_degrees.to_radians();
         disk.intensity = 0.0;
     }
-    ambient.color = rgb(value.ambient_linear);
-    // A flash lights everything around from the clouds, bluish white.
-    let flash = state.lightning.map_or(0.0, |l| l.flash);
-    ambient.brightness = value.ambient_lux + flash * lightning::FLASH_AMBIENT;
-    if flash > 0.0 {
-        let base = Vec3::from_array(value.ambient_linear) * value.ambient_lux;
-        let lit = (base
-            + Vec3::from_array(lightning::FLASH_COLOR) * flash * lightning::FLASH_AMBIENT)
-            / ambient.brightness.max(1e-3);
-        ambient.color = Color::linear_rgb(lit.x, lit.y, lit.z);
-    }
-    // Eye adaptation in the game only: authoring and studies judge the exposure as set.
+    light_ambient(
+        &mut ambient,
+        &value,
+        state.lightning.map_or(0.0, |l| l.flash),
+    );
+    // Eye adaptation in the game only: authoring judges the exposure as set.
     let adapt =
         presentation.auto_exposure && state.owner == AtmosphereOwner::Game && profile.outdoor;
     let saturation = if profile.outdoor {
@@ -464,29 +460,17 @@ fn apply(
     for (entity, camera, view, mut exposure, settings, bloom, camera_3d, mut auto, grading) in
         &mut views
     {
-        match grading {
-            Some(mut grading) => {
-                if grading.global.post_saturation != saturation {
-                    grading.global.post_saturation = saturation;
-                }
-            }
-            None => {
-                let mut grading = ColorGrading::default();
-                grading.global.post_saturation = saturation;
-                commands.entity(entity).insert(grading);
-            }
-        }
+        let mut view_commands = commands.entity(entity);
+        grade(&mut view_commands, grading, saturation);
         exposure.ev100 = state
             .exposure_override
             .filter(|v| v.is_finite())
             .unwrap_or(value.exposure_ev100);
         if profile.outdoor && settings.is_none() {
-            commands
-                .entity(entity)
-                .insert(AtmosphereSettings::default());
+            view_commands.insert(AtmosphereSettings::default());
         }
         if !profile.outdoor && settings.is_some() {
-            commands.entity(entity).remove::<AtmosphereSettings>();
+            view_commands.remove::<AtmosphereSettings>();
         }
         // The sky composite reads depth whether or not the atmosphere is present; Bevy only
         // requests sampling for atmosphere views.
@@ -496,20 +480,13 @@ fn apply(
                 camera_3d.depth_texture_usages = (usages | TextureUsages::TEXTURE_BINDING).into();
             }
         }
-        if !presentation.bloom {
-            if bloom.is_some() {
-                commands.entity(entity).remove::<Bloom>();
-            }
-        } else if let Some(mut bloom) = bloom {
-            bloom.intensity = profile.bloom_intensity;
-        } else {
-            commands.entity(entity).insert(Bloom {
-                intensity: profile.bloom_intensity,
-                ..Bloom::NATURAL
-            });
-        }
+        present_bloom(
+            &mut view_commands,
+            bloom,
+            presentation.bloom.then_some(profile.bloom_intensity),
+        );
         // The atmosphere handles both sky and aerial perspective. No second DistanceFog pass.
-        commands.entity(entity).remove::<DistanceFog>();
+        view_commands.remove::<DistanceFog>();
         if let Some(adaptation) = &adaptation {
             match auto.as_deref_mut() {
                 Some(auto) if auto.compensation_curve != *adaptation.curve(adapt) => {
@@ -517,7 +494,7 @@ fn apply(
                 }
                 Some(_) => {}
                 None if adapt => {
-                    commands.entity(entity).insert(adaptation.settings(adapt));
+                    view_commands.insert(adaptation.settings(adapt));
                 }
                 None => {}
             }
@@ -529,19 +506,8 @@ fn apply(
             .clamp(10.0, 100_000.0);
         let signature = (profile.molecular_density, visibility, profile.haze_srgb);
         if previous_medium.as_ref() != Some(&signature) {
-            let mut medium = ScatteringMedium::earth(256, 128);
-            medium.terms[0].scattering *= profile.molecular_density;
-            // Additional near-ground aerosol layer; extinction corresponds to 2% contrast
-            // at the authored visibility. This is separate from high-altitude molecular air.
-            let extinction = 3.912 / visibility;
-            let tint = Vec3::from_array(linear_rgb(profile.haze_srgb));
-            medium.terms[1].scattering = tint * extinction * 0.95;
-            medium.terms[1].absorption = Vec3::splat(extinction) - medium.terms[1].scattering;
-            medium.terms[1].falloff = Falloff::Exponential {
-                scale: 1200.0 / 100_000.0,
-            };
             if let Some(mut asset) = media.get_mut(&handle.0) {
-                *asset = medium;
+                *asset = scattering_medium(profile, visibility);
             }
             *previous_medium = Some(signature);
         }
@@ -555,6 +521,72 @@ fn apply(
             ));
         }
     }
+}
+
+/// The ambient light, and a lightning flash lighting everything around from the clouds, bluish
+/// white.
+fn light_ambient(
+    ambient: &mut GlobalAmbientLight,
+    value: &world::atmosphere::EvaluatedAtmosphere,
+    flash: f32,
+) {
+    ambient.color = rgb(value.ambient_linear);
+    ambient.brightness = value.ambient_lux + flash * lightning::FLASH_AMBIENT;
+    if flash > 0.0 {
+        let base = Vec3::from_array(value.ambient_linear) * value.ambient_lux;
+        let lit = (base
+            + Vec3::from_array(lightning::FLASH_COLOR) * flash * lightning::FLASH_AMBIENT)
+            / ambient.brightness.max(1e-3);
+        ambient.color = Color::linear_rgb(lit.x, lit.y, lit.z);
+    }
+}
+
+/// Night desaturation, on the view's colour grading.
+fn grade(view: &mut EntityCommands, grading: Option<Mut<ColorGrading>>, saturation: f32) {
+    match grading {
+        Some(mut grading) => {
+            if grading.global.post_saturation != saturation {
+                grading.global.post_saturation = saturation;
+            }
+        }
+        None => {
+            let mut grading = ColorGrading::default();
+            grading.global.post_saturation = saturation;
+            view.insert(grading);
+        }
+    }
+}
+
+/// Bloom at the profile's intensity, or none when presentation turns it off.
+fn present_bloom(view: &mut EntityCommands, bloom: Option<Mut<Bloom>>, intensity: Option<f32>) {
+    match (intensity, bloom) {
+        (None, Some(_)) => {
+            view.remove::<Bloom>();
+        }
+        (None, None) => {}
+        (Some(intensity), Some(mut bloom)) => bloom.intensity = intensity,
+        (Some(intensity), None) => {
+            view.insert(Bloom {
+                intensity,
+                ..Bloom::NATURAL
+            });
+        }
+    }
+}
+
+/// Bevy's earth medium with the profile's molecular density, plus a near-ground aerosol layer
+/// whose extinction gives 2% contrast at the visibility; separate from high-altitude air.
+fn scattering_medium(profile: &AtmosphereProfile, visibility: f32) -> ScatteringMedium {
+    let mut medium = ScatteringMedium::earth(256, 128);
+    medium.terms[0].scattering *= profile.molecular_density;
+    let extinction = 3.912 / visibility;
+    let tint = Vec3::from_array(linear_rgb(profile.haze_srgb));
+    medium.terms[1].scattering = tint * extinction * 0.95;
+    medium.terms[1].absorption = Vec3::splat(extinction) - medium.terms[1].scattering;
+    medium.terms[1].falloff = Falloff::Exponential {
+        scale: 1200.0 / 100_000.0,
+    };
+    medium
 }
 
 /// The view of a camera's depth texture that passes sample. Since Bevy 0.20 a depth texture may
@@ -571,7 +603,7 @@ pub fn sampled_depth(depth: &ViewDepthStencilTexture) -> &TextureView {
 mod tests {
     use super::*;
     #[test]
-    fn night_lights_surfaces_and_studies_and_interiors_disable_the_moon() {
+    fn night_lights_surfaces_and_isolated_workspaces_and_interiors_disable_the_moon() {
         let mut app = App::new();
         app.init_resource::<Assets<ScatteringMedium>>()
             .add_plugins(WorldEnvironmentPlugin::editor());

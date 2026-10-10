@@ -27,7 +27,7 @@ impl<T: PartialEq> DefinitionEntry<T> {
         self.base != self.current
     }
 }
-impl DenseDomainWorkingSets {
+impl SourceWorkingSets {
     pub(crate) fn definition(&self, space: WorldSpaceId) -> Option<&EnvironmentDefinition> {
         self.definitions.get(&space).map(|e| &e.current)
     }
@@ -126,10 +126,10 @@ impl DenseDomainWorkingSets {
                     if matches!(entry.state, DefinitionSaveState::Idle)
                         && entry.base != *definition =>
                 {
-                    let pinned = self.entries.iter().any(|(key, cell)| {
-                        let DenseSourceRecordKey::EnvironmentCoverage { space, .. } = key;
-                        *space == definition.space && cell.pinned()
-                    });
+                    let pinned = self
+                        .entries
+                        .iter()
+                        .any(|(key, cell)| key.space == definition.space && cell.pinned());
                     if entry.dirty() || pinned {
                         entry.state = DefinitionSaveState::Conflict(Some(definition.clone()));
                     } else {
@@ -318,7 +318,6 @@ impl DenseDomainWorkingSets {
                 .chain(std::iter::once(&mut entry.current))
                 .chain(entry.runtime.iter_mut())
             {
-                let DenseSourceRecord::EnvironmentCoverage(record) = record;
                 if record.space == space {
                     record.definition_revision = revision;
                 }
@@ -327,7 +326,7 @@ impl DenseDomainWorkingSets {
     }
     fn coverage_fits_definition(&self, definition: &EnvironmentDefinition) -> bool {
         self.entries.values().all(|e| {
-            let DenseSourceRecord::EnvironmentCoverage(record) = &e.current;
+            let record = &e.current;
             record.space != definition.space
                 || record.tiles.iter().all(|t| {
                     definition.layers.iter().any(|l| l.id == t.layer)
@@ -378,18 +377,14 @@ mod tests {
     use crate::editing::{EditorHistory, EditorObjectWorkingSet};
     use world_db::{EnvironmentSourceWriteResult, ProjectReader, ProjectWriter};
 
-    fn save(dense: &mut DenseDomainWorkingSets, writer: &mut ProjectWriter) {
+    fn save(dense: &mut SourceWorkingSets, writer: &mut ProjectWriter) {
         let definitions = dense.definition_writes();
         let writes = dense
             .dirty_snapshots()
             .into_iter()
-            .map(|s| {
-                let DenseSourceRecord::EnvironmentCoverage(record) = s.current;
-                let expected_source_revision = s.base.map(|r| dense_source_revision(&r));
-                DenseSourceWrite::EnvironmentCoverage {
-                    expected_source_revision,
-                    record,
-                }
+            .map(|s| EnvironmentCellWrite {
+                expected_source_revision: s.base.map(|r| r.source_revision),
+                record: s.current,
             })
             .collect::<Vec<_>>();
         dense.mark_definitions_saving(1);
@@ -441,7 +436,7 @@ mod tests {
                 tiles: c.tiles.clone(),
             })
             .collect::<Vec<_>>();
-        let mut dense = DenseDomainWorkingSets::from_environment_records(&records);
+        let mut dense = SourceWorkingSets::from_environment_records(&records);
         dense.initialize_presets(&snapshot.presets);
         dense.plants = Some(snapshot.vegetation_catalog);
         dense.definitions.insert(

@@ -10,22 +10,22 @@ pub(crate) use inspector::inspector;
 pub(crate) use preview::EnvironmentPreview;
 
 use crate::{
-    domain_editing::{DenseDomainWorkingSets, reconcile_dense_working_sets},
+    domain_editing::{SourceWorkingSets, reconcile_dense_working_sets},
     editing::{EditorHistory, EditorObjectWorkingSet},
     project_store::{ProjectEditorStore, ProjectStoreUpdate},
-    publication::RuntimePublicationState,
-    saving::{EditorSaveCoordinator, drive_editor_save},
-    shell::EditorInputCapture,
+    saving::drive_editor_save,
     tools::{ENVIRONMENT_TOOL, EditorToolRegistry},
     vegetation_authoring::{VegetationAuthoringState, VegetationPreviewSync},
     workspaces::{
         EditorWorkspace,
-        world::{EditorOverlayGizmos, handle_editor_shortcuts, update_editor_camera},
+        world::{
+            EditorOverlayGizmos, GroundToolInput, handle_editor_shortcuts, update_editor_camera,
+        },
     },
 };
-use bevy::{ecs::system::SystemParam, prelude::*, window::PrimaryWindow};
+use bevy::{ecs::system::SystemParam, prelude::*};
 use bevy_egui::egui;
-use engine::{StreamedTerrainSurface, WorldOrigin, WorldViewCamera};
+use engine::{StreamedTerrainSurface, WorldOrigin};
 use environment::{
     EnvironmentDefinition, LayerId,
     brush::{BrushOperation, CoverageBrush},
@@ -113,12 +113,7 @@ impl Default for EnvironmentPaintState {
     }
 }
 impl EnvironmentPaintState {
-    fn finish(
-        &mut self,
-        dense: &mut DenseDomainWorkingSets,
-        history: &mut EditorHistory,
-        cancel: bool,
-    ) {
+    fn finish(&mut self, dense: &mut SourceWorkingSets, history: &mut EditorHistory, cancel: bool) {
         if let Some(stroke) = self.stroke.take() {
             dense.gesture_active = false;
             let before = stroke.before.into_values().collect::<Vec<_>>();
@@ -141,59 +136,30 @@ impl EnvironmentPaintState {
 
 #[derive(SystemParam)]
 struct PaintInput<'w, 's> {
-    window: Single<'w, 's, &'static Window, With<PrimaryWindow>>,
-    camera: Single<'w, 's, (&'static Camera, &'static GlobalTransform), With<WorldViewCamera>>,
-    terrain: Query<'w, 's, (Entity, &'static StreamedTerrainSurface)>,
-    origin: Res<'w, WorldOrigin>,
-    workspace: Res<'w, State<EditorWorkspace>>,
-    tools: Res<'w, EditorToolRegistry>,
-    capture: Res<'w, EditorInputCapture>,
-    buttons: Res<'w, ButtonInput<MouseButton>>,
-    keys: Res<'w, ButtonInput<KeyCode>>,
-    save: Res<'w, EditorSaveCoordinator>,
-    publication: Res<'w, RuntimePublicationState>,
+    ground: GroundToolInput<'w, 's>,
     objects: Res<'w, EditorObjectWorkingSet>,
     vegetation: Res<'w, VegetationAuthoringState>,
 }
 fn paint_input(
     input: PaintInput,
     mut project: ResMut<ProjectEditorStore>,
-    mut dense: ResMut<DenseDomainWorkingSets>,
+    mut dense: ResMut<SourceWorkingSets>,
     mut history: ResMut<EditorHistory>,
     mut paint: ResMut<EnvironmentPaintState>,
 ) {
-    let enabled = *input.workspace.get() == EditorWorkspace::World
-        && input
-            .tools
-            .active(EditorWorkspace::World)
-            .is_some_and(|tool| tool.id == ENVIRONMENT_TOOL.id)
-        && input.window.focused;
+    let enabled = input.ground.active(&ENVIRONMENT_TOOL) && input.ground.window.focused;
     let blocked = paint.has_unapplied_changes()
-        || input.capture.wants_pointer
-        || input.buttons.pressed(MouseButton::Right)
-        || input.buttons.pressed(MouseButton::Middle)
-        || [
-            KeyCode::AltLeft,
-            KeyCode::AltRight,
-            KeyCode::ControlLeft,
-            KeyCode::ControlRight,
-            KeyCode::SuperLeft,
-            KeyCode::SuperRight,
-        ]
-        .iter()
-        .any(|key| input.keys.pressed(*key))
-        || input.save.active()
-        || input.publication.active()
+        || input.ground.paused()
         || project.save_in_flight()
         || dense.saving()
         || dense.has_any_conflict()
         || input.objects.saving()
         || input.vegetation.saving();
-    if input.keys.just_pressed(KeyCode::Escape) && paint.stroke.is_some() {
+    if input.ground.keys.just_pressed(KeyCode::Escape) && paint.stroke.is_some() {
         paint.finish(&mut dense, &mut history, true);
         paint.status = Some("Stroke cancelled".into());
     }
-    if !enabled || blocked || !input.buttons.pressed(MouseButton::Left) {
+    if !enabled || blocked || !input.ground.buttons.pressed(MouseButton::Left) {
         paint.finish(&mut dense, &mut history, false);
     }
     paint.hover = None;
@@ -201,7 +167,7 @@ fn paint_input(
     if !enabled || blocked {
         return;
     }
-    let Some(space) = input.origin.space() else {
+    let Some(space) = input.ground.origin.space() else {
         return;
     };
     let Some(definition) = dense
@@ -259,26 +225,32 @@ fn paint_input(
         ));
         return;
     }
-    let Some(cursor) = input.window.cursor_position() else {
+    let Some(cursor) = input.ground.window.cursor_position() else {
         if let Some(stroke) = &mut paint.stroke {
             stroke.last_point = None;
         }
         return;
     };
-    let Ok(ray) = input.camera.0.viewport_to_world(input.camera.1, cursor) else {
+    let Ok(ray) = input
+        .ground
+        .camera
+        .0
+        .viewport_to_world(input.ground.camera.1, cursor)
+    else {
         return;
     };
-    let hit = engine::raycast_resident_terrain(&input.origin, input.terrain.iter(), ray);
+    let hit =
+        engine::raycast_resident_terrain(&input.ground.origin, input.ground.terrain.iter(), ray);
     let Some((entity, point)) = hit else {
         if let Some(stroke) = &mut paint.stroke {
             stroke.last_point = None;
         }
         return;
     };
-    let Ok((_, terrain)) = input.terrain.get(entity) else {
+    let Ok((_, terrain)) = input.ground.terrain.get(entity) else {
         return;
     };
-    let origin = input.origin.cell().origin(definition.cell_size);
+    let origin = input.ground.origin.cell().origin(definition.cell_size);
     let logical = [
         origin[0] + f64::from(point.x),
         origin[1] + f64::from(point.z),
@@ -338,9 +310,11 @@ fn paint_input(
             return;
         }
     };
-    if input.buttons.just_pressed(MouseButton::Left) {
+    if input.ground.buttons.just_pressed(MouseButton::Left) {
         let mut brush = paint.brush;
-        if input.keys.pressed(KeyCode::ShiftLeft) || input.keys.pressed(KeyCode::ShiftRight) {
+        if input.ground.keys.pressed(KeyCode::ShiftLeft)
+            || input.ground.keys.pressed(KeyCode::ShiftRight)
+        {
             brush.operation = BrushOperation::Erase;
         }
         paint.stroke = Some(Stroke {
@@ -370,7 +344,7 @@ fn apply_segment(
     definition: &EnvironmentDefinition,
     cells: &[CellCoord],
     to: [f64; 2],
-    dense: &mut DenseDomainWorkingSets,
+    dense: &mut SourceWorkingSets,
 ) -> Result<(), String> {
     let from = stroke.last_point.unwrap_or(to);
     let mut originals = Vec::new();

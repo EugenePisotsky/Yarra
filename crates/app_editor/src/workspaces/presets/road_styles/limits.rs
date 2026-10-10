@@ -12,7 +12,7 @@ pub(super) struct GeometryLimits {
 impl GeometryLimits {
     pub fn in_project(
         p: &CartTrackProfile,
-        dense: &DenseDomainWorkingSets,
+        dense: &SourceWorkingSets,
         project: &ProjectEditorStore,
         preview_space: Option<WorldSpaceId>,
     ) -> Result<Self, String> {

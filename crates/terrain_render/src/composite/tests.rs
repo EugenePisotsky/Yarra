@@ -1,4 +1,5 @@
 use super::*;
+use bevy::{mesh::Indices, render::render_resource::PrimitiveTopology};
 use world::{TerrainCompositeMip, TerrainNodeKey, WorldSpaceId};
 
 fn tile() -> TerrainComposite {
@@ -206,12 +207,16 @@ fn composite_draws_rebases_and_responds_to_light() {
             let pixels = app.world().resource::<Pixels>().0.lock().unwrap().clone();
             assert!(
                 !pixels
-                    .chunks_exact(4)
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
                     .any(|p| p[2] > p[0].saturating_add(10)),
                 "a reused texture slot leaked unrelated blue ground"
             );
             let colored = pixels
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .filter(|p| p[0] > p[1].saturating_add(5) && p[1] > p[2])
                 .count();
             stable = if colored > 2000 && pixels == previous {
@@ -289,7 +294,13 @@ fn composite_draws_rebases_and_responds_to_light() {
         vec![],
     );
     let before = settle(&mut app);
-    let red = |p: &[u8]| p.chunks_exact(4).map(|c| c[0] as u64).sum::<u64>();
+    let red = |p: &[u8]| {
+        p.as_chunks::<4>()
+            .0
+            .iter()
+            .map(|c| c[0] as u64)
+            .sum::<u64>()
+    };
     assert!(
         red(&zero) < red(&half) && red(&half) < red(&before),
         "fine shading must blend on the same unchanged mesh"
@@ -345,7 +356,9 @@ fn composite_draws_rebases_and_responds_to_light() {
         .illuminance = 2000.;
     let darker = settle(&mut app);
     let brightness = |p: &[u8]| {
-        p.chunks_exact(4)
+        p.as_chunks::<4>()
+            .0
+            .iter()
             .map(|c| c[0] as u64 + c[1] as u64 + c[2] as u64)
             .sum::<u64>()
     };

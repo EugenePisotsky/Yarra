@@ -1,0 +1,627 @@
+//! Edits to placed objects, keyed by stable source ID.
+
+use bevy::prelude::*;
+use std::collections::{HashMap, HashSet};
+use world::StableObjectId;
+use world_db::{
+    MAX_OBJECT_WRITES_PER_TRANSACTION, SourceObjectRecord, SourceObjectTransform,
+    SourceObjectViewRecord, SourceObjectWrite, SourceObjectWriteCommit,
+};
+
+use super::history::EditorHistory;
+use crate::{
+    project_store::{ObjectSaveOutcome, ProjectEditorStore},
+    saving::EditorSaveCoordinator,
+};
+
+#[derive(Debug, Clone, Default)]
+enum EditorSaveState {
+    #[default]
+    Idle,
+    Saving(u64),
+    Saved(i64),
+    Conflict(Option<SourceObjectRecord>),
+    Failed(String),
+}
+
+#[derive(Debug, Clone)]
+struct ObjectEditEntry {
+    presentation: SourceObjectViewRecord,
+    /// The last source state accepted as a save/reconciliation checkpoint.
+    base: Option<SourceObjectRecord>,
+    /// The state produced by the local command stream. `None` is a deletion tombstone.
+    current: Option<SourceObjectRecord>,
+    /// The source state represented by the currently loaded cooked runtime database.
+    runtime: Option<SourceObjectRecord>,
+    save_state: EditorSaveState,
+}
+
+impl ObjectEditEntry {
+    fn from_source(record: SourceObjectViewRecord) -> Self {
+        let object = record.object.clone();
+        Self {
+            presentation: record,
+            base: Some(object.clone()),
+            current: Some(object.clone()),
+            runtime: Some(object),
+            save_state: EditorSaveState::Idle,
+        }
+    }
+
+    fn from_created(record: SourceObjectViewRecord) -> Self {
+        let object = record.object.clone();
+        Self {
+            presentation: record,
+            base: None,
+            current: Some(object),
+            runtime: None,
+            save_state: EditorSaveState::Idle,
+        }
+    }
+
+    fn dirty(&self) -> bool {
+        self.current != self.base
+    }
+
+    fn runtime_differs(&self) -> bool {
+        self.current != self.runtime
+    }
+
+    fn view(&self) -> Option<SourceObjectViewRecord> {
+        self.current.as_ref().map(|object| {
+            let mut view = self.presentation.clone();
+            view.object = object.clone();
+            view
+        })
+    }
+
+    fn has_conflict(&self) -> bool {
+        matches!(self.save_state, EditorSaveState::Conflict(_))
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ActiveObjectSave {
+    request_id: u64,
+    objects: Vec<StableObjectId>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct DirtyObjectSnapshot {
+    pub(crate) presentation: SourceObjectViewRecord,
+    pub(crate) base: Option<SourceObjectRecord>,
+    pub(crate) current: Option<SourceObjectRecord>,
+}
+
+/// Durable editor-side state for every object touched by the current session.
+///
+/// Entries are keyed by stable source ID and outlive selection and bounded source-query windows.
+/// This is intentionally separate from runtime ECS entities, which may stream in and out.
+#[derive(Resource, Default)]
+pub(crate) struct EditorObjectWorkingSet {
+    entries: HashMap<StableObjectId, ObjectEditEntry>,
+    edit_revision: u64,
+    active_save: Option<ActiveObjectSave>,
+}
+
+impl EditorObjectWorkingSet {
+    pub(crate) fn dirty_snapshots(&self) -> Vec<DirtyObjectSnapshot> {
+        let mut snapshots = self
+            .entries
+            .values()
+            .filter(|entry| entry.dirty())
+            .map(|entry| DirtyObjectSnapshot {
+                presentation: entry.presentation.clone(),
+                base: entry.base.clone(),
+                current: entry.current.clone(),
+            })
+            .collect::<Vec<_>>();
+        snapshots.sort_by_key(|snapshot| snapshot.presentation.object.id.0);
+        snapshots
+    }
+
+    pub(crate) fn restore_dirty_snapshot(&mut self, snapshot: DirtyObjectSnapshot) -> bool {
+        if self.saving() {
+            return false;
+        }
+        let id = snapshot.presentation.object.id;
+        let definition = snapshot.presentation.object.definition;
+        if snapshot
+            .base
+            .iter()
+            .chain(snapshot.current.iter())
+            .any(|object| object.id != id || object.definition != definition)
+            || snapshot.base == snapshot.current
+        {
+            return false;
+        }
+        if self.entries.get(&id).is_some_and(|entry| {
+            entry.dirty() || matches!(entry.save_state, EditorSaveState::Saving(_))
+        }) {
+            return false;
+        }
+        self.entries.insert(
+            id,
+            ObjectEditEntry {
+                presentation: snapshot.presentation,
+                runtime: snapshot.base.clone(),
+                base: snapshot.base,
+                current: snapshot.current,
+                save_state: EditorSaveState::Idle,
+            },
+        );
+        self.bump_edit_revision();
+        true
+    }
+
+    pub(crate) fn tracks(&self, object: StableObjectId) -> bool {
+        self.entries.contains_key(&object)
+    }
+
+    pub(crate) fn pin(&mut self, fresh: SourceObjectViewRecord) {
+        let id = fresh.object.id;
+        let mut changed = false;
+        if let Some(entry) = self.entries.get_mut(&id) {
+            entry.presentation.definition = fresh.definition;
+            entry.presentation.visual_uri = fresh.visual_uri;
+            entry.presentation.visual_bounds = fresh.visual_bounds;
+            if !entry.dirty()
+                && !matches!(entry.save_state, EditorSaveState::Saving(_))
+                && entry
+                    .base
+                    .as_ref()
+                    .is_none_or(|base| fresh.object.source_revision > base.source_revision)
+            {
+                entry.base = Some(fresh.object.clone());
+                entry.current = Some(fresh.object);
+                entry.save_state = EditorSaveState::Idle;
+                changed = true;
+            }
+        } else {
+            self.entries.insert(id, ObjectEditEntry::from_source(fresh));
+            changed = true;
+        }
+        if changed {
+            self.bump_edit_revision();
+        }
+    }
+
+    pub(crate) fn reconcile_source(&mut self, fresh: &SourceObjectViewRecord) {
+        self.pin(fresh.clone());
+    }
+
+    pub(crate) fn current_view(&self, object: StableObjectId) -> Option<SourceObjectViewRecord> {
+        self.entries.get(&object).and_then(ObjectEditEntry::view)
+    }
+
+    pub(crate) fn current_views(&self) -> Vec<SourceObjectViewRecord> {
+        self.entries
+            .values()
+            .filter_map(ObjectEditEntry::view)
+            .collect()
+    }
+
+    pub(crate) fn resolve_source_view(
+        &self,
+        fresh: &SourceObjectViewRecord,
+    ) -> Option<SourceObjectViewRecord> {
+        self.entries
+            .get(&fresh.object.id)
+            .map_or_else(|| Some(fresh.clone()), ObjectEditEntry::view)
+    }
+
+    pub(crate) fn desired_proxy_views(
+        &self,
+        selected: &[StableObjectId],
+    ) -> Vec<SourceObjectViewRecord> {
+        self.entries
+            .iter()
+            .filter(|(id, entry)| selected.contains(id) || entry.runtime_differs())
+            .filter_map(|(_, entry)| entry.view())
+            .collect()
+    }
+
+    pub(crate) fn is_deleted(&self, object: StableObjectId) -> bool {
+        self.entries
+            .get(&object)
+            .is_some_and(|entry| entry.current.is_none())
+    }
+
+    pub(crate) fn dirty(&self, object: StableObjectId) -> bool {
+        self.entries
+            .get(&object)
+            .is_some_and(ObjectEditEntry::dirty)
+    }
+
+    pub(crate) fn dirty_count(&self) -> usize {
+        self.entries.values().filter(|entry| entry.dirty()).count()
+    }
+
+    pub(crate) fn saving(&self) -> bool {
+        self.active_save.is_some()
+    }
+
+    pub(crate) fn has_conflict(&self, object: StableObjectId) -> bool {
+        self.entries
+            .get(&object)
+            .is_some_and(ObjectEditEntry::has_conflict)
+    }
+
+    pub(crate) fn has_any_conflict(&self) -> bool {
+        self.entries.values().any(ObjectEditEntry::has_conflict)
+    }
+
+    pub(crate) fn can_edit(&self, object: StableObjectId) -> bool {
+        !self.saving()
+            && self
+                .entries
+                .get(&object)
+                .is_some_and(|entry| entry.current.is_some() && !entry.has_conflict())
+    }
+
+    pub(crate) fn edit_revision(&self) -> u64 {
+        self.edit_revision
+    }
+
+    /// Advances the cooked baseline to the project checkpoint used by a newly adopted runtime
+    /// generation. Commands created while cooking remain divergent from that checkpoint.
+    pub(crate) fn adopt_runtime_generation(&mut self) -> usize {
+        let mut adopted = 0;
+        for entry in self.entries.values_mut() {
+            if entry.runtime != entry.base {
+                entry.runtime.clone_from(&entry.base);
+                adopted += 1;
+            }
+            if !entry.dirty() && matches!(entry.save_state, EditorSaveState::Saved(_)) {
+                entry.save_state = EditorSaveState::Idle;
+            }
+        }
+        if adopted > 0 {
+            self.bump_edit_revision();
+        }
+        adopted
+    }
+
+    pub(crate) fn status(&self, object: StableObjectId) -> String {
+        let Some(entry) = self.entries.get(&object) else {
+            return "Object is not in the editor working set".into();
+        };
+        match &entry.save_state {
+            EditorSaveState::Idle if entry.current.is_none() => "Unsaved deletion command".into(),
+            EditorSaveState::Idle if entry.dirty() => "Unsaved object command".into(),
+            EditorSaveState::Idle => "No local changes".into(),
+            EditorSaveState::Saving(request_id) => {
+                format!("Saving object transaction {request_id}…")
+            }
+            EditorSaveState::Saved(revision) => {
+                format!("Saved source revision {revision}; cooked runtime data is unchanged")
+            }
+            EditorSaveState::Conflict(Some(actual)) => format!(
+                "Conflict: database is at revision {}; local command was preserved",
+                actual.source_revision
+            ),
+            EditorSaveState::Conflict(None) => {
+                "Conflict: object was deleted; local command was preserved".into()
+            }
+            EditorSaveState::Failed(error) => format!("Save failed: {error}"),
+        }
+    }
+
+    pub(crate) fn set_transforms(
+        &mut self,
+        transforms: &[(StableObjectId, SourceObjectTransform)],
+    ) -> bool {
+        if self.saving() || transforms.is_empty() {
+            return false;
+        }
+        let mut unique = HashSet::with_capacity(transforms.len());
+        let mut changed = false;
+        for (object, transform) in transforms {
+            if !unique.insert(*object) {
+                return false;
+            }
+            let Some(entry) = self
+                .entries
+                .get(object)
+                .filter(|entry| entry.current.is_some() && !entry.has_conflict())
+            else {
+                return false;
+            };
+            let current = entry
+                .current
+                .as_ref()
+                .expect("current object was checked above");
+            changed |= SourceObjectTransform::from(current) != *transform;
+        }
+        if !changed {
+            return false;
+        }
+
+        for (object, transform) in transforms {
+            let entry = self
+                .entries
+                .get_mut(object)
+                .expect("all transformed objects were validated above");
+            let current = entry
+                .current
+                .as_mut()
+                .expect("all transformed objects had current source state");
+            current.space = transform.space;
+            current.owner_cell = transform.owner_cell;
+            current.local_translation = transform.local_translation;
+            current.yaw = transform.yaw;
+            current.scale = transform.scale;
+            entry.save_state = EditorSaveState::Idle;
+        }
+        self.bump_edit_revision();
+        true
+    }
+
+    pub(super) fn restore_object(&mut self, object: SourceObjectRecord) -> bool {
+        self.restore_objects(&[object])
+    }
+
+    pub(super) fn create_object(&mut self, record: SourceObjectViewRecord) -> bool {
+        if self.saving() || self.entries.contains_key(&record.object.id) {
+            return false;
+        }
+        self.entries
+            .insert(record.object.id, ObjectEditEntry::from_created(record));
+        self.bump_edit_revision();
+        true
+    }
+
+    pub(super) fn delete_object(&mut self, object: StableObjectId) -> Option<SourceObjectRecord> {
+        self.delete_objects(&[object])?.pop()
+    }
+
+    pub(super) fn restore_objects(&mut self, objects: &[SourceObjectRecord]) -> bool {
+        if self.saving() || objects.is_empty() {
+            return false;
+        }
+        let mut unique = HashSet::with_capacity(objects.len());
+        if objects.iter().any(|object| {
+            !unique.insert(object.id)
+                || self
+                    .entries
+                    .get(&object.id)
+                    .is_none_or(|entry| entry.current.is_some() || entry.has_conflict())
+        }) {
+            return false;
+        }
+        for object in objects {
+            let entry = self
+                .entries
+                .get_mut(&object.id)
+                .expect("all restored objects were validated above");
+            entry.current = Some(object.clone());
+            entry.save_state = EditorSaveState::Idle;
+        }
+        self.bump_edit_revision();
+        true
+    }
+
+    pub(super) fn delete_objects(
+        &mut self,
+        objects: &[StableObjectId],
+    ) -> Option<Vec<SourceObjectRecord>> {
+        if self.saving() || objects.is_empty() {
+            return None;
+        }
+        let mut unique = HashSet::with_capacity(objects.len());
+        if objects.iter().any(|object| {
+            !unique.insert(*object)
+                || self
+                    .entries
+                    .get(object)
+                    .is_none_or(|entry| entry.current.is_none() || entry.has_conflict())
+        }) {
+            return None;
+        }
+        let mut deleted = Vec::with_capacity(objects.len());
+        for object in objects {
+            let entry = self
+                .entries
+                .get_mut(object)
+                .expect("all deleted objects were validated above");
+            deleted.push(
+                entry
+                    .current
+                    .take()
+                    .expect("all deleted objects had current source state"),
+            );
+            entry.save_state = EditorSaveState::Idle;
+        }
+        self.bump_edit_revision();
+        Some(deleted)
+    }
+
+    pub(crate) fn queue_save(&mut self, project: &mut ProjectEditorStore) -> bool {
+        if self.saving() || self.has_any_conflict() {
+            return false;
+        }
+        let mut writes = Vec::new();
+        let mut objects = Vec::new();
+        let mut dirty_entries = self
+            .entries
+            .iter()
+            .filter(|(_, entry)| entry.dirty())
+            .collect::<Vec<_>>();
+        dirty_entries.sort_by_key(|(id, _)| id.0);
+        for (id, entry) in dirty_entries
+            .into_iter()
+            .take(MAX_OBJECT_WRITES_PER_TRANSACTION)
+        {
+            let write = match (&entry.base, &entry.current) {
+                (Some(base), Some(current)) => SourceObjectWrite::UpdateTransform {
+                    object: *id,
+                    expected_source_revision: base.source_revision,
+                    transform: SourceObjectTransform::from(current),
+                },
+                (Some(base), None) => SourceObjectWrite::Delete {
+                    object: *id,
+                    expected_source_revision: base.source_revision,
+                },
+                (None, Some(current)) => SourceObjectWrite::Create {
+                    object: current.clone(),
+                },
+                (None, None) => continue,
+            };
+            writes.push(write);
+            objects.push(*id);
+        }
+        let Some(request_id) = project.queue_object_transaction(writes) else {
+            return false;
+        };
+        for object in &objects {
+            if let Some(entry) = self.entries.get_mut(object) {
+                entry.save_state = EditorSaveState::Saving(request_id);
+            }
+        }
+        self.active_save = Some(ActiveObjectSave {
+            request_id,
+            objects,
+        });
+        true
+    }
+
+    pub(crate) fn discard_all(&mut self, history: &mut EditorHistory) -> bool {
+        if self.saving() || self.dirty_count() == 0 {
+            return false;
+        }
+        for entry in self.entries.values_mut().filter(|entry| entry.dirty()) {
+            entry.current.clone_from(&entry.base);
+            entry.save_state = EditorSaveState::Idle;
+        }
+        history.clear();
+        self.bump_edit_revision();
+        true
+    }
+
+    pub(crate) fn reload_conflict(
+        &mut self,
+        object: StableObjectId,
+        history: &mut EditorHistory,
+    ) -> bool {
+        let Some(entry) = self.entries.get_mut(&object) else {
+            return false;
+        };
+        let EditorSaveState::Conflict(actual) = &entry.save_state else {
+            return false;
+        };
+        entry.base.clone_from(actual);
+        entry.current.clone_from(actual);
+        if let Some(actual) = actual {
+            entry.presentation.object = actual.clone();
+        }
+        entry.save_state = EditorSaveState::Idle;
+        history.clear();
+        self.bump_edit_revision();
+        true
+    }
+
+    /// Accepts the latest database record as the new revision checkpoint while retaining the
+    /// local placement intent for a revision-checked retry.
+    pub(crate) fn rebase_conflict(
+        &mut self,
+        object: StableObjectId,
+        history: &mut EditorHistory,
+    ) -> bool {
+        let Some(entry) = self.entries.get_mut(&object) else {
+            return false;
+        };
+        let EditorSaveState::Conflict(actual) = &entry.save_state else {
+            return false;
+        };
+        let actual = actual.clone();
+        entry.base.clone_from(&actual);
+        if let (Some(current), Some(actual)) = (entry.current.as_mut(), actual.as_ref()) {
+            // Object editing does not mutate definition identity. If an improbable UUID collision
+            // created the conflict, retry only the local transform against the real definition.
+            current.definition = actual.definition;
+            entry.presentation.object = actual.clone();
+        }
+        entry.save_state = EditorSaveState::Idle;
+        history.clear();
+        self.bump_edit_revision();
+        true
+    }
+
+    fn finish_save(&mut self, request_id: u64, outcome: ObjectSaveOutcome) {
+        if self
+            .active_save
+            .as_ref()
+            .is_none_or(|active| active.request_id != request_id)
+        {
+            return;
+        }
+        let active = self
+            .active_save
+            .take()
+            .expect("the matching active save was checked above");
+        match outcome {
+            ObjectSaveOutcome::Committed(commits) => {
+                for commit in commits {
+                    match commit {
+                        SourceObjectWriteCommit::Updated(object) => {
+                            if let Some(entry) = self.entries.get_mut(&object.id) {
+                                let revision = object.source_revision;
+                                entry.base = Some(object.clone());
+                                entry.current = Some(object.clone());
+                                entry.presentation.object = object;
+                                entry.save_state = EditorSaveState::Saved(revision);
+                            }
+                        }
+                        SourceObjectWriteCommit::Deleted(object) => {
+                            if let Some(entry) = self.entries.get_mut(&object) {
+                                let revision = entry
+                                    .base
+                                    .as_ref()
+                                    .map_or(0, |base| base.source_revision.saturating_add(1));
+                                entry.base = None;
+                                entry.current = None;
+                                entry.save_state = EditorSaveState::Saved(revision);
+                            }
+                        }
+                    }
+                }
+            }
+            ObjectSaveOutcome::Conflict { object, actual } => {
+                for id in active.objects {
+                    if let Some(entry) = self.entries.get_mut(&id) {
+                        entry.save_state = if id == object {
+                            EditorSaveState::Conflict(actual.clone())
+                        } else {
+                            EditorSaveState::Idle
+                        };
+                    }
+                }
+            }
+            ObjectSaveOutcome::Failed(error) => {
+                for object in active.objects {
+                    if let Some(entry) = self.entries.get_mut(&object) {
+                        entry.save_state = EditorSaveState::Failed(error.clone());
+                    }
+                }
+            }
+        }
+        self.bump_edit_revision();
+    }
+
+    fn bump_edit_revision(&mut self) {
+        self.edit_revision = self.edit_revision.wrapping_add(1).max(1);
+    }
+}
+
+pub(crate) fn process_project_save_completion(
+    mut project: ResMut<ProjectEditorStore>,
+    mut objects: ResMut<EditorObjectWorkingSet>,
+    mut coordinator: ResMut<EditorSaveCoordinator>,
+) {
+    let Some(completion) = project.take_save_completion() else {
+        return;
+    };
+    let committed = matches!(&completion.outcome, ObjectSaveOutcome::Committed(_));
+    objects.finish_save(completion.request_id, completion.outcome);
+    coordinator.transaction_finished(committed);
+}

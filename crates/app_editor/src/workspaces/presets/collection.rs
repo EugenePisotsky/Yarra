@@ -1,11 +1,11 @@
-use crate::navigation::ProjectNavigationStore;
+use crate::listings::ProjectListings;
 use bevy_egui::egui;
 use environment::{AssetCollection, CollectionAsset};
 
 pub(crate) fn editor(
     ui: &mut egui::Ui,
     collection: &mut AssetCollection,
-    navigation: &mut ProjectNavigationStore,
+    listings: &mut ProjectListings,
     assets: &[world_db::CollectionAssetView],
 ) {
     ui.label("Spaced scatter");
@@ -42,7 +42,7 @@ pub(crate) fn editor(
                 .find(|v| v.id == a.asset)
                 .map(|v| v.name.clone())
                 .or_else(|| {
-                    navigation
+                    listings
                         .palette_records()
                         .iter()
                         .find(|v| v.definition.visual_asset == Some(a.asset))
@@ -87,18 +87,18 @@ pub(crate) fn editor(
     }
     ui.small("Weights control the mix over many placements, not exact counts in a small patch.");
     ui.collapsing("Add from asset library", |ui| {
-        let mut search = navigation.palette_search().to_owned();
+        let mut search = listings.palette_search().to_owned();
         if ui
             .add(egui::TextEdit::singleline(&mut search).hint_text("Find tree, bush, rock…"))
             .changed()
         {
-            navigation.search_palette(search);
+            listings.search_palette(search);
         }
         egui::ScrollArea::vertical()
             .id_salt("collection_assets")
             .max_height(220.0)
             .show(ui, |ui| {
-                for record in navigation.palette_records() {
+                for record in listings.palette_records() {
                     let Some(asset) = record.definition.visual_asset else {
                         continue;
                     };
@@ -130,20 +130,20 @@ pub(crate) fn editor(
         ui.horizontal(|ui| {
             if ui
                 .add_enabled(
-                    navigation.palette_has_previous(),
+                    listings.palette_has_previous(),
                     egui::Button::new("Previous"),
                 )
                 .clicked()
             {
-                navigation.palette_previous();
+                listings.palette_previous();
             }
             if ui
-                .add_enabled(navigation.palette_has_next(), egui::Button::new("Next"))
+                .add_enabled(listings.palette_has_next(), egui::Button::new("Next"))
                 .clicked()
             {
-                navigation.palette_next();
+                listings.palette_next();
             }
         });
-        ui.weak(navigation.status());
+        ui.weak(listings.status());
     });
 }

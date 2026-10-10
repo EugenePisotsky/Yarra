@@ -93,18 +93,18 @@ impl CanopyBoundary {
         let mut rebound = false;
         if let Some((finished, values)) = self.task.as_mut().and_then(check_ready) {
             self.task = None;
-            if self.request.accept(finished) {
-                if let Some((buffer, _)) = update_storage(
+            if self.request.accept(finished)
+                && let Some((buffer, _)) = update_storage(
                     device,
                     queue,
                     &self.buffer,
                     self.buffer.size(),
                     "canopy boundary",
                     bytemuck::cast_slice(&values),
-                ) {
-                    self.buffer = buffer;
-                    rebound = true;
-                }
+                )
+            {
+                self.buffer = buffer;
+                rebound = true;
             }
         }
         // Coalesce streaming bursts. One job may finish after disabling; its result is discarded.

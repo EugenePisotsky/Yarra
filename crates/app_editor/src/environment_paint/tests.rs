@@ -1,8 +1,8 @@
 use super::*;
 use environment_compile::{CompilePlan, CompileProfile};
 use world_db::{
-    DenseSourceRecord, DenseSourceWrite, DenseSourceWriteTransactionResult, ProjectReader,
-    ProjectWriter,
+    EnvironmentCellWrite, EnvironmentCellWriteResult, ProjectReader, ProjectWriter,
+    SourceEnvironmentCellRecord,
 };
 
 /// Exercises the actual brush command -> undo -> save -> database/compiler path on a disposable
@@ -70,7 +70,7 @@ fn stroke_save_reload_compile_and_cancel_preserve_borders() {
     )
     .unwrap();
     let baseline = plan.compile_cells(&cells, &original.coverage).unwrap();
-    let mut dense = DenseDomainWorkingSets::from_environment_records(&records);
+    let mut dense = SourceWorkingSets::from_environment_records(&records);
     let mut stroke = Stroke {
         space: definition.space,
         layer,
@@ -110,22 +110,15 @@ fn stroke_save_reload_compile_and_cancel_preserve_borders() {
     let writes = dense
         .dirty_snapshots()
         .into_iter()
-        .map(|dirty| {
-            let DenseSourceRecord::EnvironmentCoverage(record) = dirty.current;
-            let expected_source_revision = dirty.base.map(|base| {
-                let DenseSourceRecord::EnvironmentCoverage(base) = base;
-                base.source_revision
-            });
-            DenseSourceWrite::EnvironmentCoverage {
-                expected_source_revision,
-                record,
-            }
+        .map(|dirty| EnvironmentCellWrite {
+            expected_source_revision: dirty.base.map(|base| base.source_revision),
+            record: dirty.current,
         })
         .collect::<Vec<_>>();
     let mut writer = ProjectWriter::open(&path).unwrap();
     assert!(matches!(
-        writer.apply_dense_source_transaction(&writes).unwrap(),
-        DenseSourceWriteTransactionResult::Committed(_)
+        writer.apply_environment_cell_transaction(&writes).unwrap(),
+        EnvironmentCellWriteResult::Committed(_)
     ));
     let reloaded = reader
         .read_environment_snapshot(definition.space, &halo)
@@ -167,10 +160,7 @@ fn stroke_save_reload_compile_and_cancel_preserve_borders() {
     paint.finish(&mut dense, &mut history, true);
     let mut after_cancel = dense.current_records();
     let mut before_cancel = before_cancel;
-    let sort = |record: &DenseSourceRecord| {
-        let DenseSourceRecord::EnvironmentCoverage(record) = record;
-        record.cell
-    };
+    let sort = |record: &SourceEnvironmentCellRecord| record.cell;
     after_cancel.sort_by_key(sort);
     before_cancel.sort_by_key(sort);
     assert_eq!(after_cancel, before_cancel);

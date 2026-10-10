@@ -1,29 +1,17 @@
-//! Authored foliage weights deform on the GPU using the shared vegetation wind field.
-//! This composes with cloud-shaded PBR and uses identical colour/depth/shadow geometry.
-//! Two-layer bark (see `bark`) is installed with it.
-mod bark;
-mod cards;
-pub use cards::tree_gltf_plugin;
-#[cfg(test)]
-mod depth_tests;
+//! The wind pose every tree material and impostor reads: the shared vegetation wind field
+//! sampled once a frame at the floating origin, with this frame's and the previous frame's
+//! pose in one GPU buffer.
 #[cfg(test)]
 mod gpu_tests;
-mod instancing;
-mod material;
-mod tuning;
-pub use instancing::TreeInstancing;
-pub use tuning::TreeWindTuning;
-#[cfg(test)]
-mod scene_tests;
 #[cfg(test)]
 mod tests;
 
+use super::tuning::{TreeWindTuning, WindTuningState};
 use bevy::{
     asset::RenderAssetUsages,
     prelude::*,
     render::{
-        Render, RenderApp, RenderSystems,
-        extract_resource::{ExtractResource, ExtractResourcePlugin},
+        extract_resource::ExtractResource,
         render_asset::RenderAssets,
         renderer::RenderQueue,
         storage::{GpuShaderBuffer, ShaderBuffer},
@@ -31,41 +19,6 @@ use bevy::{
 };
 use bytemuck::{Pod, Zeroable};
 use vegetation_render::{VegetationRenderOrigin, VegetationWind};
-
-/// Requires the atmosphere environment material pipeline and VegetationRenderPlugin's clock.
-/// Installed explicitly by game/editor composition, independently of world streaming.
-pub struct TreeWindPlugin;
-/// Wind producers that run in PostUpdate must finish before this snapshot is taken.
-#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct TreeWindSystems;
-impl Plugin for TreeWindPlugin {
-    fn build(&self, app: &mut App) {
-        app.init_resource::<TreeWindTuning>()
-            .init_resource::<tuning::WindTuningState>()
-            .add_systems(PreUpdate, tuning::restore_automatic)
-            .init_resource::<TreeWindResponse>()
-            .init_resource::<WindPose>()
-            .add_systems(
-                PostUpdate,
-                sample_wind
-                    .in_set(TreeWindSystems)
-                    .after(bevy::transform::TransformSystems::Propagate),
-            );
-        instancing::plugin(app);
-        if app.get_sub_app(RenderApp).is_none() {
-            return;
-        }
-        app.add_plugins((
-            ExtractResourcePlugin::<WindPose>::default(),
-            ExtractResourcePlugin::<WindBuffer>::default(),
-            material::TreeWindMaterialPlugin,
-            bark::TreeBarkPlugin,
-        ))
-        .add_systems(Startup, setup_buffer);
-        app.sub_app_mut(RenderApp)
-            .add_systems(Render, upload_wind.in_set(RenderSystems::PrepareResources));
-    }
-}
 
 /// Response in world metres, separate from wind direction, clock and strength.
 #[derive(Resource, Clone, Copy, Debug)]
@@ -84,14 +37,14 @@ impl Default for TreeWindResponse {
 
 // Legacy UV-weight deformation is bounded to < 1.5 m. Hierarchical assets use
 // their own swept bounds because their whole trunks can bend.
-const MAX_DISPLACEMENT: f32 = 1.5;
+pub(super) const MAX_DISPLACEMENT: f32 = 1.5;
 const FLUTTER_FREQUENCY: [f64; 2] = [1.91, -1.37];
 const FLUTTER_SPEED: f64 = 6.5;
 
 #[derive(Resource, ExtractResource, Clone, Copy, Default, Pod, Zeroable, Debug, PartialEq)]
 #[extract_app(bevy::render::RenderApp)]
 #[repr(C)]
-struct WindPose {
+pub(super) struct WindPose {
     // direction XZ, broad frequency, enabled strength
     field: [f32; 4],
     // Broad, cross, gust and flutter phases at the floating origin.
@@ -170,15 +123,16 @@ impl WindPose {
     }
 }
 
-fn sample_wind(
+#[allow(clippy::too_many_arguments)] // Wind, its tuning and response, the origin and the camera.
+pub(super) fn sample_wind(
     wind: Option<ResMut<VegetationWind>>,
     time: Res<Time>,
     tuning: Res<TreeWindTuning>,
-    mut state: ResMut<tuning::WindTuningState>,
+    mut state: ResMut<WindTuningState>,
     origin: Option<Res<VegetationRenderOrigin>>,
     response: Res<TreeWindResponse>,
     mut pose: ResMut<WindPose>,
-    cameras: Query<&GlobalTransform, With<crate::WorldViewCamera>>,
+    view: crate::ActiveWorldView,
 ) {
     *pose = wind.map_or_else(WindPose::default, |mut w| {
         state.apply(&mut w, &tuning, time.delta_secs());
@@ -191,13 +145,13 @@ fn sample_wind(
         ];
         result
     });
-    if let Ok(camera) = cameras.single() {
-        pose.camera = camera.translation().extend(1.).to_array();
+    if let Some(view) = view.current() {
+        pose.camera = view.transform.translation().extend(1.).to_array();
     }
 }
 
 /// This frame's and the previous frame's [`WindPose`], shared by every tree material and
-/// the impostors (`crate::tree_impostor`).
+/// the impostors (`super::impostor`).
 #[derive(Resource, ExtractResource, Clone)]
 #[extract_app(bevy::render::RenderApp)]
 pub(crate) struct WindBuffer(pub(crate) Handle<ShaderBuffer>);
@@ -207,13 +161,13 @@ struct WindFrames {
     current: WindPose,
     previous: WindPose,
 }
-fn setup_buffer(mut commands: Commands, mut buffers: ResMut<Assets<ShaderBuffer>>) {
+pub(super) fn setup_buffer(mut commands: Commands, mut buffers: ResMut<Assets<ShaderBuffer>>) {
     commands.insert_resource(WindBuffer(buffers.add(ShaderBuffer::new(
         vec![WindFrames::zeroed()],
         RenderAssetUsages::RENDER_WORLD,
     ))));
 }
-fn upload_wind(
+pub(super) fn upload_wind(
     pose: Res<WindPose>,
     handle: Option<Res<WindBuffer>>,
     buffers: Res<RenderAssets<GpuShaderBuffer>>,

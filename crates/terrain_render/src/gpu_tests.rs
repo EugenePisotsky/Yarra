@@ -1,5 +1,6 @@
 //! Explicit GPU smoke test: compile and draw every terrain diagnostic with real Bevy imports.
 use super::*;
+use bevy::image::ImageAddressMode;
 use bevy::{
     app::PluginsState,
     camera::RenderTarget,
@@ -111,7 +112,7 @@ fn terrain_variants_compile_and_render() {
             .enabled = true;
         let cached = settled_pixels(&mut app, true);
         assert!(
-            cached.chunks_exact(4).any(|p| p[0] != p[1]),
+            cached.as_chunks::<4>().0.iter().any(|p| p[0] != p[1]),
             "test must render coloured terrain"
         );
         let builds = app
@@ -275,8 +276,8 @@ fn exercise_prepared_material(app: &mut App) {
         data.len()
     );
     // Readback rows include 256-byte alignment. Check every real texel, including the halo.
-    for row in data.chunks_exact(1280).take(272) {
-        for pixel in row[..272 * 4].chunks_exact(4) {
+    for row in data.as_chunks::<1280>().0.iter().take(272) {
+        for pixel in row[..272 * 4].as_chunks::<4>().0 {
             let decoded = (u16::from(pixel[2]) * 256 + u16::from(pixel[3])) as f32 / 65535.0;
             assert!(
                 (decoded - 191.0 / 255.0).abs() < 0.00004,
@@ -640,22 +641,15 @@ fn setup(
     .enumerate()
     {
         let material = materials.add(TerrainMaterial {
-            source_only: false,
-            environment: atmosphere::environment::fallback_parameters(),
-            cloud_shadows: None,
-            rain_shelter: None,
-            forest_shadow: None,
             shading_mode: mode,
-            stochastic_cached: false,
-            prepared: false,
-            prepared_albedo: false,
             source_weights: weights.clone(),
             source_base_color_array: array.clone(),
             stochastic_cache: crate::stochastic_cache::fallback(),
-            canopy_bounds: Vec4::ZERO,
-            canopy_shading: Default::default(),
-            canopy_coverage: None,
-            settings: TerrainMaterialUniform {
+            weights: weights.clone(),
+            base_color_array: array.clone(),
+            normal_material_array: array.clone(),
+            macro_variation: weights.clone(),
+            ..TerrainMaterial::for_tests(TerrainMaterialUniform {
                 cache_origins: Vec4::ZERO,
                 cache_size: UVec4::ZERO,
                 chunk_minimum: Vec2::splat(-2.0),
@@ -666,11 +660,7 @@ fn setup(
                 roughness_ranges: Vec4::new(0.1, 0.9, 0.1, 0.9),
                 macro_scales: Vec4::ONE,
                 macro_settings: Vec4::ONE,
-            },
-            weights: weights.clone(),
-            base_color_array: array.clone(),
-            normal_material_array: array.clone(),
-            macro_variation: weights.clone(),
+            })
         });
         commands.spawn((
             Mesh3d(mesh.clone()),

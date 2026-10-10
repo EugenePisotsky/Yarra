@@ -2,8 +2,8 @@
 //! each drawn impostor batch contributes its instances' crowns. The map is rasterized off the
 //! main thread whenever batches come or go, a rebase moves them, or the camera leaves the
 //! middle of the covered square.
-use crate::WorldViewCamera;
-use crate::tree_impostor::{ImpostorBatch, ImpostorBatchDone, ImpostorDescriptor};
+use super::impostor::{ImpostorBatch, ImpostorBatchDone, ImpostorDescriptor};
+use crate::ActiveWorldView;
 use atmosphere::forest_shadow::{ForestCrown, ForestShadow, ForestShadowMap};
 use bevy::{
     prelude::*,
@@ -30,7 +30,7 @@ pub(crate) struct ForestShadowBuilder {
 pub(crate) fn rebuild(
     mut builder: Local<ForestShadowBuilder>,
     forest: Option<ResMut<ForestShadow>>,
-    cameras: Query<(&Camera, &GlobalTransform), With<WorldViewCamera>>,
+    view: ActiveWorldView,
     batches: Query<
         (&ImpostorBatch, &GlobalTransform),
         (With<ImpostorBatchDone>, Without<NoForestShadow>),
@@ -51,10 +51,10 @@ pub(crate) fn rebuild(
     {
         builder.dirty = true;
     }
-    let Some((_, camera)) = cameras.iter().find(|(c, _)| c.is_active) else {
+    let Some(view) = view.active() else {
         return;
     };
-    let eye = camera.translation().xz();
+    let eye = view.transform.translation().xz();
     if builder
         .centre
         .is_none_or(|centre| centre.distance(eye) > RECENTRE_METRES)

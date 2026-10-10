@@ -2,6 +2,49 @@
 //! change the live generation; only a confirmed commit can publish their results.
 use super::*;
 
+/// Explicit handshake for replacing the streamer's immutable SQLite snapshot.
+///
+/// Publishing code first atomically replaces the database file, then requests the exact expected
+/// generation here. The worker prepares a second reader while the current one stays live.
+/// With the terrain hierarchy enabled, a complete uploaded cover must also be ready.
+/// Only a matching worker commit acknowledgement replaces the catalog and source pages;
+/// preparation failures discard the candidate and retain the current generation.
+#[derive(Resource, Debug, Default)]
+pub struct WorldGenerationReload {
+    pub(super) queued: Option<String>,
+    /// The preparation request and the generation it expects.
+    pub(super) in_flight: Option<(RequestId, String)>,
+    pub(super) completion: Option<Result<String, String>>,
+    pub(super) candidate: Option<RuntimeManifest>,
+    /// The commit request, once sent.
+    pub(super) commit: Option<RequestId>,
+    pub(super) committed: bool,
+    pub(super) failure: Option<String>,
+    pub(super) last_error: Option<String>,
+    pub(super) hierarchy: bool,
+}
+
+impl WorldGenerationReload {
+    pub fn request(&mut self, expected_generation: impl Into<String>) -> bool {
+        let expected_generation = expected_generation.into();
+        if expected_generation.is_empty() || self.queued.is_some() || self.in_flight.is_some() {
+            return false;
+        }
+        self.completion = None;
+        self.last_error = None;
+        self.queued = Some(expected_generation);
+        true
+    }
+
+    pub fn active(&self) -> bool {
+        self.queued.is_some() || self.in_flight.is_some()
+    }
+
+    pub fn take_completion(&mut self) -> Option<Result<String, String>> {
+        self.completion.take()
+    }
+}
+
 fn compatible_candidate(
     active: Option<WorldSpaceId>,
     old: Option<&RuntimeManifest>,
@@ -29,37 +72,35 @@ pub(super) fn request_reload(
     mut reload: ResMut<WorldGenerationReload>,
     config: Res<TerrainHierarchy>,
 ) {
-    if let Some(candidate) = &reload.candidate {
-        if let Err(error) =
+    if let Some(candidate) = &reload.candidate
+        && let Err(error) =
             compatible_candidate(active.current, stream.manifest.as_ref(), candidate)
-        {
-            reload.failure = Some(error);
-        }
+    {
+        reload.failure = Some(error);
     }
     if reload.in_flight.is_some() {
         return;
     }
-    let Some((id, generation)) = reload.queued.take() else {
+    let Some(generation) = reload.queued.take() else {
         return;
     };
     let Some(worker) = worker else {
-        reload.queued = Some((id, generation));
+        reload.queued = Some(generation);
         return;
     };
-    match worker.try_send(DatabaseRequest::Reload {
-        request_id: id,
+    match worker.send(DatabaseRequest::Reload {
         expected_generation: generation.clone(),
     }) {
-        Ok(()) => {
+        Ok(id) => {
             reload.in_flight = Some((id, generation));
             reload.candidate = None;
-            reload.commit_requested = false;
+            reload.commit = None;
             reload.committed = false;
             reload.failure = None;
             reload.hierarchy = config.enabled;
         }
-        Err(TrySendError::Full(_)) => reload.queued = Some((id, generation)),
-        Err(TrySendError::Disconnected(_)) => {
+        Err(NotSent::Full) => reload.queued = Some(generation),
+        Err(NotSent::Stopped) => {
             let error = "database request channel closed during generation preparation".to_string();
             reload.last_error = Some(error.clone());
             reload.completion = Some(Err(error));
@@ -67,6 +108,7 @@ pub(super) fn request_reload(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn advance_reload(
     mut commands: Commands,
     worker: Option<Res<WorldDatabaseWorker>>,
@@ -93,15 +135,13 @@ pub(super) fn advance_reload(
     if let Some(error) = reload.failure.clone() {
         // Keep the operation single-flight until the candidate's reader is queued
         // for release. A later retry cannot be cleared by this discard's identity.
-        if let Err(TrySendError::Full(_)) =
-            worker.try_send(DatabaseRequest::DiscardReload { request_id: id })
-        {
+        if let Err(NotSent::Full) = worker.send(DatabaseRequest::DiscardReload { reload: id }) {
             return;
         }
         entry.clear(&mut commands, &mut meshes, &tracker);
         reload.candidate = None;
         reload.in_flight = None;
-        reload.commit_requested = false;
+        reload.commit = None;
         reload.committed = false;
         reload.failure = None;
         reload.last_error = Some(error.clone());
@@ -119,14 +159,14 @@ pub(super) fn advance_reload(
     if reload.hierarchy && !entry.ready_for(&expected, request) {
         return;
     }
-    if !reload.commit_requested {
-        match worker.try_send(DatabaseRequest::CommitReload {
-            request_id: id,
+    if reload.commit.is_none() {
+        match worker.send(DatabaseRequest::CommitReload {
+            reload: id,
             expected_generation: expected,
         }) {
-            Ok(()) => reload.commit_requested = true,
-            Err(TrySendError::Full(_)) => (),
-            Err(TrySendError::Disconnected(_)) => {
+            Ok(commit) => reload.commit = Some(commit),
+            Err(NotSent::Full) => (),
+            Err(NotSent::Stopped) => {
                 reload.failure = Some("database worker stopped before generation commit".into())
             }
         }
@@ -167,7 +207,7 @@ pub(super) fn advance_reload(
         );
     }
     reload.in_flight = None;
-    reload.commit_requested = false;
+    reload.commit = None;
     reload.committed = false;
     reload.last_error = None;
     reload.completion = Some(Ok(expected));
@@ -177,6 +217,23 @@ pub(super) fn advance_reload(
 mod tests {
     use super::*;
     use crossbeam_channel::{Receiver, Sender};
+
+    #[test]
+    fn generation_reload_is_an_exact_single_flight_handshake() {
+        let mut reload = WorldGenerationReload::default();
+        assert!(!reload.request(""));
+        assert!(reload.request("generation-a"));
+        assert!(reload.active());
+        assert!(!reload.request("generation-b"));
+
+        let queued = reload.queued.take().unwrap();
+        reload.in_flight = Some((1, queued));
+        reload.in_flight = None;
+        reload.completion = Some(Ok("generation-a".into()));
+        assert_eq!(reload.take_completion(), Some(Ok("generation-a".into())));
+        assert!(!reload.active());
+        assert!(reload.request("generation-b"));
+    }
 
     fn manifest(generation: &str) -> RuntimeManifest {
         RuntimeManifest {
@@ -209,8 +266,8 @@ mod tests {
 
     struct Harness {
         app: App,
-        requests: Receiver<DatabaseRequest>,
-        replies: Sender<DatabaseResult>,
+        requests: Receiver<(RequestId, DatabaseRequest)>,
+        replies: Sender<(RequestId, DatabaseResult)>,
         resident: Entity,
     }
     impl Harness {
@@ -241,10 +298,15 @@ mod tests {
                 })
                 .add_systems(
                     Update,
-                    (receive_database_results, request_reload, advance_reload).chain(),
+                    (
+                        super::super::replies::receive_database_results,
+                        request_reload,
+                        advance_reload,
+                    )
+                        .chain(),
                 );
             replies
-                .send(DatabaseResult::Opened(Ok(manifest("old"))))
+                .send((0, DatabaseResult::Opened(Ok(manifest("old")))))
                 .unwrap();
             app.update();
             let resident = app.world_mut().spawn_empty().id();
@@ -278,25 +340,40 @@ mod tests {
                     .request("next")
             );
             self.app.update();
-            let DatabaseRequest::Reload {
-                request_id,
-                expected_generation,
-            } = self.requests.try_recv().unwrap()
+            let (
+                id,
+                DatabaseRequest::Reload {
+                    expected_generation,
+                },
+            ) = self.requests.try_recv().unwrap()
             else {
                 panic!("missing preparation request")
             };
             assert_eq!(expected_generation, "next");
             self.assert_old();
-            request_id
+            id
         }
         fn prepared(&mut self, id: u64, candidate: RuntimeManifest) {
             self.replies
-                .send(DatabaseResult::Reloaded {
-                    request_id: id,
-                    result: Ok(candidate),
-                })
+                .send((id, DatabaseResult::Reloaded(Ok(candidate))))
                 .unwrap();
             self.app.update();
+        }
+        /// The commit request for the reload `id`.
+        fn commit(&mut self, id: u64) -> u64 {
+            let (commit, DatabaseRequest::CommitReload { reload, .. }) =
+                self.requests.try_recv().unwrap()
+            else {
+                panic!("missing commit request")
+            };
+            assert_eq!(reload, id);
+            commit
+        }
+        fn discarded(&mut self, id: u64) -> bool {
+            matches!(
+                self.requests.try_recv().unwrap(),
+                (_, DatabaseRequest::DiscardReload { reload }) if reload == id
+            )
         }
         fn assert_old(&self) {
             let w = self.app.world();
@@ -330,25 +407,17 @@ mod tests {
             .resource_mut::<ActiveWorldSpace>()
             .request(WorldSpaceId(2), [1., 2., 3.]);
         h.prepared(id, manifest("next"));
-        assert!(
-            matches!(h.requests.try_recv().unwrap(), DatabaseRequest::CommitReload { request_id, .. } if request_id == id)
-        );
+        let commit = h.commit(id);
         h.assert_old();
         assert!(h.completion().is_none());
         h.replies
-            .send(DatabaseResult::ReloadCommitted {
-                request_id: id + 10,
-                result: Ok(()),
-            })
+            .send((commit + 10, DatabaseResult::ReloadCommitted(Ok(()))))
             .unwrap();
         h.app.update();
         h.assert_old();
         assert!(h.completion().is_none());
         h.replies
-            .send(DatabaseResult::ReloadCommitted {
-                request_id: id,
-                result: Ok(()),
-            })
+            .send((commit, DatabaseResult::ReloadCommitted(Ok(()))))
             .unwrap();
         h.app.update();
         assert_eq!(h.completion(), Some(Ok("next".into())));
@@ -378,30 +447,25 @@ mod tests {
             let id = h.request();
             if fail_commit {
                 h.prepared(id, manifest("next"));
-                assert!(matches!(
-                    h.requests.try_recv().unwrap(),
-                    DatabaseRequest::CommitReload { .. }
-                ));
+                let commit = h.commit(id);
                 h.replies
-                    .send(DatabaseResult::ReloadCommitted {
-                        request_id: id,
-                        result: Err("commit rejected".into()),
-                    })
+                    .send((
+                        commit,
+                        DatabaseResult::ReloadCommitted(Err("commit rejected".into())),
+                    ))
                     .unwrap();
             } else {
                 h.replies
-                    .send(DatabaseResult::Reloaded {
-                        request_id: id,
-                        result: Err("could not open candidate".into()),
-                    })
+                    .send((
+                        id,
+                        DatabaseResult::Reloaded(Err("could not open candidate".into())),
+                    ))
                     .unwrap();
             }
             h.app.update();
             h.assert_old();
             assert!(h.completion().unwrap().is_err());
-            assert!(
-                matches!(h.requests.try_recv().unwrap(), DatabaseRequest::DiscardReload { request_id } if request_id == id)
-            );
+            assert!(h.discarded(id));
             assert!(h.request() > id);
         }
     }
@@ -413,46 +477,32 @@ mod tests {
         h.app
             .world()
             .resource::<WorldDatabaseWorker>()
-            .try_send(DatabaseRequest::DiscardReload { request_id: 0 })
+            .send(DatabaseRequest::DiscardReload { reload: 0 })
             .unwrap();
         h.prepared(id, manifest("next"));
         h.assert_old();
-        assert!(
-            !h.app
-                .world()
-                .resource::<WorldGenerationReload>()
-                .commit_requested
-        );
+        let commit = |h: &Harness| h.app.world().resource::<WorldGenerationReload>().commit;
+        assert!(commit(&h).is_none());
         assert!(h.completion().is_none());
         h.requests.try_recv().unwrap();
         h.app.update();
-        assert!(
-            h.app
-                .world()
-                .resource::<WorldGenerationReload>()
-                .commit_requested
-        );
+        let sent = commit(&h).unwrap();
         // Leave the commit occupying the queue while reporting its failure.
         h.replies
-            .send(DatabaseResult::ReloadCommitted {
-                request_id: id,
-                result: Err("injected rejection".into()),
-            })
+            .send((
+                sent,
+                DatabaseResult::ReloadCommitted(Err("injected rejection".into())),
+            ))
             .unwrap();
         h.app.update();
         h.assert_old();
         assert!(h.completion().is_none());
         assert!(h.app.world().resource::<WorldGenerationReload>().active());
-        assert!(matches!(
-            h.requests.try_recv().unwrap(),
-            DatabaseRequest::CommitReload { .. }
-        ));
+        assert_eq!(h.commit(id), sent);
         h.app.update();
         h.assert_old();
         assert!(h.completion().unwrap().is_err());
-        assert!(
-            matches!(h.requests.try_recv().unwrap(), DatabaseRequest::DiscardReload { request_id } if request_id == id)
-        );
+        assert!(h.discarded(id));
     }
 
     #[test]
@@ -475,9 +525,7 @@ mod tests {
             } else {
                 "cell size"
             }));
-            assert!(
-                matches!(h.requests.try_recv().unwrap(), DatabaseRequest::DiscardReload { request_id } if request_id == id)
-            );
+            assert!(h.discarded(id));
         }
     }
 }

@@ -1,6 +1,8 @@
 //! Which meshes each view's instances come from: shadow LODs, cascade tests and hiding.
+use super::gather::{Groups, collect, flatten, in_cascade, shadow_scenes};
 use super::*;
-use crate::object_lod::ScreenSpaceLodVariant;
+use crate::object_lod::{LodScene, ScreenSpaceLod, ScreenSpaceLodVariant, TIMED_RANGE};
+use bevy::camera::primitives::{CascadesFrusta, Frustum};
 use bevy::{asset::uuid::Uuid, ecs::system::RunSystemOnce};
 
 /// Three mesh LODs and an impostor, as streamed trees have.

@@ -196,9 +196,11 @@ fn begin(
                     continue;
                 };
                 let times: Vec<u64> = data
-                    .chunks_exact(8)
+                    .as_chunks::<8>()
+                    .0
+                    .iter()
                     .take(slot.used as usize)
-                    .map(|v| u64::from_le_bytes(v.try_into().unwrap()))
+                    .map(|v| u64::from_le_bytes(*v))
                     .collect();
                 let sample = decode(slot.stamp, &times, &slot.scopes, period_ns);
                 drop(data);

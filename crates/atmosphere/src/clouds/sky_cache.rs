@@ -6,8 +6,8 @@ use std::time::Duration;
 /// disk's square grid crossed thin distant clouds diagonally, and bilinear filtering rendered
 /// them as sawtooth staircases. Twice that texel count at half the refresh rate traces the same
 /// rays per second with ~5.7 texels per degree of azimuth (the disk had ~4.2).
-pub const WIDTH: u32 = 2048;
-pub const HEIGHT: u32 = 256;
+pub(crate) const WIDTH: u32 = 2048;
+pub(crate) const HEIGHT: u32 = 256;
 /// Complete atlas refreshes per second, spread evenly over frames. The per-frame share
 /// varies with frame rate; total work per second does not.
 const REFRESH_HZ: f64 = 4.0;
@@ -16,7 +16,7 @@ const REFRESH_HZ: f64 = 4.0;
 const MAX_ROWS: u32 = HEIGHT / 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Region {
+pub(crate) enum Region {
     Full,
     Rows { start: u32, count: u32 },
 }

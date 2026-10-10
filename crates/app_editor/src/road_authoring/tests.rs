@@ -16,8 +16,8 @@ impl Fixture {
     fn reader(&self) -> ProjectReader {
         ProjectReader::open_read_only(&self.path).unwrap()
     }
-    fn load(&self) -> DenseDomainWorkingSets {
-        let mut dense = DenseDomainWorkingSets::default();
+    fn load(&self) -> SourceWorkingSets {
+        let mut dense = SourceWorkingSets::default();
         dense.roads.reconcile(
             self.reader()
                 .read_road_authoring_snapshot(
@@ -39,7 +39,7 @@ impl Drop for Fixture {
         let _ = std::fs::remove_file(&self.path);
     }
 }
-fn keys(d: &DenseDomainWorkingSets) -> (RoadSpanId, RoadKnotId) {
+fn keys(d: &SourceWorkingSets) -> (RoadSpanId, RoadKnotId) {
     let s = d
         .roads
         .entries
@@ -54,7 +54,7 @@ fn keys(d: &DenseDomainWorkingSets) -> (RoadSpanId, RoadKnotId) {
         .unwrap();
     (s, commands::span(&d.roads, s).unwrap().end.id)
 }
-fn checkpoint(f: &Fixture, d: &mut DenseDomainWorkingSets) {
+fn checkpoint(f: &Fixture, d: &mut SourceWorkingSets) {
     let mut writer = ProjectWriter::open(&f.path).unwrap();
     let result = writer
         .apply_environment_and_roads_transaction(
@@ -139,7 +139,7 @@ fn recovery_retains_reference_dependencies_and_detects_a_changed_database() {
         .unwrap();
     let bytes = ron::to_string(&dense.roads.journal()).unwrap();
     let entries = ron::from_str(&bytes).unwrap();
-    let mut restored = DenseDomainWorkingSets::default();
+    let mut restored = SourceWorkingSets::default();
     assert_eq!(restored.roads.restore(entries), 1);
     assert_eq!(restored.roads.writes(), dense.roads.writes());
     assert_eq!(restored.roads.dependencies(), dense.roads.dependencies());
@@ -321,7 +321,7 @@ fn extension_is_tangent_continuous_and_undo_removes_all_new_records() {
 }
 #[test]
 fn creation_undo_is_clean_and_record_budget_does_not_partially_apply() {
-    let mut dense = DenseDomainWorkingSets::default();
+    let mut dense = SourceWorkingSets::default();
     let mut state = RoadToolState::default();
     let mut history = EditorHistory::default();
     let mut objects = EditorObjectWorkingSet::default();

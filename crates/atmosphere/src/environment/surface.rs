@@ -12,7 +12,7 @@ use bevy::render::{
 use binding_types::*;
 
 #[derive(Resource)]
-pub struct EnvironmentSurfaceLayout(pub BindGroupLayoutDescriptor);
+pub(crate) struct EnvironmentSurfaceLayout(pub BindGroupLayoutDescriptor);
 #[derive(Resource)]
 pub struct EnvironmentSurfaceGpu(pub BindGroup);
 pub(super) fn install(app: &mut App) {
@@ -75,6 +75,7 @@ fn upload_forest_sky_levels(
     *written = Some(key);
 }
 
+#[allow(clippy::too_many_arguments)] // Independent render-world inputs of one bind group.
 fn prepare(
     mut commands: Commands,
     assets: Option<Res<EnvironmentAssets>>,

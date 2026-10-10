@@ -22,7 +22,7 @@ mod mesh_cache;
 mod transition;
 pub use contact::TerrainContactReadiness;
 mod authoring;
-use super::database::{TerrainQuery, TerrainReply};
+use super::database::{RequestId, TerrainQuery, TerrainReply};
 pub use authoring::{LiveTerrainPreview, TerrainPreviewRequest};
 use contact::{ContactInputs, ContactSystems};
 use terrain_render::lod::{self, LodSettings, LodView, PatchMetadata, PlannedCover, StitchEdges};
@@ -339,8 +339,7 @@ pub(crate) struct TerrainLodStream {
     overlay: Option<Arc<world::TerrainPreviewProducts>>,
     overlay_revision: u64,
     identity: Option<(String, WorldSpaceId)>,
-    next_id: u64,
-    pending: BTreeMap<u64, TerrainQuery>,
+    pending: BTreeMap<RequestId, TerrainQuery>,
     roots: Option<Vec<TerrainNodeKey>>,
     descriptors: BTreeMap<TerrainNodeKey, TerrainNodeDescriptor>,
     /// Shared with a running plan; copied on write only if a reply lands during one.
@@ -375,7 +374,7 @@ pub(crate) struct TerrainLodStream {
     draw_visible: bool,
 }
 impl TerrainLodStream {
-    pub(super) fn receive(&mut self, request_id: u64, reply: Result<TerrainReply, String>) {
+    pub(super) fn receive(&mut self, request_id: RequestId, reply: Result<TerrainReply, String>) {
         let Some(query) = self.pending.remove(&request_id) else {
             return;
         };
@@ -462,20 +461,15 @@ impl TerrainLodStream {
         let Some((generation, _)) = &self.identity else {
             return;
         };
-        let id = self.next_id.wrapping_add(1).max(1);
-        self.next_id = id;
-        match worker.try_send(DatabaseRequest::Terrain {
-            request_id: id,
+        match worker.send(DatabaseRequest::Terrain {
             generation: generation.clone(),
             query: query.clone(),
         }) {
-            Ok(()) => {
+            Ok(id) => {
                 self.pending.insert(id, query);
             }
-            Err(TrySendError::Full(_)) => (),
-            Err(TrySendError::Disconnected(_)) => {
-                self.error = Some("terrain database worker stopped".into())
-            }
+            Err(NotSent::Full) => (),
+            Err(NotSent::Stopped) => self.error = Some("terrain database worker stopped".into()),
         }
     }
     fn decoded_bytes(&self) -> u64 {
@@ -536,10 +530,8 @@ impl TerrainLodStream {
             uploads.ready.remove(&mesh.handle.id());
         }
         self.composites.clear(tracker);
-        let next_id = self.next_id;
         let material = self.material.take();
         *self = Self {
-            next_id,
             material,
             ..default()
         };
@@ -793,7 +785,7 @@ impl TerrainLodStream {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn update(
     mut commands: Commands,
     config: Res<TerrainHierarchy>,
@@ -865,38 +857,13 @@ fn update(
     }
     // Position from canonical keys each frame; rebasing never requires terrain reload.
     if stream.position_origin != Some(origin.cell()) || stream.draw_visible != visible {
-        stream.sync_material_origin(&mut materials, origin.cell(), info.cell_size);
-        for (&patch, &entity) in &stream.active {
-            let show = visible
-                && stream
-                    .transition
-                    .as_ref()
-                    .is_none_or(|t| !t.running() || t.keeps(&patch));
-            commands.entity(entity).insert((
-                patch_transform(patch.0, origin.cell(), info.cell_size),
-                GlobalTransform::from(patch_transform(patch.0, origin.cell(), info.cell_size)),
-                if show {
-                    Visibility::Inherited
-                } else {
-                    Visibility::Hidden
-                },
-            ));
-        }
-        if let Some(t) = &stream.transition {
-            for (&key, &entity) in &t.entities {
-                commands.entity(entity).insert((
-                    patch_transform(key, origin.cell(), info.cell_size),
-                    GlobalTransform::from(patch_transform(key, origin.cell(), info.cell_size)),
-                    if visible {
-                        Visibility::Inherited
-                    } else {
-                        Visibility::Hidden
-                    },
-                ));
-            }
-        }
-        stream.position_origin = Some(origin.cell());
-        stream.draw_visible = visible;
+        stream.place(
+            &mut commands,
+            &mut materials,
+            origin.cell(),
+            info.cell_size,
+            visible,
+        );
     }
     // Keep the drawn old cover (including its current morph weight) intact while
     // staging a different world. Both covers share the same allocation limits.
@@ -942,226 +909,72 @@ fn update(
     );
     stream.prepare_materials(&worker, material::MAX_MATERIAL_BYTES);
     // A finished plan is applied before anything else can stage a target.
-    if stream.target.is_none()
-        && let Some((planned, milliseconds)) = stream
-            .planning
-            .as_mut()
-            .and_then(|p| check_ready(&mut p.task))
-    {
-        let identity = stream.planning.take().unwrap().identity;
-        stats.plans += 1;
-        stats.replans = stream.replans;
-        stats.unmorphed_swaps = stream.unmorphed_swaps;
-        stats.plan_milliseconds = milliseconds;
-        match planned {
-            Ok(plan) => {
-                if plan.requests.is_empty() {
-                    stream.last_plan = Some(identity);
-                }
-                stats.maximum_visible_error = plan.stats.maximum_visible_error;
-                stats.budget_limited = plan.stats.budget_limited;
-                stats.contact_limited = plan.stats.contact_limited;
-                let queued: BTreeSet<_> = stream
-                    .pending
-                    .values()
-                    .filter_map(|q| {
-                        if let TerrainQuery::Metadata(keys) = q {
-                            Some(keys.iter().copied())
-                        } else {
-                            None
-                        }
-                    })
-                    .flatten()
-                    .collect();
-                // Every requested key, in batches. Refining a patch needs its four
-                // children, so one batch a plan grew a cover by only ~100 patches per
-                // plan and morph: a turned view took tens of seconds to sharpen.
-                let keys: Vec<_> = plan
-                    .requests
-                    .iter()
-                    .filter(|k| !queued.contains(k))
-                    .copied()
-                    .take(MAX_METADATA.saturating_sub(stream.metadata.len() + queued.len()))
-                    .collect();
-                for batch in keys.chunks(world_db::MAX_TERRAIN_NODE_QUERY) {
-                    stream.request(&worker, TerrainQuery::Metadata(batch.to_vec()));
-                }
-                if !plan.balanced {
-                    stats.status = "balancing coarse terrain cover".into();
-                } else if stream.draws(&plan) {
-                    // Nothing to stage. Publishing the same cover ran upload checks, a
-                    // quadratic removal scan and a full eviction on the plan's frame.
-                    stats.triangles = plan.stats.triangles;
-                    if stream.metadata.len() > MAX_METADATA - METADATA_CACHE {
-                        // Descriptors loaded for refinements this cover could not take
-                        // yet would otherwise fill the table and block every request.
-                        stream.evict(&mut meshes, &tracker);
-                    }
-                } else {
-                    stream.target = Some(plan);
-                }
-            }
-            Err(e) => stream.error = Some(e),
-        }
+    if stream.target.is_none() {
+        stream.apply_finished_plan(&worker, &mut stats, &mut meshes, &tracker);
     }
+    let view =
+        camera
+            .iter()
+            .find(|(c, _, _)| c.is_active)
+            .and_then(|(camera, transform, resolution)| {
+                let viewport = resolution
+                    .map(|r| r.0)
+                    .or_else(|| camera.physical_viewport_size())?;
+                Some(lod_view(
+                    camera,
+                    transform,
+                    viewport,
+                    origin.cell(),
+                    info.cell_size,
+                ))
+            });
     // Freeze a replacement while it uploads; changing camera demand cannot continually
     // cancel the last missing child and starve publication.
     if stream.target.is_none()
         && stream.planning.is_none()
         && visible
-        && let Some((camera, transform, resolution)) = camera.iter().find(|(c, _, _)| c.is_active)
-        && let Some(size) = resolution
-            .map(|r| r.0)
-            .or_else(|| camera.physical_viewport_size())
-        && let Some(roots) = stream.roots.as_ref()
+        && let Some(view) = &view
+        && stream.roots.is_some()
     {
-        let shift = DVec3::new(
-            origin.cell().x as f64 * info.cell_size as f64,
-            0.0,
-            origin.cell().z as f64 * info.cell_size as f64,
+        stream.start_plan(
+            view,
+            &config.settings,
+            &contacts,
+            &stats,
+            &time,
+            info.cell_size,
         );
-        let view = LodView {
-            clip_from_world: camera.clip_from_view().as_dmat4()
-                * transform.to_matrix().as_dmat4().inverse()
-                * DMat4::from_translation(-shift),
-            viewport: [size.x, size.y],
-            contact_position: transform.translation().as_dvec3() + shift,
-        };
-        let identity = PlanIdentity {
-            view: view.clone(),
-            settings: config.settings.clone(),
-            metadata_revision: stream.metadata_revision,
-            contacts: contacts.planning.clone(),
-        };
-        // Ground an actor or grass is waiting for is planned for at once.
-        let due = stats.drawn_contact_limited
-            || stream
-                .last_plan_at
-                .is_none_or(|at| time.elapsed_secs_f64() - at >= PLAN_INTERVAL_SECONDS);
-        if due && stream.last_plan.as_ref() != Some(&identity) {
-            // Off the main thread: a full-budget plan took 6–9 ms of a 16.7 ms frame, ten
-            // times a second while moving. Inputs are snapshots; metadata is shared.
-            let previous: BTreeSet<_> = stream.active.keys().map(|(k, _)| *k).collect();
-            let roots = roots.clone();
-            let metadata = stream.metadata.clone();
-            let settings = config.settings.clone();
-            let regions = contacts.planning.clone();
-            let cell_size = info.cell_size as f64;
-            stream.last_plan_at = Some(time.elapsed_secs_f64());
-            stream.planning = Some(PlanTask {
-                identity,
-                task: AsyncComputeTaskPool::get().spawn(async move {
-                    let start = std::time::Instant::now();
-                    let planned = lod::plan_cover_with_contacts(
-                        &roots, &metadata, &previous, &view, cell_size, &settings, &regions,
-                    );
-                    (planned, start.elapsed().as_secs_f64() * 1000.)
-                }),
-            });
-        }
     }
-    if let Some(plan) = &stream.target {
-        let patches: Vec<_> = plan.patches.iter().map(|(&k, &e)| (k, e)).collect();
-        stream.prepare_target(
+    if stream.target.is_some()
+        && stream.publish_target(
             &worker,
+            &config.settings,
+            &mut commands,
             &mut meshes,
             &tracker,
+            &contacts,
+            &mut stats,
+            origin.cell(),
             info.cell_size,
-            MAX_NODE_BYTES,
-            MAX_MESH_BYTES,
-        );
-        let uploaded = stream.target_uploaded(&tracker) && stream.materials_ready(&tracker);
-        let changed = stream.active.len() != patches.len()
-            || patches.iter().any(|p| !stream.active.contains_key(p));
-        let transition_done = uploaded
-            && (!changed
-                || stream.active.is_empty()
-                || stream.advance_transition(
-                    &config.settings,
-                    &mut commands,
-                    &mut meshes,
-                    &tracker,
-                    info.cell_size,
-                    origin.cell(),
-                    visible,
-                    time.delta_secs(),
-                    &contacts.required,
-                    &mut stats.contact_handoffs,
-                ));
-        if transition_done {
-            if stream.active.len() != patches.len()
-                || patches.iter().any(|p| !stream.active.contains_key(p))
-            {
-                stream.last_plan = None;
-            }
-            // `patches` comes from an ordered map, so it is sorted.
-            let remove: Vec<_> = stream
-                .active
-                .keys()
-                .filter(|p| patches.binary_search(p).is_err())
-                .copied()
-                .collect();
-            for p in remove {
-                let e = stream.active.remove(&p).unwrap();
-                commands.entity(e).despawn();
-            }
-            for patch @ (key, _) in patches {
-                if stream.active.contains_key(&patch) {
-                    continue;
-                }
-                let mesh = &stream.meshes[&patch];
-                let entity = commands
-                    .spawn((
-                        Mesh3d(mesh.handle.clone()),
-                        mesh.bounds,
-                        bevy::camera::visibility::NoAutoAabb,
-                        MeshMaterial3d(stream.patch_material(key)),
-                        patch_transform(key, origin.cell(), info.cell_size),
-                        GlobalTransform::from(patch_transform(key, origin.cell(), info.cell_size)),
-                        if visible {
-                            Visibility::Inherited
-                        } else {
-                            Visibility::Hidden
-                        },
-                        Name::new(format!("Terrain LOD {} ({},{})", key.level, key.x, key.z)),
-                    ))
-                    .id();
-                stream.active.insert(patch, entity);
-            }
-            stats.triangles = stream.target.as_ref().unwrap().stats.triangles;
-            stream.target = None;
-            stream.evict(&mut meshes, &tracker);
-            // Same deferred-command boundary as the complete replacement group.
-            for mut visibility in &mut leaves {
-                *visibility = if visible {
-                    Visibility::Hidden
-                } else {
-                    Visibility::Inherited
-                };
-            }
+            visible,
+            time.delta_secs(),
+        )
+    {
+        // Same deferred-command boundary as the complete replacement group.
+        for mut visibility in &mut leaves {
+            *visibility = if visible {
+                Visibility::Hidden
+            } else {
+                Visibility::Inherited
+            };
         }
     }
     if stream.materials_ready(&tracker)
-        && let Some((camera, transform, resolution)) = camera.iter().find(|(c, _, _)| c.is_active)
-        && let Some(viewport) = resolution
-            .map(|r| r.0)
-            .or_else(|| camera.physical_viewport_size())
+        && let Some(view) = &view
     {
-        let shift = DVec3::new(
-            origin.cell().x as f64 * info.cell_size as f64,
-            0.,
-            origin.cell().z as f64 * info.cell_size as f64,
-        );
-        let view = LodView {
-            clip_from_world: camera.clip_from_view().as_dmat4()
-                * transform.to_matrix().as_dmat4().inverse()
-                * DMat4::from_translation(-shift),
-            viewport: [viewport.x, viewport.y],
-            contact_position: transform.translation().as_dvec3() + shift,
-        };
         stream.update_material_detail(
             &worker,
-            &view,
+            view,
             info.cell_size,
             &mut images,
             &mut buffers,
@@ -1170,7 +983,304 @@ fn update(
             time.delta_secs(),
         );
     }
+    fill_stats(&mut stream, &mut stats, &near_stats, &tracker, &time);
+}
 
+/// The view a cover is planned for, in world coordinates around the render origin.
+fn lod_view(
+    camera: &Camera,
+    transform: &GlobalTransform,
+    viewport: UVec2,
+    origin: CellCoord,
+    cell_size: f32,
+) -> LodView {
+    let shift = DVec3::new(
+        origin.x as f64 * cell_size as f64,
+        0.,
+        origin.z as f64 * cell_size as f64,
+    );
+    LodView {
+        clip_from_world: camera.clip_from_view().as_dmat4()
+            * transform.to_matrix().as_dmat4().inverse()
+            * DMat4::from_translation(-shift),
+        viewport: [viewport.x, viewport.y],
+        contact_position: transform.translation().as_dvec3() + shift,
+    }
+}
+
+impl TerrainLodStream {
+    /// Moves the drawn patches to the render origin and shows or hides them with the view.
+    fn place(
+        &mut self,
+        commands: &mut Commands,
+        materials: &mut Assets<TerrainCompositeMaterial>,
+        origin: CellCoord,
+        cell_size: f32,
+        visible: bool,
+    ) {
+        self.sync_material_origin(materials, origin, cell_size);
+        for (&patch, &entity) in &self.active {
+            let show = visible
+                && self
+                    .transition
+                    .as_ref()
+                    .is_none_or(|t| !t.running() || t.keeps(&patch));
+            commands.entity(entity).insert((
+                patch_transform(patch.0, origin, cell_size),
+                GlobalTransform::from(patch_transform(patch.0, origin, cell_size)),
+                if show {
+                    Visibility::Inherited
+                } else {
+                    Visibility::Hidden
+                },
+            ));
+        }
+        if let Some(t) = &self.transition {
+            for (&key, &entity) in &t.entities {
+                commands.entity(entity).insert((
+                    patch_transform(key, origin, cell_size),
+                    GlobalTransform::from(patch_transform(key, origin, cell_size)),
+                    if visible {
+                        Visibility::Inherited
+                    } else {
+                        Visibility::Hidden
+                    },
+                ));
+            }
+        }
+        self.position_origin = Some(origin);
+        self.draw_visible = visible;
+    }
+
+    /// Takes a plan from the planning task once it is done: requests the metadata it is
+    /// missing, and stages it as the target unless it draws what is drawn.
+    fn apply_finished_plan(
+        &mut self,
+        worker: &WorldDatabaseWorker,
+        stats: &mut TerrainLodStats,
+        meshes: &mut Assets<Mesh>,
+        tracker: &UploadTracker,
+    ) {
+        let Some((planned, milliseconds)) = self
+            .planning
+            .as_mut()
+            .and_then(|p| check_ready(&mut p.task))
+        else {
+            return;
+        };
+        let identity = self.planning.take().unwrap().identity;
+        stats.plans += 1;
+        stats.replans = self.replans;
+        stats.unmorphed_swaps = self.unmorphed_swaps;
+        stats.plan_milliseconds = milliseconds;
+        let plan = match planned {
+            Ok(plan) => plan,
+            Err(e) => {
+                self.error = Some(e);
+                return;
+            }
+        };
+        if plan.requests.is_empty() {
+            self.last_plan = Some(identity);
+        }
+        stats.maximum_visible_error = plan.stats.maximum_visible_error;
+        stats.budget_limited = plan.stats.budget_limited;
+        stats.contact_limited = plan.stats.contact_limited;
+        let queued: BTreeSet<_> = self
+            .pending
+            .values()
+            .filter_map(|q| {
+                if let TerrainQuery::Metadata(keys) = q {
+                    Some(keys.iter().copied())
+                } else {
+                    None
+                }
+            })
+            .flatten()
+            .collect();
+        // Every requested key, in batches. Refining a patch needs its four
+        // children, so one batch a plan grew a cover by only ~100 patches per
+        // plan and morph: a turned view took tens of seconds to sharpen.
+        let keys: Vec<_> = plan
+            .requests
+            .iter()
+            .filter(|k| !queued.contains(k))
+            .copied()
+            .take(MAX_METADATA.saturating_sub(self.metadata.len() + queued.len()))
+            .collect();
+        for batch in keys.chunks(world_db::MAX_TERRAIN_NODE_QUERY) {
+            self.request(worker, TerrainQuery::Metadata(batch.to_vec()));
+        }
+        if !plan.balanced {
+            stats.status = "balancing coarse terrain cover".into();
+        } else if self.draws(&plan) {
+            // Nothing to stage. Publishing the same cover ran upload checks, a
+            // quadratic removal scan and a full eviction on the plan's frame.
+            stats.triangles = plan.stats.triangles;
+            if self.metadata.len() > MAX_METADATA - METADATA_CACHE {
+                // Descriptors loaded for refinements this cover could not take
+                // yet would otherwise fill the table and block every request.
+                self.evict(meshes, tracker);
+            }
+        } else {
+            self.target = Some(plan);
+        }
+    }
+
+    /// Plans a cover for `view` off the main thread, unless the same inputs were planned
+    /// last or a plan is not yet due.
+    fn start_plan(
+        &mut self,
+        view: &LodView,
+        settings: &LodSettings,
+        contacts: &ContactInputs,
+        stats: &TerrainLodStats,
+        time: &Time,
+        cell_size: f32,
+    ) {
+        let Some(roots) = self.roots.as_ref() else {
+            return;
+        };
+        let identity = PlanIdentity {
+            view: view.clone(),
+            settings: settings.clone(),
+            metadata_revision: self.metadata_revision,
+            contacts: contacts.planning.clone(),
+        };
+        // Ground an actor or grass is waiting for is planned for at once.
+        let due = stats.drawn_contact_limited
+            || self
+                .last_plan_at
+                .is_none_or(|at| time.elapsed_secs_f64() - at >= PLAN_INTERVAL_SECONDS);
+        if !due || self.last_plan.as_ref() == Some(&identity) {
+            return;
+        }
+        // Off the main thread: a full-budget plan took 6–9 ms of a 16.7 ms frame, ten
+        // times a second while moving. Inputs are snapshots; metadata is shared.
+        let previous: BTreeSet<_> = self.active.keys().map(|(k, _)| *k).collect();
+        let roots = roots.clone();
+        let metadata = self.metadata.clone();
+        let settings = settings.clone();
+        let regions = contacts.planning.clone();
+        let view = view.clone();
+        let cell_size = cell_size as f64;
+        self.last_plan_at = Some(time.elapsed_secs_f64());
+        self.planning = Some(PlanTask {
+            identity,
+            task: AsyncComputeTaskPool::get().spawn(async move {
+                let start = std::time::Instant::now();
+                let planned = lod::plan_cover_with_contacts(
+                    &roots, &metadata, &previous, &view, cell_size, &settings, &regions,
+                );
+                (planned, start.elapsed().as_secs_f64() * 1000.)
+            }),
+        });
+    }
+
+    /// Prepares the staged target and, once it has uploaded and any morph has finished,
+    /// swaps it in for the drawn cover. True when it was swapped in.
+    #[allow(clippy::too_many_arguments)]
+    fn publish_target(
+        &mut self,
+        worker: &WorldDatabaseWorker,
+        settings: &LodSettings,
+        commands: &mut Commands,
+        meshes: &mut Assets<Mesh>,
+        tracker: &UploadTracker,
+        contacts: &ContactInputs,
+        stats: &mut TerrainLodStats,
+        origin: CellCoord,
+        cell_size: f32,
+        visible: bool,
+        delta_seconds: f32,
+    ) -> bool {
+        let Some(plan) = &self.target else {
+            return false;
+        };
+        let patches: Vec<_> = plan.patches.iter().map(|(&k, &e)| (k, e)).collect();
+        self.prepare_target(
+            worker,
+            meshes,
+            tracker,
+            cell_size,
+            MAX_NODE_BYTES,
+            MAX_MESH_BYTES,
+        );
+        let uploaded = self.target_uploaded(tracker) && self.materials_ready(tracker);
+        let changed = self.active.len() != patches.len()
+            || patches.iter().any(|p| !self.active.contains_key(p));
+        let transition_done = uploaded
+            && (!changed
+                || self.active.is_empty()
+                || self.advance_transition(
+                    settings,
+                    commands,
+                    meshes,
+                    tracker,
+                    cell_size,
+                    origin,
+                    visible,
+                    delta_seconds,
+                    &contacts.required,
+                    &mut stats.contact_handoffs,
+                ));
+        if !transition_done {
+            return false;
+        }
+        if self.active.len() != patches.len()
+            || patches.iter().any(|p| !self.active.contains_key(p))
+        {
+            self.last_plan = None;
+        }
+        // `patches` comes from an ordered map, so it is sorted.
+        let remove: Vec<_> = self
+            .active
+            .keys()
+            .filter(|p| patches.binary_search(p).is_err())
+            .copied()
+            .collect();
+        for p in remove {
+            let e = self.active.remove(&p).unwrap();
+            commands.entity(e).despawn();
+        }
+        for patch @ (key, _) in patches {
+            if self.active.contains_key(&patch) {
+                continue;
+            }
+            let mesh = &self.meshes[&patch];
+            let entity = commands
+                .spawn((
+                    Mesh3d(mesh.handle.clone()),
+                    mesh.bounds,
+                    bevy::camera::visibility::NoAutoAabb,
+                    MeshMaterial3d(self.patch_material(key)),
+                    patch_transform(key, origin, cell_size),
+                    GlobalTransform::from(patch_transform(key, origin, cell_size)),
+                    if visible {
+                        Visibility::Inherited
+                    } else {
+                        Visibility::Hidden
+                    },
+                    Name::new(format!("Terrain LOD {} ({},{})", key.level, key.x, key.z)),
+                ))
+                .id();
+            self.active.insert(patch, entity);
+        }
+        stats.triangles = self.target.as_ref().unwrap().stats.triangles;
+        self.target = None;
+        self.evict(meshes, tracker);
+        true
+    }
+}
+
+/// Publishes the loader's state for F1 and the periodic `TERRAIN_LOD` log.
+fn fill_stats(
+    stream: &mut TerrainLodStream,
+    stats: &mut TerrainLodStats,
+    near_stats: &terrain_render::near::NearStats,
+    tracker: &UploadTracker,
+    time: &Time,
+) {
     stats.material_metadata = stream.composites.metadata_len();
     stats.material_detail_tiles = stream.composites.detail.as_ref().map_or(0, |d| d.count());
     stats.material_detail_uploads = stream
@@ -1189,7 +1299,7 @@ fn update(
     stats.material_status = match stream.composites.available {
         Some(false) => "geometry only; publication has no baked ground",
         Some(true) if stats.material_detail_tiles > 0 => "streamed baked ground",
-        Some(true) if stream.materials_ready(&tracker) => "coarse baked ground",
+        Some(true) if stream.materials_ready(tracker) => "coarse baked ground",
         _ => "loading coarse ground materials",
     }
     .into();
@@ -1315,7 +1425,7 @@ fn near_view(
     config: Res<TerrainHierarchy>,
     catalog: Res<WorldCatalog>,
     origin: Res<WorldOrigin>,
-    cameras: Query<(&Camera, &GlobalTransform), With<WorldViewCamera>>,
+    camera: crate::ActiveWorldView,
     mut view: ResMut<terrain_render::near::NearView>,
     stream: Res<TerrainLodStream>,
 ) {
@@ -1326,7 +1436,7 @@ fn near_view(
     let Some(space) = origin.space().and_then(|id| catalog.world_space(id)) else {
         return;
     };
-    let Some((_, t)) = cameras.iter().find(|(c, _)| c.is_active) else {
+    let Some(camera) = camera.active() else {
         return;
     };
     let p = origin.cell().origin(space.cell_size);
@@ -1339,5 +1449,5 @@ fn near_view(
         space.id,
     ));
     view.origin = origin.cell();
-    view.eye = t.translation().as_dvec3() + DVec3::new(p[0], 0., p[1]);
+    view.eye = camera.transform.translation().as_dvec3() + DVec3::new(p[0], 0., p[1]);
 }

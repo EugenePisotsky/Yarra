@@ -10,8 +10,8 @@
 mod timed;
 pub(crate) use timed::{TAG_BIAS, TIMED_RANGE};
 
-use crate::tree_impostor::ImpostorFades;
-use crate::{WorldCatalog, WorldOrigin, WorldViewCamera};
+use crate::trees::impostor::ImpostorFades;
+use crate::{ActiveWorldView, WorldCatalog, WorldOrigin, WorldViewCamera};
 use bevy::{
     camera::{
         ShadowLodOrigin,
@@ -43,7 +43,7 @@ pub(crate) const IMPOSTOR_HANDOFF_METRES: f32 =
 pub struct ObjectLodPlugin;
 impl Plugin for ObjectLodPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(crate::tree_impostor::TreeImpostorPlugin)
+        app.add_plugins(crate::trees::impostor::TreeImpostorPlugin)
             .init_resource::<VisualLodScale>()
             .init_resource::<LodProjection>()
             .add_observer(range_new_lod_scene)
@@ -76,12 +76,30 @@ pub(crate) struct ScreenSpaceLodVariant {
     pub(crate) minimum_screen_height: f32,
 }
 
+impl ScreenSpaceLodVariant {
+    /// A cataloged LOD: a mesh LOD's scene, or none for an impostor, which its far-object
+    /// block draws.
+    pub(crate) fn load(
+        server: &AssetServer,
+        lod: u8,
+        uri: &str,
+        minimum_screen_height: f32,
+    ) -> Self {
+        Self {
+            lod,
+            scene: (!world::is_impostor_uri(uri))
+                .then(|| server.load(GltfAssetLabel::Scene(0).from_asset(uri.to_owned()))),
+            minimum_screen_height,
+        }
+    }
+}
+
 /// A child scene holding one LOD (by index) of its parent's [`ScreenSpaceLod`].
 #[derive(Component)]
 pub(crate) struct LodScene(pub(crate) usize);
 
 /// Overrides which LOD scene of a [`ScreenSpaceLod`] draws, for comparisons
-/// ([`crate::lod_lab`]).
+/// (the LOD lab, `crate::trees::lab`).
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ForcedLod {
     /// The distance picks the LOD, as for every other object.
@@ -218,6 +236,16 @@ impl LodProjection {
         self.orthographic
     }
 
+    /// Distance at which an object `height` metres tall projects to `threshold` pixels, at
+    /// most `farthest`; a threshold of 0 (the last LOD) never switches.
+    pub(crate) fn switch_distance(&self, height: f32, threshold: f32, farthest: f32) -> f32 {
+        if threshold > 0.0 {
+            (height * self.pixels_per_metre / threshold).min(farthest)
+        } else {
+            f32::INFINITY
+        }
+    }
+
     /// Projected height of an object `height` metres tall, `distance` metres away. Seen
     /// side-on at its distance, so pitching the camera never changes it (projecting the
     /// root-to-top segment shrank when the camera looked down).
@@ -251,18 +279,8 @@ impl LodProjection {
                 NEVER
             };
         }
-        let size = height * self.pixels_per_metre;
-        let switch = |i: usize| {
-            if thresholds[i] > 0.0 {
-                (size / thresholds[i]).min(farthest)
-            } else {
-                f32::INFINITY
-            }
-        };
-        let margin = |d: f32| d * (1.0 - CROSSFADE_FRACTION)..d * (1.0 + CROSSFADE_FRACTION);
-        let fits = |start: f32, end: f32| {
-            start * (1.0 + CROSSFADE_FRACTION) <= end * (1.0 - CROSSFADE_FRACTION)
-        };
+        let switch = |i: usize| self.switch_distance(height, thresholds[i], farthest);
+        let fits = |start: f32, end: f32| crossfade(start).end <= crossfade(end).start;
         // A LOD starts at the previous switch, whether the LOD before drew up to it or
         // was skipped and extended its own predecessor there.
         let start = if index == 0 { 0.0 } else { switch(index - 1) };
@@ -278,15 +296,24 @@ impl LodProjection {
             end = switch(i);
         }
         VisibilityRange {
-            start_margin: if index == 0 { 0.0..0.0 } else { margin(start) },
+            start_margin: if index == 0 {
+                0.0..0.0
+            } else {
+                crossfade(start)
+            },
             end_margin: if end.is_finite() {
-                margin(end)
+                crossfade(end)
             } else {
                 f32::MAX..f32::MAX
             },
             use_aabb: false,
         }
     }
+}
+
+/// The distances over which a LOD switching at `distance` crossfades.
+pub(crate) fn crossfade(distance: f32) -> std::ops::Range<f32> {
+    distance * (1.0 - CROSSFADE_FRACTION)..distance * (1.0 + CROSSFADE_FRACTION)
 }
 
 fn select(thresholds: &[f32], projected_height: f32) -> usize {
@@ -321,7 +348,7 @@ fn update_object_lods(
     mut commands: Commands,
     lod_scale: Res<VisualLodScale>,
     mut projection: ResMut<LodProjection>,
-    camera: Single<(&Camera, &GlobalTransform), With<WorldViewCamera>>,
+    view: ActiveWorldView,
     mut objects: Query<(
         &GlobalTransform,
         &mut ScreenSpaceLod,
@@ -339,7 +366,10 @@ fn update_object_lods(
     ),
 ) {
     let mut fades = fades;
-    let (camera, camera_transform) = *camera;
+    let Some(view) = view.current() else {
+        return;
+    };
+    let (camera, camera_transform) = (view.camera, view.transform);
     let Some(viewport) = camera.logical_viewport_size() else {
         return;
     };
@@ -551,11 +581,7 @@ pub fn spawn_collection_visual(
         .variants
         .iter()
         .filter(|v| !world::is_impostor_uri(&v.uri))
-        .map(|v| ScreenSpaceLodVariant {
-            lod: v.lod,
-            scene: Some(server.load(GltfAssetLabel::Scene(0).from_asset(v.uri.clone()))),
-            minimum_screen_height: v.minimum_screen_height,
-        })
+        .map(|v| ScreenSpaceLodVariant::load(server, v.lod, &v.uri, v.minimum_screen_height))
         .collect();
     if let Some(last) = variants.last_mut() {
         last.minimum_screen_height = 0.0;

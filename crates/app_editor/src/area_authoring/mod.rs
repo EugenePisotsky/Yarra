@@ -9,7 +9,7 @@ mod viewport;
 pub(crate) mod working;
 
 use crate::{
-    domain_editing::DenseDomainWorkingSets,
+    domain_editing::SourceWorkingSets,
     editing::EditorHistory,
     project_store::{ProjectEditorStore, ProjectStoreUpdate},
     publication::RuntimePublicationState,
@@ -87,7 +87,7 @@ impl AreaToolState {
     /// Replaces the set as one undoable step.
     fn commit(
         &mut self,
-        dense: &mut DenseDomainWorkingSets,
+        dense: &mut SourceWorkingSets,
         history: &mut EditorHistory,
         areas: Vec<GameplayArea>,
     ) -> bool {
@@ -106,7 +106,7 @@ impl AreaToolState {
     }
 
     /// Replaces the set as part of a gesture: a corner drag or a value being scrubbed.
-    fn edit(&mut self, dense: &mut DenseDomainWorkingSets, areas: Vec<GameplayArea>) -> bool {
+    fn edit(&mut self, dense: &mut SourceWorkingSets, areas: Vec<GameplayArea>) -> bool {
         let before = dense.areas.areas().clone();
         match dense.areas.apply(areas.into()) {
             Ok(()) => {
@@ -125,12 +125,7 @@ impl AreaToolState {
     }
 
     /// Ends the gesture, recording it for undo or putting back what was there before it.
-    fn finish(
-        &mut self,
-        dense: &mut DenseDomainWorkingSets,
-        history: &mut EditorHistory,
-        cancel: bool,
-    ) {
+    fn finish(&mut self, dense: &mut SourceWorkingSets, history: &mut EditorHistory, cancel: bool) {
         self.dragging = None;
         let Some(before) = self.gesture.take() else {
             return;
@@ -174,7 +169,7 @@ fn tool_active(tools: &EditorToolRegistry) -> bool {
 fn end_gesture_away(
     workspace: Res<State<EditorWorkspace>>,
     mut state: ResMut<AreaToolState>,
-    mut dense: ResMut<DenseDomainWorkingSets>,
+    mut dense: ResMut<SourceWorkingSets>,
     mut history: ResMut<EditorHistory>,
 ) {
     if *workspace.get() != EditorWorkspace::World && state.gesture.is_some() {
@@ -183,7 +178,7 @@ fn end_gesture_away(
 }
 
 fn reconcile(
-    mut dense: ResMut<DenseDomainWorkingSets>,
+    mut dense: ResMut<SourceWorkingSets>,
     mut project: ResMut<ProjectEditorStore>,
     mut save: ResMut<EditorSaveCoordinator>,
 ) {
@@ -205,7 +200,7 @@ fn window(
     origin: Res<WorldOrigin>,
     catalog: Res<WorldCatalog>,
     tools: Res<EditorToolRegistry>,
-    mut dense: ResMut<DenseDomainWorkingSets>,
+    mut dense: ResMut<SourceWorkingSets>,
     mut history: ResMut<EditorHistory>,
     mut state: ResMut<AreaToolState>,
     mut focus: ResMut<EditorCameraFocusRequest>,
@@ -293,7 +288,7 @@ fn contents(
     catalog: &WorldCatalog,
     tool_active: bool,
     state: &mut AreaToolState,
-    dense: &mut DenseDomainWorkingSets,
+    dense: &mut SourceWorkingSets,
     history: &mut EditorHistory,
     focus: &mut EditorCameraFocusRequest,
 ) {

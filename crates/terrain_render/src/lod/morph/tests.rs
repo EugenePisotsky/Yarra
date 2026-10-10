@@ -59,7 +59,9 @@ fn triangles(mesh: &Mesh, weight: f32, key: TerrainNodeKey) -> Vec<[[i64; 3]; 3]
         panic!()
     };
     indices
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .filter_map(|i| {
             let a = p[i[0] as usize];
             let b = p[i[1] as usize];

@@ -123,6 +123,7 @@ fn can_discard_color(
 
 // Adapted from Bevy 0.20.0 main_opaque_pass_3d (MIT; see third_party/BEVY-MIT.txt).
 // Draw ordering, viewport, skybox, depth and diagnostic spans match upstream.
+#[allow(clippy::type_complexity)] // Upstream's view query.
 fn opaque_pass(
     world: &World,
     view: ViewQuery<(

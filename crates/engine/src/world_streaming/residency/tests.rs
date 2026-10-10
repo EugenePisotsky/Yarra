@@ -551,17 +551,12 @@ fn clearing_sources_releases_resident_and_cooling_pages_and_rejects_old_replies(
             task: AsyncComputeTaskPool::get().spawn(std::future::pending()),
         });
     }
-    let DatabaseRequest::ReadPage {
-        request_id: old_id, ..
-    } = requests.recv().unwrap()
-    else {
+    let (old_id, DatabaseRequest::ReadPage { .. }) = requests.recv().unwrap() else {
         unreachable!()
     };
-    {
-        let mut stream = app.world_mut().resource_mut::<WorldStream>();
-        stream.index_revision = 8;
-        stream.requested_index = Some((9, WorldSpaceId(1)));
-    }
+    app.world_mut()
+        .resource_mut::<WorldStream>()
+        .requested_index = Some((9, WorldSpaceId(1)));
     app.world_mut().run_system_once(clear_sources).unwrap();
     let world = app.world_mut();
     assert_eq!(
@@ -575,9 +570,7 @@ fn clearing_sources_releases_resident_and_cooling_pages_and_rejects_old_replies(
     assert!(world.resource::<Assets<TerrainMaterial>>().is_empty());
     // Asset-server-owned texture handles may still be pending; only page images are owned here.
     assert!(world.resource::<Assets<Image>>().is_empty());
-    let stream = world.resource::<WorldStream>();
-    assert_eq!(stream.index_revision, 9);
-    assert!(stream.requested_index.is_none());
+    assert!(world.resource::<WorldStream>().requested_index.is_none());
     let mut residency = world.resource_mut::<SourceResidency>();
     assert!(
         residency.pages.is_empty()
@@ -586,10 +579,7 @@ fn clearing_sources_releases_resident_and_cooling_pages_and_rejects_old_replies(
     );
     residency.set_demand(BTreeMap::from([(pending, (0, 0.))]));
     residency.request_missing(&worker, "new", true).unwrap();
-    let DatabaseRequest::ReadPage {
-        request_id: new_id, ..
-    } = requests.recv().unwrap()
-    else {
+    let (new_id, DatabaseRequest::ReadPage { .. }) = requests.recv().unwrap() else {
         unreachable!()
     };
     assert_ne!(

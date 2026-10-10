@@ -1,6 +1,6 @@
 //! Context inspectors, object transform editing and source-conflict controls.
 use crate::{
-    domain_editing::DenseDomainWorkingSets,
+    domain_editing::SourceWorkingSets,
     editing::{
         EditorHistory, EditorObjectWorkingSet, EditorSelection, TransformInspectorDraft,
         normalize_transform,
@@ -23,7 +23,7 @@ pub(super) fn draw_context_inspector(
     ui: &mut egui::Ui,
     catalog: &WorldCatalog,
     viewpoint: &WorldViewpoint,
-    dense_domains: &mut DenseDomainWorkingSets,
+    dense_domains: &mut SourceWorkingSets,
     project: &ProjectEditorStore,
     selection: &mut EditorSelection,
     objects: &mut EditorObjectWorkingSet,
@@ -113,7 +113,7 @@ pub(super) fn draw_context_inspector(
 
 fn draw_dense_conflict_controls(
     ui: &mut egui::Ui,
-    dense_domains: &mut DenseDomainWorkingSets,
+    dense_domains: &mut SourceWorkingSets,
     history: &mut EditorHistory,
 ) {
     let conflicts = dense_domains.conflict_count();

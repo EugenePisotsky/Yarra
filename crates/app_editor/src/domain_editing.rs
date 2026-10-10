@@ -1,8 +1,9 @@
-//! Bounded environment source working sets.
+//! Bounded working sets for project source other than placed objects: atmospheres, areas,
+//! roads, environment definitions, presets and coverage.
 //!
-//! Dense records are keyed by domain/cell, keep database checkpoints, local values, and the cooked
-//! runtime baseline separate, and survive spatial-query eviction while dirty, saving, or newer
-//! than the active runtime generation.
+//! Coverage cells are keyed by world space and cell, keep database checkpoints, local values,
+//! and the cooked runtime baseline separate, and survive spatial-query eviction while dirty,
+//! saving, or newer than the active runtime generation.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 mod definitions;
@@ -14,8 +15,8 @@ pub(crate) use presets::{DirtyPresetSnapshot, library_bytes};
 use bevy::prelude::*;
 use world::{CellCoord, WorldSpaceId};
 use world_db::{
-    DenseSourceRecord, DenseSourceRecordKey, DenseSourceWrite,
-    MAX_DENSE_DOMAIN_WRITES_PER_TRANSACTION,
+    EnvironmentCellKey, EnvironmentCellWrite, MAX_DENSE_DOMAIN_WRITES_PER_TRANSACTION,
+    SourceEnvironmentCellRecord,
 };
 
 use crate::{
@@ -27,15 +28,15 @@ use crate::{
 enum DenseSaveState {
     Idle,
     Saving(u64),
-    Conflict(Option<DenseSourceRecord>),
+    Conflict(Option<SourceEnvironmentCellRecord>),
     Failed(String),
 }
 
 #[derive(Debug, Clone)]
 struct DenseEditEntry {
-    base: Option<DenseSourceRecord>,
-    current: DenseSourceRecord,
-    runtime: Option<DenseSourceRecord>,
+    base: Option<SourceEnvironmentCellRecord>,
+    current: SourceEnvironmentCellRecord,
+    runtime: Option<SourceEnvironmentCellRecord>,
     save_state: DenseSaveState,
 }
 
@@ -57,13 +58,13 @@ impl DenseEditEntry {
 
 #[derive(Debug, Clone)]
 pub(crate) struct DirtyDenseSnapshot {
-    pub(crate) base: Option<DenseSourceRecord>,
-    pub(crate) current: DenseSourceRecord,
-    pub(crate) runtime: Option<DenseSourceRecord>,
+    pub(crate) base: Option<SourceEnvironmentCellRecord>,
+    pub(crate) current: SourceEnvironmentCellRecord,
+    pub(crate) runtime: Option<SourceEnvironmentCellRecord>,
 }
 
 #[derive(Resource, Default)]
-pub(crate) struct DenseDomainWorkingSets {
+pub(crate) struct SourceWorkingSets {
     pub(crate) atmospheres: crate::atmosphere_authoring::working::WorkingSet,
     pub(crate) areas: crate::area_authoring::working::WorkingSet,
     pub(crate) roads: crate::road_authoring::working::RoadWorkingSet,
@@ -71,23 +72,23 @@ pub(crate) struct DenseDomainWorkingSets {
     presets: Option<DefinitionEntry<environment::PresetLibrary>>,
     definition_revision: u64,
     plants: Option<vegetation::VegetationCatalog>,
-    entries: HashMap<DenseSourceRecordKey, DenseEditEntry>,
+    entries: HashMap<EnvironmentCellKey, DenseEditEntry>,
     last_completed_query: u64,
     edit_revision: u64,
     pub(crate) gesture_active: bool,
 }
 
-impl DenseDomainWorkingSets {
+impl SourceWorkingSets {
     #[cfg(test)]
     pub(crate) fn from_environment_records(
         records: &[world_db::SourceEnvironmentCellRecord],
     ) -> Self {
         let mut result = Self::default();
         for record in records {
-            let current = DenseSourceRecord::EnvironmentCoverage(record.clone());
+            let current = record.clone();
             let base = (record.source_revision > 0).then(|| current.clone());
             result.entries.insert(
-                dense_record_key(&current),
+                current.key(),
                 DenseEditEntry {
                     base: base.clone(),
                     current,
@@ -105,11 +106,8 @@ impl DenseDomainWorkingSets {
         cell: CellCoord,
     ) -> Option<&world_db::SourceEnvironmentCellRecord> {
         self.entries
-            .get(&DenseSourceRecordKey::EnvironmentCoverage { space, cell })
-            .map(|entry| {
-                let DenseSourceRecord::EnvironmentCoverage(record) = &entry.current;
-                record
-            })
+            .get(&EnvironmentCellKey { space, cell })
+            .map(|entry| &entry.current)
     }
 
     /// Applies every endpoint owner together. The unsaved working set is one bounded atomic
@@ -120,10 +118,7 @@ impl DenseDomainWorkingSets {
     ) -> Result<(), String> {
         let mut replacements = HashMap::new();
         for record in records {
-            let key = DenseSourceRecordKey::EnvironmentCoverage {
-                space: record.space,
-                cell: record.cell,
-            };
+            let key = record.key();
             let entry = self
                 .entries
                 .get(&key)
@@ -138,8 +133,7 @@ impl DenseDomainWorkingSets {
                 }
                 record.definition_revision = definition.revision;
             }
-            let replacement = DenseSourceRecord::EnvironmentCoverage(record);
-            if !same_dense_shape(&entry.current, &replacement)
+            if !same_dense_shape(&entry.current, &record)
                 || matches!(
                     entry.save_state,
                     DenseSaveState::Saving(_) | DenseSaveState::Conflict(_)
@@ -147,9 +141,8 @@ impl DenseDomainWorkingSets {
             {
                 return Err("Resolve the pending save or changed layer definition first".into());
             }
-            let mut replacement = replacement;
-            set_dense_revision(&mut replacement, dense_source_revision(&entry.current));
-            if replacements.insert(key, replacement).is_some() {
+            record.source_revision = entry.current.source_revision;
+            if replacements.insert(key, record).is_some() {
                 return Err("Duplicate cell in coverage command".into());
             }
         }
@@ -196,10 +189,7 @@ impl DenseDomainWorkingSets {
         self.entries
             .values()
             .filter(|entry| entry.dirty())
-            .map(|entry| {
-                let DenseSourceRecord::EnvironmentCoverage(record) = &entry.current;
-                record
-            })
+            .map(|entry| &entry.current)
     }
 
     pub(crate) fn dirty_snapshots(&self) -> Vec<DirtyDenseSnapshot> {
@@ -213,20 +203,22 @@ impl DenseDomainWorkingSets {
                 runtime: entry.runtime.clone(),
             })
             .collect::<Vec<_>>();
-        snapshots.sort_by_key(|snapshot| format!("{:?}", dense_record_key(&snapshot.current)));
+        snapshots.sort_by_key(|snapshot| snapshot.current.key());
         snapshots
     }
 
     pub(crate) fn restore_dirty_snapshot(&mut self, snapshot: DirtyDenseSnapshot) -> bool {
-        let key = dense_record_key(&snapshot.current);
+        let key = snapshot.current.key();
         if snapshot.base.as_ref() == Some(&snapshot.current)
             || !valid_dense_record(&snapshot.current)
-            || snapshot.base.as_ref().is_some_and(|record| {
-                dense_record_key(record) != key || !valid_dense_record(record)
-            })
-            || snapshot.runtime.as_ref().is_some_and(|record| {
-                dense_record_key(record) != key || !valid_dense_record(record)
-            })
+            || snapshot
+                .base
+                .as_ref()
+                .is_some_and(|record| record.key() != key || !valid_dense_record(record))
+            || snapshot
+                .runtime
+                .as_ref()
+                .is_some_and(|record| record.key() != key || !valid_dense_record(record))
         {
             return false;
         }
@@ -244,10 +236,7 @@ impl DenseDomainWorkingSets {
     }
 
     pub(crate) fn environment_record_count(&self) -> usize {
-        self.entries
-            .keys()
-            .filter(|key| matches!(key, DenseSourceRecordKey::EnvironmentCoverage { .. }))
-            .count()
+        self.entries.len()
     }
 
     pub(crate) fn dirty_count(&self) -> usize {
@@ -325,9 +314,9 @@ impl DenseDomainWorkingSets {
                 if !same_dense_shape(actual, &entry.current) {
                     continue;
                 }
-                set_dense_revision(&mut entry.current, dense_source_revision(actual));
+                entry.current.source_revision = actual.source_revision;
             } else {
-                set_dense_revision(&mut entry.current, 0);
+                entry.current.source_revision = 0;
             }
             entry.base = actual;
             entry.save_state = DenseSaveState::Idle;
@@ -402,7 +391,7 @@ impl DenseDomainWorkingSets {
     }
 
     #[cfg(test)]
-    pub(crate) fn current_records(&self) -> Vec<DenseSourceRecord> {
+    pub(crate) fn current_records(&self) -> Vec<SourceEnvironmentCellRecord> {
         self.entries
             .values()
             .map(|entry| entry.current.clone())
@@ -411,7 +400,7 @@ impl DenseDomainWorkingSets {
 
     /// Preview overlays must also include an unsaved undo back to the runtime baseline: in that
     /// case the runtime matches the draft but the saved project database no longer does.
-    pub(crate) fn preview_records(&self) -> Vec<DenseSourceRecord> {
+    pub(crate) fn preview_records(&self) -> Vec<SourceEnvironmentCellRecord> {
         self.entries
             .values()
             .filter(|entry| entry.dirty() || entry.runtime_diverged())
@@ -420,7 +409,7 @@ impl DenseDomainWorkingSets {
     }
 
     #[cfg(test)]
-    pub(crate) fn runtime_divergent_records(&self) -> Vec<DenseSourceRecord> {
+    pub(crate) fn runtime_divergent_records(&self) -> Vec<SourceEnvironmentCellRecord> {
         self.entries
             .values()
             .filter(|entry| entry.runtime_diverged())
@@ -444,15 +433,10 @@ impl DenseDomainWorkingSets {
             .iter()
             .filter(|(_, entry)| entry.dirty())
             .collect::<Vec<_>>();
-        dirty.sort_by_key(|(key, _)| format!("{key:?}"));
+        dirty.sort_by_key(|(key, _)| **key);
         let selected = dirty
             .into_iter()
-            .map(|(key, entry)| {
-                (
-                    key.clone(),
-                    dense_write(entry.base.as_ref(), &entry.current),
-                )
-            })
+            .map(|(key, entry)| (*key, dense_write(entry.base.as_ref(), &entry.current)))
             .collect::<Vec<_>>();
         if selected.len() > MAX_DENSE_DOMAIN_WRITES_PER_TRANSACTION || self.gesture_active {
             return false;
@@ -511,33 +495,31 @@ impl DenseDomainWorkingSets {
         }
         self.last_completed_query = project.completed_queries();
 
-        let fresh = project
-            .environment_cells()
+        let fresh = project.environment_cells();
+        let fresh_keys = fresh
             .iter()
-            .cloned()
-            .map(DenseSourceRecord::EnvironmentCoverage)
-            .collect::<Vec<_>>();
-        let fresh_keys = fresh.iter().map(dense_record_key).collect::<HashSet<_>>();
+            .map(SourceEnvironmentCellRecord::key)
+            .collect::<HashSet<_>>();
         let history_cells = history.environment_cells();
         self.entries.retain(|key, entry| {
-            let DenseSourceRecordKey::EnvironmentCoverage { space, cell } = key;
-            entry.pinned() || fresh_keys.contains(key) || history_cells.contains(&(*space, *cell))
+            entry.pinned()
+                || fresh_keys.contains(key)
+                || history_cells.contains(&(key.space, key.cell))
         });
-        for record in fresh {
-            let key = dense_record_key(&record);
-            let DenseSourceRecordKey::EnvironmentCoverage { space, .. } = &key;
+        for record in fresh.iter().cloned() {
+            let key = record.key();
             if self
                 .definitions
-                .get(space)
+                .get(&key.space)
                 .is_some_and(|e| matches!(e.state, definitions::DefinitionSaveState::Conflict(_)))
             {
                 continue;
             }
             match self.entries.get_mut(&key) {
                 Some(entry) if !entry.pinned() => {
-                    entry.base = (dense_source_revision(&record) > 0).then(|| record.clone());
+                    entry.base = (record.source_revision > 0).then(|| record.clone());
                     entry.current = record.clone();
-                    entry.runtime = (dense_source_revision(&record) > 0).then_some(record);
+                    entry.runtime = (record.source_revision > 0).then_some(record);
                     entry.save_state = DenseSaveState::Idle;
                 }
                 Some(_) => {}
@@ -545,9 +527,9 @@ impl DenseDomainWorkingSets {
                     self.entries.insert(
                         key,
                         DenseEditEntry {
-                            base: (dense_source_revision(&record) > 0).then(|| record.clone()),
+                            base: (record.source_revision > 0).then(|| record.clone()),
                             current: record.clone(),
-                            runtime: (dense_source_revision(&record) > 0).then_some(record),
+                            runtime: (record.source_revision > 0).then_some(record),
                             save_state: DenseSaveState::Idle,
                         },
                     );
@@ -562,7 +544,7 @@ impl DenseDomainWorkingSets {
             .iter()
             .filter_map(|(key, entry)| {
                 matches!(entry.save_state, DenseSaveState::Saving(id) if id == request_id)
-                    .then_some(key.clone())
+                    .then_some(*key)
             })
             .collect::<Vec<_>>();
         self.finish_definitions(request_id, &outcome);
@@ -575,8 +557,7 @@ impl DenseDomainWorkingSets {
                     }
                 }
                 for commit in commits.coverage {
-                    let key = dense_record_key(&commit);
-                    if let Some(entry) = self.entries.get_mut(&key) {
+                    if let Some(entry) = self.entries.get_mut(&commit.key()) {
                         entry.base = Some(commit.clone());
                         entry.current = commit;
                         entry.save_state = DenseSaveState::Idle;
@@ -618,7 +599,7 @@ impl DenseDomainWorkingSets {
 }
 
 pub(crate) fn reconcile_dense_working_sets(
-    mut working_sets: ResMut<DenseDomainWorkingSets>,
+    mut working_sets: ResMut<SourceWorkingSets>,
     project: Res<ProjectEditorStore>,
     history: Res<crate::editing::EditorHistory>,
     plants: Res<crate::vegetation_authoring::VegetationAuthoringState>,
@@ -634,7 +615,7 @@ pub(crate) fn reconcile_dense_working_sets(
 }
 
 pub(crate) fn process_dense_save_completion(
-    mut working_sets: ResMut<DenseDomainWorkingSets>,
+    mut working_sets: ResMut<SourceWorkingSets>,
     mut project: ResMut<ProjectEditorStore>,
     mut coordinator: ResMut<EditorSaveCoordinator>,
 ) {
@@ -646,89 +627,44 @@ pub(crate) fn process_dense_save_completion(
     coordinator.transaction_finished(committed);
 }
 
-fn dense_record_key(record: &DenseSourceRecord) -> DenseSourceRecordKey {
-    match record {
-        DenseSourceRecord::EnvironmentCoverage(record) => {
-            DenseSourceRecordKey::EnvironmentCoverage {
-                space: record.space,
-                cell: record.cell,
-            }
-        }
+fn dense_record_bytes(record: &SourceEnvironmentCellRecord) -> usize {
+    std::mem::size_of::<SourceEnvironmentCellRecord>() + record.sample_bytes()
+}
+
+fn valid_dense_record(record: &SourceEnvironmentCellRecord) -> bool {
+    record.source_revision >= 0
+        && record.definition_revision > 0
+        && record
+            .tiles
+            .iter()
+            .all(|t| (4..=257 * 257).contains(&t.samples.len()))
+}
+
+fn same_dense_shape(
+    left: &SourceEnvironmentCellRecord,
+    right: &SourceEnvironmentCellRecord,
+) -> bool {
+    left.space == right.space
+        && left.cell == right.cell
+        && left.definition_revision == right.definition_revision
+}
+
+fn dense_write(
+    base: Option<&SourceEnvironmentCellRecord>,
+    current: &SourceEnvironmentCellRecord,
+) -> EnvironmentCellWrite {
+    EnvironmentCellWrite {
+        expected_source_revision: base.map(|base| base.source_revision),
+        record: current.clone(),
     }
 }
 
-fn dense_record_bytes(record: &DenseSourceRecord) -> usize {
-    std::mem::size_of::<DenseSourceRecord>()
-        + match record {
-            DenseSourceRecord::EnvironmentCoverage(record) => record.sample_bytes(),
-        }
-}
-
-fn valid_dense_record(record: &DenseSourceRecord) -> bool {
-    match record {
-        DenseSourceRecord::EnvironmentCoverage(record) => {
-            record.source_revision >= 0
-                && record.definition_revision > 0
-                && record
-                    .tiles
-                    .iter()
-                    .all(|t| (4..=257 * 257).contains(&t.samples.len()))
-        }
-    }
-}
-
-fn dense_source_revision(record: &DenseSourceRecord) -> i64 {
-    match record {
-        DenseSourceRecord::EnvironmentCoverage(record) => record.source_revision,
-    }
-}
-
-fn set_dense_revision(record: &mut DenseSourceRecord, revision: i64) {
-    match record {
-        DenseSourceRecord::EnvironmentCoverage(record) => record.source_revision = revision,
-    }
-}
-
-fn same_dense_shape(left: &DenseSourceRecord, right: &DenseSourceRecord) -> bool {
-    match (left, right) {
-        (
-            DenseSourceRecord::EnvironmentCoverage(left),
-            DenseSourceRecord::EnvironmentCoverage(right),
-        ) => {
-            left.space == right.space
-                && left.cell == right.cell
-                && left.definition_revision == right.definition_revision
-        }
-    }
-}
-
-fn dense_write(base: Option<&DenseSourceRecord>, current: &DenseSourceRecord) -> DenseSourceWrite {
-    match (base, current) {
-        (
-            Some(DenseSourceRecord::EnvironmentCoverage(base)),
-            DenseSourceRecord::EnvironmentCoverage(current),
-        ) => DenseSourceWrite::EnvironmentCoverage {
-            expected_source_revision: Some(base.source_revision),
-            record: current.clone(),
-        },
-        (None, DenseSourceRecord::EnvironmentCoverage(current)) => {
-            DenseSourceWrite::EnvironmentCoverage {
-                expected_source_revision: None,
-                record: current.clone(),
-            }
-        }
-    }
-}
-
-fn same_dense_content(base: Option<&DenseSourceRecord>, current: &DenseSourceRecord) -> bool {
-    let DenseSourceRecord::EnvironmentCoverage(current) = current;
+fn same_dense_content(
+    base: Option<&SourceEnvironmentCellRecord>,
+    current: &SourceEnvironmentCellRecord,
+) -> bool {
     match base {
-        Some(DenseSourceRecord::EnvironmentCoverage(base)) => {
-            base.space == current.space
-                && base.cell == current.cell
-                && base.definition_revision == current.definition_revision
-                && base.tiles == current.tiles
-        }
+        Some(base) => same_dense_shape(base, current) && base.tiles == current.tiles,
         None => current.tiles.is_empty(),
     }
 }
@@ -753,18 +689,14 @@ mod tests {
     fn environment_undo_redo_rebases_on_saved_revision_and_retains_runtime_delta() {
         let before = record(0, 60);
         let mut after = record(0, 180);
-        let mut dense =
-            DenseDomainWorkingSets::from_environment_records(std::slice::from_ref(&before));
+        let mut dense = SourceWorkingSets::from_environment_records(std::slice::from_ref(&before));
         let mut history = EditorHistory::default();
         let mut objects = EditorObjectWorkingSet::default();
         dense
             .apply_environment_records(std::slice::from_ref(&after))
             .unwrap();
         history.record_environment_stroke(vec![before.clone()], vec![after.clone()]);
-        let key = DenseSourceRecordKey::EnvironmentCoverage {
-            space: before.space,
-            cell: before.cell,
-        };
+        let key = before.key();
         dense.entries.get_mut(&key).unwrap().save_state = DenseSaveState::Saving(1);
         after.source_revision = 2;
         dense.finish_save(
@@ -773,7 +705,7 @@ mod tests {
                 roads: None,
                 presets: None,
                 definitions: vec![],
-                coverage: vec![DenseSourceRecord::EnvironmentCoverage(after.clone())],
+                coverage: vec![after.clone()],
             }),
         );
         assert_eq!(dense.dirty_count(), 0);
@@ -800,7 +732,7 @@ mod tests {
     #[test]
     fn rejected_large_gesture_does_not_apply_any_cells() {
         let records = (0..65).map(|x| record(x, 60)).collect::<Vec<_>>();
-        let mut dense = DenseDomainWorkingSets::from_environment_records(&records);
+        let mut dense = SourceWorkingSets::from_environment_records(&records);
         let changed = (0..65).map(|x| record(x, 180)).collect::<Vec<_>>();
         assert!(dense.apply_environment_records(&changed).is_err());
         assert_eq!(dense.dirty_count(), 0);
@@ -815,8 +747,7 @@ mod tests {
         let mut before = record(0, 0);
         before.source_revision = 0;
         before.tiles.clear();
-        let mut dense =
-            DenseDomainWorkingSets::from_environment_records(std::slice::from_ref(&before));
+        let mut dense = SourceWorkingSets::from_environment_records(std::slice::from_ref(&before));
         assert_eq!(dense.dirty_count(), 0);
         dense.apply_environment_records(&[record(0, 120)]).unwrap();
         assert_eq!(dense.dirty_count(), 1);

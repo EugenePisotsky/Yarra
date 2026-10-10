@@ -159,39 +159,18 @@ mod tests {
 
     #[test]
     fn only_control_inputs_invalidate_and_non_finite_pages_fall_back() {
-        let mut material = TerrainMaterial {
-            source_only: false,
-            environment: atmosphere::environment::fallback_parameters(),
-            cloud_shadows: None,
-            rain_shelter: None,
-            forest_shadow: None,
-            shading_mode: TerrainShadingMode::Production,
-            stochastic_cached: false,
-            prepared: false,
-            prepared_albedo: false,
-            source_weights: Handle::default(),
-            source_base_color_array: Handle::default(),
-            weights: Handle::default(),
-            base_color_array: Handle::default(),
-            normal_material_array: Handle::default(),
-            macro_variation: Handle::default(),
-            stochastic_cache: Handle::default(),
-            canopy_bounds: Vec4::ZERO,
-            canopy_shading: Default::default(),
-            canopy_coverage: None,
-            settings: TerrainMaterialUniform {
-                chunk_minimum: Vec2::new(-32.0, 64.0),
-                chunk_extent: Vec2::splat(32.0),
-                surface_layers: Vec4::ONE,
-                tile_sizes: Vec4::ONE,
-                normal_settings: Vec4::ONE,
-                roughness_ranges: Vec4::ONE,
-                macro_scales: Vec4::ONE,
-                macro_settings: Vec4::ONE,
-                cache_origins: Vec4::ZERO,
-                cache_size: UVec4::ZERO,
-            },
-        };
+        let mut material = TerrainMaterial::for_tests(TerrainMaterialUniform {
+            chunk_minimum: Vec2::new(-32.0, 64.0),
+            chunk_extent: Vec2::splat(32.0),
+            surface_layers: Vec4::ONE,
+            tile_sizes: Vec4::ONE,
+            normal_settings: Vec4::ONE,
+            roughness_ranges: Vec4::ONE,
+            macro_scales: Vec4::ONE,
+            macro_settings: Vec4::ONE,
+            cache_origins: Vec4::ZERO,
+            cache_size: UVec4::ZERO,
+        });
         let inputs = Inputs::from_material(&material).unwrap();
         material.settings.macro_scales.w = 0.4;
         material.settings.macro_settings = Vec4::ZERO;

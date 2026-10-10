@@ -87,6 +87,39 @@ fn release_full_rate_preview(mut pacing: ResMut<EditorFramePacing>) {
     pacing.release(FramePacingOwner::AnimationWorkspace);
 }
 
+/// The world's sun and ambient light, saved by a workspace that lights its own preview
+/// (Animation, Presets) and given back when it is left.
+pub(crate) struct SavedDaylight {
+    transform: Transform,
+    light: DirectionalLight,
+    ambient: GlobalAmbientLight,
+}
+
+impl SavedDaylight {
+    pub(crate) fn save(
+        transform: &Transform,
+        light: &DirectionalLight,
+        ambient: &GlobalAmbientLight,
+    ) -> Self {
+        Self {
+            transform: *transform,
+            light: *light,
+            ambient: ambient.clone(),
+        }
+    }
+
+    pub(crate) fn restore(
+        self,
+        transform: &mut Transform,
+        light: &mut DirectionalLight,
+        ambient: &mut GlobalAmbientLight,
+    ) {
+        *transform = self.transform;
+        *light = self.light;
+        *ambient = self.ambient;
+    }
+}
+
 pub(crate) fn world_workspace_active(workspace: Res<State<EditorWorkspace>>) -> bool {
     *workspace.get() == EditorWorkspace::World
 }

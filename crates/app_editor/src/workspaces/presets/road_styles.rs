@@ -29,7 +29,7 @@ impl StyleDraft {
     }
     pub fn apply(
         &mut self,
-        dense: &mut DenseDomainWorkingSets,
+        dense: &mut SourceWorkingSets,
         history: &mut EditorHistory,
     ) -> Result<(), String> {
         let key = RoadRecordKey::Profile(self.value.id);
@@ -163,7 +163,7 @@ pub(super) fn validate(
 
 pub(super) fn validate_in_project(
     p: &CartTrackProfile,
-    dense: &DenseDomainWorkingSets,
+    dense: &SourceWorkingSets,
     library: &PresetLibrary,
     project: &ProjectEditorStore,
     preview_space: Option<WorldSpaceId>,
@@ -221,7 +221,7 @@ fn dependent_spaces(
 pub(super) fn panels(
     root: &mut egui::Ui,
     state: &mut PresetAuthoringState,
-    dense: &DenseDomainWorkingSets,
+    dense: &SourceWorkingSets,
     library: &PresetLibrary,
     project: &ProjectEditorStore,
     idle: bool,
@@ -405,7 +405,7 @@ mod tests {
                 &[],
             )
             .unwrap();
-        let mut dense = DenseDomainWorkingSets::default();
+        let mut dense = SourceWorkingSets::default();
         dense.roads.reconcile(snapshot, &BTreeSet::new());
         let mut styles = Styles::default();
         styles.refresh(&dense.roads);

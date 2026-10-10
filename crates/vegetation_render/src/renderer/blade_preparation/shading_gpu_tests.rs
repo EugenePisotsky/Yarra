@@ -140,7 +140,7 @@ fn shading_matches_reference_in_frozen_scene() {
                 near_strength,
                 distance_start: 15.8,
                 distance_end: 20.0,
-                ..vegetation::CanopyShading::experiment()
+                ..vegetation::CanopyShading::default_enabled()
             };
             world.resource_mut::<VegetationBladePreparation>().enabled =
                 !matches!(path, DrawPath::Fallback);

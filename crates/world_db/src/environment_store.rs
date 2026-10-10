@@ -71,45 +71,41 @@ pub struct EnvironmentReadSnapshot {
     pub coverage: CoverageSnapshot,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum DenseSourceRecordKey {
-    EnvironmentCoverage {
-        space: WorldSpaceId,
-        cell: CellCoord,
-    },
+/// One coverage cell of a world space.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct EnvironmentCellKey {
+    pub space: WorldSpaceId,
+    pub cell: CellCoord,
 }
 
-#[derive(Debug, Clone)]
-pub enum DenseSourceWrite {
-    EnvironmentCoverage {
-        /// None creates a cell; clearing an existing cell retains its revision tombstone.
-        expected_source_revision: Option<i64>,
-        record: SourceEnvironmentCellRecord,
-    },
-}
-
-impl DenseSourceWrite {
-    pub fn key(&self) -> DenseSourceRecordKey {
-        match self {
-            Self::EnvironmentCoverage { record, .. } => DenseSourceRecordKey::EnvironmentCoverage {
-                space: record.space,
-                cell: record.cell,
-            },
+impl SourceEnvironmentCellRecord {
+    pub fn key(&self) -> EnvironmentCellKey {
+        EnvironmentCellKey {
+            space: self.space,
+            cell: self.cell,
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DenseSourceRecord {
-    EnvironmentCoverage(SourceEnvironmentCellRecord),
+#[derive(Debug, Clone)]
+pub struct EnvironmentCellWrite {
+    /// None creates a cell; clearing an existing cell retains its revision tombstone.
+    pub expected_source_revision: Option<i64>,
+    pub record: SourceEnvironmentCellRecord,
+}
+
+impl EnvironmentCellWrite {
+    pub fn key(&self) -> EnvironmentCellKey {
+        self.record.key()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DenseSourceWriteTransactionResult {
-    Committed(Vec<DenseSourceRecord>),
+pub enum EnvironmentCellWriteResult {
+    Committed(Vec<SourceEnvironmentCellRecord>),
     Conflict {
-        key: DenseSourceRecordKey,
-        actual: Option<DenseSourceRecord>,
+        key: EnvironmentCellKey,
+        actual: Option<SourceEnvironmentCellRecord>,
     },
 }
 
@@ -554,7 +550,7 @@ fn validate_cell(
                 || t.samples.len() != usize::from(definition.mask_resolution).pow(2)
         })
     {
-        return Err(WorldDbError::InvalidDenseSourceRecord);
+        return Err(WorldDbError::InvalidEnvironmentCellRecord);
     }
     Ok(())
 }

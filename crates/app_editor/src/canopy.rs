@@ -8,7 +8,6 @@ use crate::{
 };
 use bevy::prelude::*;
 use bevy_egui::{EguiPrimaryContextPass, egui};
-use std::path::PathBuf;
 use vegetation::CanopyShading;
 use vegetation_render::{
     VegetationDensityMode, VegetationLighting, VegetationSceneState, VegetationSettings,
@@ -41,18 +40,10 @@ impl Plugin for EditorCanopyPlugin {
     }
 }
 
-fn look_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../content/vegetation/canopy-look.ron")
-}
-
 fn load_saved_look(mut lighting: ResMut<VegetationLighting>) {
-    let path = look_path();
-    match std::fs::read_to_string(&path)
-        .map_err(|e| e.to_string())
-        .and_then(|s| ron::from_str::<CanopyShading>(&s).map_err(|e| e.to_string()))
-    {
+    match CanopyShading::load(&CanopyShading::saved_path()) {
         Ok(look) => lighting.canopy = look,
-        Err(error) => warn!("Canopy look {}: {error}", path.display()),
+        Err(error) => warn!("Canopy look: {error}"),
     }
 }
 
@@ -110,7 +101,7 @@ fn draw_controls(ui: &mut egui::Ui, look: &mut CanopyShading, message: &mut Opti
     ui.horizontal(|ui| {
         ui.checkbox(&mut look.enabled, "Enabled");
         if ui.button("Reset").clicked() {
-            *look = vegetation::CanopyShading::experiment();
+            *look = vegetation::CanopyShading::default_enabled();
         }
     });
     ui.add(egui::Slider::new(&mut look.strength, 0.0..=0.98).text("Maximum darkness"));
@@ -149,14 +140,11 @@ fn draw_controls(ui: &mut egui::Ui, look: &mut CanopyShading, message: &mut Opti
     ui.add(egui::Slider::new(&mut look.edge_width, 0.05..=4.0).text("Grass edge fade · m"));
     ui.small("Nearby shade 0 leaves close ground normal.");
     ui.separator();
-    let path = look_path();
+    let path = CanopyShading::saved_path();
     ui.horizontal(|ui| {
         if ui.button("Save canopy look").clicked() {
             *message = Some(
-                match ron::ser::to_string_pretty(look, ron::ser::PrettyConfig::default())
-                    .map_err(|e| e.to_string())
-                    .and_then(|s| std::fs::write(&path, s).map_err(|e| e.to_string()))
-                {
+                match look.save(&path) {
                     Ok(()) => {
                         "Saved for editor startup and game. Use F1 → Advanced → Reload canopy look in the game."
                             .into()
@@ -167,10 +155,7 @@ fn draw_controls(ui: &mut egui::Ui, look: &mut CanopyShading, message: &mut Opti
         }
         if ui.button("Load saved look").clicked() {
             *message = Some(
-                match std::fs::read_to_string(&path)
-                    .map_err(|e| e.to_string())
-                    .and_then(|s| ron::from_str(&s).map_err(|e| e.to_string()))
-                {
+                match CanopyShading::load(&path) {
                     Ok(saved) => {
                         *look = saved;
                         "Loaded saved look.".into()

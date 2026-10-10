@@ -26,6 +26,7 @@ impl Plugin for StreamingSmokePlugin {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn report_streaming_smoke(
     stats: Res<StreamingStats>,
     time: Res<Time>,

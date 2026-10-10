@@ -4,7 +4,7 @@
 //! never makes drops jump. Occlusion is a soft test against the scene depth; there is no
 //! shelter under trees yet.
 use crate::{
-    ApplyAtmosphere, AtmosphereOwner, AtmosphereState, WorldEnvironmentView,
+    ApplyAtmosphere, AtmosphereState, WorldEnvironmentView,
     environment::{EnvironmentAssets, EnvironmentParams},
 };
 use bevy::{
@@ -38,7 +38,7 @@ impl Default for PrecipitationPresentation {
 /// Views that draw rain this frame.
 #[derive(Component, Clone, ExtractComponent)]
 #[extract_app(bevy::render::RenderApp)]
-pub struct PrecipitationView;
+pub(crate) struct PrecipitationView;
 
 pub const SPLASH_CAPACITY: usize = 512;
 const SPLASH_SECONDS: f32 = 0.3;
@@ -235,7 +235,7 @@ fn sync(
     let camera_velocity = camera.update(reference.0, time.delta_secs());
     let precipitation = state
         .weather
-        .filter(|_| state.owner != AtmosphereOwner::Isolated && state.profile.outdoor)
+        .filter(|_| !state.isolated() && state.profile.outdoor)
         .map_or(0.0, |w| w.precipitation.clamp(0.0, 1.0));
     let wind = state.weather.map_or(1.0, |w| w.wind_strength);
     let direction = state.profile.clouds.wind_degrees.to_radians();
@@ -461,6 +461,7 @@ fn draw(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::AtmosphereOwner;
     use world::weather::WeatherKind;
 
     fn run(
@@ -491,7 +492,7 @@ mod tests {
     }
 
     #[test]
-    fn only_set_precipitation_draws_outside_studies_and_intensity_scales_drop_counts() {
+    fn only_set_precipitation_draws_outside_isolated_workspaces_and_intensity_scales_drop_counts() {
         let game = AtmosphereOwner::Game;
         assert!(
             !run(None, game, 0.016, 1).1,

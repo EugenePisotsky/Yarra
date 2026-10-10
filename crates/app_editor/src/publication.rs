@@ -1,16 +1,13 @@
 //! Explicit background publication of mutable project source into one immutable runtime snapshot.
 
-use std::{
-    path::PathBuf,
-    thread::{self, JoinHandle},
-};
+use std::path::PathBuf;
 
 use bevy::prelude::*;
-use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded};
+use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError};
 use engine::WorldGenerationReload;
 
 use crate::{
-    domain_editing::DenseDomainWorkingSets, editing::EditorObjectWorkingSet,
+    domain_editing::SourceWorkingSets, editing::EditorObjectWorkingSet,
     project_store::ProjectEditorStore,
 };
 
@@ -153,26 +150,12 @@ impl RuntimePublicationState {
     }
 }
 
-#[derive(Resource)]
-struct RuntimePublicationWorker {
-    requests: Sender<PublicationRequest>,
-    results: Receiver<PublicationResult>,
-    thread: Option<JoinHandle<()>>,
-}
-
-impl Drop for RuntimePublicationWorker {
-    fn drop(&mut self) {
-        let _ = self.requests.send(PublicationRequest::Shutdown);
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
-    }
-}
+type RuntimePublicationWorker = crate::worker::Worker<PublicationRequest, PublicationResult>;
 
 #[derive(Debug)]
-enum PublicationRequest {
-    Publish { request_id: u64, source_epoch: u64 },
-    Shutdown,
+struct PublicationRequest {
+    request_id: u64,
+    source_epoch: u64,
 }
 
 #[derive(Debug)]
@@ -183,28 +166,25 @@ struct PublicationResult {
 }
 
 fn start_publication_worker(mut commands: Commands, paths: Res<RuntimePublicationPaths>) {
-    let (request_sender, request_receiver) = bounded(PUBLICATION_CHANNEL_CAPACITY);
-    let (result_sender, result_receiver) = bounded(PUBLICATION_CHANNEL_CAPACITY);
     let project_database = paths.project_database.clone();
     let runtime_database = paths.runtime_database.clone();
     let bake_root = Some(paths.asset_root.clone());
-    let worker_thread = thread::Builder::new()
-        .name("yarra-runtime-publisher".into())
-        .spawn(move || {
+    let worker = RuntimePublicationWorker::spawn(
+        "yarra-runtime-publisher",
+        PUBLICATION_CHANNEL_CAPACITY,
+        PUBLICATION_CHANNEL_CAPACITY,
+        move |requests, results| {
             publication_worker(
                 project_database,
                 runtime_database,
                 bake_root,
-                request_receiver,
-                result_sender,
+                requests,
+                results,
             )
-        })
-        .expect("failed to spawn runtime publication worker");
-    commands.insert_resource(RuntimePublicationWorker {
-        requests: request_sender,
-        results: result_receiver,
-        thread: Some(worker_thread),
-    });
+        },
+    )
+    .expect("failed to spawn runtime publication worker");
+    commands.insert_resource(worker);
 }
 
 fn publication_worker(
@@ -214,14 +194,11 @@ fn publication_worker(
     requests: Receiver<PublicationRequest>,
     results: Sender<PublicationResult>,
 ) {
-    while let Ok(request) = requests.recv() {
-        let PublicationRequest::Publish {
-            request_id,
-            source_epoch,
-        } = request
-        else {
-            return;
-        };
+    while let Ok(PublicationRequest {
+        request_id,
+        source_epoch,
+    }) = requests.recv()
+    {
         let result = match &bake_root {
             Some(root) => world_cook::TerrainBakeLibrary::load(root).and_then(|library| {
                 world_cook::cook_project_with_materials(
@@ -262,7 +239,7 @@ fn dispatch_publication(
     let Some(worker) = worker else {
         return;
     };
-    match worker.requests.try_send(PublicationRequest::Publish {
+    match worker.try_send(PublicationRequest {
         request_id,
         source_epoch,
     }) {
@@ -287,11 +264,11 @@ fn receive_publication_result(
     mut reload: ResMut<WorldGenerationReload>,
     mut state: ResMut<RuntimePublicationState>,
     mut objects: ResMut<EditorObjectWorkingSet>,
-    mut dense: ResMut<DenseDomainWorkingSets>,
+    mut dense: ResMut<SourceWorkingSets>,
 ) {
     if let Some(worker) = worker {
         loop {
-            match worker.results.try_recv() {
+            match worker.try_recv() {
                 Ok(completed) => {
                     let PublicationPhase::Cooking {
                         request_id,
@@ -411,12 +388,12 @@ mod tests {
         let (requests, request_receiver) = crossbeam_channel::unbounded();
         let (results, result_receiver) = crossbeam_channel::unbounded();
         requests
-            .send(PublicationRequest::Publish {
+            .send(PublicationRequest {
                 request_id: 1,
                 source_epoch: 7,
             })
             .unwrap();
-        requests.send(PublicationRequest::Shutdown).unwrap();
+        drop(requests);
 
         publication_worker(project, runtime.clone(), None, request_receiver, results);
         assert!(result_receiver.recv().unwrap().result.is_err());
@@ -439,12 +416,12 @@ mod tests {
         let (requests, receiver) = crossbeam_channel::unbounded();
         let (results, result_receiver) = crossbeam_channel::unbounded();
         requests
-            .send(PublicationRequest::Publish {
+            .send(PublicationRequest {
                 request_id: 1,
                 source_epoch: 1,
             })
             .unwrap();
-        requests.send(PublicationRequest::Shutdown).unwrap();
+        drop(requests);
         publication_worker(
             directory.join("source.sqlite"),
             runtime.clone(),
@@ -481,15 +458,13 @@ mod tests {
         app.update();
         let worker = app.world().resource::<RuntimePublicationWorker>();
         worker
-            .requests
-            .send(PublicationRequest::Publish {
+            .send(PublicationRequest {
                 request_id: 1,
                 source_epoch: 1,
             })
             .unwrap();
         assert!(
             worker
-                .results
                 .recv_timeout(std::time::Duration::from_secs(10))
                 .unwrap()
                 .result
@@ -512,12 +487,12 @@ mod tests {
         let (requests, request_receiver) = crossbeam_channel::unbounded();
         let (results, result_receiver) = crossbeam_channel::unbounded();
         requests
-            .send(PublicationRequest::Publish {
+            .send(PublicationRequest {
                 request_id: 2,
                 source_epoch: 9,
             })
             .unwrap();
-        requests.send(PublicationRequest::Shutdown).unwrap();
+        drop(requests);
 
         publication_worker(project, runtime.clone(), None, request_receiver, results);
         let published = result_receiver.recv().unwrap().result.unwrap();

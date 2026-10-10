@@ -1,10 +1,6 @@
 use super::*;
-use crate::{
-    publication::RuntimePublicationState, saving::EditorSaveCoordinator, shell::EditorInputCapture,
-    workspaces::world::EditorOverlayGizmos,
-};
-use bevy::{ecs::system::SystemParam, window::PrimaryWindow};
-use engine::{StreamedTerrainSurface, WorldOrigin, WorldViewCamera};
+use crate::workspaces::world::{EditorOverlayGizmos, GroundToolInput};
+use bevy::ecs::system::SystemParam;
 #[derive(Clone, Copy, PartialEq)]
 enum Handle {
     Point,
@@ -20,30 +16,16 @@ pub(super) struct Drag {
 }
 #[derive(SystemParam)]
 pub(super) struct Input<'w, 's> {
-    window: Single<'w, 's, &'static Window, With<PrimaryWindow>>,
-    camera: Single<'w, 's, (&'static Camera, &'static GlobalTransform), With<WorldViewCamera>>,
-    terrain: Query<'w, 's, (Entity, &'static StreamedTerrainSurface)>,
-    origin: Res<'w, WorldOrigin>,
-    workspace: Res<'w, State<EditorWorkspace>>,
-    tools: Res<'w, EditorToolRegistry>,
-    capture: Res<'w, EditorInputCapture>,
-    buttons: Res<'w, ButtonInput<MouseButton>>,
-    keys: Res<'w, ButtonInput<KeyCode>>,
-    publication: Res<'w, RuntimePublicationState>,
-    save: Res<'w, EditorSaveCoordinator>,
+    ground: GroundToolInput<'w, 's>,
     project: Res<'w, ProjectEditorStore>,
     presets: Res<'w, crate::workspaces::presets::PresetAuthoringState>,
 }
 fn active(input: &Input) -> bool {
-    *input.workspace.get() == EditorWorkspace::World
-        && input
-            .tools
-            .active(EditorWorkspace::World)
-            .is_some_and(|t| t.id == ROAD_TOOL.id)
+    input.ground.active(&ROAD_TOOL)
 }
 fn finish(
     state: &mut RoadToolState,
-    dense: &mut DenseDomainWorkingSets,
+    dense: &mut SourceWorkingSets,
     history: &mut EditorHistory,
     cancel: bool,
 ) {
@@ -69,12 +51,12 @@ fn finish(
 }
 pub(super) fn input(
     input: Input,
-    mut dense: ResMut<DenseDomainWorkingSets>,
+    mut dense: ResMut<SourceWorkingSets>,
     mut history: ResMut<EditorHistory>,
     mut state: ResMut<RoadToolState>,
 ) {
-    let enabled = active(&input) && input.window.focused;
-    if input.keys.just_pressed(KeyCode::Escape) {
+    let enabled = active(&input) && input.ground.window.focused;
+    if input.ground.keys.just_pressed(KeyCode::Escape) {
         finish(&mut state, &mut dense, &mut history, true);
         state.creating = false;
         state.extending = false;
@@ -84,25 +66,11 @@ pub(super) fn input(
         state.status = None;
         return;
     }
-    let blocked = input.capture.wants_pointer
-        || input.buttons.pressed(MouseButton::Right)
-        || input.buttons.pressed(MouseButton::Middle)
-        || input.publication.active()
-        || input.save.active()
+    let blocked = input.ground.paused()
         || input.project.save_in_flight()
         || dense.saving()
         || dense.has_any_conflict()
-        || input.presets.dirty()
-        || [
-            KeyCode::SuperLeft,
-            KeyCode::SuperRight,
-            KeyCode::ControlLeft,
-            KeyCode::ControlRight,
-            KeyCode::AltLeft,
-            KeyCode::AltRight,
-        ]
-        .iter()
-        .any(|k| input.keys.pressed(*k));
+        || input.presets.dirty();
     if !enabled || blocked {
         finish(&mut state, &mut dense, &mut history, false);
     }
@@ -118,8 +86,8 @@ pub(super) fn input(
     if blocked {
         return;
     }
-    let Some(space) = input.origin.space() else {
-        if !input.buttons.pressed(MouseButton::Left) {
+    let Some(space) = input.ground.origin.space() else {
+        if !input.ground.buttons.pressed(MouseButton::Left) {
             finish(&mut state, &mut dense, &mut history, false);
         }
         return;
@@ -138,38 +106,44 @@ pub(super) fn input(
         state.hover = None;
     }
     let Some(size) = dense.definition(space).map(|d| d.cell_size) else {
-        if !input.buttons.pressed(MouseButton::Left) {
+        if !input.ground.buttons.pressed(MouseButton::Left) {
             finish(&mut state, &mut dense, &mut history, false);
         }
         return;
     };
-    let Some(cursor) = input.window.cursor_position() else {
-        if !input.buttons.pressed(MouseButton::Left) {
+    let Some(cursor) = input.ground.window.cursor_position() else {
+        if !input.ground.buttons.pressed(MouseButton::Left) {
             finish(&mut state, &mut dense, &mut history, false);
         }
         return;
     };
-    let Ok(ray) = input.camera.0.viewport_to_world(input.camera.1, cursor) else {
-        if !input.buttons.pressed(MouseButton::Left) {
+    let Ok(ray) = input
+        .ground
+        .camera
+        .0
+        .viewport_to_world(input.ground.camera.1, cursor)
+    else {
+        if !input.ground.buttons.pressed(MouseButton::Left) {
             finish(&mut state, &mut dense, &mut history, false);
         }
         return;
     };
-    let hit = engine::raycast_resident_terrain(&input.origin, input.terrain.iter(), ray)
-        .map(|(_, point)| point);
+    let hit =
+        engine::raycast_resident_terrain(&input.ground.origin, input.ground.terrain.iter(), ray)
+            .map(|(_, point)| point);
     let Some(hit) = hit else {
         state.hover = None;
-        if !input.buttons.pressed(MouseButton::Left) {
+        if !input.ground.buttons.pressed(MouseButton::Left) {
             finish(&mut state, &mut dense, &mut history, false);
         }
         return;
     };
     let Ok(point) = RoadPoint::from_relative(
-        input.origin.cell(),
+        input.ground.origin.cell(),
         [hit.x as f64, hit.z as f64],
         size as f64,
     ) else {
-        if !input.buttons.pressed(MouseButton::Left) {
+        if !input.ground.buttons.pressed(MouseButton::Left) {
             finish(&mut state, &mut dense, &mut history, false);
         }
         return;
@@ -182,11 +156,11 @@ pub(super) fn input(
             &mut history,
             point,
             size,
-            !input.buttons.pressed(MouseButton::Left),
+            !input.ground.buttons.pressed(MouseButton::Left),
         );
         return;
     }
-    if !input.buttons.just_pressed(MouseButton::Left) {
+    if !input.ground.buttons.just_pressed(MouseButton::Left) {
         return;
     }
     if state.creating {
@@ -282,7 +256,12 @@ pub(super) fn input(
             let Some(p) = project_point(&input, p, size) else {
                 continue;
             };
-            let Ok(screen) = input.camera.0.world_to_viewport(input.camera.1, p) else {
+            let Ok(screen) = input
+                .ground
+                .camera
+                .0
+                .world_to_viewport(input.ground.camera.1, p)
+            else {
                 continue;
             };
             let distance = screen.distance(cursor);
@@ -348,18 +327,25 @@ pub(super) fn input(
         let Some(span) = commands::span(&dense.roads, s.id) else {
             continue;
         };
-        let controls = span.control_points(input.origin.cell(), size);
+        let controls = span.control_points(input.ground.origin.cell(), size);
         let mut last = None;
         for i in 0..=48 {
             let point = RoadPoint::from_relative(
-                input.origin.cell(),
+                input.ground.origin.cell(),
                 cubic(controls, i as f64 / 48.0),
                 size as f64,
             )
             .ok();
             let screen = point
                 .and_then(|p| project_point(&input, p, size))
-                .and_then(|p| input.camera.0.world_to_viewport(input.camera.1, p).ok());
+                .and_then(|p| {
+                    input
+                        .ground
+                        .camera
+                        .0
+                        .world_to_viewport(input.ground.camera.1, p)
+                        .ok()
+                });
             if let (Some(a), Some(b)) = (last, screen) {
                 let distance = distance_to_segment(cursor, a, b);
                 if distance < 10.0 && nearest.is_none_or(|v| distance < v.0) {
@@ -377,7 +363,7 @@ pub(super) fn input(
 }
 fn update_drag(
     state: &mut RoadToolState,
-    dense: &mut DenseDomainWorkingSets,
+    dense: &mut SourceWorkingSets,
     history: &mut EditorHistory,
     point: RoadPoint,
     size: f32,
@@ -499,15 +485,15 @@ fn handles(k: &RoadKnot, selected: bool, size: f32) -> Vec<(Handle, RoadPoint)> 
     result
 }
 fn project_point(input: &Input, p: RoadPoint, size: f32) -> Option<Vec3> {
-    let (_, terrain) = input
-        .terrain
-        .iter()
-        .find(|(_, s)| Some(s.key.space) == input.origin.space() && s.key.cell == p.cell)?;
+    let (_, terrain) =
+        input.ground.terrain.iter().find(|(_, s)| {
+            Some(s.key.space) == input.ground.origin.space() && s.key.cell == p.cell
+        })?;
     let y = terrain
         .heightfield
         .sample(p.local.map(|v| v as f32), size)
         .height;
-    let local = p.relative_to(input.origin.cell(), size as f64);
+    let local = p.relative_to(input.ground.origin.cell(), size as f64);
     Some(Vec3::new(local[0] as f32, y + 0.12, local[1] as f32))
 }
 fn cubic(p: [[f64; 2]; 4], t: f64) -> [f64; 2] {
@@ -526,14 +512,14 @@ fn cross(g: &mut Gizmos<EditorOverlayGizmos>, p: Vec3, color: Color, r: f32) {
 }
 pub(super) fn draw(
     input: Input,
-    dense: Res<DenseDomainWorkingSets>,
+    dense: Res<SourceWorkingSets>,
     state: Res<RoadToolState>,
     mut gizmos: Gizmos<EditorOverlayGizmos>,
 ) {
     if !active(&input) {
         return;
     }
-    let Some(space) = input.origin.space() else {
+    let Some(space) = input.ground.origin.space() else {
         return;
     };
     let Some(size) = dense.definition(space).map(|d| d.cell_size) else {
@@ -580,7 +566,7 @@ pub(super) fn draw(
                 let Some(span) = commands::span(&dense.roads, s.id) else {
                     continue;
                 };
-                let p = span.control_points(input.origin.cell(), size);
+                let p = span.control_points(input.ground.origin.cell(), size);
                 let mut last = None;
                 let color = if state.span == Some(s.id) {
                     orange
@@ -591,7 +577,7 @@ pub(super) fn draw(
                 };
                 for i in 0..=48 {
                     let next = RoadPoint::from_relative(
-                        input.origin.cell(),
+                        input.ground.origin.cell(),
                         cubic(p, i as f64 / 48.0),
                         size as f64,
                     )
@@ -662,7 +648,7 @@ mod tests {
     use crate::editing::EditorObjectWorkingSet;
     #[test]
     fn release_uses_last_ground_hit_and_one_undo_restores_the_start() {
-        let mut dense = DenseDomainWorkingSets::default();
+        let mut dense = SourceWorkingSets::default();
         let style = commands::default_profile(
             environment::fixtures::DRY_GROUND,
             environment::ChannelId([1; 16]),
@@ -713,7 +699,7 @@ mod tests {
     }
     #[test]
     fn cancelling_a_junction_drag_restores_all_members_without_an_undo_entry() {
-        let mut dense = DenseDomainWorkingSets::default();
+        let mut dense = SourceWorkingSets::default();
         let style = commands::default_profile(
             environment::fixtures::DRY_GROUND,
             environment::ChannelId([1; 16]),

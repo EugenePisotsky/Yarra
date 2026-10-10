@@ -83,6 +83,15 @@ impl CellCoord {
         ]
     }
 
+    /// This cell's corner relative to `origin`'s, in metres: where it lies in render space
+    /// while `origin` is the render origin.
+    pub fn offset_from(self, origin: CellCoord, cell_size: f32) -> [f64; 2] {
+        [
+            (i64::from(self.x) - i64::from(origin.x)) as f64 * f64::from(cell_size),
+            (i64::from(self.z) - i64::from(origin.z)) as f64 * f64::from(cell_size),
+        ]
+    }
+
     pub fn center(self, cell_size: f32) -> [f32; 2] {
         [
             (self.x as f32 + 0.5) * cell_size,
@@ -127,10 +136,11 @@ impl WorldPosition {
     }
 
     pub fn relative_to(self, origin_cell: CellCoord, cell_size: f32) -> [f32; 3] {
+        let [x, z] = self.cell.offset_from(origin_cell, cell_size);
         [
-            (i64::from(self.cell.x) - i64::from(origin_cell.x)) as f32 * cell_size + self.local[0],
+            x as f32 + self.local[0],
             self.local[1],
-            (i64::from(self.cell.z) - i64::from(origin_cell.z)) as f32 * cell_size + self.local[2],
+            z as f32 + self.local[2],
         ]
     }
 

@@ -597,8 +597,10 @@ mod tests {
 
     #[test]
     fn rejects_nonfinite_and_out_of_range_source() {
-        let mut p = AtmosphereProfile::default();
-        p.visibility_metres = f32::NAN;
+        let mut p = AtmosphereProfile {
+            visibility_metres: f32::NAN,
+            ..Default::default()
+        };
         assert!(p.validate().is_err());
         p = Default::default();
         p.sun_srgb[0] = 2.0;

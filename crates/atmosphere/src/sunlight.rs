@@ -29,7 +29,7 @@ fn ozone(altitude: f64) -> f64 {
 /// Share of the sun's light reaching `altitude` metres above the ground from a sun at
 /// `elevation_sine`, per channel. The part of the disc (angular radius `disc_radius`) below the
 /// horizon is lost; `visibility_metres` sets the aerosol near the ground.
-pub fn sun_transmittance(
+pub(crate) fn sun_transmittance(
     molecular_density: f32,
     visibility_metres: f32,
     altitude: f32,

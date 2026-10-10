@@ -8,7 +8,7 @@ mod domain_editing;
 mod editing;
 mod environment_paint;
 mod journal;
-mod navigation;
+mod listings;
 mod project_store;
 mod publication;
 mod road_authoring;
@@ -17,6 +17,7 @@ mod shell;
 mod startup;
 mod tools;
 mod vegetation_authoring;
+mod worker;
 mod workspaces;
 
 fn main() -> std::process::ExitCode {

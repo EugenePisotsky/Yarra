@@ -118,13 +118,18 @@ fn camera_transform(object_position: Vec3, rig: &CameraRig) -> Transform {
     let pitch =
         (CAMERA_NEAR_PITCH + (CAMERA_FAR_PITCH - CAMERA_NEAR_PITCH) * zoom + rig.pitch_offset)
             .clamp(5.0_f32.to_radians(), 80.0_f32.to_radians());
-    let horizontal_distance = rig.distance * pitch.cos();
     let focus = object_position + Vec3::Y * CAMERA_FOCUS_HEIGHT;
-    let offset = Vec3::new(
-        rig.yaw.sin() * horizontal_distance,
-        rig.distance * pitch.sin(),
-        rig.yaw.cos() * horizontal_distance,
-    );
+    orbit_transform(focus, rig.yaw, pitch, rig.distance)
+}
 
+/// A camera `distance` metres from `focus` looking at it, `pitch` radians above it and `yaw`
+/// radians round it (0 on its +Z side). The game, start views and editor cameras orbit so.
+pub fn orbit_transform(focus: Vec3, yaw: f32, pitch: f32, distance: f32) -> Transform {
+    let horizontal = distance * pitch.cos();
+    let offset = Vec3::new(
+        yaw.sin() * horizontal,
+        distance * pitch.sin(),
+        yaw.cos() * horizontal,
+    );
     Transform::from_translation(focus + offset).looking_at(focus, Vec3::Y)
 }

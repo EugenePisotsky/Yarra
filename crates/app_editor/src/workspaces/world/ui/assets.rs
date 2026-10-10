@@ -1,7 +1,7 @@
 //! Paged asset definitions and undoable placement at the viewpoint.
 use crate::{
     editing::{EditorHistory, EditorObjectWorkingSet, EditorSelection, TransformInspectorDraft},
-    navigation::ProjectNavigationStore,
+    listings::ProjectListings,
     project_store::ProjectEditorStore,
     tools::{EditorToolRegistry, OBJECT_TOOL},
     workspaces::{
@@ -17,7 +17,7 @@ use engine::WorldViewpoint;
 pub(super) fn draw_asset_browser(
     ui: &mut egui::Ui,
     viewpoint: &WorldViewpoint,
-    navigation: &mut ProjectNavigationStore,
+    listings: &mut ProjectListings,
     project: &mut ProjectEditorStore,
     selection: &mut EditorSelection,
     objects: &mut EditorObjectWorkingSet,
@@ -26,14 +26,14 @@ pub(super) fn draw_asset_browser(
     transform_draft: &mut TransformInspectorDraft,
     tools: &mut EditorToolRegistry,
 ) {
-    let mut search = navigation.palette_search().to_owned();
+    let mut search = listings.palette_search().to_owned();
     if ui
         .add(egui::TextEdit::singleline(&mut search).hint_text("Search asset definitions"))
         .changed()
     {
-        navigation.search_palette(search);
+        listings.search_palette(search);
     }
-    let palette_records = navigation.palette_records().to_vec();
+    let palette_records = listings.palette_records().to_vec();
     egui::ScrollArea::vertical()
         .id_salt("object_definition_palette")
         .max_height((ui.available_height() - 76.0).max(140.0))
@@ -57,18 +57,18 @@ pub(super) fn draw_asset_browser(
     ui.horizontal(|ui| {
         if ui
             .add_enabled(
-                navigation.palette_has_previous(),
+                listings.palette_has_previous(),
                 egui::Button::new("Previous"),
             )
             .clicked()
         {
-            navigation.palette_previous();
+            listings.palette_previous();
         }
         if ui
-            .add_enabled(navigation.palette_has_next(), egui::Button::new("Next"))
+            .add_enabled(listings.palette_has_next(), egui::Button::new("Next"))
             .clicked()
         {
-            navigation.palette_next();
+            listings.palette_next();
         }
         ui.weak(format!("{} on page", palette_records.len()));
     });

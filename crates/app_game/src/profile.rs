@@ -6,12 +6,17 @@ use bevy::{
     window::{MonitorSelection, PresentMode, PrimaryWindow, WindowMode},
 };
 
+use crate::game_render::{GameRenderSettings, scale_index};
+use crate::launch::Args;
+
 #[derive(Resource, Clone)]
 pub(crate) struct ProfileSettings {
     /// None follows the normal game's world-resolution scale and surface aspect ratio.
     pub size: Option<UVec2>,
     /// Exact physical window size for comparable Retina GPU measurements.
     surface: Option<UVec2>,
+    /// World render scale when `size` follows the game.
+    scale: f32,
     pub bloom: bool,
     pub auto_exposure: bool,
     pub fog: bool,
@@ -33,170 +38,94 @@ pub(crate) struct ProfileSettings {
 }
 
 impl ProfileSettings {
-    pub(crate) fn parse(args: &[String]) -> Result<Option<Self>, String> {
-        let value = |key: &str| -> Result<Option<&str>, String> {
-            args.iter()
-                .position(|a| a == key)
-                .map(|i| {
-                    args.get(i + 1)
-                        .map(String::as_str)
-                        .filter(|v| !v.starts_with("--"))
-                        .ok_or_else(|| format!("{key} requires a value"))
-                })
-                .transpose()
-        };
-        let diagnostic = args.iter().any(|a| a == "--profile-diagnostic");
-        let seconds = value("--profile-seconds")?;
-        if diagnostic && seconds.is_some() {
+    /// `scale` is the launch's `--resolution-scale`, which here scales `--profile-size game`.
+    pub(crate) fn parse(args: &Args, scale: Option<f32>) -> Result<Option<Self>, String> {
+        let diagnostic = args.has("--profile-diagnostic");
+        let timed = args.has("--profile-seconds");
+        if diagnostic && timed {
             return Err("Diagnostic captures cannot be combined with timed power runs".into());
         }
-        if !diagnostic && seconds.is_none() {
+        if !diagnostic && !timed {
             return Ok(None);
         }
-        if diagnostic
-            && !args
-                .iter()
-                .any(|a| matches!(a.as_str(), "--metal-capture" | "--render-frames"))
-        {
+        if diagnostic && !args.has("--metal-capture") && !args.has("--render-frames") {
             return Err(
                 "Diagnostic presentation requires --metal-capture or --render-frames".into(),
             );
         }
-        if !diagnostic
-            && args.iter().any(|a| {
-                matches!(
-                    a.as_str(),
-                    "--render-frames" | "--render-snapshot" | "--metal-capture"
-                )
-            })
+        if timed
+            && ["--render-frames", "--render-snapshot", "--metal-capture"]
+                .iter()
+                .any(|flag| args.has(flag))
         {
             return Err(
                 "Timed power runs cannot include frame-limited output, screenshots or GPU capture"
                     .into(),
             );
         }
-        let duration = |s: &str, low: f64, high: f64| -> Result<f64, String> {
-            let n = s
-                .parse::<f64>()
-                .map_err(|_| format!("Invalid duration: {s}"))?;
-            if n.is_finite() && (low..=high).contains(&n) {
-                Ok(n)
-            } else {
-                Err(format!("Duration must be between {low} and {high} seconds"))
-            }
+        let size = match args.value("--profile-size")?.unwrap_or("2560x1440") {
+            "game" => None,
+            size => Some(dimensions(size, "--profile-size")?),
         };
-        let size = value("--profile-size")?.unwrap_or("2560x1440");
-        let size = if size == "game" {
-            None
-        } else {
-            let (w, h) = size
-                .split_once('x')
-                .ok_or("Expected game or WIDTHxHEIGHT")?;
-            let width = w.parse::<u32>().map_err(|_| "Invalid width")?;
-            let height = h.parse::<u32>().map_err(|_| "Invalid height")?;
-            if !(64..=8192).contains(&width) || !(64..=8192).contains(&height) {
-                return Err("Profile dimensions must be in 64..8192".into());
-            }
-            Some(UVec2::new(width, height))
-        };
-        let surface = value("--profile-surface")?
-            .map(|s| {
-                let (w, h) = s
-                    .split_once('x')
-                    .ok_or("Expected WIDTHxHEIGHT for profile surface")?;
-                let w = w.parse::<u32>().map_err(|_| "Invalid surface width")?;
-                let h = h.parse::<u32>().map_err(|_| "Invalid surface height")?;
-                if !(64..=8192).contains(&w) || !(64..=8192).contains(&h) {
-                    return Err("Profile surface dimensions must be in 64..8192");
-                }
-                Ok(UVec2::new(w, h))
-            })
-            .transpose()?;
-        let bloom = match value("--profile-bloom")?.unwrap_or("on") {
-            "on" => true,
-            "off" => false,
-            _ => return Err("Profile bloom must be on or off".into()),
-        };
-        let auto_exposure = match value("--profile-auto-exposure")?.unwrap_or("on") {
-            "on" => true,
-            "off" => false,
-            _ => return Err("Profile auto exposure must be on or off".into()),
-        };
-        let fog = match value("--profile-fog")?.unwrap_or("on") {
-            "on" => true,
-            "off" => false,
-            _ => return Err("Profile fog must be on or off".into()),
-        };
-        let particles = match value("--profile-particles")?.unwrap_or("on") {
-            "on" => true,
-            "off" => false,
-            _ => return Err("Profile particles must be on or off".into()),
-        };
-        let light_shafts = match value("--profile-shafts")?.unwrap_or("on") {
-            "on" => true,
-            "off" => false,
-            _ => return Err("Profile shafts must be on or off".into()),
-        };
-        // Preserve old direct profiling commands; the runner explicitly selects its new default.
-        let fullscreen = match value("--profile-window")?.unwrap_or("windowed") {
-            "fullscreen" => true,
-            "windowed" => false,
-            _ => return Err("Profile window must be fullscreen or windowed".into()),
-        };
-        let fps = value("--profile-fps")?
-            .unwrap_or("60")
-            .parse::<u32>()
-            .map_err(|_| "Invalid fps")?;
-        if fps != 0 && !(15..=240).contains(&fps) {
-            return Err("FPS must be 0 (uncapped) or 15..240".into());
+        if size.is_some() && scale.is_some() {
+            return Err(
+                "--resolution-scale scales --profile-size game; an explicit size sets the pixels"
+                    .into(),
+            );
         }
-        let msaa = match value("--profile-msaa")?.unwrap_or("4") {
-            "1" => Msaa::Off,
-            "2" => Msaa::Sample2,
-            "4" => Msaa::Sample4,
-            _ => return Err("MSAA must be 1, 2 or 4".into()),
-        };
-        let grass = match value("--profile-grass")?.unwrap_or("full") {
-            "full" => true,
-            "off" => false,
-            _ => return Err("Profile grass must be full or off".into()),
-        };
-        let switch = |key: &str| match value(key)?.unwrap_or("on") {
-            "on" => Ok(true),
-            "off" => Ok(false),
-            _ => Err(format!("{key} must be on or off")),
-        };
-        let objects = switch("--profile-objects")?;
-        let terrain = switch("--profile-terrain")?;
+        let fps = args.value("--profile-fps")?.unwrap_or("60");
+        let fps = fps
+            .parse::<u32>()
+            .ok()
+            .filter(|&fps| fps == 0 || (15..=240).contains(&fps))
+            .ok_or("--profile-fps requires 0 (uncapped) or 15..240")?;
         Ok(Some(Self {
             size,
-            surface,
-            bloom,
-            auto_exposure,
-            fog,
-            particles,
-            light_shafts,
-            temporal_bypass: args.iter().any(|a| a == "--profile-temporal-bypass"),
-            msaa,
-            grass,
-            objects,
-            terrain,
+            surface: args
+                .value("--profile-surface")?
+                .map(|s| dimensions(s, "--profile-surface"))
+                .transpose()?,
+            scale: scale.unwrap_or(GameRenderSettings::default().resolution_scale),
+            bloom: args.switch("--profile-bloom")?,
+            auto_exposure: args.switch("--profile-auto-exposure")?,
+            fog: args.switch("--profile-fog")?,
+            particles: args.switch("--profile-particles")?,
+            light_shafts: args.switch("--profile-shafts")?,
+            temporal_bypass: args.has("--profile-temporal-bypass"),
+            msaa: args.choice(
+                "--profile-msaa",
+                "4",
+                &[("1", Msaa::Off), ("2", Msaa::Sample2), ("4", Msaa::Sample4)],
+            )?,
+            grass: args.choice("--profile-grass", "full", &[("full", true), ("off", false)])?,
+            objects: args.switch("--profile-objects")?,
+            terrain: args.switch("--profile-terrain")?,
             fps,
-            warmup: duration(value("--profile-warmup")?.unwrap_or("15"), 1.0, 600.0)?,
-            seconds: duration(seconds.unwrap_or("2"), 2.0, 3600.0)?,
-            fullscreen,
+            warmup: args.number("--profile-warmup", 15.0, 1.0..=600.0)?,
+            seconds: args.number("--profile-seconds", 2.0, 2.0..=3600.0)?,
+            // Preserve old direct profiling commands; the runner explicitly selects its new default.
+            fullscreen: args.choice(
+                "--profile-window",
+                "windowed",
+                &[("fullscreen", true), ("windowed", false)],
+            )?,
             diagnostic,
-            native_pacing: args.iter().any(|a| a == "--profile-native-pacing"),
+            native_pacing: args.has("--profile-native-pacing"),
         }))
     }
 
     pub fn resolution_scale(&self) -> f32 {
-        if self.size.is_some() {
-            1.0
-        } else {
-            crate::game_render::GameRenderSettings::default().resolution_scale
-        }
+        if self.size.is_some() { 1.0 } else { self.scale }
     }
+}
+
+/// `WIDTHxHEIGHT`, each side 64..8192.
+fn dimensions(value: &str, key: &str) -> Result<UVec2, String> {
+    value
+        .split_once('x')
+        .and_then(|(w, h)| Some(UVec2::new(w.parse().ok()?, h.parse().ok()?)))
+        .filter(|size| size.cmpge(UVec2::splat(64)).all() && size.cmple(UVec2::splat(8192)).all())
+        .ok_or_else(|| format!("{key} requires WIDTHxHEIGHT within 64..8192"))
 }
 
 #[derive(Resource, Default)]
@@ -390,7 +319,8 @@ pub(crate) fn apply_runtime_settings(app: &mut App) {
     let mut settings = app
         .world_mut()
         .resource_mut::<crate::runtime_settings::RuntimeSettings>();
-    settings.scale_index = if profile.size.is_some() { 0 } else { 2 };
+    settings.scale_index =
+        scale_index(profile.resolution_scale()).expect("launch validates the resolution scale");
     settings.msaa = profile.msaa;
     settings.bloom = profile.bloom;
     settings.auto_exposure = profile.auto_exposure;
@@ -413,11 +343,12 @@ pub(crate) fn apply_runtime_settings(app: &mut App) {
 mod tests {
     use super::*;
     fn parse(s: &str) -> Result<Option<ProfileSettings>, String> {
-        ProfileSettings::parse(&s.split_whitespace().map(str::to_owned).collect::<Vec<_>>())
+        let args = Args::collect(s.split_whitespace().map(std::ffi::OsString::from))?;
+        ProfileSettings::parse(&args, None)
     }
     #[test]
     fn profiling_is_opt_in_and_rejects_invalid_or_contaminated_runs() {
-        assert!(parse("game").unwrap().is_none());
+        assert!(parse("").unwrap().is_none());
         for args in [
             "--profile-seconds NaN",
             "--profile-seconds -1",

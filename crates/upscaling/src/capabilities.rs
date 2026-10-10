@@ -2,13 +2,13 @@ use crate::UpscaleMethod;
 use bevy::prelude::*;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BackendCapability {
+pub(crate) struct BackendCapability {
     pub method: UpscaleMethod,
     pub supported: bool,
     pub reason: Option<String>,
 }
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct UpscalingCapabilities {
+pub(crate) struct UpscalingCapabilities {
     pub backends: Vec<BackendCapability>,
 }
 impl UpscalingCapabilities {

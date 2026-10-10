@@ -18,6 +18,7 @@ use bevy::{
         core_3d::{main_opaque_pass_3d, main_transparent_pass_3d},
     },
     ecs::{
+        entity::EntityHashMap,
         schedule::{
             InternedSystemSet, IntoSystemSet, NodeId, Schedule, SystemKey, SystemSet,
             SystemWithAccess, graph::Direction,
@@ -41,7 +42,7 @@ use bevy::{
         extract_resource::ExtractResourcePlugin,
         render_asset::RenderAssets,
         render_resource::{binding_types::*, *},
-        renderer::{RenderContext, RenderDevice, ViewQuery},
+        renderer::{RenderContext, RenderDevice, RenderQueue, ViewQuery},
         storage::GpuShaderBuffer,
         texture::FallbackImage,
         texture::GpuImage,
@@ -56,7 +57,7 @@ pub(crate) struct SkyCompositeDraw;
 /// Views that get the sky composite. Required by `WorldEnvironmentView`.
 #[derive(Component, Clone, Copy, Default, ExtractComponent)]
 #[extract_app(bevy::render::RenderApp)]
-pub struct SkyCompositeView;
+pub(crate) struct SkyCompositeView;
 
 /// Render-world marker: Bevy's sky pass was found and replaced, so nothing but its opaque pass
 /// writes the multisampled colour target on atmosphere views.
@@ -431,8 +432,11 @@ fn draw(
     cloud_pipelines: Res<CloudPipelines>,
     fallback: Res<FallbackImage>,
     images: Res<RenderAssets<GpuImage>>,
+    queue: Res<RenderQueue>,
+    mut settings_buffers: Local<EntityHashMap<Buffer>>,
     mut ctx: RenderContext,
 ) {
+    let entity = view.entity();
     let (pipeline, target, depth, view_offset, resolution, bindings, shafts, sun, rays) =
         view.into_inner();
     if target.main_texture_format() != TextureFormat::Rgba16Float {
@@ -450,74 +454,17 @@ fn draw(
     };
     let key = pipeline.key;
     let device = ctx.render_device().clone();
-    let (view_group, offsets) = if key.atmosphere {
-        let (
-            Some((
-                extracted,
-                textures,
-                atmosphere_index,
-                settings_index,
-                transforms_offset,
-                lights_offset,
-            )),
-            Some(atmosphere_binding),
-            Some(settings_binding),
-            Some(transforms_binding),
-            Some(lights_binding),
-            Some(sampler),
-            Some(media),
-            Some(medium_sampler),
-        ) = (
-            bindings,
-            atmosphere.atmosphere.as_ref().and_then(|u| u.binding()),
-            atmosphere.settings.as_ref().and_then(|u| u.binding()),
-            atmosphere
-                .transforms
-                .as_ref()
-                .and_then(|t| t.uniforms().binding()),
-            atmosphere.lights.view_gpu_lights.binding(),
-            atmosphere.sampler.as_ref(),
-            atmosphere.media.as_ref(),
-            atmosphere.medium_sampler.as_ref(),
-        )
-        else {
-            return;
-        };
-        let Some(medium) = media.get(extracted.medium) else {
-            return;
-        };
-        let group = device.create_bind_group(
-            "sky composite atmosphere",
-            &cache.get_bind_group_layout(&pipelines.atmosphere_layout),
-            &BindGroupEntries::with_indices((
-                (0, atmosphere_binding),
-                (1, settings_binding),
-                (2, transforms_binding),
-                (3, view_binding),
-                (4, lights_binding),
-                (5, &medium.density_lut_view),
-                (7, medium_sampler.sampler()),
-                (8, &textures.transmittance_lut.default_view),
-                (10, &textures.sky_view_lut.default_view),
-                (11, &textures.aerial_view_lut.default_view),
-                (12, &***sampler),
-            )),
-        );
-        let offsets = vec![
-            atmosphere_index.index(),
-            settings_index.index(),
-            transforms_offset.index(),
-            view_offset.offset,
-            lights_offset.offset,
-        ];
-        (group, offsets)
-    } else {
-        let group = device.create_bind_group(
-            "sky composite view",
-            &cache.get_bind_group_layout(&pipelines.view_layout),
-            &BindGroupEntries::with_indices(((3, view_binding),)),
-        );
-        (group, vec![view_offset.offset])
+    let Some((view_group, offsets)) = view_bind_group(
+        &device,
+        &pipelines,
+        &cache,
+        &atmosphere,
+        bindings,
+        view_binding,
+        view_offset,
+        key.atmosphere,
+    ) else {
+        return;
     };
     let cached = key.clouds == Clouds::Cached;
     let (newer, older, blend) = match clouds.display() {
@@ -526,16 +473,25 @@ fn draw(
     };
     // x: cloud cross-fade; y: light shafts drawn; z: main-pass pixels per shaft texel; w: sun
     // rays drawn.
-    let settings = device.create_buffer_with_data(&BufferInitDescriptor {
-        label: Some("sky composite settings"),
-        contents: bytemuck::bytes_of(&[
+    // One small buffer per view, kept across frames.
+    let settings = settings_buffers.entry(entity).or_insert_with(|| {
+        device.create_buffer(&BufferDescriptor {
+            label: Some("sky composite settings"),
+            size: 16,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        })
+    });
+    queue.write_buffer(
+        settings,
+        0,
+        bytemuck::bytes_of(&[
             blend,
             if shafts.is_some() { 1.0 } else { 0.0 },
             crate::light_shafts::SCALE as f32,
             if rays.is_some() { 1.0 } else { 0.0 },
         ]),
-        usage: BufferUsages::UNIFORM,
-    });
+    );
     let (shaft_light, shaft_distance) = shafts.map_or(
         (&fallback.d2.texture_view, &fallback.d2.texture_view),
         |s| (&s.light.default_view, &s.distance.default_view),
@@ -598,6 +554,88 @@ fn draw(
     pass.set_bind_group(0, &view_group, &offsets);
     pass.set_bind_group(1, &composite_group, &[]);
     pass.draw(0..3, 0..1);
+}
+
+/// Group 0: Bevy's atmosphere bindings with the view, or the view alone; None until Bevy has
+/// prepared the atmosphere's buffers and tables.
+#[allow(clippy::too_many_arguments)] // The view's bindings from both sources.
+fn view_bind_group(
+    device: &RenderDevice,
+    pipelines: &SkyPipelines,
+    cache: &PipelineCache,
+    atmosphere: &AtmosphereBuffers,
+    bindings: Option<<AtmosphereBindings as bevy::ecs::query::QueryData>::Item<'_, '_>>,
+    view_binding: BindingResource,
+    view_offset: &ViewUniformOffset,
+    atmosphere_view: bool,
+) -> Option<(BindGroup, Vec<u32>)> {
+    if atmosphere_view {
+        let (
+            Some((
+                extracted,
+                textures,
+                atmosphere_index,
+                settings_index,
+                transforms_offset,
+                lights_offset,
+            )),
+            Some(atmosphere_binding),
+            Some(settings_binding),
+            Some(transforms_binding),
+            Some(lights_binding),
+            Some(sampler),
+            Some(media),
+            Some(medium_sampler),
+        ) = (
+            bindings,
+            atmosphere.atmosphere.as_ref().and_then(|u| u.binding()),
+            atmosphere.settings.as_ref().and_then(|u| u.binding()),
+            atmosphere
+                .transforms
+                .as_ref()
+                .and_then(|t| t.uniforms().binding()),
+            atmosphere.lights.view_gpu_lights.binding(),
+            atmosphere.sampler.as_ref(),
+            atmosphere.media.as_ref(),
+            atmosphere.medium_sampler.as_ref(),
+        )
+        else {
+            return None;
+        };
+        let medium = media.get(extracted.medium)?;
+        let group = device.create_bind_group(
+            "sky composite atmosphere",
+            &cache.get_bind_group_layout(&pipelines.atmosphere_layout),
+            &BindGroupEntries::with_indices((
+                (0, atmosphere_binding),
+                (1, settings_binding),
+                (2, transforms_binding),
+                (3, view_binding),
+                (4, lights_binding),
+                (5, &medium.density_lut_view),
+                (7, medium_sampler.sampler()),
+                (8, &textures.transmittance_lut.default_view),
+                (10, &textures.sky_view_lut.default_view),
+                (11, &textures.aerial_view_lut.default_view),
+                (12, &***sampler),
+            )),
+        );
+        let offsets = vec![
+            atmosphere_index.index(),
+            settings_index.index(),
+            transforms_offset.index(),
+            view_offset.offset,
+            lights_offset.offset,
+        ];
+        Some((group, offsets))
+    } else {
+        let group = device.create_bind_group(
+            "sky composite view",
+            &cache.get_bind_group_layout(&pipelines.view_layout),
+            &BindGroupEntries::with_indices(((3, view_binding),)),
+        );
+        Some((group, vec![view_offset.offset]))
+    }
 }
 
 #[cfg(test)]

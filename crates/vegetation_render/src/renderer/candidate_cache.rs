@@ -117,6 +117,7 @@ impl CandidateCache {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // Independent render-world inputs of one pass.
 pub(super) fn build(
     mut context: RenderContext,
     mut cache: ResMut<CandidateCache>,

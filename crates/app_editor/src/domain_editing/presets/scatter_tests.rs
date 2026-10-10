@@ -59,7 +59,7 @@ fn collection_preview_save_recovery_undo_and_cook_preserve_manual_objects() {
         preset: tree,
         overrides: vec![],
     });
-    let mut dense = DenseDomainWorkingSets::default();
+    let mut dense = SourceWorkingSets::default();
     dense.initialize_presets(&original);
     dense.plants = project.vegetation_catalog.clone();
     let mut history = EditorHistory::default();
@@ -70,7 +70,7 @@ fn collection_preview_save_recovery_undo_and_cook_preserve_manual_objects() {
     assert!(history.redo(&mut manual, &mut dense));
     let snapshot = dense.dirty_preset_snapshot().unwrap();
     let encoded = ron::to_string(&snapshot).unwrap();
-    let mut recovered = DenseDomainWorkingSets::default();
+    let mut recovered = SourceWorkingSets::default();
     assert!(recovered.restore_preset_snapshot(
         ron::from_str(&encoded).unwrap(),
         project.vegetation_catalog.as_ref().unwrap()

@@ -157,7 +157,7 @@ mod tests {
         let config = ConfigGpu::zeroed();
         let baseline = GenerationInputs::new(1, camera, config);
         let mut shaded = camera;
-        shaded.canopy = vegetation::CanopyShading::experiment().packed([32.0, -64.0]);
+        shaded.canopy = vegetation::CanopyShading::default_enabled().packed([32.0, -64.0]);
         shaded.sun_direction = [0.2, 0.8, 0.3, 1.0];
         shaded.sun_radiance = [20.0, 18.0, 15.0, 0.0];
         shaded.ambient_radiance = [0.1, 0.2, 0.3, 0.0];

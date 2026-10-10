@@ -60,11 +60,8 @@ pub(super) fn shift_roots(
     size: f32,
     keep_sources: bool,
 ) {
-    let shift = Vec3::new(
-        ((i64::from(old.x) - i64::from(new.x)) as f64 * f64::from(size)) as f32,
-        0.,
-        ((i64::from(old.z) - i64::from(new.z)) as f64 * f64::from(size)) as f32,
-    );
+    let [x, z] = old.offset_from(new, size);
+    let shift = Vec3::new(x as f32, 0., z as f32);
     for (mut transform, global, intent, source) in roots {
         if source && !keep_sources {
             continue;
@@ -110,7 +107,8 @@ mod tests {
             .init_resource::<Assets<Image>>()
             .insert_resource(WorldStream {
                 height_only: true,
-                index_revision: 7,
+                // Cleared pages would drop the index request too.
+                requested_index: Some((7, space)),
                 manifest: Some(RuntimeManifest {
                     schema_version: world::RUNTIME_SCHEMA_VERSION,
                     generation_id: "test".into(),
@@ -134,7 +132,11 @@ mod tests {
             })
             .add_systems(
                 Update,
-                (sync_stream_focus_to_viewpoint, update_world_origin).chain(),
+                (
+                    super::super::origin::sync_stream_focus_to_viewpoint,
+                    super::super::origin::update_world_origin,
+                )
+                    .chain(),
             );
         let mut intent = MoveIntent::default();
         intent.set_destination(Vec3::new(321., 7., -40.), CharacterGait::Jog);
@@ -222,7 +224,7 @@ mod tests {
             Vec3::new(22., 0., 8.)
         );
         let stream = w.resource::<WorldStream>();
-        assert_eq!(stream.index_revision, 7);
+        assert_eq!(stream.requested_index, Some((7, space)));
         let stream = w.resource::<SourceResidency>();
         assert!(matches!(
             stream.pages[&pending],

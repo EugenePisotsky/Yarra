@@ -1,4 +1,4 @@
-use super::{MAX_DISPLACEMENT, WindBuffer};
+use super::wind::{MAX_DISPLACEMENT, WindBuffer};
 use atmosphere::environment::{
     EnvironmentMaterial, EnvironmentMaterialOptIn, EnvironmentMaterialSystems,
 };
@@ -204,6 +204,7 @@ fn foliage_base(source: &EnvironmentMaterial, shading: FoliageShading) -> Enviro
 
 // Collections in the Presets workspace also need the composed material while
 // isolated lighting disables cloud transmission. Do not change unrelated meshes.
+#[allow(clippy::type_complexity)]
 fn opt_in(
     mut commands: Commands,
     candidates: Query<

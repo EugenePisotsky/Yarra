@@ -87,11 +87,10 @@ fn shutdown_interrupts_full_reply_and_request_queues() {
     assert_eq!(worker.results.capacity(), Some(32));
     assert!(matches!(
         worker.results.recv_timeout(Duration::from_secs(5)),
-        Ok(DatabaseResult::Opened(Ok(_)))
+        Ok((0, DatabaseResult::Opened(Ok(_))))
     ));
     let query = || DatabaseRequest::ReadIndex {
         generation: "empty".into(),
-        revision: 1,
         space: WorldSpaceId(1),
         windows: vec![[CellCoord::ZERO; 2]],
     };
@@ -99,20 +98,17 @@ fn shutdown_interrupts_full_reply_and_request_queues() {
     for _ in 0..RESULT_CAPACITY {
         worker
             .requests
-            .send_timeout(query(), Duration::from_secs(5))
+            .send_timeout((0, query()), Duration::from_secs(5))
             .unwrap();
     }
     wait_until(|| worker.results.is_full());
-    worker.try_send(query()).unwrap();
+    worker.send(query()).unwrap();
     wait_until(|| worker.requests.is_empty());
     // Further work must stay bounded, even with no reply consumer making progress.
     for _ in 0..REQUEST_CAPACITY {
-        worker.try_send(query()).unwrap();
+        worker.send(query()).unwrap();
     }
-    assert!(matches!(
-        worker.try_send(query()),
-        Err(TrySendError::Full(_))
-    ));
+    assert_eq!(worker.send(query()), Err(NotSent::Full));
     assert_drop_finishes(worker);
 }
 
@@ -122,7 +118,7 @@ fn shutdown_interrupts_idle_and_startup_reply_waits() {
     let worker = WorldDatabaseWorker::spawn(runtime.path.clone());
     assert!(matches!(
         worker.results.recv_timeout(Duration::from_secs(5)),
-        Ok(DatabaseResult::Opened(Ok(_)))
+        Ok((0, DatabaseResult::Opened(Ok(_))))
     ));
     assert_drop_finishes(worker);
 
@@ -136,7 +132,7 @@ fn failed_open_reports_the_path_then_disconnects_without_creating_a_database() {
     let path = std::env::temp_dir().join(format!("yarra-missing-db-{}.sqlite", std::process::id()));
     assert!(!path.exists());
     let worker = WorldDatabaseWorker::spawn(path.clone());
-    let DatabaseResult::Opened(Err(error)) =
+    let (0, DatabaseResult::Opened(Err(error))) =
         worker.results.recv_timeout(Duration::from_secs(5)).unwrap()
     else {
         panic!("missing runtime must fail to open");
@@ -174,7 +170,7 @@ fn worker_keeps_both_snapshots_until_commit_and_rejects_stale_source_work() {
     let worker = WorldDatabaseWorker::spawn(runtime.clone());
     let requests = &worker.requests;
     let replies = &worker.results;
-    let recv = || replies.recv_timeout(Duration::from_secs(10)).unwrap();
+    let recv = || replies.recv_timeout(Duration::from_secs(10)).unwrap().1;
     assert!(matches!(recv(), DatabaseResult::Opened(Ok(_))));
     project.cells[0].height = 8.;
     project.cells[0].source_revision += 1;
@@ -184,13 +180,15 @@ fn worker_keeps_both_snapshots_until_commit_and_rejects_stale_source_work() {
     assert_ne!(old.generation_id, next.generation_id);
     let roots = |generation: &str| {
         requests
-            .send(DatabaseRequest::Terrain {
-                request_id: 100,
-                generation: generation.into(),
-                query: TerrainQuery::Roots(WorldSpaceId(1)),
-            })
+            .send((
+                100,
+                DatabaseRequest::Terrain {
+                    generation: generation.into(),
+                    query: TerrainQuery::Roots(WorldSpaceId(1)),
+                },
+            ))
             .unwrap();
-        let DatabaseResult::Terrain { result, .. } = recv() else {
+        let DatabaseResult::Terrain(result) = recv() else {
             panic!("expected terrain reply")
         };
         result.map(|reply| {
@@ -203,14 +201,16 @@ fn worker_keeps_both_snapshots_until_commit_and_rejects_stale_source_work() {
     };
     let index = |generation: &str| {
         requests
-            .send(DatabaseRequest::ReadIndex {
-                generation: generation.into(),
-                revision: 1,
-                space: WorldSpaceId(1),
-                windows: vec![[CellCoord::ZERO; 2]],
-            })
+            .send((
+                101,
+                DatabaseRequest::ReadIndex {
+                    generation: generation.into(),
+                    space: WorldSpaceId(1),
+                    windows: vec![[CellCoord::ZERO; 2]],
+                },
+            ))
             .unwrap();
-        let DatabaseResult::Index { result, .. } = recv() else {
+        let DatabaseResult::Index(result) = recv() else {
             panic!("expected index")
         };
         result.map(|cells| {
@@ -220,17 +220,19 @@ fn worker_keeps_both_snapshots_until_commit_and_rejects_stale_source_work() {
     };
     let page = |generation: &str| {
         requests
-            .send(DatabaseRequest::ReadPage {
-                generation: generation.into(),
-                request_id: 101,
-                key: PageKey {
-                    space: WorldSpaceId(1),
-                    cell: CellCoord::ZERO,
-                    domain: PageDomain::Terrain,
-                    lod: 0,
+            .send((
+                102,
+                DatabaseRequest::ReadPage {
+                    generation: generation.into(),
+                    key: PageKey {
+                        space: WorldSpaceId(1),
+                        cell: CellCoord::ZERO,
+                        domain: PageDomain::Terrain,
+                        lod: 0,
+                    },
+                    height_only: true,
                 },
-                height_only: true,
-            })
+            ))
             .unwrap();
         let DatabaseResult::Page { result, .. } = recv() else {
             panic!("expected page")
@@ -245,18 +247,17 @@ fn worker_keeps_both_snapshots_until_commit_and_rejects_stale_source_work() {
     let old_page = page(&old.generation_id).unwrap();
     for id in [1, 2] {
         requests
-            .send(DatabaseRequest::Reload {
-                request_id: id,
-                expected_generation: next.generation_id.clone(),
-            })
+            .send((
+                id,
+                DatabaseRequest::Reload {
+                    expected_generation: next.generation_id.clone(),
+                },
+            ))
             .unwrap();
-        assert!(matches!(
-            recv(),
-            DatabaseResult::Reloaded { result: Ok(_), .. }
-        ));
+        assert!(matches!(recv(), DatabaseResult::Reloaded(Ok(_))));
         // An older discard must not remove this operation's candidate.
         requests
-            .send(DatabaseRequest::DiscardReload { request_id: 0 })
+            .send((10, DatabaseRequest::DiscardReload { reload: 0 }))
             .unwrap();
         assert!((roots(&old.generation_id).unwrap() - 3.).abs() < 0.01);
         assert!((roots(&next.generation_id).unwrap() - 8.).abs() < 0.01);
@@ -269,34 +270,34 @@ fn worker_keeps_both_snapshots_until_commit_and_rejects_stale_source_work() {
             (id, old.generation_id.clone()),
         ] {
             requests
-                .send(DatabaseRequest::CommitReload {
-                    request_id: wrong_id,
-                    expected_generation: wrong_generation,
-                })
+                .send((
+                    11,
+                    DatabaseRequest::CommitReload {
+                        reload: wrong_id,
+                        expected_generation: wrong_generation,
+                    },
+                ))
                 .unwrap();
-            assert!(matches!(
-                recv(),
-                DatabaseResult::ReloadCommitted { result: Err(_), .. }
-            ));
+            assert!(matches!(recv(), DatabaseResult::ReloadCommitted(Err(_))));
         }
         if id == 1 {
             requests
-                .send(DatabaseRequest::DiscardReload { request_id: id })
+                .send((12, DatabaseRequest::DiscardReload { reload: id }))
                 .unwrap();
             assert!(roots(&next.generation_id).is_err());
             assert_eq!(page(&old.generation_id).unwrap(), old_page);
         }
     }
     requests
-        .send(DatabaseRequest::CommitReload {
-            request_id: 2,
-            expected_generation: next.generation_id.clone(),
-        })
+        .send((
+            13,
+            DatabaseRequest::CommitReload {
+                reload: 2,
+                expected_generation: next.generation_id.clone(),
+            },
+        ))
         .unwrap();
-    assert!(matches!(
-        recv(),
-        DatabaseResult::ReloadCommitted { result: Ok(()), .. }
-    ));
+    assert!(matches!(recv(), DatabaseResult::ReloadCommitted(Ok(()))));
     assert!(index(&old.generation_id).is_err());
     assert!(page(&old.generation_id).is_err());
     assert!(roots(&old.generation_id).is_err());
@@ -317,7 +318,7 @@ fn database_worker_reopens_the_exact_published_generation() {
     let requests = &worker.requests;
     let result_receiver = &worker.results;
 
-    let DatabaseResult::Opened(Ok(manifest)) = result_receiver
+    let (0, DatabaseResult::Opened(Ok(manifest))) = result_receiver
         .recv_timeout(Duration::from_secs(10))
         .unwrap()
     else {
@@ -325,15 +326,14 @@ fn database_worker_reopens_the_exact_published_generation() {
     };
     let expected = manifest.generation_id;
     requests
-        .send(DatabaseRequest::Reload {
-            request_id: 4,
-            expected_generation: "not-the-published-generation".into(),
-        })
+        .send((
+            4,
+            DatabaseRequest::Reload {
+                expected_generation: "not-the-published-generation".into(),
+            },
+        ))
         .unwrap();
-    let DatabaseResult::Reloaded {
-        request_id: 4,
-        result: Err(error),
-    } = result_receiver
+    let (4, DatabaseResult::Reloaded(Err(error))) = result_receiver
         .recv_timeout(Duration::from_secs(10))
         .unwrap()
     else {
@@ -342,15 +342,14 @@ fn database_worker_reopens_the_exact_published_generation() {
     assert!(error.contains("generation mismatch"));
 
     requests
-        .send(DatabaseRequest::Reload {
-            request_id: 5,
-            expected_generation: expected.clone(),
-        })
+        .send((
+            5,
+            DatabaseRequest::Reload {
+                expected_generation: expected.clone(),
+            },
+        ))
         .unwrap();
-    let DatabaseResult::Reloaded {
-        request_id,
-        result: Ok(reloaded),
-    } = result_receiver
+    let (request_id, DatabaseResult::Reloaded(Ok(reloaded))) = result_receiver
         .recv_timeout(Duration::from_secs(10))
         .unwrap()
     else {

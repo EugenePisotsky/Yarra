@@ -31,7 +31,7 @@ impl ContactRegion {
     pub fn intersects(&self, bounds: [DVec3; 2]) -> bool {
         self.bounds[0].cmple(bounds[1]).all() && bounds[0].cmple(self.bounds[1]).all()
     }
-    pub fn needs_refinement(&self, bounds: [DVec3; 2], level: u8, error: f32) -> bool {
+    pub(crate) fn needs_refinement(&self, bounds: [DVec3; 2], level: u8, error: f32) -> bool {
         self.intersects(bounds)
             && ((self.exact && (level > 0 || error > 0.)) || error > self.tolerance)
     }
@@ -48,14 +48,14 @@ pub struct ContactCertificate {
     pub error: f32,
     pub exact: bool,
 }
-pub fn overlaps_xz(a: [DVec3; 2], b: [DVec3; 2]) -> bool {
+pub(crate) fn overlaps_xz(a: [DVec3; 2], b: [DVec3; 2]) -> bool {
     a[0].x <= b[1].x && b[0].x <= a[1].x && a[0].z <= b[1].z && b[0].z <= a[1].z
 }
 
 /// A stitched fan lies within a parent triangle. Its retained vertex heights may
 /// deviate from that plane by E, while the authoritative surface differs by E too.
 /// Missing parent metadata is unknown, never permission to ignore a seam.
-pub fn patch_error(
+pub(crate) fn patch_error(
     key: TerrainNodeKey,
     edges: StitchEdges,
     metadata: &BTreeMap<TerrainNodeKey, PatchMetadata>,

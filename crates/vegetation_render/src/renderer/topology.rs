@@ -104,8 +104,10 @@ mod tests {
                 expected_unique
             );
         }
-        assert!(SPLIT_HIGH_INDEX_COUNT <= SINGLE_HIGH_INDEX_COUNT);
-        assert!(SPLIT_LOW_INDEX_COUNT <= SINGLE_LOW_INDEX_COUNT);
+        const {
+            assert!(SPLIT_HIGH_INDEX_COUNT <= SINGLE_HIGH_INDEX_COUNT);
+            assert!(SPLIT_LOW_INDEX_COUNT <= SINGLE_LOW_INDEX_COUNT);
+        }
         assert!(
             u64::from(PROCEDURAL_INSTANCE_CAPACITY) * size_of::<ProceduralInstanceGpu>() as u64
                 <= 26 * 1024 * 1024
@@ -133,7 +135,9 @@ mod tests {
         let indices = build_topology_indices();
         let high = &indices[SPLIT_HIGH_FIRST_INDEX as usize..SPLIT_LOW_FIRST_INDEX as usize];
         assert!(
-            high.chunks_exact(3)
+            high.as_chunks::<3>()
+                .0
+                .iter()
                 .any(|triangle| triangle.contains(&0) && triangle.contains(&1))
         );
         assert!(!high.contains(&topology_vertex(1, 0, false)));

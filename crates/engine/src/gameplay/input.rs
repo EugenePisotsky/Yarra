@@ -56,6 +56,7 @@ struct TouchTapState {
     disqualified: bool,
 }
 
+#[allow(clippy::too_many_arguments)] // Input sources, camera, terrain and the target.
 fn set_target_from_pointer(
     enabled: Res<GameInputEnabled>,
     pointer_blocked: Res<GamePointerInputBlocked>,
@@ -248,6 +249,7 @@ fn apply_stick_dead_zone(stick: Vec2) -> Vec2 {
     stick.normalize_or_zero() * ((length - CAMERA_STICK_DEAD_ZONE) / (1.0 - CAMERA_STICK_DEAD_ZONE))
 }
 
+#[allow(clippy::too_many_arguments)] // Input sources and the camera rig.
 fn update_camera_controls(
     enabled: Res<GameInputEnabled>,
     pointer_blocked: Res<GamePointerInputBlocked>,

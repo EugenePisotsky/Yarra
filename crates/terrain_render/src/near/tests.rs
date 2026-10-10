@@ -1,5 +1,6 @@
 use super::*;
-use world::{PageDomain, TerrainTextureSetId};
+use bevy::image::ImageAddressMode;
+use world::{PageDomain, TerrainHeightfield, TerrainSurface, TerrainTextureSetId};
 fn source(cell: CellCoord) -> NearSource {
     let set = TerrainTextureSetId([3; 16]);
     let layers: Vec<_> = (0..2)
@@ -59,25 +60,7 @@ fn source(cell: CellCoord) -> NearSource {
 fn material(s: &NearSource) -> TerrainMaterial {
     TerrainMaterial {
         source_only: true,
-        environment: atmosphere::environment::fallback_parameters(),
-        cloud_shadows: None,
-        rain_shelter: None,
-        forest_shadow: None,
-        shading_mode: TerrainShadingMode::Production,
-        stochastic_cached: false,
-        prepared: false,
-        prepared_albedo: false,
-        source_weights: default(),
-        source_base_color_array: default(),
-        weights: default(),
-        base_color_array: default(),
-        normal_material_array: default(),
-        macro_variation: default(),
-        stochastic_cache: default(),
-        canopy_bounds: Vec4::ZERO,
-        canopy_shading: default(),
-        canopy_coverage: None,
-        settings: TerrainMaterialUniform {
+        ..TerrainMaterial::for_tests(TerrainMaterialUniform {
             chunk_minimum: Vec2::from_array(s.key.cell.origin(s.cell_size).map(|v| v as f32)),
             chunk_extent: Vec2::splat(s.cell_size),
             surface_layers: Vec4::new(0., 1., 2., 0.),
@@ -93,7 +76,7 @@ fn material(s: &NearSource) -> TerrainMaterial {
             macro_settings: Vec4::ONE,
             cache_origins: Vec4::ZERO,
             cache_size: UVec4::ZERO,
-        },
+        })
     }
 }
 #[test]
@@ -401,10 +384,10 @@ fn near_surface_streams_on_unchanged_mesh_and_returns_to_baked_ground() {
         .clone();
     let mut changed_bake = baked_data;
     for mip in &mut changed_bake.mips {
-        for p in mip.color.chunks_exact_mut(4) {
+        for p in mip.color.as_chunks_mut::<4>().0 {
             p.copy_from_slice(&[25, 75, 180, 255]);
         }
-        for p in mip.response.chunks_exact_mut(4) {
+        for p in mip.response.as_chunks_mut::<4>().0 {
             p.copy_from_slice(&[195, 85, 160, 255]);
         }
     }
@@ -507,7 +490,9 @@ fn near_surface_streams_on_unchanged_mesh_and_returns_to_baked_ground() {
         "diagnostics changed the production surface"
     );
     let green = |p: &[u8]| {
-        p.chunks_exact(4)
+        p.as_chunks::<4>()
+            .0
+            .iter()
             .filter(|p| p[1] > p[0].saturating_add(10))
             .count()
     };
@@ -633,7 +618,9 @@ fn near_surface_streams_on_unchanged_mesh_and_returns_to_baked_ground() {
     }
     let shaded = settle(&mut app);
     let light = |p: &[u8]| {
-        p.chunks_exact(4)
+        p.as_chunks::<4>()
+            .0
+            .iter()
             .map(|c| c[0] as u64 + c[1] as u64 + c[2] as u64)
             .sum::<u64>()
     };

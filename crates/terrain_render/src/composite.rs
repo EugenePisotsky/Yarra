@@ -2,7 +2,7 @@
 use super::*;
 use world::{TERRAIN_COMPOSITE_MIPS, TerrainComposite, TerrainMaterialKey};
 
-pub const COMPOSITE_SHADER: &str = "shaders/terrain_composite.wesl";
+pub(crate) const COMPOSITE_SHADER: &str = "shaders/terrain_composite.wesl";
 pub mod atlas;
 
 #[derive(Clone, Copy, Debug, Default, ShaderType)]

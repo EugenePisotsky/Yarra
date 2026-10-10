@@ -2,11 +2,11 @@
 use bevy::prelude::*;
 use vegetation::{VegetationCatalog, VegetationFieldPage};
 
-pub const MAX_DEPTH: f32 = 4.0;
+pub(crate) const MAX_DEPTH: f32 = 4.0;
 pub const MARGIN: f32 = MAX_DEPTH + 1.0;
 const STEP: f32 = 0.25;
 
-pub struct BoundaryField {
+pub(crate) struct BoundaryField {
     pub minimum: Vec2,
     pub step: f32,
     pub size: UVec2,
@@ -14,7 +14,7 @@ pub struct BoundaryField {
 }
 
 impl BoundaryField {
-    pub fn for_scene(catalog: &VegetationCatalog, pages: &[VegetationFieldPage]) -> Self {
+    pub(crate) fn for_scene(catalog: &VegetationCatalog, pages: &[VegetationFieldPage]) -> Self {
         let mut minimum = Vec2::splat(f32::INFINITY);
         let mut maximum = Vec2::splat(f32::NEG_INFINITY);
         for page in pages {
@@ -100,7 +100,7 @@ impl BoundaryField {
     }
 
     /// Header and scalar grid for the separate canopy buffer.
-    pub fn gpu_values(&self) -> Vec<f32> {
+    pub(crate) fn gpu_values(&self) -> Vec<f32> {
         let mut data = vec![
             self.minimum.x,
             self.minimum.y,

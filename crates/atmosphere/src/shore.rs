@@ -14,7 +14,7 @@ use std::{cmp::Reverse, collections::BinaryHeap, sync::Arc};
 
 /// Period of the swell coming ashore, seconds. The wave clock wraps after whole periods
 /// (`crate::environment::WAVE_PERIOD`).
-pub const SURF_PERIOD: f32 = 9.0;
+pub(crate) const SURF_PERIOD: f32 = 9.0;
 /// Depth taken for ground missing from the map: open sea.
 const OPEN_SEA_DEPTH: f32 = 50.0;
 /// Crests set out from water this deep, all at once: the surf is worked out from here inwards.
@@ -25,7 +25,7 @@ const SHALLOW: f32 = 5.0;
 /// own height, so crests keep coming ashore where linear waves would stall at the waterline.
 const BORE: f32 = 0.4;
 /// Arrival time of water no crest reaches (a basin below the sea level inland).
-pub const UNREACHED: f32 = 600.0;
+pub(crate) const UNREACHED: f32 = 600.0;
 const GRAVITY: f32 = 9.81;
 
 /// The shore map over a whole world space, in world coordinates, on the valley mist's grid.
@@ -44,7 +44,7 @@ pub struct ShoreMap {
 /// Speed of a wave crest of [`SURF_PERIOD`] over `depth` metres of water: the linear dispersion
 /// relation by Eckart's explicit form, within a few per cent; the square root of g times depth
 /// in shallow water, the deep-water speed in deep.
-pub fn crest_speed(depth: f32) -> f32 {
+pub(crate) fn crest_speed(depth: f32) -> f32 {
     let omega = std::f32::consts::TAU / SURF_PERIOD;
     let deep = omega * omega / GRAVITY;
     let k = deep / (deep * depth.max(1e-4)).tanh().sqrt();
@@ -91,8 +91,9 @@ impl ShoreMap {
         }
     }
 
+    #[cfg(test)]
     /// The texel holding a world XZ position, clamped to the map.
-    pub fn texel_at(&self, world: [f64; 2]) -> [f32; 4] {
+    pub(crate) fn texel_at(&self, world: [f64; 2]) -> [f32; 4] {
         let cell = |axis: usize, side: u32| {
             ((world[axis] - self.origin[axis]) / f64::from(self.metres_per_texel))
                 .floor()

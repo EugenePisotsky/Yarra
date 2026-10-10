@@ -7,7 +7,7 @@
 use bevy::prelude::*;
 
 use crate::{
-    domain_editing::DenseDomainWorkingSets, editing::EditorObjectWorkingSet,
+    domain_editing::SourceWorkingSets, editing::EditorObjectWorkingSet,
     project_store::ProjectEditorStore, publication::RuntimePublicationState,
     vegetation_authoring::VegetationAuthoringState,
 };
@@ -107,7 +107,7 @@ pub(crate) fn drive_editor_save(
     mut coordinator: ResMut<EditorSaveCoordinator>,
     mut project: ResMut<ProjectEditorStore>,
     mut objects: ResMut<EditorObjectWorkingSet>,
-    mut dense: ResMut<DenseDomainWorkingSets>,
+    mut dense: ResMut<SourceWorkingSets>,
     mut vegetation: ResMut<VegetationAuthoringState>,
     mut publication: ResMut<RuntimePublicationState>,
     presets: Res<crate::workspaces::presets::PresetAuthoringState>,

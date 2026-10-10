@@ -86,17 +86,17 @@ fn hierarchy_is_default_and_configuration_is_explicit() {
 #[test]
 fn late_database_reply_cannot_enter_a_new_world_or_generation() {
     let mut stream = TerrainLodStream {
-        next_id: 40,
         identity: Some(("new-generation".into(), WorldSpaceId(2))),
         ..default()
     };
     stream.receive(39, Err("an old generation failed".into()));
     assert!(stream.error.is_none());
     assert!(stream.metadata.is_empty());
-    let (worker, _request_receiver, _result_sender) = WorldDatabaseWorker::test_channel_pair(4, 4);
+    let (worker, requests, _result_sender) = WorldDatabaseWorker::test_channel_pair(4, 4);
     stream.request(&worker, TerrainQuery::Roots(WorldSpaceId(2)));
-    assert!(stream.pending.contains_key(&41));
-    stream.receive(41, Ok(TerrainReply::Metadata(vec![])));
+    let (id, _) = requests.try_recv().unwrap();
+    assert!(stream.pending.contains_key(&id));
+    stream.receive(id, Ok(TerrainReply::Metadata(vec![])));
     assert_eq!(stream.roots, Some(vec![]));
 }
 
@@ -243,7 +243,9 @@ fn mountain_cover_uploads_draws_moves_and_rebases() {
     let pixels = app.world().resource::<Pixels>().0.lock().unwrap().clone();
     assert!(
         pixels
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .filter(|p| p[1] > p[0] && p[1] > p[2])
             .count()
             > 512,
@@ -315,8 +317,10 @@ fn mountain_cover_uploads_draws_moves_and_rebases() {
     pump_pixels(&mut app);
     let before_morph = app.world().resource::<Pixels>().0.lock().unwrap().clone();
     let mismatch = pixels
-        .chunks_exact(4)
-        .zip(before_morph.chunks_exact(4))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(before_morph.as_chunks::<4>().0.iter())
         .filter(|(a, b)| a.iter().zip(b.iter()).any(|(a, b)| a.abs_diff(*b) > 3))
         .count();
     assert!(
@@ -337,7 +341,9 @@ fn mountain_cover_uploads_draws_moves_and_rebases() {
     let middle = app.world().resource::<Pixels>().0.lock().unwrap().clone();
     assert!(
         middle
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .filter(|p| p[1] > p[0] && p[1] > p[2])
             .count()
             > 512
@@ -372,8 +378,10 @@ fn mountain_cover_uploads_draws_moves_and_rebases() {
     );
     let rebased = app.world().resource::<Pixels>().0.lock().unwrap().clone();
     let mismatch = middle
-        .chunks_exact(4)
-        .zip(rebased.chunks_exact(4))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(rebased.as_chunks::<4>().0.iter())
         .filter(|(a, b)| a.iter().zip(b.iter()).any(|(a, b)| a.abs_diff(*b) > 3))
         .count();
     assert!(
@@ -740,7 +748,7 @@ fn live_authoring_handoff(app: &mut App, runtime: &std::path::Path, deadline: st
     let mut painted = baseline.clone();
     painted.fingerprint = [171; 32];
     for mip in &mut painted.mips {
-        for p in mip.color.chunks_exact_mut(4) {
+        for p in mip.color.as_chunks_mut::<4>().0 {
             p[..3].copy_from_slice(&[180, 50, 20]);
         }
     }
@@ -959,9 +967,10 @@ fn publication_reload(
             app.update();
             assert_old(app);
             assert!(
-                !app.world()
+                app.world()
                     .resource::<WorldGenerationReload>()
-                    .commit_requested
+                    .commit
+                    .is_none()
             );
         }
         if attempt == 0 {

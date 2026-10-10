@@ -1,26 +1,32 @@
 //! Bounded, asynchronous access to the mutable project database.
 
-use std::{
-    path::PathBuf,
-    sync::Arc,
-    thread::{self, JoinHandle},
-};
+use std::{path::PathBuf, sync::Arc};
 
 use bevy::prelude::*;
-use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded};
+use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError};
 use engine::{WorldCatalog, WorldViewpoint};
 use vegetation::VegetationCatalog;
 use world::{CellCoord, StableObjectId, WorldSpaceId};
 use world_db::{
-    DenseSourceRecord, DenseSourceRecordKey, DenseSourceWrite, EnvironmentDefinitionWrite,
-    EnvironmentSourceCommit, EnvironmentSourceWriteResult, ObjectWriteTransactionResult,
-    ProjectManifest, ProjectReader, ProjectWriter, SourceCellRecord, SourceEnvironmentCellRecord,
-    SourceObjectRecord, SourceObjectViewRecord, SourceObjectWrite, SourceObjectWriteCommit,
+    EnvironmentCellKey, EnvironmentCellWrite, EnvironmentDefinitionWrite, EnvironmentSourceCommit,
+    EnvironmentSourceWriteResult, ObjectWriteTransactionResult, ProjectManifest, ProjectReader,
+    ProjectWriter, SourceCellRecord, SourceEnvironmentCellRecord, SourceObjectRecord,
+    SourceObjectViewRecord, SourceObjectWrite, SourceObjectWriteCommit,
     VegetationCatalogWriteResult,
 };
 
 use crate::tools::{EditorSourceDomain, EditorToolRegistry};
 use crate::workspaces::EditorWorkspace;
+use demand::{
+    dispatch_project_query, dispatch_project_save, update_project_query_demand,
+    validate_project_catalog,
+};
+use receive::receive_project_results;
+use worker::start_project_worker;
+
+mod demand;
+mod receive;
+mod worker;
 
 const SOURCE_RADIUS_CELLS: i32 = 2;
 const MAX_SOURCE_CELLS: usize = 25;
@@ -142,7 +148,7 @@ struct PendingDenseSave {
     presets: Option<environment::PresetLibrary>,
     definitions: Vec<EnvironmentDefinitionWrite>,
     request_id: u64,
-    writes: Vec<DenseSourceWrite>,
+    writes: Vec<EnvironmentCellWrite>,
 }
 
 #[derive(Debug, Clone)]
@@ -188,8 +194,8 @@ pub(crate) enum DenseSaveOutcome {
         actual: Option<environment::EnvironmentDefinition>,
     },
     Conflict {
-        key: DenseSourceRecordKey,
-        actual: Option<DenseSourceRecord>,
+        key: EnvironmentCellKey,
+        actual: Option<SourceEnvironmentCellRecord>,
     },
     Failed(String),
 }
@@ -441,7 +447,7 @@ impl ProjectEditorStore {
         library_revision: u64,
         presets: Option<environment::PresetLibrary>,
         definitions: Vec<EnvironmentDefinitionWrite>,
-        writes: Vec<DenseSourceWrite>,
+        writes: Vec<EnvironmentCellWrite>,
         roads: Vec<world_db::RoadSourceWrite>,
         road_dependencies: Vec<world_db::RoadDependency>,
     ) -> Option<u64> {
@@ -492,21 +498,7 @@ impl ProjectEditorStore {
     }
 }
 
-#[derive(Resource)]
-struct ProjectWorker {
-    requests: Sender<ProjectRequest>,
-    results: Receiver<ProjectResult>,
-    thread: Option<JoinHandle<()>>,
-}
-
-impl Drop for ProjectWorker {
-    fn drop(&mut self) {
-        let _ = self.requests.send(ProjectRequest::Shutdown);
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
-    }
-}
+type ProjectWorker = crate::worker::Worker<ProjectRequest, ProjectResult>;
 
 enum ProjectRequest {
     Query {
@@ -519,7 +511,6 @@ enum ProjectRequest {
     SaveObjectTransaction(PendingObjectSave),
     SaveDenseTransaction(PendingDenseSave),
     SaveVegetationCatalog(PendingVegetationSave),
-    Shutdown,
 }
 
 enum ProjectResult {
@@ -569,716 +560,12 @@ struct ProjectWindowSnapshot {
     environment_coverage_truncated: bool,
 }
 
-fn start_project_worker(mut commands: Commands, path: Res<ProjectDatabasePath>) {
-    let (request_sender, request_receiver) = bounded(PROJECT_REQUEST_CAPACITY);
-    let (result_sender, result_receiver) = bounded(PROJECT_REQUEST_CAPACITY + 1);
-    let database_path = path.0.clone();
-    let worker_thread = thread::Builder::new()
-        .name("yarra-project-db".into())
-        .spawn(move || project_worker(database_path, request_receiver, result_sender))
-        .expect("failed to spawn the project database worker");
-    commands.insert_resource(ProjectWorker {
-        requests: request_sender,
-        results: result_receiver,
-        thread: Some(worker_thread),
-    });
-}
-
-fn project_worker(
-    path: PathBuf,
-    requests: Receiver<ProjectRequest>,
-    results: Sender<ProjectResult>,
-) {
-    let reader = match ProjectReader::open_read_only(&path) {
-        Ok(reader) => reader,
-        Err(error) => {
-            let _ = results.send(ProjectResult::Opened(Err(format!(
-                "could not open {}: {error}",
-                path.display()
-            ))));
-            return;
-        }
-    };
-    let mut writer = ProjectWriter::open(&path)
-        .map_err(|error| format!("could not open {} for authoring: {error}", path.display()));
-    let (vegetation_catalog, presets, environments) = match reader.read_environment_catalog() {
-        Ok(catalog) => catalog,
-        Err(error) => {
-            let _ = results.send(ProjectResult::Opened(Err(format!(
-                "could not read the project vegetation catalog: {error}"
-            ))));
-            return;
-        }
-    };
-    let terrain_resources = match environments
-        .iter()
-        .map(|d| reader.read_environment_terrain_resources(d.space))
-        .collect::<Result<Vec<_>, _>>()
-    {
-        Ok(resources) => resources,
-        Err(error) => {
-            let _ = results.send(ProjectResult::Opened(Err(format!(
-                "could not read environment materials: {error}"
-            ))));
-            return;
-        }
-    };
-    let height_steps = match environments
-        .iter()
-        .map(|d| {
-            reader
-                .read_terrain_height_step(d.space)
-                .map(|step| (d.space, step))
-        })
-        .collect::<Result<std::collections::BTreeMap<_, _>, _>>()
-    {
-        Ok(steps) => steps,
-        Err(e) => {
-            let _ = results.send(ProjectResult::Opened(Err(format!(
-                "could not read terrain height grids: {e}"
-            ))));
-            return;
-        }
-    };
-    let gameplay_areas = match reader.read_gameplay_areas() {
-        Ok(areas) => areas,
-        Err(e) => {
-            let _ = results.send(ProjectResult::Opened(Err(format!(
-                "could not read gameplay areas: {e}"
-            ))));
-            return;
-        }
-    };
-    if results
-        .send(ProjectResult::Opened(Ok(ProjectOpenSnapshot {
-            gameplay_areas,
-            manifest: reader.manifest().clone(),
-            vegetation_catalog,
-            environments,
-            presets: Some(presets),
-            terrain_resources,
-            height_steps,
-            write_error: writer.as_ref().err().cloned(),
-        })))
-        .is_err()
-    {
-        return;
-    }
-
-    while let Ok(request) = requests.recv() {
-        match request {
-            ProjectRequest::Query {
-                revision,
-                window,
-                domains,
-            } => {
-                let result = (|| {
-                    let cells = reader.read_cells(
-                        window.space,
-                        window.minimum,
-                        window.maximum,
-                        MAX_SOURCE_CELLS,
-                    )?;
-                    let objects = domains
-                        .objects
-                        .then(|| {
-                            reader.read_object_views_in_cells(
-                                window.space,
-                                window.minimum,
-                                window.maximum,
-                                MAX_SOURCE_OBJECTS,
-                            )
-                        })
-                        .transpose()?;
-                    let environment_snapshot = domains
-                        .environment_coverage
-                        .then(|| {
-                            let mut core = Vec::new();
-                            for x in window.minimum.x..=window.maximum.x {
-                                for z in window.minimum.z..=window.maximum.z {
-                                    core.push(CellCoord { x, z });
-                                }
-                            }
-                            reader.read_environment_snapshot(
-                                window.space,
-                                &world_db::environment_dependency_cells(&core)?,
-                            )
-                        })
-                        .transpose()?;
-                    let environment_cells =
-                        environment_snapshot
-                            .as_ref()
-                            .map_or_else(Vec::new, |snapshot| {
-                                snapshot
-                                    .coverage
-                                    .cells
-                                    .iter()
-                                    .filter(|c| {
-                                        c.cell.x >= window.minimum.x
-                                            && c.cell.x <= window.maximum.x
-                                            && c.cell.z >= window.minimum.z
-                                            && c.cell.z <= window.maximum.z
-                                    })
-                                    .map(|c| SourceEnvironmentCellRecord {
-                                        space: window.space,
-                                        cell: c.cell,
-                                        source_revision: c.revision as i64,
-                                        definition_revision: snapshot.definition.revision,
-                                        tiles: c.tiles.clone(),
-                                    })
-                                    .collect()
-                            });
-                    Ok::<_, world_db::WorldDbError>(ProjectWindowSnapshot {
-                        cells: cells.records,
-                        objects: objects
-                            .as_ref()
-                            .map_or_else(Vec::new, |query| query.records.clone()),
-                        environment_cells,
-                        environment_snapshot,
-                        cells_truncated: cells.truncated,
-                        objects_truncated: objects.is_some_and(|query| query.truncated),
-                        environment_coverage_truncated: false,
-                    })
-                })()
-                .map_err(|error| error.to_string());
-                if results
-                    .send(ProjectResult::Query {
-                        revision,
-                        window,
-                        domains,
-                        result,
-                    })
-                    .is_err()
-                {
-                    return;
-                }
-            }
-            ProjectRequest::SaveObjectTransaction(request) => {
-                let result = match writer.as_mut() {
-                    Ok(writer) => writer
-                        .apply_object_transaction(&request.writes)
-                        .map_err(|error| error.to_string()),
-                    Err(error) => Err(error.clone()),
-                };
-                if results
-                    .send(ProjectResult::SaveObjectTransaction {
-                        request_id: request.request_id,
-                        result,
-                    })
-                    .is_err()
-                {
-                    return;
-                }
-            }
-            ProjectRequest::SaveDenseTransaction(request) => {
-                let result = match writer.as_mut() {
-                    Ok(writer) => writer
-                        .apply_environment_and_roads_transaction(
-                            request.library_revision,
-                            request.presets.as_ref(),
-                            &request.definitions,
-                            &request.writes,
-                            &request.roads,
-                            &request.road_dependencies,
-                        )
-                        .map_err(|error| error.to_string()),
-                    Err(error) => Err(error.clone()),
-                };
-                if results
-                    .send(ProjectResult::SaveDenseTransaction {
-                        request_id: request.request_id,
-                        result,
-                    })
-                    .is_err()
-                {
-                    return;
-                }
-            }
-            ProjectRequest::SaveVegetationCatalog(request) => {
-                let result = match writer.as_mut() {
-                    Ok(writer) => writer
-                        .replace_vegetation_catalog_if_matches(
-                            request.expected.as_ref(),
-                            &request.replacement,
-                        )
-                        .map_err(|error| error.to_string()),
-                    Err(error) => Err(error.clone()),
-                };
-                if results
-                    .send(ProjectResult::SaveVegetationCatalog {
-                        request_id: request.request_id,
-                        replacement: request.replacement,
-                        result,
-                    })
-                    .is_err()
-                {
-                    return;
-                }
-            }
-            ProjectRequest::SaveAtmospheres(id, writes) => {
-                let result = match writer.as_mut() {
-                    Ok(writer) => writer.write_atmospheres(&writes).map_err(|e| e.to_string()),
-                    Err(e) => Err(e.clone()),
-                };
-                if results
-                    .send(ProjectResult::SaveAtmospheres(id, Box::new(result)))
-                    .is_err()
-                {
-                    return;
-                }
-            }
-            ProjectRequest::SaveGameplayAreas(id, expected_revision, areas) => {
-                let result = match writer.as_mut() {
-                    Ok(writer) => writer
-                        .write_gameplay_areas(expected_revision, &areas)
-                        .map_err(|e| e.to_string()),
-                    Err(e) => Err(e.clone()),
-                };
-                if results
-                    .send(ProjectResult::SaveGameplayAreas(id, result))
-                    .is_err()
-                {
-                    return;
-                }
-            }
-            ProjectRequest::Shutdown => return,
-        }
-    }
-}
-
-fn receive_project_results(
-    worker: Option<Res<ProjectWorker>>,
-    mut store: ResMut<ProjectEditorStore>,
-) {
-    let Some(worker) = worker else {
-        return;
-    };
-    loop {
-        match worker.results.try_recv() {
-            Ok(ProjectResult::SaveAtmospheres(id, result)) => {
-                let result = *result;
-                if store.atmosphere_save_in_flight != Some(id) {
-                    continue;
-                }
-                store.atmosphere_save_in_flight = None;
-                if let Ok(world_db::AtmosphereWriteResult::Committed(records)) = &result {
-                    store.source_epoch = store.source_epoch.wrapping_add(1).max(1);
-                    if let Some(manifest) = &mut store.manifest {
-                        for (id, revision, profile) in records {
-                            if let Some(space) =
-                                manifest.world_spaces.iter_mut().find(|s| s.id == *id)
-                            {
-                                space.atmosphere = profile.clone();
-                                space.atmosphere_revision = *revision;
-                            }
-                        }
-                    }
-                }
-                store.atmosphere_completion = Some((id, result));
-            }
-
-            Ok(ProjectResult::SaveGameplayAreas(id, result)) => {
-                if store.area_save_in_flight != Some(id) {
-                    continue;
-                }
-                store.area_save_in_flight = None;
-                if let Ok(world_db::GameplayAreasWriteResult::Committed(record)) = &result {
-                    // Publishing compares epochs to know the source moved on.
-                    store.source_epoch = store.source_epoch.wrapping_add(1).max(1);
-                    store.gameplay_areas = Some(record.clone());
-                }
-                store.area_completion = Some((id, result));
-            }
-
-            Ok(ProjectResult::Opened(result)) => match result {
-                Ok(opened) => {
-                    store.gameplay_areas = Some(opened.gameplay_areas);
-                    store.manifest = Some(opened.manifest);
-                    store.vegetation_catalog = opened.vegetation_catalog;
-                    store.environments = opened.environments;
-                    store.presets = opened.presets;
-                    store.terrain_resources = opened.terrain_resources;
-                    store.height_steps = opened.height_steps;
-                    store.write_error = opened.write_error;
-                    store.phase = ProjectStorePhase::Ready;
-                    store.source_epoch = store.source_epoch.max(1);
-                }
-                Err(error) => store.phase = ProjectStorePhase::Failed(error),
-            },
-            Ok(ProjectResult::Query {
-                revision,
-                window,
-                domains,
-                result,
-            }) => {
-                if store.in_flight.is_some_and(|query| {
-                    query.revision == revision && query.window == window && query.domains == domains
-                }) {
-                    store.in_flight = None;
-                }
-                if store.desired_window != Some(window) || store.desired_domains != domains {
-                    store.stale_results = store.stale_results.saturating_add(1);
-                    continue;
-                }
-                match result {
-                    Ok(snapshot) => {
-                        store.cells = snapshot.cells;
-                        store.objects = snapshot.objects;
-                        store.environment_cells = snapshot.environment_cells;
-                        if let Some(snapshot) = &snapshot.environment_snapshot
-                            && let Some(definition) = store
-                                .environments
-                                .iter_mut()
-                                .find(|d| d.space == snapshot.definition.space)
-                        {
-                            *definition = snapshot.definition.clone();
-                        }
-                        if let Some(environment) = &snapshot.environment_snapshot {
-                            store.presets = Some(environment.presets.clone());
-                        }
-                        store.environment_snapshot = snapshot.environment_snapshot;
-                        store.cells_truncated = snapshot.cells_truncated;
-                        store.objects_truncated = snapshot.objects_truncated;
-                        store.environment_coverage_truncated =
-                            snapshot.environment_coverage_truncated;
-                        store.loaded_window = Some(window);
-                        store.loaded_domains = domains;
-                        store.failed_window = None;
-                        store.failed_domains = ProjectSourceDomains::default();
-                        store.query_error = None;
-                        store.completed_queries = store.completed_queries.saturating_add(1);
-                    }
-                    Err(error) => {
-                        store.failed_window = Some(window);
-                        store.failed_domains = domains;
-                        store.query_error = Some(error);
-                    }
-                }
-            }
-            Ok(ProjectResult::SaveObjectTransaction { request_id, result }) => {
-                if store.save_in_flight == Some(request_id) {
-                    store.save_in_flight = None;
-                }
-                let outcome = match result {
-                    Ok(ObjectWriteTransactionResult::Committed(commits)) => {
-                        store.source_epoch = store.source_epoch.wrapping_add(1).max(1);
-                        store.loaded_window = None;
-                        store.objects.clear();
-                        store.objects_truncated = false;
-                        ObjectSaveOutcome::Committed(commits)
-                    }
-                    Ok(ObjectWriteTransactionResult::Conflict { object, actual }) => {
-                        ObjectSaveOutcome::Conflict { object, actual }
-                    }
-                    Err(error) => ObjectSaveOutcome::Failed(error),
-                };
-                store.save_completion = Some(ObjectSaveCompletion {
-                    request_id,
-                    outcome,
-                });
-            }
-            Ok(ProjectResult::SaveDenseTransaction { request_id, result }) => {
-                if store.dense_save_in_flight == Some(request_id) {
-                    store.dense_save_in_flight = None;
-                }
-                let outcome = match result {
-                    Ok(EnvironmentSourceWriteResult::Committed(commits)) => {
-                        if let Some(presets) = &commits.presets {
-                            store.presets = Some(presets.clone());
-                        }
-                        for definition in &commits.definitions {
-                            if let Some(old) = store
-                                .environments
-                                .iter_mut()
-                                .find(|d| d.space == definition.space)
-                            {
-                                *old = definition.clone();
-                            }
-                        }
-                        store.source_epoch = store.source_epoch.wrapping_add(1).max(1);
-                        store.loaded_window = None;
-                        store.environment_cells.clear();
-                        store.environment_snapshot = None;
-                        DenseSaveOutcome::Committed(commits)
-                    }
-                    Ok(EnvironmentSourceWriteResult::RoadConflict { actual }) => {
-                        DenseSaveOutcome::RoadConflict { actual }
-                    }
-                    Ok(EnvironmentSourceWriteResult::LibraryConflict { actual }) => {
-                        store.presets = Some(actual.clone());
-                        DenseSaveOutcome::LibraryConflict { actual }
-                    }
-                    Ok(EnvironmentSourceWriteResult::DefinitionConflict { space, actual }) => {
-                        DenseSaveOutcome::DefinitionConflict { space, actual }
-                    }
-                    Ok(EnvironmentSourceWriteResult::CoverageConflict { key, actual }) => {
-                        DenseSaveOutcome::Conflict { key, actual }
-                    }
-                    Err(error) => DenseSaveOutcome::Failed(error),
-                };
-                store.dense_save_completion = Some(DenseSaveCompletion {
-                    request_id,
-                    outcome,
-                });
-            }
-            Ok(ProjectResult::SaveVegetationCatalog {
-                request_id,
-                replacement,
-                result,
-            }) => {
-                if store.vegetation_save_in_flight == Some(request_id) {
-                    store.vegetation_save_in_flight = None;
-                }
-                let outcome = match result {
-                    Ok(VegetationCatalogWriteResult::Committed) => {
-                        store.source_epoch = store.source_epoch.wrapping_add(1).max(1);
-                        store.vegetation_catalog = Some(replacement.clone());
-                        VegetationSaveOutcome::Committed(replacement)
-                    }
-                    Ok(VegetationCatalogWriteResult::Conflict { actual }) => {
-                        store.vegetation_catalog = actual.clone();
-                        VegetationSaveOutcome::Conflict { actual }
-                    }
-                    Err(error) => VegetationSaveOutcome::Failed(error),
-                };
-                store.vegetation_save_completion = Some(VegetationSaveCompletion {
-                    request_id,
-                    outcome,
-                });
-            }
-            Err(TryRecvError::Empty) => break,
-            Err(TryRecvError::Disconnected) => {
-                store.phase = ProjectStorePhase::Failed("project database worker stopped".into());
-                break;
-            }
-        }
-    }
-}
-
-fn validate_project_catalog(runtime: Res<WorldCatalog>, mut store: ResMut<ProjectEditorStore>) {
-    let Some(source) = store.manifest.as_ref() else {
-        return;
-    };
-    if runtime.world_spaces().is_empty() {
-        return;
-    }
-    store.catalog_compatible = Some(
-        source.world_spaces.len() == runtime.world_spaces().len()
-            && source.world_spaces.iter().all(|source_space| {
-                runtime
-                    .world_space(source_space.id)
-                    .is_some_and(|runtime_space| {
-                        runtime_space.name == source_space.name
-                            && runtime_space.cell_size.to_bits() == source_space.cell_size.to_bits()
-                    })
-            }),
-    );
-}
-
-fn update_project_query_demand(
-    viewpoint: Res<WorldViewpoint>,
-    workspace: Res<State<EditorWorkspace>>,
-    tools: Res<EditorToolRegistry>,
-    mut store: ResMut<ProjectEditorStore>,
-) {
-    if !matches!(store.phase, ProjectStorePhase::Ready) || store.catalog_compatible == Some(false) {
-        return;
-    }
-    let Some(tool) = tools.active(*workspace.get()) else {
-        return;
-    };
-    let desired_domains = ProjectSourceDomains::from_tool(tool);
-    if !desired_domains.any() {
-        return;
-    }
-    let Some(position) = viewpoint.position() else {
-        return;
-    };
-    let center = if desired_domains.environment_coverage {
-        store
-            .environment_focus
-            .filter(|(space, _)| *space == position.space)
-            .map_or(position.cell, |(_, cell)| cell)
-    } else {
-        position.cell
-    };
-    let desired = ProjectQueryWindow::around(position.space, center);
-    if store.desired_window == Some(desired) && store.desired_domains == desired_domains {
-        return;
-    }
-
-    if store
-        .loaded_window
-        .is_some_and(|loaded| loaded.space != desired.space)
-        || store.loaded_domains != desired_domains
-    {
-        store.loaded_window = None;
-        store.cells.clear();
-        store.objects.clear();
-        store.environment_cells.clear();
-        store.environment_snapshot = None;
-        store.cells_truncated = false;
-        store.objects_truncated = false;
-        store.environment_coverage_truncated = false;
-    }
-    store.desired_window = Some(desired);
-    store.desired_domains = desired_domains;
-    if store.failed_window != Some(desired) || store.failed_domains != desired_domains {
-        store.failed_window = None;
-        store.failed_domains = ProjectSourceDomains::default();
-        store.query_error = None;
-    }
-}
-
-fn dispatch_project_query(
-    worker: Option<Res<ProjectWorker>>,
-    mut store: ResMut<ProjectEditorStore>,
-) {
-    if !matches!(store.phase, ProjectStorePhase::Ready)
-        || store.catalog_compatible == Some(false)
-        || store.in_flight.is_some()
-    {
-        return;
-    }
-    let Some(window) = store.desired_window else {
-        return;
-    };
-    let domains = store.desired_domains;
-    if (store.loaded_window == Some(window) && store.loaded_domains == domains)
-        || (store.failed_window == Some(window) && store.failed_domains == domains)
-    {
-        return;
-    }
-    let Some(worker) = worker else {
-        return;
-    };
-
-    let revision = store.next_revision.wrapping_add(1).max(1);
-    match worker.requests.try_send(ProjectRequest::Query {
-        revision,
-        window,
-        domains,
-    }) {
-        Ok(()) => {
-            store.next_revision = revision;
-            store.in_flight = Some(InFlightQuery {
-                revision,
-                window,
-                domains,
-            });
-        }
-        Err(TrySendError::Full(_)) => {}
-        Err(TrySendError::Disconnected(_)) => {
-            store.phase = ProjectStorePhase::Failed("project request channel closed".into());
-        }
-    }
-}
-
-fn dispatch_project_save(
-    worker: Option<Res<ProjectWorker>>,
-    mut store: ResMut<ProjectEditorStore>,
-) {
-    if !matches!(store.phase, ProjectStorePhase::Ready)
-        || store.save_in_flight.is_some()
-        || store.dense_save_in_flight.is_some()
-        || store.vegetation_save_in_flight.is_some()
-        || store.atmosphere_save_in_flight.is_some()
-        || store.area_save_in_flight.is_some()
-    {
-        return;
-    }
-    let Some(worker) = worker else {
-        return;
-    };
-
-    if let Some((id, revision, areas)) = store.pending_area_save.clone() {
-        match worker
-            .requests
-            .try_send(ProjectRequest::SaveGameplayAreas(id, revision, areas))
-        {
-            Ok(()) => {
-                store.pending_area_save = None;
-                store.area_save_in_flight = Some(id);
-            }
-            Err(TrySendError::Full(_)) => {}
-            Err(TrySendError::Disconnected(_)) => {
-                store.write_error = Some("Project writer stopped".into());
-            }
-        }
-        return;
-    }
-
-    if let Some((id, writes)) = store.pending_atmosphere_save.clone() {
-        match worker
-            .requests
-            .try_send(ProjectRequest::SaveAtmospheres(id, writes))
-        {
-            Ok(()) => {
-                store.pending_atmosphere_save = None;
-                store.atmosphere_save_in_flight = Some(id);
-            }
-            Err(TrySendError::Full(_)) => {}
-            Err(TrySendError::Disconnected(_)) => {
-                store.write_error = Some("Project writer stopped".into());
-            }
-        }
-        return;
-    }
-
-    if let Some(request) = store.pending_save.clone() {
-        match worker
-            .requests
-            .try_send(ProjectRequest::SaveObjectTransaction(request.clone()))
-        {
-            Ok(()) => {
-                store.pending_save = None;
-                store.save_in_flight = Some(request.request_id);
-            }
-            Err(TrySendError::Full(_)) => {}
-            Err(TrySendError::Disconnected(_)) => {
-                store.phase = ProjectStorePhase::Failed("project request channel closed".into());
-            }
-        }
-        return;
-    }
-
-    if let Some(request) = store.pending_dense_save.clone() {
-        match worker
-            .requests
-            .try_send(ProjectRequest::SaveDenseTransaction(request.clone()))
-        {
-            Ok(()) => {
-                store.pending_dense_save = None;
-                store.dense_save_in_flight = Some(request.request_id);
-            }
-            Err(TrySendError::Full(_)) => {}
-            Err(TrySendError::Disconnected(_)) => {
-                store.phase = ProjectStorePhase::Failed("project request channel closed".into());
-            }
-        }
-        return;
-    }
-
-    if let Some(request) = store.pending_vegetation_save.clone() {
-        match worker
-            .requests
-            .try_send(ProjectRequest::SaveVegetationCatalog(request.clone()))
-        {
-            Ok(()) => {
-                store.pending_vegetation_save = None;
-                store.vegetation_save_in_flight = Some(request.request_id);
-            }
-            Err(TrySendError::Full(_)) => {}
-            Err(TrySendError::Disconnected(_)) => {
-                store.phase = ProjectStorePhase::Failed("project request channel closed".into());
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use super::worker::project_worker;
     use super::*;
+    use crossbeam_channel::bounded;
+    use std::thread;
 
     #[test]
     fn source_window_is_bounded_and_saturates_at_coordinate_edges() {
@@ -1394,7 +681,7 @@ mod tests {
             "the bounded demo object view should include its authoring proxy scene URI"
         );
 
-        request_sender.send(ProjectRequest::Shutdown).unwrap();
+        drop(request_sender);
         worker.join().unwrap();
         std::fs::remove_dir_all(directory).unwrap();
     }

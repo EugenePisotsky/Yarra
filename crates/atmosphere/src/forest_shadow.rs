@@ -23,7 +23,7 @@ const OPEN: f32 = -1.0e4;
 /// Mip levels above the map (8, 16 and 32 m texels) for the sky light under the crowns: each
 /// holds the highest crown top, lowest crown base, the average share of the sky level 0's
 /// crowns let through (`exp(-density)`, not density) and the highest canopy top.
-pub const SKY_LEVELS: u32 = 3;
+pub(crate) const SKY_LEVELS: u32 = 3;
 
 /// One tree's crown as an upright ellipsoid of foliage, in render-local XZ.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -167,9 +167,10 @@ impl ForestShadowMap {
         }
     }
 
+    #[cfg(test)]
     /// Foliage depth in metres along a straight ray, at texel centres; matches the shader's
     /// march closely enough for tests and CPU queries.
-    pub fn density_at(&self, point: Vec3) -> f32 {
+    pub(crate) fn density_at(&self, point: Vec3) -> f32 {
         let texel = ((Vec2::new(point.x, point.z) - self.origin) / METRES_PER_TEXEL).floor();
         if texel.x < 0.0 || texel.y < 0.0 || texel.x >= SIZE as f32 || texel.y >= SIZE as f32 {
             return 0.0;

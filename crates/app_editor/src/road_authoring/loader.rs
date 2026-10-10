@@ -1,7 +1,5 @@
 use super::*;
 use crate::project_store::ProjectDatabasePath;
-use crossbeam_channel::{Receiver, Sender, bounded};
-use std::thread;
 #[derive(Clone, PartialEq)]
 struct Key {
     space: WorldSpaceId,
@@ -25,45 +23,13 @@ impl Key {
                 .all(|pin| self.pins.binary_search(pin).is_ok())
     }
 }
-struct Worker {
-    send: Option<Sender<Key>>,
-    receive: Receiver<(Key, Result<world_db::RoadAuthoringSnapshot, String>)>,
-    thread: Option<thread::JoinHandle<()>>,
-}
-impl Drop for Worker {
-    fn drop(&mut self) {
-        self.send.take();
-        if let Some(t) = self.thread.take() {
-            let _ = t.join();
-        }
-    }
-}
-impl Worker {
-    fn new(path: std::path::PathBuf) -> Result<Self, String> {
-        let (send, requests) = bounded::<Key>(1);
-        let (results, receive) = bounded(1);
-        let thread = thread::Builder::new()
-            .name("road-authoring".into())
-            .spawn(move || {
-                let reader =
-                    world_db::ProjectReader::open_read_only(&path).map_err(|e| e.to_string());
-                while let Ok(key) = requests.recv() {
-                    let result = reader.as_ref().map_err(Clone::clone).and_then(|r| {
-                        r.read_road_authoring_snapshot(key.space, key.bounds, &key.pins)
-                            .map_err(|e| e.to_string())
-                    });
-                    if results.send((key, result)).is_err() {
-                        break;
-                    }
-                }
-            })
-            .map_err(|e| e.to_string())?;
-        Ok(Self {
-            send: Some(send),
-            receive,
-            thread: Some(thread),
-        })
-    }
+type Worker = crate::worker::Worker<Key, (Key, Result<world_db::RoadAuthoringSnapshot, String>)>;
+fn start_worker(path: std::path::PathBuf) -> Result<Worker, String> {
+    Worker::project_reader("road-authoring", path, |reader, key: &Key| {
+        reader
+            .read_road_authoring_snapshot(key.space, key.bounds, &key.pins)
+            .map_err(|e| e.to_string())
+    })
 }
 #[derive(Resource, Default)]
 pub(super) struct RoadLoader {
@@ -79,7 +45,7 @@ pub(super) fn update(
     project: Res<ProjectEditorStore>,
     view: Res<engine::WorldViewpoint>,
     history: Res<EditorHistory>,
-    mut dense: ResMut<DenseDomainWorkingSets>,
+    mut dense: ResMut<SourceWorkingSets>,
     mut state: ResMut<RoadToolState>,
     tools: Res<EditorToolRegistry>,
     workspace: Res<State<EditorWorkspace>>,
@@ -136,11 +102,7 @@ pub(super) fn update(
         loader.submitted = None;
         state.load_error = None;
     }
-    if let Some((finished, result)) = loader
-        .worker
-        .as_ref()
-        .and_then(|w| w.receive.try_recv().ok())
-    {
+    if let Some((finished, result)) = loader.worker.as_ref().and_then(|w| w.try_recv().ok()) {
         loader.in_flight = false;
         if finished == key {
             match result {
@@ -171,7 +133,7 @@ pub(super) fn update(
         return;
     }
     if loader.worker.is_none() {
-        match Worker::new(path.0.clone()) {
+        match start_worker(path.0.clone()) {
             Ok(w) => loader.worker = Some(w),
             Err(e) => {
                 state.load_error = Some(e);
@@ -181,9 +143,6 @@ pub(super) fn update(
     }
     if loader
         .worker
-        .as_ref()
-        .unwrap()
-        .send
         .as_ref()
         .unwrap()
         .try_send(key.clone())

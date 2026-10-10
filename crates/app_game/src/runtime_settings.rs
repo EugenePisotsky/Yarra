@@ -2,8 +2,9 @@
 //! CLI setup, reproductions and F1 edit the same snapshot. This module owns no panel,
 //! capture state, timing probes or argument parsing; it also works without diagnostics.
 use crate::game_render::{
-    GameRenderSettings, GameRenderSetup, GameRenderSystems, RESOLUTION_SCALES,
+    GameRenderSettings, GameRenderSetup, GameRenderSystems, RESOLUTION_SCALES, scale_index,
 };
+use crate::launch::LaunchOptions;
 use bevy::{core_pipeline::prepass::DepthPrepass, light::ShadowFilteringMethod, prelude::*};
 use engine::{GameInputEnabled, GameplaySystems, WorldViewCamera};
 use terrain_render::{TerrainMaterial, TerrainShadingMode, composite::TerrainCompositeMaterial};
@@ -11,9 +12,57 @@ use vegetation_render::{
     VegetationLightingMode, VegetationProfileMode, VegetationSettings, VegetationWind,
 };
 
-pub(crate) fn load_canopy(path: &std::path::Path) -> Result<vegetation::CanopyShading, String> {
-    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    ron::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))
+/// Launch options applied once to the resources they configure, before [`RuntimeSettingsPlugin`]
+/// reads them. Settings F1 also changes (prepared terrain, counters) are written by
+/// [`apply_settings`] alone.
+pub(crate) fn apply_launch_options(app: &mut App) -> Result<(), String> {
+    let options = app.world().resource::<LaunchOptions>().clone();
+    let canopy = match vegetation::CanopyShading::load(&options.canopy_path()) {
+        Ok(look) => look,
+        Err(error) if options.canopy_path.is_some() => return Err(error),
+        Err(error) => {
+            eprintln!("Canopy look: {error}; using defaults");
+            default()
+        }
+    };
+    let world = app.world_mut();
+    world
+        .resource_mut::<vegetation_render::VegetationLighting>()
+        .canopy = canopy;
+    {
+        let mut grass = world.resource_mut::<VegetationSettings>();
+        grass.density_mode = options.density;
+        grass.candidate_cache_enabled &= !options.candidate_reference;
+        grass.early_rejection &= !options.placement_reference;
+    }
+    if options.vertex_reference {
+        world
+            .resource_mut::<vegetation_render::VegetationBladePreparation>()
+            .enabled = false;
+    }
+    if options.terrain_universal {
+        world
+            .resource_mut::<terrain_render::TerrainPreparedSettings>()
+            .prefer_native_astc = false;
+    }
+    if options.terrain_procedural {
+        world
+            .resource_mut::<terrain_render::TerrainCacheSettings>()
+            .enabled = false;
+    }
+    app.insert_resource(options.clouds);
+    if options.msaa_store_reference {
+        app.add_systems(PostStartup, preserve_msaa_color);
+    }
+    Ok(())
+}
+
+fn preserve_msaa_color(mut commands: Commands, cameras: Query<Entity, With<WorldViewCamera>>) {
+    for camera in &cameras {
+        commands
+            .entity(camera)
+            .insert(engine::MsaaColorStorePolicy::Preserve);
+    }
 }
 
 pub(crate) struct RuntimeSettingsPlugin;
@@ -25,15 +74,19 @@ pub(crate) struct RuntimeSettingsApply;
 
 impl Plugin for RuntimeSettingsPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<crate::launch::LaunchOptions>()
+        app.init_resource::<LaunchOptions>()
             .init_resource::<engine::PlayerMovementSpeed>();
-        let options = app.world().resource::<crate::launch::LaunchOptions>();
+        let options = app.world().resource::<LaunchOptions>();
         let settings = RuntimeSettings {
             terrain_near_disabled: options.terrain_near_off,
             terrain_prepared: !options.terrain_reference,
             upscaler: options.upscaler,
             counters: options.counters,
             gpu_pass_timings: options.gpu_detail,
+            scale_index: options.resolution_scale.map_or_else(
+                || RuntimeSettings::default().scale_index,
+                |scale| scale_index(scale).expect("launch validates the resolution scale"),
+            ),
             ..default()
         };
         app.insert_resource(settings)
@@ -108,6 +161,11 @@ pub(crate) enum Scene {
     Grass,
 }
 
+/// F1's object LOD size steps, as `VisualLodScale` factors.
+pub(crate) const OBJECT_DETAIL_SCALES: [f32; 3] = [0.5, 1.0, 2.0];
+/// F1's terrain hierarchy refinement error steps, in pixels.
+pub(crate) const TERRAIN_ERROR_PIXELS: [f64; 4] = [1.0, 2.0, 4.0, 8.0];
+
 /// Directional shadow map edge per cascade. Rendering the maps is most of the shadow cost; at
 /// 2560×1440 with 4× MSAA, 1024 saved ~0.7 ms against 2048 on M2 Max.
 pub(crate) const SHADOW_MAP_SIZES: [usize; 3] = [2048, 1536, 1024];
@@ -172,9 +230,7 @@ impl Default for RuntimeSettings {
             shadows: 0,
             shadow_map: 0,
             prepass: false,
-            scale_index: RESOLUTION_SCALES
-                .iter()
-                .position(|&scale| scale == render.resolution_scale)
+            scale_index: scale_index(render.resolution_scale)
                 .expect("game scale is available in runtime settings"),
             msaa: render.msaa,
             upscaler: render.upscaler,
@@ -260,10 +316,6 @@ fn sync_render_settings(
     }
 }
 
-pub(crate) fn page_gizmos_enabled(settings: Res<RuntimeSettings>) -> bool {
-    settings.page_gizmos
-}
-
 pub(crate) fn apply_appearance(
     settings: Res<RuntimeSettings>,
     mut lighting: ResMut<vegetation_render::VegetationLighting>,
@@ -277,6 +329,7 @@ pub(crate) fn apply_appearance(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // One writer for every resource the settings drive.
 fn apply_settings(
     mut commands: Commands,
     s: Res<RuntimeSettings>,
@@ -299,7 +352,7 @@ fn apply_settings(
     {
         shadow_map.size = size;
     }
-    object_lod.0 = [0.5, 1.0, 2.0][s.object_detail];
+    object_lod.0 = OBJECT_DETAIL_SCALES[s.object_detail];
     *clouds = s.clouds;
     atmosphere.sky_and_haze = s.sky;
     atmosphere.bloom = s.bloom;
@@ -307,7 +360,7 @@ fn apply_settings(
     atmosphere.low_air = s.fog;
     atmosphere.particles = s.particles;
     atmosphere.light_shafts = s.light_shafts;
-    lod.settings.refine_pixels = [1.0, 2.0, 4.0, 8.0][s.terrain_detail];
+    lod.settings.refine_pixels = TERRAIN_ERROR_PIXELS[s.terrain_detail];
     lod.settings.collapse_pixels = lod.settings.refine_pixels * 0.5;
     grass.density_mode = s.density;
     grass.profile_mode = s.grass_mode();

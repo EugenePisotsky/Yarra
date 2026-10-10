@@ -129,7 +129,7 @@ impl FromWorld for BladePreparation {
         );
         let arena_bytes = PROCEDURAL_INSTANCE_CAPACITY as u64 * 4 + capacity * BLADE_BYTES;
         assert!(
-            arena_bytes <= u64::from(device.limits().max_storage_buffer_binding_size),
+            arena_bytes <= device.limits().max_storage_buffer_binding_size,
             "prepared blades exceed the device storage-buffer limit"
         );
         let arena = device.create_buffer(&BufferDescriptor {
@@ -342,7 +342,7 @@ mod tests {
         let pipelines = [ComputePipelineId::new(), ComputePipelineId::new()];
         let key = PreparationKey::new(1, 1, camera, config, pipelines);
         let mut shaded = camera;
-        shaded.canopy = vegetation::CanopyShading::experiment().packed([32.0, -64.0]);
+        shaded.canopy = vegetation::CanopyShading::default_enabled().packed([32.0, -64.0]);
         assert!(key == PreparationKey::new(1, 1, shaded, config, pipelines));
         let mut animated = camera;
         animated.wind[3] = 2.0;

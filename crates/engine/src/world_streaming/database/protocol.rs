@@ -10,33 +10,35 @@ use world_db::{
 /// Encoded far-object pages by block; `None` for a block without far objects.
 pub(in crate::world_streaming) type FarObjectPayloads = Vec<(CellCoord, Option<Vec<u8>>)>;
 
+/// Names a request; its reply carries the same id. The worker numbers requests from 1, so
+/// id 0 is the opening reply, which nothing requested.
+pub(in crate::world_streaming) type RequestId = u64;
+
 #[derive(Debug)]
 pub(in crate::world_streaming) enum DatabaseRequest {
     Terrain {
-        request_id: u64,
         generation: String,
         query: TerrainQuery,
     },
+    /// Opens the published database beside the live one, as a candidate named by this
+    /// request's id.
     Reload {
-        request_id: u64,
         expected_generation: String,
     },
     CommitReload {
-        request_id: u64,
+        reload: RequestId,
         expected_generation: String,
     },
     DiscardReload {
-        request_id: u64,
+        reload: RequestId,
     },
     ReadIndex {
         generation: String,
-        revision: u64,
         space: WorldSpaceId,
         windows: Vec<[CellCoord; 2]>,
     },
     ReadPage {
         generation: String,
-        request_id: u64,
         key: PageKey,
         height_only: bool,
     },
@@ -49,36 +51,19 @@ pub(in crate::world_streaming) enum DatabaseRequest {
 }
 
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)] // 32 queued replies; boxing would allocate per page.
 pub(in crate::world_streaming) enum DatabaseResult {
-    Terrain {
-        request_id: u64,
-        result: Result<TerrainReply, String>,
-    },
+    Terrain(Result<TerrainReply, String>),
     Opened(Result<RuntimeManifest, String>),
-    Reloaded {
-        request_id: u64,
-        result: Result<RuntimeManifest, String>,
-    },
-    ReloadCommitted {
-        request_id: u64,
-        result: Result<(), String>,
-    },
-    Index {
-        revision: u64,
-        space: WorldSpaceId,
-        result: Result<Vec<CellDescriptor>, String>,
-    },
+    Reloaded(Result<RuntimeManifest, String>),
+    ReloadCommitted(Result<(), String>),
+    Index(Result<Vec<CellDescriptor>, String>),
     Page {
-        request_id: u64,
         key: PageKey,
         result: Result<Option<FetchedPage>, String>,
     },
     /// Every requested block.
-    FarObjects {
-        generation: String,
-        space: WorldSpaceId,
-        result: Result<FarObjectPayloads, String>,
-    },
+    FarObjects(Result<FarObjectPayloads, String>),
 }
 
 #[derive(Debug)]

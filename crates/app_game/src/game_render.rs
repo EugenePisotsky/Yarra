@@ -32,6 +32,13 @@ pub(crate) struct GameRenderSystems;
 
 pub(crate) const RESOLUTION_SCALES: [f32; 4] = [1.0, 0.75, 0.5, 1.0 / 3.0];
 
+/// Index of a launch scale in `RESOLUTION_SCALES`.
+pub(crate) fn scale_index(scale: f32) -> Option<usize> {
+    RESOLUTION_SCALES
+        .iter()
+        .position(|&s| (s - scale).abs() < 1e-3)
+}
+
 #[derive(Resource, Clone, PartialEq)]
 pub(crate) struct GameRenderSettings {
     pub(crate) resolution_scale: f32,
@@ -166,7 +173,8 @@ fn setup(
     commands.insert_resource(GameRenderAssets { target, upscaled });
 }
 
-#[allow(clippy::type_complexity)] // Disjoint camera/UI queries and saved root visibility.
+// Disjoint camera/UI queries and saved root visibility.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn apply_settings(
     mut commands: Commands,
     s: Res<GameRenderSettings>,

@@ -3,7 +3,7 @@
 //! draws the water in front of whatever the main pass drew below it, so the seabed shows through
 //! shallow water and the shore is wherever the terrain crosses the sea level. Lakes, rivers and
 //! swimming are later work.
-use crate::{ActiveWorldSpace, WorldCatalog, WorldViewCamera};
+use crate::{ActiveWorldSpace, ActiveWorldView, WorldCatalog};
 use bevy::prelude::*;
 
 pub struct OceanPlugin;
@@ -16,18 +16,18 @@ impl Plugin for OceanPlugin {
 }
 
 /// The sea of the active world space while a world view shows it; none without a sea level or
-/// an active world view (editor studies).
+/// an active world view (other editor workspaces).
 fn publish_sea(
     catalog: Res<WorldCatalog>,
     active: Res<ActiveWorldSpace>,
-    views: Query<&Camera, With<WorldViewCamera>>,
+    view: ActiveWorldView,
     mut sea: ResMut<atmosphere::SeaSurface>,
 ) {
     let level = active
         .current()
         .and_then(|space| catalog.world_space(space))
         .and_then(|space| space.sea_level)
-        .filter(|_| views.iter().any(|camera| camera.is_active));
+        .filter(|_| view.active().is_some());
     if sea.level != level {
         sea.level = level;
     }
@@ -36,6 +36,7 @@ fn publish_sea(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::WorldViewCamera;
     use world::{CellCoord, WorldSpaceId};
 
     fn ocean_app(sea_level: Option<f32>) -> App {

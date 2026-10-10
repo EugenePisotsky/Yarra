@@ -2,13 +2,12 @@
 //! cells' object residency (`world_db` far-object pages). Each block draws one batch per
 //! impostor, whose shader shows every instance from its mesh LOD's hand-off outward; the
 //! cells draw only meshes.
-use super::database::{DatabaseRequest, FarObjectPayloads, WorldDatabaseWorker};
-use super::{
-    ActiveWorldSpace, StreamPhase, WorldCatalog, WorldOrigin, WorldStream, WorldViewCamera,
+use super::database::{
+    DatabaseRequest, FarObjectPayloads, NotSent, RequestId, WorldDatabaseWorker,
 };
-use crate::tree_impostor::{ImpostorBatch, ImpostorInstance};
+use super::{ActiveWorldSpace, StreamPhase, WorldCatalog, WorldOrigin, WorldStream};
+use crate::trees::impostor::{ImpostorBatch, ImpostorInstance};
 use bevy::{math::DVec2, prelude::*};
-use crossbeam_channel::TrySendError;
 use std::collections::HashMap;
 use world::{CellCoord, FAR_OBJECT_BLOCK_CELLS, FarObjectsPage, WorldSpaceId};
 
@@ -27,8 +26,8 @@ pub(super) struct FarObjects {
     /// The render origin the drawn blocks are placed for.
     origin: CellCoord,
     blocks: HashMap<CellCoord, Block>,
-    /// Blocks of the request awaiting its reply.
-    requested: Option<Vec<CellCoord>>,
+    /// The request awaiting its reply, and its blocks.
+    requested: Option<(RequestId, Vec<CellCoord>)>,
     arrived: FarObjectPayloads,
 }
 
@@ -44,16 +43,12 @@ enum Block {
 pub(super) struct FarObjectBlock;
 
 impl FarObjects {
-    pub(super) fn receive(
-        &mut self,
-        generation: String,
-        space: WorldSpaceId,
-        result: Result<FarObjectPayloads, String>,
-    ) {
-        if generation != self.generation || Some(space) != self.space {
+    pub(super) fn receive(&mut self, id: RequestId, result: Result<FarObjectPayloads, String>) {
+        // A generation or world change clears the request, so its reply is no longer awaited.
+        if self.requested.as_ref().is_none_or(|(sent, _)| *sent != id) {
             return;
         }
-        let requested = self.requested.take().unwrap_or_default();
+        let (_, requested) = self.requested.take().unwrap();
         match result {
             Ok(blocks) => self.arrived.extend(blocks),
             Err(error) => {
@@ -87,7 +82,7 @@ pub(super) fn update(
     catalog: Res<WorldCatalog>,
     active: Res<ActiveWorldSpace>,
     origin: Res<WorldOrigin>,
-    cameras: Query<(&Camera, &GlobalTransform), With<WorldViewCamera>>,
+    camera: crate::ActiveWorldView,
     mut far: ResMut<FarObjects>,
     mut roots: Query<&mut Transform, With<FarObjectBlock>>,
 ) {
@@ -157,13 +152,13 @@ pub(super) fn update(
         far.blocks.insert(block, state);
     }
 
-    let Some((_, camera)) = cameras.iter().find(|(c, _)| c.is_active) else {
+    let Some(camera) = camera.active() else {
         return;
     };
     let base = origin.cell().origin(space.cell_size);
     let eye = DVec2::new(
-        f64::from(camera.translation().x) + base[0],
-        f64::from(camera.translation().z) + base[1],
+        f64::from(camera.transform.translation().x) + base[0],
+        f64::from(camera.transform.translation().z) + base[1],
     );
     if !eye.is_finite() {
         return;
@@ -209,19 +204,19 @@ pub(super) fn update(
         .take(MAX_BLOCKS_PER_REQUEST)
         .map(|(_, block)| block)
         .collect();
-    match worker.try_send(DatabaseRequest::ReadFarObjects {
+    match worker.send(DatabaseRequest::ReadFarObjects {
         generation: far.generation.clone(),
         space: space.id,
         blocks: blocks.clone(),
     }) {
-        Ok(()) => {
+        Ok(id) => {
             for &block in &blocks {
                 far.blocks.insert(block, Block::Requested);
             }
-            far.requested = Some(blocks);
+            far.requested = Some((id, blocks));
         }
-        Err(TrySendError::Full(_)) => {}
-        Err(TrySendError::Disconnected(_)) => warn!("far objects: database request channel closed"),
+        Err(NotSent::Full) => {}
+        Err(NotSent::Stopped) => warn!("far objects: database request channel closed"),
     }
 }
 

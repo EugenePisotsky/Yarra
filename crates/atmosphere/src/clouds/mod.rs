@@ -45,8 +45,8 @@ impl CloudQuality {
 /// A world view that shows clouds this frame.
 #[derive(Component, Clone, bevy::render::extract_component::ExtractComponent)]
 #[extract_app(bevy::render::RenderApp)]
-pub struct CloudView;
-pub struct CloudsPlugin;
+pub(crate) struct CloudView;
+pub(crate) struct CloudsPlugin;
 impl Plugin for CloudsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CloudClock>()

@@ -1,7 +1,7 @@
 //! World workspace composition. Tools, window presentation and interaction systems have separate owners.
 use crate::{
     domain_editing::{
-        DenseDomainWorkingSets, process_dense_save_completion, reconcile_dense_working_sets,
+        SourceWorkingSets, process_dense_save_completion, reconcile_dense_working_sets,
     },
     editing::{
         EditorHistory, EditorObjectWorkingSet, EditorSelection, TransformInspectorDraft,
@@ -31,7 +31,9 @@ use crate::{
             overlay::{draw_editor_grid, draw_promoted_editor_object, draw_source_object_handles},
             ui::{
                 ASSETS_WINDOW, DIAGNOSTICS_WINDOW, INSPECTOR_WINDOW, NAVIGATOR_WINDOW,
-                WORLD_WINDOW, WorldWorkspaceUiState, world_workspace_ui,
+                WORLD_WINDOW, WorldWorkspaceUiState, assets_window, diagnostics_window,
+                hierarchy_window, inspector_window, navigator_window, open_requested_presets,
+                world_toolbar,
             },
         },
         world_workspace_active,
@@ -44,10 +46,12 @@ use bevy::{
 use bevy_egui::EguiPrimaryContextPass;
 
 pub(crate) use camera::{EditorCameraFocusRequest, update_editor_camera};
+pub(crate) use ground_tool::GroundToolInput;
 pub(crate) use input::handle_editor_shortcuts;
 pub(crate) use overlay::EditorOverlayGizmos;
 mod camera;
 mod gizmo;
+mod ground_tool;
 mod input;
 mod objects;
 mod overlay;
@@ -96,7 +100,7 @@ impl Plugin for WorldWorkspacePlugin {
             .init_resource::<WorldWorkspaceUiState>()
             .init_resource::<TransformInspectorDraft>()
             .init_resource::<GizmoEditTransaction>()
-            .init_resource::<DenseDomainWorkingSets>()
+            .init_resource::<SourceWorkingSets>()
             .init_resource::<EditorSaveCoordinator>()
             .init_gizmo_group::<EditorOverlayGizmos>()
             .add_plugins((
@@ -185,7 +189,16 @@ impl Plugin for WorldWorkspacePlugin {
             )
             .add_systems(
                 EguiPrimaryContextPass,
-                world_workspace_ui
+                (
+                    world_toolbar,
+                    hierarchy_window,
+                    inspector_window,
+                    assets_window,
+                    navigator_window,
+                    diagnostics_window,
+                    open_requested_presets,
+                )
+                    .chain()
                     .run_if(world_workspace_active)
                     .in_set(EditorUiSet::Workspace),
             );

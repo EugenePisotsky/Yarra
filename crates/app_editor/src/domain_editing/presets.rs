@@ -19,7 +19,7 @@ fn normalize(current: &mut PresetLibrary, base: &PresetLibrary) {
     }
     current.presets.sort_by_key(|p| p.id);
 }
-impl DenseDomainWorkingSets {
+impl SourceWorkingSets {
     pub(crate) fn apply_presets(&mut self, library: &PresetLibrary) -> Result<(), String> {
         if self.presets.is_none() {
             return Err("Presets are still loading".into());
@@ -228,13 +228,13 @@ impl DenseDomainWorkingSets {
 mod tests {
     use super::*;
     use environment::fixtures::*;
-    fn working() -> DenseDomainWorkingSets {
+    fn working() -> SourceWorkingSets {
         let library = meadow_library(
             world::TerrainSurfaceId([1; 16]),
             world::TerrainSurfaceId([2; 16]),
             environment::ChannelId([1; 16]),
         );
-        let mut dense = DenseDomainWorkingSets::default();
+        let mut dense = SourceWorkingSets::default();
         dense.initialize_presets(&library);
         dense.plants = Some(vegetation::fixtures::reference_catalog());
         dense

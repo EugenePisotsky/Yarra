@@ -141,6 +141,7 @@ fn init(
         }),
     });
 }
+#[allow(clippy::too_many_arguments)] // Independent render-world inputs of one pass.
 fn update_shadows(
     view: ViewQuery<&CloudView>,
     assets: Option<Res<EnvironmentAssets>>,
@@ -302,10 +303,12 @@ mod tests {
     }
     #[test]
     fn wind_origin_and_exposure_reuse_shadows_but_density_and_light_changes_do_not() {
-        let mut p = EnvironmentParams::default();
-        p.layer = [1200., 650., 7200., 1.];
-        p.shape = [0.48, 0.02, 0.3, 7.];
-        p.sun = [0.5, 0.7, 0.5, 100000.];
+        let mut p = EnvironmentParams {
+            layer: [1200., 650., 7200., 1.],
+            shape: [0.48, 0.02, 0.3, 7.],
+            sun: [0.5, 0.7, 0.5, 100000.],
+            ..default()
+        };
         let key = ShadowInputs::from(&p);
         p.offset = [1000., 2000., 500., 750.];
         p.sun[3] *= 0.5;

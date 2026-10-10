@@ -49,9 +49,10 @@ struct ResultMessage {
     revision: u64,
     result: Result<Arc<Snapshot>, String>,
 }
+/// Compiles one preview at a time. Dropping it cancels the compile in flight through `latest`
+/// and does not wait for the thread.
 struct LiveWorker {
-    sender: Sender<Input>,
-    receiver: Receiver<ResultMessage>,
+    worker: crate::worker::Worker<Input, ResultMessage>,
     latest: Arc<AtomicU64>,
 }
 impl Drop for LiveWorker {
@@ -64,13 +65,13 @@ impl LiveWorker {
         let project = paths.project_database.clone();
         let runtime = paths.runtime_database.clone();
         let assets = paths.asset_root.clone();
-        let (sender, requests) = bounded::<Input>(1);
-        let (results, receiver) = bounded(1);
         let latest = Arc::new(AtomicU64::new(0));
         let token = latest.clone();
-        thread::Builder::new()
-            .name("live-terrain-preview".into())
-            .spawn(move || {
+        let worker = crate::worker::Worker::spawn(
+            "live-terrain-preview",
+            1,
+            1,
+            move |requests: Receiver<Input>, results| {
                 let library =
                     world_cook::TerrainBakeLibrary::load(&assets).map_err(|e| format!("{e:#}"));
                 while let Ok(job) = requests.recv() {
@@ -88,13 +89,11 @@ impl LiveWorker {
                         break;
                     }
                 }
-            })
-            .map_err(|e| e.to_string())?;
-        Ok(Self {
-            sender,
-            receiver,
-            latest,
-        })
+            },
+        )
+        .map_err(|e| e.to_string())?
+        .detached();
+        Ok(Self { worker, latest })
     }
 }
 
@@ -206,10 +205,6 @@ pub(crate) fn update(
                     .dense
                     .preview_records()
                     .into_iter()
-                    .map(|r| {
-                        let DenseSourceRecord::EnvironmentCoverage(r) = r;
-                        r
-                    })
                     .filter(|r| r.space == space)
                     .collect();
                 let global = state
@@ -242,11 +237,7 @@ pub(crate) fn update(
             (Err(e), _) | (_, Err(e)) => preview.error = Some(e.to_string()),
         }
     }
-    if let Some(result) = state
-        .worker
-        .as_ref()
-        .and_then(|w| w.receiver.try_recv().ok())
-    {
+    if let Some(result) = state.worker.as_ref().and_then(|w| w.worker.try_recv().ok()) {
         state.in_flight = false;
         if result.revision == state.revision {
             match result.result {
@@ -311,7 +302,7 @@ pub(crate) fn update(
         }
         let worker = state.worker.as_ref().unwrap();
         worker.latest.store(job.revision, Ordering::Relaxed);
-        match worker.sender.try_send(job) {
+        match worker.worker.try_send(job) {
             Ok(()) => state.in_flight = true,
             Err(e) => preview.error = Some(e.to_string()),
         }

@@ -20,6 +20,7 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
+use vegetation_render::VegetationWind;
 
 type Pixels = Arc<Mutex<[(u64, Vec<u8>); 2]>>;
 
@@ -131,13 +132,20 @@ fn wind_depth_prepass_preserves_colour_coverage() {
             let a = &pair[0].1;
             let b = &pair[1].1;
             assert!(
-                a.chunks_exact(4).filter(|p| p[0] > 10 || p[1] > 10).count() > 1000,
+                a.as_chunks::<4>()
+                    .0
+                    .iter()
+                    .filter(|p| p[0] > 10 || p[1] > 10)
+                    .count()
+                    > 1000,
                 "test must draw a visible tree"
             );
             // Allow tiny rounding at silhouettes, not black missing facets.
             let damaged = a
-                .chunks_exact(4)
-                .zip(b.chunks_exact(4))
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(b.as_chunks::<4>().0)
                 .filter(|(x, y)| x[..3].iter().zip(&y[..3]).any(|(x, y)| x.abs_diff(*y) > 8))
                 .count();
             eprintln!(

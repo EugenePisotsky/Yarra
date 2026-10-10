@@ -37,14 +37,11 @@ impl WorldStartView {
     }
 
     pub fn camera_at(view: &WorldViewBookmark, position: Vec3) -> Transform {
-        let pitch = view.pitch_degrees.to_radians();
-        let yaw = view.yaw_degrees.to_radians();
-        let focus = position + Vec3::Y * crate::gameplay::CAMERA_FOCUS_HEIGHT;
-        let offset = Vec3::new(
-            yaw.sin() * pitch.cos(),
-            pitch.sin(),
-            yaw.cos() * pitch.cos(),
-        ) * view.distance;
-        Transform::from_translation(focus + offset).looking_at(focus, Vec3::Y)
+        crate::gameplay::orbit_transform(
+            position + Vec3::Y * crate::gameplay::CAMERA_FOCUS_HEIGHT,
+            view.yaw_degrees.to_radians(),
+            view.pitch_degrees.to_radians(),
+            view.distance,
+        )
     }
 }

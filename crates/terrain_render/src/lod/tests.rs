@@ -265,7 +265,7 @@ fn stitched_topologies_cover_patch_without_holes_or_inverted_triangles() {
             let n = n as u32;
             let mut area = 0_i64;
             let mut edges = BTreeMap::<(u32, u32), usize>::new();
-            for t in indices.chunks_exact(3) {
+            for t in indices.as_chunks::<3>().0 {
                 let xy = |i: u32| ((i % n) as i64, (i / n) as i64);
                 let (a, b, c) = (xy(t[0]), xy(t[1]), xy(t[2]));
                 let cross = (b.1 - a.1) * (c.0 - a.0) - (b.0 - a.0) * (c.1 - a.1);

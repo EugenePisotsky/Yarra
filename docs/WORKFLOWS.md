@@ -645,7 +645,7 @@ with native GPU access and local dead-tree/spruce bundles. It compares rendered
 colour with/without depth and motion prepasses in Calm and two Strong poses.
 Removing `@invariant` reproduced 2176 damaged pixels in the bare-tree Strong
 case; the fixed shader produced zero in all six cases. The compute tests under
-`tree_wind::gpu_tests` separately cover attached card roots and deformation
+`trees::wind::gpu_tests` separately cover attached card roots and deformation
 history. Native Temporal captures are in `tmp/dead-trees-review/`; this is
 correctness coverage, not a dense-forest performance measurement.
 

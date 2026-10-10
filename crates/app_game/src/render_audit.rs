@@ -1,11 +1,14 @@
 //! Optional F1 controls and diagnostics. Game configuration lives in runtime_settings.
 mod logging;
+mod page_gizmos;
 mod performance;
 mod timing;
 
 use crate::frame_pacing::{FramePacing, FrameRate};
 use crate::game_render::{GameRenderAssets, RESOLUTION_SCALES};
-use crate::runtime_settings::{RuntimeSettings, RuntimeSettingsApply, Scene};
+use crate::runtime_settings::{
+    OBJECT_DETAIL_SCALES, RuntimeSettings, RuntimeSettingsApply, Scene, TERRAIN_ERROR_PIXELS,
+};
 use bevy::{prelude::*, ui::Pressed, window::PrimaryWindow};
 use engine::{GamePointerInputBlocked, GameplaySystems};
 use terrain_render::TerrainShadingMode;
@@ -58,6 +61,7 @@ impl Plugin for PerformancePanelPlugin {
                     .before(RuntimeSettingsApply)
                     .before(GameplaySystems::CameraInput),
             )
+            .add_systems(Update, page_gizmos::draw.run_if(page_gizmos::enabled))
             .add_systems(Last, update_stamp.before(timing::CollectTimings));
         performance::install(app);
     }
@@ -129,7 +133,12 @@ impl Control {
                     "Movement: Normal".into()
                 }
             }
-            Self::ObjectDetail => format!("Object LOD size: {}x", [0.5, 1.0, 2.0][s.object_detail]),
+            Self::ObjectDetail => {
+                format!(
+                    "Object LOD size: {}x",
+                    OBJECT_DETAIL_SCALES[s.object_detail]
+                )
+            }
             Self::Clouds => format!("Clouds: {:?}", s.clouds),
             Self::Sky => format!("Sky + haze pass: {}", on_off(s.sky)),
             Self::Bloom => format!("Bloom pass: {}", on_off(s.bloom)),
@@ -140,7 +149,12 @@ impl Control {
             Self::Terrain => format!("Terrain draws: {}", on_off(!s.hide_terrain)),
             Self::Objects => format!("Object draws: {}", on_off(!s.hide_objects)),
             Self::Density => format!("Grass density: {}", s.density.label()),
-            Self::TerrainDetail => format!("Terrain error: {} px", [1, 2, 4, 8][s.terrain_detail]),
+            Self::TerrainDetail => {
+                format!(
+                    "Terrain error: {} px",
+                    TERRAIN_ERROR_PIXELS[s.terrain_detail]
+                )
+            }
             Self::Near => format!("Near terrain detail: {}", on_off(!s.terrain_near_disabled)),
             Self::PageGizmos => format!("Terrain page gizmos: {}", on_off(s.page_gizmos)),
             Self::TerrainMacro => format!("Terrain macro: {}", s.terrain_macro.label()),
@@ -177,10 +191,7 @@ impl Control {
                     format!("Depth prepass: {}", on_off(s.prepass))
                 }
             }
-            Self::Scale => format!(
-                "Resolution: {}%",
-                (100.0 * RESOLUTION_SCALES[s.scale_index]).round() as u32
-            ),
+            Self::Scale => format!("Resolution: {}%", (100.0 * s.scale()).round() as u32),
             Self::TemporalDebug => format!("Temporal view: {}", s.temporal_debug.label()),
             Self::Upscaler => format!("Upscaler: {}", s.upscaler.label()),
             Self::Counters => format!("GPU counters: {}", on_off(s.counters)),
@@ -237,7 +248,9 @@ fn buttons(
                 // FPS alone must not reapply scene settings or disturb Temporal history.
                 continue;
             }
-            Control::ObjectDetail => s.object_detail = (s.object_detail + 1) % 3,
+            Control::ObjectDetail => {
+                s.object_detail = (s.object_detail + 1) % OBJECT_DETAIL_SCALES.len()
+            }
             Control::Clouds => {
                 s.clouds = match s.clouds {
                     engine::CloudQuality::Off => engine::CloudQuality::Balanced,
@@ -266,7 +279,9 @@ fn buttons(
                     }
                 }
             }
-            Control::TerrainDetail => s.terrain_detail = (s.terrain_detail + 1) % 4,
+            Control::TerrainDetail => {
+                s.terrain_detail = (s.terrain_detail + 1) % TERRAIN_ERROR_PIXELS.len()
+            }
             Control::Near => s.terrain_near_disabled = !s.terrain_near_disabled,
             Control::PageGizmos => s.page_gizmos = !s.page_gizmos,
             Control::TerrainMacro => s.terrain_macro = s.terrain_macro.toggled(),
@@ -276,7 +291,7 @@ fn buttons(
                     .cloned()
                     .unwrap_or_default()
                     .canopy_path();
-                match crate::runtime_settings::load_canopy(&path) {
+                match vegetation::CanopyShading::load(&path) {
                     Ok(look) => {
                         s.canopy = look;
                         session.message =

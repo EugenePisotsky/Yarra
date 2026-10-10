@@ -6,16 +6,13 @@
 //! over time as every tree with an impostor does) or with one representation forced at
 //! every distance. Its [`LabTree`] reports the distance band of each
 //! representation under the current LOD projection.
+use super::forest_shadow::NoForestShadow;
+use super::impostor::{ImpostorBatch, ImpostorBatchDone, ImpostorDescriptor, ImpostorInstance};
 use crate::WorldRenderRoot;
-use crate::forest_shadow::NoForestShadow;
 use crate::object_lod::{
-    CROSSFADE_FRACTION, ForcedLod, IMPOSTOR_HANDOFF_METRES, LodProjection, ScreenSpaceLod,
-    ScreenSpaceLodVariant,
+    ForcedLod, LodProjection, ScreenSpaceLod, ScreenSpaceLodVariant, crossfade,
 };
-use crate::tree_impostor::{
-    ImpostorBatch, ImpostorBatchDone, ImpostorDescriptor, ImpostorInstance,
-};
-use bevy::{gltf::GltfAssetLabel, prelude::*};
+use bevy::prelude::*;
 use std::{ops::Range, path::Path, sync::Arc};
 
 /// Updates lab trees after the user's changes and before object LODs are ranged.
@@ -126,12 +123,18 @@ impl LabAsset {
             .filter(|v| world::is_impostor_uri(&v.uri))
     }
 
-    /// Object height over the last mesh LOD's threshold at unit scale, as far-object pages
-    /// record it: times scale and pixels per metre, the impostor's hand-off distance.
-    fn impostor_switch(&self) -> Option<f32> {
+    /// The last mesh LOD's threshold, where the impostor takes over (none without one).
+    fn handoff_threshold(&self) -> Option<f32> {
         self.impostor()?;
         let threshold = self.variants[self.meshes() - 1].minimum_screen_height;
-        (threshold > 0.0).then(|| self.bounds[1] / threshold)
+        (threshold > 0.0).then_some(threshold)
+    }
+
+    /// Object height over the hand-off threshold at unit scale, as far-object pages record it:
+    /// times scale and pixels per metre, the impostor's hand-off distance.
+    fn impostor_switch(&self) -> Option<f32> {
+        self.handoff_threshold()
+            .map(|threshold| self.bounds[1] / threshold)
     }
 }
 
@@ -186,12 +189,7 @@ pub fn spawn_lab_tree(
         .variants
         .iter()
         .enumerate()
-        .map(|(i, v)| ScreenSpaceLodVariant {
-            lod: i as u8,
-            scene: (!world::is_impostor_uri(&v.uri))
-                .then(|| server.load(GltfAssetLabel::Scene(0).from_asset(v.uri.clone()))),
-            minimum_screen_height: v.minimum_screen_height,
-        })
+        .map(|(i, v)| ScreenSpaceLodVariant::load(server, i as u8, &v.uri, v.minimum_screen_height))
         .collect();
     let lod = ScreenSpaceLod::new(variants, asset.bounds[1]);
     // The impostor batch sits at the root without its rotation or scale, which its instance
@@ -305,12 +303,10 @@ fn report(
                     fade_out: range.end_margin,
                 });
             }
-            if let Some(switch) = tree.asset.impostor_switch() {
-                let start =
-                    (switch * scale * projection.pixels_per_metre()).min(IMPOSTOR_HANDOFF_METRES);
+            if let Some(threshold) = tree.asset.handoff_threshold() {
                 bands.push(LabBand {
                     representation: LabRepresentation::Impostor,
-                    fade_in: start * (1.0 - CROSSFADE_FRACTION)..start * (1.0 + CROSSFADE_FRACTION),
+                    fade_in: crossfade(projection.switch_distance(height, threshold, farthest)),
                     fade_out: f32::MAX..f32::MAX,
                 });
             }

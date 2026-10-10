@@ -1,0 +1,203 @@
+//! Builds a page's terrain material from its surfaces, weights and texture set.
+use crate::{
+    TerrainMacroVariation, TerrainMaterial, TerrainMaterialUniform, TerrainShadingMode,
+    stochastic_cache,
+};
+use bevy::{
+    asset::RenderAssetUsages,
+    image::{
+        ImageAddressMode, ImageFilterMode, ImageLoaderSettings, ImageSampler,
+        ImageSamplerDescriptor,
+    },
+    prelude::*,
+    render::render_resource::{Extent3d, TextureDimension, TextureFormat},
+};
+use world::{
+    CellCoord, TerrainProfile, TerrainSurface, TerrainSurfaceId, TerrainTextureSet,
+    TerrainWeightPage,
+};
+
+#[derive(Clone, Debug)]
+pub struct TerrainSurfaceLayer {
+    pub surface: TerrainSurface,
+    pub layer: u16,
+}
+
+pub struct PreparedTerrainMaterial {
+    pub material: Handle<TerrainMaterial>,
+    /// Page-local generated image. Remove it when the page leaves residency.
+    pub weight_image: Handle<Image>,
+}
+
+pub struct PrepareTerrainMaterialContext<'a> {
+    pub asset_server: &'a AssetServer,
+    pub images: &'a mut Assets<Image>,
+    pub materials: &'a mut Assets<TerrainMaterial>,
+    pub cell: CellCoord,
+    /// The logical cell represented by render-space origin.
+    pub origin_cell: CellCoord,
+    pub cell_size: f32,
+    pub page_surfaces: &'a [TerrainSurfaceId],
+    pub weight_pages: &'a [TerrainWeightPage],
+    pub profile: &'a TerrainProfile,
+    pub texture_set: &'a TerrainTextureSet,
+    /// Must be in the exact order stored by `page_surfaces`.
+    pub surfaces: &'a [TerrainSurfaceLayer],
+    pub macro_variation: TerrainMacroVariation,
+}
+
+pub fn prepare_terrain_material(
+    context: PrepareTerrainMaterialContext<'_>,
+) -> Result<PreparedTerrainMaterial, String> {
+    if !(1..=2).contains(&context.surfaces.len())
+        || context.page_surfaces.len() != context.surfaces.len()
+    {
+        return Err(format!(
+            "the initial terrain renderer supports one or two surfaces, got {}",
+            context.surfaces.len()
+        ));
+    }
+    if context.cell_size <= 0.0 || !context.cell_size.is_finite() {
+        return Err("terrain cell size must be finite and positive".into());
+    }
+
+    let weight_image = context.images.add(make_weight_image(
+        context.page_surfaces,
+        context.weight_pages,
+    )?);
+    let (base_color_uri, normal_material_uri, macro_variation_uri) =
+        context.texture_set.runtime_uris();
+    let base_color_array = load_repeat_image(context.asset_server, base_color_uri, true);
+    let normal_material_array = load_repeat_image(context.asset_server, normal_material_uri, false);
+    let macro_variation = load_repeat_image(context.asset_server, macro_variation_uri, false);
+
+    let first = &context.surfaces[0];
+    let second = context.surfaces.get(1).unwrap_or(first);
+    let material = context.materials.add(TerrainMaterial {
+        source_only: false,
+        environment: atmosphere::environment::fallback_parameters(),
+        cloud_shadows: None,
+        rain_shelter: None,
+        forest_shadow: None,
+        shading_mode: TerrainShadingMode::Production,
+        stochastic_cached: false,
+        prepared: false,
+        prepared_albedo: false,
+        source_weights: weight_image.clone(),
+        source_base_color_array: base_color_array.clone(),
+        stochastic_cache: stochastic_cache::fallback(),
+        canopy_bounds: Vec4::ZERO,
+        canopy_shading: Default::default(),
+        canopy_coverage: None,
+        settings: TerrainMaterialUniform {
+            cache_origins: Vec4::ZERO,
+            cache_size: UVec4::ZERO,
+            chunk_minimum: Vec2::new(
+                (i64::from(context.cell.x) - i64::from(context.origin_cell.x)) as f32
+                    * context.cell_size,
+                (i64::from(context.cell.z) - i64::from(context.origin_cell.z)) as f32
+                    * context.cell_size,
+            ),
+            chunk_extent: Vec2::splat(context.cell_size),
+            surface_layers: Vec4::new(
+                first.layer as f32,
+                second.layer as f32,
+                context.surfaces.len() as f32,
+                0.0,
+            ),
+            tile_sizes: Vec4::new(first.surface.tile_size, second.surface.tile_size, 0.0, 0.0),
+            normal_settings: Vec4::new(
+                first.surface.normal_y_sign,
+                first.surface.normal_strength,
+                second.surface.normal_y_sign,
+                second.surface.normal_strength,
+            ),
+            roughness_ranges: Vec4::new(
+                first.surface.roughness_min,
+                first.surface.roughness_max,
+                second.surface.roughness_min,
+                second.surface.roughness_max,
+            ),
+            macro_scales: Vec4::new(
+                context.profile.macro_scales[0],
+                context.profile.macro_scales[1],
+                context.profile.macro_scales[2],
+                context.profile.macro_albedo_strength,
+            ),
+            macro_settings: Vec4::new(
+                context.profile.macro_contrast,
+                context.macro_variation.shader_enabled(),
+                f32::from(first.surface.anti_tiling),
+                f32::from(second.surface.anti_tiling),
+            ),
+        },
+        weights: weight_image.clone(),
+        base_color_array,
+        normal_material_array,
+        macro_variation,
+    });
+    Ok(PreparedTerrainMaterial {
+        material,
+        weight_image,
+    })
+}
+
+pub(crate) fn make_weight_image(
+    surfaces: &[TerrainSurfaceId],
+    weight_pages: &[TerrainWeightPage],
+) -> Result<Image, String> {
+    let (resolution, rgba) = if surfaces.len() == 1 {
+        (1_u32, vec![255, 0, 0, 0])
+    } else {
+        let Some(weights) = weight_pages.first() else {
+            return Err("blended terrain page has no weight map".into());
+        };
+        let expected = usize::from(weights.resolution).pow(2) * 4;
+        if weights.resolution < 2 || weights.rgba.len() != expected {
+            return Err("terrain weight map has invalid dimensions".into());
+        }
+        (u32::from(weights.resolution), weights.rgba.clone())
+    };
+    let mut image = Image::new(
+        Extent3d {
+            width: resolution,
+            height: resolution,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        rgba,
+        TextureFormat::Rgba8Unorm,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+        address_mode_u: ImageAddressMode::ClampToEdge,
+        address_mode_v: ImageAddressMode::ClampToEdge,
+        mag_filter: ImageFilterMode::Linear,
+        min_filter: ImageFilterMode::Linear,
+        mipmap_filter: ImageFilterMode::Linear,
+        ..default()
+    });
+    Ok(image)
+}
+
+pub(crate) fn load_repeat_image(
+    asset_server: &AssetServer,
+    uri: &str,
+    is_srgb: bool,
+) -> Handle<Image> {
+    asset_server
+        .load_builder()
+        .with_settings(move |settings: &mut ImageLoaderSettings| {
+            settings.is_srgb = is_srgb;
+            settings.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+                address_mode_u: ImageAddressMode::Repeat,
+                address_mode_v: ImageAddressMode::Repeat,
+                mag_filter: ImageFilterMode::Linear,
+                min_filter: ImageFilterMode::Linear,
+                mipmap_filter: ImageFilterMode::Linear,
+                anisotropy_clamp: 8,
+                ..default()
+            });
+        })
+        .load(uri.to_owned())
+}

@@ -101,8 +101,9 @@ impl MistMap {
         }
     }
 
+    #[cfg(test)]
     /// The texel holding a world XZ position, clamped to the map.
-    pub fn texel_at(&self, world: [f64; 2]) -> [f32; 4] {
+    pub(crate) fn texel_at(&self, world: [f64; 2]) -> [f32; 4] {
         let cell = |axis: usize, side: u32| {
             ((world[axis] - self.origin[axis]) / f64::from(self.metres_per_texel))
                 .floor()
@@ -270,10 +271,11 @@ fn box_pass(values: &[f32], w: usize, h: usize, radius: usize, along_x: bool) ->
     out
 }
 
+#[cfg(test)]
 /// Mean share of full mist density along a straight segment through the mist's soft top, as
 /// `mist_share` in the shader. `ua` and `ub` are the segment's ends in fade widths below the
 /// top: density rises linearly from 0 at the top to full one fade width below it.
-pub fn mist_share(ua: f32, ub: f32) -> f32 {
+pub(crate) fn mist_share(ua: f32, ub: f32) -> f32 {
     // Integral of the density profile clamp(u, 0, 1).
     let integral = |u: f32| {
         if u <= 0.0 {
@@ -290,10 +292,18 @@ pub fn mist_share(ua: f32, ub: f32) -> f32 {
     (integral(ua) - integral(ub)) / (ua - ub)
 }
 
+#[cfg(test)]
 /// Optical depth of exponential ground haze along a ray, as `haze_depth` in the shader:
 /// extinction `density` per metre at `base` and below, thinning by e every `height` metres
 /// above it. The ray starts at height `y`, climbs `dy` per metre and runs `length` metres.
-pub fn haze_depth(density: f32, base: f32, height: f32, y: f32, dy: f32, length: f32) -> f32 {
+pub(crate) fn haze_depth(
+    density: f32,
+    base: f32,
+    height: f32,
+    y: f32,
+    dy: f32,
+    length: f32,
+) -> f32 {
     let start = density * (-(y - base).max(0.0) / height).exp();
     // Climb in thinning heights, stopping where the ray would sink below the base.
     let climb = (dy * length / height).max(-(y - base).max(0.0) / height);

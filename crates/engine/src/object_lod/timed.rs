@@ -9,7 +9,7 @@
 //! instance's slot in [`ImpostorFades`], found by world position. An object whose cell has
 //! just loaded fades in from its impostor, which drew while it was missing.
 use super::{ForcedLod, LodProjection};
-use crate::tree_impostor::ImpostorFades;
+use crate::trees::impostor::ImpostorFades;
 use bevy::{camera::visibility::VisibilityRange, math::DVec2};
 
 pub(crate) const FADE_SECONDS: f32 = 0.6;

@@ -22,7 +22,7 @@ pub(super) fn collect_view(
     origin: Res<WorldOrigin>,
     catalog: Res<WorldCatalog>,
     detail: Res<WorldDetailDemand>,
-    cameras: Query<(&Camera, &GlobalTransform), With<WorldViewCamera>>,
+    camera: crate::ActiveWorldView,
     scene: Option<Res<vegetation_render::VegetationSceneState>>,
     wind: Option<Res<vegetation_render::VegetationWind>>,
     mut view: ResMut<SourceView>,
@@ -34,11 +34,11 @@ pub(super) fn collect_view(
     let Some(space) = origin.space().and_then(|id| catalog.world_space(id)) else {
         return;
     };
-    let Some((_, transform)) = cameras.iter().find(|(c, _)| c.is_active) else {
+    let Some(camera) = camera.active() else {
         return;
     };
     let base = origin.cell().origin(space.cell_size);
-    view.eye = transform.translation().as_dvec3() + DVec3::new(base[0], 0., base[1]);
+    view.eye = camera.transform.translation().as_dvec3() + DVec3::new(base[0], 0., base[1]);
     let wind = wind.as_deref().copied().unwrap_or_default();
     let vegetation = scene
         .as_ref()
@@ -131,6 +131,7 @@ fn distance_squared(eye: DVec3, descriptor: &CellDescriptor, size: f32) -> f64 {
     eye.distance_squared(eye.clamp(low, high))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn demand(
     descriptors: &[CellDescriptor],
     position: WorldPosition,
@@ -212,6 +213,146 @@ pub(super) fn compare(a: &(PageKey, Priority), b: &(PageKey, Priority)) -> std::
         .cmp(&b.1.0)
         .then_with(|| a.1.1.total_cmp(&b.1.1))
         .then_with(|| a.0.cmp(&b.0))
+}
+
+pub(super) fn request_cell_index(
+    source_view: Res<source_demand::SourceView>,
+    worker: Option<Res<WorldDatabaseWorker>>,
+    active_space: Res<ActiveWorldSpace>,
+    viewpoint: Res<WorldViewpoint>,
+    mut stream: ResMut<WorldStream>,
+) {
+    if !matches!(stream.phase, StreamPhase::Ready) || stream.requested_index.is_some() {
+        return;
+    }
+    let Some(manifest) = stream.manifest.as_ref() else {
+        return;
+    };
+    let Some(space_id) = active_space.current else {
+        return;
+    };
+    let Some(space) = manifest.world_space(space_id) else {
+        stream.phase = StreamPhase::Failed(format!(
+            "active world space {:?} is missing from the runtime manifest",
+            space_id
+        ));
+        return;
+    };
+    let Some(position) = viewpoint
+        .position
+        .filter(|position| position.space == space_id)
+    else {
+        return;
+    };
+    let generation = manifest.generation_id.clone();
+    let windows = match source_demand::windows(position, space, &source_view, stream.height_only) {
+        Ok(windows) => {
+            stream.demand_error = None;
+            windows
+        }
+        Err(error) => {
+            stream.demand_error = Some(error);
+            return;
+        }
+    };
+    if stream.index_windows.as_ref() == Some(&windows) {
+        return;
+    }
+    let Some(worker) = worker else {
+        return;
+    };
+    let request = DatabaseRequest::ReadIndex {
+        generation,
+        space: space_id,
+        windows: windows.clone(),
+    };
+    match worker.send(request) {
+        Ok(id) => {
+            stream.index_windows = Some(windows);
+            stream.requested_index = Some((id, space_id));
+        }
+        Err(NotSent::Full) => {}
+        Err(NotSent::Stopped) => {
+            stream.phase = StreamPhase::Failed("database request channel closed".into());
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn calculate_page_demand(
+    source_view: Res<source_demand::SourceView>,
+    worker: Option<Res<WorldDatabaseWorker>>,
+    config: Res<WorldStreamingConfig>,
+    detail_demand: Res<WorldDetailDemand>,
+    active_space: Res<ActiveWorldSpace>,
+    origin: Res<WorldOrigin>,
+    camera: crate::ActiveWorldView,
+    viewpoint: Res<WorldViewpoint>,
+    mut stream: ResMut<WorldStream>,
+    mut residency: ResMut<SourceResidency>,
+) {
+    if !matches!(stream.phase, StreamPhase::Ready) {
+        return;
+    }
+    let Some(manifest) = stream.manifest.as_ref() else {
+        return;
+    };
+    let Some(space_id) = active_space.current else {
+        return;
+    };
+    let Some(space) = manifest.world_space(space_id) else {
+        return;
+    };
+    let cell_size = space.cell_size;
+    let generation = manifest.generation_id.clone();
+    let Some(position) = viewpoint
+        .position
+        .filter(|position| position.space == space_id)
+    else {
+        return;
+    };
+    if stream.demand_error.is_some() {
+        return;
+    }
+    let priorities = source_demand::demand(
+        &stream.descriptors,
+        position,
+        cell_size,
+        origin.cell,
+        camera.active().map(|view| view.frustum),
+        detail_demand.enabled(),
+        config.gameplay_pages,
+        stream.height_only,
+        &source_view,
+    );
+    residency.set_demand(priorities);
+
+    let Some(worker) = worker else {
+        return;
+    };
+    if let Err(error) = residency.request_missing(&worker, &generation, stream.height_only) {
+        stream.phase = StreamPhase::Failed(error);
+    }
+}
+
+pub(super) fn cell_intersects_frustum(
+    frustum: &Frustum,
+    descriptor: &CellDescriptor,
+    origin_cell: CellCoord,
+    cell_size: f32,
+) -> bool {
+    let [x, z] = descriptor.cell.offset_from(origin_cell, cell_size);
+    let center = [x as f32 + cell_size * 0.5, z as f32 + cell_size * 0.5];
+    let vertical_extent = ((descriptor.maximum_y - descriptor.minimum_y) * 0.5).max(0.1);
+    let aabb = Aabb {
+        center: Vec3A::new(
+            center[0],
+            (descriptor.minimum_y + descriptor.maximum_y) * 0.5,
+            center[1],
+        ),
+        half_extents: Vec3A::new(cell_size * 0.5, vertical_extent, cell_size * 0.5),
+    };
+    frustum.intersects_obb_identity(&aabb)
 }
 
 #[cfg(test)]
@@ -347,7 +488,7 @@ mod tests {
             );
         let select = |view: &SourceView, camera: &Frustum| {
             demand(
-                &[caster.clone()],
+                std::slice::from_ref(&caster),
                 position(),
                 8.,
                 CellCoord::ZERO,

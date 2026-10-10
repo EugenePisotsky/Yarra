@@ -1,21 +1,22 @@
 //! Validated game launch configuration. Process arguments are read only by main.
+mod flags;
+
 use bevy::prelude::*;
-use std::{
-    collections::BTreeMap,
-    ffi::OsString,
-    path::{Path, PathBuf},
-};
+pub(crate) use flags::Args;
+use std::{ffi::OsString, path::PathBuf};
+use vegetation_render::VegetationDensityMode;
 
 #[derive(Resource, Clone, Default)]
 pub(crate) struct LaunchOptions {
     pub help: bool,
+    pub mode: RunMode,
     pub world_db: Option<PathBuf>,
     pub start_view: Option<PathBuf>,
     pub story: Option<PathBuf>,
     pub fps: u32,
     pub upscaler: upscaling::UpscaleMethod,
     pub clouds: engine::CloudQuality,
-    pub density: vegetation_render::VegetationDensityMode,
+    pub density: VegetationDensityMode,
     pub weather: engine::WeatherStart,
     /// Day phase to start at instead of the authored time, 0..1.
     pub time: Option<f32>,
@@ -34,7 +35,6 @@ pub(crate) struct LaunchOptions {
     pub counters: bool,
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub input_trace: bool,
-    pub streaming_smoke: bool,
     pub debug_world_switch: bool,
     /// How many LODs coarser than the drawn one instanced trees cast shadows from.
     pub tree_shadow_lod: usize,
@@ -79,8 +79,24 @@ pub(crate) struct LodLabOptions {
     pub settle: u32,
 }
 
-/// Startup composition; Full preserves the existing instrumentation by default.
+/// Who holds the camera and decides when the run ends, chosen once from the flags.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum RunMode {
+    /// The player plays; a Metal capture may still record a frame.
+    #[default]
+    Play,
+    /// A scripted camera route, optionally timed by a profile.
+    Repro,
+    /// A timed or diagnostic profile from the start view.
+    Profile,
+    LodLab,
+    LookCapture,
+    /// The demo-world streaming regression.
+    Smoke,
+}
+
+/// Startup composition; Full preserves the existing instrumentation by default.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum DiagnosticsMode {
     Off,
     Panel,
@@ -90,7 +106,7 @@ pub(crate) enum DiagnosticsMode {
 
 #[derive(Clone)]
 pub(crate) struct ReproOptions {
-    pub name: String,
+    pub route: crate::repro::Route,
     pub prepass: bool,
     pub hide_ui: bool,
     pub frame_clock: bool,
@@ -100,783 +116,370 @@ pub(crate) struct ReproOptions {
     pub snapshot_frames: Vec<u32>,
 }
 
-// One registry drives accepted spelling, value requirements and --help.
-const FLAGS: &[(&str, bool, &str)] = &[
-    (
-        "--help",
-        false,
-        "Show launch options without starting the renderer",
-    ),
-    ("--world-db", true, "FILE: cooked runtime database"),
-    ("--start-view", true, "FILE: logical camera bookmark"),
-    (
-        "--story",
-        true,
-        "DIR: authored gameplay project; adds a guard and gate near the start",
-    ),
-    (
-        "--fps",
-        true,
-        "0 or 15..240: gameplay cap (default 60); 0 follows the display",
-    ),
-    (
-        "--upscaler",
-        true,
-        "auto | linear | metalfx-spatial | metalfx-temporal",
-    ),
-    ("--cloud-quality", true, "off | balanced | high"),
-    ("--grass-density", true, "balanced | full | authored"),
-    (
-        "--weather",
-        true,
-        "auto | authored | clear | scattered | overcast | rain | storm; profiles, repros and captures default to authored",
-    ),
-    (
-        "--time",
-        true,
-        "HH:MM: start at this time of day instead of the authored one",
-    ),
-    (
-        "--day-clock",
-        true,
-        "on | off: let the time of day pass; profiles, repros and captures default to off",
-    ),
-    (
-        "--canopy-look",
-        true,
-        "FILE: canopy appearance, captured by F1",
-    ),
-    (
-        "--diagnostics",
-        true,
-        "off | panel | full (default): omit diagnostics, F1/frame stats only, or F1 + CPU/GPU timings",
-    ),
-    ("--performance-open", false, "Open F1 at startup"),
-    (
-        "--render-audit",
-        false,
-        "Open F1 and enable structured audit logs",
-    ),
-    (
-        "--render-console",
-        false,
-        "Also send iOS audit output to stderr",
-    ),
-    ("--timing-log", false, "Log CPU/render timing summaries"),
-    (
-        "--gpu-timing-detail",
-        false,
-        "Enable detailed GPU pass probes",
-    ),
-    (
-        "--gpu-timing-off",
-        false,
-        "Disable GPU timestamp instrumentation",
-    ),
-    (
-        "--metalfx-timing-log",
-        false,
-        "Log native Temporal command-buffer timing",
-    ),
-    (
-        "--grass-counters",
-        false,
-        "Enable optional GPU grass statistics",
-    ),
-    (
-        "--trace-camera-input",
-        false,
-        "macOS: bounded native input trace",
-    ),
-    (
-        "--streaming-smoke",
-        false,
-        "Run demo-world traversal/residency regression and exit",
-    ),
-    (
-        "--debug-world-switch",
-        false,
-        "Enable the demo Tab world-space switch",
-    ),
-    (
-        "--tree-shadow-lod",
-        true,
-        "0..2: LOD steps coarser that instanced trees cast shadows from (default 0)",
-    ),
-    (
-        "--frame-pacing-timer",
-        false,
-        "Compare timer pacing with native display pacing",
-    ),
-    (
-        "--terrain-legacy",
-        false,
-        "Use the legacy nearby world renderer",
-    ),
-    (
-        "--terrain-reference",
-        false,
-        "Use reference terrain material preparation",
-    ),
-    (
-        "--terrain-procedural",
-        false,
-        "Disable stochastic lookup cache",
-    ),
-    (
-        "--terrain-prepared-universal",
-        false,
-        "Prefer portable prepared textures over native ASTC",
-    ),
-    ("--terrain-near-off", false, "Disable hierarchy near detail"),
-    (
-        "--grass-vertex-reference",
-        false,
-        "Disable prepared blade deformation",
-    ),
-    (
-        "--grass-placement-reference",
-        false,
-        "Disable early candidate rejection",
-    ),
-    (
-        "--grass-candidate-reference",
-        false,
-        "Disable source acceptance cache",
-    ),
-    (
-        "--grass-prepared-blades",
-        true,
-        "32768..524288: preparation capacity experiment",
-    ),
-    (
-        "--msaa-store-reference",
-        false,
-        "Preserve multisample color for comparison",
-    ),
-    (
-        "--temporal-standard-output",
-        false,
-        "Compare standard Temporal tone-map output",
-    ),
-    (
-        "--metal-capture",
-        true,
-        "PATH.gputrace: one native Apple GPU capture",
-    ),
-    (
-        "--render-repro",
-        true,
-        "NAME: repeatable route (see docs/PERFORMANCE.md)",
-    ),
-    (
-        "--render-frames",
-        true,
-        "N >= 900: stop repro at this frame",
-    ),
-    (
-        "--render-snapshot",
-        true,
-        "PATH: screenshot output for a repro",
-    ),
-    (
-        "--render-snapshot-frames",
-        true,
-        "N,N: capture frames after warmup and before exit",
-    ),
-    ("--render-prepass", false, "Enable depth prepass in a repro"),
-    (
-        "--render-frame-clock",
-        false,
-        "Advance a repro's route by frame count at 60 fps, so captures match between builds",
-    ),
-    (
-        "--render-temporal-view",
-        true,
-        "motion | depth: show MetalFX Temporal's motion or depth input in a repro",
-    ),
-    ("--render-ui-off", false, "Hide UI during a repro"),
-    (
-        "--resolution-scale",
-        true,
-        "1|0.75|0.5|0.33: render scale at launch (F1 changes it later)",
-    ),
-    (
-        "--lod-lab",
-        true,
-        "ASSET: study one tree's LODs (catalog key pack/asset) at the --start-view focus",
-    ),
-    (
-        "--lod-lab-stand",
-        true,
-        "ASSET: surround the tree with a stand of this asset",
-    ),
-    (
-        "--lod-lab-stand-count",
-        true,
-        "N: trees in the stand (default 24)",
-    ),
-    (
-        "--lod-lab-spacing",
-        true,
-        "METRES: stand spacing (default 6)",
-    ),
-    (
-        "--lod-lab-capture",
-        true,
-        "DIR: capture every LOD switch from both sides and fixed distances, then exit",
-    ),
-    (
-        "--lod-lab-screenshot",
-        true,
-        "FILE: save the window (panel included) once the trees have drawn, then exit",
-    ),
-    (
-        "--lod-lab-yaws",
-        true,
-        "DEGREES,...: camera bearings from the sun's; 0 has the sun behind the camera (default 0,90,180)",
-    ),
-    (
-        "--lod-lab-scale",
-        true,
-        "SCALE: the tree's scale, 0.25..4 (default 1); smaller trees switch nearer",
-    ),
-    (
-        "--lod-lab-pitch",
-        true,
-        "DEGREES: camera elevation above the tree's root (default 3)",
-    ),
-    (
-        "--lod-lab-distances",
-        true,
-        "METRES,...: fixed capture distances (default 10,25,50,100,200,400,800)",
-    ),
-    (
-        "--lod-lab-settle",
-        true,
-        "FRAMES: frames drawn before each capture (default 30)",
-    ),
-    (
-        "--look-capture",
-        true,
-        "DIR: screenshot the start view once per --look-variants presentation, then exit",
-    ),
-    (
-        "--look-variants",
-        true,
-        "NAME[:ev=EV100,tone=tony|agx|neutral|filmic|aces|boring|reinhard|none,ambient=SCALE,sun=SCALE,canopy=0..1,auto=on|off];...",
-    ),
-    (
-        "--look-settle",
-        true,
-        "SECONDS: world drawing time before the first look capture (default 25)",
-    ),
-    (
-        "--profile-seconds",
-        true,
-        "2..3600: timed measurement duration",
-    ),
-    ("--profile-warmup", true, "1..600: warmup seconds"),
-    (
-        "--profile-size",
-        true,
-        "game | WIDTHxHEIGHT: internal pixels",
-    ),
-    (
-        "--profile-surface",
-        true,
-        "WIDTHxHEIGHT: physical window pixels",
-    ),
-    ("--profile-window", true, "fullscreen | windowed"),
-    (
-        "--profile-fps",
-        true,
-        "0 or 15..240: profile deadline; 0 uncapped unless native pacing",
-    ),
-    (
-        "--profile-native-pacing",
-        false,
-        "Keep gameplay pacing; profile FPS is the reference deadline",
-    ),
-    ("--profile-msaa", true, "1 | 2 | 4"),
-    ("--profile-grass", true, "full | off"),
-    ("--profile-objects", true, "on | off"),
-    ("--profile-terrain", true, "on | off"),
-    ("--profile-bloom", true, "on | off"),
-    ("--profile-auto-exposure", true, "on | off"),
-    ("--profile-fog", true, "on | off"),
-    ("--profile-particles", true, "on | off"),
-    ("--profile-shafts", true, "on | off"),
-    (
-        "--profile-temporal-bypass",
-        false,
-        "Bypass Temporal reconstruction for attribution",
-    ),
-    (
-        "--profile-diagnostic",
-        false,
-        "Finite capture presentation; requires capture/frame limit",
-    ),
-];
-
 impl LaunchOptions {
     pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Self, String> {
-        let mut values = BTreeMap::new();
-        let mut args = args.into_iter();
-        while let Some(arg) = args.next() {
-            let name = arg.to_str().ok_or("Option names must be UTF-8")?;
-            let name = if name == "-h" { "--help" } else { name };
-            let Some(&(key, takes_value, _)) = FLAGS.iter().find(|f| f.0 == name) else {
-                return Err(format!(
-                    "Unknown option {name:?}. Use --help to list supported options."
-                ));
-            };
-            let value = if takes_value {
-                let value = args
-                    .next()
-                    .ok_or_else(|| format!("{key} requires a value"))?;
-                if value.to_string_lossy().starts_with("--") || value.is_empty() {
-                    return Err(format!("{key} requires a value"));
-                }
-                value
-            } else {
-                OsString::new()
-            };
-            if values.insert(key, value).is_some() {
-                return Err(format!("Duplicate option {key}"));
-            }
-        }
-        if values.contains_key("--help") {
+        let args = Args::collect(args)?;
+        if args.has("--help") {
             return Ok(Self {
                 help: true,
                 ..default()
             });
         }
-        let has = |key| values.contains_key(key);
-        let path = |key| values.get(key).map(PathBuf::from);
-        let value = |key| -> Result<Option<&str>, String> {
-            values
-                .get(key)
-                .map(|s| {
-                    s.to_str()
-                        .ok_or_else(|| format!("{key} requires a UTF-8 value"))
-                })
-                .transpose()
-        };
-        // Following a 120 Hz display kept the GPU busy whenever it had headroom, and loud.
-        let fps = value("--fps")?
-            .unwrap_or("60")
-            .parse::<u32>()
-            .map_err(|_| "--fps requires 0 or 15..240")?;
-        if fps != 0 && !(15..=240).contains(&fps) {
-            return Err("--fps requires 0 or 15..240".into());
+        let diagnostics = args.choice(
+            "--diagnostics",
+            "full",
+            &[
+                ("off", DiagnosticsMode::Off),
+                ("panel", DiagnosticsMode::Panel),
+                ("full", DiagnosticsMode::Full),
+            ],
+        )?;
+        args.check_needs(diagnostics)?;
+        let mode = RunMode::of(&args)?;
+        if args.has("--gpu-timing-off") && args.has("--gpu-timing-detail") {
+            return Err("GPU timing off conflicts with detailed GPU timing".into());
         }
-        let tree_shadow_lod = value("--tree-shadow-lod")?
-            .map(|v| {
-                v.parse::<usize>()
-                    .ok()
-                    .filter(|n| *n <= 2)
-                    .ok_or("--tree-shadow-lod requires 0..2")
-            })
-            .transpose()?
-            .unwrap_or(0);
-        let resolution_scale = value("--resolution-scale")?
-            .map(|v| match v {
-                "1" | "1.0" => Ok(1.0),
-                "0.75" => Ok(0.75),
-                "0.5" => Ok(0.5),
-                "0.33" => Ok(1.0 / 3.0),
-                _ => Err("--resolution-scale requires 1, 0.75, 0.5 or 0.33"),
-            })
-            .transpose()?;
-        let list = |key: &'static str, default: &[f32]| -> Result<Vec<f32>, String> {
-            value(key)?.map_or(Ok(default.to_vec()), |v| {
-                v.split(',')
-                    .map(|n| n.trim().parse::<f32>().ok().filter(|n| n.is_finite()))
-                    .collect::<Option<Vec<_>>>()
-                    .filter(|l| !l.is_empty())
-                    .ok_or_else(|| format!("{key} requires comma-separated numbers"))
-            })
-        };
-        let number = |key: &'static str, default: f32, range: std::ops::RangeInclusive<f32>| {
-            value(key)?.map_or(Ok(default), |v| {
-                v.parse::<f32>()
-                    .ok()
-                    .filter(|n| range.contains(n))
-                    .ok_or_else(|| format!("{key} requires {}..{}", range.start(), range.end()))
-            })
-        };
-        if has("--lod-lab-capture") && has("--lod-lab-screenshot") {
-            return Err(
-                "--lod-lab-screenshot shows the interactive lab; drop --lod-lab-capture".into(),
-            );
+        if args.has("--trace-camera-input") && !cfg!(target_os = "macos") {
+            return Err("Camera input tracing requires macOS".into());
         }
-        let lod_lab = if let Some(asset) = value("--lod-lab")? {
-            if !has("--start-view") {
-                return Err("--lod-lab places the tree at the --start-view focus".into());
-            }
-            if has("--render-repro") || has("--profile-seconds") || has("--streaming-smoke") {
-                return Err(
-                    "--lod-lab owns the camera; it cannot share a repro, profile or smoke run"
-                        .into(),
-                );
-            }
-            let distances = list(
-                "--lod-lab-distances",
-                &[10., 25., 50., 100., 200., 400., 800.],
-            )?;
-            if distances.iter().any(|d| !(2.0..=4000.0).contains(d)) {
-                return Err("--lod-lab-distances must lie within 2..4000 metres".into());
-            }
-            Some(LodLabOptions {
-                asset: asset.to_owned(),
-                stand: value("--lod-lab-stand")?
-                    .map(|stand| -> Result<_, String> {
-                        Ok((
-                            stand.to_owned(),
-                            number("--lod-lab-stand-count", 24.0, 1.0..=400.0)? as usize,
-                            number("--lod-lab-spacing", 6.0, 1.0..=50.0)?,
-                        ))
-                    })
-                    .transpose()?,
-                capture: path("--lod-lab-capture"),
-                screenshot: path("--lod-lab-screenshot"),
-                yaws: list("--lod-lab-yaws", &[0., 90., 180.])?,
-                pitch: number("--lod-lab-pitch", 3.0, -10.0..=80.0)?,
-                scale: number("--lod-lab-scale", 1.0, 0.25..=4.0)?,
-                distances,
-                settle: number("--lod-lab-settle", 30.0, 1.0..=600.0)? as u32,
-            })
-        } else {
-            if FLAGS
-                .iter()
-                .any(|f| f.0.starts_with("--lod-lab-") && has(f.0))
-            {
-                return Err("--lod-lab-* options require --lod-lab".into());
-            }
-            None
-        };
-        if lod_lab.as_ref().is_some_and(|l| l.stand.is_none())
-            && (has("--lod-lab-stand-count") || has("--lod-lab-spacing"))
-        {
-            return Err(
-                "--lod-lab-stand-count and --lod-lab-spacing require --lod-lab-stand".into(),
-            );
-        }
-        let upscaler = match value("--upscaler")?.unwrap_or("auto") {
-            "auto" => upscaling::UpscaleMethod::Auto,
-            "linear" => upscaling::UpscaleMethod::Linear,
-            "metalfx-spatial" => upscaling::UpscaleMethod::MetalFxSpatial,
-            "metalfx-temporal" => upscaling::UpscaleMethod::MetalFxTemporal,
-            _ => {
-                return Err(
-                    "--upscaler requires auto, linear, metalfx-spatial or metalfx-temporal".into(),
-                );
-            }
-        };
-        let clouds = match value("--cloud-quality")?.unwrap_or("balanced") {
-            "off" => engine::CloudQuality::Off,
-            "balanced" => engine::CloudQuality::Balanced,
-            "high" => engine::CloudQuality::High,
-            _ => return Err("--cloud-quality requires off, balanced or high".into()),
-        };
-        let density = match value("--grass-density")?.unwrap_or("balanced") {
-            "balanced" => vegetation_render::VegetationDensityMode::Balanced,
-            "full" => vegetation_render::VegetationDensityMode::FullReference,
-            "authored" => vegetation_render::VegetationDensityMode::Authored,
-            _ => return Err("--grass-density requires balanced, full or authored".into()),
-        };
-        let weather = value("--weather")?
-            .map(|name| match name {
-                "auto" => Ok(engine::WeatherStart::Automatic),
-                "authored" => Ok(engine::WeatherStart::Authored),
-                _ => engine::WeatherKind::ALL
-                    .into_iter()
-                    .find(|kind| kind.label().eq_ignore_ascii_case(name))
-                    .map(engine::WeatherStart::Manual)
-                    .ok_or_else(|| {
-                        "--weather requires auto, authored, clear, scattered, overcast, rain or storm"
-                            .to_string()
-                    }),
-            })
-            .transpose()?;
-        let time = value("--time")?
-            .map(|v| {
-                v.split_once(':')
-                    .and_then(|(h, m)| Some((h.parse::<u32>().ok()?, m.parse::<u32>().ok()?)))
-                    .filter(|&(h, m)| h < 24 && m < 60 && v.len() <= 5)
-                    .map(|(h, m)| (h * 60 + m) as f32 / 1440.0)
-                    .ok_or("--time requires HH:MM")
-            })
-            .transpose()?;
-        let day_clock = value("--day-clock")?
-            .map(|v| match v {
-                "on" => Ok(true),
-                "off" => Ok(false),
-                _ => Err("--day-clock requires on or off"),
-            })
-            .transpose()?;
-        let diagnostics = match value("--diagnostics")?.unwrap_or("full") {
-            "off" => DiagnosticsMode::Off,
-            "panel" => DiagnosticsMode::Panel,
-            "full" => DiagnosticsMode::Full,
-            _ => return Err("--diagnostics requires off, panel or full".into()),
-        };
-        if diagnostics == DiagnosticsMode::Off {
-            for flag in [
-                "--performance-open",
-                "--render-audit",
-                "--grass-counters",
-                "--metalfx-timing-log",
-                "--trace-camera-input",
-            ] {
-                if has(flag) {
-                    return Err(format!("{flag} conflicts with --diagnostics off"));
-                }
-            }
-        }
-        if diagnostics != DiagnosticsMode::Full {
-            for flag in ["--timing-log", "--gpu-timing-detail", "--gpu-timing-off"] {
-                if has(flag) {
-                    return Err(format!("{flag} requires --diagnostics full"));
-                }
-            }
-        }
-        let prepared_blades = value("--grass-prepared-blades")?
-            .map(|v| {
-                v.parse::<u64>()
-                    .ok()
-                    .filter(|n| (32768..=524288).contains(n))
-                    .ok_or("--grass-prepared-blades requires 32768..524288")
-            })
-            .transpose()?;
-        let profile_args: Vec<String> = values
-            .iter()
-            .flat_map(|(k, v)| {
-                let mut pair = vec![k.to_string()];
-                if !v.is_empty() {
-                    pair.push(v.to_string_lossy().into_owned());
-                }
-                pair
-            })
-            .collect();
-        let profile = crate::profile::ProfileSettings::parse(&profile_args)?;
-        if profile.is_none() && values.keys().any(|k| k.starts_with("--profile-")) {
-            return Err("Profile options require --profile-seconds or --profile-diagnostic".into());
-        }
-        if profile.is_some() && has("--fps") && !has("--profile-native-pacing") {
+        let resolution_scale = resolution_scale(&args)?;
+        let upscaler = args.choice(
+            "--upscaler",
+            "auto",
+            &[
+                ("auto", upscaling::UpscaleMethod::Auto),
+                ("linear", upscaling::UpscaleMethod::Linear),
+                ("metalfx-spatial", upscaling::UpscaleMethod::MetalFxSpatial),
+                (
+                    "metalfx-temporal",
+                    upscaling::UpscaleMethod::MetalFxTemporal,
+                ),
+            ],
+        )?;
+        let profile = crate::profile::ProfileSettings::parse(&args, resolution_scale)?;
+        if profile.is_some() && args.has("--fps") && !args.has("--profile-native-pacing") {
             return Err(
                 "Use --profile-fps for a profile, or --profile-native-pacing to preserve --fps"
                     .into(),
             );
         }
-        if has("--gpu-timing-off") && has("--gpu-timing-detail") {
-            return Err("GPU timing off conflicts with detailed GPU timing".into());
-        }
-        if has("--profile-temporal-bypass") && upscaler != upscaling::UpscaleMethod::MetalFxTemporal
+        if args.has("--profile-temporal-bypass")
+            && upscaler != upscaling::UpscaleMethod::MetalFxTemporal
         {
             return Err("--profile-temporal-bypass requires --upscaler metalfx-temporal".into());
         }
-        let repro = if let Some(name) = value("--render-repro")? {
-            if !crate::repro::NAMES.contains(&name) {
-                return Err(format!(
-                    "Unknown repro {name:?}; expected {}",
-                    crate::repro::NAMES.join(", ")
-                ));
-            }
-            if name.starts_with("landscape") && !has("--start-view") {
-                return Err("Landscape repro requires --start-view".into());
-            }
-            if name == "actor-walk" && !has("--start-view") {
-                return Err("actor-walk requires --start-view with a route".into());
-            }
-            let frames = value("--render-frames")?
-                .map(|v| {
-                    v.parse::<u32>()
-                        .map_err(|_| "--render-frames requires an integer")
-                })
-                .transpose()?;
-            if frames.is_some_and(|n| n < 900) {
-                return Err("--render-frames must be at least 900".into());
-            }
-            let snapshot_frames = value("--render-snapshot-frames")?
-                .unwrap_or("600")
-                .split(',')
-                .map(|v| {
-                    v.parse::<u32>()
-                        .map_err(|_| "Snapshot frames must be comma-separated integers")
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            if snapshot_frames
-                .iter()
-                .any(|&n| n < 300 || frames.is_some_and(|end| n >= end))
-            {
-                return Err("Snapshot frames must follow warmup (>=300) and precede exit".into());
-            }
-            if has("--render-snapshot-frames") && !has("--render-snapshot") {
-                return Err("Snapshot frames require --render-snapshot".into());
-            }
-            let temporal_view = match value("--render-temporal-view")? {
-                None => upscaling::temporal::TemporalDebug::Off,
-                Some("motion") => upscaling::temporal::TemporalDebug::Motion,
-                Some("depth") => upscaling::temporal::TemporalDebug::Depth,
-                Some(_) => return Err("--render-temporal-view requires motion or depth".into()),
-            };
-            Some(ReproOptions {
-                name: name.into(),
-                prepass: has("--render-prepass"),
-                hide_ui: has("--render-ui-off"),
-                frame_clock: has("--render-frame-clock"),
-                temporal_view,
-                frames,
-                snapshot: path("--render-snapshot"),
-                snapshot_frames,
-            })
-        } else {
-            if [
-                "--render-frames",
-                "--render-snapshot",
-                "--render-snapshot-frames",
-                "--render-prepass",
-                "--render-ui-off",
-                "--render-frame-clock",
-                "--render-temporal-view",
-            ]
-            .iter()
-            .any(|k| has(k))
-            {
-                return Err(
-                    "Frame/snapshot/prepass/UI repro options require --render-repro".into(),
-                );
-            }
-            None
-        };
-        if has("--streaming-smoke")
-            && (profile.is_some() || repro.is_some() || has("--metal-capture"))
-        {
-            return Err("Streaming smoke cannot share control/exit ownership with a profile, repro or capture".into());
-        }
-        if has("--trace-camera-input") && !cfg!(target_os = "macos") {
-            return Err("Camera input tracing requires macOS".into());
-        }
-        if let Some(capture) = path("--metal-capture") {
-            if !cfg!(target_vendor = "apple") {
-                return Err("Metal capture requires an Apple device".into());
-            }
-            if capture.extension().and_then(|s| s.to_str()) != Some("gputrace") {
-                return Err("Metal capture requires a .gputrace path".into());
-            }
-            if !(capture.is_absolute()
-                || cfg!(target_os = "ios") && capture.components().count() == 1)
-            {
-                return Err(
-                    "Metal capture requires an absolute path (or a plain filename on iOS)".into(),
-                );
-            }
-            if capture.is_absolute() && capture.exists() {
-                return Err("Metal capture output already exists".into());
-            }
-        }
-        let look_capture = match path("--look-capture") {
-            Some(dir) => {
-                if !has("--start-view") {
-                    return Err("--look-capture shows the --start-view".into());
-                }
-                if lod_lab.is_some() || repro.is_some() || profile.is_some() {
-                    return Err(
-                        "--look-capture holds the camera; it cannot share a lab, repro or profile"
-                            .into(),
-                    );
-                }
-                Some(crate::look_capture::LookCaptureOptions {
-                    dir,
-                    variants: crate::look_capture::parse_variants(
-                        value("--look-variants")?.ok_or("--look-capture needs --look-variants")?,
-                    )?,
-                    settle: number("--look-settle", 25.0, 5.0..=600.0)?,
-                })
-            }
-            None if has("--look-variants") || has("--look-settle") => {
-                return Err("--look-variants and --look-settle need --look-capture".into());
-            }
-            None => None,
-        };
+        let repro = ReproOptions::parse(&args)?;
         // Measurements and regressions must not change weather or time unless asked explicitly.
-        let measured = profile.is_some()
-            || repro.is_some()
-            || lod_lab.is_some()
-            || look_capture.is_some()
-            || has("--metal-capture")
-            || has("--streaming-smoke");
-        let weather = weather.unwrap_or(if measured {
-            engine::WeatherStart::Authored
-        } else {
-            engine::WeatherStart::Automatic
-        });
-        let day_clock = day_clock.unwrap_or(!measured);
+        let measured = mode != RunMode::Play || args.has("--metal-capture");
         Ok(Self {
             help: false,
-            world_db: path("--world-db"),
-            start_view: path("--start-view"),
-            story: path("--story"),
-            fps,
+            mode,
+            world_db: args.path("--world-db"),
+            start_view: args.path("--start-view"),
+            story: args.path("--story"),
+            fps: fps(&args)?,
             upscaler,
-            clouds,
-            density,
-            weather,
-            time,
-            day_clock,
-            canopy_path: path("--canopy-look"),
+            clouds: args.choice(
+                "--cloud-quality",
+                "balanced",
+                &[
+                    ("off", engine::CloudQuality::Off),
+                    ("balanced", engine::CloudQuality::Balanced),
+                    ("high", engine::CloudQuality::High),
+                ],
+            )?,
+            density: args.choice(
+                "--grass-density",
+                "balanced",
+                &[
+                    ("balanced", VegetationDensityMode::Balanced),
+                    ("full", VegetationDensityMode::FullReference),
+                    ("authored", VegetationDensityMode::Authored),
+                ],
+            )?,
+            weather: weather(&args)?.unwrap_or(if measured {
+                engine::WeatherStart::Authored
+            } else {
+                engine::WeatherStart::Automatic
+            }),
+            time: time(&args)?,
+            day_clock: args.choice(
+                "--day-clock",
+                if measured { "off" } else { "on" },
+                &[("on", true), ("off", false)],
+            )?,
+            canopy_path: args.path("--canopy-look"),
             diagnostics,
-            panel_open: has("--performance-open") || has("--render-audit"),
-            audit_log: has("--render-audit") || repro.is_some(),
-            console: has("--render-console") || repro.is_some(),
-            timing_log: has("--timing-log"),
-            gpu_detail: has("--gpu-timing-detail"),
-            gpu_off: has("--gpu-timing-off"),
-            metalfx_timing: has("--metalfx-timing-log"),
-            counters: has("--grass-counters"),
-            input_trace: has("--trace-camera-input"),
-            streaming_smoke: has("--streaming-smoke"),
-            debug_world_switch: has("--debug-world-switch"),
-            tree_shadow_lod,
-            timer_pacing: has("--frame-pacing-timer"),
-            terrain_legacy: has("--terrain-legacy"),
-            terrain_reference: has("--terrain-reference"),
-            terrain_procedural: has("--terrain-procedural"),
-            terrain_universal: has("--terrain-prepared-universal"),
-            terrain_near_off: has("--terrain-near-off"),
-            vertex_reference: has("--grass-vertex-reference"),
-            placement_reference: has("--grass-placement-reference"),
-            candidate_reference: has("--grass-candidate-reference"),
-            prepared_blades,
-            msaa_store_reference: has("--msaa-store-reference"),
-            temporal_standard_output: has("--temporal-standard-output"),
-            metal_capture: path("--metal-capture"),
+            panel_open: args.has("--performance-open") || args.has("--render-audit"),
+            audit_log: args.has("--render-audit") || repro.is_some(),
+            console: args.has("--render-console") || repro.is_some(),
+            timing_log: args.has("--timing-log"),
+            gpu_detail: args.has("--gpu-timing-detail"),
+            gpu_off: args.has("--gpu-timing-off"),
+            metalfx_timing: args.has("--metalfx-timing-log"),
+            counters: args.has("--grass-counters"),
+            input_trace: args.has("--trace-camera-input"),
+            debug_world_switch: args.has("--debug-world-switch"),
+            tree_shadow_lod: args.number("--tree-shadow-lod", 0, 0..=2)?,
+            timer_pacing: args.has("--frame-pacing-timer"),
+            terrain_legacy: args.has("--terrain-legacy"),
+            terrain_reference: args.has("--terrain-reference"),
+            terrain_procedural: args.has("--terrain-procedural"),
+            terrain_universal: args.has("--terrain-prepared-universal"),
+            terrain_near_off: args.has("--terrain-near-off"),
+            vertex_reference: args.has("--grass-vertex-reference"),
+            placement_reference: args.has("--grass-placement-reference"),
+            candidate_reference: args.has("--grass-candidate-reference"),
+            prepared_blades: args
+                .has("--grass-prepared-blades")
+                .then(|| args.number("--grass-prepared-blades", 0, 32768..=524288))
+                .transpose()?,
+            msaa_store_reference: args.has("--msaa-store-reference"),
+            temporal_standard_output: args.has("--temporal-standard-output"),
+            metal_capture: metal_capture(&args)?,
             profile,
             repro,
             resolution_scale,
-            lod_lab,
-            look_capture,
+            lod_lab: LodLabOptions::parse(&args)?,
+            look_capture: look_capture(&args)?,
         })
     }
 
     pub fn canopy_path(&self) -> PathBuf {
-        self.canopy_path.clone().unwrap_or_else(|| {
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content/vegetation/canopy-look.ron")
-        })
+        self.canopy_path
+            .clone()
+            .unwrap_or_else(vegetation::CanopyShading::saved_path)
     }
 
     pub fn help() -> String {
-        let mut help = String::from("Yarra game\nUsage: yarra-app-game [OPTIONS]\n\n");
-        for (name, value, description) in FLAGS {
-            help.push_str(&format!(
-                "  {name}{}\n      {description}\n",
-                if *value { " VALUE" } else { "" }
-            ));
+        flags::help()
+    }
+}
+
+impl RunMode {
+    /// One owner at most for the camera and the end of the run; a profile times a repro's
+    /// route but nothing else's.
+    fn of(args: &Args) -> Result<Self, String> {
+        let owners: Vec<_> = [
+            ("--render-repro", Self::Repro),
+            ("--lod-lab", Self::LodLab),
+            ("--look-capture", Self::LookCapture),
+            ("--streaming-smoke", Self::Smoke),
+        ]
+        .into_iter()
+        .filter(|(flag, _)| args.has(flag))
+        .collect();
+        let profile = args.has("--profile-seconds") || args.has("--profile-diagnostic");
+        match owners.as_slice() {
+            [] if profile => Ok(Self::Profile),
+            [] => Ok(Self::Play),
+            [(_, Self::Repro)] => Ok(Self::Repro),
+            [(flag, mode)] => {
+                if profile {
+                    return Err(format!(
+                        "{flag} holds the camera and ends the run; it cannot share a profile"
+                    ));
+                }
+                if args.has("--metal-capture") {
+                    return Err(format!(
+                        "{flag} holds the camera and ends the run; it cannot share a Metal capture"
+                    ));
+                }
+                Ok(*mode)
+            }
+            [(first, _), (second, _), ..] => Err(format!(
+                "{first} and {second} both hold the camera; choose one"
+            )),
         }
-        help.push_str("\nPrecedence: normal defaults, launch options, repro preset, profile presentation.\nProfile FPS owns pacing unless --profile-native-pacing is set.\nF1 Reset restores the effective launch configuration.\n");
-        help
+    }
+}
+
+impl DiagnosticsMode {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Panel => "panel",
+            Self::Full => "full",
+        }
+    }
+}
+
+// Following a 120 Hz display kept the GPU busy whenever it had headroom, and loud.
+fn fps(args: &Args) -> Result<u32, String> {
+    args.value("--fps")?
+        .unwrap_or("60")
+        .parse::<u32>()
+        .ok()
+        .filter(|&fps| fps == 0 || (15..=240).contains(&fps))
+        .ok_or_else(|| "--fps requires 0 or 15..240".into())
+}
+
+fn resolution_scale(args: &Args) -> Result<Option<f32>, String> {
+    args.value("--resolution-scale")?
+        .map(|v| match v {
+            "1" | "1.0" => Ok(1.0),
+            "0.75" => Ok(0.75),
+            "0.5" => Ok(0.5),
+            "0.33" => Ok(1.0 / 3.0),
+            _ => Err("--resolution-scale requires 1, 0.75, 0.5 or 0.33".into()),
+        })
+        .transpose()
+}
+
+fn weather(args: &Args) -> Result<Option<engine::WeatherStart>, String> {
+    args.value("--weather")?
+        .map(|name| match name {
+            "auto" => Ok(engine::WeatherStart::Automatic),
+            "authored" => Ok(engine::WeatherStart::Authored),
+            _ => engine::WeatherKind::ALL
+                .into_iter()
+                .find(|kind| kind.label().eq_ignore_ascii_case(name))
+                .map(engine::WeatherStart::Manual)
+                .ok_or_else(|| {
+                    "--weather requires auto, authored, clear, scattered, overcast, rain or storm"
+                        .to_string()
+                }),
+        })
+        .transpose()
+}
+
+fn time(args: &Args) -> Result<Option<f32>, String> {
+    args.value("--time")?
+        .map(|v| {
+            v.split_once(':')
+                .and_then(|(h, m)| Some((h.parse::<u32>().ok()?, m.parse::<u32>().ok()?)))
+                .filter(|&(h, m)| h < 24 && m < 60 && v.len() <= 5)
+                .map(|(h, m)| (h * 60 + m) as f32 / 1440.0)
+                .ok_or_else(|| "--time requires HH:MM".into())
+        })
+        .transpose()
+}
+
+fn metal_capture(args: &Args) -> Result<Option<PathBuf>, String> {
+    let Some(capture) = args.path("--metal-capture") else {
+        return Ok(None);
+    };
+    if !cfg!(target_vendor = "apple") {
+        return Err("Metal capture requires an Apple device".into());
+    }
+    if capture.extension().and_then(|s| s.to_str()) != Some("gputrace") {
+        return Err("Metal capture requires a .gputrace path".into());
+    }
+    if !(capture.is_absolute() || cfg!(target_os = "ios") && capture.components().count() == 1) {
+        return Err("Metal capture requires an absolute path (or a plain filename on iOS)".into());
+    }
+    if capture.is_absolute() && capture.exists() {
+        return Err("Metal capture output already exists".into());
+    }
+    Ok(Some(capture))
+}
+
+fn look_capture(args: &Args) -> Result<Option<crate::look_capture::LookCaptureOptions>, String> {
+    let Some(dir) = args.path("--look-capture") else {
+        return Ok(None);
+    };
+    if !args.has("--start-view") {
+        return Err("--look-capture shows the --start-view".into());
+    }
+    Ok(Some(crate::look_capture::LookCaptureOptions {
+        dir,
+        variants: crate::look_capture::parse_variants(
+            args.value("--look-variants")?
+                .ok_or("--look-capture needs --look-variants")?,
+        )?,
+        settle: args.number("--look-settle", 25.0, 5.0..=600.0)?,
+    }))
+}
+
+impl ReproOptions {
+    fn parse(args: &Args) -> Result<Option<Self>, String> {
+        let Some(name) = args.value("--render-repro")? else {
+            return Ok(None);
+        };
+        let route = crate::repro::Route::parse(name)?;
+        if route.needs_start_view() && !args.has("--start-view") {
+            return Err(format!("{name} requires --start-view"));
+        }
+        let frames = args
+            .has("--render-frames")
+            .then(|| args.number("--render-frames", 0, 900..=u32::MAX))
+            .transpose()?;
+        let snapshot_frames = args
+            .value("--render-snapshot-frames")?
+            .unwrap_or("600")
+            .split(',')
+            .map(|v| {
+                v.parse::<u32>()
+                    .map_err(|_| "Snapshot frames must be comma-separated integers")
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if snapshot_frames
+            .iter()
+            .any(|&n| n < 300 || frames.is_some_and(|end| n >= end))
+        {
+            return Err("Snapshot frames must follow warmup (>=300) and precede exit".into());
+        }
+        Ok(Some(Self {
+            route,
+            prepass: args.has("--render-prepass"),
+            hide_ui: args.has("--render-ui-off"),
+            frame_clock: args.has("--render-frame-clock"),
+            temporal_view: args.choice(
+                "--render-temporal-view",
+                "off",
+                &[
+                    ("off", upscaling::temporal::TemporalDebug::Off),
+                    ("motion", upscaling::temporal::TemporalDebug::Motion),
+                    ("depth", upscaling::temporal::TemporalDebug::Depth),
+                ],
+            )?,
+            frames,
+            snapshot: args.path("--render-snapshot"),
+            snapshot_frames,
+        }))
+    }
+}
+
+impl LodLabOptions {
+    fn parse(args: &Args) -> Result<Option<Self>, String> {
+        let Some(asset) = args.value("--lod-lab")? else {
+            return Ok(None);
+        };
+        if !args.has("--start-view") {
+            return Err("--lod-lab places the tree at the --start-view focus".into());
+        }
+        if args.has("--lod-lab-capture") && args.has("--lod-lab-screenshot") {
+            return Err(
+                "--lod-lab-screenshot shows the interactive lab; drop --lod-lab-capture".into(),
+            );
+        }
+        let distances = args.list(
+            "--lod-lab-distances",
+            &[10., 25., 50., 100., 200., 400., 800.],
+        )?;
+        if distances.iter().any(|d| !(2.0..=4000.0).contains(d)) {
+            return Err("--lod-lab-distances must lie within 2..4000 metres".into());
+        }
+        Ok(Some(Self {
+            asset: asset.to_owned(),
+            stand: args
+                .value("--lod-lab-stand")?
+                .map(|stand| -> Result<_, String> {
+                    Ok((
+                        stand.to_owned(),
+                        args.number("--lod-lab-stand-count", 24, 1..=400)?,
+                        args.number("--lod-lab-spacing", 6.0, 1.0..=50.0)?,
+                    ))
+                })
+                .transpose()?,
+            capture: args.path("--lod-lab-capture"),
+            screenshot: args.path("--lod-lab-screenshot"),
+            yaws: args.list("--lod-lab-yaws", &[0., 90., 180.])?,
+            pitch: args.number("--lod-lab-pitch", 3.0, -10.0..=80.0)?,
+            scale: args.number("--lod-lab-scale", 1.0, 0.25..=4.0)?,
+            distances,
+            settle: args.number("--lod-lab-settle", 30, 1..=600)?,
+        }))
     }
 }
 

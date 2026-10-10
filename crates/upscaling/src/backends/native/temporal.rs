@@ -30,9 +30,10 @@ pub(crate) struct Temporal {
     exposure: bevy::render::render_resource::Texture,
     timing: bool,
     frame: u64,
-    pending_timing:
-        std::collections::VecDeque<(u64, bool, Retained<ProtocolObject<dyn MTLCommandBuffer>>)>,
+    pending_timing: std::collections::VecDeque<PendingTiming>,
 }
+/// A frame number, whether MetalFX ran, and the command buffer to read its timing from.
+type PendingTiming = (u64, bool, Retained<ProtocolObject<dyn MTLCommandBuffer>>);
 // SAFETY: private native mutation requires &mut self and is serialized in RenderWorld.
 unsafe impl Send for Temporal {}
 unsafe impl Sync for Temporal {}
@@ -97,7 +98,7 @@ impl Temporal {
             })
         })
     }
-    pub fn set_timing(&mut self, enabled: bool) {
+    pub(crate) fn set_timing(&mut self, enabled: bool) {
         self.timing = enabled;
     }
 

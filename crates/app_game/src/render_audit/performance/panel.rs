@@ -195,6 +195,7 @@ fn button_color() -> Color {
     Color::srgb(0.10, 0.17, 0.22)
 }
 
+#[allow(clippy::too_many_arguments)] // Panel input, pacing and capture resources.
 fn actions(
     keys: Res<ButtonInput<KeyCode>>,
     clicks: Query<&Action, Added<Pressed>>,
@@ -262,7 +263,7 @@ fn capture_finished(In(finished): In<bool>, mut state: ResMut<PanelState>) {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)] // Disjoint text queries.
 fn refresh(
     canopy: Option<Res<engine::GroundCanopyTiles>>,
     vegetation: Res<vegetation_render::VegetationDiagnostics>,
@@ -421,6 +422,7 @@ fn refresh(
         };
     }
 }
+#[allow(clippy::type_complexity)] // Root and page nodes in one disjoint query.
 fn visibility(
     state: Res<PanelState>,
     mut nodes: Query<

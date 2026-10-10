@@ -31,23 +31,13 @@ use std::mem::size_of;
 #[cfg(not(target_os = "ios"))]
 const TELEMETRY_CAPTURE_INTERVAL_FRAMES: u32 = 30;
 
-#[derive(Resource)]
+#[derive(Resource, Default)]
 pub(super) struct VegetationTelemetryStaging {
     buffer: Option<Buffer>,
+    #[cfg(not(target_os = "ios"))]
     scene_revision: u64,
     #[cfg(not(target_os = "ios"))]
     frames_until_capture: u32,
-}
-
-impl Default for VegetationTelemetryStaging {
-    fn default() -> Self {
-        Self {
-            buffer: None,
-            scene_revision: 0,
-            #[cfg(not(target_os = "ios"))]
-            frames_until_capture: 0,
-        }
-    }
 }
 
 #[cfg(not(target_os = "ios"))]

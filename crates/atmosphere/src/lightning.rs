@@ -7,16 +7,16 @@
 use bevy::math::Vec3;
 
 /// Segments of one channel: the main channel and its branches.
-pub const SEGMENTS: usize = 16;
+pub(crate) const SEGMENTS: usize = 16;
 const MAIN: usize = 10;
 /// Seconds a strike lasts, afterglow included.
-pub const DURATION: f32 = 1.2;
+pub(crate) const DURATION: f32 = 1.2;
 /// Linear colour of the flash, and the ambient light (Bevy's brightness) a close strike adds at
 /// its peak. The cloud deck spreads it: a flash lights the ground from everywhere.
-pub const FLASH_COLOR: [f32; 3] = [0.85, 0.9, 1.0];
-pub const FLASH_AMBIENT: f32 = 2000.0;
+pub(crate) const FLASH_COLOR: [f32; 3] = [0.85, 0.9, 1.0];
+pub(crate) const FLASH_AMBIENT: f32 = 2000.0;
 /// Light a close strike's flash scatters from the cloud deck and the rain haze, unexposed.
-pub const FLASH_SKY: f32 = 9000.0;
+pub(crate) const FLASH_SKY: f32 = 9000.0;
 
 /// One strike: what it hits (render space) and when it began.
 #[derive(Clone, Copy, Debug, PartialEq)]

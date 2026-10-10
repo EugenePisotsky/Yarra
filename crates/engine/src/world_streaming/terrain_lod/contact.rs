@@ -268,6 +268,7 @@ fn actor_region(point: DVec3, radius: f64) -> ContactRegion {
 fn distance(point: DVec3, bounds: [DVec3; 2]) -> f64 {
     point.distance(point.clamp(bounds[0], bounds[1]))
 }
+#[allow(clippy::too_many_arguments)]
 fn collect(
     config: Res<TerrainHierarchy>,
     catalog: Res<WorldCatalog>,
@@ -550,6 +551,7 @@ impl TerrainLodStream {
 #[derive(Component)]
 struct ContactHidden(Visibility);
 
+#[allow(clippy::too_many_arguments)]
 fn publish(
     mut commands: Commands,
     config: Res<TerrainHierarchy>,

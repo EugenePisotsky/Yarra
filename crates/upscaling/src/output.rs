@@ -248,6 +248,7 @@ struct Bindings {
     // both bindings, with a fixed bound across resizes/LUT changes/view switches.
     cached: Vec<(BufferId, TextureViewId, TextureViewId, BindGroup)>,
 }
+#[allow(clippy::too_many_arguments)] // Independent render-world inputs of one pass.
 fn draw(
     view: ViewQuery<(&Ready, &ViewTarget, &ViewUniformOffset, &Tonemapping)>,
     cache: Res<PipelineCache>,

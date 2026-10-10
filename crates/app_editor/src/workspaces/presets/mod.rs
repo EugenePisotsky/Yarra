@@ -1,5 +1,6 @@
 //! Shared environment preset authoring, isolated from map-layer overrides and camera state.
 pub(crate) mod collection;
+mod editor;
 mod fixture;
 mod road_styles;
 #[cfg(test)]
@@ -9,7 +10,7 @@ mod viewport;
 mod visual_changes;
 use super::EditorWorkspace;
 use crate::{
-    domain_editing::DenseDomainWorkingSets, project_store::ProjectEditorStore, shell::EditorUiSet,
+    domain_editing::SourceWorkingSets, project_store::ProjectEditorStore, shell::EditorUiSet,
 };
 use bevy::prelude::*;
 use bevy_egui::{EguiPrimaryContextPass, egui};
@@ -130,7 +131,7 @@ impl PresetAuthoringState {
     fn bump(&mut self) {
         self.revision = self.revision.wrapping_add(1).max(1);
     }
-    fn refresh(&mut self, dense: &DenseDomainWorkingSets, project: &ProjectEditorStore) {
+    fn refresh(&mut self, dense: &SourceWorkingSets, project: &ProjectEditorStore) {
         if self.styles.refresh(&dense.roads) {
             self.bump();
         }
@@ -220,21 +221,16 @@ impl PresetAuthoringState {
         }
     }
     fn camera(&self) -> Transform {
-        let yaw = self.yaw.to_radians();
-        let pitch = self.pitch.to_radians();
         let target = Vec3::new(
             f32::from(self.size) / 2.0,
             self.focus_height,
             f32::from(self.size) / 2.0,
         );
-        Transform::from_translation(
-            target
-                + Vec3::new(
-                    yaw.sin() * pitch.cos(),
-                    pitch.sin(),
-                    yaw.cos() * pitch.cos(),
-                ) * self.distance,
+        engine::orbit_transform(
+            target,
+            self.yaw.to_radians(),
+            self.pitch.to_radians(),
+            self.distance,
         )
-        .looking_at(target, Vec3::Y)
     }
 }

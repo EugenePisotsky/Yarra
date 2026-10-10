@@ -222,6 +222,7 @@ impl FromWorld for VegetationBuffers {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // One buffer per binding.
 pub(super) fn create_schedule_bind_group(
     render_device: &RenderDevice,
     layout: &BindGroupLayout,

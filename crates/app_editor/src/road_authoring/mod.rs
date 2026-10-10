@@ -5,7 +5,7 @@ mod loader;
 mod viewport;
 pub(crate) mod working;
 use crate::{
-    domain_editing::DenseDomainWorkingSets,
+    domain_editing::SourceWorkingSets,
     editing::EditorHistory,
     project_store::ProjectEditorStore,
     tools::{EditorToolRegistry, ROAD_TOOL},
@@ -75,7 +75,7 @@ impl RoadToolState {
     }
     fn commit(
         &mut self,
-        dense: &mut DenseDomainWorkingSets,
+        dense: &mut SourceWorkingSets,
         history: &mut EditorHistory,
         changes: Result<Vec<RoadChange>, String>,
     ) -> bool {
@@ -102,7 +102,7 @@ impl RoadToolState {
 pub(crate) fn inspector(
     ui: &mut egui::Ui,
     state: &mut RoadToolState,
-    dense: &mut DenseDomainWorkingSets,
+    dense: &mut SourceWorkingSets,
     history: &mut EditorHistory,
     space: Option<WorldSpaceId>,
     preview: &crate::environment_paint::EnvironmentPreview,

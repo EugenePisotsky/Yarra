@@ -22,13 +22,13 @@ use bevy::{
 };
 
 /// Share of a change in metered brightness the exposure follows; the rest stays visible.
-pub const FOLLOW: f32 = 0.5;
+pub(crate) const FOLLOW: f32 = 0.5;
 /// Metered log2 exposed luminance left as authored: a forest edge in sun at EV 13. These
 /// constants are binary fractions, so the curve's segments meet exactly, as Bevy requires.
-pub const REFERENCE: f32 = -3.25;
+pub(crate) const REFERENCE: f32 = -3.25;
 /// The most the exposure brightens (deep shade) and darkens (bright open ground), in stops.
-pub const BRIGHTEN: f32 = 1.5;
-pub const DARKEN: f32 = 1.0;
+pub(crate) const BRIGHTEN: f32 = 1.5;
+pub(crate) const DARKEN: f32 = 1.0;
 /// Stops per second towards a brighter scene, which eyes adapt to quickly, and towards a
 /// darker one, which takes longer.
 const TO_BRIGHT: f32 = 2.0;
@@ -93,7 +93,7 @@ fn setup(
 
 /// Bevy's compensation curve over its default metering range of -8..8: `average + correction`
 /// where the correction is `FOLLOW * (REFERENCE - average)` within `-DARKEN..BRIGHTEN`.
-pub fn compensation_points() -> [Vec2; 4] {
+pub(crate) fn compensation_points() -> [Vec2; 4] {
     let brightest_kept = REFERENCE + DARKEN / FOLLOW;
     let darkest_kept = REFERENCE - BRIGHTEN / FOLLOW;
     [

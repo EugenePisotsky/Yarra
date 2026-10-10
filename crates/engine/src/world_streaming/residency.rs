@@ -5,7 +5,7 @@ pub(super) mod attachment;
 #[cfg(test)]
 pub(super) mod tests;
 
-use super::database::{DatabaseRequest, FetchedPage, WorldDatabaseWorker};
+use super::database::{DatabaseRequest, FetchedPage, NotSent, RequestId, WorldDatabaseWorker};
 use super::{
     ActiveWorldSpace, StreamPhase, WorldGenerationReload, WorldOrigin, WorldStream, source_demand,
 };
@@ -18,7 +18,6 @@ use bevy::{
     prelude::*,
     tasks::{AsyncComputeTaskPool, Task, futures::check_ready},
 };
-use crossbeam_channel::TrySendError;
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     time::Duration,
@@ -41,15 +40,15 @@ pub(super) struct SourceResidency {
     pub(super) pages: HashMap<PageKey, PageState>,
     pub(super) definition_cache: HashMap<ObjectDefinitionId, RuntimeObjectDefinition>,
     decode_tasks: Vec<DecodeTask>,
-    next_request_id: u64,
 }
 
+#[allow(clippy::large_enum_variant)] // A few hundred pages; boxing would allocate per page.
 pub(super) enum PageState {
     Loading {
-        request_id: u64,
+        request_id: RequestId,
     },
     Decoding {
-        request_id: u64,
+        request_id: RequestId,
     },
     Prepared(PreparedPage),
     Resident(PageAttachment),
@@ -69,7 +68,7 @@ pub(super) struct PreparedPage {
 }
 
 struct DecodeTask {
-    request_id: u64,
+    request_id: RequestId,
     key: PageKey,
     task: Task<Result<PreparedPage, String>>,
 }
@@ -109,19 +108,16 @@ impl SourceResidency {
             .into_iter()
             .take(MAX_PENDING_SOURCE_PAGES.saturating_sub(in_flight))
         {
-            let request_id = self.next_request_id.wrapping_add(1).max(1);
-            match worker.try_send(DatabaseRequest::ReadPage {
+            match worker.send(DatabaseRequest::ReadPage {
                 generation: generation.to_owned(),
-                request_id,
                 key,
                 height_only: height_only && key.domain == PageDomain::Terrain,
             }) {
-                Ok(()) => {
-                    self.next_request_id = request_id;
+                Ok(request_id) => {
                     self.pages.insert(key, PageState::Loading { request_id });
                 }
-                Err(TrySendError::Full(_)) => break,
-                Err(TrySendError::Disconnected(_)) => {
+                Err(NotSent::Full) => break,
+                Err(NotSent::Stopped) => {
                     return Err("database request channel closed".into());
                 }
             }
@@ -131,7 +127,7 @@ impl SourceResidency {
 
     pub(super) fn receive_page(
         &mut self,
-        request_id: u64,
+        request_id: RequestId,
         key: PageKey,
         result: Result<Option<FetchedPage>, String>,
     ) {
@@ -246,6 +242,7 @@ pub(super) fn receive_decode_results(mut stream: ResMut<SourceResidency>) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn attach_prepared_pages(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
@@ -481,7 +478,7 @@ pub(super) fn update_streaming_stats(
     };
     stats.indexed_cells = world.descriptors.len();
     if reload.active() {
-        stats.status.push_str(if reload.commit_requested {
+        stats.status.push_str(if reload.commit.is_some() {
             " | committing published generation"
         } else {
             " | preparing published generation"

@@ -314,10 +314,11 @@ mod macos {
 
     pub(super) fn configure_clock(world: &mut World, settings: FramePacing) -> bool {
         let requested = settings.rate.fps() != 0 && !settings.timer;
-        if requested && world.get_non_send::<DisplayClock>().is_none() {
-            if let Some(clock) = create(world) {
-                world.insert_non_send(clock);
-            }
+        if requested
+            && world.get_non_send::<DisplayClock>().is_none()
+            && let Some(clock) = create(world)
+        {
+            world.insert_non_send(clock);
         }
         let Some(clock) = world.get_non_send::<DisplayClock>() else {
             return false;

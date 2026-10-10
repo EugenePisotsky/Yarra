@@ -5,8 +5,7 @@
 //! mostly in sunbeams and against the light; leaves exist only under crowns of the forest map
 //! and fall to the ground of the mist map. Drawn on the resolved HDR image with the rain.
 use crate::{
-    ApplyAtmosphere, AtmosphereOwner, AtmospherePresentation, AtmosphereState,
-    WorldEnvironmentView,
+    ApplyAtmosphere, AtmospherePresentation, AtmosphereState, WorldEnvironmentView,
     environment::{EnvironmentAssets, EnvironmentParams},
 };
 use bevy::{
@@ -31,7 +30,7 @@ use world::atmosphere::evaluate;
 /// Views that draw ambient particles this frame.
 #[derive(Component, Clone, ExtractComponent)]
 #[extract_app(bevy::render::RenderApp)]
-pub struct AmbientParticlesView;
+pub(crate) struct AmbientParticlesView;
 
 struct Kind {
     /// Horizontal box edge and height in metres. Fluff fills a layer of that height over the
@@ -123,7 +122,7 @@ impl Plugin for AmbientParticlesPlugin {
 /// Share of each kind present: motes and fluff need a dry day, and wind stirs up fluff and
 /// shakes leaves loose while it scatters the motes.
 fn amounts(state: &AtmosphereState) -> [f32; 3] {
-    if state.owner == AtmosphereOwner::Isolated || !state.profile.outdoor {
+    if state.isolated() || !state.profile.outdoor {
         return [0.0; 3];
     }
     let sun = evaluate(&state.profile, state.phase).direction_to_sun[1];
@@ -409,6 +408,7 @@ fn draw(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::AtmosphereOwner;
     use world::weather::WeatherKind;
 
     fn state(kind: Option<WeatherKind>, phase: f32) -> AtmosphereState {

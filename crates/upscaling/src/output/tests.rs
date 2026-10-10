@@ -163,7 +163,11 @@ fn direct_output_matches_standard_postprocessing() {
         );
         let [reference, optimized] = previous;
         assert!(
-            reference.chunks_exact(4).any(|p| p[0..3] != [0, 0, 0]),
+            reference
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .any(|p| p[0..3] != [0, 0, 0]),
             "no scene colour"
         );
         let max_error = reference

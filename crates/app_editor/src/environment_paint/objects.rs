@@ -54,14 +54,15 @@ pub(super) fn sync(
     }
     let mut retained = BTreeSet::new();
     let transform = |key: (WorldSpaceId, CellCoord), o: &world::StaticObjectInstance| {
-        let size = catalog
-            .world_space(key.0)
-            .map_or(0.0, |s| f64::from(s.cell_size));
-        Transform::from_xyz(
-            ((f64::from(key.1.x) - f64::from(origin.cell().x)) * size) as f32 + o.translation[0],
-            o.translation[1],
-            ((f64::from(key.1.z) - f64::from(origin.cell().z)) * size) as f32 + o.translation[2],
-        )
+        let cell_size = catalog.world_space(key.0).map_or(0.0, |s| s.cell_size);
+        let position = world::WorldPosition {
+            space: key.0,
+            cell: key.1,
+            local: o.translation,
+        };
+        Transform::from_translation(Vec3::from_array(
+            position.relative_to(origin.cell(), cell_size),
+        ))
         .with_rotation(Quat::from_rotation_y(o.yaw))
         .with_scale(Vec3::splat(o.scale))
     };

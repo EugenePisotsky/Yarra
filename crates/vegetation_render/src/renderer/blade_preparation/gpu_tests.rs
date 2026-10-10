@@ -124,7 +124,9 @@ fn prepared_blades_match_reference_with_wind_msaa_and_overflow() {
             stats.prepared_blades, stats.preparation_fallback_blades
         );
         let edge_pixels = errors
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .enumerate()
             .filter(|(_, e)| e.iter().any(|&e| e > 2))
             .map(|(pixel, _)| pixel)
@@ -157,7 +159,15 @@ fn prepared_blades_match_reference_with_wind_msaa_and_overflow() {
         );
         // Nonempty output and genuinely different wind/camera cases, not comparisons of clears.
         let first = &prepared[0..4];
-        assert!(prepared.chunks_exact(4).filter(|p| *p != first).count() > 500);
+        assert!(
+            prepared
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .filter(|p| *p != first)
+                .count()
+                > 500
+        );
         assert!(prepared != previous);
         previous = prepared;
     }
@@ -250,8 +260,10 @@ fn rebasing_preserves_placement_and_wind() {
             .sum::<f64>()
             / before.len() as f64;
         let changed = before
-            .chunks_exact(4)
-            .zip(after.chunks_exact(4))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(after.as_chunks::<4>().0)
             .filter(|(a, b)| a != b)
             .count();
         eprintln!(
@@ -332,8 +344,10 @@ fn keyed_page_uploads_match_a_fresh_upload() {
     // Instances append in GPU atomic order, which picks between coincident blades; a
     // changed surface or coverage would move whole blades, as the multisets above show.
     let changed = pixels
-        .chunks_exact(4)
-        .zip(expected_pixels.chunks_exact(4))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(expected_pixels.as_chunks::<4>().0)
         .filter(|(a, b)| a != b)
         .count();
     eprintln!(
@@ -501,7 +515,7 @@ fn contact_gate_clears_frozen_roots_and_elevated_views_cull_grass() {
         .block_all = true;
     let empty = settled_pixels(&mut app);
     assert_eq!(snapshot(&app).emitted_instances, [0; 4]);
-    assert!(empty.chunks_exact(4).all(|p| p == &empty[..4]));
+    assert!(empty.as_chunks::<4>().0.iter().all(|p| p == &empty[..4]));
     *app.world_mut().resource_mut::<VegetationTerrainGate>() = default();
     let restored = settled_pixels(&mut app);
     assert_eq!(generated_instances(&app), population);
@@ -527,7 +541,11 @@ fn contact_gate_clears_frozen_roots_and_elevated_views_cull_grass() {
         .block_all = true;
     let blocked = settled_pixels(&mut app);
     assert!(
-        blocked.chunks_exact(4).all(|p| p == &blocked[..4]),
+        blocked
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .all(|p| p == &blocked[..4]),
         "frozen grass survived its contact gate"
     );
     assert_ne!(blocked, visible);
@@ -559,7 +577,11 @@ fn contact_gate_clears_frozen_roots_and_elevated_views_cull_grass() {
     let elevated = settled_pixels(&mut app);
     assert_eq!(snapshot(&app).emitted_instances, [0; 4]);
     assert!(
-        elevated.chunks_exact(4).all(|p| p == &elevated[..4]),
+        elevated
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .all(|p| p == &elevated[..4]),
         "high view drew valley grass"
     );
 }
@@ -810,7 +832,7 @@ fn paired_lod_boundary_matches_rendered_shape_and_lighting() {
                             32_767,
                             if low { 1 << 31 } else { 0 },
                             0,
-                            12_345 + i * 37 | (density << 24),
+                            (12_345 + i * 37) | (density << 24),
                         ],
                     })
                     .collect::<Vec<_>>();
@@ -854,7 +876,13 @@ fn paired_lod_boundary_matches_rendered_shape_and_lighting() {
             );
             let first = &captures[0][..4];
             assert!(
-                captures[0].chunks_exact(4).filter(|p| *p != first).count() > 500,
+                captures[0]
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .filter(|p| *p != first)
+                    .count()
+                    > 500,
                 "must render visible grass"
             );
         }
@@ -930,7 +958,9 @@ fn temporal_grass_motion_tracks_wind_camera_and_fallback() {
             .get_mapped_range()
             .expect("readback is mapped");
         let values = data
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|b| {
                 let v = u16::from_le_bytes([b[0], b[1]]);
                 let e = i32::from((v >> 10) & 31);

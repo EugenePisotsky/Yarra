@@ -1,6 +1,6 @@
 use super::fixture::{Product, Request};
 use super::*;
-use crate::vegetation_authoring::VegetationAuthoringState;
+use crate::{vegetation_authoring::VegetationAuthoringState, workspaces::SavedDaylight};
 use bevy::world_serialization::WorldInstanceReady;
 use bevy::{
     camera::{Exposure, RenderTarget, visibility::RenderLayers},
@@ -28,8 +28,8 @@ struct SavedWorld {
     settings: VegetationSettings,
     wind: VegetationWind,
     lighting: VegetationLighting,
-    sun: (Entity, Transform, DirectionalLight, Option<RenderLayers>),
-    ambient: GlobalAmbientLight,
+    daylight: SavedDaylight,
+    sun_layers: Option<RenderLayers>,
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Key {
@@ -159,8 +159,8 @@ pub(super) fn enter(
         settings: *shared.settings,
         wind: *shared.wind,
         lighting: *shared.lighting,
-        ambient: shared.ambient.clone(),
-        sun: (*entity, **transform, **light, layers.cloned()),
+        daylight: SavedDaylight::save(transform, light, &shared.ambient),
+        sun_layers: layers.cloned(),
     });
     commands.entity(*entity).insert(RenderLayers::layer(LAYER));
     **transform = Transform::from_xyz(-8.0, 12.0, 6.0).looking_at(Vec3::ZERO, Vec3::Y);
@@ -204,14 +204,15 @@ pub(super) fn leave(
         *shared.settings = saved.settings;
         *shared.wind = saved.wind;
         *shared.lighting = saved.lighting;
-        *shared.ambient = saved.ambient;
-        let (entity, t, l, layers) = saved.sun;
-        let mut e = commands.entity(entity);
-        e.insert((t, l));
-        if let Some(layers) = layers {
-            e.insert(layers);
+        let (entity, transform, light, _) = &mut *shared.sun;
+        saved
+            .daylight
+            .restore(transform, light, &mut shared.ambient);
+        let mut sun = commands.entity(*entity);
+        if let Some(layers) = saved.sun_layers {
+            sun.insert(layers);
         } else {
-            e.remove::<RenderLayers>();
+            sun.remove::<RenderLayers>();
         }
     }
     remove_ground(
@@ -256,7 +257,7 @@ pub(super) fn update(
     mut preview: ResMut<PreviewState>,
     project: Res<ProjectEditorStore>,
     path: Res<crate::project_store::ProjectDatabasePath>,
-    dense: Res<DenseDomainWorkingSets>,
+    dense: Res<SourceWorkingSets>,
     plants: Res<VegetationAuthoringState>,
     mut scene: ResMut<VegetationSceneState>,
     mut wind: ResMut<VegetationWind>,

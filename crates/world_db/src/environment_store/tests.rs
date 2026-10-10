@@ -135,23 +135,17 @@ impl Drop for Fixture {
         std::fs::remove_dir_all(&self.directory).unwrap();
     }
 }
-fn write(record: SourceEnvironmentCellRecord, revision: Option<i64>) -> DenseSourceWrite {
-    DenseSourceWrite::EnvironmentCoverage {
+fn write(record: SourceEnvironmentCellRecord, revision: Option<i64>) -> EnvironmentCellWrite {
+    EnvironmentCellWrite {
         expected_source_revision: revision,
         record,
     }
 }
-fn committed(result: DenseSourceWriteTransactionResult) -> Vec<SourceEnvironmentCellRecord> {
-    let DenseSourceWriteTransactionResult::Committed(records) = result else {
+fn committed(result: EnvironmentCellWriteResult) -> Vec<SourceEnvironmentCellRecord> {
+    let EnvironmentCellWriteResult::Committed(records) = result else {
         panic!("expected a commit")
     };
     records
-        .into_iter()
-        .map(|record| {
-            let DenseSourceRecord::EnvironmentCoverage(record) = record;
-            record
-        })
-        .collect()
 }
 
 #[test]
@@ -191,7 +185,7 @@ fn creating_painting_and_removing_a_layer_are_atomic_source_commits() {
         panic!("expected commit")
     };
     assert_eq!(commit.definitions[0].revision, 2);
-    let DenseSourceRecord::EnvironmentCoverage(mut saved) = commit.coverage[0].clone();
+    let mut saved = commit.coverage[0].clone();
     assert_eq!(saved.definition_revision, 2);
     assert_eq!(saved.source_revision, 1);
     // A stale mask CAS must also roll back an otherwise valid definition edit.
@@ -299,13 +293,13 @@ fn shared_edge_edits_require_one_atomic_transaction_and_rollback_on_failure() {
     b.tiles[0].samples[3] = 128;
     assert!(
         writer
-            .apply_dense_source_transaction(&[write(a.clone(), None)])
+            .apply_environment_cell_transaction(&[write(a.clone(), None)])
             .is_err()
     );
     assert_eq!(f.snapshot(&[a.cell]).coverage.cells[0].revision, 0);
     let records = committed(
         writer
-            .apply_dense_source_transaction(&[write(a, None), write(b, None)])
+            .apply_environment_cell_transaction(&[write(a, None), write(b, None)])
             .unwrap(),
     );
     assert!(records.iter().all(|r| r.source_revision == 1));
@@ -313,7 +307,7 @@ fn shared_edge_edits_require_one_atomic_transaction_and_rollback_on_failure() {
     broken.tiles[0].samples[5] = 255;
     assert!(
         writer
-            .apply_dense_source_transaction(&[write(broken, Some(1))])
+            .apply_environment_cell_transaction(&[write(broken, Some(1))])
             .is_err()
     );
     let snapshot = f.snapshot(&[CellCoord::ZERO, CellCoord { x: 1, z: 0 }]);
@@ -328,26 +322,26 @@ fn competing_writer_conflict_rolls_back_the_entire_gesture() {
     let mut second = f.writer();
     let records = committed(
         first
-            .apply_dense_source_transaction(&[write(f.cell(0), None), write(f.cell(1), None)])
+            .apply_environment_cell_transaction(&[write(f.cell(0), None), write(f.cell(1), None)])
             .unwrap(),
     );
     let mut changed = records[1].clone();
     changed.tiles[0].samples[4] = 100;
     committed(
         second
-            .apply_dense_source_transaction(&[write(changed, Some(1))])
+            .apply_environment_cell_transaction(&[write(changed, Some(1))])
             .unwrap(),
     );
     let mut a = records[0].clone();
     a.tiles[0].samples[4] = 30;
     assert!(matches!(
         first
-            .apply_dense_source_transaction(&[
+            .apply_environment_cell_transaction(&[
                 write(a, Some(1)),
                 write(records[1].clone(), Some(1))
             ])
             .unwrap(),
-        DenseSourceWriteTransactionResult::Conflict { .. }
+        EnvironmentCellWriteResult::Conflict { .. }
     ));
     let snapshot = f.snapshot(&[CellCoord::ZERO, CellCoord { x: 1, z: 0 }]);
     assert_eq!(snapshot.coverage.cells[0].tiles[0].samples[4], 255);
@@ -361,14 +355,14 @@ fn erase_keeps_revision_tombstones_and_rejects_stale_recreation() {
     let mut writer = f.writer();
     let mut record = committed(
         writer
-            .apply_dense_source_transaction(&[write(f.cell(0), None)])
+            .apply_environment_cell_transaction(&[write(f.cell(0), None)])
             .unwrap(),
     )
     .remove(0);
     record.tiles[0].samples.fill(0);
     let erased = committed(
         writer
-            .apply_dense_source_transaction(&[write(record, Some(1))])
+            .apply_environment_cell_transaction(&[write(record, Some(1))])
             .unwrap(),
     )
     .remove(0);
@@ -376,9 +370,9 @@ fn erase_keeps_revision_tombstones_and_rejects_stale_recreation() {
     assert!(erased.tiles.is_empty());
     assert!(matches!(
         writer
-            .apply_dense_source_transaction(&[write(f.cell(0), None)])
+            .apply_environment_cell_transaction(&[write(f.cell(0), None)])
             .unwrap(),
-        DenseSourceWriteTransactionResult::Conflict { .. }
+        EnvironmentCellWriteResult::Conflict { .. }
     ));
     assert_eq!(f.snapshot(&[CellCoord::ZERO]).coverage.cells[0].revision, 2);
 }
@@ -389,7 +383,7 @@ fn definition_edits_stamp_children_and_invalidate_older_mask_drafts() {
     let mut writer = f.writer();
     let record = committed(
         writer
-            .apply_dense_source_transaction(&[write(f.cell(0), None)])
+            .apply_environment_cell_transaction(&[write(f.cell(0), None)])
             .unwrap(),
     )
     .remove(0);
@@ -415,9 +409,9 @@ fn definition_edits_stamp_children_and_invalidate_older_mask_drafts() {
     ));
     assert!(matches!(
         writer
-            .apply_dense_source_transaction(&[write(record, Some(1))])
+            .apply_environment_cell_transaction(&[write(record, Some(1))])
             .unwrap(),
-        DenseSourceWriteTransactionResult::Conflict { .. }
+        EnvironmentCellWriteResult::Conflict { .. }
     ));
     assert_eq!(
         f.snapshot(&[CellCoord::ZERO]).definition.layers[0].opacity,
@@ -431,7 +425,7 @@ fn removing_referenced_layers_grids_or_plant_assemblages_is_rejected() {
     let mut writer = f.writer();
     committed(
         writer
-            .apply_dense_source_transaction(&[write(f.cell(0), None)])
+            .apply_environment_cell_transaction(&[write(f.cell(0), None)])
             .unwrap(),
     );
     let mut missing_layer = f.definition.clone();
@@ -471,7 +465,7 @@ fn spatial_queries_are_truncated_explicitly_and_roundtrip_only_source_masks() {
     let mut writer = f.writer();
     committed(
         writer
-            .apply_dense_source_transaction(&[write(f.cell(0), None), write(f.cell(1), None)])
+            .apply_environment_cell_transaction(&[write(f.cell(0), None), write(f.cell(1), None)])
             .unwrap(),
     );
     let query = f
@@ -516,12 +510,12 @@ fn malformed_writes_and_old_schemas_fail_without_mutation() {
     malformed.tiles[0].samples.pop();
     assert!(
         writer
-            .apply_dense_source_transaction(&[write(malformed, None)])
+            .apply_environment_cell_transaction(&[write(malformed, None)])
             .is_err()
     );
     assert!(
         writer
-            .apply_dense_source_transaction(&[write(f.cell(0), None), write(f.cell(0), None)])
+            .apply_environment_cell_transaction(&[write(f.cell(0), None), write(f.cell(0), None)])
             .is_err()
     );
     assert_eq!(f.snapshot(&[CellCoord::ZERO]).coverage.cells[0].revision, 0);
@@ -557,10 +551,10 @@ fn byte_budget_applies_before_writing_and_while_loading_a_multi_cell_snapshot() 
             write(record, None)
         })
         .collect();
-    assert!(writer.apply_dense_source_transaction(&writes).is_err());
+    assert!(writer.apply_environment_cell_transaction(&writes).is_err());
     assert_eq!(f.snapshot(&[CellCoord::ZERO]).coverage.cells[0].revision, 0);
     for chunk in writes.chunks(32) {
-        committed(writer.apply_dense_source_transaction(chunk).unwrap());
+        committed(writer.apply_environment_cell_transaction(chunk).unwrap());
     }
     let cells: Vec<_> = (0..64).map(|x| CellCoord { x, z: 0 }).collect();
     assert!(

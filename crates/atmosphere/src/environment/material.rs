@@ -1,4 +1,5 @@
 use super::*;
+use crate::AtmosphereState;
 use bevy::{
     asset::AssetEventSystems,
     mesh::MeshVertexBufferLayoutRef,
@@ -41,7 +42,7 @@ impl MaterialExtension for EnvironmentExtension {
     }
 }
 pub type EnvironmentMaterial = ExtendedMaterial<StandardMaterial, EnvironmentExtension>;
-pub struct EnvironmentMaterialPlugin;
+pub(crate) struct EnvironmentMaterialPlugin;
 /// Scene-material conversion completes before optional surface effects compose with it.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct EnvironmentMaterialSystems;
@@ -65,6 +66,7 @@ impl Plugin for EnvironmentMaterialPlugin {
 }
 // Keep source handles alive and mirror edits. Unlit/editor overlay materials retain
 // their normal path. Other meshes are never converted while an isolated workspace owns lighting.
+#[allow(clippy::too_many_arguments)] // Independent asset collections and events.
 fn convert(
     mut commands: Commands,
     assets: Option<Res<EnvironmentAssets>>,
@@ -84,18 +86,17 @@ fn convert(
         return;
     };
     for event in events.read() {
-        if let AssetEvent::Modified { id } = event {
-            if let (Some(p), Some(handle)) = (source.get(*id), cache.get(id)) {
-                if let Some(mut material) = target.get_mut(handle) {
-                    material.base = p.clone();
-                }
-            }
+        if let AssetEvent::Modified { id } = event
+            && let (Some(p), Some(handle)) = (source.get(*id), cache.get(id))
+            && let Some(mut material) = target.get_mut(handle)
+        {
+            material.base = p.clone();
         }
     }
     let live: std::collections::HashSet<_> = retained.iter().map(|p| p.0.id()).collect();
     cache.retain(|id, _| live.contains(id));
     for (e, handle, opt_in) in &meshes {
-        if state.owner == AtmosphereOwner::Isolated && !opt_in {
+        if state.isolated() && !opt_in {
             continue;
         }
         let Some(base) = source.get(handle) else {
@@ -128,6 +129,7 @@ fn convert(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::AtmosphereOwner;
     #[test]
     fn isolated_conversion_requires_explicit_composition_opt_in() {
         let mut app = App::new();

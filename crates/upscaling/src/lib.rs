@@ -15,7 +15,7 @@ use bevy::{
     prelude::*,
     render::extract_component::{ExtractComponent, ExtractComponentPlugin},
 };
-pub use capabilities::*;
+pub(crate) use capabilities::*;
 pub use output::DirectTonemapOutput;
 use std::{
     collections::HashMap,

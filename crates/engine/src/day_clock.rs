@@ -1,6 +1,5 @@
 //! Game time of day: advances the atmosphere's day phase at the authored day length, counting
-//! the days that move the moon. Editor workspaces and studies own the phase themselves and are
-//! left alone.
+//! the days that move the moon. Editor workspaces own the phase themselves and are left alone.
 use crate::{ActiveWorldSpace, ApplyAtmosphere, AtmosphereOwner, AtmosphereState};
 use bevy::prelude::*;
 

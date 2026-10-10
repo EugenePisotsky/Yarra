@@ -1,7 +1,7 @@
 //! Lightning strikes in game storms (`atmosphere::lightning`): strikes come at random, as often as
 //! the current weather calls for, a few kilometres around the camera; F1 and look captures can
-//! force one. Editor workspaces and studies never see them.
-use crate::{ApplyAtmosphere, AtmosphereOwner, AtmosphereState, GameWeather, WorldViewCamera};
+//! force one. Editor workspaces never see them.
+use crate::{ActiveWorldView, ApplyAtmosphere, AtmosphereOwner, AtmosphereState, GameWeather};
 use atmosphere::lightning::{self, Strike};
 use bevy::prelude::*;
 
@@ -71,7 +71,7 @@ fn strike(
     time: Res<Time>,
     weather: Res<GameWeather>,
     mut atmosphere: ResMut<AtmosphereState>,
-    camera: Query<&GlobalTransform, With<WorldViewCamera>>,
+    view: ActiveWorldView,
     sea: Option<Res<atmosphere::SeaSurface>>,
     mut state: ResMut<GameLightning>,
 ) {
@@ -82,7 +82,7 @@ fn strike(
         state.strike = None;
         return;
     }
-    let Some(camera) = camera.iter().next() else {
+    let Some(camera) = view.current().map(|view| view.transform) else {
         return;
     };
     let state = &mut *state;

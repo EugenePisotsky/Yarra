@@ -6,12 +6,12 @@ use world::{PageKey, WorldSpaceId};
 pub(crate) mod gpu;
 use gpu::{NearAtlas, NearEntry, NearUploadHub, Pack};
 
-pub const NEAR_SLOTS: usize = 64;
-pub const NEAR_TABLE: usize = 256;
-pub const WEIGHT_SIDE: u32 = 257;
-pub const CANOPY_SIDE: u32 = 130;
-pub const NEAR_END: f32 = 40.;
-pub const NEAR_START: f32 = 24.;
+pub(crate) const NEAR_SLOTS: usize = 64;
+pub(crate) const NEAR_TABLE: usize = 256;
+pub(crate) const WEIGHT_SIDE: u32 = 257;
+pub(crate) const CANOPY_SIDE: u32 = 130;
+pub(crate) const NEAR_END: f32 = 40.;
+pub(crate) const NEAR_START: f32 = 24.;
 
 /// Published source data only. No mesh or render assets until admitted by the near cache.
 #[derive(Component, Clone, Debug)]

@@ -1,8 +1,7 @@
 use super::*;
 use crate::project_store::{ProjectDatabasePath, ProjectQueryWindow};
-use crossbeam_channel::{Receiver, Sender, bounded};
-use std::{collections::BTreeSet, thread};
-use world_db::{EnvironmentLayerPresence, ProjectReader};
+use std::collections::BTreeSet;
+use world_db::EnvironmentLayerPresence;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Query {
@@ -10,50 +9,18 @@ struct Query {
     epoch: u64,
     definition_revision: u64,
 }
-struct Worker {
-    requests: Option<Sender<Query>>,
-    results: Receiver<(Query, Result<EnvironmentLayerPresence, String>)>,
-    thread: Option<thread::JoinHandle<()>>,
-}
-impl Worker {
-    fn start(path: std::path::PathBuf) -> Result<Self, String> {
-        let (requests, input) = bounded::<Query>(1);
-        let (output, results) = bounded(1);
-        let thread = thread::Builder::new()
-            .name("layer-browser".into())
-            .spawn(move || {
-                let reader = ProjectReader::open_read_only(&path).map_err(|e| e.to_string());
-                while let Ok(q) = input.recv() {
-                    let result = reader.as_ref().map_err(Clone::clone).and_then(|reader| {
-                        reader
-                            .read_environment_layer_presence(
-                                q.window.space,
-                                q.window.minimum,
-                                q.window.maximum,
-                                world_db::MAX_ENVIRONMENT_PRESENCE_ROWS,
-                            )
-                            .map_err(|e| e.to_string())
-                    });
-                    if output.send((q, result)).is_err() {
-                        break;
-                    }
-                }
-            })
-            .map_err(|e| e.to_string())?;
-        Ok(Self {
-            requests: Some(requests),
-            results,
-            thread: Some(thread),
-        })
-    }
-}
-impl Drop for Worker {
-    fn drop(&mut self) {
-        self.requests.take();
-        if let Some(t) = self.thread.take() {
-            let _ = t.join();
-        }
-    }
+type Worker = crate::worker::Worker<Query, (Query, Result<EnvironmentLayerPresence, String>)>;
+fn start_worker(path: std::path::PathBuf) -> Result<Worker, String> {
+    Worker::project_reader("layer-browser", path, |reader, q: &Query| {
+        reader
+            .read_environment_layer_presence(
+                q.window.space,
+                q.window.minimum,
+                q.window.maximum,
+                world_db::MAX_ENVIRONMENT_PRESENCE_ROWS,
+            )
+            .map_err(|e| e.to_string())
+    })
 }
 type MembershipCache = (Query, u64, u64, BTreeSet<LayerId>);
 #[derive(Resource, Default)]
@@ -155,7 +122,7 @@ impl EnvironmentLayerBrowser {
 
     pub(crate) fn nearby(
         &mut self,
-        dense: &DenseDomainWorkingSets,
+        dense: &SourceWorkingSets,
         space: WorldSpaceId,
     ) -> BTreeSet<LayerId> {
         let Some(desired) = self.desired.filter(|q| q.window.space == space) else {
@@ -245,10 +212,7 @@ pub(super) fn update(
         None
     };
     browser.set_desired(desired);
-    let completion = browser
-        .worker
-        .as_ref()
-        .and_then(|w| w.results.try_recv().ok());
+    let completion = browser.worker.as_ref().and_then(|w| w.try_recv().ok());
     if let Some((q, result)) = completion {
         browser.accept(q, result);
     }
@@ -259,7 +223,7 @@ pub(super) fn update(
         return;
     }
     if browser.worker.is_none() {
-        match Worker::start(path.0.clone()) {
+        match start_worker(path.0.clone()) {
             Ok(w) => browser.worker = Some(w),
             Err(e) => {
                 browser.error = Some(e);
@@ -268,16 +232,7 @@ pub(super) fn update(
             }
         }
     }
-    if browser
-        .worker
-        .as_ref()
-        .unwrap()
-        .requests
-        .as_ref()
-        .unwrap()
-        .try_send(q)
-        .is_ok()
-    {
+    if browser.worker.as_ref().unwrap().try_send(q).is_ok() {
         browser.submitted = Some(q);
         browser.in_flight = true;
     }
@@ -331,7 +286,7 @@ mod tests {
     fn cursor_movement_keeps_completed_rows_until_latest_query_finishes() {
         let layers = [LayerId([1; 16]), LayerId([2; 16]), LayerId([3; 16])];
         let entries = layers.map(|id| (CellCoord { x: -2, z: 0 }, id));
-        let dense = DenseDomainWorkingSets::default();
+        let dense = SourceWorkingSets::default();
         let mut browser = EnvironmentLayerBrowser::default();
         browser.set_desired(Some(query(0)));
         complete(&mut browser, query(0), &entries);
@@ -358,7 +313,7 @@ mod tests {
     fn refreshing_retained_rows_still_applies_local_erasures_and_reports_failures() {
         let a = LayerId([1; 16]);
         let cell = CellCoord { x: -2, z: 0 };
-        let mut dense = DenseDomainWorkingSets::from_environment_records(&[record(cell, a, 255)]);
+        let mut dense = SourceWorkingSets::from_environment_records(&[record(cell, a, 255)]);
         let mut browser = EnvironmentLayerBrowser::default();
         browser.set_desired(Some(query(0)));
         complete(&mut browser, query(0), &[(cell, a)]);
@@ -384,7 +339,7 @@ mod tests {
     #[test]
     fn saved_revisions_refresh_atomically_but_world_changes_clear_previous_rows() {
         let a = LayerId([1; 16]);
-        let dense = DenseDomainWorkingSets::default();
+        let dense = SourceWorkingSets::default();
         let mut browser = EnvironmentLayerBrowser::default();
         browser.set_desired(Some(query(0)));
         complete(&mut browser, query(0), &[(CellCoord::ZERO, a)]);

@@ -232,10 +232,10 @@ fn collect_cpu(
     }
     sample.systems.sort_by(|a, b| b.1.total_cmp(&a.1));
     sample.systems.truncate(8);
-    if let Ok(mut bus) = bridge.0.lock() {
-        if bus.cpu.len() < HISTORY {
-            bus.cpu.push(sample);
-        }
+    if let Ok(mut bus) = bridge.0.lock()
+        && bus.cpu.len() < HISTORY
+    {
+        bus.cpu.push(sample);
     }
 }
 fn classify(name: &str, schedule: &str, render: bool) -> Kind {
@@ -335,7 +335,6 @@ fn instrument(world: &mut World, render: bool) {
             schedule.configure_sets(gpu::FrameBegin.before(set));
         }
     }
-    drop(schedules);
     world.insert_resource(probes);
 }
 

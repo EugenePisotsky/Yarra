@@ -201,7 +201,7 @@ pub(super) fn drag_before(w: &working::RoadWorkingSet, id: RoadKnotId) -> Vec<Ro
 pub(super) fn inspector(
     ui: &mut egui::Ui,
     state: &mut RoadToolState,
-    dense: &mut DenseDomainWorkingSets,
+    dense: &mut SourceWorkingSets,
     history: &mut EditorHistory,
     knot: RoadKnotId,
     size: f32,

@@ -354,7 +354,7 @@ mod tests {
     use super::*;
     use environment::*;
     use world_db::{
-        DenseSourceWrite, DenseSourceWriteTransactionResult, ProjectWriter, RuntimeReader,
+        EnvironmentCellWrite, EnvironmentCellWriteResult, ProjectWriter, RuntimeReader,
     };
 
     struct Fixture {
@@ -580,12 +580,12 @@ mod tests {
         assert!(matches!(
             ProjectWriter::open(&fixture.source())
                 .unwrap()
-                .apply_dense_source_transaction(&[DenseSourceWrite::EnvironmentCoverage {
+                .apply_environment_cell_transaction(&[EnvironmentCellWrite {
                     expected_source_revision: Some(record.source_revision),
                     record: edited,
                 }])
                 .unwrap(),
-            DenseSourceWriteTransactionResult::Committed(_)
+            EnvironmentCellWriteResult::Committed(_)
         ));
         let incremental = cook_project_with_report(&fixture.source(), &fixture.runtime()).unwrap();
         assert!(incremental.stats.incremental);
@@ -656,15 +656,12 @@ mod tests {
         edited.source_revision += 1;
         let result = ProjectWriter::open(&fixture.source())
             .unwrap()
-            .apply_dense_source_transaction(&[DenseSourceWrite::EnvironmentCoverage {
+            .apply_environment_cell_transaction(&[EnvironmentCellWrite {
                 expected_source_revision: Some(record.source_revision),
                 record: edited,
             }])
             .unwrap();
-        assert!(matches!(
-            result,
-            DenseSourceWriteTransactionResult::Committed(_)
-        ));
+        assert!(matches!(result, EnvironmentCellWriteResult::Committed(_)));
         let old = cook_snapshot(snapshot, &fixture.runtime()).unwrap();
         assert_pages(
             &reference,

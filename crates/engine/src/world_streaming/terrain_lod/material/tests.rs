@@ -4,7 +4,7 @@ use crossbeam_channel::Receiver;
 fn fixture() -> (
     TerrainLodStream,
     WorldDatabaseWorker,
-    Receiver<DatabaseRequest>,
+    Receiver<(RequestId, DatabaseRequest)>,
 ) {
     let key = TerrainNodeKey::leaf(WorldSpaceId(1), CellCoord { x: -2, z: 1 });
     let (worker, receiver, _) = WorldDatabaseWorker::test_channel_pair(8, 8);
@@ -29,11 +29,13 @@ fn composite_admission_precedes_payload_io_and_shares_the_entry_budget() {
     assert_eq!(stream.composites.bytes, 0);
     stream.error = None;
     stream.prepare_materials(&worker, MAX_MATERIAL_BYTES);
-    let DatabaseRequest::Terrain {
+    let (
         request_id,
-        query: TerrainQuery::Material(Query::Descriptors(_keys)),
-        ..
-    } = requests.try_recv().unwrap()
+        DatabaseRequest::Terrain {
+            query: TerrainQuery::Material(Query::Descriptors(_keys)),
+            ..
+        },
+    ) = requests.try_recv().unwrap()
     else {
         panic!()
     };
@@ -54,7 +56,7 @@ fn composite_admission_precedes_payload_io_and_shares_the_entry_budget() {
 fn declared_absence_is_distinct_from_missing_tiles_and_stale_replies() {
     let (mut stream, worker, requests) = fixture();
     stream.prepare_materials(&worker, MAX_MATERIAL_BYTES);
-    let DatabaseRequest::Terrain { request_id, .. } = requests.try_recv().unwrap() else {
+    let (request_id, DatabaseRequest::Terrain { .. }) = requests.try_recv().unwrap() else {
         panic!()
     };
     stream.receive(

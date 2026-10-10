@@ -1,7 +1,7 @@
-//! Project-object navigation.
+//! The Navigator window: the outliner of placed objects.
 use crate::{
     editing::{EditorObjectWorkingSet, EditorSelection, TransformInspectorDraft},
-    navigation::ProjectNavigationStore,
+    listings::ProjectListings,
     tools::{EditorToolRegistry, OBJECT_TOOL},
     workspaces::EditorWorkspace,
 };
@@ -10,21 +10,21 @@ use bevy_egui::egui;
 
 pub(super) fn draw_navigator(
     ui: &mut egui::Ui,
-    navigation: &mut ProjectNavigationStore,
+    listings: &mut ProjectListings,
     selection: &mut EditorSelection,
     objects: &mut EditorObjectWorkingSet,
     transform_draft: &mut TransformInspectorDraft,
     tools: &mut EditorToolRegistry,
 ) {
     ui.heading("Project objects");
-    let mut search = navigation.outliner_search().to_owned();
+    let mut search = listings.outliner_search().to_owned();
     if ui
         .add(egui::TextEdit::singleline(&mut search).hint_text("Search project objects"))
         .changed()
     {
-        navigation.search_outliner(search);
+        listings.search_outliner(search);
     }
-    let records = navigation.outliner_records().to_vec();
+    let records = listings.outliner_records().to_vec();
     egui::ScrollArea::vertical()
         .id_salt("project_object_outliner")
         .max_height(190.0)
@@ -54,18 +54,18 @@ pub(super) fn draw_navigator(
     ui.horizontal(|ui| {
         if ui
             .add_enabled(
-                navigation.outliner_has_previous(),
+                listings.outliner_has_previous(),
                 egui::Button::new("Previous"),
             )
             .clicked()
         {
-            navigation.outliner_previous();
+            listings.outliner_previous();
         }
         if ui
-            .add_enabled(navigation.outliner_has_next(), egui::Button::new("Next"))
+            .add_enabled(listings.outliner_has_next(), egui::Button::new("Next"))
             .clicked()
         {
-            navigation.outliner_next();
+            listings.outliner_next();
         }
     });
 }

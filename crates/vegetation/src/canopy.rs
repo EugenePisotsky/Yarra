@@ -1,5 +1,6 @@
 //! Adjustable artistic canopy integration. This is a shared shading envelope, not traced shadows.
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -41,7 +42,24 @@ impl Default for CanopyShading {
     }
 }
 impl CanopyShading {
-    pub fn experiment() -> Self {
+    /// The saved look the game starts with and the editor's Canopy window saves.
+    pub fn saved_path() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content/vegetation/canopy-look.ron")
+    }
+
+    pub fn load(path: &Path) -> Result<Self, String> {
+        let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        ron::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))
+    }
+
+    pub fn save(&self, path: &Path) -> Result<(), String> {
+        let text = ron::ser::to_string_pretty(self, ron::ser::PrettyConfig::default())
+            .map_err(|e| e.to_string())?;
+        std::fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))
+    }
+
+    /// The default look, switched on.
+    pub fn default_enabled() -> Self {
         Self {
             enabled: true,
             ..Self::default()

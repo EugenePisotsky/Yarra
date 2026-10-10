@@ -326,13 +326,7 @@ fn editor_camera_transform(
             .expect("editor camera transform requires a logical focus")
             .relative_to(origin_cell, cell_size),
     );
-    let horizontal = camera.distance * camera.pitch.cos();
-    let offset = Vec3::new(
-        horizontal * camera.yaw.sin(),
-        camera.distance * camera.pitch.sin(),
-        horizontal * camera.yaw.cos(),
-    );
-    Transform::from_translation(focus + offset).looking_at(focus, Vec3::Y)
+    engine::orbit_transform(focus, camera.yaw, camera.pitch, camera.distance)
 }
 
 #[cfg(test)]

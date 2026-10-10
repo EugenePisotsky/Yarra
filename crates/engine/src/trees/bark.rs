@@ -92,7 +92,7 @@ struct BarkChecked;
 #[derive(Component)]
 struct SourceMaterial(Handle<EnvironmentMaterial>);
 
-// Isolated collection studies need the composed material too.
+// Collections in the isolated Presets workspace need the composed material too.
 #[allow(clippy::type_complexity)]
 fn opt_in(
     mut commands: Commands,

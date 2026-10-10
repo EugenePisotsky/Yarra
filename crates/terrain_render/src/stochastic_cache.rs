@@ -485,28 +485,7 @@ mod tests {
             handles.push(
                 app.world_mut()
                     .resource_mut::<Assets<TerrainMaterial>>()
-                    .add(TerrainMaterial {
-                        source_only: false,
-                        environment: atmosphere::environment::fallback_parameters(),
-                        cloud_shadows: None,
-                        rain_shelter: None,
-                        forest_shadow: None,
-                        shading_mode: super::super::TerrainShadingMode::Production,
-                        stochastic_cached: false,
-                        prepared: false,
-                        prepared_albedo: false,
-                        source_weights: Handle::default(),
-                        source_base_color_array: Handle::default(),
-                        settings: settings(Vec2::ZERO),
-                        weights: Handle::default(),
-                        base_color_array: Handle::default(),
-                        normal_material_array: Handle::default(),
-                        macro_variation: Handle::default(),
-                        stochastic_cache: Handle::default(),
-                        canopy_bounds: Vec4::ZERO,
-                        canopy_shading: Default::default(),
-                        canopy_coverage: None,
-                    }),
+                    .add(TerrainMaterial::for_tests(settings(Vec2::ZERO))),
             );
         }
         let page_bytes = Layout::for_material(&settings(Vec2::ZERO)).unwrap().bytes();
@@ -571,28 +550,7 @@ mod tests {
         let material = app
             .world_mut()
             .resource_mut::<Assets<TerrainMaterial>>()
-            .add(TerrainMaterial {
-                source_only: false,
-                environment: atmosphere::environment::fallback_parameters(),
-                cloud_shadows: None,
-                rain_shelter: None,
-                forest_shadow: None,
-                shading_mode: super::super::TerrainShadingMode::Production,
-                stochastic_cached: false,
-                prepared: false,
-                prepared_albedo: false,
-                source_weights: Handle::default(),
-                source_base_color_array: Handle::default(),
-                settings: settings(Vec2::ZERO),
-                weights: Handle::default(),
-                base_color_array: Handle::default(),
-                normal_material_array: Handle::default(),
-                macro_variation: Handle::default(),
-                stochastic_cache: Handle::default(),
-                canopy_bounds: Vec4::ZERO,
-                canopy_shading: Default::default(),
-                canopy_coverage: None,
-            });
+            .add(TerrainMaterial::for_tests(settings(Vec2::ZERO)));
         app.update();
         let old = app.world().resource::<CacheEntries>().0[&material.id()]
             .buffer

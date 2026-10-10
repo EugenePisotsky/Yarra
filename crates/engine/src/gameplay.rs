@@ -5,7 +5,7 @@ mod input;
 mod target;
 pub use actors::{PlayerMovementSuspended, PlayerRoute, standing_character};
 pub(crate) use camera::CAMERA_FOCUS_HEIGHT;
-pub use camera::GameCameraPlugin;
+pub use camera::{GameCameraPlugin, orbit_transform};
 pub use input::GameInputPlugin;
 pub use target::MovementTargetPlugin;
 

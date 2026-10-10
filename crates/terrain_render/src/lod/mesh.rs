@@ -7,17 +7,17 @@ use world::TerrainHeightfield;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct StitchEdges(pub u8);
 impl StitchEdges {
-    pub const WEST: u8 = 1;
-    pub const EAST: u8 = 2;
-    pub const SOUTH: u8 = 4;
-    pub const NORTH: u8 = 8;
+    pub(crate) const WEST: u8 = 1;
+    pub(crate) const EAST: u8 = 2;
+    pub(crate) const SOUTH: u8 = 4;
+    pub(crate) const NORTH: u8 = 8;
     pub fn insert(&mut self, edge: u8) {
         self.0 |= edge;
     }
 }
 /// Collapse odd boundary indices onto canonical even vertices. Degenerate triangles
 /// are removed; the retained edge is exactly the neighbour's linear segment.
-pub fn stitch_indices(resolution: u16, edges: StitchEdges) -> Result<Vec<u32>, String> {
+pub(crate) fn stitch_indices(resolution: u16, edges: StitchEdges) -> Result<Vec<u32>, String> {
     if !(3..=257).contains(&resolution) || !(resolution - 1).is_power_of_two() || edges.0 > 15 {
         return Err("invalid stitched terrain grid".into());
     }

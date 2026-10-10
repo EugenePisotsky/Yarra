@@ -202,6 +202,7 @@ impl Transition {
         let index = self.morph_index.as_ref().unwrap();
         contacts.iter().all(|r| index.certificates_accept(r))
     }
+    #[allow(clippy::too_many_arguments)]
     fn update(
         &mut self,
         stream: &TerrainLodStream,
@@ -370,6 +371,7 @@ impl Transition {
     }
 }
 impl TerrainLodStream {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn advance_transition(
         &mut self,
         settings: &LodSettings,
@@ -535,12 +537,8 @@ fn contact_handoff(
     HandoffIndex::new(old, new, metadata, size).handoff(contacts, budget_limited)
 }
 pub(super) fn patch_transform(key: TerrainNodeKey, origin: CellCoord, cell_size: f32) -> Transform {
-    let min = key.cell_bounds().unwrap()[0];
-    Transform::from_xyz(
-        ((min.x as i64 - origin.x as i64) as f64 * cell_size as f64) as f32,
-        0.,
-        ((min.z as i64 - origin.z as i64) as f64 * cell_size as f64) as f32,
-    )
+    let [x, z] = key.cell_bounds().unwrap()[0].offset_from(origin, cell_size);
+    Transform::from_xyz(x as f32, 0., z as f32)
 }
 
 #[cfg(test)]

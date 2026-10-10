@@ -27,6 +27,7 @@ use bevy::{
     },
 };
 
+#[allow(clippy::too_many_arguments)] // Bevy render-world system parameters are independent resources.
 pub(super) fn queue(
     mut commands: Commands,
     pipeline_cache: Res<PipelineCache>,

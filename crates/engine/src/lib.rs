@@ -8,15 +8,10 @@ mod character_catalog;
 mod msaa_store;
 mod object_lod;
 pub use object_lod::{ObjectFootprint, ObjectLodPlugin};
-mod forest_shadow;
-mod lod_lab;
-pub use lod_lab::{
-    LabAsset, LabBand, LabRepresentation, LabTree, LabVariant, LodLabPlugin, spawn_lab_tree,
-};
-mod tree_impostor;
-mod tree_wind;
-pub use tree_wind::{
-    TreeInstancing, TreeWindPlugin, TreeWindResponse, TreeWindSystems, TreeWindTuning,
+mod trees;
+pub use trees::{
+    LabAsset, LabBand, LabRepresentation, LabTree, LabVariant, LodLabPlugin, TreeInstancing,
+    TreeWindPlugin, TreeWindResponse, TreeWindSystems, TreeWindTuning, spawn_lab_tree,
     tree_gltf_plugin,
 };
 mod day_clock;
@@ -62,6 +57,8 @@ pub use world_streaming::{
 
 mod ocean;
 pub use ocean::OceanPlugin;
+mod world_view;
+pub use world_view::{ActiveWorldView, WorldView};
 mod start_view;
 pub use start_view::{WORLD_VIEW_DISTANCE, WorldStartAdopted, WorldStartView};
 mod gameplay;
@@ -69,5 +66,5 @@ pub use actor::{MoveIntent, PlayerControlled, TerrainGrounded};
 pub use gameplay::{
     GameCameraPlugin, GameInputEnabled, GameInputPlugin, GamePointerInputBlocked, GameplayPlugin,
     GameplayPlugins, GameplaySystems, MinimalGamePlugin, MovementTargetPlugin, PlayerMovementSpeed,
-    PlayerMovementSuspended, PlayerRoute, standing_character,
+    PlayerMovementSuspended, PlayerRoute, orbit_transform, standing_character,
 };

@@ -38,7 +38,7 @@ fn displaying_a_running_clock_does_not_pause_or_quantize_it() {
 
 #[test]
 fn preview_is_transient_and_color_drag_is_one_undo_across_a_save() {
-    let mut dense = DenseDomainWorkingSets::default();
+    let mut dense = SourceWorkingSets::default();
     let source = world_db::WorldSpaceRecord {
         id: WorldSpaceId(1),
         name: "test".into(),

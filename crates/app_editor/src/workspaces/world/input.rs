@@ -1,6 +1,6 @@
 //! World shortcuts, source selection and interaction cancellation.
 use crate::{
-    domain_editing::DenseDomainWorkingSets,
+    domain_editing::SourceWorkingSets,
     editing::{EditorHistory, EditorObjectWorkingSet, EditorSelection},
     project_store::ProjectEditorStore,
     publication::RuntimePublicationState,
@@ -46,7 +46,7 @@ pub(crate) fn handle_editor_shortcuts(
     mut gizmo_settings: ResMut<TransformGizmoSettings>,
     mut selection: ResMut<EditorSelection>,
     mut objects: ResMut<EditorObjectWorkingSet>,
-    mut dense_domains: ResMut<DenseDomainWorkingSets>,
+    mut dense_domains: ResMut<SourceWorkingSets>,
     vegetation: Res<VegetationAuthoringState>,
     mut history: ResMut<EditorHistory>,
     publication: Res<RuntimePublicationState>,

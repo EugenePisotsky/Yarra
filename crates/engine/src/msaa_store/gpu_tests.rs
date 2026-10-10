@@ -185,7 +185,14 @@ fn resolve_only_matches_stored_color_and_preserves_later_consumers() {
 
     let opaque = compare(&mut app, &pixels, "opaque, alpha cutout and UI", true);
     assert!(
-        opaque.chunks_exact(4).map(|p| p[2]).max().unwrap() > 100,
+        opaque
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|p| p[2])
+            .max()
+            .unwrap()
+            > 100,
         "test must draw visible geometry"
     );
     // The shared graph slot keeps Bevy's public before/after anchors functional.

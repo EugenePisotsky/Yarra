@@ -39,12 +39,12 @@ impl TerrainEntry {
                 .as_ref()
                 .is_some_and(|(g, t)| g == generation && *t == transition)
     }
-    pub(in crate::world_streaming) fn owns_request(&self, id: u64) -> bool {
+    pub(in crate::world_streaming) fn owns_request(&self, id: RequestId) -> bool {
         self.stream.pending.contains_key(&id)
     }
     pub(in crate::world_streaming) fn receive(
         &mut self,
-        id: u64,
+        id: RequestId,
         result: Result<TerrainReply, String>,
     ) {
         self.stream.receive(id, result);
@@ -108,6 +108,7 @@ impl TerrainEntry {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(in crate::world_streaming) fn prepare(
     mut commands: Commands,
     config: Res<TerrainHierarchy>,
@@ -237,7 +238,6 @@ pub(in crate::world_streaming) fn prepare(
         return;
     }
     let stage = &mut entry.stream;
-    stage.next_id = active.next_id;
     stage.poll_work(&mut meshes, &tracker);
     stage.poll_materials(&mut materials, &mut images, &tracker, origin.cell(), size);
     stage.prepare_materials(
@@ -298,7 +298,6 @@ pub(in crate::world_streaming) fn prepare(
         MAX_NODE_BYTES.saturating_sub(active.decoded_bytes()),
         MAX_MESH_BYTES.saturating_sub(active.mesh_bytes() + PROBE_BYTES),
     );
-    active.next_id = stage.next_id;
     if stage.target.as_ref().is_some_and(|p| p.patches.is_empty()) {
         entry.ready = entry.stream.materials_ready(&tracker); // Declared empty worlds still validate material presence.
         return;

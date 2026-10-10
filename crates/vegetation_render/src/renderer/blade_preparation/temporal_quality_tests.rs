@@ -86,7 +86,7 @@ fn save_pixels(app: &mut App, path: &std::path::Path) {
     let image = world.resource::<RenderAssets<GpuImage>>().get(id).unwrap();
     let bytes = read_temporal_texture(world, &image.texture);
     let mut ppm = b"P6\n256 256\n255\n".to_vec();
-    for pixel in bytes.chunks_exact(4) {
+    for pixel in bytes.as_chunks::<4>().0 {
         ppm.extend_from_slice(&[pixel[2], pixel[1], pixel[0]]);
     }
     std::fs::write(path, ppm).unwrap();

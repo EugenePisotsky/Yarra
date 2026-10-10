@@ -12,11 +12,11 @@ use environment::{Preset, PresetKind};
 
 #[derive(SystemParam)]
 pub(super) struct Resources<'w> {
-    navigation: ResMut<'w, crate::navigation::ProjectNavigationStore>,
+    listings: ResMut<'w, crate::listings::ProjectListings>,
     state: ResMut<'w, PresetAuthoringState>,
     preview: Res<'w, viewport::PreviewState>,
     roads: Res<'w, crate::road_authoring::RoadToolState>,
-    dense: ResMut<'w, DenseDomainWorkingSets>,
+    dense: ResMut<'w, SourceWorkingSets>,
     project: Res<'w, ProjectEditorStore>,
     plants: Res<'w, VegetationAuthoringState>,
     history: ResMut<'w, EditorHistory>,
@@ -28,7 +28,7 @@ pub(super) struct Resources<'w> {
 }
 pub(super) fn draw(mut frame: ResMut<EditorUiFrame>, resources: Resources) -> Result {
     let Resources {
-        mut navigation,
+        mut listings,
         mut state,
         preview,
         roads,
@@ -130,22 +130,22 @@ pub(super) fn draw(mut frame: ResMut<EditorUiFrame>, resources: Resources) -> Re
                                 if let Some(base) = state.base
                                     && ui.button("Ground").clicked()
                                 {
-                                    added = Some(controls::new_ground(base));
+                                    added = Some(editor::new_ground(base));
                                     ui.close();
                                 }
                                 if let Some((catalog, _, _)) = plants.working_catalog()
                                     && let Some(a) = catalog.assemblages.first()
                                     && ui.button("Foliage").clicked()
                                 {
-                                    added = Some(controls::new_foliage(a.id));
+                                    added = Some(editor::new_foliage(a.id));
                                     ui.close();
                                 }
                                 if ui.button("Asset collection").clicked() {
-                                    added = Some(controls::new_collection());
+                                    added = Some(editor::new_collection());
                                     ui.close();
                                 }
                                 if ui.button("Exclusion").clicked() {
-                                    added = Some(controls::new_exclusion());
+                                    added = Some(editor::new_exclusion());
                                     ui.close();
                                 }
                                 if ui.button("Composition").clicked() {
@@ -246,14 +246,14 @@ pub(super) fn draw(mut frame: ResMut<EditorUiFrame>, resources: Resources) -> Re
                         .id_salt("preset_details")
                         .show(ui, |ui| {
                             ui.add_enabled_ui(idle, |ui| {
-                                controls::preset_editor(
+                                editor::preset_editor(
                                     ui,
                                     &mut draft.library,
                                     &mut selected,
                                     definition,
                                     &project,
                                     plants.working_catalog().map(|(c, _, _)| c),
-                                    &mut navigation,
+                                    &mut listings,
                                     &preview.assets,
                                 );
                             })

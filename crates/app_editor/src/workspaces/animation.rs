@@ -6,7 +6,7 @@ use engine::{
     DEFAULT_CHARACTER_PRESENTATION_ID, load_character_presentation_catalog_summary,
 };
 
-use super::{EditorWorkspace, animation_workspace_active};
+use super::{EditorWorkspace, SavedDaylight, animation_workspace_active};
 use crate::shell::{EditorUiFrame, EditorUiSet};
 
 #[derive(Component)]
@@ -77,7 +77,7 @@ pub(crate) fn setup_animation_workspace(mut commands: Commands) {
 struct AnimationPreviewActor;
 
 #[derive(Resource, Default)]
-struct AnimationLighting(Option<(Transform, DirectionalLight, GlobalAmbientLight)>);
+struct AnimationLighting(Option<SavedDaylight>);
 
 fn enter_animation_lighting(
     mut saved: ResMut<AnimationLighting>,
@@ -85,7 +85,7 @@ fn enter_animation_lighting(
     ambient: Option<ResMut<GlobalAmbientLight>>,
 ) {
     if let (Ok((mut transform, mut light)), Some(mut ambient)) = (sun.single_mut(), ambient) {
-        saved.0 = Some((*transform, *light, (*ambient).clone()));
+        saved.0 = Some(SavedDaylight::save(&transform, &light, &ambient));
         apply_preview_daylight(&mut transform, &mut light, &mut ambient);
     }
 }
@@ -108,12 +108,10 @@ fn exit_animation_lighting(
     mut sun: Query<(&mut Transform, &mut DirectionalLight), With<engine::WorldSun>>,
     ambient: Option<ResMut<GlobalAmbientLight>>,
 ) {
-    if let (Some((t, l, a)), Ok((mut transform, mut light)), Some(mut ambient)) =
+    if let (Some(saved), Ok((mut transform, mut light)), Some(mut ambient)) =
         (saved.0.take(), sun.single_mut(), ambient)
     {
-        *transform = t;
-        *light = l;
-        *ambient = a;
+        saved.restore(&mut transform, &mut light, &mut ambient);
     }
 }
 

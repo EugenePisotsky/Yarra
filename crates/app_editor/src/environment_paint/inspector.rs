@@ -61,7 +61,7 @@ fn move_layer(definition: &mut EnvironmentDefinition, layer: LayerId, up: bool) 
 }
 fn commit(
     paint: &mut EnvironmentPaintState,
-    dense: &mut DenseDomainWorkingSets,
+    dense: &mut SourceWorkingSets,
     history: &mut EditorHistory,
     definition: &EnvironmentDefinition,
 ) {
@@ -82,7 +82,7 @@ pub(crate) fn inspector(
     _project: &ProjectEditorStore,
     space: Option<WorldSpaceId>,
     history: &mut EditorHistory,
-    dense: &mut DenseDomainWorkingSets,
+    dense: &mut SourceWorkingSets,
     _plants: Option<&vegetation::VegetationCatalog>,
     busy: bool,
 ) {

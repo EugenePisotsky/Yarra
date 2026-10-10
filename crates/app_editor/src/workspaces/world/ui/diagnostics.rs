@@ -1,9 +1,9 @@
 //! Read-only world, streaming, source and publication diagnostics.
 use crate::{
-    domain_editing::DenseDomainWorkingSets,
+    domain_editing::SourceWorkingSets,
     editing::{EditorHistory, EditorObjectWorkingSet},
     journal::EditorJournalStatus,
-    navigation::ProjectNavigationStore,
+    listings::ProjectListings,
     project_store::{ProjectEditorStore, ProjectQueryWindow},
     publication::RuntimePublicationState,
     tools::EditorToolRegistry,
@@ -24,9 +24,9 @@ pub(super) fn draw_world_diagnostics(
     viewpoint: &WorldViewpoint,
     origin: &WorldOrigin,
     stats: &StreamingStats,
-    dense_domains: &DenseDomainWorkingSets,
+    dense_domains: &SourceWorkingSets,
     journal: &EditorJournalStatus,
-    navigation: &ProjectNavigationStore,
+    listings: &ProjectListings,
     publication: &RuntimePublicationState,
     project: &ProjectEditorStore,
     objects: &EditorObjectWorkingSet,
@@ -109,9 +109,9 @@ pub(super) fn draw_world_diagnostics(
         journal.recovered_entries()
     ));
     ui.small(format!(
-        "{} · {} stale navigation result(s)",
-        navigation.status(),
-        navigation.stale_results()
+        "{} · {} stale listings result(s)",
+        listings.status(),
+        listings.stale_results()
     ));
     if let Some(error) = project.write_error() {
         ui.colored_label(

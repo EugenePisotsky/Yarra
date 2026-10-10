@@ -47,7 +47,7 @@ pub(super) struct CoverageOverlays {
 #[derive(SystemParam)]
 pub(super) struct CoverageSource<'w, 's> {
     project: Res<'w, ProjectEditorStore>,
-    dense: Res<'w, DenseDomainWorkingSets>,
+    dense: Res<'w, SourceWorkingSets>,
     origin: Res<'w, WorldOrigin>,
     workspace: Res<'w, State<EditorWorkspace>>,
     tools: Res<'w, EditorToolRegistry>,

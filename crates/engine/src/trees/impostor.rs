@@ -9,8 +9,9 @@
 //! final LOD ends where the impostor starts, both dithering over the same band and both
 //! limited to `object_lod::IMPOSTOR_HANDOFF_METRES`, so the handover neither gaps nor
 //! doubles.
+use super::wind::WindBuffer;
 use crate::object_lod::{IMPOSTOR_HANDOFF_METRES, LodProjection};
-use crate::{WorldCatalog, WorldOrigin, tree_wind::WindBuffer};
+use crate::{WorldCatalog, WorldOrigin};
 use atmosphere::environment::{EnvironmentAssets, EnvironmentExtension, EnvironmentMaterial};
 use bevy::{
     asset::{AssetLoader, LoadContext, RenderAssetUsages, io::Reader},
@@ -73,7 +74,7 @@ impl Plugin for TreeImpostorPlugin {
             )
             .add_systems(
                 PostUpdate,
-                crate::forest_shadow::rebuild.after(bevy::transform::TransformSystems::Propagate),
+                super::forest_shadow::rebuild.after(bevy::transform::TransformSystems::Propagate),
             )
             .add_systems(Last, upload_fades);
     }
@@ -91,7 +92,7 @@ pub struct ImpostorDescriptor {
     pub centre: Vec3,
     pub radius: f32,
     pub crop: Vec4,
-    /// The foliage, for distant forest shadows (`crate::forest_shadow`).
+    /// The foliage, for distant forest shadows (`super::forest_shadow`).
     pub crown: ImpostorCrown,
     /// The far mesh LOD's structural wind profile and stem height (object metres), so the
     /// quad leans as that trunk does (`shaders/tree/wind.wesl`, `sway_point_of_trunk`).

@@ -1,9 +1,8 @@
 //! The Areas tool in the viewport: drawing a new shape corner by corner, selecting, moving
 //! and adding corners, and the outlines that show where the areas are.
 use super::*;
-use crate::{shell::EditorInputCapture, workspaces::world::EditorOverlayGizmos};
-use bevy::{ecs::system::SystemParam, window::PrimaryWindow};
-use engine::{StreamedTerrainSurface, WorldViewCamera};
+use crate::workspaces::world::{EditorOverlayGizmos, GroundToolInput};
+use bevy::ecs::system::SystemParam;
 use world::MAX_GAMEPLAY_AREA_POINTS;
 
 /// Pointer distances, in logical pixels, within which a corner or an edge is picked.
@@ -16,18 +15,8 @@ const LIFT: f32 = 0.15;
 
 #[derive(SystemParam)]
 pub(super) struct Input<'w, 's> {
-    window: Single<'w, 's, &'static Window, With<PrimaryWindow>>,
-    camera: Single<'w, 's, (&'static Camera, &'static GlobalTransform), With<WorldViewCamera>>,
-    terrain: Query<'w, 's, (Entity, &'static StreamedTerrainSurface)>,
-    origin: Res<'w, WorldOrigin>,
+    ground: GroundToolInput<'w, 's>,
     catalog: Res<'w, WorldCatalog>,
-    workspace: Res<'w, State<EditorWorkspace>>,
-    tools: Res<'w, EditorToolRegistry>,
-    capture: Res<'w, EditorInputCapture>,
-    buttons: Res<'w, ButtonInput<MouseButton>>,
-    keys: Res<'w, ButtonInput<KeyCode>>,
-    publication: Res<'w, RuntimePublicationState>,
-    save: Res<'w, EditorSaveCoordinator>,
     project: Res<'w, ProjectEditorStore>,
 }
 
@@ -41,13 +30,13 @@ struct Trace {
 
 impl Input<'_, '_> {
     fn active(&self) -> bool {
-        *self.workspace.get() == EditorWorkspace::World && tool_active(&self.tools)
+        self.ground.active(&AREA_TOOL)
     }
 
     fn ground(&self, render: Vec3) -> Option<f32> {
         engine::sample_resident_terrain_surface(
-            &self.origin,
-            self.terrain.iter().map(|(_, surface)| surface),
+            &self.ground.origin,
+            self.ground.terrain.iter().map(|(_, surface)| surface),
             [render.x, render.z],
         )
         .map(|sample| sample.height)
@@ -56,19 +45,22 @@ impl Input<'_, '_> {
     /// The world ground position under the pointer.
     fn pointed(&self, cursor: Vec2) -> Option<[f64; 2]> {
         let ray = self
+            .ground
             .camera
             .0
-            .viewport_to_world(self.camera.1, cursor)
+            .viewport_to_world(self.ground.camera.1, cursor)
             .ok()?;
-        let (_, hit) = engine::raycast_resident_terrain(&self.origin, self.terrain.iter(), ray)?;
-        let (_, world) = self.origin.to_world(&self.catalog, hit)?;
+        let (_, hit) =
+            engine::raycast_resident_terrain(&self.ground.origin, self.ground.terrain.iter(), ray)?;
+        let (_, world) = self.ground.origin.to_world(&self.catalog, hit)?;
         Some([world[0], world[2]])
     }
 
     fn screen(&self, position: Vec3) -> Option<Vec2> {
-        self.camera
+        self.ground
+            .camera
             .0
-            .world_to_viewport(self.camera.1, position)
+            .world_to_viewport(self.ground.camera.1, position)
             .ok()
     }
 
@@ -79,7 +71,8 @@ impl Input<'_, '_> {
         let flat: Vec<Vec3> = points
             .iter()
             .map(|p| {
-                self.origin
+                self.ground
+                    .origin
                     .to_render(&self.catalog, space, [p[0], 0., p[1]])
             })
             .collect::<Option<_>>()?;
@@ -131,8 +124,9 @@ impl Input<'_, '_> {
     /// Whether an area is close enough to the camera to be worth drawing.
     fn near(&self, area: &GameplayArea) -> bool {
         let Some((_, camera)) = self
+            .ground
             .origin
-            .to_world(&self.catalog, self.camera.1.translation())
+            .to_world(&self.catalog, self.ground.camera.1.translation())
         else {
             return false;
         };
@@ -210,7 +204,7 @@ pub(super) struct Gesture {
 /// Carries out one frame of the tool: dragging, drawing, corner edits and selection.
 pub(super) fn act(
     state: &mut AreaToolState,
-    dense: &mut DenseDomainWorkingSets,
+    dense: &mut SourceWorkingSets,
     history: &mut EditorHistory,
     space: WorldSpaceId,
     gesture: Gesture,
@@ -315,11 +309,11 @@ pub(super) fn act(
 
 pub(super) fn input(
     input: Input,
-    mut dense: ResMut<DenseDomainWorkingSets>,
+    mut dense: ResMut<SourceWorkingSets>,
     mut history: ResMut<EditorHistory>,
     mut state: ResMut<AreaToolState>,
 ) {
-    if let Some(space) = input.origin.space()
+    if let Some(space) = input.ground.origin.space()
         && state.space != Some(space)
     {
         // Another world: what was selected or half drawn belongs to the one left behind.
@@ -330,32 +324,18 @@ pub(super) fn input(
         state.draft = None;
     }
     let active = input.active();
-    let enabled = active && input.window.focused;
-    let typing = input.capture.wants_keyboard;
-    let pressed = |key| !typing && input.keys.just_pressed(key);
+    let enabled = active && input.ground.window.focused;
+    let typing = input.ground.capture.wants_keyboard;
+    let pressed = |key| !typing && input.ground.keys.just_pressed(key);
     if enabled && pressed(KeyCode::Escape) {
         state.finish(&mut dense, &mut history, true);
         state.draft = None;
         return;
     }
-    let blocked = input.capture.wants_pointer
-        || input.buttons.pressed(MouseButton::Right)
-        || input.buttons.pressed(MouseButton::Middle)
-        || input.publication.active()
-        || input.save.active()
+    let blocked = input.ground.paused()
         || input.project.save_in_flight()
         || dense.saving()
-        || dense.has_any_conflict()
-        || [
-            KeyCode::SuperLeft,
-            KeyCode::SuperRight,
-            KeyCode::ControlLeft,
-            KeyCode::ControlRight,
-            KeyCode::AltLeft,
-            KeyCode::AltRight,
-        ]
-        .iter()
-        .any(|k| input.keys.pressed(*k));
+        || dense.has_any_conflict();
     if (!enabled || blocked) && state.dragging.is_some() {
         state.finish(&mut dense, &mut history, false);
     }
@@ -368,14 +348,14 @@ pub(super) fn input(
     if !enabled || blocked {
         return;
     }
-    let Some(space) = input.origin.space() else {
+    let Some(space) = input.ground.origin.space() else {
         return;
     };
-    let cursor = input.window.cursor_position();
+    let cursor = input.ground.window.cursor_position();
     let mut gesture = Gesture {
         hit: cursor.and_then(|cursor| input.pointed(cursor)),
-        click: input.buttons.just_pressed(MouseButton::Left),
-        held: input.buttons.pressed(MouseButton::Left),
+        click: input.ground.buttons.just_pressed(MouseButton::Left),
+        held: input.ground.buttons.pressed(MouseButton::Left),
         close: pressed(KeyCode::Enter),
         back: pressed(KeyCode::Backspace) || pressed(KeyCode::Delete),
         ..default()
@@ -410,14 +390,14 @@ fn cross(gizmos: &mut Gizmos<EditorOverlayGizmos>, at: Vec3, color: Color, radiu
 
 pub(super) fn draw(
     input: Input,
-    dense: Res<DenseDomainWorkingSets>,
+    dense: Res<SourceWorkingSets>,
     mut state: ResMut<AreaToolState>,
     mut gizmos: Gizmos<EditorOverlayGizmos>,
 ) {
     if !input.active() {
         return;
     }
-    let Some(space) = input.origin.space() else {
+    let Some(space) = input.ground.origin.space() else {
         return;
     };
     let resting = Color::srgb(0.45, 0.95, 0.55);

@@ -4,23 +4,22 @@ use std::{
     fs::{self, File},
     io::{ErrorKind, Write},
     path::{Path, PathBuf},
-    thread::{self, JoinHandle},
 };
 
 use bevy::prelude::*;
-use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded};
+use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError};
 use serde::{Deserialize, Serialize};
 use world::{
     AssetId, CellCoord, ObjectActivationPolicy, ObjectDefinitionId, StableObjectId, WorldSpaceId,
 };
 use world_db::{
-    DenseSourceRecord, SourceEnvironmentCellRecord, SourceObjectDefinitionRecord,
-    SourceObjectRecord, SourceObjectViewRecord,
+    SourceEnvironmentCellRecord, SourceObjectDefinitionRecord, SourceObjectRecord,
+    SourceObjectViewRecord,
 };
 
 use crate::{
     domain_editing::{
-        DenseDomainWorkingSets, DirtyDefinitionSnapshot, DirtyDenseSnapshot, DirtyPresetSnapshot,
+        DirtyDefinitionSnapshot, DirtyDenseSnapshot, DirtyPresetSnapshot, SourceWorkingSets,
     },
     editing::{DirtyObjectSnapshot, EditorHistory, EditorObjectWorkingSet},
 };
@@ -110,21 +109,7 @@ impl EditorJournalStatus {
     }
 }
 
-#[derive(Resource)]
-struct JournalWorker {
-    requests: Sender<JournalRequest>,
-    results: Receiver<JournalResult>,
-    thread: Option<JoinHandle<()>>,
-}
-
-impl Drop for JournalWorker {
-    fn drop(&mut self) {
-        let _ = self.requests.send(JournalRequest::Shutdown);
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
-    }
-}
+type JournalWorker = crate::worker::Worker<JournalRequest, JournalResult>;
 
 enum JournalRequest {
     Write {
@@ -134,7 +119,6 @@ enum JournalRequest {
     Clear {
         revision: JournalRevision,
     },
-    Shutdown,
 }
 
 enum JournalResult {
@@ -278,80 +262,68 @@ impl From<JournalEntry> for DirtyObjectSnapshot {
     }
 }
 
-impl JournalDenseRecord {
-    fn from_source(record: &DenseSourceRecord) -> Option<Self> {
-        match record {
-            DenseSourceRecord::EnvironmentCoverage(record) => Some(Self::EnvironmentCoverage {
-                space: record.space,
-                cell: record.cell,
-                definition_revision: record.definition_revision,
-                tiles: record.tiles.clone(),
-                source_revision: record.source_revision,
-            }),
+impl From<&SourceEnvironmentCellRecord> for JournalDenseRecord {
+    fn from(record: &SourceEnvironmentCellRecord) -> Self {
+        Self::EnvironmentCoverage {
+            space: record.space,
+            cell: record.cell,
+            definition_revision: record.definition_revision,
+            tiles: record.tiles.clone(),
+            source_revision: record.source_revision,
         }
     }
 }
 
-impl From<JournalDenseRecord> for DenseSourceRecord {
+impl From<JournalDenseRecord> for SourceEnvironmentCellRecord {
     fn from(record: JournalDenseRecord) -> Self {
-        match record {
-            JournalDenseRecord::EnvironmentCoverage {
-                space,
-                cell,
-                definition_revision,
-                tiles,
-                source_revision,
-            } => Self::EnvironmentCoverage(SourceEnvironmentCellRecord {
-                space,
-                cell,
-                definition_revision,
-                tiles,
-                source_revision,
-            }),
+        let JournalDenseRecord::EnvironmentCoverage {
+            space,
+            cell,
+            definition_revision,
+            tiles,
+            source_revision,
+        } = record;
+        Self {
+            space,
+            cell,
+            definition_revision,
+            tiles,
+            source_revision,
         }
     }
 }
 
-impl JournalDenseEntry {
-    fn from_snapshot(snapshot: DirtyDenseSnapshot) -> Option<Self> {
-        Some(Self {
-            base: snapshot
-                .base
-                .as_ref()
-                .and_then(JournalDenseRecord::from_source),
-            current: JournalDenseRecord::from_source(&snapshot.current)?,
-            runtime: snapshot
-                .runtime
-                .as_ref()
-                .and_then(JournalDenseRecord::from_source),
-        })
+impl From<DirtyDenseSnapshot> for JournalDenseEntry {
+    fn from(snapshot: DirtyDenseSnapshot) -> Self {
+        Self {
+            base: snapshot.base.as_ref().map(JournalDenseRecord::from),
+            current: JournalDenseRecord::from(&snapshot.current),
+            runtime: snapshot.runtime.as_ref().map(JournalDenseRecord::from),
+        }
     }
 }
 
 impl From<JournalDenseEntry> for DirtyDenseSnapshot {
     fn from(entry: JournalDenseEntry) -> Self {
         Self {
-            base: entry.base.map(DenseSourceRecord::from),
-            current: DenseSourceRecord::from(entry.current),
-            runtime: entry.runtime.map(DenseSourceRecord::from),
+            base: entry.base.map(SourceEnvironmentCellRecord::from),
+            current: SourceEnvironmentCellRecord::from(entry.current),
+            runtime: entry.runtime.map(SourceEnvironmentCellRecord::from),
         }
     }
 }
 
 fn start_journal_worker(mut commands: Commands, config: Res<EditorJournalConfig>) {
-    let (request_sender, request_receiver) = bounded(JOURNAL_CHANNEL_CAPACITY);
-    let (result_sender, result_receiver) = bounded(JOURNAL_CHANNEL_CAPACITY + 1);
     let path = config.path.clone();
     let project_database = config.project_database.clone();
-    let worker_thread = thread::Builder::new()
-        .name("yarra-editor-journal".into())
-        .spawn(move || journal_worker(path, project_database, request_receiver, result_sender))
-        .expect("failed to spawn editor journal worker");
-    commands.insert_resource(JournalWorker {
-        requests: request_sender,
-        results: result_receiver,
-        thread: Some(worker_thread),
-    });
+    let worker = JournalWorker::spawn(
+        "yarra-editor-journal",
+        JOURNAL_CHANNEL_CAPACITY,
+        JOURNAL_CHANNEL_CAPACITY + 1,
+        move |requests, results| journal_worker(path, project_database, requests, results),
+    )
+    .expect("failed to spawn editor journal worker");
+    commands.insert_resource(worker);
 }
 
 fn journal_worker(
@@ -369,7 +341,6 @@ fn journal_worker(
                 (revision, write_journal_atomically(&path, &file))
             }
             JournalRequest::Clear { revision } => (revision, clear_journal(&path)),
-            JournalRequest::Shutdown => return,
         };
         if results
             .send(JournalResult::Written { revision, result })
@@ -438,7 +409,7 @@ fn receive_journal_results(
         return;
     };
     loop {
-        match worker.results.try_recv() {
+        match worker.try_recv() {
             Ok(JournalResult::Loaded(Ok(Some(file)))) => {
                 let object_count = file.entries.len();
                 let dense_count = file.dense_entries.len();
@@ -489,7 +460,7 @@ fn receive_journal_results(
 pub(crate) fn restore_loaded_journal(
     mut status: ResMut<EditorJournalStatus>,
     mut objects: ResMut<EditorObjectWorkingSet>,
-    mut dense_domains: ResMut<DenseDomainWorkingSets>,
+    mut dense_domains: ResMut<SourceWorkingSets>,
     mut history: ResMut<EditorHistory>,
     project: Res<crate::project_store::ProjectEditorStore>,
 ) {
@@ -546,7 +517,7 @@ fn dispatch_dirty_journal(
     worker: Option<Res<JournalWorker>>,
     config: Res<EditorJournalConfig>,
     objects: Res<EditorObjectWorkingSet>,
-    dense_domains: Res<DenseDomainWorkingSets>,
+    dense_domains: Res<SourceWorkingSets>,
     mut status: ResMut<EditorJournalStatus>,
 ) {
     let Some(worker) = worker else {
@@ -570,7 +541,7 @@ fn dispatch_dirty_journal(
     let dense_entries = dense_domains
         .dirty_snapshots()
         .into_iter()
-        .filter_map(JournalDenseEntry::from_snapshot)
+        .map(JournalDenseEntry::from)
         .collect::<Vec<_>>();
     let definition_entries = dense_domains.dirty_definition_snapshots();
     let presets = dense_domains.dirty_preset_snapshot();
@@ -602,7 +573,7 @@ fn dispatch_dirty_journal(
             }),
         }
     };
-    match worker.requests.try_send(request) {
+    match worker.try_send(request) {
         Ok(()) => status.last_dispatched_revision = Some(revision),
         Err(TrySendError::Full(_)) => {}
         Err(TrySendError::Disconnected(_)) => {
@@ -670,18 +641,15 @@ mod tests {
             schema_version: JOURNAL_SCHEMA_VERSION,
             project_database: project.clone(),
             entries: vec![],
-            dense_entries: vec![
-                JournalDenseEntry::from_snapshot(DirtyDenseSnapshot {
-                    base: None,
-                    current: DenseSourceRecord::EnvironmentCoverage(paint.clone()),
-                    runtime: None,
-                })
-                .unwrap(),
-            ],
+            dense_entries: vec![JournalDenseEntry::from(DirtyDenseSnapshot {
+                base: None,
+                current: paint.clone(),
+                runtime: None,
+            })],
         };
         write_journal_atomically(&journal, &file).unwrap();
         let recovered = load_journal(&journal, &project).unwrap().unwrap();
-        let mut dense = DenseDomainWorkingSets::default();
+        let mut dense = SourceWorkingSets::default();
         dense.initialize_presets(&reader.read_environment_presets().unwrap());
         assert!(dense.restore_preset_snapshot(recovered.presets.unwrap(), &plants));
         assert_eq!(dense.presets(), Some(&presets));

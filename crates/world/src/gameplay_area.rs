@@ -133,7 +133,9 @@ impl GameplayArea {
             .collect();
         crossings.sort_by(f64::total_cmp);
         crossings
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .max_by(|a, b| (a[1] - a[0]).total_cmp(&(b[1] - b[0])))
             .map_or(middle, |span| [(span[0] + span[1]) / 2., z])
     }

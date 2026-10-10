@@ -206,6 +206,7 @@ struct MotorOutput {
     arrived: bool,
 }
 
+#[allow(clippy::type_complexity)] // Actors' transform, intent, motor and grounding.
 pub(crate) fn advance_character_motors(
     time: Res<Time>,
     player_speed: Option<Res<crate::PlayerMovementSpeed>>,

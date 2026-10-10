@@ -12,7 +12,7 @@ pub struct EnvironmentSourceCommit {
     pub roads: Option<crate::road_store::RoadSourceCommit>,
     pub presets: Option<PresetLibrary>,
     pub definitions: Vec<EnvironmentDefinition>,
-    pub coverage: Vec<crate::DenseSourceRecord>,
+    pub coverage: Vec<SourceEnvironmentCellRecord>,
 }
 #[derive(Debug, Clone, PartialEq)]
 pub enum EnvironmentSourceWriteResult {
@@ -28,8 +28,8 @@ pub enum EnvironmentSourceWriteResult {
         actual: Option<EnvironmentDefinition>,
     },
     CoverageConflict {
-        key: DenseSourceRecordKey,
-        actual: Option<DenseSourceRecord>,
+        key: EnvironmentCellKey,
+        actual: Option<SourceEnvironmentCellRecord>,
     },
 }
 
@@ -64,21 +64,21 @@ impl ProjectWriter {
             }
         }
     }
-    pub fn apply_dense_source_transaction(
+    pub fn apply_environment_cell_transaction(
         &mut self,
-        writes: &[DenseSourceWrite],
-    ) -> Result<DenseSourceWriteTransactionResult, WorldDbError> {
+        writes: &[EnvironmentCellWrite],
+    ) -> Result<EnvironmentCellWriteResult, WorldDbError> {
         match self.apply_environment_source_transaction(
             read_library(&self.connection)?.revision,
             None,
             &[],
             writes,
         )? {
-            EnvironmentSourceWriteResult::Committed(commit) => Ok(
-                DenseSourceWriteTransactionResult::Committed(commit.coverage),
-            ),
+            EnvironmentSourceWriteResult::Committed(commit) => {
+                Ok(EnvironmentCellWriteResult::Committed(commit.coverage))
+            }
             EnvironmentSourceWriteResult::CoverageConflict { key, actual } => {
-                Ok(DenseSourceWriteTransactionResult::Conflict { key, actual })
+                Ok(EnvironmentCellWriteResult::Conflict { key, actual })
             }
             EnvironmentSourceWriteResult::RoadConflict { .. } => unreachable!("no road writes"),
             EnvironmentSourceWriteResult::LibraryConflict { .. } => {
@@ -94,7 +94,7 @@ impl ProjectWriter {
         expected_library_revision: u64,
         replacement_library: Option<&PresetLibrary>,
         definitions: &[EnvironmentDefinitionWrite],
-        writes: &[DenseSourceWrite],
+        writes: &[EnvironmentCellWrite],
     ) -> Result<EnvironmentSourceWriteResult, WorldDbError> {
         self.apply_environment_and_roads_transaction(
             expected_library_revision,
@@ -110,7 +110,7 @@ impl ProjectWriter {
         expected_library_revision: u64,
         replacement_library: Option<&PresetLibrary>,
         definitions: &[EnvironmentDefinitionWrite],
-        writes: &[DenseSourceWrite],
+        writes: &[EnvironmentCellWrite],
         roads: &[crate::road_store::RoadSourceWrite],
         dependencies: &[crate::road_store::RoadDependency],
     ) -> Result<EnvironmentSourceWriteResult, WorldDbError> {
@@ -128,16 +128,16 @@ impl ProjectWriter {
             || writes.len() > crate::MAX_DENSE_DOMAIN_WRITES_PER_TRANSACTION
             || writes
                 .iter()
-                .map(DenseSourceWrite::key)
+                .map(EnvironmentCellWrite::key)
                 .collect::<std::collections::HashSet<_>>()
                 .len()
                 != writes.len()
         {
-            return Err(WorldDbError::InvalidDenseSourceTransaction);
+            return Err(WorldDbError::InvalidEnvironmentCellTransaction);
         }
         let mut bytes = 0usize;
         for write in writes {
-            let DenseSourceWrite::EnvironmentCoverage {
+            let EnvironmentCellWrite {
                 expected_source_revision,
                 record,
             } = write;
@@ -145,7 +145,7 @@ impl ProjectWriter {
                 || record.source_revision < 0
                 || record.tiles.len() > 128
             {
-                return Err(WorldDbError::InvalidDenseSourceRecord);
+                return Err(WorldDbError::InvalidEnvironmentCellRecord);
             }
             for tile in &record.tiles {
                 bytes = bytes
@@ -210,7 +210,7 @@ impl ProjectWriter {
         let mut commits = Vec::new();
         let mut remaining = MAX_ENVIRONMENT_MASK_BYTES;
         for write in writes {
-            let DenseSourceWrite::EnvironmentCoverage {
+            let EnvironmentCellWrite {
                 expected_source_revision,
                 record,
             } = write;
@@ -230,7 +230,7 @@ impl ProjectWriter {
             {
                 return Ok(EnvironmentSourceWriteResult::CoverageConflict {
                     key: write.key(),
-                    actual: actual.map(DenseSourceRecord::EnvironmentCoverage),
+                    actual,
                 });
             }
             let mut committed = record.clone();
@@ -290,10 +290,7 @@ impl ProjectWriter {
                 roads,
                 presets: changed_library,
                 definitions: next.into_values().collect(),
-                coverage: commits
-                    .into_iter()
-                    .map(DenseSourceRecord::EnvironmentCoverage)
-                    .collect(),
+                coverage: commits,
             },
         ))
     }

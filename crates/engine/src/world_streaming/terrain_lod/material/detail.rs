@@ -120,6 +120,7 @@ impl Detail {
 }
 
 impl TerrainLodStream {
+    #[allow(clippy::too_many_arguments)]
     pub(in crate::world_streaming::terrain_lod) fn update_material_detail(
         &mut self,
         worker: &WorldDatabaseWorker,

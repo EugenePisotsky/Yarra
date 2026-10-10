@@ -4,21 +4,18 @@ pub(crate) mod live;
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
-    thread,
 };
 
 use bevy::prelude::*;
-use crossbeam_channel::{Receiver, Sender, bounded};
+use crossbeam_channel::Receiver;
 use engine::{StreamedTerrainSurface, WorldCatalog, WorldOrigin};
 use environment_compile::{CompilePlan, CompiledCell};
 use terrain_render::TerrainSurfaceLayer;
 use world::{CellCoord, WorldSpaceId};
-use world_db::{
-    DenseSourceRecord, ProjectReader, SourceEnvironmentCellRecord, environment_dependency_cells,
-};
+use world_db::{ProjectReader, SourceEnvironmentCellRecord, environment_dependency_cells};
 
 use crate::{
-    domain_editing::DenseDomainWorkingSets, project_store::ProjectEditorStore,
+    domain_editing::SourceWorkingSets, project_store::ProjectEditorStore,
     vegetation_authoring::VegetationAuthoringState, workspaces::EditorWorkspace,
 };
 
@@ -217,7 +214,7 @@ fn override_stamp(record: &SourceEnvironmentCellRecord) -> Stamp {
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct PreviewSource<'w, 's> {
     project: Res<'w, ProjectEditorStore>,
-    dense: Res<'w, DenseDomainWorkingSets>,
+    dense: Res<'w, SourceWorkingSets>,
     plants: Res<'w, VegetationAuthoringState>,
     origin: Res<'w, WorldOrigin>,
     runtime: Res<'w, WorldCatalog>,

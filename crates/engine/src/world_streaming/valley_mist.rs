@@ -4,7 +4,9 @@
 //! built off the main thread. Reteya's 10 km takes 400 nodes and makes a 641² map at 16 m.
 use super::{
     ActiveWorldSpace, WorldCatalog,
-    database::{DatabaseRequest, TerrainQuery, TerrainReply, WorldDatabaseWorker},
+    database::{
+        DatabaseRequest, NotSent, RequestId, TerrainQuery, TerrainReply, WorldDatabaseWorker,
+    },
 };
 use atmosphere::{
     shore::{Shore, ShoreMap},
@@ -14,7 +16,6 @@ use bevy::{
     prelude::*,
     tasks::{AsyncComputeTaskPool, Task, block_on, poll_once},
 };
-use crossbeam_channel::TrySendError;
 use std::{collections::HashMap, sync::Arc};
 use world::{TerrainNodeKey, WorldSpaceId};
 use world_db::{EncodedTerrainNode, TerrainNodeDescriptor};
@@ -23,8 +24,6 @@ use world_db::{EncodedTerrainNode, TerrainNodeDescriptor};
 const LEVEL: u8 = 4;
 /// Node requests in flight at once; the terrain LOD keeps up to 12.
 const IN_FLIGHT: usize = 4;
-/// Set in this module's request ids, which the reply loop routes here.
-const REQUEST_BIT: u64 = 1 << 63;
 
 /// The mist map, and the shore map of a world with a sea.
 type Maps = (MistMap, Option<ShoreMap>);
@@ -36,8 +35,7 @@ pub(super) struct MistTerrain {
     cell_size: f32,
     /// Nodes still to request, and requests in flight by id.
     queue: Vec<TerrainNodeKey>,
-    pending: HashMap<u64, TerrainQuery>,
-    next_id: u64,
+    pending: HashMap<RequestId, TerrainQuery>,
     expected: usize,
     received: Vec<EncodedTerrainNode>,
     build: Option<Task<Result<Maps, String>>>,
@@ -45,11 +43,11 @@ pub(super) struct MistTerrain {
 }
 
 impl MistTerrain {
-    pub(super) fn owns_request(request_id: u64) -> bool {
-        request_id & REQUEST_BIT != 0
+    pub(super) fn owns_request(&self, request_id: RequestId) -> bool {
+        self.pending.contains_key(&request_id)
     }
 
-    pub(super) fn receive(&mut self, request_id: u64, reply: Result<TerrainReply, String>) {
+    pub(super) fn receive(&mut self, request_id: RequestId, reply: Result<TerrainReply, String>) {
         let Some(query) = self.pending.remove(&request_id) else {
             return;
         };
@@ -83,19 +81,16 @@ impl MistTerrain {
         let Some((generation, _)) = &self.identity else {
             return false;
         };
-        self.next_id = self.next_id.wrapping_add(1);
-        let request_id = REQUEST_BIT | self.next_id;
-        match worker.try_send(DatabaseRequest::Terrain {
-            request_id,
+        match worker.send(DatabaseRequest::Terrain {
             generation: generation.clone(),
             query: query.clone(),
         }) {
-            Ok(()) => {
+            Ok(request_id) => {
                 self.pending.insert(request_id, query);
                 true
             }
-            Err(TrySendError::Full(_)) => false,
-            Err(TrySendError::Disconnected(_)) => {
+            Err(NotSent::Full) => false,
+            Err(NotSent::Stopped) => {
                 self.fail("the world database worker stopped");
                 false
             }
@@ -149,7 +144,6 @@ pub(super) fn update(
         *mist = MistTerrain {
             identity: Some(identity),
             cell_size: info.cell_size,
-            next_id: mist.next_id,
             ..default()
         };
         published.set_sea_level(info.sea_level);

@@ -3,7 +3,7 @@
 mod tests;
 pub(crate) mod working;
 use crate::{
-    domain_editing::DenseDomainWorkingSets,
+    domain_editing::SourceWorkingSets,
     editing::EditorHistory,
     project_store::{ProjectEditorStore, ProjectStoreUpdate},
     publication::RuntimePublicationState,
@@ -97,7 +97,7 @@ struct Preview {
     gameplay: Option<(WorldSpaceId, AtmosphereProfile, f32)>,
 }
 fn reconcile(
-    mut dense: ResMut<DenseDomainWorkingSets>,
+    mut dense: ResMut<SourceWorkingSets>,
     mut project: ResMut<ProjectEditorStore>,
     mut save: ResMut<EditorSaveCoordinator>,
 ) {
@@ -118,7 +118,7 @@ fn sync(
     workspace: Res<State<EditorWorkspace>>,
     origin: Res<WorldOrigin>,
     catalog: Res<WorldCatalog>,
-    dense: Res<DenseDomainWorkingSets>,
+    dense: Res<SourceWorkingSets>,
     mut preview: ResMut<Preview>,
     mut state: ResMut<AtmosphereState>,
     time: Res<Time>,
@@ -211,7 +211,7 @@ fn draw(
     mut windows: ResMut<EditorWindowRegistry>,
     origin: Res<WorldOrigin>,
     catalog: Res<WorldCatalog>,
-    mut dense: ResMut<DenseDomainWorkingSets>,
+    mut dense: ResMut<SourceWorkingSets>,
     mut preview: ResMut<Preview>,
     mut history: ResMut<EditorHistory>,
     publication: Res<RuntimePublicationState>,
