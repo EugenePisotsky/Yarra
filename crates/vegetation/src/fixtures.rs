@@ -38,6 +38,7 @@ pub fn meadow() -> GrassType {
         roughness: 0.4,
         translucency: 0.35,
         stiffness: 0.4,
+        twin: false,
     }
 }
 
@@ -69,6 +70,7 @@ pub fn tufts() -> GrassType {
         roughness: 0.5,
         translucency: 0.2,
         stiffness: 0.7,
+        twin: true,
     }
 }
 

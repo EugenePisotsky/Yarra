@@ -105,7 +105,8 @@ impl GrassCover {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GrassType {
     pub key: String,
-    /// Blades per square metre where the type grows at full amount.
+    /// Roots per square metre where the type grows at full amount; twin types grow two blades
+    /// from each.
     pub density: f32,
     /// Blade height in metres.
     pub height: [f32; 2],
@@ -124,6 +125,9 @@ pub struct GrassType {
     pub translucency: f32,
     /// Resistance to wind: 0 sways freely, 1 barely moves.
     pub stiffness: f32,
+    /// Each root grows two blades in a V that share one blade's vertex budget, as in Ghost of
+    /// Tsushima: twice the blades for the same placement and vertex work, with fewer bends each.
+    pub twin: bool,
 }
 
 impl GrassType {
@@ -134,6 +138,11 @@ impl GrassType {
     /// Metres between lattice candidates.
     pub fn spacing(&self) -> f32 {
         self.density.sqrt().recip()
+    }
+
+    /// Blades per square metre where the type grows at full amount.
+    pub fn blades_per_square_metre(&self) -> f32 {
+        self.density * if self.twin { 2.0 } else { 1.0 }
     }
 
     fn is_valid(&self) -> bool {
@@ -249,7 +258,7 @@ impl VegetationCatalog {
                 continue;
             };
             let share = a.amount
-                * (grass.density / Self::FULL_COVER_DENSITY).min(1.0)
+                * (grass.blades_per_square_metre() / Self::FULL_COVER_DENSITY).min(1.0)
                 * (1.0 - 0.5 * grass.clumps.pull);
             let field = grass.colors.field();
             total += share;
@@ -774,7 +783,10 @@ mod tests {
         let even = catalog.cover([1; 16]);
         let tufted = catalog.cover([2; 16]);
         assert_eq!(even.color, catalog.grass[0].colors.field());
-        assert!(tufted.amount < 0.6 * even.amount);
+        assert!(tufted.amount < even.amount);
+        let tufts = catalog.grass[1].clone();
+        assert!(tufts.twin);
+        assert_eq!(tufts.blades_per_square_metre(), 2.0 * tufts.density);
         let both = catalog.cover([3; 16]);
         assert!(both.amount <= 1.0 && both.amount > even.amount);
         for c in 0..3 {

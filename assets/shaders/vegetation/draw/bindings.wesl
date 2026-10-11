@@ -21,6 +21,9 @@ struct VertexOutput {
     @location(6) clump_normal: vec3<f32>,
     // The blade's width axis.
     @location(7) side: vec3<f32>,
+    // x: how deep in the field's canopy this point sits (0 at its top, 1 on the ground),
+    // y: the canopy's height in metres.
+    @location(8) canopy: vec2<f32>,
 }
 
 @group(1) @binding(0) var<storage, read> instances: array<Instance>;

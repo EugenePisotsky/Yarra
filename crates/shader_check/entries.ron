@@ -6,7 +6,7 @@
     bases: {
         // The vegetation limits every grass pipeline passes (vegetation_render gpu_types::shader_defs;
         // its tests check that these match).
-        "grass": ["HIGH_CAPACITY=131072", "LOW_CAPACITY=786432", "INSTANCE_CAPACITY=917504", "TYPE_INDEX_MASK=65535", "WORKGROUP_SIZE=64", "HIGH_INDEX_COUNT=39", "LOW_INDEX_COUNT=15", "HIGH_FIRST_INDEX=0", "LOW_FIRST_INDEX=39", "HIGH_ROWS=7", "LOW_ROWS=3", "PROCEDURAL_DISTANCE_METERS=96"],
+        "grass": ["HIGH_CAPACITY=131072", "LOW_CAPACITY=786432", "INSTANCE_CAPACITY=917504", "TYPE_INDEX_MASK=65535", "WORKGROUP_SIZE=64", "HIGH_INDEX_COUNT=51", "LOW_INDEX_COUNT=15", "HIGH_FIRST_INDEX=0", "LOW_FIRST_INDEX=51", "HIGH_ROWS=9", "LOW_ROWS=3", "PROCEDURAL_DISTANCE_METERS=96"],
     },
     entries: [
         (shader: "shaders/lighting/material.wesl", variants: [

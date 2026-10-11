@@ -74,6 +74,22 @@ fn decode_instance(instance: Instance) -> BladeInstance {
     return blade;
 }
 
+// One of a twin root's two blades. The second is the instance's own blade; the first is its
+// sibling, with its own size and shape, and the two lean apart in a V.
+fn twin_blade(b: BladeInstance, first: bool) -> BladeInstance {
+    var blade = b;
+    let half_spread = mix(0.12, 0.32, random01(b.seed ^ 0x2f2ebe6du));
+    let turn = select(half_spread, -half_spread, first);
+    blade.facing = vec2<f32>(
+        b.facing.x * cos(turn) - b.facing.y * sin(turn),
+        b.facing.x * sin(turn) + b.facing.y * cos(turn),
+    );
+    if (first) {
+        blade.seed = hash32(b.seed ^ 0x5bd1e995u) & 0x00ffffffu;
+    }
+    return blade;
+}
+
 // A blade at rest: its frame, size and colours.
 struct Blade {
     root: vec3<f32>,

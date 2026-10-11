@@ -65,13 +65,16 @@ fn stochastic(uv: vec2<f32>, lattice: vec2<f32>, origin: vec2<f32>, layer: i32, 
 }
 // Ground fully covered by grass shows the grass's lower blades in their own shade, this bright,
 // where blades stand over it: gaps in a meadow read as deep grass, not bare soil.
-const UNDER_GRASS: f32 = 0.45;
-// Blades thin out with distance; over this range the ground between them turns from their shade
-// to the field's colour, as the distant composite bakes it (world_cook material_bake), reached
-// before the composite takes over (near::NEAR_START).
-const FIELD_RANGE: vec2<f32> = vec2(24.0, 48.0);
+const UNDER_GRASS: f32 = 0.12;
+// Over this range the ground between blades turns from their shade to the field's colour, as
+// the distant composite bakes it (world_cook material_bake), while the composite takes over
+// (near::NEAR_START..NEAR_END).
+const FIELD_RANGE: vec2<f32> = vec2(44.0, 76.0);
 // How far fully covered ground takes the field's colour. The composite bake uses the same.
 const FIELD_STRENGTH: f32 = 0.85;
+// Close up, covered ground keeps most of its own texture (soil, litter, moss between the
+// blades), taking only this much of the field's colour before the blades' shade darkens it.
+const UNDER_TINT: f32 = 0.5;
 // `color.a` is the surface's blend height.
 struct Surface { color: vec4<f32>, normal: vec3<f32>, ao: f32, roughness: f32, }
 // `field` is how far grassy ground here shows the field's colour rather than the blades' shade,
@@ -95,7 +98,8 @@ fn surface(index: u32, slot: u32, local: vec2<f32>, world_dx: vec2<f32>, world_d
     n = normalize(vec3(n.xy*clamp(s.surface.w,0.0,1.0), max(n.z,0.001)));
     let rough = mix(s.material.y,s.material.z,packed.a);
     let cover = clamp(s.grass.w, 0.0, 1.0);
-    let ground = mix(color.rgb, s.grass.rgb, cover*FIELD_STRENGTH) * mix(1.0, mix(UNDER_GRASS, 1.0, field), cover);
+    let tint = mix(UNDER_TINT, FIELD_STRENGTH, field) * cover;
+    let ground = mix(color.rgb, s.grass.rgb, tint) * mix(1.0, mix(UNDER_GRASS, 1.0, field), cover);
     return Surface(vec4(ground, color.a),n,packed.b,rough);
 }
 // Weighted sum of up to three shaded surfaces.

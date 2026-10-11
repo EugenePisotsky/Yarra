@@ -128,6 +128,7 @@ pub(super) fn pack_type(grass: &GrassType) -> GrassTypeGpu {
             grass.translucency,
             grass.stiffness,
         ],
+        form: [f32::from(u8::from(grass.twin)), 0.0, 0.0, 0.0],
     }
 }
 

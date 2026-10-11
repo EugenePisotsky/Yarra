@@ -4,7 +4,7 @@
 import package::shaders::vegetation::types::{Camera, PI, DENSITY_FADE_BAND};
 import package::shaders::vegetation::blade::{
     normalize3_or, cubic_bezier, cubic_bezier_derivative, decode_instance, rest_blade,
-    rest_curve, wind_curve,
+    rest_curve, twin_blade, wind_curve,
 };
 import package::shaders::vegetation::draw::bindings::{VertexOutput, instances, types, camera};
 
@@ -21,6 +21,8 @@ const TARGET_HALF_PIXELS: f32 = 0.6;
 const SUBPIXEL_FADE: vec2<f32> = vec2(14.0, 30.0);
 // Blade shape across its length: full width low down, narrowing to the point.
 const TAPER: f32 = 0.55;
+// The field's canopy top, as a share of the type's tallest blades (which lean over).
+const CANOPY_SHARE: f32 = 0.55;
 
 // A shallow, clump-stable tilt of the ground normal: neighbouring blades enter and leave the
 // broad highlight together.
@@ -34,6 +36,13 @@ fn clump_normal(surface_normal: vec3<f32>, clump: f32) -> vec3<f32> {
     );
 }
 
+// Twin types (Ghost of Tsushima's doubled blades) share one blade's strip between two blades in
+// a V from one root: the strip runs down the first blade from its tip to the root, then up the
+// second. These are the first blade's segments in the high- and low-detail strips; the second
+// takes the rest (high 4 + 5, low 1 + 2: at low detail the first blade is straight).
+const TWIN_FIRST_HIGH: u32 = 4u;
+const TWIN_FIRST_LOW: u32 = 1u;
+
 fn blade_vertex(vertex_index: u32, instance_index: u32, pose: Camera, previous: bool) -> VertexOutput {
     var instance = instances[instance_index];
     if previous {
@@ -41,27 +50,38 @@ fn blade_vertex(vertex_index: u32, instance_index: u32, pose: Camera, previous: 
         instance.root_clump.x += camera.render_origin.x - pose.render_origin.x;
         instance.root_clump.z += camera.render_origin.y - pose.render_origin.y;
     }
-    let b = decode_instance(instance);
+    var b = decode_instance(instance);
     let grass = types[b.type_index];
-    let blade = rest_blade(b, grass);
-    let c = wind_curve(rest_curve(blade), blade, grass, pose);
 
     let rows = select(HIGH_ROWS, LOW_ROWS, b.low);
     let tip = vertex_index >= 2u * rows;
-    let row = select(vertex_index >> 1u, rows, tip);
+    // Position along the strip: its rows, then the tip.
+    let path = f32(select(vertex_index >> 1u, rows, tip));
     let side_sign = select(select(-1.0, 1.0, (vertex_index & 1u) != 0u), 0.0, tip);
-    let t = f32(row) / f32(rows);
+    var t = path / f32(rows);
+    // Segments of this blade in the low-detail strip, which high detail morphs toward.
+    var low_segments = f32(LOW_ROWS);
+    if (grass.form.x > 0.5) {
+        let split = f32(select(TWIN_FIRST_HIGH, TWIN_FIRST_LOW, b.low));
+        let first = path < split;
+        t = select((path - split) / (f32(rows) - split), (split - path) / split, first);
+        low_segments = select(f32(LOW_ROWS - TWIN_FIRST_LOW), f32(TWIN_FIRST_LOW), first);
+        b = twin_blade(b, first);
+    }
+    let blade = rest_blade(b, grass);
+    let c = wind_curve(rest_curve(blade), blade, grass, pose);
+
     var position = cubic_bezier(c.p0, c.p1, c.p2, c.p3, t);
     let tangent = normalize3_or(cubic_bezier_derivative(c.p0, c.p1, c.p2, c.p3, t), blade.up);
     var taper = pow(max(1.0 - t, 0.0), TAPER);
     if (!b.low && b.lod_morph < 1.0) {
         // Near the edge of the high-detail disk, rows slide onto the low mesh's straight
         // segments so the switch to it never pops.
-        let s = t * f32(LOW_ROWS);
-        let k = min(floor(s), f32(LOW_ROWS) - 1.0);
+        let s = t * low_segments;
+        let k = min(floor(s), low_segments - 1.0);
         let f = s - k;
-        let t0 = k / f32(LOW_ROWS);
-        let t1 = (k + 1.0) / f32(LOW_ROWS);
+        let t0 = k / low_segments;
+        let t1 = (k + 1.0) / low_segments;
         let low = mix(
             cubic_bezier(c.p0, c.p1, c.p2, c.p3, t0),
             cubic_bezier(c.p0, c.p1, c.p2, c.p3, t1),
@@ -118,12 +138,17 @@ fn blade_vertex(vertex_index: u32, instance_index: u32, pose: Camera, previous: 
     output.blade_t = t;
     output.blade_u = side_sign;
     output.color = mix(blade.root_color, blade.tip_color, smoothstep(0.0, 0.55, t));
+    // Deep in the canopy the blades shade each other: a lying tip near the ground is as dark as
+    // a root, and blades rise out of the dark.
+    let canopy_height = max(grass.size.y * CANOPY_SHARE, 0.02);
+    let depth = clamp(1.0 - dot(position - blade.root, blade.up) / canopy_height, 0.0, 1.0);
     output.material = vec4<f32>(
         grass.material.y,
         grass.material.z,
         grass.material.x,
-        mix(0.45, 1.0, smoothstep(0.0, 0.5, t)),
+        mix(0.15, 1.0, smoothstep(0.0, 0.8, 1.0 - depth)),
     );
+    output.canopy = vec2<f32>(depth, canopy_height);
     output.clump_normal = clump_normal(b.surface_normal, b.clump);
     return output;
 }

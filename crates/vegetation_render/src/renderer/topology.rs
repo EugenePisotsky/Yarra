@@ -1,10 +1,11 @@
 //! Fixed index templates of the two blade LODs, as in Ghost of Tsushima's grass: pairs of
-//! vertices at evenly spaced rows up the blade and one tip vertex. High detail has 7 rows
-//! (15 vertices), low detail 3 (7 vertices). Vertex `2 * row + side` sits on a row; vertex
-//! `2 * rows` is the tip.
+//! vertices at evenly spaced rows up the blade and one tip vertex. High detail has 9 rows
+//! (19 vertices), low detail 3 (7 vertices). Vertex `2 * row + side` sits on a row; vertex
+//! `2 * rows` is the tip. Twin types run one strip through two blades (`draw/geometry.wesl`),
+//! so high detail has rows enough for two blades that lie over without visible kinks.
 
 /// Rows of vertex pairs below the tip.
-pub(super) const HIGH_ROWS: u32 = 7;
+pub(super) const HIGH_ROWS: u32 = 9;
 pub(super) const LOW_ROWS: u32 = 3;
 pub(super) const HIGH_INDEX_COUNT: u32 = (HIGH_ROWS - 1) * 6 + 3;
 pub(super) const LOW_INDEX_COUNT: u32 = (LOW_ROWS - 1) * 6 + 3;
@@ -39,7 +40,7 @@ mod tests {
         let low = &indices[LOW_FIRST_INDEX as usize..];
         assert_eq!(high.iter().max(), Some(&(2 * HIGH_ROWS as u16)));
         assert_eq!(low.iter().max(), Some(&(2 * LOW_ROWS as u16)));
-        assert_eq!(HIGH_INDEX_COUNT, 39);
+        assert_eq!(HIGH_INDEX_COUNT, 51);
         assert_eq!(LOW_INDEX_COUNT, 15);
     }
 }

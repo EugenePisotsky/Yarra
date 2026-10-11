@@ -32,6 +32,8 @@ struct GrassType {
     dry_tip: vec4<f32>,
     // x: gloss, y: roughness, z: translucency, w: stiffness
     material: vec4<f32>,
+    // x: twin blades (1) or one (0); yzw reserved
+    form: vec4<f32>,
 }
 
 struct Instance {

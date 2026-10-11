@@ -9,7 +9,7 @@ import package::shaders::lighting::forest_shadow::{forest_sky_light, forest_sky_
 import bevy_pbr::atmosphere::functions::{clamp_to_surface, calculate_visible_sun_ratio};
 
 import package::shaders::vegetation::types::PI;
-import package::shaders::vegetation::blade::normalize3_or;
+import package::shaders::vegetation::blade::{normalize3_or, value_noise};
 import package::shaders::vegetation::draw::bindings::{VertexOutput, camera};
 
 import bevy_pbr::render::{
@@ -70,6 +70,33 @@ fn vegetation_light_index() -> u32 {
         }
     }
     return selected;
+}
+
+// Sunlight left after the blades above a point deep in the canopy. Not their real shadows: the
+// beam is broken by a pattern of gaps where it enters the canopy top, fewer the deeper the
+// point, so lower blades carry shadow lines that move with the sun (Ghost of Tsushima dithers a
+// raised terrain into its shadow maps for the same look). The pattern fades to its mean, the
+// beam's transmittance through the canopy, where it would alias.
+const CANOPY_EXTINCTION: f32 = 2.3;
+const CANOPY_GAP_SCALE: f32 = 0.13;
+const CANOPY_PATTERN_DISTANCE: vec2<f32> = vec2(10.0, 24.0);
+fn canopy_light(position: vec3<f32>, canopy: vec2<f32>, light: vec3<f32>, camera_distance: f32) -> f32 {
+    let depth = canopy.x;
+    if (depth <= 0.0) {
+        return 1.0;
+    }
+    let mean = exp(-CANOPY_EXTINCTION * depth);
+    let pattern = 1.0 - smoothstep(CANOPY_PATTERN_DISTANCE.x, CANOPY_PATTERN_DISTANCE.y, camera_distance);
+    if (pattern <= 0.0) {
+        return mean;
+    }
+    // Where the beam to this point entered the canopy, in canonical metres.
+    let entry = position.xz + camera.render_origin.xy
+        + light.xz / max(light.y, 0.2) * depth * canopy.y;
+    let p = entry / CANOPY_GAP_SCALE;
+    let n = value_noise(p) * 0.6 + value_noise(p * 2.3 + vec2(7.1, 3.7)) * 0.4;
+    let lit = smoothstep(0.92 - mean - 0.16, 0.92 - mean + 0.16, n);
+    return mix(mean, lit, pattern * 0.75);
 }
 
 fn ggx_specular(
@@ -135,6 +162,7 @@ fn shade(input: VertexOutput) -> vec4<f32> {
                 view_bindings::lights.directional_lights[vegetation_light_index()].sun_disk_angular_size);
     }
     let exposed_sun = sun_radiance * view_bindings::view.exposure * camera.sun_direction.w;
+    beam *= canopy_light(input.world_position, input.canopy, light_direction, camera_distance);
     // Lower blades sit in the shade of their neighbours.
     let self_shadow = mix(0.6, 1.0, occlusion);
 
@@ -190,7 +218,7 @@ fn shade(input: VertexOutput) -> vec4<f32> {
     sky_fill *= forest_sky_light(input.world_position);
     // A sun shadow takes part of the fill too, so shaded grass is not flat: as on the ground.
     let shade_dimming = mix(1.0, mix(0.55, 1.0, shadow_visibility), camera.lighting.w * cloud_beam);
-    let ambient = albedo * bounded_ambient * mix(0.5, 1.0, occlusion) * sky_fill * shade_dimming;
+    let ambient = albedo * bounded_ambient * mix(0.2, 1.0, occlusion) * sky_fill * shade_dimming;
 
     return vec4<f32>(ambient + sun, 1.0);
 }

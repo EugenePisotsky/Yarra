@@ -9,7 +9,9 @@
 //
 // Per type (ranges are (minimum, maximum); every blade picks its value, its clump shared by its
 // neighbours):
-// - `density`: blades per square metre where the type grows at full amount.
+// - `density`: roots per square metre where the type grows at full amount.
+// - `twin`: each root grows two blades in a V, sharing one blade's vertices (Ghost of Tsushima's
+//   doubled blades): twice the blades for the same cost, with fewer bends each.
 // - `height`, `width`: blade height and root width in metres; blades taper to a point.
 // - `tilt`: how far the tip leans from upright (0 upright, 1 lying flat).
 // - `bend`: how much the blade's middle arches above the line from root to tip.
@@ -33,9 +35,9 @@
         // one way by each clump, cover the ground as Ghost of Yotei's fields do.
         (
             key: "meadow",
-            density: 52.0,
+            density: 56.0,
             height: (0.4, 0.85),
-            width: (0.011, 0.022),
+            width: (0.014, 0.028),
             tilt: (0.35, 0.95),
             bend: (0.25, 0.8),
             clumps: (size: 0.9, pull: 0.2, height: 0.4, facing: 0.75, splay: 0.15, patches: 0.4),
@@ -50,6 +52,7 @@
             roughness: 0.42,
             translucency: 0.3,
             stiffness: 0.35,
+            twin: true,
         ),
         // Timothy and cocksfoot stems standing above the meadow.
         (
@@ -71,11 +74,12 @@
             roughness: 0.42,
             translucency: 0.3,
             stiffness: 0.5,
+            twin: false,
         ),
         // Sun-dried grass of the dry meadows: straw and olive, more of it lying over.
         (
             key: "dry-meadow",
-            density: 56.0,
+            density: 40.0,
             height: (0.25, 0.55),
             width: (0.006, 0.012),
             tilt: (0.2, 0.7),
@@ -92,12 +96,13 @@
             roughness: 0.45,
             translucency: 0.25,
             stiffness: 0.4,
+            twin: true,
         ),
         // Marram on the coastal grey dune behind the beach: stiff, rolled, blue-green tussocks.
         // Beaches and open dune sand stay bare.
         (
             key: "marram",
-            density: 64.0,
+            density: 40.0,
             height: (0.45, 0.9),
             width: (0.004, 0.007),
             tilt: (0.1, 0.45),
@@ -114,12 +119,13 @@
             roughness: 0.45,
             translucency: 0.2,
             stiffness: 0.7,
+            twin: true,
         ),
         // Wavy hair-grass of the pine and mixed forest floor: very fine, soft, yellow-green,
         // drooping over the moss.
         (
             key: "wavy-hair",
-            density: 48.0,
+            density: 36.0,
             height: (0.18, 0.42),
             width: (0.003, 0.005),
             tilt: (0.3, 0.8),
@@ -136,6 +142,7 @@
             roughness: 0.42,
             translucency: 0.4,
             stiffness: 0.25,
+            twin: true,
         ),
     ],
     surfaces: {

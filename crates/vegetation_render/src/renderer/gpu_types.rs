@@ -88,6 +88,8 @@ pub(super) struct GrassTypeGpu {
     pub(super) dry_tip: [f32; 4],
     // x: gloss, y: roughness, z: translucency, w: stiffness
     pub(super) material: [f32; 4],
+    // x: twin blades (1) or one (0); yzw reserved
+    pub(super) form: [f32; 4],
 }
 
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -160,7 +162,7 @@ mod tests {
     #[test]
     fn gpu_contracts_have_expected_alignment() {
         assert_eq!(size_of::<WorkItemGpu>(), 64);
-        assert_eq!(size_of::<GrassTypeGpu>(), 128);
+        assert_eq!(size_of::<GrassTypeGpu>(), 144);
         assert_eq!(size_of::<SurfaceSampleGpu>(), 32);
         assert_eq!(size_of::<InstanceGpu>(), 32);
         assert_eq!(size_of::<CameraGpu>(), 224);
