@@ -211,8 +211,8 @@ impl CompilePlan {
         weights
     }
 
-    /// Each grass type's coverage: what its surfaces carry, less what exclusions and road
-    /// wear clear.
+    /// Each grass type's coverage: what the surfaces that show carry, less what exclusions and
+    /// road wear clear.
     fn vegetation(
         &self,
         cell: CellCoord,
@@ -228,7 +228,7 @@ impl CompilePlan {
                     (x as f64 + 0.5) / resolution as f64,
                     (z as f64 + 0.5) / resolution as f64,
                 ];
-                let surfaces = self.surface_weights(cell, coverage, roads, uv, base);
+                let surfaces = shown(self.surface_weights(cell, coverage, roads, uv, base));
                 let mut kept = 1.0;
                 for layer in &self.layers {
                     if layer.source.enabled && layer.grass_exclusion > 0.0 {
@@ -321,4 +321,39 @@ fn quantize(weights: &[f64]) -> Vec<u8> {
         result[index] += 1;
     }
     result
+}
+
+/// Each surface's share of the ground that shows. Near detail draws a surface only where its
+/// weight comes close to the largest (within the height blend's margin), so a faint blend, such
+/// as coastal grass fading out over dune sand, shows as sand and grows no grass there; even
+/// blends keep their shares.
+fn shown(mut weights: Vec<f64>) -> Vec<f64> {
+    let step = |w: f64| {
+        let t = ((w - 0.2) / 0.4).clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    };
+    let total: f64 = weights.iter().map(|&w| step(w)).sum();
+    if total <= 0.0 {
+        return weights;
+    }
+    for w in &mut weights {
+        *w = step(*w) / total;
+    }
+    weights
+}
+
+#[cfg(test)]
+mod tests {
+    use super::shown;
+
+    #[test]
+    fn faint_blends_grow_nothing_and_even_blends_keep_their_shares() {
+        let faint = shown(vec![0.85, 0.15]);
+        assert_eq!(faint, vec![1.0, 0.0]);
+        let even = shown(vec![0.5, 0.5]);
+        assert!((even[0] - 0.5).abs() < 1e-12 && (even[1] - 0.5).abs() < 1e-12);
+        let leaning = shown(vec![0.65, 0.35]);
+        assert!(leaning[1] > 0.0 && leaning[1] < 0.35);
+        assert!((leaning.iter().sum::<f64>() - 1.0).abs() < 1e-12);
+    }
 }

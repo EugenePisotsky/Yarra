@@ -158,7 +158,7 @@ pub(crate) fn parse_variants(spec: &str) -> Result<Vec<LookVariant>, String> {
                     "lightning" => variant.lightning = Some(number(0.0..=1.1)?),
                     "moon" => variant.moon = Some(number(0.0..=29.5)?),
                     "tilt" => variant.tilt = number(-30.0..=90.0)?,
-                    "wind" => variant.wind = number(0.0..=3600.0)?,
+                    "wind" => variant.wind = number(0.0..=4095.0)?,
                     "burst" => variant.burst = number(1.0..=120.0)? as u32,
                     "haze" => variant.tuning.haze = number(0.0..=20.0)?,
                     "mist" => variant.tuning.mist = number(0.0..=20.0)?,

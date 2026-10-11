@@ -25,6 +25,9 @@ const ROUNDING: f32 = 0.8;
 // Distance over which unresolved blades hand their sheen and part of their diffuse direction to
 // their clump.
 const STABILITY_DISTANCE: vec2<f32> = vec2(16.0, 64.0);
+// How much wider the distant field's sheen lobe is than one blade's (GGX alpha): blades lean
+// every way, so together they reflect over a broad cone.
+const FIELD_SHEEN_SPREAD: f32 = 0.4;
 
 fn directional_shadow_visibility(input: VertexOutput) -> f32 {
     if (camera.sun_direction.w <= 0.0) {
@@ -105,24 +108,22 @@ fn shade(input: VertexOutput) -> vec4<f32> {
     let t = input.blade_t;
     let occlusion = clamp(input.material.w, 0.0, 1.0);
 
-    // The sun at this point: clouds, the shadow maps, the atmosphere and exposure.
+    // The sun at this point. `beam` is the share arriving straight from its direction past the
+    // clouds and the shadow maps; `scattered` the share the clouds pass on diffusely, which lights
+    // blades as on the ground but makes no sheen and shines through none. Crowns hold the
+    // scattered share back as they do the sky.
     let shadow_visibility = directional_shadow_visibility(input);
-    var cloud_sun = 1.0;
+    let shadow = mix(1.0, shadow_visibility, camera.lighting.w);
+    var beam = shadow;
+    var scattered = 0.0;
     var cloud_beam = 1.0;
-    @if(ENVIRONMENT_SURFACE)
-    let cloud = cloud_light(input.world_position, camera.sun_direction.xyz);
     @if(ENVIRONMENT_SURFACE) {
-        cloud_sun = cloud.x + cloud.y;
+        let cloud = cloud_light(input.world_position, camera.sun_direction.xyz);
         cloud_beam = cloud.x;
+        beam = cloud.x * shadow;
+        scattered = cloud.y * mix(1.0, forest_sky_visibility(input.world_position), camera.lighting.w);
     }
-    // The shadow maps shade the direct beam; what the clouds pass on diffusely casts no
-    // shadows, and crowns hold it back as they do the sky.
-    var sun_shadow = shadow_visibility;
-    @if(ENVIRONMENT_SURFACE)
-    sun_shadow = (cloud.x * shadow_visibility + cloud.y * forest_sky_visibility(input.world_position))
-        / max(cloud_sun, 1e-4);
-    sun_shadow = mix(1.0, sun_shadow, camera.lighting.w);
-    var sun_radiance = camera.sun_radiance.xyz * cloud_sun;
+    var sun_radiance = camera.sun_radiance.xyz;
     @if(ATMOSPHERE) {
         let atmosphere = view_bindings::atmosphere;
         let p_as = (atmosphere.world_to_atmosphere * vec4(input.world_position, 1.0)).xyz;
@@ -133,8 +134,7 @@ fn shade(input: VertexOutput) -> vec4<f32> {
             * calculate_visible_sun_ratio(atmosphere, r, mu,
                 view_bindings::lights.directional_lights[vegetation_light_index()].sun_disk_angular_size);
     }
-    let exposed_sun = sun_radiance * view_bindings::view.exposure;
-    let sun_on = camera.sun_direction.w;
+    let exposed_sun = sun_radiance * view_bindings::view.exposure * camera.sun_direction.w;
     // Lower blades sit in the shade of their neighbours.
     let self_shadow = mix(0.6, 1.0, occlusion);
 
@@ -151,17 +151,19 @@ fn shade(input: VertexOutput) -> vec4<f32> {
         clump,
     );
     let wrapped = clamp((dot(diffuse_normal, light_direction) + 0.25) / 1.25, 0.0, 1.0);
-    let diffuse = albedo * exposed_sun * wrapped / PI * camera.lighting.x;
+    let diffuse = albedo * exposed_sun * wrapped / PI * (beam + scattered) * self_shadow
+        * camera.lighting.x;
 
-    // Transmission: the sun through blades lit from behind, strongest looking toward it.
+    // Transmission: the sun's beam through blades lit from behind, strongest looking toward it.
     let behind = clamp(dot(-flat_normal, light_direction), 0.0, 1.0);
     let toward_sun = smoothstep(-0.2, 0.9, dot(-view_direction, light_direction));
-    let transmission = albedo * 1.6 * exposed_sun / PI
+    let transmission = albedo * exposed_sun / PI * beam
         * behind * mix(0.35, 1.0, toward_sun) * input.material.y
         * camera.lighting.z * smoothstep(0.1, 0.6, t);
 
-    // Sheen: a narrow highlight that slides across each rounded blade nearby and a broad one
-    // from the clump far away, strongest along the middle of the blade.
+    // Sheen: the beam's highlight sliding across each rounded blade nearby. Far away, where
+    // blades are unresolved, a field of blades leaning every way reflects as a broad lobe about
+    // its clump's normal, not as a polished ground: a soft sheen toward the light, no glare.
     let roughness = clamp(input.material.x, 0.08, 1.0);
     let alpha_near = roughness * roughness;
     let normal_width = fwidth(rounded);
@@ -169,12 +171,12 @@ fn shade(input: VertexOutput) -> vec4<f32> {
     let near_sheen = ggx_specular(rounded, view_direction, light_direction,
         clamp(alpha_near + variance * 0.5, 0.02, 0.9));
     let far_sheen = ggx_specular(clump, view_direction, light_direction,
-        clamp(alpha_near * 1.8 + 0.12, 0.05, 0.95));
+        clamp(alpha_near + FIELD_SHEEN_SPREAD, 0.3, 0.95));
     let along = smoothstep(0.05, 0.45, t) * (1.0 - 0.35 * t);
-    let sheen = mix(near_sheen, far_sheen * 0.6, stability) * along * input.material.z;
-    let highlight = exposed_sun * sheen * camera.lighting.y;
+    let sheen = mix(near_sheen, far_sheen * 0.3, stability) * along * input.material.z;
+    let highlight = exposed_sun * sheen * beam * camera.lighting.y;
 
-    let sun = (diffuse * self_shadow + transmission + highlight) * sun_shadow * sun_on;
+    let sun = diffuse + transmission + highlight;
 
     // Sky fill from above, for both faces of the thin blade; bounded in exposed units for the
     // clear-day look, raised with exposure adaptation under weather.

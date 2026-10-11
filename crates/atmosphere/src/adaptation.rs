@@ -23,9 +23,11 @@ use bevy::{
 
 /// Share of a change in metered brightness the exposure follows; the rest stays visible.
 pub(crate) const FOLLOW: f32 = 0.5;
-/// Metered log2 exposed luminance left as authored: a forest edge in sun at EV 13. These
-/// constants are binary fractions, so the curve's segments meet exactly, as Bevy requires.
-pub(crate) const REFERENCE: f32 = -3.25;
+/// Metered log2 exposed luminance left as authored, a stop below a forest edge in sun at EV 13
+/// (-3.25), so daylight shows half a stop darker than it meters: the game read too bright in
+/// sun and under cloud. These constants are binary fractions, so the curve's segments meet
+/// exactly, as Bevy requires.
+pub(crate) const REFERENCE: f32 = -4.25;
 /// The most the exposure brightens (deep shade) and darkens (bright open ground), in stops.
 pub(crate) const BRIGHTEN: f32 = 1.5;
 pub(crate) const DARKEN: f32 = 1.0;

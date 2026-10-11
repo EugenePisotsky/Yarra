@@ -163,7 +163,8 @@ impl CompilePlan {
             bincode::config::standard(),
         )?;
         let mut hash = blake3::Hasher::new();
-        hash.update(b"yarra.environment.compiler.v4");
+        // v5: grass follows the ground that shows, not faint blend weights.
+        hash.update(b"yarra.environment.compiler.v5");
         hash.update(&bytes);
         Ok(Self {
             presets: presets.clone(),

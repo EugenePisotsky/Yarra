@@ -63,7 +63,8 @@ fn stochastic(uv: vec2<f32>, lattice: vec2<f32>, origin: vec2<f32>, layer: i32, 
     }
     return result;
 }
-// Ground fully covered by grass is this bright where blades stand over it: it lies in their shade.
+// Ground fully covered by grass shows the grass's lower blades in their own shade, this bright,
+// where blades stand over it: gaps in a meadow read as deep grass, not bare soil.
 const UNDER_GRASS: f32 = 0.45;
 // Blades thin out with distance; over this range the ground between them turns from their shade
 // to the field's colour, as the distant composite bakes it (world_cook material_bake), reached
@@ -94,7 +95,7 @@ fn surface(index: u32, slot: u32, local: vec2<f32>, world_dx: vec2<f32>, world_d
     n = normalize(vec3(n.xy*clamp(s.surface.w,0.0,1.0), max(n.z,0.001)));
     let rough = mix(s.material.y,s.material.z,packed.a);
     let cover = clamp(s.grass.w, 0.0, 1.0);
-    let ground = mix(color.rgb*mix(1.0, UNDER_GRASS, cover), mix(color.rgb, s.grass.rgb, cover*FIELD_STRENGTH), field);
+    let ground = mix(color.rgb, s.grass.rgb, cover*FIELD_STRENGTH) * mix(1.0, mix(UNDER_GRASS, 1.0, field), cover);
     return Surface(vec4(ground, color.a),n,packed.b,rough);
 }
 // Weighted sum of up to three shaded surfaces.

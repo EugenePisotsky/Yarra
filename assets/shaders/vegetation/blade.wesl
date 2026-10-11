@@ -194,6 +194,9 @@ fn grass_gust(canonical_xz: vec2<f32>, camera: Camera) -> f32 {
 // The rest curve pushed downwind. The tip moves most; the root stays. Each blade also bobs at
 // its own rate, neighbours along the wind in phase, and flutters across it. The control polygon
 // then scales back to its rest length, so pushed blades bow over rather than stretch.
+// Every oscillation's rate is constant: `time` grows without bound (to 4096 s), so a rate that
+// varies over space or time would make the phase race and the blades vibrate. Gusts change
+// amplitudes only.
 fn wind_curve(rest: Curve, blade: Blade, grass: GrassType, camera: Camera) -> Curve {
     let strength = camera.wind.z;
     if (strength <= 1e-5) {
@@ -207,7 +210,7 @@ fn wind_curve(rest: Curve, blade: Blade, grass: GrassType, camera: Camera) -> Cu
     let downwind = normalize3_or(wind - blade.up * dot(wind, blade.up), blade.forward);
     let across = cross(blade.up, downwind);
     let time = camera.wind.w;
-    let bob = sin(time * (3.2 + blade.phase * 1.8 + gust * 1.6) + blade.phase * 2.0 * PI
+    let bob = sin(time * (3.2 + blade.phase * 1.8) + blade.phase * 2.0 * PI
         + dot(canonical, camera.wind.xy) * 0.9);
     let flutter = sin(time * 7.3 + blade.phase * 11.0) * camera.wind_shape.w;
     let push = force * (0.35 + 0.65 * gust) + bob * (0.06 + 0.08 * gust);
