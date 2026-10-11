@@ -569,6 +569,14 @@ Grass now follows the ground: a grass pack (`assets/packs/grass/baltic.ron`) say
 | Thin-blade shimmer | User: strongest strafing, from very thin blades. Blades beyond 5–15 m (was 14–30) keep at least 0.75 px half width, up to 2.25× (was 1.75×). Unconfirmed in motion. |
 | Open | Grass shadows (screen-space, as Ghost of Tsushima); confirm shimmer in motion; dusk and overcast grass read greener and brighter than the scene; per-instance blade preparation; pressed grass under NPCs off-camera wraps out with the map. |
 
+## Night light — October 11
+
+Scenes read flat when the directional light on open ground is weak against the sky's even light. Key/fill at the user's screenshots (sun or moon on open ground over sky light): noon 10.5, 16:55 2.8, a moonlit night that "looks great" 0.53, and the flat ones: 18:03 0 (sun on the horizon, moon 30° below) and 05:31 0.09 (moon 41° up but faded by the twilight weighting against a twilight sky 3.5× the night's).
+
+| Trial | Decision / observation |
+| --- | --- |
+| Fixed giant planet in place of the moon | **Rejected** by the user ("more or less the same, but a moving moon is better"); branch `feat/planet` (5a35e8f, local). A 20° banded planet fixed 30° up at the pole of the sun's path, always half lit, its lit side turning with the sun; art-directed light holding key/fill at 0.6 from sunset to sunrise, none while the sun is up; shadows handed over at sunset. Forest-edge tree contrast 0.67→0.97 at 18:30, 0.78→1.06 at 05:31. First version took the shadows (and grass's single light) from the sun below 3°, losing golden-hour shadows and colour; fixed by fading it in over ±1° of the horizon. Unsolved when dropped: overcast, the sea's glitter of a 20° disc, light colour. |
+
 ## Open gates and maintenance
 
 The remaining gates are sustained terrain/whole-game power, Temporal cost and motion quality, field-scale grass lighting, target-PC acceptance, and physical-phone heat/60-FPS delivery. Keep correctness references until their replacements pass the relevant gate. Existing counters often identify less work without demonstrating better delivered frames or lower power.
