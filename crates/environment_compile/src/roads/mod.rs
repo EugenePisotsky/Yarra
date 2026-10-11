@@ -1,7 +1,6 @@
 //! Road influences evaluated after the painted environment stack. No grass population is added.
 mod geometry;
 mod junctions;
-mod noise;
 mod relief;
 use super::*;
 use environment::roads::*;
@@ -326,44 +325,25 @@ impl RoadPlan {
             (f64::from(cell.x) + uv[0]) * size,
             (f64::from(cell.z) + uv[1]) * size,
         ];
-        let irregular = (noise::patch(world, p.edge_patch_size, road.source.seed ^ 0x153) * 2.0
-            - 1.0)
-            * f64::from(p.edge_variation);
-        let feather = f64::from(p.edge_softness);
-        let lateral = closest.lateral.abs();
-        let longitudinal = closest.longitudinal;
-        let track_outer = f64::from(p.track_spacing + p.track_width) * 0.5;
-        let center_radius = f64::from(p.track_spacing - p.track_width) * 0.5;
-        let corridor = falloff(
-            closest.distance_squared.sqrt(),
-            closest.width * 0.5 + irregular,
-            feather,
+        let z = shape(p, road.source.seed).zones(
+            &world::RoadOffset {
+                distance: closest.distance_squared.sqrt(),
+                lateral: closest.lateral,
+                longitudinal: closest.longitudinal,
+                width: closest.width,
+            },
+            world,
         );
-        let track_distance = (lateral - f64::from(p.track_spacing) * 0.5).hypot(longitudinal);
-        let tracks = falloff(
-            track_distance,
-            f64::from(p.track_width) * 0.5 + irregular,
-            feather,
-        ) * corridor;
-        let center = falloff(lateral.hypot(longitudinal), center_radius, feather) * corridor;
-        let shoulder = smooth((lateral - center_radius) / feather)
-            * smooth(
-                (closest.width * 0.5 - lateral) / (closest.width * 0.5 - track_outer).max(feather),
-            )
-            * corridor;
-        let patches = smooth(
-            (noise::patch(world, p.breakup_patch_size, road.source.seed ^ 0x815) - 0.40) / 0.30,
-        );
-        let wear = 1.0 - f64::from(p.breakup) * patches;
         RoadInfluence {
-            ground: tracks
-                .max(center * f64::from(p.center_ground))
-                .max(shoulder * f64::from(p.shoulder_ground))
-                * wear,
-            suppression: (tracks * f64::from(1.0 - p.track_retention))
-                .max(center * f64::from(1.0 - p.center_retention))
-                .max(shoulder * f64::from(1.0 - p.shoulder_retention))
-                * wear,
+            ground: z
+                .tracks
+                .max(z.center * f64::from(p.center_ground))
+                .max(z.shoulder * f64::from(p.shoulder_ground))
+                * z.wear,
+            suppression: (z.tracks * f64::from(1.0 - p.track_retention))
+                .max(z.center * f64::from(1.0 - p.center_retention))
+                .max(z.shoulder * f64::from(1.0 - p.shoulder_retention))
+                * z.wear,
         }
     }
     pub(crate) fn ground(&self, cell: CellCoord, uv: [f64; 2], weights: &mut [f64]) {
@@ -467,18 +447,93 @@ impl RoadPlan {
             bincode::config::standard(),
         )?;
         let mut hash = blake3::Hasher::new();
-        hash.update(b"yarra.environment.road.v1");
+        hash.update(b"yarra.environment.road.v2");
         hash.update(&base);
         hash.update(&bytes);
         Ok(*hash.finalize().as_bytes())
     }
 }
+impl RoadPlan {
+    /// The roads reaching `cell` as its terrain page carries them: each road's drawing and every
+    /// tessellated centre-line segment whose corridor touches the page, in page-local metres.
+    /// Near terrain detail resolves wheel tracks from these that the page's weights cannot.
+    pub(crate) fn terrain_roads(&self, cell: CellCoord) -> world::TerrainRoads {
+        let mut result = world::TerrainRoads::default();
+        let Some(entries) = self.cells.get(&cell) else {
+            return result;
+        };
+        let size = f64::from(self.size);
+        for (index, curves) in entries {
+            let road = &self.roads[*index];
+            let p = &road.profile;
+            let PresetKind::Ground(ground) = &road.ground_preset.kind else {
+                unreachable!()
+            };
+            let local = result.roads.len() as u16;
+            result.roads.push(world::TerrainRoad {
+                shape: shape(p, road.source.seed),
+                center_ground: p.center_ground,
+                shoulder_ground: p.shoulder_ground,
+                track_depth: p.relief.track_depth,
+                rut_roundness: p.relief.rut_roundness,
+                strength: ground.strength,
+                surfaces: {
+                    let total: f32 = ground.surfaces.iter().map(|s| s.weight).sum();
+                    ground
+                        .surfaces
+                        .iter()
+                        .map(|s| (s.surface, s.weight / total))
+                        .collect()
+                },
+            });
+            for &curve in curves {
+                let curve = &road.curves[curve];
+                let origin = curve.source.start.position.cell;
+                let offset = [
+                    (f64::from(origin.x) - f64::from(cell.x)) * size,
+                    (f64::from(origin.z) - f64::from(cell.z)) * size,
+                ];
+                let reach = f64::from(p.edge_variation + p.edge_softness);
+                for pair in curve.vertices.windows(2) {
+                    let (a, b) = (&pair[0], &pair[1]);
+                    let pa = [a.point[0] + offset[0], a.point[1] + offset[1]];
+                    let pb = [b.point[0] + offset[0], b.point[1] + offset[1]];
+                    let pad = a.width.max(b.width) * 0.5 + reach;
+                    let outside =
+                        (0..2).any(|i| pa[i].max(pb[i]) < -pad || pa[i].min(pb[i]) > size + pad);
+                    if outside {
+                        continue;
+                    }
+                    result.segments.push(world::TerrainRoadSegment {
+                        a: pa.map(|v| v as f32),
+                        b: pb.map(|v| v as f32),
+                        normal_a: a.normal.map(|v| v as f32),
+                        normal_b: b.normal.map(|v| v as f32),
+                        width: [a.width as f32, b.width as f32],
+                        road: local,
+                    });
+                }
+            }
+        }
+        result
+    }
+}
+
+fn shape(p: &CartTrackProfile, seed: u32) -> world::RoadShape {
+    world::RoadShape {
+        seed,
+        track_spacing: p.track_spacing,
+        track_width: p.track_width,
+        edge_softness: p.edge_softness,
+        edge_variation: p.edge_variation,
+        edge_patch_size: p.edge_patch_size,
+        breakup: p.breakup,
+        breakup_patch_size: p.breakup_patch_size,
+    }
+}
 fn smooth(t: f64) -> f64 {
     let t = t.clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
-}
-fn falloff(distance: f64, radius: f64, softness: f64) -> f64 {
-    smooth((radius + softness - distance) / (2.0 * softness))
 }
 impl CompilePlan {
     pub fn compile_cells_with_roads(

@@ -595,3 +595,32 @@ fn road_thinning_keeps_cpu_reference_roots_at_their_original_positions() {
     assert!(retained.len() < original.len());
     assert!(retained.is_subset(&original));
 }
+#[test]
+fn page_roads_reproduce_the_compiled_road_ground_for_near_detail() {
+    let (d, l, p, c, r) = cart_tracks();
+    let plan = CompilePlan::new(&d, &p, &l, CompileProfile::default()).unwrap();
+    let cells = compile(&plan, &c, &r);
+    let mut worn = 0;
+    for (cell, compiled) in CELLS.iter().zip(&cells) {
+        let roads = &compiled.roads;
+        assert_eq!(roads.roads.len(), 1);
+        assert_eq!(roads.roads[0].surfaces, [(SOIL, 1.0)]);
+        assert!(!roads.segments.is_empty());
+        let n = usize::from(compiled.ground.weight_pages[0].resolution);
+        let size = f64::from(d.cell_size);
+        let origin = [f64::from(cell.x) * size, f64::from(cell.z) * size];
+        for z in 0..n {
+            for x in 0..n {
+                let local = [x, z].map(|v| v as f64 * size / (n - 1) as f64);
+                let (_, ground) = roads.ground(origin, local).unwrap();
+                let compiled = f64::from(ground_at(compiled, x, z));
+                assert!(
+                    (ground * 255.0 - compiled).abs() <= 1.0,
+                    "{cell:?} at {local:?}: page roads draw {ground}, the compiler laid {compiled}"
+                );
+                worn += usize::from(ground > 0.5);
+            }
+        }
+    }
+    assert!(worn > 20, "the road wore {worn} samples");
+}

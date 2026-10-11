@@ -30,6 +30,7 @@ pub(super) struct VegetationPage {
 pub(super) struct CookedEnvironment {
     pub objects: BTreeMap<(WorldSpaceId, CellCoord), Vec<world::StaticObjectInstance>>,
     pub terrain: BTreeMap<(WorldSpaceId, CellCoord), world::TerrainHeightfield>,
+    pub roads: BTreeMap<(WorldSpaceId, CellCoord), world::TerrainRoads>,
     pub catalog: Option<VegetationCatalog>,
     pub slots: Vec<TerrainSlot>,
     pub weights: Vec<TerrainWeights>,
@@ -115,6 +116,7 @@ pub(super) fn compile_environment(project: &ProjectDocument) -> Result<CookedEnv
     let mut result = CookedEnvironment {
         objects: BTreeMap::new(),
         terrain: BTreeMap::new(),
+        roads: BTreeMap::new(),
         catalog: project.vegetation_catalog.clone(),
         slots: Vec::new(),
         weights: Vec::new(),
@@ -643,6 +645,7 @@ impl CookedEnvironment {
         Self {
             objects: BTreeMap::new(),
             terrain: BTreeMap::new(),
+            roads: BTreeMap::new(),
             catalog: Some(catalog),
             slots: vec![],
             weights: vec![],
@@ -659,6 +662,9 @@ impl CookedEnvironment {
     ) {
         self.terrain
             .insert((space, cell), compiled.terrain.unwrap());
+        if !compiled.roads.segments.is_empty() {
+            self.roads.insert((space, cell), compiled.roads);
+        }
         self.objects.insert((space, cell), compiled.objects);
         self.slots.extend(
             compiled

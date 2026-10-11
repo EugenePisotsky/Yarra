@@ -2,13 +2,15 @@
 import bevy_pbr::render::mesh_view_bindings as near_view;
 import package::shaders::terrain_stochastic::{quarter_turn, stochastic_vertex_turn, stochastic_vertex_offset};
 import package::shaders::terrain_blend::height_blend;
+import package::shaders::terrain_road::{RoadHit, nearest_road, road_amount, road_reach, road_shares, road_slots};
 // One of a page's up to eight surfaces. `surface`: array layer, metres per repetition,
 // anti-tiling (0/1), normal strength. `material`: normal Y sign, roughness minimum/maximum.
 // `phase`/`lattice`: this page's UV and anti-tiling lattice offsets for the surface's tile size.
 // `grass`: the grass field's linear colour and how fully grass covers the surface.
 struct NearSlot { surface: vec4<f32>, material: vec4<f32>, phase: vec4<f32>, lattice: vec4<f32>, grass: vec4<f32>, }
+// `roads`: the page's first road tile and tiles across in `near_roads` (terrain_road.wesl).
 struct NearEntry {
-    key: vec4<i32>, state: vec4<f32>, macro_scales: vec4<f32>, macro_settings: vec4<f32>,
+    key: vec4<i32>, roads: vec4<i32>, state: vec4<f32>, macro_scales: vec4<f32>, macro_settings: vec4<f32>,
     macro_a: vec4<f32>, macro_b: vec4<f32>, macro_c: vec4<f32>, slots: array<NearSlot, 8>,
 }
 @group(constants::MATERIAL_BIND_GROUP) @binding(8) var near_weights: texture_2d_array<f32>;
@@ -108,16 +110,44 @@ fn mix_surfaces(a: Surface, b: Surface, c: Surface, w: vec3<f32>) -> Surface {
         normalize(a.normal*w.x+b.normal*w.y+c.normal*w.z),
         a.ao*w.x+b.ao*w.y+c.ao*w.z, a.roughness*w.x+b.roughness*w.y+c.roughness*w.z);
 }
-// The page's ground: its three largest weights here, blended by surface height.
-fn blended_surfaces(index: u32, uv: vec2<f32>, local: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, field: f32) -> Surface {
+// A page's surface weights, slots 0-3 and 4-7.
+struct Weights { low: vec4<f32>, high: vec4<f32>, }
+// The page's surface weights at `uv` (0..1 across the page).
+fn page_weights(index: u32, uv: vec2<f32>) -> Weights {
     let count = u32(near_table[index].state.z+0.5);
-    if count <= 1u { return surface(index,0u,local,dx,dy,field); }
+    if count <= 1u { return Weights(vec4(1.0,0.0,0.0,0.0), vec4(0.0)); }
     let wuv = (vec2(0.5)+uv*(near_table[index].state.y-1.0))/near_settings.w;
     let layer = (near_table[index].key.w-1)*2;
     let first = textureSampleLevel(near_weights,map_sampler,wuv,layer,0.0);
     var second = vec4(0.0);
     if count > 4u { second = textureSampleLevel(near_weights,map_sampler,wuv,layer+1,0.0); }
-    var weights = array<f32,8>(first.x,first.y,first.z,first.w,second.x,second.y,second.z,second.w);
+    return Weights(first, second);
+}
+// Weight `share` on page slot `slot` (none when negative).
+fn slot_weight(slot: f32, share: f32) -> Weights {
+    return Weights(select(vec4(0.0), vec4(share), vec4(0.0,1.0,2.0,3.0) == vec4(slot)),
+        select(vec4(0.0), vec4(share), vec4(4.0,5.0,6.0,7.0) == vec4(slot)));
+}
+// The page's weights with a road drawn at full detail. Its natural ground comes from beside it,
+// beyond its baked drawing, blended across; the road's ground then replaces that ground as the
+// compiler lays it (environment_compile RoadPlan::ground). `world`: absolute world XZ.
+fn road_weights(index: u32, page: Weights, hit: RoadHit, reach: f32, texel: f32, cell_size: f32, world: vec2<f32>) -> Weights {
+    let left = page_weights(index, clamp((hit.point-hit.normal*reach)/cell_size, vec2(0.0), vec2(1.0)));
+    let right = page_weights(index, clamp((hit.point+hit.normal*reach)/cell_size, vec2(0.0), vec2(1.0)));
+    let side = clamp(hit.lateral/reach*0.5+0.5, 0.0, 1.0);
+    let natural = smoothstep(reach-texel, reach, hit.distance);
+    let amount = road_amount(hit, world);
+    let slots = road_slots(hit); let shares = road_shares(hit) * amount;
+    let a = slot_weight(slots.x, shares.x); let b = slot_weight(slots.y, shares.y);
+    let c = slot_weight(slots.z, shares.z); let d = slot_weight(slots.w, shares.w);
+    return Weights(mix(mix(left.low,right.low,side),page.low,natural)*(1.0-amount) + a.low+b.low+c.low+d.low,
+        mix(mix(left.high,right.high,side),page.high,natural)*(1.0-amount) + a.high+b.high+c.high+d.high);
+}
+// The page's ground: its three largest weights here, blended by surface height.
+fn blended_surfaces(index: u32, page: Weights, local: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, field: f32) -> Surface {
+    let count = u32(near_table[index].state.z+0.5);
+    if count <= 1u { return surface(index,0u,local,dx,dy,field); }
+    var weights = array<f32,8>(page.low.x,page.low.y,page.low.z,page.low.w,page.high.x,page.high.y,page.high.z,page.high.w);
     // Largest first; ties keep the lower slot, as world::terrain_blend_candidates does.
     var pick = vec3<u32>(0u); var best = vec3(0.0);
     for (var i=0u; i<count; i+=1u) {
@@ -163,7 +193,20 @@ fn close_ground(world: vec3<f32>, geometry_normal: vec3<f32>, dx: vec2<f32>, dy:
         if edges[i] < 1.0 { availability = min(availability,mix(near_availability(cell+offsets[i]),1.0,smoothstep(0.0,1.0,edges[i]))); }
     }
     let field = smoothstep(FIELD_RANGE.x,FIELD_RANGE.y,distance_to_camera);
-    let s = blended_surfaces(index,uv,local,dx,dy,field);
+    var weights = page_weights(index,uv);
+    let roads = near_table[index].roads;
+    if roads.y > 0 {
+        let hit = nearest_road(roads,local,cell_size);
+        if hit.road >= 0 {
+            // Bilinear weights carry the baked road a texel and a half beyond its drawing.
+            let texel = cell_size/max(near_table[index].state.y-1.0,1.0);
+            let reach = road_reach(hit,texel*1.5);
+            if hit.distance < reach {
+                weights = road_weights(index,weights,hit,reach,texel,cell_size,vec2<f32>(cell)*cell_size+local);
+            }
+        }
+    }
+    let s = blended_surfaces(index,weights,local,dx,dy,field);
     result.color = vec4(clamp(s.color.rgb*macro_response(index,local,dx,dy),vec3(0.0),vec3(1.0)),1.0);
     // World-X tangent with the same +Z bitangent as the original heightfield UVs.
     let n = normalize(geometry_normal);

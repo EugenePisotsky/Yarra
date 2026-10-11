@@ -7314,11 +7314,13 @@ name = "yarra-terrain-render"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "bytemuck",
  "glam",
  "ron",
  "serde",
  "thiserror 2.0.20",
  "yarra-atmosphere",
+ "yarra-shader-check",
  "yarra-world",
 ]
 

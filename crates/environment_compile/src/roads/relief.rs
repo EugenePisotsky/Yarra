@@ -130,7 +130,8 @@ impl RoadPlan {
                     (closest.width * 0.5 - closest.distance_squared.sqrt())
                         / f64::from(relief.shoulder_falloff).min(closest.width * 0.5),
                 );
-                let signed_noise = |length, seed| noise::patch(world, length, seed) * 2.0 - 1.0;
+                let signed_noise =
+                    |length, seed| world::road_patch(world, length, seed) * 2.0 - 1.0;
                 let broad = signed_noise(relief.road_variation_length, road.source.seed ^ 0x906a);
                 let depth = f64::from(relief.road_depth)
                     * (1.0 + f64::from(relief.road_variation) * broad)
@@ -331,7 +332,7 @@ impl CompilePlan {
             compiled.terrain.as_ref(),
         )?;
         let mut hash = blake3::Hasher::new();
-        hash.update(b"yarra.road-relief.v1");
+        hash.update(b"yarra.road-relief.v2");
         hash.update(&compiled.input_fingerprint);
         let mut canonical = terrain.clone();
         canonical.loaded_cells.sort();

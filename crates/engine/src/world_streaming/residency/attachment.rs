@@ -278,6 +278,7 @@ pub(super) fn attach_terrain_source(
         heightfield,
         surfaces,
         weight_pages: weights,
+        roads,
     } = terrain;
     heightfield.validate().map_err(|e| e.to_string())?;
     let bounds = [
@@ -318,6 +319,7 @@ pub(super) fn attach_terrain_source(
                 profile: resources.profile,
                 texture_set: resources.texture_set,
                 layers,
+                roads,
             })
         })
         .transpose()?;

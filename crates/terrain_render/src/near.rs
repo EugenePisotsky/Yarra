@@ -24,6 +24,8 @@ pub struct NearSource {
     pub profile: TerrainProfile,
     pub texture_set: TerrainTextureSet,
     pub layers: Vec<TerrainSurfaceLayer>,
+    /// Roads crossing the page, drawn finer than its weights carry them.
+    pub roads: world::TerrainRoads,
 }
 #[derive(Resource, Default)]
 pub struct NearView {
@@ -46,6 +48,8 @@ struct Resident {
     material: Handle<TerrainMaterial>,
     fade: f32,
     uploaded: bool,
+    /// The entry's `roads`, from the upload.
+    roads: IVec4,
 }
 #[derive(Resource, Default)]
 struct Cache {
@@ -239,6 +243,7 @@ fn select_sources(
                         material: prepared.material,
                         fade: 0.,
                         uploaded: false,
+                        roads: IVec4::ZERO,
                     },
                 );
                 added += 1;
@@ -341,13 +346,21 @@ fn update(
             continue;
         }
         if !p.uploaded && uploads.len() < 2 {
-            uploads.push(gpu::tile(p.slot, source));
+            let (tile, fits) = gpu::tile(p.slot, source);
+            if !fits {
+                warn_once!(
+                    "near terrain: a page's roads exceed {} records; they draw as baked",
+                    gpu::ROAD_CAPACITY
+                );
+            }
+            p.roads = tile.road_entry;
+            uploads.push(tile);
             p.uploaded = true;
         }
         if !p.uploaded {
             continue;
         }
-        let entry = gpu::entry(source, m, p.slot, p.fade);
+        let entry = gpu::entry(source, m, p.slot, p.fade, p.roads);
         let mut i = hash(p.cell);
         while table[i].key.w != 0 {
             i = (i + 1) & (NEAR_TABLE - 1);
@@ -393,5 +406,7 @@ fn hash(cell: CellCoord) -> usize {
         & (NEAR_TABLE - 1)
 }
 
+#[cfg(test)]
+mod road_tests;
 #[cfg(test)]
 mod tests;

@@ -13,6 +13,8 @@ mod view_bookmark;
 pub use view_bookmark::WorldViewBookmark;
 mod gameplay_area;
 pub use gameplay_area::*;
+mod terrain_road;
+pub use terrain_road::*;
 
 use std::{error::Error, fmt};
 
@@ -28,7 +30,7 @@ pub const DEFAULT_CELL_SIZE: f32 = 32.0;
 pub const MAX_DECODED_PAGE_BYTES: u64 = 64 * 1024 * 1024;
 pub const PROJECT_SCHEMA_VERSION: i64 = 31;
 pub const RUNTIME_SCHEMA_VERSION: i64 = 30;
-pub const PAGE_PAYLOAD_VERSION: u16 = 11;
+pub const PAGE_PAYLOAD_VERSION: u16 = 12;
 pub const MAX_TERRAIN_SURFACES_PER_CELL: usize = 8;
 
 /// An asset's last LOD variant may be an impostor: a descriptor of baked views drawn as one
@@ -596,6 +598,8 @@ pub struct TerrainHeightfieldPage {
     /// `weight_pages`, four surfaces per page.
     pub surfaces: Vec<TerrainSurfaceId>,
     pub weight_pages: Vec<TerrainWeightPage>,
+    /// Roads crossing the page, for drawing them finer than its weights resolve.
+    pub roads: TerrainRoads,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -940,6 +944,7 @@ mod tests {
             heightfield: heightfield.clone(),
             surfaces: vec![TerrainSurfaceId([4; 16])],
             weight_pages: Vec::new(),
+            roads: Default::default(),
         });
 
         let mut bytes = encode_page_payload(&payload).unwrap();

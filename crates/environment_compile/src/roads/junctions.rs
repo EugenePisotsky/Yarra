@@ -30,7 +30,7 @@ impl PlannedJunction {
             (f64::from(cell.z) + uv[1]) * f64::from(size),
         ];
         let patches = smooth(
-            (noise::patch(
+            (world::road_patch(
                 world,
                 self.profile.breakup_patch_size,
                 self.source.seed ^ 0x815,
@@ -45,10 +45,12 @@ impl PlannedJunction {
             (f64::from(cell.x) + uv[0]) * f64::from(size),
             (f64::from(cell.z) + uv[1]) * f64::from(size),
         ];
-        let broad =
-            noise::patch(world, r.road_variation_length, self.source.seed ^ 0x906a) * 2.0 - 1.0;
-        let rut =
-            noise::patch(world, r.track_variation_length, self.source.seed ^ 0x418c) * 2.0 - 1.0;
+        let broad = world::road_patch(world, r.road_variation_length, self.source.seed ^ 0x906a)
+            * 2.0
+            - 1.0;
+        let rut = world::road_patch(world, r.track_variation_length, self.source.seed ^ 0x418c)
+            * 2.0
+            - 1.0;
         // Ruts merge into a shallow worn basin, never accumulate into intersecting trenches.
         f64::from(r.road_depth) * (1.0 + f64::from(r.road_variation) * broad)
             + 0.5 * f64::from(r.track_depth) * (1.0 + f64::from(r.track_variation) * rut)

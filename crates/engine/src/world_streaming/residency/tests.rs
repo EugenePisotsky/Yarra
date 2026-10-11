@@ -30,6 +30,7 @@ pub(in crate::world_streaming) fn height_page(key: PageKey) -> PreparedPage {
                     .unwrap(),
                 surfaces: vec![],
                 weight_pages: vec![],
+                roads: Default::default(),
             }),
         },
     }

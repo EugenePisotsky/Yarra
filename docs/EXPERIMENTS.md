@@ -587,6 +587,20 @@ Scenes read flat when the directional light on open ground is weak against the s
 | Look | Rocks on the forest floor gather into clumps, textured and half-sunk; pebbles on the beach include dark flint-like stones from the pack. Grass grows through larger rocks. |
 | Plants | **Retained.** Ferns, nettles, lily of the valley and sorrel are detail types using the vegetation bundles' LOD1 meshes; each spawned piece carries its glTF material tags, so the tree conversions make it swaying, crown-shaded foliage (fern area changes 9/255 between wind 10 s and 11 s). Pine forest, alternating with a details-off build: 71.9/71.9 against 77.6/77.3 fps (≈1 ms), +4,226 entities, main thread +0.7 ms, render prep +0.6 ms; GPU-bound. Fern and nettle shadows off: ≈0.3 ms of it (thermally limited runs). **Open:** LOD2 beyond ~20 m or a shorter fern distance if the forest needs the millisecond. |
 
+## Crisp roads — October 11
+
+The compiler bakes roads into 0.5 m weights, which blur 1.1 m wheel tracks. Terrain pages now carry their roads' centre lines and near detail draws the tracks per pixel. Costs are Metal System Trace ratios of the main opaque fragment pass to the sky composite in the same trace (thermal drift moved absolute times by up to 30% between runs), native 3456×2168 at `road-bend` (standing on the road), three alternating runs each; one ratio point ≈ 9.2 ms.
+
+| Change | Decision / observation |
+| --- | --- |
+| Drawing | **Retained.** Roads off 1.160, on 1.29 (≈1.1 ms native, ≈0.3 ms at 50% scale). |
+| Search by chunks of 8 segments with padded bounds | **Replaced.** Search alone +0.14, on +0.215 (≈2 ms): along a diagonal road the bounds cover most pixels near it. |
+| Tile grid, 4 m then 2 m, and a lean loop (best index only) | **Retained.** Lookup alone +0.025, search +0.08–0.09: tiles hold 5–6 segments (island roads: 72 pages, 15 segments a page on average, 46 at most, median 1.5 m). 2 m tiles and the lean loop changed little against 4 m: the search is latency-bound, not work-bound. |
+| Search unrolled four segments at a time | **Rejected.** No change (1.256 against 1.237). |
+| Open | A per-page road distance texture would replace the search with one filtered read (≈0.5 ms native), at the cost of an exact match with the compiler. |
+
+Metal System Trace leaves its raw kernel trace (~1 GB) in `$TMPDIR` for every recording; 153 of them (164 GB) had filled the disk. `tmp/look/trace.sh` now removes each one.
+
 ## Open gates and maintenance
 
 The remaining gates are sustained terrain/whole-game power, Temporal cost and motion quality, field-scale grass lighting, target-PC acceptance, and physical-phone heat/60-FPS delivery. Keep correctness references until their replacements pass the relevant gate. Existing counters often identify less work without demonstrating better delivered frames or lower power.

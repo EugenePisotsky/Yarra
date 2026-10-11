@@ -158,6 +158,7 @@ mod tests {
             heightfield: field.clone(),
             surfaces: Vec::new(),
             weight_pages: Vec::new(),
+            roads: Default::default(),
         });
         let PagePayload::TerrainHeightfield(page) =
             decode_page_payload(&encode_page_payload(&payload).unwrap()).unwrap()
@@ -264,6 +265,7 @@ mod tests {
             heightfield: field,
             surfaces: Vec::new(),
             weight_pages: Vec::new(),
+            roads: Default::default(),
         });
         assert!(encode_page_payload(&payload).is_err());
     }

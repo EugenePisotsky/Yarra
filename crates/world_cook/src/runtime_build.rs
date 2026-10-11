@@ -659,10 +659,16 @@ impl RuntimeOutput {
         let height_bounds = heightfield.height_bounds();
         let resolution = heightfield.resolution;
         let heightfield_gpu_bytes = estimate_heightfield_gpu_bytes(heightfield.resolution);
+        let roads = environment
+            .roads
+            .get(&cell_key)
+            .cloned()
+            .unwrap_or_default();
         let terrain_payload = PagePayload::TerrainHeightfield(TerrainHeightfieldPage {
             heightfield,
             surfaces,
             weight_pages,
+            roads,
         });
         let terrain_page = encoded_page(
             terrain_key,

@@ -48,6 +48,7 @@ impl CompilePlan {
                     cell,
                     ground: self.ground(cell, &coverage, roads)?,
                     vegetation: self.vegetation(cell, &coverage, roads)?,
+                    roads: roads.map(|r| r.terrain_roads(cell)).unwrap_or_default(),
                     input_fingerprint: {
                         let base = coverage.fingerprint(self, cell)?;
                         if let Some(roads) = roads {

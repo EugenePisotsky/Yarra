@@ -49,6 +49,8 @@ pub(crate) struct NearSlot {
 #[derive(Clone, Copy, Debug, Default, PartialEq, ShaderType)]
 pub(crate) struct NearEntry {
     pub key: IVec4,
+    /// The page's roads in the road buffer: first tile and tiles across (`road_records`).
+    pub roads: IVec4,
     /// Fade, weight resolution, surface count.
     pub state: Vec4,
     pub macro_scales: Vec4,
@@ -62,6 +64,141 @@ pub(super) fn bytes() -> u64 {
     // Two RGBA weight layers per slot.
     u64::from(WEIGHT_SIDE * WEIGHT_SIDE * 8) * NEAR_SLOTS as u64
         + NearEntry::min_size().get() * NEAR_TABLE as u64
+        + road_buffer_bytes()
+}
+/// Each slot's region of the road buffer, in vec4s: about 250 centre-line segments, several
+/// roads' worth through one cell.
+pub(super) const ROAD_CAPACITY: u32 = 1024;
+/// Tiles across a page's road grid: on 32 m cells, 2 m tiles.
+pub(super) const ROAD_TILES: usize = 16;
+fn road_buffer_bytes() -> u64 {
+    u64::from(ROAD_CAPACITY) * NEAR_SLOTS as u64 * 16
+}
+/// A page's roads as `terrain_near.wesl` reads them from its slot's region of the road buffer,
+/// which starts at vec4 `base`: six vec4 per road, then the page's 16 x 16 tiles, one vec4 each
+/// (rows of increasing X from the page's origin), then three vec4 per segment (ends; end
+/// normals; end widths and road). A tile holds two runs of segments, first and count each,
+/// together every segment that reaches the tile, so a pixel tests only those. Indices are
+/// absolute vec4 indices. Roads whose ground has no surface on the page draw nothing. Returns
+/// the records and the entry's `roads` (first tile, tiles across), or `None` when they do not
+/// fit the region.
+pub(super) fn road_records(s: &NearSource, base: u32) -> Option<(Vec<Vec4>, IVec4)> {
+    let roads = &s.roads;
+    if roads.segments.is_empty() {
+        return Some((vec![], IVec4::ZERO));
+    }
+    let first_tile = base as usize + roads.roads.len() * 6;
+    let first_segment = first_tile + ROAD_TILES * ROAD_TILES;
+    let end = first_segment + roads.segments.len() * 3;
+    if end > (base + ROAD_CAPACITY) as usize {
+        return None;
+    }
+    let mut records = Vec::with_capacity(end - base as usize);
+    for road in &roads.roads {
+        let mut ground: Vec<_> = road
+            .surfaces
+            .iter()
+            .filter_map(|(id, w)| Some((s.surfaces.iter().position(|s| s == id)? as f32, *w)))
+            .collect();
+        ground.sort_by(|a, b| b.1.total_cmp(&a.1));
+        ground.resize(4, (-1., 0.));
+        let shape = &road.shape;
+        records.extend([
+            Vec4::new(
+                shape.track_spacing,
+                shape.track_width,
+                shape.edge_softness,
+                shape.edge_variation,
+            ),
+            Vec4::new(
+                shape.edge_patch_size,
+                shape.breakup_patch_size,
+                (shape.seed & 0xffff) as f32,
+                (shape.seed >> 16) as f32,
+            ),
+            Vec4::new(
+                shape.breakup,
+                road.center_ground,
+                road.shoulder_ground,
+                road.strength,
+            ),
+            Vec4::new(road.track_depth, road.rut_roundness, 0., 0.),
+            Vec4::from_array(std::array::from_fn(|i| ground[i].0)),
+            Vec4::from_array(std::array::from_fn(|i| ground[i].1)),
+        ]);
+    }
+    // How far each segment's drawing reaches. Bilinear weights carry the baked road a texel and
+    // a half beyond it, and the shader redraws the ground that far.
+    let texel = s
+        .weights
+        .first()
+        .map_or(0., |w| s.cell_size / f32::from(w.resolution.max(2) - 1));
+    let bounds: Vec<_> = roads
+        .segments
+        .iter()
+        .map(|segment| {
+            let shape = &roads.roads[usize::from(segment.road)].shape;
+            let pad = segment.width[0].max(segment.width[1]) * 0.5
+                + shape.edge_variation
+                + shape.edge_softness
+                + texel * 1.5;
+            let (a, b) = (Vec2::from_array(segment.a), Vec2::from_array(segment.b));
+            (a.min(b) - pad, a.max(b) + pad)
+        })
+        .collect();
+    let size = s.cell_size / ROAD_TILES as f32;
+    for z in 0..ROAD_TILES {
+        for x in 0..ROAD_TILES {
+            let lo = Vec2::new(x as f32, z as f32) * size;
+            let hi = lo + size;
+            // Runs of consecutive segments reaching the tile; the closest runs merge until two
+            // remain, which may add segments that do not reach it, never drop one that does.
+            let mut runs: Vec<std::ops::Range<usize>> = vec![];
+            for (i, (a, b)) in bounds.iter().enumerate() {
+                if a.cmple(hi).all() && b.cmpge(lo).all() {
+                    match runs.last_mut() {
+                        Some(r) if r.end == i => r.end = i + 1,
+                        _ => runs.push(i..i + 1),
+                    }
+                }
+            }
+            while runs.len() > 2 {
+                let i = (1..runs.len())
+                    .min_by_key(|&i| runs[i].start - runs[i - 1].end)
+                    .unwrap();
+                runs[i - 1].end = runs[i].end;
+                runs.remove(i);
+            }
+            let run = |i: usize| {
+                runs.get(i).map_or(Vec2::ZERO, |r| {
+                    Vec2::new((first_segment + r.start * 3) as f32, r.len() as f32)
+                })
+            };
+            let (first, second) = (run(0), run(1));
+            records.push(Vec4::new(first.x, first.y, second.x, second.y));
+        }
+    }
+    for segment in &roads.segments {
+        records.extend([
+            Vec4::new(segment.a[0], segment.a[1], segment.b[0], segment.b[1]),
+            Vec4::new(
+                segment.normal_a[0],
+                segment.normal_a[1],
+                segment.normal_b[0],
+                segment.normal_b[1],
+            ),
+            Vec4::new(
+                segment.width[0],
+                segment.width[1],
+                (base as usize + usize::from(segment.road) * 6) as f32,
+                0.,
+            ),
+        ]);
+    }
+    Some((
+        records,
+        IVec4::new(first_tile as i32, ROAD_TILES as i32, 0, 0),
+    ))
 }
 fn phase(v: [f64; 2]) -> Vec2 {
     Vec2::new(v[0].rem_euclid(1.) as f32, v[1].rem_euclid(1.) as f32)
@@ -85,7 +222,13 @@ fn uv_phase(p: [f64; 2], size: f32) -> (Vec4, Vec4) {
         ),
     )
 }
-pub(super) fn entry(s: &NearSource, m: &TerrainMaterial, slot: u32, fade: f32) -> NearEntry {
+pub(super) fn entry(
+    s: &NearSource,
+    m: &TerrainMaterial,
+    slot: u32,
+    fade: f32,
+    roads: IVec4,
+) -> NearEntry {
     let settings = m.settings;
     let p = s.key.cell.origin(s.cell_size);
     let mut slots = [NearSlot::default(); MAX_TERRAIN_SURFACES_PER_CELL];
@@ -117,6 +260,7 @@ pub(super) fn entry(s: &NearSource, m: &TerrainMaterial, slot: u32, fade: f32) -
     };
     NearEntry {
         key: IVec4::new(s.key.cell.x, s.key.cell.z, 0, slot as i32 + 1),
+        roads,
         state: Vec4::new(
             fade,
             if s.surfaces.len() == 1 {
@@ -146,8 +290,12 @@ pub(super) struct Tile {
     /// Two RGBA layers of surface weights, four surfaces each.
     pub(super) weights: [Vec<u8>; 2],
     weight_side: u32,
+    /// The page's road records (`road_records`), as bytes, and the entry's `roads`.
+    roads: Vec<u8>,
+    pub(super) road_entry: IVec4,
 }
-pub(super) fn tile(slot: u32, s: &NearSource) -> Tile {
+/// The page's upload; `None` roads draw only as the page's weights carry them.
+pub(super) fn tile(slot: u32, s: &NearSource) -> (Tile, bool) {
     let (weight_side, weights) = if s.surfaces.len() == 1 {
         (1, [vec![255, 0, 0, 0], vec![0; 4]])
     } else {
@@ -159,11 +307,24 @@ pub(super) fn tile(slot: u32, s: &NearSource) -> Tile {
         };
         (side, [page(0), page(1)])
     };
-    Tile {
-        slot,
-        weights,
-        weight_side,
-    }
+    let road = road_records(s, slot * ROAD_CAPACITY);
+    let fits = road.is_some();
+    let (roads, road_entry) = road.unwrap_or_default();
+    let roads = if roads.is_empty() {
+        vec![]
+    } else {
+        crate::storage_bytes(&roads)
+    };
+    (
+        Tile {
+            slot,
+            weights,
+            weight_side,
+            roads,
+            road_entry,
+        },
+        fits,
+    )
 }
 struct Update {
     table: Vec<u8>,
@@ -172,6 +333,7 @@ struct Update {
 struct Shared {
     weights: AssetId<Image>,
     table: AssetId<ShaderBuffer>,
+    roads: AssetId<ShaderBuffer>,
     pack: Pack,
     pending: Option<Update>,
     ready: bool,
@@ -182,6 +344,7 @@ pub(super) struct NearUploadHub(Arc<Mutex<Vec<Weak<Mutex<Shared>>>>>);
 pub(crate) struct NearAtlas {
     pub weights: Handle<Image>,
     pub table: Handle<ShaderBuffer>,
+    pub roads: Handle<ShaderBuffer>,
     pub(crate) pack: Pack,
     shared: Arc<Mutex<Shared>>,
 }
@@ -220,9 +383,14 @@ impl NearAtlas {
             NearEntry::min_size().get() * NEAR_TABLE as u64,
             RenderAssetUsages::RENDER_WORLD,
         ));
+        let roads = buffers.add(ShaderBuffer::with_size(
+            road_buffer_bytes(),
+            RenderAssetUsages::RENDER_WORLD,
+        ));
         let shared = Arc::new(Mutex::new(Shared {
             weights: weights.id(),
             table: table.id(),
+            roads: roads.id(),
             pack: pack.clone(),
             pending: None,
             ready: false,
@@ -232,6 +400,7 @@ impl NearAtlas {
         let atlas = Self {
             weights,
             table,
+            roads,
             pack,
             shared,
         };
@@ -278,7 +447,11 @@ fn upload(
             return false;
         };
         let mut s = shared.lock().unwrap();
-        let (Some(weights), Some(table)) = (images.get(s.weights), buffers.get(s.table)) else {
+        let (Some(weights), Some(table), Some(roads)) = (
+            images.get(s.weights),
+            buffers.get(s.table),
+            buffers.get(s.roads),
+        ) else {
             return true;
         };
         if [&s.pack.base, &s.pack.normal, &s.pack.macro_image]
@@ -318,6 +491,13 @@ fn upload(
                         height: side,
                         depth_or_array_layers: 1,
                     },
+                );
+            }
+            if !t.roads.is_empty() {
+                queue.write_buffer(
+                    &roads.buffer,
+                    u64::from(t.slot * ROAD_CAPACITY) * 16,
+                    &t.roads,
                 );
             }
         }
