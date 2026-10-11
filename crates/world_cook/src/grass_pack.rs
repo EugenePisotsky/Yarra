@@ -34,15 +34,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tracked_pack_grows_on_the_meadows_and_leaves_rock_bare() {
+    fn tracked_pack_grows_grass_on_the_meadows_but_none_on_rock_or_beach() {
         let terrain = TerrainPack::baltic();
         let catalog = baltic(&terrain);
-        assert!(!catalog.on_surface(terrain.surface("meadow").0).is_empty());
-        assert!(catalog.on_surface(terrain.surface("rock").0).is_empty());
+        let grass = |key: &str| {
+            catalog
+                .on_surface(terrain.surface(key).0)
+                .iter()
+                .filter(|a| catalog.grass(a.grass).is_some())
+                .count()
+        };
+        assert!(grass("meadow") > 0);
+        assert_eq!(grass("rock"), 0);
+        assert_eq!(grass("beach-sand"), 0);
+        // Beaches keep their pebbles; every listed detail is in the catalog.
         assert!(
             catalog
                 .on_surface(terrain.surface("beach-sand").0)
-                .is_empty()
+                .iter()
+                .all(|a| catalog.detail(a.grass).is_some())
         );
     }
 }

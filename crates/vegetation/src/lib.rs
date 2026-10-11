@@ -130,6 +130,18 @@ pub struct GrassType {
     pub twin: bool,
 }
 
+impl Lattice for GrassType {
+    fn seed(&self) -> u32 {
+        self.id().seed()
+    }
+    fn spacing(&self) -> f32 {
+        GrassType::spacing(self)
+    }
+    fn clumps(&self) -> GrassClumps {
+        self.clumps
+    }
+}
+
 impl GrassType {
     pub fn id(&self) -> GrassTypeId {
         GrassTypeId::from_key(&self.key)
@@ -173,7 +185,86 @@ impl GrassType {
     }
 }
 
-/// How much of a grass type grows on a surface: a share of the type's density.
+/// Small objects strewn over the ground: stones, pebbles, twigs. Like grass they grow where their
+/// ground surfaces say (`SurfaceGrass`, sharing the grass types' ID space), on a world-aligned
+/// lattice gathered into clumps; each object is a random piece of the type's asset, a glTF binary
+/// whose meshes are its pieces (`tools/import_detail_props.py`), standing on the origin.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DetailType {
+    pub key: String,
+    /// The pieces' glTF binary, under `assets/`.
+    pub asset: String,
+    /// Objects per square metre where the type grows at full amount.
+    pub density: f32,
+    /// Scale applied to the pieces as authored, (minimum, maximum).
+    pub scale: [f32; 2],
+    /// Voronoi clumps as grass's: `size` metres apart, `pull` gathering objects to their centres,
+    /// `patches` making partial coverage keep or drop whole clumps.
+    pub clumps: DetailClumps,
+    /// Share of each piece's height sunk into the ground.
+    pub sink: f32,
+    /// How far pieces follow the ground's slope: 0 upright, 1 along its normal.
+    pub align: f32,
+    /// Random tilt from that, radians.
+    pub tilt: f32,
+    /// Metres from the camera at which they have faded out.
+    pub distance: f32,
+    /// Whether they cast shadows; pebbles and twigs are too small to need them.
+    pub shadows: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct DetailClumps {
+    pub size: f32,
+    pub pull: f32,
+    pub patches: f32,
+}
+
+/// Ground details stop drawing within this distance at most.
+pub const MAX_DETAIL_DISTANCE: f32 = 160.0;
+
+impl DetailType {
+    pub fn id(&self) -> GrassTypeId {
+        GrassTypeId::from_key(&self.key)
+    }
+
+    fn is_valid(&self) -> bool {
+        let c = self.clumps;
+        !self.key.is_empty()
+            && !self.asset.is_empty()
+            && finite_range(self.density, 0.001, 50.0)
+            && finite_range(self.scale[0], 0.05, 20.0)
+            && finite_range(self.scale[1], self.scale[0], 20.0)
+            && finite_range(c.size, 0.1, 16.0)
+            && finite_range(c.pull, 0.0, 1.0)
+            && finite_range(c.patches, 0.0, 1.0)
+            && finite_range(self.sink, 0.0, 1.0)
+            && finite_range(self.align, 0.0, 1.0)
+            && finite_range(self.tilt, 0.0, 1.6)
+            && finite_range(self.distance, 1.0, MAX_DETAIL_DISTANCE)
+    }
+}
+
+impl Lattice for DetailType {
+    fn seed(&self) -> u32 {
+        self.id().seed()
+    }
+    fn spacing(&self) -> f32 {
+        self.density.sqrt().recip()
+    }
+    fn clumps(&self) -> GrassClumps {
+        GrassClumps {
+            size: self.clumps.size,
+            pull: self.clumps.pull,
+            height: 0.0,
+            facing: 0.0,
+            splay: 0.0,
+            patches: self.clumps.patches,
+        }
+    }
+}
+
+/// How much of a grass or detail type grows on a surface: a share of the type's density.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct GrassAmount {
     pub grass: GrassTypeId,
@@ -194,12 +285,13 @@ pub const MAX_GRASS_TYPES: usize = 256;
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct VegetationCatalog {
     pub grass: Vec<GrassType>,
+    pub details: Vec<DetailType>,
     pub surfaces: Vec<SurfaceGrass>,
 }
 
 impl VegetationCatalog {
     pub fn validate(&self) -> Result<(), CatalogValidationError> {
-        if self.grass.len() > MAX_GRASS_TYPES {
+        if self.grass.len() + self.details.len() > MAX_GRASS_TYPES {
             return Err(CatalogValidationError::TooManyTypes);
         }
         let mut ids = HashSet::new();
@@ -209,6 +301,14 @@ impl VegetationCatalog {
             }
             if !grass.is_valid() {
                 return Err(CatalogValidationError::InvalidType(grass.key.clone()));
+            }
+        }
+        for detail in &self.details {
+            if !ids.insert(detail.id()) {
+                return Err(CatalogValidationError::DuplicateType(detail.key.clone()));
+            }
+            if !detail.is_valid() {
+                return Err(CatalogValidationError::InvalidType(detail.key.clone()));
             }
         }
         let mut surfaces = HashSet::new();
@@ -231,6 +331,18 @@ impl VegetationCatalog {
 
     pub fn grass(&self, id: GrassTypeId) -> Option<&GrassType> {
         self.grass.iter().find(|grass| grass.id() == id)
+    }
+
+    pub fn detail(&self, id: GrassTypeId) -> Option<&DetailType> {
+        self.details.iter().find(|detail| detail.id() == id)
+    }
+
+    /// Every grass and detail type's ID, grass first, each in catalog order.
+    pub fn type_ids(&self) -> impl Iterator<Item = GrassTypeId> + '_ {
+        self.grass
+            .iter()
+            .map(GrassType::id)
+            .chain(self.details.iter().map(DetailType::id))
     }
 
     pub fn index(&self, id: GrassTypeId) -> Option<usize> {
@@ -288,6 +400,14 @@ impl VegetationCatalog {
                 changed = true;
             }
         }
+        for detail in &mut self.details {
+            if let Some(source) = other.details.iter().find(|d| d.key == detail.key)
+                && source != detail
+            {
+                *detail = source.clone();
+                changed = true;
+            }
+        }
         changed
     }
 }
@@ -299,7 +419,9 @@ pub struct GrassPack {
     /// The terrain pack whose surface keys `surfaces` names.
     pub terrain: String,
     pub types: Vec<GrassType>,
-    /// Surface key → (grass key, share of that type's density).
+    #[serde(default)]
+    pub details: Vec<DetailType>,
+    /// Surface key → (grass or detail key, share of that type's density).
     pub surfaces: BTreeMap<String, Vec<(String, f32)>>,
 }
 
@@ -322,14 +444,13 @@ impl GrassPack {
                 let grass = grass
                     .iter()
                     .map(|(grass, amount)| {
-                        self.types
-                            .iter()
-                            .any(|t| &t.key == grass)
-                            .then(|| GrassAmount {
-                                grass: GrassTypeId::from_key(grass),
-                                amount: *amount,
-                            })
-                            .ok_or_else(|| format!("surface {key} names unknown grass {grass}"))
+                        (self.types.iter().any(|t| &t.key == grass)
+                            || self.details.iter().any(|t| &t.key == grass))
+                        .then(|| GrassAmount {
+                            grass: GrassTypeId::from_key(grass),
+                            amount: *amount,
+                        })
+                        .ok_or_else(|| format!("surface {key} names unknown grass {grass}"))
                     })
                     .collect::<Result<_, _>>()?;
                 Ok(SurfaceGrass { surface, grass })
@@ -337,6 +458,7 @@ impl GrassPack {
             .collect::<Result<_, String>>()?;
         let catalog = VegetationCatalog {
             grass: self.types.clone(),
+            details: self.details.clone(),
             surfaces,
         };
         catalog.validate().map_err(|e| e.to_string())?;
@@ -396,7 +518,7 @@ impl VegetationFieldPageData {
     pub fn validate(&self, catalog: &VegetationCatalog) -> Result<(), PageValidationError> {
         let mut types = HashSet::new();
         for field in &self.fields {
-            if catalog.grass(field.grass).is_none() {
+            if catalog.grass(field.grass).is_none() && catalog.detail(field.grass).is_none() {
                 return Err(PageValidationError::MissingType(field.grass));
             }
             if !types.insert(field.grass) {
@@ -724,14 +846,45 @@ mod tests {
 
     #[test]
     fn packs_resolve_surface_and_grass_keys() {
+        let pebbles = DetailType {
+            key: "pebbles".into(),
+            asset: "pebbles.glb".into(),
+            density: 1.0,
+            scale: [1.0, 1.5],
+            clumps: DetailClumps {
+                size: 1.0,
+                pull: 0.5,
+                patches: 0.5,
+            },
+            sink: 0.3,
+            align: 0.5,
+            tilt: 0.2,
+            distance: 30.0,
+            shadows: false,
+        };
         let pack = GrassPack {
             terrain: "test".into(),
             types: vec![fixtures::meadow(), fixtures::tufts()],
-            surfaces: [("lawn".to_string(), vec![("meadow".to_string(), 0.5)])].into(),
+            details: vec![pebbles],
+            surfaces: [
+                ("lawn".to_string(), vec![("meadow".to_string(), 0.5)]),
+                ("path".to_string(), vec![("pebbles".to_string(), 0.8)]),
+            ]
+            .into(),
         };
-        let catalog = pack
-            .catalog(|key| (key == "lawn").then_some([7; 16]))
+        let path = pack
+            .catalog(|key| match key {
+                "lawn" => Some([7; 16]),
+                "path" => Some([9; 16]),
+                _ => None,
+            })
             .unwrap();
+        // Details share the grass types' ID space; grass cover ignores them.
+        let on_path = path.on_surface([9; 16]);
+        assert_eq!(on_path.len(), 1);
+        assert!(path.detail(on_path[0].grass).is_some());
+        assert_eq!(path.cover([9; 16]).amount, 0.0);
+        let catalog = path;
         assert_eq!(
             catalog.on_surface([7; 16]),
             &[GrassAmount {

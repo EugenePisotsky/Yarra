@@ -236,10 +236,10 @@ pub(super) fn pack_items(
             |(minimum, maximum), height| (minimum.min(*height), maximum.max(*height)),
         );
         for (field, &coverage_offset) in page.fields.iter().zip(&layout.coverage) {
-            let index = scene
-                .catalog
-                .index(field.grass)
-                .expect("validated scene grass");
+            // Ground-detail fields share the page; their objects are drawn elsewhere.
+            let Some(index) = scene.catalog.index(field.grass) else {
+                continue;
+            };
             // Lattices are world-aligned in canonical coordinates, independent of the render
             // origin the page is drawn relative to.
             let domain = candidate_domain(

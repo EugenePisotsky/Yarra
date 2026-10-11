@@ -77,6 +77,7 @@ pub fn tufts() -> GrassType {
 pub fn reference_catalog() -> VegetationCatalog {
     VegetationCatalog {
         grass: vec![meadow(), tufts()],
+        details: vec![],
         surfaces: vec![],
     }
 }

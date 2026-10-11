@@ -705,7 +705,7 @@ mod tests {
         let catalog = build.manifest.vegetation_catalog.as_ref().unwrap();
         page.validate(catalog).unwrap();
         assert!(!page.fields.is_empty());
-        assert!(page.fields.len() <= 5);
+        assert!(page.fields.len() <= catalog.grass.len() + catalog.details.len());
         assert_eq!(
             build
                 .pages

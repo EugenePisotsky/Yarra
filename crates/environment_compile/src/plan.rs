@@ -96,12 +96,11 @@ impl CompilePlan {
                     .map(|resolved| (l.id, resolved))
             })
             .collect::<Result<_, _>>()?;
-        // Types in catalog order; a type grows here when some surface of this world carries it.
+        // Grass and detail types in catalog order; a type grows here when some surface of this
+        // world carries it.
         let bindings: Vec<_> = grass
-            .grass
-            .iter()
-            .map(|t| {
-                let id = t.id();
+            .type_ids()
+            .map(|id| {
                 let amounts = definition
                     .surfaces
                     .iter()

@@ -1,7 +1,16 @@
 //! Deterministic blade placement: one candidate per cell of a world-aligned lattice at the type's
 //! spacing, jittered, gathered toward Voronoi clump centres, and thinned by coverage. The GPU
 //! (`shaders/vegetation/placement/sampling.wesl`) reproduces this; tests compare the two.
-use crate::{GrassType, VegetationFieldPage};
+use crate::{GrassClumps, VegetationFieldPage};
+
+/// What placement needs of a type that grows on a lattice: grass or ground details.
+pub trait Lattice {
+    /// Every type grows on its own world-aligned lattice.
+    fn seed(&self) -> u32;
+    /// Metres between lattice candidates.
+    fn spacing(&self) -> f32;
+    fn clumps(&self) -> GrassClumps;
+}
 
 /// Clump feature points sit this far from their cell centres, as a share of the cell.
 pub const CLUMP_JITTER: f32 = 0.9;
@@ -57,9 +66,10 @@ pub struct Candidate {
     pub seed: u32,
 }
 
-pub fn candidate_domain(origin_xz: [f32; 2], size: f32, grass: &GrassType) -> CandidateDomain {
+pub fn candidate_domain(origin_xz: [f32; 2], size: f32, grass: &impl Lattice) -> CandidateDomain {
     let spacing = grass.spacing();
-    let radius = grass.clumps.size * std::f32::consts::SQRT_2 * grass.clumps.pull;
+    let clumps = grass.clumps();
+    let radius = clumps.size * std::f32::consts::SQRT_2 * clumps.pull;
     let minimum = [
         ((origin_xz[0] - radius) / spacing).floor() as i32,
         ((origin_xz[1] - radius) / spacing).floor() as i32,
@@ -79,14 +89,14 @@ pub fn candidate_domain(origin_xz: [f32; 2], size: f32, grass: &GrassType) -> Ca
 }
 
 pub fn sample_candidate(
-    grass: &GrassType,
+    grass: &impl Lattice,
     domain: CandidateDomain,
     index: u32,
 ) -> Option<Candidate> {
     if index >= domain.candidate_count() {
         return None;
     }
-    let type_seed = grass.id().seed();
+    let type_seed = grass.seed();
     let cell_x = domain.cell_min[0] + (index % domain.cell_count[0]) as i32;
     let cell_z = domain.cell_min[1] + (index / domain.cell_count[0]) as i32;
     let seed = hash_cell(type_seed, cell_x, cell_z, 0x6d2b_79f5);
@@ -95,7 +105,7 @@ pub fn sample_candidate(
         (cell_z as f32 + random01(seed ^ 0x63d8_3595)) * domain.spacing,
     ];
     let clump = sample_clump(grass, type_seed, jittered);
-    let pull = grass.clumps.pull * clump.influence;
+    let pull = grass.clumps().pull * clump.influence;
     let root_xz = [
         jittered[0] + (clump.center_xz[0] - jittered[0]) * pull,
         jittered[1] + (clump.center_xz[1] - jittered[1]) * pull,
@@ -112,7 +122,7 @@ pub fn sample_candidate(
         rank: patch_rank(
             random01(seed ^ 0x4cf5_ad43),
             random01(clump.key ^ 0x2545_f491),
-            grass.clumps.patches,
+            grass.clumps().patches,
         ),
         lod_rank: (lane as f32 + random01(seed ^ 0x91e1_0da5)) * 0.25,
         seed,
@@ -143,14 +153,14 @@ pub fn patch_rank(blade: f32, clump: f32, patches: f32) -> f32 {
     }
 }
 
-fn facing(grass: &GrassType, clump: Clump, seed: u32) -> [f32; 2] {
+fn facing(grass: &impl Lattice, clump: Clump, seed: u32) -> [f32; 2] {
     let angle = |s: u32| {
         let a = random01(s) * std::f32::consts::TAU;
         [a.cos(), a.sin()]
     };
     let own = angle(seed ^ 0x1656_67b1);
     let shared = angle(clump.key ^ 0x68e3_1da4);
-    let c = grass.clumps;
+    let c = grass.clumps();
     let grouped = c.facing * clump.influence;
     let splay = c.splay * clump.influence;
     let mixed = [
@@ -164,8 +174,8 @@ fn facing(grass: &GrassType, clump: Clump, seed: u32) -> [f32; 2] {
 }
 
 /// The nearest of the 3×3 clump feature points around `root`, and how clearly it is nearest.
-pub fn sample_clump(grass: &GrassType, type_seed: u32, root: [f32; 2]) -> Clump {
-    let size = grass.clumps.size;
+pub fn sample_clump(grass: &impl Lattice, type_seed: u32, root: [f32; 2]) -> Clump {
+    let size = grass.clumps().size;
     let base = [
         (root[0] / size).floor() as i32,
         (root[1] / size).floor() as i32,
@@ -193,7 +203,7 @@ pub fn sample_clump(grass: &GrassType, type_seed: u32, root: [f32; 2]) -> Clump 
     let influence = smoothstep01((second.sqrt() - distance) / (size * CLUMP_SOFTNESS));
     let normalized = (distance / (size * std::f32::consts::SQRT_2)).clamp(0.0, 1.0);
     // Tufted types thin out between clumps; even ones barely do.
-    let edge = 1.0 - 0.6 * grass.clumps.pull;
+    let edge = 1.0 - 0.6 * grass.clumps().pull;
     let spatial = 1.0 + (edge - 1.0) * normalized.powf(1.5);
     let clump = 1.0 - CLUMP_DENSITY_VARIATION * random01(key ^ 0xd1b5_4a35);
     Clump {

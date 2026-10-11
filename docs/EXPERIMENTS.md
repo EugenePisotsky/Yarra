@@ -577,6 +577,15 @@ Scenes read flat when the directional light on open ground is weak against the s
 | --- | --- |
 | Fixed giant planet in place of the moon | **Rejected** by the user ("more or less the same, but a moving moon is better"); branch `feat/planet` (5a35e8f, local). A 20° banded planet fixed 30° up at the pole of the sun's path, always half lit, its lit side turning with the sun; art-directed light holding key/fill at 0.6 from sunset to sunrise, none while the sun is up; shadows handed over at sunset. Forest-edge tree contrast 0.67→0.97 at 18:30, 0.78→1.06 at 05:31. First version took the shadows (and grass's single light) from the sun below 3°, losing golden-hour shadows and colour; fixed by fading it in over ±1° of the horizon. Unsolved when dropped: overcast, the sea's glitter of a 20° disc, light colour. |
 
+## Ground details — October 11
+
+| Change | Decision / observation |
+| --- | --- |
+| Render path | **CPU placement, plain mesh entities.** Placed objects spawn a glTF scene per LOD (several entities each), too heavy for tens of thousands of stones; a grass-style GPU path would need its own textured PBR draw and shadow pass. Megascans' low tiers are 36–370 triangles, so plain mesh entities sharing one material per pack, drawn instanced by Bevy, are cheap. Placement reuses the grass's tested lattice, clumps and coverage acceptance on the CPU. |
+| Spawning | Per page **and type**: spawning a page's types together kept pebbles (26 m) alive out to the rocks' 80 m, tens of thousands on rocky ground. |
+| Cost | Alternating with a details-off build at shipped densities: pine forest 78.1/78.4 fps against 68.6/76.0, edge-sun 72.2/68.6 against 72.2/61.7: within the runs' spread. Entities +2,138 in the forest, +133 at the meadow edge; main thread unchanged. |
+| Look | Rocks on the forest floor gather into clumps, textured and half-sunk; pebbles on the beach include dark flint-like stones from the pack. Grass grows through larger rocks. |
+
 ## Open gates and maintenance
 
 The remaining gates are sustained terrain/whole-game power, Temporal cost and motion quality, field-scale grass lighting, target-PC acceptance, and physical-phone heat/60-FPS delivery. Keep correctness references until their replacements pass the relevant gate. Existing counters often identify less work without demonstrating better delivered frames or lower power.

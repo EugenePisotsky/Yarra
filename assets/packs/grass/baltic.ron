@@ -26,8 +26,16 @@
 //   than a plain dielectric. `translucency`: the share of the sun a blade passes when seen
 //   against the light. `stiffness`: 0 sways freely, 1 barely moves.
 //
-// `surfaces`: terrain surface key → (grass key, share of its density). Unlisted surfaces stay
-// bare. A surface may carry several types; shares need not sum to 1.
+// `details`: small objects strewn over the ground, each a random piece of `asset` (a glTF binary
+// under assets/, made by tools/import_detail_props.py from a Megascans pack in
+// ~/Dev/Assets/props/sources). `density` objects per square metre at full amount; `scale` range
+// of the pieces as authored; `clumps` as grass's (size, pull, patches); `sink` share of a piece's
+// height sunk into the ground; `align` how far pieces follow the slope (0 upright, 1 the ground's
+// normal) and `tilt` random lean, radians; `distance` metres at which they have faded out;
+// `shadows` whether they cast them.
+//
+// `surfaces`: terrain surface key → (grass or detail key, share of its density). Unlisted surfaces
+// stay bare. A surface may carry several types; shares need not sum to 1.
 (
     terrain: "baltic",
     types: [
@@ -145,15 +153,87 @@
             twin: true,
         ),
     ],
+    details: [
+        // Pebbles of the beach, gravel and paths: 5-14 cm.
+        (
+            key: "pebbles",
+            asset: "local/details/pebbles.glb",
+            density: 1.5,
+            scale: (1.0, 1.6),
+            clumps: (size: 1.2, pull: 0.6, patches: 0.6),
+            sink: 0.35,
+            align: 0.8,
+            tilt: 0.4,
+            distance: 26.0,
+            shadows: false,
+        ),
+        // Rounded cobbles at the waterline and on gravel: 5-25 cm.
+        (
+            key: "cobbles",
+            asset: "local/details/cobbles.glb",
+            density: 0.6,
+            scale: (1.5, 3.0),
+            clumps: (size: 2.0, pull: 0.7, patches: 0.8),
+            sink: 0.3,
+            align: 0.8,
+            tilt: 0.3,
+            distance: 34.0,
+            shadows: false,
+        ),
+        // Angular stones of rocky ground, 10-30 cm.
+        (
+            key: "stones",
+            asset: "local/details/small_stones.glb",
+            density: 0.3,
+            scale: (1.0, 2.0),
+            clumps: (size: 2.5, pull: 0.6, patches: 0.7),
+            sink: 0.35,
+            align: 0.7,
+            tilt: 0.4,
+            distance: 45.0,
+            shadows: true,
+        ),
+        // Rocks breaking through moss and meadow, 20-80 cm.
+        (
+            key: "rocks",
+            asset: "local/details/small_rocks.glb",
+            density: 0.05,
+            scale: (1.5, 3.5),
+            clumps: (size: 5.0, pull: 0.5, patches: 0.9),
+            sink: 0.4,
+            align: 0.6,
+            tilt: 0.3,
+            distance: 80.0,
+            shadows: true,
+        ),
+        // Twigs on the forest floor, 5-40 cm.
+        (
+            key: "twigs",
+            asset: "local/details/twigs.glb",
+            density: 0.8,
+            scale: (1.5, 3.0),
+            clumps: (size: 1.5, pull: 0.4, patches: 0.5),
+            sink: 0.15,
+            align: 1.0,
+            tilt: 0.15,
+            distance: 26.0,
+            shadows: false,
+        ),
+    ],
     surfaces: {
-        "meadow": [("meadow", 1.0), ("meadow-tall", 1.0)],
-        "dry-meadow": [("dry-meadow", 1.0), ("meadow-tall", 0.4)],
-        "coastal-grass": [("marram", 0.8), ("dry-meadow", 0.25)],
-        "gravel": [("dry-meadow", 0.12)],
-        "forest-moss": [("wavy-hair", 0.45)],
-        "forest-floor": [("wavy-hair", 0.3)],
-        "pine-needles": [("wavy-hair", 0.12)],
-        "leaf-litter": [("wavy-hair", 0.08)],
-        "stony-moss": [("wavy-hair", 0.25)],
+        "meadow": [("meadow", 1.0), ("meadow-tall", 1.0), ("rocks", 0.02), ("stones", 0.03)],
+        "dry-meadow": [("dry-meadow", 1.0), ("meadow-tall", 0.4), ("rocks", 0.05), ("stones", 0.1), ("pebbles", 0.05)],
+        "coastal-grass": [("marram", 0.8), ("dry-meadow", 0.25), ("pebbles", 0.1), ("stones", 0.05)],
+        "gravel": [("dry-meadow", 0.12), ("pebbles", 1.0), ("cobbles", 0.4), ("stones", 0.3)],
+        "forest-moss": [("wavy-hair", 0.45), ("twigs", 0.5), ("rocks", 0.1)],
+        "forest-floor": [("wavy-hair", 0.3), ("twigs", 1.0), ("stones", 0.1), ("rocks", 0.08)],
+        "pine-needles": [("wavy-hair", 0.12), ("twigs", 0.8), ("rocks", 0.05)],
+        "leaf-litter": [("wavy-hair", 0.08), ("twigs", 1.0)],
+        "stony-moss": [("wavy-hair", 0.25), ("stones", 0.6), ("rocks", 0.6), ("twigs", 0.3)],
+        "beach-sand": [("pebbles", 0.3), ("cobbles", 0.25)],
+        "dirt": [("pebbles", 0.5), ("stones", 0.2)],
+        "rocky-ground": [("pebbles", 1.0), ("stones", 0.8), ("rocks", 0.6)],
+        "rock": [("stones", 0.3), ("rocks", 0.4)],
+        "lichen-rock": [("stones", 0.3), ("rocks", 0.4)],
     },
 )

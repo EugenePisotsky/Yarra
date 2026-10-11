@@ -21,6 +21,7 @@ pub use lightning::GameLightning;
 mod weather;
 pub use weather::{GameWeather, GameWeatherPlugin, WeatherStart};
 pub use world::weather::{WeatherKind, WeatherParams};
+mod ground_details;
 mod world_streaming;
 mod world_vegetation;
 pub use world_vegetation::{GrassLooks, WorldVegetationPlugin, WorldVegetationSystems};

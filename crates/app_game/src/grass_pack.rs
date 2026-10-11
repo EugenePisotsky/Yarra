@@ -50,6 +50,7 @@ fn reload(time: Res<Time<Real>>, mut watch: ResMut<Watch>, mut looks: ResMut<eng
         Ok(pack) => {
             let catalog = vegetation::VegetationCatalog {
                 grass: pack.types,
+                details: pack.details,
                 surfaces: Vec::new(),
             };
             if let Err(error) = catalog.validate() {

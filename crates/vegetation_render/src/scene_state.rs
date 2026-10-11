@@ -111,7 +111,8 @@ impl VegetationSceneState {
         NEXT_PAGE_KEY.fetch_add(1, Ordering::Relaxed)
     }
 
-    pub(crate) fn page_keys(&self) -> &[u64] {
+    /// Each page's content key, when the scene has them.
+    pub fn page_keys(&self) -> &[u64] {
         &self.page_keys
     }
 

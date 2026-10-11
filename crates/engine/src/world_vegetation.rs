@@ -36,25 +36,28 @@ pub struct GrassLooks(pub Option<VegetationCatalog>);
 
 impl Plugin for WorldVegetationPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(VegetationRenderPlugin)
-            .insert_resource(
-                VegetationSceneState::new(VegetationScene {
-                    catalog: Default::default(),
-                    pages: Vec::new(),
-                })
-                .expect("empty vegetation scene is valid"),
-            )
-            .init_resource::<GrassLooks>()
-            .add_systems(
-                Update,
-                sync_scene
-                    .in_set(WorldVegetationSystems)
-                    .after(WorldStreamingSystems),
-            )
-            .add_systems(
-                PostUpdate,
-                (update_lod_focus, list_grass_benders).after(TransformSystems::Propagate),
-            );
+        app.add_plugins((
+            VegetationRenderPlugin,
+            crate::ground_details::GroundDetailsPlugin,
+        ))
+        .insert_resource(
+            VegetationSceneState::new(VegetationScene {
+                catalog: Default::default(),
+                pages: Vec::new(),
+            })
+            .expect("empty vegetation scene is valid"),
+        )
+        .init_resource::<GrassLooks>()
+        .add_systems(
+            Update,
+            sync_scene
+                .in_set(WorldVegetationSystems)
+                .after(WorldStreamingSystems),
+        )
+        .add_systems(
+            PostUpdate,
+            (update_lod_focus, list_grass_benders).after(TransformSystems::Propagate),
+        );
     }
 }
 
