@@ -4,7 +4,7 @@ use vegetation::{DetailClumps, fixtures::full_coverage_page};
 fn stones() -> DetailType {
     DetailType {
         key: "stones".into(),
-        asset: "stones.glb".into(),
+        assets: vec!["stones.glb".into()],
         density: 2.0,
         scale: [0.8, 1.2],
         clumps: DetailClumps {
@@ -26,6 +26,7 @@ fn pieces() -> Vec<Piece> {
             mesh: Handle::default(),
             material: Handle::default(),
             height: 0.1 * (i + 1) as f32,
+            tags: None,
         })
         .collect()
 }

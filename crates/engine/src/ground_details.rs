@@ -9,7 +9,7 @@ use crate::world_streaming::WorldRenderRoot;
 use bevy::{
     camera::visibility::VisibilityRange,
     ecs::system::SystemParam,
-    gltf::{Gltf, GltfMaterial, GltfMesh},
+    gltf::{Gltf, GltfMaterial, GltfMaterialExtras, GltfMesh},
     light::NotShadowCaster,
     mesh::VertexAttributeValues,
     pbr::gltf::standard_material_from_gltf_material,
@@ -52,6 +52,8 @@ struct Piece {
     mesh: Handle<Mesh>,
     material: Handle<StandardMaterial>,
     height: f32,
+    /// The material's glTF tags: plants sway and are shaded like tree foliage by them.
+    tags: Option<GltfMaterialExtras>,
 }
 
 enum AssetState {
@@ -125,7 +127,7 @@ fn place_details(
                 continue;
             }
             live.insert(group);
-            if spawned || !ready.contains(detail.asset.as_str()) {
+            if spawned || !ready.contains(detail.key.as_str()) {
                 continue;
             }
             let entity = spawn_group(&mut commands, page, field, detail, origin.world_xz, &assets);
@@ -141,7 +143,7 @@ fn place_details(
     });
 }
 
-/// Starts loading every type's asset and returns the assets ready to place.
+/// Starts loading every type's assets and returns the keys of types whose assets are all ready.
 fn load_assets<'a>(
     details: &'a [DetailType],
     sources: &mut Sources,
@@ -149,46 +151,58 @@ fn load_assets<'a>(
 ) -> HashSet<&'a str> {
     let mut ready = HashSet::new();
     for detail in details {
-        let state = assets
-            .0
-            .entry(detail.asset.clone())
-            .or_insert_with(|| AssetState::Loading(sources.server.load(detail.asset.clone())));
-        if let AssetState::Loading(handle) = state {
-            let loaded = sources.gltfs.get(handle.id()).map(|gltf| {
-                let mut named: Vec<_> = gltf
-                    .named_meshes
-                    .iter()
-                    .map(|(name, mesh)| (name.to_string(), mesh.clone()))
-                    .collect();
-                named.sort_by(|a, b| a.0.cmp(&b.0));
-                named
-            });
-            if let Some(named) = loaded {
-                *state = pieces(&named, sources).map_or_else(
-                    || {
-                        warn!("ground detail asset {} has no usable pieces", detail.asset);
-                        AssetState::Failed
-                    },
-                    AssetState::Ready,
-                );
-            } else if sources.server.load_state(handle.id()).is_failed() {
-                warn!("ground detail asset {} failed to load", detail.asset);
-                *state = AssetState::Failed;
+        let mut all = true;
+        for path in &detail.assets {
+            let state = assets
+                .0
+                .entry(path.clone())
+                .or_insert_with(|| AssetState::Loading(sources.server.load(path.clone())));
+            if let AssetState::Loading(handle) = state {
+                let loaded = sources
+                    .gltfs
+                    .get(handle.id())
+                    .map(|gltf| gltf.meshes.clone());
+                if let Some(meshes) = loaded {
+                    *state = pieces(&meshes, sources).map_or_else(
+                        || {
+                            warn!("ground detail asset {path} has no usable pieces");
+                            AssetState::Failed
+                        },
+                        AssetState::Ready,
+                    );
+                } else if sources.server.load_state(handle.id()).is_failed() {
+                    warn!("ground detail asset {path} failed to load");
+                    *state = AssetState::Failed;
+                }
             }
+            all &= matches!(state, AssetState::Ready(_));
         }
-        if matches!(state, AssetState::Ready(_)) {
-            ready.insert(detail.asset.as_str());
+        if all {
+            ready.insert(detail.key.as_str());
         }
     }
     ready
 }
 
-/// The asset's meshes in name order, each its first primitive. Pieces sharing a glTF material
+/// The pieces of a type: every mesh of its assets, in order.
+fn type_pieces(detail: &DetailType, assets: &DetailAssets) -> Vec<Piece> {
+    detail
+        .assets
+        .iter()
+        .filter_map(|path| match assets.0.get(path) {
+            Some(AssetState::Ready(pieces)) => Some(pieces.iter().cloned()),
+            _ => None,
+        })
+        .flatten()
+        .collect()
+}
+
+/// An asset's meshes in order, each its first primitive. Pieces sharing a glTF material
 /// share one converted material, so they draw instanced.
-fn pieces(named: &[(String, Handle<GltfMesh>)], sources: &mut Sources) -> Option<Vec<Piece>> {
+fn pieces(meshes: &[Handle<GltfMesh>], sources: &mut Sources) -> Option<Vec<Piece>> {
     let mut converted = HashMap::new();
     let mut pieces = Vec::new();
-    for (_, handle) in named {
+    for handle in meshes {
         let Some(primitive) = sources
             .gltf_meshes
             .get(handle)
@@ -230,6 +244,12 @@ fn pieces(named: &[(String, Handle<GltfMesh>)], sources: &mut Sources) -> Option
             mesh: primitive.mesh.clone(),
             material,
             height: (high - low).max(0.001),
+            tags: primitive
+                .material_extras
+                .as_ref()
+                .map(|e| GltfMaterialExtras {
+                    value: e.value.clone(),
+                }),
         });
     }
     (!pieces.is_empty()).then_some(pieces)
@@ -260,15 +280,16 @@ fn spawn_group(
             Visibility::default(),
         ))
         .id();
-    let Some(AssetState::Ready(pieces)) = assets.0.get(&detail.asset) else {
+    let pieces = type_pieces(detail, assets);
+    if pieces.is_empty() {
         return root;
-    };
+    }
     let range = VisibilityRange {
         start_margin: 0.0..0.0,
         end_margin: detail.distance * (1. - FADE_SHARE)..detail.distance,
         use_aabb: false,
     };
-    for (piece, transform) in place(page, field, detail, origin, pieces) {
+    for (piece, transform) in place(page, field, detail, origin, &pieces) {
         let mut object = commands.spawn((
             Mesh3d(piece.mesh.clone()),
             MeshMaterial3d(piece.material.clone()),
@@ -281,6 +302,9 @@ fn spawn_group(
         ));
         if !detail.shadows {
             object.insert(NotShadowCaster);
+        }
+        if let Some(tags) = &piece.tags {
+            object.insert(tags.clone());
         }
     }
     root

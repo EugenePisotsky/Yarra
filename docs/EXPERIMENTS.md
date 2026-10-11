@@ -585,6 +585,7 @@ Scenes read flat when the directional light on open ground is weak against the s
 | Spawning | Per page **and type**: spawning a page's types together kept pebbles (26 m) alive out to the rocks' 80 m, tens of thousands on rocky ground. |
 | Cost | Alternating with a details-off build at shipped densities: pine forest 78.1/78.4 fps against 68.6/76.0, edge-sun 72.2/68.6 against 72.2/61.7: within the runs' spread. Entities +2,138 in the forest, +133 at the meadow edge; main thread unchanged. |
 | Look | Rocks on the forest floor gather into clumps, textured and half-sunk; pebbles on the beach include dark flint-like stones from the pack. Grass grows through larger rocks. |
+| Plants | **Retained.** Ferns, nettles, lily of the valley and sorrel are detail types using the vegetation bundles' LOD1 meshes; each spawned piece carries its glTF material tags, so the tree conversions make it swaying, crown-shaded foliage (fern area changes 9/255 between wind 10 s and 11 s). Pine forest, alternating with a details-off build: 71.9/71.9 against 77.6/77.3 fps (≈1 ms), +4,226 entities, main thread +0.7 ms, render prep +0.6 ms; GPU-bound. Fern and nettle shadows off: ≈0.3 ms of it (thermally limited runs). **Open:** LOD2 beyond ~20 m or a shorter fern distance if the forest needs the millisecond. |
 
 ## Open gates and maintenance
 

@@ -185,15 +185,17 @@ impl GrassType {
     }
 }
 
-/// Small objects strewn over the ground: stones, pebbles, twigs. Like grass they grow where their
-/// ground surfaces say (`SurfaceGrass`, sharing the grass types' ID space), on a world-aligned
-/// lattice gathered into clumps; each object is a random piece of the type's asset, a glTF binary
-/// whose meshes are its pieces (`tools/import_detail_props.py`), standing on the origin.
+/// Small objects strewn over the ground: stones, pebbles, twigs, ferns and herbs. Like grass they
+/// grow where their ground surfaces say (`SurfaceGrass`, sharing the grass types' ID space), on a
+/// world-aligned lattice gathered into clumps; each object is a random piece of the type's assets,
+/// glTF files whose meshes are its pieces (`tools/import_detail_props.py` for props; plants from
+/// vegetation bundles, swaying and shaded like tree foliage by their material tags), standing on
+/// the origin.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DetailType {
     pub key: String,
-    /// The pieces' glTF binary, under `assets/`.
-    pub asset: String,
+    /// glTF files under `assets/`; every mesh in them is a piece.
+    pub assets: Vec<String>,
     /// Objects per square metre where the type grows at full amount.
     pub density: f32,
     /// Scale applied to the pieces as authored, (minimum, maximum).
@@ -231,7 +233,8 @@ impl DetailType {
     fn is_valid(&self) -> bool {
         let c = self.clumps;
         !self.key.is_empty()
-            && !self.asset.is_empty()
+            && !self.assets.is_empty()
+            && self.assets.iter().all(|a| !a.is_empty())
             && finite_range(self.density, 0.001, 50.0)
             && finite_range(self.scale[0], 0.05, 20.0)
             && finite_range(self.scale[1], self.scale[0], 20.0)
@@ -848,7 +851,7 @@ mod tests {
     fn packs_resolve_surface_and_grass_keys() {
         let pebbles = DetailType {
             key: "pebbles".into(),
-            asset: "pebbles.glb".into(),
+            assets: vec!["pebbles.glb".into()],
             density: 1.0,
             scale: [1.0, 1.5],
             clumps: DetailClumps {
