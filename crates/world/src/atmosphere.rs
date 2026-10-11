@@ -209,9 +209,13 @@ pub struct EvaluatedAtmosphere {
     pub moon_lit: f32,
     pub exposure_ev100: f32,
     pub night_weight: f32,
-    /// How far the eye has adapted to the night, 0..1: exposure and the loss of colour follow
-    /// it. It runs ahead of the night's light, so twilight never reads darker than the night.
+    /// How far the eye has adapted to the night, 0..1: the exposure follows it. It follows the
+    /// light on open ground, so the evening and morning twilight never read darker than a
+    /// moonlit night.
     pub adaptation: f32,
+    /// How much of the night's loss of colour applies, 0..1: the adaptation once the sun has
+    /// set, so golden hours keep their colour.
+    pub colour_loss: f32,
     /// Valley mist amount, 0..1 (`FogSettings::mist_amount`).
     pub mist: f32,
 }
@@ -232,6 +236,15 @@ pub fn linear_rgb(srgb: [f32; 3]) -> [f32; 3] {
 fn smoothstep(t: f32) -> f32 {
     let t = t.clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
+}
+
+/// Share of the sun's light left after the atmosphere at `elevation` (radians): Kasten and
+/// Young's air mass through a clear atmosphere's optical depth for visible light.
+fn sun_transmittance(elevation: f32) -> f32 {
+    const OPTICAL_DEPTH: f32 = 0.12;
+    let degrees = elevation.to_degrees().max(0.);
+    let air_mass = 1. / (elevation.max(0.).sin() + 0.50572 * (degrees + 6.07995).powf(-1.6364));
+    (-OPTICAL_DEPTH * air_mass).exp()
 }
 
 fn luminance(c: [f32; 3]) -> f32 {
@@ -292,10 +305,9 @@ pub fn evaluate_at(profile: &AtmosphereProfile, day: i32, phase: f32) -> Evaluat
         };
         amount[a] + (amount[b] - amount[a]) * t
     };
-    // Adapt only after sunset, reaching the authored night appearance by -12°.
-    // Shallow sun paths still reach night at midnight and remain continuous.
+    // The night's light: after sunset, reaching the authored night by -12°. Shallow sun paths
+    // still reach night at midnight and remain continuous.
     let night = smoothstep(-elevation.to_degrees() / profile.maximum_elevation_degrees.min(12.0));
-    let adaptation = night.sqrt();
     // The moon lags the sun along its path by its elongation, which grows by a turn a month.
     let age =
         (f64::from(profile.night.age_days) + time).rem_euclid(f64::from(SYNODIC_MONTH_DAYS)) as f32;
@@ -348,6 +360,32 @@ pub fn evaluate_at(profile: &AtmosphereProfile, day: i32, phase: f32) -> Evaluat
     let sun_up = smoothstep(
         (elevation.to_degrees() - SUN_GONE_DEGREES) / (SUN_FADING_DEGREES - SUN_GONE_DEGREES),
     );
+    let ambient_lux = mix(a.ambient_lux, b.ambient_lux) * (1. + overcast * 0.4);
+    // The eye adapts to the light on open ground: the exposure opens just enough that it never
+    // reads darker than under the authored moonlit night, and the night's loss of colour
+    // follows the exposure. Adapting to the sun's elevation instead left a dusk and a dawn a
+    // stop or two darker than the night: the sun's light on the ground was gone while the night
+    // exposure had barely begun.
+    let ground_light =
+        profile.sun_lux * sun_up * sun_transmittance(elevation) * elevation.sin().max(0.)
+            + ambient_lux;
+    let moonlit = profile.phases[0].ambient_lux
+        + if profile.night.enabled {
+            profile.night.illuminance_lux * MOON_TONE_ELEVATION_DEGREES.to_radians().sin()
+        } else {
+            0.
+        };
+    let (day_ev, night_ev) = (profile.exposure_ev100, profile.night.exposure_ev100);
+    let (exposure_ev100, adaptation) = if day_ev - night_ev > 1e-3 && ground_light > 0. {
+        let exposed_night = moonlit / night_ev.exp2();
+        let ev = (ground_light / exposed_night)
+            .log2()
+            .clamp(night_ev, day_ev);
+        (ev, (day_ev - ev) / (day_ev - night_ev))
+    } else {
+        let adaptation = night.sqrt();
+        (day_ev + (night_ev - day_ev) * adaptation, adaptation)
+    };
     // The orbit's pole, on the side above the horizon.
     let pole = [
         -up[1] * across[2],
@@ -364,7 +402,7 @@ pub fn evaluate_at(profile: &AtmosphereProfile, day: i32, phase: f32) -> Evaluat
         sun_linear: linear_rgb(profile.sun_srgb),
         sun_lux: profile.sun_lux * sun_up,
         ambient_linear,
-        ambient_lux: mix(a.ambient_lux, b.ambient_lux) * (1. + overcast * 0.4),
+        ambient_lux,
         direction_to_moon,
         moon_north: pole,
         moon_linear: linear_rgb(profile.night.light_srgb),
@@ -377,10 +415,10 @@ pub fn evaluate_at(profile: &AtmosphereProfile, day: i32, phase: f32) -> Evaluat
         },
         moon_age_days: age,
         moon_lit,
-        exposure_ev100: profile.exposure_ev100
-            + (profile.night.exposure_ev100 - profile.exposure_ev100) * adaptation,
+        exposure_ev100,
         night_weight: night,
         adaptation,
+        colour_loss: adaptation * (1. - smoothstep((elevation.to_degrees() + 1.) / 4.)),
         mist,
     }
 }
@@ -388,6 +426,39 @@ pub fn evaluate_at(profile: &AtmosphereProfile, day: i32, phase: f32) -> Evaluat
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn twilight_never_reads_darker_than_the_night_and_golden_hours_keep_colour() {
+        let p = AtmosphereProfile::default();
+        let moonlit = p.phases[0].ambient_lux
+            + p.night.illuminance_lux * MOON_TONE_ELEVATION_DEGREES.to_radians().sin();
+        let night_exposed = moonlit / p.night.exposure_ev100.exp2();
+        let mut previous: Option<f32> = None;
+        for i in 0..2000 {
+            let e = evaluate(&p, i as f32 / 2000.);
+            let elevation = e.direction_to_sun[1].clamp(-1., 1.).asin();
+            let ground =
+                e.sun_lux * sun_transmittance(elevation) * elevation.sin().max(0.) + e.ambient_lux;
+            // Until the eye has fully adapted; from then on the moon lights the night.
+            let exposed = ground / e.exposure_ev100.exp2();
+            if e.adaptation < 0.999 {
+                assert!(
+                    exposed >= night_exposed * 0.999,
+                    "{i}: {exposed} < {night_exposed}"
+                );
+            }
+            if let Some(ev) = previous {
+                assert!((e.exposure_ev100 - ev).abs() < 0.1, "{i}: exposure jumps");
+            }
+            previous = Some(e.exposure_ev100);
+            if elevation.to_degrees() > 3. {
+                assert_eq!(e.colour_loss, 0.);
+            }
+            if elevation.to_degrees() < -1. {
+                assert!((e.colour_loss - e.adaptation).abs() < 1e-6);
+            }
+        }
+    }
     #[test]
     fn moon_and_exposure_blend_continuously_and_leave_daylight_unchanged() {
         let p = AtmosphereProfile::default();

@@ -453,7 +453,7 @@ fn apply(
     let adapt =
         presentation.auto_exposure && state.owner == AtmosphereOwner::Game && profile.outdoor;
     let saturation = if profile.outdoor {
-        1.0 - NIGHT_DESATURATION * value.adaptation
+        1.0 - NIGHT_DESATURATION * value.colour_loss
     } else {
         1.0
     };
