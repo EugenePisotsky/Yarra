@@ -65,6 +65,7 @@ const DEMO_TERRAIN_HEIGHTFIELD_RESOLUTION: u16 = 33;
 const DEMO_TERRAIN_MINIMUM_HEIGHT: f32 = -4.0;
 const DEMO_TERRAIN_MAXIMUM_HEIGHT: f32 = 4.0;
 
+mod grass_pack;
 mod road_demo;
 mod terrain_pack;
 pub use road_demo::create_road_demo_project;
@@ -75,6 +76,11 @@ use terrain_pack::TerrainPack;
 /// Existing projects are never replaced by initialization or cooking.
 pub fn create_world_project(path: &Path) -> Result<()> {
     island_fixture::create_island_world(path)
+}
+
+/// The catalog of grass pack `text` for the terrain pack worlds are created with.
+pub fn grass_catalog(text: &str) -> Result<vegetation::VegetationCatalog> {
+    grass_pack::catalog(text, &TerrainPack::baltic()).map_err(anyhow::Error::msg)
 }
 
 pub fn create_demo_project(path: &Path) -> Result<()> {
@@ -309,7 +315,7 @@ fn demo_project_document() -> ProjectDocument {
         start_view: None,
         gameplay_areas: Default::default(),
         world_spaces: vec![overworld, interior],
-        vegetation_catalog: Some(vegetation::fixtures::reference_catalog()),
+        vegetation_catalog: Some(grass_pack::baltic(&pack)),
         cells,
         terrain_surfaces: pack.surfaces,
         terrain_texture_sets: vec![pack.texture_set],
@@ -689,7 +695,8 @@ mod tests {
             .filter(|page| page.key.domain == PageDomain::Vegetation)
             .collect::<Vec<_>>();
         assert!(!vegetation_pages.is_empty());
-        assert!(vegetation_pages.len() <= 16 * 16);
+        // Grass grows on every cell's ground: the overworld's 16×16 and the interior's 9×9.
+        assert!(vegetation_pages.len() <= 16 * 16 + 9 * 9);
         assert_eq!(vegetation_pages[0].key.cell, CellCoord { x: -8, z: -8 });
         let decoded = vegetation_pages[0].clone().decode().unwrap();
         let PagePayload::Vegetation(page) = decoded.payload else {

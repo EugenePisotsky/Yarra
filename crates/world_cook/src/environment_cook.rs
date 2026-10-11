@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Context, Result, bail};
 use environment::*;
-use environment_compile::{CompilePlan, CompileProfile, merge_runtime_catalogs};
+use environment_compile::{CompilePlan, CompileProfile};
 use vegetation::{VegetationCatalog, VegetationFieldPageData};
 use world::{CellCoord, TerrainSurfaceId, WorldSpaceId};
 use world_db::{ProjectDocument, SourceEnvironmentCellRecord, environment_dependency_cells};
@@ -40,11 +40,7 @@ pub(super) struct CookedEnvironment {
 pub(super) fn prepare_plans(
     project: &ProjectDocument,
 ) -> Result<BTreeMap<WorldSpaceId, CompilePlan>> {
-    let empty = VegetationCatalog {
-        species: Vec::new(),
-        populations: Vec::new(),
-        assemblages: Vec::new(),
-    };
+    let empty = VegetationCatalog::default();
     let plants = project.vegetation_catalog.as_ref().unwrap_or(&empty);
     let mut definitions = BTreeMap::new();
     let mut plans = BTreeMap::new();
@@ -119,7 +115,7 @@ pub(super) fn compile_environment(project: &ProjectDocument) -> Result<CookedEnv
     let mut result = CookedEnvironment {
         objects: BTreeMap::new(),
         terrain: BTreeMap::new(),
-        catalog: Some(merge_runtime_catalogs(&plans.values().collect::<Vec<_>>())?),
+        catalog: project.vegetation_catalog.clone(),
         slots: Vec::new(),
         weights: Vec::new(),
         vegetation: Vec::new(),
@@ -253,8 +249,7 @@ pub(super) fn demo_environment(
     Vec<EnvironmentDefinition>,
     Vec<SourceEnvironmentCellRecord>,
 ) {
-    let grass = ChannelId(super::stable_id("ground-grass-channel"));
-    let presets = environment::fixtures::meadow_library(dry, green, grass);
+    let presets = environment::fixtures::meadow_library(dry, green);
     let roots = [
         environment::fixtures::DRY_MEADOW,
         environment::fixtures::GREEN_MEADOW,
@@ -440,12 +435,6 @@ mod tests {
         );
         let empty = super::super::build_runtime(cleared).unwrap();
         assert_ne!(build.manifest.content_hash, empty.manifest.content_hash);
-        assert!(
-            empty
-                .pages
-                .iter()
-                .all(|p| p.key.domain != PageDomain::Vegetation)
-        );
         for page in &build.pages {
             if matches!(
                 page.key.domain,
@@ -469,7 +458,8 @@ mod tests {
         let mut project = super::super::demo_project_document();
         project.environment_cells.clear();
         let compiled = compile_environment(&project).unwrap();
-        assert!(compiled.vegetation.is_empty());
+        // Unpainted cells show their base ground and grow what grows on it.
+        assert!(!compiled.vegetation.is_empty());
         assert!(compiled.weights.is_empty());
         for slot in &compiled.slots {
             assert_eq!(
@@ -502,7 +492,7 @@ mod road_tests {
             revision: 1,
             name: "Coarse-grid road fixture".into(),
             ground: environment::fixtures::DRY_GROUND,
-            vegetation_channel: ChannelId(super::super::stable_id("ground-grass-channel")),
+            vegetation_channel: GRASS_CHANNEL,
             track_spacing: 3.8,
             track_width: 2.4,
             edge_softness: 0.55,

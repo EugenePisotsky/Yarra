@@ -1,16 +1,14 @@
 //! Shader contract checks: every variant the renderer builds composes and validates, and the
 //! composed modules keep the structure and values the Rust side relies on.
 use super::gpu_types::shader_defs;
-use crate::{VegetationDensityMode, VegetationLightingMode};
 use bevy::shader::ShaderDefVal;
-use naga::{Expression, Literal, Module, Statement};
+use naga::{Module, Statement};
 use shader_check::{Def, Shaders};
 
-const COMPUTE_SHADERS: [&str; 4] = [
+const COMPUTE_SHADERS: [&str; 3] = [
     "shaders/vegetation/schedule.wesl",
     "shaders/vegetation/placement.wesl",
     "shaders/vegetation/candidate_cache.wesl",
-    "shaders/vegetation/prepare.wesl",
 ];
 const DRAW_SHADER: &str = "shaders/vegetation/draw.wesl";
 
@@ -47,20 +45,6 @@ pub(super) fn composed(shader: &str, defs: &[Def]) -> Module {
         .check(shader, defs)
         .unwrap_or_else(|error| panic!("{error}"));
     shader_check::validate(&wgsl).unwrap()
-}
-
-/// A module-scope constant's value; composition prefixes imported names, so match the suffix.
-pub(super) fn constant(module: &Module, name: &str) -> f64 {
-    let (_, constant) = module
-        .constants
-        .iter()
-        .find(|(_, c)| c.name.as_deref().is_some_and(|n| n.ends_with(name)))
-        .unwrap_or_else(|| panic!("no constant {name}"));
-    match module.global_expressions[constant.init] {
-        Expression::Literal(Literal::U32(value)) => value.into(),
-        Expression::Literal(Literal::F32(value)) => value.into(),
-        ref other => panic!("{name} is not a literal: {other:?}"),
-    }
 }
 
 fn calls(module: &Module, block: &naga::Block, name: &str) -> usize {
@@ -130,43 +114,15 @@ fn placement_classifies_each_candidate_once() {
 
 #[test]
 fn drawing_reuses_the_placement_lod() {
-    // The draw reads each instance's topology bin and morph; it never projects blades again.
+    // The draw reads each instance's LOD bin and morph; it never projects blades again.
     for temporal in [false, true] {
         let module = composed(DRAW_SHADER, &draw_variant(temporal, true));
         for (_, function) in module.functions.iter() {
             let name = function.name.as_deref().unwrap_or_default();
             assert!(
-                !name.ends_with("projected_blade_extent_pixels")
-                    && !name.ends_with("blade_extent_limits_pixels"),
+                !name.ends_with("projected_blade_extent_pixels"),
                 "the draw shader calls {name}"
             );
         }
-    }
-}
-
-#[test]
-fn shader_modes_match_the_renderer() {
-    let placement = composed("shaders/vegetation/placement.wesl", &grass_defs());
-    for (name, mode) in [
-        ("DENSITY_MODE_BALANCED", VegetationDensityMode::Balanced),
-        (
-            "DENSITY_MODE_FULL_REFERENCE",
-            VegetationDensityMode::FullReference,
-        ),
-    ] {
-        assert_eq!(constant(&placement, name), f64::from(mode as u32));
-    }
-    let draw = composed(DRAW_SHADER, &draw_variant(false, false));
-    for (name, mode) in [
-        (
-            "LIGHTING_MODE_UNLIT_DIAGNOSTIC",
-            VegetationLightingMode::UnlitDiagnostic,
-        ),
-        (
-            "LIGHTING_MODE_VERTEX_ONLY_DIAGNOSTIC",
-            VegetationLightingMode::VertexOnlyDiagnostic,
-        ),
-    ] {
-        assert_eq!(constant(&draw, name), f64::from(mode as u32));
     }
 }

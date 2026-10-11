@@ -2,8 +2,6 @@
 // and `terrain_post_lighting`.
 import package::shaders::lighting::pbr_lighting::apply_pbr_lighting;
 import package::shaders::weather::ground_wetness::apply_rain_puddles;
-import bevy_pbr::render::mesh_view_bindings as canopy_view;
-import package::shaders::grass_canopy::{canopy_visibility_at};
 
 import package::shaders::terrain_stochastic::{
     quarter_turn, stochastic_vertex_turn, stochastic_vertex_offset,
@@ -39,30 +37,6 @@ struct TerrainMaterialSettings {
 @group(constants::MATERIAL_BIND_GROUP) @binding(4) var surface_sampler: sampler;
 @group(constants::MATERIAL_BIND_GROUP) @binding(5) var normal_material_array: texture_2d_array<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(6) var macro_variation_texture: texture_2d<f32>;
-
-@if(TERRAIN_CANOPY)
-struct TerrainCanopyShading {
-    appearance: vec4<f32>, shape: vec4<f32>, distance_settings: vec4<f32>, origin: vec4<f32>,
-};
-@if(TERRAIN_CANOPY)
-@group(constants::MATERIAL_BIND_GROUP) @binding(11) var<uniform> terrain_canopy: TerrainCanopyShading;
-@if(TERRAIN_CANOPY)
-@group(constants::MATERIAL_BIND_GROUP) @binding(8) var<uniform> canopy_bounds: vec4<f32>;
-@if(TERRAIN_CANOPY)
-@group(constants::MATERIAL_BIND_GROUP) @binding(9) var canopy_coverage: texture_2d<f32>;
-@if(TERRAIN_CANOPY)
-@group(constants::MATERIAL_BIND_GROUP) @binding(10) var canopy_sampler: sampler;
-
-@if(TERRAIN_CANOPY)
-fn canopy_visibility(world_xz: vec2<f32>, camera_distance: f32) -> f32 {
-    let uv = (world_xz - canopy_bounds.xy) * canopy_bounds.zw;
-    let cover = textureSample(canopy_coverage, canopy_sampler, uv).rg;
-    let visibility = canopy_visibility_at(world_xz, 0.0, camera_distance,
-        terrain_canopy.appearance, terrain_canopy.shape, terrain_canopy.distance_settings,
-        terrain_canopy.origin, terrain_canopy.appearance.y, cover.g * 4.0,
-        distance(canopy_view::view.world_position.xz, world_xz));
-    return mix(1.0, visibility, cover.r);
-}
 
 struct StochasticUvPlan {
     uv_0: vec2<f32>,
@@ -354,16 +328,13 @@ fn terrain_pbr_input(
     return apply_rain_puddles(pbr_input, -1.0);
 }
 
-// Grass canopy darkening of the lit colour, then fog and in-shader tonemapping.
+// Fog and in-shader tonemapping of the lit colour.
 fn terrain_post_lighting(
     in: VertexOutput,
     pbr_input: pbr_types::PbrInput,
     lit: vec4<f32>,
 ) -> vec4<f32> {
-    var color = lit;
-    @if(TERRAIN_CANOPY)
-    color = vec4(color.rgb * canopy_visibility(in.world_position.xz, distance(canopy_view::view.world_position, in.world_position.xyz)), color.a);
-    return main_pass_post_lighting_processing(pbr_input, color);
+    return main_pass_post_lighting_processing(pbr_input, lit);
 }
 
 @fragment

@@ -68,31 +68,11 @@ fn main() -> Result<()> {
         );
         return Ok(());
     }
-    if command == "export-vegetation" {
-        use std::io::Write;
-        let project = PathBuf::from(arguments.next().context("expected PROJECT_DB")?);
-        let output = PathBuf::from(arguments.next().context("expected CATALOG_RON")?);
-        if arguments.next().is_some() {
-            bail!("usage: yarra-world-cook export-vegetation PROJECT_DB CATALOG_RON");
-        }
-        let catalog = world_db::ProjectReader::open_read_only(&project)?
-            .read_vegetation_catalog()?
-            .context("project has no vegetation catalog")?;
-        let text = ron::ser::to_string_pretty(&catalog, ron::ser::PrettyConfig::default())?;
-        std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(output)?
-            .write_all(text.as_bytes())?;
-        return Ok(());
-    }
-    if command == "import-vegetation" {
-        let source = PathBuf::from(arguments.next().context("expected catalog.ron")?);
+    if command == "import-grass" {
+        let source = PathBuf::from(arguments.next().context("expected a grass pack RON")?);
         let options = CookOptions::parse(arguments)?;
         let materials = options.load_materials()?;
-        let catalog: vegetation::VegetationCatalog =
-            ron::from_str(&std::fs::read_to_string(&source)?)?;
-        catalog.validate()?;
+        let catalog = yarra_world_cook::grass_catalog(&std::fs::read_to_string(&source)?)?;
         world_db::ProjectWriter::open(&options.project)?.replace_vegetation_catalog(&catalog)?;
         let manifest = options.cook(materials.as_ref())?.manifest;
         println!(
@@ -113,7 +93,7 @@ fn main() -> Result<()> {
     };
     if command != "cook" && command != "init" && heightfield.is_none() {
         bail!(
-            "unknown command {command:?}; expected `init`, `cook`, `import-heightfield`, `create-demo`, `create-road-demo`, `create-mountain-fixture`, `create-hill-fixture`, `create-island-fixture`, `export-vegetation`, `import-vegetation` or `import-assets`"
+            "unknown command {command:?}; expected `init`, `cook`, `import-heightfield`, `create-demo`, `create-road-demo`, `create-mountain-fixture`, `create-hill-fixture`, `create-island-fixture`, `import-grass` or `import-assets`"
         );
     }
 

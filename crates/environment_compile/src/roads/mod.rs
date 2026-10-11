@@ -5,7 +5,7 @@ mod noise;
 mod relief;
 use super::*;
 use environment::roads::*;
-use environment::{ChannelId, PresetKind};
+use environment::{GRASS_CHANNEL, PresetKind};
 use geometry::Curve;
 pub use relief::{TerrainSource, TerrainSourceCell};
 use std::collections::BTreeMap;
@@ -401,16 +401,14 @@ impl RoadPlan {
             }
         }
     }
-    pub(crate) fn vegetation(
-        &self,
-        cell: CellCoord,
-        uv: [f64; 2],
-        bindings: &[PopulationBinding],
-        weights: &mut [f64],
-    ) {
-        let mut suppression = BTreeMap::<ChannelId, f64>::new();
+    /// How much road and junction wear clears grass at `uv`: the strongest in the grass channel.
+    pub(crate) fn grass_suppression(&self, cell: CellCoord, uv: [f64; 2]) -> f64 {
+        let mut suppression = 0.0_f64;
         for (index, curves) in &self.cells[&cell] {
             let road = &self.roads[*index];
+            if road.profile.vegetation_channel != GRASS_CHANNEL {
+                continue;
+            }
             let mut value = self.influence(road, curves, cell, uv).suppression;
             for j in &self.junctions {
                 if j.roads.contains(&road.source.id) {
@@ -421,21 +419,17 @@ impl RoadPlan {
                             * blend;
                 }
             }
-            let entry = suppression
-                .entry(road.profile.vegetation_channel)
-                .or_default();
-            *entry = entry.max(value);
+            suppression = suppression.max(value);
         }
         for j in &self.junctions {
-            let value = j.blend(cell, uv, self.size)
-                * j.wear(cell, uv, self.size)
-                * f64::from(1.0 - j.profile.track_retention);
-            let entry = suppression.entry(j.profile.vegetation_channel).or_default();
-            *entry = entry.max(value);
+            if j.profile.vegetation_channel == GRASS_CHANNEL {
+                let value = j.blend(cell, uv, self.size)
+                    * j.wear(cell, uv, self.size)
+                    * f64::from(1.0 - j.profile.track_retention);
+                suppression = suppression.max(value);
+            }
         }
-        for (value, binding) in weights.iter_mut().zip(bindings) {
-            *value *= 1.0 - suppression.get(&binding.channel).copied().unwrap_or(0.0);
-        }
+        suppression
     }
     pub(crate) fn fingerprint(
         &self,

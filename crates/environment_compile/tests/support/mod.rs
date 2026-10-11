@@ -3,10 +3,10 @@
 use std::collections::BTreeSet;
 
 use environment::*;
-use vegetation::{VegetationCatalog, fixtures};
+use vegetation::{GrassAmount, SurfaceGrass, VegetationCatalog, fixtures};
 use world::{CellCoord, TerrainSurfaceId, WorldSpaceId};
 
-pub const GRASS: ChannelId = ChannelId([1; 16]);
+pub const GRASS: ChannelId = GRASS_CHANNEL;
 pub const FLOWERS: ChannelId = ChannelId([2; 16]);
 pub const DRY: LayerId = LayerId([11; 16]);
 pub const GREEN: LayerId = LayerId([12; 16]);
@@ -21,7 +21,7 @@ pub fn fixture() -> (
     VegetationCatalog,
     CoverageSnapshot,
 ) {
-    let library = environment::fixtures::meadow_library(SOIL, GREEN_SOIL, GRASS);
+    let library = environment::fixtures::meadow_library(SOIL, GREEN_SOIL);
     let definition = EnvironmentDefinition {
         space: WorldSpaceId(1),
         revision: 1,
@@ -58,7 +58,25 @@ pub fn fixture() -> (
         let distance = (z - (4.0 + (x * 0.3).sin() * 0.7)).abs();
         ((1.25 - distance) / 0.5).clamp(0.0, 1.0)
     });
-    (definition, library, fixtures::reference_catalog(), coverage)
+    (definition, library, catalog(), coverage)
+}
+
+/// Tufts grow on the dry soil and meadow grass on the green.
+pub fn catalog() -> VegetationCatalog {
+    let grows = |surface: TerrainSurfaceId, grass: vegetation::GrassType| SurfaceGrass {
+        surface: surface.0,
+        grass: vec![GrassAmount {
+            grass: grass.id(),
+            amount: 1.0,
+        }],
+    };
+    VegetationCatalog {
+        surfaces: vec![
+            grows(SOIL, fixtures::tufts()),
+            grows(GREEN_SOIL, fixtures::meadow()),
+        ],
+        ..fixtures::reference_catalog()
+    }
 }
 
 pub fn ground(surface: TerrainSurfaceId) -> GroundTreatment {
@@ -148,18 +166,6 @@ pub fn ground_weights(
         .collect()
 }
 
-pub fn foliage(library: &mut PresetLibrary, id: PresetId) -> &mut VegetationTreatment {
-    let PresetKind::Foliage(v) = &mut library
-        .presets
-        .iter_mut()
-        .find(|p| p.id == id)
-        .unwrap()
-        .kind
-    else {
-        panic!()
-    };
-    v
-}
 pub fn soil(library: &mut PresetLibrary, id: PresetId) -> &mut GroundTreatment {
     let PresetKind::Ground(v) = &mut library
         .presets

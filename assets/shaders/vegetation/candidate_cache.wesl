@@ -1,21 +1,16 @@
 // Stable candidate acceptance, cached per resident work item across camera movement.
-import package::shaders::vegetation::random::random01;
 import package::shaders::vegetation::types::WorkItem;
 import package::shaders::vegetation::placement::bindings::{
-    work_items, candidate_cache_entries, candidate_acceptance_bits, cache_build_items,
+    work_items, types, candidate_cache_entries, candidate_acceptance_bits, cache_build_items,
 };
 import package::shaders::vegetation::placement::sampling::{
-    owns, sample_surface, sample_candidate, local_occupancy,
+    sample_surface, sample_candidate, candidate_grows,
 };
 
 // Deliberately excludes all camera, wind, projected size and population LOD inputs.
 fn stable_candidate_is_present(item: WorkItem, index: u32) -> bool {
-    let candidate = sample_candidate(item, index);
-    if (!owns(item, candidate.root) || candidate.stable_rank >= item.growth.w) { return false; }
-    let surface = sample_surface(item, candidate.root);
-    if (surface.validity < 0.5) { return false; }
-    let occupancy = local_occupancy(item, candidate.root) * candidate.group_density;
-    return random01(candidate.seed ^ 0x4cf5ad43u) < occupancy;
+    let candidate = sample_candidate(item, types[item.field.w], index);
+    return candidate_grows(item, candidate, sample_surface(item, candidate.root));
 }
 
 var<workgroup> acceptance: array<u32, 64>;

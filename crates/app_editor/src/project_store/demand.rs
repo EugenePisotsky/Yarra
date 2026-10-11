@@ -130,7 +130,6 @@ pub(super) fn dispatch_project_save(
     if !matches!(store.phase, ProjectStorePhase::Ready)
         || store.save_in_flight.is_some()
         || store.dense_save_in_flight.is_some()
-        || store.vegetation_save_in_flight.is_some()
         || store.atmosphere_save_in_flight.is_some()
         || store.area_save_in_flight.is_some()
     {
@@ -187,20 +186,6 @@ pub(super) fn dispatch_project_save(
             Ok(()) => {
                 store.pending_dense_save = None;
                 store.dense_save_in_flight = Some(request.request_id);
-            }
-            Err(TrySendError::Full(_)) => {}
-            Err(TrySendError::Disconnected(_)) => {
-                store.phase = ProjectStorePhase::Failed("project request channel closed".into());
-            }
-        }
-        return;
-    }
-
-    if let Some(request) = store.pending_vegetation_save.clone() {
-        match worker.try_send(ProjectRequest::SaveVegetationCatalog(request.clone())) {
-            Ok(()) => {
-                store.pending_vegetation_save = None;
-                store.vegetation_save_in_flight = Some(request.request_id);
             }
             Err(TrySendError::Full(_)) => {}
             Err(TrySendError::Disconnected(_)) => {

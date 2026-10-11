@@ -5,7 +5,6 @@ use crate::{
     publication::RuntimePublicationState,
     saving::EditorSaveCoordinator,
     shell::EditorUiFrame,
-    vegetation_authoring::VegetationAuthoringState,
 };
 use bevy::ecs::system::SystemParam;
 use environment::{Preset, PresetKind};
@@ -18,7 +17,6 @@ pub(super) struct Resources<'w> {
     roads: Res<'w, crate::road_authoring::RoadToolState>,
     dense: ResMut<'w, SourceWorkingSets>,
     project: Res<'w, ProjectEditorStore>,
-    plants: Res<'w, VegetationAuthoringState>,
     history: ResMut<'w, EditorHistory>,
     objects: ResMut<'w, EditorObjectWorkingSet>,
     save: ResMut<'w, EditorSaveCoordinator>,
@@ -34,7 +32,6 @@ pub(super) fn draw(mut frame: ResMut<EditorUiFrame>, resources: Resources) -> Re
         roads,
         mut dense,
         project,
-        plants,
         mut history,
         mut objects,
         mut save,
@@ -58,8 +55,6 @@ pub(super) fn draw(mut frame: ResMut<EditorUiFrame>, resources: Resources) -> Re
         && !dense.has_any_conflict()
         && !objects.saving()
         && !objects.has_any_conflict()
-        && !plants.saving()
-        && !plants.has_conflict()
         && !publication.active()
         && project.write_error().is_none();
     let road_mode = state.mode == Mode::Roads;
@@ -83,13 +78,13 @@ pub(super) fn draw(mut frame: ResMut<EditorUiFrame>, resources: Resources) -> Re
             let committed=idle && !all_dirty && !paint.has_unapplied_changes();
             if ui.add_enabled(committed && history.undo_len()>0,egui::Button::new("Undo")).clicked(){history.undo(&mut objects,&mut dense);}
             if ui.add_enabled(committed && history.redo_len()>0,egui::Button::new("Redo")).clicked(){history.redo(&mut objects,&mut dense);}
-            let dirty=dense.dirty_count()+objects.dirty_count()+plants.dirty_count()>0;
+            let dirty=dense.dirty_count()+objects.dirty_count()>0;
             if ui.add_enabled(committed && dirty,egui::Button::new("Save")).clicked(){save.request_save();}
             if ui.add_enabled(committed,egui::Button::new(if dirty {"Save & Publish"} else {"Publish"})).clicked(){save.request_publish();}
         });
         if all_dirty{ui.colored_label(egui::Color32::YELLOW,"Previewing an unapplied draft. Apply updates every use of these shared presets. Drafts stay here when you change workspaces; apply both Environment and Road styles drafts before saving.");}
         if let Some(message)=&state.message {ui.label(message);}
-        ui.weak(save.status(dense.dirty_count()+objects.dirty_count()+plants.dirty_count()));
+        ui.weak(save.status(dense.dirty_count()+objects.dirty_count()));
         ui.weak(publication.status());
         if let Some(error)=project.write_error() {ui.colored_label(egui::Color32::LIGHT_RED,error);}
         if let Some(status)=dense.status() {ui.colored_label(egui::Color32::YELLOW,status);}
@@ -131,13 +126,6 @@ pub(super) fn draw(mut frame: ResMut<EditorUiFrame>, resources: Resources) -> Re
                                     && ui.button("Ground").clicked()
                                 {
                                     added = Some(editor::new_ground(base));
-                                    ui.close();
-                                }
-                                if let Some((catalog, _, _)) = plants.working_catalog()
-                                    && let Some(a) = catalog.assemblages.first()
-                                    && ui.button("Foliage").clicked()
-                                {
-                                    added = Some(editor::new_foliage(a.id));
                                     ui.close();
                                 }
                                 if ui.button("Asset collection").clicked() {
@@ -252,7 +240,6 @@ pub(super) fn draw(mut frame: ResMut<EditorUiFrame>, resources: Resources) -> Re
                                     &mut selected,
                                     definition,
                                     &project,
-                                    plants.working_catalog().map(|(c, _, _)| c),
                                     &mut listings,
                                     &preview.assets,
                                 );
@@ -285,13 +272,13 @@ pub(super) fn draw(mut frame: ResMut<EditorUiFrame>, resources: Resources) -> Re
                 }
             });
             if before!=(state.styles.curved,state.styles.width.to_bits()) {state.bump();}
-            ui.small("Width and reference foliage are preview-only. Map roads keep their own widths and painted coverage.");
+            ui.small("Width and reference ground are preview-only. Map roads keep their own widths and painted coverage.");
             if state.styles.width < minimum_width {
                 ui.colored_label(egui::Color32::YELLOW,format!("Preview corridor is {:.2} m wide; this style needs at least {minimum_width:.2} m. Use Fit preview width.",state.styles.width));
             }
             if let Some(d)=&state.styles.draft {
                 if let Err(e)=road_styles::validate_in_project(&d.value,&dense,&draft.library,&project,state.space) {ui.colored_label(egui::Color32::YELLOW,e);}
-                if let Some(p)=preview_underlay.and_then(|id|draft.library.get(id)) && matches!(&p.kind,PresetKind::Foliage(f) if f.channel!=d.value.vegetation_channel) {ui.colored_label(egui::Color32::YELLOW,"Reference foliage uses another channel; this style will not thin it.");}
+                if d.value.vegetation_channel!=environment::GRASS_CHANNEL {ui.colored_label(egui::Color32::YELLOW,"This style clears another channel, so it does not thin grass.");}
             }
         }
         ui.small("Flat test patch · fixed seed · no map overrides. Drag to orbit; scroll to zoom.");
@@ -309,13 +296,13 @@ pub(super) fn draw(mut frame: ResMut<EditorUiFrame>, resources: Resources) -> Re
                 let name=resources.surfaces.iter().find(|s|Some(s.surface.id)==state.base).map(|s|s.surface.display_name.as_str()).unwrap_or("Choose");
                 egui::ComboBox::from_id_salt("preset_base").selected_text(name).show_ui(ui,|ui|{for surface in &resources.surfaces {ui.selectable_value(&mut state.base,Some(surface.surface.id),&surface.surface.display_name);}});
             }
-            ui.label("Reference foliage");
+            ui.label("Reference ground");
             egui::ComboBox::from_id_salt("preset_underlay").selected_text(preview_underlay.and_then(|id|draft.library.get(id)).map_or("None",|p|p.name.as_str())).show_ui(ui,|ui| {
                 ui.selectable_value(&mut preview_underlay,None,"None");
-                for p in &draft.library.presets {if matches!(p.kind,PresetKind::Foliage(_)){ui.selectable_value(&mut preview_underlay,Some(p.id),&p.name);}}
+                for p in &draft.library.presets {if matches!(p.kind,PresetKind::Ground(_)|PresetKind::Composition(_)){ui.selectable_value(&mut preview_underlay,Some(p.id),&p.name);}}
             });
         });
-        if preview_underlay.is_some(){ui.small(if road_mode {"Coverage shape applies to the reference foliage. Roads only thin the grass already present."} else {"Reference foliage fills the patch underneath this preset, to test clearing and blending."});}
+        if preview_underlay.is_some(){ui.small(if road_mode {"Coverage shape applies to the reference ground. Roads only thin the grass already present."} else {"Reference ground fills the patch underneath this preset, to test clearing and blending."});}
         let status = if let Some(error)=&preview.error {
             format!("Preview unavailable: {error}")
         } else if !preview.has_image() {
@@ -323,7 +310,7 @@ pub(super) fn draw(mut frame: ResMut<EditorUiFrame>, resources: Resources) -> Re
         } else if preview.slow_update(std::time::Instant::now()) {
             "Updating preview · showing previous result".into()
         } else {
-            format!("Preview · {} objects · up to {} foliage candidates",preview.objects,preview.candidates)
+            format!("Preview · {} objects · up to {} grass candidates",preview.objects,preview.candidates)
         };
         let status_text = if preview.error.is_some() { egui::RichText::new(&status).color(egui::Color32::LIGHT_RED) } else { egui::RichText::new(&status).weak() };
         ui.add(egui::Label::new(status_text).truncate()).on_hover_text(status);

@@ -12,6 +12,7 @@ use engine::{MinimalGamePlugin, WorldVegetationPlugin};
 mod camera_input_trace;
 mod frame_pacing;
 mod game_render;
+mod grass_pack;
 mod launch;
 mod lod_lab;
 mod look_capture;
@@ -52,12 +53,6 @@ fn run() -> Result<(), String> {
             shadow_lod: options.tree_shadow_lod,
             ..default()
         })
-        .insert_resource(
-            options
-                .prepared_blades
-                .map(vegetation_render::VegetationPreparationCapacity)
-                .unwrap_or_default(),
-        )
         .insert_resource(upscaling::UpscalingDiagnostics {
             temporal_timing: options.metalfx_timing,
         })
@@ -104,6 +99,9 @@ fn run() -> Result<(), String> {
         .add_plugins(engine::GameDayClockPlugin);
     app.add_plugins((
         WorldVegetationPlugin,
+        grass_pack::GrassPackPlugin {
+            path: asset_root.join("packs/grass/baltic.ron"),
+        },
         engine::TreeWindPlugin,
         engine::OceanPlugin,
     ))

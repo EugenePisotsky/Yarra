@@ -4,6 +4,7 @@ use crate::{
     domain_editing::SourceWorkingSets,
     editing::{EditorHistory, EditorObjectWorkingSet, EditorSelection, TransformInspectorDraft},
     environment_paint::{EnvironmentLayerBrowser, EnvironmentPaintState, EnvironmentPreview},
+    grass::GrassPreview,
     journal::EditorJournalStatus,
     listings::ProjectListings,
     project_store::ProjectEditorStore,
@@ -12,7 +13,6 @@ use crate::{
     saving::EditorSaveCoordinator,
     shell::{EditorUiFrame, EditorWindowDescriptor, EditorWindowId, EditorWindowRegistry},
     tools::EditorToolRegistry,
-    vegetation_authoring::VegetationAuthoringState,
     workspaces::{
         EditorWorkspace,
         presets::PresetAuthoringState,
@@ -163,7 +163,7 @@ pub(crate) struct InspectorResources<'w> {
     tools: Res<'w, EditorToolRegistry>,
     gizmo_settings: Res<'w, TransformGizmoSettings>,
     environment_preview: Res<'w, EnvironmentPreview>,
-    vegetation: Res<'w, VegetationAuthoringState>,
+    grass: Res<'w, GrassPreview>,
     save: Res<'w, EditorSaveCoordinator>,
     publication: Res<'w, RuntimePublicationState>,
     presets: Res<'w, PresetAuthoringState>,
@@ -191,7 +191,7 @@ pub(crate) fn inspector_window(
         tools,
         gizmo_settings,
         environment_preview,
-        vegetation,
+        grass,
         save,
         publication,
         presets,
@@ -235,7 +235,7 @@ pub(crate) fn inspector_window(
                 &mut layer_browser,
                 &environment_preview,
                 origin.space(),
-                vegetation.working_catalog().map(|(catalog, _, _)| catalog),
+                grass.catalog(),
                 save.active()
                     || publication.active()
                     || project.save_in_flight()
@@ -385,19 +385,18 @@ pub(crate) fn open_requested_presets(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{vegetation_authoring::VEGETATION_WINDOW, workspaces::EditorWorkspace};
+    use crate::workspaces::EditorWorkspace;
 
     #[test]
-    fn world_registers_two_primary_and_four_optional_windows() {
+    fn world_registers_two_primary_and_three_optional_windows() {
         let descriptors = [
             WORLD_WINDOW,
             INSPECTOR_WINDOW,
             ASSETS_WINDOW,
             NAVIGATOR_WINDOW,
             DIAGNOSTICS_WINDOW,
-            VEGETATION_WINDOW,
         ];
-        assert_eq!(descriptors.len(), 6);
+        assert_eq!(descriptors.len(), 5);
         assert_eq!(
             descriptors
                 .iter()

@@ -1,8 +1,7 @@
 use super::*;
 use crate::{WorldSpaceRecord, write_project_database};
 use environment::{
-    ChannelId, Layer, LayerId, OutputId, Preset, PresetId, PresetKind, VegetationBlend,
-    VegetationTreatment,
+    Exclusion, GRASS_CHANNEL, Layer, LayerId, OutputId, Preset, PresetId, PresetKind,
 };
 use world::TerrainSurface;
 
@@ -48,14 +47,10 @@ impl Fixture {
                 id: PresetId([1; 16]),
                 revision: 1,
                 name: "Meadow".into(),
-                kind: PresetKind::Foliage(VegetationTreatment {
+                kind: PresetKind::Exclusion(Exclusion {
                     id: OutputId([1; 16]),
-                    channel: ChannelId([1; 16]),
-                    assemblage: vegetation::fixtures::DRY_FIELD_ASSEMBLAGE_ID,
-                    blend: VegetationBlend::Replace,
+                    channel: GRASS_CHANNEL,
                     strength: 1.0,
-                    density: 1.0,
-                    seed: 0,
                 }),
             }],
         };
@@ -443,7 +438,7 @@ fn removing_referenced_layers_grids_or_plant_assemblages_is_rejected() {
             .is_err()
     );
     let mut plants = vegetation::fixtures::reference_catalog();
-    plants.assemblages.clear();
+    plants.grass.push(plants.grass[0].clone());
     assert!(writer.replace_vegetation_catalog(&plants).is_err());
     assert!(
         writer
@@ -660,9 +655,6 @@ fn dependency_pages_follow_nested_repeated_uses_across_worlds_and_update_atomica
     let mut f = Fixture::new();
     let mut document = crate::read_project_database(&f.path).unwrap();
     let leaf = document.presets.presets[0].id;
-    if let PresetKind::Foliage(v) = &mut document.presets.presets[0].kind {
-        v.blend = VegetationBlend::Add;
-    }
     let inner = PresetId([50; 16]);
     let outer = PresetId([51; 16]);
     let use_leaf = |id| PresetUse {
@@ -697,7 +689,7 @@ fn dependency_pages_follow_nested_repeated_uses_across_worlds_and_update_atomica
     second.space = WorldSpaceId(2);
     second.layers[0].overrides = vec![PresetOverride {
         path: vec![PresetUseId([20; 16]), PresetUseId([10; 16])],
-        value: QuickValue::FoliageDensity(0.25),
+        value: QuickValue::ExclusionInfluence(0.25),
     }];
     document.environments.push(second);
     f.path = f.directory.join("two-worlds.sqlite");
@@ -784,7 +776,7 @@ fn referenced_preset_deletion_and_incompatible_type_changes_do_not_corrupt_sourc
     let mut definition = f.definition.clone();
     definition.layers[0].overrides.push(PresetOverride {
         path: vec![],
-        value: QuickValue::FoliageDensity(0.5),
+        value: QuickValue::ExclusionInfluence(0.5),
     });
     writer
         .apply_environment_source_transaction(
@@ -798,10 +790,14 @@ fn referenced_preset_deletion_and_incompatible_type_changes_do_not_corrupt_sourc
         )
         .unwrap();
     let mut changed = original.clone();
-    changed.presets[0].kind = PresetKind::Exclusion(environment::Exclusion {
+    // A ground leaf no longer takes the definition's exclusion override.
+    changed.presets[0].kind = PresetKind::Ground(environment::GroundTreatment {
         id: OutputId([3; 16]),
-        channel: ChannelId([1; 16]),
         strength: 1.0,
+        surfaces: vec![environment::SurfaceWeight {
+            surface: world::TerrainSurfaceId([1; 16]),
+            weight: 1.0,
+        }],
     });
     assert!(
         writer

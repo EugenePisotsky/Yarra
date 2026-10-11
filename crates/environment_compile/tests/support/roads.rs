@@ -10,7 +10,9 @@ pub fn cart_tracks() -> (
     CoverageSnapshot,
     RoadSnapshot,
 ) {
-    let (mut definition, library, plants, _) = fixture();
+    let (mut definition, library, mut plants, _) = fixture();
+    // The road wears down to bare soil: only the meadow grows grass.
+    plants.surfaces.retain(|s| s.surface == GREEN_SOIL.0);
     definition.layers.retain(|l| l.id == GREEN);
     definition.base_surface = GREEN_SOIL;
     let coverage = snapshot(&definition, &CELLS, |_, _, _| 1.0);

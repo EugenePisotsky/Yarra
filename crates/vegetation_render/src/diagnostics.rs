@@ -7,14 +7,8 @@ use std::sync::{Arc, RwLock};
 /// GPU values are copied into a tiny staging buffer without waiting for the device, so they are
 /// normally one or more frames behind the scene counters. This is intentional: diagnostics must
 /// not perturb the timings they are meant to explain.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct VegetationDiagnosticsSnapshot {
-    pub blade_preparation_enabled: bool,
-    pub blade_preparation_bytes: u64,
-    pub blade_preparation_dispatches: u64,
-    pub blade_preparation_reuses: u64,
-    pub prepared_blades: u32,
-    pub preparation_fallback_blades: u32,
     pub scene_revision: u64,
     /// Cumulative completed placement dispatches and frames that reused their results.
     pub generation_dispatches: u64,
@@ -38,18 +32,20 @@ pub struct VegetationDiagnosticsSnapshot {
     /// Padded compute lanes in the sampled indirect dispatch.
     pub dispatched_candidate_lanes: u32,
     pub candidate_evaluations: u32,
-    pub eligible_instances: [u32; 4],
-    pub emitted_instances: [u32; 4],
-    pub capacity_dropped_instances: [u32; 4],
-    /// Indices submitted by the four procedural draws for the sampled frame.
+    /// High- and low-detail blades.
+    pub eligible_instances: [u32; 2],
+    pub emitted_instances: [u32; 2],
+    pub capacity_dropped_instances: [u32; 2],
+    /// Indices submitted by the two blade draws for the sampled frame.
     pub submitted_indices: u64,
-    /// Maximum distinct topology inputs per instance before the GPU's post-transform cache.
-    pub topology_vertex_inputs: u64,
-    /// Fixed number of compact procedural instance records in the active device profile.
-    pub procedural_instance_capacity: u32,
-    /// Current scene-adaptive capacities for single-high/single-low/split-high/split-low.
-    pub topology_instance_capacities: [u32; 4],
-    pub procedural_instance_bytes: u64,
+    /// Blade vertices shaded for the sampled frame.
+    pub blade_vertices: u64,
+    /// Fixed number of blade instance records in the active device profile.
+    pub instance_capacity: u32,
+    pub bin_capacities: [u32; 2],
+    pub instance_bytes: u64,
+    /// Metres around the detail centre within which blades take the high-detail mesh.
+    pub high_detail_radius: f32,
     pub gpu_samples: u64,
     /// Scene revision associated with the last completed GPU readback (not CPU preparation).
     pub gpu_scene_revision: u64,

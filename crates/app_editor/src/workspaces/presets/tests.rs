@@ -1,12 +1,30 @@
 use super::*;
 use environment::fixtures::*;
+/// Tufts grow on the dry ground and meadow grass on the green.
+fn plants(green_grows: bool) -> vegetation::VegetationCatalog {
+    let grows = |surface: u8, grass: vegetation::GrassType| vegetation::SurfaceGrass {
+        surface: [surface; 16],
+        grass: vec![vegetation::GrassAmount {
+            grass: grass.id(),
+            amount: 1.0,
+        }],
+    };
+    let mut surfaces = vec![grows(1, vegetation::fixtures::tufts())];
+    if green_grows {
+        surfaces.push(grows(2, vegetation::fixtures::meadow()));
+    }
+    vegetation::VegetationCatalog {
+        surfaces,
+        ..vegetation::fixtures::reference_catalog()
+    }
+}
 fn request() -> fixture::Request {
     let dry = TerrainSurfaceId([1; 16]);
     let green = TerrainSurfaceId([2; 16]);
     fixture::Request {
         road: None,
-        library: meadow_library(dry, green, environment::ChannelId([1; 16])),
-        plants: vegetation::fixtures::reference_catalog(),
+        library: meadow_library(dry, green),
+        plants: plants(true),
         preset: GREEN_MEADOW,
         base: dry,
         surfaces: vec![dry, green],
@@ -45,7 +63,7 @@ fn names_do_not_invalidate_preview_but_apply_still_validates_them() {
     assert_eq!(before.scene, after.scene);
     assert_eq!(before.ground, after.ground);
     assert!(
-        renamed.library.validate(&renamed.plants).is_err(),
+        renamed.library.validate().is_err(),
         "Apply still validates authoring names"
     );
 
@@ -156,15 +174,13 @@ fn production_patch_is_deterministic_and_coverage_controls_ground_and_grass() {
     assert_ne!(a.ground, hole.ground);
 }
 #[test]
-fn exclusion_needs_an_explicit_reference_and_removes_underlying_foliage() {
+fn exclusions_clear_the_grass_of_the_ground_beneath() {
     let r = fixture::Request {
         preset: CLEAR_GRASS,
         ..request()
     };
-    let empty = r.clone().compile().unwrap();
-    assert!(empty.scene.pages[0].fields.is_empty());
     let cleared = fixture::Request {
-        underlay: Some(DRY_FOLIAGE),
+        underlay: Some(DRY_MEADOW),
         footprint: Footprint::Full,
         ..r.clone()
     }
@@ -172,15 +188,21 @@ fn exclusion_needs_an_explicit_reference_and_removes_underlying_foliage() {
     .unwrap();
     assert!(cleared.scene.pages[0].fields.is_empty());
     let patch = fixture::Request {
-        underlay: Some(DRY_FOLIAGE),
+        underlay: Some(DRY_MEADOW),
         ..r
     }
     .compile()
     .unwrap();
-    assert!(!patch.scene.pages[0].fields.is_empty());
+    let field = &patch.scene.pages[0].fields[0];
+    let n = usize::from(field.resolution);
+    assert_eq!(field.coverage[n / 2 * n + n / 2], 0, "the patch is cleared");
+    assert!(
+        field.coverage.iter().any(|&v| v > 0),
+        "grass grows around it"
+    );
 }
 #[test]
-fn preview_rejects_unbounded_patch_and_nonfoliage_underlay() {
+fn preview_rejects_unbounded_patch_and_groundless_underlay() {
     assert!(
         fixture::Request {
             size: 128,
@@ -191,7 +213,7 @@ fn preview_rejects_unbounded_patch_and_nonfoliage_underlay() {
     );
     assert!(
         fixture::Request {
-            underlay: Some(DRY_MEADOW),
+            underlay: Some(CLEAR_GRASS),
             ..request()
         }
         .compile()
@@ -258,8 +280,7 @@ fn preset_workspace_restores_scene_lighting_wind_and_camera_ownership() {
         assert!(!app.world().get::<Camera>(other).unwrap().is_active);
         app.world_mut()
             .resource_mut::<VegetationLighting>()
-            .canopy
-            .strength = 0.987;
+            .diffuse_strength = 0.987;
         app.world_mut()
             .resource_mut::<NextState<EditorWorkspace>>()
             .set(destination);
@@ -275,8 +296,10 @@ fn preset_workspace_restores_scene_lighting_wind_and_camera_ownership() {
         );
         assert!(!app.world().resource::<VegetationWind>().externally_driven);
         assert_eq!(
-            app.world().resource::<VegetationLighting>().canopy,
-            VegetationLighting::default().canopy
+            app.world()
+                .resource::<VegetationLighting>()
+                .diffuse_strength,
+            VegetationLighting::default().diffuse_strength
         );
         assert_eq!(*app.world().get::<Transform>(sun).unwrap(), transform);
         assert_eq!(
@@ -289,12 +312,14 @@ fn preset_workspace_restores_scene_lighting_wind_and_camera_ownership() {
 pub(super) fn road_request() -> fixture::Request {
     let mut r = request();
     r.base = TerrainSurfaceId([2; 16]);
-    r.underlay = Some(DRY_FOLIAGE);
+    // The hole in the reference ground shows bare base ground.
+    r.plants = plants(false);
+    r.underlay = Some(DRY_MEADOW);
     r.footprint = Footprint::Full;
     r.road = Some(fixture::RoadFixture {
         profile: crate::road_authoring::commands::default_profile(
             DRY_GROUND,
-            environment::ChannelId([1; 16]),
+            environment::GRASS_CHANNEL,
         ),
         curved: false,
         width: 3.5,
@@ -353,7 +378,7 @@ fn road_preview_uses_production_wear_and_preserves_unpainted_holes() {
                 .iter()
                 .zip(&untouched.scene.pages[0].fields)
             {
-                assert_eq!(w.population, u.population);
+                assert_eq!(w.grass, u.grass);
                 assert!(w.coverage.iter().zip(&u.coverage).all(|(w, u)| w <= u));
                 let n = (w.coverage.len() as f64).sqrt() as usize;
                 assert_eq!(
@@ -370,11 +395,12 @@ fn road_preview_uses_production_wear_and_preserves_unpainted_holes() {
     }
 }
 #[test]
-fn road_preview_ground_mixture_and_empty_reference_are_independent() {
+fn road_preview_grass_follows_the_road_ground_mixture() {
     let mut r = road_request();
     r.underlay = None;
     let dry = r.clone().compile().unwrap();
-    assert!(dry.scene.pages[0].fields.is_empty());
+    // Only the worn dry ground grows anything over the bare base.
+    assert_eq!(dry.scene.pages[0].fields.len(), 1);
     let environment::PresetKind::Ground(g) = &mut r
         .library
         .presets
@@ -391,7 +417,17 @@ fn road_preview_ground_mixture_and_empty_reference_are_independent() {
     });
     let mixed = r.clone().compile().unwrap();
     assert_ne!(dry.ground, mixed.ground);
-    assert_eq!(dry.scene, mixed.scene);
+    let (a, b) = (
+        &dry.scene.pages[0].fields[0],
+        &mixed.scene.pages[0].fields[0],
+    );
+    assert!(
+        a.coverage
+            .iter()
+            .zip(&b.coverage)
+            .all(|(dry, mixed)| mixed <= dry)
+    );
+    assert_ne!(a.coverage, b.coverage);
     r.road.as_mut().unwrap().width = 1.0;
     assert!(r.compile().is_err());
 }

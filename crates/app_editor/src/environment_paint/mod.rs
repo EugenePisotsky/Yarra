@@ -12,10 +12,10 @@ pub(crate) use preview::EnvironmentPreview;
 use crate::{
     domain_editing::{SourceWorkingSets, reconcile_dense_working_sets},
     editing::{EditorHistory, EditorObjectWorkingSet},
+    grass::GrassPreviewSync,
     project_store::{ProjectEditorStore, ProjectStoreUpdate},
     saving::drive_editor_save,
     tools::{ENVIRONMENT_TOOL, EditorToolRegistry},
-    vegetation_authoring::{VegetationAuthoringState, VegetationPreviewSync},
     workspaces::{
         EditorWorkspace,
         world::{
@@ -58,7 +58,7 @@ impl Plugin for EnvironmentPaintPlugin {
                     .after(update_editor_camera)
                     .before(handle_editor_shortcuts)
                     .before(drive_editor_save)
-                    .before(VegetationPreviewSync)
+                    .before(GrassPreviewSync)
                     .before(terrain_render::TerrainMaterialPreparation),
             )
             .add_systems(PostUpdate, (draw_brush, objects::sync));
@@ -138,7 +138,6 @@ impl EnvironmentPaintState {
 struct PaintInput<'w, 's> {
     ground: GroundToolInput<'w, 's>,
     objects: Res<'w, EditorObjectWorkingSet>,
-    vegetation: Res<'w, VegetationAuthoringState>,
 }
 fn paint_input(
     input: PaintInput,
@@ -153,8 +152,7 @@ fn paint_input(
         || project.save_in_flight()
         || dense.saving()
         || dense.has_any_conflict()
-        || input.objects.saving()
-        || input.vegetation.saving();
+        || input.objects.saving();
     if input.ground.keys.just_pressed(KeyCode::Escape) && paint.stroke.is_some() {
         paint.finish(&mut dense, &mut history, true);
         paint.status = Some("Stroke cancelled".into());

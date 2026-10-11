@@ -15,8 +15,8 @@ use world::{CellCoord, WorldSpaceId};
 use world_db::{ProjectReader, SourceEnvironmentCellRecord, environment_dependency_cells};
 
 use crate::{
-    domain_editing::SourceWorkingSets, project_store::ProjectEditorStore,
-    vegetation_authoring::VegetationAuthoringState, workspaces::EditorWorkspace,
+    domain_editing::SourceWorkingSets, grass::GrassPreview, project_store::ProjectEditorStore,
+    workspaces::EditorWorkspace,
 };
 
 const MAX_PREVIEW_CELLS: usize = 256;
@@ -215,7 +215,7 @@ fn override_stamp(record: &SourceEnvironmentCellRecord) -> Stamp {
 pub(crate) struct PreviewSource<'w, 's> {
     project: Res<'w, ProjectEditorStore>,
     dense: Res<'w, SourceWorkingSets>,
-    plants: Res<'w, VegetationAuthoringState>,
+    grass: Res<'w, GrassPreview>,
     origin: Res<'w, WorldOrigin>,
     runtime: Res<'w, WorldCatalog>,
     workspace: Res<'w, State<EditorWorkspace>>,

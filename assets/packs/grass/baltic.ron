@@ -1,0 +1,151 @@
+// Grass of the Baltic coast island and what grows on each ground surface of the `baltic`
+// terrain pack (assets/packs/terrain/baltic.toml).
+//
+// New worlds take it when created; `yarra-world-cook import-grass` puts an edited pack into an
+// existing world and cooks it. The game also reloads the types' looks from this file while it
+// runs, so shapes, colours, density and wind response can be tuned live; which types grow where
+// (`surfaces`) and the ground's grass colour (the field's tint where blades thin out and on
+// distant terrain) need a cook.
+//
+// Per type (ranges are (minimum, maximum); every blade picks its value, its clump shared by its
+// neighbours):
+// - `density`: blades per square metre where the type grows at full amount.
+// - `height`, `width`: blade height and root width in metres; blades taper to a point.
+// - `tilt`: how far the tip leans from upright (0 upright, 1 lying flat).
+// - `bend`: how much the blade's middle arches above the line from root to tip.
+// - `clumps`: Voronoi clumps `size` metres apart. `pull` gathers roots toward clump centres
+//   (0 even turf, 1 tight tussocks); `height` is how much clumps differ in height; `facing` the
+//   share of blades facing their clump's common direction; `splay` how much blades fan outward;
+//   `patches` how partial coverage thins the type (0 single blades evenly, 1 whole clumps, so
+//   sparse grass grows as separate tussocks).
+// - `colors`: linear RGB at the root and tip; a `dry` share of clumps has the `dry_tip`;
+//   `variation` is clump-to-clump brightness.
+// - `gloss`, `roughness`: the sun's sheen on the blades. `translucency`: the share of the sun a
+//   blade passes when seen against the light. `stiffness`: 0 sways freely, 1 barely moves.
+//
+// `surfaces`: terrain surface key → (grass key, share of its density). Unlisted surfaces stay
+// bare. A surface may carry several types; shares need not sum to 1.
+(
+    terrain: "baltic",
+    types: [
+        // Mixed fescue and bent grass of the meadows. Long blades that rise and lie over, combed
+        // one way by each clump, cover the ground as Ghost of Yotei's fields do.
+        (
+            key: "meadow",
+            density: 52.0,
+            height: (0.4, 0.85),
+            width: (0.011, 0.022),
+            tilt: (0.35, 0.95),
+            bend: (0.25, 0.8),
+            clumps: (size: 0.9, pull: 0.2, height: 0.4, facing: 0.75, splay: 0.15, patches: 0.4),
+            colors: (
+                root: (0.035, 0.065, 0.018),
+                tip: (0.14, 0.27, 0.05),
+                dry_tip: (0.36, 0.33, 0.12),
+                dry: 0.1,
+                variation: 0.18,
+            ),
+            gloss: 0.8,
+            roughness: 0.35,
+            translucency: 0.3,
+            stiffness: 0.35,
+        ),
+        // Timothy and cocksfoot stems standing above the meadow.
+        (
+            key: "meadow-tall",
+            density: 5.0,
+            height: (0.7, 1.05),
+            width: (0.006, 0.01),
+            tilt: (0.05, 0.25),
+            bend: (0.0, 0.2),
+            clumps: (size: 1.4, pull: 0.5, height: 0.3, facing: 0.3, splay: 0.5, patches: 0.6),
+            colors: (
+                root: (0.05, 0.08, 0.02),
+                tip: (0.24, 0.32, 0.1),
+                dry_tip: (0.38, 0.33, 0.14),
+                dry: 0.3,
+                variation: 0.15,
+            ),
+            gloss: 0.6,
+            roughness: 0.42,
+            translucency: 0.3,
+            stiffness: 0.5,
+        ),
+        // Sun-dried grass of the dry meadows: straw and olive, more of it lying over.
+        (
+            key: "dry-meadow",
+            density: 56.0,
+            height: (0.25, 0.55),
+            width: (0.006, 0.012),
+            tilt: (0.2, 0.7),
+            bend: (0.15, 0.55),
+            clumps: (size: 0.8, pull: 0.4, height: 0.5, facing: 0.5, splay: 0.35, patches: 0.85),
+            colors: (
+                root: (0.12, 0.11, 0.05),
+                tip: (0.34, 0.31, 0.14),
+                dry_tip: (0.45, 0.38, 0.2),
+                dry: 0.45,
+                variation: 0.15,
+            ),
+            gloss: 0.55,
+            roughness: 0.45,
+            translucency: 0.25,
+            stiffness: 0.4,
+        ),
+        // Marram on the dunes and coastal grey dune: stiff, rolled, blue-green tussocks.
+        (
+            key: "marram",
+            density: 64.0,
+            height: (0.45, 0.9),
+            width: (0.004, 0.007),
+            tilt: (0.1, 0.45),
+            bend: (0.05, 0.3),
+            clumps: (size: 1.3, pull: 0.9, height: 0.45, facing: 0.1, splay: 0.9, patches: 1.0),
+            colors: (
+                root: (0.1, 0.11, 0.07),
+                tip: (0.3, 0.33, 0.22),
+                dry_tip: (0.45, 0.4, 0.27),
+                dry: 0.4,
+                variation: 0.12,
+            ),
+            gloss: 0.5,
+            roughness: 0.45,
+            translucency: 0.2,
+            stiffness: 0.7,
+        ),
+        // Wavy hair-grass of the pine and mixed forest floor: very fine, soft, yellow-green,
+        // drooping over the moss.
+        (
+            key: "wavy-hair",
+            density: 48.0,
+            height: (0.18, 0.42),
+            width: (0.003, 0.005),
+            tilt: (0.3, 0.8),
+            bend: (0.25, 0.65),
+            clumps: (size: 0.6, pull: 0.7, height: 0.4, facing: 0.3, splay: 0.7, patches: 1.0),
+            colors: (
+                root: (0.04, 0.05, 0.015),
+                tip: (0.22, 0.28, 0.07),
+                dry_tip: (0.34, 0.32, 0.12),
+                dry: 0.2,
+                variation: 0.15,
+            ),
+            gloss: 0.5,
+            roughness: 0.42,
+            translucency: 0.4,
+            stiffness: 0.25,
+        ),
+    ],
+    surfaces: {
+        "meadow": [("meadow", 1.0), ("meadow-tall", 1.0)],
+        "dry-meadow": [("dry-meadow", 1.0), ("meadow-tall", 0.4)],
+        "coastal-grass": [("marram", 0.8), ("dry-meadow", 0.25)],
+        "dune-sand": [("marram", 0.2)],
+        "gravel": [("dry-meadow", 0.12)],
+        "forest-moss": [("wavy-hair", 0.45)],
+        "forest-floor": [("wavy-hair", 0.3)],
+        "pine-needles": [("wavy-hair", 0.12)],
+        "leaf-litter": [("wavy-hair", 0.08)],
+        "stony-moss": [("wavy-hair", 0.25)],
+    },
+)

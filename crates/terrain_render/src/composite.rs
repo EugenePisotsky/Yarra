@@ -50,8 +50,6 @@ pub struct TerrainCompositeMaterial {
     detail_table: Handle<ShaderBuffer>,
     #[texture(8, dimension = "2d_array")]
     near_weights: Option<Handle<Image>>,
-    #[texture(9, dimension = "2d_array")]
-    near_canopy: Option<Handle<Image>>,
     #[storage(10, read_only, visibility(fragment))]
     near_table: Handle<ShaderBuffer>,
     #[uniform(11)]
@@ -83,7 +81,6 @@ impl Default for TerrainCompositeMaterial {
             detail_response: None,
             detail_table: Default::default(),
             near_weights: None,
-            near_canopy: None,
             near_table: Default::default(),
             near_settings: Default::default(),
             near_base: None,
@@ -163,7 +160,6 @@ impl TerrainCompositeMaterial {
 
     pub(crate) fn clear_near(&mut self) {
         self.near_weights = None;
-        self.near_canopy = None;
         self.near_table = default();
         self.near_base = None;
         self.near_normal = None;
@@ -175,7 +171,6 @@ impl TerrainCompositeMaterial {
     }
     pub(crate) fn set_near(&mut self, atlas: &crate::near::gpu::NearAtlas) {
         self.near_weights = Some(atlas.weights.clone());
-        self.near_canopy = Some(atlas.canopy.clone());
         self.near_table = atlas.table.clone();
         self.near_base = Some(atlas.pack.base.clone());
         self.near_normal = Some(atlas.pack.normal.clone());

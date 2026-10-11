@@ -12,7 +12,6 @@ use world_db::{
     EnvironmentSourceWriteResult, ObjectWriteTransactionResult, ProjectManifest, ProjectReader,
     ProjectWriter, SourceCellRecord, SourceEnvironmentCellRecord, SourceObjectRecord,
     SourceObjectViewRecord, SourceObjectWrite, SourceObjectWriteCommit,
-    VegetationCatalogWriteResult,
 };
 
 use crate::tools::{EditorSourceDomain, EditorToolRegistry};
@@ -152,13 +151,6 @@ struct PendingDenseSave {
 }
 
 #[derive(Debug, Clone)]
-struct PendingVegetationSave {
-    request_id: u64,
-    expected: Option<VegetationCatalog>,
-    replacement: VegetationCatalog,
-}
-
-#[derive(Debug, Clone)]
 pub(crate) struct ObjectSaveCompletion {
     pub(crate) request_id: u64,
     pub(crate) outcome: ObjectSaveOutcome,
@@ -200,19 +192,6 @@ pub(crate) enum DenseSaveOutcome {
     Failed(String),
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct VegetationSaveCompletion {
-    pub(crate) request_id: u64,
-    pub(crate) outcome: VegetationSaveOutcome,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) enum VegetationSaveOutcome {
-    Committed(VegetationCatalog),
-    Conflict { actual: Option<VegetationCatalog> },
-    Failed(String),
-}
-
 #[derive(Resource, Default)]
 pub(crate) struct ProjectEditorStore {
     phase: ProjectStorePhase,
@@ -250,9 +229,6 @@ pub(crate) struct ProjectEditorStore {
     pending_dense_save: Option<PendingDenseSave>,
     dense_save_in_flight: Option<u64>,
     dense_save_completion: Option<DenseSaveCompletion>,
-    pending_vegetation_save: Option<PendingVegetationSave>,
-    vegetation_save_in_flight: Option<u64>,
-    vegetation_save_completion: Option<VegetationSaveCompletion>,
     next_save_request_id: u64,
     pending_atmosphere_save: Option<(u64, Vec<world_db::AtmosphereWrite>)>,
     atmosphere_save_in_flight: Option<u64>,
@@ -417,8 +393,6 @@ impl ProjectEditorStore {
             || self.save_in_flight.is_some()
             || self.pending_dense_save.is_some()
             || self.dense_save_in_flight.is_some()
-            || self.pending_vegetation_save.is_some()
-            || self.vegetation_save_in_flight.is_some()
             || self.pending_atmosphere_save.is_some()
             || self.atmosphere_save_in_flight.is_some()
             || self.pending_area_save.is_some()
@@ -474,28 +448,6 @@ impl ProjectEditorStore {
     pub(crate) fn take_dense_save_completion(&mut self) -> Option<DenseSaveCompletion> {
         self.dense_save_completion.take()
     }
-
-    pub(crate) fn queue_vegetation_catalog(
-        &mut self,
-        expected: Option<VegetationCatalog>,
-        replacement: VegetationCatalog,
-    ) -> Option<u64> {
-        if self.save_in_flight() || self.write_error.is_some() || replacement.validate().is_err() {
-            return None;
-        }
-        let request_id = self.next_save_request_id.wrapping_add(1).max(1);
-        self.next_save_request_id = request_id;
-        self.pending_vegetation_save = Some(PendingVegetationSave {
-            request_id,
-            expected,
-            replacement,
-        });
-        Some(request_id)
-    }
-
-    pub(crate) fn take_vegetation_save_completion(&mut self) -> Option<VegetationSaveCompletion> {
-        self.vegetation_save_completion.take()
-    }
 }
 
 type ProjectWorker = crate::worker::Worker<ProjectRequest, ProjectResult>;
@@ -510,7 +462,6 @@ enum ProjectRequest {
     SaveGameplayAreas(u64, i64, Arc<[world::GameplayArea]>),
     SaveObjectTransaction(PendingObjectSave),
     SaveDenseTransaction(PendingDenseSave),
-    SaveVegetationCatalog(PendingVegetationSave),
 }
 
 enum ProjectResult {
@@ -531,11 +482,6 @@ enum ProjectResult {
     SaveDenseTransaction {
         request_id: u64,
         result: Result<EnvironmentSourceWriteResult, String>,
-    },
-    SaveVegetationCatalog {
-        request_id: u64,
-        replacement: VegetationCatalog,
-        result: Result<VegetationCatalogWriteResult, String>,
     },
 }
 

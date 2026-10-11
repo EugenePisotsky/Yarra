@@ -115,13 +115,6 @@ pub(crate) const ENVIRONMENT_TOOL: EditorToolDescriptor = EditorToolDescriptor {
     ],
 };
 
-pub(crate) const VEGETATION_TOOL: EditorToolDescriptor = EditorToolDescriptor {
-    id: EditorToolId("world.vegetation"),
-    label: "Vegetation",
-    workspace: EditorWorkspace::World,
-    source_domains: &[EditorSourceDomain::CellDescriptors],
-};
-
 pub(crate) fn object_tool_active(registry: Res<EditorToolRegistry>) -> bool {
     registry
         .active(EditorWorkspace::World)
@@ -137,7 +130,6 @@ mod tests {
         let mut registry = EditorToolRegistry::default();
         registry.register(OBJECT_TOOL, true);
         registry.register(ENVIRONMENT_TOOL, false);
-        registry.register(VEGETATION_TOOL, false);
         assert_eq!(
             registry.active(EditorWorkspace::World).map(|tool| tool.id),
             Some(OBJECT_TOOL.id)

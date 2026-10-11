@@ -21,8 +21,8 @@ cargo run -p yarra-world-cook -- cook
 ```
 
 Test fixtures use the explicit `create-demo` / `create-road-demo` commands and separate
-paths. Vegetation is edited in the editor; intentional catalog replacement uses
-`import-vegetation`.
+paths. Grass comes from the grass pack (`assets/packs/grass/`); `import-grass` puts an
+edited pack into the world.
 
 Source and generated databases remain local and ignored by Git. Models live in
 `source_assets`; placements reference `object_definitions`. Authored presets, layers,

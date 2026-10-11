@@ -542,6 +542,20 @@ The island had two terrain surfaces (uncut and dried grass) and the cook took at
 | Steep faces | Planar projection stretches rock on 35–45° slopes. **Open:** triplanar or biplanar sampling for rock surfaces. |
 | Not done | Wet sand at the waterline (the terrain shader has no sea level yet); dune grass (grass rewrite); the procedural island's masks are rough height and slope rules. |
 
+## Grass rewrite — October 11
+
+Grass now follows the ground: a grass pack (`assets/packs/grass/baltic.ron`) says which types grow on each terrain surface, the compiler derives coverage from surface weights, and the editor's Vegetation catalog and Canopy windows are gone. The GPU pipeline (lattice candidates, two LOD bins, caches) stayed; blades, wind, shading and content were rewritten. Judged on the rebuilt island with look captures (game settings, morning sun) from `tmp/look/views`.
+
+| Change | Decision / observation |
+| --- | --- |
+| Lying blades | **Retained.** After the user's Ghost of Yotei references: meadow tilt 0.35–0.95 of a 1.45 rad lean, so most blades lie over and the field reads dense from eye height. |
+| Blade energy | **Fixed.** First captures had near-black blades: diffuse is now albedo × sun × wrap / π as on PBR ground, its normal halfway to the clump's (fully for unresolved blades), and the dark root band is shorter. |
+| Ground under grass | **Retained.** Near detail shades covered ground to 0.45 under the blades and turns it to the field's colour (mean of the types' upper blades) over 24–48 m; the composite bake tints distant ground by the same cover × 0.85. Distant meadow hills were dark olive where blades ended; they now keep the field's green. Cover counts tufted types (high `pull`) as covering less ground, so sand between marram tussocks is not shaded. |
+| Patches | **Retained.** Partial coverage thinned blade by blade, so dunes (marram at 0.2) and pine needles (hair-grass at 0.12) showed scattered single strands. A type's `patches` blends the acceptance rank toward its clump's through the blend's distribution (still uniform, so coverage keeps its share): at 1 whole clumps come and go and sparse grass grows as tussocks. Marram, hair-grass 1.0; dry meadow 0.85; meadow 0.4. |
+| Wind | **Checked** with the new look-capture key `wind` (captures hold the wind still): mean change in the near grass 6/255 per 1/30 s against 20/255 per 0.5 s, so motion is coherent, not jitter; blades keep their length. |
+| Cost | Edge-sun, game settings: 13.1–13.4 ms GPU with grass against 11.6 without (thermal fair throughout). Workload: 1,672,320 candidate lanes, ~125k blades (19.8k high), 2.35M indices, no capacity drops, identical to the earlier g5 capture that measured 12.78 ms from a nominal thermal start. Patches on/off A/B: ≤0.4 ms, within the ±0.25 ms run-to-run spread. |
+| Open | Grass shadows (screen-space, as Ghost of Tsushima); player interaction; distant meadows read uniform and saturated; coastal grass seen from above is dark brown streaks. |
+
 ## Open gates and maintenance
 
 The remaining gates are sustained terrain/whole-game power, Temporal cost and motion quality, field-scale grass lighting, target-PC acceptance, and physical-phone heat/60-FPS delivery. Keep correctness references until their replacements pass the relevant gate. Existing counters often identify less work without demonstrating better delivered frames or lower power.

@@ -38,7 +38,7 @@ fn malformed_options_fail_before_startup() {
         vec!["--fps", "14"],
         vec!["--fps", "60", "--fps", "120"],
         vec!["--upscaler", "magic"],
-        vec!["--grass-prepared-blades", "1"],
+        vec!["--grass-density", "full"],
         vec!["--gpu-timing-off", "--gpu-timing-detail"],
     ] {
         assert!(parse(&args).is_err(), "{args:?}");
@@ -87,8 +87,6 @@ fn supported_automation_commands_keep_their_configuration() {
     let options = parse(&[
         "--world-db",
         "snapshot.sqlite",
-        "--canopy-look",
-        "canopy.ron",
         "--render-repro",
         "grass-soak",
         "--profile-seconds",
@@ -105,15 +103,12 @@ fn supported_automation_commands_keep_their_configuration() {
         "4",
         "--profile-grass",
         "full",
-        "--grass-density",
-        "balanced",
-        "--grass-prepared-blades",
-        "262144",
+        "--grass-candidate-reference",
     ])
     .unwrap();
     assert!(options.profile.is_some());
     assert_eq!(options.repro.unwrap().route, Route::GrassSoak);
-    assert_eq!(options.prepared_blades, Some(262144));
+    assert!(options.candidate_reference);
     assert!(options.audit_log);
     for route in Route::ALL {
         let name = route.name();

@@ -3,10 +3,7 @@ use crate::{
     editing::{EditorObjectWorkingSet, EditorSelection},
     project_store::{ProjectEditorStore, ProjectQueryWindow},
     shell::EditorWindowRegistry,
-    tools::{
-        AREA_TOOL, ENVIRONMENT_TOOL, EditorToolRegistry, OBJECT_TOOL, ROAD_TOOL, VEGETATION_TOOL,
-    },
-    vegetation_authoring::VEGETATION_WINDOW,
+    tools::{AREA_TOOL, ENVIRONMENT_TOOL, EditorToolRegistry, OBJECT_TOOL, ROAD_TOOL},
     workspaces::{EditorWorkspace, world::ui::WorldWorkspaceUiState},
 };
 use bevy::prelude::*;
@@ -65,16 +62,6 @@ pub(super) fn draw_world_hierarchy(
         .clicked()
     {
         tools.set_active(EditorWorkspace::World, ENVIRONMENT_TOOL.id);
-    }
-    if ui
-        .selectable_label(
-            active_tool.is_some_and(|tool| tool.id == VEGETATION_TOOL.id),
-            "Vegetation",
-        )
-        .clicked()
-    {
-        tools.set_active(EditorWorkspace::World, VEGETATION_TOOL.id);
-        windows.set_open(VEGETATION_WINDOW.id, true);
     }
     if ui
         .selectable_label(active_tool.is_some_and(|t| t.id == AREA_TOOL.id), "Areas")

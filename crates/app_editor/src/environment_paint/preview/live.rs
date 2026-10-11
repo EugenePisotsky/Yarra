@@ -120,9 +120,9 @@ pub(crate) fn update(
     if *source.workspace.get() != EditorWorkspace::World {
         return;
     }
-    let (Some(space), Some((plants, _, plants_revision)), Some(presets)) = (
+    let (Some(space), Some(plants), Some(presets)) = (
         source.origin.space(),
-        source.plants.working_catalog(),
+        source.grass.catalog(),
         source.dense.presets(),
     ) else {
         return;
@@ -136,7 +136,7 @@ pub(crate) fn update(
     let context = (
         space,
         source.dense.definition_edit_revision(),
-        plants_revision,
+        source.grass.revision(),
         source.project.source_epoch(),
         source.runtime.generation_id().to_owned(),
     );
@@ -191,14 +191,12 @@ pub(crate) fn update(
                 ..default()
             },
         );
+        // Every world must still compile with the catalog; the catalog itself is shared.
         let catalog = source
             .dense
             .definitions()
-            .map(|d| CompilePlan::new(d, plants, presets, default()))
-            .collect::<Result<Vec<_>, _>>()
-            .and_then(|p| {
-                environment_compile::merge_runtime_catalogs(&p.iter().collect::<Vec<_>>())
-            });
+            .try_for_each(|d| CompilePlan::new(d, plants, presets, default()).map(drop))
+            .map(|()| plants.clone());
         match (plan, catalog) {
             (Ok(plan), Ok(catalog)) => {
                 let records = source
@@ -584,6 +582,9 @@ pub(crate) fn apply_sources(
                                 TerrainSurfaceLayer {
                                     surface: s.surface.clone(),
                                     layer: s.layer,
+                                    grass: project
+                                        .vegetation_catalog()
+                                        .map_or([0.0; 4], |c| c.cover(s.surface.id.0).rgba()),
                                 }
                             })
                         })

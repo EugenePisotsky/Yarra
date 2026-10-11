@@ -174,7 +174,6 @@ def analyze_run(directory, power_rows):
     if not selected_audits:
         result['errors'].append('No in-window settings/residency audit')
     expected = {'msaa_samples': str(settings['msaa']),
-                'density': {'balanced': 'Balanced', 'full': 'FullReference', 'authored': 'Authored'}[settings['density']],
                 'grass': 'full' if settings['grass'] == 'full' else 'disabled',
                 'counters': str(settings['counters']).lower(),
                 'prepass': str(settings.get('prepass', False)).lower()}
@@ -197,21 +196,16 @@ def analyze_run(directory, power_rows):
     # Old reports have no requested window mode or mode audit. Preserve their interpretation.
     if 'window' in settings:
         expected['window_mode'] = settings['window']
-    if settings.get('prepared_blades') is not None:
-        # Instance lookup table + requested physical blade records + indirect dispatch.
-        expected['blade_preparation_bytes'] = str(851968 * 4 + settings['prepared_blades'] * 128 + 12)
     for key, value in expected.items():
         if any(a.get(key) != value for a in selected_audits):
             result['errors'].append(f'Actual {key} does not match requested {value}')
     # Also flag interactive changes beyond the requested controls.
-    for key in ('shadows', 'ground_shader', 'terrain_prepared', 'wind', 'ui', 'lighting', 'render_px', 'surface_px', 'window_mode', 'monitor_px', 'monitor_hz', 'scale_factor', 'low_power'):
+    for key in ('shadows', 'ground_shader', 'wind', 'ui', 'render_px', 'surface_px', 'window_mode', 'monitor_px', 'monitor_hz', 'scale_factor', 'low_power'):
         if len({a.get(key) for a in selected_audits}) > 1:
             result['errors'].append(f'{key} changed during measurement')
-    if any(a.get('terrain_prepared_active') != a.get('terrain_prepared_pages') for a in selected_audits):
-        result['warnings'].append('Prepared terrain was not fully ready in every audit sample')
     if settings['view'] not in ('grass-stream', 'grass-soak') and len({a.get('source_revision') for a in selected_audits}) > 1:
         result['warnings'].append('Source residency changed during measurement; check warmup duration')
-    if any(any(json.loads(a.get('sampled_capacity_drops', '[0,0,0,0]'))) for a in selected_audits):
+    if any(any(json.loads(a.get('sampled_capacity_drops', '[0,0]'))) for a in selected_audits):
         result['errors'].append('Grass instance capacity drops')
     result['last_audit'] = selected_audits[-1] if selected_audits else None
     last = result['last_audit'] or {}

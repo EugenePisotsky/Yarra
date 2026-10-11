@@ -1,11 +1,10 @@
 //! Resident GPU allocation, bind groups and geometric storage growth.
 use super::{
-    blade_preparation, candidate_cache, canopy_boundary,
+    candidate_cache,
     generation::{GenerationInputs, GenerationKey},
     gpu_types::{
-        CameraGpu, ConfigGpu, DRAW_ARGS_SIZE, DiagnosticInstanceGpu, GPU_TELEMETRY_SIZE,
-        LOW_DETAIL_CAPACITY, MAX_DIAGNOSTIC_INSTANCES, PROCEDURAL_INSTANCE_CAPACITY,
-        ProceduralInstanceGpu, WorkItemGpu,
+        CameraGpu, ConfigGpu, DRAW_ARGS_SIZE, GPU_TELEMETRY_SIZE, INSTANCE_CAPACITY, InstanceGpu,
+        WorkItemGpu,
     },
     page_slots,
     pipelines::VegetationPipelines,
@@ -30,19 +29,15 @@ pub(super) struct VegetationBuffers {
     pub(super) visible_work_items: Buffer,
     pub(super) visible_work_items_capacity: u64,
     pub(super) candidate_dispatch_args: Buffer,
-    pub(super) choices: Buffer,
-    pub(super) choices_capacity: u64,
     pub(super) coverage: Buffer,
     pub(super) coverage_capacity: u64,
-    pub(super) canopy_boundary: canopy_boundary::CanopyBoundary,
     pub(super) surfaces: Buffer,
     pub(super) surfaces_capacity: u64,
     /// Which ranges of `surfaces` and `coverage` hold each resident page.
     pub(super) page_slots: page_slots::PageSlots,
-    pub(super) species: Buffer,
-    pub(super) species_capacity: u64,
-    pub(super) procedural_instances: Buffer,
-    pub(super) diagnostic_instances: Buffer,
+    pub(super) types: Buffer,
+    pub(super) types_capacity: u64,
+    pub(super) instances: Buffer,
     pub(super) topology_indices: Buffer,
     pub(super) args: Buffer,
     pub(super) gpu_telemetry: Buffer,
@@ -58,12 +53,10 @@ pub(super) struct VegetationBuffers {
     pub(super) source_work_items: Vec<WorkItemGpu>,
     pub(super) generation_inputs: Option<GenerationInputs>,
     pub(super) last_generation: Option<GenerationKey>,
-    pub(super) generation_serial: u64,
-    pub(super) preparation_enabled: bool,
-    pub(super) preparation_camera: Option<CameraGpu>,
+    pub(super) camera_values: Option<CameraGpu>,
     pub(super) work_item_count: u32,
     pub(super) maximum_candidate_count: u32,
-    pub(super) low_detail_capacities: [u32; 2],
+    pub(super) high_detail_radius: f32,
     pub(super) active: bool,
 }
 
@@ -85,14 +78,12 @@ impl FromWorld for VegetationBuffers {
             usage: BufferUsages::STORAGE | BufferUsages::INDIRECT | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let choices = dummy_storage(render_device, "vegetation empty choices");
         let coverage = dummy_storage(render_device, "vegetation empty coverage");
         let surfaces = dummy_storage(render_device, "vegetation empty surfaces");
-        let species = dummy_storage(render_device, "vegetation empty species");
-        let procedural_instances = render_device.create_buffer(&BufferDescriptor {
-            label: Some("vegetation compact topology-bin instances"),
-            size: u64::from(PROCEDURAL_INSTANCE_CAPACITY)
-                * size_of::<ProceduralInstanceGpu>() as u64,
+        let types = dummy_storage(render_device, "vegetation empty grass types");
+        let instances = render_device.create_buffer(&BufferDescriptor {
+            label: Some("vegetation blade instances"),
+            size: u64::from(INSTANCE_CAPACITY) * size_of::<InstanceGpu>() as u64,
             usage: BufferUsages::STORAGE
                 | if cfg!(test) {
                     BufferUsages::COPY_SRC | BufferUsages::COPY_DST
@@ -101,14 +92,13 @@ impl FromWorld for VegetationBuffers {
                 },
             mapped_at_creation: false,
         });
-        let diagnostic_instances = diagnostic_instances(render_device, false);
         let topology_indices = render_device.create_buffer_with_data(&BufferInitDescriptor {
-            label: Some("vegetation fixed-budget topology indices"),
+            label: Some("vegetation blade topology indices"),
             contents: bytemuck::cast_slice(&build_topology_indices()),
             usage: BufferUsages::INDEX,
         });
         let args = render_device.create_buffer(&BufferDescriptor {
-            label: Some("vegetation topology-bin indirect args"),
+            label: Some("vegetation indirect args"),
             size: DRAW_ARGS_SIZE,
             usage: BufferUsages::STORAGE
                 | BufferUsages::INDIRECT
@@ -137,23 +127,25 @@ impl FromWorld for VegetationBuffers {
         let schedule_bind_group = create_schedule_bind_group(
             render_device,
             &schedule_layout,
-            &work_items,
-            &visible_work_items,
-            &candidate_dispatch_args,
-            &camera,
-            &gpu_telemetry,
-            &config,
+            [
+                &work_items,
+                &visible_work_items,
+                &candidate_dispatch_args,
+                &camera,
+                &gpu_telemetry,
+                &config,
+                &types,
+            ],
         );
         let compute_bind_group = create_compute_bind_group(
             render_device,
             &compute_layout,
             [
                 &work_items,
-                &choices,
+                &types,
                 &coverage,
                 &surfaces,
-                &procedural_instances,
-                &diagnostic_instances,
+                &instances,
                 &args,
                 &visible_work_items,
                 &config,
@@ -164,38 +156,22 @@ impl FromWorld for VegetationBuffers {
                 &candidate_cache.build_items,
             ],
         );
-        let canopy_boundary = canopy_boundary::CanopyBoundary::new(render_device);
-        let draw_bind_group = create_draw_bind_group(
-            render_device,
-            &draw_layout,
-            &procedural_instances,
-            &diagnostic_instances,
-            &species,
-            &camera,
-            &config,
-            &world
-                .resource::<blade_preparation::BladePreparation>()
-                .arena,
-            &canopy_boundary.buffer,
-        );
+        let draw_bind_group =
+            create_draw_bind_group(render_device, &draw_layout, &instances, &types, &camera);
         Self {
             work_items,
             work_items_capacity: 16,
             visible_work_items,
             visible_work_items_capacity: 16,
             candidate_dispatch_args,
-            choices,
-            choices_capacity: 16,
             coverage,
             coverage_capacity: 16,
-            canopy_boundary,
             surfaces,
             surfaces_capacity: 16,
             page_slots: default(),
-            species,
-            species_capacity: 16,
-            procedural_instances,
-            diagnostic_instances,
+            types,
+            types_capacity: 16,
+            instances,
             topology_indices,
             args,
             gpu_telemetry,
@@ -211,55 +187,33 @@ impl FromWorld for VegetationBuffers {
             source_work_items: Vec::new(),
             generation_inputs: None,
             last_generation: None,
-            generation_serial: 0,
-            preparation_enabled: false,
-            preparation_camera: None,
+            camera_values: None,
             work_item_count: 0,
             maximum_candidate_count: 0,
-            low_detail_capacities: [LOW_DETAIL_CAPACITY / 2; 2],
+            high_detail_radius: 0.0,
             active: false,
         }
     }
 }
 
-#[allow(clippy::too_many_arguments)] // One buffer per binding.
 pub(super) fn create_schedule_bind_group(
     render_device: &RenderDevice,
     layout: &BindGroupLayout,
-    work_items: &Buffer,
-    visible_work_items: &Buffer,
-    candidate_dispatch_args: &Buffer,
-    camera: &Buffer,
-    gpu_telemetry: &Buffer,
-    config: &Buffer,
+    buffers: [&Buffer; 7],
 ) -> BindGroup {
     render_device.create_bind_group(
         Some("vegetation visible work scheduling"),
         layout,
         &BindGroupEntries::sequential((
-            work_items.as_entire_binding(),
-            visible_work_items.as_entire_binding(),
-            candidate_dispatch_args.as_entire_binding(),
-            camera.as_entire_binding(),
-            gpu_telemetry.as_entire_binding(),
-            config.as_entire_binding(),
+            buffers[0].as_entire_binding(),
+            buffers[1].as_entire_binding(),
+            buffers[2].as_entire_binding(),
+            buffers[3].as_entire_binding(),
+            buffers[4].as_entire_binding(),
+            buffers[5].as_entire_binding(),
+            buffers[6].as_entire_binding(),
         )),
     )
-}
-
-/// Placement diagnostics' instances: room for all of them only while a diagnostic mode is on.
-pub(super) fn diagnostic_instances(render_device: &RenderDevice, diagnostic: bool) -> Buffer {
-    let count = if diagnostic {
-        u64::from(MAX_DIAGNOSTIC_INSTANCES)
-    } else {
-        1
-    };
-    render_device.create_buffer(&BufferDescriptor {
-        label: Some("vegetation placement diagnostic instances"),
-        size: count * size_of::<DiagnosticInstanceGpu>() as u64,
-        usage: BufferUsages::STORAGE,
-        mapped_at_creation: false,
-    })
 }
 
 pub(super) fn dummy_storage(render_device: &RenderDevice, label: &'static str) -> Buffer {
@@ -273,7 +227,7 @@ pub(super) fn dummy_storage(render_device: &RenderDevice, label: &'static str) -
 pub(super) fn create_compute_bind_group(
     render_device: &RenderDevice,
     layout: &BindGroupLayout,
-    buffers: [&Buffer; 14],
+    buffers: [&Buffer; 13],
 ) -> BindGroup {
     render_device.create_bind_group(
         Some("vegetation placement"),
@@ -292,34 +246,24 @@ pub(super) fn create_compute_bind_group(
             buffers[10].as_entire_binding(),
             buffers[11].as_entire_binding(),
             buffers[12].as_entire_binding(),
-            buffers[13].as_entire_binding(),
         )),
     )
 }
 
-#[allow(clippy::too_many_arguments)] // One named buffer per shader binding.
 pub(super) fn create_draw_bind_group(
     render_device: &RenderDevice,
     layout: &BindGroupLayout,
-    procedural_instances: &Buffer,
-    diagnostic_instances: &Buffer,
-    species: &Buffer,
+    instances: &Buffer,
+    types: &Buffer,
     camera: &Buffer,
-    config: &Buffer,
-    prepared_arena: &Buffer,
-    canopy_boundary: &Buffer,
 ) -> BindGroup {
     render_device.create_bind_group(
         Some("vegetation draw"),
         layout,
         &BindGroupEntries::sequential((
-            procedural_instances.as_entire_binding(),
-            diagnostic_instances.as_entire_binding(),
-            species.as_entire_binding(),
+            instances.as_entire_binding(),
+            types.as_entire_binding(),
             camera.as_entire_binding(),
-            config.as_entire_binding(),
-            prepared_arena.as_entire_binding(),
-            canopy_boundary.as_entire_binding(),
         )),
     )
 }

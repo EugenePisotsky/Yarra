@@ -1,25 +1,22 @@
 //! Upload scene revisions and prepare per-view inputs without changing render scheduling.
 use super::{
-    blade_preparation,
     buffers::{
         VegetationBuffers, create_compute_bind_group, create_draw_bind_group,
-        create_schedule_bind_group, diagnostic_instances, grow_storage, update_storage,
-        writable_storage,
+        create_schedule_bind_group, grow_storage, update_storage, writable_storage,
     },
     candidate_cache,
     generation::GenerationInputs,
     gpu_types::{
-        CameraGpu, ConfigGpu, DRAW_ARGS_SIZE, DiagnosticInstanceGpu, PROCEDURAL_INSTANCE_CAPACITY,
-        ProceduralInstanceGpu, SINGLE_HIGH_CAPACITY, SPLIT_HIGH_CAPACITY, SurfaceSampleGpu,
+        CameraGpu, ConfigGpu, DRAW_ARGS_SIZE, HIGH_CAPACITY, INSTANCE_CAPACITY, InstanceGpu,
+        LOW_CAPACITY, SurfaceSampleGpu,
     },
     packing::{apply_terrain_gate, pack_coverage, pack_items, pack_lod_focus, pack_surface},
     pipelines::VegetationPipelines,
 };
 use crate::{
-    VegetationAmbientGain, VegetationDiagnosticMode, VegetationDiagnostics, VegetationLighting,
-    VegetationLightingMode, VegetationLodFocus, VegetationProfileMode, VegetationRenderOrigin,
-    VegetationSceneState, VegetationSettings, VegetationSun, VegetationTerrainGate, VegetationView,
-    VegetationWind,
+    VegetationAmbientGain, VegetationDiagnostics, VegetationLighting, VegetationLodFocus,
+    VegetationProfileMode, VegetationRenderOrigin, VegetationSceneState, VegetationSettings,
+    VegetationSun, VegetationTerrainGate, VegetationView, VegetationWind,
 };
 use bevy::{
     ecs::system::SystemParam,
@@ -43,10 +40,6 @@ pub(super) struct ViewInputs<'w> {
     ambient_gain: Option<Res<'w, VegetationAmbientGain>>,
 }
 
-/// `ConfigGpu::workload.w` bits, read as `config.workload.w & 1u` and `& 2u` in
-/// `shaders/vegetation/placement.wesl`.
-const EARLY_REJECTION: u32 = 1;
-const CANDIDATE_CACHE: u32 = 1 << 1;
 /// Bounds on the exposure gain applied to grass's ambient fill.
 const AMBIENT_GAIN_RANGE: (f32, f32) = (0.0625, 16.0);
 
@@ -54,8 +47,6 @@ const AMBIENT_GAIN_RANGE: (f32, f32) = (0.0625, 16.0);
 pub(super) fn prepare(
     scene: Option<Res<VegetationSceneState>>,
     settings: Res<VegetationSettings>,
-    blade_settings: Res<crate::VegetationBladePreparation>,
-    blade_preparation: Res<blade_preparation::BladePreparation>,
     inputs: ViewInputs,
     terrain_gate: Res<VegetationTerrainGate>,
     render_device: Res<RenderDevice>,
@@ -81,17 +72,7 @@ pub(super) fn prepare(
         buffers.active = false;
         return;
     };
-    let mut rebind =
-        buffers
-            .canopy_boundary
-            .update(&scene, &inputs.lighting, &render_device, &render_queue);
-    let diagnostic = settings.diagnostic_mode != VegetationDiagnosticMode::ProceduralGeometry;
-    if (buffers.diagnostic_instances.size() > size_of::<DiagnosticInstanceGpu>() as u64)
-        != diagnostic
-    {
-        buffers.diagnostic_instances = diagnostic_instances(&render_device, diagnostic);
-        rebind = true;
-    }
+    let mut rebind = false;
     let gate_changed = *terrain_gate != buffers.uploaded_terrain_gate;
     if gate_changed {
         // Even DrawFrozen must stop showing roots whose ground is no longer
@@ -116,7 +97,7 @@ pub(super) fn prepare(
             &diagnostics,
         );
     } else if gate_changed {
-        // Keep surface/coverage/species buffers and stable candidate masks intact.
+        // Keep surface/coverage/type buffers and stable candidate masks intact.
         // Only the compact scheduler input changes as terrain patches become ready.
         if apply_terrain_gate(&mut buffers.source_work_items, &terrain_gate) {
             render_queue.write_buffer(
@@ -135,7 +116,6 @@ pub(super) fn prepare(
             &pipeline_cache,
             &pipelines,
             &candidate_cache,
-            &blade_preparation,
         );
     }
 
@@ -144,29 +124,14 @@ pub(super) fn prepare(
         return;
     };
     let view_size = resolution.map_or(view.viewport.zw(), |r| r.0);
-    let camera_gpu = camera(view, view_size, &inputs, settings.far_width_compensation);
-    buffers.preparation_enabled = blade_settings.enabled
-        && !diagnostic
-        && settings.lighting_mode != VegetationLightingMode::VertexOnlyDiagnostic
-        && matches!(
-            settings.profile_mode,
-            VegetationProfileMode::Full | VegetationProfileMode::DrawFrozen
-        )
-        && blade_preparation.available(&pipeline_cache);
-    buffers.preparation_camera = Some(camera_gpu);
+    let camera_gpu = camera(view, view_size, &inputs, buffers.high_detail_radius);
+    buffers.camera_values = Some(camera_gpu);
     let config_gpu = ConfigGpu {
-        values: [
-            settings.diagnostic_mode as u32,
-            settings.density_mode as u32,
-            settings.lighting_mode as u32,
-            buffers.low_detail_capacities[0],
-        ],
         workload: [
             buffers.work_item_count,
             u32::from(settings.gpu_counters_enabled),
-            u32::from(buffers.preparation_enabled),
-            (u32::from(settings.early_rejection) * EARLY_REJECTION)
-                | (u32::from(settings.candidate_cache_enabled) * CANDIDATE_CACHE),
+            u32::from(settings.candidate_cache_enabled),
+            0,
         ],
     };
     render_queue.write_buffer(&buffers.camera, 0, bytemuck::bytes_of(&camera_gpu));
@@ -181,7 +146,7 @@ pub(super) fn prepare(
 
 /// Uploads a new scene revision or render origin: page samples stay in place while their
 /// content key is unchanged, so only arriving or edited pages are packed and written; work
-/// items and species are rebuilt. True when a buffer was replaced and bind groups must follow.
+/// items and grass types are rebuilt. True when a buffer was replaced and bind groups must follow.
 #[allow(clippy::too_many_arguments)] // The renderer's buffers and the scene's inputs.
 fn upload_sources(
     buffers: &mut VegetationBuffers,
@@ -266,16 +231,10 @@ fn upload_sources(
             bytemuck::cast_slice(&packed.work_items),
         ),
         (
-            &mut b.choices,
-            &mut b.choices_capacity,
-            "vegetation species choices",
-            bytemuck::cast_slice(&packed.choices),
-        ),
-        (
-            &mut b.species,
-            &mut b.species_capacity,
-            "vegetation species",
-            bytemuck::cast_slice(&packed.species),
+            &mut b.types,
+            &mut b.types_capacity,
+            "vegetation grass types",
+            bytemuck::cast_slice(&packed.types),
         ),
     ] {
         uploaded_bytes += contents.len() as u64;
@@ -306,7 +265,7 @@ fn upload_sources(
 
     buffers.work_item_count = packed.work_items.len() as u32;
     buffers.maximum_candidate_count = packed.maximum_candidate_count;
-    buffers.low_detail_capacities = packed.low_detail_capacities;
+    buffers.high_detail_radius = packed.high_detail_radius;
     buffers.uploaded_revision = scene.revision();
     buffers.uploaded_origin = origin;
     buffers.uploaded_terrain_gate = terrain_gate.clone();
@@ -319,23 +278,17 @@ fn upload_sources(
         snapshot.source_uploaded_bytes = uploaded_bytes;
         snapshot.source_buffer_capacity_bytes = buffers.work_items_capacity
             + buffers.visible_work_items_capacity
-            + buffers.choices_capacity
             + buffers.coverage_capacity
             + buffers.surfaces_capacity
-            + buffers.species_capacity;
+            + buffers.types_capacity;
         snapshot.source_pages = scene.scene().pages.len() as u32;
         // CPU allocation metadata is available even when iOS GPU readback is disabled.
-        snapshot.procedural_instance_capacity = PROCEDURAL_INSTANCE_CAPACITY;
-        snapshot.procedural_instance_bytes =
-            u64::from(PROCEDURAL_INSTANCE_CAPACITY) * size_of::<ProceduralInstanceGpu>() as u64;
+        snapshot.instance_capacity = INSTANCE_CAPACITY;
+        snapshot.instance_bytes = u64::from(INSTANCE_CAPACITY) * size_of::<InstanceGpu>() as u64;
         snapshot.source_work_items = buffers.work_item_count;
         snapshot.maximum_candidates_per_item = buffers.maximum_candidate_count;
-        snapshot.topology_instance_capacities = [
-            SINGLE_HIGH_CAPACITY,
-            buffers.low_detail_capacities[0],
-            SPLIT_HIGH_CAPACITY,
-            buffers.low_detail_capacities[1],
-        ];
+        snapshot.bin_capacities = [HIGH_CAPACITY, LOW_CAPACITY];
+        snapshot.high_detail_radius = buffers.high_detail_radius;
     });
     buffers.source_work_items = packed.work_items;
     replaced_buffers > 0
@@ -348,28 +301,29 @@ fn rebind_groups(
     pipeline_cache: &PipelineCache,
     pipelines: &VegetationPipelines,
     candidate_cache: &candidate_cache::CandidateCache,
-    blade_preparation: &blade_preparation::BladePreparation,
 ) {
     buffers.schedule_bind_group = create_schedule_bind_group(
         render_device,
         &pipeline_cache.get_bind_group_layout(&pipelines.schedule_layout),
-        &buffers.work_items,
-        &buffers.visible_work_items,
-        &buffers.candidate_dispatch_args,
-        &buffers.camera,
-        &buffers.gpu_telemetry,
-        &buffers.config,
+        [
+            &buffers.work_items,
+            &buffers.visible_work_items,
+            &buffers.candidate_dispatch_args,
+            &buffers.camera,
+            &buffers.gpu_telemetry,
+            &buffers.config,
+            &buffers.types,
+        ],
     );
     buffers.compute_bind_group = create_compute_bind_group(
         render_device,
         &pipeline_cache.get_bind_group_layout(&pipelines.compute_layout),
         [
             &buffers.work_items,
-            &buffers.choices,
+            &buffers.types,
             &buffers.coverage,
             &buffers.surfaces,
-            &buffers.procedural_instances,
-            &buffers.diagnostic_instances,
+            &buffers.instances,
             &buffers.args,
             &buffers.visible_work_items,
             &buffers.config,
@@ -383,13 +337,9 @@ fn rebind_groups(
     buffers.draw_bind_group = create_draw_bind_group(
         render_device,
         &pipeline_cache.get_bind_group_layout(&pipelines.draw_layout),
-        &buffers.procedural_instances,
-        &buffers.diagnostic_instances,
-        &buffers.species,
+        &buffers.instances,
+        &buffers.types,
         &buffers.camera,
-        &buffers.config,
-        &blade_preparation.arena,
-        &buffers.canopy_boundary.buffer,
     );
 }
 
@@ -398,7 +348,7 @@ fn camera(
     view: &ExtractedView,
     view_size: UVec2,
     inputs: &ViewInputs,
-    far_width_compensation: bool,
+    high_detail_radius: f32,
 ) -> CameraGpu {
     let ViewInputs {
         lighting,
@@ -424,7 +374,6 @@ fn camera(
             view.world_from_view.translation(),
             *view.world_from_view.forward(),
         ),
-        canopy: lighting.canopy.packed(lighting.canopy_origin),
         clip_from_world: clip_from_world.to_cols_array(),
         camera_position: view
             .world_from_view
@@ -435,7 +384,7 @@ fn camera(
             view.clip_from_view.y_axis.y.abs() * view_size.y.max(1) as f32 * 0.5,
             view_size.x.max(1) as f32,
             view_size.y.max(1) as f32,
-            if far_width_compensation { 1.0 } else { 0.0 },
+            high_detail_radius,
         ],
         sun_direction: sun
             .direction_to_light

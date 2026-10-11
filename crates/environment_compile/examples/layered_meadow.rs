@@ -4,7 +4,7 @@
 #[path = "../tests/support/mod.rs"]
 mod support;
 
-use std::{collections::BTreeMap, fmt::Write};
+use std::fmt::Write;
 
 use support::*;
 use yarra_environment_compile::CompilePlan;
@@ -32,27 +32,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .find(|(id, _)| *id == GREEN_SOIL)
                     .map_or(0.0, |(_, v)| f64::from(*v) / 255.0);
                 let ground = mix([151, 111, 67], [66, 118, 72], green);
-                // Competition spends the strongest requested density within each group.
-                // Spatial clump thinning, geometry LOD and render appearance are not evaluated.
-                let mut groups = BTreeMap::<u16, f64>::new();
-                let mut density = 0.0;
-                for field in &cell.vegetation.fields {
-                    let population = plan.catalog().population(field.population).unwrap();
-                    let value = f64::from(population.density_per_square_meter)
-                        * f64::from(field.coverage[z * 16 + x])
-                        / 255.0;
-                    if let Some(group) = population.competition_group {
-                        let requested = groups.entry(group).or_default();
-                        *requested = requested.max(value);
-                    } else {
-                        density += value;
-                    }
-                }
-                density += groups.values().sum::<f64>();
+                // Blades per square metre before clump thinning; geometry LOD and render
+                // appearance are not evaluated.
+                let density: f64 = cell
+                    .vegetation
+                    .fields
+                    .iter()
+                    .map(|field| {
+                        f64::from(plan.catalog().grass(field.grass).unwrap().density)
+                            * f64::from(field.coverage[z * 16 + x])
+                            / 255.0
+                    })
+                    .sum();
                 let grass = mix(
                     [25, 37, 45],
                     [166, 214, 109],
-                    (density / 24.0).clamp(0.0, 1.0),
+                    (density / 48.0).clamp(0.0, 1.0),
                 );
                 for (left, color) in [(32, ground), (576, grass)] {
                     writeln!(
@@ -82,13 +77,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?;
     }
     svg.push_str(r##"<text x="32" y="440" font-size="14" fill="#a9b9c6">Brown: dry ground. Green: meadow ground. The clearing changes both ground and vegetation.</text>
-<text x="32" y="462" font-size="14" fill="#a9b9c6">Dark: no plants. Bright: up to 24 roots/m² before clump thinning. The upper-left hole is unpainted coverage.</text>
+<text x="32" y="462" font-size="14" fill="#a9b9c6">Dark: no grass. Bright: 48 blades/m² or more before clump thinning. The upper-left hole is unpainted coverage.</text>
 </g></svg>"##);
     println!("{svg}");
     eprintln!(
-        "Compiled {} cells, {} population bindings; ground and vegetation came from one layer stack.",
+        "Compiled {} cells, {} grass types; grass grew on the ground the layer stack painted.",
         cells.len(),
-        plan.bindings().len()
+        plan.grass_types().count()
     );
     Ok(())
 }

@@ -2,8 +2,8 @@
 use super::*;
 use crate::environment_paint::preset_controls::{kind_name, preset_selector, quick_controls};
 use environment::{
-    ChannelId, EnvironmentDefinition, Exclusion, GroundTreatment, OutputId, Preset, PresetKind,
-    PresetUse, PresetUseId, SurfaceWeight, VegetationBlend, VegetationTreatment,
+    EnvironmentDefinition, Exclusion, GRASS_CHANNEL, GroundTreatment, OutputId, Preset, PresetKind,
+    PresetUse, PresetUseId, SurfaceWeight,
 };
 
 fn id() -> [u8; 16] {
@@ -22,22 +22,6 @@ pub(crate) fn new_ground(surface: world::TerrainSurfaceId) -> Preset {
                 surface,
                 weight: 1.0,
             }],
-        }),
-    }
-}
-pub(crate) fn new_foliage(assemblage: vegetation::VegetationAssemblageId) -> Preset {
-    Preset {
-        id: PresetId(id()),
-        revision: 1,
-        name: "New foliage".into(),
-        kind: PresetKind::Foliage(VegetationTreatment {
-            id: OutputId(id()),
-            channel: ChannelId([1; 16]),
-            assemblage,
-            blend: VegetationBlend::Replace,
-            strength: 1.0,
-            density: 1.0,
-            seed: 0,
         }),
     }
 }
@@ -65,7 +49,7 @@ pub(crate) fn new_exclusion() -> Preset {
         name: "New exclusion".into(),
         kind: PresetKind::Exclusion(Exclusion {
             id: OutputId(id()),
-            channel: ChannelId([1; 16]),
+            channel: GRASS_CHANNEL,
             strength: 1.0,
         }),
     }
@@ -77,7 +61,6 @@ pub(crate) fn preset_editor(
     editing: &mut PresetId,
     definition: &EnvironmentDefinition,
     project: &ProjectEditorStore,
-    plants: Option<&vegetation::VegetationCatalog>,
     listings: &mut crate::listings::ProjectListings,
     assets: &[world_db::CollectionAssetView],
 ) {
@@ -129,53 +112,15 @@ pub(crate) fn preset_editor(
             }
             ui.add(egui::Slider::new(&mut g.strength, 0.0..=1.0).text("Default influence"));
         }
-        PresetKind::Foliage(v) => {
-            if let Some(plants) = plants {
-                egui::ComboBox::from_id_salt("assemblage")
-                    .selected_text(
-                        plants
-                            .assemblages
-                            .iter()
-                            .find(|a| a.id == v.assemblage)
-                            .map_or("Missing foliage", |a| a.key.as_str()),
-                    )
-                    .show_ui(ui, |ui| {
-                        for a in &plants.assemblages {
-                            ui.selectable_value(&mut v.assemblage, a.id, &a.key);
-                        }
-                    });
-            }
-            ui.horizontal(|ui| {
-                ui.selectable_value(
-                    &mut v.blend,
-                    VegetationBlend::Replace,
-                    "Replace lower grass",
-                );
-                ui.selectable_value(&mut v.blend, VegetationBlend::Add, "Add grass");
-            });
-            ui.add(egui::Slider::new(&mut v.density, 0.0..=1.0).text("Default density"));
-            ui.add(egui::Slider::new(&mut v.strength, 0.0..=1.0).text("Default influence"));
-            ui.horizontal(|ui| {
-                ui.label("Default seed");
-                ui.add(egui::DragValue::new(&mut v.seed));
-            });
-        }
         PresetKind::Exclusion(e) => {
             let mut channels = std::collections::BTreeMap::new();
+            channels.insert(GRASS_CHANNEL, "Grass".to_owned());
             channels.insert(environment::ASSET_CHANNEL, "Asset collections".to_owned());
             for p in &snapshot.presets {
-                match &p.kind {
-                    PresetKind::Foliage(v) => {
-                        channels
-                            .entry(v.channel)
-                            .or_insert_with(|| format!("Foliage · {}", p.name));
-                    }
-                    PresetKind::AssetCollection(c) => {
-                        channels
-                            .entry(c.channel)
-                            .or_insert_with(|| format!("Assets · {}", p.name));
-                    }
-                    _ => {}
+                if let PresetKind::AssetCollection(c) = &p.kind {
+                    channels
+                        .entry(c.channel)
+                        .or_insert_with(|| format!("Assets · {}", p.name));
                 }
             }
             egui::ComboBox::from_id_salt("exclusion_channel")

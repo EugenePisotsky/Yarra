@@ -143,9 +143,9 @@ impl Request {
         if let Some(p) = self.underlay {
             if !matches!(
                 self.library.get(p).map(|p| &p.kind),
-                Some(PresetKind::Foliage(_))
+                Some(PresetKind::Ground(_) | PresetKind::Composition(_))
             ) {
-                return Err("Reference underlay must be a foliage preset".into());
+                return Err("Reference underlay must be a ground or composition preset".into());
             }
             layers.push(layer(80, 0, p));
         }
@@ -279,18 +279,16 @@ impl Request {
             .flat_map(|page| {
                 page.fields.iter().map(|field| {
                     vegetation::candidate_domain(
-                        page,
-                        scene.catalog.population(field.population).unwrap(),
+                        page.origin_xz,
+                        page.size,
+                        scene.catalog.grass(field.grass).unwrap(),
                     )
                     .candidate_count()
                 })
             })
             .fold(0u32, u32::saturating_add);
         if candidates > 250_000 {
-            return Err(
-                "Preview exceeds 250,000 candidates; reduce the patch size or preset density"
-                    .into(),
-            );
+            return Err("Preview exceeds 250,000 candidates; reduce the patch size".into());
         }
         Ok(Product {
             objects: cell.objects,

@@ -1,6 +1,6 @@
 //! A separate, physically scaled road-authoring fixture. Ordinary demo/performance grids stay intact.
 use super::*;
-use environment::{ChannelId, roads::*};
+use environment::roads::*;
 use world_db::{RoadSourceRecord as R, SourceRoad, SourceRoadKnot, SourceRoadSpan};
 pub fn create_road_demo_project(path: &Path) -> Result<()> {
     write_project_database(path, &document())
@@ -34,7 +34,7 @@ pub(super) fn document() -> ProjectDocument {
         revision: 1,
         name: "Worn meadow cart track".into(),
         ground: environment::fixtures::DRY_GROUND,
-        vegetation_channel: ChannelId(stable_id("ground-grass-channel")),
+        vegetation_channel: environment::GRASS_CHANNEL,
         track_spacing: 1.55,
         track_width: 0.65,
         edge_softness: 0.15,

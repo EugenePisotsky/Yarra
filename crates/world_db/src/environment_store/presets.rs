@@ -51,11 +51,8 @@ pub(crate) fn read_library(connection: &Connection) -> Result<PresetLibrary, Wor
 pub(super) fn validate_library_references(
     connection: &Connection,
     library: &PresetLibrary,
-    plants: &VegetationCatalog,
 ) -> Result<(), WorldDbError> {
-    library
-        .validate(plants)
-        .map_err(|e| invalid(e.to_string()))?;
+    library.validate().map_err(|e| invalid(e.to_string()))?;
     for preset in &library.presets {
         if let PresetKind::AssetCollection(c) = &preset.kind {
             for asset in &c.assets {

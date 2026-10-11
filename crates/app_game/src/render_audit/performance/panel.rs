@@ -145,8 +145,8 @@ fn initialize(
         });
         for (tab, note, controls) in [
             (Tab::Features, "Grass Disabled skips its render preparation, compute and draws; source streaming remains. Terrain/object draw switches keep streaming, animation and collision. Sky + haze keeps authored illumination. Cloud Off skips cloud passes; shared material bookkeeping remains. Fog & mist hides ground haze and valley mist; weather fog stays. Ambient particles hides dust motes, seed fluff and falling leaves. Light shafts and sun rays skips the sunbeam passes; the sun's glare stays.", &[Control::Clouds, Control::GrassEnabled, Control::Sky, Control::Bloom, Control::AutoExposure, Control::Fog, Control::Particles, Control::LightShafts, Control::Terrain, Control::Objects, Control::Shadows, Control::ShadowMap, Control::Wind][..]),
-            (Tab::Quality, "Click to cycle. Larger terrain error allows coarser geometry. Object LOD size below 1 selects coarser available assets. Ground contact requirements still apply; grass density changes acceptance and geometry LOD. Lower resolution affects the 3D scene only.", &[Control::Scale, Control::Upscaler, Control::TemporalDebug, Control::Antialiasing, Control::Density, Control::TerrainDetail, Control::ObjectDetail, Control::Near][..]),
-            (Tab::Advanced, "Diagnostic experiments. Compute only hides grass draws but keeps generation; Schedule only omits generation. Draw frozen locks controls. These settings do not change published content.", &[Control::Grass, Control::Scene, Control::Shading, Control::Prepass, Control::Counters, Control::GpuPassTimings, Control::Lock, Control::PageGizmos, Control::TerrainMacro, Control::ReloadCanopy][..]),
+            (Tab::Quality, "Click to cycle. Larger terrain error allows coarser geometry. Object LOD size below 1 selects coarser available assets. Ground contact requirements still apply. Lower resolution affects the 3D scene only.", &[Control::Scale, Control::Upscaler, Control::TemporalDebug, Control::Antialiasing, Control::TerrainDetail, Control::ObjectDetail, Control::Near][..]),
+            (Tab::Advanced, "Diagnostic experiments. Compute only hides grass draws but keeps generation; Schedule only omits generation. Draw frozen locks controls. These settings do not change published content.", &[Control::Grass, Control::Scene, Control::Shading, Control::Prepass, Control::Counters, Control::GpuPassTimings, Control::Lock, Control::PageGizmos, Control::TerrainMacro][..]),
         ] {
             panel.spawn((Page(tab), page_node())).with_children(|page| {
                 page.spawn((Text::new(note), font(12.0)));
@@ -265,7 +265,6 @@ fn capture_finished(In(finished): In<bool>, mut state: ResMut<PanelState>) {
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)] // Disjoint text queries.
 fn refresh(
-    canopy: Option<Res<engine::GroundCanopyTiles>>,
     vegetation: Res<vegetation_render::VegetationDiagnostics>,
     time: Res<Time<Real>>,
     (mut t, pending): (ResMut<Telemetry>, Res<PendingPipelines>),
@@ -375,15 +374,15 @@ fn refresh(
         );
     }
     let grass = vegetation.snapshot();
-    let (ready, total, jobs) = canopy.as_ref().map_or((0, 0, 0), |tiles| tiles.counts());
     let source_info = format!(
-        "Canopy coverage: {ready}/{total} tiles | {jobs} jobs\nSource memory: {:.2} MiB decoded / {:.2} MiB estimated GPU\nGrass: {} source pages | {} work items | {} repacks\nGrass source buffers: {:.2} MiB | dropped: {:?} ({} GPU samples)",
+        "Source memory: {:.2} MiB decoded / {:.2} MiB estimated GPU\nGrass: {} source pages | {} work items | {} repacks\nGrass source buffers: {:.2} MiB | high detail within {:.0} m | dropped: {:?} ({} GPU samples)",
         streaming.decoded_bytes as f64 / 1048576.0,
         streaming.gpu_bytes_estimate as f64 / 1048576.0,
         grass.source_pages,
         grass.source_work_items,
         grass.source_repacks,
         grass.source_buffer_capacity_bytes as f64 / 1048576.0,
+        grass.high_detail_radius,
         grass.capacity_dropped_instances,
         grass.gpu_samples
     );

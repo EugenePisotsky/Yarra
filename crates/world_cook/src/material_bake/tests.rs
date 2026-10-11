@@ -506,6 +506,7 @@ fn road_composite_uses_final_ground_weights_and_keeps_relief_out_of_albedo() {
             8.,
             &page,
             &resources,
+            None,
             inputs.get(&resources.texture_set).unwrap(),
         )
         .unwrap();
@@ -526,6 +527,7 @@ fn road_composite_uses_final_ground_weights_and_keeps_relief_out_of_albedo() {
             8.,
             &page,
             &resources,
+            None,
             inputs.get(&resources.texture_set).unwrap(),
         )
         .unwrap();
@@ -585,7 +587,9 @@ fn many_surface_pages_blend_from_both_weight_pages() {
     layers.sort_by_key(|s| s.layer);
     let ids: Vec<_> = layers.iter().take(6).map(|s| s.surface.id).collect();
     assert_eq!(ids.len(), 6);
-    let mean = |surfaces: &[world::TerrainSurfaceId], weights: &[[u8; 4]]| {
+    let tinted = |surfaces: &[world::TerrainSurfaceId],
+                  weights: &[[u8; 4]],
+                  grass: Option<&vegetation::VegetationCatalog>| {
         let mut page = page.clone();
         page.surfaces = surfaces.to_vec();
         page.weight_pages = weights
@@ -596,12 +600,14 @@ fn many_surface_pages_blend_from_both_weight_pages() {
             })
             .collect();
         let key = TerrainMaterialKey(TerrainNodeKey::leaf(p.key.space, p.key.cell));
-        let core = evaluate::leaf(key, 8., &page, &resources, inputs).unwrap();
+        let core = evaluate::leaf(key, 8., &page, &resources, grass, inputs).unwrap();
         let sum = core.pixels.iter().fold([0.; 3], |a, p| {
             [a[0] + p.color[0], a[1] + p.color[1], a[2] + p.color[2]]
         });
         sum.map(|v| v / core.pixels.len() as f32)
     };
+    let mean =
+        |surfaces: &[world::TerrainSurfaceId], weights: &[[u8; 4]]| tinted(surfaces, weights, None);
     let close = |a: [f32; 3], b: [f32; 3]| a.iter().zip(b).all(|(a, b)| (a - b).abs() < 1e-3);
     // The sixth surface lives in the second weight page.
     let only_sixth = mean(&ids, &[[0, 0, 0, 0], [0, 255, 0, 0]]);
@@ -621,6 +627,24 @@ fn many_surface_pages_blend_from_both_weight_pages() {
         thirds,
         std::array::from_fn(|c| (green[c] * 2. + brown[c]) / 3.)
     ));
+    // Grass tints its surface toward the field's colour by how fully it covers it; other
+    // surfaces keep theirs.
+    let mut catalog = vegetation::fixtures::reference_catalog();
+    catalog.surfaces = vec![vegetation::SurfaceGrass {
+        surface: ids[0].0,
+        grass: vec![vegetation::GrassAmount {
+            grass: catalog.grass[0].id(),
+            amount: 0.5,
+        }],
+    }];
+    let field = catalog.cover(ids[0].0);
+    assert!(field.amount > 0.4 && field.amount <= 0.5);
+    let meadow = tinted(&ids[..1], &[], Some(&catalog));
+    for c in 0..3 {
+        let tint = (meadow[c] - green[c]) / (field.color[c] - green[c]);
+        assert!((tint - field.amount * 0.85).abs() < 0.03, "{tint}");
+    }
+    assert!(close(tinted(&ids[1..2], &[], Some(&catalog)), brown));
 }
 
 #[test]

@@ -9,10 +9,7 @@ use super::{
         DRAW_INDEXED_ARGS_WORD_COUNT, GPU_TELEMETRY_WORD_COUNT, TELEMETRY_READBACK_SIZE,
         WORKGROUP_SIZE,
     },
-    topology::{
-        SINGLE_HIGH_INDEX_COUNT, SINGLE_LOW_INDEX_COUNT, SPLIT_HIGH_INDEX_COUNT,
-        SPLIT_LOW_INDEX_COUNT,
-    },
+    topology::{HIGH_INDEX_COUNT, HIGH_ROWS, LOW_INDEX_COUNT, LOW_ROWS},
 };
 #[cfg(not(target_os = "ios"))]
 use crate::{VegetationDiagnostics, VegetationSceneState, VegetationSettings};
@@ -104,31 +101,24 @@ pub(super) fn begin_telemetry_readback(
                         words[args_offset + bin * DRAW_INDEXED_ARGS_WORD_COUNT as usize + 1]
                     });
                     diagnostics.update(|snapshot| {
-                        snapshot.prepared_blades = words[11];
-                        snapshot.preparation_fallback_blades = words[12];
                         snapshot.scheduled_work_items = words[0];
                         snapshot.dispatched_candidate_lanes = words[10]
                             .saturating_mul(WORKGROUP_SIZE)
                             .saturating_mul(words[0]);
                         snapshot.candidate_evaluations = words[1];
-                        snapshot.eligible_instances.copy_from_slice(&words[2..6]);
+                        snapshot.eligible_instances.copy_from_slice(&words[2..4]);
                         snapshot
                             .capacity_dropped_instances
-                            .copy_from_slice(&words[6..10]);
+                            .copy_from_slice(&words[6..8]);
                         snapshot.emitted_instances = emitted_instances;
                         snapshot.submitted_indices = emitted_instances
                             .into_iter()
-                            .zip([
-                                SINGLE_HIGH_INDEX_COUNT,
-                                SINGLE_LOW_INDEX_COUNT,
-                                SPLIT_HIGH_INDEX_COUNT,
-                                SPLIT_LOW_INDEX_COUNT,
-                            ])
+                            .zip([HIGH_INDEX_COUNT, LOW_INDEX_COUNT])
                             .map(|(instances, indices)| u64::from(instances) * u64::from(indices))
                             .sum();
-                        snapshot.topology_vertex_inputs = emitted_instances
+                        snapshot.blade_vertices = emitted_instances
                             .into_iter()
-                            .zip([18_u32, 8, 15, 7])
+                            .zip([2 * HIGH_ROWS + 1, 2 * LOW_ROWS + 1])
                             .map(|(instances, vertices)| u64::from(instances) * u64::from(vertices))
                             .sum();
                         snapshot.gpu_samples = snapshot.gpu_samples.saturating_add(1);

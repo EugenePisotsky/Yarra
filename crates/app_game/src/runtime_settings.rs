@@ -8,38 +8,16 @@ use crate::launch::LaunchOptions;
 use bevy::{core_pipeline::prepass::DepthPrepass, light::ShadowFilteringMethod, prelude::*};
 use engine::{GameInputEnabled, GameplaySystems, WorldViewCamera};
 use terrain_render::{TerrainMaterial, TerrainShadingMode, composite::TerrainCompositeMaterial};
-use vegetation_render::{
-    VegetationLightingMode, VegetationProfileMode, VegetationSettings, VegetationWind,
-};
+use vegetation_render::{VegetationProfileMode, VegetationSettings, VegetationWind};
 
 /// Launch options applied once to the resources they configure, before [`RuntimeSettingsPlugin`]
 /// reads them. Settings F1 also changes (counters) are written by
 /// [`apply_settings`] alone.
 pub(crate) fn apply_launch_options(app: &mut App) -> Result<(), String> {
     let options = app.world().resource::<LaunchOptions>().clone();
-    let canopy = match vegetation::CanopyShading::load(&options.canopy_path()) {
-        Ok(look) => look,
-        Err(error) if options.canopy_path.is_some() => return Err(error),
-        Err(error) => {
-            eprintln!("Canopy look: {error}; using defaults");
-            default()
-        }
-    };
-    let world = app.world_mut();
-    world
-        .resource_mut::<vegetation_render::VegetationLighting>()
-        .canopy = canopy;
-    {
-        let mut grass = world.resource_mut::<VegetationSettings>();
-        grass.density_mode = options.density;
-        grass.candidate_cache_enabled &= !options.candidate_reference;
-        grass.early_rejection &= !options.placement_reference;
-    }
-    if options.vertex_reference {
-        world
-            .resource_mut::<vegetation_render::VegetationBladePreparation>()
-            .enabled = false;
-    }
+    app.world_mut()
+        .resource_mut::<VegetationSettings>()
+        .candidate_cache_enabled &= !options.candidate_reference;
     app.insert_resource(options.clouds);
     if options.msaa_store_reference {
         app.add_systems(PostStartup, preserve_msaa_color);
@@ -112,15 +90,10 @@ impl Plugin for RuntimeSettingsPlugin {
 fn initialize(
     mut settings: ResMut<RuntimeSettings>,
     clouds: Res<engine::CloudQuality>,
-    grass: Res<VegetationSettings>,
-    lighting: Res<vegetation_render::VegetationLighting>,
     variation: Res<terrain_render::TerrainMacroVariation>,
 ) {
-    settings.canopy = lighting.canopy;
     settings.terrain_macro = *variation;
     settings.clouds = *clouds;
-    settings.density = grass.density_mode;
-    settings.lighting = grass.lighting_mode;
 }
 
 pub(crate) fn apply_input_lock(
@@ -196,13 +169,10 @@ pub(crate) struct RuntimeSettings {
     pub(crate) light_shafts: bool,
     pub(crate) hide_terrain: bool,
     pub(crate) hide_objects: bool,
-    pub(crate) density: vegetation_render::VegetationDensityMode,
     pub(crate) terrain_detail: usize,
     pub(crate) page_gizmos: bool,
     pub(crate) terrain_macro: terrain_render::TerrainMacroVariation,
-    pub(crate) canopy: vegetation::CanopyShading,
     pub(crate) object_detail: usize,
-    pub(crate) lighting: VegetationLightingMode,
 }
 
 impl Default for RuntimeSettings {
@@ -239,13 +209,10 @@ impl Default for RuntimeSettings {
             light_shafts: true,
             hide_terrain: false,
             hide_objects: false,
-            density: vegetation_render::VegetationDensityMode::Balanced,
             terrain_detail: 1,
             page_gizmos: false,
             terrain_macro: default(),
-            canopy: default(),
             object_detail: 1,
-            lighting: VegetationLightingMode::RoundedGloss,
         }
     }
 }
@@ -305,13 +272,9 @@ fn sync_render_settings(
 
 pub(crate) fn apply_appearance(
     settings: Res<RuntimeSettings>,
-    mut lighting: ResMut<vegetation_render::VegetationLighting>,
     mut variation: ResMut<terrain_render::TerrainMacroVariation>,
 ) {
     if settings.is_changed() {
-        if lighting.canopy != settings.canopy {
-            lighting.canopy = settings.canopy;
-        }
         variation.set_if_neq(settings.terrain_macro);
     }
 }
@@ -348,13 +311,7 @@ fn apply_settings(
     atmosphere.light_shafts = s.light_shafts;
     lod.refine_pixels = TERRAIN_ERROR_PIXELS[s.terrain_detail];
     lod.collapse_pixels = lod.refine_pixels * 0.5;
-    grass.density_mode = s.density;
     grass.profile_mode = s.grass_mode();
-    grass.lighting_mode = if s.unlit {
-        VegetationLightingMode::UnlitDiagnostic
-    } else {
-        s.lighting
-    };
     grass.gpu_counters_enabled = s.counters;
     wind.enabled = s.wind;
     atmosphere.shadows = s.shadows != 2;

@@ -69,6 +69,7 @@ pub(super) fn cook(
             store: &store,
             cache: cache.as_ref(),
             library,
+            grass: store.reader().manifest().vegetation_catalog.as_ref(),
             size: space.cell_size,
             first,
             minimum_level,
@@ -109,6 +110,8 @@ struct Bake<'a> {
     store: &'a TerrainMaterialCookStore,
     cache: Option<&'a CoreCache>,
     library: &'a TerrainBakeLibrary,
+    /// The grass whose fields tint the ground.
+    grass: Option<&'a vegetation::VegetationCatalog>,
     size: f32,
     /// The level whose cores are evaluated from leaves; finer cores are never staged.
     first: u8,
@@ -233,6 +236,7 @@ impl Bake<'_> {
                 self.store,
                 self.size,
                 self.library,
+                self.grass,
                 self.cache,
                 batch,
                 stats,
@@ -387,6 +391,7 @@ fn group_cores(
     store: &TerrainMaterialCookStore,
     size: f32,
     library: &TerrainBakeLibrary,
+    grass: Option<&vegetation::VegetationCatalog>,
     cache: Option<&CoreCache>,
     batch: &[TerrainMaterialKey],
     stats: &mut TerrainMaterialBakeStats,
@@ -409,7 +414,7 @@ fn group_cores(
     let leaves: Vec<_> = groups.iter().flat_map(|(_, inputs)| inputs).collect();
     let leaf_fingerprints = parallel::map(&leaves, |(key, page, resources)| {
         let inputs = library.get(&resources.texture_set)?;
-        Ok(LeafPlan::new(*key, size, page, resources, inputs)?.fingerprint)
+        Ok(LeafPlan::new(*key, size, page, resources, grass, inputs)?.fingerprint)
     })
     .into_iter()
     .collect::<Result<Vec<_>>>()?;
@@ -444,6 +449,7 @@ fn group_cores(
             size,
             page,
             resources,
+            grass,
             library.get(&resources.texture_set)?,
         )
     });

@@ -7207,7 +7207,6 @@ dependencies = [
  "blake3",
  "serde",
  "thiserror 2.0.20",
- "yarra-vegetation",
  "yarra-world",
 ]
 

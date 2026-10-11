@@ -58,7 +58,7 @@ fn live_road_edit_move_save_undo_and_cancel() {
                 .layer,
         })
         .collect();
-    let catalog = environment_compile::merge_runtime_catalogs(&[&plan]).unwrap();
+    let catalog = plan.catalog().clone();
     let mut job = Input {
         revision: 1,
         context: (space, 1, 1, 1, report.manifest.generation_id.clone()),

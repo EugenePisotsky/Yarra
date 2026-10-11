@@ -145,8 +145,6 @@ impl<P: PhaseItem> RenderCommand<P> for DrawVegetationIndirect {
         pass.set_index_buffer(buffers.topology_indices.slice(..), IndexFormat::Uint16);
         pass.draw_indexed_indirect(&buffers.args, 0);
         pass.draw_indexed_indirect(&buffers.args, 20);
-        pass.draw_indexed_indirect(&buffers.args, 40);
-        pass.draw_indexed_indirect(&buffers.args, 60);
         draw_span.end(pass);
         RenderCommandResult::Success
     }

@@ -19,11 +19,11 @@ from grass_profile_report import status, write_report
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULTS = dict(size='game', window='fullscreen', fps=60, msaa=4, warmup=20, seconds=90,
-                view='low-walk', density='balanced', grass='full', counters=False,
+                view='low-walk', grass='full', counters=False,
                 native_pacing=False, prepass=False)
 VIEWS = ['low-walk', 'grass-close', 'grass-away', 'grass-follow', 'grass-follow-far',
          'grass-zoom', 'grass-overhead', 'grass-top-down', 'grass-stream', 'grass-soak']
-INPUTS = {'binary', 'world_db', 'shaders', 'canopy', 'vertex_reference', 'candidate_reference', 'placement_reference', 'terrain_reference', 'prepared_blades'}
+INPUTS = {'binary', 'world_db', 'shaders', 'candidate_reference'}
 
 
 def save(path, value):
@@ -59,18 +59,13 @@ def validate(settings):
             raise ValueError(f'{key} must be in {low}..{high}')
     if type(settings['msaa']) is not int or settings['msaa'] not in [1, 2, 4] or settings['view'] not in VIEWS:
         raise ValueError('Invalid MSAA or view')
-    if settings['density'] not in ['balanced', 'full', 'authored'] or settings['grass'] not in ['full', 'off']:
-        raise ValueError('Invalid density or grass mode')
+    if settings['grass'] not in ['full', 'off']:
+        raise ValueError('Invalid grass mode')
     for key in ['counters', 'native_pacing', 'prepass',
                 *[k for k in INPUTS if k.endswith('_reference')]]:
         if key in settings and not isinstance(settings[key], bool):
             raise ValueError(f'{key} must be boolean')
     for key in INPUTS - {k for k in INPUTS if k.endswith('_reference')}:
-        if key == 'prepared_blades':
-            value = settings.get(key)
-            if value is not None and (type(value) is not int or not 32768 <= value <= 524288):
-                raise ValueError('prepared_blades must be an integer in 32768..524288')
-            continue
         if settings.get(key) is not None and not isinstance(settings[key], str):
             raise ValueError(f'{key} must be a path string')
 
@@ -90,10 +85,8 @@ def snapshot(destination, settings):
         for p in shader_dir.glob('*.wesl'):
             shutil.copy2(p, assets / 'shaders' / p.name)
     binary = source(settings.get('binary'), 'target/release/yarra-app-game')
-    canopy = source(settings.get('canopy'), 'content/vegetation/canopy-look.ron')
     database = source(settings.get('world_db'), 'assets/generated/world.runtime.sqlite')
     shutil.copy2(binary, destination / 'game')
-    shutil.copy2(canopy, destination / 'canopy.ron')
     # SQLite backup includes a committed WAL, unlike copying only the main file.
     with sqlite3.connect(database.as_uri() + '?mode=ro', uri=True) as src:
         with sqlite3.connect(destination / 'runtime.sqlite') as dst:
@@ -101,10 +94,9 @@ def snapshot(destination, settings):
     metadata = {
         'binary_sha256': digest(destination / 'game'),
         'database_sha256': digest(destination / 'runtime.sqlite'),
-        'canopy_sha256': digest(destination / 'canopy.ron'),
         'shader_sha256': {p.name: digest(p) for p in sorted((assets / 'shaders').glob('*.wesl'))},
-        'original_sources': {'binary': str(binary), 'database': str(database), 'canopy': str(canopy)},
-        'asset_scope': 'Binary, DB, shaders and canopy copied; other assets linked to workspace and must remain unchanged',
+        'original_sources': {'binary': str(binary), 'database': str(database)},
+        'asset_scope': 'Binary, DB and shaders copied; other assets linked to workspace and must remain unchanged',
     }
     save(destination / 'inputs.json', metadata)
     return metadata
@@ -112,25 +104,19 @@ def snapshot(destination, settings):
 
 def command(inputs, settings):
     result = [str(inputs / 'game'), '--world-db', str(inputs / 'runtime.sqlite'),
-              '--canopy-look', str(inputs / 'canopy.ron'), '--render-repro', settings['view'],
+              '--render-repro', settings['view'],
               '--profile-seconds', str(settings['seconds']), '--profile-warmup', str(settings['warmup']),
               '--profile-size', settings['size'], '--profile-fps', str(settings['fps']),
               '--profile-window', settings['window'],
-              '--profile-msaa', str(settings['msaa']), '--profile-grass', settings['grass'],
-              '--grass-density', settings['density']]
-    if settings.get('prepared_blades') is not None:
-        result += ['--grass-prepared-blades', str(settings['prepared_blades'])]
+              '--profile-msaa', str(settings['msaa']), '--profile-grass', settings['grass']]
     if settings['counters']:
         result.append('--grass-counters')
     for key, flag in [('native_pacing', '--profile-native-pacing'),
                       ('prepass', '--render-prepass')]:
         if settings[key]:
             result.append(flag)
-    for option in ['vertex', 'candidate', 'placement']:
-        if settings.get(f'{option}_reference'):
-            result.append(f'--grass-{option}-reference')
-    if settings.get('terrain_reference'):
-        result.append('--terrain-reference')
+    if settings.get('candidate_reference'):
+        result.append('--grass-candidate-reference')
     return result
 
 
@@ -364,8 +350,6 @@ def main():
                     p.add_argument('--' + key.replace('_', '-'), type=type(default), default=default)
             for key in sorted(INPUTS):
                 options = {'action': 'store_true'} if key.endswith('_reference') else {'action': 'store'}
-                if key == 'prepared_blades':
-                    options['type'] = int
                 p.add_argument('--' + key.replace('_', '-'), **options)
     args = parser.parse_args()
     if args.action == 'report':

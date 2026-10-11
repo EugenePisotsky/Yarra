@@ -176,31 +176,6 @@ pub(super) fn receive_project_results(
                     outcome,
                 });
             }
-            Ok(ProjectResult::SaveVegetationCatalog {
-                request_id,
-                replacement,
-                result,
-            }) => {
-                if store.vegetation_save_in_flight == Some(request_id) {
-                    store.vegetation_save_in_flight = None;
-                }
-                let outcome = match result {
-                    Ok(VegetationCatalogWriteResult::Committed) => {
-                        store.source_epoch = store.source_epoch.wrapping_add(1).max(1);
-                        store.vegetation_catalog = Some(replacement.clone());
-                        VegetationSaveOutcome::Committed(replacement)
-                    }
-                    Ok(VegetationCatalogWriteResult::Conflict { actual }) => {
-                        store.vegetation_catalog = actual.clone();
-                        VegetationSaveOutcome::Conflict { actual }
-                    }
-                    Err(error) => VegetationSaveOutcome::Failed(error),
-                };
-                store.vegetation_save_completion = Some(VegetationSaveCompletion {
-                    request_id,
-                    outcome,
-                });
-            }
             Err(TryRecvError::Empty) => break,
             Err(TryRecvError::Disconnected) => {
                 store.phase = ProjectStorePhase::Failed("project database worker stopped".into());

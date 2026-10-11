@@ -114,14 +114,14 @@ One mode holds the camera and ends the run: play, a repro route (`--render-repro
 
 | Purpose | Controls |
 | --- | --- |
-| Scene and presentation | `--world-db FILE`, `--start-view FILE`, `--story DIR`, `--fps 0\|15..240`, `--resolution-scale 1\|0.75\|0.5\|0.33`, `--time HH:MM`, `--day-clock on\|off`, `--weather auto\|authored\|clear\|scattered\|overcast\|rain\|storm`, `--upscaler auto\|linear\|metalfx-spatial\|metalfx-temporal`, `--cloud-quality off\|balanced\|high`, `--grass-density balanced\|full\|authored`, `--tree-shadow-lod 0..2`, `--canopy-look FILE` |
+| Scene and presentation | `--world-db FILE`, `--start-view FILE`, `--story DIR`, `--fps 0\|15..240`, `--resolution-scale 1\|0.75\|0.5\|0.33`, `--time HH:MM`, `--day-clock on\|off`, `--weather auto\|authored\|clear\|scattered\|overcast\|rain\|storm`, `--upscaler auto\|linear\|metalfx-spatial\|metalfx-temporal`, `--cloud-quality off\|balanced\|high`, `--tree-shadow-lod 0..2` |
 | Panel and logging | `--diagnostics off\|panel\|full`, `--performance-open`, `--render-audit`, `--render-console`, `--timing-log`, `--gpu-timing-detail`, `--gpu-timing-off`, `--metalfx-timing-log`, `--grass-counters` |
 | Scripted routes | `--render-repro NAME`, `--render-frames N`, `--render-snapshot PATH`, `--render-snapshot-frames N,N`, `--render-prepass`, `--render-frame-clock`, `--render-temporal-view motion\|depth`, `--render-ui-off` |
 | Captures and checks | `--metal-capture PATH.gputrace`, `--streaming-smoke` |
 | Timed profile | `--profile-seconds 2..3600`, `--profile-warmup 1..600`, `--profile-size game\|WIDTHxHEIGHT`, `--profile-surface WIDTHxHEIGHT`, `--profile-window fullscreen\|windowed`, `--profile-fps 0\|15..240`, `--profile-native-pacing`, `--profile-msaa 1\|2\|4`, `--profile-grass full\|off`, `--profile-objects on\|off`, `--profile-terrain on\|off`, `--profile-bloom on\|off`, `--profile-auto-exposure on\|off`, `--profile-fog on\|off`, `--profile-particles on\|off`, `--profile-shafts on\|off`, `--profile-temporal-bypass`, `--profile-diagnostic` |
 | Look captures | `--look-capture DIR`, `--look-variants LIST`, `--look-settle SECONDS` |
 | LOD lab | `--lod-lab PACK/ASSET`, `--lod-lab-stand ASSET`, `--lod-lab-stand-count N`, `--lod-lab-spacing METRES`, `--lod-lab-capture DIR`, `--lod-lab-screenshot FILE`, `--lod-lab-yaws DEGREES,...`, `--lod-lab-scale 0.25..4`, `--lod-lab-pitch DEGREES`, `--lod-lab-distances METRES,...`, `--lod-lab-settle FRAMES` |
-| Grass references | `--grass-vertex-reference`, `--grass-placement-reference`, `--grass-candidate-reference`, `--grass-prepared-blades 32768..524288` |
+| Grass references | `--grass-candidate-reference` |
 | Terrain, output and pacing references | `--terrain-near-off`, `--msaa-store-reference`, `--temporal-standard-output`, `--frame-pacing-timer` |
 | Input and demo controls | `--trace-camera-input`, `--debug-world-switch` |
 

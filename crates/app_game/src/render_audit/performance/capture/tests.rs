@@ -239,7 +239,6 @@ fn restore_and_export_use_the_captured_configuration() {
         let mut settings = app.world_mut().resource_mut::<RuntimeSettings>();
         settings.hide_objects = true;
         settings.clouds = engine::CloudQuality::Off;
-        settings.canopy.strength = 0.123;
         settings.terrain_macro = settings.terrain_macro.toggled();
         settings.page_gizmos = true;
     }
@@ -262,7 +261,6 @@ fn restore_and_export_use_the_captured_configuration() {
         .as_ref()
         .unwrap()
         .settings;
-    assert_eq!(settings.canopy, captured.canopy);
     assert_eq!(settings.terrain_macro, captured.terrain_macro);
     assert_eq!(settings.page_gizmos, captured.page_gizmos);
     assert_eq!(

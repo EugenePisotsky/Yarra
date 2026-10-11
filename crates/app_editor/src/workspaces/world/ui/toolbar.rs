@@ -9,7 +9,6 @@ use crate::{
     saving::EditorSaveCoordinator,
     shell::EditorUiFrame,
     tools::{EditorToolRegistry, OBJECT_TOOL},
-    vegetation_authoring::VegetationAuthoringState,
     workspaces::{EditorWorkspace, presets::PresetAuthoringState},
 };
 use bevy::{
@@ -23,7 +22,6 @@ pub(crate) fn world_toolbar(
     mut frame: ResMut<EditorUiFrame>,
     presets: Res<PresetAuthoringState>,
     paint: Res<EnvironmentPaintState>,
-    vegetation: Res<VegetationAuthoringState>,
     publication: Res<RuntimePublicationState>,
     project: Res<ProjectEditorStore>,
     selection: Res<EditorSelection>,
@@ -41,9 +39,7 @@ pub(crate) fn world_toolbar(
     egui::Panel::top("editor_world_toolbar").show(viewport_ui, |ui| {
         if presets.dirty() {ui.colored_label(egui::Color32::YELLOW,"An unapplied preset draft is waiting in Presets. Apply or discard it before saving.");}
         ui.horizontal(|ui| {
-            let remaining_changes = objects.dirty_count()
-                + dense_domains.dirty_count()
-                + vegetation.dirty_count();
+            let remaining_changes = objects.dirty_count() + dense_domains.dirty_count();
             let has_dirty_source = remaining_changes > 0;
             let source_action_available = !paint.has_unapplied_changes() && !presets.dirty() && !save.active()
                 && !project.save_in_flight()
@@ -51,10 +47,8 @@ pub(crate) fn world_toolbar(
                 && !dense_domains.saving()
                 && !dense_domains.gesture_active
                 && dense_domains.atmospheres.gesture.is_none()
-                && !vegetation.saving()
                 && !objects.has_any_conflict()
                 && !dense_domains.has_any_conflict()
-                && !vegetation.has_conflict()
                 && !publication.active()
                 && project.write_error().is_none();
             let can_save = has_dirty_source && source_action_available;
@@ -94,10 +88,8 @@ pub(crate) fn world_toolbar(
                         && !dense_domains.saving()
                         && !dense_domains.gesture_active
                         && dense_domains.atmospheres.gesture.is_none()
-                        && !vegetation.saving()
-                        && !objects.has_any_conflict()
-                        && !dense_domains.has_any_conflict()
-                        && !vegetation.has_conflict(),
+                                && !objects.has_any_conflict()
+                        && !dense_domains.has_any_conflict(),
                     egui::Button::new("Undo"),
                 )
                 .on_hover_text("Undo the last command (Cmd+Z)")
@@ -117,10 +109,8 @@ pub(crate) fn world_toolbar(
                         && !dense_domains.saving()
                         && !dense_domains.gesture_active
                         && dense_domains.atmospheres.gesture.is_none()
-                        && !vegetation.saving()
-                        && !objects.has_any_conflict()
-                        && !dense_domains.has_any_conflict()
-                        && !vegetation.has_conflict(),
+                                && !objects.has_any_conflict()
+                        && !dense_domains.has_any_conflict(),
                     egui::Button::new("Redo"),
                 )
                 .on_hover_text("Redo the last command (Cmd+Shift+Z)")
@@ -156,7 +146,6 @@ pub(crate) fn world_toolbar(
                 || project.save_in_flight()
                 || objects.saving()
                 || dense_domains.saving()
-                || vegetation.saving()
             {
                 ui.separator();
                 ui.spinner();
@@ -184,14 +173,8 @@ pub(crate) fn world_toolbar(
                     egui::Color32::YELLOW,
                     format!("{} environment change(s) unsaved", dense_domains.dirty_count()),
                 );
-            } else if vegetation.dirty_count() > 0 {
-                ui.separator();
-                ui.colored_label(egui::Color32::YELLOW, "Vegetation catalog unsaved");
             }
-            if objects.has_any_conflict()
-                || dense_domains.has_any_conflict()
-                || vegetation.has_conflict()
-            {
+            if objects.has_any_conflict() || dense_domains.has_any_conflict() {
                 ui.separator();
                 ui.colored_label(egui::Color32::LIGHT_RED, "Source conflict");
             }

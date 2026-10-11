@@ -1,11 +1,11 @@
-//! Bevy/WGPU rendering of procedural grass and ground cover.
+//! Bevy/WGPU rendering of procedural grass, after Ghost of Tsushima's.
 //!
-//! The renderer schedules resident population fields on the GPU, classifies each candidate once,
-//! emits compact instances into bounded topology/LOD bins, finalizes indexed indirect arguments,
-//! and exposes non-blocking workload diagnostics. Environment lighting and directional-shadow
-//! reception use Bevy's view data. A shared analytic wind field deforms the procedural curves;
-//! grass casting and additional representation families build on these contracts without depending
-//! on the deleted ground-cover renderer.
+//! The renderer schedules resident grass fields on the GPU, places blades on jittered lattices
+//! gathered into Voronoi clumps, classifies each candidate once, emits compact instances into
+//! high- and low-detail bins, finalizes indexed indirect arguments, and exposes non-blocking
+//! workload diagnostics. The vertex shader builds each blade as a cubic Bézier bent by the shared
+//! wind field; lighting uses rounded normals, clump-normal gloss and translucency, Bevy's view
+//! data and directional shadows.
 
 use bevy::{
     pbr::MeshPipelineSystems,
@@ -17,7 +17,6 @@ use bevy::{
     transform::TransformSystems,
 };
 
-pub mod canopy_coverage;
 mod diagnostics;
 mod environment;
 mod renderer;
@@ -34,11 +33,7 @@ pub use scene_state::{
     VegetationView, VegetationViewDisabled,
 };
 use scene_state::{attach_default_views, maintain_draw_entity};
-pub use settings::{
-    VegetationBladePreparation, VegetationDensityMode, VegetationDiagnosticMode,
-    VegetationLightingMode, VegetationPreparationCapacity, VegetationProfileMode,
-    VegetationSettings,
-};
+pub use settings::{VegetationProfileMode, VegetationSettings};
 
 pub const PROCEDURAL_DISTANCE_METERS: f32 = 96.0;
 
@@ -51,8 +46,6 @@ pub struct VegetationRenderPlugin;
 
 impl Plugin for VegetationRenderPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<VegetationPreparationCapacity>();
-        let capacity = *app.world().resource::<VegetationPreparationCapacity>();
         let diagnostics = VegetationDiagnostics::default();
         app.insert_resource(diagnostics.clone());
         app.add_plugins((
@@ -63,7 +56,6 @@ impl Plugin for VegetationRenderPlugin {
             ExtractResourcePlugin::<VegetationLodFocus>::default(),
             ExtractResourcePlugin::<VegetationRenderOrigin>::default(),
             ExtractResourcePlugin::<VegetationTerrainGate>::default(),
-            ExtractResourcePlugin::<VegetationBladePreparation>::default(),
             ExtractResourcePlugin::<VegetationSun>::default(),
             ExtractResourcePlugin::<VegetationAmbientGain>::default(),
             ExtractComponentPlugin::<VegetationView>::default(),
@@ -75,7 +67,6 @@ impl Plugin for VegetationRenderPlugin {
         .init_resource::<VegetationLodFocus>()
         .init_resource::<VegetationRenderOrigin>()
         .init_resource::<VegetationTerrainGate>()
-        .init_resource::<VegetationBladePreparation>()
         .init_resource::<VegetationSun>()
         .init_resource::<VegetationAmbientGain>()
         .add_systems(Update, advance_vegetation_wind)
@@ -88,9 +79,7 @@ impl Plugin for VegetationRenderPlugin {
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
         };
-        render_app
-            .insert_resource(diagnostics)
-            .insert_resource(capacity);
+        render_app.insert_resource(diagnostics);
         render_app.add_systems(
             RenderStartup,
             renderer::initialize.after(MeshPipelineSystems),

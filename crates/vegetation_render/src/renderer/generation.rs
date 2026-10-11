@@ -25,8 +25,7 @@ pub(super) struct GenerationInputs {
 impl GenerationInputs {
     pub(super) fn new(source_revision: u64, mut camera: CameraGpu, config: ConfigGpu) -> Self {
         // Placement uses wind strength for conservative bounds, but wind phase is evaluated
-        // only by blade preparation/drawing. Animate existing blades without rebuilding them.
-        camera.wind[3] = 0.0;
+        // only by drawing. Animate existing blades without rebuilding them.
         camera = camera.geometry_cache_key();
         Self {
             source_revision,
@@ -87,7 +86,6 @@ pub(super) fn generate(
         return;
     }
     buffers.last_generation = None;
-    buffers.generation_serial = buffers.generation_serial.wrapping_add(1);
     render_context
         .command_encoder()
         .clear_buffer(&buffers.args, 0, None);
@@ -157,7 +155,6 @@ mod tests {
         let config = ConfigGpu::zeroed();
         let baseline = GenerationInputs::new(1, camera, config);
         let mut shaded = camera;
-        shaded.canopy = vegetation::CanopyShading::default_enabled().packed([32.0, -64.0]);
         shaded.sun_direction = [0.2, 0.8, 0.3, 1.0];
         shaded.sun_radiance = [20.0, 18.0, 15.0, 0.0];
         shaded.ambient_radiance = [0.1, 0.2, 0.3, 0.0];
@@ -181,9 +178,6 @@ mod tests {
         assert!(baseline != GenerationInputs::new(1, stronger_wind, config));
         assert!(baseline != GenerationInputs::new(2, camera, config));
         let mut changed_config = config;
-        changed_config.values[1] = 1;
-        assert!(baseline != GenerationInputs::new(1, camera, changed_config));
-        changed_config = config;
         changed_config.workload[1] = 1;
         assert!(baseline != GenerationInputs::new(1, camera, changed_config));
 

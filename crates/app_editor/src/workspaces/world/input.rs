@@ -7,7 +7,6 @@ use crate::{
     saving::EditorSaveCoordinator,
     shell::EditorInputCapture,
     tools::{EditorToolRegistry, OBJECT_TOOL},
-    vegetation_authoring::VegetationAuthoringState,
     workspaces::{
         EditorWorkspace,
         world::{
@@ -47,7 +46,6 @@ pub(crate) fn handle_editor_shortcuts(
     mut selection: ResMut<EditorSelection>,
     mut objects: ResMut<EditorObjectWorkingSet>,
     mut dense_domains: ResMut<SourceWorkingSets>,
-    vegetation: Res<VegetationAuthoringState>,
     mut history: ResMut<EditorHistory>,
     publication: Res<RuntimePublicationState>,
     mut save: ResMut<EditorSaveCoordinator>,
@@ -67,7 +65,6 @@ pub(crate) fn handle_editor_shortcuts(
         || dense_domains.gesture_active
         || dense_domains.atmospheres.gesture.is_some()
         || publication.active()
-        || vegetation.saving()
         || save.active()
     {
         return;
@@ -90,7 +87,7 @@ pub(crate) fn handle_editor_shortcuts(
     } else if control_pressed(&keys) && keys.just_pressed(KeyCode::KeyY) {
         history.redo(&mut objects, &mut dense_domains);
     } else if command_pressed(&keys) && keys.just_pressed(KeyCode::KeyS) && !publication.active() {
-        if objects.dirty_count() + dense_domains.dirty_count() + vegetation.dirty_count() > 0 {
+        if objects.dirty_count() + dense_domains.dirty_count() > 0 {
             save.request_save();
         }
     } else if (keys.just_pressed(KeyCode::Delete) || keys.just_pressed(KeyCode::Backspace))

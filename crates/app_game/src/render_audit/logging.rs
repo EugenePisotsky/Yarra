@@ -191,16 +191,6 @@ pub(super) fn log_status(
         window.height(),
         window.scale_factor()
     );
-    let blade_preparation = format!(
-        "blade_preparation={} blade_preparation_bytes={} blade_preparation_dispatches={} blade_preparation_reuses={} sampled_prepared_blades={} sampled_preparation_fallback_blades={}",
-        snapshot.blade_preparation_enabled,
-        snapshot.blade_preparation_bytes,
-        snapshot.blade_preparation_dispatches,
-        snapshot.blade_preparation_reuses,
-        snapshot.prepared_blades,
-        snapshot.preparation_fallback_blades
-    );
-    let early_rejection = grass.early_rejection;
     let candidate_cache = format!(
         "candidate_cache={} candidate_cache_bytes={} candidate_cache_builds={} candidate_cache_ready={} candidate_cache_planned={}",
         snapshot.candidate_cache_enabled,
@@ -217,7 +207,7 @@ pub(super) fn log_status(
     let generation_dispatches = snapshot.generation_dispatches;
     let generation_reuses = snapshot.generation_reuses;
     warn!(
-        "RENDER_AUDIT v=1 event={event} seq={} unix_ms={unix_ms} elapsed_s={now:.3} main_frame={} app_fps_window={app_fps} window_s={window_s:.3} since_change_s={:.3} thermal={} low_power={} scene={:?} grass={} unlit={} ground_shader={ground_shader} terrain_near={terrain_near} terrain_macro={macro_state} shadows={} shadow_map={} prepass={} scale={} msaa_samples={msaa_samples} requested_msaa_samples={requested_msaa_samples} msaa_store_policy={msaa_store_policy:?} counters={} wind={} locked={} ui={ui} render_px={}x{} surface_px={}x{} {display_fields} focused={focused} present_mode={present_mode:?} camera_pos={:.3},{:.3},{:.3} camera_rot={:.4},{:.4},{:.4},{:.4} density={:?} lighting={:?} far_width_compensation={} entities={} mesh_assets={} image_assets={} source_revision={} source_pages={} source_work_items={} source_repacks={} source_reallocs={} last_source_upload_bytes={} source_capacity_bytes={} instance_capacity={} instance_capacity_bytes={} generation_dispatches={generation_dispatches} generation_reuses={generation_reuses} early_rejection={early_rejection} {candidate_cache} {blade_preparation} {gpu} os={} debug_assertions={}",
+        "RENDER_AUDIT v=1 event={event} seq={} unix_ms={unix_ms} elapsed_s={now:.3} main_frame={} app_fps_window={app_fps} window_s={window_s:.3} since_change_s={:.3} thermal={} low_power={} scene={:?} grass={} unlit={} ground_shader={ground_shader} terrain_near={terrain_near} terrain_macro={macro_state} shadows={} shadow_map={} prepass={} scale={} msaa_samples={msaa_samples} requested_msaa_samples={requested_msaa_samples} msaa_store_policy={msaa_store_policy:?} counters={} wind={} locked={} ui={ui} render_px={}x{} surface_px={}x{} {display_fields} focused={focused} present_mode={present_mode:?} camera_pos={:.3},{:.3},{:.3} camera_rot={:.4},{:.4},{:.4},{:.4} high_detail_m={:.1} entities={} mesh_assets={} image_assets={} source_revision={} source_pages={} source_work_items={} source_repacks={} source_reallocs={} last_source_upload_bytes={} source_capacity_bytes={} instance_capacity={} instance_capacity_bytes={} generation_dispatches={generation_dispatches} generation_reuses={generation_reuses} {candidate_cache} {gpu} os={} debug_assertions={}",
         state.sequence,
         frame.0,
         now - state.changed_at_s,
@@ -244,9 +234,7 @@ pub(super) fn log_status(
         rotation.y,
         rotation.z,
         rotation.w,
-        grass.density_mode,
-        grass.lighting_mode,
-        grass.far_width_compensation,
+        snapshot.high_detail_radius,
         entities.iter().len(),
         meshes.len(),
         images.len(),
@@ -257,8 +245,8 @@ pub(super) fn log_status(
         snapshot.source_buffer_reallocations,
         snapshot.source_uploaded_bytes,
         snapshot.source_buffer_capacity_bytes,
-        snapshot.procedural_instance_capacity,
-        snapshot.procedural_instance_bytes,
+        snapshot.instance_capacity,
+        snapshot.instance_bytes,
         std::env::consts::OS,
         cfg!(debug_assertions),
     );
@@ -312,7 +300,7 @@ mod tests {
         assert_eq!(gpu_readback_fields(default()), "gpu_readback=unavailable");
         let fields = gpu_readback_fields(VegetationDiagnosticsSnapshot {
             gpu_samples: 1,
-            emitted_instances: [1, 2, 3, 4],
+            emitted_instances: [4, 6],
             ..default()
         });
         assert!(fields.contains("gpu_readback=sampled"));

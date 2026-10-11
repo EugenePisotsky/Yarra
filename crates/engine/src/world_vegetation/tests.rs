@@ -1,6 +1,6 @@
 use super::*;
 use crate::world_streaming::test_world_resources;
-use vegetation_render::{VegetationLighting, VegetationProfileMode, VegetationSettings};
+use vegetation_render::{VegetationProfileMode, VegetationSettings};
 
 pub(super) fn surface(space: i64, x: i32, height: f32) -> StreamedTerrainSurface {
     StreamedTerrainSurface {
@@ -181,12 +181,8 @@ fn disabled_grass_stays_current_through_rebase_world_change_and_resume() {
         app.world().resource::<VegetationLodFocus>().position,
         Some(Vec3::new(3., 2., 4.))
     );
-    assert_eq!(
-        app.world().resource::<VegetationLighting>().canopy_origin,
-        [160., 0.]
-    );
     let mut updated = vegetation::fixtures::reference_catalog();
-    updated.species[0].key.push_str("_published");
+    updated.grass[0].colors.tip = [0.5, 0.4, 0.1];
     let (catalog, origin) =
         test_world_resources(WorldSpaceId(2), CellCoord::ZERO, Some(updated.clone()));
     app.insert_resource(catalog).insert_resource(origin);
@@ -196,10 +192,6 @@ fn disabled_grass_stays_current_through_rebase_world_change_and_resume() {
     assert_eq!(scene.scene().pages.len(), 1);
     assert_eq!(scene.scene().pages[0].surface.heights, vec![9.; 4]);
     assert_eq!(app.world().resource::<VegetationLodFocus>().position, None);
-    assert_eq!(
-        app.world().resource::<VegetationLighting>().canopy_origin,
-        [0.; 2]
-    );
     let revision = scene.revision();
     app.world_mut()
         .resource_mut::<VegetationSettings>()

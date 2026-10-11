@@ -371,12 +371,8 @@ impl ProjectReader {
         let plants = read_vegetation_catalog(&transaction)?;
         let presets = read_library(&transaction)?;
         let definitions = read_definitions(&transaction)?;
-        let empty = VegetationCatalog {
-            species: Vec::new(),
-            populations: Vec::new(),
-            assemblages: Vec::new(),
-        };
-        validate_library_references(&transaction, &presets, plants.as_ref().unwrap_or(&empty))?;
+        let empty = VegetationCatalog::default();
+        validate_library_references(&transaction, &presets)?;
         for definition in &definitions {
             checked_definition(definition, plants.as_ref().unwrap_or(&empty), &presets)?;
         }
@@ -575,9 +571,7 @@ pub(crate) fn validate_catalog_dependencies(
     plants: &VegetationCatalog,
 ) -> Result<(), WorldDbError> {
     let presets = read_library(connection)?;
-    presets
-        .validate(plants)
-        .map_err(|e| invalid(e.to_string()))?;
+    presets.validate().map_err(|e| invalid(e.to_string()))?;
     for definition in read_definitions(connection)? {
         checked_definition(&definition, plants, &presets)?;
     }
@@ -588,16 +582,9 @@ pub(crate) fn write_environment_document(
     transaction: &Transaction<'_>,
     document: &ProjectDocument,
 ) -> Result<(), WorldDbError> {
-    let plants = document
-        .vegetation_catalog
-        .clone()
-        .unwrap_or_else(|| VegetationCatalog {
-            species: Vec::new(),
-            populations: Vec::new(),
-            assemblages: Vec::new(),
-        });
+    let plants = document.vegetation_catalog.clone().unwrap_or_default();
     let presets = &document.presets;
-    validate_library_references(transaction, presets, &plants)?;
+    validate_library_references(transaction, presets)?;
     store_library(transaction, presets)?;
     let definitions: BTreeMap<_, _> = document.environments.iter().map(|d| (d.space, d)).collect();
     if definitions.len() != document.environments.len()
@@ -713,12 +700,7 @@ pub(crate) fn read_snapshot(
 ) -> Result<EnvironmentReadSnapshot, WorldDbError> {
     let definition = read_definition(connection, space)?
         .ok_or_else(|| invalid("world has no environment definition"))?;
-    let vegetation_catalog =
-        read_vegetation_catalog(connection)?.unwrap_or_else(|| VegetationCatalog {
-            species: Vec::new(),
-            populations: Vec::new(),
-            assemblages: Vec::new(),
-        });
+    let vegetation_catalog = read_vegetation_catalog(connection)?.unwrap_or_default();
     let presets = read_library(connection)?;
     checked_definition(&definition, &vegetation_catalog, &presets)?;
     let coverage = read_coverage(connection, &definition, cells)?;

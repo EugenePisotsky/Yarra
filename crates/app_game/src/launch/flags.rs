@@ -157,22 +157,10 @@ const FLAGS: &[Flag] = &[
         "Clouds (default balanced)",
     ),
     flag(
-        "--grass-density",
-        "balanced|full|authored",
-        Scene,
-        "Grass density (default balanced)",
-    ),
-    flag(
         "--tree-shadow-lod",
         "0..2",
         Scene,
         "LOD steps coarser that instanced trees cast shadows from (default 0)",
-    ),
-    flag(
-        "--canopy-look",
-        "FILE",
-        Scene,
-        "Canopy appearance, captured by F1",
     ),
     flag(
         "--diagnostics",
@@ -382,7 +370,7 @@ const FLAGS: &[Flag] = &[
         "--look-variants",
         "LIST",
         Look,
-        "NAME[:ev=EV100,tone=tony|agx|neutral|filmic|aces|boring|reinhard|none,ambient=SCALE,sun=SCALE,canopy=0..1,auto=on|off];...",
+        "NAME[:ev=EV100,tone=tony|agx|neutral|filmic|aces|boring|reinhard|none,ambient=SCALE,sun=SCALE,auto=on|off];...",
     )
     .needs(LOOK),
     flag(
@@ -469,28 +457,10 @@ const FLAGS: &[Flag] = &[
     )
     .needs(LAB),
     flag(
-        "--grass-vertex-reference",
-        "",
-        GrassReference,
-        "Disable prepared blade deformation",
-    ),
-    flag(
-        "--grass-placement-reference",
-        "",
-        GrassReference,
-        "Disable early candidate rejection",
-    ),
-    flag(
         "--grass-candidate-reference",
         "",
         GrassReference,
         "Disable the source acceptance cache",
-    ),
-    flag(
-        "--grass-prepared-blades",
-        "32768..524288",
-        GrassReference,
-        "Blade preparation capacity",
     ),
     flag("--terrain-near-off", "", Reference, "Disable hierarchy near detail"),
     flag(

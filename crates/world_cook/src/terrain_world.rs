@@ -33,13 +33,12 @@ const GENERATED_MASKS: [&str; 11] = [
     "rock",
 ];
 
-/// An island ground layer above the meadows: its name, the mask it reads, its surfaces and
-/// the share of meadow grass it keeps.
+/// An island ground layer above the meadows: its name, the mask it reads and its surfaces.
+/// What grass grows on them is the grass catalog's (`assets/packs/grass/baltic.ron`).
 struct IslandGround {
     name: &'static str,
     mask: &'static str,
     surfaces: &'static [(&'static str, f32)],
-    grass: f32,
 }
 
 /// Island ground layers, lowest first. Houdini supplies sand, rock and scree;
@@ -50,61 +49,51 @@ const ISLAND_GROUND: [IslandGround; 8] = [
         name: "Coastal grass",
         mask: "coast",
         surfaces: &[("coastal-grass", 1.0)],
-        grass: 0.6,
     },
     IslandGround {
         name: "Pine forest floor",
         mask: "pine_forest",
         surfaces: &[("forest-moss", 0.55), ("pine-needles", 0.45)],
-        grass: 0.35,
     },
     IslandGround {
         name: "Spruce forest floor",
         mask: "spruce_forest",
         surfaces: &[("forest-floor", 0.6), ("pine-needles", 0.4)],
-        grass: 0.15,
     },
     IslandGround {
         name: "Broadleaf forest floor",
         mask: "broadleaf_forest",
         surfaces: &[("leaf-litter", 0.6), ("forest-floor", 0.4)],
-        grass: 0.4,
     },
     IslandGround {
         name: "Dunes",
         mask: "dune",
         surfaces: &[("dune-sand", 1.0)],
-        grass: 0.1,
     },
     IslandGround {
         name: "Beach",
         mask: "beach",
         surfaces: &[("beach-sand", 1.0)],
-        grass: 0.0,
     },
     IslandGround {
         name: "Scree",
         mask: "scree",
         surfaces: &[("stony-moss", 0.5), ("rocky-ground", 0.5)],
-        grass: 0.2,
     },
     IslandGround {
         name: "Rock",
         mask: "rock",
         surfaces: &[("rock", 0.75), ("lichen-rock", 0.25)],
-        grass: 0.0,
     },
 ];
 
-/// Adds the island ground layers above the meadows: a ground preset, a grass exclusion and
-/// their composition for each, and a layer reading its mask.
+/// Adds the island ground layers above the meadows: a ground preset for each and a layer
+/// reading its mask.
 fn island_ground(project: &mut ProjectDocument) {
     use environment::{
-        ChannelId, Exclusion, GroundTreatment, Layer, LayerId, OutputId, Preset, PresetId,
-        PresetKind, PresetUse, PresetUseId, SurfaceWeight,
+        GroundTreatment, Layer, LayerId, OutputId, Preset, PresetId, PresetKind, SurfaceWeight,
     };
     let pack = TerrainPack::baltic();
-    let channel = ChannelId(stable_id("ground-grass-channel"));
     let definition = &mut project.environments[0];
     let first = definition.layers.len() as i32;
     for (index, ground) in ISLAND_GROUND.iter().enumerate() {
@@ -131,34 +120,11 @@ fn island_ground(project: &mut ProjectDocument) {
                     .collect(),
             }),
         );
-        let thinning = preset(
-            "grass",
-            format!("{} grass", ground.name),
-            PresetKind::Exclusion(Exclusion {
-                id: OutputId(id("grass-output")),
-                channel,
-                strength: 1.0 - ground.grass,
-            }),
-        );
-        let child = |part: &str, name: &str, preset: &Preset| PresetUse {
-            id: PresetUseId(id(part)),
-            name: name.into(),
-            preset: preset.id,
-            overrides: vec![],
-        };
-        let composition = preset(
-            "composition",
-            ground.name.into(),
-            PresetKind::Composition(vec![
-                child("ground-use", "Ground", &soil),
-                child("grass-use", "Grass", &thinning),
-            ]),
-        );
         definition.layers.push(Layer {
             id: LayerId(id("layer")),
             revision: 1,
             name: ground.name.into(),
-            preset: composition.id,
+            preset: soil.id,
             overrides: vec![],
             order: first + index as i32,
             seed: 42,
@@ -166,10 +132,7 @@ fn island_ground(project: &mut ProjectDocument) {
             opacity: 1.0,
             imported_mask: Some(ground.mask.into()),
         });
-        project
-            .presets
-            .presets
-            .extend([soil, thinning, composition]);
+        project.presets.presets.push(soil);
     }
 }
 

@@ -159,11 +159,7 @@ impl ProjectWriter {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let plants = read_vegetation_catalog(&tx)?.unwrap_or_else(|| VegetationCatalog {
-            species: vec![],
-            populations: vec![],
-            assemblages: vec![],
-        });
+        let plants = read_vegetation_catalog(&tx)?.unwrap_or_default();
         let saved_library = read_library(&tx)?;
         if saved_library.revision != expected_library_revision {
             return Ok(EnvironmentSourceWriteResult::LibraryConflict {
@@ -174,7 +170,7 @@ impl ProjectWriter {
             .map(|next| revisioned_library(&saved_library, next))
             .transpose()?;
         let presets = changed_library.as_ref().unwrap_or(&saved_library);
-        validate_library_references(&tx, presets, &plants)?;
+        validate_library_references(&tx, presets)?;
         let mut previous = BTreeMap::new();
         let mut next = BTreeMap::new();
         let mut definition_bytes = 0;

@@ -109,12 +109,10 @@ enum Control {
     LightShafts,
     Terrain,
     Objects,
-    Density,
     TerrainDetail,
     Near,
     PageGizmos,
     TerrainMacro,
-    ReloadCanopy,
     ObjectDetail,
 }
 
@@ -147,7 +145,6 @@ impl Control {
             Self::LightShafts => format!("Light shafts and sun rays: {}", on_off(s.light_shafts)),
             Self::Terrain => format!("Terrain draws: {}", on_off(!s.hide_terrain)),
             Self::Objects => format!("Object draws: {}", on_off(!s.hide_objects)),
-            Self::Density => format!("Grass density: {}", s.density.label()),
             Self::TerrainDetail => {
                 format!(
                     "Terrain error: {} px",
@@ -157,7 +154,6 @@ impl Control {
             Self::Near => format!("Near terrain detail: {}", on_off(!s.terrain_near_disabled)),
             Self::PageGizmos => format!("Terrain page gizmos: {}", on_off(s.page_gizmos)),
             Self::TerrainMacro => format!("Terrain macro: {}", s.terrain_macro.label()),
-            Self::ReloadCanopy => "Reload canopy look".into(),
             Self::Scene => format!("Scene: {:?}", s.scene),
             Self::GrassEnabled => format!(
                 "Grass vegetation: {}",
@@ -257,44 +253,12 @@ fn buttons(
             Control::LightShafts => s.light_shafts = !s.light_shafts,
             Control::Terrain => s.hide_terrain = !s.hide_terrain,
             Control::Objects => s.hide_objects = !s.hide_objects,
-            Control::Density => {
-                s.density = match s.density {
-                    vegetation_render::VegetationDensityMode::Balanced => {
-                        vegetation_render::VegetationDensityMode::FullReference
-                    }
-                    vegetation_render::VegetationDensityMode::FullReference => {
-                        vegetation_render::VegetationDensityMode::Authored
-                    }
-                    vegetation_render::VegetationDensityMode::Authored => {
-                        vegetation_render::VegetationDensityMode::Balanced
-                    }
-                }
-            }
             Control::TerrainDetail => {
                 s.terrain_detail = (s.terrain_detail + 1) % TERRAIN_ERROR_PIXELS.len()
             }
             Control::Near => s.terrain_near_disabled = !s.terrain_near_disabled,
             Control::PageGizmos => s.page_gizmos = !s.page_gizmos,
             Control::TerrainMacro => s.terrain_macro = s.terrain_macro.toggled(),
-            Control::ReloadCanopy => {
-                let path = options
-                    .as_deref()
-                    .cloned()
-                    .unwrap_or_default()
-                    .canopy_path();
-                match vegetation::CanopyShading::load(&path) {
-                    Ok(look) => {
-                        s.canopy = look;
-                        session.message =
-                            "Canopy look reloaded; Reset restores the launch values.".into();
-                    }
-                    Err(error) => {
-                        session.message = format!("Canopy reload failed: {error}");
-                        warn!("Canopy reload failed: {error}");
-                        continue;
-                    }
-                }
-            }
             Control::Scene => {
                 s.scene = match s.scene {
                     Scene::Current => Scene::Clear,
@@ -492,11 +456,7 @@ mod tests {
         use crate::game_render::GameRenderSettings;
         use crate::launch::{DiagnosticsMode, LaunchOptions};
         use crate::runtime_settings::RuntimeSettingsPlugin;
-        use vegetation_render::{VegetationLighting, VegetationSettings, VegetationWind};
-        let canopy = vegetation::CanopyShading {
-            strength: 0.27,
-            ..default()
-        };
+        use vegetation_render::{VegetationSettings, VegetationWind};
         for mode in [DiagnosticsMode::Off, DiagnosticsMode::Panel] {
             let mut app = App::new();
             app.add_plugins(bevy::input::InputPlugin)
@@ -524,14 +484,8 @@ mod tests {
                 .init_resource::<Assets<terrain_render::TerrainMaterial>>()
                 .init_resource::<Assets<terrain_render::composite::TerrainCompositeMaterial>>()
                 .insert_resource(engine::CloudQuality::Off)
-                .insert_resource(VegetationLighting {
-                    canopy,
-                    ..default()
-                })
-                .insert_resource(VegetationSettings {
-                    density_mode: vegetation_render::VegetationDensityMode::Authored,
-                    ..default()
-                })
+                .init_resource::<vegetation_render::VegetationLighting>()
+                .init_resource::<VegetationSettings>()
                 .add_plugins(RuntimeSettingsPlugin);
             app.world_mut().spawn((Window::default(), PrimaryWindow));
             let camera = app
@@ -547,17 +501,11 @@ mod tests {
             install(&mut app);
             app.update();
             let settings = app.world().resource::<RuntimeSettings>();
-            assert_eq!(settings.canopy, canopy);
             assert_eq!(settings.clouds, engine::CloudQuality::Off);
-            assert_eq!(
-                settings.density,
-                vegetation_render::VegetationDensityMode::Authored
-            );
             assert_eq!(
                 app.world().resource::<GameRenderSettings>().upscaler,
                 upscaling::UpscaleMethod::Linear
             );
-            assert_eq!(app.world().resource::<VegetationLighting>().canopy, canopy);
             assert_eq!(
                 app.world().contains_resource::<performance::PanelState>(),
                 mode == DiagnosticsMode::Panel
@@ -594,65 +542,26 @@ mod tests {
                     engine::CloudQuality::Off
                 );
                 assert_eq!(
-                    app.world().resource::<VegetationSettings>().density_mode,
-                    vegetation_render::VegetationDensityMode::Authored
+                    app.world().resource::<VegetationSettings>().profile_mode,
+                    VegetationProfileMode::Full
                 );
-                assert_eq!(app.world().resource::<VegetationLighting>().canopy, canopy);
             }
         }
     }
 
     #[test]
-    fn canopy_reload_and_reset_restore_values_without_rereading_the_file() {
-        let path =
-            std::env::temp_dir().join(format!("yarra-canopy-reset-{}.ron", std::process::id()));
-        let initial = vegetation::CanopyShading {
-            strength: 0.25,
-            ..default()
-        };
-        let edited = vegetation::CanopyShading {
-            strength: 0.85,
-            enabled: true,
-            ..default()
-        };
-        std::fs::write(&path, ron::to_string(&edited).unwrap()).unwrap();
+    fn reset_restores_launch_appearance() {
         let mut app = App::new();
-        app.insert_resource(RuntimeSettings {
-            canopy: initial,
-            ..default()
-        })
-        .insert_resource(crate::launch::LaunchOptions {
-            canopy_path: Some(path.clone()),
-            ..default()
-        })
-        .init_resource::<FramePacing>()
-        .init_resource::<Time>()
-        .init_resource::<performance::CaptureSession>()
-        .init_resource::<vegetation_render::VegetationLighting>()
-        .init_resource::<terrain_render::TerrainMacroVariation>()
-        .add_systems(Update, (buttons, apply_appearance).chain());
+        app.init_resource::<RuntimeSettings>()
+            .init_resource::<FramePacing>()
+            .init_resource::<Time>()
+            .init_resource::<performance::CaptureSession>()
+            .init_resource::<terrain_render::TerrainMacroVariation>()
+            .add_systems(Update, (buttons, apply_appearance).chain());
         app.world_mut()
             .resource_mut::<performance::CaptureSession>()
-            .remember_launch(
-                &RuntimeSettings {
-                    canopy: initial,
-                    ..default()
-                },
-                FrameRate::default(),
-            );
-        let button = app.world_mut().spawn((Pressed, Control::ReloadCanopy)).id();
-        app.update();
-        assert_eq!(
-            app.world()
-                .resource::<vegetation_render::VegetationLighting>()
-                .canopy,
-            edited
-        );
-        std::fs::remove_file(path).unwrap();
-        app.world_mut()
-            .entity_mut(button)
-            .remove::<Pressed>()
-            .insert((Pressed, Control::TerrainMacro));
+            .remember_launch(&RuntimeSettings::default(), FrameRate::default());
+        let button = app.world_mut().spawn((Pressed, Control::TerrainMacro)).id();
         app.update();
         assert_eq!(
             *app.world()
@@ -664,12 +573,6 @@ mod tests {
             .remove::<Pressed>()
             .insert((Pressed, Control::Reset));
         app.update();
-        assert_eq!(
-            app.world()
-                .resource::<vegetation_render::VegetationLighting>()
-                .canopy,
-            initial
-        );
         assert_eq!(
             *app.world()
                 .resource::<terrain_render::TerrainMacroVariation>(),

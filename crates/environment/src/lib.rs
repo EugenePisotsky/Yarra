@@ -1,7 +1,8 @@
 //! Environment authoring source. No editor, database or renderer dependencies.
 //!
 //! Compositions describe content; layers apply them through spatial coverage. The
-//! compiler resolves this source to ordinary terrain weights and vegetation fields.
+//! compiler resolves this source to ordinary terrain weights and grass coverage: grass grows on
+//! ground surfaces as the world's grass catalog says, less where exclusions and roads clear it.
 
 pub mod brush;
 pub mod fixtures;
@@ -15,7 +16,6 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use vegetation::{VegetationAssemblageId, VegetationCatalog};
 use world::{CellCoord, TerrainSurfaceId, WorldSpaceId};
 
 macro_rules! id {
@@ -31,6 +31,9 @@ id!(PresetUseId);
 id!(LayerId);
 id!(OutputId);
 id!(ChannelId);
+
+/// The channel whose exclusions and road wear clear grass.
+pub const GRASS_CHANNEL: ChannelId = ChannelId([1; 16]);
 
 /// Small definition catalog for one world space, independent of its spatial tiles.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -58,24 +61,6 @@ pub struct GroundTreatment {
 pub struct SurfaceWeight {
     pub surface: TerrainSurfaceId,
     pub weight: f32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum VegetationBlend {
-    Replace,
-    Add,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct VegetationTreatment {
-    pub id: OutputId,
-    pub channel: ChannelId,
-    pub assemblage: VegetationAssemblageId,
-    /// Stable thinning below the authored maximum, independent of replacement influence.
-    pub density: f32,
-    pub seed: u32,
-    pub blend: VegetationBlend,
-    pub strength: f32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -138,12 +123,8 @@ pub struct CoverageSnapshot {
 impl EnvironmentDefinition {
     /// Checks source references and semantics. Spatial data and target budgets are checked by
     /// the compiler, which never assumes deserialization implies validity.
-    pub fn validate(
-        &self,
-        plants: &VegetationCatalog,
-        library: &PresetLibrary,
-    ) -> Result<(), ValidationError> {
-        library.validate(plants)?;
+    pub fn validate(&self, library: &PresetLibrary) -> Result<(), ValidationError> {
+        library.validate()?;
         self.validate_layers(library)
     }
     /// Used after validating the shared library once in a project snapshot.
@@ -205,12 +186,8 @@ pub enum ValidationError {
     Invalid(&'static str),
     #[error("missing terrain surface {0:?}")]
     MissingSurface(TerrainSurfaceId),
-    #[error("missing vegetation assemblage {0:?}")]
-    MissingAssemblage(VegetationAssemblageId),
     #[error("invalid preset: {0}")]
     Preset(String),
     #[error("invalid road: {0}")]
     Road(&'static str),
-    #[error(transparent)]
-    Vegetation(#[from] vegetation::CatalogValidationError),
 }

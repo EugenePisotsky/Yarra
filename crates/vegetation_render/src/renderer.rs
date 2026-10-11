@@ -7,18 +7,14 @@ use bevy::{
     render::{Render, RenderSystems, render_phase::AddRenderCommand, renderer::RenderGraph},
 };
 
-mod blade_preparation;
 mod buffers;
 mod candidate_cache;
-mod canopy_boundary;
 mod draw;
 mod generation;
 mod gpu_types;
 mod packing;
 mod page_slots;
 mod pipelines;
-#[cfg(test)]
-mod placement_gpu_tests;
 mod prepare;
 mod telemetry;
 mod temporal;
@@ -44,7 +40,6 @@ pub(crate) fn install(render_app: &mut SubApp) {
             (
                 candidate_cache::build,
                 generation::generate,
-                blade_preparation::run,
                 telemetry::finish_telemetry,
             )
                 .chain()
@@ -65,7 +60,6 @@ pub(crate) fn install(render_app: &mut SubApp) {
 
 pub(crate) fn initialize(world: &mut World) {
     world.init_resource::<pipelines::VegetationPipelines>();
-    world.init_resource::<blade_preparation::BladePreparation>();
     world.init_resource::<candidate_cache::CandidateCache>();
     world.init_resource::<buffers::VegetationBuffers>();
     world.init_resource::<telemetry::VegetationTelemetryStaging>();

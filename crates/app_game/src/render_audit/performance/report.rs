@@ -26,7 +26,6 @@ const ALL_CONTROLS: &[Control] = &[
     Control::Upscaler,
     Control::TemporalDebug,
     Control::Antialiasing,
-    Control::Density,
     Control::TerrainDetail,
     Control::ObjectDetail,
     Control::Near,
@@ -116,10 +115,6 @@ pub(super) fn comparison(state: &CaptureSession) -> String {
                 differences += 1;
                 out += &format!("{from} -> {to}\n");
             }
-        }
-        if a.settings.canopy != b.settings.canopy {
-            differences += 1;
-            out += "Canopy look changed (full values are included in exported settings)\n";
         }
         if differences == 0 {
             out += "None\n";

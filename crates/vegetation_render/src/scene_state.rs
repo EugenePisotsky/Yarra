@@ -192,7 +192,7 @@ mod tests {
         assert_ne!(snapshot.revision(), scene.revision());
         assert_eq!(snapshot.catalog_revision(), scene.catalog_revision());
         let mut next = scene.scene().clone();
-        next.catalog.species[0].material.root_color[0] *= 0.5;
+        next.catalog.grass[0].colors.root[0] *= 0.5;
         scene.replace(next).unwrap();
         assert_ne!(snapshot.catalog_revision(), scene.catalog_revision());
     }

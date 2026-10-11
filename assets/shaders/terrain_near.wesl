@@ -1,19 +1,17 @@
 // Detailed surface evaluation on any terrain mesh; inputs use canonical cell addresses.
 import bevy_pbr::render::mesh_view_bindings as near_view;
-import package::shaders::grass_canopy::canopy_visibility_at;
 import package::shaders::terrain_stochastic::{quarter_turn, stochastic_vertex_turn, stochastic_vertex_offset};
 import package::shaders::terrain_blend::height_blend;
-struct NearCanopy { appearance: vec4<f32>, shape: vec4<f32>, distance_settings: vec4<f32>, origin: vec4<f32>, }
 // One of a page's up to eight surfaces. `surface`: array layer, metres per repetition,
 // anti-tiling (0/1), normal strength. `material`: normal Y sign, roughness minimum/maximum.
 // `phase`/`lattice`: this page's UV and anti-tiling lattice offsets for the surface's tile size.
-struct NearSlot { surface: vec4<f32>, material: vec4<f32>, phase: vec4<f32>, lattice: vec4<f32>, }
+// `grass`: the grass field's linear colour and how fully grass covers the surface.
+struct NearSlot { surface: vec4<f32>, material: vec4<f32>, phase: vec4<f32>, lattice: vec4<f32>, grass: vec4<f32>, }
 struct NearEntry {
     key: vec4<i32>, state: vec4<f32>, macro_scales: vec4<f32>, macro_settings: vec4<f32>,
-    macro_a: vec4<f32>, macro_b: vec4<f32>, macro_c: vec4<f32>, slots: array<NearSlot, 8>, canopy: NearCanopy,
+    macro_a: vec4<f32>, macro_b: vec4<f32>, macro_c: vec4<f32>, slots: array<NearSlot, 8>,
 }
 @group(constants::MATERIAL_BIND_GROUP) @binding(8) var near_weights: texture_2d_array<f32>;
-@group(constants::MATERIAL_BIND_GROUP) @binding(9) var near_canopy: texture_2d_array<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(10) var<storage, read> near_table: array<NearEntry>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(11) var<uniform> near_settings: vec4<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(12) var near_base: texture_2d_array<f32>;
@@ -24,7 +22,7 @@ struct NearEntry {
 @group(constants::MATERIAL_BIND_GROUP) @binding(2) var map_sampler: sampler;
 
 // Probe only keys. Returning the whole entry through a dynamic loop also
-// carried every surface/canopy parameter through neighbour-only lookups.
+// carried every surface parameter through neighbour-only lookups.
 fn near_lookup(key: vec2<i32>) -> u32 {
     var h = (u32(key.x) * 0x9e3779b9u) ^ (u32(key.y) * 0x85ebca6bu);
     h ^= h >> 16u; h *= 0x7feb352du; h ^= h >> 15u;
@@ -65,9 +63,19 @@ fn stochastic(uv: vec2<f32>, lattice: vec2<f32>, origin: vec2<f32>, layer: i32, 
     }
     return result;
 }
+// Ground fully covered by grass is this bright where blades stand over it: it lies in their shade.
+const UNDER_GRASS: f32 = 0.45;
+// Blades thin out with distance; over this range the ground between them turns from their shade
+// to the field's colour, as the distant composite bakes it (world_cook material_bake), reached
+// before the composite takes over (near::NEAR_START).
+const FIELD_RANGE: vec2<f32> = vec2(24.0, 48.0);
+// How far fully covered ground takes the field's colour. The composite bake uses the same.
+const FIELD_STRENGTH: f32 = 0.85;
 // `color.a` is the surface's blend height.
 struct Surface { color: vec4<f32>, normal: vec3<f32>, ao: f32, roughness: f32, }
-fn surface(index: u32, slot: u32, local: vec2<f32>, world_dx: vec2<f32>, world_dy: vec2<f32>) -> Surface {
+// `field` is how far grassy ground here shows the field's colour rather than the blades' shade,
+// 0..1.
+fn surface(index: u32, slot: u32, local: vec2<f32>, world_dx: vec2<f32>, world_dy: vec2<f32>, field: f32) -> Surface {
     let s = near_table[index].slots[slot];
     let size = max(s.surface.y, 0.001);
     let layer = i32(s.surface.x+0.5);
@@ -85,7 +93,9 @@ fn surface(index: u32, slot: u32, local: vec2<f32>, world_dx: vec2<f32>, world_d
     n = normalize(n); n.y *= s.material.x;
     n = normalize(vec3(n.xy*clamp(s.surface.w,0.0,1.0), max(n.z,0.001)));
     let rough = mix(s.material.y,s.material.z,packed.a);
-    return Surface(color,n,packed.b,rough);
+    let cover = clamp(s.grass.w, 0.0, 1.0);
+    let ground = mix(color.rgb*mix(1.0, UNDER_GRASS, cover), mix(color.rgb, s.grass.rgb, cover*FIELD_STRENGTH), field);
+    return Surface(vec4(ground, color.a),n,packed.b,rough);
 }
 // Weighted sum of up to three shaded surfaces.
 fn mix_surfaces(a: Surface, b: Surface, c: Surface, w: vec3<f32>) -> Surface {
@@ -94,9 +104,9 @@ fn mix_surfaces(a: Surface, b: Surface, c: Surface, w: vec3<f32>) -> Surface {
         a.ao*w.x+b.ao*w.y+c.ao*w.z, a.roughness*w.x+b.roughness*w.y+c.roughness*w.z);
 }
 // The page's ground: its three largest weights here, blended by surface height.
-fn blended_surfaces(index: u32, uv: vec2<f32>, local: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) -> Surface {
+fn blended_surfaces(index: u32, uv: vec2<f32>, local: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, field: f32) -> Surface {
     let count = u32(near_table[index].state.z+0.5);
-    if count <= 1u { return surface(index,0u,local,dx,dy); }
+    if count <= 1u { return surface(index,0u,local,dx,dy,field); }
     let wuv = (vec2(0.5)+uv*(near_table[index].state.y-1.0))/near_settings.w;
     let layer = (near_table[index].key.w-1)*2;
     let first = textureSampleLevel(near_weights,map_sampler,wuv,layer,0.0);
@@ -111,10 +121,10 @@ fn blended_surfaces(index: u32, uv: vec2<f32>, local: vec2<f32>, dx: vec2<f32>, 
         else if w > best.y { best = vec3(best.x,w,best.y); pick = vec3(pick.x,i,pick.y); }
         else if w > best.z { best.z = w; pick.z = i; }
     }
-    let a = surface(index,pick.x,local,dx,dy);
+    let a = surface(index,pick.x,local,dx,dy,field);
     var b = a; var c = a;
-    if best.y > 0.0 { b = surface(index,pick.y,local,dx,dy); }
-    if best.z > 0.0 { c = surface(index,pick.z,local,dx,dy); }
+    if best.y > 0.0 { b = surface(index,pick.y,local,dx,dy,field); }
+    if best.z > 0.0 { c = surface(index,pick.z,local,dx,dy,field); }
     return mix_surfaces(a,b,c,height_blend(best,vec3(a.color.a,b.color.a,c.color.a)));
 }
 fn rotate_medium(p: vec2<f32>) -> vec2<f32> { return vec2(p.x*0.819-p.y*0.574, p.x*0.574+p.y*0.819); }
@@ -127,9 +137,9 @@ fn macro_response(index: u32, local: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) ->
     let signal = dot(vec3(a,b,c)*2.0-1.0,vec3(0.28,0.36,0.36));
     return exp2(clamp(signal*near_table[index].macro_settings.x,-1.0,1.0)*near_table[index].macro_scales.w);
 }
-struct NearResult { color: vec4<f32>, normal: vec3<f32>, ao: f32, roughness: f32, weight: f32, canopy: f32, }
+struct NearResult { color: vec4<f32>, normal: vec3<f32>, ao: f32, roughness: f32, weight: f32, }
 fn close_ground(world: vec3<f32>, geometry_normal: vec3<f32>, dx: vec2<f32>, dy: vec2<f32>, cell_size: f32, origin: vec2<i32>) -> NearResult {
-    var result = NearResult(vec4(0.0),geometry_normal,1.0,1.0,0.0,1.0);
+    var result = NearResult(vec4(0.0),geometry_normal,1.0,1.0,0.0);
     if near_settings.z < 0.5 { return result; }
     let distance_to_camera = distance(near_view::view.world_position,world);
     let range_weight = (1.0-smoothstep(near_settings.x,near_settings.y,distance_to_camera))
@@ -147,17 +157,13 @@ fn close_ground(world: vec3<f32>, geometry_normal: vec3<f32>, dx: vec2<f32>, dy:
     for(var i=0u;i<4u;i+=1u) {
         if edges[i] < 1.0 { availability = min(availability,mix(near_availability(cell+offsets[i]),1.0,smoothstep(0.0,1.0,edges[i]))); }
     }
-    let s = blended_surfaces(index,uv,local,dx,dy);
+    let field = smoothstep(FIELD_RANGE.x,FIELD_RANGE.y,distance_to_camera);
+    let s = blended_surfaces(index,uv,local,dx,dy,field);
     result.color = vec4(clamp(s.color.rgb*macro_response(index,local,dx,dy),vec3(0.0),vec3(1.0)),1.0);
     // World-X tangent with the same +Z bitangent as the original heightfield UVs.
     let n = normalize(geometry_normal);
     let t = normalize(vec3(n.y,-n.x,0.0)); let b = normalize(cross(t,n));
     result.normal = normalize(t*s.normal.x+b*s.normal.y+n*s.normal.z);
     result.ao = s.ao; result.roughness = s.roughness; result.weight = range_weight*availability;
-    if near_table[index].canopy.appearance.x > 0.0 {
-        let cover = textureSampleLevel(near_canopy,map_sampler,(uv*128.0+1.0)/130.0,near_table[index].key.w-1,0.0).rg;
-        let shade = canopy_visibility_at(world.xz,0.0,distance_to_camera,near_table[index].canopy.appearance,near_table[index].canopy.shape,near_table[index].canopy.distance_settings,near_table[index].canopy.origin,near_table[index].canopy.appearance.y,cover.g*4.0,distance(near_view::view.world_position.xz,world.xz));
-        result.canopy = mix(1.0,shade,cover.r);
-    }
     return result;
 }

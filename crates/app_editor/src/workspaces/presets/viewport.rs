@@ -1,6 +1,6 @@
 use super::fixture::{Product, Request};
 use super::*;
-use crate::{vegetation_authoring::VegetationAuthoringState, workspaces::SavedDaylight};
+use crate::{grass::GrassPreview, workspaces::SavedDaylight};
 use bevy::world_serialization::WorldInstanceReady;
 use bevy::{
     camera::{Exposure, RenderTarget, visibility::RenderLayers},
@@ -170,17 +170,12 @@ pub(super) fn enter(
     shared.ambient.brightness = 300.0;
     *shared.settings = VegetationSettings::default();
     *shared.lighting = VegetationLighting::default();
-    shared.lighting.canopy_origin = [0.0; 2];
     *shared.wind = VegetationWind::default();
     shared.wind.externally_driven = true;
     shared.wind.set_phase_seconds(state.phase);
     // The render resources are exclusively owned until this workspace exits.
     let _ = shared.scene.replace(vegetation::VegetationScene {
-        catalog: vegetation::VegetationCatalog {
-            species: vec![],
-            populations: vec![],
-            assemblages: vec![],
-        },
+        catalog: vegetation::VegetationCatalog::default(),
         pages: vec![],
     });
     state.bump();
@@ -258,7 +253,7 @@ pub(super) fn update(
     project: Res<ProjectEditorStore>,
     path: Res<crate::project_store::ProjectDatabasePath>,
     dense: Res<SourceWorkingSets>,
-    plants: Res<VegetationAuthoringState>,
+    grass: Res<GrassPreview>,
     mut scene: ResMut<VegetationSceneState>,
     mut wind: ResMut<VegetationWind>,
     time: Res<Time>,
@@ -273,7 +268,8 @@ pub(super) fn update(
         state.phase = (state.phase + time.delta_secs().min(0.1)).rem_euclid(4096.0);
     }
     wind.set_phase_seconds(state.phase);
-    let Some((catalog, _, revision)) = plants.working_catalog() else {
+    let revision = grass.revision();
+    let Some(catalog) = grass.catalog() else {
         preview.current = false;
         return;
     };
@@ -348,6 +344,8 @@ pub(super) fn update(
                             .map(|s| TerrainSurfaceLayer {
                                 surface: s.surface.clone(),
                                 layer: s.layer,
+                                // The drawn preview material shades no grass ground.
+                                grass: [0.0; 4],
                             })
                     })
                     .collect::<Vec<_>>();

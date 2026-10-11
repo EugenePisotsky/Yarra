@@ -4,7 +4,6 @@ mod flags;
 use bevy::prelude::*;
 pub(crate) use flags::Args;
 use std::{ffi::OsString, path::PathBuf};
-use vegetation_render::VegetationDensityMode;
 
 #[derive(Resource, Clone, Default)]
 pub(crate) struct LaunchOptions {
@@ -16,13 +15,11 @@ pub(crate) struct LaunchOptions {
     pub fps: u32,
     pub upscaler: upscaling::UpscaleMethod,
     pub clouds: engine::CloudQuality,
-    pub density: VegetationDensityMode,
     pub weather: engine::WeatherStart,
     /// Day phase to start at instead of the authored time, 0..1.
     pub time: Option<f32>,
     /// Whether the time of day passes.
     pub day_clock: bool,
-    pub canopy_path: Option<PathBuf>,
     pub diagnostics: DiagnosticsMode,
     pub panel_open: bool,
     pub audit_log: bool,
@@ -40,10 +37,7 @@ pub(crate) struct LaunchOptions {
     pub tree_shadow_lod: usize,
     pub timer_pacing: bool,
     pub terrain_near_off: bool,
-    pub vertex_reference: bool,
-    pub placement_reference: bool,
     pub candidate_reference: bool,
-    pub prepared_blades: Option<u64>,
     pub msaa_store_reference: bool,
     pub temporal_standard_output: bool,
     pub metal_capture: Option<PathBuf>,
@@ -184,15 +178,6 @@ impl LaunchOptions {
                     ("high", engine::CloudQuality::High),
                 ],
             )?,
-            density: args.choice(
-                "--grass-density",
-                "balanced",
-                &[
-                    ("balanced", VegetationDensityMode::Balanced),
-                    ("full", VegetationDensityMode::FullReference),
-                    ("authored", VegetationDensityMode::Authored),
-                ],
-            )?,
             weather: weather(&args)?.unwrap_or(if measured {
                 engine::WeatherStart::Authored
             } else {
@@ -204,7 +189,6 @@ impl LaunchOptions {
                 if measured { "off" } else { "on" },
                 &[("on", true), ("off", false)],
             )?,
-            canopy_path: args.path("--canopy-look"),
             diagnostics,
             panel_open: args.has("--performance-open") || args.has("--render-audit"),
             audit_log: args.has("--render-audit") || repro.is_some(),
@@ -219,13 +203,7 @@ impl LaunchOptions {
             tree_shadow_lod: args.number("--tree-shadow-lod", 0, 0..=2)?,
             timer_pacing: args.has("--frame-pacing-timer"),
             terrain_near_off: args.has("--terrain-near-off"),
-            vertex_reference: args.has("--grass-vertex-reference"),
-            placement_reference: args.has("--grass-placement-reference"),
             candidate_reference: args.has("--grass-candidate-reference"),
-            prepared_blades: args
-                .has("--grass-prepared-blades")
-                .then(|| args.number("--grass-prepared-blades", 0, 32768..=524288))
-                .transpose()?,
             msaa_store_reference: args.has("--msaa-store-reference"),
             temporal_standard_output: args.has("--temporal-standard-output"),
             metal_capture: metal_capture(&args)?,
@@ -235,12 +213,6 @@ impl LaunchOptions {
             lod_lab: LodLabOptions::parse(&args)?,
             look_capture: look_capture(&args)?,
         })
-    }
-
-    pub fn canopy_path(&self) -> PathBuf {
-        self.canopy_path
-            .clone()
-            .unwrap_or_else(vegetation::CanopyShading::saved_path)
     }
 
     pub fn help() -> String {

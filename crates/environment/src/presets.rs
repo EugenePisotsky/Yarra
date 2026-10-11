@@ -32,7 +32,6 @@ pub struct Preset {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum PresetKind {
     Ground(GroundTreatment),
-    Foliage(VegetationTreatment),
     Exclusion(Exclusion),
     Composition(Vec<PresetUse>),
     AssetCollection(AssetCollection),
@@ -54,9 +53,6 @@ pub struct PresetOverride {
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum QuickValue {
     GroundInfluence(f32),
-    FoliageDensity(f32),
-    FoliageInfluence(f32),
-    FoliageSeed(u32),
     ExclusionInfluence(f32),
     CollectionDensity(f32),
     CollectionSeed(u32),
@@ -65,12 +61,9 @@ impl QuickValue {
     pub fn key(self) -> u8 {
         match self {
             Self::GroundInfluence(_) => 0,
-            Self::FoliageDensity(_) => 1,
-            Self::FoliageInfluence(_) => 2,
-            Self::FoliageSeed(_) => 3,
-            Self::ExclusionInfluence(_) => 4,
-            Self::CollectionDensity(_) => 5,
-            Self::CollectionSeed(_) => 6,
+            Self::ExclusionInfluence(_) => 1,
+            Self::CollectionDensity(_) => 2,
+            Self::CollectionSeed(_) => 3,
         }
     }
 }
@@ -85,7 +78,6 @@ pub struct ResolvedUse {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ResolvedComposition {
     pub ground: Option<GroundTreatment>,
-    pub vegetation: Vec<VegetationTreatment>,
     pub exclusions: Vec<Exclusion>,
     pub collections: Vec<AssetCollection>,
     /// Only reachable preset revisions; unrelated library changes do not fingerprint this plan.
@@ -99,8 +91,7 @@ impl PresetLibrary {
     pub fn get(&self, id: PresetId) -> Option<&Preset> {
         self.presets.iter().find(|p| p.id == id)
     }
-    pub fn validate(&self, plants: &VegetationCatalog) -> Result<(), ValidationError> {
-        plants.validate()?;
+    pub fn validate(&self) -> Result<(), ValidationError> {
         if self.revision == 0 || self.presets.len() > MAX_PRESETS {
             return Err(invalid("library budget or revision"));
         }
@@ -125,14 +116,6 @@ impl PresetLibrary {
                         })
                     {
                         return Err(invalid("ground settings"));
-                    }
-                }
-                PresetKind::Foliage(v) => {
-                    if !unit(v.strength) || !unit(v.density) {
-                        return Err(invalid("foliage settings"));
-                    }
-                    if !plants.assemblages.iter().any(|a| a.id == v.assemblage) {
-                        return Err(ValidationError::MissingAssemblage(v.assemblage));
                     }
                 }
                 PresetKind::Exclusion(e) if !unit(e.strength) => {
@@ -194,13 +177,11 @@ impl PresetLibrary {
         let (uses, dependencies) = self.expand(root, overrides)?;
         let mut result = ResolvedComposition {
             ground: None,
-            vegetation: vec![],
             exclusions: vec![],
             collections: vec![],
             dependencies,
         };
         let mut ids = BTreeSet::new();
-        let mut replaced = BTreeSet::new();
         for leaf in uses {
             let derive = |id: OutputId| {
                 let mut hash = blake3::Hasher::new();
@@ -227,18 +208,6 @@ impl PresetLibrary {
                     result.ground = Some(g);
                     id
                 }
-                PresetKind::Foliage(mut v) => {
-                    if v.blend == VegetationBlend::Replace && !replaced.insert(v.channel) {
-                        return Err(invalid(format!(
-                            "multiple replacements in channel {:?} at {:?}",
-                            v.channel, leaf.path
-                        )));
-                    }
-                    v.id = derive(v.id);
-                    let id = v.id;
-                    result.vegetation.push(v);
-                    id
-                }
                 PresetKind::Exclusion(mut e) => {
                     e.id = derive(e.id);
                     let id = e.id;
@@ -258,7 +227,6 @@ impl PresetLibrary {
                 return Err(invalid("resolved output identity collision"));
             }
         }
-        result.vegetation.sort_by_key(|v| v.id);
         result.exclusions.sort_by_key(|e| e.id);
         result.collections.sort_by_key(|e| e.id);
         Ok(result)
@@ -355,12 +323,6 @@ fn apply_overrides(
                 None
             }
             (PresetKind::Ground(g), QuickValue::GroundInfluence(v)) => Some((&mut g.strength, v)),
-            (PresetKind::Foliage(f), QuickValue::FoliageDensity(v)) => Some((&mut f.density, v)),
-            (PresetKind::Foliage(f), QuickValue::FoliageInfluence(v)) => Some((&mut f.strength, v)),
-            (PresetKind::Foliage(f), QuickValue::FoliageSeed(seed)) => {
-                f.seed = seed;
-                None
-            }
             (PresetKind::Exclusion(e), QuickValue::ExclusionInfluence(v)) => {
                 Some((&mut e.strength, v))
             }

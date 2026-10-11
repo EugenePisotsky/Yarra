@@ -18,6 +18,10 @@ use world::{
 pub struct TerrainSurfaceLayer {
     pub surface: TerrainSurface,
     pub layer: u16,
+    /// The grass on this surface (`vegetation::VegetationCatalog::cover`): its field's linear
+    /// colour and how fully it covers the ground, 0..1. Near detail shades the ground beneath
+    /// the blades and gives it the field's colour where they thin out.
+    pub grass: [f32; 4],
 }
 
 pub struct PreparedTerrainMaterial {
@@ -80,9 +84,6 @@ pub fn prepare_terrain_material(
         rain_shelter: None,
         forest_shadow: None,
         shading_mode: TerrainShadingMode::Production,
-        canopy_bounds: Vec4::ZERO,
-        canopy_shading: Default::default(),
-        canopy_coverage: None,
         settings: TerrainMaterialUniform {
             chunk_minimum: Vec2::new(
                 (i64::from(context.cell.x) - i64::from(context.origin_cell.x)) as f32

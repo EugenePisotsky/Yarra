@@ -6,7 +6,7 @@ use crate::{
         normalize_transform,
     },
     project_store::ProjectEditorStore,
-    tools::{ENVIRONMENT_TOOL, EditorToolRegistry, OBJECT_TOOL, ROAD_TOOL, VEGETATION_TOOL},
+    tools::{ENVIRONMENT_TOOL, EditorToolRegistry, OBJECT_TOOL, ROAD_TOOL},
     workspaces::{
         EditorWorkspace,
         world::{camera::EditorCameraFocusRequest, objects::source_object_position},
@@ -95,15 +95,6 @@ pub(super) fn draw_context_inspector(
             dense_domains,
             plants,
             busy,
-        );
-        return;
-    }
-
-    if active_tool.id == VEGETATION_TOOL.id {
-        ui.heading("Vegetation");
-        ui.label("Edit the active vegetation catalog in the Vegetation window.");
-        ui.weak(
-            "The validated draft drives the production GPU renderer. Save persists it to the project; Save & Publish also rebuilds the runtime database loaded by the game.",
         );
         return;
     }

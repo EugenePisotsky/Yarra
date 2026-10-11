@@ -9,12 +9,7 @@ use crate::{
     },
     saving::{EditorSaveCoordinator, drive_editor_save},
     shell::{EditorUiSet, EditorWindowRegistry},
-    tools::{
-        ENVIRONMENT_TOOL, EditorToolRegistry, OBJECT_TOOL, VEGETATION_TOOL, object_tool_active,
-    },
-    vegetation_authoring::{
-        VEGETATION_WINDOW, VegetationAuthoringPlugin, process_vegetation_save_completion,
-    },
+    tools::{ENVIRONMENT_TOOL, EditorToolRegistry, OBJECT_TOOL, object_tool_active},
     workspaces::{
         EditorWorkspace,
         world::{
@@ -69,9 +64,6 @@ impl Plugin for WorldWorkspacePlugin {
             .register(ENVIRONMENT_TOOL, false);
         app.world_mut()
             .resource_mut::<EditorToolRegistry>()
-            .register(VEGETATION_TOOL, false);
-        app.world_mut()
-            .resource_mut::<EditorToolRegistry>()
             .register(crate::tools::ROAD_TOOL, false);
         app.world_mut()
             .resource_mut::<EditorToolRegistry>()
@@ -82,8 +74,6 @@ impl Plugin for WorldWorkspacePlugin {
             ASSETS_WINDOW,
             NAVIGATOR_WINDOW,
             DIAGNOSTICS_WINDOW,
-            VEGETATION_WINDOW,
-            crate::canopy::CANOPY_WINDOW,
             crate::atmosphere_authoring::WINDOW,
             crate::area_authoring::WINDOW,
         ] {
@@ -105,10 +95,9 @@ impl Plugin for WorldWorkspacePlugin {
             .init_gizmo_group::<EditorOverlayGizmos>()
             .add_plugins((
                 TransformGizmoPlugin,
-                VegetationAuthoringPlugin,
+                crate::grass::GrassPlugin,
                 crate::environment_paint::EnvironmentPaintPlugin,
                 crate::road_authoring::RoadAuthoringPlugin,
-                crate::canopy::EditorCanopyPlugin,
                 crate::atmosphere_authoring::AtmosphereAuthoringPlugin,
                 crate::area_authoring::AreaAuthoringPlugin,
             ))
@@ -133,7 +122,6 @@ impl Plugin for WorldWorkspacePlugin {
                 (
                     process_project_save_completion,
                     process_dense_save_completion,
-                    process_vegetation_save_completion,
                     drive_editor_save,
                 )
                     .chain(),

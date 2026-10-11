@@ -81,7 +81,7 @@ fn fixture_records(count: usize) -> Vec<RoadSourceRecord> {
     records
 }
 fn project() -> ProjectDocument {
-    let presets = environment::fixtures::meadow_library(SOIL, GREEN, ChannelId([1; 16]));
+    let presets = environment::fixtures::meadow_library(SOIL, GREEN);
     let definition = EnvironmentDefinition {
         space: SPACE,
         revision: 1,
@@ -127,7 +127,17 @@ fn project() -> ProjectDocument {
             maximum_y: 0.0,
             sea_level: None,
         }],
-        vegetation_catalog: Some(vegetation::fixtures::reference_catalog()),
+        // Meadow grass grows on the green ground.
+        vegetation_catalog: Some(vegetation::VegetationCatalog {
+            surfaces: vec![vegetation::SurfaceGrass {
+                surface: GREEN.0,
+                grass: vec![vegetation::GrassAmount {
+                    grass: vegetation::fixtures::meadow().id(),
+                    amount: 1.0,
+                }],
+            }],
+            ..vegetation::fixtures::reference_catalog()
+        }),
         cells: vec![SourceCellRecord {
             space: SPACE,
             cell: CellCoord::ZERO,

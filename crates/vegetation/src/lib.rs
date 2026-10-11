@@ -1,667 +1,364 @@
-//! Pure vegetation domain contracts shared by cooking, rendering, editor tooling, and tests.
+//! Pure grass contracts shared by cooking, rendering, editor tooling and tests: grass types and
+//! what grows on each ground surface, the coverage fields cooked per world cell, and the
+//! deterministic blade placement the GPU reproduces.
 //!
-//! This crate deliberately has no Bevy, SQLite, or GPU dependency. It defines what vegetation
-//! means; integration crates decide how records are stored, streamed, and rendered.
+//! This crate deliberately has no Bevy, SQLite, or GPU dependency. It defines what grass means;
+//! integration crates decide how records are stored, streamed, and rendered.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-mod canopy;
 pub mod fixtures;
-pub use canopy::CanopyShading;
+mod placement;
+pub use placement::*;
 
-macro_rules! id_type {
-    ($name:ident) => {
-        #[derive(
-            Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
-        )]
-        pub struct $name(pub [u8; 16]);
-    };
-}
+/// A grass type's stable identity, derived from its key so packs may reorder types freely.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct GrassTypeId(pub [u8; 16]);
 
-id_type!(VegetationSpeciesId);
-id_type!(VegetationPopulationId);
-id_type!(VegetationAssemblageId);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum TopologyFamily {
-    Ribbon,
-    RibbonTuft,
-    BroadLeafCluster,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct RibbonCurveProfile {
-    /// Tip position on the normalized blade-height arc, measured from the terrain normal toward
-    /// the blade facing direction.
-    pub tip_tilt_radians: f32,
-    /// Root tangent angle measured from the terrain normal toward the blade facing direction.
-    pub root_tangent_radians: f32,
-    /// Tip tangent angle measured from the terrain normal toward the blade facing direction.
-    /// Values above 90 degrees let the curve arrive at the tip while travelling downward.
-    pub tip_tangent_radians: f32,
-    /// Root-side cubic handle length as a fraction of the blade height.
-    pub root_handle_length: f32,
-    /// Tip-side cubic handle length as a fraction of the blade height.
-    pub tip_handle_length: f32,
-}
-
-impl RibbonCurveProfile {
-    fn is_valid(self) -> bool {
-        finite_range(self.tip_tilt_radians, 0.0, 1.55)
-            && finite_range(self.root_tangent_radians, -1.55, 1.55)
-            && finite_range(self.tip_tangent_radians, -1.55, 3.05)
-            && finite_range(self.root_handle_length, 0.02, 1.5)
-            && finite_range(self.tip_handle_length, 0.02, 1.5)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct RibbonTopologyProfile {
-    pub high_section_count: u8,
-    pub low_section_count: u8,
-    pub blades_per_render_unit: u8,
-    pub longitudinal_power: f32,
-    /// Endpoints of one correlated, per-blade silhouette axis. Each variant owns the tip plus both
-    /// cubic handles so the editor and renderer interpolate complete curves.
-    pub curve_variant_a: RibbonCurveProfile,
-    pub curve_variant_b: RibbonCurveProfile,
-    pub maximum_lateral_curve: f32,
-    pub pair_spread_radians: f32,
-    /// Maximum angle through which the renderer may rotate the ribbon width line toward the
-    /// camera-facing width line around the local curve tangent. The response is zero when the
-    /// physical ribbon already faces the camera and grows continuously toward edge-on views; zero
-    /// disables it.
-    pub maximum_view_opening_radians: f32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct BroadLeafTopologyProfile {
-    pub high_section_count: u8,
-    pub low_section_count: u8,
-    pub minimum_leaf_count: u8,
-    pub maximum_leaf_count: u8,
-    pub crown_radius: f32,
-    pub minimum_droop: f32,
-    pub maximum_droop: f32,
-    pub maximum_camber: f32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub enum TopologyProfile {
-    Ribbon(RibbonTopologyProfile),
-    BroadLeafCluster(BroadLeafTopologyProfile),
-}
-
-impl TopologyProfile {
-    pub const fn family(self) -> TopologyFamily {
-        match self {
-            Self::Ribbon(profile) if profile.blades_per_render_unit > 2 => {
-                TopologyFamily::RibbonTuft
-            }
-            Self::Ribbon(_) => TopologyFamily::Ribbon,
-            Self::BroadLeafCluster(_) => TopologyFamily::BroadLeafCluster,
-        }
-    }
-
-    fn is_valid(self) -> bool {
-        match self {
-            Self::Ribbon(profile) => {
-                (2..=12).contains(&profile.high_section_count)
-                    && (1..profile.high_section_count).contains(&profile.low_section_count)
-                    && (1..=2).contains(&profile.blades_per_render_unit)
-                    && finite_range(profile.longitudinal_power, 0.2, 4.0)
-                    && profile.curve_variant_a.is_valid()
-                    && profile.curve_variant_b.is_valid()
-                    && profile.curve_variant_a.tip_tilt_radians
-                        <= profile.curve_variant_b.tip_tilt_radians
-                    && finite_range(profile.maximum_lateral_curve, 0.0, 1.0)
-                    && finite_range(profile.pair_spread_radians, 0.0, 3.15)
-                    && finite_range(
-                        profile.maximum_view_opening_radians,
-                        0.0,
-                        std::f32::consts::FRAC_PI_4,
-                    )
-            }
-            Self::BroadLeafCluster(profile) => {
-                (2..=12).contains(&profile.high_section_count)
-                    && (1..profile.high_section_count).contains(&profile.low_section_count)
-                    && profile.minimum_leaf_count == 2
-                    && profile.maximum_leaf_count == 2
-                    && finite_range(profile.crown_radius, 0.0, 2.0)
-                    && finite_range(profile.minimum_droop, 0.0, 2.0)
-                    && finite_range(profile.maximum_droop, profile.minimum_droop, 2.0)
-                    && finite_range(profile.maximum_camber, 0.0, 1.0)
-            }
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct VegetationMaterialProfile {
-    pub root_color: [f32; 3],
-    pub tip_color: [f32; 3],
-    pub clump_color_variation: f32,
-    pub perceptual_roughness: f32,
-    pub transmission: f32,
-    pub root_ao: f32,
-    pub tip_ao: f32,
-    pub normal_rounding: f32,
-}
-
-impl VegetationMaterialProfile {
-    fn is_valid(self) -> bool {
-        self.root_color.into_iter().all(valid_color_component)
-            && self.tip_color.into_iter().all(valid_color_component)
-            && finite_range(self.clump_color_variation, 0.0, 1.0)
-            && finite_range(self.perceptual_roughness, 0.0, 1.0)
-            && finite_range(self.transmission, 0.0, 1.0)
-            && finite_range(self.root_ao, 0.0, 1.0)
-            && finite_range(self.tip_ao, 0.0, 1.0)
-            && finite_range(self.normal_rounding, 0.0, 1.0)
-    }
-}
-
-/// How strongly a species replaces per-blade shape randomness with a stable group signal.
-///
-/// A value of zero keeps independent blade variation. A value of one makes every blade in a
-/// group use the same random coordinate for that channel. The authored topology ranges remain the
-/// hard geometry bounds in both cases.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct VegetationGroupResponseProfile {
-    pub height_coherence: f32,
-    /// Coherence of the complete ribbon silhouette (tip plus both handles), or the complete
-    /// broad-leaf droop shape for that topology family.
-    pub silhouette_coherence: f32,
-    pub lateral_curve_coherence: f32,
-}
-
-impl VegetationGroupResponseProfile {
-    fn is_valid(self) -> bool {
-        finite_range(self.height_coherence, 0.0, 1.0)
-            && finite_range(self.silhouette_coherence, 0.0, 1.0)
-            && finite_range(self.lateral_curve_coherence, 0.0, 1.0)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct VegetationWindProfile {
-    pub stiffness: f32,
-    pub drag: f32,
-    pub phase_spread_radians: f32,
-    pub vertical_response: f32,
-    pub maximum_tip_displacement: f32,
-}
-
-impl VegetationWindProfile {
-    fn is_valid(self) -> bool {
-        finite_range(self.stiffness, 0.0, 1.0)
-            && finite_range(self.drag, 0.0, 4.0)
-            && finite_range(self.phase_spread_radians, 0.0, std::f32::consts::TAU)
-            && finite_range(self.vertical_response, 0.0, 1.0)
-            && finite_range(self.maximum_tip_displacement, 0.0, 8.0)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct VegetationBounds {
-    pub minimum_height: f32,
-    pub maximum_height: f32,
-    pub minimum_half_width: f32,
-    pub maximum_half_width: f32,
-    pub maximum_horizontal_reach: f32,
-}
-
-impl VegetationBounds {
-    fn is_valid(self) -> bool {
-        finite_range(self.minimum_height, 0.01, 16.0)
-            && finite_range(self.maximum_height, self.minimum_height, 16.0)
-            && finite_range(self.minimum_half_width, 0.0001, 4.0)
-            && finite_range(self.maximum_half_width, self.minimum_half_width, 4.0)
-            && finite_range(self.maximum_horizontal_reach, 0.0, 16.0)
-    }
-}
-
-/// Stable per-species height distribution and short-grass topology policy.
-///
-/// Height remains a physical, camera-independent property. Ribbon roots at or below
-/// `pair_below_height` spend their fixed topology budget on two short blades; taller roots spend the
-/// same budget on one better-sampled curved blade. A zero threshold disables short-grass pairing.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct VegetationHeightProfile {
-    /// Bias of the generated height distribution: -1 favors short blades, 0 is neutral, and +1
-    /// favors tall blades without changing the authored minimum/maximum envelope.
-    pub distribution_bias: f32,
-    /// Maximum generated world-space height eligible for the two-blade ribbon topology. Zero keeps
-    /// every ribbon root on the single-blade topology.
-    pub pair_below_height: f32,
-}
-
-impl VegetationHeightProfile {
-    fn is_valid(self, bounds: VegetationBounds) -> bool {
-        finite_range(self.distribution_bias, -1.0, 1.0)
-            && (self.pair_below_height == 0.0
-                || finite_range(
-                    self.pair_below_height,
-                    bounds.minimum_height,
-                    bounds.maximum_height,
-                ))
-    }
-
-    /// Remaps a stable uniform coordinate while preserving the authored height envelope.
-    pub fn remap_coordinate(self, coordinate: f32) -> f32 {
-        let exponent = 2.0_f32.powf(-2.0 * self.distribution_bias);
-        coordinate.clamp(0.0, 1.0).powf(exponent)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub enum RepresentationKind {
-    Procedural(TopologyFamily),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct RepresentationLevel {
-    /// The representation is eligible at or above this projected pixel size.
-    pub minimum_projected_size: f32,
-    pub density_fraction: f32,
-    pub kind: RepresentationKind,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct VegetationSpecies {
-    pub id: VegetationSpeciesId,
-    pub key: String,
-    pub topology: TopologyProfile,
-    pub material: VegetationMaterialProfile,
-    pub group_response: VegetationGroupResponseProfile,
-    pub wind: VegetationWindProfile,
-    pub bounds: VegetationBounds,
-    pub height: VegetationHeightProfile,
-    /// Ordered from the highest-detail representation to the farthest.
-    pub representations: Vec<RepresentationLevel>,
-}
-
-impl VegetationSpecies {
-    fn is_valid(&self) -> bool {
-        if self.key.is_empty()
-            || !self.topology.is_valid()
-            || !self.material.is_valid()
-            || !self.group_response.is_valid()
-            || !self.wind.is_valid()
-            || !self.bounds.is_valid()
-            || !self.height.is_valid(self.bounds)
-            || self.representations.is_empty()
-        {
-            return false;
-        }
-
-        match self.topology {
-            TopologyProfile::Ribbon(profile) => {
-                if (self.height.pair_below_height > 0.0) != (profile.blades_per_render_unit == 2) {
-                    return false;
-                }
-            }
-            TopologyProfile::BroadLeafCluster(_) => {
-                if self.height.pair_below_height != 0.0 {
-                    return false;
-                }
-            }
-        }
-
-        let topology_family = self.topology.family();
-        let mut previous_size = f32::INFINITY;
-        let mut previous_density = 1.0;
-        for level in &self.representations {
-            if !finite_range(level.minimum_projected_size, 0.0, 16_384.0)
-                || !finite_range(level.density_fraction, f32::EPSILON, 1.0)
-                || level.minimum_projected_size >= previous_size
-                || level.density_fraction > previous_density
-            {
-                return false;
-            }
-            let RepresentationKind::Procedural(family) = level.kind;
-            if family != topology_family
-                && !(topology_family == TopologyFamily::RibbonTuft
-                    && family == TopologyFamily::Ribbon)
-            {
-                return false;
-            }
-            previous_size = level.minimum_projected_size;
-            previous_density = level.density_fraction;
-        }
-        true
-    }
-
-    /// Expected fraction of roots routed through the split-topology bins.
-    ///
-    /// The value is exact for the renderer's marginal distribution: independent and group height
-    /// coordinates are uniform, then linearly mixed by height coherence before the authored bias.
-    pub fn expected_split_topology_fraction(&self) -> f32 {
-        match self.topology {
-            TopologyProfile::BroadLeafCluster(_) => 1.0,
-            TopologyProfile::Ribbon(profile)
-                if profile.blades_per_render_unit == 2 && self.height.pair_below_height > 0.0 =>
-            {
-                let span = self.bounds.maximum_height - self.bounds.minimum_height;
-                if span <= f32::EPSILON {
-                    return if self.bounds.maximum_height <= self.height.pair_below_height {
-                        1.0
-                    } else {
-                        0.0
-                    };
-                }
-                let biased_limit = ((self.height.pair_below_height - self.bounds.minimum_height)
-                    / span)
-                    .clamp(0.0, 1.0);
-                let exponent = 2.0_f32.powf(-2.0 * self.height.distribution_bias);
-                let source_limit = biased_limit.powf(1.0 / exponent);
-                mixed_uniform_cdf(source_limit, self.group_response.height_coherence)
-            }
-            TopologyProfile::Ribbon(_) => 0.0,
-        }
-    }
-}
-
-fn mixed_uniform_cdf(value: f32, mix_weight: f32) -> f32 {
-    let value = value.clamp(0.0, 1.0);
-    let a = mix_weight.min(1.0 - mix_weight);
-    let b = mix_weight.max(1.0 - mix_weight);
-    if a <= f32::EPSILON {
-        return value;
-    }
-    if value < a {
-        value * value / (2.0 * a * b)
-    } else if value < b {
-        (value - a * 0.5) / b
-    } else {
-        1.0 - (1.0 - value).powi(2) / (2.0 * a * b)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub enum GrowthPattern {
-    Uniform {
-        jitter: f32,
-    },
-    ParentChild {
-        parent_spacing: f32,
-        children_per_parent: u16,
-        radius: f32,
-        parent_jitter: f32,
-    },
-}
-
-impl GrowthPattern {
-    fn is_valid(self, density_per_square_meter: f32) -> bool {
-        match self {
-            Self::Uniform { jitter } => finite_range(jitter, 0.0, 1.0),
-            Self::ParentChild {
-                parent_spacing,
-                children_per_parent,
-                radius,
-                parent_jitter,
-            } => {
-                if !finite_range(parent_spacing, 0.05, 64.0)
-                    || !(1..=256).contains(&children_per_parent)
-                    || !finite_range(radius, 0.0, parent_spacing * 2.0)
-                    || !finite_range(parent_jitter, 0.0, 1.0)
-                {
-                    return false;
-                }
-                let maximum_density = f32::from(children_per_parent) / parent_spacing.powi(2);
-                density_per_square_meter <= maximum_density * (1.0 + 1e-5)
-            }
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct VoronoiClumpProfile {
-    /// Distance between procedural feature-point cells in world metres.
-    pub spacing: f32,
-    /// Jitter of each feature point inside its cell, from centred to the full cell.
-    pub feature_jitter: f32,
-    /// Width of the fade where the nearest two feature points are similarly distant.
-    pub boundary_softness: f32,
-    /// Fraction of the centre vector applied to candidate roots away from boundaries.
-    pub root_attraction: f32,
-    /// Candidate retention at the feature point and at the outer clump region.
-    pub center_retention: f32,
-    pub edge_retention: f32,
-    pub retention_falloff: f32,
-    /// Bounded group-to-group reduction of the retention profile.
-    pub density_variation: f32,
-}
-
-impl VoronoiClumpProfile {
-    fn is_valid(self) -> bool {
-        finite_range(self.spacing, 0.05, 64.0)
-            && finite_range(self.feature_jitter, 0.0, 1.0)
-            && finite_range(self.boundary_softness, 0.0, 1.0)
-            && finite_range(self.root_attraction, 0.0, 1.0)
-            && finite_range(self.center_retention, 0.0, 1.0)
-            && finite_range(self.edge_retention, 0.0, 1.0)
-            && finite_range(self.retention_falloff, 0.1, 8.0)
-            && finite_range(self.density_variation, 0.0, 1.0)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub enum VegetationGroupingProfile {
-    None,
-    /// Use the explicit parent produced by parent/child root placement.
-    Parent,
-    /// Assign continuous stratified roots to analytic world-space Voronoi groups.
-    Voronoi(VoronoiClumpProfile),
-}
-
-impl VegetationGroupingProfile {
-    fn is_valid(self, growth: GrowthPattern) -> bool {
-        match (self, growth) {
-            (Self::None, _) | (Self::Parent, GrowthPattern::ParentChild { .. }) => true,
-            (Self::Voronoi(profile), GrowthPattern::Uniform { .. }) => profile.is_valid(),
-            (Self::Parent, GrowthPattern::Uniform { .. })
-            | (Self::Voronoi(_), GrowthPattern::ParentChild { .. }) => false,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct VegetationOrientationProfile {
-    pub shared_group_weight: f32,
-    pub radial_weight: f32,
-    pub tangential_weight: f32,
-    pub random_weight: f32,
-    pub flow_weight: f32,
-    pub angular_jitter_radians: f32,
-}
-
-impl VegetationOrientationProfile {
-    fn is_valid(self, grouping: VegetationGroupingProfile) -> bool {
-        let grouped_weight = self.shared_group_weight.abs()
-            + self.radial_weight.abs()
-            + self.tangential_weight.abs();
-        finite_range(self.shared_group_weight.abs(), 0.0, 4.0)
-            && finite_range(self.radial_weight.abs(), 0.0, 4.0)
-            && finite_range(self.tangential_weight.abs(), 0.0, 4.0)
-            && finite_range(self.random_weight, 0.0, 4.0)
-            && finite_range(self.flow_weight.abs(), 0.0, 4.0)
-            && finite_range(self.angular_jitter_radians, 0.0, std::f32::consts::PI)
-            && grouped_weight + self.random_weight + self.flow_weight.abs() > f32::EPSILON
-            && (!matches!(grouping, VegetationGroupingProfile::None)
-                || grouped_weight <= f32::EPSILON)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct SpeciesChoice {
-    pub species: VegetationSpeciesId,
-    pub weight: f32,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct VegetationPopulation {
-    pub id: VegetationPopulationId,
-    pub key: String,
-    pub species: Vec<SpeciesChoice>,
-    pub density_per_square_meter: f32,
-    pub seed: u32,
-    pub growth: GrowthPattern,
-    pub grouping: VegetationGroupingProfile,
-    pub orientation: VegetationOrientationProfile,
-    /// Populations sharing a nonzero group compete for local occupancy.
-    pub competition_group: Option<u16>,
-}
-
-impl VegetationPopulation {
-    fn is_valid(&self, species_ids: &HashSet<VegetationSpeciesId>) -> bool {
-        let unique_choice_count = self
-            .species
-            .iter()
-            .map(|choice| choice.species)
-            .collect::<HashSet<_>>()
-            .len();
-        !self.key.is_empty()
-            && finite_range(self.density_per_square_meter, 0.0001, 512.0)
-            && self.growth.is_valid(self.density_per_square_meter)
-            && self.grouping.is_valid(self.growth)
-            && self.orientation.is_valid(self.grouping)
-            && !self.species.is_empty()
-            && unique_choice_count == self.species.len()
-            && self.species.iter().all(|choice| {
-                species_ids.contains(&choice.species)
-                    && choice.weight.is_finite()
-                    && choice.weight > 0.0
+impl GrassTypeId {
+    /// Two FNV-1a passes with different offsets: stable across builds and platforms.
+    pub fn from_key(key: &str) -> Self {
+        let pass = |offset: u64| {
+            key.bytes().fold(offset, |hash, byte| {
+                (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
             })
+        };
+        let mut id = [0; 16];
+        id[..8].copy_from_slice(&pass(0xcbf2_9ce4_8422_2325).to_le_bytes());
+        id[8..].copy_from_slice(&pass(0x6c62_272e_07bb_0142).to_le_bytes());
+        Self(id)
+    }
+
+    /// The placement seed: every type grows on its own world-aligned lattice.
+    pub fn seed(self) -> u32 {
+        u32::from_le_bytes([self.0[0], self.0[1], self.0[2], self.0[3]])
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct VegetationAssemblage {
-    pub id: VegetationAssemblageId,
-    pub key: String,
-    pub populations: Vec<VegetationPopulationId>,
+/// How blades group into clumps: Voronoi cells of `size`, each with its own height, colour
+/// and facing, as in Ghost of Tsushima's grass.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct GrassClumps {
+    /// Metres between clump centres.
+    pub size: f32,
+    /// Share of the way each root moves toward its clump centre: 0 spreads blades evenly,
+    /// 1 gathers them into tight tufts with bare ground between.
+    pub pull: f32,
+    /// How much clumps differ in height: 0 all alike, 1 from half to full height.
+    pub height: f32,
+    /// Share of blades that face their clump's common direction instead of their own.
+    pub facing: f32,
+    /// How strongly blades splay outward from their clump centre.
+    pub splay: f32,
+    /// How partial coverage thins the type: 0 drops single blades evenly, 1 drops whole clumps,
+    /// so sparse grass grows as separate tussocks.
+    pub patches: f32,
 }
 
+/// Linear-light colours of a blade along its length.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct GrassColors {
+    pub root: [f32; 3],
+    pub tip: [f32; 3],
+    /// The tip colour of dry clumps.
+    pub dry_tip: [f32; 3],
+    /// Share of clumps with dry tips.
+    pub dry: f32,
+    /// Clump-to-clump brightness variation, as a share.
+    pub variation: f32,
+}
+
+impl GrassColors {
+    /// The mean colour a field of these blades shows from a distance, where their upper parts
+    /// hide the roots.
+    pub fn field(&self) -> [f32; 3] {
+        std::array::from_fn(|i| {
+            let tip = self.tip[i] + (self.dry_tip[i] - self.tip[i]) * self.dry;
+            self.root[i] + (tip - self.root[i]) * 0.7
+        })
+    }
+}
+
+/// What the grass on a ground surface makes of it.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct GrassCover {
+    /// How fully grass covers the surface, 0..1: its types' shares, a type at
+    /// `VegetationCatalog::FULL_COVER_DENSITY` or more counting fully, and tufted types (high
+    /// `pull`) leaving bare ground between their tufts.
+    pub amount: f32,
+    /// Linear colour of the field from a distance, its types mixed by their cover.
+    pub color: [f32; 3],
+}
+
+impl GrassCover {
+    /// Colour, then amount.
+    pub fn rgba(self) -> [f32; 4] {
+        [self.color[0], self.color[1], self.color[2], self.amount]
+    }
+}
+
+/// One kind of grass: blade shape, clumping, colour, lighting and wind response. Every blade
+/// picks its values within the ranges, its clump shared by its neighbours.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GrassType {
+    pub key: String,
+    /// Blades per square metre where the type grows at full amount.
+    pub density: f32,
+    /// Blade height in metres.
+    pub height: [f32; 2],
+    /// Blade width at the root in metres; blades taper to a point.
+    pub width: [f32; 2],
+    /// How far the tip leans from upright: 0 upright, 1 lying along the ground.
+    pub tilt: [f32; 2],
+    /// How much the blade's middle arches above the line from root to tip.
+    pub bend: [f32; 2],
+    pub clumps: GrassClumps,
+    pub colors: GrassColors,
+    /// Strength of the sun's sheen on the blades.
+    pub gloss: f32,
+    pub roughness: f32,
+    /// Share of the sun passing through a blade seen against the light.
+    pub translucency: f32,
+    /// Resistance to wind: 0 sways freely, 1 barely moves.
+    pub stiffness: f32,
+}
+
+impl GrassType {
+    pub fn id(&self) -> GrassTypeId {
+        GrassTypeId::from_key(&self.key)
+    }
+
+    /// Metres between lattice candidates.
+    pub fn spacing(&self) -> f32 {
+        self.density.sqrt().recip()
+    }
+
+    fn is_valid(&self) -> bool {
+        let range = |r: [f32; 2], minimum: f32, maximum: f32| {
+            finite_range(r[0], minimum, maximum) && finite_range(r[1], r[0], maximum)
+        };
+        let color = |c: [f32; 3]| c.into_iter().all(|v| finite_range(v, 0.0, 1.0));
+        let c = self.clumps;
+        !self.key.is_empty()
+            && finite_range(self.density, 0.25, 400.0)
+            && range(self.height, 0.02, 3.0)
+            && range(self.width, 0.0005, 0.1)
+            && range(self.tilt, 0.0, 1.0)
+            && range(self.bend, -0.5, 1.0)
+            && finite_range(c.size, 0.1, 8.0)
+            && [c.pull, c.height, c.facing, c.splay, c.patches]
+                .into_iter()
+                .all(|v| finite_range(v, 0.0, 1.0))
+            && color(self.colors.root)
+            && color(self.colors.tip)
+            && color(self.colors.dry_tip)
+            && finite_range(self.colors.dry, 0.0, 1.0)
+            && finite_range(self.colors.variation, 0.0, 1.0)
+            && finite_range(self.gloss, 0.0, 2.0)
+            && finite_range(self.roughness, 0.05, 1.0)
+            && finite_range(self.translucency, 0.0, 1.0)
+            && finite_range(self.stiffness, 0.0, 1.0)
+    }
+}
+
+/// How much of a grass type grows on a surface: a share of the type's density.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct GrassAmount {
+    pub grass: GrassTypeId,
+    pub amount: f32,
+}
+
+/// What grows on one ground surface.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SurfaceGrass {
+    /// A `world::TerrainSurfaceId`, by value: this crate sits below `world`.
+    pub surface: [u8; 16],
+    pub grass: Vec<GrassAmount>,
+}
+
+pub const MAX_GRASS_TYPES: usize = 256;
+
+/// The grass of a world: its types and what grows on each of its ground surfaces.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct VegetationCatalog {
-    pub species: Vec<VegetationSpecies>,
-    pub populations: Vec<VegetationPopulation>,
-    pub assemblages: Vec<VegetationAssemblage>,
+    pub grass: Vec<GrassType>,
+    pub surfaces: Vec<SurfaceGrass>,
 }
 
 impl VegetationCatalog {
     pub fn validate(&self) -> Result<(), CatalogValidationError> {
-        let mut species_ids = HashSet::new();
-        let mut species_keys = HashSet::new();
-        for species in &self.species {
-            if !species_ids.insert(species.id) {
-                return Err(CatalogValidationError::DuplicateSpecies(species.id));
+        if self.grass.len() > MAX_GRASS_TYPES {
+            return Err(CatalogValidationError::TooManyTypes);
+        }
+        let mut ids = HashSet::new();
+        for grass in &self.grass {
+            if !ids.insert(grass.id()) {
+                return Err(CatalogValidationError::DuplicateType(grass.key.clone()));
             }
-            if !species_keys.insert(species.key.as_str()) {
-                return Err(CatalogValidationError::DuplicateSpeciesKey(
-                    species.key.clone(),
-                ));
-            }
-            if !species.is_valid() {
-                return Err(CatalogValidationError::InvalidSpecies(species.id));
+            if !grass.is_valid() {
+                return Err(CatalogValidationError::InvalidType(grass.key.clone()));
             }
         }
-
-        let mut population_ids = HashSet::new();
-        let mut population_keys = HashSet::new();
-        for population in &self.populations {
-            if !population_ids.insert(population.id) {
-                return Err(CatalogValidationError::DuplicatePopulation(population.id));
+        let mut surfaces = HashSet::new();
+        for surface in &self.surfaces {
+            if !surfaces.insert(surface.surface) {
+                return Err(CatalogValidationError::DuplicateSurface(surface.surface));
             }
-            if !population_keys.insert(population.key.as_str()) {
-                return Err(CatalogValidationError::DuplicatePopulationKey(
-                    population.key.clone(),
-                ));
-            }
-            if !population.is_valid(&species_ids) {
-                return Err(CatalogValidationError::InvalidPopulation(population.id));
-            }
-        }
-
-        let mut assemblage_ids = HashSet::new();
-        let mut assemblage_keys = HashSet::new();
-        for assemblage in &self.assemblages {
-            if !assemblage_ids.insert(assemblage.id) {
-                return Err(CatalogValidationError::DuplicateAssemblage(assemblage.id));
-            }
-            if !assemblage_keys.insert(assemblage.key.as_str()) {
-                return Err(CatalogValidationError::DuplicateAssemblageKey(
-                    assemblage.key.clone(),
-                ));
-            }
-            if assemblage.key.is_empty()
-                || assemblage.populations.is_empty()
-                || assemblage
-                    .populations
-                    .iter()
-                    .any(|population| !population_ids.contains(population))
-                || assemblage
-                    .populations
-                    .iter()
-                    .copied()
-                    .collect::<HashSet<_>>()
-                    .len()
-                    != assemblage.populations.len()
-            {
-                return Err(CatalogValidationError::InvalidAssemblage(assemblage.id));
+            let mut types = HashSet::new();
+            for amount in &surface.grass {
+                if !ids.contains(&amount.grass)
+                    || !types.insert(amount.grass)
+                    || !finite_range(amount.amount, 0.0, 4.0)
+                {
+                    return Err(CatalogValidationError::InvalidSurface(surface.surface));
+                }
             }
         }
         Ok(())
     }
 
-    pub fn species(&self, id: VegetationSpeciesId) -> Option<&VegetationSpecies> {
-        self.species.iter().find(|species| species.id == id)
+    pub fn grass(&self, id: GrassTypeId) -> Option<&GrassType> {
+        self.grass.iter().find(|grass| grass.id() == id)
     }
 
-    pub fn population(&self, id: VegetationPopulationId) -> Option<&VegetationPopulation> {
-        self.populations
+    pub fn index(&self, id: GrassTypeId) -> Option<usize> {
+        self.grass.iter().position(|grass| grass.id() == id)
+    }
+
+    /// What grows on `surface`; nothing for a surface the catalog does not list.
+    pub fn on_surface(&self, surface: [u8; 16]) -> &[GrassAmount] {
+        self.surfaces
             .iter()
-            .find(|population| population.id == id)
+            .find(|s| s.surface == surface)
+            .map_or(&[], |s| &s.grass)
+    }
+
+    /// Blades per square metre at which one type covers its ground fully.
+    pub const FULL_COVER_DENSITY: f32 = 30.0;
+
+    /// How grass covers `surface`: ground under it is shaded where blades are drawn and takes
+    /// the field's colour beyond them.
+    pub fn cover(&self, surface: [u8; 16]) -> GrassCover {
+        let mut total = 0.0;
+        let mut color = [0.0; 3];
+        for a in self.on_surface(surface) {
+            let Some(grass) = self.grass(a.grass) else {
+                continue;
+            };
+            let share = a.amount
+                * (grass.density / Self::FULL_COVER_DENSITY).min(1.0)
+                * (1.0 - 0.5 * grass.clumps.pull);
+            let field = grass.colors.field();
+            total += share;
+            for (c, f) in color.iter_mut().zip(field) {
+                *c += f * share;
+            }
+        }
+        if total <= 0.0 {
+            return GrassCover::default();
+        }
+        GrassCover {
+            amount: total.min(1.0),
+            color: color.map(|c| c / total),
+        }
+    }
+
+    /// Takes the look of `other`'s types with the same keys, keeping this catalog's set of types
+    /// and surfaces: what a live-edited pack may change without recooking coverage. True when a
+    /// type changed.
+    pub fn adopt_looks(&mut self, other: &VegetationCatalog) -> bool {
+        let mut changed = false;
+        for grass in &mut self.grass {
+            if let Some(source) = other.grass.iter().find(|g| g.key == grass.key)
+                && source != grass
+            {
+                *grass = source.clone();
+                changed = true;
+            }
+        }
+        changed
+    }
+}
+
+/// A grass pack as authored in RON (`assets/packs/grass/*.ron`): its types, and what grows on
+/// each ground surface of its terrain pack, by surface key.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GrassPack {
+    /// The terrain pack whose surface keys `surfaces` names.
+    pub terrain: String,
+    pub types: Vec<GrassType>,
+    /// Surface key → (grass key, share of that type's density).
+    pub surfaces: BTreeMap<String, Vec<(String, f32)>>,
+}
+
+impl GrassPack {
+    pub fn parse(text: &str) -> Result<Self, String> {
+        ron::from_str(text).map_err(|e| e.to_string())
+    }
+
+    /// The catalog for a world whose ground surface `key` has the ID `surface(key)`.
+    pub fn catalog(
+        &self,
+        surface: impl Fn(&str) -> Option<[u8; 16]>,
+    ) -> Result<VegetationCatalog, String> {
+        let surfaces = self
+            .surfaces
+            .iter()
+            .map(|(key, grass)| {
+                let surface = surface(key)
+                    .ok_or_else(|| format!("terrain pack {} has no surface {key}", self.terrain))?;
+                let grass = grass
+                    .iter()
+                    .map(|(grass, amount)| {
+                        self.types
+                            .iter()
+                            .any(|t| &t.key == grass)
+                            .then(|| GrassAmount {
+                                grass: GrassTypeId::from_key(grass),
+                                amount: *amount,
+                            })
+                            .ok_or_else(|| format!("surface {key} names unknown grass {grass}"))
+                    })
+                    .collect::<Result<_, _>>()?;
+                Ok(SurfaceGrass { surface, grass })
+            })
+            .collect::<Result<_, String>>()?;
+        let catalog = VegetationCatalog {
+            grass: self.types.clone(),
+            surfaces,
+        };
+        catalog.validate().map_err(|e| e.to_string())?;
+        Ok(catalog)
     }
 }
 
 #[derive(Debug, Error, Clone, PartialEq)]
 pub enum CatalogValidationError {
-    #[error("duplicate vegetation species {0:?}")]
-    DuplicateSpecies(VegetationSpeciesId),
-    #[error("duplicate vegetation species key {0}")]
-    DuplicateSpeciesKey(String),
-    #[error("invalid vegetation species {0:?}")]
-    InvalidSpecies(VegetationSpeciesId),
-    #[error("duplicate vegetation population {0:?}")]
-    DuplicatePopulation(VegetationPopulationId),
-    #[error("duplicate vegetation population key {0}")]
-    DuplicatePopulationKey(String),
-    #[error("invalid vegetation population {0:?}")]
-    InvalidPopulation(VegetationPopulationId),
-    #[error("duplicate vegetation assemblage {0:?}")]
-    DuplicateAssemblage(VegetationAssemblageId),
-    #[error("duplicate vegetation assemblage key {0}")]
-    DuplicateAssemblageKey(String),
-    #[error("invalid vegetation assemblage {0:?}")]
-    InvalidAssemblage(VegetationAssemblageId),
+    #[error("more than {MAX_GRASS_TYPES} grass types")]
+    TooManyTypes,
+    #[error("duplicate grass type {0}")]
+    DuplicateType(String),
+    #[error("invalid grass type {0}")]
+    InvalidType(String),
+    #[error("surface {0:?} is listed twice")]
+    DuplicateSurface([u8; 16]),
+    #[error("surface {0:?} names unknown, repeated or out-of-range grass")]
+    InvalidSurface([u8; 16]),
 }
 
+/// One grass type's coverage over a page: how much of its density grows at each sample.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct VegetationPopulationField {
-    pub population: VegetationPopulationId,
+pub struct GrassField {
+    pub grass: GrassTypeId,
     pub resolution: u16,
-    /// Row-major R8 weight samples.
+    /// Row-major R8 samples at texel centres.
     pub coverage: Vec<u8>,
-    /// Optional normalized world-space direction. Zero selects the population's fallback flow.
-    pub flow_direction: [f32; 2],
 }
 
-impl VegetationPopulationField {
+impl GrassField {
     pub fn sample_coverage(&self, page: &VegetationFieldPage, world_xz: [f32; 2]) -> f32 {
         if !page.owns(world_xz) || self.resolution == 0 {
             return 0.0;
@@ -675,7 +372,7 @@ impl VegetationPopulationField {
     }
 }
 
-/// Persistent, terrain-independent vegetation data for one streamed world page.
+/// Persistent, terrain-independent grass data for one streamed world page.
 ///
 /// The page key and world-space record provide its cell and extent. Relief is deliberately absent:
 /// a resident vegetation page joins this data with the matching streamed terrain heightfield. This
@@ -683,42 +380,35 @@ impl VegetationPopulationField {
 /// one authoritative terrain page.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VegetationFieldPageData {
-    pub fields: Vec<VegetationPopulationField>,
+    pub fields: Vec<GrassField>,
 }
 
 impl VegetationFieldPageData {
     pub fn validate(&self, catalog: &VegetationCatalog) -> Result<(), PageValidationError> {
-        let mut populations = HashSet::new();
+        let mut types = HashSet::new();
         for field in &self.fields {
-            if catalog.population(field.population).is_none() {
-                return Err(PageValidationError::MissingPopulation(field.population));
+            if catalog.grass(field.grass).is_none() {
+                return Err(PageValidationError::MissingType(field.grass));
             }
-            if !populations.insert(field.population) {
-                return Err(PageValidationError::DuplicatePopulation(field.population));
+            if !types.insert(field.grass) {
+                return Err(PageValidationError::DuplicateType(field.grass));
             }
             let resolution = usize::from(field.resolution);
-            if resolution == 0
-                || resolution > 256
-                || field.coverage.len() != resolution * resolution
-                || !field.flow_direction.into_iter().all(f32::is_finite)
-            {
-                return Err(PageValidationError::InvalidField(field.population));
+            if resolution == 0 || resolution > 256 || field.coverage.len() != resolution.pow(2) {
+                return Err(PageValidationError::InvalidField(field.grass));
             }
         }
         Ok(())
     }
 }
 
-/// Resident/debug page assembled from persisted vegetation fields and streamed terrain relief.
-///
-/// This composite is convenient for CPU reference placement and the current GPU diagnostic, but it
-/// is not the format written to vegetation pages in the world database.
+/// Resident page assembled from persisted grass fields and streamed terrain relief.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VegetationFieldPage {
     pub origin_xz: [f32; 2],
     pub size: f32,
     pub surface: VegetationSurfaceField,
-    pub fields: Vec<VegetationPopulationField>,
+    pub fields: Vec<GrassField>,
 }
 
 impl VegetationFieldPage {
@@ -768,15 +458,15 @@ pub enum PageValidationError {
     InvalidExtent,
     #[error("invalid vegetation page surface field")]
     InvalidSurface,
-    #[error("vegetation page references missing population {0:?}")]
-    MissingPopulation(VegetationPopulationId),
-    #[error("vegetation page repeats population {0:?}")]
-    DuplicatePopulation(VegetationPopulationId),
-    #[error("invalid field for vegetation population {0:?}")]
-    InvalidField(VegetationPopulationId),
+    #[error("vegetation page references missing grass {0:?}")]
+    MissingType(GrassTypeId),
+    #[error("vegetation page repeats grass {0:?}")]
+    DuplicateType(GrassTypeId),
+    #[error("invalid field for grass {0:?}")]
+    InvalidField(GrassTypeId),
 }
 
-/// Page-local terrain samples shared by every population on the page.
+/// Page-local terrain samples shared by every grass type on the page.
 ///
 /// Samples include both page edges, so adjacent cooked pages can carry identical boundary values.
 /// Normals use signed 16-bit octahedral encoding; validity is R8. This keeps the persistent
@@ -825,7 +515,7 @@ impl VegetationSurfaceField {
     ) -> VegetationSurfaceSample {
         let resolution = usize::from(self.resolution);
         // Scene admission validates every height once. Sampling must remain O(1),
-        // including debug builds used by the editor and CPU canopy baker.
+        // including debug builds used by the editor.
         debug_assert!((2..=257).contains(&resolution));
         debug_assert_eq!(self.heights.len(), resolution * resolution);
         debug_assert_eq!(self.normals_oct.len(), resolution * resolution);
@@ -954,378 +644,6 @@ fn pages_overlap(first: &VegetationFieldPage, second: &VegetationFieldPage) -> b
         && first.origin_xz[1] + first.size > second.origin_xz[1]
 }
 
-/// World-lattice candidate range for one page/population pair.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct CandidateDomain {
-    pub cell_min: [i32; 2],
-    pub cell_count: [u32; 2],
-    pub candidates_per_cell: u32,
-    pub spacing: f32,
-}
-
-impl CandidateDomain {
-    pub fn candidate_count(self) -> u32 {
-        self.cell_count[0]
-            .saturating_mul(self.cell_count[1])
-            .saturating_mul(self.candidates_per_cell)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct GroupSample {
-    pub key: u32,
-    pub center_xz: [f32; 2],
-    pub radial_direction: [f32; 2],
-    pub normalized_distance: f32,
-    pub boundary_influence: f32,
-    pub density_retention: f32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct CandidateSample {
-    pub root_xz: [f32; 2],
-    pub group: GroupSample,
-    pub rest_direction: [f32; 2],
-    pub stable_rank: f32,
-    /// Nested four-way rank used by representation-density LOD.
-    pub lod_rank: f32,
-    pub clump_variant: f32,
-    pub seed: u32,
-}
-
-pub fn candidate_domain(
-    page: &VegetationFieldPage,
-    population: &VegetationPopulation,
-) -> CandidateDomain {
-    candidate_domain_for_extent(page.origin_xz, page.size, population)
-}
-
-/// Canonical placement domain independent of the page's render-space offset.
-pub fn candidate_domain_for_extent(
-    origin_xz: [f32; 2],
-    size: f32,
-    population: &VegetationPopulation,
-) -> CandidateDomain {
-    let (spacing, placement_radius, candidates_per_cell) = match population.growth {
-        GrowthPattern::Uniform { .. } => {
-            (population.density_per_square_meter.sqrt().recip(), 0.0, 1)
-        }
-        GrowthPattern::ParentChild {
-            parent_spacing,
-            children_per_parent,
-            radius,
-            ..
-        } => (parent_spacing, radius, u32::from(children_per_parent)),
-    };
-    let grouping_radius = match population.grouping {
-        VegetationGroupingProfile::Voronoi(profile) => {
-            profile.spacing * std::f32::consts::SQRT_2 * profile.root_attraction
-        }
-        VegetationGroupingProfile::None | VegetationGroupingProfile::Parent => 0.0,
-    };
-    let radius = placement_radius.max(grouping_radius);
-    let minimum = [
-        ((origin_xz[0] - radius) / spacing).floor() as i32,
-        ((origin_xz[1] - radius) / spacing).floor() as i32,
-    ];
-    let maximum = [
-        ((origin_xz[0] + size + radius) / spacing).ceil() as i32,
-        ((origin_xz[1] + size + radius) / spacing).ceil() as i32,
-    ];
-    CandidateDomain {
-        cell_min: minimum,
-        cell_count: [
-            maximum[0].saturating_sub(minimum[0]) as u32,
-            maximum[1].saturating_sub(minimum[1]) as u32,
-        ],
-        candidates_per_cell,
-        spacing,
-    }
-}
-
-pub fn sample_candidate(
-    population: &VegetationPopulation,
-    domain: CandidateDomain,
-    candidate_index: u32,
-    flow_direction: [f32; 2],
-) -> Option<CandidateSample> {
-    if candidate_index >= domain.candidate_count() || domain.cell_count[0] == 0 {
-        return None;
-    }
-    let cell_index = candidate_index / domain.candidates_per_cell;
-    let child_index = candidate_index % domain.candidates_per_cell;
-    let cell_x = domain.cell_min[0] + (cell_index % domain.cell_count[0]) as i32;
-    let cell_z = domain.cell_min[1] + (cell_index / domain.cell_count[0]) as i32;
-    let cell_seed = hash_cell(population.seed, cell_x, cell_z, 0x6d2b_79f5);
-
-    let (parent, initial_root) = match population.growth {
-        GrowthPattern::Uniform { jitter } => {
-            let offset = [
-                0.5 + (random01(cell_seed ^ 0xa511_e9b3) - 0.5) * jitter,
-                0.5 + (random01(cell_seed ^ 0x63d8_3595) - 0.5) * jitter,
-            ];
-            let root = [
-                (cell_x as f32 + offset[0]) * domain.spacing,
-                (cell_z as f32 + offset[1]) * domain.spacing,
-            ];
-            (root, root)
-        }
-        GrowthPattern::ParentChild {
-            parent_jitter,
-            radius,
-            ..
-        } => {
-            let parent_offset = [
-                0.5 + (random01(cell_seed ^ 0xa511_e9b3) - 0.5) * parent_jitter,
-                0.5 + (random01(cell_seed ^ 0x63d8_3595) - 0.5) * parent_jitter,
-            ];
-            let parent = [
-                (cell_x as f32 + parent_offset[0]) * domain.spacing,
-                (cell_z as f32 + parent_offset[1]) * domain.spacing,
-            ];
-            let child_seed = hash32(cell_seed ^ child_index.wrapping_mul(0x9e37_79b9));
-            let angle = random01(child_seed ^ 0xc2b2_ae35) * std::f32::consts::TAU;
-            let distance = random01(child_seed ^ 0x27d4_eb2f).sqrt() * radius;
-            let radial = [angle.cos(), angle.sin()];
-            let root = [
-                parent[0] + radial[0] * distance,
-                parent[1] + radial[1] * distance,
-            ];
-            (parent, root)
-        }
-    };
-
-    let seed = hash32(cell_seed ^ child_index.wrapping_mul(0x85eb_ca6b));
-    let group = sample_group(population, initial_root, parent, cell_seed, seed);
-    let mut root = initial_root;
-    if let VegetationGroupingProfile::Voronoi(profile) = population.grouping {
-        let attraction = profile.root_attraction * group.boundary_influence;
-        root = [
-            root[0] + (group.center_xz[0] - root[0]) * attraction,
-            root[1] + (group.center_xz[1] - root[1]) * attraction,
-        ];
-    }
-    let lod_lane = match population.growth {
-        GrowthPattern::Uniform { .. } => {
-            let block_x = cell_x.div_euclid(2);
-            let block_z = cell_z.div_euclid(2);
-            let quadrant = cell_x.rem_euclid(2) as u32 + 2 * cell_z.rem_euclid(2) as u32;
-            let rotation = hash_cell(population.seed, block_x, block_z, 0xa24b_aed5) & 3;
-            (quadrant + rotation) & 3
-        }
-        GrowthPattern::ParentChild { .. } => {
-            let group = child_index / 4;
-            let rotation = hash_cell(
-                population.seed,
-                cell_x,
-                cell_z,
-                0xa24b_aed5 ^ group.wrapping_mul(0x9e37_79b9),
-            ) & 3;
-            (child_index % 4 + rotation) & 3
-        }
-    };
-    let random_angle = random01(seed ^ 0x1656_67b1) * std::f32::consts::TAU;
-    let random_direction = [random_angle.cos(), random_angle.sin()];
-    let shared_angle = random01(group.key ^ 0x68e3_1da4) * std::f32::consts::TAU;
-    let shared_direction = [shared_angle.cos(), shared_angle.sin()];
-    let radial = group.radial_direction;
-    let tangent = [-radial[1], radial[0]];
-    let flow = normalize_or(flow_direction, [1.0, 0.0]);
-    let orientation = population.orientation;
-    let group_influence = group.boundary_influence;
-    let mixed = [
-        shared_direction[0] * orientation.shared_group_weight * group_influence
-            + radial[0] * orientation.radial_weight * group_influence
-            + tangent[0] * orientation.tangential_weight * group_influence
-            + random_direction[0] * orientation.random_weight
-            + flow[0] * orientation.flow_weight,
-        shared_direction[1] * orientation.shared_group_weight * group_influence
-            + radial[1] * orientation.radial_weight * group_influence
-            + tangent[1] * orientation.tangential_weight * group_influence
-            + random_direction[1] * orientation.random_weight
-            + flow[1] * orientation.flow_weight,
-    ];
-    let direction = normalize_or(mixed, random_direction);
-    let angular_jitter =
-        (random01(seed ^ 0x7f4a_7c15) * 2.0 - 1.0) * orientation.angular_jitter_radians;
-    let rest_direction = [
-        direction[0] * angular_jitter.cos() - direction[1] * angular_jitter.sin(),
-        direction[0] * angular_jitter.sin() + direction[1] * angular_jitter.cos(),
-    ];
-    Some(CandidateSample {
-        root_xz: root,
-        group,
-        rest_direction,
-        stable_rank: random01(seed ^ 0x94d0_49bb),
-        lod_rank: (lod_lane as f32 + random01(seed ^ 0x91e1_0da5)) * 0.25,
-        clump_variant: random01(group.key ^ 0x3c6e_f372),
-        seed,
-    })
-}
-
-fn sample_group(
-    population: &VegetationPopulation,
-    root: [f32; 2],
-    parent: [f32; 2],
-    parent_key: u32,
-    candidate_seed: u32,
-) -> GroupSample {
-    match population.grouping {
-        VegetationGroupingProfile::None => GroupSample {
-            key: candidate_seed,
-            center_xz: root,
-            radial_direction: [0.0, 0.0],
-            normalized_distance: 0.0,
-            boundary_influence: 0.0,
-            density_retention: 1.0,
-        },
-        VegetationGroupingProfile::Parent => {
-            let delta = [root[0] - parent[0], root[1] - parent[1]];
-            let distance = (delta[0] * delta[0] + delta[1] * delta[1]).sqrt();
-            let radius = match population.growth {
-                GrowthPattern::ParentChild { radius, .. } => radius,
-                GrowthPattern::Uniform { .. } => 0.0,
-            };
-            GroupSample {
-                key: parent_key,
-                center_xz: parent,
-                radial_direction: normalize_or(delta, [1.0, 0.0]),
-                normalized_distance: if radius <= f32::EPSILON {
-                    0.0
-                } else {
-                    (distance / radius).clamp(0.0, 1.0)
-                },
-                boundary_influence: 1.0,
-                density_retention: 1.0,
-            }
-        }
-        VegetationGroupingProfile::Voronoi(profile) => {
-            sample_voronoi_group(population.seed, root, profile)
-        }
-    }
-}
-
-fn sample_voronoi_group(seed: u32, root: [f32; 2], profile: VoronoiClumpProfile) -> GroupSample {
-    let base_x = (root[0] / profile.spacing).floor() as i32;
-    let base_z = (root[1] / profile.spacing).floor() as i32;
-    let mut nearest_distance_squared = f32::INFINITY;
-    let mut second_distance_squared = f32::INFINITY;
-    let mut nearest_center = root;
-    let mut nearest_key = seed;
-
-    for dz in -1..=1 {
-        for dx in -1..=1 {
-            let cell_x = base_x + dx;
-            let cell_z = base_z + dz;
-            let key = hash_cell(seed, cell_x, cell_z, 0x4f1b_cdc9);
-            let offset = [
-                0.5 + (random01(key ^ 0x9e37_79b9) - 0.5) * profile.feature_jitter,
-                0.5 + (random01(key ^ 0x85eb_ca6b) - 0.5) * profile.feature_jitter,
-            ];
-            let center = [
-                (cell_x as f32 + offset[0]) * profile.spacing,
-                (cell_z as f32 + offset[1]) * profile.spacing,
-            ];
-            let delta = [root[0] - center[0], root[1] - center[1]];
-            let distance_squared = delta[0] * delta[0] + delta[1] * delta[1];
-            if distance_squared < nearest_distance_squared {
-                second_distance_squared = nearest_distance_squared;
-                nearest_distance_squared = distance_squared;
-                nearest_center = center;
-                nearest_key = key;
-            } else if distance_squared < second_distance_squared {
-                second_distance_squared = distance_squared;
-            }
-        }
-    }
-
-    let distance = nearest_distance_squared.sqrt();
-    let second_distance = second_distance_squared.sqrt();
-    let softness_width = profile.spacing * profile.boundary_softness;
-    let boundary_influence = if softness_width <= f32::EPSILON {
-        1.0
-    } else {
-        smoothstep01((second_distance - distance) / softness_width)
-    };
-    let normalized_distance =
-        (distance / (profile.spacing * std::f32::consts::SQRT_2)).clamp(0.0, 1.0);
-    let distance_profile = normalized_distance.powf(profile.retention_falloff);
-    let spatial_retention = profile.center_retention
-        + (profile.edge_retention - profile.center_retention) * distance_profile;
-    let group_retention = 1.0 - profile.density_variation * random01(nearest_key ^ 0xd1b5_4a35);
-    let delta = [root[0] - nearest_center[0], root[1] - nearest_center[1]];
-
-    GroupSample {
-        key: nearest_key,
-        center_xz: nearest_center,
-        radial_direction: normalize_or(delta, [1.0, 0.0]),
-        normalized_distance,
-        boundary_influence,
-        density_retention: (spatial_retention * group_retention).clamp(0.0, 1.0),
-    }
-}
-
-pub fn candidate_density_retention(population: &VegetationPopulation) -> f32 {
-    match population.growth {
-        GrowthPattern::Uniform { .. } => 1.0,
-        GrowthPattern::ParentChild {
-            parent_spacing,
-            children_per_parent,
-            ..
-        } => {
-            let maximum_density = f32::from(children_per_parent) / parent_spacing.powi(2);
-            (population.density_per_square_meter / maximum_density).clamp(0.0, 1.0)
-        }
-    }
-}
-
-pub fn choose_species(population: &VegetationPopulation, random: f32) -> VegetationSpeciesId {
-    let total = population
-        .species
-        .iter()
-        .map(|choice| choice.weight)
-        .sum::<f32>();
-    let mut target = random * total;
-    for choice in &population.species {
-        if target <= choice.weight {
-            return choice.species;
-        }
-        target -= choice.weight;
-    }
-    population
-        .species
-        .last()
-        .expect("validated population")
-        .species
-}
-
-pub fn hash32(mut value: u32) -> u32 {
-    value ^= value >> 16;
-    value = value.wrapping_mul(0x7feb_352d);
-    value ^= value >> 15;
-    value = value.wrapping_mul(0x846c_a68b);
-    value ^ (value >> 16)
-}
-
-pub fn hash_cell(seed: u32, x: i32, z: i32, salt: u32) -> u32 {
-    hash32(
-        seed ^ (x as u32).wrapping_mul(0x8da6_b343) ^ (z as u32).wrapping_mul(0xd816_3841) ^ salt,
-    )
-}
-
-pub fn random01(value: u32) -> f32 {
-    hash32(value) as f32 * (1.0 / u32::MAX as f32)
-}
-
-fn normalize_or(value: [f32; 2], fallback: [f32; 2]) -> [f32; 2] {
-    let length_squared = value[0] * value[0] + value[1] * value[1];
-    if length_squared <= 1e-10 {
-        return fallback;
-    }
-    let inverse_length = length_squared.sqrt().recip();
-    [value[0] * inverse_length, value[1] * inverse_length]
-}
-
 fn normalize3_or(value: [f32; 3], fallback: [f32; 3]) -> [f32; 3] {
     let length_squared = value[0] * value[0] + value[1] * value[1] + value[2] * value[2];
     if length_squared <= 1e-10 {
@@ -1339,17 +657,8 @@ fn normalize3_or(value: [f32; 3], fallback: [f32; 3]) -> [f32; 3] {
     ]
 }
 
-fn valid_color_component(value: f32) -> bool {
-    value.is_finite() && (0.0..=16.0).contains(&value)
-}
-
 fn finite_range(value: f32, minimum: f32, maximum: f32) -> bool {
     value.is_finite() && (minimum..=maximum).contains(&value)
-}
-
-fn smoothstep01(value: f32) -> f32 {
-    let value = value.clamp(0.0, 1.0);
-    value * value * (3.0 - 2.0 * value)
 }
 
 #[cfg(test)]
@@ -1362,82 +671,116 @@ mod tests {
     }
 
     #[test]
-    fn candidate_domains_are_world_aligned_across_page_boundaries() {
-        let scene = fixtures::reference_scene();
-        let population = scene
-            .catalog
-            .population(fixtures::DRY_TUFT_POPULATION_ID)
-            .unwrap();
-        let left = candidate_domain(&scene.pages[0], population);
-        let right = candidate_domain(&scene.pages[1], population);
-        assert_eq!(left.spacing, right.spacing);
-        assert!(left.cell_min[0] < right.cell_min[0]);
-    }
-
-    #[test]
-    fn parent_child_sample_is_stable() {
-        let scene = fixtures::reference_scene();
-        let population = scene
-            .catalog
-            .population(fixtures::DRY_TUFT_POPULATION_ID)
-            .unwrap();
-        let domain = candidate_domain(&scene.pages[0], population);
-        let first = sample_candidate(population, domain, 17, [0.0, 1.0]).unwrap();
-        let second = sample_candidate(population, domain, 17, [0.0, 1.0]).unwrap();
-        assert_eq!(first, second);
-        assert!(
-            (first.rest_direction[0].powi(2) + first.rest_direction[1].powi(2) - 1.0).abs() < 1e-5
+    fn type_ids_follow_keys() {
+        let meadow = fixtures::meadow();
+        assert_eq!(meadow.id(), GrassTypeId::from_key("meadow"));
+        assert_ne!(meadow.id(), fixtures::tufts().id());
+        // Pinned: cooked fields name types by these bytes, and placement seeds from them.
+        assert_eq!(
+            GrassTypeId::from_key("meadow").0,
+            [
+                32, 178, 120, 38, 118, 198, 84, 235, 243, 133, 212, 231, 125, 158, 138, 93
+            ]
         );
+        assert_eq!(GrassTypeId::from_key("meadow").seed(), 645_444_128);
     }
 
     #[test]
-    fn siblings_share_the_explicit_parent_group() {
-        let scene = fixtures::reference_scene();
-        let population = scene
-            .catalog
-            .population(fixtures::DRY_TUFT_POPULATION_ID)
-            .unwrap();
-        let domain = candidate_domain(&scene.pages[0], population);
-        let first = sample_candidate(population, domain, 0, [0.0, 1.0]).unwrap();
-        let sibling = sample_candidate(population, domain, 1, [0.0, 1.0]).unwrap();
-        assert_eq!(first.group.key, sibling.group.key);
-        assert_eq!(first.group.center_xz, sibling.group.center_xz);
-        assert_eq!(first.clump_variant, sibling.clump_variant);
-        assert_eq!(first.group.boundary_influence, 1.0);
-    }
-
-    #[test]
-    fn voronoi_group_sampling_is_stable_and_bounded() {
-        let scene = fixtures::reference_scene();
-        let population = scene
-            .catalog
-            .population(fixtures::SHORT_FILL_POPULATION_ID)
-            .unwrap();
-        let VegetationGroupingProfile::Voronoi(profile) = population.grouping else {
-            panic!("short fill fixture must exercise analytic grouping");
-        };
-        let first = sample_voronoi_group(population.seed, [7.25, -3.75], profile);
-        let second = sample_voronoi_group(population.seed, [7.25, -3.75], profile);
-        assert_eq!(first, second);
-        assert!((0.0..=1.0).contains(&first.normalized_distance));
-        assert!((0.0..=1.0).contains(&first.boundary_influence));
-        assert!((0.0..=1.0).contains(&first.density_retention));
-    }
-
-    #[test]
-    fn grouping_source_must_match_the_root_placement_contract() {
-        let mut scene = fixtures::reference_scene();
-        let population = scene
-            .catalog
-            .populations
-            .iter_mut()
-            .find(|population| population.id == fixtures::SHORT_FILL_POPULATION_ID)
-            .unwrap();
-        population.grouping = VegetationGroupingProfile::Parent;
+    fn catalog_rejects_out_of_range_types_and_unknown_surface_grass() {
+        let mut catalog = fixtures::reference_catalog();
+        catalog.grass[0].height = [0.8, 0.4];
         assert!(matches!(
-            scene.catalog.validate(),
-            Err(CatalogValidationError::InvalidPopulation(_))
+            catalog.validate(),
+            Err(CatalogValidationError::InvalidType(_))
         ));
+        let mut catalog = fixtures::reference_catalog();
+        catalog.surfaces.push(SurfaceGrass {
+            surface: [9; 16],
+            grass: vec![GrassAmount {
+                grass: GrassTypeId::from_key("nonexistent"),
+                amount: 1.0,
+            }],
+        });
+        assert!(matches!(
+            catalog.validate(),
+            Err(CatalogValidationError::InvalidSurface(_))
+        ));
+        let mut catalog = fixtures::reference_catalog();
+        catalog.grass.push(fixtures::meadow());
+        assert!(matches!(
+            catalog.validate(),
+            Err(CatalogValidationError::DuplicateType(_))
+        ));
+    }
+
+    #[test]
+    fn packs_resolve_surface_and_grass_keys() {
+        let pack = GrassPack {
+            terrain: "test".into(),
+            types: vec![fixtures::meadow(), fixtures::tufts()],
+            surfaces: [("lawn".to_string(), vec![("meadow".to_string(), 0.5)])].into(),
+        };
+        let catalog = pack
+            .catalog(|key| (key == "lawn").then_some([7; 16]))
+            .unwrap();
+        assert_eq!(
+            catalog.on_surface([7; 16]),
+            &[GrassAmount {
+                grass: GrassTypeId::from_key("meadow"),
+                amount: 0.5
+            }]
+        );
+        assert!(catalog.on_surface([8; 16]).is_empty());
+        assert!(pack.catalog(|_| None).is_err());
+        let mut unknown = pack.clone();
+        unknown
+            .surfaces
+            .insert("lawn".into(), vec![("clover".into(), 1.0)]);
+        assert!(unknown.catalog(|_| Some([7; 16])).is_err());
+    }
+
+    #[test]
+    fn live_looks_keep_the_cooked_set_of_types() {
+        let mut catalog = fixtures::reference_catalog();
+        let mut edited = catalog.clone();
+        edited.grass[0].colors.tip = [0.5, 0.5, 0.1];
+        edited.grass.push(GrassType {
+            key: "new".into(),
+            ..fixtures::meadow()
+        });
+        assert!(catalog.adopt_looks(&edited));
+        assert_eq!(catalog.grass.len(), 2);
+        assert_eq!(catalog.grass[0].colors.tip, [0.5, 0.5, 0.1]);
+        assert!(!catalog.adopt_looks(&edited));
+    }
+
+    #[test]
+    fn cover_mixes_field_colours_and_tufted_grass_covers_less() {
+        let mut catalog = fixtures::reference_catalog();
+        let [meadow, tufts] = [0, 1].map(|i| catalog.grass[i].id());
+        let surface = |grass: Vec<(GrassTypeId, f32)>, key: u8| SurfaceGrass {
+            surface: [key; 16],
+            grass: grass
+                .into_iter()
+                .map(|(grass, amount)| GrassAmount { grass, amount })
+                .collect(),
+        };
+        catalog.surfaces = vec![
+            surface(vec![(meadow, 1.0)], 1),
+            surface(vec![(tufts, 1.0)], 2),
+            surface(vec![(meadow, 1.0), (tufts, 1.0)], 3),
+        ];
+        assert_eq!(catalog.cover([9; 16]), GrassCover::default());
+        let even = catalog.cover([1; 16]);
+        let tufted = catalog.cover([2; 16]);
+        assert_eq!(even.color, catalog.grass[0].colors.field());
+        assert!(tufted.amount < 0.6 * even.amount);
+        let both = catalog.cover([3; 16]);
+        assert!(both.amount <= 1.0 && both.amount > even.amount);
+        for c in 0..3 {
+            let (a, b) = (even.color[c], tufted.color[c]);
+            assert!(both.color[c] >= a.min(b) && both.color[c] <= a.max(b));
+        }
     }
 
     #[test]
@@ -1468,221 +811,5 @@ mod tests {
         assert!((sample.normal[1] - normal[1]).abs() < 1e-4);
         assert!((sample.normal[2] - normal[2]).abs() < 1e-4);
         assert_eq!(sample.validity, 1.0);
-    }
-
-    #[test]
-    fn catalog_rejects_topology_counts_the_renderer_cannot_honor() {
-        let mut scene = fixtures::reference_scene();
-        let ribbon = scene
-            .catalog
-            .species
-            .iter_mut()
-            .find(|species| matches!(species.topology, TopologyProfile::Ribbon(_)))
-            .unwrap();
-        let TopologyProfile::Ribbon(profile) = &mut ribbon.topology else {
-            unreachable!();
-        };
-        profile.blades_per_render_unit = 3;
-        assert!(matches!(
-            scene.catalog.validate(),
-            Err(CatalogValidationError::InvalidSpecies(_))
-        ));
-
-        let mut scene = fixtures::reference_scene();
-        let broad = scene
-            .catalog
-            .species
-            .iter_mut()
-            .find(|species| matches!(species.topology, TopologyProfile::BroadLeafCluster(_)))
-            .unwrap();
-        let TopologyProfile::BroadLeafCluster(profile) = &mut broad.topology else {
-            unreachable!();
-        };
-        profile.maximum_leaf_count = 3;
-        assert!(matches!(
-            scene.catalog.validate(),
-            Err(CatalogValidationError::InvalidSpecies(_))
-        ));
-    }
-
-    #[test]
-    fn catalog_rejects_invalid_ribbon_curve_handles() {
-        let mut scene = fixtures::reference_scene();
-        let ribbon = scene
-            .catalog
-            .species
-            .iter_mut()
-            .find(|species| matches!(species.topology, TopologyProfile::Ribbon(_)))
-            .unwrap();
-        let TopologyProfile::Ribbon(profile) = &mut ribbon.topology else {
-            unreachable!();
-        };
-        profile.curve_variant_b.tip_handle_length = 1.51;
-        assert!(matches!(
-            scene.catalog.validate(),
-            Err(CatalogValidationError::InvalidSpecies(_))
-        ));
-    }
-
-    #[test]
-    fn catalog_rejects_reversed_ribbon_silhouette_tips() {
-        let mut scene = fixtures::reference_scene();
-        let ribbon = scene
-            .catalog
-            .species
-            .iter_mut()
-            .find(|species| matches!(species.topology, TopologyProfile::Ribbon(_)))
-            .unwrap();
-        let TopologyProfile::Ribbon(profile) = &mut ribbon.topology else {
-            unreachable!();
-        };
-        profile.curve_variant_a.tip_tilt_radians = profile.curve_variant_b.tip_tilt_radians + 0.01;
-        assert!(matches!(
-            scene.catalog.validate(),
-            Err(CatalogValidationError::InvalidSpecies(_))
-        ));
-    }
-
-    #[test]
-    fn catalog_rejects_unbounded_view_opening() {
-        let mut scene = fixtures::reference_scene();
-        let ribbon = scene
-            .catalog
-            .species
-            .iter_mut()
-            .find(|species| matches!(species.topology, TopologyProfile::Ribbon(_)))
-            .unwrap();
-        let TopologyProfile::Ribbon(profile) = &mut ribbon.topology else {
-            unreachable!();
-        };
-        profile.maximum_view_opening_radians = std::f32::consts::FRAC_PI_4 + 0.01;
-        assert!(matches!(
-            scene.catalog.validate(),
-            Err(CatalogValidationError::InvalidSpecies(_))
-        ));
-    }
-
-    #[test]
-    fn height_pairing_requires_a_split_capable_ribbon_and_valid_threshold() {
-        let mut scene = fixtures::reference_scene();
-        let ribbon = scene
-            .catalog
-            .species
-            .iter_mut()
-            .find(|species| matches!(species.topology, TopologyProfile::Ribbon(_)))
-            .unwrap();
-        let TopologyProfile::Ribbon(profile) = &mut ribbon.topology else {
-            unreachable!();
-        };
-        profile.blades_per_render_unit = 1;
-        assert!(ribbon.height.pair_below_height > 0.0);
-        assert!(matches!(
-            scene.catalog.validate(),
-            Err(CatalogValidationError::InvalidSpecies(_))
-        ));
-
-        let mut scene = fixtures::reference_scene();
-        let ribbon = scene
-            .catalog
-            .species
-            .iter_mut()
-            .find(|species| matches!(species.topology, TopologyProfile::Ribbon(_)))
-            .unwrap();
-        ribbon.height.pair_below_height = ribbon.bounds.maximum_height + 0.01;
-        assert!(matches!(
-            scene.catalog.validate(),
-            Err(CatalogValidationError::InvalidSpecies(_))
-        ));
-    }
-
-    #[test]
-    fn height_bias_and_pairing_fraction_are_bounded_and_directional() {
-        let neutral = VegetationHeightProfile {
-            distribution_bias: 0.0,
-            pair_below_height: 0.5,
-        };
-        let short_biased = VegetationHeightProfile {
-            distribution_bias: -1.0,
-            ..neutral
-        };
-        let tall_biased = VegetationHeightProfile {
-            distribution_bias: 1.0,
-            ..neutral
-        };
-        assert!(short_biased.remap_coordinate(0.5) < neutral.remap_coordinate(0.5));
-        assert!(neutral.remap_coordinate(0.5) < tall_biased.remap_coordinate(0.5));
-
-        let scene = fixtures::reference_scene();
-        let green = scene
-            .catalog
-            .species(fixtures::GREEN_FINE_SPECIES_ID)
-            .unwrap();
-        let short = scene
-            .catalog
-            .species(fixtures::SHORT_FILL_SPECIES_ID)
-            .unwrap();
-        let broad = scene
-            .catalog
-            .species(fixtures::BROAD_LEAF_SPECIES_ID)
-            .unwrap();
-        assert!((0.0..1.0).contains(&green.expected_split_topology_fraction()));
-        assert!((short.expected_split_topology_fraction() - 1.0).abs() < 1e-6);
-        assert!((broad.expected_split_topology_fraction() - 1.0).abs() < 1e-6);
-    }
-
-    #[test]
-    fn catalog_rejects_density_that_increases_with_distance() {
-        let mut scene = fixtures::reference_scene();
-        let species = &mut scene.catalog.species[0];
-        species.representations[0].density_fraction = 0.25;
-        species.representations[1].density_fraction = 0.5;
-        assert!(matches!(
-            scene.catalog.validate(),
-            Err(CatalogValidationError::InvalidSpecies(_))
-        ));
-    }
-
-    #[test]
-    fn nested_lod_rank_retains_one_candidate_per_four_way_group() {
-        let scene = fixtures::reference_scene();
-        let uniform = scene
-            .catalog
-            .population(fixtures::SHORT_FILL_POPULATION_ID)
-            .unwrap();
-        let uniform_domain = CandidateDomain {
-            cell_min: [-2, -2],
-            cell_count: [4, 4],
-            candidates_per_cell: 1,
-            spacing: 1.0,
-        };
-        let retained_uniform = (0..uniform_domain.candidate_count())
-            .filter(|&index| {
-                sample_candidate(uniform, uniform_domain, index, [1.0, 0.0])
-                    .unwrap()
-                    .lod_rank
-                    < 0.25
-            })
-            .count();
-        assert_eq!(retained_uniform, 4);
-
-        let parent_child = scene
-            .catalog
-            .population(fixtures::DRY_TUFT_POPULATION_ID)
-            .unwrap();
-        let parent_domain = CandidateDomain {
-            cell_min: [-1, -1],
-            cell_count: [2, 2],
-            candidates_per_cell: 8,
-            spacing: 1.0,
-        };
-        let retained_children = (0..parent_domain.candidate_count())
-            .filter(|&index| {
-                sample_candidate(parent_child, parent_domain, index, [1.0, 0.0])
-                    .unwrap()
-                    .lod_rank
-                    < 0.25
-            })
-            .count();
-        assert_eq!(retained_children, 8);
     }
 }

@@ -1,14 +1,13 @@
-//! The light and wind every vegetation species responds to: the world's directional light and
-//! ambient fill, the shared lighting response, the analytic wind field and exposure gain.
+//! The light and wind every grass type responds to: the world's directional light and ambient
+//! fill, the shared lighting response, the wind field and exposure gain.
 use bevy::{
     color::LinearRgba, light::SunDisk, prelude::*, render::extract_resource::ExtractResource,
 };
 
-/// Global environment response shared by every vegetation species.
+/// Global environment response shared by every grass type.
 ///
-/// Species keep their own colors, roughness, transmission, and AO. These values tune how strongly
-/// the renderer applies the world's directional light and its received shadows to that authored
-/// material response.
+/// Types keep their own colours, gloss and translucency. These values tune how strongly the
+/// renderer applies the world's directional light and its received shadows to that response.
 #[derive(Resource, ExtractResource, Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 #[extract_app(bevy::render::RenderApp)]
 pub struct VegetationLighting {
@@ -16,21 +15,15 @@ pub struct VegetationLighting {
     pub specular_strength: f32,
     pub transmission_strength: f32,
     pub received_shadow_strength: f32,
-    #[serde(default)]
-    pub canopy: vegetation::CanopyShading,
-    #[serde(skip)]
-    pub canopy_origin: [f32; 2],
 }
 
 impl Default for VegetationLighting {
     fn default() -> Self {
         Self {
-            diffuse_strength: 0.82,
-            specular_strength: 0.28,
-            transmission_strength: 0.34,
-            received_shadow_strength: 0.78,
-            canopy: Default::default(),
-            canopy_origin: [0.0; 2],
+            diffuse_strength: 1.0,
+            specular_strength: 1.0,
+            transmission_strength: 1.0,
+            received_shadow_strength: 1.0,
         }
     }
 }
@@ -211,7 +204,7 @@ pub(crate) fn sync_vegetation_sun(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{VegetationDensityMode, VegetationSettings};
+    use crate::VegetationSettings;
 
     #[test]
     fn external_transport_keeps_exact_wind_phase() {
@@ -231,10 +224,6 @@ mod tests {
         let wind = app.world().resource::<VegetationWind>();
         assert_eq!(wind.phase_seconds(), 7.125);
         assert!(wind.enabled);
-        assert_eq!(
-            app.world().resource::<VegetationSettings>().density_mode,
-            VegetationDensityMode::Balanced
-        );
         app.world_mut()
             .resource_mut::<VegetationWind>()
             .externally_driven = false;

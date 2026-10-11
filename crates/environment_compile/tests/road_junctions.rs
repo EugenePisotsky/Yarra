@@ -141,20 +141,30 @@ fn t_junction_wears_the_center_and_blends_ruts_without_adding_grass_or_excavatin
             before.terrain.as_ref().unwrap().height_at(4, z)
         );
     }
-    let mut empty = c.clone();
-    for cell in &mut empty.cells {
-        for tile in &mut cell.tiles {
-            tile.samples.fill(0);
-        }
-    }
-    let empty = compile(&plan, &empty, &r, CELLS[0]);
-    assert!(
-        empty
+    // Roads and junctions only wear the meadow away. The worn ground they paint grows its own
+    // grass, no more than the corridor retains.
+    let mut none = r.clone();
+    none.junctions.clear();
+    none.spans.clear();
+    none.roads.clear();
+    let bare = compile(&plan, &c, &none, CELLS[0]);
+    for field in &a.vegetation.fields {
+        match bare
             .vegetation
             .fields
             .iter()
-            .all(|f| f.coverage.iter().all(|v| *v == 0))
-    );
+            .find(|f| f.grass == field.grass)
+        {
+            Some(without) => assert!(
+                field
+                    .coverage
+                    .iter()
+                    .zip(&without.coverage)
+                    .all(|(with, without)| with <= without)
+            ),
+            None => assert!(field.coverage.iter().all(|&v| v <= 141)),
+        }
+    }
 }
 #[test]
 fn independently_compiled_junction_borders_and_reordered_inputs_match() {

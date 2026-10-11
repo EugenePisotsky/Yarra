@@ -5,6 +5,7 @@ fn source(cell: CellCoord) -> NearSource {
     let set = TerrainTextureSetId([3; 16]);
     let layers: Vec<_> = (0..2)
         .map(|i| TerrainSurfaceLayer {
+            grass: [0.0; 4],
             layer: i,
             surface: TerrainSurface {
                 id: TerrainSurfaceId([i as u8; 16]),
@@ -115,6 +116,7 @@ fn pages_carry_up_to_eight_surfaces_in_two_weight_layers() {
     let template = s.layers[0].clone();
     s.layers = (0..6)
         .map(|i| TerrainSurfaceLayer {
+            grass: [0.0; 4],
             layer: 5 - i,
             surface: TerrainSurface {
                 id: TerrainSurfaceId([i as u8; 16]),
@@ -146,7 +148,7 @@ fn pages_carry_up_to_eight_surfaces_in_two_weight_layers() {
         assert_eq!(slot.surface.z, f32::from(i % 2 == 0));
     }
     assert_eq!(entry.slots[6], gpu::NearSlot::default());
-    let tile = gpu::tile(7, &s, &m, None, CellCoord::ZERO);
+    let tile = gpu::tile(7, &s);
     assert_eq!(tile.weights[1][..4], [50, 105, 0, 0]);
     // A page whose second weight page is missing is rejected.
     let mut missing = s.clone();
@@ -157,7 +159,7 @@ fn pages_carry_up_to_eight_surfaces_in_two_weight_layers() {
 #[derive(Resource, Default, Clone)]
 struct Pixels(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
 #[test]
-#[ignore = "native GPU readback: near cache, surfaces, canopy, rebasing and eviction"]
+#[ignore = "native GPU readback: near cache, surfaces, rebasing and eviction"]
 fn near_surface_streams_on_unchanged_mesh_and_returns_to_baked_ground() {
     use bevy::{
         app::PluginsState,
@@ -398,7 +400,6 @@ fn near_surface_streams_on_unchanged_mesh_and_returns_to_baked_ground() {
                 material: material.clone(),
                 fade: 0.,
                 uploaded: false,
-                canopy: None,
             },
         );
     }
@@ -454,7 +455,10 @@ fn near_surface_streams_on_unchanged_mesh_and_returns_to_baked_ground() {
     assert_eq!(near, settle(&mut app));
     // Keep the source resident while moving through the distance fade. The
     // shader must still blend in the transition and use only the bake beyond it.
-    for (height, should_match_bake) in [(32., false), (48., true)] {
+    for (height, should_match_bake) in [
+        ((NEAR_START + NEAR_END) * 0.5, false),
+        (NEAR_END * 1.2, true),
+    ] {
         app.world_mut()
             .get_mut::<Transform>(camera)
             .unwrap()
@@ -626,44 +630,6 @@ fn near_surface_streams_on_unchanged_mesh_and_returns_to_baked_ground() {
     assert!(
         flat.iter().zip(&rebased).all(|(a, b)| a.abs_diff(*b) <= 2),
         "near pattern moved on rebase"
-    );
-    let coverage = Image::new(
-        Extent3d {
-            width: 2,
-            height: 2,
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        vec![255; 8],
-        TextureFormat::Rg8Unorm,
-        RenderAssetUsages::default(),
-    );
-    let coverage = app
-        .world_mut()
-        .resource_mut::<Assets<Image>>()
-        .add(coverage);
-    {
-        let mut materials = app.world_mut().resource_mut::<Assets<TerrainMaterial>>();
-        let mut m = materials.get_mut(&material).unwrap();
-        m.set_canopy_coverage(Some(coverage), Vec4::new(64., -56., 0.125, 0.125));
-        m.set_canopy_shading([
-            [0.6, 1., 0., 1.],
-            [0.5, 0.5, 1., 0.],
-            [0., 50., 0., 0.],
-            [-72., 56., 0.1, 0.],
-        ]);
-    }
-    let shaded = settle(&mut app);
-    let light = |p: &[u8]| {
-        p.as_chunks::<4>()
-            .0
-            .iter()
-            .map(|c| c[0] as u64 + c[1] as u64 + c[2] as u64)
-            .sum::<u64>()
-    };
-    assert!(
-        light(&shaded) < light(&rebased) * 9 / 10,
-        "canopy coverage did not shade the ground"
     );
     app.world_mut().despawn(entity);
     let retired = settle(&mut app);

@@ -1,13 +1,72 @@
-//! Published terrain/vegetation joining for the editor live preview.
-use crate::{vegetation_authoring::VegetationAuthoringState, workspaces::EditorWorkspace};
+//! Grass in the editor: the renderer, the project's grass catalog and the live preview of the
+//! accepted ground and grass. Grass types are tuned in `assets/packs/grass/*.ron` (the game
+//! reloads their looks while it runs) and put into a project with `yarra-world-cook import-grass`.
+use crate::{project_store::ProjectEditorStore, workspaces::EditorWorkspace};
 use bevy::prelude::*;
 use engine::{StreamedTerrainSurface, StreamedVegetationFieldPage, WorldOrigin};
-use vegetation::VegetationScene;
-use vegetation_render::VegetationSceneState;
+use vegetation::{VegetationCatalog, VegetationScene};
+use vegetation_render::{VegetationRenderPlugin, VegetationSceneState};
+
+pub(crate) struct GrassPlugin;
+
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct GrassPreviewSync;
+
+impl Plugin for GrassPlugin {
+    fn build(&self, app: &mut App) {
+        // The editor explicitly opts into render diagnostics; the renderer itself is reusable
+        // by game compositions that omit instrumentation.
+        #[cfg(not(target_os = "ios"))]
+        app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
+        app.add_plugins(VegetationRenderPlugin)
+            .init_resource::<GrassPreview>()
+            .insert_resource(
+                VegetationSceneState::new(VegetationScene {
+                    catalog: VegetationCatalog::default(),
+                    pages: Vec::new(),
+                })
+                .expect("the empty grass scene is valid"),
+            )
+            .add_systems(
+                Update,
+                (adopt_project_catalog, sync_live_preview)
+                    .chain()
+                    .in_set(GrassPreviewSync)
+                    .after(engine::WorldStreamingSystems),
+            );
+    }
+}
+
+/// The project's grass catalog, as compiling and the live preview use it.
+#[derive(Resource, Default)]
+pub(crate) struct GrassPreview {
+    catalog: Option<VegetationCatalog>,
+    revision: u64,
+    pub(crate) error: Option<String>,
+}
+
+impl GrassPreview {
+    pub(crate) fn catalog(&self) -> Option<&VegetationCatalog> {
+        self.catalog.as_ref()
+    }
+
+    /// Changes whenever the catalog does.
+    pub(crate) fn revision(&self) -> u64 {
+        self.revision
+    }
+}
+
+fn adopt_project_catalog(project: Res<ProjectEditorStore>, mut preview: ResMut<GrassPreview>) {
+    let catalog = project.vegetation_catalog();
+    if catalog != preview.catalog.as_ref() {
+        preview.catalog = catalog.cloned();
+        preview.revision = preview.revision.wrapping_add(1);
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct PreviewSignature {
-    authoring_revision: u64,
+struct PreviewSignature {
+    catalog_revision: u64,
     environment_revision: u64,
     enabled: bool,
     active_space: Option<world::WorldSpaceId>,
@@ -15,8 +74,10 @@ pub(super) struct PreviewSignature {
     pages: Vec<(Entity, i64, i32, i32, u8)>,
 }
 
+/// Joins resident terrain with the accepted grass fields (edited cells from the environment
+/// preview, published pages elsewhere) into the rendered scene.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn sync_live_preview(
+fn sync_live_preview(
     runtime: Res<engine::WorldCatalog>,
     paint: Res<crate::environment_paint::EnvironmentPaintState>,
     workspace: Res<State<EditorWorkspace>>,
@@ -24,7 +85,7 @@ pub(super) fn sync_live_preview(
     origin: Res<WorldOrigin>,
     terrain_pages: Query<(Entity, &StreamedTerrainSurface)>,
     field_pages: Query<(Entity, &StreamedVegetationFieldPage)>,
-    mut state: ResMut<VegetationAuthoringState>,
+    mut preview: ResMut<GrassPreview>,
     mut scene: ResMut<VegetationSceneState>,
     mut previous: Local<Option<PreviewSignature>>,
     render_origin: Option<ResMut<vegetation_render::VegetationRenderOrigin>>,
@@ -36,9 +97,9 @@ pub(super) fn sync_live_preview(
         *previous = None;
         return;
     }
-    let tool_active = *workspace.get() == EditorWorkspace::World;
-    let enabled =
-        tool_active && state.preview_enabled && state.working.is_some() && !paint.coverage_visible;
+    let enabled = *workspace.get() == EditorWorkspace::World
+        && preview.catalog.is_some()
+        && !paint.coverage_visible;
     let active_space = origin.space();
     let fields = active_space.map_or_else(Vec::new, |space| {
         let mut fields = field_pages
@@ -48,23 +109,17 @@ pub(super) fn sync_live_preview(
         fields.sort_by_key(|(entity, page)| (page.key, *entity));
         fields
     });
-    let mut page_signature = if enabled {
-        fields
-            .iter()
-            .map(|(entity, page)| {
-                (
-                    *entity,
-                    page.key.space.0,
-                    page.key.cell.x,
-                    page.key.cell.z,
-                    page.key.lod,
-                )
-            })
-            .collect::<Vec<_>>()
-    } else {
-        Vec::new()
-    };
+    let mut page_signature = Vec::new();
     if enabled {
+        page_signature.extend(fields.iter().map(|(entity, page)| {
+            (
+                *entity,
+                page.key.space.0,
+                page.key.cell.x,
+                page.key.cell.z,
+                page.key.lod,
+            )
+        }));
         page_signature.extend(terrain_pages.iter().map(|(entity, page)| {
             (
                 entity,
@@ -77,7 +132,7 @@ pub(super) fn sync_live_preview(
         page_signature.sort();
     }
     let signature = PreviewSignature {
-        authoring_revision: state.revision,
+        catalog_revision: preview.revision,
         environment_revision: environment.revision,
         enabled,
         active_space,
@@ -87,7 +142,6 @@ pub(super) fn sync_live_preview(
     if previous.as_ref() == Some(&signature) {
         return;
     }
-
     // The accepted catalog and fields switch together after a definition edit. While a new
     // catalog is compiling, keep rendering the previously accepted ground-and-grass products.
     let Some(catalog) = environment
@@ -120,13 +174,9 @@ pub(super) fn sync_live_preview(
     } else {
         Vec::new()
     };
-    match scene.replace(VegetationScene { catalog, pages }) {
-        Ok(()) => {
-            state.preview_error = None;
-        }
-        Err(error) => {
-            state.preview_error = Some(format!("Live preview rejected the scene: {error}"));
-        }
-    }
+    preview.error = scene
+        .replace(VegetationScene { catalog, pages })
+        .err()
+        .map(|error| format!("Live preview rejected the scene: {error}"));
     *previous = Some(signature);
 }

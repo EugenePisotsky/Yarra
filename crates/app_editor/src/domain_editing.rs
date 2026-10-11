@@ -602,14 +602,11 @@ pub(crate) fn reconcile_dense_working_sets(
     mut working_sets: ResMut<SourceWorkingSets>,
     project: Res<ProjectEditorStore>,
     history: Res<crate::editing::EditorHistory>,
-    plants: Res<crate::vegetation_authoring::VegetationAuthoringState>,
+    grass: Res<crate::grass::GrassPreview>,
 ) {
     working_sets.reconcile_definitions(
         &project,
-        plants
-            .working_catalog()
-            .map(|(catalog, _, _)| catalog)
-            .or_else(|| project.vegetation_catalog()),
+        grass.catalog().or_else(|| project.vegetation_catalog()),
     );
     working_sets.reconcile(&project, &history);
 }

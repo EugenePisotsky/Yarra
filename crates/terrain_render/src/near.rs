@@ -10,7 +10,6 @@ pub(crate) const NEAR_SLOTS: usize = 64;
 pub(crate) const NEAR_TABLE: usize = 256;
 /// Largest ground weight map near detail holds: a 32 m cell compiles 65 samples.
 pub(crate) const WEIGHT_SIDE: u32 = 129;
-pub(crate) const CANOPY_SIDE: u32 = 130;
 pub(crate) const NEAR_END: f32 = 80.;
 pub(crate) const NEAR_START: f32 = 48.;
 
@@ -47,7 +46,6 @@ struct Resident {
     material: Handle<TerrainMaterial>,
     fade: f32,
     uploaded: bool,
-    canopy: Option<AssetId<Image>>,
 }
 #[derive(Resource, Default)]
 struct Cache {
@@ -216,7 +214,7 @@ fn select_sources(
             macro_variation: *variation,
         }) {
             Ok(mut prepared) => {
-                // Carriers feed the shared albedo/canopy integrations but are never
+                // Carriers feed the shared near cache but are never
                 // drawn. Preserve authored weights in NearSource only; uploading a
                 // second full per-page weight image would duplicate the array cache.
                 images.remove(prepared.weight_image.id());
@@ -241,7 +239,6 @@ fn select_sources(
                         material: prepared.material,
                         fade: 0.,
                         uploaded: false,
-                        canopy: None,
                     },
                 );
                 added += 1;
@@ -267,24 +264,8 @@ fn update(
     hub: Res<NearUploadHub>,
     mut cache: ResMut<Cache>,
     mut stats: ResMut<NearStats>,
-    mut events: MessageReader<AssetEvent<Image>>,
     server: Res<AssetServer>,
 ) {
-    let changed: BTreeSet<_> = events
-        .read()
-        .filter_map(|e| {
-            if let AssetEvent::Modified { id } = e {
-                Some(*id)
-            } else {
-                None
-            }
-        })
-        .collect();
-    for p in cache.pages.values_mut() {
-        if p.canopy.is_some_and(|id| changed.contains(&id)) {
-            p.canopy = None;
-        }
-    }
     let Some((_, space)) = &view.identity else {
         return;
     };
@@ -330,7 +311,6 @@ fn update(
         for p in cache.pages.values_mut() {
             p.uploaded = false;
             p.fade = 0.;
-            p.canopy = None;
         }
     }
     let atlas = cache.atlas.as_ref().unwrap();
@@ -360,30 +340,14 @@ fn update(
         if !pack.matches(m) {
             continue;
         }
-        let canopy = m
-            .canopy_coverage
-            .as_ref()
-            .and_then(|h| images.get(h).map(|i| (h.id(), i)));
-        let canopy_id = canopy.map(|v| v.0);
-        if (!p.uploaded || p.canopy != canopy_id) && uploads.len() < 2 {
-            uploads.push(gpu::tile(
-                p.slot,
-                source,
-                m,
-                canopy.map(|v| v.1),
-                view.origin,
-            ));
+        if !p.uploaded && uploads.len() < 2 {
+            uploads.push(gpu::tile(p.slot, source));
             p.uploaded = true;
-            p.canopy = canopy_id;
         }
         if !p.uploaded {
             continue;
         }
-        let mut entry = gpu::entry(source, m, p.slot, p.fade);
-        // Canopy is disabled until its corresponding pixels join this transaction.
-        if p.canopy.is_none() {
-            entry.canopy.appearance.x = 0.;
-        }
+        let entry = gpu::entry(source, m, p.slot, p.fade);
         let mut i = hash(p.cell);
         while table[i].key.w != 0 {
             i = (i + 1) & (NEAR_TABLE - 1);

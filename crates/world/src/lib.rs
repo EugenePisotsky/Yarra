@@ -26,9 +26,9 @@ pub const DEFAULT_RUNTIME_DATABASE: &str = "generated/world.runtime.sqlite";
 
 pub const DEFAULT_CELL_SIZE: f32 = 32.0;
 pub const MAX_DECODED_PAGE_BYTES: u64 = 64 * 1024 * 1024;
-pub const PROJECT_SCHEMA_VERSION: i64 = 30;
-pub const RUNTIME_SCHEMA_VERSION: i64 = 29;
-pub const PAGE_PAYLOAD_VERSION: u16 = 10;
+pub const PROJECT_SCHEMA_VERSION: i64 = 31;
+pub const RUNTIME_SCHEMA_VERSION: i64 = 30;
+pub const PAGE_PAYLOAD_VERSION: u16 = 11;
 pub const MAX_TERRAIN_SURFACES_PER_CELL: usize = 8;
 
 /// An asset's last LOD variant may be an impostor: a descriptor of baked views drawn as one
@@ -1042,6 +1042,6 @@ mod tests {
         let bytes = encode_page_payload(&payload).unwrap();
         assert_eq!(decode_page_payload(&bytes).unwrap(), payload);
         assert_eq!(payload.domain(), PageDomain::Vegetation);
-        assert_eq!(data.fields.len(), 4);
+        assert_eq!(data.fields.len(), 2);
     }
 }

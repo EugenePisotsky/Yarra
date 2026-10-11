@@ -1,12 +1,11 @@
-//! Production joining of streamed fields/terrain, render-space focus and ground canopy.
-//! Editor source selection stays in the editor; terrain conversion and canopy caching are shared.
-mod canopy;
-pub use canopy::{GroundCanopyPlugin, GroundCanopySystems, GroundCanopyTiles};
+//! Production joining of streamed grass fields and terrain, and the render-space detail focus.
+//! Editor source selection stays in the editor; terrain conversion is shared.
 
 use bevy::prelude::*;
 use std::collections::HashMap;
 use vegetation::{
-    VegetationFieldPage, VegetationFieldPageData, VegetationScene, VegetationSurfaceField,
+    VegetationCatalog, VegetationFieldPage, VegetationFieldPageData, VegetationScene,
+    VegetationSurfaceField,
 };
 use vegetation_render::{VegetationLodFocus, VegetationRenderPlugin, VegetationSceneState};
 use world::{CellCoord, PageKey, WorldSpaceId};
@@ -16,35 +15,39 @@ use crate::{
     WorldStreamingSystems, WorldViewpoint,
 };
 
-/// Installs the renderer, joins published resident sources, updates grass focus, and maintains
-/// ground canopy. Requires world streaming, Time and terrain/image asset resources.
+/// Installs the renderer, joins published resident sources and updates grass focus. Requires
+/// world streaming and Time.
 ///
-/// Render isolation (including Grass Disabled) does not suspend source joining: contact and
-/// canopy consumers must see the current world/origin even while vegetation draws are disabled.
-/// The editor uses its own scene producer and only shares GroundCanopyPlugin and page conversion.
+/// Render isolation (including Grass Disabled) does not suspend source joining: contact
+/// consumers must see the current world/origin even while vegetation draws are disabled.
+/// The editor uses its own scene producer and shares page conversion.
 pub struct WorldVegetationPlugin;
 
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct WorldVegetationSystems;
+
+/// Grass looks to draw instead of the published ones, matched by type key: a grass pack being
+/// edited while the game runs. Which types grow where stays as published.
+#[derive(Resource, Default)]
+pub struct GrassLooks(pub Option<VegetationCatalog>);
 
 impl Plugin for WorldVegetationPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(VegetationRenderPlugin)
             .insert_resource(
                 VegetationSceneState::new(VegetationScene {
-                    catalog: vegetation::fixtures::reference_catalog(),
+                    catalog: Default::default(),
                     pages: Vec::new(),
                 })
                 .expect("empty vegetation scene is valid"),
             )
+            .init_resource::<GrassLooks>()
             .add_systems(
                 Update,
                 sync_scene
                     .in_set(WorldVegetationSystems)
                     .after(WorldStreamingSystems),
             )
-            .add_plugins(GroundCanopyPlugin)
-            .configure_sets(Update, GroundCanopySystems.after(WorldVegetationSystems))
             .add_systems(
                 PostUpdate,
                 update_lod_focus.after(TransformSystems::Propagate),
@@ -104,6 +107,7 @@ struct SourceState {
 fn sync_scene(
     origin: Res<WorldOrigin>,
     catalog: Res<WorldCatalog>,
+    looks: Res<GrassLooks>,
     terrain: Query<(Entity, Ref<StreamedTerrainSurface>)>,
     fields: Query<(Entity, Ref<StreamedVegetationFieldPage>)>,
     mut scene: ResMut<VegetationSceneState>,
@@ -149,9 +153,17 @@ fn sync_scene(
     let edited = pairs.iter().any(|&(field, surface)| {
         fields.get(field).unwrap().1.is_changed() || terrain.get(surface).unwrap().1.is_changed()
     });
-    if previous.pairs == pairs && previous.frame == Some(frame) && !catalog.is_changed() && !edited
+    if previous.pairs == pairs
+        && previous.frame == Some(frame)
+        && !catalog.is_changed()
+        && !looks.is_changed()
+        && !edited
     {
         return;
+    }
+    let mut source_catalog = source_catalog.clone();
+    if let Some(looks) = &looks.0 {
+        source_catalog.adopt_looks(looks);
     }
     let pages = pairs
         .iter()
@@ -180,7 +192,7 @@ fn sync_scene(
     scene
         .replace_with_page_keys(
             VegetationScene {
-                catalog: source_catalog.clone(),
+                catalog: source_catalog,
                 pages,
             },
             page_keys,

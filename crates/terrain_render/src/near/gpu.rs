@@ -39,10 +39,12 @@ impl Pack {
 pub(crate) struct NearSlot {
     /// Array layer, metres per repetition, anti-tiling (0/1), normal strength.
     pub surface: Vec4,
-    /// Normal Y sign, roughness minimum and maximum.
+    /// Normal Y sign, roughness minimum and maximum; W unused.
     pub material: Vec4,
     pub phase: Vec4,
     pub lattice: Vec4,
+    /// The grass field's linear colour and how fully grass covers the surface.
+    pub grass: Vec4,
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq, ShaderType)]
 pub(crate) struct NearEntry {
@@ -55,11 +57,10 @@ pub(crate) struct NearEntry {
     pub macro1: Vec4,
     pub macro2: Vec4,
     pub slots: [NearSlot; MAX_TERRAIN_SURFACES_PER_CELL],
-    pub canopy: TerrainCanopyShading,
 }
 pub(super) fn bytes() -> u64 {
-    // Two RGBA weight layers and one RG canopy layer per slot.
-    u64::from(WEIGHT_SIDE * WEIGHT_SIDE * 8 + CANOPY_SIDE * CANOPY_SIDE * 2) * NEAR_SLOTS as u64
+    // Two RGBA weight layers per slot.
+    u64::from(WEIGHT_SIDE * WEIGHT_SIDE * 8) * NEAR_SLOTS as u64
         + NearEntry::min_size().get() * NEAR_TABLE as u64
 }
 fn phase(v: [f64; 2]) -> Vec2 {
@@ -106,6 +107,7 @@ pub(super) fn entry(s: &NearSource, m: &TerrainMaterial, slot: u32, fade: f32) -
             ),
             phase,
             lattice,
+            grass: Vec4::from_array(layer.grass),
         };
     }
     let macro_phase = |i, p: [f64; 2]| {
@@ -137,7 +139,6 @@ pub(super) fn entry(s: &NearSource, m: &TerrainMaterial, slot: u32, fade: f32) -
             [p[0] * -0.342 - p[1] * 0.940, p[0] * 0.940 + p[1] * -0.342],
         ),
         slots,
-        canopy: m.canopy_shading,
     }
 }
 pub(super) struct Tile {
@@ -145,15 +146,8 @@ pub(super) struct Tile {
     /// Two RGBA layers of surface weights, four surfaces each.
     pub(super) weights: [Vec<u8>; 2],
     weight_side: u32,
-    canopy: Vec<u8>,
 }
-pub(super) fn tile(
-    slot: u32,
-    s: &NearSource,
-    m: &TerrainMaterial,
-    canopy: Option<&Image>,
-    origin: CellCoord,
-) -> Tile {
+pub(super) fn tile(slot: u32, s: &NearSource) -> Tile {
     let (weight_side, weights) = if s.surfaces.len() == 1 {
         (1, [vec![255, 0, 0, 0], vec![0; 4]])
     } else {
@@ -165,47 +159,10 @@ pub(super) fn tile(
         };
         (side, [page(0), page(1)])
     };
-    let minimum = [
-        i64::from(s.key.cell.x) - i64::from(origin.x),
-        i64::from(s.key.cell.z) - i64::from(origin.z),
-    ]
-    .map(|v| v as f64 * s.cell_size as f64);
-    // Resample already filtered canopy coverage at 128 interior samples plus a halo.
-    let mut pixels = vec![0; (CANOPY_SIDE * CANOPY_SIDE * 2) as usize];
-    if let Some(image) = canopy.filter(|i| i.texture_descriptor.format == TextureFormat::Rg8Unorm)
-        && let Some(data) = &image.data
-    {
-        let side = image.width();
-        let height = image.height();
-        for y in 0..CANOPY_SIDE {
-            for x in 0..CANOPY_SIDE {
-                let p = Vec2::new(
-                    (minimum[0] + (x as f64 - 0.5) / 128. * s.cell_size as f64) as f32,
-                    (minimum[1] + (y as f64 - 0.5) / 128. * s.cell_size as f64) as f32,
-                );
-                let uv = (p - m.canopy_bounds.xy()) * m.canopy_bounds.zw();
-                let q = uv * Vec2::new(side as f32, height as f32) - Vec2::splat(0.5);
-                let low = q.floor();
-                let f = q - low;
-                for c in 0..2 {
-                    let at = |dx: f32, dy: f32| {
-                        let a = (low.x + dx).clamp(0., side as f32 - 1.) as usize;
-                        let b = (low.y + dy).clamp(0., height as f32 - 1.) as usize;
-                        data[(b * side as usize + a) * 2 + c] as f32
-                    };
-                    let a = at(0., 0.) * (1. - f.x) + at(1., 0.) * f.x;
-                    let b = at(0., 1.) * (1. - f.x) + at(1., 1.) * f.x;
-                    pixels[((y * CANOPY_SIDE + x) * 2) as usize + c] =
-                        (a * (1. - f.y) + b * f.y).round().clamp(0., 255.) as u8;
-                }
-            }
-        }
-    }
     Tile {
         slot,
         weights,
         weight_side,
-        canopy: pixels,
     }
 }
 struct Update {
@@ -214,7 +171,6 @@ struct Update {
 }
 struct Shared {
     weights: AssetId<Image>,
-    canopy: AssetId<Image>,
     table: AssetId<ShaderBuffer>,
     pack: Pack,
     pending: Option<Update>,
@@ -225,7 +181,6 @@ struct Shared {
 pub(super) struct NearUploadHub(Arc<Mutex<Vec<Weak<Mutex<Shared>>>>>);
 pub(crate) struct NearAtlas {
     pub weights: Handle<Image>,
-    pub canopy: Handle<Image>,
     pub table: Handle<ShaderBuffer>,
     pub(crate) pack: Pack,
     shared: Arc<Mutex<Shared>>,
@@ -261,14 +216,12 @@ impl NearAtlas {
         };
         let slots = NEAR_SLOTS as u32;
         let weights = images.add(image(WEIGHT_SIDE, TextureFormat::Rgba8Unorm, slots * 2));
-        let canopy = images.add(image(CANOPY_SIDE, TextureFormat::Rg8Unorm, slots));
         let table = buffers.add(ShaderBuffer::with_size(
             NearEntry::min_size().get() * NEAR_TABLE as u64,
             RenderAssetUsages::RENDER_WORLD,
         ));
         let shared = Arc::new(Mutex::new(Shared {
             weights: weights.id(),
-            canopy: canopy.id(),
             table: table.id(),
             pack: pack.clone(),
             pending: None,
@@ -278,7 +231,6 @@ impl NearAtlas {
         hub.0.lock().unwrap().push(Arc::downgrade(&shared));
         let atlas = Self {
             weights,
-            canopy,
             table,
             pack,
             shared,
@@ -326,11 +278,7 @@ fn upload(
             return false;
         };
         let mut s = shared.lock().unwrap();
-        let (Some(weights), Some(canopy), Some(table)) = (
-            images.get(s.weights),
-            images.get(s.canopy),
-            buffers.get(s.table),
-        ) else {
+        let (Some(weights), Some(table)) = (images.get(s.weights), buffers.get(s.table)) else {
             return true;
         };
         if [&s.pack.base, &s.pack.normal, &s.pack.macro_image]
@@ -346,7 +294,6 @@ fn upload(
             let layers = [
                 (weights, t.weight_side, 4, t.slot * 2, &t.weights[0]),
                 (weights, t.weight_side, 4, t.slot * 2 + 1, &t.weights[1]),
-                (canopy, CANOPY_SIDE, 2, t.slot, &t.canopy),
             ];
             for (image, side, bytes, layer, data) in layers {
                 queue.write_texture(

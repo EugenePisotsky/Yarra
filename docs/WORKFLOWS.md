@@ -41,20 +41,20 @@ The script exports the display node's `height` volume (or `--node SOP`; `--heigh
 
 `import-heightfield MANIFEST [PROJECT_DB] [RUNTIME_DB]` creates the project if it is missing, then cooks. It samples the heightfield every metre with smooth (Catmull-Rom) interpolation and masks linearly. The world is widened to whole 1 km blocks of flat sea so the terrain hierarchy closes. The `--start` point (by default the shore nearest the centre) becomes the world's start: the game and editor begin there unless `--start-view` overrides it. `start` and `summit` views are also written beside the project. Moving the start recooks nothing.
 
-Ground layers are either imported or painted. An imported layer names a mask (editor: Environment → Layer settings → **Coverage from terrain import**), and every import rewrites its coverage from that mask; the editor does not paint it, so touch-ups go on a painted layer above. Painted layers are never touched by imports. New island worlds bind these layers, lowest first, each with its ground and the share of meadow grass it keeps:
+Ground layers are either imported or painted. An imported layer names a mask (editor: Environment → Layer settings → **Coverage from terrain import**), and every import rewrites its coverage from that mask; the editor does not paint it, so touch-ups go on a painted layer above. Painted layers are never touched by imports. New island worlds bind these layers, lowest first, each with its ground; grass grows on the ground as the grass pack says (see [Grass](#grass)):
 
-| Layer | Mask | Ground | Grass kept |
-|---|---|---|---|
-| Dry meadow | `land` | dry meadow, dry grass | all |
-| Green meadow | `green` | meadow, green grass | all |
-| Coastal grass | `coast` | coastal grass | 60% |
-| Pine forest floor | `pine_forest` | moss and pine needles | 35% |
-| Spruce forest floor | `spruce_forest` | forest floor and needles | 15% |
-| Broadleaf forest floor | `broadleaf_forest` | leaf litter and forest floor | 40% |
-| Dunes | `dune` | dune sand | 10% |
-| Beach | `beach` | beach sand | none |
-| Scree | `scree` | stony moss and rocky ground | 20% |
-| Rock | `rock` | rock and lichen rock | none |
+| Layer | Mask | Ground |
+|---|---|---|
+| Dry meadow | `land` | dry meadow |
+| Green meadow | `green` | meadow |
+| Coastal grass | `coast` | coastal grass |
+| Pine forest floor | `pine_forest` | moss and pine needles |
+| Spruce forest floor | `spruce_forest` | forest floor and needles |
+| Broadleaf forest floor | `broadleaf_forest` | leaf litter and forest floor |
+| Dunes | `dune` | dune sand |
+| Beach | `beach` | beach sand |
+| Scree | `scree` | stony moss and rocky ground |
+| Rock | `rock` | rock and lichen rock |
 
 Without an exported mask of the same name, `land` and `green` come from height and slope, `beach`, `scree` and `rock` from rough height and slope rules, and the others are empty. The import prints masks no layer reads, and fails if a layer reads a mask it neither provides nor generates. Bind a new mask in the editor, save, then re-import. Imported coverage fades out over the world's last 48 m.
 
@@ -128,7 +128,7 @@ target/release/yarra-app-game --start-view content/world.project.views/start.ron
 uv run --with numpy --with pillow python tools/look_sheet.py tmp/look/start
 ```
 
-Keys: `ev` (EV100), `tone` (tony, agx, neutral, filmic, aces, boring, reinhard, none), `ambient` and `sun` (scales of the sky and sun light), `canopy` (0–1), `auto`, `fog`, `particles` and `shafts` (on/off), `air` (scale of the air under crowns), `burst` (that many screenshots one after another, a frame or two apart, for motion), `lightning` (a strike ahead of the camera held that many seconds in, 0–1.1; storms need `--weather storm` for their light), `phase` (time of day as a share of the day: 0.27 is just after sunrise, 0.34 the game's morning, 0.5 noon), `tilt` (degrees the camera turns up, −30–90) and `haze`, `mist` and `depth` (scales of the authored haze and mist extinction and the mist depth). With `tone=none` the frame is the exposed linear image, so its 10–90% mean log2 luminance is what auto exposure meters.
+Keys: `ev` (EV100), `tone` (tony, agx, neutral, filmic, aces, boring, reinhard, none), `ambient` and `sun` (scales of the sky and sun light), `canopy` (0–1), `auto`, `fog`, `particles` and `shafts` (on/off), `air` (scale of the air under crowns), `burst` (that many screenshots one after another, a frame or two apart, for motion), `lightning` (a strike ahead of the camera held that many seconds in, 0–1.1; storms need `--weather storm` for their light), `phase` (time of day as a share of the day: 0.27 is just after sunrise, 0.34 the game's morning, 0.5 noon), `tilt` (degrees the camera turns up, −30–90), `wind` (seconds into the wind's clock, otherwise 0: the wind holds still in captures, so variants at different times show its motion) and `haze`, `mist` and `depth` (scales of the authored haze and mist extinction and the mist depth). With `tone=none` the frame is the exposed linear image, so its 10–90% mean log2 luminance is what auto exposure meters.
 
 On macOS 14+, capped modes coordinate display callbacks and the Metal minimum presentation interval. Other platforms/older macOS use the timer fallback. This changes app pacing, not the display's system setting. The normal launch caps at 60 fps (`--fps 0` follows the display) and uses 50% resolution with 4× MSAA.
 
@@ -416,11 +416,17 @@ For grass streaming/history regression, run `cargo test -p yarra-vegetation-rend
 
 Save conflicts indicate newer source revisions: resolve/reload the draft rather than forcing a stale overwrite. Recovery data under `.editor` is separate from saved source. Generated preview failures must remain visible as stale/error state; they are not publication success.
 
-## Canopy look and animation preview
+## Grass
 
-The grass study workspace, its saved studies, reference photographs and capture tools were retired on October 10 (recoverable from Git at `7208dd6`); grass is judged in the world and in the game.
+Grass grows on the ground. The grass pack [`assets/packs/grass/baltic.ron`](../assets/packs/grass/baltic.ron) defines the grass types (meadow, tall meadow stems, dry meadow, marram, wavy hair-grass) and, per terrain surface, which types grow there and at what share of their density; its header documents every parameter. Painting a surface paints its grass; exclusions in the Grass channel (presets → Exclusion) and road wear clear it. There is no grass painting or catalog editing in the editor.
 
-The World workspace's Vegetation window opens **Canopy…** (*Canopy · ground and grass*). With the Vegetation tool's live preview active, it shows the combined, ground-only or blade-only treatment on world terrain and grass and sets the distance gradient. **Save canopy look** writes `content/vegetation/canopy-look.ron`; the game loads it at startup or **F1 → Advanced → Reload canopy look**. This is an artistic approximation, not a shadow solution. The Animation workspace independently previews catalog models/clips and transport without changing gameplay actor authority.
+New worlds take the pack when created. To put an edited pack into an existing world and publish it:
+
+```sh
+cargo run --release -p yarra-world-cook -- import-grass assets/packs/grass/baltic.ron
+```
+
+The game reloads the types' looks from the pack while it runs (blade shape, clumping, colours, gloss, translucency, wind response and density), so they can be tuned live; which types grow where, and the ground's grass colour, need `import-grass`, which recooks only what the change affects. Sparse grass (marram on the dunes, hair-grass on the forest floor) grows as tussocks because its `patches` drops whole clumps where coverage is partial. Ground under grass is shaded by the blades close up and takes the field's colour from 24 to 48 m, where blades have thinned out; distant terrain is baked with the same colour, so a meadow stays a meadow past the end of its blades. Grass is judged in the world and in the game; the grass study workspace and the canopy look were retired. The Animation workspace independently previews catalog models/clips and transport without changing gameplay actor authority.
 
 ### Bay shrub prototype
 
@@ -704,7 +710,7 @@ python3 tools/hill_landscape.py descent
 
 `create-demo` provides the historical 32 m grass fixture; `create-mountain-fixture` and `create-hill-fixture` provide terrain fixtures. `create-island-fixture` writes the default island (and its views) to another path without cooking. The hill helper uses `tmp/hill-landscape`, preserves existing source, and supports `--recook`. It is separate from normal game content. Pure compiler fixtures remain available as `layered_meadow` and `cart_track` examples in `yarra-environment-compile`.
 
-`export-vegetation PROJECT_DB CATALOG_RON` writes a new catalog file. `import-vegetation CATALOG_RON [PROJECT_DB RUNTIME_DB]` intentionally replaces the catalog and publishes; it is not a read-only preview. The old `demo` and `sync-demo-vegetation` reset commands no longer exist.
+`import-grass PACK_RON [PROJECT_DB RUNTIME_DB]` replaces the grass catalog from a grass pack and publishes; it is not a read-only preview.
 
 ## Standalone gameplay and saves
 

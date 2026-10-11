@@ -10,10 +10,10 @@ pub use roads::{RoadCompileProfile, RoadDetailLimits, TerrainSource, TerrainSour
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use vegetation::{VegetationFieldPageData, VegetationPopulationId};
+use vegetation::VegetationFieldPageData;
 use world::{CellCoord, TerrainSurfaceId, TerrainWeightPage, WorldSpaceId};
 
-pub use plan::{BindingKey, CompilePlan, PopulationBinding, merge_runtime_catalogs};
+pub use plan::CompilePlan;
 
 /// Explicit compiler budgets, not measured hardware performance or runtime draw limits.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -22,7 +22,7 @@ pub struct CompileProfile {
     pub vegetation_resolution: u16,
     pub max_surfaces_per_cell: usize,
     pub max_layers: usize,
-    pub max_population_bindings: usize,
+    pub max_grass_types: usize,
     pub max_fields_per_cell: usize,
     pub max_cells_per_batch: usize,
     pub max_mask_samples: usize,
@@ -39,7 +39,7 @@ impl Default for CompileProfile {
             vegetation_resolution: 64,
             max_surfaces_per_cell: world::MAX_TERRAIN_SURFACES_PER_CELL,
             max_layers: 128,
-            max_population_bindings: 256,
+            max_grass_types: vegetation::MAX_GRASS_TYPES,
             max_fields_per_cell: 64,
             max_cells_per_batch: 64,
             max_mask_samples: 4 * 1024 * 1024,
@@ -92,8 +92,6 @@ pub enum CompileError {
     WrongSpace,
     #[error("duplicate world in generation catalog: {0:?}")]
     DuplicateWorld(WorldSpaceId),
-    #[error("world plans disagree about shared plant species {0:?}")]
-    ConflictingSpecies(vegetation::VegetationSpeciesId),
     #[error("duplicate requested or loaded cell {0:?}")]
     DuplicateCell(CellCoord),
     #[error("coverage cell {0:?} is not loaded")]
@@ -108,9 +106,7 @@ pub enum CompileError {
     },
     #[error("cell coordinate has no representable dependency halo")]
     CoordinateRange,
-    #[error("derived population identity collision: {0:?}")]
-    BindingCollision(VegetationPopulationId),
-    #[error("invalid derived vegetation catalog: {0}")]
+    #[error("invalid grass catalog: {0}")]
     Catalog(#[from] vegetation::CatalogValidationError),
     #[error("invalid derived vegetation page: {0}")]
     Page(#[from] vegetation::PageValidationError),

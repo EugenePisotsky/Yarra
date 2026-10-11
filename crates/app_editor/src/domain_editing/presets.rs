@@ -60,7 +60,7 @@ impl SourceWorkingSets {
             return Err("Preset library exceeds the editor's 1 MiB authoring limit".into());
         }
         let plants = self.plants.as_ref().ok_or("Plant assets are loading")?;
-        library.validate(plants).map_err(|e| e.to_string())?;
+        library.validate().map_err(|e| e.to_string())?;
         for definition in self.definitions() {
             let d = replacement
                 .filter(|r| r.space == definition.space)
@@ -197,7 +197,7 @@ impl SourceWorkingSets {
         snapshot: DirtyPresetSnapshot,
         plants: &vegetation::VegetationCatalog,
     ) -> bool {
-        if snapshot.current.validate(plants).is_err()
+        if snapshot.current.validate().is_err()
             || snapshot.base == snapshot.current
             || library_bytes(&snapshot.current) > 1024 * 1024
         {
@@ -232,7 +232,6 @@ mod tests {
         let library = meadow_library(
             world::TerrainSurfaceId([1; 16]),
             world::TerrainSurfaceId([2; 16]),
-            environment::ChannelId([1; 16]),
         );
         let mut dense = SourceWorkingSets::default();
         dense.initialize_presets(&library);
@@ -246,7 +245,7 @@ mod tests {
         local
             .presets
             .iter_mut()
-            .find(|p| p.id == DRY_FOLIAGE)
+            .find(|p| p.id == DRY_GROUND)
             .unwrap()
             .name = "Local grass".into();
         dense.install_preset_edit(&local);
@@ -255,7 +254,7 @@ mod tests {
         let other = actual
             .presets
             .iter_mut()
-            .find(|p| p.id == GREEN_FOLIAGE)
+            .find(|p| p.id == GREEN_GROUND)
             .unwrap();
         other.name = "External grass".into();
         other.revision += 1;
@@ -269,12 +268,12 @@ mod tests {
         assert_eq!(dense.resolve_preset_conflict(true), 1);
         assert_eq!(dense.preset_base_revision(), actual.revision);
         assert_eq!(
-            dense.presets().unwrap().get(DRY_FOLIAGE).unwrap().name,
+            dense.presets().unwrap().get(DRY_GROUND).unwrap().name,
             "Local grass"
         );
         assert_eq!(
-            dense.presets().unwrap().get(GREEN_FOLIAGE),
-            actual.get(GREEN_FOLIAGE)
+            dense.presets().unwrap().get(GREEN_GROUND),
+            actual.get(GREEN_GROUND)
         );
         assert!(!dense.has_any_conflict());
         assert!(dense.preset_write().is_some());
@@ -305,7 +304,7 @@ mod tests {
         edited
             .presets
             .iter_mut()
-            .find(|p| p.id == DRY_FOLIAGE)
+            .find(|p| p.id == DRY_GROUND)
             .unwrap()
             .name = "Edited grass".into();
         let mut history = EditorHistory::default();
@@ -319,7 +318,7 @@ mod tests {
         saved
             .presets
             .iter_mut()
-            .find(|p| p.id == GREEN_FOLIAGE)
+            .find(|p| p.id == GREEN_GROUND)
             .unwrap()
             .name = "Unrelated external name".into();
         let entry = dense.presets.as_mut().unwrap();
@@ -327,21 +326,21 @@ mod tests {
         entry.current = saved.clone();
         history.undo(&mut objects, &mut dense);
         assert_eq!(
-            dense.presets().unwrap().get(DRY_FOLIAGE).unwrap().name,
-            original.get(DRY_FOLIAGE).unwrap().name
+            dense.presets().unwrap().get(DRY_GROUND).unwrap().name,
+            original.get(DRY_GROUND).unwrap().name
         );
         assert_eq!(
-            dense.presets().unwrap().get(GREEN_FOLIAGE),
-            saved.get(GREEN_FOLIAGE)
+            dense.presets().unwrap().get(GREEN_GROUND),
+            saved.get(GREEN_GROUND)
         );
         history.redo(&mut objects, &mut dense);
         assert_eq!(
-            dense.presets().unwrap().get(DRY_FOLIAGE).unwrap().name,
+            dense.presets().unwrap().get(DRY_GROUND).unwrap().name,
             "Edited grass"
         );
         assert_eq!(
-            dense.presets().unwrap().get(GREEN_FOLIAGE),
-            saved.get(GREEN_FOLIAGE)
+            dense.presets().unwrap().get(GREEN_GROUND),
+            saved.get(GREEN_GROUND)
         );
         assert!(merge_preset_changes(Some(&saved), &original, &edited).is_err());
     }

@@ -141,12 +141,18 @@ impl PresetAuthoringState {
         if !self.styles.reference_initialized
             && let Some(d) = &self.styles.draft
         {
-            self.styles.underlay = library.presets.iter().find_map(|p| match &p.kind {
-                environment::PresetKind::Foliage(f) if f.channel == d.value.vegetation_channel => {
-                    Some(p.id)
-                }
-                _ => None,
-            });
+            // A meadow beneath the road shows the grass it thins.
+            self.styles.underlay = library
+                .presets
+                .iter()
+                .find(|p| matches!(p.kind, environment::PresetKind::Composition(_)))
+                .or_else(|| {
+                    library.presets.iter().find(|p| {
+                        matches!(p.kind, environment::PresetKind::Ground(_))
+                            && p.id != d.value.ground
+                    })
+                })
+                .map(|p| p.id);
             self.styles.reference_initialized = true;
             self.bump();
         }

@@ -1,10 +1,9 @@
-// Candidates on the population lattice and the page data under them: coverage, terrain surface,
-// grouping, competition between overlapping populations and species choice.
-import package::shaders::vegetation::types::WorkItem;
+// Candidates on a grass type's lattice and the page data under them: coverage, terrain surface
+// and Voronoi clumps. Mirrors crates/vegetation/src/placement.rs, which tests compare against.
+import package::shaders::vegetation::types::{WorkItem, GrassType};
 import package::shaders::vegetation::random::{hash32, hash_cell, random01};
-import package::shaders::vegetation::lod::floor_div_two;
 import package::shaders::vegetation::placement::bindings::{
-    SpeciesChoice, work_items, choices, coverage_values, surface_samples,
+    coverage_values, surface_samples, camera,
 };
 
 struct SurfaceResult {
@@ -13,29 +12,35 @@ struct SurfaceResult {
     validity: f32,
 }
 
+struct Clump {
+    key: u32,
+    // Canonical world XZ.
+    center: vec2<f32>,
+    radial: vec2<f32>,
+    // Distance from the centre, as a share of the largest possible.
+    distance: f32,
+    // 1 inside the clump, falling to 0 at the boundary with its neighbour.
+    influence: f32,
+    // Share of candidates the clump keeps here.
+    retention: f32,
+}
+
 struct Candidate {
+    // Render-space XZ.
     root: vec2<f32>,
-    group_center: vec2<f32>,
-    direction: vec2<f32>,
-    stable_rank: f32,
+    clump: Clump,
+    facing: vec2<f32>,
+    rank: f32,
     lod_rank: f32,
-    clump_variant: f32,
-    group_distance: f32,
-    group_influence: f32,
-    group_density: f32,
     seed: u32,
 }
 
-struct GroupSample {
-    center: vec2<f32>,
-    radial: vec2<f32>,
-    normalized_distance: f32,
-    boundary_influence: f32,
-    density_retention: f32,
-    key: u32,
-}
-
 const PI_2: f32 = 6.283185307179586;
+// vegetation::placement constants.
+const CLUMP_JITTER: f32 = 0.9;
+const CLUMP_SOFTNESS: f32 = 0.25;
+const CLUMP_DENSITY_VARIATION: f32 = 0.2;
+const FACING_JITTER: f32 = 0.35;
 
 fn normalize_or(value: vec2<f32>, fallback: vec2<f32>) -> vec2<f32> {
     let length_squared = dot(value, value);
@@ -43,6 +48,10 @@ fn normalize_or(value: vec2<f32>, fallback: vec2<f32>) -> vec2<f32> {
         return fallback;
     }
     return value * inverseSqrt(length_squared);
+}
+
+fn type_seed(grass: GrassType) -> u32 {
+    return bitcast<u32>(grass.placement.z);
 }
 
 fn owns(item: WorkItem, world_xz: vec2<f32>) -> bool {
@@ -53,10 +62,10 @@ fn sample_coverage(item: WorkItem, world_xz: vec2<f32>) -> f32 {
     if (!owns(item, world_xz)) {
         return 0.0;
     }
-    let resolution = item.candidate_layout.w;
+    let resolution = item.field.z;
     let local = clamp((world_xz - item.page.xy) / item.page.z, vec2<f32>(0.0), vec2<f32>(0.999999));
     let texel = vec2<u32>(local * f32(resolution));
-    return coverage_values[item.candidate_layout.z + texel.y * resolution + texel.x];
+    return coverage_values[item.field.y + texel.y * resolution + texel.x];
 }
 
 fn sample_surface(item: WorkItem, world_xz: vec2<f32>) -> SurfaceResult {
@@ -94,198 +103,122 @@ fn sample_surface(item: WorkItem, world_xz: vec2<f32>) -> SurfaceResult {
     return SurfaceResult(height, normal, validity);
 }
 
-fn sample_voronoi_group(item: WorkItem, root: vec2<f32>) -> GroupSample {
-    let spacing = item.grouping.x;
-    let base_cell = vec2<i32>(floor(root / spacing));
-    var nearest_distance_squared = 1e30;
-    var second_distance_squared = 1e30;
-    var nearest_center = root;
-    var nearest_key = item.population.z;
+// The nearest of the 3×3 clump feature points around `root`, and how clearly it is nearest.
+fn sample_clump(grass: GrassType, seed: u32, root: vec2<f32>) -> Clump {
+    let size = grass.clumps.x;
+    let base = vec2<i32>(floor(root / size));
+    var nearest = 1e30;
+    var second = 1e30;
+    var center = root;
+    var key = seed;
     for (var dz = -1; dz <= 1; dz += 1) {
         for (var dx = -1; dx <= 1; dx += 1) {
-            let cell = base_cell + vec2<i32>(dx, dz);
-            let key = hash_cell(item.population.z, cell, 0x4f1bcdc9u);
-            let offset = vec2<f32>(
-                0.5 + (random01(key ^ 0x9e3779b9u) - 0.5) * item.grouping.y,
-                0.5 + (random01(key ^ 0x85ebca6bu) - 0.5) * item.grouping.y,
-            );
-            let center = (vec2<f32>(cell) + offset) * spacing;
-            let delta = root - center;
-            let distance_squared = dot(delta, delta);
-            if (distance_squared < nearest_distance_squared) {
-                second_distance_squared = nearest_distance_squared;
-                nearest_distance_squared = distance_squared;
-                nearest_center = center;
-                nearest_key = key;
-            } else if (distance_squared < second_distance_squared) {
-                second_distance_squared = distance_squared;
+            let cell = base + vec2<i32>(dx, dz);
+            let cell_key = hash_cell(seed, cell, 0x4f1bcdc9u);
+            let point = (vec2<f32>(cell) + 0.5 + (vec2(
+                random01(cell_key ^ 0x9e3779b9u),
+                random01(cell_key ^ 0x85ebca6bu),
+            ) - 0.5) * CLUMP_JITTER) * size;
+            let delta = root - point;
+            let d = dot(delta, delta);
+            if (d < nearest) {
+                second = nearest;
+                nearest = d;
+                center = point;
+                key = cell_key;
+            } else if (d < second) {
+                second = d;
             }
         }
     }
-
-    let nearest_distance = sqrt(nearest_distance_squared);
-    let second_distance = sqrt(second_distance_squared);
-    let softness_width = spacing * item.grouping.z;
-    var boundary_influence = 1.0;
-    if (softness_width > 1e-7) {
-        boundary_influence = smoothstep(
-            0.0,
-            softness_width,
-            second_distance - nearest_distance,
-        );
-    }
-    let normalized_distance = clamp(nearest_distance / (spacing * 1.41421356237), 0.0, 1.0);
-    let distance_profile = pow(normalized_distance, item.group_density.z);
-    let spatial_retention = mix(item.group_density.x, item.group_density.y, distance_profile);
-    let group_retention = 1.0
-        - item.group_density.w * random01(nearest_key ^ 0xd1b54a35u);
-    return GroupSample(
-        nearest_center,
-        normalize_or(root - nearest_center, vec2<f32>(1.0, 0.0)),
-        normalized_distance,
-        boundary_influence,
-        clamp(spatial_retention * group_retention, 0.0, 1.0),
-        nearest_key,
+    let distance = sqrt(nearest);
+    let influence = smoothstep(0.0, 1.0, (sqrt(second) - distance) / (size * CLUMP_SOFTNESS));
+    let normalized = clamp(distance / (size * 1.41421356237), 0.0, 1.0);
+    // Tufted types thin out between clumps; even ones barely do.
+    let edge = 1.0 - 0.6 * grass.clumps.y;
+    let spatial = 1.0 + (edge - 1.0) * pow(normalized, 1.5);
+    let variation = 1.0 - CLUMP_DENSITY_VARIATION * random01(key ^ 0xd1b54a35u);
+    return Clump(
+        key,
+        center,
+        normalize_or(root - center, vec2<f32>(1.0, 0.0)),
+        normalized,
+        influence,
+        clamp(spatial * variation, 0.0, 1.0),
     );
 }
 
-fn sample_candidate(item: WorkItem, candidate_index: u32) -> Candidate {
-    let cell_index = candidate_index / item.candidate_layout.x;
-    let child_index = candidate_index % item.candidate_layout.x;
-    let cell_count_x = u32(item.domain.z);
+fn angle_direction(value: u32) -> vec2<f32> {
+    let angle = random01(value) * PI_2;
+    return vec2<f32>(cos(angle), sin(angle));
+}
+
+// `patches` of the way from the blade's rank to its clump's, mapped through the blend's
+// distribution so it stays uniform and coverage keeps the same share of blades.
+fn patch_rank(blade: f32, clump: f32, patches: f32) -> f32 {
+    let value = clump * patches + blade * (1.0 - patches);
+    let wide = max(patches, 1.0 - patches);
+    let narrow = 1.0 - wide;
+    if (narrow < 1e-4) {
+        return value;
+    }
+    if (value < narrow) {
+        return value * value / (2.0 * wide * narrow);
+    }
+    if (value < wide) {
+        return (value - narrow * 0.5) / wide;
+    }
+    return 1.0 - (1.0 - value) * (1.0 - value) / (2.0 * wide * narrow);
+}
+
+fn sample_candidate(item: WorkItem, grass: GrassType, index: u32) -> Candidate {
+    let seed_of_type = type_seed(grass);
+    let spacing = grass.placement.y;
+    let count_x = u32(item.domain.z);
     let cell = vec2<i32>(
-        item.domain.x + i32(cell_index % cell_count_x),
-        item.domain.y + i32(cell_index / cell_count_x),
+        item.domain.x + i32(index % count_x),
+        item.domain.y + i32(index / count_x),
     );
-    let cell_seed = hash_cell(item.population.z, cell, 0x6d2b79f5u);
+    let seed = hash_cell(seed_of_type, cell, 0x6d2b79f5u);
+    let jittered = (vec2<f32>(cell) + vec2(
+        random01(seed ^ 0xa511e9b3u),
+        random01(seed ^ 0x63d83595u),
+    )) * spacing;
+    let clump = sample_clump(grass, seed_of_type, jittered);
+    let root = jittered + (clump.center - jittered) * (grass.clumps.y * clump.influence);
+    // Four neighbouring cells hold one of each LOD lane, rotated per block, so keeping the
+    // lowest quarter of ranks keeps one root in every 2×2 block.
+    let block = vec2<i32>(floor(vec2<f32>(cell) * 0.5));
+    let quadrant = u32(cell.x - block.x * 2) + 2u * u32(cell.y - block.y * 2);
+    let lane = (quadrant + (hash_cell(seed_of_type, block, 0xa24baed5u) & 3u)) & 3u;
 
-    var root: vec2<f32>;
-    var parent: vec2<f32>;
-    if (item.peers.z == 0u) {
-        let offset = vec2<f32>(
-            0.5 + (random01(cell_seed ^ 0xa511e9b3u) - 0.5) * item.growth.z,
-            0.5 + (random01(cell_seed ^ 0x63d83595u) - 0.5) * item.growth.z,
-        );
-        root = (vec2<f32>(cell) + offset) * item.growth.x;
-        parent = root;
-    } else {
-        let parent_offset = vec2<f32>(
-            0.5 + (random01(cell_seed ^ 0xa511e9b3u) - 0.5) * item.growth.z,
-            0.5 + (random01(cell_seed ^ 0x63d83595u) - 0.5) * item.growth.z,
-        );
-        parent = (vec2<f32>(cell) + parent_offset) * item.growth.x;
-        let child_seed = hash32(cell_seed ^ (child_index * 0x9e3779b9u));
-        let angle = random01(child_seed ^ 0xc2b2ae35u) * PI_2;
-        let distance = sqrt(random01(child_seed ^ 0x27d4eb2fu)) * item.growth.y;
-        let placement_radial = vec2<f32>(cos(angle), sin(angle));
-        root = parent + placement_radial * distance;
-    }
-
-    let seed = hash32(cell_seed ^ (child_index * 0x85ebca6bu));
-    var group = GroupSample(
-        root,
-        vec2<f32>(0.0),
-        0.0,
-        0.0,
-        1.0,
-        seed,
+    let own = angle_direction(seed ^ 0x165667b1u);
+    let clump_facing = angle_direction(clump.key ^ 0x68e31da4u);
+    let grouped = grass.clumps.w * clump.influence;
+    let splay = grass.placement.x * clump.influence;
+    let mixed = clump_facing * grouped + clump.radial * splay + own * (1.0 - grouped);
+    let base_facing = normalize_or(mixed, own);
+    let turn = (random01(seed ^ 0x7f4a7c15u) * 2.0 - 1.0) * FACING_JITTER;
+    let facing = vec2<f32>(
+        base_facing.x * cos(turn) - base_facing.y * sin(turn),
+        base_facing.x * sin(turn) + base_facing.y * cos(turn),
     );
-    if (item.peers.w == 1u) {
-        let delta = root - parent;
-        let distance = length(delta);
-        var normalized_distance = 0.0;
-        if (item.growth.y > 1e-7) {
-            normalized_distance = clamp(distance / item.growth.y, 0.0, 1.0);
-        }
-        group = GroupSample(
-            parent,
-            normalize_or(delta, vec2<f32>(1.0, 0.0)),
-            normalized_distance,
-            1.0,
-            1.0,
-            cell_seed,
-        );
-    } else if (item.peers.w == 2u) {
-        group = sample_voronoi_group(item, root);
-        root = mix(root, group.center, item.grouping.w * group.boundary_influence);
-    }
-    var lod_lane = 0u;
-    if (item.peers.z == 0u) {
-        let block = vec2<i32>(floor_div_two(cell.x), floor_div_two(cell.y));
-        let quadrant = u32(cell.x - block.x * 2) + 2u * u32(cell.y - block.y * 2);
-        let rotation = hash_cell(item.population.z, block, 0xa24baed5u) & 3u;
-        lod_lane = (quadrant + rotation) & 3u;
-    } else {
-        let group = child_index / 4u;
-        let rotation = hash_cell(
-            item.population.z,
-            cell,
-            0xa24baed5u ^ (group * 0x9e3779b9u),
-        ) & 3u;
-        lod_lane = (child_index % 4u + rotation) & 3u;
-    }
-    let random_angle = random01(seed ^ 0x165667b1u) * PI_2;
-    let random_direction = vec2<f32>(cos(random_angle), sin(random_angle));
-    let shared_angle = random01(group.key ^ 0x68e31da4u) * PI_2;
-    let shared_direction = vec2<f32>(cos(shared_angle), sin(shared_angle));
-    let tangent = vec2<f32>(-group.radial.y, group.radial.x);
-    let flow = normalize_or(item.flow_density.xy, vec2<f32>(1.0, 0.0));
-    let mixed = shared_direction * item.orientation.x * group.boundary_influence
-        + group.radial * item.direction_weights.x * group.boundary_influence
-        + tangent * item.direction_weights.y
-            * group.boundary_influence
-        + random_direction * item.direction_weights.z
-        + flow * item.direction_weights.w;
-    let base_direction = normalize_or(mixed, random_direction);
-    let angular_jitter = (random01(seed ^ 0x7f4a7c15u) * 2.0 - 1.0) * item.orientation.y;
-    let sine = sin(angular_jitter);
-    let cosine = cos(angular_jitter);
-    let direction = vec2<f32>(
-        base_direction.x * cosine - base_direction.y * sine,
-        base_direction.x * sine + base_direction.y * cosine,
-    );
+    var render_clump = clump;
+    render_clump.center = clump.center - camera.render_origin.xy;
     return Candidate(
-        root - item.orientation.zw,
-        group.center - item.orientation.zw,
-        direction,
-        random01(seed ^ 0x94d049bbu),
-        (f32(lod_lane) + random01(seed ^ 0x91e10da5u)) * 0.25,
-        random01(group.key ^ 0x3c6ef372u),
-        group.normalized_distance,
-        group.boundary_influence,
-        group.density_retention,
+        root - camera.render_origin.xy,
+        render_clump,
+        facing,
+        patch_rank(random01(seed ^ 0x4cf5ad43u), random01(clump.key ^ 0x2545f491u), grass.dry_tip.w),
+        (f32(lane) + random01(seed ^ 0x91e10da5u)) * 0.25,
         seed,
     );
 }
 
-fn local_occupancy(item: WorkItem, root: vec2<f32>) -> f32 {
-    let own_coverage = sample_coverage(item, root);
-    if (item.population.w == 0u) {
-        return own_coverage;
-    }
-
-    var total_requested_density = 0.0;
-    var strongest_requested_density = 0.0;
-    for (var peer_offset = 0u; peer_offset < item.peers.y; peer_offset += 1u) {
-        let peer = work_items[item.peers.x + peer_offset];
-        if (peer.population.w == item.population.w) {
-            let requested_density = peer.flow_density.z * sample_coverage(peer, root);
-            total_requested_density += requested_density;
-            strongest_requested_density = max(strongest_requested_density, requested_density);
-        }
-    }
-    if (total_requested_density <= 1e-7) {
-        return 0.0;
-    }
-    return clamp(strongest_requested_density * own_coverage / total_requested_density, 0.0, 1.0);
-}
-
-fn choose_species_choice(item: WorkItem, random_value: f32) -> SpeciesChoice {
-    for (var choice_offset = 0u; choice_offset < item.population.y; choice_offset += 1u) {
-        let choice = choices[item.population.x + choice_offset];
-        if (random_value <= choice.threshold.x) {
-            return choice;
-        }
-    }
-    return choices[item.population.x + item.population.y - 1u];
+// Camera-independent acceptance: the page owns the root, its ground is valid, and coverage,
+// thinned by the clump, exceeds the candidate's rank (shared by the clump as the type patches).
+fn candidate_grows(item: WorkItem, candidate: Candidate, surface: SurfaceResult) -> bool {
+    return owns(item, candidate.root)
+        && surface.validity >= 0.5
+        && candidate.rank < sample_coverage(item, candidate.root) * candidate.clump.retention;
 }

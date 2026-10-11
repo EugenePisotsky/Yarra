@@ -4,9 +4,7 @@ use super::{
     gpu_types::WorkItemGpu,
     pipelines::VegetationPipelines,
 };
-use crate::{
-    VegetationDiagnosticMode, VegetationDiagnostics, VegetationProfileMode, VegetationSettings,
-};
+use crate::{VegetationDiagnostics, VegetationProfileMode, VegetationSettings};
 use bevy::{
     prelude::*,
     render::{
@@ -62,7 +60,7 @@ fn plan(items: &[WorkItemGpu], position: Vec3, byte_budget: u64) -> (Vec<[u32; 4
     let mut pending = Vec::new();
     let mut indices = 0u64;
     for index in order {
-        let count = items[index as usize].layout[1];
+        let count = items[index as usize].field[0];
         if count == 0
             || count > MAX_BUILD_LANES
             || (indices + u64::from(count.div_ceil(32))) * 4 > byte_budget
@@ -77,7 +75,7 @@ fn plan(items: &[WorkItemGpu], position: Vec3, byte_budget: u64) -> (Vec<[u32; 4
 }
 
 impl CandidateCache {
-    /// Source revision changes invalidate all cached acceptance, including peer competition.
+    /// Source revision changes invalidate all cached acceptance.
     /// Camera motion never changes this plan. Uncached fields remain on the reference path.
     pub fn prepare(
         &mut self,
@@ -129,7 +127,6 @@ pub(super) fn build(
     diagnostics: Res<VegetationDiagnostics>,
 ) {
     let enabled = settings.candidate_cache_enabled
-        && settings.diagnostic_mode == VegetationDiagnosticMode::ProceduralGeometry
         && matches!(
             settings.profile_mode,
             VegetationProfileMode::Full | VegetationProfileMode::ComputeOnly
@@ -221,9 +218,9 @@ mod tests {
     fn planning_has_bounded_nonoverlapping_slots_and_reference_fallback() {
         let mut items = pack_scene(&vegetation::fixtures::reference_scene()).work_items;
         for (i, item) in items.iter_mut().enumerate() {
-            item.layout[1] = 100 + i as u32;
+            item.field[0] = 100 + i as u32;
         }
-        items[0].layout[1] = MAX_BUILD_LANES + 1;
+        items[0].field[0] = MAX_BUILD_LANES + 1;
         let (entries, pending, bytes) = plan(&items, Vec3::ZERO, 1200);
         assert!(bytes <= 1200 && pending.len() > 1);
         assert_eq!(entries[0], [0; 4]);
@@ -231,7 +228,7 @@ mod tests {
         for i in pending {
             let e = entries[i as usize];
             assert_eq!(e[0], end);
-            assert_eq!(e[1], items[i as usize].layout[1]);
+            assert_eq!(e[1], items[i as usize].field[0]);
             assert_eq!(&e[2..], &[0, 0]);
             end += e[1].div_ceil(32);
         }

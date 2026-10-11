@@ -139,7 +139,6 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         let world_dx = dpdx(in.world_position.xz);
         let world_dy = dpdy(in.world_position.xz);
         let footprint = max(length(world_dx), length(world_dy));
-        var canopy = 1.0;
         var hollow = -1.0;
         var pbr = pbr_input_from_vertex_output(in, is_front, false);
         // Same placeholder as the geometry diagnostic when the publication has no bake.
@@ -159,7 +158,6 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
             let close = close_ground(in.world_position.xyz, in.world_normal, world_dx, world_dy, detail.world.x, detail.origin.xy);
             @if(!TERRAIN_NEAR_DISABLED) {
                 ground = GroundSample(close.color, close.normal, close.roughness, close.ao);
-                canopy = mix(1.0, close.canopy, close.weight);
             }
             // Without the close cache every pixel takes the distant composite.
             @if(!TERRAIN_NEAR_DISABLED)
@@ -200,7 +198,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         @else {
             pbr = apply_rain_puddles(pbr, hollow);
             let lit = apply_pbr_lighting(pbr);
-            out.color = main_pass_post_lighting_processing(pbr, vec4(lit.rgb * canopy, lit.a));
+            out.color = main_pass_post_lighting_processing(pbr, lit);
         }
     }
     return out;

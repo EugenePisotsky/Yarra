@@ -3,10 +3,10 @@
 mod area_authoring;
 mod atmosphere_authoring;
 
-mod canopy;
 mod domain_editing;
 mod editing;
 mod environment_paint;
+mod grass;
 mod journal;
 mod listings;
 mod project_store;
@@ -16,7 +16,6 @@ mod saving;
 mod shell;
 mod startup;
 mod tools;
-mod vegetation_authoring;
 mod worker;
 mod workspaces;
 

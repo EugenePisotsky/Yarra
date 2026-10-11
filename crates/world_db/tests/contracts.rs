@@ -69,12 +69,12 @@ fn project_and_runtime_databases_are_distinct_and_readable() {
         read_project
             .vegetation_catalog
             .as_ref()
-            .map(|catalog| catalog.populations.len()),
-        Some(vegetation_catalog.populations.len())
+            .map(|catalog| catalog.grass.len()),
+        Some(vegetation_catalog.grass.len())
     );
 
     let mut replacement_catalog = vegetation_catalog.clone();
-    replacement_catalog.populations[0].density_per_square_meter = 5.5;
+    replacement_catalog.grass[0].density = 5.5;
     ProjectWriter::open(&project_path)
         .unwrap()
         .replace_vegetation_catalog(&replacement_catalog)
@@ -88,7 +88,7 @@ fn project_and_runtime_databases_are_distinct_and_readable() {
     );
 
     let mut authored_catalog = replacement_catalog.clone();
-    authored_catalog.populations[0].density_per_square_meter = 6.25;
+    authored_catalog.grass[0].density = 6.25;
     let mut writer = ProjectWriter::open(&project_path).unwrap();
     assert_eq!(
         writer
@@ -98,7 +98,7 @@ fn project_and_runtime_databases_are_distinct_and_readable() {
     );
 
     let mut stale_catalog = replacement_catalog.clone();
-    stale_catalog.populations[0].density_per_square_meter = 7.0;
+    stale_catalog.grass[0].density = 7.0;
     assert_eq!(
         writer
             .replace_vegetation_catalog_if_matches(Some(&replacement_catalog), &stale_catalog,)
@@ -148,8 +148,8 @@ fn project_and_runtime_databases_are_distinct_and_readable() {
             .manifest()
             .vegetation_catalog
             .as_ref()
-            .map(|catalog| catalog.populations.len()),
-        Some(vegetation_catalog.populations.len())
+            .map(|catalog| catalog.grass.len()),
+        Some(vegetation_catalog.grass.len())
     );
     fs::remove_dir_all(directory).unwrap();
 }

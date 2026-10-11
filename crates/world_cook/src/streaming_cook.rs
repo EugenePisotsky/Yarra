@@ -1,7 +1,6 @@
 //! Production cook: one stable source snapshot, bounded local inputs, staged output.
 use super::*;
 use environment_compile::CompilePlan;
-use environment_compile::merge_runtime_catalogs;
 use environment_cook::prepare_plans;
 use std::collections::BTreeSet;
 use vegetation::VegetationCatalog;
@@ -96,7 +95,7 @@ fn cook_snapshot_options(
 ) -> Result<CookReport> {
     let project = snapshot.catalog();
     let plans = prepare_plans(project)?;
-    let catalog = merge_runtime_catalogs(&plans.values().collect::<Vec<_>>())?;
+    let catalog = project.vegetation_catalog.clone().unwrap_or_default();
     let mut environment_hash = blake3::Hasher::new();
     for plan in plans.values() {
         environment_hash.update(&plan.fingerprint());

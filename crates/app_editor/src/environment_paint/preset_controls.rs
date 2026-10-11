@@ -4,7 +4,6 @@ use environment::{PresetId, PresetKind, PresetLibrary, PresetOverride, QuickValu
 pub(crate) fn kind_name(kind: &PresetKind) -> &'static str {
     match kind {
         PresetKind::Ground(_) => "Ground",
-        PresetKind::Foliage(_) => "Foliage",
         PresetKind::Exclusion(_) => "Exclusion",
         PresetKind::Composition(_) => "Composition",
         PresetKind::AssetCollection(_) => "Asset collection",
@@ -71,11 +70,6 @@ pub(crate) fn quick_controls(
                         PresetKind::Ground(g) => {
                             vec![("Ground influence", QuickValue::GroundInfluence(g.strength))]
                         }
-                        PresetKind::Foliage(v) => vec![
-                            ("Density", QuickValue::FoliageDensity(v.density)),
-                            ("Influence", QuickValue::FoliageInfluence(v.strength)),
-                            ("Seed", QuickValue::FoliageSeed(v.seed)),
-                        ],
                         PresetKind::Exclusion(e) => vec![(
                             "Clearing influence",
                             QuickValue::ExclusionInfluence(e.strength),
@@ -93,15 +87,12 @@ pub(crate) fn quick_controls(
                         ui.push_id(value.key(), |ui| {
                             ui.horizontal(|ui| {
                                 let changed = match &mut value {
-                                    QuickValue::FoliageSeed(seed)
-                                    | QuickValue::CollectionSeed(seed) => {
+                                    QuickValue::CollectionSeed(seed) => {
                                         ui.label(label);
                                         ui.add(egui::DragValue::new(seed)).changed()
                                     }
                                     QuickValue::CollectionDensity(v)
                                     | QuickValue::GroundInfluence(v)
-                                    | QuickValue::FoliageDensity(v)
-                                    | QuickValue::FoliageInfluence(v)
                                     | QuickValue::ExclusionInfluence(v) => ui
                                         .add(egui::Slider::new(v, 0.0..=1.0).text(label))
                                         .changed(),

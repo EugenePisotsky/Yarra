@@ -56,6 +56,7 @@ impl FromWorld for VegetationPipelines {
                     uniform_buffer_sized(false, None),
                     storage_buffer_sized(false, None),
                     uniform_buffer_sized(false, None),
+                    storage_buffer_read_only_sized(false, None),
                 ),
             ),
         );
@@ -68,7 +69,6 @@ impl FromWorld for VegetationPipelines {
                     storage_buffer_read_only_sized(false, None),
                     storage_buffer_read_only_sized(false, None),
                     storage_buffer_read_only_sized(false, None),
-                    storage_buffer_sized(false, None),
                     storage_buffer_sized(false, None),
                     storage_buffer_sized(false, None),
                     storage_buffer_read_only_sized(false, None),
@@ -88,11 +88,7 @@ impl FromWorld for VegetationPipelines {
                 (
                     storage_buffer_read_only_sized(false, None),
                     storage_buffer_read_only_sized(false, None),
-                    storage_buffer_read_only_sized(false, None),
                     uniform_buffer_sized(false, None),
-                    uniform_buffer_sized(false, None),
-                    storage_buffer_read_only_sized(false, None),
-                    storage_buffer_read_only_sized(false, None),
                 ),
             ),
         );

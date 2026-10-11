@@ -62,6 +62,9 @@ pub(crate) struct LookVariant {
     pub(crate) moon: Option<f32>,
     /// Degrees the camera turns up from the game's view, to see the sky it never shows.
     pub(crate) tilt: f32,
+    /// Seconds into the wind's clock, held still: variants at different times show how wind
+    /// poses grass and trees.
+    pub(crate) wind: f32,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -84,7 +87,7 @@ pub(crate) const TONEMAPPERS: [(&str, Tonemapping); 8] = [
 ];
 
 /// `NAME[:key=value,...]` separated by `;`, keys `ev`, `tone`, `ambient`, `sun`, `canopy`,
-/// `auto`, `fog`, `particles`, `shafts`, `phase`, `haze`, `mist`, `depth`, `air` (scale of the air under crowns), `lightning` (a strike ahead held that many seconds in), `moon` (its age in days), `tilt` (degrees the camera turns up) and `burst` (that many
+/// `auto`, `fog`, `particles`, `shafts`, `phase`, `haze`, `mist`, `depth`, `air` (scale of the air under crowns), `lightning` (a strike ahead held that many seconds in), `moon` (its age in days), `tilt` (degrees the camera turns up), `wind` (seconds into the wind's clock) and `burst` (that many
 /// screenshots one after another, a frame or two apart).
 pub(crate) fn parse_variants(spec: &str) -> Result<Vec<LookVariant>, String> {
     let variants = spec
@@ -110,6 +113,7 @@ pub(crate) fn parse_variants(spec: &str) -> Result<Vec<LookVariant>, String> {
                 lightning: None,
                 moon: None,
                 tilt: 0.0,
+                wind: 0.0,
             };
             for setting in settings.split(',').map(str::trim).filter(|s| !s.is_empty()) {
                 let (key, value) = setting.split_once('=').ok_or_else(|| {
@@ -154,6 +158,7 @@ pub(crate) fn parse_variants(spec: &str) -> Result<Vec<LookVariant>, String> {
                     "lightning" => variant.lightning = Some(number(0.0..=1.1)?),
                     "moon" => variant.moon = Some(number(0.0..=29.5)?),
                     "tilt" => variant.tilt = number(-30.0..=90.0)?,
+                    "wind" => variant.wind = number(0.0..=3600.0)?,
                     "burst" => variant.burst = number(1.0..=120.0)? as u32,
                     "haze" => variant.tuning.haze = number(0.0..=20.0)?,
                     "mist" => variant.tuning.mist = number(0.0..=20.0)?,
@@ -248,9 +253,12 @@ fn fullscreen(mut window: Single<&mut Window, With<PrimaryWindow>>) {
     window.mode = WindowMode::BorderlessFullscreen(MonitorSelection::Primary);
 }
 
-/// Still wind, so variants differ only in their presentation.
-fn freeze_wind(mut wind: ResMut<vegetation_render::VegetationWind>) {
-    wind.set_phase_seconds(0.0);
+/// Still wind, so variants differ only in their presentation and chosen wind time.
+fn freeze_wind(capture: Res<Capture>, mut wind: ResMut<vegetation_render::VegetationWind>) {
+    let seconds = capture
+        .current
+        .map_or(0.0, |(index, ..)| capture.options.variants[index].wind);
+    wind.set_phase_seconds(seconds);
 }
 
 /// Turns the camera up after the game has placed it, about its own horizontal axis; only a
@@ -537,6 +545,7 @@ mod tests {
             Some(false)
         );
         assert_eq!(parse_variants("x:burst=12").unwrap()[0].burst, 12);
+        assert_eq!(parse_variants("x:wind=2.5").unwrap()[0].wind, 2.5);
         assert_eq!(
             parse_variants("x:shafts=off").unwrap()[0].shafts,
             Some(false)

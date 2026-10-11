@@ -63,6 +63,7 @@ pub(super) fn attach_page(
             key,
             terrain,
             prepared.terrain,
+            vegetation_catalog,
             cell_size,
         )?,
         PagePayload::StaticObjects(objects) => attach_static_objects(
@@ -270,6 +271,7 @@ pub(super) fn attach_terrain_source(
     key: PageKey,
     terrain: world::TerrainHeightfieldPage,
     resources: Option<world_db::TerrainRenderResources>,
+    grass: Option<&VegetationCatalog>,
     cell_size: f32,
 ) -> Result<(), String> {
     let world::TerrainHeightfieldPage {
@@ -303,6 +305,7 @@ pub(super) fn attach_terrain_source(
                     Ok(TerrainSurfaceLayer {
                         surface: r.surface.clone(),
                         layer: r.layer,
+                        grass: grass.map_or([0.0; 4], |g| g.cover(id.0).rgba()),
                     })
                 })
                 .collect::<Result<Vec<_>, String>>()?;

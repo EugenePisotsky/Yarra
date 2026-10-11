@@ -43,13 +43,13 @@ fn cart_tracks_preserve_existing_center_and_outside_grass_and_keep_population_id
             .vegetation
             .fields
             .iter()
-            .map(|f| f.population)
+            .map(|f| f.grass)
             .collect::<Vec<_>>(),
         base[0]
             .vegetation
             .fields
             .iter()
-            .map(|f| f.population)
+            .map(|f| f.grass)
             .collect::<Vec<_>>()
     );
     // 8 m / 64 vegetation samples. Center at z=4; tracks at 4 ± .775.
@@ -137,7 +137,7 @@ fn splitting_a_curve_preserves_coverage_within_raster_tolerance_and_never_reseed
     }
 }
 #[test]
-fn disabled_and_absent_roads_leave_base_output_identical_and_do_not_fill_unpainted_holes() {
+fn disabled_and_absent_roads_leave_base_output_identical_and_add_no_grass() {
     let (d, l, p, _, mut r) = cart_tracks();
     let c = snapshot(&d, &CELLS, |_, x, z| {
         if x > 2.0 && x < 5.0 && z > 2.0 && z < 6.0 {
@@ -149,7 +149,7 @@ fn disabled_and_absent_roads_leave_base_output_identical_and_do_not_fill_unpaint
     let plan = CompilePlan::new(&d, &p, &l, Default::default()).unwrap();
     let base = plan.compile_cells(&CELLS, &c).unwrap();
     let with_road = compile(&plan, &c, &r);
-    assert_eq!(grass(&with_road[0], 24, 32), 0);
+    assert!((0..64).all(|z| (0..64).all(|x| grass(&with_road[0], x, z) <= grass(&base[0], x, z))));
     r.roads[0].enabled = false;
     assert_eq!(compile(&plan, &c, &r), base);
     r.roads.clear();
@@ -285,10 +285,13 @@ fn routes_suppress_only_the_named_channel_and_material_budget_still_applies() {
     let (d, mut l, p, c, mut r) = cart_tracks();
     let baseline_plan = CompilePlan::new(&d, &p, &l, Default::default()).unwrap();
     let base = baseline_plan.compile_cells(&CELLS, &c).unwrap();
+    let worn = compile(&baseline_plan, &c, &r);
     r.profiles[0].vegetation_channel = FLOWERS;
     let roads = compile(&baseline_plan, &c, &r);
-    assert_eq!(roads[0].vegetation, base[0].vegetation);
+    // Grass still follows the road's ground, but no wear clears it beyond that.
     assert_ne!(roads[0].ground, base[0].ground);
+    assert!((0..64).all(|z| (0..64).all(|x| grass(&roads[0], x, z) >= grass(&worn[0], x, z))));
+    assert!((0..64).any(|z| grass(&roads[0], 32, z) > grass(&worn[0], 32, z)));
     let road_ground = l
         .presets
         .iter_mut()
@@ -468,7 +471,7 @@ fn offscreen_controls_are_loaded_but_unrelated_far_spans_do_not_invalidate_produ
     assert_eq!(compile(&plan, &c, &r), original);
 }
 #[test]
-fn overlapping_shoulders_use_maximum_suppression_and_are_input_order_independent() {
+fn overlapping_shoulders_wear_at_least_as_much_and_are_input_order_independent() {
     let (d, l, p, c, mut r) = cart_tracks();
     straight(&mut r);
     let plan = CompilePlan::new(&d, &p, &l, Default::default()).unwrap();
@@ -487,10 +490,7 @@ fn overlapping_shoulders_use_maximum_suppression_and_are_input_order_independent
     let both = compile(&plan, &c, &r);
     for z in 0..64 {
         for x in 0..64 {
-            assert_eq!(
-                grass(&both[0], x, z),
-                grass(&a[0], x, z).min(grass(&b[0], x, z))
-            );
+            assert!(grass(&both[0], x, z) <= grass(&a[0], x, z).min(grass(&b[0], x, z)));
         }
     }
     r.roads.reverse();
@@ -586,7 +586,7 @@ fn road_thinning_keeps_cpu_reference_roots_at_their_original_positions() {
         vegetation_compile::generate_scene_debug_placements(&scene)
             .unwrap()
             .into_iter()
-            .map(|p| (p.population, p.seed, p.root.map(f32::to_bits)))
+            .map(|p| (p.grass, p.seed, p.root.map(f32::to_bits)))
             .collect::<std::collections::BTreeSet<_>>()
     };
     let original = placements(&before);

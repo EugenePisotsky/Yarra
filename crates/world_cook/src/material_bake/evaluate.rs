@@ -4,20 +4,25 @@ use super::{
     inputs::Inputs,
 };
 use anyhow::{Context, Result, bail};
+use vegetation::{GrassCover, VegetationCatalog};
 use world::*;
 use world_db::TerrainRenderResources;
 
 /// Fine height samples per side of each stratified sample where surfaces blend.
 const BLEND_SAMPLES: usize = 3;
+/// How far ground fully covered by grass takes the field's colour: composites are seen where
+/// blades have thinned out or ended. `FIELD_STRENGTH` in terrain_near.wesl matches it.
+const GRASS_FIELD_STRENGTH: f32 = 0.85;
 
 pub(super) fn leaf(
     key: TerrainMaterialKey,
     size: f32,
     page: &TerrainHeightfieldPage,
     resources: &TerrainRenderResources,
+    grass: Option<&VegetationCatalog>,
     inputs: &Inputs,
 ) -> Result<Core> {
-    Ok(LeafPlan::new(key, size, page, resources, inputs)?.evaluate(inputs))
+    Ok(LeafPlan::new(key, size, page, resources, grass, inputs)?.evaluate(inputs))
 }
 
 /// A validated leaf and the fingerprint of its core, which hashes everything the evaluation
@@ -28,6 +33,8 @@ pub(super) struct LeafPlan<'a> {
     size: f32,
     page: &'a TerrainHeightfieldPage,
     surfaces: Vec<&'a world_db::RuntimeTerrainSurface>,
+    /// The grass on each of `surfaces`.
+    grass: Vec<GrassCover>,
     profile: &'a TerrainProfile,
     pub fingerprint: [u8; 32],
 }
@@ -38,6 +45,7 @@ impl<'a> LeafPlan<'a> {
         size: f32,
         page: &'a TerrainHeightfieldPage,
         resources: &'a TerrainRenderResources,
+        grass: Option<&VegetationCatalog>,
         inputs: &Inputs,
     ) -> Result<Self> {
         page.heightfield.validate()?;
@@ -74,10 +82,16 @@ impl<'a> LeafPlan<'a> {
         {
             bail!("invalid composite ground weights");
         }
+        let grass: Vec<_> = surfaces
+            .iter()
+            .map(|s| grass.map_or_else(GrassCover::default, |g| g.cover(s.surface.id.0)))
+            .collect();
         let profile = &resources.profile;
         let mut hash = blake3::Hasher::new();
-        // v4: up to eight surfaces, height-blended three at a time over fine heights.
-        hash.update(b"terrain-composite-leaf-v4");
+        // v5: up to eight surfaces, height-blended three at a time over fine heights, each
+        // tinted by its grass field.
+        hash.update(b"terrain-composite-leaf-v5");
+        hash.update(&GRASS_FIELD_STRENGTH.to_bits().to_le_bytes());
         hash.update(&(BLEND_SAMPLES as u32).to_le_bytes());
         hash.update(&inputs.hash);
         hash.update(&bincode::serde::encode_to_vec(
@@ -91,7 +105,10 @@ impl<'a> LeafPlan<'a> {
             ),
             bincode::config::standard(),
         )?);
-        for s in &surfaces {
+        for (s, g) in surfaces.iter().zip(&grass) {
+            for v in g.rgba() {
+                hash.update(&v.to_bits().to_le_bytes());
+            }
             hash.update(&s.layer.to_le_bytes());
             hash.update(&[s.surface.anti_tiling as u8]);
             for v in [
@@ -117,6 +134,7 @@ impl<'a> LeafPlan<'a> {
             size,
             page,
             surfaces,
+            grass,
             profile,
             fingerprint: *hash.finalize().as_bytes(),
         })
@@ -168,11 +186,16 @@ impl<'a> LeafPlan<'a> {
                             let tile = s.surface.tile_size.max(0.001) as f64;
                             let layer = s.layer as usize;
                             let u = world.map(|x| x / tile);
-                            let color = if s.surface.anti_tiling {
+                            let mut color = if s.surface.anti_tiling {
                                 stochastic(inputs, layer, u, footprint / tile)
                             } else {
                                 inputs.sample(inputs.base_color(layer), u, footprint / tile, true)
                             };
+                            let grass = self.grass[i];
+                            let tint = grass.amount * GRASS_FIELD_STRENGTH;
+                            for (c, g) in color.iter_mut().zip(grass.color) {
+                                *c += (g - *c) * tint;
+                            }
                             let material = inputs.sample(
                                 inputs.normal_material(layer),
                                 u,

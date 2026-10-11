@@ -179,6 +179,7 @@ pub fn bake_terrain_preview(
                 size,
                 page,
                 resources,
+                reader.manifest().vegetation_catalog.as_ref(),
                 library.get(&resources.texture_set)?,
             )?,
         );
@@ -333,6 +334,7 @@ fn published_core(
             size,
             &page,
             &resources,
+            reader.manifest().vegetation_catalog.as_ref(),
             texture_set,
         )?));
     }

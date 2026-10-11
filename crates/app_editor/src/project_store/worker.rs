@@ -69,19 +69,6 @@ pub(super) fn project_worker(
                     )
                 }),
             },
-            ProjectRequest::SaveVegetationCatalog(request) => {
-                let result = save(&mut writer, |writer| {
-                    writer.replace_vegetation_catalog_if_matches(
-                        request.expected.as_ref(),
-                        &request.replacement,
-                    )
-                });
-                ProjectResult::SaveVegetationCatalog {
-                    request_id: request.request_id,
-                    replacement: request.replacement,
-                    result,
-                }
-            }
             ProjectRequest::SaveAtmospheres(id, writes) => ProjectResult::SaveAtmospheres(
                 id,
                 Box::new(save(&mut writer, |writer| {

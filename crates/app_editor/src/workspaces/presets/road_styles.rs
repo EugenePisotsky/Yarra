@@ -256,15 +256,7 @@ pub(super) fn panels(
                                 .iter()
                                 .find(|p| matches!(p.kind, PresetKind::Ground(_)))
                             {
-                                let channel = library
-                                    .presets
-                                    .iter()
-                                    .find_map(|p| match &p.kind {
-                                        PresetKind::Foliage(f) => Some(f.channel),
-                                        _ => None,
-                                    })
-                                    .unwrap_or(environment::ChannelId([0; 16]));
-                                let p = default_profile(g.id, channel);
+                                let p = default_profile(g.id, environment::GRASS_CHANNEL);
                                 state.styles.selected = Some(p.id);
                                 state.styles.draft = Some(StyleDraft {
                                     base: None,
@@ -332,10 +324,10 @@ pub(super) fn panels(
                 });
                 if ui.button("Edit ground mixture…").clicked() { edit_ground = Some(p.ground); }
                 ui.small("The linked Ground preset owns material weights and strength. Editing it affects all its uses.");
-                ui.label("Foliage channel to thin");
-                egui::ComboBox::from_id_salt("style_channel").selected_text(library.presets.iter().find(|g| matches!(&g.kind, PresetKind::Foliage(f) if f.channel == p.vegetation_channel)).map_or("No matching foliage preset", |p| p.name.as_str())).show_ui(ui, |ui| {
-                    for g in &library.presets { if let PresetKind::Foliage(f) = &g.kind { ui.selectable_value(&mut p.vegetation_channel, f.channel, &g.name); } }
-                });
+                let mut thins = p.vegetation_channel == environment::GRASS_CHANNEL;
+                if ui.checkbox(&mut thins, "Thins grass").changed() {
+                    p.vegetation_channel = if thins { environment::GRASS_CHANNEL } else { environment::ChannelId([0; 16]) };
+                }
                 ui.separator(); ui.label("Wheel tracks");
                 if let Ok(limits) = &limits {
                     GeometryField::Spacing.control(ui, p, *limits);
@@ -460,11 +452,11 @@ mod tests {
     fn style_validation_includes_offscreen_widths_and_world_surfaces() {
         let p = default_profile(
             environment::fixtures::DRY_GROUND,
-            environment::ChannelId([1; 16]),
+            environment::GRASS_CHANNEL,
         );
         let dry = world::TerrainSurfaceId([1; 16]);
         let green = world::TerrainSurfaceId([2; 16]);
-        let library = environment::fixtures::meadow_library(dry, green, p.vegetation_channel);
+        let library = environment::fixtures::meadow_library(dry, green);
         let d = environment::EnvironmentDefinition {
             space: WorldSpaceId(7),
             revision: 1,

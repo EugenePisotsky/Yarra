@@ -3,14 +3,28 @@ mod support;
 use std::collections::HashSet;
 
 use environment::fixtures::{
-    CLEARING, DRY_FOLIAGE, DRY_GROUND, DRY_MEADOW, FOLIAGE_USE, GREEN_FOLIAGE, GREEN_GROUND,
-    GREEN_MEADOW, GROUND_USE,
+    CLEAR_GRASS, CLEAR_USE, CLEARING, DRY_GROUND, GREEN_GROUND, GROUND_USE,
 };
 use environment::*;
 use support::*;
-use vegetation::{VegetationFieldPage, VegetationSurfaceField, fixtures};
+use vegetation::{GrassTypeId, VegetationFieldPage, VegetationSurfaceField, fixtures};
 use world::{CellCoord, TerrainSurfaceId, WorldSpaceId};
-use yarra_environment_compile::{CompileError, CompilePlan};
+use yarra_environment_compile::{CompileError, CompilePlan, CompiledCell};
+
+fn meadow() -> GrassTypeId {
+    fixtures::meadow().id()
+}
+fn tufts() -> GrassTypeId {
+    fixtures::tufts().id()
+}
+/// A grass type's coverage at vegetation sample (x, z), zero where it does not grow.
+fn coverage(cell: &CompiledCell, grass: GrassTypeId, x: usize, z: usize) -> u8 {
+    cell.vegetation
+        .fields
+        .iter()
+        .find(|f| f.grass == grass)
+        .map_or(0, |f| f.coverage[z * usize::from(f.resolution) + x])
+}
 
 #[test]
 fn local_and_batch_compilation_match_with_canonical_order_and_seamless_ground() {
@@ -54,12 +68,7 @@ fn local_and_batch_compilation_match_with_canonical_order_and_seamless_ground() 
         cell.tiles.reverse();
     }
     let mut reordered_plants = plants.clone();
-    reordered_plants.populations.reverse();
-    reordered_plants.species.reverse();
-    reordered_plants.assemblages.reverse();
-    for assemblage in &mut reordered_plants.assemblages {
-        assemblage.populations.reverse();
-    }
+    reordered_plants.surfaces.reverse();
     let other = CompilePlan::new(
         &reordered_definition,
         &reordered_plants,
@@ -77,19 +86,17 @@ fn local_and_batch_compilation_match_with_canonical_order_and_seamless_ground() 
 }
 
 #[test]
-fn holes_and_clearing_are_preserved_and_erasing_reveals_lower_vegetation() {
+fn grass_grows_on_its_surfaces_and_clearings_remove_it() {
     let (mut definition, library, plants, source) = fixture();
     let plan = CompilePlan::new(&definition, &plants, &library, profile()).unwrap();
     let cells = plan.compile_cells(&CELLS, &source).unwrap();
-    // Deep inside the deliberately unpainted 2x2 m patch.
-    assert!(
-        cells[0]
-            .vegetation
-            .fields
-            .iter()
-            .all(|f| f.coverage[3 * 16 + 3] == 0)
-    );
-    // Inside the winding exclusion at x=8.25, z=4.25.
+    // The unpainted patch shows the dry base ground, and its tufts.
+    assert_eq!(coverage(&cells[0], tufts(), 3, 3), 255);
+    assert_eq!(coverage(&cells[0], meadow(), 3, 3), 0);
+    // Green meadow ground at the far side of the gradient grows meadow grass only.
+    assert_eq!(coverage(&cells[1], meadow(), 15, 15), 255);
+    assert_eq!(coverage(&cells[1], tufts(), 15, 15), 0);
+    // Inside the winding clearing at x=8.25, z=4.25 nothing grows.
     assert!(
         cells[1]
             .vegetation
@@ -117,6 +124,27 @@ fn holes_and_clearing_are_preserved_and_erasing_reveals_lower_vegetation() {
 }
 
 #[test]
+fn grass_follows_the_share_of_its_surfaces() {
+    let (mut definition, mut library, plants, _) = fixture();
+    definition.layers[0].enabled = false;
+    definition.layers[2].enabled = false;
+    soil(&mut library, GREEN_GROUND).strength = 0.5;
+    let source = snapshot(&definition, &CELLS, |_, _, _| 1.0);
+    let compile = |plants: &vegetation::VegetationCatalog| {
+        CompilePlan::new(&definition, plants, &library, profile())
+            .unwrap()
+            .compile_cells(&CELLS, &source)
+            .unwrap()
+    };
+    let cells = compile(&plants);
+    assert_eq!(coverage(&cells[0], meadow(), 5, 5), 128);
+    assert_eq!(coverage(&cells[0], tufts(), 5, 5), 128);
+    let mut half = plants.clone();
+    half.surfaces[1].grass[0].amount = 0.5;
+    assert_eq!(coverage(&compile(&half)[0], meadow(), 5, 5), 64);
+}
+
+#[test]
 fn ground_borders_match_even_when_cells_have_different_palettes() {
     let (mut definition, library, plants, _) = fixture();
     definition.layers[2].enabled = false;
@@ -131,9 +159,8 @@ fn ground_borders_match_even_when_cells_have_different_palettes() {
         .unwrap()
         .compile_cells(&CELLS, &source)
         .unwrap();
-    assert_eq!(cells[0].ground.surfaces.len(), 2);
+    assert_eq!(cells[0].ground.surfaces, vec![SOIL, GREEN_SOIL]);
     assert_eq!(cells[1].ground.surfaces, vec![GREEN_SOIL]);
-    assert!(cells[1].ground.weight_pages.is_empty());
     for z in 0..17 {
         assert_eq!(
             ground_weights(&cells[0].ground, 16, z),
@@ -160,119 +187,59 @@ fn quantization_preserves_total_and_breaks_ties_by_surface_id() {
 }
 
 #[test]
-fn exclusions_are_channel_specific_and_do_not_repaint_ground() {
+fn only_grass_channel_exclusions_clear_grass_and_none_repaint_ground() {
     let (mut definition, mut library, plants, _) = fixture();
-    append(
-        &mut library,
-        DRY_MEADOW,
-        PresetId([90; 16]),
-        PresetKind::Foliage(VegetationTreatment {
-            id: OutputId([4; 16]),
-            channel: FLOWERS,
-            assemblage: fixtures::MIXED_GREEN_ASSEMBLAGE_ID,
-            blend: VegetationBlend::Add,
-            strength: 1.0,
-            density: 1.0,
-            seed: 0,
-        }),
-    );
     definition.layers[1].enabled = false;
     children(&mut library, CLEARING).retain(|c| c.id != GROUND_USE);
     let source = snapshot(&definition, &CELLS, |_, _, _| 1.0);
-    let plan = CompilePlan::new(&definition, &plants, &library, profile()).unwrap();
-    let cells = plan.compile_cells(&CELLS, &source).unwrap();
-    for cell in cells {
-        assert_eq!(cell.ground.surfaces, vec![SOIL]);
-        assert!(!cell.vegetation.fields.is_empty());
-        for field in &cell.vegetation.fields {
-            let binding = plan
-                .bindings()
-                .iter()
-                .find(|b| b.runtime_population == field.population)
-                .unwrap();
-            assert_eq!(binding.channel, FLOWERS);
-            assert!(field.coverage.iter().all(|&v| v == 255));
-        }
-    }
-}
-
-#[test]
-fn a_layers_exclusion_does_not_remove_its_own_vegetation() {
-    let (mut definition, mut library, plants, _) = fixture();
-    definition.layers[2].enabled = false;
-    foliage(&mut library, GREEN_FOLIAGE).blend = VegetationBlend::Add;
-    append(
-        &mut library,
-        GREEN_MEADOW,
-        PresetId([90; 16]),
-        PresetKind::Exclusion(Exclusion {
-            id: OutputId([5; 16]),
-            channel: GRASS,
-            strength: 1.0,
-        }),
-    );
-    let source = snapshot(&definition, &CELLS, |_, _, _| 1.0);
-    let plan = CompilePlan::new(&definition, &plants, &library, profile()).unwrap();
-    let cells = plan.compile_cells(&CELLS, &source).unwrap();
-    assert_eq!(cells[0].vegetation.fields.len(), 3);
-    for field in &cells[0].vegetation.fields {
-        let binding = plan
-            .bindings()
-            .iter()
-            .find(|b| b.runtime_population == field.population)
-            .unwrap();
-        assert_eq!(binding.key.layer, GREEN);
-        assert!(field.coverage.iter().all(|&v| v == 255));
-    }
-}
-
-#[test]
-fn layer_seeds_and_competition_are_isolated_but_internal_competition_survives() {
-    let (mut definition, mut library, plants, _) = fixture();
-    foliage(&mut library, DRY_FOLIAGE).assemblage = fixtures::MIXED_GREEN_ASSEMBLAGE_ID;
-    let plan = CompilePlan::new(&definition, &plants, &library, profile()).unwrap();
-    let groups = |layer| {
-        plan.bindings()
-            .iter()
-            .filter(|b| b.key.layer == layer)
-            .filter_map(|b| {
-                plan.catalog()
-                    .population(b.runtime_population)
-                    .unwrap()
-                    .competition_group
-            })
-            .collect::<HashSet<_>>()
+    let compile = |library: &PresetLibrary| {
+        CompilePlan::new(&definition, &plants, library, profile())
+            .unwrap()
+            .compile_cells(&CELLS, &source)
+            .unwrap()
     };
-    assert_eq!(groups(DRY).len(), 1);
-    assert_eq!(groups(GREEN).len(), 1);
-    assert_ne!(groups(DRY), groups(GREEN));
-    let seeds: HashSet<_> = plan.catalog().populations.iter().map(|p| p.seed).collect();
-    assert_eq!(seeds.len(), 6);
-    let catalog = plan.catalog().clone();
-    definition.layers[1].enabled = false;
-    definition.layers[0].name = "Renamed".into();
-    definition.layers[0].order = 100;
-    let changed = CompilePlan::new(&definition, &plants, &library, profile()).unwrap();
-    assert_eq!(catalog, *changed.catalog());
-    assert_eq!(plan.bindings(), changed.bindings());
+    for cell in compile(&library) {
+        assert_eq!(cell.ground.surfaces, vec![SOIL]);
+        assert!(cell.vegetation.fields.is_empty());
+    }
+    let PresetKind::Exclusion(exclusion) = &mut library
+        .presets
+        .iter_mut()
+        .find(|p| p.id == CLEAR_GRASS)
+        .unwrap()
+        .kind
+    else {
+        panic!()
+    };
+    exclusion.channel = FLOWERS;
+    for cell in compile(&library) {
+        assert_eq!(cell.ground.surfaces, vec![SOIL]);
+        assert_eq!(cell.vegetation.fields.len(), 1);
+        assert!(cell.vegetation.fields[0].coverage.iter().all(|&v| v == 255));
+    }
 }
 
 #[test]
-fn local_density_retains_actual_roots_without_reseeding_the_lattice() {
+fn partial_exclusions_thin_grass_without_moving_roots() {
     let (mut definition, library, plants, _) = fixture();
     definition.layers[1].enabled = false;
-    definition.layers[2].enabled = false;
+    definition.layers[2].opacity = 0.5;
     let source = snapshot(&definition, &CELLS, |_, _, _| 1.0);
-    let full = CompilePlan::new(&definition, &plants, &library, profile()).unwrap();
-    definition.layers[0].overrides.push(PresetOverride {
-        path: vec![FOLIAGE_USE],
-        value: QuickValue::FoliageDensity(0.35),
-    });
-    let thin = CompilePlan::new(&definition, &plants, &library, profile()).unwrap();
-    assert_eq!(full.catalog(), thin.catalog());
+    let mut full = definition.clone();
+    full.layers[2].enabled = false;
+    let full_plan = CompilePlan::new(&full, &plants, &library, profile()).unwrap();
+    let thin_plan = CompilePlan::new(&definition, &plants, &library, profile()).unwrap();
+    let thin = thin_plan.compile_cells(&CELLS, &source).unwrap();
+    assert!(
+        thin[0]
+            .vegetation
+            .fields
+            .iter()
+            .all(|f| f.coverage.iter().all(|&v| v == 128))
+    );
     let roots = |plan: &CompilePlan| {
-        let cells = plan.compile_cells(&CELLS, &source).unwrap();
-        cells
+        plan.compile_cells(&CELLS, &source)
+            .unwrap()
             .into_iter()
             .flat_map(|cell| {
                 let page = VegetationFieldPage {
@@ -283,102 +250,14 @@ fn local_density_retains_actual_roots_without_reseeding_the_lattice() {
                 };
                 vegetation_compile::generate_page_debug_placements(plan.catalog(), &page).unwrap()
             })
-            .map(|p| (p.population, p.seed, p.root.map(f32::to_bits)))
+            .map(|p| (p.grass, p.seed, p.root.map(f32::to_bits)))
             .collect::<HashSet<_>>()
     };
-    let full_roots = roots(&full);
-    let thin_roots = roots(&thin);
+    let full_roots = roots(&full_plan);
+    let thin_roots = roots(&thin_plan);
     assert!(!thin_roots.is_empty());
     assert!(thin_roots.len() < full_roots.len());
     assert!(thin_roots.is_subset(&full_roots));
-}
-
-#[test]
-fn replace_and_exclude_attenuate_lower_content_once_while_add_retains_it() {
-    let (mut definition, mut library, plants, _) = fixture();
-    definition.layers[2].enabled = false;
-    definition.layers[1].opacity = 0.5;
-    append(
-        &mut library,
-        GREEN_MEADOW,
-        PresetId([90; 16]),
-        PresetKind::Exclusion(Exclusion {
-            id: OutputId([8; 16]),
-            channel: GRASS,
-            strength: 1.0,
-        }),
-    );
-    let source = snapshot(&definition, &CELLS, |_, _, _| 1.0);
-    let replace = CompilePlan::new(&definition, &plants, &library, profile()).unwrap();
-    let replaced = replace.compile_cells(&CELLS, &source).unwrap();
-    assert!(
-        replaced[0]
-            .vegetation
-            .fields
-            .iter()
-            .all(|f| f.coverage.iter().all(|&v| v == 128))
-    );
-    foliage(&mut library, GREEN_FOLIAGE).blend = VegetationBlend::Add;
-    children(&mut library, GREEN_MEADOW).retain(|c| c.id == FOLIAGE_USE || c.id == GROUND_USE);
-    let add = CompilePlan::new(&definition, &plants, &library, profile()).unwrap();
-    let added = add.compile_cells(&CELLS, &source).unwrap();
-    for field in &added[0].vegetation.fields {
-        let layer = add
-            .bindings()
-            .iter()
-            .find(|b| b.runtime_population == field.population)
-            .unwrap()
-            .key
-            .layer;
-        let expected = if layer == DRY { 255 } else { 128 };
-        assert!(field.coverage.iter().all(|&v| v == expected));
-    }
-}
-
-#[test]
-fn ground_only_and_decoration_only_outputs_do_not_modify_other_channels() {
-    let (mut definition, mut library, plants, _) = fixture();
-    definition.layers[2].enabled = false;
-    children(&mut library, GREEN_MEADOW).retain(|c| c.id != FOLIAGE_USE);
-    let source = snapshot(&definition, &CELLS, |_, _, _| 1.0);
-    let ground_only = CompilePlan::new(&definition, &plants, &library, profile()).unwrap();
-    let compiled = ground_only.compile_cells(&CELLS, &source).unwrap();
-    assert_eq!(compiled[0].ground.surfaces, vec![GREEN_SOIL]);
-    assert_eq!(compiled[0].vegetation.fields.len(), 2);
-    assert!(
-        compiled[0]
-            .vegetation
-            .fields
-            .iter()
-            .all(|f| f.coverage.iter().all(|&v| v == 255))
-    );
-
-    children(&mut library, GREEN_MEADOW).retain(|c| c.id != GROUND_USE);
-    append(
-        &mut library,
-        GREEN_MEADOW,
-        PresetId([90; 16]),
-        PresetKind::Foliage(VegetationTreatment {
-            id: OutputId([2; 16]),
-            channel: FLOWERS,
-            assemblage: fixtures::MIXED_GREEN_ASSEMBLAGE_ID,
-            blend: VegetationBlend::Replace,
-            strength: 1.0,
-            density: 1.0,
-            seed: 0,
-        }),
-    );
-    let flowers_only = CompilePlan::new(&definition, &plants, &library, profile()).unwrap();
-    let compiled = flowers_only.compile_cells(&CELLS, &source).unwrap();
-    assert_eq!(compiled[0].ground.surfaces, vec![SOIL]);
-    assert_eq!(compiled[0].vegetation.fields.len(), 5);
-    assert!(
-        compiled[0]
-            .vegetation
-            .fields
-            .iter()
-            .all(|f| f.coverage.iter().all(|&v| v == 255))
-    );
 }
 
 #[test]
@@ -462,12 +341,12 @@ fn absent_tiles_in_loaded_cells_mean_empty_but_unknown_cells_never_do() {
         cell.tiles.clear();
     }
     let plan = CompilePlan::new(&definition, &plants, &library, profile()).unwrap();
-    let cells = plan.compile_cells(&CELLS, &source).unwrap();
-    assert!(
-        cells
-            .iter()
-            .all(|c| c.vegetation.fields.is_empty() && c.ground.surfaces == vec![SOIL])
-    );
+    for cell in plan.compile_cells(&CELLS, &source).unwrap() {
+        // Unpainted ground is the base surface, with what grows on it.
+        assert_eq!(cell.ground.surfaces, vec![SOIL]);
+        assert_eq!(cell.vegetation.fields.len(), 1);
+        assert_eq!(cell.vegetation.fields[0].grass, tufts());
+    }
 }
 
 #[test]
@@ -554,7 +433,7 @@ fn unsupported_material_counts_and_work_budgets_are_errors() {
         ));
     }
     let mut limits = profile();
-    limits.max_population_bindings = 1;
+    limits.max_grass_types = 1;
     assert!(matches!(
         CompilePlan::new(&definition, &plants, &library, limits),
         Err(CompileError::Budget(_))
@@ -562,35 +441,25 @@ fn unsupported_material_counts_and_work_budgets_are_errors() {
 }
 
 #[test]
-fn malformed_definition_references_and_nonfinite_controls_are_rejected() {
+fn malformed_definitions_libraries_and_catalogs_are_rejected() {
     let (definition, library, plants, _) = fixture();
     let mut invalid = definition.clone();
     invalid.layers[0].opacity = f32::NAN;
-    assert!(invalid.validate(&plants, &library).is_err());
+    assert!(invalid.validate(&library).is_err());
     let mut bad_library = library.clone();
     soil(&mut bad_library, DRY_GROUND).surfaces[0].weight = f32::INFINITY;
-    assert!(definition.validate(&plants, &bad_library).is_err());
-    bad_library = library.clone();
-    foliage(&mut bad_library, DRY_FOLIAGE).assemblage =
-        vegetation::VegetationAssemblageId([99; 16]);
-    assert!(matches!(
-        definition.validate(&plants, &bad_library),
-        Err(ValidationError::MissingAssemblage(_))
-    ));
-    bad_library = library.clone();
-    let extra = foliage(&mut bad_library, DRY_FOLIAGE).clone();
-    append(
-        &mut bad_library,
-        DRY_MEADOW,
-        PresetId([99; 16]),
-        PresetKind::Foliage(extra),
-    );
-    assert!(definition.validate(&plants, &bad_library).is_err());
-    invalid = definition;
+    assert!(definition.validate(&bad_library).is_err());
+    invalid = definition.clone();
     invalid.layers[0].preset = PresetId([99; 16]);
     assert!(matches!(
-        invalid.validate(&plants, &library),
+        invalid.validate(&library),
         Err(ValidationError::Preset(_))
+    ));
+    let mut bad_plants = plants.clone();
+    bad_plants.grass[0].height = [1.0, 0.5];
+    assert!(matches!(
+        CompilePlan::new(&definition, &bad_plants, &library, profile()),
+        Err(CompileError::Catalog(_))
     ));
 }
 
@@ -630,113 +499,60 @@ fn logical_negative_and_large_cell_coordinates_do_not_affect_sampling() {
 }
 
 #[test]
-fn world_plans_namespace_populations_and_merge_catalogs_in_canonical_order() {
-    let (a, library, plants, _) = fixture();
-    let mut b = a.clone();
-    b.space = world::WorldSpaceId(2);
-    let pa = CompilePlan::new(&a, &plants, &library, profile()).unwrap();
-    let pb = CompilePlan::new(&b, &plants, &library, profile()).unwrap();
-    let merged = yarra_environment_compile::merge_runtime_catalogs(&[&pa, &pb]).unwrap();
-    assert_eq!(
-        merged,
-        yarra_environment_compile::merge_runtime_catalogs(&[&pb, &pa]).unwrap()
-    );
-    assert_eq!(
-        merged.populations.len(),
-        pa.catalog().populations.len() + pb.catalog().populations.len()
-    );
-    for first in &pa.catalog().populations {
-        for second in &pb.catalog().populations {
-            assert_ne!(first.id, second.id);
-        }
-    }
-    let groups = |plan: &CompilePlan| {
-        plan.catalog()
-            .populations
-            .iter()
-            .filter_map(|p| {
-                merged
-                    .populations
-                    .iter()
-                    .find(|m| m.id == p.id)
-                    .unwrap()
-                    .competition_group
-            })
-            .collect::<std::collections::BTreeSet<_>>()
-    };
-    assert!(groups(&pa).is_disjoint(&groups(&pb)));
-}
-
-#[test]
-fn repeated_preset_uses_keep_independent_runtime_seeds_and_density_overrides() {
+fn repeated_preset_uses_keep_independent_overrides() {
     let (mut definition, mut library, plants, _) = fixture();
-    definition.layers.truncate(1);
-    foliage(&mut library, DRY_FOLIAGE).blend = VegetationBlend::Add;
+    definition.layers.retain(|l| l.id == CLEAR);
     let second = PresetUseId([99; 16]);
-    children(&mut library, DRY_MEADOW).push(PresetUse {
+    children(&mut library, CLEARING).push(PresetUse {
         id: second,
-        name: "Second grass use".into(),
-        preset: DRY_FOLIAGE,
+        name: "Second clearing".into(),
+        preset: CLEAR_GRASS,
         overrides: vec![],
     });
     let baseline = CompilePlan::new(&definition, &plants, &library, profile()).unwrap();
-    assert_eq!(baseline.bindings().len(), 4);
-    definition.layers[0].overrides = vec![
-        PresetOverride {
-            path: vec![second],
-            value: QuickValue::FoliageDensity(0.3),
-        },
-        PresetOverride {
-            path: vec![second],
-            value: QuickValue::FoliageSeed(123),
-        },
-    ];
-    let changed = CompilePlan::new(&definition, &plants, &library, profile()).unwrap();
-    assert_eq!(baseline.bindings(), changed.bindings());
-    let changed_seeds = baseline
-        .catalog()
-        .populations
-        .iter()
-        .filter(|p| p.seed != changed.catalog().population(p.id).unwrap().seed)
-        .count();
-    assert_eq!(changed_seeds, 2);
-    definition.layers[0].overrides.reverse();
-    assert_eq!(
-        changed.fingerprint(),
-        CompilePlan::new(&definition, &plants, &library, profile())
-            .unwrap()
-            .fingerprint()
-    );
+    definition.layers[0].overrides = vec![PresetOverride {
+        path: vec![second],
+        value: QuickValue::ExclusionInfluence(0.3),
+    }];
+    let second_only = CompilePlan::new(&definition, &plants, &library, profile()).unwrap();
+    definition.layers[0].overrides[0].path = vec![CLEAR_USE];
+    let first_only = CompilePlan::new(&definition, &plants, &library, profile()).unwrap();
+    assert_ne!(baseline.fingerprint(), second_only.fingerprint());
+    assert_ne!(second_only.fingerprint(), first_only.fingerprint());
 }
 
 #[test]
-fn plan_fingerprints_follow_only_reachable_preset_revisions() {
+fn plan_fingerprints_follow_reachable_presets_and_growth_but_not_looks() {
     let (mut definition, mut library, plants, _) = fixture();
     definition.layers.truncate(1);
-    let before = CompilePlan::new(&definition, &plants, &library, profile()).unwrap();
+    let fingerprint = |library: &PresetLibrary, plants: &vegetation::VegetationCatalog| {
+        CompilePlan::new(&definition, plants, library, profile())
+            .unwrap()
+            .fingerprint()
+    };
+    let before = fingerprint(&library, &plants);
     library.revision += 1;
     library
         .presets
         .iter_mut()
-        .find(|p| p.id == GREEN_FOLIAGE)
+        .find(|p| p.id == GREEN_GROUND)
         .unwrap()
         .revision += 1;
-    assert_eq!(
-        before.fingerprint(),
-        CompilePlan::new(&definition, &plants, &library, profile())
-            .unwrap()
-            .fingerprint()
-    );
+    assert_eq!(before, fingerprint(&library, &plants));
     library
         .presets
         .iter_mut()
-        .find(|p| p.id == DRY_FOLIAGE)
+        .find(|p| p.id == DRY_GROUND)
         .unwrap()
         .revision += 1;
-    assert_ne!(
-        before.fingerprint(),
-        CompilePlan::new(&definition, &plants, &library, profile())
-            .unwrap()
-            .fingerprint()
-    );
+    let after = fingerprint(&library, &plants);
+    assert_ne!(before, after);
+    // A look changes no coverage; what grows where does.
+    let mut looks = plants.clone();
+    looks.grass[0].colors.tip = [0.5, 0.4, 0.1];
+    looks.grass[1].height = [0.2, 0.3];
+    assert_eq!(after, fingerprint(&library, &looks));
+    let mut growth = plants.clone();
+    growth.surfaces[0].grass[0].amount = 0.4;
+    assert_ne!(after, fingerprint(&library, &growth));
 }

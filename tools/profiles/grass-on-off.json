@@ -4,7 +4,6 @@
     "size": "2560x1440",
     "fps": 60,
     "msaa": 4,
-    "density": "balanced",
     "view": "low-walk",
     "warmup": 30,
     "seconds": 120

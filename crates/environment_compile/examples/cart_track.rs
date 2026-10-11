@@ -86,10 +86,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     println!("{svg}");
     eprintln!(
-        "Compiled two cells; retained {} of {} CPU reference roots; {} stable population bindings.",
+        "Compiled two cells; retained {} of {} CPU reference roots of {} grass types.",
         placements.len(),
         before.len(),
-        plan.bindings().len()
+        plan.grass_types().count()
     );
     Ok(())
 }

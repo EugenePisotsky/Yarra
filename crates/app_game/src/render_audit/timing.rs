@@ -672,7 +672,7 @@ mod tests {
         assert_eq!(classify("prepare_meshes", "Render", true), Kind::Prepare);
         assert_eq!(
             classify(
-                "yarra_engine::world_vegetation::canopy::sync",
+                "yarra_engine::world_vegetation::sync_scene",
                 "Update",
                 false
             ),

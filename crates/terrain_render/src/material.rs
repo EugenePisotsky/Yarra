@@ -1,5 +1,5 @@
 //! The page terrain material. Drawn directly, it shades the first two of a page's surfaces
-//! blended by a page-local weight map, with macro variation, anti-tiling and canopy shading.
+//! blended by a page-local weight map, with macro variation and anti-tiling.
 use bevy::{
     mesh::MeshVertexBufferLayoutRef,
     pbr::{Material, MaterialPipeline, MaterialPipelineKey},
@@ -125,42 +125,6 @@ pub struct TerrainMaterial {
     pub(crate) normal_material_array: Handle<Image>,
     #[texture(6)]
     pub(crate) macro_variation: Handle<Image>,
-    #[uniform(11)]
-    pub(crate) canopy_shading: TerrainCanopyShading,
-    #[uniform(8)]
-    pub(crate) canopy_bounds: Vec4,
-    #[texture(9)]
-    #[sampler(10)]
-    pub(crate) canopy_coverage: Option<Handle<Image>>,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, ShaderType)]
-pub(crate) struct TerrainCanopyShading {
-    pub(crate) appearance: Vec4,
-    pub(crate) shape: Vec4,
-    pub(crate) distance: Vec4,
-    pub(crate) origin: Vec4,
-}
-impl From<[[f32; 4]; 4]> for TerrainCanopyShading {
-    fn from(v: [[f32; 4]; 4]) -> Self {
-        Self {
-            appearance: v[0].into(),
-            shape: v[1].into(),
-            distance: v[2].into(),
-            origin: v[3].into(),
-        }
-    }
-}
-impl TerrainMaterial {
-    pub fn set_canopy_shading(&mut self, packed: [[f32; 4]; 4]) {
-        self.canopy_shading = packed.into();
-    }
-
-    /// Static grass cover in render-space XZ; visibility is independent of render LOD/wind.
-    pub fn set_canopy_coverage(&mut self, coverage: Option<Handle<Image>>, bounds: Vec4) {
-        self.canopy_coverage = coverage;
-        self.canopy_bounds = bounds;
-    }
 }
 
 #[cfg(test)]
@@ -178,9 +142,6 @@ impl TerrainMaterial {
             base_color_array: default(),
             normal_material_array: default(),
             macro_variation: default(),
-            canopy_bounds: Vec4::ZERO,
-            canopy_shading: default(),
-            canopy_coverage: None,
             settings,
         }
     }
@@ -188,7 +149,6 @@ impl TerrainMaterial {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TerrainMaterialKey {
-    canopy: bool,
     shading: TerrainShadingMode,
 }
 
@@ -196,7 +156,6 @@ impl From<&TerrainMaterial> for TerrainMaterialKey {
     fn from(material: &TerrainMaterial) -> Self {
         Self {
             shading: material.shading_mode,
-            canopy: material.canopy_coverage.is_some(),
         }
     }
 }
@@ -219,11 +178,6 @@ impl Material for TerrainMaterial {
         _layout: &MeshVertexBufferLayoutRef,
         key: MaterialPipelineKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
-        if key.bind_group_data.canopy
-            && let Some(fragment) = descriptor.fragment.as_mut()
-        {
-            fragment.shader_defs.push("TERRAIN_CANOPY".into());
-        }
         let define = match key.bind_group_data.shading {
             TerrainShadingMode::Production => None,
             TerrainShadingMode::SurfaceUnlit => Some("TERRAIN_SURFACE_UNLIT"),
