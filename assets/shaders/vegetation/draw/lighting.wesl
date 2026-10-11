@@ -218,7 +218,7 @@ fn shade(input: VertexOutput) -> vec4<f32> {
     sky_fill *= forest_sky_light(input.world_position);
     // A sun shadow takes part of the fill too, so shaded grass is not flat: as on the ground.
     let shade_dimming = mix(1.0, mix(0.55, 1.0, shadow_visibility), camera.lighting.w * cloud_beam);
-    let ambient = albedo * bounded_ambient * mix(0.2, 1.0, occlusion) * sky_fill * shade_dimming;
+    let ambient = albedo * bounded_ambient * mix(0.4, 1.0, occlusion) * sky_fill * shade_dimming;
 
     return vec4<f32>(ambient + sun, 1.0);
 }

@@ -65,7 +65,7 @@ fn stochastic(uv: vec2<f32>, lattice: vec2<f32>, origin: vec2<f32>, layer: i32, 
 }
 // Ground fully covered by grass shows the grass's lower blades in their own shade, this bright,
 // where blades stand over it: gaps in a meadow read as deep grass, not bare soil.
-const UNDER_GRASS: f32 = 0.12;
+const UNDER_GRASS: f32 = 0.2;
 // Over this range the ground between blades turns from their shade to the field's colour, as
 // the distant composite bakes it (world_cook material_bake), while the composite takes over
 // (near::NEAR_START..NEAR_END).

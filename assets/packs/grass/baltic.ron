@@ -42,8 +42,8 @@
             bend: (0.25, 0.8),
             clumps: (size: 0.9, pull: 0.2, height: 0.4, facing: 0.75, splay: 0.15, patches: 0.4),
             colors: (
-                root: (0.015, 0.035, 0.012),
-                tip: (0.055, 0.13, 0.035),
+                root: (0.02, 0.03, 0.01),
+                tip: (0.075, 0.115, 0.03),
                 dry_tip: (0.22, 0.2, 0.08),
                 dry: 0.1,
                 variation: 0.18,
