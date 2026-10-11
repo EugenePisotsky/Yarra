@@ -1,9 +1,9 @@
 // The trample map (vegetation_render renderer/trample.rs): each texel of a world-aligned texture
-// wrapping around the camera is a damped spring holding how the grass rooted there is displaced
-// by characters: xy, the way its tips are pushed (length 1 lies flat), zw, their velocity.
-// Characters set the spring's target: flat along their motion under their feet, leaning away
-// from their legs to either side. The spring pulls blades down within a fraction of a second
-// and lets them spring back over a second or two, a little past upright.
+// wrapping around the camera is a critically damped spring holding how the grass rooted there is
+// pushed by characters: xy, the way its tips are pushed (length 1 lies flat; more stays flat
+// longer), zw, their velocity. Characters set the spring's target: flat along their motion under
+// their feet, leaning outward beside their legs. Blades go down within a fraction of a second,
+// stay flat for about a second and rise over two more, without overshoot.
 
 struct Trample {
     // xy: canonical centre this frame, zw: last frame's
@@ -18,13 +18,17 @@ struct Trample {
 @group(0) @binding(1) var previous: texture_2d<f32>;
 @group(0) @binding(2) var current: texture_storage_2d<rgba16float, write>;
 
-// Spring while a character presses (fast, no overshoot) and while grass recovers (slower,
-// slightly underdamped): angular frequency in radians per second and damping ratio.
-const PRESS_SPRING: vec2<f32> = vec2(20.0, 1.0);
-const RECOVER_SPRING: vec2<f32> = vec2(3.5, 0.6);
-// Shares of a bender's radius: under its feet grass lies flat; out to the radius it leans away.
+// Spring while a character pushes grass further (fast) and while it lets go (slow): angular
+// frequency in radians per second and damping ratio. Critically damped, so blades never swing
+// back past upright.
+const PRESS_SPRING: vec2<f32> = vec2(14.0, 1.0);
+const RECOVER_SPRING: vec2<f32> = vec2(1.6, 1.0);
+// Push under the feet. Blades lie flat beyond 1, so the excess is how long they stay flat
+// before rising: from 2 the spring above takes about 1 s to reach 1, and 2 more to settle.
+const FLAT_PUSH: f32 = 2.0;
+// Shares of a bender's reach: under its feet grass lies flat; out to the reach it leans aside.
 const FEET_SHARE: vec2<f32> = vec2(0.2, 0.5);
-const ASIDE_LEAN: f32 = 0.45;
+const ASIDE_LEAN: f32 = 0.5;
 // Integration step bound, seconds.
 const MAX_STEP: f32 = 1.0 / 120.0;
 
@@ -45,18 +49,29 @@ fn goal_at(here: vec2<f32>) -> vec3<f32> {
         let velocity = trample.benders[2u * i + 1u].xy;
         let offset = here - disc.xy;
         let distance = length(offset);
-        let radius = max(disc.z, 0.05);
-        if (distance >= radius) {
+        let reach = max(disc.z, 0.05);
+        if (distance >= reach) {
             continue;
         }
         let radial = select(vec2<f32>(1.0, 0.0), offset / distance, distance > 1e-4);
-        let feet = 1.0 - smoothstep(FEET_SHARE.x * radius, FEET_SHARE.y * radius, distance);
-        let aside = ASIDE_LEAN * (1.0 - smoothstep(FEET_SHARE.y * radius, radius, distance));
-        // Under the feet blades lie along the motion; beside the legs they lean away from them.
+        let feet = 1.0 - smoothstep(FEET_SHARE.x * reach, FEET_SHARE.y * reach, distance);
+        let aside = ASIDE_LEAN * (1.0 - smoothstep(FEET_SHARE.y * reach, reach, distance));
+        // A moving character lays blades along its way and leans those beside it outward and a
+        // little forward, the same way all the while it passes, so they do not swivel. One
+        // standing still presses them outward.
         let speed = length(velocity);
-        let along = select(radial, velocity / speed, speed > 0.2);
-        let under = normalize(mix(radial, along, min(speed, 1.0)) + 1e-5);
-        let push = under * feet + radial * aside * (1.0 - feet);
+        var under = radial;
+        var beside = radial;
+        if (speed > 0.2) {
+            let along = velocity / speed;
+            let across = radial - along * dot(radial, along);
+            let across_length = length(across);
+            let outward = select(vec2(-along.y, along.x), across / across_length, across_length > 1e-3);
+            let moving = smoothstep(0.2, 0.8, speed);
+            under = normalize(mix(radial, along, moving) + 1e-5);
+            beside = normalize(mix(radial, outward + along * 0.4, moving) + 1e-5);
+        }
+        let push = under * feet * FLAT_PUSH + beside * aside * (1.0 - feet);
         if (dot(push, push) > dot(best, best)) {
             best = push;
         }
@@ -85,7 +100,10 @@ fn stamp(@builtin(global_invocation_id) id: vec3<u32>) {
         textureStore(current, vec2<i32>(id.xy), vec4<f32>(0.0));
         return;
     }
-    let spring = select(RECOVER_SPRING, PRESS_SPRING, goal.z > 0.0 && dot(goal.xy, goal.xy) > 1e-4);
+    // Characters only push grass further down quickly; pressed grass always rises slowly, even
+    // while a character still stands beside it.
+    let pushing = goal.z > 0.0 && dot(goal.xy, goal.xy) > dot(state.xy, state.xy);
+    let spring = select(RECOVER_SPRING, PRESS_SPRING, pushing);
     let total = clamp(trample.params.z, 0.0, 0.1);
     let steps = max(1u, u32(ceil(total / MAX_STEP)));
     let h = total / f32(steps);
