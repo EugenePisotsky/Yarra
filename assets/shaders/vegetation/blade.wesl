@@ -141,6 +141,31 @@ fn rest_blade(b: BladeInstance, grass: GrassType) -> Blade {
     return blade;
 }
 
+// A pushed blade lies this far from upright, flat on the ground.
+const PRESSED_LEAN: f32 = 1.52;
+
+// The blade pushed by characters (`push`: the way its tip is pushed, length 1 lying flat). Its
+// direction from the root slides from its own toward lying flat along the push, so it moves
+// continuously whichever way it faced; it loses most of its arch and wind response.
+fn trample_blade(rest: Blade, push: vec2<f32>) -> Blade {
+    let amount = min(length(push), 1.0);
+    if (amount < 1e-3) {
+        return rest;
+    }
+    var blade = rest;
+    let pushed = vec3<f32>(push.x, 0.0, push.y);
+    let along = normalize3_or(pushed - rest.up * dot(pushed, rest.up), rest.forward);
+    let own = rest.up * cos(rest.lean) + rest.forward * sin(rest.lean);
+    let flat = rest.up * cos(PRESSED_LEAN) + along * sin(PRESSED_LEAN);
+    let chord = normalize3_or(mix(own, flat, amount), own);
+    blade.lean = acos(clamp(dot(chord, rest.up), -1.0, 1.0));
+    blade.forward = normalize3_or(chord - rest.up * dot(chord, rest.up), rest.forward);
+    blade.side = normalize3_or(cross(rest.up, blade.forward), rest.side);
+    blade.bend = rest.bend * (1.0 - 0.7 * amount);
+    blade.pressed = amount;
+    return blade;
+}
+
 // The curve's four control points.
 struct Curve {
     p0: vec3<f32>,

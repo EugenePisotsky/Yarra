@@ -240,6 +240,13 @@ const FLAGS: &[Flag] = &[
     .needs(Needs::Flag("--render-snapshot")),
     flag("--render-prepass", "", Repro, "Enable the depth prepass").needs(REPRO),
     flag(
+        "--render-walk-speed",
+        "MPS",
+        Repro,
+        "Speed of actor-walk in metres per second (default 20; a walk is about 1.5)",
+    )
+    .needs(REPRO),
+    flag(
         "--render-frame-clock",
         "",
         Repro,

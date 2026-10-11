@@ -130,7 +130,7 @@ pub(crate) fn install(app: &mut App) {
             .0
             .clone()
             .expect("actor-walk requires --start-view with a route");
-        app.insert_resource(engine::PlayerRoute::new(view.route).with_speed(ACTOR_WALK_SPEED_MPS))
+        app.insert_resource(engine::PlayerRoute::new(view.route).with_speed(repro.walk_speed))
             .add_systems(Update, log_actor_walk);
     }
     app.insert_resource(ReproView(route))
@@ -163,9 +163,6 @@ pub(crate) fn install(app: &mut App) {
         .add_systems(Update, output);
     }
 }
-
-/// About 70 km/h: kilometres of island in a couple of minutes.
-const ACTOR_WALK_SPEED_MPS: f32 = 20.;
 
 #[derive(Resource)]
 struct ReproView(Route);

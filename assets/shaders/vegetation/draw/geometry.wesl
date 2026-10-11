@@ -4,7 +4,7 @@
 import package::shaders::vegetation::types::{Camera, PI, DENSITY_FADE_BAND};
 import package::shaders::vegetation::blade::{
     normalize3_or, cubic_bezier, cubic_bezier_derivative, decode_instance, rest_blade,
-    rest_curve, twin_blade, wind_curve,
+    rest_curve, trample_blade, twin_blade, wind_curve,
 };
 import package::shaders::vegetation::draw::bindings::{
     VertexOutput, instances, types, camera, trample_now, trample_before, trample_sampler,
@@ -46,15 +46,12 @@ fn clump_normal(surface_normal: vec3<f32>, clump: f32) -> vec3<f32> {
 const TWIN_FIRST_HIGH: u32 = 4u;
 const TWIN_FIRST_LOW: u32 = 1u;
 
-// A pressed blade lies this far from upright, flat on the ground.
-const PRESSED_LEAN: f32 = 1.52;
-
-// How far characters have pressed down the grass rooted at `root` (z, 0..1) and the way it lies
-// (xy), from the trample map of `pose`'s frame. The map wraps, so roots near or beyond its edge
+// How characters push the grass rooted at `root`, from the trample map of `pose`'s frame: the
+// way its tips are pushed, length 1 lying flat. The map wraps, so roots near or beyond its edge
 // read nothing.
-fn trampled(root: vec3<f32>, pose: Camera, previous: bool) -> vec3<f32> {
+fn trampled(root: vec3<f32>, pose: Camera, previous: bool) -> vec2<f32> {
     if (pose.trample.w <= 0.0) {
-        return vec3<f32>(0.0);
+        return vec2<f32>(0.0);
     }
     let canonical = root.xz + pose.render_origin.xy;
     let away = abs(canonical - pose.trample.xy);
@@ -62,17 +59,14 @@ fn trampled(root: vec3<f32>, pose: Camera, previous: bool) -> vec3<f32> {
     let half_side = pose.trample.z * 0.5;
     let inside = 1.0 - smoothstep(half_side - 4.0, half_side - 1.0, edge);
     if (inside <= 0.0) {
-        return vec3<f32>(0.0);
+        return vec2<f32>(0.0);
     }
     let uv = canonical / pose.trample.z;
     var value = textureSampleLevel(trample_now, trample_sampler, uv, 0.0);
     if previous {
         value = textureSampleLevel(trample_before, trample_sampler, uv, 0.0);
     }
-    let press = clamp(value.z, 0.0, 1.0) * inside;
-    let lay_length = length(value.xy);
-    let lay = select(vec2<f32>(0.0), value.xy / lay_length, lay_length > 1e-4);
-    return vec3<f32>(lay, press);
+    return value.xy * inside;
 }
 
 fn blade_vertex(vertex_index: u32, instance_index: u32, pose: Camera, previous: bool) -> VertexOutput {
@@ -84,13 +78,7 @@ fn blade_vertex(vertex_index: u32, instance_index: u32, pose: Camera, previous: 
     }
     var b = decode_instance(instance);
     let grass = types[b.type_index];
-    // Pressed grass turns the way it was laid before twins spread from it.
-    let pressed = trampled(b.root, pose, previous);
-    if (pressed.z > 0.0 && dot(pressed.xy, pressed.xy) > 0.5) {
-        let turned = mix(b.facing, pressed.xy, pressed.z);
-        let turned_length = length(turned);
-        b.facing = select(pressed.xy, turned / turned_length, turned_length > 1e-3);
-    }
+    let push = trampled(b.root, pose, previous);
 
     let rows = select(HIGH_ROWS, LOW_ROWS, b.low);
     let tip = vertex_index >= 2u * rows;
@@ -107,10 +95,7 @@ fn blade_vertex(vertex_index: u32, instance_index: u32, pose: Camera, previous: 
         low_segments = select(f32(LOW_ROWS - TWIN_FIRST_LOW), f32(TWIN_FIRST_LOW), first);
         b = twin_blade(b, first);
     }
-    var blade = rest_blade(b, grass);
-    blade.lean = mix(blade.lean, PRESSED_LEAN, pressed.z);
-    blade.bend *= 1.0 - 0.7 * pressed.z;
-    blade.pressed = pressed.z;
+    let blade = trample_blade(rest_blade(b, grass), push);
     let c = wind_curve(rest_curve(blade), blade, grass, pose);
 
     var position = cubic_bezier(c.p0, c.p1, c.p2, c.p3, t);
@@ -185,7 +170,7 @@ fn blade_vertex(vertex_index: u32, instance_index: u32, pose: Camera, previous: 
     let canopy_height = max(grass.size.y * CANOPY_SHARE, 0.02);
     // Pressed grass lies in the open, its neighbours pressed down with it, so it is lit.
     let depth = clamp(1.0 - dot(position - blade.root, blade.up) / canopy_height, 0.0, 1.0)
-        * (1.0 - 0.8 * pressed.z);
+        * (1.0 - 0.8 * blade.pressed);
     output.material = vec4<f32>(
         grass.material.y,
         grass.material.z,

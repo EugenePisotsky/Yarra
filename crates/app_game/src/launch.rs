@@ -104,6 +104,8 @@ pub(crate) struct ReproOptions {
     pub frames: Option<u32>,
     pub snapshot: Option<PathBuf>,
     pub snapshot_frames: Vec<u32>,
+    /// Speed of the actor-walk route, metres per second.
+    pub walk_speed: f32,
 }
 
 impl LaunchOptions {
@@ -388,6 +390,7 @@ impl ReproOptions {
             prepass: args.has("--render-prepass"),
             hide_ui: args.has("--render-ui-off"),
             frame_clock: args.has("--render-frame-clock"),
+            walk_speed: args.number("--render-walk-speed", 20.0, 0.5..=40.0)?,
             temporal_view: args.choice(
                 "--render-temporal-view",
                 "off",
