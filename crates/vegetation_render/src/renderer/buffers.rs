@@ -9,6 +9,7 @@ use super::{
     page_slots,
     pipelines::VegetationPipelines,
     topology::build_topology_indices,
+    trample::TrampleMap,
 };
 use bevy::{
     prelude::*,
@@ -156,8 +157,14 @@ impl FromWorld for VegetationBuffers {
                 &candidate_cache.build_items,
             ],
         );
-        let draw_bind_group =
-            create_draw_bind_group(render_device, &draw_layout, &instances, &types, &camera);
+        let draw_bind_group = create_draw_bind_group(
+            render_device,
+            &draw_layout,
+            &instances,
+            &types,
+            &camera,
+            world.resource::<TrampleMap>(),
+        );
         Self {
             work_items,
             work_items_capacity: 16,
@@ -256,6 +263,7 @@ pub(super) fn create_draw_bind_group(
     instances: &Buffer,
     types: &Buffer,
     camera: &Buffer,
+    trample: &TrampleMap,
 ) -> BindGroup {
     render_device.create_bind_group(
         Some("vegetation draw"),
@@ -264,6 +272,9 @@ pub(super) fn create_draw_bind_group(
             instances.as_entire_binding(),
             types.as_entire_binding(),
             camera.as_entire_binding(),
+            &trample.current_view,
+            &trample.previous_view,
+            &trample.sampler,
         )),
     )
 }

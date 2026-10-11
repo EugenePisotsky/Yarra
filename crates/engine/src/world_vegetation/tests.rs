@@ -211,3 +211,38 @@ fn disabled_grass_stays_current_through_rebase_world_change_and_resume() {
             .is_empty()
     );
 }
+
+#[test]
+fn characters_press_grass_along_their_motion_nearest_first() {
+    let mut app = App::new();
+    app.init_resource::<Time>()
+        .init_resource::<VegetationLodFocus>()
+        .init_resource::<vegetation_render::GrassBenders>()
+        .add_systems(Update, list_grass_benders);
+    app.world_mut()
+        .resource_mut::<VegetationLodFocus>()
+        .position = Some(Vec3::ZERO);
+    for x in 0..vegetation_render::MAX_GRASS_BENDERS + 4 {
+        let motion = crate::actor::CharacterMotion {
+            displacement: Vec2::new(0.0, 0.05),
+            speed_mps: 1.5,
+            ..default()
+        };
+        app.world_mut().spawn((
+            GlobalTransform::from_translation(Vec3::new(x as f32, 0.0, 0.0)),
+            motion,
+        ));
+    }
+    app.update();
+    let benders = &app
+        .world()
+        .resource::<vegetation_render::GrassBenders>()
+        .benders;
+    assert_eq!(benders.len(), vegetation_render::MAX_GRASS_BENDERS);
+    assert!(
+        benders
+            .iter()
+            .all(|b| b.position.x < vegetation_render::MAX_GRASS_BENDERS as f32)
+    );
+    assert!((benders[0].velocity - Vec2::new(0.0, 1.5)).length() < 1e-5);
+}

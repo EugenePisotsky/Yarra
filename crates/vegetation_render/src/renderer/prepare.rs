@@ -12,6 +12,7 @@ use super::{
     },
     packing::{apply_terrain_gate, pack_coverage, pack_items, pack_lod_focus, pack_surface},
     pipelines::VegetationPipelines,
+    trample,
 };
 use crate::{
     VegetationAmbientGain, VegetationDiagnostics, VegetationLighting, VegetationLodFocus,
@@ -63,6 +64,7 @@ pub(super) fn prepare(
     >,
     mut buffers: ResMut<VegetationBuffers>,
     mut candidate_cache: ResMut<candidate_cache::CandidateCache>,
+    trample: Res<trample::TrampleMap>,
 ) {
     if settings.profile_mode == VegetationProfileMode::Disabled {
         buffers.active = false;
@@ -116,6 +118,7 @@ pub(super) fn prepare(
             &pipeline_cache,
             &pipelines,
             &candidate_cache,
+            &trample,
         );
     }
 
@@ -301,6 +304,7 @@ fn rebind_groups(
     pipeline_cache: &PipelineCache,
     pipelines: &VegetationPipelines,
     candidate_cache: &candidate_cache::CandidateCache,
+    trample: &trample::TrampleMap,
 ) {
     buffers.schedule_bind_group = create_schedule_bind_group(
         render_device,
@@ -340,6 +344,7 @@ fn rebind_groups(
         &buffers.instances,
         &buffers.types,
         &buffers.camera,
+        trample,
     );
 }
 
@@ -369,6 +374,10 @@ fn camera(
             0.,
             0.,
         ],
+        trample: {
+            let centre = trample::centre(view, render_origin);
+            [centre[0], centre[1], trample::extent(), 1.0]
+        },
         lod_focus: pack_lod_focus(
             lod_focus.position,
             view.world_from_view.translation(),

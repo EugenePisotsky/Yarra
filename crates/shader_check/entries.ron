@@ -100,6 +100,9 @@
         (shader: "shaders/vegetation/schedule.wesl", variants: [
             ["@grass"],
         ]),
+        (shader: "shaders/vegetation/trample.wesl", variants: [
+            [],
+        ]),
         (shader: "shaders/weather/ambient.wesl", variants: [
             [],
             ["MULTISAMPLED"],

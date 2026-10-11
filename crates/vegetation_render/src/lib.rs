@@ -22,6 +22,7 @@ mod environment;
 mod renderer;
 mod scene_state;
 mod settings;
+mod trample;
 pub use diagnostics::{VegetationDiagnostics, VegetationDiagnosticsSnapshot};
 pub(crate) use environment::VegetationSun;
 pub use environment::{VegetationAmbientGain, VegetationLighting, VegetationWind};
@@ -34,6 +35,7 @@ pub use scene_state::{
 };
 use scene_state::{attach_default_views, maintain_draw_entity};
 pub use settings::{VegetationProfileMode, VegetationSettings};
+pub use trample::{GrassBender, GrassBenders, MAX_GRASS_BENDERS};
 
 pub const PROCEDURAL_DISTANCE_METERS: f32 = 96.0;
 
@@ -58,6 +60,7 @@ impl Plugin for VegetationRenderPlugin {
             ExtractResourcePlugin::<VegetationTerrainGate>::default(),
             ExtractResourcePlugin::<VegetationSun>::default(),
             ExtractResourcePlugin::<VegetationAmbientGain>::default(),
+            ExtractResourcePlugin::<GrassBenders>::default(),
             ExtractComponentPlugin::<VegetationView>::default(),
             ExtractComponentPlugin::<VegetationDraw>::default(),
         ))
@@ -69,6 +72,7 @@ impl Plugin for VegetationRenderPlugin {
         .init_resource::<VegetationTerrainGate>()
         .init_resource::<VegetationSun>()
         .init_resource::<VegetationAmbientGain>()
+        .init_resource::<GrassBenders>()
         .add_systems(Update, advance_vegetation_wind)
         .add_systems(
             PostUpdate,

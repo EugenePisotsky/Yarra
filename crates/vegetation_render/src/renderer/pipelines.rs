@@ -8,10 +8,12 @@ use bevy::{
         BindGroupLayoutDescriptor, BindGroupLayoutEntries, CachedComputePipelineId, Canonical,
         ColorTargetState, ColorWrites, CompareFunction, ComputePipelineDescriptor,
         DepthStencilState, FragmentState, FrontFace, PipelineCache, PolygonMode, PrimitiveState,
-        PrimitiveTopology, RenderPipeline, RenderPipelineDescriptor, ShaderStages, Specializer,
-        SpecializerKey, TextureFormat, Variants, VertexState,
+        PrimitiveTopology, RenderPipeline, RenderPipelineDescriptor, SamplerBindingType,
+        ShaderStages, Specializer, SpecializerKey, TextureFormat, TextureSampleType, Variants,
+        VertexState,
         binding_types::{
-            storage_buffer_read_only_sized, storage_buffer_sized, uniform_buffer_sized,
+            sampler, storage_buffer_read_only_sized, storage_buffer_sized, texture_2d,
+            uniform_buffer_sized,
         },
     },
     shader::ShaderDefVal,
@@ -89,6 +91,10 @@ impl FromWorld for VegetationPipelines {
                     storage_buffer_read_only_sized(false, None),
                     storage_buffer_read_only_sized(false, None),
                     uniform_buffer_sized(false, None),
+                    // The trample map now and last frame, and its wrapping sampler.
+                    texture_2d(TextureSampleType::Float { filterable: true }),
+                    texture_2d(TextureSampleType::Float { filterable: true }),
+                    sampler(SamplerBindingType::Filtering),
                 ),
             ),
         );

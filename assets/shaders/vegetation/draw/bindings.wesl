@@ -29,6 +29,10 @@ struct VertexOutput {
 @group(1) @binding(0) var<storage, read> instances: array<Instance>;
 @group(1) @binding(1) var<storage, read> types: array<GrassType>;
 @group(1) @binding(2) var<uniform> camera: Camera;
+// The trample map (trample.wesl) this frame and last, which poses blades for motion vectors.
+@group(1) @binding(3) var trample_now: texture_2d<f32>;
+@group(1) @binding(4) var trample_before: texture_2d<f32>;
+@group(1) @binding(5) var trample_sampler: sampler;
 
 @if(TEMPORAL_GRASS)
 struct TemporalGrass { previous: Camera, raster_clip: mat4x4<f32> }

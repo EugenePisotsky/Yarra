@@ -21,6 +21,7 @@ mod temporal;
 #[cfg(test)]
 mod tests;
 mod topology;
+mod trample;
 
 pub use packing::terrain_contact_radius;
 
@@ -32,12 +33,14 @@ pub(crate) fn install(render_app: &mut SubApp) {
             Render,
             (
                 prepare::prepare.in_set(RenderSystems::PrepareBindGroups),
+                trample::prepare.in_set(RenderSystems::PrepareBindGroups),
                 draw::queue.in_set(RenderSystems::Queue),
             ),
         )
         .add_systems(
             RenderGraph,
             (
+                trample::stamp,
                 candidate_cache::build,
                 generation::generate,
                 telemetry::finish_telemetry,
@@ -61,6 +64,7 @@ pub(crate) fn install(render_app: &mut SubApp) {
 pub(crate) fn initialize(world: &mut World) {
     world.init_resource::<pipelines::VegetationPipelines>();
     world.init_resource::<candidate_cache::CandidateCache>();
+    world.init_resource::<trample::TrampleMap>();
     world.init_resource::<buffers::VegetationBuffers>();
     world.init_resource::<telemetry::VegetationTelemetryStaging>();
 }

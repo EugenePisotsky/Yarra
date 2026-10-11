@@ -106,6 +106,8 @@ struct Blade {
     tip_color: vec3<f32>,
     // Per-blade wind phase, 0..1.
     phase: f32,
+    // How far a character has pressed the blade down, 0..1: pressed blades barely move in wind.
+    pressed: f32,
 }
 
 fn rest_blade(b: BladeInstance, grass: GrassType) -> Blade {
@@ -128,6 +130,7 @@ fn rest_blade(b: BladeInstance, grass: GrassType) -> Blade {
     blade.bend = mix(grass.shape.z, grass.shape.w, random01(seed ^ 0x165667b1u));
     blade.side_curve = (random01(seed ^ 0x94d049bbu) * 2.0 - 1.0) * 0.18;
     blade.phase = random01(seed ^ 0x3c6ef372u);
+    blade.pressed = 0.0;
 
     // Colour: a clump-wide brightness, dry tips in some clumps, and a little per blade.
     let dry = random01(clump ^ 0x7b7d159cu) < grass.root.w;
@@ -221,7 +224,7 @@ fn wind_curve(rest: Curve, blade: Blade, grass: GrassType, camera: Camera) -> Cu
     let canonical = blade.root.xz + camera.render_origin.xy;
     let force = field_force(canonical, camera);
     let gust = grass_gust(canonical, camera);
-    let response = strength * (1.0 - 0.75 * grass.material.w);
+    let response = strength * (1.0 - 0.75 * grass.material.w) * (1.0 - 0.85 * blade.pressed);
     let wind = vec3<f32>(camera.wind.x, 0.0, camera.wind.y);
     let downwind = normalize3_or(wind - blade.up * dot(wind, blade.up), blade.forward);
     let across = cross(blade.up, downwind);

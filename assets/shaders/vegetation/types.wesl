@@ -67,6 +67,8 @@ struct Camera {
     // xy: canonical XZ offset of render coordinates.
     render_origin: vec4<f32>,
     lod_focus: vec4<f32>,
+    // xy: the trample map's canonical centre, z: its side in metres, w: 1 when it is stamped
+    trample: vec4<f32>,
 }
 
 struct Config {

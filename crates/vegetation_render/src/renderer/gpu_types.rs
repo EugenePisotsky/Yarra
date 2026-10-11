@@ -133,6 +133,8 @@ pub(super) struct CameraGpu {
     pub(super) render_origin: [f32; 4],
     // xy: detail centre, zw: normalized forward XZ (zero selects the camera disk).
     pub(super) lod_focus: [f32; 4],
+    // xy: the trample map's canonical centre, z: its side in metres, w: 1 when it is stamped
+    pub(super) trample: [f32; 4],
 }
 
 impl CameraGpu {
@@ -144,6 +146,7 @@ impl CameraGpu {
         self.ambient_radiance = [0.0; 4];
         self.lighting = [0.0; 4];
         self.wind[3] = 0.0;
+        self.trample = [0.0; 4];
         self
     }
 }
@@ -165,7 +168,7 @@ mod tests {
         assert_eq!(size_of::<GrassTypeGpu>(), 144);
         assert_eq!(size_of::<SurfaceSampleGpu>(), 32);
         assert_eq!(size_of::<InstanceGpu>(), 32);
-        assert_eq!(size_of::<CameraGpu>(), 224);
+        assert_eq!(size_of::<CameraGpu>(), 240);
         assert_eq!(size_of::<ConfigGpu>(), 16);
         assert_eq!(GPU_TELEMETRY_SIZE, 64);
         assert_eq!(DRAW_ARGS_SIZE, 40);
