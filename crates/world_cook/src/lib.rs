@@ -67,6 +67,7 @@ const DEMO_TERRAIN_MAXIMUM_HEIGHT: f32 = 4.0;
 
 mod grass_pack;
 mod road_demo;
+mod road_import;
 mod terrain_pack;
 pub use road_demo::create_road_demo_project;
 use terrain_pack::TerrainPack;
@@ -79,6 +80,8 @@ pub fn create_world_project(path: &Path) -> Result<()> {
 }
 
 /// The catalog of grass pack `text` for the terrain pack worlds are created with.
+pub use road_import::{RoadImportReport, import_roads};
+
 pub fn grass_catalog(text: &str) -> Result<vegetation::VegetationCatalog> {
     grass_pack::catalog(text, &TerrainPack::baltic()).map_err(anyhow::Error::msg)
 }

@@ -105,13 +105,7 @@ impl ProjectReader {
         &self,
         keys: &[RoadRecordKey],
     ) -> Result<Vec<RoadRecordState>, WorldDbError> {
-        if keys.len() > MAX_ROAD_DEPENDENCIES
-            || keys.iter().collect::<BTreeSet<_>>().len() != keys.len()
-        {
-            return Err(invalid("record read budget or duplicate identity"));
-        }
-        let tx = self.connection.unchecked_transaction()?;
-        keys.iter().map(|&key| read_state(&tx, key)).collect()
+        read_records(&self.connection, keys)
     }
     /// Both source domains and all referenced presets come from one SQLite read transaction.
     /// `coverage_cells` includes the painter's halo; road bounds certify the target cells.
@@ -217,5 +211,34 @@ impl ProjectReader {
             spans,
             next_cursor,
         })
+    }
+}
+
+fn read_records(
+    connection: &rusqlite::Connection,
+    keys: &[RoadRecordKey],
+) -> Result<Vec<RoadRecordState>, WorldDbError> {
+    if keys.len() > MAX_ROAD_DEPENDENCIES
+        || keys.iter().collect::<BTreeSet<_>>().len() != keys.len()
+    {
+        return Err(invalid("record read budget or duplicate identity"));
+    }
+    let tx = connection.unchecked_transaction()?;
+    keys.iter().map(|&key| read_state(&tx, key)).collect()
+}
+
+impl crate::ProjectWriter {
+    /// Each record's revision (None if it never existed) and record (None if deleted), for
+    /// writes that replace or remove them.
+    pub fn read_road_records(
+        &self,
+        keys: &[RoadRecordKey],
+    ) -> Result<Vec<RoadRecordState>, WorldDbError> {
+        read_records(&self.connection, keys)
+    }
+
+    /// The preset library revision road writes are checked against.
+    pub fn road_library_revision(&self) -> Result<u64, WorldDbError> {
+        Ok(crate::environment_store::read_library(&self.connection)?.revision)
     }
 }

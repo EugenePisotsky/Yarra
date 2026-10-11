@@ -1,0 +1,47 @@
+// Roads of the Baltic island, imported with
+//     cargo run --release -p yarra-world-cook -- import-roads content/roads/island.ron
+// Styles are cart-track styles (environment::roads::CartTrackProfile) with the terrain surfaces
+// their Ground preset lays down; routes are world XZ points through which a road curves. Routes
+// were found as least-cost paths over the island's slopes. Importing again replaces these roads
+// and styles by name; the editor edits them as any other road.
+(
+    styles: [
+        // A two-track cart road: worn wheel paths, grass down the middle, trampled shoulders.
+        (
+            name: "Baltic cart track",
+            surfaces: [("dirt", 0.75), ("gravel", 0.25)],
+            track_spacing: 1.7,
+            track_width: 1.1,
+            edge_softness: 0.25,
+            center_ground: 0.1,
+            center_retention: 0.9,
+            shoulder_ground: 0.35,
+            shoulder_retention: 0.55,
+            track_retention: 0.0,
+            edge_variation: 0.05,
+            edge_patch_size: 2.0,
+            breakup: 0.3,
+            breakup_patch_size: 2.4,
+            relief: (
+                road_depth: 0.06,
+                track_depth: 0.0,
+                shoulder_falloff: 1.0,
+                rut_roundness: 1.0,
+                road_variation: 0.2,
+                road_variation_length: 6.0,
+                track_variation: 0.25,
+                track_variation_length: 4.0,
+            ),
+        ),
+    ],
+    roads: [
+        // From the start beach north through the pines to the northern meadows.
+        (
+            name: "Beach road",
+            style: "Baltic cart track",
+            width: 3.6,
+            seed: 31,
+            points: [(2881.6, 3117.8), (2882.4, 3025.9), (2883.3, 2934.0), (2820.2, 2864.0), (2816.0, 2768.0), (2806.0, 2730.0), (2756.2, 2618.0), (2716.2, 2562.0), (2716.0, 2454.0), (2730.0, 2424.0), (2729.3, 2324.0), (2728.7, 2224.0), (2629.1, 2120.0), (2606.9, 2062.0), (2533.1, 1958.0), (2505.6, 1906.0), (2443.9, 1853.1), (2382.2, 1800.2)],
+        ),
+    ],
+)

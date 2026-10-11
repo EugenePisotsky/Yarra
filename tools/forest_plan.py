@@ -17,6 +17,9 @@ and young trees lines every edge.
 The landmass is the one holding --at (by default the manifest's start). Writes
 OUT_DIR/preview.png and OUT_DIR/forest.json. --apply replaces the kit's trees and shrubs on that
 landmass in --project with these placements and adds forest-* views beside it. Cook afterwards.
+--roads FILE keeps trees and shrubs off the roads of a road import (content/roads/*.ron, as
+`yarra-world-cook import-roads` reads it): trunks stay ROAD_CLEARANCE metres beyond the road's
+edge, shrubs half that, while crowns may overhang.
 """
 import argparse
 import json
@@ -99,6 +102,37 @@ SPACING = 0.42  # neighbouring trunks keep this share of their mean crown width 
 TYPE_SHARE = {PINE: 0.38, BROADLEAF: 0.40, SPRUCE: 0.22}
 FRINGE = 12.0  # metres of shrubs and young trees along every forest edge
 COLOURS = {PINE: (196, 160, 92), SPRUCE: (52, 96, 88), BROADLEAF: (104, 146, 70), BIRCH: (190, 200, 120)}
+
+
+# Metres between a tree's trunk and the road's edge; shrubs keep half of it.
+ROAD_CLEARANCE = 1.5
+
+
+def road_samples(path):
+    """Points every half metre along a road import's roads, each with its half width: the same
+    cubic curves `import-roads` builds through the points (handles along the direction from the
+    previous point to the next, a third of the way to the neighbour)."""
+    import re
+    text = path.read_text()
+    points, halves = [], []
+    for road in re.finditer(r'width:\s*([0-9.]+)[^\[]*points:\s*\[(.*?)\]', text, re.S):
+        half = float(road.group(1)) / 2
+        p = np.array([[float(a), float(b)] for a, b in re.findall(r'\(\s*([-0-9.]+)\s*,\s*([-0-9.]+)\s*\)', road.group(2))])
+        for i in range(len(p) - 1):
+            def handle(k, towards):
+                prev, nxt = p[max(k - 1, 0)], p[min(k + 1, len(p) - 1)]
+                d = nxt - prev
+                return d / (np.hypot(*d) or 1) * np.hypot(*(p[towards] - p[k])) / 3
+            a, b = p[i], p[i + 1]
+            c1, c2 = a + handle(i, i + 1), b - handle(i + 1, i)
+            n = max(2, int(np.hypot(*(b - a)) / 0.5))
+            t = np.linspace(0, 1, n, endpoint=False)[:, None]
+            curve = (1 - t) ** 3 * a + 3 * (1 - t) ** 2 * t * c1 + 3 * (1 - t) * t ** 2 * c2 + t ** 3 * b
+            points.append(curve)
+            halves.append(np.full(len(curve), half))
+    if not points:
+        return None
+    return cKDTree(np.vstack(points)), np.concatenate(halves)
 
 
 def smoothstep(a, b, x):
@@ -267,9 +301,16 @@ class Plan:
             self.kind.append(kind)
             self.age.append(age)
 
-    def trees(self):
-        """Places canopy trees largest first, then the edge fringe and understory shrubs."""
+    def trees(self, roads=None):
+        """Places canopy trees largest first, then the edge fringe and understory shrubs, off the
+        roads."""
         f, rng = self.f, self.f.rng
+        def off_road(px, pz, margin):
+            if roads is None:
+                return True
+            tree, halves = roads
+            d, k = tree.query((f.lo[0] + px, f.lo[1] + pz))
+            return d >= halves[k] + margin
         candidates = []
         for i in range(len(self.kind)):
             if self.area[i] <= 0:
@@ -305,7 +346,7 @@ class Plan:
                        for dx in range(-reach, reach + 1) for dz in range(-reach, reach + 1)
                        for qx, qz, qr in hash_.get((k[0] + dx, k[1] + dz), ()))
         for width, px, pz, form, scale, i in candidates:
-            if per_stand[i] >= targets[i] or not clear(px, pz, width / 2):
+            if per_stand[i] >= targets[i] or not off_road(px, pz, ROAD_CLEARANCE) or not clear(px, pz, width / 2):
                 continue
             hash_[(int(px // 12), int(pz // 12))].append((px, pz, width / 2))
             per_stand[i] += 1
@@ -321,7 +362,7 @@ class Plan:
         for pz, px in list((cells[rng.integers(len(cells), size=wanted * 2)] + rng.random((wanted * 2, 2))) * GRID):
             form = shrub_names[rng.choice(len(shrub_names), p=shrub_w)]
             scale = rng.uniform(0.8, 1.15)
-            if clear(px, pz, CROWN[form] * scale / 2 * 0.7):
+            if off_road(px, pz, ROAD_CLEARANCE / 2) and clear(px, pz, CROWN[form] * scale / 2 * 0.7):
                 hash_[(int(px // 12), int(pz // 12))].append((px, pz, CROWN[form] * scale / 2 * 0.7))
                 placed.append((form, px, pz, scale, -1))
                 wanted -= 1
@@ -332,7 +373,7 @@ class Plan:
             for pz, px in list((cells[rng.integers(len(cells), size=int(count) * 3 + 1)] + rng.random((int(count) * 3 + 1, 2))) * GRID)[:int(count) * 3]:
                 form = shrub_names[rng.choice(len(shrub_names) - 1)]  # no bay under the canopy
                 scale = rng.uniform(0.75, 1.05)
-                if clear(px, pz, CROWN[form] * scale / 2 * 0.7):
+                if off_road(px, pz, ROAD_CLEARANCE / 2) and clear(px, pz, CROWN[form] * scale / 2 * 0.7):
                     hash_[(int(px // 12), int(pz // 12))].append((px, pz, CROWN[form] * scale / 2 * 0.7))
                     placed.append((form, px, pz, scale, i))
                     count -= 1
@@ -481,10 +522,11 @@ def main():
     parser.add_argument('--apply', action='store_true', help='plant the plan in --project')
     parser.add_argument('--clear', action='store_true', help='only remove the kit from this landmass in --project, for comparisons')
     parser.add_argument('--project', type=Path, default=ROOT / 'content/world.project.sqlite')
+    parser.add_argument('--roads', type=Path, help='keep trees off the roads of this road import')
     args = parser.parse_args()
     field = Field(args.manifest, args.at, args.seed)
     plan = Plan(field, args.density)
-    plan.trees()
+    plan.trees(road_samples(args.roads) if args.roads else None)
     stats = plan.stats()
     args.output.mkdir(parents=True, exist_ok=True)
     plan.preview(args.output / 'preview.png')

@@ -68,6 +68,23 @@ fn main() -> Result<()> {
         );
         return Ok(());
     }
+    if command == "import-roads" {
+        let source = PathBuf::from(arguments.next().context("expected a roads RON")?);
+        let options = CookOptions::parse(arguments)?;
+        let materials = options.load_materials()?;
+        let report =
+            yarra_world_cook::import_roads(&std::fs::read_to_string(&source)?, &options.project)?;
+        let manifest = options.cook(materials.as_ref())?.manifest;
+        println!(
+            "imported {} road styles and {} roads ({} knots) from {} and published runtime generation {}",
+            report.styles,
+            report.roads,
+            report.knots,
+            source.display(),
+            manifest.generation_id
+        );
+        return Ok(());
+    }
     if command == "import-grass" {
         let source = PathBuf::from(arguments.next().context("expected a grass pack RON")?);
         let options = CookOptions::parse(arguments)?;
@@ -93,7 +110,7 @@ fn main() -> Result<()> {
     };
     if command != "cook" && command != "init" && heightfield.is_none() {
         bail!(
-            "unknown command {command:?}; expected `init`, `cook`, `import-heightfield`, `create-demo`, `create-road-demo`, `create-mountain-fixture`, `create-hill-fixture`, `create-island-fixture`, `import-grass` or `import-assets`"
+            "unknown command {command:?}; expected `init`, `cook`, `import-heightfield`, `create-demo`, `create-road-demo`, `create-mountain-fixture`, `create-hill-fixture`, `create-island-fixture`, `import-grass`, `import-roads` or `import-assets`"
         );
     }
 
