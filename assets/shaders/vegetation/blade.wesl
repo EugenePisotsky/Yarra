@@ -108,6 +108,8 @@ struct Blade {
     phase: f32,
     // How far a character has pressed the blade down, 0..1: pressed blades barely move in wind.
     pressed: f32,
+    // The blade's own hash, for the ways it varies.
+    seed: u32,
 }
 
 fn rest_blade(b: BladeInstance, grass: GrassType) -> Blade {
@@ -131,6 +133,7 @@ fn rest_blade(b: BladeInstance, grass: GrassType) -> Blade {
     blade.side_curve = (random01(seed ^ 0x94d049bbu) * 2.0 - 1.0) * 0.18;
     blade.phase = random01(seed ^ 0x3c6ef372u);
     blade.pressed = 0.0;
+    blade.seed = seed;
 
     // Colour: a clump-wide brightness, dry tips in some clumps, and a little per blade.
     let dry = random01(clump ^ 0x7b7d159cu) < grass.root.w;
@@ -141,26 +144,46 @@ fn rest_blade(b: BladeInstance, grass: GrassType) -> Blade {
     return blade;
 }
 
-// A pushed blade lies this far from upright, flat on the ground.
-const PRESSED_LEAN: f32 = 1.52;
+// Pushed blades lie between these leans from upright: some flat on the ground, some still
+// partly raised over their neighbours.
+const PRESSED_LEAN: vec2<f32> = vec2(1.15, 1.55);
+// Each pushed blade lies up to this many radians either side of the push, so a trail fans out
+// instead of combing every blade one way.
+const PRESSED_SPREAD: f32 = 0.6;
+// Pushed blades twist along their length by up to this many radians, so some show their face
+// and some their edge.
+const PRESSED_TWIST: f32 = 1.05;
 
 // The blade pushed by characters (`push`: the way its tip is pushed, length 1 lying flat). Its
-// direction from the root slides from its own toward lying flat along the push, so it moves
-// continuously whichever way it faced; it loses most of its arch and wind response.
+// direction from the root slides from its own toward lying along the push, turned by its own
+// spread, which is continuous whichever way it faced; it twists about its length and loses most
+// of its arch and wind response.
 fn trample_blade(rest: Blade, push: vec2<f32>) -> Blade {
     let amount = min(length(push), 1.0);
     if (amount < 1e-3) {
         return rest;
     }
     var blade = rest;
-    let pushed = vec3<f32>(push.x, 0.0, push.y);
+    let turn = (random01(rest.seed ^ 0x1b873593u) * 2.0 - 1.0) * PRESSED_SPREAD;
+    let way = push / max(length(push), 1e-6);
+    let spread = vec2<f32>(
+        way.x * cos(turn) - way.y * sin(turn),
+        way.x * sin(turn) + way.y * cos(turn),
+    );
+    let pushed = vec3<f32>(spread.x, 0.0, spread.y);
     let along = normalize3_or(pushed - rest.up * dot(pushed, rest.up), rest.forward);
+    let lean = mix(PRESSED_LEAN.x, PRESSED_LEAN.y, random01(rest.seed ^ 0xe6546b64u));
     let own = rest.up * cos(rest.lean) + rest.forward * sin(rest.lean);
-    let flat = rest.up * cos(PRESSED_LEAN) + along * sin(PRESSED_LEAN);
-    let chord = normalize3_or(mix(own, flat, amount), own);
+    let lying = rest.up * cos(lean) + along * sin(lean);
+    let chord = normalize3_or(mix(own, lying, amount), own);
     blade.lean = acos(clamp(dot(chord, rest.up), -1.0, 1.0));
     blade.forward = normalize3_or(chord - rest.up * dot(chord, rest.up), rest.forward);
-    blade.side = normalize3_or(cross(rest.up, blade.forward), rest.side);
+    let flat_side = normalize3_or(cross(rest.up, blade.forward), rest.side);
+    let twist = (random01(rest.seed ^ 0x85ebca6bu) * 2.0 - 1.0) * PRESSED_TWIST * amount;
+    blade.side = normalize3_or(
+        flat_side * cos(twist) + cross(chord, flat_side) * sin(twist),
+        flat_side,
+    );
     blade.bend = rest.bend * (1.0 - 0.7 * amount);
     blade.pressed = amount;
     return blade;
