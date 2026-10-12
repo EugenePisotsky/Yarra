@@ -13,7 +13,7 @@ struct NearSlot { surface: vec4<f32>, material: vec4<f32>, phase: vec4<f32>, lat
 // `wear.x`: whether the page has a wear field (terrain_wear.wesl), in its slot's layer.
 struct NearEntry {
     key: vec4<i32>, wear: vec4<f32>, state: vec4<f32>, macro_scales: vec4<f32>, macro_settings: vec4<f32>,
-    macro_a: vec4<f32>, macro_b: vec4<f32>, macro_c: vec4<f32>, slots: array<NearSlot, 8>,
+    macro_a: vec4<f32>, macro_b: vec4<f32>, macro_c: vec4<f32>, slots: array<NearSlot, 12>,
 }
 @group(constants::MATERIAL_BIND_GROUP) @binding(8) var near_weights: texture_2d_array<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(10) var<storage, read> near_table: array<NearEntry>;
@@ -110,38 +110,40 @@ fn mix_surfaces(a: Surface, b: Surface, c: Surface, w: vec3<f32>) -> Surface {
         normalize(a.normal*w.x+b.normal*w.y+c.normal*w.z),
         a.ao*w.x+b.ao*w.y+c.ao*w.z, a.roughness*w.x+b.roughness*w.y+c.roughness*w.z);
 }
-// A page's surface weights, slots 0-3 and 4-7.
-struct Weights { low: vec4<f32>, high: vec4<f32>, }
-// The page's surface weights at `uv` (0..1 across the page).
-fn page_weights(index: u32, uv: vec2<f32>) -> Weights {
+// A page's surface weights are one per slot: array<f32, 12> (world::MAX_TERRAIN_SURFACES_PER_CELL).
+// Spelled out, not aliased: Metal translation treats an alias as a distinct type.
+// The page's surface weights at `uv` (0..1 across the page): four per weight layer, a layer read
+// only where the page has surfaces in it.
+fn page_weights(index: u32, uv: vec2<f32>) -> array<f32, 12> {
+    var w: array<f32, 12>;
     let count = u32(near_table[index].state.z+0.5);
-    if count <= 1u { return Weights(vec4(1.0,0.0,0.0,0.0), vec4(0.0)); }
+    if count <= 1u { w[0] = 1.0; return w; }
     let wuv = (vec2(0.5)+uv*(near_table[index].state.y-1.0))/near_settings.w;
-    let layer = (near_table[index].key.w-1)*2;
-    let first = textureSampleLevel(near_weights,map_sampler,wuv,layer,0.0);
-    var second = vec4(0.0);
-    if count > 4u { second = textureSampleLevel(near_weights,map_sampler,wuv,layer+1,0.0); }
-    return Weights(first, second);
+    let layer = (near_table[index].key.w-1)*3;
+    for (var page = 0u; page*4u < count; page += 1u) {
+        let v = textureSampleLevel(near_weights,map_sampler,wuv,layer+i32(page),0.0);
+        w[page*4u] = v.x; w[page*4u+1u] = v.y; w[page*4u+2u] = v.z; w[page*4u+3u] = v.w;
+    }
+    return w;
 }
 // The page's weights worn by `wear`, `bare` of it bare, as `world::TerrainWear::lay` wears them.
-fn worn_weights(index: u32, page: Weights, wear: f32, bare: f32) -> Weights {
+fn worn_weights(index: u32, page: array<f32, 12>, wear: f32, bare: f32) -> array<f32, 12> {
     let count = u32(near_table[index].state.z+0.5);
-    var worn: array<vec4<f32>, 8>;
-    var trampled: array<f32, 8>;
-    for (var i = 0u; i < 8u; i += 1u) {
+    var worn: array<vec4<f32>, 12>;
+    var trampled: array<f32, 12>;
+    for (var i = 0u; i < count; i += 1u) {
         worn[i] = near_table[index].slots[i].worn;
         trampled[i] = near_table[index].slots[i].material.w;
     }
-    let w = lay_worn(array<f32,8>(page.low.x,page.low.y,page.low.z,page.low.w,page.high.x,page.high.y,page.high.z,page.high.w), worn, trampled, count, wear, bare);
-    return Weights(vec4(w[0],w[1],w[2],w[3]), vec4(w[4],w[5],w[6],w[7]));
+    return lay_worn(page, worn, trampled, count, wear, bare);
 }
 // The page's ground: its three largest weights here, blended by surface height, and the grass
 // its surfaces carry (field colour, cover) in the same shares.
 struct Ground { surface: Surface, grass: vec4<f32>, }
-fn blended_surfaces(index: u32, page: Weights, local: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) -> Ground {
+fn blended_surfaces(index: u32, page: array<f32, 12>, local: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) -> Ground {
     let count = u32(near_table[index].state.z+0.5);
     if count <= 1u { return Ground(surface(index,0u,local,dx,dy), near_table[index].slots[0].grass); }
-    var weights = array<f32,8>(page.low.x,page.low.y,page.low.z,page.low.w,page.high.x,page.high.y,page.high.z,page.high.w);
+    var weights = page;
     // Largest first; ties keep the lower slot, as world::terrain_blend_candidates does.
     var pick = vec3<u32>(0u); var best = vec3(0.0);
     for (var i=0u; i<count; i+=1u) {

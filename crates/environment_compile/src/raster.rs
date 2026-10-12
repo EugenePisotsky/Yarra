@@ -135,6 +135,10 @@ impl CompilePlan {
         let mut samples = Vec::with_capacity(resolution * resolution * surface_count);
         let mut used = vec![false; surface_count];
         let mut worn = vec![false; surface_count];
+        // How much each surface shows, worn where roads wear the ground, samples on the cell's
+        // edge counting EDGE_PRIORITY times: where more surfaces meet than a page holds, those
+        // a neighbour shares along the edge are kept, so the pages agree there.
+        let mut score = vec![0.0; surface_count];
         for z in 0..resolution {
             for x in 0..resolution {
                 let uv = [
@@ -142,6 +146,8 @@ impl CompilePlan {
                     z as f64 / (resolution - 1) as f64,
                 ];
                 let natural = self.surface_weights(cell, coverage, uv, base);
+                let edge = x == 0 || z == 0 || x + 1 == resolution || z + 1 == resolution;
+                let priority = if edge { EDGE_PRIORITY } else { 1.0 };
                 if wearing {
                     let local = uv.map(|v| v * size);
                     let laid = roads.ground(origin, local);
@@ -150,6 +156,11 @@ impl CompilePlan {
                     let full = self.worn_ground(&natural, laid, bare);
                     for (i, (full, natural)) in full.iter().zip(&natural).enumerate() {
                         worn[i] |= full - natural > 0.5 / 255.0;
+                        score[i] += full * priority;
+                    }
+                } else {
+                    for (s, w) in score.iter_mut().zip(&natural) {
+                        *s += w * priority;
                     }
                 }
                 let quantized = quantize(&natural);
@@ -161,12 +172,11 @@ impl CompilePlan {
         }
         let mut palette: Vec<_> = (0..surface_count).filter(|&i| used[i] || worn[i]).collect();
         if palette.len() > self.profile.max_surfaces_per_cell {
-            let first: Vec<_> = (0..surface_count).filter(|&i| worn[i]).collect();
             palette = keep_heaviest(
                 &mut samples,
                 surface_count,
                 &palette,
-                &first,
+                &score,
                 self.profile.max_surfaces_per_cell,
             );
         }
@@ -391,33 +401,25 @@ fn wear_texels(roads: &world::TerrainRoads, origin: [f64; 2], size: f64) -> Vec<
         .collect()
 }
 
+/// How much more a weight sample on a cell's edge counts than one inside it when a cell keeps
+/// its surfaces: the edge's samples then weigh about as much as the inside's.
+const EDGE_PRIORITY: f64 = 16.0;
+
 /// Where more surfaces meet in a cell than its weight pages hold, keeps the `maximum` with the
-/// most weight in the cell and shares each sample among those. The dropped surfaces are slivers:
-/// shading shows at most three surfaces at a point anyway. Surfaces in `first` (road ground) are
-/// kept ahead of heavier natural ground, so a road crossing a corner of a varied page still
-/// shows there. Returns the kept palette, in order.
+/// highest `score` (how much each shows, worn ground included, its edge counting most) and shares
+/// each sample among those. Surfaces a neighbour shares along the edge are kept, so pages agree
+/// there; the dropped ones are slivers inside the cell (shading shows at most three at a point).
+/// Returns the kept palette, in order.
 fn keep_heaviest(
     samples: &mut [u8],
     surface_count: usize,
     palette: &[usize],
-    first: &[usize],
+    score: &[f64],
     maximum: usize,
 ) -> Vec<usize> {
-    let mut totals = vec![0_u64; surface_count];
-    for weights in samples.chunks(surface_count) {
-        for (total, &w) in totals.iter_mut().zip(weights) {
-            *total += u64::from(w);
-        }
-    }
     let mut kept = palette.to_vec();
-    // Road ground first, then heaviest; equal totals keep the lower surface index.
-    kept.sort_by(|&a, &b| {
-        first
-            .contains(&b)
-            .cmp(&first.contains(&a))
-            .then(totals[b].cmp(&totals[a]))
-            .then(a.cmp(&b))
-    });
+    // Highest score first; equal scores keep the lower surface index.
+    kept.sort_by(|&a, &b| score[b].total_cmp(&score[a]).then(a.cmp(&b)));
     kept.truncate(maximum);
     let heaviest = kept[0];
     kept.sort_unstable();

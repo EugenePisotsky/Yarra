@@ -68,7 +68,7 @@ impl CompilePlan {
     ) -> Result<Self, CompileError> {
         if !(2..=257).contains(&profile.terrain_resolution)
             || !(1..=256).contains(&profile.vegetation_resolution)
-            || !(1..=8).contains(&profile.max_surfaces_per_cell)
+            || !(1..=world::MAX_TERRAIN_SURFACES_PER_CELL).contains(&profile.max_surfaces_per_cell)
             || profile.max_layers == 0
             || profile.max_grass_types == 0
             || profile.max_fields_per_cell == 0
@@ -188,8 +188,8 @@ impl CompilePlan {
         )?;
         let mut hash = blake3::Hasher::new();
         // v5: grass follows the ground that shows, not faint blend weights.
-        // v6: pages hold the natural ground; roads wear it through the wear field.
-        hash.update(b"yarra.environment.compiler.v6");
+        // v7: up to twelve surfaces a page, those shared along its edges kept first.
+        hash.update(b"yarra.environment.compiler.v7");
         hash.update(&bytes);
         Ok(Self {
             presets: presets.clone(),

@@ -113,13 +113,13 @@ fn phases_keep_large_negative_cell_boundaries_and_altitude_stops_near_demand() {
 }
 
 #[test]
-fn pages_carry_up_to_eight_surfaces_in_two_weight_layers() {
+fn pages_carry_up_to_twelve_surfaces_in_three_weight_layers() {
     let mut s = source(CellCoord { x: 3, z: -2 });
     let template = s.layers[0].clone();
-    s.layers = (0..6)
+    s.layers = (0..10)
         .map(|i| TerrainSurfaceLayer {
             grass: [0.0; 4],
-            layer: 5 - i,
+            layer: 9 - i as u16,
             surface: TerrainSurface {
                 id: TerrainSurfaceId([i as u8; 16]),
                 tile_size: 1. + i as f32,
@@ -129,7 +129,7 @@ fn pages_carry_up_to_eight_surfaces_in_two_weight_layers() {
         })
         .collect();
     s.surfaces = s.layers.iter().map(|l| l.surface.id).collect();
-    // Four surfaces per RGBA page: the second page holds surfaces four and five.
+    // Four surfaces per RGBA page: the third page holds surfaces eight and nine.
     s.weights = vec![
         TerrainWeightPage {
             resolution: 2,
@@ -137,22 +137,26 @@ fn pages_carry_up_to_eight_surfaces_in_two_weight_layers() {
         },
         TerrainWeightPage {
             resolution: 2,
-            rgba: [50, 105, 0, 0].repeat(4),
+            rgba: [5, 10, 15, 20].repeat(4),
+        },
+        TerrainWeightPage {
+            resolution: 2,
+            rgba: [50, 55, 0, 0].repeat(4),
         },
     ];
     assert!(valid_source(&s));
     let m = material(&s);
     let entry = gpu::entry(&s, &m, 7, 1., false, 0);
-    assert_eq!(entry.state.z, 6.);
-    for (i, slot) in entry.slots.iter().enumerate().take(6) {
-        assert_eq!(slot.surface.x, 5. - i as f32);
+    assert_eq!(entry.state.z, 10.);
+    for (i, slot) in entry.slots.iter().enumerate().take(10) {
+        assert_eq!(slot.surface.x, 9. - i as f32);
         assert_eq!(slot.surface.y, 1. + i as f32);
         assert_eq!(slot.surface.z, f32::from(i % 2 == 0));
     }
-    assert_eq!(entry.slots[6], gpu::NearSlot::default());
+    assert_eq!(entry.slots[10], gpu::NearSlot::default());
     let tile = gpu::tile(7, &s, None);
-    assert_eq!(tile.weights[1][..4], [50, 105, 0, 0]);
-    // A page whose second weight page is missing is rejected.
+    assert_eq!(tile.weights[2][..4], [50, 55, 0, 0]);
+    // A page whose third weight page is missing is rejected.
     let mut missing = s.clone();
     missing.weights.pop();
     assert!(!valid_source(&missing));

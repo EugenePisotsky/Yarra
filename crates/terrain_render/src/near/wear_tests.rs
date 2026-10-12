@@ -48,7 +48,7 @@ fn near_terrain_wears_the_ground_as_the_cook_lays_it() {
         weights[2] = a * 0.4;
         cases.push((weights, i as f32 / 63.0, ((i * 7) % 11) as f32 / 10.0));
     }
-    let slots: Vec<[f32; 4]> = (0..8)
+    let slots: Vec<[f32; 4]> = (0..12)
         .map(|i| {
             let pair = wear.worn.get(i).copied().unwrap_or([(NO_WORN_SLOT, 0); 2]);
             let to = |(s, share): (u8, u8)| {
@@ -62,7 +62,7 @@ fn near_terrain_wears_the_ground_as_the_cook_lays_it() {
             [a[0], a[1], b[0], b[1]]
         })
         .collect();
-    let trampled: Vec<f32> = (0..8)
+    let trampled: Vec<f32> = (0..12)
         .map(|i| match wear.trampled.get(i) {
             Some(&t) if t != NO_WORN_SLOT => f32::from(t),
             _ => -1.0,
@@ -135,18 +135,20 @@ import package::shaders::terrain_wear::lay_worn;
 struct Case { weights: array<vec4<f32>, 2>, wear: vec4<f32> }
 @group(0) @binding(0) var<storage, read> cases: array<Case>;
 @group(0) @binding(1) var<storage, read_write> results: array<array<vec4<f32>, 2>>;
-@group(0) @binding(3) var<storage, read> slots: array<vec4<f32>, 8>;
-@group(0) @binding(4) var<storage, read> trampled: array<vec4<f32>, 2>;
+@group(0) @binding(3) var<storage, read> slots: array<vec4<f32>, 12>;
+@group(0) @binding(4) var<storage, read> trampled: array<vec4<f32>, 3>;
 @compute @workgroup_size(64)
 fn evaluate(@builtin(global_invocation_id) id: vec3<u32>) {
     if id.x >= arrayLength(&cases) { return; }
     let c = cases[id.x];
-    let w = array<f32, 8>(c.weights[0].x, c.weights[0].y, c.weights[0].z, c.weights[0].w,
-        c.weights[1].x, c.weights[1].y, c.weights[1].z, c.weights[1].w);
-    var worn: array<vec4<f32>, 8>;
-    for (var i = 0u; i < 8u; i += 1u) { worn[i] = slots[i]; }
-    let t = array<f32, 8>(trampled[0].x, trampled[0].y, trampled[0].z, trampled[0].w,
-        trampled[1].x, trampled[1].y, trampled[1].z, trampled[1].w);
+    var w: array<f32, 12>;
+    var worn: array<vec4<f32>, 12>;
+    var t: array<f32, 12>;
+    for (var i = 0u; i < 12u; i += 1u) {
+        if i < 8u { w[i] = c.weights[i/4u][i%4u]; }
+        worn[i] = slots[i];
+        t[i] = trampled[i/4u][i%4u];
+    }
     let out = lay_worn(w, worn, t, COUNTu, c.wear.x, c.wear.y);
     results[id.x] = array(vec4(out[0], out[1], out[2], out[3]), vec4(out[4], out[5], out[6], out[7]));
 }
@@ -186,7 +188,7 @@ fn evaluate(@builtin(global_invocation_id) id: vec3<u32>) {
         .collect();
     let input = storage(bytemuck::cast_slice(&packed));
     let mut slot_data: Vec<f32> = slots.iter().flatten().copied().collect();
-    slot_data.resize(32, 0.);
+    slot_data.resize(48, 0.);
     let slot_buffer = storage(bytemuck::cast_slice(&slot_data));
     let trampled_buffer = storage(bytemuck::cast_slice(trampled));
     let bytes = cases.len() as u64 * 32;

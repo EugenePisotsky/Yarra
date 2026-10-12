@@ -33,7 +33,9 @@ pub const MAX_DECODED_PAGE_BYTES: u64 = 64 * 1024 * 1024;
 pub const PROJECT_SCHEMA_VERSION: i64 = 31;
 pub const RUNTIME_SCHEMA_VERSION: i64 = 30;
 pub const PAGE_PAYLOAD_VERSION: u16 = 14;
-pub const MAX_TERRAIN_SURFACES_PER_CELL: usize = 8;
+/// Surfaces a terrain page holds, four per RGBA weight page: natural ground and what roads wear
+/// it to, so varied ground along a road keeps both.
+pub const MAX_TERRAIN_SURFACES_PER_CELL: usize = 12;
 
 /// An asset's last LOD variant may be an impostor: a descriptor of baked views drawn as one
 /// camera-facing quad per object, instead of a glTF scene.
@@ -42,7 +44,7 @@ pub const IMPOSTOR_SUFFIX: &str = ".impostor.json";
 pub fn is_impostor_uri(uri: &str) -> bool {
     uri.ends_with(IMPOSTOR_SUFFIX)
 }
-pub const MAX_TERRAIN_WEIGHT_PAGES: usize = 2;
+pub const MAX_TERRAIN_WEIGHT_PAGES: usize = MAX_TERRAIN_SURFACES_PER_CELL.div_ceil(4);
 pub const MAX_TERRAIN_WEIGHT_RESOLUTION: u16 = 257;
 pub const MAX_TERRAIN_HEIGHTFIELD_RESOLUTION: u16 = 257;
 /// Terrain heights are whole multiples of this step (1/1024 m) on one grid shared by every

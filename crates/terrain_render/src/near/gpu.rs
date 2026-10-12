@@ -65,11 +65,14 @@ pub(crate) struct NearEntry {
     pub slots: [NearSlot; MAX_TERRAIN_SURFACES_PER_CELL],
 }
 pub(super) fn bytes() -> u64 {
-    // Two RGBA weight layers and a grass cover layer per slot.
-    u64::from(WEIGHT_SIDE * WEIGHT_SIDE * 8 + GRASS_SIDE * GRASS_SIDE * 4) * NEAR_SLOTS as u64
+    // The RGBA weight layers and a grass cover layer per slot.
+    u64::from(WEIGHT_SIDE * WEIGHT_SIDE * 4 * WEIGHT_LAYERS as u32 + GRASS_SIDE * GRASS_SIDE * 4)
+        * NEAR_SLOTS as u64
         + NearEntry::min_size().get() * NEAR_TABLE as u64
         + u64::from(WEAR_SIDE * WEAR_SIDE * 4) * NEAR_SLOTS as u64
 }
+/// RGBA weight layers per slot: four surfaces each, `MAX_TERRAIN_SURFACES_PER_CELL` in all.
+pub(super) const WEIGHT_LAYERS: usize = MAX_TERRAIN_SURFACES_PER_CELL.div_ceil(4);
 /// Largest grass cover (`NearGrassCover`) the grass atlas holds: a 32 m cell's half-metre
 /// grass fields.
 pub(super) const GRASS_SIDE: u32 = 64;
@@ -178,8 +181,8 @@ pub(super) fn entry(
 }
 pub(super) struct Tile {
     slot: u32,
-    /// Two RGBA layers of surface weights, four surfaces each.
-    pub(super) weights: [Vec<u8>; 2],
+    /// The RGBA layers of surface weights, four surfaces each; empty past the page's surfaces.
+    pub(super) weights: [Vec<u8>; WEIGHT_LAYERS],
     weight_side: u32,
     /// The grass cover layer (`NearGrassCover`), empty for none.
     cover: Vec<u8>,
@@ -194,16 +197,18 @@ impl Tile {
 }
 /// The page's upload.
 pub(super) fn tile(slot: u32, s: &NearSource, cover: Option<&NearGrassCover>) -> Tile {
+    // The shader reads only the layers the page's surfaces fill.
     let (weight_side, weights) = if s.surfaces.len() == 1 {
-        (1, [vec![255, 0, 0, 0], vec![0; 4]])
+        (
+            1,
+            std::array::from_fn(|i| if i == 0 { vec![255, 0, 0, 0] } else { vec![] }),
+        )
     } else {
         let side = s.weights[0].resolution as u32;
-        let page = |i: usize| {
-            s.weights
-                .get(i)
-                .map_or_else(|| vec![0; (side * side * 4) as usize], |w| w.rgba.clone())
-        };
-        (side, [page(0), page(1)])
+        (
+            side,
+            std::array::from_fn(|i| s.weights.get(i).map_or(vec![], |w| w.rgba.clone())),
+        )
     };
     let wear = s
         .wear
@@ -278,7 +283,11 @@ impl NearAtlas {
             image
         };
         let slots = NEAR_SLOTS as u32;
-        let weights = images.add(image(WEIGHT_SIDE, TextureFormat::Rgba8Unorm, slots * 2));
+        let weights = images.add(image(
+            WEIGHT_SIDE,
+            TextureFormat::Rgba8Unorm,
+            slots * WEIGHT_LAYERS as u32,
+        ));
         let grass = images.add(image(GRASS_SIDE, TextureFormat::Rgba8Unorm, slots));
         let table = buffers.add(ShaderBuffer::with_size(
             NearEntry::min_size().get() * NEAR_TABLE as u64,
@@ -365,12 +374,16 @@ fn upload(
             return true;
         };
         for t in &update.tiles {
-            let layers = [
-                (weights, t.weight_side, t.slot * 2, &t.weights[0]),
-                (weights, t.weight_side, t.slot * 2 + 1, &t.weights[1]),
-                (grass, t.cover_side, t.slot, &t.cover),
-                (wear, WEAR_SIDE, t.slot, &t.wear),
-            ];
+            let first = t.slot * WEIGHT_LAYERS as u32;
+            let layers = t
+                .weights
+                .iter()
+                .enumerate()
+                .map(|(i, data)| (weights, t.weight_side, first + i as u32, data))
+                .chain([
+                    (grass, t.cover_side, t.slot, &t.cover),
+                    (wear, WEAR_SIDE, t.slot, &t.wear),
+                ]);
             for (image, side, layer, data) in layers {
                 if data.is_empty() {
                     continue;

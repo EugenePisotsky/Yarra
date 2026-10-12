@@ -49,11 +49,11 @@ fn rut_at(layer: i32, uv: vec2<f32>) -> f32 {
     return textureSampleLevel(near_wear, map_sampler, uv, layer, 0.0).y*RUT_DEPTH_SCALE;
 }
 
-// A page's eight surface weights worn by `wear`, as world `TerrainWear::lay` wears them: each
+// A page's surface weights (up to twelve) worn by `wear`, as world `TerrainWear::lay` wears them: each
 // surface gives that share of itself, `bare` of it to what it wears bare to (`worn[i]`: two
 // slots, -1 none, and their shares) and the rest to what it is trampled to (`trampled[i]`, -1
 // none: it goes bare).
-fn lay_worn(weights: array<f32, 8>, worn: array<vec4<f32>, 8>, trampled: array<f32, 8>, count: u32, wear: f32, bare: f32) -> array<f32, 8> {
+fn lay_worn(weights: array<f32, 12>, worn: array<vec4<f32>, 12>, trampled: array<f32, 12>, count: u32, wear: f32, bare: f32) -> array<f32, 12> {
     var out = weights;
     for (var i = 0u; i < count; i += 1u) {
         if weights[i] <= 0.0 { continue; }
