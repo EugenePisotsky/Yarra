@@ -29,11 +29,10 @@ pub struct TerrainRoadJunction {
 }
 
 impl TerrainRoadJunction {
-    /// How fully the junction's patch replaces its roads at `local` (page-local): a common
-    /// centre, then a broad transition into each road's own tracks.
-    pub fn blend(&self, local: [f64; 2]) -> f64 {
+    /// How fully the junction's patch replaces its roads at `local` (page-local; `world` XZ).
+    pub fn blend(&self, local: [f64; 2], world: [f64; 2]) -> f64 {
         let d = (local[0] - f64::from(self.centre[0])).hypot(local[1] - f64::from(self.centre[1]));
-        smooth((1.0 - d / f64::from(self.radius)) / 0.65)
+        junction_blend(d, self.radius, world, self.seed)
     }
     /// How much of its ground the patch lays at `world` (XZ), over everything, `road` being its
     /// road's drawing.
@@ -42,7 +41,7 @@ impl TerrainRoadJunction {
             (road_patch(world, road.shape.breakup_patch_size, self.seed ^ 0x815) - 0.40) / 0.30,
         );
         (1.0 - f64::from(road.shape.breakup) * patches)
-            * self.blend(local)
+            * self.blend(local, world)
             * f64::from(road.strength)
     }
     pub fn joins(&self, road: usize) -> bool {
@@ -324,7 +323,7 @@ impl TerrainRoads {
                     .junctions
                     .iter()
                     .filter(|j| j.joins(road))
-                    .map(|j| j.blend(local))
+                    .map(|j| j.blend(local, world))
                     .fold(0.0, f64::max);
                 self.roads[road].ground(&hit.offset, world) * (1.0 - joined)
             })
@@ -354,7 +353,7 @@ impl TerrainRoads {
                 .junctions
                 .iter()
                 .filter(|j| j.joins(road))
-                .map(|j| j.blend(local))
+                .map(|j| j.blend(local, world))
                 .fold(0.0, f64::max);
             let amount = drawn.ground(&hit.offset, world) * (1.0 - joined);
             kept *= 1.0 - amount;
@@ -381,6 +380,14 @@ impl TerrainRoads {
             .map(|a| 1.0 - a)
             .product::<f64>()
     }
+}
+
+/// How fully a junction's worn patch replaces its roads `distance` metres from its centre, at
+/// `world` (XZ): a common centre, then a broad transition into each road's own tracks, the
+/// patch's edge ragged by up to a third of its radius in broad patches.
+pub fn junction_blend(distance: f64, radius: f32, world: [f64; 2], seed: u32) -> f64 {
+    let ragged = 1.0 + 0.3 * (road_patch(world, radius * 0.8, seed ^ 0x5e1) * 2.0 - 1.0);
+    smooth((1.0 - distance / (f64::from(radius) * ragged)) / 0.65)
 }
 
 /// Domain-warped value noise, 0..1, in patches about `size` metres across, at world XZ `p`.

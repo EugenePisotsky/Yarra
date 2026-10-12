@@ -199,8 +199,8 @@ Drawing roads per pixel from centre lines (near terrain until now) fits one road
 
 Authored: routes, which roads connect, traffic level and width, per-junction overrides (later), painted wear touch-ups (later; the field is built so a brush can add to it). Generated: everything visual, junction hubs and corner legs (one per pair of neighbouring arms meeting at under about 150°, its traffic the quieter arm's, less the wider the angle; legs against a one-way road's `TravelDirection` are skipped), island objects, edge bands, debris.
 
-1. **Wear field** (in progress): pages carry natural weights and the field (payload v14); surfaces name their worn ground in the terrain pack; the compiler rasterizes roads and junctions into the field and lays worn ground for grass, palette and bake; near terrain and the bake apply it; the per-pixel road search goes.
-2. **Junctions**: generated corner legs, hubs and islands; editor display and toggles.
+1. **Wear field**: done (`c1d20d3`).
+2. **Junctions**: corner legs and ragged hubs done; island objects go with the look, per-junction toggles with authoring.
 3. **Look**, iterated with the user on a fixed sheet of views against the references: the wear ramp (trampled grass, dry band, dirt, packed and gravel), weeds, stones, flattened and leaning grass, ruts.
 4. **Authoring**: traffic level per road (styles become presets of it), wear brush.
 5. **Performance**, once the look holds.

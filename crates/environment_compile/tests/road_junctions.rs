@@ -135,12 +135,25 @@ fn t_junction_wears_the_center_and_blends_ruts_without_adding_grass_or_excavatin
     plain.spans.retain(|s| s.road == plain.roads[0].id);
     plain.roads.truncate(1);
     let before = compile(&plan, &c, &plain, CELLS[0]);
+    // Away from the corner legs (the page's roads after the two that meet).
+    let mut compared = 0;
     for z in 0..33 {
+        let local = [1.0, z as f64 * 0.25];
+        let near_leg = (2..a.roads.roads.len()).any(|leg| {
+            a.roads
+                .nearest_on(leg, local)
+                .is_some_and(|hit| hit.offset.distance < hit.offset.width * 0.5 + 2.0)
+        });
+        if near_leg {
+            continue;
+        }
+        compared += 1;
         assert_eq!(
             h.height_at(4, z),
             before.terrain.as_ref().unwrap().height_at(4, z)
         );
     }
+    assert!(compared >= 5, "{compared} samples away from the legs");
     // Roads and junctions only wear the meadow away. The worn ground they paint grows its own
     // grass, no more than the corridor retains.
     let mut none = r.clone();
@@ -305,7 +318,8 @@ fn page_roads_reproduce_a_junction_for_near_detail() {
     for cell in CELLS {
         let compiled = compile(&plan, &c, &r, cell);
         let roads = &compiled.roads;
-        assert_eq!(roads.roads.len(), 2, "both roads draw on {cell:?}");
+        // Both roads, and the corner legs between them.
+        assert!(roads.roads.len() >= 2, "both roads draw on {cell:?}");
         assert_eq!(roads.junctions.len(), 1);
         assert_eq!(roads.junctions[0].members, 0b11);
         let n = usize::from(compiled.ground.weight_pages[0].resolution);
@@ -346,8 +360,14 @@ fn a_footpath_of_its_own_style_branches_from_a_cart_road() {
     }
     let cell = compile(&plan, &c, &r, CELLS[0]);
     let roads = &cell.roads;
-    assert_eq!(roads.roads.len(), 2);
     assert_eq!(roads.roads[1].shape.track_spacing, 0.0);
+    // Its corner legs to the cart road take the quieter footpath's style.
+    assert!(roads.roads.len() > 2);
+    assert!(
+        roads.roads[2..]
+            .iter()
+            .all(|r| r.shape.track_spacing == 0.0)
+    );
     // One track: both wander as one.
     let tracks = roads.roads[1].shape.tracks([3.0, 5.0]);
     assert_eq!(tracks[0], tracks[1]);
@@ -358,4 +378,45 @@ fn a_footpath_of_its_own_style_branches_from_a_cart_road() {
         ..path
     });
     assert!(r.validate().is_err());
+}
+#[test]
+fn corner_legs_cut_the_corners_traffic_turns_leaving_a_grass_island() {
+    let (plan, c, r) = setup();
+    // A T: the branch leaves the straight road at right angles, so both corners are cut.
+    let cells: Vec<_> = CELLS
+        .iter()
+        .map(|&cell| compile(&plan, &c, &r, cell))
+        .collect();
+    let legs = cells[0].roads.roads.len() - 2;
+    assert_eq!(legs, 2, "one leg per corner");
+    // The legs are narrower and wear less than the roads they join.
+    let main = &cells[0].roads.roads[0];
+    assert!(
+        cells[0].roads.roads[2..]
+            .iter()
+            .all(|l| l.strength < main.strength)
+    );
+    // Between a leg and the junction the meadow stays (an island); on the leg it is worn.
+    let roads = &cells[0].roads;
+    let origin = [0.0, 0.0];
+    let island = roads.ground(origin, [6.0, 6.5]);
+    let on_leg = (2..roads.roads.len())
+        .filter_map(|leg| roads.nearest_on(leg, [6.0, 6.5]))
+        .map(|hit| roads.ground(origin, hit.point))
+        .fold(0.0, f64::max);
+    assert!(on_leg > 0.4, "the leg wears {on_leg}");
+    assert!(
+        island < on_leg,
+        "island {island} against the leg's {on_leg}"
+    );
+    // Corners too sharp or too straight are not cut: two roads meeting end to end keep none.
+    let mut straight = r.clone();
+    straight.spans.retain(|s| s.road == straight.roads[0].id);
+    straight.roads.truncate(1);
+    straight.junctions[0]
+        .knots
+        .retain(|k| *k == RoadKnotId([3; 16]));
+    straight.junctions.clear();
+    let plain = compile(&plan, &c, &straight, CELLS[0]);
+    assert_eq!(plain.roads.roads.len(), 1);
 }

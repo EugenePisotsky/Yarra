@@ -208,6 +208,20 @@ impl RoadPlan {
             snapshot.cell_size,
             profile.max_intersection_work,
         )?;
+        // Corner legs join their arms by design, so come after the crossing checks.
+        let limits = profile.detail_limits(
+            snapshot.cell_size,
+            plan.profile.terrain_resolution,
+            plan.profile.vegetation_resolution,
+        )?;
+        roads.extend(junctions::legs(
+            &junctions,
+            &roads,
+            snapshot.cell_size,
+            &profile,
+            &limits,
+            &mut remaining,
+        ));
         let mut cells = BTreeMap::new();
         let mut work = 0usize;
         let samples = usize::from(plan.profile.terrain_resolution).pow(2)

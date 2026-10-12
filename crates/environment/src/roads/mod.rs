@@ -27,6 +27,12 @@ pub const MAX_ROAD_QUERY_CELLS: usize = 576;
 
 /// Explicit at-grade connection. Member knots retain independent curve handles.
 /// The first policy is a worn clearing, using one shared cart style for all arms.
+/// How far along its arms a junction's corner legs join them at most, metres.
+pub const JUNCTION_LEG_REACH: f32 = 18.0;
+/// What a corner leg's drawing reaches beyond its centre line at most: half the widest road a
+/// junction takes (its radius) is not known here, so a generous bound.
+const JUNCTION_LEG_MARGIN: f32 = 8.0;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RoadJunction {
     pub id: RoadJunctionId,
@@ -56,14 +62,14 @@ impl RoadJunction {
         }
         Ok(())
     }
+    /// The cells the junction's patch and its corner legs reach.
     pub fn bounds(&self, size: f32) -> Result<RoadCellBounds, ValidationError> {
         self.validate(size)?;
+        let reach = f64::from(self.radius.max(JUNCTION_LEG_REACH) + JUNCTION_LEG_MARGIN);
         let point = |sign: f64| {
             RoadPoint::from_relative(
                 self.position.cell,
-                self.position
-                    .local
-                    .map(|v| v + sign * f64::from(self.radius)),
+                self.position.local.map(|v| v + sign * reach),
                 f64::from(size),
             )
             .map(|p| p.cell)
