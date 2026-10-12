@@ -337,11 +337,18 @@ fn routes_suppress_only_the_named_channel_and_material_budget_still_applies() {
         },
     )
     .unwrap();
-    // Past the budget a cell keeps its heaviest surfaces, so the road still compiles.
+    // Past the budget a cell keeps its heaviest surfaces, so the road still compiles, its own
+    // ground ahead of heavier natural ground: a road through a varied page still shows.
     let cells = narrow
         .compile_cells_with_roads(&CELLS, &c, &r, Default::default())
         .unwrap();
     assert!(cells.iter().all(|c| c.ground.surfaces.len() == 1));
+    let crossed: Vec<_> = cells.iter().filter(|c| !c.roads.roads.is_empty()).collect();
+    assert!(!crossed.is_empty());
+    for cell in crossed {
+        let road = &cell.roads.roads[0].surfaces;
+        assert!(road.iter().any(|(s, _)| *s == cell.ground.surfaces[0]));
+    }
 }
 #[test]
 fn detail_below_output_resolution_is_broadened_in_the_bake_and_drawn_as_authored_up_close() {

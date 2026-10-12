@@ -138,10 +138,11 @@ fn road_weights(index: u32, page: Weights, hit: RoadHit, reach: f32, texel: f32,
     let side = clamp(hit.lateral/reach*0.5+0.5, 0.0, 1.0);
     let natural = smoothstep(reach-texel, reach, hit.distance);
     let slots = road_slots(hit); let shares = road_shares(hit) * amount;
+    let laid = dot(shares, vec4(1.0));
     let a = slot_weight(slots.x, shares.x); let b = slot_weight(slots.y, shares.y);
     let c = slot_weight(slots.z, shares.z); let d = slot_weight(slots.w, shares.w);
-    return Weights(mix(mix(left.low,right.low,side),page.low,natural)*(1.0-amount) + a.low+b.low+c.low+d.low,
-        mix(mix(left.high,right.high,side),page.high,natural)*(1.0-amount) + a.high+b.high+c.high+d.high);
+    return Weights(mix(mix(left.low,right.low,side),page.low,natural)*(1.0-laid) + a.low+b.low+c.low+d.low,
+        mix(mix(left.high,right.high,side),page.high,natural)*(1.0-laid) + a.high+b.high+c.high+d.high);
 }
 // The page's ground: its three largest weights here, blended by surface height.
 fn blended_surfaces(index: u32, page: Weights, local: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, field: f32) -> Surface {
@@ -189,8 +190,7 @@ fn close_ground(world: vec3<f32>, geometry_normal: vec3<f32>, dx: vec2<f32>, dy:
     var result = NearResult(vec4(0.0),geometry_normal,1.0,1.0,0.0,-1.0);
     if near_settings.z < 0.5 { return result; }
     let distance_to_camera = distance(near_view::view.world_position,world);
-    let range_weight = (1.0-smoothstep(near_settings.x,near_settings.y,distance_to_camera))
-        * (1.0-smoothstep(0.06,0.18,max(length(dx),length(dy))));
+    let range_weight = 1.0-smoothstep(near_settings.x,near_settings.y,distance_to_camera);
     if range_weight <= 0.0 { return result; }
     let c = world.xz/cell_size;
     let cell = vec2<i32>(floor(c))+origin;

@@ -139,10 +139,12 @@ impl CompilePlan {
             .filter_map(|(i, used)| used.then_some(i))
             .collect();
         if palette.len() > self.profile.max_surfaces_per_cell {
+            let roads = roads.map_or(vec![], |r| r.ground_surfaces(cell));
             palette = keep_heaviest(
                 &mut samples,
                 surface_count,
                 &palette,
+                &roads,
                 self.profile.max_surfaces_per_cell,
             );
         }
@@ -275,11 +277,14 @@ impl CompilePlan {
 
 /// Where more surfaces meet in a cell than its weight pages hold, keeps the `maximum` with the
 /// most weight in the cell and shares each sample among those. The dropped surfaces are slivers:
-/// shading shows at most three surfaces at a point anyway. Returns the kept palette, in order.
+/// shading shows at most three surfaces at a point anyway. Surfaces in `first` (road ground) are
+/// kept ahead of heavier natural ground, so a road crossing a corner of a varied page still
+/// shows there. Returns the kept palette, in order.
 fn keep_heaviest(
     samples: &mut [u8],
     surface_count: usize,
     palette: &[usize],
+    first: &[usize],
     maximum: usize,
 ) -> Vec<usize> {
     let mut totals = vec![0_u64; surface_count];
@@ -289,8 +294,14 @@ fn keep_heaviest(
         }
     }
     let mut kept = palette.to_vec();
-    // Heaviest first; equal totals keep the lower surface index.
-    kept.sort_by(|&a, &b| totals[b].cmp(&totals[a]).then(a.cmp(&b)));
+    // Road ground first, then heaviest; equal totals keep the lower surface index.
+    kept.sort_by(|&a, &b| {
+        first
+            .contains(&b)
+            .cmp(&first.contains(&a))
+            .then(totals[b].cmp(&totals[a]))
+            .then(a.cmp(&b))
+    });
     kept.truncate(maximum);
     let heaviest = kept[0];
     kept.sort_unstable();

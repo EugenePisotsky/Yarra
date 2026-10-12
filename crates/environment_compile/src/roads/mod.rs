@@ -331,6 +331,17 @@ impl RoadPlan {
                 * z.wear,
         }
     }
+    /// The surfaces roads and junctions may lay on `cell`: a page keeps these over natural
+    /// ground when it has more surfaces than it can carry.
+    pub(crate) fn ground_surfaces(&self, cell: CellCoord) -> Vec<usize> {
+        let roads = self.cells.get(&cell).into_iter().flatten();
+        let junctions = self.junctions.iter().filter(|j| j.bounds.contains(cell));
+        roads
+            .flat_map(|(index, _)| &self.roads[*index].ground)
+            .chain(junctions.flat_map(|j| &j.ground))
+            .map(|&(index, _)| index)
+            .collect()
+    }
     pub(crate) fn ground(&self, cell: CellCoord, uv: [f64; 2], weights: &mut [f64]) {
         for (index, curves) in &self.cells[&cell] {
             let road = &self.roads[*index];
