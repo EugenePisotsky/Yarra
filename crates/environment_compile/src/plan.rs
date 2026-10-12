@@ -16,10 +16,11 @@ pub(crate) struct PlannedLayer {
 }
 
 /// A grass type that grows on some of the world's surfaces: its share of density on each, in
-/// the definition's surface order.
+/// the definition's surface order, and whether it lies on worn ground too (`DetailType::on_paths`).
 pub(crate) struct GrassBinding {
     pub grass: GrassTypeId,
     pub amounts: Vec<f64>,
+    pub on_paths: bool,
 }
 
 /// Build once from the complete small layer/catalog definition and share with every cell job.
@@ -112,7 +113,12 @@ impl CompilePlan {
                             .map_or(0.0, |a| f64::from(a.amount))
                     })
                     .collect::<Vec<_>>();
-                GrassBinding { grass: id, amounts }
+                let on_paths = grass.details.iter().any(|d| d.id() == id && d.on_paths);
+                GrassBinding {
+                    grass: id,
+                    amounts,
+                    on_paths,
+                }
             })
             .filter(|b| b.amounts.iter().any(|&a| a > 0.0))
             .collect();
@@ -156,7 +162,10 @@ impl CompilePlan {
             })
             .collect();
         // Coverage depends on what grows where, not on how the grass looks.
-        let growth: Vec<_> = bindings.iter().map(|b| (b.grass, &b.amounts)).collect();
+        let growth: Vec<_> = bindings
+            .iter()
+            .map(|b| (b.grass, &b.amounts, b.on_paths))
+            .collect();
         let bytes = bincode::serde::encode_to_vec(
             (&definition, &compositions, &growth, &profile),
             bincode::config::standard(),

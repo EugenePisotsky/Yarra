@@ -17,6 +17,7 @@ fn stones() -> DetailType {
         tilt: 0.3,
         distance: 40.0,
         shadows: false,
+        on_paths: true,
     }
 }
 

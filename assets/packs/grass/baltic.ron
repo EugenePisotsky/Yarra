@@ -154,6 +154,7 @@
             twin: true,
         ),
     ],
+    // Stones, pebbles and twigs lie on roads and paths too (`on_paths`); road wear clears plants.
     details: [
         // Pebbles of the beach, gravel and paths: 5-14 cm.
         (
@@ -167,6 +168,7 @@
             tilt: 0.4,
             distance: 26.0,
             shadows: false,
+            on_paths: true,
         ),
         // Rounded cobbles at the waterline and on gravel: 5-25 cm.
         (
@@ -180,6 +182,7 @@
             tilt: 0.3,
             distance: 34.0,
             shadows: false,
+            on_paths: true,
         ),
         // Angular stones of rocky ground, 10-30 cm.
         (
@@ -193,6 +196,7 @@
             tilt: 0.4,
             distance: 45.0,
             shadows: true,
+            on_paths: true,
         ),
         // Rocks breaking through moss and meadow, 20-80 cm.
         (
@@ -219,6 +223,7 @@
             tilt: 0.15,
             distance: 26.0,
             shadows: false,
+            on_paths: true,
         ),
         // Bracken in patches over the forest floor and moss, 1-2.6 m across.
         (
@@ -284,7 +289,7 @@
         "leaf-litter": [("wavy-hair", 0.08), ("twigs", 1.0), ("ferns", 0.4), ("nettles", 0.15), ("lilies", 0.4)],
         "stony-moss": [("wavy-hair", 0.25), ("stones", 0.6), ("rocks", 0.6), ("twigs", 0.3), ("ferns", 0.3)],
         "beach-sand": [("pebbles", 0.3), ("cobbles", 0.25)],
-        "dirt": [("pebbles", 0.5), ("stones", 0.2), ("nettles", 0.25)],
+        "dirt": [("pebbles", 0.4), ("stones", 0.15), ("twigs", 0.12), ("nettles", 0.25)],
         "rocky-ground": [("pebbles", 1.0), ("stones", 0.8), ("rocks", 0.6)],
         "rock": [("stones", 0.3), ("rocks", 0.4)],
         "lichen-rock": [("stones", 0.3), ("rocks", 0.4)],

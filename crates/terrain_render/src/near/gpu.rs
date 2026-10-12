@@ -75,7 +75,7 @@ fn road_buffer_bytes() -> u64 {
     u64::from(ROAD_CAPACITY) * NEAR_SLOTS as u64 * 16
 }
 /// A page's roads as `terrain_near.wesl` reads them from its slot's region of the road buffer,
-/// which starts at vec4 `base`: six vec4 per road, then the page's 16 x 16 tiles, one vec4 each
+/// which starts at vec4 `base`: six vec4 per road (`terrain_road.wesl` lists their fields), then the page's 16 x 16 tiles, one vec4 each
 /// (rows of increasing X from the page's origin), then three vec4 per segment (ends; end
 /// normals; end widths and road). A tile holds two runs of segments, first and count each,
 /// together every segment that reaches the tile, so a pixel tests only those. Indices are
@@ -122,7 +122,12 @@ pub(super) fn road_records(s: &NearSource, base: u32) -> Option<(Vec<Vec4>, IVec
                 road.shoulder_ground,
                 road.strength,
             ),
-            Vec4::new(road.track_depth, road.rut_roundness, 0., 0.),
+            Vec4::new(
+                road.track_depth,
+                road.rut_roundness,
+                shape.track_wander,
+                shape.track_wander_length,
+            ),
             Vec4::from_array(std::array::from_fn(|i| ground[i].0)),
             Vec4::from_array(std::array::from_fn(|i| ground[i].1)),
         ]);

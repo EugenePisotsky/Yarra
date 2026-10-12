@@ -505,6 +505,8 @@ mod road_tests {
             track_retention: 0.0,
             edge_variation: 0.08,
             edge_patch_size: 4.0,
+            track_wander: 0.0,
+            track_wander_length: 8.0,
             breakup: 0.4,
             breakup_patch_size: 4.0,
             relief: Default::default(),

@@ -1,11 +1,11 @@
 //! Limits for one edited value, preserving every other authored value.
 use super::*;
-use environment_compile::{RoadCompileProfile, RoadDetailLimits};
 use std::ops::RangeInclusive;
 
+/// Output grids no longer limit a style: near terrain detail draws it as authored, and the
+/// compiler broadens what its grids cannot resolve (`environment_compile::RoadDetailLimits`).
 #[derive(Clone, Copy)]
 pub(super) struct GeometryLimits {
-    pub detail: RoadDetailLimits,
     pub corridor: Option<f32>,
     pub height_step: f32,
 }
@@ -16,11 +16,6 @@ impl GeometryLimits {
         project: &ProjectEditorStore,
         preview_space: Option<WorldSpaceId>,
     ) -> Result<Self, String> {
-        let compiler = RoadCompileProfile::default();
-        // Both preview sizes have the same 0.125 m output grid.
-        let mut detail = compiler
-            .detail_limits(8.0, 65, 64)
-            .map_err(|e| e.to_string())?;
         let mut height_step = 0.25_f32;
         for space in dependent_spaces(p, &dense.roads, preview_space) {
             height_step = height_step.max(
@@ -28,22 +23,8 @@ impl GeometryLimits {
                     .terrain_height_step(space)
                     .ok_or("Terrain height grid is loading")?,
             );
-            let d = dense
-                .definition(space)
-                .or_else(|| project.environments().iter().find(|d| d.space == space))
-                .ok_or("World definition is loading")?;
-            let terrain = project
-                .terrain_resources(space)
-                .ok_or("Terrain resources are loading")?;
-            let other = compiler
-                .detail_limits(d.cell_size, terrain.profile.weight_resolution, 64)
-                .map_err(|e| e.to_string())?;
-            detail.track_core = detail.track_core.max(other.track_core);
-            detail.edge_softness = detail.edge_softness.max(other.edge_softness);
-            detail.patch_size = detail.patch_size.max(other.patch_size);
         }
         Ok(Self {
-            detail,
             corridor: minimum_corridor(p, &dense.roads),
             height_step,
         })
@@ -52,7 +33,7 @@ impl GeometryLimits {
     pub fn range(self, field: GeometryField, p: &CartTrackProfile) -> Option<RangeInclusive<f32>> {
         use GeometryField::*;
         let corridor = self.corridor.unwrap_or(64.0);
-        let edges = 2.0 * (p.edge_softness + p.edge_variation);
+        let edges = 2.0 * (p.edge_softness + p.edge_variation + p.track_wander);
         let (mut min, mut max) = match field {
             Spacing => (
                 0.1_f32.max(p.track_width.next_up()),
@@ -60,32 +41,37 @@ impl GeometryLimits {
             ),
             TrackWidth => (
                 0.05_f32
-                    .max(if p.relief.track_depth > 0.0 {
-                        2.0 * self.height_step
-                    } else {
-                        0.0
-                    })
                     .max(p.edge_softness)
                     .max(p.edge_variation / 0.4)
-                    .max(self.detail.track_core + 2.0 * p.edge_variation),
+                    .max(p.track_wander),
                 8.0_f32
                     .min(p.track_spacing.next_down())
                     .min(corridor - p.track_spacing - edges),
             ),
             Softness => (
-                0.01_f32.max(self.detail.edge_softness),
+                0.01_f32,
                 4.0_f32
                     .min(p.track_width)
                     .min((corridor - p.track_spacing - p.track_width) * 0.5 - p.edge_variation),
             ),
             Variation => (
                 0.0,
-                4.0_f32
-                    .min(p.track_width * 0.4)
-                    .min((p.track_width - self.detail.track_core) * 0.5)
-                    .min((corridor - p.track_spacing - p.track_width) * 0.5 - p.edge_softness),
+                4.0_f32.min(p.track_width * 0.4).min(
+                    (corridor - p.track_spacing - p.track_width) * 0.5
+                        - p.edge_softness
+                        - p.track_wander,
+                ),
             ),
-            EdgePatch | BreakupPatch => (0.25_f32.max(self.detail.patch_size), 64.0),
+            Wander => (
+                0.0,
+                p.track_width.min(
+                    (corridor - p.track_spacing - p.track_width) * 0.5
+                        - p.edge_softness
+                        - p.edge_variation,
+                ),
+            ),
+            EdgePatch | BreakupPatch => (0.25, 64.0),
+            WanderLength => (0.5, 64.0),
         };
         // Inverse formulae can round outwards. Check their endpoints using the exact
         // forward constraints, without letting an unrelated invalid field prevent repair.
@@ -99,16 +85,13 @@ impl GeometryLimits {
                     v < p.track_spacing
                         && p.edge_softness <= v
                         && p.edge_variation <= v * 0.4
-                        && v - 2.0 * p.edge_variation >= self.detail.track_core
+                        && p.track_wander <= v
                         && width_fits
                 }
                 Softness => v <= p.track_width && width_fits,
-                Variation => {
-                    v <= p.track_width * 0.4
-                        && p.track_width - 2.0 * v >= self.detail.track_core
-                        && width_fits
-                }
-                EdgePatch | BreakupPatch => true,
+                Variation => v <= p.track_width * 0.4 && width_fits,
+                Wander => v <= p.track_width && width_fits,
+                EdgePatch | BreakupPatch | WanderLength => true,
             }
         };
         for _ in 0..8 {
@@ -122,6 +105,10 @@ impl GeometryLimits {
                 break;
             }
             max = max.next_down();
+        }
+        // A value squeezed to its last valid setting can leave rounded ends crossed.
+        if max < min && accepts(min) {
+            max = min;
         }
         (min.is_finite() && max.is_finite() && min <= max && accepts(min) && accepts(max))
             .then_some(min..=max)
@@ -161,6 +148,8 @@ pub(super) enum GeometryField {
     Variation,
     EdgePatch,
     BreakupPatch,
+    Wander,
+    WanderLength,
 }
 impl GeometryField {
     pub fn value(self, p: &mut CartTrackProfile) -> &mut f32 {
@@ -171,6 +160,8 @@ impl GeometryField {
             Self::Variation => &mut p.edge_variation,
             Self::EdgePatch => &mut p.edge_patch_size,
             Self::BreakupPatch => &mut p.breakup_patch_size,
+            Self::Wander => &mut p.track_wander,
+            Self::WanderLength => &mut p.track_wander_length,
         }
     }
     pub fn control(self, ui: &mut egui::Ui, p: &mut CartTrackProfile, limits: GeometryLimits) {
@@ -181,10 +172,12 @@ impl GeometryField {
             Self::Variation => "Edge variation",
             Self::EdgePatch => "Edge patch size",
             Self::BreakupPatch => "Breakup patch size",
+            Self::Wander => "Track wander",
+            Self::WanderLength => "Track wander length",
         };
         if let Some(range) = limits.range(self, p) {
             let hint = format!(
-                "Allowed: {:.4}–{:.4} m with the current track dimensions, road widths and output grids.",
+                "Allowed: {:.4}–{:.4} m with the current track dimensions and road widths.",
                 range.start(),
                 range.end()
             );
@@ -232,19 +225,18 @@ mod tests {
     use super::*;
     use crate::workspaces::presets::tests::road_request;
 
-    const FIELDS: [GeometryField; 6] = [
+    const FIELDS: [GeometryField; 8] = [
         GeometryField::Spacing,
         GeometryField::TrackWidth,
         GeometryField::Softness,
         GeometryField::Variation,
         GeometryField::EdgePatch,
         GeometryField::BreakupPatch,
+        GeometryField::Wander,
+        GeometryField::WanderLength,
     ];
     fn limits() -> GeometryLimits {
         GeometryLimits {
-            detail: RoadCompileProfile::default()
-                .detail_limits(8.0, 65, 64)
-                .unwrap(),
             corridor: Some(3.5),
             height_step: 0.25,
         }
@@ -305,7 +297,6 @@ mod tests {
                     *range.end()
                 };
                 p.validate().unwrap();
-                l.detail.validate(&p).unwrap();
                 assert!(p.minimum_width() <= 3.5);
             }
         }

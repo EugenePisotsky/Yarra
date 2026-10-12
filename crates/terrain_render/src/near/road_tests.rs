@@ -42,6 +42,8 @@ fn bend() -> TerrainRoads {
                 edge_softness: 0.25,
                 edge_variation: 0.05,
                 edge_patch_size: 2.0,
+                track_wander: 0.25,
+                track_wander_length: 7.0,
                 breakup: 0.3,
                 breakup_patch_size: 2.4,
             },
@@ -142,7 +144,8 @@ fn evaluate(@builtin(global_invocation_id) id: vec3<u32>) {
     let c = cases[id.x];
     let hit = nearest_road(c.roads, c.local, 32.0);
     if hit.road < 0 { results[id.x] = vec4(-1.0); return; }
-    results[id.x] = vec4(road_amount(hit, c.world), hit.lateral, hit.distance, f32(hit.road));
+    let centre = c.world - c.local + hit.point;
+    results[id.x] = vec4(road_amount(hit, c.world, centre), hit.lateral, hit.distance, f32(hit.road));
 }
 "#,
             &defs,

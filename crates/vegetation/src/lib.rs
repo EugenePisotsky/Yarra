@@ -213,6 +213,10 @@ pub struct DetailType {
     pub distance: f32,
     /// Whether they cast shadows; pebbles and twigs are too small to need them.
     pub shadows: bool,
+    /// Whether they lie on worn ground too: road wear and grass exclusions, which clear plants,
+    /// leave stones and twigs where the ground carries them.
+    #[serde(default)]
+    pub on_paths: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -864,6 +868,7 @@ mod tests {
             tilt: 0.2,
             distance: 30.0,
             shadows: false,
+            on_paths: true,
         };
         let pack = GrassPack {
             terrain: "test".into(),

@@ -58,49 +58,29 @@ impl RoadCompileProfile {
             patch_size: ceil(4.0 * step),
         })
     }
-
-    pub fn validate_detail(
-        &self,
-        cart: &CartTrackProfile,
-        cell_size: f32,
-        terrain_resolution: u16,
-        vegetation_resolution: u16,
-    ) -> Result<(), CompileError> {
-        self.detail_limits(cell_size, terrain_resolution, vegetation_resolution)?
-            .validate(cart)
-    }
 }
 
+/// The finest road detail a cell's output grids resolve: narrower tracks, softer edges and
+/// smaller patches would alias between samples or vanish. The compiler broadens a style to these
+/// for weights, grass and heights; near terrain detail draws the authored style per pixel.
 #[derive(Debug, Clone, Copy)]
 pub struct RoadDetailLimits {
-    /// Track width remaining after variation consumes both edges.
+    /// Track width remaining after variation and wander consume both edges.
     pub track_core: f32,
     pub edge_softness: f32,
     pub patch_size: f32,
 }
 impl RoadDetailLimits {
-    pub fn validate(&self, cart: &CartTrackProfile) -> Result<(), CompileError> {
-        for (value, minimum, label) in [
-            (
-                cart.track_width - 2.0 * cart.edge_variation,
-                self.track_core,
-                "track width minus twice the edge variation",
-            ),
-            (cart.edge_softness, self.edge_softness, "edge softness"),
-            (cart.edge_patch_size, self.patch_size, "edge patch size"),
-            (
-                cart.breakup_patch_size,
-                self.patch_size,
-                "breakup patch size",
-            ),
-        ] {
-            if !value.is_finite() || value < minimum {
-                return Err(CompileError::Road(format!(
-                    "{label} must be at least {minimum:.4} m at this output resolution; broaden this feature or increase output resolution"
-                )));
-            }
-        }
-        Ok(())
+    /// `shape` as these grids can draw it.
+    pub fn broaden(&self, mut shape: world::RoadShape) -> world::RoadShape {
+        shape.edge_softness = shape.edge_softness.max(self.edge_softness);
+        shape.track_width = shape
+            .track_width
+            .max(self.track_core + 2.0 * shape.edge_variation + shape.track_wander);
+        shape.edge_patch_size = shape.edge_patch_size.max(self.patch_size);
+        shape.breakup_patch_size = shape.breakup_patch_size.max(self.patch_size);
+        shape.track_wander_length = shape.track_wander_length.max(self.patch_size);
+        shape
     }
 }
 /// Independent influence values; a road can expose ground while retaining its grassy center.
@@ -112,6 +92,8 @@ struct RoadInfluence {
 struct PlannedRoad {
     source: Road,
     profile: CartTrackProfile,
+    /// The style's shape as the cell's grids draw it.
+    baked: world::RoadShape,
     ground: Vec<(usize, f64)>,
     ground_preset: environment::Preset,
     curves: Vec<Curve>,
@@ -211,12 +193,13 @@ impl RoadPlan {
                 continue;
             }
             spans.sort_by_key(|s| s.id);
-            profile.validate_detail(
-                cart,
-                snapshot.cell_size,
-                plan.profile.terrain_resolution,
-                plan.profile.vegetation_resolution,
-            )?;
+            let baked = profile
+                .detail_limits(
+                    snapshot.cell_size,
+                    plan.profile.terrain_resolution,
+                    plan.profile.vegetation_resolution,
+                )?
+                .broaden(shape(cart, source.seed));
             let mut curves = vec![];
             for span in spans {
                 curves.push(Curve::build(
@@ -231,6 +214,7 @@ impl RoadPlan {
                 roads.push(PlannedRoad {
                     source: source.clone(),
                     profile: cart.clone(),
+                    baked,
                     ground: surface_weights,
                     ground_preset: preset.clone(),
                     curves,
@@ -325,12 +309,13 @@ impl RoadPlan {
             (f64::from(cell.x) + uv[0]) * size,
             (f64::from(cell.z) + uv[1]) * size,
         ];
-        let z = shape(p, road.source.seed).zones(
+        let z = road.baked.zones(
             &world::RoadOffset {
                 distance: closest.distance_squared.sqrt(),
                 lateral: closest.lateral,
                 longitudinal: closest.longitudinal,
                 width: closest.width,
+                point: closest.point,
             },
             world,
         );
@@ -457,6 +442,19 @@ impl RoadPlan {
     /// The roads reaching `cell` as its terrain page carries them: each road's drawing and every
     /// tessellated centre-line segment whose corridor touches the page, in page-local metres.
     /// Near terrain detail resolves wheel tracks from these that the page's weights cannot.
+    /// Ruts that heights `height_step` apart carry are not drawn again.
+    pub(crate) fn clear_carved_ruts(
+        &self,
+        cell: CellCoord,
+        height_step: f32,
+        roads: &mut world::TerrainRoads,
+    ) {
+        for ((index, _), road) in self.cells[&cell].iter().zip(&mut roads.roads) {
+            if self.roads[*index].profile.carves_ruts(height_step) {
+                road.track_depth = 0.0;
+            }
+        }
+    }
     pub(crate) fn terrain_roads(&self, cell: CellCoord) -> world::TerrainRoads {
         let mut result = world::TerrainRoads::default();
         let Some(entries) = self.cells.get(&cell) else {
@@ -527,6 +525,8 @@ fn shape(p: &CartTrackProfile, seed: u32) -> world::RoadShape {
         edge_softness: p.edge_softness,
         edge_variation: p.edge_variation,
         edge_patch_size: p.edge_patch_size,
+        track_wander: p.track_wander,
+        track_wander_length: p.track_wander_length,
         breakup: p.breakup,
         breakup_patch_size: p.breakup_patch_size,
     }

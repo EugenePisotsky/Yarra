@@ -23,7 +23,7 @@ pub(super) fn controls(ui: &mut egui::Ui, p: &mut CartTrackProfile, step: f32) {
         ui.small("Smooth, stable variation uses each road's seed. Both tracks share broad variation but have individual unevenness. Grass patches do not erase ruts.");
     });
     ui.small(format!(
-        "Height grid limit: {step:.3} m. Ruts need tracks at least {:.3} m wide.",
+        "Height grid: {step:.3} m. Tracks at least {:.3} m wide carve their ruts into the terrain; near terrain detail draws narrower ones.",
         step * 2.0
     ));
     if let Err(e) = p.validate_relief_detail(step) {

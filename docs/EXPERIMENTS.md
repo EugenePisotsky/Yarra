@@ -599,6 +599,17 @@ The compiler bakes roads into 0.5 m weights, which blur 1.1 m wheel tracks. Terr
 | Search unrolled four segments at a time | **Rejected.** No change (1.256 against 1.237). |
 | Open | A per-page road distance texture would replace the search with one filtered read (≈0.5 ms native), at the cost of an exact match with the compiler. |
 
+**Less perfect roads (October 12).** After the user's references (`tmp/references/roads`): ragged edges, wandering tracks, parallax ruts, worn soil, stones and twigs on the road, rain in the ruts. Views `road-bend`, `road-meadow`, `road-forest`, `road-low` (on the road, low camera).
+
+| Change | Decision / observation |
+| --- | --- |
+| Edges | **Retained.** A fine octave of bites at a fifth of the edge patch size; softness 0.08 m drawn up close, broadened to 0.25 m in the bake. |
+| Track wander | **Retained.** Each track's offset and width drift along the road (value noise at the nearest centre-line point); the centre strip narrows and widens. |
+| Wheel grooves as two sines | **Rejected:** corduroy. Value noise across the rut, in stretches a few metres long, at 30% of the rut's depth. |
+| Rut water | First filled every rut end to end, then came out in boxes (thresholds along and across the rut); now a level water line over the floor's dips in 2-D, domain-warped so edges are not lattice-aligned. Muddy water seen from above stays dark (the shared puddle shading). |
+| Debris on paths | **Retained.** `DetailType::on_paths`: road wear no longer clears stones, pebbles and twigs. |
+| Cost (`road-low`, ratio to the sky composite, native) | Roads off 1.29 → 1.225 after skipping blend candidates that cannot show (all near terrain). Search +0.085; blending the road's edges into its surroundings +0.18 (a third surface's texture reads; reading the sides alone costs nothing); ruts +0.22 → +0.145 (puddle noise only when wet, six steps) → +0.047 (march without grooves; pixels too far to see into a rut skip it). Total about +0.35 (≈3 ms native, ≈0.75 ms at 50%). |
+
 Metal System Trace leaves its raw kernel trace (~1 GB) in `$TMPDIR` for every recording; 153 of them (164 GB) had filled the disk. `tmp/look/trace.sh` now removes each one.
 
 ## Open gates and maintenance

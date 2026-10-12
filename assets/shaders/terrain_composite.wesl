@@ -182,6 +182,10 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
                 let base = textureSampleGrad(color_map, map_sampler, uv, uv_dx, uv_dy).a;
                 hollow = detailed_hollow(base, in.world_position.xz, footprint);
             }
+            // Wheel ruts drawn by near detail alone.
+            @if(!TERRAIN_NEAR_DISABLED) {
+                hollow = max(hollow, close.hollow);
+            }
             pbr.material.base_color = vec4(ground.color.rgb, 1.0);
             pbr.N = ground.normal;
             pbr.clearcoat_N = pbr.N;

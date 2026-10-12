@@ -6,27 +6,31 @@
 // and styles by name; the editor edits them as any other road.
 (
     styles: [
-        // A two-track cart road: worn wheel paths, grass down the middle, trampled shoulders.
+        // A two-track cart road: worn wheel paths sunk into ruts, grass down the middle,
+        // trampled shoulders. Ragged edges with grass biting in, tracks wandering and changing
+        // width along the road (after the references in tmp/references/roads).
         (
             name: "Baltic cart track",
             surfaces: [("dirt", 0.75), ("gravel", 0.25)],
             track_spacing: 1.7,
             track_width: 1.1,
-            edge_softness: 0.25,
-            center_ground: 0.1,
-            center_retention: 0.9,
+            edge_softness: 0.08,
+            center_ground: 0.2,
+            center_retention: 0.85,
             shoulder_ground: 0.35,
             shoulder_retention: 0.55,
             track_retention: 0.0,
-            edge_variation: 0.05,
-            edge_patch_size: 2.0,
+            edge_variation: 0.15,
+            edge_patch_size: 1.6,
+            track_wander: 0.15,
+            track_wander_length: 6.0,
             breakup: 0.3,
             breakup_patch_size: 2.4,
             relief: (
                 road_depth: 0.06,
-                track_depth: 0.0,
+                track_depth: 0.07,
                 shoulder_falloff: 1.0,
-                rut_roundness: 1.0,
+                rut_roundness: 0.6,
                 road_variation: 0.2,
                 road_variation_length: 6.0,
                 track_variation: 0.25,

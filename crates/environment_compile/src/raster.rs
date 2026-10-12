@@ -213,7 +213,7 @@ impl CompilePlan {
     }
 
     /// Each grass type's coverage: what the surfaces that show carry, less what exclusions and
-    /// road wear clear.
+    /// road wear clear (of plants; stones and twigs stay).
     fn vegetation(
         &self,
         cell: CellCoord,
@@ -248,6 +248,7 @@ impl CompilePlan {
                         .zip(&grass.amounts)
                         .map(|(w, a)| w * a)
                         .sum();
+                    let kept = if grass.on_paths { 1.0 } else { kept };
                     field[z * resolution + x] =
                         ((amount * kept).clamp(0.0, 1.0) * 255.0).round() as u8;
                 }

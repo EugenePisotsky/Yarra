@@ -167,7 +167,7 @@ fn relief_ignores_grass_retention_and_cosmetic_breakup_and_does_not_stack_overla
     assert!((0..33).all(|x| overlapped.height_at(x, 22) > -0.20));
 }
 #[test]
-fn invalid_height_halos_unresolved_ruts_and_out_of_range_depths_fail_explicitly() {
+fn invalid_height_halos_and_out_of_range_depths_fail_explicitly() {
     let (plan, c, r) = setup();
     let check =
         |t: &TerrainSource| plan.compile_cell_with_terrain(CELLS[0], &c, &r, t, Default::default());
@@ -180,17 +180,43 @@ fn invalid_height_halos_unresolved_ruts_and_out_of_range_depths_fail_explicitly(
     let mut t = terrain(CELLS[0], 33);
     t.cells[4].heights[0] = 0.2;
     assert!(check(&t).is_err());
-    assert!(
-        check(&terrain(CELLS[0], 17))
-            .unwrap_err()
-            .to_string()
-            .contains("two terrain height intervals")
-    );
     let mut t = terrain(CELLS[0], 33);
     t.minimum_height = -0.05;
     assert!(check(&t).unwrap_err().to_string().contains("height bounds"));
 }
 
+#[test]
+fn ruts_too_narrow_for_the_heights_are_left_to_near_detail() {
+    let (plan, c, r) = setup();
+    let cell = |resolution| {
+        plan.compile_cell_with_terrain(
+            CELLS[0],
+            &c,
+            &r,
+            &terrain(CELLS[0], resolution),
+            Default::default(),
+        )
+        .unwrap()
+    };
+    // 0.65 m tracks: two intervals of a 33-sample grid (0.25 m), not of a 17-sample one (0.5 m).
+    let (fine, coarse) = (cell(33), cell(17));
+    assert_eq!(
+        fine.roads.roads[0].track_depth, 0.0,
+        "the heights carry them"
+    );
+    assert_eq!(
+        coarse.roads.roads[0].track_depth, 0.08,
+        "near detail draws them"
+    );
+    // Only the 0.15 m road bed is carved into the coarse grid; ruts deepen the fine one.
+    let deepest = |t: &TerrainHeightfield| {
+        (0..usize::from(t.resolution).pow(2))
+            .map(|i| t.height_at(i % usize::from(t.resolution), i / usize::from(t.resolution)))
+            .fold(0.0_f32, f32::min)
+    };
+    assert!(deepest(coarse.terrain.as_ref().unwrap()) > -0.2);
+    assert!(deepest(fine.terrain.as_ref().unwrap()) < -0.2);
+}
 #[test]
 fn flat_source_cells_keep_four_vertices_until_relief_needs_a_mesh() {
     let (plan, c, mut r) = setup();

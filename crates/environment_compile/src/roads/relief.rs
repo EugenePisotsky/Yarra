@@ -106,7 +106,7 @@ fn offset(cell: CellCoord, dx: i32, dz: i32) -> Result<CellCoord, CompileError> 
 }
 
 impl RoadPlan {
-    fn depression(&self, cell: CellCoord, uv: [f64; 2]) -> f64 {
+    fn depression(&self, cell: CellCoord, uv: [f64; 2], height_step: f32) -> f64 {
         let world = [
             (f64::from(cell.x) + uv[0]) * f64::from(self.size),
             (f64::from(cell.z) + uv[1]) * f64::from(self.size),
@@ -136,12 +136,16 @@ impl RoadPlan {
                 let depth = f64::from(relief.road_depth)
                     * (1.0 + f64::from(relief.road_variation) * broad)
                     * bed;
+                // Ruts too narrow for the height grid are near terrain detail's to draw.
+                if !p.carves_ruts(height_step) {
+                    return self.joined_depth(road.source.id, cell, uv, depth);
+                }
                 let shared = signed_noise(relief.track_variation_length, road.source.seed ^ 0x418c);
                 let mut ruts: f64 = 0.0;
-                for (side, salt) in [(-1.0, 0x41ab), (1.0, 0x873d)] {
-                    let distance = (closest.lateral - side * f64::from(p.track_spacing) * 0.5)
-                        .hypot(closest.longitudinal);
-                    let t = (distance / (f64::from(p.track_width) * 0.5)).min(1.0);
+                let tracks = road.baked.tracks(closest.point);
+                for ((centre, half), salt) in tracks.into_iter().zip([0x41ab, 0x873d]) {
+                    let distance = (closest.lateral - centre).hypot(closest.longitudinal);
+                    let t = (distance / half).min(1.0);
                     let shape =
                         smooth(1.0 - t.powf(2.0 + 6.0 * (1.0 - f64::from(relief.rut_roundness))));
                     let uneven = shared * 0.65
@@ -192,6 +196,7 @@ impl RoadPlan {
                 - self.depression(
                     page.cell,
                     [x as f64 / (count - 1) as f64, z as f64 / (count - 1) as f64],
+                    step,
                 ) as f32
         };
         let mut heights = Vec::with_capacity(n * n);
@@ -325,6 +330,11 @@ impl CompilePlan {
             .compile_with_influences(&[cell], coverage, Some(&road_plan))?
             .remove(0);
         compiled.terrain = Some(road_plan.terrain(cell, terrain)?);
+        road_plan.clear_carved_ruts(
+            cell,
+            terrain.cell_size / (n - 1) as f32,
+            &mut compiled.roads,
+        );
         compiled.objects = self.scatter(
             cell,
             &crate::coverage::Coverage::new(self, coverage)?,

@@ -181,16 +181,6 @@ pub(super) fn validate_in_project(
                 .ok_or("Terrain height grid is loading")?,
         )
         .map_err(|e| format!("World {}: {e}", space.0))?;
-        let d = definitions
-            .iter()
-            .find(|d| d.space == space)
-            .ok_or("World definition is loading")?;
-        let terrain = project
-            .terrain_resources(space)
-            .ok_or("Terrain resources for a dependent world are loading")?;
-        environment_compile::RoadCompileProfile::default()
-            .validate_detail(p, d.cell_size, terrain.profile.weight_resolution, 64)
-            .map_err(|e| format!("World {}: {e}", space.0))?;
     }
     Ok(())
 }
@@ -332,6 +322,9 @@ pub(super) fn panels(
                 if let Ok(limits) = &limits {
                     GeometryField::Spacing.control(ui, p, *limits);
                     GeometryField::TrackWidth.control(ui, p, *limits);
+                    GeometryField::Wander.control(ui, p, *limits);
+                    GeometryField::WanderLength.control(ui, p, *limits);
+                    ui.small("Each track wanders across the road by up to its wander, and its width by half that, independently along the road.");
                 }
                 ratio(ui, "Grass retained in tracks", &mut p.track_retention);
                 ui.separator(); ui.label("Center strip");

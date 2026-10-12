@@ -162,7 +162,12 @@ impl Curve {
             lateral: 0.0,
             longitudinal: 0.0,
             width: 0.0,
+            point: [0.0; 2],
         };
+        let origin = [
+            f64::from(self.source.start.position.cell.x) * size,
+            f64::from(self.source.start.position.cell.z) * size,
+        ];
         for pair in self.vertices.windows(2) {
             let [a, b] = [pair[0], pair[1]];
             let (t, q) = project(p, a.point, b.point);
@@ -176,6 +181,7 @@ impl Curve {
                     lateral,
                     longitudinal: (distance_squared - lateral * lateral).max(0.0).sqrt(),
                     width: a.width + (b.width - a.width) * t,
+                    point: [origin[0] + q[0], origin[1] + q[1]],
                 };
             }
         }
@@ -187,6 +193,8 @@ pub(super) struct Closest {
     pub lateral: f64,
     pub longitudinal: f64,
     pub width: f64,
+    /// The nearest centre-line point, world XZ.
+    pub point: [f64; 2],
 }
 fn intersects(a: [f64; 2], b: [f64; 2], c: [f64; 2], d: [f64; 2]) -> bool {
     if (0..2)

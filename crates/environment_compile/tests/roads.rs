@@ -344,14 +344,25 @@ fn routes_suppress_only_the_named_channel_and_material_budget_still_applies() {
     assert!(cells.iter().all(|c| c.ground.surfaces.len() == 1));
 }
 #[test]
-fn detail_below_output_resolution_is_rejected_instead_of_losing_wheel_tracks() {
+fn detail_below_output_resolution_is_broadened_in_the_bake_and_drawn_as_authored_up_close() {
     let (d, l, p, c, mut r) = cart_tracks();
+    straight(&mut r);
+    // Half-metre grids: 0.65 m tracks with 0.15 m edges are finer than they resolve.
     let coarse = CompilePlan::new(&d, &p, &l, profile()).unwrap();
-    assert!(matches!(
-        coarse.compile_cells_with_roads(&CELLS, &c, &r, Default::default()),
-        Err(CompileError::Road(_))
-    ));
-    // A distant profile cannot impose its detail requirements on this output cell.
+    let cells = compile(&coarse, &c, &r);
+    // The bake broadens the tracks to a metre, so both still clear their grass (centres at
+    // z = 4 -+ 0.775; texel centres every 0.5 m from 0.25).
+    for z in [6, 9] {
+        assert_eq!(grass(&cells[0], 8, z), 0, "track at row {z}");
+    }
+    // Near detail gets the style as authored.
+    let shape = cells[0].roads.roads[0].shape;
+    assert_eq!(
+        (shape.track_width, shape.edge_softness),
+        (0.65, 0.15),
+        "page roads carry the authored style"
+    );
+    // A distant profile cannot impose anything on this output cell.
     r.spans[0].start.position.cell.z += 20;
     r.spans[0].end.position.cell.z += 20;
     assert_eq!(
@@ -360,7 +371,7 @@ fn detail_below_output_resolution_is_rejected_instead_of_losing_wheel_tracks() {
     );
 }
 #[test]
-fn advertised_detail_minima_satisfy_sampling_constraints_and_identify_invalid_fields() {
+fn detail_minima_satisfy_sampling_constraints_and_broaden_only_what_falls_below() {
     let (_, _, _, _, r) = cart_tracks();
     for (size, terrain, vegetation, tolerance) in [
         (8.0, 65, 64, 0.005),
@@ -377,36 +388,33 @@ fn advertised_detail_minima_satisfy_sampling_constraints_and_identify_invalid_fi
         assert!(f64::from(limits.edge_softness) >= 0.5 * step);
         assert!(f64::from(limits.edge_softness) * 0.1 >= tolerance);
         assert!(f64::from(limits.patch_size) >= 4.0 * step);
-        let mut p = r.profiles[0].clone();
-        p.edge_variation = 0.0;
-        p.track_width = limits.track_core.max(limits.edge_softness);
-        p.edge_softness = limits.edge_softness;
-        p.edge_patch_size = limits.patch_size;
-        p.breakup_patch_size = limits.patch_size;
-        compiler
-            .validate_detail(&p, size, terrain, vegetation)
-            .unwrap();
-        for field in [
-            "edge softness",
-            "edge patch size",
-            "breakup patch size",
-            "track width",
-        ] {
-            let mut invalid = p.clone();
-            match field {
-                "edge softness" => invalid.edge_softness = limits.edge_softness.next_down(),
-                "edge patch size" => invalid.edge_patch_size = limits.patch_size.next_down(),
-                "breakup patch size" => invalid.breakup_patch_size = limits.patch_size.next_down(),
-                _ => invalid.track_width = limits.track_core.next_down(),
-            }
-            assert!(
-                compiler
-                    .validate_detail(&invalid, size, terrain, vegetation)
-                    .unwrap_err()
-                    .to_string()
-                    .contains(field)
-            );
-        }
+        let p = &r.profiles[0];
+        let fine = world::RoadShape {
+            seed: 1,
+            track_spacing: p.track_spacing,
+            track_width: limits.track_core + 0.5,
+            edge_softness: limits.edge_softness,
+            edge_variation: 0.1,
+            edge_patch_size: limits.patch_size,
+            track_wander: 0.2,
+            track_wander_length: limits.patch_size,
+            breakup: 0.5,
+            breakup_patch_size: limits.patch_size,
+        };
+        assert_eq!(limits.broaden(fine), fine, "resolvable detail is kept");
+        let coarse = limits.broaden(world::RoadShape {
+            track_width: 0.1,
+            edge_softness: 0.01,
+            edge_patch_size: 0.25,
+            track_wander_length: 0.25,
+            breakup_patch_size: 0.25,
+            ..fine
+        });
+        assert_eq!(coarse.track_width, limits.track_core + 0.2 + 0.2);
+        assert_eq!(coarse.edge_softness, limits.edge_softness);
+        assert_eq!(coarse.edge_patch_size, limits.patch_size);
+        assert_eq!(coarse.track_wander_length, limits.patch_size);
+        assert_eq!(coarse.breakup_patch_size, limits.patch_size);
     }
 }
 #[test]
@@ -623,4 +631,58 @@ fn page_roads_reproduce_the_compiled_road_ground_for_near_detail() {
         }
     }
     assert!(worn > 20, "the road wore {worn} samples");
+}
+#[test]
+fn road_wear_clears_plants_but_leaves_stones_and_twigs() {
+    let (d, l, mut p, c, mut r) = cart_tracks();
+    straight(&mut r);
+    let detail = |key: &str, on_paths| vegetation::DetailType {
+        key: key.into(),
+        assets: vec![format!("{key}.glb")],
+        density: 1.0,
+        scale: [1.0, 1.0],
+        clumps: vegetation::DetailClumps {
+            size: 1.0,
+            pull: 0.0,
+            patches: 0.0,
+        },
+        sink: 0.0,
+        align: 0.0,
+        tilt: 0.0,
+        distance: 20.0,
+        shadows: false,
+        on_paths,
+    };
+    let (pebbles, nettles) = (detail("pebbles", true), detail("nettles", false));
+    // Both grow on the meadow and on the road's bare soil alike.
+    p.surfaces.push(vegetation::SurfaceGrass {
+        surface: SOIL.0,
+        grass: vec![],
+    });
+    for s in &mut p.surfaces {
+        for t in [&pebbles, &nettles] {
+            s.grass.push(vegetation::GrassAmount {
+                grass: t.id(),
+                amount: 1.0,
+            });
+        }
+    }
+    p.details = vec![pebbles.clone(), nettles.clone()];
+    let plan = CompilePlan::new(&d, &p, &l, CompileProfile::default()).unwrap();
+    let cells = compile(&plan, &c, &r);
+    let at = |id, z: usize| {
+        let field = cells[0]
+            .vegetation
+            .fields
+            .iter()
+            .find(|f| f.grass == id)
+            .unwrap();
+        field.coverage[z * usize::from(field.resolution) + 32]
+    };
+    // A wheel track (row 25) is worn bare of plants; pebbles still lie there.
+    assert_eq!(at(nettles.id(), 25), 0);
+    assert_eq!(at(pebbles.id(), 25), 255);
+    // Off the road both grow.
+    assert_eq!(at(nettles.id(), 0), 255);
+    assert_eq!(at(pebbles.id(), 0), 255);
 }

@@ -213,6 +213,10 @@ pub struct CartTrackProfile {
     pub track_retention: f32,
     pub edge_variation: f32,
     pub edge_patch_size: f32,
+    /// How far each wheel track wanders across the road (its width by half that), metres, and
+    /// over about what length of road.
+    pub track_wander: f32,
+    pub track_wander_length: f32,
     /// Fraction of otherwise worn coverage restored in noise-selected patches.
     pub breakup: f32,
     pub breakup_patch_size: f32,
@@ -309,6 +313,11 @@ impl RoadRelief {
     }
 }
 impl CartTrackProfile {
+    /// Whether terrain heights `height_step` apart carry the wheel ruts: tracks at least two
+    /// intervals wide. Narrower ruts are drawn by near terrain detail alone.
+    pub fn carves_ruts(&self, height_step: f32) -> bool {
+        self.relief.track_depth > 0.0 && self.track_width >= 2.0 * height_step
+    }
     pub fn validate_relief_detail(&self, height_step: f32) -> Result<(), &'static str> {
         let r = &self.relief;
         if !r.enabled() {
@@ -322,15 +331,10 @@ impl CartTrackProfile {
                 "terrain shoulder falloff must span at least one height sample; broaden it or increase terrain resolution",
             );
         }
-        if r.track_depth > 0.0 && self.track_width < 2.0 * height_step {
-            return Err(
-                "wheel ruts need at least two terrain height intervals across their width; widen tracks or increase terrain resolution",
-            );
-        }
         if (r.road_depth > 0.0
             && r.road_variation > 0.0
             && r.road_variation_length < 4.0 * height_step)
-            || (r.track_depth > 0.0
+            || (self.carves_ruts(height_step)
                 && r.track_variation > 0.0
                 && r.track_variation_length < 4.0 * height_step)
         {
@@ -382,6 +386,12 @@ impl CartTrackProfile {
                 64.0,
                 "breakup patch size must be between 0.25 and 64 m",
             ),
+            (
+                self.track_wander_length,
+                0.5,
+                64.0,
+                "track wander length must be between 0.5 and 64 m",
+            ),
         ] {
             if !range(value, min, max) {
                 return Err(invalid(message));
@@ -397,6 +407,11 @@ impl CartTrackProfile {
         }
         if self.edge_variation > self.track_width * 0.4 {
             return Err(invalid("edge variation must not exceed 40% of track width"));
+        }
+        if !range(self.track_wander, 0.0, self.track_width) {
+            return Err(invalid(
+                "track wander must be between 0 and the track width",
+            ));
         }
         for (value, message) in [
             (
@@ -428,7 +443,9 @@ impl CartTrackProfile {
         Ok(())
     }
     pub fn minimum_width(&self) -> f32 {
-        self.track_spacing + self.track_width + 2.0 * (self.edge_softness + self.edge_variation)
+        self.track_spacing
+            + self.track_width
+            + 2.0 * (self.edge_softness + self.edge_variation + self.track_wander)
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

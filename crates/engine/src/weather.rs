@@ -31,6 +31,9 @@ pub struct GameWeather {
     pub paused: bool,
     /// Weather clock multiplier for testing transitions.
     pub time_scale: f32,
+    /// Holds the ground this wet, 0..1, in place of what the weather has soaked it to (look
+    /// captures of wet ground).
+    pub wetness_override: Option<f32>,
 }
 impl GameWeather {
     pub fn new(start: WeatherStart, seed: u64) -> Self {
@@ -40,6 +43,7 @@ impl GameWeather {
             runtime: None,
             paused: false,
             time_scale: 1.0,
+            wetness_override: None,
         }
     }
     pub fn start(&self) -> WeatherStart {
@@ -185,10 +189,12 @@ pub(crate) fn advance_weather(
         *previous_target = target;
     }
     let transition = weather.runtime.as_ref().map(WeatherRuntime::transition);
-    let wetness = weather
-        .runtime
-        .as_ref()
-        .map_or(0.0, WeatherRuntime::wetness);
+    let wetness = weather.wetness_override.unwrap_or_else(|| {
+        weather
+            .runtime
+            .as_ref()
+            .map_or(0.0, WeatherRuntime::wetness)
+    });
     if atmosphere.weather != current
         || atmosphere.weather_transition != transition
         || atmosphere.wetness != wetness

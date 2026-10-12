@@ -8,7 +8,7 @@ use world::{
     TerrainTextureSet, TerrainTextureSetId, WorldSpaceId,
 };
 
-pub(crate) const VEGETATION_CATALOG_FORMAT_VERSION: i64 = 11;
+pub(crate) const VEGETATION_CATALOG_FORMAT_VERSION: i64 = 12;
 pub(crate) fn write_vegetation_catalog(
     transaction: &Connection,
     catalog: Option<&VegetationCatalog>,

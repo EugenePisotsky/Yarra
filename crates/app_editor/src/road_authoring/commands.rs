@@ -28,6 +28,8 @@ pub(crate) fn default_profile(ground: PresetId, channel: ChannelId) -> CartTrack
         track_retention: 0.0,
         edge_variation: 0.08,
         edge_patch_size: 2.0,
+        track_wander: 0.0,
+        track_wander_length: 8.0,
         breakup: 0.7,
         breakup_patch_size: 1.2,
         relief: Default::default(),
