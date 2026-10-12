@@ -367,6 +367,14 @@ impl VegetationCatalog {
     /// Blades per square metre at which one type covers its ground fully.
     pub const FULL_COVER_DENSITY: f32 = 30.0;
 
+    /// How fully one type covers its ground where it grows at full amount: at
+    /// `FULL_COVER_DENSITY` or more fully, tufted types (high `pull`) leaving bare ground between
+    /// their tufts.
+    pub fn cover_share(grass: &GrassType) -> f32 {
+        (grass.blades_per_square_metre() / Self::FULL_COVER_DENSITY).min(1.0)
+            * (1.0 - 0.5 * grass.clumps.pull)
+    }
+
     /// How grass covers `surface`: ground under it is shaded where blades are drawn and takes
     /// the field's colour beyond them.
     pub fn cover(&self, surface: [u8; 16]) -> GrassCover {
@@ -376,9 +384,7 @@ impl VegetationCatalog {
             let Some(grass) = self.grass(a.grass) else {
                 continue;
             };
-            let share = a.amount
-                * (grass.blades_per_square_metre() / Self::FULL_COVER_DENSITY).min(1.0)
-                * (1.0 - 0.5 * grass.clumps.pull);
+            let share = a.amount * Self::cover_share(grass);
             let field = grass.colors.field();
             total += share;
             for (c, f) in color.iter_mut().zip(field) {
@@ -537,6 +543,47 @@ impl VegetationFieldPageData {
             }
         }
         Ok(())
+    }
+
+    /// How grass covers the page's ground where it actually grows (roads, exclusions and painted
+    /// coverage included), as `GrassCover` per texel: row-major RGBA8 at the grass fields' texel
+    /// centres, the field colour's square root in RGB (dark linear colours keep their precision)
+    /// and the cover in A. `None` without grass, or for fields of differing resolution.
+    pub fn cover_map(&self, catalog: &VegetationCatalog) -> Option<(u16, Vec<u8>)> {
+        let fields: Vec<_> = self
+            .fields
+            .iter()
+            .filter_map(|f| {
+                let grass = catalog.grass(f.grass)?;
+                Some((
+                    f,
+                    VegetationCatalog::cover_share(grass),
+                    grass.colors.field(),
+                ))
+            })
+            .collect();
+        let resolution = fields.first()?.0.resolution;
+        if fields.iter().any(|(f, _, _)| f.resolution != resolution) {
+            return None;
+        }
+        let texels = usize::from(resolution).pow(2);
+        let mut rgba = Vec::with_capacity(texels * 4);
+        for i in 0..texels {
+            let mut total = 0.0;
+            let mut color = [0.0; 3];
+            for (field, share, field_color) in &fields {
+                let share = f32::from(field.coverage[i]) / 255.0 * share;
+                total += share;
+                for (c, f) in color.iter_mut().zip(field_color) {
+                    *c += f * share;
+                }
+            }
+            let unit = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+            let color = color.map(|c| if total > 0.0 { c / total } else { 0.0 });
+            rgba.extend(color.map(|c| unit(c.sqrt())));
+            rgba.push(unit(total));
+        }
+        Some((resolution, rgba))
     }
 }
 
@@ -954,6 +1001,41 @@ mod tests {
             let (a, b) = (even.color[c], tufted.color[c]);
             assert!(both.color[c] >= a.min(b) && both.color[c] <= a.max(b));
         }
+    }
+
+    #[test]
+    fn cover_map_follows_where_grass_grows() {
+        let catalog = fixtures::reference_catalog();
+        let [meadow, tufts] = [0, 1].map(|i| catalog.grass[i].id());
+        let field = |grass, coverage: [u8; 4]| GrassField {
+            grass,
+            resolution: 2,
+            coverage: coverage.to_vec(),
+        };
+        // Meadow everywhere but a worn texel; tufts in one corner.
+        let data = VegetationFieldPageData {
+            fields: vec![
+                field(meadow, [255, 255, 255, 0]),
+                field(tufts, [0, 255, 0, 0]),
+            ],
+        };
+        let (resolution, rgba) = data.cover_map(&catalog).unwrap();
+        assert_eq!((resolution, rgba.len()), (2, 16));
+        let share = VegetationCatalog::cover_share(&catalog.grass[0]);
+        assert_eq!(rgba[3], (share * 255.0).round() as u8);
+        assert_eq!(rgba[15], 0);
+        let tufted = (share + VegetationCatalog::cover_share(&catalog.grass[1])).min(1.0);
+        assert_eq!(rgba[7], (tufted * 255.0).round() as u8);
+        let field_color = catalog.grass[0].colors.field();
+        for c in 0..3 {
+            let decoded = (f32::from(rgba[c]) / 255.0).powi(2);
+            assert!((decoded - field_color[c]).abs() < 0.01);
+        }
+        assert!(
+            VegetationFieldPageData { fields: vec![] }
+                .cover_map(&catalog)
+                .is_none()
+        );
     }
 
     #[test]

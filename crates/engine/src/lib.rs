@@ -24,7 +24,9 @@ pub use world::weather::{WeatherKind, WeatherParams};
 mod ground_details;
 mod world_streaming;
 mod world_vegetation;
-pub use world_vegetation::{GrassLooks, WorldVegetationPlugin, WorldVegetationSystems};
+pub use world_vegetation::{
+    GrassLooks, WorldVegetationPlugin, WorldVegetationSystems, near_grass_cover,
+};
 
 pub use atmosphere::clouds::CloudQuality;
 pub use atmosphere::forest_shadow::ForestSkyOcclusion;

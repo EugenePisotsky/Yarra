@@ -21,6 +21,9 @@ struct NearEntry {
 @group(constants::MATERIAL_BIND_GROUP) @binding(13) var near_normal: texture_2d_array<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(14) var near_macro: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(15) var repeat_sampler: sampler;
+// Per page: how grass covers its ground (near::NearGrassCover), the field colour's square root
+// and the cover, at the grass fields' texel centres.
+@group(constants::MATERIAL_BIND_GROUP) @binding(17) var near_grass: texture_2d_array<f32>;
 // This sampler belongs to the coarse maps and clamps rather than repeating controls.
 @group(constants::MATERIAL_BIND_GROUP) @binding(2) var map_sampler: sampler;
 
@@ -66,23 +69,23 @@ fn stochastic(uv: vec2<f32>, lattice: vec2<f32>, origin: vec2<f32>, layer: i32, 
     }
     return result;
 }
-// Ground fully covered by grass shows the grass's lower blades in their own shade, this bright,
-// where blades stand over it: gaps in a meadow read as deep grass, not bare soil.
-const UNDER_GRASS: f32 = 0.2;
+// Ground between grass blades, as far as grass covers it. Close by it keeps most of its own
+// texture (soil, litter, moss between the blades), a little of the field's colour and shaded as
+// the blades' roots are by the sky (vegetation lighting: about half); over UNDER_RANGE, as blades
+// thin out with distance, it takes more of the field's colour and its shade, so gaps read as deep
+// grass, not bare soil. Pairs (close, at UNDER_RANGE's end).
+const UNDER_RANGE: vec2<f32> = vec2(5.0, 30.0);
+const UNDER_TINT: vec2<f32> = vec2(0.25, 0.5);
+const UNDER_SHADE: vec2<f32> = vec2(0.8, 0.55);
 // Over this range the ground between blades turns from their shade to the field's colour, as
 // the distant composite bakes it (world_cook material_bake), while the composite takes over
 // (near::NEAR_START..NEAR_END).
 const FIELD_RANGE: vec2<f32> = vec2(44.0, 76.0);
 // How far fully covered ground takes the field's colour. The composite bake uses the same.
 const FIELD_STRENGTH: f32 = 0.85;
-// Close up, covered ground keeps most of its own texture (soil, litter, moss between the
-// blades), taking only this much of the field's colour before the blades' shade darkens it.
-const UNDER_TINT: f32 = 0.5;
 // `color.a` is the surface's blend height.
 struct Surface { color: vec4<f32>, normal: vec3<f32>, ao: f32, roughness: f32, }
-// `field` is how far grassy ground here shows the field's colour rather than the blades' shade,
-// 0..1.
-fn surface(index: u32, slot: u32, local: vec2<f32>, world_dx: vec2<f32>, world_dy: vec2<f32>, field: f32) -> Surface {
+fn surface(index: u32, slot: u32, local: vec2<f32>, world_dx: vec2<f32>, world_dy: vec2<f32>) -> Surface {
     let s = near_table[index].slots[slot];
     let size = max(s.surface.y, 0.001);
     let layer = i32(s.surface.x+0.5);
@@ -100,10 +103,7 @@ fn surface(index: u32, slot: u32, local: vec2<f32>, world_dx: vec2<f32>, world_d
     n = normalize(n); n.y *= s.material.x;
     n = normalize(vec3(n.xy*clamp(s.surface.w,0.0,1.0), max(n.z,0.001)));
     let rough = mix(s.material.y,s.material.z,packed.a);
-    let cover = clamp(s.grass.w, 0.0, 1.0);
-    let tint = mix(UNDER_TINT, FIELD_STRENGTH, field) * cover;
-    let ground = mix(color.rgb, s.grass.rgb, tint) * mix(1.0, mix(UNDER_GRASS, 1.0, field), cover);
-    return Surface(vec4(ground, color.a),n,packed.b,rough);
+    return Surface(color,n,packed.b,rough);
 }
 // Weighted sum of up to three shaded surfaces.
 fn mix_surfaces(a: Surface, b: Surface, c: Surface, w: vec3<f32>) -> Surface {
@@ -133,21 +133,33 @@ fn slot_weight(slot: f32, share: f32) -> Weights {
 // beyond its baked drawing, blended across; the road's ground then replaces that ground as the
 // compiler lays it (environment_compile RoadPlan::ground), `amount` of it here.
 fn road_weights(index: u32, page: Weights, hit: RoadHit, reach: f32, texel: f32, cell_size: f32, amount: f32) -> Weights {
-    let left = page_weights(index, clamp((hit.point-hit.normal*reach)/cell_size, vec2(0.0), vec2(1.0)));
-    let right = page_weights(index, clamp((hit.point+hit.normal*reach)/cell_size, vec2(0.0), vec2(1.0)));
-    let side = clamp(hit.lateral/reach*0.5+0.5, 0.0, 1.0);
+    let left_uv = clamp((hit.point-hit.normal*reach)/cell_size, vec2(0.0), vec2(1.0));
+    let right_uv = clamp((hit.point+hit.normal*reach)/cell_size, vec2(0.0), vec2(1.0));
+    let left = page_weights(index, left_uv);
+    let right = page_weights(index, right_uv);
+    var side = clamp(hit.lateral/reach*0.5+0.5, 0.0, 1.0);
+    // Near the page's edge a side's sample clamps onto the page, maybe onto the road itself, whose
+    // ground would then fill its grassy centre: only a side whose sample stays clear of the road
+    // stands in, else the side whose sample lies farther from it.
+    let clear = abs(vec2(dot(left_uv*cell_size-hit.point, hit.normal), dot(right_uv*cell_size-hit.point, hit.normal)));
+    let usable = clear >= vec2(reach-texel);
+    if usable.x != usable.y { side = select(0.0, 1.0, usable.y); }
+    else if !usable.x { side = select(0.0, 1.0, clear.y > clear.x); }
     let natural = smoothstep(reach-texel, reach, hit.distance);
     let slots = road_slots(hit); let shares = road_shares(hit) * amount;
+    // Road ground the page does not carry gives way to the natural ground.
     let laid = dot(shares, vec4(1.0));
     let a = slot_weight(slots.x, shares.x); let b = slot_weight(slots.y, shares.y);
     let c = slot_weight(slots.z, shares.z); let d = slot_weight(slots.w, shares.w);
     return Weights(mix(mix(left.low,right.low,side),page.low,natural)*(1.0-laid) + a.low+b.low+c.low+d.low,
         mix(mix(left.high,right.high,side),page.high,natural)*(1.0-laid) + a.high+b.high+c.high+d.high);
 }
-// The page's ground: its three largest weights here, blended by surface height.
-fn blended_surfaces(index: u32, page: Weights, local: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, field: f32) -> Surface {
+// The page's ground: its three largest weights here, blended by surface height, and the grass
+// its surfaces carry (field colour, cover) in the same shares.
+struct Ground { surface: Surface, grass: vec4<f32>, }
+fn blended_surfaces(index: u32, page: Weights, local: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) -> Ground {
     let count = u32(near_table[index].state.z+0.5);
-    if count <= 1u { return surface(index,0u,local,dx,dy,field); }
+    if count <= 1u { return Ground(surface(index,0u,local,dx,dy), near_table[index].slots[0].grass); }
     var weights = array<f32,8>(page.low.x,page.low.y,page.low.z,page.low.w,page.high.x,page.high.y,page.high.z,page.high.w);
     // Largest first; ties keep the lower slot, as world::terrain_blend_candidates does.
     var pick = vec3<u32>(0u); var best = vec3(0.0);
@@ -160,17 +172,20 @@ fn blended_surfaces(index: u32, page: Weights, local: vec2<f32>, dx: vec2<f32>, 
     // A surface shows only where its score (weight share plus height) comes within the blend
     // depth of the best; one that cannot, even at full height, is not sampled.
     let share = best/max(best.x+best.y+best.z,0.000001);
-    let a = surface(index,pick.x,local,dx,dy,field);
+    let a = surface(index,pick.x,local,dx,dy);
     var cut = share.x+a.color.a*BLEND_HEIGHT-BLEND_DEPTH;
     var b = a; var c = a; var heights = vec3(a.color.a,-1.0e3,-1.0e3);
     if best.y > 0.0 && share.y+BLEND_HEIGHT > cut {
-        b = surface(index,pick.y,local,dx,dy,field); heights.y = b.color.a;
+        b = surface(index,pick.y,local,dx,dy); heights.y = b.color.a;
         cut = max(cut,share.y+b.color.a*BLEND_HEIGHT-BLEND_DEPTH);
     }
     if best.z > 0.0 && share.z+BLEND_HEIGHT > cut {
-        c = surface(index,pick.z,local,dx,dy,field); heights.z = c.color.a;
+        c = surface(index,pick.z,local,dx,dy); heights.z = c.color.a;
     }
-    return mix_surfaces(a,b,c,height_blend(best,heights));
+    let w = height_blend(best,heights);
+    let grass = near_table[index].slots[pick.x].grass*w.x + near_table[index].slots[pick.y].grass*w.y
+        + near_table[index].slots[pick.z].grass*w.z;
+    return Ground(mix_surfaces(a,b,c,w), grass);
 }
 fn rotate_medium(p: vec2<f32>) -> vec2<f32> { return vec2(p.x*0.819-p.y*0.574, p.x*0.574+p.y*0.819); }
 fn rotate_large(p: vec2<f32>) -> vec2<f32> { return vec2(p.x*-0.342-p.y*0.940, p.x*0.940+p.y*-0.342); }
@@ -190,6 +205,8 @@ fn close_ground(world: vec3<f32>, geometry_normal: vec3<f32>, dx: vec2<f32>, dy:
     var result = NearResult(vec4(0.0),geometry_normal,1.0,1.0,0.0,-1.0);
     if near_settings.z < 0.5 { return result; }
     let distance_to_camera = distance(near_view::view.world_position,world);
+    // By distance only: at a glancing view a pixel spans metres along the ground but centimetres
+    // across it, where the composite's half-metre bake would blur roads a few metres off.
     let range_weight = 1.0-smoothstep(near_settings.x,near_settings.y,distance_to_camera);
     if range_weight <= 0.0 { return result; }
     let c = world.xz/cell_size;
@@ -204,7 +221,11 @@ fn close_ground(world: vec3<f32>, geometry_normal: vec3<f32>, dx: vec2<f32>, dy:
     for(var i=0u;i<4u;i+=1u) {
         if edges[i] < 1.0 { availability = min(availability,mix(near_availability(cell+offsets[i]),1.0,smoothstep(0.0,1.0,edges[i]))); }
     }
+    // How much of the field's colour and of the blades' shade fully grassed ground takes here.
     let field = smoothstep(FIELD_RANGE.x,FIELD_RANGE.y,distance_to_camera);
+    let thinning = smoothstep(UNDER_RANGE.x,UNDER_RANGE.y,distance_to_camera);
+    let under = vec2(mix(mix(UNDER_TINT.x,UNDER_TINT.y,thinning), FIELD_STRENGTH, field),
+        mix(mix(UNDER_SHADE.x,UNDER_SHADE.y,thinning), 1.0, field));
     var weights = page_weights(index,uv);
     // Roads: where the surface is sampled (sunk into ruts), the terrain normal the ruts tilt,
     // how much they occlude, and how worn edges darken.
@@ -256,10 +277,21 @@ fn close_ground(world: vec3<f32>, geometry_normal: vec3<f32>, dx: vec2<f32>, dy:
             }
         }
     }
-    let s = blended_surfaces(index,weights,sampled,dx,dy,field);
+    let blend = blended_surfaces(index,weights,sampled,dx,dy);
+    let s = blend.surface;
+    // Grass over the ground here: where blades actually grow, from the page's cover layer,
+    // else as its surfaces carry grass.
+    var grass = clamp(blend.grass, vec4(0.0), vec4(1.0));
+    let cover_side = near_table[index].state.w;
+    if cover_side > 0.5 {
+        let texel = clamp(uv*cover_side, vec2(0.5), vec2(cover_side-0.5))/f32(textureDimensions(near_grass).x);
+        let packed = textureSampleLevel(near_grass,map_sampler,texel,near_table[index].key.w-1,0.0);
+        grass = vec4(packed.rgb*packed.rgb, packed.a);
+    }
+    let ground = mix(s.color.rgb, grass.rgb, under.x*grass.a) * mix(1.0, under.y, grass.a);
     // Worn soil is darker and browner than loose soil of the same kind.
     let worn = mix(vec3(1.0), vec3(0.76,0.7,0.64), compacted)*(1.0-0.12*rim);
-    result.color = vec4(clamp(s.color.rgb*macro_response(index,local,dx,dy)*worn,vec3(0.0),vec3(1.0)),1.0);
+    result.color = vec4(clamp(ground*macro_response(index,local,dx,dy)*worn,vec3(0.0),vec3(1.0)),1.0);
     // World-X tangent with the same +Z bitangent as the original heightfield UVs.
     let t = normalize(vec3(n.y,-n.x,0.0)); let b = normalize(cross(t,n));
     result.normal = normalize(t*s.normal.x+b*s.normal.y+n*s.normal.z);

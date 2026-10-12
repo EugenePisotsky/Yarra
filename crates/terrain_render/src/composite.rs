@@ -63,6 +63,8 @@ pub struct TerrainCompositeMaterial {
     near_macro: Option<Handle<Image>>,
     #[storage(16, read_only, visibility(fragment))]
     near_roads: Handle<ShaderBuffer>,
+    #[texture(17, dimension = "2d_array")]
+    near_grass: Option<Handle<Image>>,
 }
 
 impl Default for TerrainCompositeMaterial {
@@ -89,6 +91,7 @@ impl Default for TerrainCompositeMaterial {
             near_normal: None,
             near_macro: None,
             near_roads: Default::default(),
+            near_grass: None,
         }
     }
 }
@@ -168,6 +171,7 @@ impl TerrainCompositeMaterial {
         self.near_normal = None;
         self.near_macro = None;
         self.near_roads = default();
+        self.near_grass = None;
         self.near_settings = Vec4::ZERO;
     }
     pub(crate) fn has_near(&self, atlas: &crate::near::gpu::NearAtlas) -> bool {
@@ -180,6 +184,7 @@ impl TerrainCompositeMaterial {
         self.near_normal = Some(atlas.pack.normal.clone());
         self.near_macro = Some(atlas.pack.macro_image.clone());
         self.near_roads = atlas.roads.clone();
+        self.near_grass = Some(atlas.grass.clone());
         self.near_settings = Vec4::new(
             crate::near::NEAR_START,
             crate::near::NEAR_END,

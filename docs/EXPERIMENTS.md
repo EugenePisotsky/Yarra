@@ -612,6 +612,15 @@ The compiler bakes roads into 0.5 m weights, which blur 1.1 m wheel tracks. Terr
 
 Metal System Trace leaves its raw kernel trace (~1 GB) in `$TMPDIR` for every recording; 153 of them (164 GB) had filled the disk. `tmp/look/trace.sh` now removes each one.
 
+**Road and grass review (October 12, later).** From the user's screenshots: roads blurring a few metres off, ground under grass near black at night (and in the road's centre strip), a road gone with black patches in a pine wood. Views `road-gap` (that spot), `road-bend-high`/`-high2` (page edges), `grass-down`, `road-forest`, `road-meadow` with `phase=0.02` for night.
+
+| Change | Decision / observation |
+| --- | --- |
+| Road gone, black patches | **Fixed.** A cell keeps at most eight surfaces, its heaviest; in varied forest pages a road crossing a corner lost its dirt or gravel (6 of 60 pages along the island road, both in one). There near detail drew natural ground where the road went and zero weights, black, where it fully replaced the ground. Road ground is now kept first (0 of 60), and road ground a page lacks gives way to the natural ground in the shader. |
+| Blur 13–22 m off | **Fixed.** Near detail also ended where a pixel spanned 6–18 cm of ground; at a low camera that is 13–22 m, sooner at 50% scale, and beyond it the half-metre bake blurred the tracks into one band. Now by distance alone (48–80 m). `road-low`, native: opaque 12.65 → 12.90 ms. |
+| Ground under grass | **Retained.** Ground under any grassy surface was drawn at 20% brightness up close, wherever its surface had grass, even with the blades worn away; at night it went black. Now near terrain shades it by where blades grow (the grass fields' cover per 0.5 m texel, `NearGrassCover`, which carries road wear and exclusions): 80% bright with a quarter of the field's colour close by, 55% and half by 30 m, the field's colour from 44–76 m as before. Cost about +0.04 in the ratio (≈0.25 ms native); carrying the grass through the three blended surfaces instead cost twice that (registers). |
+| Centre strip filled at page edges | **Fixed.** The natural ground under a road is read beside it on either side; where the road runs along a page's edge one side clamped onto the page, onto the road itself, and its dirt filled the centre up to the page boundary. Only a side whose sample stays clear of the road is used now. |
+
 ## Open gates and maintenance
 
 The remaining gates are sustained terrain/whole-game power, Temporal cost and motion quality, field-scale grass lighting, target-PC acceptance, and physical-phone heat/60-FPS delivery. Keep correctness references until their replacements pass the relevant gate. Existing counters often identify less work without demonstrating better delivered frames or lower power.

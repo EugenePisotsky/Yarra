@@ -61,11 +61,14 @@ pub(crate) struct NearEntry {
     pub slots: [NearSlot; MAX_TERRAIN_SURFACES_PER_CELL],
 }
 pub(super) fn bytes() -> u64 {
-    // Two RGBA weight layers per slot.
-    u64::from(WEIGHT_SIDE * WEIGHT_SIDE * 8) * NEAR_SLOTS as u64
+    // Two RGBA weight layers and a grass cover layer per slot.
+    u64::from(WEIGHT_SIDE * WEIGHT_SIDE * 8 + GRASS_SIDE * GRASS_SIDE * 4) * NEAR_SLOTS as u64
         + NearEntry::min_size().get() * NEAR_TABLE as u64
         + road_buffer_bytes()
 }
+/// Largest grass cover (`NearGrassCover`) the grass atlas holds: a 32 m cell's half-metre
+/// grass fields.
+pub(super) const GRASS_SIDE: u32 = 64;
 /// Each slot's region of the road buffer, in vec4s: about 250 centre-line segments, several
 /// roads' worth through one cell.
 pub(super) const ROAD_CAPACITY: u32 = 1024;
@@ -233,6 +236,7 @@ pub(super) fn entry(
     slot: u32,
     fade: f32,
     roads: IVec4,
+    cover_side: u32,
 ) -> NearEntry {
     let settings = m.settings;
     let p = s.key.cell.origin(s.cell_size);
@@ -274,7 +278,7 @@ pub(super) fn entry(
                 s.weights[0].resolution as f32
             },
             s.surfaces.len() as f32,
-            0.,
+            cover_side as f32,
         ),
         macro_scales: settings.macro_scales,
         macro_settings: settings.macro_settings,
@@ -295,12 +299,15 @@ pub(super) struct Tile {
     /// Two RGBA layers of surface weights, four surfaces each.
     pub(super) weights: [Vec<u8>; 2],
     weight_side: u32,
+    /// The grass cover layer (`NearGrassCover`), empty for none.
+    cover: Vec<u8>,
+    pub(super) cover_side: u32,
     /// The page's road records (`road_records`), as bytes, and the entry's `roads`.
     roads: Vec<u8>,
     pub(super) road_entry: IVec4,
 }
 /// The page's upload; `None` roads draw only as the page's weights carry them.
-pub(super) fn tile(slot: u32, s: &NearSource) -> (Tile, bool) {
+pub(super) fn tile(slot: u32, s: &NearSource, cover: Option<&NearGrassCover>) -> (Tile, bool) {
     let (weight_side, weights) = if s.surfaces.len() == 1 {
         (1, [vec![255, 0, 0, 0], vec![0; 4]])
     } else {
@@ -320,11 +327,18 @@ pub(super) fn tile(slot: u32, s: &NearSource) -> (Tile, bool) {
     } else {
         crate::storage_bytes(&roads)
     };
+    let cover = cover.filter(|c| {
+        c.resolution > 0
+            && u32::from(c.resolution) <= GRASS_SIDE
+            && c.rgba.len() == usize::from(c.resolution).pow(2) * 4
+    });
     (
         Tile {
             slot,
             weights,
             weight_side,
+            cover: cover.map_or(vec![], |c| c.rgba.clone()),
+            cover_side: cover.map_or(0, |c| u32::from(c.resolution)),
             roads,
             road_entry,
         },
@@ -337,6 +351,7 @@ struct Update {
 }
 struct Shared {
     weights: AssetId<Image>,
+    grass: AssetId<Image>,
     table: AssetId<ShaderBuffer>,
     roads: AssetId<ShaderBuffer>,
     pack: Pack,
@@ -348,6 +363,7 @@ struct Shared {
 pub(super) struct NearUploadHub(Arc<Mutex<Vec<Weak<Mutex<Shared>>>>>);
 pub(crate) struct NearAtlas {
     pub weights: Handle<Image>,
+    pub grass: Handle<Image>,
     pub table: Handle<ShaderBuffer>,
     pub roads: Handle<ShaderBuffer>,
     pub(crate) pack: Pack,
@@ -384,6 +400,7 @@ impl NearAtlas {
         };
         let slots = NEAR_SLOTS as u32;
         let weights = images.add(image(WEIGHT_SIDE, TextureFormat::Rgba8Unorm, slots * 2));
+        let grass = images.add(image(GRASS_SIDE, TextureFormat::Rgba8Unorm, slots));
         let table = buffers.add(ShaderBuffer::with_size(
             NearEntry::min_size().get() * NEAR_TABLE as u64,
             RenderAssetUsages::RENDER_WORLD,
@@ -394,6 +411,7 @@ impl NearAtlas {
         ));
         let shared = Arc::new(Mutex::new(Shared {
             weights: weights.id(),
+            grass: grass.id(),
             table: table.id(),
             roads: roads.id(),
             pack: pack.clone(),
@@ -404,6 +422,7 @@ impl NearAtlas {
         hub.0.lock().unwrap().push(Arc::downgrade(&shared));
         let atlas = Self {
             weights,
+            grass,
             table,
             roads,
             pack,
@@ -452,8 +471,9 @@ fn upload(
             return false;
         };
         let mut s = shared.lock().unwrap();
-        let (Some(weights), Some(table), Some(roads)) = (
+        let (Some(weights), Some(grass), Some(table), Some(roads)) = (
             images.get(s.weights),
+            images.get(s.grass),
             buffers.get(s.table),
             buffers.get(s.roads),
         ) else {
@@ -470,10 +490,14 @@ fn upload(
         };
         for t in &update.tiles {
             let layers = [
-                (weights, t.weight_side, 4, t.slot * 2, &t.weights[0]),
-                (weights, t.weight_side, 4, t.slot * 2 + 1, &t.weights[1]),
+                (weights, t.weight_side, t.slot * 2, &t.weights[0]),
+                (weights, t.weight_side, t.slot * 2 + 1, &t.weights[1]),
+                (grass, t.cover_side, t.slot, &t.cover),
             ];
-            for (image, side, bytes, layer, data) in layers {
+            for (image, side, layer, data) in layers {
+                if data.is_empty() {
+                    continue;
+                }
                 queue.write_texture(
                     TexelCopyTextureInfo {
                         texture: &image.texture,
@@ -488,7 +512,7 @@ fn upload(
                     data,
                     TexelCopyBufferLayout {
                         offset: 0,
-                        bytes_per_row: Some(side * bytes),
+                        bytes_per_row: Some(side * 4),
                         rows_per_image: Some(side),
                     },
                     Extent3d {

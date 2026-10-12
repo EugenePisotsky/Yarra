@@ -3,6 +3,8 @@
 
 use bevy::prelude::*;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use terrain_render::near::{NearGrassCover, NearSource};
 use vegetation::{
     VegetationCatalog, VegetationFieldPage, VegetationFieldPageData, VegetationScene,
     VegetationSurfaceField,
@@ -50,7 +52,7 @@ impl Plugin for WorldVegetationPlugin {
         .init_resource::<GrassLooks>()
         .add_systems(
             Update,
-            sync_scene
+            (sync_scene, sync_near_grass_cover)
                 .in_set(WorldVegetationSystems)
                 .after(WorldStreamingSystems),
         )
@@ -125,6 +127,75 @@ impl StreamedTerrainSurface {
             data.clone(),
         )
     }
+}
+
+/// How grass covers a page's ground for near terrain, from its grass fields; `None` without grass.
+/// Each cover gets a new revision, so a resident near page uploads it again.
+pub fn near_grass_cover(
+    data: &VegetationFieldPageData,
+    catalog: &VegetationCatalog,
+) -> Option<NearGrassCover> {
+    static REVISION: AtomicU64 = AtomicU64::new(1);
+    let (resolution, rgba) = data.cover_map(catalog)?;
+    Some(NearGrassCover {
+        revision: REVISION.fetch_add(1, Ordering::Relaxed),
+        resolution,
+        rgba,
+    })
+}
+
+/// Near terrain shades the ground under grass where blades grow: each near page takes the cover
+/// of its cell's grass fields, renewed when either page or the grass looks change.
+fn sync_near_grass_cover(
+    mut commands: Commands,
+    catalog: Res<WorldCatalog>,
+    looks: Res<GrassLooks>,
+    terrain: Query<(Entity, Ref<StreamedTerrainSurface>), With<NearSource>>,
+    fields: Query<(Entity, Ref<StreamedVegetationFieldPage>)>,
+    mut joined: Local<HashMap<Entity, Entity>>,
+) {
+    let Some(source) = catalog.vegetation() else {
+        return;
+    };
+    let renew = catalog.is_changed() || looks.is_changed();
+    let by_cell: HashMap<_, _> = fields
+        .iter()
+        .map(|(entity, page)| (cell_key(page.key), entity))
+        .collect();
+    let mut effective: Option<VegetationCatalog> = None;
+    let mut seen = HashMap::with_capacity(joined.len());
+    for (entity, surface) in &terrain {
+        let field = by_cell
+            .get(&cell_key(surface.key))
+            .and_then(|&field| fields.get(field).ok())
+            .filter(|(_, page)| surface.matches_vegetation(page));
+        let Some((field, page)) = field else {
+            if joined.contains_key(&entity) {
+                commands.entity(entity).remove::<NearGrassCover>();
+            }
+            continue;
+        };
+        seen.insert(entity, field);
+        if joined.get(&entity) == Some(&field)
+            && !renew
+            && !page.is_changed()
+            && !surface.is_changed()
+        {
+            continue;
+        }
+        let catalog = effective.get_or_insert_with(|| {
+            let mut catalog = source.clone();
+            if let Some(looks) = &looks.0 {
+                catalog.adopt_looks(looks);
+            }
+            catalog
+        });
+        match near_grass_cover(&page.data, catalog) {
+            Some(cover) => commands.entity(entity).insert(cover),
+            None => commands.entity(entity).remove::<NearGrassCover>(),
+        };
+    }
+    *joined = seen;
 }
 
 fn cell_key(key: PageKey) -> (WorldSpaceId, CellCoord, u8) {

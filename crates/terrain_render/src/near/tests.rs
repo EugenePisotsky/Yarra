@@ -85,8 +85,8 @@ fn phases_keep_large_negative_cell_boundaries_and_altitude_stops_near_demand() {
         let a = source(CellCoord { x, z: -7 });
         let b = source(CellCoord { x: x + 1, z: -7 });
         let m = material(&a);
-        let ea = gpu::entry(&a, &m, 0, 1., IVec4::ZERO);
-        let eb = gpu::entry(&b, &m, 1, 1., IVec4::ZERO);
+        let ea = gpu::entry(&a, &m, 0, 1., IVec4::ZERO, 0);
+        let eb = gpu::entry(&b, &m, 1, 1., IVec4::ZERO, 0);
         let circular_error = |a: f64, b: f64| {
             let e = (a - b).rem_euclid(1.);
             e.min(1. - e)
@@ -141,7 +141,7 @@ fn pages_carry_up_to_eight_surfaces_in_two_weight_layers() {
     ];
     assert!(valid_source(&s));
     let m = material(&s);
-    let entry = gpu::entry(&s, &m, 7, 1., IVec4::ZERO);
+    let entry = gpu::entry(&s, &m, 7, 1., IVec4::ZERO, 0);
     assert_eq!(entry.state.z, 6.);
     for (i, slot) in entry.slots.iter().enumerate().take(6) {
         assert_eq!(slot.surface.x, 5. - i as f32);
@@ -149,7 +149,7 @@ fn pages_carry_up_to_eight_surfaces_in_two_weight_layers() {
         assert_eq!(slot.surface.z, f32::from(i % 2 == 0));
     }
     assert_eq!(entry.slots[6], gpu::NearSlot::default());
-    let (tile, _) = gpu::tile(7, &s);
+    let (tile, _) = gpu::tile(7, &s, None);
     assert_eq!(tile.weights[1][..4], [50, 105, 0, 0]);
     // A page whose second weight page is missing is rejected.
     let mut missing = s.clone();
@@ -402,6 +402,7 @@ fn near_surface_streams_on_unchanged_mesh_and_returns_to_baked_ground() {
                 fade: 0.,
                 uploaded: false,
                 roads: IVec4::ZERO,
+                cover: (0, 0),
             },
         );
     }

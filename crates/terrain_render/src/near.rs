@@ -27,6 +27,16 @@ pub struct NearSource {
     /// Roads crossing the page, drawn finer than its weights carry them.
     pub roads: world::TerrainRoads,
 }
+/// How grass covers a near page's ground where it actually grows (roads and exclusions
+/// included), from its vegetation page: `vegetation::VegetationFieldPageData::cover_map`. Ground
+/// between blades is shaded by it; pages without it shade by their surfaces' grass.
+#[derive(Component, Clone, Debug)]
+pub struct NearGrassCover {
+    /// Changes whenever the map does, so a resident page uploads it again.
+    pub revision: u64,
+    pub resolution: u16,
+    pub rgba: Vec<u8>,
+}
 #[derive(Resource, Default)]
 pub struct NearView {
     pub identity: Option<(String, WorldSpaceId)>,
@@ -50,6 +60,8 @@ struct Resident {
     uploaded: bool,
     /// The entry's `roads`, from the upload.
     roads: IVec4,
+    /// The uploaded grass cover's revision and side (0: none).
+    cover: (u64, u32),
 }
 #[derive(Resource, Default)]
 struct Cache {
@@ -244,6 +256,7 @@ fn select_sources(
                         fade: 0.,
                         uploaded: false,
                         roads: IVec4::ZERO,
+                        cover: (0, 0),
                     },
                 );
                 added += 1;
@@ -261,7 +274,7 @@ fn select_sources(
 #[allow(clippy::too_many_arguments)]
 fn update(
     view: Res<NearView>,
-    sources: Query<&NearSource>,
+    sources: Query<(&NearSource, Option<&NearGrassCover>)>,
     source_materials: Res<Assets<TerrainMaterial>>,
     mut materials: ResMut<Assets<TerrainCompositeMaterial>>,
     mut images: ResMut<Assets<Image>>,
@@ -339,14 +352,18 @@ fn update(
     let mut table = vec![NearEntry::default(); NEAR_TABLE];
     let mut uploads = vec![];
     for (&entity, p) in &mut cache.pages {
-        let (Ok(source), Some(m)) = (sources.get(entity), source_materials.get(&p.material)) else {
+        let (Ok((source, cover)), Some(m)) =
+            (sources.get(entity), source_materials.get(&p.material))
+        else {
             continue;
         };
         if !pack.matches(m) {
             continue;
         }
-        if !p.uploaded && uploads.len() < 2 {
-            let (tile, fits) = gpu::tile(p.slot, source);
+        // A cover arriving or changing after the page uploads it again, drawing meanwhile.
+        let stale = p.uploaded && p.cover.0 != cover.map_or(0, |c| c.revision);
+        if (!p.uploaded || stale) && uploads.len() < 2 {
+            let (tile, fits) = gpu::tile(p.slot, source, cover);
             if !fits {
                 warn_once!(
                     "near terrain: a page's roads exceed {} records; they draw as baked",
@@ -354,13 +371,14 @@ fn update(
                 );
             }
             p.roads = tile.road_entry;
+            p.cover = (cover.map_or(0, |c| c.revision), tile.cover_side);
             uploads.push(tile);
             p.uploaded = true;
         }
         if !p.uploaded {
             continue;
         }
-        let entry = gpu::entry(source, m, p.slot, p.fade, p.roads);
+        let entry = gpu::entry(source, m, p.slot, p.fade, p.roads, p.cover.1);
         let mut i = hash(p.cell);
         while table[i].key.w != 0 {
             i = (i + 1) & (NEAR_TABLE - 1);
