@@ -76,7 +76,7 @@ To stress streaming on foot, `--render-repro actor-walk --start-view VIEW` walks
 
 ### Terrain surfaces
 
-Terrain packs are tracked in `assets/packs/terrain/<pack>.toml`: surfaces in texture-array order, each with its Megascans source folder under `~/Dev/Assets/terrain/sources` (licensed, local only) and its parameters (tile size, normal strength, roughness range, blend height, anti-tiling, optional colour match). The Baltic pack has fifteen: beach and dune sand, coastal grass, gravel, meadow, dry meadow, forest moss, pine needles, forest floor, leaf litter, dirt, rocky ground, rock, lichen rock and stony moss. To change or add a surface, edit the pack and rebuild its local files:
+Terrain packs are tracked in `assets/packs/terrain/<pack>.toml`: surfaces in texture-array order, each with its Megascans source folder under `~/Dev/Assets/terrain/sources` (licensed, local only) and its parameters (tile size, normal strength, roughness range, blend height, anti-tiling, optional colour match). The Baltic pack has eighteen: beach and dune sand, coastal grass, gravel, meadow, dry meadow, forest moss, pine needles, forest floor, leaf litter, dirt, rocky ground, rock, lichen rock and stony moss, and for roads packed dirt, road gravel and forest dirt. To change or add a surface, edit the pack and rebuild its local files:
 
 ```sh
 uv run --with numpy --with pillow python tools/import_terrain_surfaces.py [--only KEY…]
@@ -84,7 +84,7 @@ uv run python tools/compile_terrain_textures.py
 uv run --with numpy --with pillow python tools/prepare_terrain_bake.py
 ```
 
-The import resamples each scan to 1024² in linear light with wrapped borders, stores the height map (normalised, times `blend_height`) in base colour alpha, packs normal/AO/roughness, and turns every normal into the engine's frame (+U along world X, +V along world Z), detecting each scan's green convention from its height map (`import-report.json` records the decision). `color_match` scales a surface's albedo to another scan's mean, as dune sand takes the beach sand's colour. New worlds copy the pack's surfaces; an existing world keeps its own parameters until it is rebuilt. Fifteen 1024² layers take about 43 MB of GPU memory on desktop.
+The import resamples each scan to 1024² in linear light with wrapped borders, stores the height map (normalised, times `blend_height`) in base colour alpha, packs normal/AO/roughness, and turns every normal into the engine's frame (+U along world X, +V along world Z), detecting each scan's green convention from its height map (`import-report.json` records the decision). `color_match` scales a surface's albedo to another scan's mean, as dune sand takes the beach sand's colour. New worlds copy the pack's surfaces; an existing world keeps its own parameters until it is rebuilt. Eighteen 1024² layers take about 52 MB of GPU memory on desktop.
 
 ### World map
 

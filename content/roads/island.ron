@@ -7,26 +7,27 @@
 // these roads and styles by name; the editor edits them as any other road.
 (
     styles: [
-        // A two-track cart road: worn wheel paths sunk into ruts, grass down the middle,
-        // trampled shoulders. Ragged edges with grass biting in, tracks wandering and changing
-        // width along the road (after the references in tmp/references/roads).
+        // A two-track cart road: narrow wheel paths of packed soil and pale gravel chips sunk
+        // into ruts, tall grass down the middle, trampled shoulders. Ragged edges with grass
+        // biting in, tufts left in the tracks, grass breaking through in patches, tracks
+        // wandering and changing width along the road (after tmp/references/roads).
         (
             name: "Baltic cart track",
-            surfaces: [("dirt", 0.75), ("gravel", 0.25)],
-            track_spacing: 1.7,
-            track_width: 1.1,
+            surfaces: [("dirt", 0.4), ("road-gravel", 0.3), ("packed-dirt", 0.3)],
+            track_spacing: 1.45,
+            track_width: 0.6,
             edge_softness: 0.08,
-            center_ground: 0.2,
-            center_retention: 0.85,
-            shoulder_ground: 0.35,
-            shoulder_retention: 0.55,
-            track_retention: 0.0,
-            edge_variation: 0.15,
-            edge_patch_size: 1.6,
-            track_wander: 0.15,
+            center_ground: 0.15,
+            center_retention: 0.95,
+            shoulder_ground: 0.3,
+            shoulder_retention: 0.75,
+            track_retention: 0.1,
+            edge_variation: 0.12,
+            edge_patch_size: 1.4,
+            track_wander: 0.1,
             track_wander_length: 6.0,
-            breakup: 0.3,
-            breakup_patch_size: 2.4,
+            breakup: 0.45,
+            breakup_patch_size: 1.8,
             relief: (
                 road_depth: 0.06,
                 track_depth: 0.07,
@@ -41,7 +42,7 @@
         // A footpath: one worn track through the grass and litter, wandering, soft-edged.
         (
             name: "Forest footpath",
-            surfaces: [("dirt", 0.8), ("leaf-litter", 0.2)],
+            surfaces: [("forest-dirt", 0.6), ("dirt", 0.25), ("leaf-litter", 0.15)],
             track_spacing: 0.0,
             track_width: 0.55,
             edge_softness: 0.08,
@@ -73,7 +74,7 @@
         (
             name: "Beach road",
             style: "Baltic cart track",
-            width: 3.6,
+            width: 2.8,
             seed: 31,
             points: [(2881.6, 3117.8), (2882.4, 3025.9), (2883.3, 2934.0), (2820.2, 2864.0), (2816.0, 2768.0), (2806.0, 2730.0), (2756.2, 2618.0), (2716.2, 2562.0), (2716.0, 2454.0), (2730.0, 2424.0), (2729.3, 2324.0), (2728.7, 2224.0), (2629.1, 2120.0), (2606.9, 2062.0), (2533.1, 1958.0), (2505.6, 1906.0), (2443.9, 1853.1), (2382.2, 1800.2)],
         ),
@@ -81,7 +82,7 @@
         (
             name: "West meadow track",
             style: "Baltic cart track",
-            width: 3.6,
+            width: 2.8,
             seed: 47,
             from: ("Beach road", 12),
             points: [(2588.0, 2108.0), (2542.0, 2108.0), (2510.0, 2140.0), (2472.0, 2160.0), (2432.0, 2178.0), (2420.0, 2220.0), (2408.0, 2262.0), (2374.0, 2266.0)],

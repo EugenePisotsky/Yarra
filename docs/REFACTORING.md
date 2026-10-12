@@ -186,6 +186,25 @@ Evidence: 232 tests across the gameplay crates and the game, clippy clean, the s
 
 Work in small runnable batches. Replace superseded formats directly and regenerate fixtures. Run the headless scenarios first: [headless play](ARCHITECTURE.md#commands) through the same commands and read models as the game is a requirement for every step. Add a script only for a concrete case that built-in rules express badly.
 
+## Roads roadmap
+
+October 12, 2026, agreed with the user after the references in `tmp/references/roads-2`. How worn a path is decides how it looks: heavily used roads are one band of pale gravelly dirt streaked by wheels, less used ones two bare tracks with grass between, light trails trampled grass, the faintest a line; edges run from dirt through dry grass to tall grass hanging over. Junctions are seldom points: traffic cuts both corners, so a branch meets its road in two legs around a grass island (often holding a signpost, bush or stump), and three roads meeting are joined pairwise around one. Most of the detail is scattered: stones along edges, weeds, sticks.
+
+Drawing roads per pixel from centre lines (near terrain until now) fits one road; junctions with corner legs put three or four roads and a hub within reach of a pixel, and every arm adds cost and special cases. Instead, **one wear field per page**:
+
+- The cook draws every road, corner leg, junction hub and (later) painted wear into a field per page at about 12.5 cm (256² over 32 m): wear 0–1, rut depth, and traffic direction (as a doubled angle, so opposite directions blend).
+- **Worn ground comes from the natural ground**, not from the road: each terrain surface names what it wears down to (meadow to sandy dirt and gravel, forest floor to forest dirt). Pages store the natural ground's weights; near terrain lays the worn ground over them by the field's wear per pixel, and the distant bake does the same at its resolution. Road styles (later: traffic level) shape only how much wear lands where.
+- Near terrain reads the field once per pixel, whatever meets there. Ruts sink by parallax over its rut depth; grooves and streaks follow its direction, curving through junctions.
+- Grass and details take wear from the same source: thinner and shorter as it rises, flattened along the direction where trampled, leaning over edges; stones where wear falls off, weeds where it is moderate.
+
+Authored: routes, which roads connect, traffic level and width, per-junction overrides (later), painted wear touch-ups (later; the field is built so a brush can add to it). Generated: everything visual, junction hubs and corner legs (one per pair of neighbouring arms meeting at under about 150°, its traffic the quieter arm's, less the wider the angle; legs against a one-way road's `TravelDirection` are skipped), island objects, edge bands, debris.
+
+1. **Wear field** (in progress): pages carry natural weights and the field (payload v14); surfaces name their worn ground in the terrain pack; the compiler rasterizes roads and junctions into the field and lays worn ground for grass, palette and bake; near terrain and the bake apply it; the per-pixel road search goes.
+2. **Junctions**: generated corner legs, hubs and islands; editor display and toggles.
+3. **Look**, iterated with the user on a fixed sheet of views against the references: the wear ramp (trampled grass, dry band, dirt, packed and gravel), weeds, stones, flattened and leaning grass, ruts.
+4. **Authoring**: traffic level per road (styles become presets of it), wear brush.
+5. **Performance**, once the look holds.
+
 ## Performance roadmap
 
 October 9, 2026. At native resolution the forest ran at about 43 fps uncapped on a cool M2 Max and lower once it heats (the user saw 35). Measurements and the fixes so far are in [Experiments](EXPERIMENTS.md#native-resolution--october-9). What remains, largest first:
