@@ -30,8 +30,10 @@ pub struct CompilePlan {
     pub(crate) definition: EnvironmentDefinition,
     pub(crate) layers: Vec<PlannedLayer>,
     pub(crate) grass: Vec<GrassBinding>,
-    /// What each surface (by index) wears down to, shares normalised; empty: itself.
+    /// What each surface (by index) wears bare to, shares normalised; empty: itself.
     pub(crate) worn: Vec<Vec<(usize, f64)>>,
+    /// What light wear tramples each surface (by index) to, if anything.
+    pub(crate) trampled: Vec<Option<usize>>,
     pub(crate) catalog: VegetationCatalog,
     pub(crate) profile: CompileProfile,
     pub(crate) fingerprint: [u8; 32],
@@ -126,7 +128,9 @@ impl CompilePlan {
             .collect();
         let index = |s: &world::TerrainSurfaceId| definition.surfaces.binary_search(s).unwrap();
         let mut worn = vec![vec![]; definition.surfaces.len()];
+        let mut trampled = vec![None; definition.surfaces.len()];
         for w in &definition.worn {
+            trampled[index(&w.surface)] = w.trampled.as_ref().map(index);
             let total: f64 = w.ground.iter().map(|g| f64::from(g.weight)).sum();
             worn[index(&w.surface)] = w
                 .ground
@@ -193,6 +197,7 @@ impl CompilePlan {
             layers,
             grass: bindings,
             worn,
+            trampled,
             catalog: grass.clone(),
             profile,
             fingerprint: *hash.finalize().as_bytes(),

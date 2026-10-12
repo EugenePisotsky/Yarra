@@ -17,6 +17,8 @@
 #   material (flat and rippled sand) agree, or a mean sRGB colour.
 # - `worn`: what roads and paths wear the surface down to, surface keys with relative weights
 #   (at most two); a surface without wears to itself.
+# - `trampled`: what light wear (path edges, little-used tracks) tramples it to, a surface key;
+#   without, light wear goes straight to `worn`.
 pack_key = "baltic"
 storage = "local-ignored"
 sources = "~/Dev/Assets/terrain/sources"
@@ -55,6 +57,7 @@ roughness = [0.6, 1.0]
 blend_height = 0.6
 anti_tiling = true
 worn = [["dirt", 0.5], ["beach-sand", 0.5]]
+trampled = "dry-meadow"
 
 [[surfaces]]
 key = "gravel"
@@ -78,6 +81,7 @@ roughness = [0.75, 1.0]
 blend_height = 0.5
 anti_tiling = true
 worn = [["dirt", 0.6], ["road-gravel", 0.4]]
+trampled = "dry-meadow"
 
 [[surfaces]]
 key = "dry-meadow"
@@ -101,6 +105,7 @@ roughness = [0.7, 1.0]
 blend_height = 0.4
 anti_tiling = true
 worn = [["forest-dirt", 1.0]]
+trampled = "forest-floor"
 
 [[surfaces]]
 key = "pine-needles"
@@ -123,6 +128,7 @@ roughness = [0.6, 1.0]
 blend_height = 0.5
 anti_tiling = true
 worn = [["forest-dirt", 1.0]]
+trampled = "leaf-litter"
 
 [[surfaces]]
 key = "leaf-litter"

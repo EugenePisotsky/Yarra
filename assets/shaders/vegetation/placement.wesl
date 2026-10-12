@@ -12,7 +12,7 @@ import package::shaders::vegetation::placement::bindings::{
     candidate_cache_entries, candidate_acceptance_bits,
 };
 import package::shaders::vegetation::placement::sampling::{
-    Candidate, SurfaceResult, sample_surface, sample_candidate, candidate_grows,
+    Candidate, SurfaceResult, sample_surface, sample_candidate, candidate_grows, sample_coverage, owns,
 };
 import package::shaders::vegetation::placement::lod::{
     MINIMUM_EXTENT_PIXELS, candidate_is_visible, projected_blade_extent_pixels,
@@ -40,13 +40,17 @@ fn use_candidate_cache(index: u32) -> bool {
 fn evaluate_candidate(item: WorkItem, index: u32) -> CandidateEvaluation {
     var result: CandidateEvaluation;
     let grass = types[item.field.w];
-    let candidate = sample_candidate(item, grass, index);
+    var candidate = sample_candidate(item, grass, index);
     let surface = sample_surface(item, candidate.root);
     result.candidate = candidate;
     result.surface = surface;
     if (!candidate_grows(item, candidate, surface) || !candidate_is_visible(candidate, surface, grass)) {
         return result;
     }
+    // Blades at the edge of worn or bare ground (a path, a wheel track) turn to lean out over it,
+    // as grass overhangs a road's edges.
+    candidate.facing = edge_facing(item, candidate);
+    result.candidate = candidate;
     if (projected_blade_extent_pixels(candidate, surface, grass) < MINIMUM_EXTENT_PIXELS) {
         return result;
     }
@@ -62,6 +66,28 @@ fn evaluate_candidate(item: WorkItem, index: u32) -> CandidateEvaluation {
     result.population_density = density;
     result.eligible = true;
     return result;
+}
+
+// Where coverage falls off within a texel or two, the facing turns toward the barer side, the
+// more the steeper the fall. Samples beyond the page count as the root's own coverage.
+fn edge_facing(item: WorkItem, candidate: Candidate) -> vec2<f32> {
+    let step = item.page.z / f32(item.field.z);
+    let root = candidate.root;
+    let here = sample_coverage(item, root);
+    var toward = vec2(0.0);
+    for (var i = 0u; i < 4u; i += 1u) {
+        let d = select(vec2(0.0, select(-1.0, 1.0, i == 3u)), vec2(select(-1.0, 1.0, i == 1u), 0.0), i < 2u);
+        let p = root + d * step;
+        let c = select(here, sample_coverage(item, p), owns(item, p));
+        toward += d * (here - c);
+    }
+    let edge = clamp(length(toward) * 1.2, 0.0, 0.85);
+    if (edge < 0.05) {
+        return candidate.facing;
+    }
+    let mixed = mix(candidate.facing, normalize(toward), edge);
+    let length_mixed = length(mixed);
+    return select(candidate.facing, mixed / length_mixed, length_mixed > 1e-4);
 }
 
 fn bin_capacity(bin: u32) -> u32 {

@@ -156,7 +156,7 @@ struct Arm {
 }
 
 /// Corner legs at the plan's junctions: wherever neighbouring arms meet at a corner traffic cuts
-/// (`LEG_ANGLES`), a narrower, less worn road of the quieter arm's style curves from one arm to
+/// (`LEG_ANGLES`), a narrower, much less worn road of the quieter arm's style curves from one arm to
 /// the other, tangent to both, joining them far enough out (`environment::roads::JUNCTION_LEG_REACH`
 /// at most) to leave a grass island against the junction. The wider the corner, the more
 /// traffic cuts it. A leg only one-way traffic could take against its road is left out, as is
@@ -286,7 +286,8 @@ pub(super) fn legs(
             };
             let mut ground_preset = source.ground_preset.clone();
             if let PresetKind::Ground(g) = &mut ground_preset.kind {
-                g.strength *= (0.5 + 0.45 * traffic) as f32;
+                // Lightly enough that legs mostly trample, bare in their busiest stretches.
+                g.strength *= (0.4 + 0.35 * traffic) as f32;
             }
             legs.push(PlannedRoad {
                 baked: limits.broaden(shape(profile, road.seed)),

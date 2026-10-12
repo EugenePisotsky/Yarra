@@ -175,7 +175,8 @@ impl<'a> LeafPlan<'a> {
                         if let Some(wear) = &page.wear {
                             let mut laid: Vec<f64> =
                                 ground[..count].iter().map(|&w| f64::from(w)).collect();
-                            wear.lay(&mut laid, wear.sample(uv).wear);
+                            let w = wear.sample(uv).wear;
+                            wear.lay(&mut laid, w, world::bare_share(w, world));
                             for (g, w) in ground.iter_mut().zip(laid) {
                                 *g = w as f32;
                             }

@@ -52,11 +52,13 @@ pub struct EnvironmentDefinition {
     pub layers: Vec<Layer>,
 }
 
-/// The ground `surface` wears down to: up to two surfaces of the world with relative weights.
+/// The ground `surface` wears down to: bare, up to two surfaces of the world with relative
+/// weights; where wear is light, `trampled` (dry, flattened grass) if it names one.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WornGround {
     pub surface: TerrainSurfaceId,
     pub ground: Vec<SurfaceWeight>,
+    pub trampled: Option<TerrainSurfaceId>,
 }
 
 /// Most surfaces one surface wears down to: what near terrain draws per page slot.
@@ -158,7 +160,9 @@ impl EnvironmentDefinition {
         for w in &self.worn {
             if !worn.insert(w.surface)
                 || !surfaces.contains(&w.surface)
-                || !(1..=MAX_WORN_SURFACES).contains(&w.ground.len())
+                || w.ground.len() > MAX_WORN_SURFACES
+                || (w.ground.is_empty() && w.trampled.is_none())
+                || w.trampled.is_some_and(|t| !surfaces.contains(&t))
                 || w.ground.iter().any(|g| {
                     !surfaces.contains(&g.surface) || !g.weight.is_finite() || g.weight <= 0.0
                 })

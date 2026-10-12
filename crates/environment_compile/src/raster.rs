@@ -143,8 +143,11 @@ impl CompilePlan {
                 ];
                 let natural = self.surface_weights(cell, coverage, uv, base);
                 if wearing {
-                    let laid = roads.ground(origin, uv.map(|v| v * size));
-                    let full = self.worn_ground(&natural, laid);
+                    let local = uv.map(|v| v * size);
+                    let laid = roads.ground(origin, local);
+                    let bare =
+                        world::bare_share(laid, [origin[0] + local[0], origin[1] + local[1]]);
+                    let full = self.worn_ground(&natural, laid, bare);
                     for (i, (full, natural)) in full.iter().zip(&natural).enumerate() {
                         worn[i] |= full - natural > 0.5 / 255.0;
                     }
@@ -189,6 +192,14 @@ impl CompilePlan {
                 .iter()
                 .map(|&i| self.worn_slots(i, &palette))
                 .collect(),
+            trampled: palette
+                .iter()
+                .map(|&i| {
+                    self.trampled[i]
+                        .and_then(|t| palette.iter().position(|&p| p == t))
+                        .map_or(world::NO_WORN_SLOT, |slot| slot as u8)
+                })
+                .collect(),
         });
         Ok((
             CompiledGround {
@@ -202,20 +213,30 @@ impl CompilePlan {
         ))
     }
 
-    /// The natural ground's `weights` (per surface) worn by `wear`, as `world::TerrainWear::lay`
-    /// wears a page's.
-    fn worn_ground(&self, weights: &[f64], wear: f64) -> Vec<f64> {
+    /// The natural ground's `weights` (per surface) worn by `wear`, `bare` of it bare and the
+    /// rest trampled, as `world::TerrainWear::lay` wears a page's.
+    fn worn_ground(&self, weights: &[f64], wear: f64, bare: f64) -> Vec<f64> {
         let mut full = weights.to_vec();
         if wear <= 0.0 {
             return full;
         }
         for (i, &w) in weights.iter().enumerate() {
-            if w <= 0.0 || self.worn[i].is_empty() {
+            if w <= 0.0 {
                 continue;
             }
-            full[i] -= w * wear;
+            let given = w * wear;
+            let to_trampled = self.trampled[i].map_or(0.0, |_| given * (1.0 - bare));
+            let to_bare = if self.worn[i].is_empty() {
+                0.0
+            } else {
+                given - to_trampled
+            };
+            full[i] -= to_trampled + to_bare;
+            if let Some(t) = self.trampled[i] {
+                full[t] += to_trampled;
+            }
             for &(j, share) in &self.worn[i] {
-                full[j] += w * wear * share;
+                full[j] += to_bare * share;
             }
         }
         full
@@ -308,8 +329,11 @@ impl CompilePlan {
                 let surfaces = if page_roads.roads.is_empty() {
                     shown(natural)
                 } else {
-                    let wear = page_roads.ground(origin, uv.map(|v| v * size));
-                    shown(self.worn_ground(&natural, wear))
+                    let local = uv.map(|v| v * size);
+                    let wear = page_roads.ground(origin, local);
+                    let bare =
+                        world::bare_share(wear, [origin[0] + local[0], origin[1] + local[1]]);
+                    shown(self.worn_ground(&natural, wear, bare))
                 };
                 let mut kept = 1.0;
                 for layer in &self.layers {

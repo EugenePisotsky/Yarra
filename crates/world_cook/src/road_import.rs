@@ -155,37 +155,10 @@ pub fn import_roads(text: &str, project: &Path) -> Result<RoadImportReport> {
     }
     drop(reader);
 
-    // Styles and their ground presets first, in one transaction.
+    // Styles and their ground presets first, in one transaction. A style widened beyond the
+    // roads an earlier import left is refused until those roads widen: then roads go first.
     let mut writer = world_db::ProjectWriter::open(project)?;
-    let keys: Vec<_> = profiles
-        .iter()
-        .map(|p| RoadRecordKey::Profile(p.id))
-        .collect();
-    let states = writer.read_road_records(&keys)?;
-    let writes: Vec<_> = profiles
-        .into_iter()
-        .zip(states)
-        .map(|(profile, state)| RoadSourceWrite {
-            key: RoadRecordKey::Profile(profile.id),
-            expected_revision: state.revision,
-            record: Some(RoadSourceRecord::Profile(profile)),
-        })
-        .collect();
-    let revision = library.revision;
-    let committed = writer.apply_environment_and_roads_transaction(
-        revision,
-        Some(&library),
-        &[],
-        &[],
-        &writes,
-        &[],
-    )?;
-    if !matches!(
-        committed,
-        world_db::EnvironmentSourceWriteResult::Committed(_)
-    ) {
-        bail!("road styles were not saved: {committed:?}");
-    }
+    let styles_first = write_styles(&mut writer, &profiles, &library);
 
     // Then each road on its own, replacing any knots and spans a longer earlier import left.
     let mut knots_total = 0;
@@ -365,11 +338,51 @@ pub fn import_roads(text: &str, project: &Path) -> Result<RoadImportReport> {
         }
         knots_total += knots.len();
     }
+    if styles_first.is_err() {
+        write_styles(&mut writer, &profiles, &library)?;
+    }
     Ok(RoadImportReport {
         styles: import.styles.len(),
         roads: import.roads.len(),
         knots: knots_total,
     })
+}
+
+/// Writes the road styles and their ground presets in one transaction.
+fn write_styles(
+    writer: &mut world_db::ProjectWriter,
+    profiles: &[CartTrackProfile],
+    library: &environment::PresetLibrary,
+) -> Result<()> {
+    let keys: Vec<_> = profiles
+        .iter()
+        .map(|p| RoadRecordKey::Profile(p.id))
+        .collect();
+    let states = writer.read_road_records(&keys)?;
+    let writes: Vec<_> = profiles
+        .iter()
+        .zip(states)
+        .map(|(profile, state)| RoadSourceWrite {
+            key: RoadRecordKey::Profile(profile.id),
+            expected_revision: state.revision,
+            record: Some(RoadSourceRecord::Profile(profile.clone())),
+        })
+        .collect();
+    let committed = writer.apply_environment_and_roads_transaction(
+        library.revision,
+        Some(library),
+        &[],
+        &[],
+        &writes,
+        &[],
+    )?;
+    if !matches!(
+        committed,
+        world_db::EnvironmentSourceWriteResult::Committed(_)
+    ) {
+        bail!("road styles were not saved: {committed:?}");
+    }
+    Ok(())
 }
 
 /// Point `index` of route `main`, which a branch leaves from.

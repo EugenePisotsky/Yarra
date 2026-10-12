@@ -39,7 +39,8 @@ impl Pack {
 pub(crate) struct NearSlot {
     /// Array layer, metres per repetition, anti-tiling (0/1), normal strength.
     pub surface: Vec4,
-    /// Normal Y sign, roughness minimum and maximum; W unused.
+    /// Normal Y sign, roughness minimum and maximum, and the page slot light wear tramples the
+    /// surface to (-1: none).
     pub material: Vec4,
     pub phase: Vec4,
     pub lattice: Vec4,
@@ -109,11 +110,12 @@ pub(super) fn entry(
     let mut slots = [NearSlot::default(); MAX_TERRAIN_SURFACES_PER_CELL];
     for (index, (slot, layer)) in slots.iter_mut().zip(&s.layers).enumerate() {
         let surface = &layer.surface;
-        let worn = s
-            .wear
-            .as_ref()
-            .filter(|_| wear)
-            .map_or([(world::NO_WORN_SLOT, 0); 2], |w| w.worn[index]);
+        let field = s.wear.as_ref().filter(|_| wear);
+        let worn = field.map_or([(world::NO_WORN_SLOT, 0); 2], |w| w.worn[index]);
+        let trampled = field
+            .map(|w| w.trampled[index])
+            .filter(|&t| t != world::NO_WORN_SLOT)
+            .map_or(-1., f32::from);
         let to = |(slot, share): (u8, u8)| {
             if slot == world::NO_WORN_SLOT {
                 (-1., 0.)
@@ -134,7 +136,7 @@ pub(super) fn entry(
                 surface.normal_y_sign,
                 surface.roughness_min,
                 surface.roughness_max,
-                0.,
+                trampled,
             ),
             phase,
             lattice,

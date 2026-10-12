@@ -13,7 +13,11 @@ use bevy::render::{
 };
 use world::{NO_WORN_SLOT, TerrainWear};
 
-/// Page slots 0-2 natural (meadow, forest floor, dirt), 3-5 what they wear to.
+/// Page slots 0-2 natural (meadow, forest floor, dirt), 3-5 what they wear to; the meadow is
+/// trampled to slot 5 (dry grass) and the forest floor to slot 3.
+fn trampled() -> Vec<u8> {
+    vec![5, 3, NO_WORN_SLOT, NO_WORN_SLOT, NO_WORN_SLOT, NO_WORN_SLOT]
+}
 fn worn() -> Vec<[(u8, u8); 2]> {
     let none = (NO_WORN_SLOT, 0);
     vec![
@@ -33,6 +37,7 @@ fn near_terrain_wears_the_ground_as_the_cook_lays_it() {
         resolution: 2,
         texels: vec![[0; 4]; 4],
         worn: worn(),
+        trampled: trampled(),
     };
     let mut cases = vec![];
     for i in 0..64 {
@@ -41,7 +46,7 @@ fn near_terrain_wears_the_ground_as_the_cook_lays_it() {
         weights[0] = 1.0 - a;
         weights[1] = a * 0.6;
         weights[2] = a * 0.4;
-        cases.push((weights, i as f32 / 63.0));
+        cases.push((weights, i as f32 / 63.0, ((i * 7) % 11) as f32 / 10.0));
     }
     let slots: Vec<[f32; 4]> = (0..8)
         .map(|i| {
@@ -57,10 +62,16 @@ fn near_terrain_wears_the_ground_as_the_cook_lays_it() {
             [a[0], a[1], b[0], b[1]]
         })
         .collect();
-    let results = run(&cases, &slots, wear.worn.len() as u32);
-    for ((weights, w), result) in cases.iter().zip(&results) {
+    let trampled: Vec<f32> = (0..8)
+        .map(|i| match wear.trampled.get(i) {
+            Some(&t) if t != NO_WORN_SLOT => f32::from(t),
+            _ => -1.0,
+        })
+        .collect();
+    let results = run(&cases, &slots, &trampled, wear.worn.len() as u32);
+    for ((weights, w, bare), result) in cases.iter().zip(&results) {
         let mut expected: Vec<f64> = weights[..6].iter().map(|&v| f64::from(v)).collect();
-        wear.lay(&mut expected, f64::from(*w));
+        wear.lay(&mut expected, f64::from(*w), f64::from(*bare));
         for (slot, want) in expected.iter().enumerate() {
             assert!(
                 (f64::from(result[slot]) - want).abs() < 1e-5,
@@ -92,6 +103,9 @@ fn pages_pack_their_wear_and_what_their_surfaces_wear_to() {
         resolution: world::WEAR_RESOLUTION,
         texels: vec![[200, 10, 128, 255]; n * n],
         worn,
+        trampled: (0..s.surfaces.len())
+            .map(|i| if i == 0 { 1 } else { NO_WORN_SLOT })
+            .collect(),
     });
     let m = super::tests::material(&s);
     let tile = gpu::tile(3, &s, None);
@@ -100,12 +114,19 @@ fn pages_pack_their_wear_and_what_their_surfaces_wear_to() {
     assert_eq!(entry.wear.x, 1.);
     assert_eq!(entry.slots[0].worn, Vec4::new(1., 1., -1., 0.));
     assert_eq!(entry.slots[1].worn.x, -1.);
+    assert_eq!(entry.slots[0].material.w, 1.);
+    assert_eq!(entry.slots[1].material.w, -1.);
     // A field of the wrong size draws none.
     s.wear.as_mut().unwrap().resolution = 64;
     assert!(!gpu::tile(3, &s, None).has_wear());
 }
 
-fn run(cases: &[([f32; 8], f32)], slots: &[[f32; 4]], count: u32) -> Vec<[f32; 8]> {
+fn run(
+    cases: &[([f32; 8], f32, f32)],
+    slots: &[[f32; 4]],
+    trampled: &[f32],
+    count: u32,
+) -> Vec<[f32; 8]> {
     let defs = shader_check::Def::parse_list("MATERIAL_BIND_GROUP=0").unwrap();
     let shader = shader_check::Shaders::get()
         .compose_source(
@@ -115,6 +136,7 @@ struct Case { weights: array<vec4<f32>, 2>, wear: vec4<f32> }
 @group(0) @binding(0) var<storage, read> cases: array<Case>;
 @group(0) @binding(1) var<storage, read_write> results: array<array<vec4<f32>, 2>>;
 @group(0) @binding(3) var<storage, read> slots: array<vec4<f32>, 8>;
+@group(0) @binding(4) var<storage, read> trampled: array<vec4<f32>, 2>;
 @compute @workgroup_size(64)
 fn evaluate(@builtin(global_invocation_id) id: vec3<u32>) {
     if id.x >= arrayLength(&cases) { return; }
@@ -123,7 +145,9 @@ fn evaluate(@builtin(global_invocation_id) id: vec3<u32>) {
         c.weights[1].x, c.weights[1].y, c.weights[1].z, c.weights[1].w);
     var worn: array<vec4<f32>, 8>;
     for (var i = 0u; i < 8u; i += 1u) { worn[i] = slots[i]; }
-    let out = lay_worn(w, worn, COUNTu, c.wear.x);
+    let t = array<f32, 8>(trampled[0].x, trampled[0].y, trampled[0].z, trampled[0].w,
+        trampled[1].x, trampled[1].y, trampled[1].z, trampled[1].w);
+    let out = lay_worn(w, worn, t, COUNTu, c.wear.x, c.wear.y);
     results[id.x] = array(vec4(out[0], out[1], out[2], out[3]), vec4(out[4], out[5], out[6], out[7]));
 }
 "#
@@ -158,12 +182,13 @@ fn evaluate(@builtin(global_invocation_id) id: vec3<u32>) {
     };
     let packed: Vec<f32> = cases
         .iter()
-        .flat_map(|(w, wear)| w.iter().copied().chain([*wear, 0., 0., 0.]))
+        .flat_map(|(w, wear, bare)| w.iter().copied().chain([*wear, *bare, 0., 0.]))
         .collect();
     let input = storage(bytemuck::cast_slice(&packed));
     let mut slot_data: Vec<f32> = slots.iter().flatten().copied().collect();
     slot_data.resize(32, 0.);
     let slot_buffer = storage(bytemuck::cast_slice(&slot_data));
+    let trampled_buffer = storage(bytemuck::cast_slice(trampled));
     let bytes = cases.len() as u64 * 32;
     let output = resources.0.create_buffer(&BufferDescriptor {
         label: None,
@@ -192,6 +217,10 @@ fn evaluate(@builtin(global_invocation_id) id: vec3<u32>) {
             BindGroupEntry {
                 binding: 3,
                 resource: slot_buffer.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 4,
+                resource: trampled_buffer.as_entire_binding(),
             },
         ],
     });

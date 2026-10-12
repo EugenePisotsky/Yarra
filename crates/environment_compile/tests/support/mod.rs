@@ -36,6 +36,7 @@ pub fn fixture() -> (
                 surface: SOIL,
                 weight: 1.0,
             }],
+            trampled: None,
         }],
         layers: library.presets[..3]
             .iter()
@@ -200,7 +201,9 @@ pub fn worn_weights(
     let size = 8.0;
     let local = [x, z].map(|v| v as f64 * size / (n - 1) as f64);
     let origin = [f64::from(cell.cell.x) * size, f64::from(cell.cell.z) * size];
-    wear.lay(&mut weights, cell.roads.ground(origin, local));
+    let laid = cell.roads.ground(origin, local);
+    let world = [origin[0] + local[0], origin[1] + local[1]];
+    wear.lay(&mut weights, laid, world::bare_share(laid, world));
     ground
         .surfaces
         .iter()

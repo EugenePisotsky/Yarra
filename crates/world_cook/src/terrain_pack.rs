@@ -25,6 +25,9 @@ struct Surface {
     /// What roads and paths wear the surface down to: surface keys with relative weights.
     #[serde(default)]
     worn: Vec<(String, f32)>,
+    /// What light wear tramples it to: a surface key.
+    #[serde(default)]
+    trampled: Option<String>,
 }
 
 pub(crate) struct TerrainPack {
@@ -87,9 +90,17 @@ impl TerrainPack {
         let worn = manifest
             .surfaces
             .iter()
-            .filter(|s| !s.worn.is_empty())
+            .filter(|s| !s.worn.is_empty() || s.trampled.is_some())
             .map(|s| environment::WornGround {
                 surface: Self::surface_id(pack, &s.key),
+                trampled: s.trampled.as_ref().map(|key| {
+                    assert!(
+                        manifest.surfaces.iter().any(|o| &o.key == key),
+                        "{} is trampled to unknown surface {key:?}",
+                        s.key
+                    );
+                    Self::surface_id(pack, key)
+                }),
                 ground: s
                     .worn
                     .iter()

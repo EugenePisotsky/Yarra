@@ -35,12 +35,14 @@ impl TerrainRoadJunction {
         junction_blend(d, self.radius, world, self.seed)
     }
     /// How much of its ground the patch lays at `world` (XZ), over everything, `road` being its
-    /// road's drawing.
+    /// road's drawing: worn bare in patches a metre or so across, trampled between them.
     pub fn ground(&self, road: &TerrainRoad, local: [f64; 2], world: [f64; 2]) -> f64 {
         let patches = smooth(
             (road_patch(world, road.shape.breakup_patch_size, self.seed ^ 0x815) - 0.40) / 0.30,
         );
+        let bare = smooth((road_patch(world, 1.3, self.seed ^ 0x31c) - 0.3) / 0.4);
         (1.0 - f64::from(road.shape.breakup) * patches)
+            * (0.45 + 0.55 * bare)
             * self.blend(local, world)
             * f64::from(road.strength)
     }

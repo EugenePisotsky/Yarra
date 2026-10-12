@@ -298,7 +298,7 @@ impl Request {
             asset_ids: plan.collection_assets(),
             assets: vec![],
             scene,
-            ground: worn_ground(cell.ground, cell.wear.as_ref()),
+            ground: worn_ground(cell.ground, cell.wear.as_ref(), f64::from(self.size)),
             terrain: cell.terrain,
             size: self.size as f32,
             candidates,
@@ -308,7 +308,12 @@ impl Request {
 
 /// The preview shades its weights directly: the natural ground worn where the road wears it,
 /// at the weights' own samples (dense enough on road previews), as near terrain lays it.
-fn worn_ground(mut ground: CompiledGround, wear: Option<&world::TerrainWear>) -> CompiledGround {
+/// The preview patch stands at the world's origin, `size` metres across.
+fn worn_ground(
+    mut ground: CompiledGround,
+    wear: Option<&world::TerrainWear>,
+    size: f64,
+) -> CompiledGround {
     let Some(wear) = wear else {
         return ground;
     };
@@ -327,7 +332,8 @@ fn worn_ground(mut ground: CompiledGround, wear: Option<&world::TerrainWear>) ->
                 .map(|i| f64::from(ground.weight_pages[i / 4].rgba[texel + i % 4]) / 255.0)
                 .collect();
             let uv = [x, z].map(|v| v as f64 / (n - 1) as f64);
-            wear.lay(&mut weights, wear.sample(uv).wear);
+            let w = wear.sample(uv).wear;
+            wear.lay(&mut weights, w, world::bare_share(w, uv.map(|v| v * size)));
             for (i, w) in weights.into_iter().enumerate() {
                 ground.weight_pages[i / 4].rgba[texel + i % 4] = (w * 255.0).round() as u8;
             }

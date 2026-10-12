@@ -3,7 +3,7 @@ import bevy_pbr::render::mesh_view_bindings as near_view;
 import package::shaders::terrain_stochastic::{quarter_turn, stochastic_vertex_turn, stochastic_vertex_offset};
 import package::shaders::terrain_blend::{BLEND_DEPTH, BLEND_HEIGHT, height_blend};
 import package::shaders::lighting::surface::surface_weather;
-import package::shaders::terrain_wear::{WEAR_TEXEL, map_sampler, wear_at, rut_at, lay_worn, rut_parallax, wear_patch, wheel_grooves};
+import package::shaders::terrain_wear::{WEAR_TEXEL, map_sampler, wear_at, rut_at, lay_worn, bare_share, rut_parallax, wear_patch, wheel_grooves};
 // One of a page's up to eight surfaces. `surface`: array layer, metres per repetition,
 // anti-tiling (0/1), normal strength. `material`: normal Y sign, roughness minimum/maximum.
 // `phase`/`lattice`: this page's UV and anti-tiling lattice offsets for the surface's tile size.
@@ -123,12 +123,16 @@ fn page_weights(index: u32, uv: vec2<f32>) -> Weights {
     if count > 4u { second = textureSampleLevel(near_weights,map_sampler,wuv,layer+1,0.0); }
     return Weights(first, second);
 }
-// The page's weights worn by `wear`, as `world::TerrainWear::lay` wears them.
-fn worn_weights(index: u32, page: Weights, wear: f32) -> Weights {
+// The page's weights worn by `wear`, `bare` of it bare, as `world::TerrainWear::lay` wears them.
+fn worn_weights(index: u32, page: Weights, wear: f32, bare: f32) -> Weights {
     let count = u32(near_table[index].state.z+0.5);
     var worn: array<vec4<f32>, 8>;
-    for (var i = 0u; i < 8u; i += 1u) { worn[i] = near_table[index].slots[i].worn; }
-    let w = lay_worn(array<f32,8>(page.low.x,page.low.y,page.low.z,page.low.w,page.high.x,page.high.y,page.high.z,page.high.w), worn, count, wear);
+    var trampled: array<f32, 8>;
+    for (var i = 0u; i < 8u; i += 1u) {
+        worn[i] = near_table[index].slots[i].worn;
+        trampled[i] = near_table[index].slots[i].material.w;
+    }
+    let w = lay_worn(array<f32,8>(page.low.x,page.low.y,page.low.z,page.low.w,page.high.x,page.high.y,page.high.z,page.high.w), worn, trampled, count, wear, bare);
     return Weights(vec4(w[0],w[1],w[2],w[3]), vec4(w[4],w[5],w[6],w[7]));
 }
 // The page's ground: its three largest weights here, blended by surface height, and the grass
@@ -214,10 +218,12 @@ fn close_ground(world: vec3<f32>, geometry_normal: vec3<f32>, dx: vec2<f32>, dy:
         let layer = near_table[index].key.w-1;
         let field = wear_at(layer,uv);
         if field.wear > 0.002 || field.rut > 0.0005 {
-            weights = worn_weights(index,weights,field.wear);
-            // Where wheels wear the ground down to the grass, its edge is compacted and dark.
-            rim = field.wear*(1.0-field.wear)*4.0;
-            compacted = field.wear*0.25;
+            let bare = bare_share(field.wear,vec2<f32>(cell)*cell_size+local);
+            weights = worn_weights(index,weights,field.wear,bare);
+            // Where wheels wear the ground bare, its edge is compacted and dark.
+            let worn_bare = field.wear*bare;
+            rim = worn_bare*(1.0-worn_bare)*4.0;
+            compacted = worn_bare*0.25;
             let sink = 1.0-smoothstep(RUT_RANGE.x,RUT_RANGE.y,distance_to_camera);
             if sink > 0.0 && field.wear > 0.05 {
                 let deepest = RUT_DEEPEST*sink;

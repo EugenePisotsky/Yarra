@@ -20,10 +20,22 @@ pub struct TerrainWear {
     /// [`RUT_DEPTH_SCALE`]), and the traffic direction as a doubled angle (its cosine and sine,
     /// each mapped to 0..1), so opposite directions blend instead of cancelling.
     pub texels: Vec<[u8; 4]>,
-    /// Per page surface (slot), up to two page surfaces it wears down to with their shares
+    /// Per page surface (slot), up to two page surfaces it wears bare to with their shares
     /// (0..255, summing to 255); [`NO_WORN_SLOT`] marks none. A surface naming none wears to
     /// itself.
     pub worn: Vec<[(u8, u8); 2]>,
+    /// Per page surface (slot), the page surface it is trampled to where wear is light, or
+    /// [`NO_WORN_SLOT`] (it goes straight to its bare ground).
+    pub trampled: Vec<u8>,
+}
+
+/// How much of the ground `wear` wears down goes bare (dirt, gravel) rather than trampled (dry,
+/// flattened grass), at `world` (XZ): light wear tramples, heavy wear bares, the line between
+/// broken up in patches about two metres across.
+pub fn bare_share(wear: f64, world: [f64; 2]) -> f64 {
+    let t = (wear + 0.3 * (crate::road_patch(world, 1.8, 0x7a1) - 0.5) - 0.3) / 0.45;
+    let t = t.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
 }
 
 /// The field at a point: wear, rut depth (metres) and the traffic direction (unit, XZ; its
@@ -41,10 +53,15 @@ impl TerrainWear {
         (2..=WEAR_RESOLUTION).contains(&self.resolution)
             && self.texels.len() == n * n
             && self.worn.len() == surfaces
+            && self.trampled.len() == surfaces
             && self.worn.iter().all(|pair| {
                 pair.iter()
                     .all(|&(slot, _)| slot == NO_WORN_SLOT || usize::from(slot) < surfaces)
             })
+            && self
+                .trampled
+                .iter()
+                .all(|&slot| slot == NO_WORN_SLOT || usize::from(slot) < surfaces)
     }
 
     /// Bilinear RGBA at `uv` (0..1 over the page), each 0..1.
@@ -73,20 +90,35 @@ impl TerrainWear {
     }
 
     /// The natural ground's `weights` (per page surface, summing to one) worn by `wear`: that
-    /// share of each surface gives way to what it wears down to.
-    pub fn lay(&self, weights: &mut [f64], wear: f64) {
+    /// share of each surface gives way, `bare` of it ([`bare_share`]) to what it wears bare to
+    /// and the rest to what it is trampled to.
+    pub fn lay(&self, weights: &mut [f64], wear: f64, bare: f64) {
         if wear <= 0.0 {
             return;
         }
         let natural = weights.to_vec();
         for (slot, (&w, pair)) in natural.iter().zip(&self.worn).enumerate() {
-            if w <= 0.0 || pair.iter().all(|&(s, _)| s == NO_WORN_SLOT) {
+            if w <= 0.0 {
                 continue;
             }
-            weights[slot] -= w * wear;
+            let given = w * wear;
+            let trampled = self.trampled[slot];
+            let to_trampled = if trampled == NO_WORN_SLOT {
+                0.0
+            } else {
+                given * (1.0 - bare)
+            };
+            let mut to_bare = given - to_trampled;
+            if pair.iter().all(|&(s, _)| s == NO_WORN_SLOT) {
+                to_bare = 0.0;
+            }
+            weights[slot] -= to_trampled + to_bare;
+            if to_trampled > 0.0 {
+                weights[usize::from(trampled)] += to_trampled;
+            }
             for &(s, share) in pair {
                 if s != NO_WORN_SLOT {
-                    weights[usize::from(s)] += w * wear * f64::from(share) / 255.0;
+                    weights[usize::from(s)] += to_bare * f64::from(share) / 255.0;
                 }
             }
         }
@@ -126,15 +158,38 @@ mod tests {
                 [(1, 153), (2, 102)],
                 [(NO_WORN_SLOT, 0), (NO_WORN_SLOT, 0)],
                 [(NO_WORN_SLOT, 0), (NO_WORN_SLOT, 0)],
+                [(NO_WORN_SLOT, 0), (NO_WORN_SLOT, 0)],
             ],
+            // Slot 0 (meadow) is trampled to slot 3 (dry grass).
+            trampled: vec![3, NO_WORN_SLOT, NO_WORN_SLOT, NO_WORN_SLOT],
         };
-        assert!(wear.is_valid(3));
-        let mut w = [0.8, 0.2, 0.0];
-        wear.lay(&mut w, 0.5);
+        assert!(wear.is_valid(4));
+        // All bare: as without trampling.
+        let mut w = [0.8, 0.2, 0.0, 0.0];
+        wear.lay(&mut w, 0.5, 1.0);
         assert!((w.iter().sum::<f64>() - 1.0).abs() < 1e-9);
         assert!((w[0] - 0.4).abs() < 1e-9);
         assert!((w[1] - (0.2 + 0.4 * 0.6)).abs() < 1e-9);
         assert!((w[2] - 0.4 * 0.4).abs() < 1e-9);
+        // A quarter bare: three quarters of the worn meadow trampled.
+        let mut w = [0.8, 0.2, 0.0, 0.0];
+        wear.lay(&mut w, 0.5, 0.25);
+        assert!((w.iter().sum::<f64>() - 1.0).abs() < 1e-9);
+        assert!((w[3] - 0.3).abs() < 1e-9);
+        assert!((w[1] - (0.2 + 0.1 * 0.6)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn light_wear_tramples_and_heavy_wear_bares() {
+        let p = [12.3, 45.6];
+        assert!(bare_share(0.05, p) < 0.1);
+        assert!(bare_share(1.0, p) > 0.9);
+        let mut last = 0.0;
+        for i in 0..=20 {
+            let b = bare_share(f64::from(i) / 20.0, p);
+            assert!(b >= last);
+            last = b;
+        }
     }
 
     #[test]
@@ -146,6 +201,7 @@ mod tests {
             resolution: 2,
             texels: vec![one; 4],
             worn: vec![],
+            trampled: vec![],
         };
         let s = wear.sample([0.3, 0.7]);
         assert!((s.wear - 0.5).abs() < 0.003);

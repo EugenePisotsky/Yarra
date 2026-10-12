@@ -320,6 +320,7 @@ pub(super) fn road_request() -> fixture::Request {
             surface: TerrainSurfaceId([1; 16]),
             weight: 1.0,
         }],
+        trampled: None,
     }];
     // The hole in the reference ground shows bare base ground.
     r.plants = plants(false);

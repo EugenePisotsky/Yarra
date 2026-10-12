@@ -49,19 +49,30 @@ fn rut_at(layer: i32, uv: vec2<f32>) -> f32 {
     return textureSampleLevel(near_wear, map_sampler, uv, layer, 0.0).y*RUT_DEPTH_SCALE;
 }
 
-// A page's eight surface weights worn by `wear`: each surface gives that share of itself to what
-// it wears down to (`worn[i]`: two slots, -1 none, and their shares).
-fn lay_worn(weights: array<f32, 8>, worn: array<vec4<f32>, 8>, count: u32, wear: f32) -> array<f32, 8> {
+// A page's eight surface weights worn by `wear`, as world `TerrainWear::lay` wears them: each
+// surface gives that share of itself, `bare` of it to what it wears bare to (`worn[i]`: two
+// slots, -1 none, and their shares) and the rest to what it is trampled to (`trampled[i]`, -1
+// none: it goes bare).
+fn lay_worn(weights: array<f32, 8>, worn: array<vec4<f32>, 8>, trampled: array<f32, 8>, count: u32, wear: f32, bare: f32) -> array<f32, 8> {
     var out = weights;
     for (var i = 0u; i < count; i += 1u) {
-        let to = worn[i];
-        if to.x < 0.0 || weights[i] <= 0.0 { continue; }
+        if weights[i] <= 0.0 { continue; }
         let given = weights[i]*wear;
-        out[i] -= given;
-        out[u32(to.x)] += given*to.y;
-        if to.z >= 0.0 { out[u32(to.z)] += given*to.w; }
+        let to = worn[i];
+        let to_trampled = select(0.0, given*(1.0-bare), trampled[i] >= 0.0);
+        let to_bare = select(given - to_trampled, 0.0, to.x < 0.0);
+        out[i] -= to_trampled + to_bare;
+        if trampled[i] >= 0.0 { out[u32(trampled[i])] += to_trampled; }
+        if to.x >= 0.0 { out[u32(to.x)] += to_bare*to.y; }
+        if to.z >= 0.0 { out[u32(to.z)] += to_bare*to.w; }
     }
     return out;
+}
+// How much of the worn ground goes bare rather than trampled at `world` (absolute XZ), as world
+// `bare_share`: light wear tramples, heavy wear bares, the line broken up in patches.
+fn bare_share(wear: f32, world: vec2<f32>) -> f32 {
+    let t = clamp((wear + 0.3*(wear_patch(world, 1.8, 0x7a1u) - 0.5) - 0.3)/0.45, 0.0, 1.0);
+    return t*t*(3.0 - 2.0*t);
 }
 
 // Where the view ray (`view`: toward the eye) entering the terrain at page uv `uv` meets the
