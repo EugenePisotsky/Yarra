@@ -326,15 +326,11 @@ impl CompilePlan {
         {
             return Err(CompileError::Budget("road relief sample work"));
         }
+        let step = terrain.cell_size / (n - 1) as f32;
         let mut compiled = self
-            .compile_with_influences(&[cell], coverage, Some(&road_plan))?
+            .compile_with_influences(&[cell], coverage, Some(&road_plan), Some(step))?
             .remove(0);
         compiled.terrain = Some(road_plan.terrain(cell, terrain)?);
-        road_plan.clear_carved_ruts(
-            cell,
-            terrain.cell_size / (n - 1) as f32,
-            &mut compiled.roads,
-        );
         compiled.objects = self.scatter(
             cell,
             &crate::coverage::Coverage::new(self, coverage)?,

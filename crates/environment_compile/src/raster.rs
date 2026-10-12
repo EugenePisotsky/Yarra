@@ -14,14 +14,17 @@ impl CompilePlan {
         requested: &[CellCoord],
         source: &CoverageSnapshot,
     ) -> Result<Vec<CompiledCell>, CompileError> {
-        self.compile_with_influences(requested, source, None)
+        self.compile_with_influences(requested, source, None, None)
     }
 
+    /// `height_step`: the spacing of the cell's terrain heights, whose carved ruts the wear
+    /// field does not sink again (`RoadPlan::clear_carved_ruts`).
     pub(crate) fn compile_with_influences(
         &self,
         requested: &[CellCoord],
         source: &CoverageSnapshot,
         roads: Option<&crate::roads::RoadPlan>,
+        height_step: Option<f32>,
     ) -> Result<Vec<CompiledCell>, CompileError> {
         if requested.len() > self.profile.max_cells_per_batch {
             return Err(CompileError::Budget("requested cells"));
@@ -41,14 +44,20 @@ impl CompilePlan {
         cells
             .into_iter()
             .map(|cell| {
+                let mut page_roads = roads.map(|r| r.terrain_roads(cell)).unwrap_or_default();
+                if let (Some(roads), Some(step)) = (roads, height_step) {
+                    roads.clear_carved_ruts(cell, step, &mut page_roads);
+                }
+                let (ground, wear) = self.ground(cell, &coverage, &page_roads)?;
                 Ok(CompiledCell {
                     terrain: None,
                     objects: self.scatter(cell, &coverage, roads, None)?,
                     space: self.definition.space,
                     cell,
-                    ground: self.ground(cell, &coverage, roads)?,
-                    vegetation: self.vegetation(cell, &coverage, roads)?,
-                    roads: roads.map(|r| r.terrain_roads(cell)).unwrap_or_default(),
+                    ground,
+                    vegetation: self.vegetation(cell, &coverage, roads, &page_roads)?,
+                    roads: page_roads,
+                    wear,
                     input_fingerprint: {
                         let base = coverage.fingerprint(self, cell)?;
                         if let Some(roads) = roads {
@@ -108,43 +117,53 @@ impl CompilePlan {
         Ok(())
     }
 
+    /// The cell's natural ground, and where roads wear it, the wear field with what each of its
+    /// surfaces wears down to. Worn ground joins the palette wherever wear brings it in, ahead of
+    /// heavier natural ground when more surfaces meet than a page holds.
     fn ground(
         &self,
         cell: CellCoord,
         coverage: &Coverage<'_>,
-        roads: Option<&crate::roads::RoadPlan>,
-    ) -> Result<CompiledGround, CompileError> {
+        roads: &world::TerrainRoads,
+    ) -> Result<(CompiledGround, Option<world::TerrainWear>), CompileError> {
         let resolution = usize::from(self.profile.terrain_resolution);
         let base = self.base_surface();
         let surface_count = self.definition.surfaces.len();
+        let size = f64::from(self.definition.cell_size);
+        let origin = cell.origin(self.definition.cell_size);
+        let wearing = !roads.roads.is_empty();
         let mut samples = Vec::with_capacity(resolution * resolution * surface_count);
         let mut used = vec![false; surface_count];
+        let mut worn = vec![false; surface_count];
         for z in 0..resolution {
             for x in 0..resolution {
                 let uv = [
                     x as f64 / (resolution - 1) as f64,
                     z as f64 / (resolution - 1) as f64,
                 ];
-                let weights = self.surface_weights(cell, coverage, roads, uv, base);
-                let quantized = quantize(&weights);
+                let natural = self.surface_weights(cell, coverage, uv, base);
+                if wearing {
+                    let laid = roads.ground(origin, uv.map(|v| v * size));
+                    let full = self.worn_ground(&natural, laid);
+                    for (i, (full, natural)) in full.iter().zip(&natural).enumerate() {
+                        worn[i] |= full - natural > 0.5 / 255.0;
+                    }
+                }
+                let quantized = quantize(&natural);
                 for (index, value) in quantized.into_iter().enumerate() {
                     used[index] |= value != 0;
                     samples.push(value);
                 }
             }
         }
-        let mut palette: Vec<_> = used
-            .iter()
-            .enumerate()
-            .filter_map(|(i, used)| used.then_some(i))
-            .collect();
+        let mut palette: Vec<_> = (0..surface_count).filter(|&i| used[i] || worn[i]).collect();
         if palette.len() > self.profile.max_surfaces_per_cell {
-            let roads = roads.map_or(vec![], |r| r.ground_surfaces(cell));
+            let first: Vec<_> = (0..surface_count).filter(|&i| worn[i]).collect();
             palette = keep_heaviest(
                 &mut samples,
                 surface_count,
                 &palette,
-                &roads,
+                &first,
                 self.profile.max_surfaces_per_cell,
             );
         }
@@ -163,13 +182,68 @@ impl CompilePlan {
                 });
             }
         }
-        Ok(CompiledGround {
-            surfaces: palette
-                .into_iter()
-                .map(|i| self.definition.surfaces[i])
+        let wear = wearing.then(|| world::TerrainWear {
+            resolution: world::WEAR_RESOLUTION,
+            texels: wear_texels(roads, origin, size),
+            worn: palette
+                .iter()
+                .map(|&i| self.worn_slots(i, &palette))
                 .collect(),
-            weight_pages,
-        })
+        });
+        Ok((
+            CompiledGround {
+                surfaces: palette
+                    .into_iter()
+                    .map(|i| self.definition.surfaces[i])
+                    .collect(),
+                weight_pages,
+            },
+            wear,
+        ))
+    }
+
+    /// The natural ground's `weights` (per surface) worn by `wear`, as `world::TerrainWear::lay`
+    /// wears a page's.
+    fn worn_ground(&self, weights: &[f64], wear: f64) -> Vec<f64> {
+        let mut full = weights.to_vec();
+        if wear <= 0.0 {
+            return full;
+        }
+        for (i, &w) in weights.iter().enumerate() {
+            if w <= 0.0 || self.worn[i].is_empty() {
+                continue;
+            }
+            full[i] -= w * wear;
+            for &(j, share) in &self.worn[i] {
+                full[j] += w * wear * share;
+            }
+        }
+        full
+    }
+
+    /// What surface `surface` wears down to as page slots of `palette`, shares of 255; none
+    /// where it wears to itself (or its worn ground did not fit the page).
+    fn worn_slots(&self, surface: usize, palette: &[usize]) -> [(u8, u8); 2] {
+        let mut slots = [(world::NO_WORN_SLOT, 0); 2];
+        let kept: Vec<_> = self.worn[surface]
+            .iter()
+            .filter_map(|&(i, share)| Some((palette.iter().position(|&p| p == i)?, share)))
+            .collect();
+        let total: f64 = kept.iter().map(|k| k.1).sum();
+        if total <= 0.0 {
+            return slots;
+        }
+        let mut given = 0u8;
+        for (k, &(slot, share)) in kept.iter().enumerate() {
+            let value = if k + 1 == kept.len() {
+                255 - given
+            } else {
+                (share / total * 255.0).round() as u8
+            };
+            given += value;
+            slots[k] = (slot as u8, value);
+        }
+        slots
     }
 
     fn base_surface(&self) -> usize {
@@ -179,13 +253,12 @@ impl CompilePlan {
             .unwrap()
     }
 
-    /// Each surface's share of the ground at `uv`, before quantization: the base surface under
-    /// every enabled layer's ground in order, then road wear.
+    /// Each surface's share of the natural ground at `uv`, before quantization: the base
+    /// surface under every enabled layer's ground in order.
     fn surface_weights(
         &self,
         cell: CellCoord,
         coverage: &Coverage<'_>,
-        roads: Option<&crate::roads::RoadPlan>,
         uv: [f64; 2],
         base: usize,
     ) -> Vec<f64> {
@@ -208,22 +281,22 @@ impl CompilePlan {
                 weights[index] += a * weight;
             }
         }
-        if let Some(roads) = roads {
-            roads.ground(cell, uv, &mut weights);
-        }
         weights
     }
 
-    /// Each grass type's coverage: what the surfaces that show carry, less what exclusions and
-    /// road wear clear (of plants; stones and twigs stay).
+    /// Each grass type's coverage: what the surfaces that show (worn where roads wear them)
+    /// carry, less what exclusions and road wear clear (of plants; stones and twigs stay).
     fn vegetation(
         &self,
         cell: CellCoord,
         coverage: &Coverage<'_>,
         roads: Option<&crate::roads::RoadPlan>,
+        page_roads: &world::TerrainRoads,
     ) -> Result<VegetationFieldPageData, CompileError> {
         let resolution = usize::from(self.profile.vegetation_resolution);
         let base = self.base_surface();
+        let size = f64::from(self.definition.cell_size);
+        let origin = cell.origin(self.definition.cell_size);
         let mut samples = vec![vec![0; resolution * resolution]; self.grass.len()];
         for z in 0..resolution {
             for x in 0..resolution {
@@ -231,7 +304,13 @@ impl CompilePlan {
                     (x as f64 + 0.5) / resolution as f64,
                     (z as f64 + 0.5) / resolution as f64,
                 ];
-                let surfaces = shown(self.surface_weights(cell, coverage, roads, uv, base));
+                let natural = self.surface_weights(cell, coverage, uv, base);
+                let surfaces = if page_roads.roads.is_empty() {
+                    shown(natural)
+                } else {
+                    let wear = page_roads.ground(origin, uv.map(|v| v * size));
+                    shown(self.worn_ground(&natural, wear))
+                };
                 let mut kept = 1.0;
                 for layer in &self.layers {
                     if layer.source.enabled && layer.grass_exclusion > 0.0 {
@@ -273,6 +352,19 @@ impl CompilePlan {
         page.validate(&self.catalog)?;
         Ok(page)
     }
+}
+
+/// The wear field's texels over a cell whose origin is `origin` and side `size`
+/// (`world::TerrainWear`), at texel centres.
+fn wear_texels(roads: &world::TerrainRoads, origin: [f64; 2], size: f64) -> Vec<[u8; 4]> {
+    let n = usize::from(world::WEAR_RESOLUTION);
+    (0..n * n)
+        .map(|i| {
+            let local = [(i % n) as f64 + 0.5, (i / n) as f64 + 0.5].map(|v| v / n as f64 * size);
+            let s = roads.wear(origin, local);
+            world::TerrainWear::encode(s.wear, s.rut, s.direction)
+        })
+        .collect()
 }
 
 /// Where more surfaces meet in a cell than its weight pages hold, keeps the `maximum` with the

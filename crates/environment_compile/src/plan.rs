@@ -30,6 +30,8 @@ pub struct CompilePlan {
     pub(crate) definition: EnvironmentDefinition,
     pub(crate) layers: Vec<PlannedLayer>,
     pub(crate) grass: Vec<GrassBinding>,
+    /// What each surface (by index) wears down to, shares normalised; empty: itself.
+    pub(crate) worn: Vec<Vec<(usize, f64)>>,
     pub(crate) catalog: VegetationCatalog,
     pub(crate) profile: CompileProfile,
     pub(crate) fingerprint: [u8; 32],
@@ -122,6 +124,16 @@ impl CompilePlan {
             })
             .filter(|b| b.amounts.iter().any(|&a| a > 0.0))
             .collect();
+        let index = |s: &world::TerrainSurfaceId| definition.surfaces.binary_search(s).unwrap();
+        let mut worn = vec![vec![]; definition.surfaces.len()];
+        for w in &definition.worn {
+            let total: f64 = w.ground.iter().map(|g| f64::from(g.weight)).sum();
+            worn[index(&w.surface)] = w
+                .ground
+                .iter()
+                .map(|g| (index(&g.surface), f64::from(g.weight) / total))
+                .collect();
+        }
         if bindings.len() > profile.max_grass_types {
             return Err(CompileError::Budget("grass types"));
         }
@@ -172,13 +184,15 @@ impl CompilePlan {
         )?;
         let mut hash = blake3::Hasher::new();
         // v5: grass follows the ground that shows, not faint blend weights.
-        hash.update(b"yarra.environment.compiler.v5");
+        // v6: pages hold the natural ground; roads wear it through the wear field.
+        hash.update(b"yarra.environment.compiler.v6");
         hash.update(&bytes);
         Ok(Self {
             presets: presets.clone(),
             definition,
             layers,
             grass: bindings,
+            worn,
             catalog: grass.clone(),
             profile,
             fingerprint: *hash.finalize().as_bytes(),

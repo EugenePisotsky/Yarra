@@ -88,9 +88,9 @@ impl<'a> LeafPlan<'a> {
             .collect();
         let profile = &resources.profile;
         let mut hash = blake3::Hasher::new();
-        // v5: up to eight surfaces, height-blended three at a time over fine heights, each
-        // tinted by its grass field.
-        hash.update(b"terrain-composite-leaf-v5");
+        // v6: up to eight surfaces, height-blended three at a time over fine heights, each
+        // tinted by its grass field, the natural ground worn where roads wear it.
+        hash.update(b"terrain-composite-leaf-v6");
         hash.update(&GRASS_FIELD_STRENGTH.to_bits().to_le_bytes());
         hash.update(&(BLEND_SAMPLES as u32).to_le_bytes());
         hash.update(&inputs.hash);
@@ -99,6 +99,7 @@ impl<'a> LeafPlan<'a> {
                 key,
                 &page.surfaces,
                 &page.weight_pages,
+                &page.wear,
                 page.heightfield.resolution,
                 &page.heightfield.normals_oct,
                 &page.heightfield.heights,
@@ -170,6 +171,15 @@ impl<'a> LeafPlan<'a> {
                         ground[0] = 1.;
                     } else {
                         weights(&page.weight_pages, uv, &mut ground[..count]);
+                        // Where roads wear the natural ground, as near detail lays it.
+                        if let Some(wear) = &page.wear {
+                            let mut laid: Vec<f64> =
+                                ground[..count].iter().map(|&w| f64::from(w)).collect();
+                            wear.lay(&mut laid, wear.sample(uv).wear);
+                            for (g, w) in ground.iter_mut().zip(laid) {
+                                *g = w as f32;
+                            }
+                        }
                     }
                     let local = [uv[0] as f32 * size, uv[1] as f32 * size];
                     let mut p = Pixel {

@@ -29,6 +29,14 @@ pub fn fixture() -> (
         mask_resolution: 17,
         surfaces: vec![SOIL, GREEN_SOIL],
         base_surface: SOIL,
+        // Roads wear the green meadow down to soil.
+        worn: vec![WornGround {
+            surface: GREEN_SOIL,
+            ground: vec![SurfaceWeight {
+                surface: SOIL,
+                weight: 1.0,
+            }],
+        }],
         layers: library.presets[..3]
             .iter()
             .enumerate()
@@ -163,6 +171,42 @@ pub fn ground_weights(
             (*id, value)
         })
         .filter(|(_, value)| *value != 0)
+        .collect()
+}
+
+/// The cell's ground at weight sample (x, z) as its page draws it: the natural weights worn by
+/// its roads (`world::TerrainWear::lay`, at the wear its roads lay there).
+pub fn worn_weights(
+    cell: &yarra_environment_compile::CompiledCell,
+    x: usize,
+    z: usize,
+) -> Vec<(TerrainSurfaceId, u8)> {
+    let ground = &cell.ground;
+    let natural = ground_weights(ground, x, z);
+    let Some(wear) = &cell.wear else {
+        return natural;
+    };
+    let mut weights: Vec<f64> = ground
+        .surfaces
+        .iter()
+        .map(|s| {
+            natural
+                .iter()
+                .find(|(id, _)| id == s)
+                .map_or(0.0, |w| f64::from(w.1) / 255.0)
+        })
+        .collect();
+    let n = usize::from(ground.weight_pages.first().map_or(2, |p| p.resolution));
+    let size = 8.0;
+    let local = [x, z].map(|v| v as f64 * size / (n - 1) as f64);
+    let origin = [f64::from(cell.cell.x) * size, f64::from(cell.cell.z) * size];
+    wear.lay(&mut weights, cell.roads.ground(origin, local));
+    ground
+        .surfaces
+        .iter()
+        .zip(weights)
+        .map(|(s, w)| (*s, (w * 255.0).round() as u8))
+        .filter(|(_, v)| *v != 0)
         .collect()
 }
 

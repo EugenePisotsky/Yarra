@@ -28,6 +28,7 @@ impl Fixture {
             mask_resolution: 3,
             surfaces: vec![surface],
             base_surface: surface,
+            worn: vec![],
             layers: vec![Layer {
                 id: LayerId([1; 16]),
                 revision: 1,

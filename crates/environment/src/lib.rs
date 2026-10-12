@@ -46,8 +46,21 @@ pub struct EnvironmentDefinition {
     /// IDs available to this world's terrain pack. Texture array slots are not source IDs.
     pub surfaces: Vec<TerrainSurfaceId>,
     pub base_surface: TerrainSurfaceId,
+    /// What surfaces wear down to under roads and paths (meadow to dirt and gravel, forest floor
+    /// to forest dirt); a surface not listed wears to itself.
+    pub worn: Vec<WornGround>,
     pub layers: Vec<Layer>,
 }
+
+/// The ground `surface` wears down to: up to two surfaces of the world with relative weights.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WornGround {
+    pub surface: TerrainSurfaceId,
+    pub ground: Vec<SurfaceWeight>,
+}
+
+/// Most surfaces one surface wears down to: what near terrain draws per page slot.
+pub const MAX_WORN_SURFACES: usize = 2;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GroundTreatment {
@@ -140,6 +153,18 @@ impl EnvironmentDefinition {
         let surfaces: BTreeSet<_> = self.surfaces.iter().copied().collect();
         if surfaces.len() != self.surfaces.len() || !surfaces.contains(&self.base_surface) {
             return Err(ValidationError::Invalid("surface catalog or base surface"));
+        }
+        let mut worn = BTreeSet::new();
+        for w in &self.worn {
+            if !worn.insert(w.surface)
+                || !surfaces.contains(&w.surface)
+                || !(1..=MAX_WORN_SURFACES).contains(&w.ground.len())
+                || w.ground.iter().any(|g| {
+                    !surfaces.contains(&g.surface) || !g.weight.is_finite() || g.weight <= 0.0
+                })
+            {
+                return Err(ValidationError::Invalid("worn ground"));
+            }
         }
         let mut ids = BTreeSet::new();
         for layer in &self.layers {

@@ -15,6 +15,8 @@
 # - `anti_tiling`: stochastic albedo for surfaces whose repetition shows.
 # - `color_match`: optional source whose mean colour this surface takes, so variants of one
 #   material (flat and rippled sand) agree, or a mean sRGB colour.
+# - `worn`: what roads and paths wear the surface down to, surface keys with relative weights
+#   (at most two); a surface without wears to itself.
 pack_key = "baltic"
 storage = "local-ignored"
 sources = "~/Dev/Assets/terrain/sources"
@@ -52,6 +54,7 @@ normal_strength = 0.6
 roughness = [0.6, 1.0]
 blend_height = 0.6
 anti_tiling = true
+worn = [["dirt", 0.5], ["beach-sand", 0.5]]
 
 [[surfaces]]
 key = "gravel"
@@ -74,6 +77,7 @@ normal_strength = 0.45
 roughness = [0.75, 1.0]
 blend_height = 0.5
 anti_tiling = true
+worn = [["dirt", 0.6], ["road-gravel", 0.4]]
 
 [[surfaces]]
 key = "dry-meadow"
@@ -85,6 +89,7 @@ normal_strength = 0.45
 roughness = [0.8, 1.0]
 blend_height = 0.5
 anti_tiling = true
+worn = [["dirt", 0.6], ["road-gravel", 0.4]]
 
 [[surfaces]]
 key = "forest-moss"
@@ -95,6 +100,7 @@ normal_strength = 0.5
 roughness = [0.7, 1.0]
 blend_height = 0.4
 anti_tiling = true
+worn = [["forest-dirt", 1.0]]
 
 [[surfaces]]
 key = "pine-needles"
@@ -105,6 +111,7 @@ normal_strength = 0.7
 roughness = [0.6, 1.0]
 blend_height = 0.7
 anti_tiling = true
+worn = [["forest-dirt", 0.7], ["dirt", 0.3]]
 
 [[surfaces]]
 key = "forest-floor"
@@ -115,6 +122,7 @@ normal_strength = 0.6
 roughness = [0.6, 1.0]
 blend_height = 0.5
 anti_tiling = true
+worn = [["forest-dirt", 1.0]]
 
 [[surfaces]]
 key = "leaf-litter"
@@ -125,6 +133,7 @@ normal_strength = 0.7
 roughness = [0.55, 1.0]
 blend_height = 0.7
 anti_tiling = true
+worn = [["forest-dirt", 1.0]]
 
 [[surfaces]]
 key = "dirt"
@@ -135,6 +144,7 @@ normal_strength = 0.7
 roughness = [0.5, 1.0]
 blend_height = 0.2
 anti_tiling = false
+worn = [["packed-dirt", 0.6], ["road-gravel", 0.4]]
 
 [[surfaces]]
 key = "rocky-ground"
@@ -175,9 +185,11 @@ normal_strength = 0.8
 roughness = [0.55, 1.0]
 blend_height = 0.7
 anti_tiling = true
+worn = [["forest-dirt", 0.6], ["road-gravel", 0.4]]
 
 # Road surfaces (after the references in tmp/references/roads): wheel tracks pack the soil, chips
 # of pale gravel work up through it, forest paths wear down to dark soil.
+
 [[surfaces]]
 key = "packed-dirt"
 name = "Packed dirt"

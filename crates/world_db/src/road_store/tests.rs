@@ -91,6 +91,7 @@ fn project() -> ProjectDocument {
         mask_resolution: 17,
         surfaces: vec![SOIL, GREEN],
         base_surface: GREEN,
+        worn: vec![],
         layers: vec![Layer {
             id: LayerId([1; 16]),
             revision: 1,

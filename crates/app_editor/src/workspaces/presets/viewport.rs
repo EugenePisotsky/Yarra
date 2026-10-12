@@ -472,6 +472,7 @@ pub(super) fn update(
             preset: state.selected.unwrap_or(PresetId([0; 16])),
             base,
             surfaces: definition.surfaces.clone(),
+            worn: definition.worn.clone(),
             size: state.size,
             footprint: state.footprint,
             underlay: state.preview_underlay(),

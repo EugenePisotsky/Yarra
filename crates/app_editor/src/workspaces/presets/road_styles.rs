@@ -313,7 +313,7 @@ pub(super) fn panels(
                     for g in &library.presets { if matches!(g.kind, PresetKind::Ground(_)) { ui.selectable_value(&mut p.ground, g.id, &g.name); } }
                 });
                 if ui.button("Edit ground mixture…").clicked() { edit_ground = Some(p.ground); }
-                ui.small("The linked Ground preset owns material weights and strength. Editing it affects all its uses.");
+                ui.small("The road wears the natural ground down to what the terrain pack names for it; the linked Ground preset's strength sets how strongly. Editing it affects all its uses.");
                 let mut thins = p.vegetation_channel == environment::GRASS_CHANNEL;
                 if ui.checkbox(&mut thins, "Thins grass").changed() {
                     p.vegetation_channel = if thins { environment::GRASS_CHANNEL } else { environment::ChannelId([0; 16]) };
@@ -463,6 +463,7 @@ mod tests {
             mask_resolution: 33,
             surfaces: vec![dry, green],
             base_surface: green,
+            worn: vec![],
             layers: vec![],
         };
         let mut roads = RoadWorkingSet::default();

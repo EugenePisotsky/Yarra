@@ -165,7 +165,6 @@ pub(crate) fn install(app: &mut App) {
 fn fallback_buffer(
     mut fallback: Local<Option<Handle<ShaderBuffer>>>,
     mut near_fallback: Local<Option<Handle<ShaderBuffer>>>,
-    mut road_fallback: Local<Option<Handle<ShaderBuffer>>>,
     mut buffers: ResMut<Assets<ShaderBuffer>>,
     mut materials: ResMut<Assets<TerrainCompositeMaterial>>,
 ) {
@@ -178,17 +177,9 @@ fn fallback_buffer(
             RenderAssetUsages::RENDER_WORLD,
         ))
     });
-    // Read only through near table entries, which the fallback table has none of.
-    let road_fallback = road_fallback.get_or_insert_with(|| {
-        buffers.add(ShaderBuffer::with_size(16, RenderAssetUsages::RENDER_WORLD))
-    });
     let missing: Vec<_> = materials
         .iter()
-        .filter(|(_, m)| {
-            m.detail_table == Handle::default()
-                || m.near_table == Handle::default()
-                || m.near_roads == Handle::default()
-        })
+        .filter(|(_, m)| m.detail_table == Handle::default() || m.near_table == Handle::default())
         .map(|(id, _)| id)
         .collect();
     for id in missing {
@@ -198,9 +189,6 @@ fn fallback_buffer(
         }
         if m.near_table == Handle::default() {
             m.near_table = near_fallback.clone();
-        }
-        if m.near_roads == Handle::default() {
-            m.near_roads = road_fallback.clone();
         }
     }
 }

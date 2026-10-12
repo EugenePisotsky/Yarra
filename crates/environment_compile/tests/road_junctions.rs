@@ -115,7 +115,7 @@ fn t_junction_wears_the_center_and_blends_ruts_without_adding_grass_or_excavatin
     let h = a.terrain.as_ref().unwrap();
     assert!((h.height_at(32, 16) + 0.19).abs() < 0.001);
     assert!((0..33).all(|x| (0..33).all(|z| h.height_at(x, z) > -0.231)));
-    let center = ground_weights(&a.ground, 64, 32);
+    let center = worn_weights(&a, 64, 32);
     assert_eq!(center.iter().find(|(s, _)| *s == SOIL).unwrap().1, 255);
     assert!(
         a.vegetation
@@ -282,7 +282,7 @@ fn overlapping_approach_materials_do_not_jump_at_the_junction_boundary() {
             .compile_cells_with_roads(&[CELLS[1]], &c, r, Default::default())
             .unwrap()
             .remove(0);
-        ground_weights(&cell.ground, 27, 43)
+        worn_weights(&cell, 27, 43)
             .into_iter()
             .find(|(s, _)| *s == SOIL)
             .unwrap()
@@ -314,7 +314,7 @@ fn page_roads_reproduce_a_junction_for_near_detail() {
             for x in 0..n {
                 let local = [x, z].map(|v| v as f64 * 8.0 / (n - 1) as f64);
                 let laid = roads.ground(origin, local);
-                let soil = ground_weights(&compiled.ground, x, z)
+                let soil = worn_weights(&compiled, x, z)
                     .iter()
                     .find(|(s, _)| *s == SOIL)
                     .map_or(0, |w| w.1);

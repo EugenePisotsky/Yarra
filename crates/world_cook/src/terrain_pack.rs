@@ -22,12 +22,17 @@ struct Surface {
     normal_strength: f32,
     roughness: [f32; 2],
     anti_tiling: bool,
+    /// What roads and paths wear the surface down to: surface keys with relative weights.
+    #[serde(default)]
+    worn: Vec<(String, f32)>,
 }
 
 pub(crate) struct TerrainPack {
     pub texture_set: TerrainTextureSet,
     pub surfaces: Vec<TerrainSurface>,
     pub layers: Vec<TerrainTextureLayer>,
+    /// What surfaces wear down to (`environment::EnvironmentDefinition::worn`).
+    pub worn: Vec<environment::WornGround>,
 }
 
 impl TerrainPack {
@@ -79,10 +84,34 @@ impl TerrainPack {
                 layer: layer as u16,
             })
             .collect();
+        let worn = manifest
+            .surfaces
+            .iter()
+            .filter(|s| !s.worn.is_empty())
+            .map(|s| environment::WornGround {
+                surface: Self::surface_id(pack, &s.key),
+                ground: s
+                    .worn
+                    .iter()
+                    .map(|(key, weight)| {
+                        assert!(
+                            manifest.surfaces.iter().any(|o| &o.key == key),
+                            "{} wears to unknown surface {key:?}",
+                            s.key
+                        );
+                        environment::SurfaceWeight {
+                            surface: Self::surface_id(pack, key),
+                            weight: *weight,
+                        }
+                    })
+                    .collect(),
+            })
+            .collect();
         Self {
             texture_set,
             surfaces,
             layers,
+            worn,
         }
     }
 

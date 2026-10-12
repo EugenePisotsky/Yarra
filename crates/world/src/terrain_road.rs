@@ -1,13 +1,11 @@
-//! Roads as a terrain page carries them, and how a cart-track road is drawn: its wheel tracks,
-//! grassy centre and shoulders, from the distance to its centre line. The environment compiler
-//! lays roads into page weights and grass with [`RoadShape::zones`]; near terrain detail draws
-//! them per pixel from [`TerrainRoads`], and `shaders/terrain_road.wesl` mirrors this module.
-use crate::TerrainSurfaceId;
+//! Roads near a terrain cell as the cook draws them into its wear field, and how a cart-track
+//! road is drawn: its wheel tracks, grassy centre and shoulders, from the distance to its centre
+//! line ([`RoadShape::zones`]). [`TerrainRoads::wear`] gives the field at a point
+//! ([`crate::TerrainWear`]); the compiler's grass follows the same zones.
 use serde::{Deserialize, Serialize};
 
-/// Roads crossing a terrain page: their centre lines near it as segments, and how each road is
-/// drawn. The page's weights and heights already carry the roads at their resolution; near
-/// terrain detail draws wheel tracks, verges and ruts from these at full detail.
+/// Roads near a terrain cell: their centre lines as segments, how each road is drawn, and the
+/// junctions where they meet.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct TerrainRoads {
     /// In the order the compiler lays them, each over the ones before.
@@ -62,10 +60,8 @@ pub struct TerrainRoad {
     pub shoulder_ground: f32,
     pub track_depth: f32,
     pub rut_roundness: f32,
-    /// How strongly the road's ground replaces the natural ground (its Ground preset's strength).
+    /// How strongly the road wears the natural ground (its Ground preset's strength).
     pub strength: f32,
-    /// The road's ground: surfaces and their shares, summing to one.
-    pub surfaces: Vec<(TerrainSurfaceId, f32)>,
 }
 
 /// A straight piece of a road's centre line, in page-local metres (ends may lie outside the page).
@@ -201,6 +197,35 @@ impl RoadShape {
 }
 
 impl TerrainRoad {
+    /// How deep the road's ruts lie at a point `offset` from its centre line, metres: each wheel
+    /// track a rounded rut, deepening and shallowing along the road (over twice the wander
+    /// length by 30%, every metre or two by 20%); the deeper of the two.
+    pub fn rut(&self, offset: &RoadOffset) -> f64 {
+        if self.track_depth <= 0.0 {
+            return 0.0;
+        }
+        let shape = &self.shape;
+        let centre = offset.point;
+        let slow = value4(
+            centre.map(|v| v / (2.0 * f64::from(shape.track_wander_length.max(0.5)))),
+            shape.seed ^ 0x77d,
+        );
+        let fast = value4(centre.map(|v| v / 1.4), shape.seed ^ 0x3c7);
+        let power = 2.0 + 6.0 * (1.0 - f64::from(self.rut_roundness));
+        shape
+            .tracks(centre)
+            .iter()
+            .enumerate()
+            .map(|(i, &(at, half))| {
+                let depth =
+                    f64::from(self.track_depth) * (0.7 + 0.6 * slow[i]) * (0.8 + 0.4 * fast[2 + i]);
+                let t =
+                    ((offset.lateral - at).hypot(offset.longitudinal) / half.max(0.01)).min(1.0);
+                depth * smooth(1.0 - t.powf(power))
+            })
+            .fold(0.0, f64::max)
+    }
+
     /// How much of the road's ground replaces the natural ground at a point `offset` from its
     /// centre line, `world` (XZ, metres), as the compiler lays it into page weights.
     pub fn ground(&self, offset: &RoadOffset, world: [f64; 2]) -> f64 {
@@ -310,6 +335,42 @@ impl TerrainRoads {
                 .map(|j| j.ground(&self.roads[usize::from(j.road)], local, world)),
         );
         layers
+    }
+
+    /// The wear field at `local` on a page whose origin is `origin`, as the cook draws it: the
+    /// share of the ground roads and junctions wear down, the deepest rut (flattened where
+    /// junctions take over), and the direction of the road that wears it most.
+    pub fn wear(&self, origin: [f64; 2], local: [f64; 2]) -> crate::WearSample {
+        let world = [origin[0] + local[0], origin[1] + local[1]];
+        let mut kept = 1.0;
+        let mut rut = 0.0_f64;
+        let mut strongest = (0.0, [0.0; 2]);
+        for (road, drawn) in self.roads.iter().enumerate() {
+            let Some(mut hit) = self.nearest_on(road, local) else {
+                continue;
+            };
+            hit.offset.point = [origin[0] + hit.point[0], origin[1] + hit.point[1]];
+            let joined = self
+                .junctions
+                .iter()
+                .filter(|j| j.joins(road))
+                .map(|j| j.blend(local))
+                .fold(0.0, f64::max);
+            let amount = drawn.ground(&hit.offset, world) * (1.0 - joined);
+            kept *= 1.0 - amount;
+            rut = rut.max(drawn.rut(&hit.offset) * (1.0 - joined));
+            if amount > strongest.0 {
+                strongest = (amount, [hit.normal[1], -hit.normal[0]]);
+            }
+        }
+        for j in &self.junctions {
+            kept *= 1.0 - j.ground(&self.roads[usize::from(j.road)], local, world);
+        }
+        crate::WearSample {
+            wear: 1.0 - kept,
+            rut,
+            direction: strongest.1,
+        }
     }
 
     /// The share of the ground at `local` that roads and junctions lay, of all their kinds.

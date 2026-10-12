@@ -17,8 +17,9 @@ fn grass(cell: &CompiledCell, x: usize, z: usize) -> u8 {
         .max()
         .unwrap_or(0)
 }
+/// The road's soil at a weight sample, as the page draws it (natural ground worn by its roads).
 fn ground_at(cell: &CompiledCell, x: usize, z: usize) -> u8 {
-    ground_weights(&cell.ground, x, z)
+    worn_weights(cell, x, z)
         .iter()
         .find(|(s, _)| *s == SOIL)
         .map_or(0, |(_, v)| *v)
@@ -346,8 +347,8 @@ fn routes_suppress_only_the_named_channel_and_material_budget_still_applies() {
     let crossed: Vec<_> = cells.iter().filter(|c| !c.roads.roads.is_empty()).collect();
     assert!(!crossed.is_empty());
     for cell in crossed {
-        let road = &cell.roads.roads[0].surfaces;
-        assert!(road.iter().any(|(s, _)| *s == cell.ground.surfaces[0]));
+        // The road wears the green meadow down to soil.
+        assert_eq!(cell.ground.surfaces[0], SOIL);
     }
 }
 #[test]
@@ -619,7 +620,6 @@ fn page_roads_reproduce_the_compiled_road_ground_for_near_detail() {
     for (cell, compiled) in CELLS.iter().zip(&cells) {
         let roads = &compiled.roads;
         assert_eq!(roads.roads.len(), 1);
-        assert_eq!(roads.roads[0].surfaces, [(SOIL, 1.0)]);
         assert!(!roads.segments.is_empty());
         let n = usize::from(compiled.ground.weight_pages[0].resolution);
         let size = f64::from(d.cell_size);
@@ -692,4 +692,36 @@ fn road_wear_clears_plants_but_leaves_stones_and_twigs() {
     // Off the road both grow.
     assert_eq!(at(nettles.id(), 0), 255);
     assert_eq!(at(pebbles.id(), 0), 255);
+}
+#[test]
+fn the_wear_field_draws_what_roads_wear_and_names_the_worn_ground() {
+    let (d, l, p, c, mut r) = cart_tracks();
+    straight(&mut r);
+    let plan = CompilePlan::new(&d, &p, &l, CompileProfile::default()).unwrap();
+    let cells = compile(&plan, &c, &r);
+    let cell = &cells[0];
+    let wear = cell.wear.as_ref().unwrap();
+    let surfaces = &cell.ground.surfaces;
+    assert!(wear.is_valid(surfaces.len()));
+    // Green meadow wears down to soil; soil to itself.
+    let slot = |s| surfaces.iter().position(|x| *x == s).unwrap();
+    let none = (world::NO_WORN_SLOT, 0);
+    assert_eq!(wear.worn[slot(GREEN_SOIL)], [(slot(SOIL) as u8, 255), none]);
+    assert_eq!(wear.worn[slot(SOIL)], [none, none]);
+    // Texels hold the roads' wear at their centres.
+    let n = usize::from(wear.resolution);
+    let origin = [f64::from(cell.cell.x) * 8.0, f64::from(cell.cell.z) * 8.0];
+    for i in (0..n * n).step_by(37) {
+        let local = [(i % n) as f64 + 0.5, (i / n) as f64 + 0.5].map(|v| v / n as f64 * 8.0);
+        let s = cell.roads.wear(origin, local);
+        assert_eq!(
+            wear.texels[i],
+            world::TerrainWear::encode(s.wear, s.rut, s.direction)
+        );
+    }
+    let worn = wear.texels.iter().filter(|t| t[0] > 200).count();
+    assert!(worn > 1000, "{worn} texels worn");
+    // A cell no road reaches has no field.
+    let far = plan.compile_cells(&CELLS, &c).unwrap();
+    assert!(far.iter().all(|c| c.wear.is_none()));
 }

@@ -65,8 +65,10 @@ pub struct CompiledCell {
     pub cell: CellCoord,
     pub ground: CompiledGround,
     pub vegetation: VegetationFieldPageData,
-    /// Roads crossing the cell, for its terrain page (`world::TerrainRoads`).
+    /// Roads crossing the cell as its wear field draws them (`world::TerrainRoads::wear`).
     pub roads: world::TerrainRoads,
+    /// How roads and junctions wear the cell's natural ground; none where nothing does.
+    pub wear: Option<world::TerrainWear>,
     /// Includes the plan and this cell's coverage dependency halo, not unrelated loaded cells.
     pub input_fingerprint: [u8; 32],
 }

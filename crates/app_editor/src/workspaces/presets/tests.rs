@@ -28,6 +28,7 @@ fn request() -> fixture::Request {
         preset: GREEN_MEADOW,
         base: dry,
         surfaces: vec![dry, green],
+        worn: vec![],
         size: 8,
         footprint: Footprint::Patch,
         underlay: None,
@@ -312,6 +313,14 @@ fn preset_workspace_restores_scene_lighting_wind_and_camera_ownership() {
 pub(super) fn road_request() -> fixture::Request {
     let mut r = request();
     r.base = TerrainSurfaceId([2; 16]);
+    // Roads wear the green base down to dry ground.
+    r.worn = vec![environment::WornGround {
+        surface: TerrainSurfaceId([2; 16]),
+        ground: vec![environment::SurfaceWeight {
+            surface: TerrainSurfaceId([1; 16]),
+            weight: 1.0,
+        }],
+    }];
     // The hole in the reference ground shows bare base ground.
     r.plants = plants(false);
     r.underlay = Some(DRY_MEADOW);
@@ -395,39 +404,18 @@ fn road_preview_uses_production_wear_and_preserves_unpainted_holes() {
     }
 }
 #[test]
-fn road_preview_grass_follows_the_road_ground_mixture() {
+fn road_preview_wears_the_ground_and_its_grass_follows() {
     let mut r = road_request();
     r.underlay = None;
-    let dry = r.clone().compile().unwrap();
+    let worn = r.clone().compile().unwrap();
     // Only the worn dry ground grows anything over the bare base.
-    assert_eq!(dry.scene.pages[0].fields.len(), 1);
-    let environment::PresetKind::Ground(g) = &mut r
-        .library
-        .presets
-        .iter_mut()
-        .find(|p| p.id == DRY_GROUND)
-        .unwrap()
-        .kind
-    else {
-        panic!()
-    };
-    g.surfaces.push(environment::SurfaceWeight {
-        surface: TerrainSurfaceId([2; 16]),
-        weight: 1.0,
-    });
-    let mixed = r.clone().compile().unwrap();
-    assert_ne!(dry.ground, mixed.ground);
-    let (a, b) = (
-        &dry.scene.pages[0].fields[0],
-        &mixed.scene.pages[0].fields[0],
-    );
-    assert!(
-        a.coverage
-            .iter()
-            .zip(&b.coverage)
-            .all(|(dry, mixed)| mixed <= dry)
-    );
-    assert_ne!(a.coverage, b.coverage);
+    assert_eq!(worn.scene.pages[0].fields.len(), 1);
+    // A world whose ground wears to itself shows its road in neither ground nor grass.
+    let mut unworn = r.clone();
+    unworn.worn.clear();
+    let unworn = unworn.compile().unwrap();
+    assert_ne!(worn.ground, unworn.ground);
+    assert!(unworn.scene.pages[0].fields.is_empty());
     r.road.as_mut().unwrap().width = 1.0;
     assert!(r.compile().is_err());
 }

@@ -24,8 +24,8 @@ pub struct NearSource {
     pub profile: TerrainProfile,
     pub texture_set: TerrainTextureSet,
     pub layers: Vec<TerrainSurfaceLayer>,
-    /// Roads crossing the page, drawn finer than its weights carry them.
-    pub roads: world::TerrainRoads,
+    /// How roads wear the page's natural ground, finer than its weights resolve.
+    pub wear: Option<world::TerrainWear>,
 }
 /// How grass covers a near page's ground where it actually grows (roads and exclusions
 /// included), from its vegetation page: `vegetation::VegetationFieldPageData::cover_map`. Ground
@@ -58,8 +58,10 @@ struct Resident {
     material: Handle<TerrainMaterial>,
     fade: f32,
     uploaded: bool,
-    /// The entry's `roads`, from the upload.
-    roads: IVec4,
+    /// Whether the upload carried a wear field.
+    wear: bool,
+    /// When the uploaded source last changed: the editor rewrites sources in place.
+    source: bevy::ecs::change_detection::Tick,
     /// The uploaded grass cover's revision and side (0: none).
     cover: (u64, u32),
 }
@@ -255,7 +257,8 @@ fn select_sources(
                         material: prepared.material,
                         fade: 0.,
                         uploaded: false,
-                        roads: IVec4::ZERO,
+                        wear: false,
+                        source: default(),
                         cover: (0, 0),
                     },
                 );
@@ -274,7 +277,7 @@ fn select_sources(
 #[allow(clippy::too_many_arguments)]
 fn update(
     view: Res<NearView>,
-    sources: Query<(&NearSource, Option<&NearGrassCover>)>,
+    sources: Query<(Ref<NearSource>, Option<&NearGrassCover>)>,
     source_materials: Res<Assets<TerrainMaterial>>,
     mut materials: ResMut<Assets<TerrainCompositeMaterial>>,
     mut images: ResMut<Assets<Image>>,
@@ -360,17 +363,14 @@ fn update(
         if !pack.matches(m) {
             continue;
         }
-        // A cover arriving or changing after the page uploads it again, drawing meanwhile.
-        let stale = p.uploaded && p.cover.0 != cover.map_or(0, |c| c.revision);
+        // An edited source, or a cover arriving or changing after the page, uploads it again,
+        // drawing meanwhile.
+        let stale = p.uploaded
+            && (p.cover.0 != cover.map_or(0, |c| c.revision) || p.source != source.last_changed());
         if (!p.uploaded || stale) && uploads.len() < 2 {
-            let (tile, fits) = gpu::tile(p.slot, source, cover);
-            if !fits {
-                warn_once!(
-                    "near terrain: a page's roads exceed {} records; they draw as baked",
-                    gpu::ROAD_CAPACITY
-                );
-            }
-            p.roads = tile.road_entry;
+            let tile = gpu::tile(p.slot, &source, cover);
+            p.source = source.last_changed();
+            p.wear = tile.has_wear();
             p.cover = (cover.map_or(0, |c| c.revision), tile.cover_side);
             uploads.push(tile);
             p.uploaded = true;
@@ -378,7 +378,7 @@ fn update(
         if !p.uploaded {
             continue;
         }
-        let entry = gpu::entry(source, m, p.slot, p.fade, p.roads, p.cover.1);
+        let entry = gpu::entry(&source, m, p.slot, p.fade, p.wear, p.cover.1);
         let mut i = hash(p.cell);
         while table[i].key.w != 0 {
             i = (i + 1) & (NEAR_TABLE - 1);
@@ -425,6 +425,6 @@ fn hash(cell: CellCoord) -> usize {
 }
 
 #[cfg(test)]
-mod road_tests;
-#[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod wear_tests;

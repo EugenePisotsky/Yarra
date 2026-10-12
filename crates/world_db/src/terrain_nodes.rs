@@ -639,7 +639,7 @@ mod tests {
                     heightfield: field.clone(),
                     surfaces: vec![],
                     weight_pages: vec![],
-                    roads: Default::default(),
+                    wear: None,
                 }))
                 .unwrap();
             let space = WorldSpaceId(1);

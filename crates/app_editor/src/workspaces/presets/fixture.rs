@@ -95,6 +95,8 @@ pub(super) struct Request {
     pub preset: PresetId,
     pub base: TerrainSurfaceId,
     pub surfaces: Vec<TerrainSurfaceId>,
+    /// What the world's surfaces wear down to, as roads show it.
+    pub worn: Vec<environment::WornGround>,
     pub size: u16,
     pub footprint: Footprint,
     pub underlay: Option<PresetId>,
@@ -159,6 +161,7 @@ impl Request {
             mask_resolution: 33,
             surfaces: self.surfaces,
             base_surface: self.base,
+            worn: self.worn,
             layers,
         };
         let plan = CompilePlan::new(
@@ -295,10 +298,40 @@ impl Request {
             asset_ids: plan.collection_assets(),
             assets: vec![],
             scene,
-            ground: cell.ground,
+            ground: worn_ground(cell.ground, cell.wear.as_ref()),
             terrain: cell.terrain,
             size: self.size as f32,
             candidates,
         })
     }
+}
+
+/// The preview shades its weights directly: the natural ground worn where the road wears it,
+/// at the weights' own samples (dense enough on road previews), as near terrain lays it.
+fn worn_ground(mut ground: CompiledGround, wear: Option<&world::TerrainWear>) -> CompiledGround {
+    let Some(wear) = wear else {
+        return ground;
+    };
+    let Some(n) = ground
+        .weight_pages
+        .first()
+        .map(|p| usize::from(p.resolution))
+    else {
+        return ground;
+    };
+    let count = ground.surfaces.len();
+    for z in 0..n {
+        for x in 0..n {
+            let texel = (z * n + x) * 4;
+            let mut weights: Vec<f64> = (0..count)
+                .map(|i| f64::from(ground.weight_pages[i / 4].rgba[texel + i % 4]) / 255.0)
+                .collect();
+            let uv = [x, z].map(|v| v as f64 / (n - 1) as f64);
+            wear.lay(&mut weights, wear.sample(uv).wear);
+            for (i, w) in weights.into_iter().enumerate() {
+                ground.weight_pages[i / 4].rgba[texel + i % 4] = (w * 255.0).round() as u8;
+            }
+        }
+    }
+    ground
 }

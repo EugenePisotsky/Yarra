@@ -6,7 +6,6 @@ pub(super) struct PlannedJunction {
     /// junction's own.
     pub hub: usize,
     pub profile: CartTrackProfile,
-    pub ground: Vec<(usize, f64)>,
     pub ground_preset: environment::Preset,
     pub roads: Vec<RoadId>,
     pub bounds: RoadCellBounds,
@@ -60,13 +59,6 @@ impl PlannedJunction {
     }
 }
 impl RoadPlan {
-    pub(super) fn junction_blend(&self, road: RoadId, cell: CellCoord, uv: [f64; 2]) -> f64 {
-        self.junctions
-            .iter()
-            .filter(|j| j.roads.contains(&road))
-            .map(|j| j.blend(cell, uv, self.size))
-            .fold(0.0, f64::max)
-    }
     pub(super) fn joined_depth(
         &self,
         road: RoadId,
@@ -123,7 +115,6 @@ pub(super) fn build(
             source: j.clone(),
             hub,
             profile: road.profile.clone(),
-            ground: road.ground.clone(),
             ground_preset: road.ground_preset.clone(),
             roads: members.into_iter().collect(),
             bounds,

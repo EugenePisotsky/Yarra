@@ -478,7 +478,7 @@ fn compile_inner(
                 .unwrap_or_else(|| baseline.heightfield.clone()),
             surfaces: result.ground.surfaces.clone(),
             weight_pages: result.ground.weight_pages.clone(),
-            roads: result.roads.clone(),
+            wear: result.wear.clone(),
         };
         if page == baseline {
             leaves.remove(&cell);
@@ -595,11 +595,11 @@ pub(crate) fn apply_sources(
             if height_changed {
                 near.height_bounds = surface.heightfield.height_bounds();
             }
-            let roads = cell.map(|c| &c.roads).or_else(|| page.map(|p| &p.roads));
-            if let Some(roads) = roads
-                && near.roads != *roads
+            let wear = cell.map(|c| &c.wear).or_else(|| page.map(|p| &p.wear));
+            if let Some(wear) = wear
+                && near.wear != *wear
             {
-                near.roads = roads.clone();
+                near.wear = wear.clone();
             }
         }
     }

@@ -94,7 +94,6 @@ struct PlannedRoad {
     profile: CartTrackProfile,
     /// The style's shape as the cell's grids draw it.
     baked: world::RoadShape,
-    ground: Vec<(usize, f64)>,
     ground_preset: environment::Preset,
     curves: Vec<Curve>,
 }
@@ -151,29 +150,11 @@ impl RoadPlan {
             let Some(preset) = plan.presets.get(cart.ground) else {
                 return Err(road_error("missing road ground preset"));
             };
-            let PresetKind::Ground(ground) = &preset.kind else {
+            // The road wears the natural ground down to what it wears to; its Ground preset sets
+            // only how strongly.
+            if !matches!(preset.kind, PresetKind::Ground(_)) {
                 return Err(road_error("road surface must reference a Ground preset"));
-            };
-            let total = ground
-                .surfaces
-                .iter()
-                .map(|s| f64::from(s.weight))
-                .sum::<f64>();
-            let surface_weights = ground
-                .surfaces
-                .iter()
-                .map(|s| {
-                    plan.definition
-                        .surfaces
-                        .binary_search(&s.surface)
-                        .map(|index| (index, f64::from(s.weight) / total))
-                        .map_err(|_| {
-                            CompileError::Source(environment::ValidationError::MissingSurface(
-                                s.surface,
-                            ))
-                        })
-                })
-                .collect::<Result<Vec<_>, _>>()?;
+            }
             if !source.enabled {
                 continue;
             }
@@ -215,7 +196,6 @@ impl RoadPlan {
                     source: source.clone(),
                     profile: cart.clone(),
                     baked,
-                    ground: surface_weights,
                     ground_preset: preset.clone(),
                     curves,
                 });
@@ -331,52 +311,6 @@ impl RoadPlan {
                 * z.wear,
         }
     }
-    /// The surfaces roads and junctions may lay on `cell`: a page keeps these over natural
-    /// ground when it has more surfaces than it can carry.
-    pub(crate) fn ground_surfaces(&self, cell: CellCoord) -> Vec<usize> {
-        let roads = self.cells.get(&cell).into_iter().flatten();
-        let junctions = self.junctions.iter().filter(|j| j.bounds.contains(cell));
-        roads
-            .flat_map(|(index, _)| &self.roads[*index].ground)
-            .chain(junctions.flat_map(|j| &j.ground))
-            .map(|&(index, _)| index)
-            .collect()
-    }
-    pub(crate) fn ground(&self, cell: CellCoord, uv: [f64; 2], weights: &mut [f64]) {
-        for (index, curves) in &self.cells[&cell] {
-            let road = &self.roads[*index];
-            let PresetKind::Ground(ground) = &road.ground_preset.kind else {
-                unreachable!()
-            };
-            // Fade each ordinary road continuously; changing blend support must not
-            // switch abruptly between sequential material layers and a max union.
-            let a = self.influence(road, curves, cell, uv).ground
-                * (1.0 - self.junction_blend(road.source.id, cell, uv))
-                * f64::from(ground.strength);
-            for value in weights.iter_mut() {
-                *value *= 1.0 - a;
-            }
-            for &(index, value) in &road.ground {
-                weights[index] += a * value;
-            }
-        }
-        for j in &self.junctions {
-            let PresetKind::Ground(ground) = &j.ground_preset.kind else {
-                unreachable!()
-            };
-            let blend = j.blend(cell, uv, self.size);
-            if blend == 0.0 {
-                continue;
-            }
-            let a = j.wear(cell, uv, self.size) * blend * f64::from(ground.strength);
-            for value in weights.iter_mut() {
-                *value *= 1.0 - a;
-            }
-            for &(index, value) in &j.ground {
-                weights[index] += a * value;
-            }
-        }
-    }
     /// How much road and junction wear clears grass at `uv`: the strongest in the grass channel.
     pub(crate) fn grass_suppression(&self, cell: CellCoord, uv: [f64; 2]) -> f64 {
         let mut suppression = 0.0_f64;
@@ -480,14 +414,6 @@ impl RoadPlan {
             track_depth: p.relief.track_depth,
             rut_roundness: p.relief.rut_roundness,
             strength: ground.strength,
-            surfaces: {
-                let total: f32 = ground.surfaces.iter().map(|s| s.weight).sum();
-                ground
-                    .surfaces
-                    .iter()
-                    .map(|s| (s.surface, s.weight / total))
-                    .collect()
-            },
         }
     }
     pub(crate) fn terrain_roads(&self, cell: CellCoord) -> world::TerrainRoads {
@@ -603,6 +529,6 @@ impl CompilePlan {
             requested.to_vec()
         };
         let road_plan = RoadPlan::new(self, &queried, roads, profile)?;
-        self.compile_with_influences(requested, source, Some(&road_plan))
+        self.compile_with_influences(requested, source, Some(&road_plan), None)
     }
 }

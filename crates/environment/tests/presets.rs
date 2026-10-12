@@ -226,6 +226,7 @@ fn imported_mask_names_are_checked_with_their_layer() {
         mask_resolution: 33,
         surfaces: vec![TerrainSurfaceId([1; 16]), TerrainSurfaceId([2; 16])],
         base_surface: TerrainSurfaceId([1; 16]),
+        worn: vec![],
         layers: vec![Layer {
             id: LayerId([1; 16]),
             revision: 1,
