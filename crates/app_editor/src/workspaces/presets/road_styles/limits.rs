@@ -34,6 +34,7 @@ impl GeometryLimits {
         use GeometryField::*;
         let corridor = self.corridor.unwrap_or(64.0);
         let edges = 2.0 * (p.edge_softness + p.edge_variation + p.track_wander);
+        let footpath = p.track_spacing == 0.0;
         let (mut min, mut max) = match field {
             Spacing => (
                 0.1_f32.max(p.track_width.next_up()),
@@ -45,7 +46,11 @@ impl GeometryLimits {
                     .max(p.edge_variation / 0.4)
                     .max(p.track_wander),
                 8.0_f32
-                    .min(p.track_spacing.next_down())
+                    .min(if footpath {
+                        8.0
+                    } else {
+                        p.track_spacing.next_down()
+                    })
                     .min(corridor - p.track_spacing - edges),
             ),
             Softness => (
@@ -82,7 +87,7 @@ impl GeometryLimits {
             match field {
                 Spacing => v > p.track_width && width_fits,
                 TrackWidth => {
-                    v < p.track_spacing
+                    (footpath || v < p.track_spacing)
                         && p.edge_softness <= v
                         && p.edge_variation <= v * 0.4
                         && p.track_wander <= v

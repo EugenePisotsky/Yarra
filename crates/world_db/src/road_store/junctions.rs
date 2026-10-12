@@ -83,13 +83,19 @@ pub(super) fn validate(c: &Connection, source: &SourceRoadJunction) -> Result<()
             spans.insert(id, span(c, id)?);
         }
     }
+    // Roads of other styles may join; the junction's patch takes one of theirs.
+    let mut styles: BTreeSet<_> = roads.values().map(|r: &Road| r.profile).collect();
+    styles.insert(j.profile);
     RoadSnapshot {
         space: source.space,
         cell_size: size,
         loaded_bounds: j.bounds(size).map_err(|e| invalid(e.to_string()))?,
         truncated: false,
         roads: roads.into_values().collect(),
-        profiles: vec![profile(c, j.profile)?],
+        profiles: styles
+            .into_iter()
+            .map(|id| profile(c, id))
+            .collect::<Result<_, _>>()?,
         spans: spans.into_values().collect(),
         junctions: vec![j.clone()],
     }

@@ -357,12 +357,6 @@ impl CartTrackProfile {
                 "track width must be between 0.05 and 8 m",
             ),
             (
-                self.track_spacing,
-                0.1,
-                16.0,
-                "wheel spacing must be between 0.1 and 16 m",
-            ),
-            (
                 self.edge_softness,
                 0.01,
                 4.0,
@@ -397,7 +391,13 @@ impl CartTrackProfile {
                 return Err(invalid(message));
             }
         }
-        if self.track_spacing <= self.track_width {
+        // No spacing: a footpath, one track down the middle.
+        if self.track_spacing != 0.0 && !range(self.track_spacing, 0.1, 16.0) {
+            return Err(invalid(
+                "wheel spacing must be 0 (one track) or between 0.1 and 16 m",
+            ));
+        }
+        if self.track_spacing != 0.0 && self.track_spacing <= self.track_width {
             return Err(invalid("wheel spacing must be greater than track width"));
         }
         if self.edge_softness > self.track_width {
@@ -568,11 +568,10 @@ impl RoadSnapshot {
                 if !connected.insert(*id)
                     || !owners.insert(*owner)
                     || knot.position != junction.position
-                    || roads[owner].profile != junction.profile
                     || knot.width > junction.radius
                 {
                     return Err(invalid(
-                        "junction points must belong to different roads, share its position and style, and fit its radius",
+                        "junction points must belong to different roads, share its position and fit its radius",
                     ));
                 }
                 arms += self
@@ -583,6 +582,14 @@ impl RoadSnapshot {
             }
             if !(2..=4).contains(&arms) {
                 return Err(invalid("junction supports two to four incident arms"));
+            }
+            // Roads of other styles may join (a footpath leaving a cart road); the junction's
+            // worn patch takes the style of one of its roads.
+            if !owners
+                .iter()
+                .any(|owner| roads[owner].profile == junction.profile)
+            {
+                return Err(invalid("a junction takes the style of one of its roads"));
             }
         }
         Ok(())

@@ -314,12 +314,30 @@ fn validate_route_style(
     route: RoadId,
     p: &CartTrackProfile,
 ) -> Result<(), String> {
+    // A junction's worn patch takes the style of one of its roads, which must keep it.
+    let road_of = |k: &RoadKnotId| match w.get(RoadRecordKey::Knot(*k)) {
+        Some(RoadSourceRecord::Knot(k)) => Some(k.road),
+        _ => None,
+    };
+    let style_of = |r: RoadId| match w.get(RoadRecordKey::Road(r)) {
+        Some(RoadSourceRecord::Road(r)) => Some(r.road.profile),
+        _ => None,
+    };
     for e in w.entries.values() {
         if let Some(RoadSourceRecord::Junction(j)) = &e.current
             && j.junction.profile != p.id
-            && j.junction.knots.iter().any(|k| matches!(w.get(RoadRecordKey::Knot(*k)), Some(RoadSourceRecord::Knot(k)) if k.road == route))
+            && j.junction.knots.iter().any(|k| road_of(k) == Some(route))
+            && !j
+                .junction
+                .knots
+                .iter()
+                .filter_map(road_of)
+                .any(|r| r != route && style_of(r) == Some(j.junction.profile))
         {
-            return Err("Disconnect this road from its junction before assigning a different style".into());
+            return Err(
+                "This road gives its junction its style; give another road there that style first"
+                    .into(),
+            );
         }
     }
     let saved = w.route_minimum_widths.get(&route).copied().flatten();

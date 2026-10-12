@@ -627,7 +627,7 @@ fn page_roads_reproduce_the_compiled_road_ground_for_near_detail() {
         for z in 0..n {
             for x in 0..n {
                 let local = [x, z].map(|v| v as f64 * size / (n - 1) as f64);
-                let (_, ground) = roads.ground(origin, local).unwrap();
+                let ground = roads.ground(origin, local);
                 let compiled = f64::from(ground_at(compiled, x, z));
                 assert!(
                     (ground * 255.0 - compiled).abs() <= 1.0,

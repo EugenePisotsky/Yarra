@@ -10,8 +10,46 @@ use serde::{Deserialize, Serialize};
 /// terrain detail draws wheel tracks, verges and ruts from these at full detail.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct TerrainRoads {
+    /// In the order the compiler lays them, each over the ones before.
     pub roads: Vec<TerrainRoad>,
     pub segments: Vec<TerrainRoadSegment>,
+    /// Junctions near the page, laid over every road.
+    pub junctions: Vec<TerrainRoadJunction>,
+}
+
+/// Where roads meet (`environment::roads::RoadJunction`): within `radius` of `centre`
+/// (page-local metres) its roads give way to one worn patch of the ground of `road`, whose
+/// breakup, strength and surfaces it takes. `members` has a bit per index into
+/// `TerrainRoads::roads` for each road that meets there.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct TerrainRoadJunction {
+    pub centre: [f32; 2],
+    pub radius: f32,
+    pub seed: u32,
+    pub road: u16,
+    pub members: u32,
+}
+
+impl TerrainRoadJunction {
+    /// How fully the junction's patch replaces its roads at `local` (page-local): a common
+    /// centre, then a broad transition into each road's own tracks.
+    pub fn blend(&self, local: [f64; 2]) -> f64 {
+        let d = (local[0] - f64::from(self.centre[0])).hypot(local[1] - f64::from(self.centre[1]));
+        smooth((1.0 - d / f64::from(self.radius)) / 0.65)
+    }
+    /// How much of its ground the patch lays at `world` (XZ), over everything, `road` being its
+    /// road's drawing.
+    pub fn ground(&self, road: &TerrainRoad, local: [f64; 2], world: [f64; 2]) -> f64 {
+        let patches = smooth(
+            (road_patch(world, road.shape.breakup_patch_size, self.seed ^ 0x815) - 0.40) / 0.30,
+        );
+        (1.0 - f64::from(road.shape.breakup) * patches)
+            * self.blend(local)
+            * f64::from(road.strength)
+    }
+    pub fn joins(&self, road: usize) -> bool {
+        road < 32 && self.members & (1 << road) != 0
+    }
 }
 
 /// One road's drawing: its cart-track style (`environment::roads::CartTrackProfile`), metres,
@@ -89,18 +127,22 @@ pub struct RoadZones {
 
 impl RoadShape {
     /// The wheel tracks where the centre line passes `point` (world XZ): each one's offset from
-    /// the line (the left one negative) and half-width.
+    /// the line (the left one negative) and half-width. A footpath (`track_spacing` 0) has one.
     pub fn tracks(&self, point: [f64; 2]) -> [(f64, f64); 2] {
         let half_spacing = f64::from(self.track_spacing) * 0.5;
         let half_width = f64::from(self.track_width) * 0.5;
         let mut tracks = [(-half_spacing, half_width), (half_spacing, half_width)];
         if self.track_wander > 0.0 {
             let wander = f64::from(self.track_wander);
-            let n = value4(
+            let mut n = value4(
                 point.map(|v| v / f64::from(self.track_wander_length)),
                 self.seed ^ 0x5a1,
             )
             .map(|v| v * 2.0 - 1.0);
+            // A footpath's one track (no spacing) wanders as one.
+            if self.track_spacing == 0.0 {
+                n = [n[0], n[0], n[2], n[2]];
+            }
             tracks[0].0 += wander * n[0];
             tracks[1].0 += wander * n[1];
             tracks[0].1 += wander * 0.5 * n[2];
@@ -185,8 +227,17 @@ impl TerrainRoads {
     /// The road whose centre line passes nearest `local` (page-local metres). Its offset's
     /// `point` is page-local too.
     pub fn nearest(&self, local: [f64; 2]) -> Option<RoadHit> {
+        self.nearest_of(local, |_| true)
+    }
+
+    /// The nearest centre-line point of road `road` (an index into `roads`).
+    pub fn nearest_on(&self, road: usize, local: [f64; 2]) -> Option<RoadHit> {
+        self.nearest_of(local, |r| r == road)
+    }
+
+    fn nearest_of(&self, local: [f64; 2], keep: impl Fn(usize) -> bool) -> Option<RoadHit> {
         let mut best: Option<(f64, RoadHit)> = None;
-        for s in &self.segments {
+        for s in self.segments.iter().filter(|s| keep(usize::from(s.road))) {
             let a = s.a.map(f64::from);
             let ab = [f64::from(s.b[0]) - a[0], f64::from(s.b[1]) - a[1]];
             let denominator = ab[0] * ab[0] + ab[1] * ab[1];
@@ -232,13 +283,42 @@ impl TerrainRoads {
         best.map(|(_, hit)| hit)
     }
 
-    /// The nearest road at `local` on a page whose origin is `origin` (world XZ, metres), and how
-    /// much of its ground replaces the natural ground there.
-    pub fn ground(&self, origin: [f64; 2], local: [f64; 2]) -> Option<(usize, f64)> {
-        let mut hit = self.nearest(local)?;
+    /// How the page's roads lay their ground at `local` on a page whose origin is `origin`
+    /// (world XZ, metres), as the compiler lays it into page weights: each road in order, then
+    /// each junction, replacing that share of all ground laid before with its own. Amounts per
+    /// layer: roads by index, then junctions after them.
+    pub fn layers(&self, origin: [f64; 2], local: [f64; 2]) -> Vec<f64> {
         let world = [origin[0] + local[0], origin[1] + local[1]];
-        hit.offset.point = [origin[0] + hit.point[0], origin[1] + hit.point[1]];
-        Some((hit.road, self.roads[hit.road].ground(&hit.offset, world)))
+        let mut layers: Vec<_> = (0..self.roads.len())
+            .map(|road| {
+                let Some(mut hit) = self.nearest_on(road, local) else {
+                    return 0.0;
+                };
+                hit.offset.point = [origin[0] + hit.point[0], origin[1] + hit.point[1]];
+                let joined = self
+                    .junctions
+                    .iter()
+                    .filter(|j| j.joins(road))
+                    .map(|j| j.blend(local))
+                    .fold(0.0, f64::max);
+                self.roads[road].ground(&hit.offset, world) * (1.0 - joined)
+            })
+            .collect();
+        layers.extend(
+            self.junctions
+                .iter()
+                .map(|j| j.ground(&self.roads[usize::from(j.road)], local, world)),
+        );
+        layers
+    }
+
+    /// The share of the ground at `local` that roads and junctions lay, of all their kinds.
+    pub fn ground(&self, origin: [f64; 2], local: [f64; 2]) -> f64 {
+        1.0 - self
+            .layers(origin, local)
+            .into_iter()
+            .map(|a| 1.0 - a)
+            .product::<f64>()
     }
 }
 

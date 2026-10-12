@@ -276,10 +276,12 @@ pub(super) fn validate_record(
         RoadSourceRecord::Junction(j) => junctions::validate(c, j)?,
         RoadSourceRecord::Profile(p) => p.validate().map_err(|e| invalid(e.to_string()))?,
         RoadSourceRecord::Road(r) => {
-            let mismatch:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM road_junction_knots m JOIN road_knots k ON k.id=m.knot_id JOIN road_junctions j ON j.id=m.junction_id WHERE k.road_id=?1 AND (j.profile_id!=?2 OR j.world_space_id!=?3))",params![r.road.id.0.as_slice(),r.road.profile.0.as_slice(),r.space.0],|row|row.get(0))?;
+            // A junction's worn patch takes the style of one of its roads: a road may differ
+            // from it while another road there keeps it.
+            let mismatch:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM road_junction_knots m JOIN road_knots k ON k.id=m.knot_id JOIN road_junctions j ON j.id=m.junction_id WHERE k.road_id=?1 AND (j.world_space_id!=?3 OR (j.profile_id!=?2 AND NOT EXISTS(SELECT 1 FROM road_junction_knots m2 JOIN road_knots k2 ON k2.id=m2.knot_id JOIN roads r2 ON r2.id=k2.road_id WHERE m2.junction_id=j.id AND r2.id!=?1 AND r2.profile_id=j.profile_id))))",params![r.road.id.0.as_slice(),r.road.profile.0.as_slice(),r.space.0],|row|row.get(0))?;
             if mismatch {
                 return Err(invalid(
-                    "disconnect a road from its junctions before changing its style",
+                    "a junction takes the style of one of its roads; keep it on another road there before changing this one",
                 ));
             }
             let p = profile(c, r.road.profile)?;

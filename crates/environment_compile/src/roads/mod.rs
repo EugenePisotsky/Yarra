@@ -466,35 +466,74 @@ impl RoadPlan {
             }
         }
     }
+    /// A plan road as pages draw it.
+    fn terrain_road(&self, index: usize) -> world::TerrainRoad {
+        let road = &self.roads[index];
+        let p = &road.profile;
+        let PresetKind::Ground(ground) = &road.ground_preset.kind else {
+            unreachable!()
+        };
+        world::TerrainRoad {
+            shape: shape(p, road.source.seed),
+            center_ground: p.center_ground,
+            shoulder_ground: p.shoulder_ground,
+            track_depth: p.relief.track_depth,
+            rut_roundness: p.relief.rut_roundness,
+            strength: ground.strength,
+            surfaces: {
+                let total: f32 = ground.surfaces.iter().map(|s| s.weight).sum();
+                ground
+                    .surfaces
+                    .iter()
+                    .map(|s| (s.surface, s.weight / total))
+                    .collect()
+            },
+        }
+    }
     pub(crate) fn terrain_roads(&self, cell: CellCoord) -> world::TerrainRoads {
         let mut result = world::TerrainRoads::default();
-        let Some(entries) = self.cells.get(&cell) else {
+        let entries = self.cells.get(&cell).map_or(&[][..], Vec::as_slice);
+        let junctions: Vec<_> = self
+            .junctions
+            .iter()
+            .filter(|j| j.bounds.contains(cell))
+            .collect();
+        if entries.is_empty() && junctions.is_empty() {
             return result;
-        };
+        }
         let size = f64::from(self.size);
+        // A page road per plan road, in the plan's order; a junction's style road joins the
+        // page without segments where none of it passes.
+        let mut indices = BTreeMap::new();
+        for (index, _) in entries {
+            indices.insert(*index, result.roads.len() as u16);
+            result.roads.push(self.terrain_road(*index));
+        }
+        for j in &junctions {
+            indices.entry(j.hub).or_insert_with(|| {
+                result.roads.push(self.terrain_road(j.hub));
+                (result.roads.len() - 1) as u16
+            });
+        }
+        for j in junctions {
+            result.junctions.push(world::TerrainRoadJunction {
+                centre: j.source.position.relative_to(cell, size).map(|v| v as f32),
+                radius: j.source.radius,
+                seed: j.source.seed,
+                road: indices[&j.hub],
+                members: j
+                    .roads
+                    .iter()
+                    .filter_map(|id| self.roads.iter().position(|r| r.source.id == *id))
+                    .filter_map(|i| indices.get(&i))
+                    .filter(|&&i| i < 32)
+                    .fold(0, |bits, &i| bits | 1 << i),
+            });
+        }
         for (index, curves) in entries {
             let road = &self.roads[*index];
             let p = &road.profile;
-            let PresetKind::Ground(ground) = &road.ground_preset.kind else {
-                unreachable!()
-            };
-            let local = result.roads.len() as u16;
-            result.roads.push(world::TerrainRoad {
-                shape: shape(p, road.source.seed),
-                center_ground: p.center_ground,
-                shoulder_ground: p.shoulder_ground,
-                track_depth: p.relief.track_depth,
-                rut_roundness: p.relief.rut_roundness,
-                strength: ground.strength,
-                surfaces: {
-                    let total: f32 = ground.surfaces.iter().map(|s| s.weight).sum();
-                    ground
-                        .surfaces
-                        .iter()
-                        .map(|s| (s.surface, s.weight / total))
-                        .collect()
-                },
-            });
+            let local = indices[index];
             for &curve in curves {
                 let curve = &road.curves[curve];
                 let origin = curve.source.start.position.cell;

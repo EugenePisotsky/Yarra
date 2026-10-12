@@ -114,10 +114,16 @@ def road_samples(path):
     previous point to the next, a third of the way to the neighbour)."""
     import re
     text = path.read_text()
-    points, halves = [], []
-    for road in re.finditer(r'width:\s*([0-9.]+)[^\[]*points:\s*\[(.*?)\]', text, re.S):
-        half = float(road.group(1)) / 2
-        p = np.array([[float(a), float(b)] for a, b in re.findall(r'\(\s*([-0-9.]+)\s*,\s*([-0-9.]+)\s*\)', road.group(2))])
+    points, halves, routes = [], [], {}
+    pattern = r'name:\s*"([^"]*)"[^\[]*?width:\s*([0-9.]+)[^\[]*?(?:from:\s*\(\s*"([^"]*)"\s*,\s*(\d+)\s*\)[^\[]*)?points:\s*\[(.*?)\]'
+    for road in re.finditer(pattern, text, re.S):
+        half = float(road.group(2)) / 2
+        p = [[float(a), float(b)] for a, b in re.findall(r'\(\s*([-0-9.]+)\s*,\s*([-0-9.]+)\s*\)', road.group(5))]
+        # A branch starts at a point of a road listed before it.
+        if road.group(3) is not None:
+            p.insert(0, routes[road.group(3)][int(road.group(4))])
+        routes[road.group(1)] = p
+        p = np.array(p)
         for i in range(len(p) - 1):
             def handle(k, towards):
                 prev, nxt = p[max(k - 1, 0)], p[min(k + 1, len(p) - 1)]

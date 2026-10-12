@@ -8,8 +8,8 @@ use anyhow::{Context, Result, bail};
 use environment::{
     GRASS_CHANNEL, GroundTreatment, OutputId, Preset, PresetId, PresetKind, SurfaceWeight,
     roads::{
-        CartTrackProfile, Road, RoadId, RoadKnot, RoadKnotId, RoadPoint, RoadProfileId, RoadRelief,
-        RoadSpanId, RoadTravelMode, TravelDirection,
+        CartTrackProfile, Road, RoadId, RoadJunction, RoadJunctionId, RoadKnot, RoadKnotId,
+        RoadPoint, RoadProfileId, RoadRelief, RoadSpanId, RoadTravelMode, TravelDirection,
     },
 };
 use serde::Deserialize;
@@ -17,7 +17,7 @@ use std::path::Path;
 use world::CellCoord;
 use world_db::{
     RoadRecordKey, RoadSourceRecord, RoadSourceWrite, RoadSourceWriteResult, SourceRoad,
-    SourceRoadKnot, SourceRoadSpan,
+    SourceRoadJunction, SourceRoadKnot, SourceRoadSpan,
 };
 
 /// The most knots one route may have: its records must fit one road transaction.
@@ -52,13 +52,17 @@ struct StyleImport {
     relief: RoadRelief,
 }
 
-/// A road through `points` (world XZ, metres), `width` metres across.
+/// A road through `points` (world XZ, metres), `width` metres across. A branch starts `from` a
+/// point of a road listed before it (its name and the point's index), joined to it there by a
+/// junction worn in that road's style; its `points` continue from there.
 #[derive(Deserialize)]
 struct RouteImport {
     name: String,
     style: String,
     width: f32,
     seed: u32,
+    #[serde(default)]
+    from: Option<(String, usize)>,
     points: Vec<[f64; 2]>,
 }
 
@@ -69,7 +73,11 @@ pub struct RoadImportReport {
 }
 
 pub fn import_roads(text: &str, project: &Path) -> Result<RoadImportReport> {
-    let import: RoadImport = ron::from_str(text).context("road import RON")?;
+    // `from: ("Beach road", 12)` reads as an optional field without `Some`.
+    let import: RoadImport = ron::Options::default()
+        .with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME)
+        .from_str(text)
+        .context("road import RON")?;
     let reader = world_db::ProjectReader::open_read_only(project)?;
     let space_id = reader.manifest().default_world_space;
     let space = reader
@@ -181,7 +189,31 @@ pub fn import_roads(text: &str, project: &Path) -> Result<RoadImportReport> {
 
     // Then each road on its own, replacing any knots and spans a longer earlier import left.
     let mut knots_total = 0;
-    for route in &import.roads {
+    for (index, imported) in import.roads.iter().enumerate() {
+        // A branch's first point is the point of the road it leaves.
+        let mut route = RouteImport {
+            name: imported.name.clone(),
+            style: imported.style.clone(),
+            width: imported.width,
+            seed: imported.seed,
+            from: imported.from.clone(),
+            points: imported.points.clone(),
+        };
+        let joined = match &imported.from {
+            None => None,
+            Some((name, point)) => {
+                let Some(main) = import.roads[..index].iter().find(|r| &r.name == name) else {
+                    bail!(
+                        "road {}: branches from {name}, which must be listed before it",
+                        route.name
+                    );
+                };
+                let start = main_point(main, *point)?;
+                route.points.insert(0, start);
+                Some((main, *point))
+            }
+        };
+        let route = &route;
         if !(2..=MAX_ROUTE_KNOTS).contains(&route.points.len()) {
             bail!(
                 "road {}: {} points; a road takes 2 to {MAX_ROUTE_KNOTS}",
@@ -231,11 +263,40 @@ pub fn import_roads(text: &str, project: &Path) -> Result<RoadImportReport> {
                 end: pair[1].id,
             })
         }));
-        // Stale knots and spans past this import's end are removed with it.
+        let junction_id =
+            RoadJunctionId(crate::stable_id(&format!("road/{}/junction", route.name)));
+        if let Some((main, point)) = joined {
+            let main_knot = RoadKnotId(crate::stable_id(&format!(
+                "road/{}/knot/{point}",
+                main.name
+            )));
+            records.push(RoadSourceRecord::Junction(SourceRoadJunction {
+                space: space_id,
+                junction: RoadJunction {
+                    id: junction_id,
+                    revision: 1,
+                    position: knots[0].position,
+                    radius: main.width.max(route.width).clamp(1.0, 16.0),
+                    profile: profile_id(&main.style),
+                    seed: route.seed ^ 0x9e37,
+                    knots: {
+                        let mut knots = vec![main_knot, knots[0].id];
+                        knots.sort();
+                        knots
+                    },
+                },
+            }));
+        }
+        // Stale knots, spans and a junction past this import's end are removed with it.
         let mut keys: Vec<_> = records.iter().map(RoadSourceRecord::key).collect();
         let stale: Vec<_> = (knots.len()..MAX_ROUTE_KNOTS)
             .map(|i| RoadRecordKey::Knot(knot_id(i)))
             .chain((knots.len() - 1..MAX_ROUTE_KNOTS).map(|i| RoadRecordKey::Span(span_id(i))))
+            .chain(
+                joined
+                    .is_none()
+                    .then_some(RoadRecordKey::Junction(junction_id)),
+            )
             .collect();
         keys.extend(&stale);
         let states = writer.read_road_records(&keys)?;
@@ -258,10 +319,37 @@ pub fn import_roads(text: &str, project: &Path) -> Result<RoadImportReport> {
                     record: None,
                 }),
         );
-        // The style the road is read with is checked against its current revision.
-        let style = RoadRecordKey::Profile(profile_id(&route.style));
+        // The styles the road is read with, and the point it leaves, are checked against their
+        // current revisions.
+        let mut read = vec![RoadRecordKey::Profile(profile_id(&route.style))];
+        if let Some((main, point)) = joined {
+            if main.style != route.style {
+                read.push(RoadRecordKey::Profile(profile_id(&main.style)));
+            }
+            read.push(RoadRecordKey::Road(RoadId(crate::stable_id(&format!(
+                "road/{}",
+                main.name
+            )))));
+            read.push(RoadRecordKey::Knot(RoadKnotId(crate::stable_id(&format!(
+                "road/{}/knot/{point}",
+                main.name
+            )))));
+        }
+        // Junctions of branches already leaving this road, from an earlier import.
+        read.extend(
+            import
+                .roads
+                .iter()
+                .filter(|b| b.from.as_ref().is_some_and(|(name, _)| name == &route.name))
+                .map(|b| {
+                    RoadRecordKey::Junction(RoadJunctionId(crate::stable_id(&format!(
+                        "road/{}/junction",
+                        b.name
+                    ))))
+                }),
+        );
         let dependencies: Vec<_> = writer
-            .read_road_records(&[style])?
+            .read_road_records(&read)?
             .into_iter()
             .filter_map(|s| {
                 Some(world_db::RoadDependency {
@@ -282,6 +370,19 @@ pub fn import_roads(text: &str, project: &Path) -> Result<RoadImportReport> {
         roads: import.roads.len(),
         knots: knots_total,
     })
+}
+
+/// Point `index` of route `main`, which a branch leaves from.
+fn main_point(main: &RouteImport, index: usize) -> Result<[f64; 2]> {
+    if main.from.is_some() && index == 0 {
+        bail!("road {}: its first point is a junction already", main.name);
+    }
+    let offset = usize::from(main.from.is_some());
+    index
+        .checked_sub(offset)
+        .and_then(|i| main.points.get(i))
+        .copied()
+        .with_context(|| format!("road {} has no point {index}", main.name))
 }
 
 fn profile_id(style: &str) -> RoadProfileId {

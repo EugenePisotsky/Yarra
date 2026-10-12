@@ -58,10 +58,10 @@ pub(super) fn join(
     };
     let ar = road(a.road)?;
     let br = road(b.road)?;
-    if ar.space != br.space || ar.road.profile != br.road.profile {
-        return Err(
-            "First-version junctions connect roads in the same world using the same style".into(),
-        );
+    // Roads of any style meet (a footpath leaving a cart road); the junction's worn patch takes
+    // the style of the road joined to.
+    if ar.space != br.space {
+        return Err("Junctions connect roads in the same world".into());
     }
     let mut j = at(w, target)
         .cloned()
@@ -208,12 +208,22 @@ pub(super) fn inspector(
 ) {
     ui.horizontal(|ui| {
         if ui.button("Branch from point").clicked() {
-            state.branching=true;state.connecting=false;state.creating=false;state.extending=false;state.first=None;
-            state.status=Some("Click the new branch endpoint. The branch shares this road's style.".into());
+            state.branching = true;
+            state.connecting = false;
+            state.creating = false;
+            state.extending = false;
+            state.first = None;
+            state.status =
+                Some("Click the new branch endpoint. The branch shares this road's style.".into());
         }
         if ui.button("Connect to point…").clicked() {
-            state.connecting=true;state.branching=false;state.creating=false;state.extending=false;state.first=None;
-            state.status=Some("Click a point on another road using the same style. Split its curve first if needed.".into());
+            state.connecting = true;
+            state.branching = false;
+            state.creating = false;
+            state.extending = false;
+            state.first = None;
+            state.status =
+                Some("Click a point on another road. Split its curve first if needed.".into());
         }
     });
     let Some(source) = at(&dense.roads, knot).cloned() else {

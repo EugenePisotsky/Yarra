@@ -78,19 +78,21 @@ fn road_buffer_bytes() -> u64 {
     u64::from(ROAD_CAPACITY) * NEAR_SLOTS as u64 * 16
 }
 /// A page's roads as `terrain_near.wesl` reads them from its slot's region of the road buffer,
-/// which starts at vec4 `base`: six vec4 per road (`terrain_road.wesl` lists their fields), then the page's 16 x 16 tiles, one vec4 each
-/// (rows of increasing X from the page's origin), then three vec4 per segment (ends; end
-/// normals; end widths and road). A tile holds two runs of segments, first and count each,
-/// together every segment that reaches the tile, so a pixel tests only those. Indices are
-/// absolute vec4 indices. Roads whose ground has no surface on the page draw nothing. Returns
-/// the records and the entry's `roads` (first tile, tiles across), or `None` when they do not
-/// fit the region.
+/// which starts at vec4 `base`: six vec4 per road (`terrain_road.wesl` lists their fields), two
+/// per junction, then the page's 16 x 16 tiles, one vec4 each (rows of increasing X from the
+/// page's origin), then three vec4 per segment (ends; end normals; end widths and road). A tile
+/// holds two runs of segments, first and count each, together every segment that reaches the
+/// tile, so a pixel tests only those; its first count is negative where they belong to more than
+/// one road. Indices are absolute vec4 indices. Roads whose ground has no surface on the page
+/// draw nothing. Returns the records and the entry's `roads` (first tile, tiles across, first
+/// junction, junctions), or `None` when they do not fit the region.
 pub(super) fn road_records(s: &NearSource, base: u32) -> Option<(Vec<Vec4>, IVec4)> {
     let roads = &s.roads;
     if roads.segments.is_empty() {
         return Some((vec![], IVec4::ZERO));
     }
-    let first_tile = base as usize + roads.roads.len() * 6;
+    let first_junction = base as usize + roads.roads.len() * 6;
+    let first_tile = first_junction + roads.junctions.len() * 2;
     let first_segment = first_tile + ROAD_TILES * ROAD_TILES;
     let end = first_segment + roads.segments.len() * 3;
     if end > (base + ROAD_CAPACITY) as usize {
@@ -133,6 +135,19 @@ pub(super) fn road_records(s: &NearSource, base: u32) -> Option<(Vec<Vec4>, IVec
             ),
             Vec4::from_array(std::array::from_fn(|i| ground[i].0)),
             Vec4::from_array(std::array::from_fn(|i| ground[i].1)),
+        ]);
+    }
+    // Junctions take their road's ground; a page road's bit marks each road that meets there.
+    for j in &roads.junctions {
+        let members = j.members & 0x00ff_ffff;
+        records.extend([
+            Vec4::new(j.centre[0], j.centre[1], j.radius, (j.seed & 0xffff) as f32),
+            Vec4::new(
+                (j.seed >> 16) as f32,
+                (base as usize + usize::from(j.road) * 6) as f32,
+                members as f32,
+                base as f32,
+            ),
         ]);
     }
     // How far each segment's drawing reaches. Bilinear weights carry the baked road a texel and
@@ -183,7 +198,15 @@ pub(super) fn road_records(s: &NearSource, base: u32) -> Option<(Vec<Vec4>, IVec
                 })
             };
             let (first, second) = (run(0), run(1));
-            records.push(Vec4::new(first.x, first.y, second.x, second.y));
+            let mut owners = runs
+                .iter()
+                .flat_map(|r| r.clone())
+                .map(|i| roads.segments[i].road);
+            let mixed = owners
+                .next()
+                .is_some_and(|road| owners.any(|other| other != road));
+            let count = if mixed { -first.y } else { first.y };
+            records.push(Vec4::new(first.x, count, second.x, second.y));
         }
     }
     for segment in &roads.segments {
@@ -205,7 +228,12 @@ pub(super) fn road_records(s: &NearSource, base: u32) -> Option<(Vec<Vec4>, IVec
     }
     Some((
         records,
-        IVec4::new(first_tile as i32, ROAD_TILES as i32, 0, 0),
+        IVec4::new(
+            first_tile as i32,
+            ROAD_TILES as i32,
+            first_junction as i32,
+            roads.junctions.len() as i32,
+        ),
     ))
 }
 fn phase(v: [f64; 2]) -> Vec2 {

@@ -298,3 +298,64 @@ fn overlapping_approach_materials_do_not_jump_at_the_junction_boundary() {
         "material jumps at junction radius: {outside} vs {inside}"
     );
 }
+#[test]
+fn page_roads_reproduce_a_junction_for_near_detail() {
+    let (plan, c, r) = setup();
+    let mut hub = 0;
+    for cell in CELLS {
+        let compiled = compile(&plan, &c, &r, cell);
+        let roads = &compiled.roads;
+        assert_eq!(roads.roads.len(), 2, "both roads draw on {cell:?}");
+        assert_eq!(roads.junctions.len(), 1);
+        assert_eq!(roads.junctions[0].members, 0b11);
+        let n = usize::from(compiled.ground.weight_pages[0].resolution);
+        let origin = [f64::from(cell.x) * 8.0, f64::from(cell.z) * 8.0];
+        for z in 0..n {
+            for x in 0..n {
+                let local = [x, z].map(|v| v as f64 * 8.0 / (n - 1) as f64);
+                let laid = roads.ground(origin, local);
+                let soil = ground_weights(&compiled.ground, x, z)
+                    .iter()
+                    .find(|(s, _)| *s == SOIL)
+                    .map_or(0, |w| w.1);
+                assert!(
+                    (laid * 255.0 - f64::from(soil)).abs() <= 1.0,
+                    "{cell:?} at {local:?}: page roads lay {laid}, the compiler laid {soil}"
+                );
+                let layers = roads.layers(origin, local);
+                hub += usize::from(layers[2] > 0.5);
+            }
+        }
+    }
+    assert!(hub > 20, "the junction wore {hub} samples");
+}
+#[test]
+fn a_footpath_of_its_own_style_branches_from_a_cart_road() {
+    let (plan, c, mut r) = setup();
+    let mut path = r.profiles[0].clone();
+    path.id = RoadProfileId([9; 16]);
+    path.name = "Footpath".into();
+    path.track_spacing = 0.0;
+    path.track_width = 0.6;
+    path.track_wander = 0.1;
+    r.profiles.push(path.clone());
+    r.roads[1].profile = path.id;
+    for s in r.spans.iter_mut().filter(|s| s.road == r.roads[1].id) {
+        s.start.width = 1.6;
+        s.end.width = 1.6;
+    }
+    let cell = compile(&plan, &c, &r, CELLS[0]);
+    let roads = &cell.roads;
+    assert_eq!(roads.roads.len(), 2);
+    assert_eq!(roads.roads[1].shape.track_spacing, 0.0);
+    // One track: both wander as one.
+    let tracks = roads.roads[1].shape.tracks([3.0, 5.0]);
+    assert_eq!(tracks[0], tracks[1]);
+    // The junction's patch takes the style of one of its roads.
+    r.junctions[0].profile = RoadProfileId([8; 16]);
+    r.profiles.push(environment::roads::CartTrackProfile {
+        id: RoadProfileId([8; 16]),
+        ..path
+    });
+    assert!(r.validate().is_err());
+}

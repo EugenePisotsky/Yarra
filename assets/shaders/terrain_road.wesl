@@ -5,12 +5,15 @@
 // grass put them. Wheel ruts narrower than the heights resolve are drawn here alone: sunk into
 // the ground by parallax, grooved by wheels, and holding rain.
 
-// Records written by terrain_render near/gpu.rs `road_records`, in vec4s. A road: track spacing,
-// track width, edge softness, edge variation; edge patch size, breakup patch size, seed low and
-// high 16 bits; breakup, centre ground, shoulder ground, strength; track depth, rut roundness,
-// track wander, wander length; the page slots of up to four ground surfaces (-1 none); their shares. A tile of the page's grid:
-// two runs of segments (first, count), together every segment reaching the tile. A segment: ends
-// A and B; their unit normals; their corridor widths and its road.
+// Records written by terrain_render near/gpu.rs `road_records`, in vec4s. A road: track spacing
+// (0: one track), track width, edge softness, edge variation; edge patch size, breakup patch
+// size, seed low and high 16 bits; breakup, centre ground, shoulder ground, strength; track
+// depth, rut roundness, track wander, wander length; the page slots of up to four ground surfaces
+// (-1 none); their shares. A junction: centre, radius, seed low 16 bits; seed high 16 bits, its
+// road (whose ground, breakup and strength it takes), a bit per page road that meets there, the
+// page's first road. A tile of the page's grid: two runs of segments (first, count), together
+// every segment reaching the tile; the first count is negative where they belong to more than one
+// road. A segment: ends A and B; their unit normals; their corridor widths and its road.
 @group(constants::MATERIAL_BIND_GROUP) @binding(16) var<storage, read> near_roads: array<vec4<f32>>;
 
 fn road_bits(x: i32, z: i32, seed: u32) -> u32 {
@@ -51,14 +54,31 @@ fn road_falloff(distance: f32, radius: f32, softness: f32) -> f32 {
 // it, the signed offset along the normal, the distance past the line's end, the corridor width,
 // and the road's record (-1: no road within reach).
 struct RoadHit { point: vec2<f32>, normal: vec2<f32>, distance: f32, lateral: f32, longitudinal: f32, width: f32, road: i32, }
-// `roads`: the page entry's first tile and tiles across; `p` page-local on a page `cell_size` across.
-fn nearest_road(roads: vec4<i32>, p: vec2<f32>, cell_size: f32) -> RoadHit {
+// The nearest centre-line point of two roads at `p`, nearest first (`road` -1: none): where roads
+// meet or branch, both draw.
+struct RoadPair { first: RoadHit, second: RoadHit, }
+fn road_hit(segment: u32, along: f32, best: f32, p: vec2<f32>) -> RoadHit {
+    if best == 3.4e38 { return RoadHit(vec2(0.0), vec2(0.0), 0.0, 0.0, 0.0, 0.0, -1); }
+    let ends = near_roads[segment];
+    let normals = near_roads[segment+1u];
+    let widths = near_roads[segment+2u];
+    let q = mix(ends.xy, ends.zw, along);
+    let m = mix(normals.xy, normals.zw, along);
+    let n = select(normals.xy, normalize(m), dot(m, m) > 1e-12);
+    let lateral = dot(p-q, n);
+    return RoadHit(q, n, sqrt(best), lateral, sqrt(max(best-lateral*lateral, 0.0)), mix(widths.x, widths.y, along), i32(widths.z));
+}
+// `roads`: the page entry's first tile, tiles across, first junction and junctions; `p`
+// page-local on a page `cell_size` across.
+fn nearest_roads(roads: vec4<i32>, p: vec2<f32>, cell_size: f32) -> RoadPair {
     let tile = clamp(vec2<i32>(floor(p/cell_size*f32(roads.y))), vec2(0), vec2(roads.y-1));
     let runs = near_roads[u32(roads.x + tile.y*roads.y + tile.x)];
-    // The search keeps only the nearest segment and where along it; the rest is read once.
-    var best = 3.4e38; var nearest = 0u; var along = 0.0;
+    // The search keeps only each road's nearest segment and where along it; the rest is read
+    // once. Most tiles hold one road and never read a segment's road.
+    let mixed = runs.y < 0.0;
+    var best = vec2(3.4e38); var nearest = vec2(0u); var along = vec2(0.0); var road = vec2(-1.0);
     for (var r = 0u; r < 2u; r += 1u) {
-        let run = select(runs.xy, runs.zw, r == 1u);
+        let run = abs(select(runs.xy, runs.zw, r == 1u));
         for (var i = 0u; i < u32(run.y); i += 1u) {
             let s = u32(run.x) + i*3u;
             let ends = near_roads[s];
@@ -67,18 +87,25 @@ fn nearest_road(roads: vec4<i32>, p: vec2<f32>, cell_size: f32) -> RoadHit {
             let t = select(0.0, clamp(dot(p-ends.xy, ab)/denominator, 0.0, 1.0), denominator > 1e-12);
             let d = p - ends.xy - ab*t;
             let d2 = dot(d, d);
-            if d2 < best { best = d2; nearest = s; along = t; }
+            if !mixed {
+                if d2 < best.x { best.x = d2; nearest.x = s; along.x = t; }
+                continue;
+            }
+            let owner = near_roads[s+2u].z;
+            if owner == road.x {
+                if d2 < best.x { best.x = d2; nearest.x = s; along.x = t; }
+            } else if d2 < best.x {
+                best.y = best.x; nearest.y = nearest.x; along.y = along.x; road.y = road.x;
+                best.x = d2; nearest.x = s; along.x = t; road.x = owner;
+            } else if d2 < best.y {
+                best.y = d2; nearest.y = s; along.y = t; road.y = owner;
+            }
         }
     }
-    if best == 3.4e38 { return RoadHit(vec2(0.0), vec2(0.0), 0.0, 0.0, 0.0, 0.0, -1); }
-    let ends = near_roads[nearest];
-    let normals = near_roads[nearest+1u];
-    let widths = near_roads[nearest+2u];
-    let q = mix(ends.xy, ends.zw, along);
-    let m = mix(normals.xy, normals.zw, along);
-    let n = select(normals.xy, normalize(m), dot(m, m) > 1e-12);
-    let lateral = dot(p-q, n);
-    return RoadHit(q, n, sqrt(best), lateral, sqrt(max(best-lateral*lateral, 0.0)), mix(widths.x, widths.y, along), i32(widths.z));
+    return RoadPair(road_hit(nearest.x, along.x, best.x, p), road_hit(nearest.y, along.y, best.y, p));
+}
+fn nearest_road(roads: vec4<i32>, p: vec2<f32>, cell_size: f32) -> RoadHit {
+    return nearest_roads(roads, p, cell_size).first;
 }
 // How far from the centre line the road shows, plus `margin`.
 fn road_reach(hit: RoadHit, margin: f32) -> f32 {
@@ -93,7 +120,9 @@ fn road_tracks(road: u32, centre: vec2<f32>) -> RoadTracks {
     let shape = near_roads[road]; let rut = near_roads[road+3u];
     var tracks = RoadTracks(vec2(-0.5, 0.5)*shape.x, vec2(0.5*shape.y));
     if rut.z > 0.0 {
-        let n = road_value4(centre/rut.w, road_seed(road) ^ 0x5a1u)*2.0-1.0;
+        var n = road_value4(centre/rut.w, road_seed(road) ^ 0x5a1u)*2.0-1.0;
+        // A footpath's one track (no spacing) wanders as one.
+        if shape.x == 0.0 { n = n.xxzz; }
         tracks.offset += rut.z*n.xy;
         tracks.half += rut.z*0.5*n.zw;
     }
@@ -130,6 +159,33 @@ fn road_amount(hit: RoadHit, world: vec2<f32>, centre: vec2<f32>) -> f32 {
     let shoulder = road_smooth((out-near)/feather)*road_smooth((half_width-out)/max(half_width-far, feather))*corridor;
     let wear = 1.0 - look.x*road_smooth((road_patch(world, noise.y, road_seed(base) ^ 0x815u)-0.4)/0.3);
     return max(max(wheels, center*look.y), shoulder*look.z)*wear*look.w;
+}
+
+// How fully junction record `j` replaces its roads at `p` (page-local): a common centre, then a
+// broad transition into each road's own tracks.
+fn junction_blend(j: u32, p: vec2<f32>) -> f32 {
+    let a = near_roads[j];
+    return road_smooth((1.0 - length(p - a.xy)/a.z)/0.65);
+}
+// How much of its ground junction `j` lays at `p` (page-local; `world` XZ), over everything.
+fn junction_ground(j: u32, p: vec2<f32>, world: vec2<f32>) -> f32 {
+    let a = near_roads[j]; let b = near_roads[j+1u];
+    let road = u32(b.y);
+    let look = near_roads[road+2u];
+    let seed = u32(a.w) | (u32(b.x) << 16u);
+    let patches = road_smooth((road_patch(world, near_roads[road+1u].y, seed ^ 0x815u) - 0.4)/0.3);
+    return (1.0 - look.x*patches)*junction_blend(j, p)*look.w;
+}
+// How much of the junctions at `p` replaces road `hit`'s drawing: the strongest that it meets.
+fn junctions_over(roads: vec4<i32>, hit: RoadHit, p: vec2<f32>) -> f32 {
+    var joined = 0.0;
+    for (var i = 0; i < roads.w; i += 1) {
+        let j = u32(roads.z + i*2);
+        let b = near_roads[j+1u];
+        let local = (u32(hit.road) - u32(b.w))/6u;
+        if local < 24u && ((u32(b.z) >> local) & 1u) != 0u { joined = max(joined, junction_blend(j, p)); }
+    }
+    return joined;
 }
 
 // The wheel ruts of a road near `centre` (world XZ): the tracks, each rut's depth (metres), how
@@ -189,5 +245,3 @@ fn rut_parallax(r: RoadRuts, hit: RoadHit, view: vec3<f32>, normal: vec3<f32>) -
     return vec3(shift*deepest, deepest);
 }
 // The page slots of the road's ground surfaces (-1 none) and their shares.
-fn road_slots(hit: RoadHit) -> vec4<f32> { return near_roads[u32(hit.road)+4u]; }
-fn road_shares(hit: RoadHit) -> vec4<f32> { return near_roads[u32(hit.road)+5u]; }

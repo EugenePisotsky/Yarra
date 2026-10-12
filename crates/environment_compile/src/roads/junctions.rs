@@ -2,6 +2,9 @@ use super::*;
 
 pub(super) struct PlannedJunction {
     pub source: RoadJunction,
+    /// The road (index into the plan's roads) whose style the junction's patch takes: the
+    /// junction's own.
+    pub hub: usize,
     pub profile: CartTrackProfile,
     pub ground: Vec<(usize, f64)>,
     pub ground_preset: environment::Preset,
@@ -110,12 +113,15 @@ pub(super) fn build(
         if arms < 2 || members.len() < 2 {
             continue;
         }
-        let road = roads
+        let hub = roads
             .iter()
-            .find(|r| members.contains(&r.source.id))
+            .position(|r| members.contains(&r.source.id) && r.source.profile == j.profile)
+            .or_else(|| roads.iter().position(|r| members.contains(&r.source.id)))
             .unwrap();
+        let road = &roads[hub];
         result.push(PlannedJunction {
             source: j.clone(),
+            hub,
             profile: road.profile.clone(),
             ground: road.ground.clone(),
             ground_preset: road.ground_preset.clone(),

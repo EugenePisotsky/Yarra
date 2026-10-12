@@ -10,7 +10,7 @@ use bevy::render::{
     renderer::initialize_renderer,
     settings::{Backends, WgpuSettings},
 };
-use world::{RoadShape, TerrainRoad, TerrainRoadSegment, TerrainRoads};
+use world::{RoadShape, TerrainRoad, TerrainRoadJunction, TerrainRoadSegment, TerrainRoads};
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -67,17 +67,67 @@ fn bend() -> TerrainRoads {
                 road: 0,
             })
             .collect(),
+        junctions: vec![],
     }
 }
 
-#[test]
-#[ignore = "requires native GPU; checks the near road drawing against the compiler's"]
-fn near_roads_draw_where_the_compiler_lays_them() {
+/// A cart road along the page and a footpath leaving it at a junction, 40 degrees off.
+fn fork() -> TerrainRoads {
+    let line = |from: [f32; 2], to: [f32; 2], road: u16, width: f32| {
+        let d = [to[0] - from[0], to[1] - from[1]];
+        let length = d[0].hypot(d[1]);
+        let normal = [-d[1] / length, d[0] / length];
+        let steps = (length / 1.5).ceil() as usize;
+        (0..steps)
+            .map(move |i| {
+                let at = |t: f32| [from[0] + d[0] * t, from[1] + d[1] * t];
+                TerrainRoadSegment {
+                    a: at(i as f32 / steps as f32),
+                    b: at((i + 1) as f32 / steps as f32),
+                    normal_a: normal,
+                    normal_b: normal,
+                    width: [width; 2],
+                    road,
+                }
+            })
+            .collect::<Vec<_>>()
+    };
+    let mut roads = bend();
+    let mut path = roads.roads[0].clone();
+    path.shape.seed = 9;
+    path.shape.track_spacing = 0.0;
+    path.shape.track_width = 0.6;
+    path.shape.edge_softness = 0.1;
+    path.shape.track_wander = 0.1;
+    roads.roads.push(path);
+    roads.segments = line([-5.0, 16.0], [40.0, 16.0], 0, 3.6);
+    roads.segments.extend(line(
+        [16.0, 16.0],
+        [16.0 + 24.0 * 0.766, 16.0 + 24.0 * 0.643],
+        1,
+        1.6,
+    ));
+    roads.junctions = vec![TerrainRoadJunction {
+        centre: [16.0, 16.0],
+        radius: 4.0,
+        seed: 99,
+        road: 0,
+        members: 0b11,
+    }];
+    roads
+}
+
+/// Draws `roads` on a 32 m page with the production shader and checks every layer against
+/// `world::TerrainRoads::layers`, which the compiler lays roads with.
+/// Returns how many samples each layer (two roads, a junction) covers more than half.
+fn draws_as_compiled(roads: TerrainRoads) -> [usize; 3] {
     let cell = CellCoord { x: 85, z: 70 };
     let mut source = super::tests::source(cell);
     source.cell_size = 32.;
-    source.roads = bend();
-    let (records, roads) = gpu::road_records(&source, 3 * gpu::ROAD_CAPACITY).unwrap();
+    source.weights[0].resolution = 65;
+    source.roads = roads;
+    let base = 3 * gpu::ROAD_CAPACITY;
+    let (records, entry) = gpu::road_records(&source, base).unwrap();
     let origin = [cell.x as f64 * 32., cell.z as f64 * 32.];
     let mut cases = vec![];
     for z in 0..160 {
@@ -89,65 +139,88 @@ fn near_roads_draw_where_the_compiler_lays_them() {
                     (origin[0] + f64::from(local[0])) as f32,
                     (origin[1] + f64::from(local[1])) as f32,
                 ],
-                roads: roads.to_array(),
+                roads: entry.to_array(),
             });
         }
     }
     // The page's records sit at their slot's region of the buffer.
     let mut buffer = vec![Vec4::ZERO; 4 * gpu::ROAD_CAPACITY as usize];
-    let base = 3 * gpu::ROAD_CAPACITY as usize;
-    buffer[base..base + records.len()].copy_from_slice(&records);
-    let results = run(&cases, &buffer);
-    let (mut drawn, mut largest) = (0, 0_f64);
+    buffer[base as usize..base as usize + records.len()].copy_from_slice(&records);
+    let results = run(&cases, &buffer, base);
+    let (mut drawn, mut largest) = ([0; 3], 0_f64);
     for (case, result) in cases.iter().zip(&results) {
         let local = case.local.map(f64::from);
-        let hit = source.roads.nearest(local).unwrap();
-        let reference = source.roads.ground(origin, local).unwrap().1;
-        let shape = source.roads.roads[0].shape;
-        let reach = hit.offset.width * 0.5
-            + f64::from(shape.edge_variation)
-            + f64::from(shape.edge_softness);
-        if result[3] < 0. {
+        let reference = source.roads.layers(origin, local);
+        let mut expected = [0.0; 3];
+        expected[..reference.len()].copy_from_slice(&reference);
+        for (layer, &want) in expected.iter().enumerate() {
+            let error = (f64::from(result[layer]) - want).abs();
+            largest = largest.max(error);
             assert!(
-                hit.offset.distance > reach,
-                "{local:?}: no road found {} m from the centre line",
-                hit.offset.distance
+                error < 2e-3,
+                "{local:?}: layer {layer} draws {} where the compiler lays {want}",
+                result[layer]
             );
-            continue;
         }
-        let error = (f64::from(result[0]) - reference).abs();
-        largest = largest.max(error);
-        assert!(
-            error < 2e-3,
-            "{local:?}: the shader draws {} where the compiler lays {reference}",
-            result[0]
-        );
-        assert!((f64::from(result[1]) - hit.offset.lateral).abs() < 1e-3);
-        drawn += usize::from(reference > 0.5);
+        if result[3] > -1e8 {
+            let hit = source.roads.nearest(local).unwrap();
+            assert!((f64::from(result[3]) - hit.offset.lateral).abs() < 1e-3);
+        }
+        for (count, &value) in drawn.iter_mut().zip(&expected) {
+            *count += usize::from(value > 0.5);
+        }
     }
-    assert!(drawn > 1000, "the road drew {drawn} samples");
-    println!("largest difference {largest:e} over {drawn} road samples");
+    println!("largest difference {largest:e}; samples over half per layer {drawn:?}");
+    drawn
 }
 
-fn run(cases: &[Case], roads: &[Vec4]) -> Vec<[f32; 4]> {
+#[test]
+#[ignore = "requires native GPU; checks the near road drawing against the compiler's"]
+fn near_roads_draw_where_the_compiler_lays_them() {
+    assert!(draws_as_compiled(bend())[0] > 1000);
+}
+
+#[test]
+#[ignore = "requires native GPU; checks roads meeting at a junction against the compiler's"]
+fn near_roads_branch_as_the_compiler_lays_them() {
+    let [road, path, junction] = draws_as_compiled(fork());
+    assert!(
+        road > 1000 && path > 100 && junction > 100,
+        "{road} {path} {junction}"
+    );
+}
+
+fn run(cases: &[Case], roads: &[Vec4], base: u32) -> Vec<[f32; 4]> {
     let defs = shader_check::Def::parse_list("MATERIAL_BIND_GROUP=0").unwrap();
     let shader = shader_check::Shaders::get()
         .compose_source(
-            r#"
-import package::shaders::terrain_road::{nearest_road, road_amount};
+            &r#"
+import package::shaders::terrain_road::{RoadHit, nearest_roads, road_amount, road_reach, junction_ground, junctions_over};
 struct Case { local: vec2<f32>, world: vec2<f32>, roads: vec4<i32> }
 @group(0) @binding(0) var<storage, read> cases: array<Case>;
 @group(0) @binding(1) var<storage, read_write> results: array<vec4<f32>>;
+// Per case: the amount each of the page's first two roads lays, the first junction's, and the
+// nearest road's lateral offset (-1e9: no road within reach), as near terrain lays them.
+fn laid(c: Case, hit: RoadHit) -> f32 {
+    if hit.road < 0 || hit.distance >= road_reach(hit, 0.75) { return 0.0; }
+    let centre = c.world - c.local + hit.point;
+    return road_amount(hit, c.world, centre) * (1.0 - junctions_over(c.roads, hit, c.local));
+}
 @compute @workgroup_size(64)
 fn evaluate(@builtin(global_invocation_id) id: vec3<u32>) {
     if id.x >= arrayLength(&cases) { return; }
     let c = cases[id.x];
-    let hit = nearest_road(c.roads, c.local, 32.0);
-    if hit.road < 0 { results[id.x] = vec4(-1.0); return; }
-    let centre = c.world - c.local + hit.point;
-    results[id.x] = vec4(road_amount(hit, c.world, centre), hit.lateral, hit.distance, f32(hit.road));
+    let pair = nearest_roads(c.roads, c.local, 32.0);
+    var out = vec4(0.0, 0.0, 0.0, -1.0e9);
+    let base = BASE;
+    if pair.first.road >= 0 { out[(u32(pair.first.road) - base)/6u] = laid(c, pair.first); }
+    if pair.second.road >= 0 { out[(u32(pair.second.road) - base)/6u] = laid(c, pair.second); }
+    if c.roads.w > 0 { out.z = junction_ground(u32(c.roads.z), c.local, c.world); }
+    if pair.first.road >= 0 && pair.first.distance < road_reach(pair.first, 0.75) { out.w = pair.first.lateral; }
+    results[id.x] = out;
 }
-"#,
+"#
+            .replace("BASE", &format!("{base}u")),
             &defs,
         )
         .unwrap_or_else(|error| panic!("{error}"));
@@ -247,7 +320,7 @@ fn road_tiles_list_every_segment_that_reaches_them_and_records_fit_their_region(
     let base = 5 * gpu::ROAD_CAPACITY;
     let (records, roads) = gpu::road_records(&source, base).unwrap();
     let first_segment = base as usize + 12 + 256;
-    assert_eq!(roads, IVec4::new(base as i32 + 12, 16, 0, 0));
+    assert_eq!(roads, IVec4::new(base as i32 + 12, 16, base as i32 + 12, 0));
     assert_eq!(records.len(), 12 + 256 + 26 * 3);
     // The seed survives as two exact halves; the ground's surface is the page's slot 1.
     assert_eq!(records[7].zw(), Vec2::new(7., 0.));
@@ -262,8 +335,11 @@ fn road_tiles_list_every_segment_that_reaches_them_and_records_fit_their_region(
         let index = (first_segment + i * 3) as f32;
         [r.xy(), r.zw()]
             .iter()
-            .any(|r| index >= r.x && index < r.x + r.y * 3.)
+            .any(|r| index >= r.x && index < r.x + r.y.abs() * 3.)
     };
+    // Tiles reached by both roads say so; tiles of one road do not.
+    let both = (0..256).filter(|&i| records[12 + i].y < 0.).count();
+    assert!(both > 0 && both < 20, "{both} tiles hold both roads");
     for z in 0..16 {
         for x in 0..16 {
             let lo = Vec2::new(x as f32, z as f32) * 2.;

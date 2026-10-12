@@ -3,7 +3,7 @@ import bevy_pbr::render::mesh_view_bindings as near_view;
 import package::shaders::terrain_stochastic::{quarter_turn, stochastic_vertex_turn, stochastic_vertex_offset};
 import package::shaders::terrain_blend::{BLEND_DEPTH, BLEND_HEIGHT, height_blend};
 import package::shaders::lighting::surface::surface_weather;
-import package::shaders::terrain_road::{RoadHit, near_roads, nearest_road, road_amount, road_reach, road_shares, road_slots, road_patch, road_ruts, road_tracks, rut_depth, rut_parallax};
+import package::shaders::terrain_road::{RoadHit, near_roads, nearest_roads, road_amount, road_reach, road_patch, road_ruts, road_tracks, rut_depth, rut_parallax, junction_ground, junctions_over};
 // One of a page's up to eight surfaces. `surface`: array layer, metres per repetition,
 // anti-tiling (0/1), normal strength. `material`: normal Y sign, roughness minimum/maximum.
 // `phase`/`lattice`: this page's UV and anti-tiling lattice offsets for the surface's tile size.
@@ -129,30 +129,40 @@ fn slot_weight(slot: f32, share: f32) -> Weights {
     return Weights(select(vec4(0.0), vec4(share), vec4(0.0,1.0,2.0,3.0) == vec4(slot)),
         select(vec4(0.0), vec4(share), vec4(4.0,5.0,6.0,7.0) == vec4(slot)));
 }
-// The page's weights with a road drawn at full detail. Its natural ground comes from beside it,
-// beyond its baked drawing, blended across; the road's ground then replaces that ground as the
-// compiler lays it (environment_compile RoadPlan::ground), `amount` of it here.
-fn road_weights(index: u32, page: Weights, hit: RoadHit, reach: f32, texel: f32, cell_size: f32, amount: f32) -> Weights {
+// The natural ground under a road `hit`, drawn at full detail where it reaches `reach`: its
+// page weights from beside it, beyond its baked drawing, blended across, and the page's own
+// weights at the edge of its reach.
+fn natural_weights(index: u32, page: Weights, hit: RoadHit, reach: f32, other: RoadHit, other_reach: f32, texel: f32, cell_size: f32) -> Weights {
     let left_uv = clamp((hit.point-hit.normal*reach)/cell_size, vec2(0.0), vec2(1.0));
     let right_uv = clamp((hit.point+hit.normal*reach)/cell_size, vec2(0.0), vec2(1.0));
     let left = page_weights(index, left_uv);
     let right = page_weights(index, right_uv);
     var side = clamp(hit.lateral/reach*0.5+0.5, 0.0, 1.0);
-    // Near the page's edge a side's sample clamps onto the page, maybe onto the road itself, whose
-    // ground would then fill its grassy centre: only a side whose sample stays clear of the road
-    // stands in, else the side whose sample lies farther from it.
+    // Near the page's edge a side's sample clamps onto the page, maybe onto the road itself, and
+    // where roads meet it may fall on the other road: either's ground would then fill the grassy
+    // centre. A side stands in as far as its sample stays clear of both, else the side whose
+    // sample lies farther from the road.
     let clear = abs(vec2(dot(left_uv*cell_size-hit.point, hit.normal), dot(right_uv*cell_size-hit.point, hit.normal)));
-    let usable = clear >= vec2(reach-texel);
-    if usable.x != usable.y { side = select(0.0, 1.0, usable.y); }
-    else if !usable.x { side = select(0.0, 1.0, clear.y > clear.x); }
+    var usable = smoothstep(vec2(reach-2.0*texel), vec2(reach-texel), clear);
+    if other.road >= 0 {
+        let apart = abs(vec2(dot(left_uv*cell_size-other.point, other.normal), dot(right_uv*cell_size-other.point, other.normal)));
+        usable *= smoothstep(vec2(other_reach-2.0*texel), vec2(other_reach-texel), apart);
+    }
+    let shares = vec2(1.0-side, side)*usable;
+    if shares.x+shares.y > 1.0e-3 { side = shares.y/(shares.x+shares.y); }
+    else { side = select(0.0, 1.0, clear.y > clear.x); }
     let natural = smoothstep(reach-texel, reach, hit.distance);
-    let slots = road_slots(hit); let shares = road_shares(hit) * amount;
-    // Road ground the page does not carry gives way to the natural ground.
+    return Weights(mix(mix(left.low,right.low,side),page.low,natural), mix(mix(left.high,right.high,side),page.high,natural));
+}
+// Weights `w` with `amount` of road record `road`'s ground laid over them, as the compiler lays
+// it (environment_compile RoadPlan::ground): that share of all ground beneath gives way to the
+// road's. Road ground the page does not carry leaves the ground beneath.
+fn lay_road(w: Weights, road: u32, amount: f32) -> Weights {
+    let slots = near_roads[road+4u]; let shares = near_roads[road+5u]*amount;
     let laid = dot(shares, vec4(1.0));
     let a = slot_weight(slots.x, shares.x); let b = slot_weight(slots.y, shares.y);
     let c = slot_weight(slots.z, shares.z); let d = slot_weight(slots.w, shares.w);
-    return Weights(mix(mix(left.low,right.low,side),page.low,natural)*(1.0-laid) + a.low+b.low+c.low+d.low,
-        mix(mix(left.high,right.high,side),page.high,natural)*(1.0-laid) + a.high+b.high+c.high+d.high);
+    return Weights(w.low*(1.0-laid) + a.low+b.low+c.low+d.low, w.high*(1.0-laid) + a.high+b.high+c.high+d.high);
 }
 // The page's ground: its three largest weights here, blended by surface height, and the grass
 // its surfaces carry (field colour, cover) in the same shares.
@@ -233,46 +243,66 @@ fn close_ground(world: vec3<f32>, geometry_normal: vec3<f32>, dx: vec2<f32>, dy:
     var compacted = 0.0;
     let roads = near_table[index].roads;
     if roads.y > 0 {
-        let hit = nearest_road(roads,local,cell_size);
-        if hit.road >= 0 {
-            // Bilinear weights carry the baked road a texel and a half beyond its drawing.
-            let texel = cell_size/max(near_table[index].state.y-1.0,1.0);
-            let reach = road_reach(hit,texel*1.5);
-            if hit.distance < reach {
-                let page_origin = vec2<f32>(cell)*cell_size;
-                let centre = page_origin+hit.point;
-                let amount = road_amount(hit,page_origin+local,centre);
-                weights = road_weights(index,weights,hit,reach,texel,cell_size,amount);
-                // Where wheels wear the ground down to the grass, its edge is compacted and dark.
-                rim = amount*(1.0-amount)*4.0;
-                compacted = amount*0.25;
-                let sink = 1.0-smoothstep(RUT_RANGE.x,RUT_RANGE.y,distance_to_camera);
-                let rut = near_roads[u32(hit.road)+3u];
-                // A rut can be seen into from no further than its depth over the view's slope.
-                let tracks = road_tracks(u32(hit.road),centre);
-                let apart = abs(vec2(hit.lateral)-tracks.offset)-tracks.half;
-                if rut.x > 0.0 && sink > 0.0 && min(apart.x,apart.y) < rut.x*8.0 {
-                    // Grooves finer than about two pixels fade rather than shimmer.
-                    let grooves = 1.0-smoothstep(0.03,0.07,max(length(dx),length(dy)));
-                    let ruts = road_ruts(hit,centre,sink,grooves);
-                    let found = rut_parallax(ruts,hit,normalize(near_view::view.world_position-world),n);
-                    sampled = local+found.xy;
-                    let across = hit.lateral+dot(found.xy,hit.normal);
-                    let slope = (rut_depth(ruts,across+0.01,hit.longitudinal,true)-rut_depth(ruts,across-0.01,hit.longitudinal,true))/0.02;
-                    n = normalize(n+vec3(hit.normal.x,0.0,hit.normal.y)*slope);
-                    // Rut bottoms: shaded by their walls, the soil compacted and damp.
-                    let bottom = found.z/max(max(ruts.depth.x,ruts.depth.y),0.0001);
-                    occlusion = 1.0-0.35*bottom;
-                    compacted = max(compacted,bottom*amount);
-                    // Rain stands in dips of a rut's floor a metre or three across, deepest
-                    // first, spreading as the ground soaks (weather/ground_wetness.wesl); fine
-                    // noise breaks the water line. Puddles form only on wet ground.
-                    if surface_weather().x > 0.3 {
-                        let floor = page_origin+sampled;
-                        let dips = road_patch(floor,2.0,ruts.seed^0x6e3u);
-                        let fine = road_patch(floor,0.6,ruts.seed^0x51du)-0.5;
-                        result.hollow = clamp(bottom*bottom*dips*1.5-0.55+fine*0.35,0.0,1.0);
-                    }
+        // Up to two roads draw here (where roads meet or branch), each within its reach: bilinear
+        // weights carry the baked road a texel and a half beyond its drawing.
+        let pair = nearest_roads(roads,local,cell_size);
+        let texel = cell_size/max(near_table[index].state.y-1.0,1.0);
+        var reach = vec2(0.0);
+        if pair.first.road >= 0 { reach.x = road_reach(pair.first,texel*1.5); }
+        if pair.second.road >= 0 { reach.y = road_reach(pair.second,texel*1.5); }
+        let within = vec2((pair.first.road >= 0) && (pair.first.distance < reach.x),
+            (pair.second.road >= 0) && (pair.second.distance < reach.y));
+        if within.x || within.y {
+            let page_origin = vec2<f32>(cell)*cell_size;
+            let at = page_origin+local;
+            var amount = vec2(0.0);
+            if within.x { amount.x = road_amount(pair.first,at,page_origin+pair.first.point)*(1.0-junctions_over(roads,pair.first,local)); }
+            if within.y { amount.y = road_amount(pair.second,at,page_origin+pair.second.point)*(1.0-junctions_over(roads,pair.second,local)); }
+            // The road this pixel belongs to: the nearest within reach. Its natural ground comes
+            // from beside it; the roads lay theirs over it in the compiler's order, then junctions.
+            var hit = pair.first; var other = pair.second; var reaches = reach; var drawn = amount.x;
+            if !within.x { hit = pair.second; other = pair.first; reaches = reach.yx; drawn = amount.y; }
+            weights = natural_weights(index,weights,hit,reaches.x,other,reaches.y,texel,cell_size);
+            let order = select(vec2(1u,0u), vec2(0u,1u), (pair.second.road < 0) || (pair.first.road < pair.second.road));
+            for (var k = 0u; k < 2u; k += 1u) {
+                let i = order[k];
+                if amount[i] > 0.0 { weights = lay_road(weights,u32(select(pair.second.road,pair.first.road,i == 0u)),amount[i]); }
+            }
+            for (var j = 0; j < roads.w; j += 1) {
+                let record = u32(roads.z+j*2);
+                let hub = junction_ground(record,local,at);
+                if hub > 0.0 { weights = lay_road(weights,u32(near_roads[record+1u].y),hub); }
+            }
+            let centre = page_origin+hit.point;
+            // Where wheels wear the ground down to the grass, its edge is compacted and dark.
+            rim = drawn*(1.0-drawn)*4.0;
+            compacted = drawn*0.25;
+            let sink = 1.0-smoothstep(RUT_RANGE.x,RUT_RANGE.y,distance_to_camera);
+            let rut = near_roads[u32(hit.road)+3u];
+            // A rut can be seen into from no further than its depth over the view's slope.
+            let tracks = road_tracks(u32(hit.road),centre);
+            let apart = abs(vec2(hit.lateral)-tracks.offset)-tracks.half;
+            if rut.x > 0.0 && sink > 0.0 && min(apart.x,apart.y) < rut.x*8.0 {
+                // Grooves finer than about two pixels fade rather than shimmer.
+                let grooves = 1.0-smoothstep(0.03,0.07,max(length(dx),length(dy)));
+                let ruts = road_ruts(hit,centre,sink,grooves);
+                let found = rut_parallax(ruts,hit,normalize(near_view::view.world_position-world),n);
+                sampled = local+found.xy;
+                let across = hit.lateral+dot(found.xy,hit.normal);
+                let slope = (rut_depth(ruts,across+0.01,hit.longitudinal,true)-rut_depth(ruts,across-0.01,hit.longitudinal,true))/0.02;
+                n = normalize(n+vec3(hit.normal.x,0.0,hit.normal.y)*slope);
+                // Rut bottoms: shaded by their walls, the soil compacted and damp.
+                let bottom = found.z/max(max(ruts.depth.x,ruts.depth.y),0.0001);
+                occlusion = 1.0-0.35*bottom;
+                compacted = max(compacted,bottom*drawn);
+                // Rain stands in dips of a rut's floor a metre or three across, deepest
+                // first, spreading as the ground soaks (weather/ground_wetness.wesl); fine
+                // noise breaks the water line. Puddles form only on wet ground.
+                if surface_weather().x > 0.3 {
+                    let floor = page_origin+sampled;
+                    let dips = road_patch(floor,2.0,ruts.seed^0x6e3u);
+                    let fine = road_patch(floor,0.6,ruts.seed^0x51du)-0.5;
+                    result.hollow = clamp(bottom*bottom*dips*1.5-0.55+fine*0.35,0.0,1.0);
                 }
             }
         }

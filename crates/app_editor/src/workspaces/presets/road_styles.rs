@@ -319,8 +319,14 @@ pub(super) fn panels(
                     p.vegetation_channel = if thins { environment::GRASS_CHANNEL } else { environment::ChannelId([0; 16]) };
                 }
                 ui.separator(); ui.label("Wheel tracks");
+                let mut footpath = p.track_spacing == 0.0;
+                if ui.checkbox(&mut footpath, "One track (footpath)").changed() {
+                    p.track_spacing = if footpath { 0.0 } else { (p.track_width + 0.6).max(0.1) };
+                }
                 if let Ok(limits) = &limits {
-                    GeometryField::Spacing.control(ui, p, *limits);
+                    if !footpath {
+                        GeometryField::Spacing.control(ui, p, *limits);
+                    }
                     GeometryField::TrackWidth.control(ui, p, *limits);
                     GeometryField::Wander.control(ui, p, *limits);
                     GeometryField::WanderLength.control(ui, p, *limits);
