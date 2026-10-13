@@ -33,7 +33,10 @@
 // of the pieces as authored; `clumps` as grass's (size, pull, patches); `sink` share of a piece's
 // height sunk into the ground; `align` how far pieces follow the slope (0 upright, 1 the ground's
 // normal) and `tilt` random lean, radians; `distance` metres at which they have faded out;
-// `shadows` whether they cast them.
+// `shadows` whether they cast them; `on_paths` whether road wear, which clears plants, leaves
+// them. `wear`: types that grow only on worn ground, by how worn (0..1, roads' and junctions' wear
+// field): from the first wear, full at the second, gone by the third. Their surface shares count
+// the natural ground under the wear: what a meadow track or a forest path gathers along it.
 //
 // `surfaces`: terrain surface key → (grass or detail key, share of its density). Unlisted surfaces
 // stay bare. A surface may carry several types; shares need not sum to 1.
@@ -264,6 +267,49 @@
             distance: 35.0,
             shadows: false,
         ),
+        // Stones kicked aside by wheels and feet, gathered where wear falls off: along road edges,
+        // junction hubs and the strip between the tracks. 10-30 cm.
+        (
+            key: "verge-stones",
+            assets: ["local/details/small_stones.glb", "local/details/cobbles.glb"],
+            density: 1.5,
+            scale: (1.0, 2.0),
+            clumps: (size: 1.5, pull: 0.3, patches: 0.5),
+            sink: 0.35,
+            align: 0.7,
+            tilt: 0.4,
+            distance: 45.0,
+            shadows: true,
+            wear: Some((0.03, 0.15, 0.4)),
+        ),
+        // Gravel worked out of the tracks onto their edges.
+        (
+            key: "verge-pebbles",
+            assets: ["local/details/pebbles.glb"],
+            density: 4.0,
+            scale: (1.0, 1.6),
+            clumps: (size: 1.0, pull: 0.5, patches: 0.6),
+            sink: 0.35,
+            align: 0.8,
+            tilt: 0.4,
+            distance: 26.0,
+            shadows: false,
+            wear: Some((0.05, 0.25, 0.55)),
+        ),
+        // Branches fallen on forest paths and pushed to their edges, 15-220 cm.
+        (
+            key: "verge-sticks",
+            assets: ["local/details/twigs.glb"],
+            density: 2.5,
+            scale: (3.0, 5.5),
+            clumps: (size: 2.0, pull: 0.3, patches: 0.5),
+            sink: 0.15,
+            align: 1.0,
+            tilt: 0.15,
+            distance: 30.0,
+            shadows: true,
+            wear: Some((0.02, 0.2, 0.9)),
+        ),
         // Sorrel rosettes in the meadows.
         (
             key: "sorrel",
@@ -279,21 +325,21 @@
         ),
     ],
     surfaces: {
-        "meadow": [("meadow", 1.0), ("meadow-tall", 1.0), ("rocks", 0.02), ("stones", 0.03), ("sorrel", 0.08)],
-        "dry-meadow": [("dry-meadow", 1.0), ("meadow-tall", 0.4), ("rocks", 0.05), ("stones", 0.1), ("pebbles", 0.05), ("sorrel", 0.04)],
-        "coastal-grass": [("marram", 0.8), ("dry-meadow", 0.25), ("pebbles", 0.1), ("stones", 0.05)],
-        "gravel": [("dry-meadow", 0.12), ("pebbles", 1.0), ("cobbles", 0.4), ("stones", 0.3)],
-        "forest-moss": [("wavy-hair", 0.45), ("twigs", 0.5), ("rocks", 0.1), ("ferns", 0.8)],
-        "forest-floor": [("wavy-hair", 0.3), ("twigs", 1.0), ("stones", 0.1), ("rocks", 0.08), ("ferns", 0.6), ("nettles", 0.08), ("lilies", 0.15)],
-        "pine-needles": [("wavy-hair", 0.12), ("twigs", 0.8), ("rocks", 0.05), ("ferns", 0.25)],
-        "leaf-litter": [("wavy-hair", 0.08), ("twigs", 1.0), ("ferns", 0.4), ("nettles", 0.15), ("lilies", 0.4)],
-        "stony-moss": [("wavy-hair", 0.25), ("stones", 0.6), ("rocks", 0.6), ("twigs", 0.3), ("ferns", 0.3)],
+        "meadow": [("meadow", 1.0), ("meadow-tall", 1.0), ("rocks", 0.02), ("stones", 0.03), ("sorrel", 0.08), ("verge-stones", 0.5), ("verge-pebbles", 0.6)],
+        "dry-meadow": [("dry-meadow", 1.0), ("meadow-tall", 0.4), ("rocks", 0.05), ("stones", 0.1), ("pebbles", 0.05), ("sorrel", 0.04), ("verge-stones", 0.7), ("verge-pebbles", 0.8)],
+        "coastal-grass": [("marram", 0.8), ("dry-meadow", 0.25), ("pebbles", 0.1), ("stones", 0.05), ("verge-stones", 0.3), ("verge-pebbles", 0.5)],
+        "gravel": [("dry-meadow", 0.12), ("pebbles", 1.0), ("cobbles", 0.4), ("stones", 0.3), ("verge-stones", 1.0), ("verge-pebbles", 1.0)],
+        "forest-moss": [("wavy-hair", 0.45), ("twigs", 0.5), ("rocks", 0.1), ("ferns", 0.8), ("verge-sticks", 0.8), ("verge-stones", 0.3)],
+        "forest-floor": [("wavy-hair", 0.3), ("twigs", 1.0), ("stones", 0.1), ("rocks", 0.08), ("ferns", 0.6), ("nettles", 0.08), ("lilies", 0.15), ("verge-sticks", 1.0), ("verge-stones", 0.3)],
+        "pine-needles": [("wavy-hair", 0.12), ("twigs", 0.8), ("rocks", 0.05), ("ferns", 0.25), ("verge-sticks", 0.8), ("verge-stones", 0.2)],
+        "leaf-litter": [("wavy-hair", 0.08), ("twigs", 1.0), ("ferns", 0.4), ("nettles", 0.15), ("lilies", 0.4), ("verge-sticks", 1.0)],
+        "stony-moss": [("wavy-hair", 0.25), ("stones", 0.6), ("rocks", 0.6), ("twigs", 0.3), ("ferns", 0.3), ("verge-stones", 1.0), ("verge-sticks", 0.4)],
         "beach-sand": [("pebbles", 0.3), ("cobbles", 0.25)],
-        "dirt": [("pebbles", 0.4), ("stones", 0.15), ("twigs", 0.12), ("nettles", 0.25)],
+        "dirt": [("pebbles", 0.4), ("stones", 0.15), ("twigs", 0.12), ("nettles", 0.25), ("verge-stones", 0.6), ("verge-pebbles", 0.6)],
         "packed-dirt": [("pebbles", 0.25), ("twigs", 0.08)],
         "road-gravel": [("pebbles", 1.0), ("cobbles", 0.3), ("stones", 0.2)],
-        "forest-dirt": [("twigs", 0.6), ("pebbles", 0.15), ("stones", 0.1)],
-        "rocky-ground": [("pebbles", 1.0), ("stones", 0.8), ("rocks", 0.6)],
+        "forest-dirt": [("twigs", 1.0), ("pebbles", 0.15), ("stones", 0.1)],
+        "rocky-ground": [("pebbles", 1.0), ("stones", 0.8), ("rocks", 0.6), ("verge-stones", 1.0)],
         "rock": [("stones", 0.3), ("rocks", 0.4)],
         "lichen-rock": [("stones", 0.3), ("rocks", 0.4)],
     },

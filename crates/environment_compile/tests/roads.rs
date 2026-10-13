@@ -655,6 +655,7 @@ fn road_wear_clears_plants_but_leaves_stones_and_twigs() {
         distance: 20.0,
         shadows: false,
         on_paths,
+        wear: None,
     };
     let (pebbles, nettles) = (detail("pebbles", true), detail("nettles", false));
     // Both grow on the meadow and on the road's bare soil alike.
@@ -688,6 +689,64 @@ fn road_wear_clears_plants_but_leaves_stones_and_twigs() {
     // Off the road both grow.
     assert_eq!(at(nettles.id(), 0), 255);
     assert_eq!(at(pebbles.id(), 0), 255);
+}
+#[test]
+fn details_with_a_wear_band_lie_where_wear_falls_off() {
+    let (d, l, mut p, c, mut r) = cart_tracks();
+    straight(&mut r);
+    let verge = vegetation::DetailType {
+        key: "verge".into(),
+        assets: vec!["verge.glb".into()],
+        density: 1.0,
+        scale: [1.0, 1.0],
+        clumps: vegetation::DetailClumps {
+            size: 1.0,
+            pull: 0.0,
+            patches: 0.0,
+        },
+        sink: 0.0,
+        align: 0.0,
+        tilt: 0.0,
+        distance: 20.0,
+        shadows: false,
+        on_paths: false,
+        wear: Some([0.02, 0.15, 0.35]),
+    };
+    // On the meadow the road wears; its worn soil carries none.
+    for s in &mut p.surfaces {
+        if s.surface == GREEN_SOIL.0 {
+            s.grass.push(vegetation::GrassAmount {
+                grass: verge.id(),
+                amount: 1.0,
+            });
+        }
+    }
+    p.details = vec![verge.clone()];
+    let plan = CompilePlan::new(&d, &p, &l, CompileProfile::default()).unwrap();
+    let cells = compile(&plan, &c, &r);
+    let field = cells[0]
+        .vegetation
+        .fields
+        .iter()
+        .find(|f| f.grass == verge.id())
+        .unwrap();
+    let column: Vec<u8> = (0..64).map(|z| field.coverage[z * 64 + 32]).collect();
+    // None away from the road or in its wheel tracks; some along each edge, outside the tracks.
+    assert_eq!(column[0], 0);
+    assert_eq!(column[63], 0);
+    assert_eq!(column[25], 0);
+    assert_eq!(column[38], 0);
+    assert!(column[..25].iter().any(|&v| v > 100), "{column:?}");
+    assert!(column[39..].iter().any(|&v| v > 100), "{column:?}");
+    // The plain compile has no wear, so nothing grows there.
+    let base = plan.compile_cells(&CELLS, &c).unwrap();
+    assert!(
+        base[0]
+            .vegetation
+            .fields
+            .iter()
+            .all(|f| f.grass != verge.id())
+    );
 }
 #[test]
 fn the_wear_field_draws_what_roads_wear_and_names_the_worn_ground() {

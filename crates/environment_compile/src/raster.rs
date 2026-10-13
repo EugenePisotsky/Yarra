@@ -55,7 +55,13 @@ impl CompilePlan {
                     space: self.definition.space,
                     cell,
                     ground,
-                    vegetation: self.vegetation(cell, &coverage, roads, &page_roads)?,
+                    vegetation: self.vegetation(
+                        cell,
+                        &coverage,
+                        roads,
+                        &page_roads,
+                        wear.as_ref(),
+                    )?,
                     roads: page_roads,
                     wear,
                     input_fingerprint: {
@@ -316,13 +322,16 @@ impl CompilePlan {
     }
 
     /// Each grass type's coverage: what the surfaces that show (worn where roads wear them)
-    /// carry, less what exclusions and road wear clear (of plants; stones and twigs stay).
+    /// carry, less what exclusions and road wear clear (of plants; stones and twigs stay). Types
+    /// growing by wear (`DetailType::wear`) take what the natural ground carries by how worn it
+    /// is, over each sample's area of the wear field `wear`.
     fn vegetation(
         &self,
         cell: CellCoord,
         coverage: &Coverage<'_>,
         roads: Option<&crate::roads::RoadPlan>,
         page_roads: &world::TerrainRoads,
+        wear: Option<&world::TerrainWear>,
     ) -> Result<VegetationFieldPageData, CompileError> {
         let resolution = usize::from(self.profile.vegetation_resolution);
         let base = self.base_surface();
@@ -336,6 +345,7 @@ impl CompilePlan {
                     (z as f64 + 0.5) / resolution as f64,
                 ];
                 let natural = self.surface_weights(cell, coverage, uv, base);
+                let unworn = wear.map(|_| shown(natural.clone()));
                 let surfaces = if page_roads.roads.is_empty() {
                     shown(natural)
                 } else {
@@ -358,14 +368,16 @@ impl CompilePlan {
                     kept *= 1.0 - roads.grass_suppression(cell, uv);
                 }
                 for (field, grass) in samples.iter_mut().zip(&self.grass) {
-                    let amount: f64 = surfaces
-                        .iter()
-                        .zip(&grass.amounts)
-                        .map(|(w, a)| w * a)
-                        .sum();
-                    let kept = if grass.on_paths { 1.0 } else { kept };
+                    let (ground, share) = match (grass.wear, wear, &unworn) {
+                        (Some(band), Some(wear), Some(unworn)) => {
+                            (unworn, band_share(wear, band, [x, z], resolution))
+                        }
+                        (Some(_), ..) => continue,
+                        _ => (&surfaces, if grass.on_paths { 1.0 } else { kept }),
+                    };
+                    let amount: f64 = ground.iter().zip(&grass.amounts).map(|(w, a)| w * a).sum();
                     field[z * resolution + x] =
-                        ((amount * kept).clamp(0.0, 1.0) * 255.0).round() as u8;
+                        ((amount * share).clamp(0.0, 1.0) * 255.0).round() as u8;
                 }
             }
         }
@@ -386,6 +398,22 @@ impl CompilePlan {
         page.validate(&self.catalog)?;
         Ok(page)
     }
+}
+
+/// The mean share a type with the wear band `band` grows over sample `at` of a `resolution`²
+/// grid on the page whose wear field is `wear`.
+fn band_share(wear: &world::TerrainWear, band: [f32; 3], at: [usize; 2], resolution: usize) -> f64 {
+    let n = usize::from(wear.resolution);
+    let [x, z] = at.map(|v| {
+        let start = v * n / resolution;
+        start..((v + 1) * n / resolution).max(start + 1)
+    });
+    let count = x.len() * z.len();
+    let total: f64 = z
+        .flat_map(|j| x.clone().map(move |i| j * n + i))
+        .map(|i| vegetation::wear_share(band, f64::from(wear.texels[i][0]) / 255.0))
+        .sum();
+    total / count as f64
 }
 
 /// The wear field's texels over a cell whose origin is `origin` and side `size`

@@ -16,11 +16,13 @@ pub(crate) struct PlannedLayer {
 }
 
 /// A grass type that grows on some of the world's surfaces: its share of density on each, in
-/// the definition's surface order, and whether it lies on worn ground too (`DetailType::on_paths`).
+/// the definition's surface order, whether it lies on worn ground too (`DetailType::on_paths`)
+/// and the wear it grows at, if only on worn ground (`DetailType::wear`).
 pub(crate) struct GrassBinding {
     pub grass: GrassTypeId,
     pub amounts: Vec<f64>,
     pub on_paths: bool,
+    pub wear: Option<[f32; 3]>,
 }
 
 /// Build once from the complete small layer/catalog definition and share with every cell job.
@@ -117,11 +119,12 @@ impl CompilePlan {
                             .map_or(0.0, |a| f64::from(a.amount))
                     })
                     .collect::<Vec<_>>();
-                let on_paths = grass.details.iter().any(|d| d.id() == id && d.on_paths);
+                let detail = grass.detail(id);
                 GrassBinding {
                     grass: id,
                     amounts,
-                    on_paths,
+                    on_paths: detail.is_some_and(|d| d.on_paths),
+                    wear: detail.and_then(|d| d.wear),
                 }
             })
             .filter(|b| b.amounts.iter().any(|&a| a > 0.0))
@@ -180,7 +183,7 @@ impl CompilePlan {
         // Coverage depends on what grows where, not on how the grass looks.
         let growth: Vec<_> = bindings
             .iter()
-            .map(|b| (b.grass, &b.amounts, b.on_paths))
+            .map(|b| (b.grass, &b.amounts, b.on_paths, b.wear))
             .collect();
         let bytes = bincode::serde::encode_to_vec(
             (&definition, &compositions, &growth, &profile),
@@ -189,7 +192,8 @@ impl CompilePlan {
         let mut hash = blake3::Hasher::new();
         // v5: grass follows the ground that shows, not faint blend weights.
         // v7: up to twelve surfaces a page, those shared along its edges kept first.
-        hash.update(b"yarra.environment.compiler.v7");
+        // v8: details that grow by how worn the ground is.
+        hash.update(b"yarra.environment.compiler.v8");
         hash.update(&bytes);
         Ok(Self {
             presets: presets.clone(),

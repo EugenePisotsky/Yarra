@@ -18,6 +18,7 @@ fn stones() -> DetailType {
         distance: 40.0,
         shadows: false,
         on_paths: true,
+        wear: None,
     }
 }
 

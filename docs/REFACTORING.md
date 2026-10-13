@@ -201,7 +201,7 @@ Authored: routes, which roads connect, traffic level and width, per-junction ove
 
 1. **Wear field**: done (`c1d20d3`).
 2. **Junctions**: corner legs and ragged hubs done; island objects go with the look, per-junction toggles with authoring.
-3. **Look**, iterated with the user on a fixed sheet of views against the references: the wear ramp (trampled grass, dry band, dirt, packed and gravel), weeds, stones, flattened and leaning grass, ruts.
+3. **Look**, iterated with the user on a fixed sheet of views against the references: the wear ramp (trampled grass, dry band, dirt, packed and gravel), weeds, stones, flattened and leaning grass, ruts. Done: trampled and bare ground (`47fc8de`), pages agreeing along their edges (`602ac07`), debris by wear band (`vegetation::DetailType::wear`): stones and pebbles where wear falls off, fallen branches along and on forest paths. Weeds wait for a plant asset (a plantain or clover rosette for the vegetation kit; sorrel scaled down read as flat green patches). Next: traffic level per road, then the night pass.
 4. **Authoring**: traffic level per road (styles become presets of it), wear brush.
 5. **Performance**, once the look holds.
 

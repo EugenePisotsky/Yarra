@@ -217,6 +217,13 @@ pub struct DetailType {
     /// leave stones and twigs where the ground carries them.
     #[serde(default)]
     pub on_paths: bool,
+    /// Where on worn ground the type grows, by how worn it is (roads' and junctions' wear,
+    /// `world::TerrainWear`): rising from the first wear to full at the second and gone by the
+    /// third (kept above the second if the third equals it). Stones kicked aside where wear falls off, weeds in moderately trampled ground. A
+    /// type with a band grows only there, its surface shares counting the natural ground under
+    /// the wear; without, it grows on the ground that shows.
+    #[serde(default)]
+    pub wear: Option<[f32; 3]>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -249,6 +256,27 @@ impl DetailType {
             && finite_range(self.align, 0.0, 1.0)
             && finite_range(self.tilt, 0.0, 1.6)
             && finite_range(self.distance, 1.0, MAX_DETAIL_DISTANCE)
+            && self.wear.is_none_or(|[from, peak, to]| {
+                finite_range(from, 0.0, 1.0)
+                    && finite_range(peak, from + 0.01, 1.0)
+                    && finite_range(to, peak, 1.0)
+            })
+    }
+}
+
+/// The share of a type with the wear band `band` (`DetailType::wear`) that grows at `wear` (0..1).
+pub fn wear_share(band: [f32; 3], wear: f64) -> f64 {
+    let [from, peak, to] = band.map(f64::from);
+    let smooth = |t: f64| {
+        let t = t.clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    };
+    if wear <= peak {
+        smooth((wear - from) / (peak - from))
+    } else if to > peak {
+        1.0 - smooth((wear - peak) / (to - peak))
+    } else {
+        1.0
     }
 }
 
@@ -899,6 +927,17 @@ mod tests {
     }
 
     #[test]
+    fn wear_bands_rise_peak_and_fall() {
+        let band = [0.1, 0.3, 0.6];
+        let near = |wear: f64, share: f64| (wear_share(band, wear) - share).abs() < 1e-5;
+        assert!(near(0.0, 0.0) && near(0.1, 0.0));
+        assert!(near(0.2, 0.5) && near(0.3, 1.0) && near(0.45, 0.5));
+        assert!(near(0.6, 0.0) && near(1.0, 0.0));
+        // A band ending at its peak stays full above it.
+        assert_eq!(wear_share([0.5, 0.8, 0.8], 1.0), 1.0);
+    }
+
+    #[test]
     fn packs_resolve_surface_and_grass_keys() {
         let pebbles = DetailType {
             key: "pebbles".into(),
@@ -916,6 +955,7 @@ mod tests {
             distance: 30.0,
             shadows: false,
             on_paths: true,
+            wear: None,
         };
         let pack = GrassPack {
             terrain: "test".into(),
