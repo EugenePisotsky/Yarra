@@ -56,6 +56,8 @@ pub(super) struct Styles {
     requested: Option<RoadProfileId>,
     pub curved: bool,
     pub width: f32,
+    /// The preview road's traffic; medium until changed.
+    pub traffic: Option<f32>,
     pub underlay: Option<PresetId>,
     pub reference_initialized: bool,
 }
@@ -332,13 +334,8 @@ pub(super) fn panels(
                     GeometryField::WanderLength.control(ui, p, *limits);
                     ui.small("Each track wanders across the road by up to its wander, and its width by half that, independently along the road.");
                 }
-                ratio(ui, "Grass retained in tracks", &mut p.track_retention);
-                ui.separator(); ui.label("Center strip");
-                ratio(ui, "Ground exposure at center", &mut p.center_ground);
-                ratio(ui, "Grass retained at center", &mut p.center_retention);
-                ui.separator(); ui.label("Shoulders and edges");
-                ratio(ui, "Ground exposure at shoulders", &mut p.shoulder_ground);
-                ratio(ui, "Grass retained at shoulders", &mut p.shoulder_retention);
+                ui.small("How worn the tracks, the strip between them and the shoulders are comes from each road's traffic.");
+                ui.separator(); ui.label("Edges");
                 if let Ok(limits) = &limits {
                     GeometryField::Softness.control(ui, p, *limits);
                     GeometryField::Variation.control(ui, p, *limits);
@@ -350,7 +347,7 @@ pub(super) fn panels(
                 ui.separator(); ui.label("Wear breakup");
                 ratio(ui, "Unworn patches", &mut p.breakup);
                 if let Ok(limits) = &limits { GeometryField::BreakupPatch.control(ui, p, *limits); }
-                ui.small("Unworn patches preserve the surrounding ground and grass. Retention never adds grass where none was painted.");
+                ui.small("Unworn patches preserve the surrounding ground and grass: this much at medium traffic, fewer on busier roads. Roads never add grass where none was painted.");
                 if let Ok(limits) = &limits { relief::controls(ui, p, limits.height_step); }
                 ui.label(format!("Minimum road width: {:.2} m", p.minimum_width()));
                 if let Ok(limits) = &limits && let Some(width) = limits.corridor {
@@ -507,6 +504,7 @@ mod tests {
             order: 0,
             direction: TravelDirection::Bidirectional,
             travel_modes: vec![RoadTravelMode::Foot],
+            traffic: environment::roads::DEFAULT_TRAFFIC,
         };
         let mut roads = RoadWorkingSet::default();
         roads

@@ -501,11 +501,6 @@ mod road_tests {
             track_spacing: 3.8,
             track_width: 2.4,
             edge_softness: 0.55,
-            center_ground: 0.0,
-            center_retention: 1.0,
-            shoulder_ground: 0.15,
-            shoulder_retention: 0.55,
-            track_retention: 0.0,
             edge_variation: 0.08,
             edge_patch_size: 4.0,
             track_wander: 0.0,
@@ -524,6 +519,7 @@ mod road_tests {
             order: 0,
             direction: TravelDirection::Bidirectional,
             travel_modes: vec![RoadTravelMode::Foot, RoadTravelMode::Cart],
+            traffic: environment::roads::DEFAULT_TRAFFIC,
         };
         let knot = |id, x| RoadKnot {
             id: RoadKnotId([id; 16]),

@@ -29,7 +29,7 @@ struct RoadImport {
     roads: Vec<RouteImport>,
 }
 
-/// A cart-track style: `CartTrackProfile`'s parameters, and the terrain surfaces (keys of the
+/// A road style: `CartTrackProfile`'s parameters, and the terrain surfaces (keys of the
 /// world's terrain pack, with weights) its Ground preset lays down.
 #[derive(Deserialize)]
 struct StyleImport {
@@ -38,11 +38,6 @@ struct StyleImport {
     track_spacing: f32,
     track_width: f32,
     edge_softness: f32,
-    center_ground: f32,
-    center_retention: f32,
-    shoulder_ground: f32,
-    shoulder_retention: f32,
-    track_retention: f32,
     edge_variation: f32,
     edge_patch_size: f32,
     track_wander: f32,
@@ -52,18 +47,25 @@ struct StyleImport {
     relief: RoadRelief,
 }
 
-/// A road through `points` (world XZ, metres), `width` metres across. A branch starts `from` a
-/// point of a road listed before it (its name and the point's index), joined to it there by a
-/// junction worn in that road's style; its `points` continue from there.
+/// A road through `points` (world XZ, metres), `width` metres across, used as much as `traffic`
+/// says (0..1, `Road::traffic`; medium when left out). A branch starts `from` a point of a road
+/// listed before it (its name and the point's index), joined to it there by a junction worn in
+/// that road's style; its `points` continue from there.
 #[derive(Deserialize)]
 struct RouteImport {
     name: String,
     style: String,
     width: f32,
+    #[serde(default = "medium_traffic")]
+    traffic: f32,
     seed: u32,
     #[serde(default)]
     from: Option<(String, usize)>,
     points: Vec<[f64; 2]>,
+}
+
+fn medium_traffic() -> f32 {
+    environment::roads::DEFAULT_TRAFFIC
 }
 
 pub struct RoadImportReport {
@@ -139,11 +141,6 @@ pub fn import_roads(text: &str, project: &Path) -> Result<RoadImportReport> {
             track_spacing: style.track_spacing,
             track_width: style.track_width,
             edge_softness: style.edge_softness,
-            center_ground: style.center_ground,
-            center_retention: style.center_retention,
-            shoulder_ground: style.shoulder_ground,
-            shoulder_retention: style.shoulder_retention,
-            track_retention: style.track_retention,
             edge_variation: style.edge_variation,
             edge_patch_size: style.edge_patch_size,
             track_wander: style.track_wander,
@@ -168,6 +165,7 @@ pub fn import_roads(text: &str, project: &Path) -> Result<RoadImportReport> {
             name: imported.name.clone(),
             style: imported.style.clone(),
             width: imported.width,
+            traffic: imported.traffic,
             seed: imported.seed,
             from: imported.from.clone(),
             points: imported.points.clone(),
@@ -219,6 +217,7 @@ pub fn import_roads(text: &str, project: &Path) -> Result<RoadImportReport> {
                     RoadTravelMode::Mounted,
                     RoadTravelMode::Cart,
                 ],
+                traffic: route.traffic,
             },
         })];
         records.extend(knots.iter().map(|k| {

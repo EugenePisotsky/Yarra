@@ -187,11 +187,15 @@ pub struct Road {
     pub order: i32,
     pub direction: TravelDirection,
     pub travel_modes: Vec<RoadTravelMode>,
+    /// How much the road is used, 0..1: how worn its style's tracks, centre and shoulders are
+    /// ([`RoadWear`]).
+    pub traffic: f32,
 }
 impl Road {
     pub fn validate(&self) -> Result<(), ValidationError> {
         if self.revision == 0
             || !name(&self.name)
+            || !unit(self.traffic)
             || self.travel_modes.is_empty()
             || self.travel_modes.len() > 3
             || self.travel_modes.iter().collect::<BTreeSet<_>>().len() != self.travel_modes.len()
@@ -201,6 +205,9 @@ impl Road {
         Ok(())
     }
 }
+/// A road style: the kind of way (two wheel tracks or one footpath track, how ragged its edges,
+/// how its tracks wander and sink). How worn a road of it is comes from the road's traffic
+/// ([`RoadWear`]).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CartTrackProfile {
     pub id: RoadProfileId,
@@ -212,21 +219,74 @@ pub struct CartTrackProfile {
     pub track_spacing: f32,
     pub track_width: f32,
     pub edge_softness: f32,
-    pub center_ground: f32,
-    pub center_retention: f32,
-    pub shoulder_ground: f32,
-    pub shoulder_retention: f32,
-    pub track_retention: f32,
     pub edge_variation: f32,
     pub edge_patch_size: f32,
     /// How far each wheel track wanders across the road (its width by half that), metres, and
     /// over about what length of road.
     pub track_wander: f32,
     pub track_wander_length: f32,
-    /// Fraction of otherwise worn coverage restored in noise-selected patches.
+    /// Share of the wear restored in patches where it lets up, at medium traffic
+    /// ([`RoadWear::breakup`]), and the patches' size in metres.
     pub breakup: f32,
     pub breakup_patch_size: f32,
+    /// Depths at medium traffic; [`RoadWear`] scales them.
     pub relief: RoadRelief,
+}
+
+/// How worn a road is at a traffic level (`Road::traffic`), after the references in
+/// `tmp/references/roads-2`: the faintest roads are two trampled lines, little-used ones bare
+/// tracks with grass between (medium traffic, 0.5), busy ones a single band of bare ground
+/// whose shoulders wear too. Each share is of the natural ground the part wears down.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RoadWear {
+    /// The wheel tracks (a footpath's one track).
+    pub tracks: f32,
+    /// The strip between the tracks.
+    pub center: f32,
+    /// The shoulders outside them.
+    pub shoulders: f32,
+    /// Scale of the style's patches where wear lets up: fewer the busier the road.
+    pub patchiness: f32,
+    /// Scale of the style's rut depth: ruts deepen with use, then flatten as wheels spread.
+    pub ruts: f32,
+    /// Scale of the style's whole-road depth.
+    pub basin: f32,
+}
+/// Traffic of a new road: tracks worn bare, grass down the middle.
+pub const DEFAULT_TRAFFIC: f32 = 0.5;
+impl RoadWear {
+    pub fn at(traffic: f32) -> Self {
+        let t = traffic.clamp(0.0, 1.0);
+        let s = |x: f32| {
+            let x = x.clamp(0.0, 1.0);
+            x * x * (3.0 - 2.0 * x)
+        };
+        Self {
+            tracks: 0.3 + 0.7 * s(t / 0.5),
+            center: 0.35 * s((t - 0.15) / 0.35) + 0.65 * s((t - 0.5) / 0.45),
+            shoulders: 0.45 * s(t / 0.5) + 0.35 * s((t - 0.5) / 0.5),
+            patchiness: 1.4 - 0.8 * t,
+            ruts: s(t / 0.5) * (1.0 - 0.4 * s((t - 0.5) / 0.5)),
+            basin: 2.0 * t,
+        }
+    }
+    /// A style's `breakup` at this wear.
+    pub fn breakup(&self, style: f32) -> f32 {
+        (style * self.patchiness).clamp(0.0, 1.0)
+    }
+    /// `relief` at this wear, kept within its limits.
+    pub fn relief(&self, relief: &RoadRelief) -> RoadRelief {
+        RoadRelief {
+            road_depth: (relief.road_depth * self.basin).min(2.0),
+            track_depth: (relief.track_depth * self.ruts).min(0.5),
+            ..relief.clone()
+        }
+    }
+}
+/// The share of grass that road wear `wear` (0..1) clears: little where the ground is trampled,
+/// all where it is worn bare.
+pub fn grass_cleared(wear: f64) -> f64 {
+    wear.clamp(0.0, 1.0).powf(1.5)
 }
 
 /// Additional depression relative to the unmodified source heightfield, in metres.
@@ -419,32 +479,8 @@ impl CartTrackProfile {
                 "track wander must be between 0 and the track width",
             ));
         }
-        for (value, message) in [
-            (
-                self.center_ground,
-                "ground exposure at center must be between 0 and 1",
-            ),
-            (
-                self.center_retention,
-                "grass retained at center must be between 0 and 1",
-            ),
-            (
-                self.shoulder_ground,
-                "ground exposure at shoulders must be between 0 and 1",
-            ),
-            (
-                self.shoulder_retention,
-                "grass retained at shoulders must be between 0 and 1",
-            ),
-            (
-                self.track_retention,
-                "grass retained in tracks must be between 0 and 1",
-            ),
-            (self.breakup, "unworn patches must be between 0 and 1"),
-        ] {
-            if !unit(value) {
-                return Err(invalid(message));
-            }
+        if !unit(self.breakup) {
+            return Err(invalid("unworn patches must be between 0 and 1"));
         }
         Ok(())
     }
@@ -609,4 +645,40 @@ fn range(v: f32, min: f32, max: f32) -> bool {
 }
 fn invalid(what: &'static str) -> ValidationError {
     ValidationError::Road(what)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn traffic_wears_roads_from_trampled_lines_to_one_bare_band() {
+        // Medium traffic: the cart track as tuned on the references.
+        let medium = RoadWear::at(DEFAULT_TRAFFIC);
+        let near = |a: f32, b: f32| (a - b).abs() < 1e-4;
+        assert!(near(medium.tracks, 1.0) && near(medium.center, 0.35));
+        assert!(near(medium.shoulders, 0.45) && near(medium.breakup(0.45), 0.45));
+        assert!(near(medium.ruts, 1.0) && near(medium.basin, 1.0));
+        // The faintest: tracks only trampled, nothing between them.
+        let faint = RoadWear::at(0.0);
+        assert!(faint.tracks < 0.4 && faint.center == 0.0 && faint.shoulders == 0.0);
+        // The busiest: one worn band, shoulders worn too, fewer unworn patches.
+        let busy = RoadWear::at(1.0);
+        assert!(near(busy.center, 1.0) && busy.shoulders > 0.75 && busy.breakup(0.45) < 0.3);
+        // Every part wears more the more the road is used.
+        let mut last = faint;
+        for i in 1..=20 {
+            let w = RoadWear::at(i as f32 / 20.0);
+            assert!(w.tracks >= last.tracks && w.center >= last.center);
+            assert!(w.shoulders >= last.shoulders && w.patchiness <= last.patchiness);
+            last = w;
+        }
+    }
+
+    #[test]
+    fn worn_ground_clears_grass_and_trampled_ground_keeps_most() {
+        assert_eq!(grass_cleared(0.0), 0.0);
+        assert!(grass_cleared(0.35) < 0.25);
+        assert_eq!(grass_cleared(1.0), 1.0);
+    }
 }

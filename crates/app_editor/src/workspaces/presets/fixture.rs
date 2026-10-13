@@ -37,6 +37,7 @@ pub(super) struct RoadFixture {
     pub profile: CartTrackProfile,
     pub curved: bool,
     pub width: f32,
+    pub traffic: f32,
 }
 impl RoadFixture {
     fn snapshot(&self, size: f32) -> RoadSnapshot {
@@ -70,6 +71,7 @@ impl RoadFixture {
                 order: 0,
                 direction: TravelDirection::Bidirectional,
                 travel_modes: vec![RoadTravelMode::Foot, RoadTravelMode::Cart],
+                traffic: self.traffic,
             }],
             spans: vec![RoadSpan {
                 id: RoadSpanId([91; 16]),

@@ -291,6 +291,10 @@ pub(super) fn update(
             profile: d.value.clone(),
             curved: state.styles.curved,
             width: state.styles.width,
+            traffic: state
+                .styles
+                .traffic
+                .unwrap_or(environment::roads::DEFAULT_TRAFFIC),
         })
     } else {
         None

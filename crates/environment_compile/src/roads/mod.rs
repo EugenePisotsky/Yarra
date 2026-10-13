@@ -83,15 +83,12 @@ impl RoadDetailLimits {
         shape
     }
 }
-/// Independent influence values; a road can expose ground while retaining its grassy center.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
-struct RoadInfluence {
-    pub ground: f64,
-    pub suppression: f64,
-}
 struct PlannedRoad {
     source: Road,
+    /// The road's style, its relief at the road's traffic (`RoadWear::relief`).
     profile: CartTrackProfile,
+    /// How worn its traffic leaves it.
+    wear: RoadWear,
     /// The style's shape as the cell's grids draw it.
     baked: world::RoadShape,
     ground_preset: environment::Preset,
@@ -174,13 +171,14 @@ impl RoadPlan {
                 continue;
             }
             spans.sort_by_key(|s| s.id);
+            let wear = RoadWear::at(source.traffic);
             let baked = profile
                 .detail_limits(
                     snapshot.cell_size,
                     plan.profile.terrain_resolution,
                     plan.profile.vegetation_resolution,
                 )?
-                .broaden(shape(cart, source.seed));
+                .broaden(shape(cart, &wear, source.seed));
             let mut curves = vec![];
             for span in spans {
                 curves.push(Curve::build(
@@ -194,7 +192,11 @@ impl RoadPlan {
             if !curves.is_empty() {
                 roads.push(PlannedRoad {
                     source: source.clone(),
-                    profile: cart.clone(),
+                    profile: CartTrackProfile {
+                        relief: wear.relief(&cart.relief),
+                        ..cart.clone()
+                    },
+                    wear,
                     baked,
                     ground_preset: preset.clone(),
                     curves,
@@ -217,6 +219,7 @@ impl RoadPlan {
         roads.extend(junctions::legs(
             &junctions,
             &roads,
+            &snapshot.profiles,
             snapshot.cell_size,
             &profile,
             &limits,
@@ -285,19 +288,13 @@ impl RoadPlan {
             .any(|j| j.blocks_scatter(cell, uv, self.size, clearance))
     }
 
-    fn influence(
-        &self,
-        road: &PlannedRoad,
-        curves: &[usize],
-        cell: CellCoord,
-        uv: [f64; 2],
-    ) -> RoadInfluence {
+    /// How much of the natural ground `road` wears at `uv`, as its page road draws it.
+    fn worn(&self, road: &PlannedRoad, curves: &[usize], cell: CellCoord, uv: [f64; 2]) -> f64 {
         let closest = curves
             .iter()
             .map(|i| road.curves[*i].closest(cell, uv, f64::from(self.size)))
             .min_by(|a, b| a.distance_squared.total_cmp(&b.distance_squared))
             .unwrap();
-        let p = &road.profile;
         let size = f64::from(self.size);
         let world = [
             (f64::from(cell.x) + uv[0]) * size,
@@ -313,47 +310,37 @@ impl RoadPlan {
             },
             world,
         );
-        RoadInfluence {
-            ground: z
-                .tracks
-                .max(z.center * f64::from(p.center_ground))
-                .max(z.shoulder * f64::from(p.shoulder_ground))
-                * z.wear,
-            suppression: (z.tracks * f64::from(1.0 - p.track_retention))
-                .max(z.center * f64::from(1.0 - p.center_retention))
-                .max(z.shoulder * f64::from(1.0 - p.shoulder_retention))
-                * z.wear,
-        }
+        let w = &road.wear;
+        (z.tracks * f64::from(w.tracks))
+            .max(z.center * f64::from(w.center))
+            .max(z.shoulder * f64::from(w.shoulders))
+            * z.wear
+            * strength(&road.ground_preset)
     }
-    /// How much road and junction wear clears grass at `uv`: the strongest in the grass channel.
+    /// How much road and junction wear clears grass at `uv` (`environment::roads::grass_cleared`):
+    /// the most worn ground in the grass channel.
     pub(crate) fn grass_suppression(&self, cell: CellCoord, uv: [f64; 2]) -> f64 {
-        let mut suppression = 0.0_f64;
+        let mut worn = 0.0_f64;
         for (index, curves) in &self.cells[&cell] {
             let road = &self.roads[*index];
             if road.profile.vegetation_channel != GRASS_CHANNEL {
                 continue;
             }
-            let mut value = self.influence(road, curves, cell, uv).suppression;
+            let mut value = self.worn(road, curves, cell, uv);
             for j in &self.junctions {
                 if j.roads.contains(&road.source.id) {
                     let blend = j.blend(cell, uv, self.size);
-                    value = value * (1.0 - blend)
-                        + j.wear(cell, uv, self.size)
-                            * f64::from(1.0 - j.profile.track_retention)
-                            * blend;
+                    value = value * (1.0 - blend) + j.worn(cell, uv, self.size) * blend;
                 }
             }
-            suppression = suppression.max(value);
+            worn = worn.max(value);
         }
         for j in &self.junctions {
             if j.profile.vegetation_channel == GRASS_CHANNEL {
-                let value = j.blend(cell, uv, self.size)
-                    * j.wear(cell, uv, self.size)
-                    * f64::from(1.0 - j.profile.track_retention);
-                suppression = suppression.max(value);
+                worn = worn.max(j.blend(cell, uv, self.size) * j.worn(cell, uv, self.size));
             }
         }
-        suppression
+        grass_cleared(worn)
     }
     pub(crate) fn fingerprint(
         &self,
@@ -391,7 +378,7 @@ impl RoadPlan {
             bincode::config::standard(),
         )?;
         let mut hash = blake3::Hasher::new();
-        hash.update(b"yarra.environment.road.v2");
+        hash.update(b"yarra.environment.road.v3");
         hash.update(&base);
         hash.update(&bytes);
         Ok(*hash.finalize().as_bytes())
@@ -421,13 +408,15 @@ impl RoadPlan {
         let PresetKind::Ground(ground) = &road.ground_preset.kind else {
             unreachable!()
         };
+        // Pages wear tracks by the road's strength and its centre and shoulders by shares of it.
+        let w = &road.wear;
         world::TerrainRoad {
-            shape: shape(p, road.source.seed),
-            center_ground: p.center_ground,
-            shoulder_ground: p.shoulder_ground,
+            shape: shape(p, w, road.source.seed),
+            center_ground: (w.center / w.tracks).min(1.0),
+            shoulder_ground: (w.shoulders / w.tracks).min(1.0),
             track_depth: p.relief.track_depth,
             rut_roundness: p.relief.rut_roundness,
-            strength: ground.strength,
+            strength: ground.strength * w.tracks,
         }
     }
     pub(crate) fn terrain_roads(&self, cell: CellCoord) -> world::TerrainRoads {
@@ -507,7 +496,7 @@ impl RoadPlan {
     }
 }
 
-fn shape(p: &CartTrackProfile, seed: u32) -> world::RoadShape {
+fn shape(p: &CartTrackProfile, wear: &RoadWear, seed: u32) -> world::RoadShape {
     world::RoadShape {
         seed,
         track_spacing: p.track_spacing,
@@ -517,8 +506,15 @@ fn shape(p: &CartTrackProfile, seed: u32) -> world::RoadShape {
         edge_patch_size: p.edge_patch_size,
         track_wander: p.track_wander,
         track_wander_length: p.track_wander_length,
-        breakup: p.breakup,
+        breakup: wear.breakup(p.breakup),
         breakup_patch_size: p.breakup_patch_size,
+    }
+}
+/// How strongly a road's Ground preset wears the ground.
+fn strength(preset: &environment::Preset) -> f64 {
+    match &preset.kind {
+        PresetKind::Ground(g) => f64::from(g.strength),
+        _ => 1.0,
     }
 }
 fn smooth(t: f64) -> f64 {

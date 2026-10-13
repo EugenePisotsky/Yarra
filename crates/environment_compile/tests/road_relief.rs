@@ -142,13 +142,11 @@ fn independently_compiled_borders_share_heights_and_normals_on_curved_roads() {
     }
 }
 #[test]
-fn relief_ignores_grass_retention_and_cosmetic_breakup_and_does_not_stack_overlaps() {
+fn relief_ignores_cosmetic_breakup_and_edges_and_does_not_stack_overlaps() {
     let (plan, c, mut r) = setup();
     let original = compile(&plan, &c, &r, CELLS[0]).terrain.unwrap();
     let p = &mut r.profiles[0];
     p.breakup = 1.0;
-    p.track_retention = 1.0;
-    p.center_retention = 0.0;
     p.edge_variation = 0.12;
     assert_eq!(original, compile(&plan, &c, &r, CELLS[0]).terrain.unwrap());
     let mut other = r.roads[0].clone();

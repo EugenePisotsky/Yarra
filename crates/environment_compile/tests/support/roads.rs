@@ -25,11 +25,6 @@ pub fn cart_tracks() -> (
         track_spacing: 1.55,
         track_width: 0.65,
         edge_softness: 0.15,
-        center_ground: 0.0,
-        center_retention: 1.0,
-        shoulder_ground: 0.15,
-        shoulder_retention: 0.55,
-        track_retention: 0.0,
         edge_variation: 0.08,
         edge_patch_size: 2.0,
         track_wander: 0.0,
@@ -52,6 +47,7 @@ pub fn cart_tracks() -> (
             RoadTravelMode::Mounted,
             RoadTravelMode::Cart,
         ],
+        traffic: DEFAULT_TRAFFIC,
     };
     let point = |x, z| RoadPoint::from_relative(CellCoord::ZERO, [x, z], 8.0).unwrap();
     let span = RoadSpan {

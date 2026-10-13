@@ -33,7 +33,7 @@ fn compile(
         .unwrap()
 }
 #[test]
-fn cart_tracks_preserve_existing_center_and_outside_grass_and_keep_population_identities() {
+fn cart_tracks_keep_grass_down_the_middle_and_outside_and_keep_population_identities() {
     let (d, l, p, c, mut r) = cart_tracks();
     straight(&mut r);
     let plan = CompilePlan::new(&d, &p, &l, CompileProfile::default()).unwrap();
@@ -53,12 +53,14 @@ fn cart_tracks_preserve_existing_center_and_outside_grass_and_keep_population_id
             .map(|f| f.grass)
             .collect::<Vec<_>>()
     );
-    // 8 m / 64 vegetation samples. Center at z=4; tracks at 4 ± .775.
-    assert_eq!(grass(&cells[0], 32, 31), 255);
+    // 8 m / 64 vegetation samples. Center at z=4; tracks at 4 ± .775. At medium traffic grass
+    // grows down the middle, thinned where it is trampled, and in full outside.
+    let middle = grass(&cells[0], 32, 31);
+    assert!(middle > 100 && middle < 255, "{middle}");
     assert_eq!(grass(&cells[0], 32, 0), 255);
     assert_eq!(grass(&cells[0], 32, 25), 0);
     assert_eq!(grass(&cells[0], 32, 38), 0);
-    assert_eq!(ground_at(&cells[0], 32, 32), 0);
+    assert!(ground_at(&cells[0], 32, 32) < 128);
     assert!(ground_at(&cells[0], 32, 26) > 230);
     let shoulder = grass(&cells[0], 32, 20);
     assert!(shoulder > 0 && shoulder < 255);
@@ -67,8 +69,31 @@ fn cart_tracks_preserve_existing_center_and_outside_grass_and_keep_population_id
     r.spans[0].end.width = 5.0;
     let wide = compile(&plan, &c, &r);
     assert_eq!(grass(&wide[0], 32, 25), 0);
-    assert_eq!(grass(&wide[0], 32, 31), 255);
+    assert_eq!(grass(&wide[0], 32, 31), middle);
     assert!(grass(&wide[0], 32, 17) < grass(&cells[0], 32, 17));
+}
+#[test]
+fn traffic_wears_a_quiet_track_to_trampled_lines_and_a_busy_one_to_a_bare_band() {
+    let (d, l, p, c, mut r) = cart_tracks();
+    straight(&mut r);
+    let plan = CompilePlan::new(&d, &p, &l, CompileProfile::default()).unwrap();
+    let at = |r: &RoadSnapshot, traffic: f32| {
+        let mut r = r.clone();
+        r.roads[0].traffic = traffic;
+        compile(&plan, &c, &r).remove(0)
+    };
+    let (quiet, medium, busy) = (at(&r, 0.1), at(&r, 0.5), at(&r, 1.0));
+    // Tracks: worn partly when quiet, bare from medium traffic on.
+    assert!(ground_at(&quiet, 32, 26) < 200);
+    assert!(ground_at(&medium, 32, 26) > 230 && ground_at(&busy, 32, 26) > 230);
+    // The middle: untouched when quiet, worn bare when busy, grass gone with it.
+    assert_eq!(ground_at(&quiet, 32, 32), 0);
+    assert_eq!(grass(&quiet, 32, 31), 255);
+    assert!(ground_at(&busy, 32, 32) > 230);
+    assert!(grass(&busy, 32, 31) < 20, "{}", grass(&busy, 32, 31));
+    // Shoulders wear more the busier the road.
+    let shoulder = |cell: &CompiledCell| grass(cell, 32, 20);
+    assert!(shoulder(&quiet) > shoulder(&medium) && shoulder(&medium) > shoulder(&busy));
 }
 #[test]
 fn curved_road_matches_local_batch_order_and_cell_border_compilation() {
@@ -169,7 +194,7 @@ fn breakup_retains_grass_in_worn_areas_without_changing_outside_or_base_catalog(
     assert!((0..64).any(|x| grass(&worn[0], x, 25) > grass(&solid[0], x, 25) + 20));
     for x in 0..64 {
         assert_eq!(grass(&worn[0], x, 0), grass(&solid[0], x, 0));
-        assert_eq!(grass(&worn[0], x, 31), 255);
+        assert!(grass(&worn[0], x, 31) >= grass(&solid[0], x, 31));
     }
 }
 #[test]

@@ -1,6 +1,6 @@
 //! cargo run --offline -p yarra-environment-compile --example cart_track > cart-track.svg
-//! Options: --breakup 0..1 --spacing metres --track-width metres --road-width metres
-//!          --center-retention 0..1 --shoulder-retention 0..1 --seed integer --straight
+//! Options: --traffic 0..1 --breakup 0..1 --spacing metres --track-width metres
+//!          --road-width metres --seed integer --straight
 #[path = "../tests/support/roads.rs"]
 mod road_support;
 #[path = "../tests/support/mod.rs"]
@@ -27,8 +27,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 roads.spans[0].start.width = width;
                 roads.spans[0].end.width = width;
             }
-            "--center-retention" => roads.profiles[0].center_retention = value.parse()?,
-            "--shoulder-retention" => roads.profiles[0].shoulder_retention = value.parse()?,
+            "--traffic" => roads.roads[0].traffic = value.parse()?,
             "--seed" => roads.roads[0].seed = value.parse()?,
             _ => return Err(format!("unknown option {arg}").into()),
         }
@@ -74,7 +73,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let p = &roads.profiles[0];
     writeln!(
         svg,
-        r##"<text x="40" y="969" font-size="15">Wheel spacing {:.2} m · track width {:.2} m · corridor {:.1}–{:.1} m · breakup {:.0}% · center retention {:.0}%</text>
+        r##"<text x="40" y="969" font-size="15">Wheel spacing {:.2} m · track width {:.2} m · corridor {:.1}–{:.1} m · breakup {:.0}% · traffic {:.0}%</text>
 <text x="40" y="997" font-size="14" fill="#a9bcb5">Surface: brown = road, green = meadow. Coverage: dark = cleared, bright = retained. Dashes mark the cell boundary.</text>
 <text x="40" y="1025" font-size="14" fill="#a9bcb5">Compiler proof only. Road persistence, editor handles, paving joints, elevation and navigation are not implemented.</text></g></svg>"##,
         p.track_spacing,
@@ -82,7 +81,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         roads.spans[0].start.width,
         roads.spans[0].end.width,
         p.breakup * 100.0,
-        p.center_retention * 100.0
+        roads.roads[0].traffic * 100.0
     )?;
     println!("{svg}");
     eprintln!(

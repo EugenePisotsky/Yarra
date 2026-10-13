@@ -244,8 +244,6 @@ fn document(half_cells: i32) -> ProjectDocument {
     profile.edge_softness = 0.25;
     profile.breakup_patch_size = 2.4;
     profile.breakup = 0.28;
-    profile.center_ground = 0.12;
-    profile.shoulder_ground = 0.45;
     profile.relief.road_depth = 0.08;
     profile.relief.shoulder_falloff = 1.0;
     // Narrow wheel ruts need finer geometry; this distance fixture keeps wheel
@@ -265,6 +263,7 @@ fn document(half_cells: i32) -> ProjectDocument {
             RoadTravelMode::Mounted,
             RoadTravelMode::Cart,
         ],
+        traffic: environment::roads::DEFAULT_TRAFFIC,
     };
     project.roads.records = vec![
         R::Profile(profile),

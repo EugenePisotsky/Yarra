@@ -244,6 +244,21 @@ pub(crate) fn inspector(
         });
         if ui.button("Edit this shared style…").clicked() { state.style_request = Some((space, source.road.profile.into())); }
         ui.checkbox(&mut next.road.enabled, "Enabled");
+        // Held in egui's temporary state while dragged; one change when let go.
+        let traffic_id = ui.make_persistent_id(("road-traffic", id.0));
+        let mut traffic = ui
+            .data_mut(|d| d.get_temp::<f32>(traffic_id))
+            .unwrap_or(source.road.traffic);
+        let slider = ui.add(egui::Slider::new(&mut traffic, 0.0..=1.0).text("Traffic"));
+        if slider.dragged() {
+            ui.data_mut(|d| d.insert_temp(traffic_id, traffic));
+        } else {
+            ui.data_mut(|d| d.remove::<f32>(traffic_id));
+            if slider.changed() || slider.drag_stopped() {
+                next.road.traffic = traffic;
+            }
+        }
+        ui.small("How much the road is used: two trampled lines when quiet, bare tracks with grass between at the middle, one bare band when busy.");
         egui::ComboBox::from_id_salt("road-direction")
             .selected_text(format!("{:?}", next.road.direction))
             .show_ui(ui, |ui| {

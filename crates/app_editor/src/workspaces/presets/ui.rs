@@ -261,7 +261,7 @@ pub(super) fn draw(mut frame: ResMut<EditorUiFrame>, resources: Resources) -> Re
     egui::CentralPanel::default().show(root,|ui| {
         ui.heading(if road_mode {"Road style preview"} else {"Preset preview"});
         if road_mode {
-            let before=(state.styles.curved,state.styles.width.to_bits());
+            let before=(state.styles.curved,state.styles.width.to_bits(),state.styles.traffic.map(f32::to_bits));
             let minimum_width = state.styles.draft.as_ref().map_or(0.1, |d| d.value.minimum_width());
             ui.horizontal_wrapped(|ui| {
                 ui.checkbox(&mut state.styles.curved,"Curved road");
@@ -270,9 +270,14 @@ pub(super) fn draw(mut frame: ResMut<EditorUiFrame>, resources: Resources) -> Re
                 if state.styles.width < minimum_width && ui.button("Fit preview width").clicked() {
                     state.styles.width = minimum_width;
                 }
+                let mut traffic = state.styles.traffic.unwrap_or(environment::roads::DEFAULT_TRAFFIC);
+                ui.label("Preview traffic");
+                if ui.add(egui::Slider::new(&mut traffic, 0.0..=1.0)).changed() {
+                    state.styles.traffic = Some(traffic);
+                }
             });
-            if before!=(state.styles.curved,state.styles.width.to_bits()) {state.bump();}
-            ui.small("Width and reference ground are preview-only. Map roads keep their own widths and painted coverage.");
+            if before!=(state.styles.curved,state.styles.width.to_bits(),state.styles.traffic.map(f32::to_bits)) {state.bump();}
+            ui.small("Width, traffic and reference ground are preview-only. Map roads keep their own widths, traffic and painted coverage.");
             if state.styles.width < minimum_width {
                 ui.colored_label(egui::Color32::YELLOW,format!("Preview corridor is {:.2} m wide; this style needs at least {minimum_width:.2} m. Use Fit preview width.",state.styles.width));
             }

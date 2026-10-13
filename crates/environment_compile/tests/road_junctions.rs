@@ -117,19 +117,20 @@ fn t_junction_wears_the_center_and_blends_ruts_without_adding_grass_or_excavatin
     assert!((0..33).all(|x| (0..33).all(|z| h.height_at(x, z) > -0.231)));
     let center = worn_weights(&a, 64, 32);
     assert_eq!(center.iter().find(|(s, _)| *s == SOIL).unwrap().1, 255);
-    assert!(
-        a.vegetation
-            .fields
-            .iter()
-            .all(|f| f.coverage[31 * usize::from(f.resolution) + 63] == 0)
-    );
-    // The painted meadow and straight road outside the junction keep their original behavior.
-    assert!(
-        a.vegetation
-            .fields
-            .iter()
-            .any(|f| f.coverage[31 * usize::from(f.resolution) + 8] == 255)
-    );
+    // Worn bare there, the hub clears nearly all grass.
+    for f in &a.vegetation.fields {
+        let v = f.coverage[31 * usize::from(f.resolution) + 63];
+        assert!(v < 26, "{v}");
+    }
+    // Outside the junction grass still grows down the road's middle.
+    let middle = a
+        .vegetation
+        .fields
+        .iter()
+        .map(|f| f.coverage[31 * usize::from(f.resolution) + 8])
+        .max()
+        .unwrap();
+    assert!(middle > 100, "{middle}");
     let mut plain = r.clone();
     plain.junctions.clear();
     plain.spans.retain(|s| s.road == plain.roads[0].id);
@@ -208,7 +209,6 @@ fn independently_compiled_junction_borders_and_reordered_inputs_match() {
     assert_eq!(a, compile(&plan, &c, &r, CELLS[0]));
     let mut dry = r.clone();
     dry.profiles[0].breakup = 0.0;
-    dry.profiles[0].track_retention = 1.0;
     assert_eq!(a.terrain, compile(&plan, &c, &dry, CELLS[0]).terrain);
 }
 #[test]

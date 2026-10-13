@@ -193,7 +193,7 @@ October 12, 2026, agreed with the user after the references in `tmp/references/r
 Drawing roads per pixel from centre lines (near terrain until now) fits one road; junctions with corner legs put three or four roads and a hub within reach of a pixel, and every arm adds cost and special cases. Instead, **one wear field per page**:
 
 - The cook draws every road, corner leg, junction hub and (later) painted wear into a field per page at about 12.5 cm (256² over 32 m): wear 0–1, rut depth, and traffic direction (as a doubled angle, so opposite directions blend).
-- **Worn ground comes from the natural ground**, not from the road: each terrain surface names what it wears down to (meadow to sandy dirt and gravel, forest floor to forest dirt). Pages store the natural ground's weights; near terrain lays the worn ground over them by the field's wear per pixel, and the distant bake does the same at its resolution. Road styles (later: traffic level) shape only how much wear lands where.
+- **Worn ground comes from the natural ground**, not from the road: each terrain surface names what it wears down to (meadow to sandy dirt and gravel, forest floor to forest dirt). Pages store the natural ground's weights; near terrain lays the worn ground over them by the field's wear per pixel, and the distant bake does the same at its resolution. A road's traffic level and its style's shape decide only how much wear lands where.
 - Near terrain reads the field once per pixel, whatever meets there. Ruts sink by parallax over its rut depth; grooves and streaks follow its direction, curving through junctions.
 - Grass and details take wear from the same source: thinner and shorter as it rises, flattened along the direction where trampled, leaning over edges; stones where wear falls off, weeds where it is moderate.
 
@@ -201,8 +201,8 @@ Authored: routes, which roads connect, traffic level and width, per-junction ove
 
 1. **Wear field**: done (`c1d20d3`).
 2. **Junctions**: corner legs and ragged hubs done; island objects go with the look, per-junction toggles with authoring.
-3. **Look**, iterated with the user on a fixed sheet of views against the references: the wear ramp (trampled grass, dry band, dirt, packed and gravel), weeds, stones, flattened and leaning grass, ruts. Done: trampled and bare ground (`47fc8de`), pages agreeing along their edges (`602ac07`), debris by wear band (`vegetation::DetailType::wear`): stones and pebbles where wear falls off, fallen branches along and on forest paths. Weeds wait for a plant asset (a plantain or clover rosette for the vegetation kit; sorrel scaled down read as flat green patches). Next: traffic level per road, then the night pass.
-4. **Authoring**: traffic level per road (styles become presets of it), wear brush.
+3. **Look**, iterated with the user on a fixed sheet of views against the references: the wear ramp (trampled grass, dry band, dirt, packed and gravel), weeds, stones, flattened and leaning grass, ruts. Done: trampled and bare ground (`47fc8de`), pages agreeing along their edges (`602ac07`), debris by wear band (`vegetation::DetailType::wear`): stones and pebbles where wear falls off, fallen branches along and on forest paths. Weeds wait for a plant asset (a plantain or clover rosette for the vegetation kit; sorrel scaled down read as flat green patches). Next: the night pass.
+4. **Authoring**: traffic level per road done: `Road::traffic` replaces the styles' wear and grass-retention knobs (`RoadWear::at`; medium traffic reproduces the tuned cart track), styles keep the kind of way, the road inspector has a traffic slider and the style preview a preview traffic; the island's Beach road is the main road (0.85, 4 m wide). Still to come: the wear brush, per-junction toggles.
 5. **Performance**, once the look holds.
 
 ## Performance roadmap

@@ -333,6 +333,7 @@ pub(super) fn road_request() -> fixture::Request {
         ),
         curved: false,
         width: 3.5,
+        traffic: environment::roads::DEFAULT_TRAFFIC,
     });
     r
 }
@@ -374,13 +375,13 @@ fn road_preview_uses_production_wear_and_preserves_unpainted_holes() {
             let repeated = r.clone().compile().unwrap();
             assert_eq!(full.scene, repeated.scene);
             assert_eq!(full.ground, repeated.ground);
+            // A quiet road leaves the strip between its tracks, over the hole, unworn.
             r.footprint = Footprint::Hole;
+            r.road.as_mut().unwrap().traffic = 0.1;
             let worn = r.clone().compile().unwrap();
-            // Keep the exact road fixture and grid, but make it retain all vegetation.
+            // Keep the exact road fixture and grid, but make it clear no grass.
             let p = &mut r.road.as_mut().unwrap().profile;
-            p.track_retention = 1.0;
-            p.center_retention = 1.0;
-            p.shoulder_retention = 1.0;
+            p.vegetation_channel = environment::ChannelId([0; 16]);
             let untouched = r.compile().unwrap();
             assert_ne!(full.scene.pages, worn.scene.pages);
             for (w, u) in worn.scene.pages[0]

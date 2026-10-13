@@ -2,10 +2,11 @@ use super::*;
 
 pub(super) struct PlannedJunction {
     pub source: RoadJunction,
-    /// The road (index into the plan's roads) whose style the junction's patch takes: the
-    /// junction's own.
+    /// The road (index into the plan's roads) whose style and wear the junction's patch takes:
+    /// the busiest of its roads in the junction's own style.
     pub hub: usize,
     pub profile: CartTrackProfile,
+    pub wear: RoadWear,
     pub ground_preset: environment::Preset,
     pub roads: Vec<RoadId>,
     pub bounds: RoadCellBounds,
@@ -29,7 +30,8 @@ impl PlannedJunction {
         ];
         world::junction_blend(distance, self.source.radius, world, self.source.seed)
     }
-    pub fn wear(&self, cell: CellCoord, uv: [f64; 2], size: f32) -> f64 {
+    /// How much of the natural ground the patch wears at `uv` where it holds fully.
+    pub fn worn(&self, cell: CellCoord, uv: [f64; 2], size: f32) -> f64 {
         let world = [
             (f64::from(cell.x) + uv[0]) * f64::from(size),
             (f64::from(cell.z) + uv[1]) * f64::from(size),
@@ -42,7 +44,9 @@ impl PlannedJunction {
             ) - 0.40)
                 / 0.30,
         );
-        1.0 - f64::from(self.profile.breakup) * patches
+        (1.0 - f64::from(self.wear.breakup(self.profile.breakup)) * patches)
+            * f64::from(self.wear.tracks)
+            * strength(&self.ground_preset)
     }
     pub fn depth(&self, cell: CellCoord, uv: [f64; 2], size: f32) -> f64 {
         let r = &self.profile.relief;
@@ -108,16 +112,21 @@ pub(super) fn build(
         if arms < 2 || members.len() < 2 {
             continue;
         }
-        let hub = roads
-            .iter()
-            .position(|r| members.contains(&r.source.id) && r.source.profile == j.profile)
-            .or_else(|| roads.iter().position(|r| members.contains(&r.source.id)))
-            .unwrap();
+        let busiest = |styled: bool| {
+            (0..roads.len())
+                .filter(|&i| {
+                    let r = &roads[i].source;
+                    members.contains(&r.id) && (!styled || r.profile == j.profile)
+                })
+                .max_by(|&a, &b| roads[a].source.traffic.total_cmp(&roads[b].source.traffic))
+        };
+        let hub = busiest(true).or_else(|| busiest(false)).unwrap();
         let road = &roads[hub];
         result.push(PlannedJunction {
             source: j.clone(),
             hub,
             profile: road.profile.clone(),
+            wear: road.wear,
             ground_preset: road.ground_preset.clone(),
             roads: members.into_iter().collect(),
             bounds,
@@ -156,14 +165,15 @@ struct Arm {
 }
 
 /// Corner legs at the plan's junctions: wherever neighbouring arms meet at a corner traffic cuts
-/// (`LEG_ANGLES`), a narrower, much less worn road of the quieter arm's style curves from one arm to
-/// the other, tangent to both, joining them far enough out (`environment::roads::JUNCTION_LEG_REACH`
-/// at most) to leave a grass island against the junction. The wider the corner, the more
-/// traffic cuts it. A leg only one-way traffic could take against its road is left out, as is
-/// one too tight to draw.
+/// (`LEG_ANGLES`), a narrower road of the quieter arm's style, with a share of its traffic,
+/// curves from one arm to the other, tangent to both, joining them far enough out
+/// (`environment::roads::JUNCTION_LEG_REACH` at most) to leave a grass island against the
+/// junction. The wider the corner, the more traffic cuts it. A leg only one-way traffic could
+/// take against its road is left out, as is one too tight to draw.
 pub(super) fn legs(
     junctions: &[PlannedJunction],
     roads: &[PlannedRoad],
+    styles: &[CartTrackProfile],
     size: f32,
     config: &RoadCompileProfile,
     limits: &RoadDetailLimits,
@@ -212,8 +222,8 @@ pub(super) fn legs(
             if !(LEG_ANGLES[0]..=LEG_ANGLES[1]).contains(&corner) || !turnable(roads, a, b) {
                 continue;
             }
-            let traffic = smooth((corner - 60.0) / 35.0) * (1.0 - smooth((corner - 150.0) / 15.0));
-            if traffic < 0.15 {
+            let cut = smooth((corner - 60.0) / 35.0) * (1.0 - smooth((corner - 150.0) / 15.0));
+            if cut < 0.15 {
                 continue;
             }
             // Far enough out that the leg's middle passes a road's width and three metres from
@@ -228,7 +238,8 @@ pub(super) fn legs(
             ) else {
                 continue;
             };
-            let quieter = if a.width <= b.width { a } else { b };
+            let traffic = |arm: &Arm| (roads[arm.road].source.traffic, arm.width);
+            let quieter = if traffic(a) <= traffic(b) { a } else { b };
             let source = &roads[quieter.road];
             let profile = &source.profile;
             let width = (0.7 * a.width.min(b.width)).max(f64::from(profile.minimum_width()));
@@ -267,6 +278,8 @@ pub(super) fn legs(
                 order: source.source.order,
                 direction: TravelDirection::Bidirectional,
                 travel_modes: source.source.travel_modes.clone(),
+                // Lightly enough that legs mostly trample, bare in their busiest stretches.
+                traffic: source.source.traffic * (0.25 + 0.4 * cut) as f32,
             };
             let (Some(start), Some(end)) = (
                 knot(key("start"), pa, [0.0; 2], handle(pa)),
@@ -284,16 +297,20 @@ pub(super) fn legs(
             let Ok(curve) = Curve::build(&span, profile, size, config, remaining) else {
                 continue;
             };
-            let mut ground_preset = source.ground_preset.clone();
-            if let PresetKind::Ground(g) = &mut ground_preset.kind {
-                // Lightly enough that legs mostly trample, bare in their busiest stretches.
-                g.strength *= (0.4 + 0.35 * traffic) as f32;
-            }
+            // The style's depths as authored: the arm's profile holds them at its traffic.
+            let Some(style) = styles.iter().find(|p| p.id == profile.id) else {
+                continue;
+            };
+            let wear = RoadWear::at(road.traffic);
             legs.push(PlannedRoad {
-                baked: limits.broaden(shape(profile, road.seed)),
+                baked: limits.broaden(shape(profile, &wear, road.seed)),
+                profile: CartTrackProfile {
+                    relief: wear.relief(&style.relief),
+                    ..profile.clone()
+                },
+                wear,
                 source: road,
-                profile: profile.clone(),
-                ground_preset,
+                ground_preset: source.ground_preset.clone(),
                 curves: vec![curve],
             });
         }
