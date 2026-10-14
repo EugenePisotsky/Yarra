@@ -224,7 +224,12 @@ fn shade(input: VertexOutput) -> vec4<f32> {
     let sun_share = sun_level / max(sun_level + dot(bounded_ambient, luma), 1e-6);
     let shade_dimming = mix(1.0, mix(0.55, 1.0, shadow_visibility),
         camera.lighting.w * cloud_beam * smoothstep(0.2, 0.6, sun_share));
-    let ambient = albedo * bounded_ambient * mix(0.4, 1.0, occlusion) * sky_fill * shade_dimming;
+    // The sky's diffuse share as every PBR surface takes it (Bevy's ambient light: about 0.45 of
+    // the albedo on rough ground), so grass and the ground between it keep their day contrast
+    // under sky light alone: at night, at dusk and in shade.
+    let sky_diffuse = pbr_lighting::F_AB(1.0, clamp(dot(diffuse_normal, view_direction), 0.0, 1.0)).x;
+    let ambient = albedo * sky_diffuse * bounded_ambient * mix(0.4, 1.0, occlusion) * sky_fill
+        * shade_dimming;
 
     return vec4<f32>(ambient + sun, 1.0);
 }
