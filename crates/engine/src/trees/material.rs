@@ -30,6 +30,7 @@ pub(super) struct TreeWindExtension {
     #[storage(100, read_only)]
     wind: Handle<ShaderBuffer>,
     crown_shading: bool,
+    crown_sky: bool,
     bark_blend: bool,
     #[uniform(105)]
     profile: Vec4,
@@ -44,6 +45,7 @@ pub(super) struct TreeWindExtension {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) struct TreeWindKey {
     crown_shading: bool,
+    crown_sky: bool,
     bark_blend: bool,
     /// Drawn from the instance buffer (`super::instancing`) rather than per mesh entity; only
     /// that path specializes with it.
@@ -53,6 +55,7 @@ impl From<&TreeWindExtension> for TreeWindKey {
     fn from(material: &TreeWindExtension) -> Self {
         Self {
             crown_shading: material.crown_shading,
+            crown_sky: material.crown_sky,
             bark_blend: material.bark_blend,
             instanced: false,
         }
@@ -69,6 +72,9 @@ impl MaterialExtension for TreeWindExtension {
             && let Some(fragment) = descriptor.fragment.as_mut()
         {
             fragment.shader_defs.push("TREE_CROWN_SHADING".into());
+            if key.bind_group_data.crown_sky {
+                fragment.shader_defs.push("TREE_CROWN_SKY".into());
+            }
         }
         if key.bind_group_data.bark_blend
             && let Some(fragment) = descriptor.fragment.as_mut()
@@ -170,8 +176,9 @@ enum FoliageShading {
     /// sides keep the authored crown normal. Back faces are still drawn; only Bevy's
     /// two-sided normal flip is turned off.
     Crown,
-    /// `crown_v2`: spatial sky visibility baked from the full crown, retained across LODs.
-    /// Lit like `crown_v1`; distant self-shadowing reads either occlusion the same way.
+    /// `crown_v2`: the share of the sky each card sees past the rest of its crown, baked
+    /// linearly from the full crown (vegetation `crown_sky_v2`) and retained across LODs.
+    /// Lit like `crown_v1`, with its sky light held back by that share (TREE_CROWN_SKY).
     CrownOcclusion,
     /// `yarra_shading: "pad_v1"`: cards are flat pads (pine branch ends) whose authored
     /// normal faces up, so Bevy's flip is kept: a pad's underside faces down and falls dark.
@@ -301,6 +308,7 @@ fn convert(
                             .as_ref()
                             .and_then(|u| load(&u.metallic_roughness, false)),
                         crown_shading: shading != FoliageShading::Plain,
+                        crown_sky: shading == FoliageShading::CrownOcclusion,
                     },
                 });
                 (material, shading)

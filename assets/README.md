@@ -131,17 +131,20 @@ crown normals turns shaded leaves grey. It also carries the usual `yarra_wind`
 contract (TEXCOORD_1 = flutter, branch); bark is opaque and rigid, with its
 occlusion multiplied into base colour.
 
-The tall-tree lighting trial exports `vegetation_occlusion: "crown_sky_v1"`.
+Every vegetation tree preset exports `vegetation_occlusion: "crown_sky_v2"`.
 `import_vegetation_bundle.py` preserves this marker and selects
-`yarra_shading: "crown_v2"`. Its vertex colors contain spatial sky visibility
-from the complete crown before LOD thinning. Facing clumps retain constant AO
-at their pivot; the approved geometry and foliage textures are unchanged.
-Near direct sunlight still uses dynamic shadows. Over the outer 30% of the
-shadow range, `crown_v2` blends to coarse self-shadowing from AO and the stable
-crown normal relative to the light. Sun-facing areas stay brighter than sheltered
-areas after shadow maps run out. It adds no texture samples or geometry.
-Unmarked bundles keep `crown_v1`. This is an art trial, not final foliage shading;
-it does not extend ground-shadow range or implement runtime billboards.
+`yarra_shading: "crown_v2"`; it refuses the older `crown_sky_v1` (rebuild the bundle).
+Its vertex colors hold linear sky visibility: the share of an overcast sky's light
+(three times brighter overhead than at the horizon) a card sees past the rest of
+its crown, from the complete crown before LOD thinning. Facing clumps retain one
+value at their pivot, and impostors carry the same values.
+The game (TREE_CROWN_SKY in `shaders/lighting/pbr_lighting.wesl`) multiplies the
+crown's sky light by it and by the shade of the crowns around (`forest_crown_sky`),
+keeping 12% for light passed through and between leaves; the lower half of a crown
+sees the ground, as other surfaces do. Near direct sunlight still uses dynamic
+shadows. Over the outer 30% of the shadow range, `crown_v2` blends to coarse
+self-shadowing from the same visibility and the stable crown normal relative to
+the light. It adds no texture samples or geometry. Unmarked bundles keep `crown_v1`.
 
 The bay shrub trial is rebuilt from vegetation's `bay_upright` bundle using
 `tools/import_vegetation_bundle.py`, with tracked catalog

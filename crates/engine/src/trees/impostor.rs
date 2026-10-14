@@ -472,6 +472,9 @@ impl MaterialExtension for ImpostorExtension {
         descriptor.primitive.cull_mode = None;
         if let Some(fragment) = descriptor.fragment.as_mut() {
             fragment.shader_defs.push("TREE_CROWN_SHADING".into());
+            // Impostors carry their mesh's crown occlusion: linear sky visibility since every
+            // impostor-baked tree exports crown_sky_v2.
+            fragment.shader_defs.push("TREE_CROWN_SKY".into());
             fragment.shader_defs.push("IMPOSTOR_SELF_SHADOW".into());
         }
         Ok(())

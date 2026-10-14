@@ -43,7 +43,7 @@ import bevy_pbr::render::pbr_functions::{calculate_diffuse_color, calculate_F0, 
 @if(STANDARD_MATERIAL_ANISOTROPY) import bevy_pbr::render::pbr_functions::bend_normal_for_anisotropy;
 @if(CONTACT_SHADOWS && DEPTH_PREPASS) import bevy_pbr::render::pbr_functions::calculate_contact_shadow;
 import package::shaders::lighting::surface::{cloud_light, ground_celestial_irradiance, surface_wetness};
-import package::shaders::lighting::forest_shadow::{forest_transmittance, forest_sky_light, forest_sky_visibility};
+import package::shaders::lighting::forest_shadow::{forest_transmittance, forest_sky_light, forest_sky_visibility, forest_crown_sky};
 
 // Yarra: light reflected towards a surface by the ground around it, as environment radiance
 // (Bevy's ambient colour is used the same way): the ground's albedo times the sun, moon and
@@ -52,6 +52,23 @@ const GROUND_ALBEDO: vec3<f32> = vec3(0.09, 0.12, 0.05);
 fn ground_light(P: vec3<f32>) -> vec3<f32> {
     let irradiance = view_bindings::lights.ambient_color.rgb * PI + ground_celestial_irradiance(P);
     return GROUND_ALBEDO * irradiance / PI;
+}
+
+// Yarra: sky light still reaching foliage the rest of its crown hides from the sky, passed
+// through and between the leaves (TREE_CROWN_SKY).
+const CROWN_FILL: f32 = 0.12;
+
+// Yarra: the share of the sky's light reaching foliage at `p` whose crown leaves it `sky`
+// (TREE_CROWN_SKY): past its own crown and the crowns around, plus what leaves pass on.
+fn crown_sky_reach(sky: f32, p: vec3<f32>) -> f32 {
+    let open = clamp(sky, 0.0, 1.0) * forest_crown_sky(p);
+    return open + (1.0 - open) * CROWN_FILL;
+}
+
+// Yarra: a crown's linear sky visibility (TREE_CROWN_SKY) as the eased occlusion the distant
+// self-shadow was tuned on: deep foliage keeps about half the sun.
+fn crown_sky_shade(sky: f32) -> f32 {
+    return 1.0 - 0.52 * (1.0 - pow(sky, 0.65));
 }
 
 // Yarra: the sunlight left at `P` after the atmosphere and the horizon, as Bevy applies it inside
@@ -403,8 +420,11 @@ fn apply_pbr_lighting(
                 let to_light = (*light).direction_to_light;
                 // The authored crown normal faces the sun on exposed sides; the crown's
                 // occlusion deepens sheltered ones. The march skips the crown's own front.
-                @if(TREE_CROWN_SHADING)
+                @if(TREE_CROWN_SHADING && !TREE_CROWN_SKY)
                 let crown = clamp(in.diffuse_occlusion.g, 0.0, 1.0);
+                // Linear sky visibility, eased into the range the self-shadow was tuned on.
+                @if(TREE_CROWN_SKY)
+                let crown = crown_sky_shade(clamp(in.diffuse_occlusion.g, 0.0, 1.0));
                 @if(TREE_CROWN_SHADING)
                 let sun_facing = smoothstep(-0.25, 0.65, dot(normalize(in.world_normal), to_light));
                 @if(TREE_CROWN_SHADING)
@@ -421,7 +441,11 @@ fn apply_pbr_lighting(
         }
         // The clouds' direct beam is shaded like any sunlight; what they pass on diffusely casts
         // no shadows, and crowns hold it back as they do the sky.
+        @if(!TREE_CROWN_SKY)
         let diffuse = cloud.y * forest_sky_visibility(in.world_position.xyz);
+        // Under clouds this is sky light: foliage the crown hides from the sky sees less of it.
+        @if(TREE_CROWN_SKY)
+        let diffuse = cloud.y * crown_sky_reach(in.diffuse_occlusion.g, in.world_position.xyz);
         shadow = shadow * cloud.x + diffuse;
         var light_contrib = lighting::directional_light(i, &lighting_input, enable_diffuse);
         @if(TREE_CROWN_SHADING) {
@@ -577,7 +601,18 @@ fn apply_pbr_lighting(
         // ground is unchanged); vertical ones get 75% and downward ones 50%, so shapes
         // still read when clouds hide the sun.
         var sky_facing = vec3(0.75 + 0.25 * in.N.y);
-        @if(TREE_CROWN_SHADING)
+        @if(TREE_CROWN_SKY) {
+            // Foliage sees the sky past the rest of its crown (baked) and past the crowns
+            // around it, which shade the lower crowns of a stand. Light passed through and
+            // between leaves keeps the deepest foliage from black. Below the crown's
+            // horizon lies the ground, as for every other surface.
+            let reach = crown_sky_reach(diffuse_occlusion.g, in.world_position.xyz);
+            let below = 0.5 - 0.5 * in.N.y;
+            let ground = ground_light(in.world_position.xyz) * forest_sky_light(in.world_position.xyz);
+            indirect_light += ambient::ambient_light(in.world_position, in.N, in.V, NdotV, diffuse_color, F0, perceptual_roughness, vec3(reach * (1.0 - below)));
+            indirect_light += diffuse_color * ground * below * reach;
+        }
+        @elif(TREE_CROWN_SHADING)
         indirect_light += ambient::ambient_light(in.world_position, in.N, in.V, NdotV, diffuse_color, F0, perceptual_roughness, diffuse_occlusion * sky_facing);
         @else {
             // Below the horizon of a surface lies sunlit ground, not sky: its lower half sees

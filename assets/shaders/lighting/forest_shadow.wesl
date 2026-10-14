@@ -70,3 +70,28 @@ fn forest_sky_light(p: vec3<f32>) -> vec3<f32> {
     let open = forest_sky_visibility(p);
     return open + (1.0 - open) * CANOPY_FILL;
 }
+
+// The share of the sky a crown at `p` sees past its neighbours: the floor's share at the base of
+// the crown layer around it, opening to the full sky at the canopy top. Lower crowns in a stand
+// lie in its shade; the tops and a lone tree see the open sky. 1 without a map.
+fn forest_crown_sky(p: vec3<f32>) -> f32 {
+    let parameters = forest_shadow_parameters();
+    let strength = forest_sky_parameters().x;
+    if strength <= 0.0 || parameters.z <= 0.0 {
+        return 1.0;
+    }
+    let extent = parameters.z * vec2<f32>(textureDimensions(forest_map));
+    let here = (p.xz - parameters.xy) / extent;
+    if any(here <= vec2(0.0)) || any(here >= vec2(1.0)) {
+        return 1.0;
+    }
+    let around = textureSampleLevel(forest_map, forest_sampler, here, 1.5);
+    let local = textureSampleLevel(forest_map, forest_sampler, here, 0.0);
+    if around.a <= p.y {
+        return 1.0;
+    }
+    let base = min(local.g, around.a - 1.0);
+    let height = clamp((p.y - base) / max(around.a - base, 1.0), 0.0, 1.0);
+    let floor_share = mix(0.15, 1.0, around.b);
+    return mix(1.0, mix(floor_share, 1.0, height * height), strength);
+}

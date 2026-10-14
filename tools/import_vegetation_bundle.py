@@ -102,7 +102,10 @@ def adapt_foliage(doc, blob, blend):
             if material.get('alphaMode') == 'MASK':
                 extras = material.setdefault('extras', {})
                 bare_wood = extras.get('vegetation_surface') == 'bare_wood'
-                occlusion = extras.get('vegetation_occlusion') == 'crown_sky_v1'
+                if extras.get('vegetation_occlusion') == 'crown_sky_v1':
+                    raise ValueError('crown_sky_v1 occlusion is no longer read; rebuild the bundle '
+                                     '(crown_sky_v2 bakes linear sky visibility)')
+                occlusion = extras.get('vegetation_occlusion') == 'crown_sky_v2'
                 extras.update(yarra_wind='hierarchy_v2' if structural else 'foliage_uv1_v1',
                               yarra_shading='plain' if bare_wood else 'crown_v2' if occlusion else 'crown_v1')
                 material['extensions'] = {'KHR_materials_specular': {'specularFactor': .5}}
@@ -276,7 +279,7 @@ def main():
         (stage/'import.json').write_text(json.dumps({'assets': reports, 'source_texture_sha256': texture_hashes,
             'lod_screen_heights': [near, mid, far] + ([0.] if far > 0 else []),
             'impostor': 'hemi-octahedral impostor below the third height' if far > 0 else 'none',
-            'canopy_blend': args.canopy_blend, 'lighting': 'crown_v2 for crown_sky_v1 occlusion bakes; legacy bundles retain crown_v1',
+            'canopy_blend': args.canopy_blend, 'lighting': 'crown_v2 for crown_sky_v2 occlusion bakes; bundles without one retain crown_v1',
             'billboard': 'The eight-view authoring billboard is not imported',
             'translucency': 'Source sidecar not sampled by current Yarra foliage shader'}, indent=2)+'\n')
         if output.exists():
