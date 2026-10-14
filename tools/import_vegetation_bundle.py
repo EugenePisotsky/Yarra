@@ -88,6 +88,30 @@ def unit(a):
     return tuple(x / max(length, 1e-12) for x in a)
 
 
+def merge_upper_bark(doc, pack):
+    """Pine bundles split their trunk into `bark` and `bark_upper` triangles by the blend
+    weight (COLOR_0 alpha). The game blends the two barks across the weight on one material
+    (`yarra_bark: blend_v1`), so every bark triangle takes `bark`, which lists the upper
+    bark's textures; drawn apart, the two met in a hard line."""
+    names = [m.get('name') for m in doc['materials']]
+    if 'bark' not in names or 'bark_upper' not in names:
+        return
+    lower, upper = names.index('bark'), names.index('bark_upper')
+    pbr = doc['materials'][upper]['pbrMetallicRoughness']
+    def asset(info):
+        uri = doc['images'][doc['textures'][info['index']]['source']]['uri']
+        return f'{pack}/runtime/textures/{Path(uri).name}'
+    doc['materials'][lower].setdefault('extras', {}).update(
+        yarra_bark='blend_v1',
+        yarra_bark_upper={'color': asset(pbr['baseColorTexture']),
+                          'normal': asset(doc['materials'][upper]['normalTexture']),
+                          'metallic_roughness': asset(pbr['metallicRoughnessTexture'])})
+    for mesh in doc['meshes']:
+        for primitive in mesh['primitives']:
+            if primitive['material'] == upper:
+                primitive['material'] = lower
+
+
 def adapt_foliage(doc, blob, blend):
     moving_ids = set()
     for mesh in doc['meshes']:
@@ -228,6 +252,7 @@ def main():
                         texture_hashes[filename] = digest
                         shutil.copy2(bundle/uri, source/'textures'/Path(uri).name)
                     im['uri'] = '../textures/'+filename
+                merge_upper_bark(doc, pack)
                 ids = adapt_foliage(doc, blob, args.canopy_blend)
                 if far > 0 and lod == 2:
                     wind = impostor_wind(doc, blob, name)

@@ -146,6 +146,13 @@ shadows. Over the outer 30% of the shadow range, `crown_v2` blends to coarse
 self-shadowing from the same visibility and the stable crown normal relative to
 the light. It adds no texture samples or geometry. Unmarked bundles keep `crown_v1`.
 
+Pine bundles split the trunk into `bark` and `bark_upper` triangles by the bark blend
+weight (COLOR_0 alpha, lower 0 to upper 1). The importer gives every bark triangle the
+`bark` material with `yarra_bark: "blend_v1"` and the upper bark's textures, so the game
+blends the two across the weight (`shaders/tree_bark.wesl`): the upper bark shows first in
+the lower bark's dark furrows and closes over its plates last. Drawn as two materials they
+met in a hard line.
+
 The bay shrub trial is rebuilt from vegetation's `bay_upright` bundle using
 `tools/import_vegetation_bundle.py`, with tracked catalog
 `packs/yarra_bay/bay.catalog.ron` and local textures/geometry in `local/yarra_bay`.
