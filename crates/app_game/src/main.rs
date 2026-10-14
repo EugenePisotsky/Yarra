@@ -10,6 +10,7 @@ use engine::{MinimalGamePlugin, WorldVegetationPlugin};
 
 #[cfg(target_os = "macos")]
 mod camera_input_trace;
+mod cloth_lab;
 mod frame_pacing;
 mod game_render;
 mod grass_pack;
@@ -120,6 +121,7 @@ fn run() -> Result<(), String> {
     repro::install(&mut app);
     profile::apply_runtime_settings(&mut app);
     lod_lab::install(&mut app)?;
+    cloth_lab::install(&mut app)?;
     look_capture::install(&mut app);
     render_audit::install(&mut app);
     #[cfg(any(target_os = "macos", target_os = "ios"))]

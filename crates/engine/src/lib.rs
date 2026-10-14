@@ -4,6 +4,8 @@ pub use camera_input_diagnostics::CameraInputDiagnostics;
 mod terrain_raycast;
 pub use terrain_raycast::raycast_resident_terrain;
 mod character;
+mod cloth;
+pub use cloth::{ClothPlugin, ClothSettings, ClothStats, ClothWorn, OutfitChoice, TestOutfit};
 mod character_catalog;
 mod msaa_store;
 mod object_lod;

@@ -46,6 +46,7 @@ pub(crate) struct LaunchOptions {
     /// Render scale at launch (one of `RESOLUTION_SCALES`).
     pub resolution_scale: Option<f32>,
     pub lod_lab: Option<LodLabOptions>,
+    pub cloth_lab: Option<crate::cloth_lab::ClothLabOptions>,
     pub look_capture: Option<crate::look_capture::LookCaptureOptions>,
 }
 
@@ -80,6 +81,7 @@ pub(crate) enum RunMode {
     /// A timed or diagnostic profile from the start view.
     Profile,
     LodLab,
+    ClothLab,
     LookCapture,
     /// The demo-world streaming regression.
     Smoke,
@@ -213,6 +215,7 @@ impl LaunchOptions {
             repro,
             resolution_scale,
             lod_lab: LodLabOptions::parse(&args)?,
+            cloth_lab: crate::cloth_lab::ClothLabOptions::parse(&args)?,
             look_capture: look_capture(&args)?,
         })
     }
@@ -229,6 +232,7 @@ impl RunMode {
         let owners: Vec<_> = [
             ("--render-repro", Self::Repro),
             ("--lod-lab", Self::LodLab),
+            ("--cloth-lab", Self::ClothLab),
             ("--look-capture", Self::LookCapture),
             ("--streaming-smoke", Self::Smoke),
         ]

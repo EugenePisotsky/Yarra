@@ -1,0 +1,1007 @@
+//! Position-based cloth for characters: a few dozen particles per piece that the animation
+//! carries, gravity and wind move, and capsules on the body push out. XPBD in small steps
+//! (one pass per substep, Macklin et al. 2019), so stiffness does not depend on the frame rate.
+//!
+//! Everything is in render space. Where the animation alone would put a particle, its target,
+//! comes from the bones that carry it as `deform × rest`: `deform` is a bone's skinning
+//! transform (its pose times its inverse bind pose) and `rest` the particle's bind-space position.
+use bevy::math::{Affine3A, Mat3A, Quat, Vec3A};
+
+/// More substeps than this in one frame means a hitch: the frame's time is cut instead.
+const MAX_SUBSTEPS: usize = 12;
+/// Faster than this (m/s) is a solver blow-up, not cloth.
+const MAX_SPEED: f32 = 25.0;
+
+/// The bones that carry a particle: `bone`, blended towards `other` by `blend`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Carrier {
+    pub bone: u16,
+    pub other: u16,
+    pub blend: f32,
+}
+
+impl Carrier {
+    pub fn on(bone: u16) -> Self {
+        Self {
+            bone,
+            other: bone,
+            blend: 0.0,
+        }
+    }
+
+    pub fn blended(bone: u16, other: u16, blend: f32) -> Self {
+        Self {
+            bone,
+            other,
+            blend: blend.clamp(0.0, 1.0),
+        }
+    }
+
+    fn place(self, rest: Vec3A, deforms: &[Affine3A]) -> Vec3A {
+        let a = deforms[self.bone as usize].transform_point3a(rest);
+        if self.blend <= 0.0 {
+            return a;
+        }
+        a.lerp(
+            deforms[self.other as usize].transform_point3a(rest),
+            self.blend,
+        )
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ParticleDef {
+    /// Bind-space position.
+    pub rest: Vec3A,
+    pub carrier: Carrier,
+    /// Held exactly at its target.
+    pub pinned: bool,
+    /// How far it may stray from its target.
+    pub max_distance: f32,
+    /// Pull back towards the target, per second.
+    pub goal: f32,
+    /// Collision radius.
+    pub radius: f32,
+}
+
+/// Keeps two particles at their rest distance; `compliance` (m/N at unit mass) softens it.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Link {
+    pub a: u16,
+    pub b: u16,
+    pub rest: f32,
+    pub compliance: f32,
+}
+
+/// Keeps a particle within `length` of a pinned one: no stretching, however few the passes.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Tether {
+    pub particle: u16,
+    pub root: u16,
+    pub length: f32,
+}
+
+/// Keeps `particle` within an angle of a bone-carried direction from `pivot`.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Cone {
+    pub pivot: u16,
+    pub particle: u16,
+    pub bone: u16,
+    /// Bind-space direction.
+    pub axis: Vec3A,
+    pub cos_max: f32,
+}
+
+/// How a piece's render joints turn.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Frames {
+    /// A sheet of `columns × rows` particles, row by row; `wrap` closes each row (a skirt).
+    Grid {
+        columns: usize,
+        rows: usize,
+        wrap: bool,
+    },
+    /// A strand: each joint points at the next particle and rolls with `bone`.
+    Chain { bone: u16 },
+    /// A rigid body hanging from particle 0 towards the last one, rolling with `bone`.
+    Rigid { bone: u16 },
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct PieceDef {
+    pub particles: Vec<ParticleDef>,
+    pub links: Vec<Link>,
+    pub tethers: Vec<Tether>,
+    pub cones: Vec<Cone>,
+    pub frames: Frames,
+    /// The bone whose movement carries the piece along (see `inertia`).
+    pub anchor: u16,
+    /// Share of the anchor's movement the piece resists: 1 leaves it in world space, 0 moves it
+    /// rigidly with the anchor.
+    pub inertia: f32,
+    /// Velocity lost per second.
+    pub damping: f32,
+    /// Pull towards the wind's velocity, per second.
+    pub drag: f32,
+    /// Pull towards the wind's velocity along the surface normal, per second (sheets only).
+    pub lift: f32,
+    /// Share of sliding velocity lost on contact.
+    pub friction: f32,
+}
+
+impl PieceDef {
+    /// Render joints: one per particle, or one for a rigid body.
+    pub fn joint_count(&self) -> usize {
+        match self.frames {
+            Frames::Rigid { .. } => 1,
+            _ => self.particles.len(),
+        }
+    }
+
+    /// Bind-space joint positions; a joint's inverse bind pose is a translation by minus this.
+    pub fn joint_rests(&self) -> Vec<Vec3A> {
+        match self.frames {
+            Frames::Rigid { .. } => vec![self.particles[0].rest],
+            _ => self.particles.iter().map(|p| p.rest).collect(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Capsule {
+    pub a: Vec3A,
+    pub b: Vec3A,
+    pub radius: f32,
+    /// Zero for an ordinary collider. Otherwise a presser (a strap or a weapon worn over a
+    /// cloak): particles under it, within its width, are held on this side of it.
+    pub press: Vec3A,
+}
+
+impl Capsule {
+    pub fn new(a: Vec3A, b: Vec3A, radius: f32) -> Self {
+        Self {
+            a,
+            b,
+            radius,
+            press: Vec3A::ZERO,
+        }
+    }
+
+    pub fn lerp(self, other: Self, t: f32) -> Self {
+        Self {
+            a: self.a.lerp(other.a, t),
+            b: self.b.lerp(other.b, t),
+            radius: self.radius + (other.radius - self.radius) * t,
+            press: self.press.lerp(other.press, t).normalize_or_zero(),
+        }
+    }
+
+    fn closest(&self, p: Vec3A) -> Vec3A {
+        let axis = self.b - self.a;
+        let length2 = axis.length_squared();
+        if length2 <= f32::EPSILON {
+            return self.a;
+        }
+        let t = ((p - self.a).dot(axis) / length2).clamp(0.0, 1.0);
+        self.a + axis * t
+    }
+}
+
+/// What a frame of simulation needs besides the piece.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct StepParams {
+    pub dt: f32,
+    pub substep_hz: f32,
+    pub gravity: Vec3A,
+    /// Wind velocity, m/s.
+    pub wind: Vec3A,
+    /// Replaces every piece's own inertia.
+    pub inertia: Option<f32>,
+}
+
+/// One piece's moving state.
+#[derive(Clone, Debug)]
+pub(crate) struct PieceSim {
+    x: Vec<Vec3A>,
+    v: Vec<Vec3A>,
+    start: Vec<Vec3A>,
+    targets_prev: Vec<Vec3A>,
+    targets: Vec<Vec3A>,
+    normals: Vec<Vec3A>,
+    contacts: Vec<Vec3A>,
+    anchor_prev: Option<Affine3A>,
+    /// Colliders that may touch each particle this frame, as (particle, collider) pairs.
+    pairs: Vec<(u16, u16)>,
+    /// Sheets: each particle's frame at rest, transposed.
+    rest_frames: Vec<Mat3A>,
+    /// The piece's links with their particles' inverse masses; links between two pinned
+    /// particles are left out.
+    links: Vec<SolverLink>,
+    /// Each collider's bounding sphere, grown by how far it moves this frame.
+    bounds: Vec<(Vec3A, f32)>,
+    /// How far each particle can get this frame.
+    reach: Vec<f32>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SolverLink {
+    a: u16,
+    b: u16,
+    rest: f32,
+    compliance: f32,
+    wa: f32,
+    wb: f32,
+}
+
+impl PieceSim {
+    pub fn new(def: &PieceDef) -> Self {
+        let n = def.particles.len();
+        Self {
+            x: def.particles.iter().map(|p| p.rest).collect(),
+            v: vec![Vec3A::ZERO; n],
+            start: vec![Vec3A::ZERO; n],
+            targets_prev: vec![Vec3A::ZERO; n],
+            targets: vec![Vec3A::ZERO; n],
+            normals: vec![Vec3A::ZERO; n],
+            contacts: vec![Vec3A::ZERO; n],
+            anchor_prev: None,
+            pairs: Vec::new(),
+            links: independent_batches(
+                def.links
+                    .iter()
+                    .map(|l| SolverLink {
+                        a: l.a,
+                        b: l.b,
+                        rest: l.rest,
+                        compliance: l.compliance,
+                        wa: weight(&def.particles[l.a as usize]),
+                        wb: weight(&def.particles[l.b as usize]),
+                    })
+                    .filter(|l| l.wa + l.wb > 0.0),
+                def.particles.len(),
+            ),
+            bounds: Vec::new(),
+            reach: Vec::new(),
+            rest_frames: match def.frames {
+                Frames::Grid {
+                    columns,
+                    rows,
+                    wrap,
+                } => {
+                    let rests: Vec<Vec3A> = def.particles.iter().map(|p| p.rest).collect();
+                    (0..rows * columns)
+                        .map(|i| {
+                            grid_frame(&rests, columns, rows, wrap, i / columns, i % columns)
+                                .transpose()
+                        })
+                        .collect()
+                }
+                _ => Vec::new(),
+            },
+        }
+    }
+
+    pub fn positions(&self) -> &[Vec3A] {
+        &self.x
+    }
+
+    /// Puts every particle where the animation alone would, at rest.
+    pub fn reset(&mut self, def: &PieceDef, deforms: &[Affine3A]) {
+        for (i, p) in def.particles.iter().enumerate() {
+            let target = p.carrier.place(p.rest, deforms);
+            self.x[i] = target;
+            self.targets[i] = target;
+            self.targets_prev[i] = target;
+            self.v[i] = Vec3A::ZERO;
+        }
+        self.anchor_prev = Some(deforms[def.anchor as usize]);
+    }
+
+    /// Advances one frame. `capsules` holds each collider at the start and end of the frame.
+    pub fn step(
+        &mut self,
+        def: &PieceDef,
+        deforms: &[Affine3A],
+        capsules: &[(Capsule, Capsule)],
+        params: &StepParams,
+    ) {
+        let anchor = deforms[def.anchor as usize];
+        let Some(anchor_prev) = self.anchor_prev else {
+            self.reset(def, deforms);
+            return;
+        };
+        if params.dt <= 0.0 {
+            return;
+        }
+        for (i, p) in def.particles.iter().enumerate() {
+            self.targets_prev[i] = self.targets[i];
+            self.targets[i] = p.carrier.place(p.rest, deforms);
+        }
+
+        // Carry the piece along with part of its anchor's movement, the frame's starting targets
+        // too, so pinned particles do not then drag the carried ones back over the substeps.
+        let keep = params.inertia.unwrap_or(def.inertia).clamp(0.0, 1.0);
+        if keep < 1.0 {
+            let delta = anchor * anchor_prev.inverse();
+            for (i, p) in def.particles.iter().enumerate() {
+                let carried = delta.transform_point3a(self.targets_prev[i]);
+                self.targets_prev[i] = carried.lerp(self.targets_prev[i], keep);
+                if !p.pinned {
+                    self.x[i] = delta.transform_point3a(self.x[i]).lerp(self.x[i], keep);
+                    self.v[i] = delta.matrix3.mul_vec3a(self.v[i]).lerp(self.v[i], keep);
+                }
+            }
+        }
+        self.anchor_prev = Some(anchor);
+
+        if let Frames::Grid {
+            columns,
+            rows,
+            wrap,
+        } = def.frames
+        {
+            grid_normals(&self.x, columns, rows, wrap, &mut self.normals);
+        }
+        self.gather_pairs(capsules, def, params.dt);
+
+        let substeps = ((params.dt * params.substep_hz).ceil() as usize).clamp(1, MAX_SUBSTEPS);
+        let h = params.dt.min(MAX_SUBSTEPS as f32 / params.substep_hz) / substeps as f32;
+        for s in 1..=substeps {
+            let t = s as f32 / substeps as f32;
+            self.substep(def, deforms, capsules, params, h, t);
+        }
+    }
+
+    /// Pairs of particles and colliders that could meet this frame: a particle reaches at most
+    /// its speed and its target's movement farther, a collider its endpoints' movement.
+    fn gather_pairs(&mut self, capsules: &[(Capsule, Capsule)], def: &PieceDef, dt: f32) {
+        self.pairs.clear();
+        self.bounds.clear();
+        self.bounds.extend(capsules.iter().map(|(before, after)| {
+            let travel = before.a.distance(after.a).max(before.b.distance(after.b));
+            let centre = (after.a + after.b) * 0.5;
+            let pressing = if after.press == Vec3A::ZERO { 0.0 } else { 0.6 };
+            (
+                centre,
+                after.a.distance(after.b) * 0.5 + after.radius + travel + pressing,
+            )
+        }));
+        // Collider by collider, so pairs next to each other move different particles and the
+        // substeps' pushes do not wait on each other.
+        self.reach.clear();
+        // Pinned particles reach nowhere: colliders do not move them.
+        self.reach
+            .extend(def.particles.iter().enumerate().map(|(i, p)| {
+                if p.pinned {
+                    f32::NEG_INFINITY
+                } else {
+                    self.v[i].length() * dt
+                        + self.targets[i].distance(self.targets_prev[i])
+                        + p.radius
+                        + 0.03
+                }
+            }));
+        for (k, &(centre, bound)) in self.bounds.iter().enumerate() {
+            let (before, after) = capsules[k];
+            let travel = before.a.distance(after.a).max(before.b.distance(after.b));
+            for (i, (x, reach)) in self.x.iter().zip(&self.reach).enumerate() {
+                let limit = bound + reach;
+                if limit < 0.0 || x.distance_squared(centre) > limit * limit {
+                    continue;
+                }
+                let gap = if after.press == Vec3A::ZERO {
+                    x.distance(after.closest(*x)) - after.radius
+                } else {
+                    // A presser holds back particles however far out they have swung.
+                    f32::NEG_INFINITY
+                };
+                if gap < reach + travel {
+                    self.pairs.push((i as u16, k as u16));
+                }
+            }
+        }
+    }
+
+    fn substep(
+        &mut self,
+        def: &PieceDef,
+        deforms: &[Affine3A],
+        capsules: &[(Capsule, Capsule)],
+        params: &StepParams,
+        h: f32,
+        t: f32,
+    ) {
+        let particles = &def.particles;
+        for (i, p) in particles.iter().enumerate() {
+            let target = self.targets_prev[i].lerp(self.targets[i], t);
+            self.start[i] = self.x[i];
+            if p.pinned {
+                self.x[i] = target;
+                continue;
+            }
+            let relative = params.wind - self.v[i];
+            let n = self.normals[i];
+            let accel = params.gravity + relative * def.drag + n * (n.dot(relative) * def.lift);
+            self.v[i] += accel * h;
+            self.x[i] += self.v[i] * h;
+        }
+
+        let inverse_h2 = 1.0 / (h * h);
+        let x = &mut self.x;
+        for link in &self.links {
+            let (a, b) = (link.a as usize, link.b as usize);
+            let d = x[b] - x[a];
+            let length = d.length();
+            if length <= f32::EPSILON {
+                continue;
+            }
+            let lambda = (length - link.rest) / (link.wa + link.wb + link.compliance * inverse_h2);
+            let correction = d * (lambda / length);
+            x[a] += correction * link.wa;
+            x[b] -= correction * link.wb;
+        }
+        for tether in &def.tethers {
+            let (i, root) = (tether.particle as usize, tether.root as usize);
+            let d = self.x[i] - self.x[root];
+            let length = d.length();
+            if length > tether.length {
+                self.x[i] = self.x[root] + d * (tether.length / length);
+            }
+        }
+        for cone in &def.cones {
+            let (pivot, i) = (cone.pivot as usize, cone.particle as usize);
+            let axis = deforms[cone.bone as usize]
+                .matrix3
+                .mul_vec3a(cone.axis)
+                .normalize_or_zero();
+            let d = self.x[i] - self.x[pivot];
+            let length = d.length();
+            if length <= f32::EPSILON || axis == Vec3A::ZERO {
+                continue;
+            }
+            let direction = d / length;
+            let cos = direction.dot(axis);
+            if cos < cone.cos_max {
+                let side = (direction - axis * cos).normalize_or(axis.any_orthonormal_vector());
+                let sin_max = (1.0 - cone.cos_max * cone.cos_max).max(0.0).sqrt();
+                self.x[i] = self.x[pivot] + (axis * cone.cos_max + side * sin_max) * length;
+            }
+        }
+        for (i, p) in particles.iter().enumerate() {
+            if p.pinned {
+                continue;
+            }
+            let target = self.targets_prev[i].lerp(self.targets[i], t);
+            if p.goal > 0.0 {
+                self.x[i] = self.x[i].lerp(target, (p.goal * h).min(1.0));
+            }
+            let d = self.x[i] - target;
+            let distance = d.length();
+            if distance > p.max_distance {
+                self.x[i] = target + d * (p.max_distance / distance);
+            }
+        }
+        // Colliders last: being outside the body matters more than staying near the pose.
+        self.contacts.fill(Vec3A::ZERO);
+        for &(i, k) in &self.pairs {
+            let i = i as usize;
+            let (before, after) = capsules[k as usize];
+            let capsule = before.lerp(after, t);
+            let closest = capsule.closest(self.x[i]);
+            let d = self.x[i] - closest;
+            let reach = capsule.radius + particles[i].radius;
+            if capsule.press != Vec3A::ZERO {
+                let under = d.dot(capsule.press);
+                let across = d - capsule.press * under;
+                if under < reach && across.length_squared() < reach * reach * 2.5 {
+                    self.x[i] += capsule.press * (reach - under);
+                    self.contacts[i] = capsule.press;
+                }
+                continue;
+            }
+            let distance2 = d.length_squared();
+            if distance2 >= reach * reach {
+                continue;
+            }
+            let distance = distance2.sqrt();
+            // On the axis itself, leave the way the target lies.
+            let normal = if distance > 1e-6 {
+                d / distance
+            } else {
+                (self.targets[i] - closest).normalize_or(Vec3A::Y)
+            };
+            self.x[i] = closest + normal * reach;
+            self.contacts[i] = normal;
+        }
+
+        let damping = 1.0 / (1.0 + def.damping * h);
+        for (i, p) in particles.iter().enumerate() {
+            if p.pinned {
+                self.v[i] = (self.x[i] - self.start[i]) / h;
+                continue;
+            }
+            let mut v = (self.x[i] - self.start[i]) / h;
+            let n = self.contacts[i];
+            if n != Vec3A::ZERO {
+                let sliding = v - n * v.dot(n);
+                v -= sliding * def.friction;
+            }
+            v *= damping;
+            let speed2 = v.length_squared();
+            if speed2 > MAX_SPEED * MAX_SPEED {
+                v *= MAX_SPEED / speed2.sqrt();
+            }
+            self.v[i] = v;
+        }
+    }
+
+    /// The render joints' world poses (rotation and position); each joint's inverse bind pose
+    /// is a translation by minus its rest position ([`PieceDef::joint_rests`]).
+    pub fn joints(&self, def: &PieceDef, deforms: &[Affine3A], out: &mut Vec<(Quat, Vec3A)>) {
+        out.clear();
+        match def.frames {
+            Frames::Grid {
+                columns,
+                rows,
+                wrap,
+            } => {
+                for r in 0..rows {
+                    for c in 0..columns {
+                        let i = r * columns + c;
+                        let now = grid_frame(&self.x, columns, rows, wrap, r, c);
+                        let rotation = Quat::from_mat3a(&(now * self.rest_frames[i]));
+                        out.push((rotation.normalize(), self.x[i]));
+                    }
+                }
+            }
+            Frames::Chain { bone } => {
+                let turn = bone_rotation(deforms, bone);
+                let n = self.x.len();
+                for i in 0..n {
+                    let (a, b) = if i + 1 < n { (i, i + 1) } else { (i - 1, i) };
+                    let rest = def.particles[b].rest - def.particles[a].rest;
+                    let now = self.x[b] - self.x[a];
+                    out.push((carried_turn(turn, rest, now), self.x[i]));
+                }
+            }
+            Frames::Rigid { bone } => {
+                let turn = bone_rotation(deforms, bone);
+                let last = self.x.len() - 1;
+                let rest = def.particles[last].rest - def.particles[0].rest;
+                let now = self.x[last] - self.x[0];
+                out.push((carried_turn(turn, rest, now), self.x[0]));
+            }
+        }
+    }
+}
+
+/// Orders links in batches that share no particle, so neighbouring solves do not wait on each
+/// other's writes (one link after another along a row would). Greedy colouring.
+fn independent_batches(
+    links: impl Iterator<Item = SolverLink>,
+    particles: usize,
+) -> Vec<SolverLink> {
+    let mut batches: Vec<(Vec<bool>, Vec<SolverLink>)> = Vec::new();
+    for link in links {
+        let (a, b) = (link.a as usize, link.b as usize);
+        let batch = match batches.iter().position(|(used, _)| !used[a] && !used[b]) {
+            Some(i) => i,
+            None => {
+                batches.push((vec![false; particles], Vec::new()));
+                batches.len() - 1
+            }
+        };
+        let (used, batch) = &mut batches[batch];
+        used[a] = true;
+        used[b] = true;
+        batch.push(link);
+    }
+    batches.into_iter().flat_map(|(_, links)| links).collect()
+}
+
+fn weight(p: &ParticleDef) -> f32 {
+    if p.pinned { 0.0 } else { 1.0 }
+}
+
+/// A bone's rotation from its bind pose, without any stretch.
+fn bone_rotation(deforms: &[Affine3A], bone: u16) -> Quat {
+    let (_, rotation, _) = deforms[bone as usize].to_scale_rotation_translation();
+    rotation
+}
+
+/// `turn`, then the shortest swing taking the turned rest direction onto the current one.
+fn carried_turn(turn: Quat, rest: Vec3A, now: Vec3A) -> Quat {
+    let (Some(from), Some(to)) = ((turn * rest).try_normalize(), now.try_normalize()) else {
+        return turn;
+    };
+    (Quat::from_rotation_arc(from.into(), to.into()) * turn).normalize()
+}
+
+fn grid_index(columns: usize, wrap: bool, r: usize, c: isize) -> usize {
+    let c = if wrap {
+        c.rem_euclid(columns as isize) as usize
+    } else {
+        c.clamp(0, columns as isize - 1) as usize
+    };
+    r * columns + c
+}
+
+/// Orthonormal frame of a sheet at one particle: across the row, down the column, normal.
+fn grid_frame(x: &[Vec3A], columns: usize, rows: usize, wrap: bool, r: usize, c: usize) -> Mat3A {
+    let ci = c as isize;
+    let across = x[grid_index(columns, wrap, r, ci + 1)] - x[grid_index(columns, wrap, r, ci - 1)];
+    let (up, down) = (r.saturating_sub(1), (r + 1).min(rows - 1));
+    let along = x[grid_index(columns, wrap, down, ci)] - x[grid_index(columns, wrap, up, ci)];
+    let e1 = across.normalize_or(Vec3A::X);
+    let e3 = e1.cross(along).normalize_or(e1.any_orthonormal_vector());
+    let e2 = e3.cross(e1);
+    Mat3A::from_cols(e1, e2, e3)
+}
+
+fn grid_normals(x: &[Vec3A], columns: usize, rows: usize, wrap: bool, out: &mut [Vec3A]) {
+    for r in 0..rows {
+        for c in 0..columns {
+            out[r * columns + c] = grid_frame(x, columns, rows, wrap, r, c).z_axis;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const PARAMS: StepParams = StepParams {
+        dt: 1.0 / 60.0,
+        substep_hz: 240.0,
+        gravity: Vec3A::new(0.0, -9.81, 0.0),
+        wind: Vec3A::ZERO,
+        inertia: None,
+    };
+
+    /// A vertical strand of `n` particles 0.1 m apart hanging from a pinned top one.
+    fn strand(n: usize) -> PieceDef {
+        let particles = (0..n)
+            .map(|i| ParticleDef {
+                rest: Vec3A::new(0.0, -0.1 * i as f32, 0.0),
+                carrier: Carrier::on(0),
+                pinned: i == 0,
+                max_distance: 10.0,
+                goal: 0.0,
+                radius: 0.02,
+            })
+            .collect();
+        let links = (1..n)
+            .map(|i| Link {
+                a: (i - 1) as u16,
+                b: i as u16,
+                rest: 0.1,
+                compliance: 0.0,
+            })
+            .collect();
+        let tethers = (1..n)
+            .map(|i| Tether {
+                particle: i as u16,
+                root: 0,
+                length: 0.1 * i as f32,
+            })
+            .collect();
+        PieceDef {
+            particles,
+            links,
+            tethers,
+            cones: Vec::new(),
+            frames: Frames::Chain { bone: 0 },
+            anchor: 0,
+            inertia: 1.0,
+            damping: 2.0,
+            drag: 0.0,
+            lift: 0.0,
+            friction: 0.0,
+        }
+    }
+
+    fn run(
+        def: &PieceDef,
+        sim: &mut PieceSim,
+        deforms: &[Affine3A],
+        capsules: &[Capsule],
+        frames: usize,
+    ) {
+        let pairs: Vec<_> = capsules.iter().map(|c| (*c, *c)).collect();
+        for _ in 0..frames {
+            sim.step(def, deforms, &pairs, &PARAMS);
+        }
+    }
+
+    #[test]
+    fn a_strand_pushed_aside_settles_hanging_under_its_pin_without_stretching() {
+        let def = strand(6);
+        let deforms = [Affine3A::IDENTITY];
+        let mut sim = PieceSim::new(&def);
+        sim.reset(&def, &deforms);
+        sim.x[5] = Vec3A::new(0.4, -0.3, 0.0);
+        run(&def, &mut sim, &deforms, &[], 600);
+        let tip = sim.positions()[5];
+        assert!(
+            tip.x.abs() < 0.01 && tip.z.abs() < 0.01,
+            "tip {tip:?} still swinging"
+        );
+        assert!(
+            (tip.y + 0.5).abs() < 0.01,
+            "strand stretched or bunched: tip at {tip:?}"
+        );
+    }
+
+    #[test]
+    fn particles_end_outside_a_capsule_in_their_way() {
+        let def = strand(6);
+        let deforms = [Affine3A::IDENTITY];
+        let mut sim = PieceSim::new(&def);
+        sim.reset(&def, &deforms);
+        // A horizontal bar right under the third particle.
+        let bar = Capsule::new(
+            Vec3A::new(-0.5, -0.25, 0.02),
+            Vec3A::new(0.5, -0.25, 0.02),
+            0.05,
+        );
+        run(&def, &mut sim, &deforms, &[bar], 300);
+        for (i, x) in sim.positions().iter().enumerate().skip(1) {
+            let gap = x.distance(bar.closest(*x)) - bar.radius - 0.02;
+            assert!(gap > -2e-3, "particle {i} at {x:?} is {gap} inside the bar");
+        }
+    }
+
+    #[test]
+    fn moving_the_anchor_carries_a_rigid_piece_and_lags_a_free_one() {
+        let mut rigid = strand(4);
+        rigid.inertia = 0.0;
+        let free = strand(4);
+        let mut sims = [PieceSim::new(&rigid), PieceSim::new(&free)];
+        for (def, sim) in [&rigid, &free].into_iter().zip(&mut sims) {
+            sim.reset(def, &[Affine3A::IDENTITY]);
+            // One frame, half a metre sideways.
+            sim.step(
+                def,
+                &[Affine3A::from_translation(bevy::math::Vec3::X * 0.5)],
+                &[],
+                &PARAMS,
+            );
+        }
+        assert!((sims[0].positions()[3].x - 0.5).abs() < 1e-3);
+        assert!(sims[1].positions()[3].x < 0.4, "free tip followed at once");
+    }
+
+    #[test]
+    fn a_presser_holds_particles_on_its_inner_side() {
+        let def = strand(6);
+        let deforms = [Affine3A::IDENTITY];
+        let mut sim = PieceSim::new(&def);
+        sim.reset(&def, &deforms);
+        // A vertical strap just behind the strand, pressing towards +Z; the strand is pushed
+        // out towards -Z and must stay in front of the strap anyway.
+        let mut strap = Capsule::new(
+            Vec3A::new(0.0, 0.0, -0.05),
+            Vec3A::new(0.0, -0.6, -0.05),
+            0.02,
+        );
+        strap.press = Vec3A::Z;
+        for _ in 0..120 {
+            for i in 1..6 {
+                sim.v[i] = Vec3A::new(0.0, 0.0, -1.0);
+            }
+            run(&def, &mut sim, &deforms, &[strap], 1);
+        }
+        for (i, x) in sim.positions().iter().enumerate().skip(1) {
+            assert!(
+                x.z > -0.05 + 0.04 - 2e-3,
+                "particle {i} at {x:?} got past the strap"
+            );
+        }
+    }
+
+    #[test]
+    fn a_cone_keeps_a_pendulum_near_its_axis() {
+        let mut def = strand(3);
+        def.cones.push(Cone {
+            pivot: 0,
+            particle: 2,
+            bone: 0,
+            axis: Vec3A::NEG_Y,
+            cos_max: 20f32.to_radians().cos(),
+        });
+        let deforms = [Affine3A::IDENTITY];
+        let mut sim = PieceSim::new(&def);
+        sim.reset(&def, &deforms);
+        sim.v[1] = Vec3A::new(6.0, 0.0, 0.0);
+        sim.v[2] = Vec3A::new(12.0, 0.0, 0.0);
+        let mut widest = 0f32;
+        for _ in 0..120 {
+            run(&def, &mut sim, &deforms, &[], 1);
+            let d = sim.positions()[2] - sim.positions()[0];
+            widest = widest.max(d.normalize().dot(Vec3A::NEG_Y).acos().to_degrees());
+        }
+        assert!(widest < 20.5, "swung {widest}° from the axis");
+    }
+
+    #[test]
+    fn sheet_joints_are_identity_at_rest() {
+        let columns = 3;
+        let rows = 3;
+        let particles = (0..rows * columns)
+            .map(|i| ParticleDef {
+                rest: Vec3A::new(
+                    (i % columns) as f32 * 0.1,
+                    -((i / columns) as f32) * 0.1,
+                    0.0,
+                ),
+                carrier: Carrier::on(0),
+                pinned: i < columns,
+                max_distance: 1.0,
+                goal: 0.0,
+                radius: 0.02,
+            })
+            .collect();
+        let def = PieceDef {
+            particles,
+            links: Vec::new(),
+            tethers: Vec::new(),
+            cones: Vec::new(),
+            frames: Frames::Grid {
+                columns,
+                rows,
+                wrap: false,
+            },
+            anchor: 0,
+            inertia: 1.0,
+            damping: 0.0,
+            drag: 0.0,
+            lift: 0.0,
+            friction: 0.0,
+        };
+        let deforms = [Affine3A::IDENTITY];
+        let mut sim = PieceSim::new(&def);
+        sim.reset(&def, &deforms);
+        let mut joints = Vec::new();
+        sim.joints(&def, &deforms, &mut joints);
+        for ((rotation, position), particle) in joints.iter().zip(&def.particles) {
+            assert!(rotation.angle_between(Quat::IDENTITY) < 1e-4);
+            assert!(position.distance(particle.rest) < 1e-6);
+        }
+    }
+
+    /// `cargo test --release -p yarra-engine bench_ -- --ignored --nocapture`: a frame of a
+    /// cloak-sized and a skirt-sized sheet among 43 capsules, as the lab's characters have.
+    #[test]
+    #[ignore]
+    fn bench_sheets_among_capsules() {
+        fn sheet(columns: usize, rows: usize, wrap: bool, radius: f32) -> PieceDef {
+            let mut particles = Vec::new();
+            for r in 0..rows {
+                for c in 0..columns {
+                    let a = c as f32 / columns as f32 * std::f32::consts::TAU;
+                    particles.push(ParticleDef {
+                        rest: Vec3A::new(a.sin() * radius, 1.4 - 0.13 * r as f32, a.cos() * radius),
+                        carrier: Carrier::on(0),
+                        pinned: r == 0,
+                        max_distance: 0.02 + 0.1 * r as f32,
+                        goal: 0.0,
+                        radius: 0.025,
+                    });
+                }
+            }
+            let index = |r: usize, c: usize| r * columns + c % columns;
+            let across = if wrap { columns } else { columns - 1 };
+            let mut links = Vec::new();
+            let mut link = |a: usize, b: usize, compliance: f32| {
+                links.push(Link {
+                    a: a as u16,
+                    b: b as u16,
+                    rest: particles[a].rest.distance(particles[b].rest),
+                    compliance,
+                })
+            };
+            for r in 0..rows {
+                for c in 0..across {
+                    link(index(r, c), index(r, c + 1), 0.0);
+                    if r + 1 < rows {
+                        link(index(r, c), index(r + 1, c + 1), 2e-5);
+                        link(index(r, c + 1), index(r + 1, c), 2e-5);
+                    }
+                    link(index(r, c), index(r, c + 2), 4e-4);
+                }
+            }
+            for c in 0..columns {
+                for r in 1..rows {
+                    link(index(r - 1, c), index(r, c), 0.0);
+                    if r >= 2 {
+                        link(index(r - 2, c), index(r, c), 4e-4);
+                    }
+                }
+            }
+            let tethers = (columns..rows * columns)
+                .map(|i| Tether {
+                    particle: i as u16,
+                    root: (i % columns) as u16,
+                    length: 0.13 * (i / columns) as f32 * 1.05,
+                })
+                .collect();
+            PieceDef {
+                particles,
+                links,
+                tethers,
+                cones: Vec::new(),
+                frames: Frames::Grid {
+                    columns,
+                    rows,
+                    wrap,
+                },
+                anchor: 0,
+                inertia: 0.7,
+                damping: 0.4,
+                drag: 0.25,
+                lift: 2.5,
+                friction: 0.35,
+            }
+        }
+        let mut pieces = [sheet(9, 8, false, 0.3), sheet(16, 6, true, 0.25)];
+        let variant = std::env::var("BENCH_VARIANT").unwrap_or_default();
+        if variant.contains("nolinks") {
+            for p in &mut pieces {
+                p.links.clear();
+            }
+        }
+        let count = if variant.contains("nocapsules") {
+            0
+        } else {
+            43
+        };
+        let capsules: Vec<(Capsule, Capsule)> = (0..count)
+            .map(|k| {
+                let a = k as f32 * 0.7;
+                let c = Capsule::new(
+                    Vec3A::new(a.sin() * 0.12, 0.3 + 0.025 * k as f32, a.cos() * 0.1),
+                    Vec3A::new(a.sin() * 0.12, 0.5 + 0.025 * k as f32, a.cos() * 0.1),
+                    0.07,
+                );
+                (c, c)
+            })
+            .collect();
+        let mut sims: Vec<PieceSim> = pieces.iter().map(PieceSim::new).collect();
+        let mut out = Vec::new();
+        let frames: usize = std::env::var("BENCH_FRAMES")
+            .ok()
+            .and_then(|f| f.parse().ok())
+            .unwrap_or(2000);
+        let mut deforms = [Affine3A::IDENTITY];
+        for (def, sim) in pieces.iter().zip(&mut sims) {
+            sim.reset(def, &deforms);
+        }
+        let started = std::time::Instant::now();
+        for f in 0..frames {
+            // Walk forward and sway, as a character does.
+            let t = f as f32 / 60.0;
+            deforms[0] = Affine3A::from_rotation_translation(
+                Quat::from_rotation_y((t * 3.0).sin() * 0.2),
+                bevy::math::Vec3::new(0.0, 0.0, t * 1.9),
+            );
+            let moved: Vec<(Capsule, Capsule)> = capsules
+                .iter()
+                .map(|(c, _)| {
+                    let m = Capsule::new(
+                        deforms[0].transform_point3a(c.a),
+                        deforms[0].transform_point3a(c.b),
+                        c.radius,
+                    );
+                    (m, m)
+                })
+                .collect();
+            for (def, sim) in pieces.iter().zip(&mut sims) {
+                sim.step(def, &deforms, &moved, &PARAMS);
+                sim.joints(def, &deforms, &mut out);
+            }
+        }
+        let per_frame = started.elapsed().as_secs_f64() * 1e6 / frames as f64;
+        let pairs: usize = sims.iter().map(|s| s.pairs.len()).sum();
+        println!("BENCH sheets: {per_frame:.1} us per frame, {pairs} collision pairs last frame");
+    }
+}

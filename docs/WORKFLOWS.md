@@ -130,6 +130,14 @@ uv run --with numpy --with pillow python tools/look_sheet.py tmp/look/start
 
 Keys: `ev` (EV100), `tone` (tony, agx, neutral, filmic, aces, boring, reinhard, none), `ambient` and `sun` (scales of the sky and sun light), `canopy` (0–1), `auto`, `fog`, `particles` and `shafts` (on/off), `air` (scale of the air under crowns), `burst` (that many screenshots one after another, a frame or two apart, for motion), `lightning` (a strike ahead of the camera held that many seconds in, 0–1.1; storms need `--weather storm` for their light), `phase` (time of day as a share of the day: 0.27 is just after sunrise, 0.34 the game's morning, 0.5 noon), `tilt` (degrees the camera turns up, −30–90), `wind` (seconds into the wind's clock, otherwise 0: the wind holds still in captures, so variants at different times show its motion), `wet` (how wet the ground is held, 0–1: puddles without waiting for rain to soak it) and `haze`, `mist` and `depth` (scales of the authored haze and mist extinction and the mist depth). With `tone=none` the frame is the exposed linear image, so its 10–90% mean log2 luminance is what auto exposure meters.
 
+**Cloth lab.** `--cloth-lab` dresses the player and walking clones in a generated test outfit at the start view: a cloak, a long skirt, a ponytail, a greatsword and a bow across the back and a sword at the hip, all simulated. Play as usual; clones walk octagons around where they stand. The panel picks the pieces (and whether the back weapons are strapped over the cloak or under it), the clone count and gait, a camera that keeps its side of the player, the simulation's settings (substeps, inertia, wind, gravity, distance) and colliders or particles drawn, and shows the cloth pass's cost. `--cloth-lab-shots DIR` walks the player too, saves six views (one with colliders) and `stats.txt`, then exits.
+
+```sh
+cargo run --release -p yarra-app-game -- --cloth-lab --cloth-lab-clones 3 --cloth-lab-gait mixed
+cargo run --release -p yarra-app-game -- --cloth-lab --cloth-lab-outfit cloak,skirt,greatsword,bow,over --cloth-lab-shots tmp/cloth
+cargo test --release -p yarra-engine bench_ -- --ignored --nocapture   # the solver alone
+```
+
 On macOS 14+, capped modes coordinate display callbacks and the Metal minimum presentation interval. Other platforms/older macOS use the timer fallback. This changes app pacing, not the display's system setting. The normal launch caps at 60 fps (`--fps 0` follows the display) and uses 50% resolution with 4× MSAA.
 
 F1 Advanced owns terrain macro variation, terrain page gizmos and canopy reload. Reset and A/B restore include those settings and the actual canopy values. B/G/H/U/V and the old X/P/O/L/K/I renderer handlers were removed. Normal grass always uses the published catalog; separate legacy overlays and banding controls are gone.

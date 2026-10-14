@@ -13,13 +13,14 @@ pub(crate) enum Group {
     Profile,
     Look,
     LodLab,
+    ClothLab,
     GrassReference,
     Reference,
     Input,
 }
 
 impl Group {
-    const ALL: [Self; 11] = [
+    const ALL: [Self; 12] = [
         Self::Help,
         Self::Scene,
         Self::Diagnostics,
@@ -28,6 +29,7 @@ impl Group {
         Self::Profile,
         Self::Look,
         Self::LodLab,
+        Self::ClothLab,
         Self::GrassReference,
         Self::Reference,
         Self::Input,
@@ -43,6 +45,7 @@ impl Group {
             Self::Profile => "Timed profile",
             Self::Look => "Look captures",
             Self::LodLab => "LOD lab",
+            Self::ClothLab => "Cloth lab",
             Self::GrassReference => "Grass references",
             Self::Reference => "Terrain, output and pacing references",
             Self::Input => "Input and demo controls",
@@ -99,9 +102,10 @@ const PANEL: Needs = Needs::Diagnostics(DiagnosticsMode::Panel);
 const FULL: Needs = Needs::Diagnostics(DiagnosticsMode::Full);
 const LAB: Needs = Needs::Flag("--lod-lab");
 const LOOK: Needs = Needs::Flag("--look-capture");
+const CLOTH: Needs = Needs::Flag("--cloth-lab");
 use Group::{
-    Captures, Diagnostics, GrassReference, Help, Input, LodLab, Look, Profile, Reference, Repro,
-    Scene,
+    Captures, ClothLab, Diagnostics, GrassReference, Help, Input, LodLab, Look, Profile, Reference,
+    Repro, Scene,
 };
 
 const FLAGS: &[Flag] = &[
@@ -463,6 +467,40 @@ const FLAGS: &[Flag] = &[
         "Frames drawn before each capture (default 30)",
     )
     .needs(LAB),
+    flag(
+        "--cloth-lab",
+        "",
+        ClothLab,
+        "The player and walking clones wear a simulated test outfit at the start view",
+    ),
+    flag(
+        "--cloth-lab-clones",
+        "0..63",
+        ClothLab,
+        "Clones walking around the player (default 3)",
+    )
+    .needs(CLOTH),
+    flag(
+        "--cloth-lab-gait",
+        "idle|walk|jog|mixed",
+        ClothLab,
+        "How the clones move (default walk)",
+    )
+    .needs(CLOTH),
+    flag(
+        "--cloth-lab-outfit",
+        "all|none|LIST",
+        ClothLab,
+        "Pieces worn, from cloak,skirt,ponytail,greatsword,bow,sword; over straps the back weapons over the cloak (default all)",
+    )
+    .needs(CLOTH),
+    flag(
+        "--cloth-lab-shots",
+        "DIR",
+        ClothLab,
+        "Walk the player too, save close views and the cloth timings, then exit",
+    )
+    .needs(CLOTH),
     flag(
         "--grass-candidate-reference",
         "",

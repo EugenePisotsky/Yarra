@@ -100,6 +100,11 @@ impl MoveIntent {
         self.set_destination(position, CharacterGait::Walk);
     }
 
+    /// Jogs to a render-space position and stops there.
+    pub fn jog_to(&mut self, position: Vec3) {
+        self.set_destination(position, CharacterGait::Jog);
+    }
+
     /// The render-space position the actor is heading for, if it was given one.
     pub fn destination(&self) -> Option<Vec3> {
         self.destination.map(|destination| destination.position)
