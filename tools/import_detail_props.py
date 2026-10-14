@@ -3,13 +3,16 @@
 Run with Blender, once per pack:
 
     /Applications/Blender.app/Contents/MacOS/Blender -b --factory-startup \
-        -P tools/import_detail_props.py -- PACK_DIR OUT.glb
+        -P tools/import_detail_props.py -- PACK_DIR OUT.glb [--albedo LUMINANCE]
 
 Each piece of the pack becomes its own mesh, named `piece_NNN`, standing on the origin: its
 footprint centred and its lowest point at height zero. All pieces share one material with the
 pack's base colour, normal, roughness and ambient occlusion, re-saved as PNG (the game decodes
 neither JPEG nor EXR). The ground-detail placer picks pieces at random and sinks them by their
 type's `sink`.
+
+`--albedo` scales the base colour so its mean linear luminance is LUMINANCE, keeping its hue:
+scanned packs come with their own exposure (the twigs average 0.2, twice the forest floor).
 """
 import glob
 import os
@@ -17,6 +20,7 @@ import sys
 import tempfile
 
 import bpy
+import numpy as np
 from mathutils import Vector
 
 
@@ -26,7 +30,9 @@ def texture(directory, kind):
 
 
 def main():
-    pack, output = sys.argv[sys.argv.index("--") + 1:][:2]
+    arguments = sys.argv[sys.argv.index("--") + 1:]
+    pack, output = arguments[:2]
+    albedo = float(arguments[arguments.index("--albedo") + 1]) if "--albedo" in arguments else None
     bpy.ops.wm.read_factory_settings(use_empty=True)
     fbx = glob.glob(os.path.join(pack, "*.fbx"))
     if len(fbx) != 1:
@@ -40,12 +46,24 @@ def main():
     links = material.node_tree.links
     shader = nodes["Principled BSDF"]
 
-    def image(kind, colour):
+    def image(kind, colour, luminance=None):
         path = texture(pack, kind)
         if path is None:
             return None
         # Re-saved as PNG: the exporter keeps each image's source format.
         source = bpy.data.images.load(path)
+        if luminance is not None:
+            # Blender hands 8-bit images over in their own (sRGB) encoding.
+            pixels = np.empty(len(source.pixels), np.float32)
+            source.pixels.foreach_get(pixels)
+            rgba = pixels.reshape(-1, 4)
+            c = rgba[:, :3]
+            linear = np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
+            mean = float((linear @ np.array([0.2126, 0.7152, 0.0722], np.float32)).mean())
+            linear = np.clip(linear * (luminance / max(mean, 1e-6)), 0.0, 1.0)
+            rgba[:, :3] = np.where(linear <= 0.0031308, linear * 12.92, 1.055 * linear ** (1 / 2.4) - 0.055)
+            source.pixels.foreach_set(pixels)
+            print(f"{kind}: mean luminance {mean:.4f} -> {luminance:.4f}")
         png = os.path.join(scratch, f"{kind}.png")
         source.file_format = "PNG"
         source.save(filepath=png)
@@ -55,7 +73,7 @@ def main():
             node.image.colorspace_settings.name = "Non-Color"
         return node
 
-    base = image("BaseColor", True)
+    base = image("BaseColor", True, albedo)
     links.new(base.outputs["Color"], shader.inputs["Base Color"])
     rough = image("Roughness", False)
     if rough is not None:
