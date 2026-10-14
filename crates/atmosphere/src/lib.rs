@@ -13,6 +13,7 @@ pub mod shore;
 pub mod sky;
 pub mod sun_glare;
 pub mod sunlight;
+mod tonemapping;
 pub mod valley_mist;
 
 use bevy::{
@@ -39,8 +40,15 @@ use world::{
 
 /// The world cameras' display transform. Khronos PBR Neutral keeps mid-tones as lit, so sunny
 /// ground keeps its colour and contrast where Tony McMapface's compression read as milky haze
-/// (docs/EXPERIMENTS.md, October 7).
+/// (docs/EXPERIMENTS.md, October 7). Its toe keeps hue (`tonemapping`).
 pub const WORLD_TONEMAPPING: Tonemapping = Tonemapping::KhronosPbrNeutral;
+
+/// The cameras' white balance as Bevy's (temperature, tint) offsets of the white point from D65:
+/// three quarters of the way along the daylight locus to 5000 K, about the 5500 K of sun and sky
+/// light together. The sun through the atmosphere is yellower than D65; balanced for D65, sunlit
+/// white read cream (blue 0.77 of green) and meadows yellow. Fixed, as a camera set to daylight
+/// is: dusk and moonlight stay blue.
+const DAYLIGHT_BALANCE: (f32, f32) = (-0.0248, 0.0221);
 
 /// Share of colour lost by full night: eyes adapted to moonlight see little colour, so moonlit
 /// scenes stay readable without looking like a blue day.
@@ -248,7 +256,7 @@ impl Plugin for WorldEnvironmentPlugin {
                 ..default()
             })
             .insert_resource(ShadowCoverage(self.first_cascade, self.shadow_distance))
-            .add_plugins(adaptation::plugin)
+            .add_plugins((adaptation::plugin, tonemapping::plugin))
             .add_systems(Startup, setup)
             .configure_sets(
                 PostUpdate,
@@ -452,16 +460,19 @@ fn apply(
     // Eye adaptation in the game only: authoring judges the exposure as set.
     let adapt =
         presentation.auto_exposure && state.owner == AtmosphereOwner::Game && profile.outdoor;
-    let saturation = if profile.outdoor {
-        1.0 - NIGHT_DESATURATION * value.colour_loss
+    let (saturation, balance) = if profile.outdoor {
+        (
+            1.0 - NIGHT_DESATURATION * value.colour_loss,
+            DAYLIGHT_BALANCE,
+        )
     } else {
-        1.0
+        (1.0, (0.0, 0.0))
     };
     for (entity, camera, view, mut exposure, settings, bloom, camera_3d, mut auto, grading) in
         &mut views
     {
         let mut view_commands = commands.entity(entity);
-        grade(&mut view_commands, grading, saturation);
+        grade(&mut view_commands, grading, saturation, balance);
         exposure.ev100 = state
             .exposure_override
             .filter(|v| v.is_finite())
@@ -541,17 +552,31 @@ fn light_ambient(
     }
 }
 
-/// Night desaturation, on the view's colour grading.
-fn grade(view: &mut EntityCommands, grading: Option<Mut<ColorGrading>>, saturation: f32) {
+/// Night desaturation and white balance, on the view's colour grading.
+fn grade(
+    view: &mut EntityCommands,
+    grading: Option<Mut<ColorGrading>>,
+    saturation: f32,
+    (temperature, tint): (f32, f32),
+) {
     match grading {
         Some(mut grading) => {
-            if grading.global.post_saturation != saturation {
-                grading.global.post_saturation = saturation;
+            let global = &grading.global;
+            if global.post_saturation != saturation
+                || global.temperature != temperature
+                || global.tint != tint
+            {
+                let global = &mut grading.global;
+                global.post_saturation = saturation;
+                global.temperature = temperature;
+                global.tint = tint;
             }
         }
         None => {
             let mut grading = ColorGrading::default();
             grading.global.post_saturation = saturation;
+            grading.global.temperature = temperature;
+            grading.global.tint = tint;
             view.insert(grading);
         }
     }
