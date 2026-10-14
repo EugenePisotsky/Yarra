@@ -32,6 +32,7 @@ pub(super) struct TreeWindExtension {
     crown_shading: bool,
     crown_sky: bool,
     bark_blend: bool,
+    bark_sky: bool,
     #[uniform(105)]
     profile: Vec4,
     #[texture(101)]
@@ -47,6 +48,7 @@ pub(super) struct TreeWindKey {
     crown_shading: bool,
     crown_sky: bool,
     bark_blend: bool,
+    bark_sky: bool,
     /// Drawn from the instance buffer (`super::instancing`) rather than per mesh entity; only
     /// that path specializes with it.
     pub(super) instanced: bool,
@@ -57,6 +59,7 @@ impl From<&TreeWindExtension> for TreeWindKey {
             crown_shading: material.crown_shading,
             crown_sky: material.crown_sky,
             bark_blend: material.bark_blend,
+            bark_sky: material.bark_sky,
             instanced: false,
         }
     }
@@ -80,6 +83,11 @@ impl MaterialExtension for TreeWindExtension {
             && let Some(fragment) = descriptor.fragment.as_mut()
         {
             fragment.shader_defs.push("TREE_BARK_BLEND".into());
+        }
+        if key.bind_group_data.bark_sky
+            && let Some(fragment) = descriptor.fragment.as_mut()
+        {
+            fragment.shader_defs.push("TREE_BARK_SKY".into());
         }
         if key.bind_group_data.instanced {
             descriptor.vertex.shader_defs.push("TREE_INSTANCED".into());
@@ -302,6 +310,9 @@ fn convert(
                         wind: buffer.0.clone(),
                         profile: wind_profile(&extras.value),
                         bark_blend: upper.is_some(),
+                        // `yarra_shading: "bark_sky_v1"`: vertex colour is the share of the
+                        // sky the crown leaves the bark (vegetation `bark_sky_v1`), not a tint.
+                        bark_sky: extra_is(&extras.value, "yarra_shading", "bark_sky_v1"),
                         upper_color: upper.as_ref().and_then(|u| load(&u.color, true)),
                         upper_normal: upper.as_ref().and_then(|u| load(&u.normal, false)),
                         upper_metallic_roughness: upper

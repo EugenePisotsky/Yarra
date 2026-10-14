@@ -65,6 +65,16 @@ fn crown_sky_reach(sky: f32, p: vec3<f32>) -> f32 {
     return open + (1.0 - open) * CROWN_FILL;
 }
 
+// Yarra: the share of the stand's sky light reaching bark that its own crown leaves `sky`
+// (TREE_BARK_SKY), plus what leaves pass on. The forest map's 8-16 m average already holds part
+// of the tree's own crown, so bark keeps the darker of the two shares rather than their product:
+// trunks inside a stand stay as dark as before, lone and edge trees darken under their crowns.
+fn bark_sky_reach(sky: f32, p: vec3<f32>) -> f32 {
+    let own = clamp(sky, 0.0, 1.0);
+    let stand = forest_sky_visibility(p);
+    return min((own + (1.0 - own) * CROWN_FILL) / max(stand, 1e-3), 1.0);
+}
+
 // Yarra: a crown's linear sky visibility (TREE_CROWN_SKY) as the eased occlusion the distant
 // self-shadow was tuned on: deep foliage keeps about half the sun.
 fn crown_sky_shade(sky: f32) -> f32 {
@@ -118,6 +128,9 @@ fn apply_pbr_lighting(
 
     let specular_transmissive_color = specular_transmission * in.material.base_color.rgb;
 
+    @if(TREE_BARK_SKY)
+    let diffuse_occlusion = vec3(bark_sky_reach(in.diffuse_occlusion.g, in.world_position.xyz));
+    @else
     let diffuse_occlusion = in.diffuse_occlusion;
     let specular_occlusion = in.specular_occlusion;
 
@@ -441,8 +454,11 @@ fn apply_pbr_lighting(
         }
         // The clouds' direct beam is shaded like any sunlight; what they pass on diffusely casts
         // no shadows, and crowns hold it back as they do the sky.
-        @if(!TREE_CROWN_SKY)
+        @if(!TREE_CROWN_SKY && !TREE_BARK_SKY)
         let diffuse = cloud.y * forest_sky_visibility(in.world_position.xyz);
+        // Bark under its own crown holds it back as it does the sky (bark_sky_reach).
+        @if(TREE_BARK_SKY)
+        let diffuse = cloud.y * forest_sky_visibility(in.world_position.xyz) * diffuse_occlusion.g;
         // Under clouds this is sky light: foliage the crown hides from the sky sees less of it.
         @if(TREE_CROWN_SKY)
         let diffuse = cloud.y * crown_sky_reach(in.diffuse_occlusion.g, in.world_position.xyz);

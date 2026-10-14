@@ -123,6 +123,9 @@ def adapt_foliage(doc, blob, blend):
                 if not all(k in a for k in ('_WIND_PIVOT', '_WIND_AXIS')):
                     raise ValueError('Structural wind requires limb bindings on every primitive')
                 material['extras']['yarra_wind'] = 'hierarchy_v2'
+                # Bark whose vertex colour is its sky visibility past the crown, not a tint.
+                if material['extras'].get('vegetation_occlusion') == 'bark_sky_v1':
+                    material['extras']['yarra_shading'] = 'bark_sky_v1'
             if material.get('alphaMode') == 'MASK':
                 extras = material.setdefault('extras', {})
                 bare_wood = extras.get('vegetation_surface') == 'bare_wood'

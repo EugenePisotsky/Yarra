@@ -129,9 +129,17 @@ past the shadow range it also supplies a coarse self-shadow fallback. Leaves are
 the default reflectance (`KHR_materials_specular`), since glossy sky reflection off
 crown normals turns shaded leaves grey. It also carries the usual `yarra_wind`
 contract (TEXCOORD_1 = flutter, branch); bark is opaque and rigid, with its
-occlusion multiplied into base colour.
+occlusion multiplied into base colour, except bark tagged `bark_sky_v1` (below).
 
-Every vegetation tree preset exports `vegetation_occlusion: "crown_sky_v2"`.
+Every vegetation tree preset exports `vegetation_occlusion: "crown_sky_v2"` on its foliage
+and `"bark_sky_v1"` on its bark. Bark vertex colours then hold the same overcast sky
+visibility, baked for each bark vertex against the complete crown (LOD0's cards as soft
+clumps); the importer selects `yarra_shading: "bark_sky_v1"` and the game (TREE_BARK_SKY)
+lights bark by the darker of that share, plus 12% through the leaves, and the stand's
+(`bark_sky_reach`), instead of tinting its albedo. Trunks under their own crown no longer
+take the open sky's light; trunks inside a stand are unchanged.
+
+Foliage:
 `import_vegetation_bundle.py` preserves this marker and selects
 `yarra_shading: "crown_v2"`; it refuses the older `crown_sky_v1` (rebuild the bundle).
 Its vertex colors hold linear sky visibility: the share of an overcast sky's light

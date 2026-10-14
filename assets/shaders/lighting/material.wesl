@@ -123,11 +123,25 @@ fn fragment(
     pbr_input.specular_occlusion *= crown_occlusion.g;
 }
 
+    // Bark tagged `bark_sky_v1` (crates/engine/src/trees/material.rs) stores the share of the
+    // sky its crown leaves it in vertex colour: lighting, not albedo (bark_sky_reach in
+    // pbr_lighting). Clamped as crown occlusion above.
+@if(TREE_BARK_SKY && VERTEX_COLORS) {
+    let bark_sky = clamp(in.color.rgb, vec3(0.01), vec3(1.0));
+    pbr_input.material.base_color = vec4(
+        pbr_input.material.base_color.rgb / bark_sky,
+        pbr_input.material.base_color.a,
+    );
+    pbr_input.diffuse_occlusion *= bark_sky;
+}
+
     // Two-layer tree bark (crates/engine/src/tree_wind/bark.rs): vertex colour alpha
     // blends the lower bark built above towards the upper bark.
     // Clamped for the same reason as crown occlusion: MSAA extrapolates vertex colour on
     // thin branches.
-@if(TREE_BARK_BLEND && !PREPASS_PIPELINE && VERTEX_COLORS && VERTEX_UVS_A && VERTEX_TANGENTS)
+@if(TREE_BARK_BLEND && TREE_BARK_SKY && !PREPASS_PIPELINE && VERTEX_COLORS && VERTEX_UVS_A && VERTEX_TANGENTS)
+    blend_upper_bark(&pbr_input, in.uv, vec3(1.0), in.color.a, in.world_normal, in.world_tangent);
+@if(TREE_BARK_BLEND && !TREE_BARK_SKY && !PREPASS_PIPELINE && VERTEX_COLORS && VERTEX_UVS_A && VERTEX_TANGENTS)
     blend_upper_bark(&pbr_input, in.uv, clamp(in.color.rgb, vec3(0.0), vec3(1.0)), in.color.a,
         in.world_normal, in.world_tangent);
 
