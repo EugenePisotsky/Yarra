@@ -9,6 +9,8 @@ use bevy::math::{Affine3A, Mat3A, Quat, Vec3A};
 
 /// More substeps than this in one frame means a hitch: the frame's time is cut instead.
 const MAX_SUBSTEPS: usize = 12;
+/// Share of a collider's push applied each substep.
+const CONTACT_STIFFNESS: f32 = 0.6;
 /// Faster than this (m/s) is a solver blow-up, not cloth.
 const MAX_SPEED: f32 = 25.0;
 
@@ -121,9 +123,11 @@ pub(crate) struct PieceDef {
     pub inertia: f32,
     /// Velocity lost per second.
     pub damping: f32,
-    /// Pull towards the wind's velocity, per second.
+    /// Pull towards the air's velocity along the surface (strands: in every direction), per
+    /// second.
     pub drag: f32,
-    /// Pull towards the wind's velocity along the surface normal, per second (sheets only).
+    /// Air pushing across a sheet: this times the square of the air's speed across it, per
+    /// metre.
     pub lift: f32,
     /// Share of sliding velocity lost on contact.
     pub friction: f32,
@@ -195,8 +199,179 @@ pub(crate) struct StepParams {
     pub gravity: Vec3A,
     /// Wind velocity, m/s.
     pub wind: Vec3A,
+    /// How much the wind varies over a piece, 0–1: gusts and eddies running across it.
+    pub flutter: f32,
+    /// Seconds, for the flutter's motion.
+    pub time: f32,
     /// Replaces every piece's own inertia.
     pub inertia: Option<f32>,
+    /// Scale every piece's damping and lift.
+    pub damping: f32,
+    pub lift: f32,
+}
+
+/// An inner garment as the pieces over it see it: its radius around a bone-carried upright
+/// axis by angle and height, read from its particles each frame. Unlike capsules standing in
+/// for it, it has no gaps for a particle to slip through. Fits garments that go round the body
+/// (a skirt, a coat).
+#[derive(Clone, Debug)]
+pub(crate) struct Layer {
+    columns: usize,
+    rows: usize,
+    origin: Vec3A,
+    /// The layer's frame from world: X across, Y up, Z forward.
+    inverse: Mat3A,
+    basis: Mat3A,
+    /// Each of [`LAYER_BINS`] even steps of [`diamond`] angle: the two columns either side of
+    /// it at rest, and how far it lies between them. Columns keep their angles about the axis
+    /// closely enough that the table need not search them each frame.
+    bins: Vec<(u16, u16, f32)>,
+    /// Radius and height per row and bin.
+    table: Vec<(f32, f32)>,
+    top: f32,
+    bottom: f32,
+    widest: f32,
+}
+
+const LAYER_BINS: usize = 48;
+/// Clearance kept beyond a particle's radius from the layer under it: the rendered surfaces
+/// of both garments sag a little between their particles.
+const LAYER_GAP: f32 = 0.035;
+
+/// A monotonic stand-in for the angle of (x, z) from +Z towards +X, in [0, 4): cheaper than
+/// `atan2`, and lookups only need the same measure both ways.
+fn diamond(x: f32, z: f32) -> f32 {
+    let sum = x.abs() + z.abs();
+    if sum <= 1e-9 {
+        return 0.0;
+    }
+    match (x >= 0.0, z >= 0.0) {
+        (true, true) => x / sum,
+        (true, false) => 1.0 + -z / sum,
+        (false, false) => 2.0 + -x / sum,
+        (false, true) => 3.0 + z / sum,
+    }
+}
+
+/// The direction a [`diamond`] measure stands for, as (x, z).
+fn undiamond(d: f32) -> (f32, f32) {
+    let d = d.rem_euclid(4.0);
+    let f = d.fract();
+    match d as usize {
+        0 => (f, 1.0 - f),
+        1 => (1.0 - f, -f),
+        2 => (-f, -(1.0 - f)),
+        _ => (-(1.0 - f), f),
+    }
+}
+
+impl Layer {
+    /// A wrapped sheet's layer; `angles` are its columns' angles about the axis at rest
+    /// (`atan2(x, z)`), going round in order.
+    pub fn new(rows: usize, angles: &[f32]) -> Self {
+        let columns = angles.len();
+        let tau = std::f32::consts::TAU;
+        let bins = (0..LAYER_BINS)
+            .map(|b| {
+                let (x, z) = undiamond(b as f32 * 4.0 / LAYER_BINS as f32);
+                let at = x.atan2(z);
+                let ahead = |c: usize| (angles[c] - at).rem_euclid(tau);
+                // The column just past `at` going round, and the one before it.
+                let next = (0..columns)
+                    .min_by(|&a, &b| ahead(a).total_cmp(&ahead(b)))
+                    .unwrap_or(0);
+                let previous = (next + columns - 1) % columns;
+                let span = (angles[next] - angles[previous]).rem_euclid(tau).max(1e-4);
+                let f = ((at - angles[previous]).rem_euclid(tau) / span).clamp(0.0, 1.0);
+                (previous as u16, next as u16, f)
+            })
+            .collect();
+        Self {
+            columns,
+            rows,
+            origin: Vec3A::ZERO,
+            inverse: Mat3A::IDENTITY,
+            basis: Mat3A::IDENTITY,
+            bins,
+            table: vec![(0.0, 0.0); rows * LAYER_BINS],
+            top: 0.0,
+            bottom: 0.0,
+            widest: 0.0,
+        }
+    }
+
+    /// Reads the garment's particles (a wrapped sheet, top row first) about `origin`.
+    pub fn update(&mut self, positions: &[Vec3A], origin: Vec3A, basis: Mat3A) {
+        self.origin = origin;
+        self.basis = basis;
+        self.inverse = basis.transpose();
+        self.widest = 0.0;
+        self.top = f32::MIN;
+        self.bottom = f32::MAX;
+        let polar = |x: Vec3A| {
+            let local = self.inverse * (x - origin);
+            (local.x.hypot(local.z), local.y)
+        };
+        for r in 0..self.rows {
+            let row = &positions[r * self.columns..(r + 1) * self.columns];
+            for (b, &(previous, next, f)) in self.bins.iter().enumerate() {
+                let (r0, h0) = polar(row[previous as usize]);
+                let (r1, h1) = polar(row[next as usize]);
+                self.table[r * LAYER_BINS + b] = (r0 + (r1 - r0) * f, h0 + (h1 - h0) * f);
+            }
+            for &x in row {
+                let (radius, height) = polar(x);
+                self.widest = self.widest.max(radius);
+                if r == 0 {
+                    self.top = self.top.max(height);
+                }
+                if r == self.rows - 1 {
+                    self.bottom = self.bottom.min(height);
+                }
+            }
+        }
+    }
+
+    /// Where `x` must go to lie `reach` outside the garment, if it is inside.
+    fn push_out(&self, x: Vec3A, reach: f32) -> Option<Vec3A> {
+        let local = self.inverse * (x - self.origin);
+        if local.y > self.top || local.y < self.bottom {
+            return None;
+        }
+        let r = local.x.hypot(local.z);
+        if r >= self.widest + reach {
+            return None;
+        }
+        let at = diamond(local.x, local.z) * LAYER_BINS as f32 / 4.0;
+        let b0 = (at as usize).min(LAYER_BINS - 1);
+        let b1 = (b0 + 1) % LAYER_BINS;
+        let f = at - b0 as f32;
+        let read = |row: usize| {
+            let (r0, h0) = self.table[row * LAYER_BINS + b0];
+            let (r1, h1) = self.table[row * LAYER_BINS + b1];
+            (r0 + (r1 - r0) * f, h0 + (h1 - h0) * f)
+        };
+        let (mut upper_r, mut upper_h) = read(0);
+        for row in 1..self.rows {
+            let (lower_r, lower_h) = read(row);
+            if local.y >= lower_h {
+                let f = ((upper_h - local.y) / (upper_h - lower_h).max(1e-4)).clamp(0.0, 1.0);
+                let wall = upper_r + (lower_r - upper_r) * f + reach;
+                if r >= wall {
+                    return None;
+                }
+                let out = if r > 1e-4 {
+                    Vec3A::new(local.x / r, 0.0, local.z / r)
+                } else {
+                    Vec3A::NEG_Z
+                };
+                let moved = Vec3A::new(out.x * wall, local.y, out.z * wall);
+                return Some(self.origin + self.basis * moved);
+            }
+            (upper_r, upper_h) = (lower_r, lower_h);
+        }
+        None
+    }
 }
 
 /// One piece's moving state.
@@ -221,6 +396,15 @@ pub(crate) struct PieceSim {
     bounds: Vec<(Vec3A, f32)>,
     /// How far each particle can get this frame.
     reach: Vec<f32>,
+    /// Bounding spheres of runs of eight particles, grown by their reach.
+    chunks: Vec<(Vec3A, f32)>,
+    /// Each particle's wind this frame.
+    gusts: Vec<Vec3A>,
+    /// Each particle's position the last three frames, for [`Self::shake`].
+    history: [Vec<Vec3A>; 3],
+    target_history: [Vec<Vec3A>; 3],
+    shake: f32,
+    target_shake: f32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -262,6 +446,20 @@ impl PieceSim {
             ),
             bounds: Vec::new(),
             reach: Vec::new(),
+            chunks: Vec::new(),
+            history: [
+                vec![Vec3A::ZERO; n],
+                vec![Vec3A::ZERO; n],
+                vec![Vec3A::ZERO; n],
+            ],
+            target_history: [
+                vec![Vec3A::ZERO; n],
+                vec![Vec3A::ZERO; n],
+                vec![Vec3A::ZERO; n],
+            ],
+            shake: 0.0,
+            target_shake: 0.0,
+            gusts: vec![Vec3A::ZERO; n],
             rest_frames: match def.frames {
                 Frames::Grid {
                     columns,
@@ -303,6 +501,7 @@ impl PieceSim {
         def: &PieceDef,
         deforms: &[Affine3A],
         capsules: &[(Capsule, Capsule)],
+        layers: &[&Layer],
         params: &StepParams,
     ) {
         let anchor = deforms[def.anchor as usize];
@@ -334,21 +533,71 @@ impl PieceSim {
         }
         self.anchor_prev = Some(anchor);
 
-        if let Frames::Grid {
-            columns,
-            rows,
-            wrap,
-        } = def.frames
-        {
-            grid_normals(&self.x, columns, rows, wrap, &mut self.normals);
-        }
+        // Sheets' normals for the wind come from the last frame's joints ([`Self::joints`]).
         self.gather_pairs(capsules, def, params.dt);
+        self.gust(def, params);
 
         let substeps = ((params.dt * params.substep_hz).ceil() as usize).clamp(1, MAX_SUBSTEPS);
         let h = params.dt.min(MAX_SUBSTEPS as f32 / params.substep_hz) / substeps as f32;
         for s in 1..=substeps {
             let t = s as f32 / substeps as f32;
-            self.substep(def, deforms, capsules, params, h, t);
+            self.substep(def, deforms, capsules, layers, params, h, t);
+        }
+        self.measure_shake(def);
+    }
+
+    /// How much the piece jitters: the mean third difference over frames of its free particles'
+    /// positions, metres. Swinging however hard keeps it small (it changes acceleration only
+    /// gradually); flicker from frame to frame does not.
+    pub fn shake(&self) -> f32 {
+        self.shake
+    }
+
+    /// The same for the targets the animation gives them, for comparison.
+    pub fn target_shake(&self) -> f32 {
+        self.target_shake
+    }
+
+    fn measure_shake(&mut self, def: &PieceDef) {
+        let (mut sum, mut driven, mut count) = (0.0, 0.0, 0);
+        for (i, p) in def.particles.iter().enumerate() {
+            let [a, b, c] = [self.history[0][i], self.history[1][i], self.history[2][i]];
+            let [ta, tb, tc] = [
+                self.target_history[0][i],
+                self.target_history[1][i],
+                self.target_history[2][i],
+            ];
+            if !p.pinned {
+                sum += (self.x[i] - 3.0 * a + 3.0 * b - c).length();
+                driven += (self.targets[i] - 3.0 * ta + 3.0 * tb - tc).length();
+                count += 1;
+            }
+            self.history[2][i] = b;
+            self.history[1][i] = a;
+            self.history[0][i] = self.x[i];
+            self.target_history[2][i] = tb;
+            self.target_history[1][i] = ta;
+            self.target_history[0][i] = self.targets[i];
+        }
+        let count = count.max(1) as f32;
+        self.shake = sum / count;
+        self.target_shake = driven / count;
+    }
+
+    /// Each particle's wind this frame: the wind, stronger and weaker in waves that run across
+    /// the piece, and turning a little aside.
+    fn gust(&mut self, def: &PieceDef, params: &StepParams) {
+        let speed = params.wind.length();
+        let along = params.wind.normalize_or_zero();
+        let aside = along.cross(Vec3A::Y);
+        let t = params.time;
+        for (i, p) in def.particles.iter().enumerate() {
+            let q = p.rest;
+            let surge =
+                wave(t * 2.3 + q.y * 5.0 + q.x * 3.0) * wave(t * 5.1 + q.x * 8.0 - q.y * 4.0);
+            let swirl = wave(t * 3.7 + q.y * 7.0 - q.z * 5.0);
+            self.gusts[i] = params.wind * (1.0 + params.flutter * surge)
+                + (aside * swirl + Vec3A::Y * surge * 0.5) * (params.flutter * 0.5 * speed);
         }
     }
 
@@ -381,32 +630,54 @@ impl PieceSim {
                         + 0.03
                 }
             }));
+        // Spheres round runs of eight particles first: most colliders are near few of them.
+        self.chunks.clear();
+        for (xs, reaches) in self.x.chunks(8).zip(self.reach.chunks(8)) {
+            let centre = xs.iter().copied().sum::<Vec3A>() / xs.len() as f32;
+            let radius = xs
+                .iter()
+                .zip(reaches)
+                .filter(|(_, r)| r.is_finite())
+                .map(|(x, r)| x.distance(centre) + r)
+                .fold(f32::NEG_INFINITY, f32::max);
+            self.chunks.push((centre, radius));
+        }
         for (k, &(centre, bound)) in self.bounds.iter().enumerate() {
             let (before, after) = capsules[k];
             let travel = before.a.distance(after.a).max(before.b.distance(after.b));
-            for (i, (x, reach)) in self.x.iter().zip(&self.reach).enumerate() {
-                let limit = bound + reach;
-                if limit < 0.0 || x.distance_squared(centre) > limit * limit {
+            for (chunk, &(middle, extent)) in self.chunks.iter().enumerate() {
+                let limit = bound + extent;
+                if extent < 0.0 || middle.distance_squared(centre) > limit * limit {
                     continue;
                 }
-                let gap = if after.press == Vec3A::ZERO {
-                    x.distance(after.closest(*x)) - after.radius
-                } else {
-                    // A presser holds back particles however far out they have swung.
-                    f32::NEG_INFINITY
-                };
-                if gap < reach + travel {
-                    self.pairs.push((i as u16, k as u16));
+                let first = chunk * 8;
+                for i in first..(first + 8).min(self.x.len()) {
+                    let (x, reach) = (self.x[i], self.reach[i]);
+                    let limit = bound + reach;
+                    if limit < 0.0 || x.distance_squared(centre) > limit * limit {
+                        continue;
+                    }
+                    let gap = if after.press == Vec3A::ZERO {
+                        x.distance(after.closest(x)) - after.radius
+                    } else {
+                        // A presser holds back particles however far out they have swung.
+                        f32::NEG_INFINITY
+                    };
+                    if gap < reach + travel {
+                        self.pairs.push((i as u16, k as u16));
+                    }
                 }
             }
         }
     }
 
+    #[allow(clippy::too_many_arguments)] // One substep of `step`, with its frame's inputs.
     fn substep(
         &mut self,
         def: &PieceDef,
         deforms: &[Affine3A],
         capsules: &[(Capsule, Capsule)],
+        layers: &[&Layer],
         params: &StepParams,
         h: f32,
         t: f32,
@@ -419,9 +690,14 @@ impl PieceSim {
                 self.x[i] = target;
                 continue;
             }
-            let relative = params.wind - self.v[i];
+            // Air: across the surface it pushes as the square of the speed (gentle on slow
+            // swinging, quick to stop a flick); along it, and for strands, in proportion.
+            let relative = self.gusts[i] - self.v[i];
             let n = self.normals[i];
-            let accel = params.gravity + relative * def.drag + n * (n.dot(relative) * def.lift);
+            let across = n.dot(relative);
+            let accel = params.gravity
+                + (relative - n * across) * def.drag
+                + n * (across * across.abs() * def.lift * params.lift);
             self.v[i] += accel * h;
             self.x[i] += self.v[i] * h;
         }
@@ -510,11 +786,30 @@ impl PieceSim {
             } else {
                 (self.targets[i] - closest).normalize_or(Vec3A::Y)
             };
-            self.x[i] = closest + normal * reach;
+            // Part of the way each substep: a collider meets cloth over a few milliseconds
+            // rather than kicking it in one.
+            let push = closest + normal * reach - self.x[i];
+            self.x[i] += push * CONTACT_STIFFNESS;
             self.contacts[i] = normal;
         }
 
-        let damping = 1.0 / (1.0 + def.damping * h);
+        for layer in layers {
+            for (i, p) in particles.iter().enumerate() {
+                if p.pinned {
+                    continue;
+                }
+                if let Some(outside) = layer.push_out(self.x[i], p.radius + LAYER_GAP) {
+                    self.contacts[i] = (outside - self.x[i]).normalize_or_zero();
+                    let push = outside - self.x[i];
+                    self.x[i] += push * CONTACT_STIFFNESS;
+                }
+            }
+        }
+
+        // Damp motion relative to where the animation carries each particle, not in the world:
+        // the body's own movement is not slowed, the cloth's swinging and shivering about it is.
+        let damping = 1.0 / (1.0 + def.damping * params.damping * h);
+        let frame = 1.0 / params.dt.max(1e-4);
         for (i, p) in particles.iter().enumerate() {
             if p.pinned {
                 self.v[i] = (self.x[i] - self.start[i]) / h;
@@ -526,7 +821,8 @@ impl PieceSim {
                 let sliding = v - n * v.dot(n);
                 v -= sliding * def.friction;
             }
-            v *= damping;
+            let carried = (self.targets[i] - self.targets_prev[i]) * frame;
+            v = carried + (v - carried) * damping;
             let speed2 = v.length_squared();
             if speed2 > MAX_SPEED * MAX_SPEED {
                 v *= MAX_SPEED / speed2.sqrt();
@@ -537,7 +833,8 @@ impl PieceSim {
 
     /// The render joints' world poses (rotation and position); each joint's inverse bind pose
     /// is a translation by minus its rest position ([`PieceDef::joint_rests`]).
-    pub fn joints(&self, def: &PieceDef, deforms: &[Affine3A], out: &mut Vec<(Quat, Vec3A)>) {
+    /// Sheets also keep each frame's normals for the next frame's wind.
+    pub fn joints(&mut self, def: &PieceDef, deforms: &[Affine3A], out: &mut Vec<(Quat, Vec3A)>) {
         out.clear();
         match def.frames {
             Frames::Grid {
@@ -549,6 +846,7 @@ impl PieceSim {
                     for c in 0..columns {
                         let i = r * columns + c;
                         let now = grid_frame(&self.x, columns, rows, wrap, r, c);
+                        self.normals[i] = now.z_axis;
                         let rotation = Quat::from_mat3a(&(now * self.rest_frames[i]));
                         out.push((rotation.normalize(), self.x[i]));
                     }
@@ -599,6 +897,13 @@ fn independent_batches(
     batches.into_iter().flat_map(|(_, links)| links).collect()
 }
 
+/// A smooth wave through -1..1 with a period of 2π, close to `sin` and much cheaper.
+fn wave(x: f32) -> f32 {
+    let f = (x * std::f32::consts::FRAC_1_PI * 0.5).fract().abs();
+    let s = 1.0 - 4.0 * (f - 0.5).abs();
+    s * (1.5 - 0.5 * s * s)
+}
+
 fn weight(p: &ParticleDef) -> f32 {
     if p.pinned { 0.0 } else { 1.0 }
 }
@@ -638,14 +943,6 @@ fn grid_frame(x: &[Vec3A], columns: usize, rows: usize, wrap: bool, r: usize, c:
     Mat3A::from_cols(e1, e2, e3)
 }
 
-fn grid_normals(x: &[Vec3A], columns: usize, rows: usize, wrap: bool, out: &mut [Vec3A]) {
-    for r in 0..rows {
-        for c in 0..columns {
-            out[r * columns + c] = grid_frame(x, columns, rows, wrap, r, c).z_axis;
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -655,7 +952,11 @@ mod tests {
         substep_hz: 240.0,
         gravity: Vec3A::new(0.0, -9.81, 0.0),
         wind: Vec3A::ZERO,
+        flutter: 0.0,
+        time: 0.0,
         inertia: None,
+        damping: 1.0,
+        lift: 1.0,
     };
 
     /// A vertical strand of `n` particles 0.1 m apart hanging from a pinned top one.
@@ -709,7 +1010,7 @@ mod tests {
     ) {
         let pairs: Vec<_> = capsules.iter().map(|c| (*c, *c)).collect();
         for _ in 0..frames {
-            sim.step(def, deforms, &pairs, &PARAMS);
+            sim.step(def, deforms, &pairs, &[], &PARAMS);
         }
     }
 
@@ -764,11 +1065,59 @@ mod tests {
                 def,
                 &[Affine3A::from_translation(bevy::math::Vec3::X * 0.5)],
                 &[],
+                &[],
                 &PARAMS,
             );
         }
         assert!((sims[0].positions()[3].x - 0.5).abs() < 1e-3);
         assert!(sims[1].positions()[3].x < 0.4, "free tip followed at once");
+    }
+
+    #[test]
+    fn diamond_angles_order_directions_as_angles_do_and_invert() {
+        let mut previous = -1.0;
+        for k in 0..64 {
+            let a = k as f32 / 64.0 * std::f32::consts::TAU;
+            let d = diamond(a.sin(), a.cos());
+            assert!(d > previous, "not monotonic at {a}");
+            previous = d;
+            let (x, z) = undiamond(d);
+            assert!((x.atan2(z).rem_euclid(std::f32::consts::TAU) - a).abs() < 1e-4);
+        }
+    }
+
+    #[test]
+    fn a_layer_keeps_particles_outside_it_between_its_columns() {
+        // A skirt-like ring of 8 columns, 0.2 m round, from 1.0 down to 0.4 m.
+        let (columns, rows) = (8, 3);
+        let positions: Vec<Vec3A> = (0..rows * columns)
+            .map(|i| {
+                let a = (i % columns) as f32 / columns as f32 * std::f32::consts::TAU;
+                Vec3A::new(
+                    a.sin() * 0.2,
+                    1.0 - 0.3 * (i / columns) as f32,
+                    a.cos() * 0.2,
+                )
+            })
+            .collect();
+        let angles: Vec<f32> = positions[..columns]
+            .iter()
+            .map(|p| p.x.atan2(p.z))
+            .collect();
+        let mut layer = Layer::new(rows, &angles);
+        layer.update(&positions, Vec3A::ZERO, Mat3A::IDENTITY);
+        // Halfway between two columns, inside the polygon: pushed out to the wall.
+        let a = 0.5 / columns as f32 * std::f32::consts::TAU;
+        let inside = Vec3A::new(a.sin() * 0.1, 0.7, a.cos() * 0.1);
+        let out = layer.push_out(inside, 0.02).expect("inside the layer");
+        let r = out.x.hypot(out.z);
+        let wall = 0.2 * (std::f32::consts::PI / columns as f32).cos();
+        assert!(r > wall && r < 0.2 + 0.021, "pushed to {r}");
+        assert!((out.y - 0.7).abs() < 1e-5);
+        // Outside, above or below it: left alone.
+        assert!(layer.push_out(Vec3A::new(0.0, 0.7, 0.3), 0.02).is_none());
+        assert!(layer.push_out(Vec3A::new(0.0, 1.2, 0.05), 0.02).is_none());
+        assert!(layer.push_out(Vec3A::new(0.0, 0.3, 0.05), 0.02).is_none());
     }
 
     #[test]
@@ -943,7 +1292,8 @@ mod tests {
                 friction: 0.35,
             }
         }
-        let mut pieces = [sheet(9, 8, false, 0.3), sheet(16, 6, true, 0.25)];
+        // The lab's skirt and cape; the cape stays outside the skirt.
+        let mut pieces = [sheet(16, 6, true, 0.25), sheet(13, 10, false, 0.3)];
         let variant = std::env::var("BENCH_VARIANT").unwrap_or_default();
         if variant.contains("nolinks") {
             for p in &mut pieces {
@@ -967,6 +1317,11 @@ mod tests {
             })
             .collect();
         let mut sims: Vec<PieceSim> = pieces.iter().map(PieceSim::new).collect();
+        let angles: Vec<f32> = pieces[0].particles[..16]
+            .iter()
+            .map(|p| p.rest.x.atan2(p.rest.z))
+            .collect();
+        let mut layer = Layer::new(6, &angles);
         let mut out = Vec::new();
         let frames: usize = std::env::var("BENCH_FRAMES")
             .ok()
@@ -995,10 +1350,21 @@ mod tests {
                     (m, m)
                 })
                 .collect();
-            for (def, sim) in pieces.iter().zip(&mut sims) {
-                sim.step(def, &deforms, &moved, &PARAMS);
-                sim.joints(def, &deforms, &mut out);
-            }
+            let (skirt, cape) = sims.split_at_mut(1);
+            skirt[0].step(&pieces[0], &deforms, &moved, &[], &PARAMS);
+            skirt[0].joints(&pieces[0], &deforms, &mut out);
+            let layers: Vec<&Layer> = if variant.contains("nolayer") {
+                Vec::new()
+            } else {
+                layer.update(
+                    skirt[0].positions(),
+                    deforms[0].translation,
+                    Mat3A::IDENTITY,
+                );
+                vec![&layer]
+            };
+            cape[0].step(&pieces[1], &deforms, &moved, &layers, &PARAMS);
+            cape[0].joints(&pieces[1], &deforms, &mut out);
         }
         let per_frame = started.elapsed().as_secs_f64() * 1e6 / frames as f64;
         let pairs: usize = sims.iter().map(|s| s.pairs.len()).sum();

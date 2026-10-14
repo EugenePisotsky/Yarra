@@ -491,7 +491,7 @@ const FLAGS: &[Flag] = &[
         "--cloth-lab-outfit",
         "all|none|LIST",
         ClothLab,
-        "Pieces worn, from cloak,skirt,ponytail,greatsword,bow,sword; over straps the back weapons over the cloak (default all)",
+        "Pieces worn, from cloak,skirt,ponytail,greatsword,bow,sword (default all)",
     )
     .needs(CLOTH),
     flag(

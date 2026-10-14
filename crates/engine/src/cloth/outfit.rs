@@ -2,7 +2,7 @@
 //! colliders: a cloak, a long skirt, a ponytail, a greatsword and a bow on the back and a sword
 //! at the hip. Shapes are plain on purpose; they exist to try the simulation and its colliders.
 use super::body::{BodyCapsule, group};
-use super::solver::{Carrier, Cone, Frames, Link, ParticleDef, PieceDef, Tether};
+use super::solver::{Carrier, Frames, Link, ParticleDef, PieceDef, Tether};
 use bevy::math::{Affine3A, Vec2, Vec3A};
 use std::collections::HashMap;
 
@@ -15,9 +15,6 @@ pub struct OutfitChoice {
     pub greatsword: bool,
     pub bow: bool,
     pub side_sword: bool,
-    /// Back weapons are strapped over the cloak, pressing it to the back, instead of the cloak
-    /// draping over them.
-    pub weapons_over_cloak: bool,
 }
 
 impl OutfitChoice {
@@ -28,7 +25,6 @@ impl OutfitChoice {
         greatsword: true,
         bow: true,
         side_sword: true,
-        weapons_over_cloak: false,
     };
 }
 
@@ -66,12 +62,21 @@ pub(crate) struct Provided {
     pub group: u32,
 }
 
+/// A wrapped sheet that pieces over it stay outside of ([`super::solver::Layer`]): its axis
+/// runs up through `origin` (bind space) and turns with `bone`.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct LayerPlan {
+    pub bone: u16,
+    pub origin: Vec3A,
+}
+
 pub(crate) struct PiecePlan {
     pub name: &'static str,
     pub def: PieceDef,
-    /// Collider groups it collides with.
+    /// Collider groups it collides with; [`group::LAYERS`] keeps it outside inner layers.
     pub collides: u32,
     pub provides: Vec<Provided>,
+    pub layer: Option<LayerPlan>,
     /// Skinned to the piece's render joints.
     pub parts: Vec<(Look, MeshData)>,
 }
@@ -118,8 +123,8 @@ pub(crate) fn plan(
     }
     let mut items = Vec::new();
     let mut back_depth = None;
-    // Strapped over a cloak, weapons sit out by its thickness and press it to the back.
-    let over = choice.cloak && choice.weapons_over_cloak;
+    // Strapped over a cloak, back weapons sit out by its thickness and press it to the back.
+    let over = choice.cloak;
     if choice.greatsword
         && let Some((item, depth)) = planner.greatsword(over)
     {
@@ -132,8 +137,7 @@ pub(crate) fn plan(
         items.push(item);
     }
     let mut pieces = Vec::new();
-    // Inner layers first: the skirt is a collider for the scabbard and the cloak, the scabbard
-    // for the cloak.
+    // Inner layers first: the cloak stays outside the skirt and collides with the scabbard.
     if choice.skirt {
         pieces.extend(planner.skirt());
     }
@@ -144,7 +148,7 @@ pub(crate) fn plan(
         pieces.extend(planner.ponytail());
     }
     if choice.cloak {
-        pieces.extend(planner.cloak(over));
+        pieces.extend(planner.cloak());
     }
     OutfitPlan {
         bones: planner.bones,
@@ -153,6 +157,9 @@ pub(crate) fn plan(
         items,
     }
 }
+
+/// How much farther out back weapons sit when strapped over a cloak, metres.
+const CLOAK_ROOM: f32 = 0.08;
 
 struct Planner<'a> {
     binds: &'a HashMap<String, Affine3A>,
@@ -197,45 +204,19 @@ impl Planner<'_> {
         p
     }
 
-    /// Moves a bind-space point along `outward` until it clears the back items' colliders.
-    fn push_past_items(&self, mut p: Vec3A, outward: Vec3A, margin: f32) -> Vec3A {
-        for _ in 0..60 {
-            let inside = self.capsules.iter().any(|c| {
-                if c.group & group::BACK_ITEMS == 0 {
-                    return false;
-                }
-                let axis = c.b - c.a;
-                let t = ((p - c.a).dot(axis) / axis.length_squared().max(1e-9)).clamp(0.0, 1.0);
-                p.distance(c.a + axis * t) < c.radius + margin
+    /// Adds a back item's colliders: an ordinary one, and a presser that holds a cloak under
+    /// it, against the back, however the cloak swings.
+    fn item_capsule(&mut self, bone: u16, a: Vec3A, b: Vec3A, radius: f32) {
+        for (group, press) in [(group::BACK_ITEMS, None), (group::PRESSERS, Some(Vec3A::Z))] {
+            self.capsules.push(CapsuleDef {
+                bone,
+                a,
+                b,
+                radius,
+                group,
+                press,
             });
-            if !inside {
-                break;
-            }
-            p += outward * 0.01;
         }
-        p
-    }
-
-    /// Adds an item's colliders: an ordinary one, and a presser for the cloak that keeps it on
-    /// one side of the item however it swings: under the item (pressed to the back) when the
-    /// item is strapped over it, else over it.
-    fn item_capsule(&mut self, bone: u16, a: Vec3A, b: Vec3A, radius: f32, over_cloak: bool) {
-        self.capsules.push(CapsuleDef {
-            bone,
-            a,
-            b,
-            radius,
-            group: group::BACK_ITEMS,
-            press: None,
-        });
-        self.capsules.push(CapsuleDef {
-            bone,
-            a,
-            b,
-            radius,
-            group: group::PRESSERS,
-            press: Some(if over_cloak { Vec3A::Z } else { Vec3A::NEG_Z }),
-        });
     }
 
     /// How far behind the back (most negative Z) a straight item from `top` to `bottom` must
@@ -255,66 +236,112 @@ impl Planner<'_> {
         }
     }
 
-    fn cloak(&mut self, under_weapons: bool) -> Option<PiecePlan> {
+    /// A cape: a collar round the neck, a mantle over the shoulders held close to the upper arms
+    /// (it lies over them as the bind pose holds them, so it comes down with them), and a body
+    /// hanging below.
+    fn cloak(&mut self) -> Option<PiecePlan> {
         let chest = self.bone("spine_05.x")?;
-        let left = self.bone("shoulder.l")?;
-        let right = self.bone("shoulder.r")?;
         let hips = self.bone("root.x")?;
-        let shoulder = self.joint("c_arm_twist_offset.l")?;
+        let arms = [self.bone("arm_stretch.r")?, self.bone("arm_stretch.l")?];
+        let collar_bones = [self.bone("shoulder.r")?, self.bone("shoulder.l")?];
         let neck = self.joint("subneck_twist_1.x")?;
+        let shoulder = self.joint("c_arm_twist_offset.l")?;
+        let elbow = self.joint("forearm_stretch.l")?;
         let knee = self.joint("leg_stretch.l")?;
-        let (columns, rows) = (9, 8);
-        let top = shoulder.y + 0.05;
-        let bottom = knee.y - 0.2;
-        let spread = 75f32.to_radians();
-        let mut particles = Vec::new();
+        let neck_radius = self.body_capsule("neck").map_or(0.055, |c| c.radius);
+        // The mantle droops as the bind pose's upper arm does, so it lies along it.
+        let arm = elbow - shoulder;
+        let droop = (-arm.y).atan2(arm.x.abs());
+        const COLUMNS: usize = 13;
+        const MANTLE: usize = 3;
+        const HANGING: usize = 6;
+        let rows = 1 + MANTLE + HANGING;
+        let spread = 110f32.to_radians();
+        let collar_y = neck.y - 0.01;
+        let collar = neck_radius + 0.03;
+        let bottom = knee.y - 0.15;
+        let mut particles = Vec::with_capacity(rows * COLUMNS);
+        let mut ends = [Vec3A::ZERO; COLUMNS];
         for r in 0..rows {
-            let f = r as f32 / (rows - 1) as f32;
-            let y = top + (bottom - top) * f;
-            let (rx, rz) = (shoulder.x.abs() + 0.02 + 0.2 * f, 0.1 + 0.14 * f);
-            for c in 0..columns {
-                let theta = -spread + 2.0 * spread * c as f32 / (columns - 1) as f32;
+            for (c, end) in ends.iter_mut().enumerate() {
+                let theta = -spread + 2.0 * spread * c as f32 / (COLUMNS - 1) as f32;
                 let (s, k) = theta.sin_cos();
-                let p = Vec3A::new(s * rx, y, neck.z - k * rz);
-                let p = self.push_out(p, group::TORSO | group::HEAD | group::LAYERS, 0.03);
-                // Draped over the weapons, it starts outside them.
-                let p = if under_weapons {
-                    p
-                } else {
-                    let outward = Vec3A::new(p.x, 0.0, p.z - neck.z).normalize_or(Vec3A::NEG_Z);
-                    self.push_past_items(p, outward, 0.03)
-                };
-                let carrier = if r == 0 {
-                    Carrier::blended(chest, if s > 0.0 { left } else { right }, 0.6 * s * s)
-                } else {
-                    Carrier::blended(chest, hips, 0.35 * f)
-                };
-                particles.push(ParticleDef {
-                    rest: p,
-                    carrier,
-                    pinned: r == 0,
-                    max_distance: 0.02 + 0.6 * f.powf(1.3),
+                // Out from the neck: back at 0, the character's left (+X) at +90°.
+                let out = Vec3A::new(s, 0.0, -k);
+                let side = smoothstep(0.45, 0.9, s.abs());
+                let arm = arms[usize::from(s > 0.0)];
+                let start = Vec3A::new(s * collar, collar_y, neck.z - k * collar * 0.9);
+                let start = self.push_out(start, group::TORSO | group::HEAD, 0.025);
+                let mut particle = ParticleDef {
+                    rest: start,
+                    carrier: Carrier::blended(
+                        chest,
+                        collar_bones[usize::from(s > 0.0)],
+                        0.3 * side,
+                    ),
+                    pinned: true,
+                    max_distance: 0.0,
                     goal: 0.0,
                     radius: 0.025,
-                });
+                };
+                if (1..=MANTLE).contains(&r) {
+                    // Down the slope of the shoulders to the elbows at the sides, a little way
+                    // down the back behind.
+                    let to_elbow = (elbow.x.abs() - collar + 0.02) / droop.cos();
+                    let length = 0.14 + (to_elbow - 0.14) * side;
+                    let along = length * r as f32 / MANTLE as f32;
+                    let slope = out * droop.cos() + Vec3A::NEG_Y * droop.sin();
+                    let p = self.push_out(
+                        start + slope * along,
+                        group::TORSO | group::HEAD | group::ARMS,
+                        0.03,
+                    );
+                    // Over the arms it follows them closely without being pinned to them (a
+                    // pinned edge whipped the cape at every arm swing); behind, it settles on the
+                    // back.
+                    particle.rest = p;
+                    particle.carrier =
+                        Carrier::blended(chest, arm, side * (0.3 + 0.4 * r as f32 / MANTLE as f32));
+                    particle.pinned = false;
+                    particle.max_distance = 0.03 + 0.12 * (1.0 - side);
+                    particle.goal = 25.0 * side;
+                    if r == MANTLE {
+                        *end = p;
+                    }
+                } else if r > MANTLE {
+                    let f = (r - MANTLE) as f32 / HANGING as f32;
+                    let end = *end;
+                    let p =
+                        Vec3A::new(end.x, end.y + (bottom - end.y) * f, end.z) + out * (0.08 * f);
+                    particle.rest =
+                        self.push_out(p, group::TORSO | group::LEGS | group::LAYERS, 0.03);
+                    particle.carrier = if side > 0.3 {
+                        Carrier::blended(chest, arm, side * 0.6 * (1.0 - f))
+                    } else {
+                        Carrier::blended(chest, hips, 0.35 * f)
+                    };
+                    particle.pinned = false;
+                    particle.max_distance = 0.04 + 0.55 * f.powf(1.2);
+                }
+                particles.push(particle);
             }
         }
-        let (links, tethers) = sheet_constraints(&particles, columns, rows, false);
+        let (links, tethers) = sheet_constraints(&particles, COLUMNS, rows, false);
         let def = PieceDef {
             particles,
             links,
             tethers,
             cones: Vec::new(),
             frames: Frames::Grid {
-                columns,
+                columns: COLUMNS,
                 rows,
                 wrap: false,
             },
             anchor: chest,
             inertia: 0.7,
             damping: 0.4,
-            drag: 0.25,
-            lift: 2.5,
+            drag: 0.8,
+            lift: 2.0,
             friction: 0.35,
         };
         let mut mesh = MeshData::default();
@@ -329,6 +356,7 @@ impl Planner<'_> {
                 | group::HIP_ITEMS
                 | group::LAYERS,
             provides: Vec::new(),
+            layer: None,
             parts: vec![(Look::Wool, mesh)],
         })
     }
@@ -378,42 +406,40 @@ impl Planner<'_> {
             anchor: hips,
             inertia: 0.6,
             damping: 0.6,
-            drag: 0.25,
-            lift: 1.5,
+            drag: 0.8,
+            lift: 2.0,
             friction: 0.4,
         };
         let mut mesh = MeshData::default();
         mesh.add_sheet(&def, 3, Vec2::new(0.0, centre));
-        // Every other column, in two pieces, stands in for the skirt under other garments.
-        let provides: Vec<Provided> = (0..columns)
-            .step_by(2)
-            .flat_map(|c| [(0, 2), (2, rows - 1)].map(|(a, b)| (a * columns + c, b * columns + c)))
-            .map(|(a, b)| Provided {
-                a: a as u16,
-                b: b as u16,
-                radius: 0.035,
-                group: group::LAYERS,
-            })
-            .collect();
-        for p in &provides {
+        // For planning what goes over it, every column stands in for the skirt at rest.
+        for c in 0..columns {
             let (a, b) = (
-                def.particles[p.a as usize].rest,
-                def.particles[p.b as usize].rest,
+                def.particles[c].rest,
+                def.particles[(rows - 1) * columns + c].rest,
             );
             self.body.push(BodyCapsule {
                 name: "skirt".into(),
                 bone: "root.x".into(),
                 a,
                 b,
-                radius: p.radius,
-                group: p.group,
+                radius: 0.03,
+                group: group::LAYERS,
             });
         }
         Some(PiecePlan {
             name: "skirt",
             def,
-            collides: group::TORSO | group::LEGS | group::ARMS | group::BACK_ITEMS,
-            provides,
+            collides: group::TORSO
+                | group::LEGS
+                | group::ARMS
+                | group::BACK_ITEMS
+                | group::HIP_ITEMS,
+            provides: Vec::new(),
+            layer: Some(LayerPlan {
+                bone: hips,
+                origin: Vec3A::new(0.0, pelvis.y, centre),
+            }),
             parts: vec![(Look::Linen, mesh)],
         })
     }
@@ -460,7 +486,7 @@ impl Planner<'_> {
             anchor: head,
             inertia: 0.8,
             damping: 1.2,
-            drag: 0.6,
+            drag: 1.5,
             lift: 0.0,
             friction: 0.2,
         };
@@ -472,52 +498,47 @@ impl Planner<'_> {
             def,
             collides: group::HEAD | group::TORSO | group::BACK_ITEMS,
             provides: Vec::new(),
+            layer: None,
             parts: vec![(Look::Hair, mesh)],
         })
     }
 
+    /// Worn, not simulated: it hangs from the hip and swings a third of the way with the thigh,
+    /// so the leg does not pass through it. The cloak collides with it.
     fn side_sword(&mut self) -> Option<PiecePlan> {
         let hips = self.bone("root.x")?;
+        let thigh = self.bone("thigh_stretch.l")?;
         let pelvis = self.joint("root.x")?;
         let pivot = self.push_out(
             pelvis + Vec3A::new(0.17, 0.0, 0.03),
             group::TORSO | group::LAYERS,
             0.04,
         );
-        let d = Vec3A::new(0.15, -0.8, -0.58).normalize();
-        let positions = [pivot, pivot + d * 0.42, pivot + d * 0.84];
-        let particles: Vec<ParticleDef> = positions
+        let d = Vec3A::new(0.22, -0.8, -0.55).normalize();
+        let particles: Vec<ParticleDef> = [0.0, 0.42, 0.84]
             .iter()
             .enumerate()
-            .map(|(i, &p)| ParticleDef {
-                rest: p,
-                carrier: Carrier::on(hips),
-                pinned: i == 0,
-                max_distance: [0.0, 0.6, 0.9][i],
-                goal: 0.8,
+            .map(|(i, &at)| ParticleDef {
+                rest: pivot + d * at,
+                carrier: Carrier::blended(hips, thigh, [0.0, 0.17, 0.33][i]),
+                pinned: true,
+                max_distance: 0.0,
+                goal: 0.0,
                 radius: 0.035,
             })
             .collect();
-        let mut links = chain_links(&particles, 0.0);
-        links.push(link(&particles, 0, 2, 0.0));
         let def = PieceDef {
             particles,
-            links,
+            links: Vec::new(),
             tethers: Vec::new(),
-            cones: vec![Cone {
-                pivot: 0,
-                particle: 2,
-                bone: hips,
-                axis: d,
-                cos_max: 40f32.to_radians().cos(),
-            }],
+            cones: Vec::new(),
             frames: Frames::Rigid { bone: hips },
             anchor: hips,
-            inertia: 0.85,
-            damping: 1.0,
-            drag: 0.05,
+            inertia: 1.0,
+            damping: 0.0,
+            drag: 0.0,
             lift: 0.0,
-            friction: 0.3,
+            friction: 0.0,
         };
         // Flat against the leg: the blade's width lies fore and aft.
         let width = d.cross(Vec3A::X).normalize();
@@ -532,9 +553,10 @@ impl Planner<'_> {
             (Look::Steel, -0.23, 0.02, 0.025, 0.025),
         ];
         Some(PiecePlan {
-            name: "side sword",
+            name: "hip sword",
             def,
-            collides: group::LEGS | group::TORSO | group::LAYERS,
+            collides: 0,
+            layer: None,
             provides: vec![Provided {
                 a: 0,
                 b: 2,
@@ -552,7 +574,7 @@ impl Planner<'_> {
     fn greatsword(&mut self, over_cloak: bool) -> Option<(ItemPlan, f32)> {
         let chest = self.bone("spine_05.x")?;
         let (guard, tip) = (Vec2::new(-0.19, 1.46), Vec2::new(0.2, 0.55));
-        let z = self.clear_depth(guard, tip, 0.04) - if over_cloak { 0.05 } else { 0.0 };
+        let z = self.clear_depth(guard, tip, 0.04) - if over_cloak { CLOAK_ROOM } else { 0.0 };
         let g = Vec3A::new(guard.x, guard.y, z);
         let t = Vec3A::new(tip.x, tip.y, z);
         let axis = (t - g).normalize();
@@ -579,7 +601,7 @@ impl Planner<'_> {
             ),
         ]);
         for (a, b, radius) in [(g, t, 0.035), (g, pommel, 0.03)] {
-            self.item_capsule(chest, a, b, radius, over_cloak);
+            self.item_capsule(chest, a, b, radius);
         }
         let item = ItemPlan {
             name: "greatsword",
@@ -594,7 +616,7 @@ impl Planner<'_> {
         let chest = self.bone("spine_05.x")?;
         let (upper, lower) = (Vec2::new(0.24, 1.58), Vec2::new(-0.22, 0.68));
         let z = outside_of.map_or_else(
-            || self.clear_depth(upper, lower, 0.03) - if over_cloak { 0.05 } else { 0.0 },
+            || self.clear_depth(upper, lower, 0.03) - if over_cloak { CLOAK_ROOM } else { 0.0 },
             |z| z - 0.045,
         );
         let (u, l) = (
@@ -635,7 +657,7 @@ impl Planner<'_> {
         cord.add_tube(&string, 4, Vec3A::Z, false, false);
         for k in 0..3 {
             let (a, b) = (stave(k as f32 / 3.0), stave((k + 1) as f32 / 3.0));
-            self.item_capsule(chest, a, b, 0.03, over_cloak);
+            self.item_capsule(chest, a, b, 0.03);
         }
         Some(ItemPlan {
             name: "bow",
@@ -647,6 +669,11 @@ impl Planner<'_> {
             ],
         })
     }
+}
+
+fn smoothstep(low: f32, high: f32, x: f32) -> f32 {
+    let t = ((x - low) / (high - low)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
 }
 
 /// Boxes on joint 0, one mesh per look.

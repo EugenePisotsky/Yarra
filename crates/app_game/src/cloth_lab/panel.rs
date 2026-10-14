@@ -58,10 +58,6 @@ fn panel(
                 ui.checkbox(&mut outfit.bow, "Bow");
                 ui.checkbox(&mut outfit.side_sword, "Hip sword");
             });
-            ui.checkbox(
-                &mut outfit.weapons_over_cloak,
-                "Back weapons strapped over the cloak",
-            );
             if outfit != lab.outfit {
                 lab.outfit = outfit;
             }
@@ -135,11 +131,45 @@ fn panel(
                 ui.add_enabled(inertia, egui::Slider::new(&mut share, 0.0..=1.0));
             });
             tuned.inertia = inertia.then_some(share);
+            let wind = Vec2::new(stats.wind.x, stats.wind.z);
+            ui.label(format!(
+                "Wind {:.1} m/s towards {:.0}°{}",
+                wind.length(),
+                wind.x.atan2(wind.y).to_degrees().rem_euclid(360.0),
+                if tuned.wind_override.is_some() {
+                    " (set here)"
+                } else {
+                    " (the weather's, as grass and trees feel it)"
+                }
+            ));
             ui.add(
                 egui::Slider::new(&mut tuned.wind_speed, 0.0..=20.0)
                     .suffix(" m/s")
-                    .text("Wind at unit force"),
+                    .text("Weather wind at unit force"),
             );
+            let mut set = tuned.wind_override.is_some();
+            let (mut bearing, mut speed) = tuned.wind_override.unwrap_or((90.0, 8.0));
+            ui.checkbox(&mut set, "Set the wind");
+            ui.add_enabled_ui(set, |ui| {
+                ui.add(
+                    egui::Slider::new(&mut bearing, 0.0..=360.0)
+                        .suffix("°")
+                        .text("Towards"),
+                );
+                ui.add(
+                    egui::Slider::new(&mut speed, 0.0..=25.0)
+                        .suffix(" m/s")
+                        .text("Speed"),
+                );
+            });
+            tuned.wind_override = set.then_some((bearing, speed));
+            ui.add(egui::Slider::new(&mut tuned.flutter, 0.0..=1.0).text("Flutter"));
+            ui.add(
+                egui::Slider::new(&mut tuned.damping, 0.0..=8.0)
+                    .logarithmic(true)
+                    .text("Damping ×"),
+            );
+            ui.add(egui::Slider::new(&mut tuned.lift, 0.0..=3.0).text("Lift ×"));
             ui.add(egui::Slider::new(&mut tuned.gravity, 0.0..=20.0).text("Gravity"));
             ui.add(
                 egui::Slider::new(&mut tuned.simulate_within, 5.0..=120.0)
@@ -170,6 +200,10 @@ fn panel(
                 "Work over all cores {:.3} ms; {per:.0} µs per character, worst {:.0} µs",
                 stats.work_us / 1000.0,
                 stats.worst_character_us
+            ));
+            ui.label(format!(
+                "Shake {:.2} mm a frame (jitter apart from the body's motion)",
+                stats.shake_mm
             ));
             ui.small("The player moves as usual (WASD, click). F1 has frame timings.");
         });

@@ -190,11 +190,13 @@ Work in small runnable batches. Replace superseded formats directly and regenera
 
 October 14, 2026, after the user turned from the environment to the character: cloth and later hair that leave the frame alone, capes worn with back and hip weapons, and clothing and armour equipped piece by piece. Only one female body exists yet; male bodies and variants come later.
 
-1. **Cloth lab**: done ([Experiments](EXPERIMENTS.md#cloth-on-characters--october-14)). Generated cloak, skirt, ponytail and weapons on walking clones; costs and the cloak/weapon modes are there to judge.
+1. **Cloth lab**: done ([Experiments](EXPERIMENTS.md#cloth-on-characters--october-14)). Generated cape, skirt, ponytail and weapons on walking clones, with costs and jitter measured; reviewed once by the user (shoulders, weapons over the cape only, layering, wind, calmer motion).
 2. **Equipment presentation**: a wearables catalog beside `character_presentations.catalog.ron` mapping gameplay items to meshes per body type; garments skinned to the body's skeleton entities (leader pose without copying); body and garment regions per vertex, hidden by rebuilding index buffers on equip (cached per mask); layers (under, padded, mail, plate, tabard, cloak); carry points as bone plus offset, resolved from a small table. Gameplay keeps slots and items.
 3. **One real garment through the pipeline**: from a bought pack, re-weighted to the body in Blender, regions painted, cloth sections exported as particle layouts. Waits on choosing assets (bodies sharing a skeleton and ideally topology; per-slot pieces fitted to a body we have).
 4. **Hair**: the same strands on hair cards.
 5. **Cost**: skip off-screen characters, a 30 Hz band before the frozen one, and merge a character's pieces into one mesh only if crowds show it in a profile.
+6. **Smoother animation input**: clips are keyed at 30 fps and interpolated linearly, so bones change velocity every other frame at 60 fps and every piece hung on them inherits about 5 mm of jitter a frame. Re-export at 60 fps from smooth curves (or resample the GLB's channels with a spline at load); the body's own motion gains too. The validated export is the user's call.
+7. **Open in the lab**: fingers poke through the cape (hand capsules end at the middle finger's second joint); a startup event occasionally takes every actor's bones away (refitted, logged).
 
 ## Roads roadmap
 

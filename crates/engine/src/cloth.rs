@@ -29,7 +29,7 @@ use bevy::{
 };
 use body::BodyCapsule;
 use outfit::{Look, MeshData, OutfitPlan};
-use solver::{Capsule, PieceSim, StepParams};
+use solver::{Capsule, Layer, PieceSim, StepParams};
 use std::{collections::HashMap, sync::Arc, time::Instant};
 
 pub struct ClothPlugin;
@@ -68,8 +68,16 @@ pub struct ClothSettings {
     pub substep_hz: f32,
     /// Replaces each piece's own share of world movement it resists (see the solver).
     pub inertia: Option<f32>,
-    /// Wind speed, m/s, at the vegetation wind's unit force.
+    /// Wind speed, m/s, at the vegetation wind's unit force (the wind grass and trees bend
+    /// in; weather scales it).
     pub wind_speed: f32,
+    /// Replaces that wind: the compass bearing it blows towards (0 is +Z) and its speed, m/s.
+    pub wind_override: Option<(f32, f32)>,
+    /// How much the wind varies across a piece, 0–1.
+    pub flutter: f32,
+    /// Scale every piece's damping and its lift (drag along its surface normal).
+    pub damping: f32,
+    pub lift: f32,
     pub gravity: f32,
     /// Farther from the camera, pieces hang where the animation puts them.
     pub simulate_within: f32,
@@ -83,7 +91,11 @@ impl Default for ClothSettings {
             enabled: true,
             substep_hz: 240.0,
             inertia: None,
-            wind_speed: 5.0,
+            wind_speed: 7.0,
+            wind_override: None,
+            flutter: 0.45,
+            damping: 1.0,
+            lift: 1.0,
             gravity: 9.81,
             simulate_within: 40.0,
             show_colliders: false,
@@ -105,6 +117,20 @@ pub struct ClothStats {
     /// Summed over characters (all cores), last frame.
     pub work_us: f32,
     pub worst_character_us: f32,
+    /// The wind at the last character simulated, m/s, render space.
+    pub wind: Vec3,
+    /// Mean frame-to-frame jitter of simulated pieces, mm ([`solver::PieceSim::shake`]), and
+    /// per kind of piece beside the jitter of what the animation gives it.
+    pub shake_mm: f32,
+    pub shake_by_piece: Vec<PieceShake>,
+}
+
+/// One kind of piece's jitter, mm, averaged over characters.
+#[derive(Clone, Copy, Debug)]
+pub struct PieceShake {
+    pub name: &'static str,
+    pub cloth: f32,
+    pub animation: f32,
 }
 
 /// An actor's bones by name: each joint entity and its inverse bind pose.
@@ -158,6 +184,10 @@ struct ClothRig {
     last_root: Option<Vec3>,
     simulated: bool,
     time_us: f32,
+    /// Sum of its simulated pieces' shake, metres, and how many.
+    shake: (f32, usize),
+    /// Each piece's shake this frame and its targets', metres.
+    piece_shake: Vec<(f32, f32)>,
 }
 
 struct RigPiece {
@@ -165,6 +195,8 @@ struct RigPiece {
     joints: Vec<Entity>,
     poses: Vec<(Quat, Vec3A)>,
     near: Vec<(Capsule, Capsule)>,
+    /// What the pieces over it see, when it is an inner layer.
+    layer: Option<Layer>,
 }
 
 type WaitingActors<'w, 's> = Query<
@@ -184,6 +216,7 @@ fn drop_stale_rigs(
     mut commands: Commands,
     actors: Query<(Entity, &CharacterSkeleton, Option<&ClothRig>)>,
     posed: Query<(), With<GlobalTransform>>,
+    entities: &bevy::ecs::entity::Entities,
 ) {
     for (actor, skeleton, rig) in &actors {
         if skeleton
@@ -193,7 +226,23 @@ fn drop_stale_rigs(
         {
             continue;
         }
-        info!("Cloth: actor {actor} has a new model; refitting its outfit");
+        // Seen rarely at startup for every actor at once, cause unknown: say which bones went
+        // and whether they were despawned or only lost their pose.
+        let missing: Vec<_> = skeleton
+            .joints
+            .iter()
+            .filter(|(_, (joint, _))| !posed.contains(*joint))
+            .map(|(name, (joint, _))| {
+                let gone = if entities.contains(*joint) {
+                    "unposed"
+                } else {
+                    "despawned"
+                };
+                format!("{name} {gone}")
+            })
+            .take(3)
+            .collect();
+        info!("Cloth: actor {actor} lost bones ({missing:?}); refitting its outfit");
         if let Some(rig) = rig {
             for &entity in &rig.spawned {
                 commands.entity(entity).despawn();
@@ -348,11 +397,22 @@ fn build_rigs(
                     joints.clone(),
                 ));
             }
+            let layer = plan.layer.and_then(|at| match plan.def.frames {
+                solver::Frames::Grid { columns, rows, .. } => {
+                    let angles: Vec<f32> = plan.def.particles[..columns]
+                        .iter()
+                        .map(|p| (p.rest.x - at.origin.x).atan2(p.rest.z - at.origin.z))
+                        .collect();
+                    Some(Layer::new(rows, &angles))
+                }
+                _ => None,
+            });
             pieces.push(RigPiece {
                 sim: PieceSim::new(&plan.def),
                 joints,
                 poses: Vec::new(),
                 near: Vec::new(),
+                layer,
             });
         }
         for (plan, uploaded) in built.plan.items.iter().zip(&built.items) {
@@ -398,6 +458,8 @@ fn build_rigs(
                 last_root: None,
                 simulated: false,
                 time_us: 0.0,
+                shake: (0.0, 0),
+                piece_shake: Vec::new(),
             },
             ClothWorn,
         ));
@@ -586,11 +648,13 @@ fn simulate_cloth(
     let started = Instant::now();
     let camera = cameras.iter().next().map(|c| c.translation());
     let dt = time.delta_secs();
+    let seconds = time.elapsed_secs_wrapped();
     let wind_direction = wind
         .as_ref()
         .map_or(Vec2::ZERO, |w| w.direction.normalize_or_zero());
     let offset = wind_origin.map_or([0.0; 2], |o| o.world_xz);
     let settings = settings.clone();
+    let last_wind = std::sync::Mutex::new(Vec3A::ZERO);
     rigs.par_iter_mut().for_each(|(mut rig, root)| {
         let begun = Instant::now();
         let rig = &mut *rig;
@@ -606,19 +670,35 @@ fn simulate_cloth(
             .is_none_or(|last| last.distance(root) > (8.0 * dt).max(1.0));
         rig.last_root = Some(root);
         let simulate = settings.enabled && !far && !jumped;
-        let strength = wind.as_ref().map_or(0.0, |w| {
-            w.sample_force(Vec2::new(
-                (f64::from(root.x) + offset[0]) as f32,
-                (f64::from(root.z) + offset[1]) as f32,
-            ))
-        });
+        let blowing = match settings.wind_override {
+            Some((bearing, speed)) => {
+                let (s, c) = bearing.to_radians().sin_cos();
+                Vec3A::new(s, 0.0, c) * speed
+            }
+            None => {
+                let strength = wind.as_ref().map_or(0.0, |w| {
+                    w.sample_force(Vec2::new(
+                        (f64::from(root.x) + offset[0]) as f32,
+                        (f64::from(root.z) + offset[1]) as f32,
+                    ))
+                });
+                Vec3A::new(wind_direction.x, 0.0, wind_direction.y)
+                    * (strength * settings.wind_speed)
+            }
+        };
+        if simulate && let Ok(mut last) = last_wind.lock() {
+            *last = blowing;
+        }
         let params = StepParams {
             dt,
             substep_hz: settings.substep_hz,
             gravity: Vec3A::new(0.0, -settings.gravity, 0.0),
-            wind: Vec3A::new(wind_direction.x, 0.0, wind_direction.y)
-                * (strength * settings.wind_speed),
+            wind: blowing,
+            flutter: settings.flutter,
+            time: seconds,
             inertia: settings.inertia,
+            damping: settings.damping,
+            lift: settings.lift,
         };
         let plan = &rig.outfit.plan;
         for (k, c) in plan.capsules.iter().enumerate() {
@@ -635,7 +715,11 @@ fn simulate_cloth(
             rig.capsules[k] = (before, now);
         }
         let mut provided = plan.capsules.len();
-        for (piece, state) in plan.pieces.iter().zip(&mut rig.pieces) {
+        rig.shake = (0.0, 0);
+        rig.piece_shake.clear();
+        for (k, piece) in plan.pieces.iter().enumerate() {
+            let (inner, rest) = rig.pieces.split_at_mut(k);
+            let state = &mut rest[0];
             if simulate {
                 state.near.clear();
                 state.near.extend(
@@ -645,13 +729,33 @@ fn simulate_cloth(
                         .filter(|(_, g)| *g & piece.collides != 0)
                         .map(|(c, _)| *c),
                 );
+                let layers: Vec<&Layer> = if piece.collides & body::group::LAYERS != 0 {
+                    inner.iter().filter_map(|p| p.layer.as_ref()).collect()
+                } else {
+                    Vec::new()
+                };
                 state
                     .sim
-                    .step(&piece.def, &rig.deforms, &state.near, &params);
+                    .step(&piece.def, &rig.deforms, &state.near, &layers, &params);
+                if piece.def.particles.iter().any(|p| !p.pinned) {
+                    rig.shake.0 += state.sim.shake();
+                    rig.shake.1 += 1;
+                }
+                rig.piece_shake
+                    .push((state.sim.shake(), state.sim.target_shake()));
             } else {
                 state.sim.reset(&piece.def, &rig.deforms);
             }
             state.sim.joints(&piece.def, &rig.deforms, &mut state.poses);
+            if let (Some(layer), Some(at)) = (state.layer.as_mut(), piece.layer) {
+                let deform = rig.deforms[at.bone as usize];
+                let (_, turn, _) = deform.to_scale_rotation_translation();
+                layer.update(
+                    state.sim.positions(),
+                    deform.transform_point3a(at.origin),
+                    bevy::math::Mat3A::from_quat(turn),
+                );
+            }
             let x = state.sim.positions();
             for p in &piece.provides {
                 let now = Capsule::new(x[p.a as usize], x[p.b as usize], p.radius);
@@ -669,8 +773,29 @@ fn simulate_cloth(
     });
 
     let (mut characters, mut simulated, mut particles, mut work, mut worst) = (0, 0, 0, 0.0, 0f32);
+    let mut shake = (0.0, 0);
+    let mut by_piece: Vec<(PieceShake, usize)> = Vec::new();
     for (rig, _) in &rigs {
         characters += 1;
+        shake.0 += rig.shake.0;
+        shake.1 += rig.shake.1;
+        for (plan, &(cloth, animation)) in rig.outfit.plan.pieces.iter().zip(&rig.piece_shake) {
+            match by_piece.iter_mut().find(|(p, _)| p.name == plan.name) {
+                Some((entry, n)) => {
+                    entry.cloth += cloth;
+                    entry.animation += animation;
+                    *n += 1;
+                }
+                None => by_piece.push((
+                    PieceShake {
+                        name: plan.name,
+                        cloth,
+                        animation,
+                    },
+                    1,
+                )),
+            }
+        }
         simulated += usize::from(rig.simulated);
         work += rig.time_us;
         worst = worst.max(rig.time_us);
@@ -697,6 +822,16 @@ fn simulate_cloth(
         mean_frame_us: stats.mean_frame_us + (frame_us - stats.mean_frame_us) * (dt * 2.0).min(1.0),
         work_us: work,
         worst_character_us: worst,
+        wind: last_wind.into_inner().map_or(Vec3::ZERO, Vec3::from),
+        shake_mm: shake.0 / shake.1.max(1) as f32 * 1000.0,
+        shake_by_piece: by_piece
+            .into_iter()
+            .map(|(p, n)| PieceShake {
+                cloth: p.cloth / n as f32 * 1000.0,
+                animation: p.animation / n as f32 * 1000.0,
+                ..p
+            })
+            .collect(),
     };
 }
 

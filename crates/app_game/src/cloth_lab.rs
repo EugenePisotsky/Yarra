@@ -53,11 +53,10 @@ impl ClothLabOptions {
                         "greatsword" => choice.greatsword = true,
                         "bow" => choice.bow = true,
                         "sword" => choice.side_sword = true,
-                        "over" => choice.weapons_over_cloak = true,
                         other => {
                             return Err(format!(
                                 "--cloth-lab-outfit: unknown piece {other:?}; use all, none or \
-                                 cloak,skirt,ponytail,greatsword,bow,sword,over"
+                                 cloak,skirt,ponytail,greatsword,bow,sword"
                             ));
                         }
                     }
@@ -109,7 +108,7 @@ pub(crate) struct ClothLab {
 #[derive(Resource, Default)]
 struct PanelHasPointer(bool);
 
-/// Walks an octagon: each arrival turns 45° and heads on.
+/// Walks an octagon, turning 45° at each corner without stopping.
 #[derive(Component)]
 struct LabWalker {
     heading: Vec2,
@@ -169,6 +168,27 @@ pub(crate) fn install(app: &mut App) -> Result<(), String> {
             // Controls stay unlocked: locked controls also stop every motor, and the walk is
             // the point.
             app.world_mut().resource_mut::<RuntimeSettings>().show_ui = false;
+            // Unattended tuning runs: CLOTH_LAB_TUNE="damping=2,lift=0.5,flutter=0,inertia=0.6".
+            if let Ok(tune) = std::env::var("CLOTH_LAB_TUNE") {
+                let mut settings = engine::ClothSettings::default();
+                for pair in tune.split(',') {
+                    let Some((key, value)) = pair.split_once('=') else {
+                        continue;
+                    };
+                    let value: f32 = value
+                        .parse()
+                        .map_err(|_| format!("CLOTH_LAB_TUNE {pair}"))?;
+                    match key {
+                        "damping" => settings.damping = value,
+                        "lift" => settings.lift = value,
+                        "flutter" => settings.flutter = value,
+                        "inertia" => settings.inertia = Some(value),
+                        "substeps" => settings.substep_hz = value,
+                        _ => return Err(format!("CLOTH_LAB_TUNE: unknown {key}")),
+                    }
+                }
+                app.insert_resource(settings);
+            }
             app.insert_resource(Shots::new(dir))
                 .add_systems(Update, shoot.after(drive_camera));
         }
@@ -243,7 +263,7 @@ fn walk(lab: Res<ClothLab>, mut walkers: Query<(&Transform, &mut MoveIntent, &mu
             walker.gait = Some(lab.gait);
             intent.clear();
         }
-        if lab.gait == LabGait::Idle || intent.destination().is_some() {
+        if lab.gait == LabGait::Idle {
             continue;
         }
         let jog = match lab.gait {
@@ -251,11 +271,22 @@ fn walk(lab: Res<ClothLab>, mut walkers: Query<(&Transform, &mut MoveIntent, &mu
             LabGait::Mixed => walker.corner / 2 % 2 == 1,
             _ => false,
         };
+        // The next corner before reaching this one, so walkers turn without stopping.
+        let ahead = if jog { 2.5 } else { 1.6 };
+        if let Some(corner) = intent.destination() {
+            let left = Vec2::new(
+                corner.x - transform.translation.x,
+                corner.z - transform.translation.z,
+            );
+            if left.length() > ahead {
+                continue;
+            }
+        }
         let side = if jog { 4.5 } else { 3.0 };
         walker.heading = Vec2::from_angle(std::f32::consts::FRAC_PI_4).rotate(walker.heading);
         walker.corner += 1;
-        let target =
-            transform.translation + Vec3::new(walker.heading.x, 0.0, walker.heading.y) * side;
+        let from = intent.destination().unwrap_or(transform.translation);
+        let target = from + Vec3::new(walker.heading.x, 0.0, walker.heading.y) * side;
         if jog {
             intent.jog_to(target);
         } else {
@@ -309,7 +340,7 @@ fn log_stats(time: Res<Time<Real>>, mut lab: ResMut<ClothLab>, stats: Res<ClothS
     if lab.log_timer.tick(time.delta()).just_finished() && stats.characters > 0 {
         info!(
             "CLOTH_LAB characters={} simulated={} particles={} colliders={} pass_us={:.0} \
-             mean_pass_us={:.0} work_us={:.0} worst_character_us={:.0}",
+             mean_pass_us={:.0} work_us={:.0} worst_character_us={:.0} wind_mps={:.1}",
             stats.characters,
             stats.simulated,
             stats.particles,
@@ -317,23 +348,59 @@ fn log_stats(time: Res<Time<Real>>, mut lab: ResMut<ClothLab>, stats: Res<ClothS
             stats.frame_us,
             stats.mean_frame_us,
             stats.work_us,
-            stats.worst_character_us
+            stats.worst_character_us,
+            stats.wind.length()
         );
     }
 }
 
-/// One saved view: bearing from the player's facing, distance, and whether colliders show.
-const SHOTS: [(&str, f32, f32, bool); 6] = [
-    ("back", 180.0, 3.4, false),
-    ("back_colliders", 180.0, 3.4, true),
-    ("back_left", 135.0, 3.4, false),
-    ("side", 90.0, 3.4, false),
-    ("front", 25.0, 3.4, false),
-    ("group", 160.0, 9.0, false),
+/// One saved view.
+struct Shot {
+    name: &'static str,
+    /// The camera's bearing from the player's facing (0 looks at their face).
+    bearing: f32,
+    distance: f32,
+    colliders: bool,
+    /// Everyone stands, and the wind blows this way relative to the player's facing at
+    /// `WIND_MPS` (0 blows the way they face, so it comes from behind).
+    wind: Option<f32>,
+}
+
+const fn shot(name: &'static str, bearing: f32, distance: f32) -> Shot {
+    Shot {
+        name,
+        bearing,
+        distance,
+        colliders: false,
+        wind: None,
+    }
+}
+
+const SHOTS: [Shot; 8] = [
+    shot("back", 180.0, 3.4),
+    Shot {
+        colliders: true,
+        ..shot("back_colliders", 180.0, 3.4)
+    },
+    shot("back_left", 135.0, 3.4),
+    shot("side", 90.0, 3.4),
+    shot("front", 25.0, 3.4),
+    shot("group", 160.0, 9.0),
+    Shot {
+        wind: Some(180.0),
+        ..shot("wind_from_front", 90.0, 3.6)
+    },
+    Shot {
+        wind: Some(-90.0),
+        ..shot("wind_from_left", 180.0, 3.6)
+    },
 ];
+const WIND_MPS: f32 = 10.0;
 /// Walking time before the first view, then between views.
-const SETTLE_SECONDS: f32 = 8.0;
-const SHOT_SECONDS: f32 = 2.5;
+const SETTLE_SECONDS: f32 = 14.0;
+/// Walking jitter is measured over this window, before any view is framed or captured.
+const MEASURE_SECONDS: (f32, f32) = (5.0, 11.5);
+const SHOT_SECONDS: f32 = 3.0;
 
 #[derive(Resource)]
 struct Shots {
@@ -347,6 +414,13 @@ struct Shots {
     frame_seconds: f32,
     characters: usize,
     particles: usize,
+    /// Summed shake (mm) and frames, walking and standing in the wind.
+    shake_walking: (f32, u32),
+    shake_standing: (f32, u32),
+    /// Summed shake (mm) per kind of piece, and frames, walking.
+    shake_by_piece: Vec<(engine::PieceShake, u32)>,
+    /// Steady frames in a row.
+    steady: u32,
 }
 
 impl Shots {
@@ -362,6 +436,10 @@ impl Shots {
             frame_seconds: 0.0,
             characters: 0,
             particles: 0,
+            shake_walking: (0.0, 0),
+            shake_standing: (0.0, 0),
+            shake_by_piece: Vec::new(),
+            steady: 0,
         }
     }
 }
@@ -386,7 +464,7 @@ fn shoot(
         return;
     };
     let elapsed = now - started;
-    if elapsed > SETTLE_SECONDS * 0.5 {
+    if elapsed > MEASURE_SECONDS.0 {
         shots.frames += 1;
         shots.pass_us += stats.frame_us;
         shots.worst_pass_us = shots.worst_pass_us.max(stats.frame_us);
@@ -394,14 +472,50 @@ fn shoot(
         shots.frame_seconds += time.delta_secs();
         shots.characters = stats.characters;
         shots.particles = stats.particles;
+        // Jitter only over steady frames: a hitch (a screenshot, streaming) shows as jitter in
+        // everything for the next three.
+        let ms = time.delta_secs() * 1000.0;
+        shots.steady = if (13.0..20.0).contains(&ms) {
+            shots.steady + 1
+        } else {
+            0
+        };
+        let walking = (MEASURE_SECONDS.0..MEASURE_SECONDS.1).contains(&elapsed);
+        let standing = lab.gait == LabGait::Idle;
+        if shots.steady >= 4 && (walking || standing) {
+            let phase = if standing {
+                &mut shots.shake_standing
+            } else {
+                &mut shots.shake_walking
+            };
+            phase.0 += stats.shake_mm;
+            phase.1 += 1;
+        }
+        if shots.steady >= 4 && walking {
+            for piece in &stats.shake_by_piece {
+                match shots
+                    .shake_by_piece
+                    .iter_mut()
+                    .find(|(p, _)| p.name == piece.name)
+                {
+                    Some((sum, n)) => {
+                        sum.cloth += piece.cloth;
+                        sum.animation += piece.animation;
+                        *n += 1;
+                    }
+                    None => shots.shake_by_piece.push((*piece, 1)),
+                }
+            }
+        }
     }
-    let Some(&(name, bearing, distance, colliders)) = SHOTS.get(shots.taken) else {
+    let Some(view) = SHOTS.get(shots.taken) else {
         if elapsed > SETTLE_SECONDS + SHOT_SECONDS * SHOTS.len() as f32 + 1.0 {
             let frames = shots.frames.max(1) as f32;
             let report = format!(
                 "characters {}\nparticles {}\nframes {}\nmean frame ms {:.2}\n\
                  mean cloth pass us {:.0}\nworst cloth pass us {:.0}\n\
-                 mean cloth work us (all cores) {:.0}\nmean work per character us {:.1}\n",
+                 mean cloth work us (all cores) {:.0}\nmean work per character us {:.1}\n\
+                 shake walking mm {:.3}\nshake standing in wind mm {:.3}\n",
                 shots.characters,
                 shots.particles,
                 shots.frames,
@@ -410,7 +524,19 @@ fn shoot(
                 shots.worst_pass_us,
                 shots.work_us / frames,
                 shots.work_us / frames / shots.characters.max(1) as f32,
+                shots.shake_walking.0 / shots.shake_walking.1.max(1) as f32,
+                shots.shake_standing.0 / shots.shake_standing.1.max(1) as f32,
             );
+            let mut report = report;
+            for (piece, n) in &shots.shake_by_piece {
+                let n = (*n).max(1) as f32;
+                report.push_str(&format!(
+                    "shake {} mm {:.3} (its animation {:.3})\n",
+                    piece.name,
+                    piece.cloth / n,
+                    piece.animation / n
+                ));
+            }
             info!("CLOTH_LAB shots done:\n{report}");
             if let Err(error) = std::fs::write(shots.dir.join("stats.txt"), report) {
                 error!("CLOTH_LAB could not write stats: {error}");
@@ -420,18 +546,25 @@ fn shoot(
         return;
     };
     let due = SETTLE_SECONDS + SHOT_SECONDS * shots.taken as f32;
-    // Frame the view first, take it once the camera and gizmos have settled on it.
-    if elapsed > due - SHOT_SECONDS * 0.6 {
+    // Frame the view first, take it once the camera, gizmos and wind have settled on it.
+    if elapsed > due - SHOT_SECONDS * 0.8 {
         lab.camera = Some(LabCamera {
-            bearing,
-            distance,
+            bearing: view.bearing,
+            distance: view.distance,
             pitch: 12.0,
         });
-        settings.show_colliders = colliders;
+        settings.show_colliders = view.colliders;
+        let facing = lab.facing.unwrap_or(0.0).to_degrees();
+        settings.wind_override = view.wind.map(|towards| (facing + towards, WIND_MPS));
+        if view.wind.is_some() && lab.gait != LabGait::Idle {
+            lab.gait = LabGait::Idle;
+        }
     }
     if elapsed > due {
         use bevy::render::view::screenshot::{Screenshot, save_to_disk};
-        let path = shots.dir.join(format!("{:02}_{name}.png", shots.taken));
+        let path = shots
+            .dir
+            .join(format!("{:02}_{}.png", shots.taken, view.name));
         info!("CLOTH_LAB shot {}", path.display());
         commands
             .spawn(Screenshot::primary_window())
