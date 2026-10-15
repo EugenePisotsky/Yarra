@@ -8,8 +8,9 @@
 //! (one with the colliders drawn) and the cloth timings, then exits; `--cloth-lab-video DIR`
 //! films takes instead ([`video`]).
 //!
-//! The cloak is the one draped in Blender (`tools/cloth/author_test_cape.py`) when its file is
-//! there, else the generated one; `--cloth-lab-cape` chooses. The cloak and the skirt wear
+//! The cloak and the skirt are those draped in Blender (`tools/cloth/author_test_garments.py`)
+//! when their files are there, else the generated ones; `--cloth-lab-cape` and
+//! `--cloth-lab-skirt` choose. The cloak and the skirt wear
 //! fabrics made by `tools/cloth/import_fabric.py` when those are there, else plain colours.
 mod panel;
 mod video;
@@ -24,10 +25,11 @@ use engine::{
 use std::path::PathBuf;
 use std::sync::Arc;
 
-/// The draped test cape, under the asset root.
+/// The draped test cape and skirt, under the asset root.
 const DRAPED_CAPE: &str = "local/characters/female_main/test_cape.cloth.json";
+const DRAPED_SKIRT: &str = "local/characters/female_main/test_skirt.cloth.json";
 /// Fabrics for the cloak and the skirt, asset folders.
-const CAPE_FABRIC: &str = "local/fabrics/black_twill";
+const CAPE_FABRIC: &str = "local/fabrics/denim";
 const SKIRT_FABRIC: &str = "local/fabrics/gray_twill";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,15 +49,46 @@ pub(crate) struct ClothLabOptions {
     pub outfit: OutfitChoice,
     pub shots: Option<PathBuf>,
     pub video: Option<PathBuf>,
-    pub cape: LabCape,
+    pub cape: LabGarment,
+    pub skirt: LabGarment,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum LabCape {
-    /// The draped cape if its file is there, else the generated one.
+pub(crate) enum LabGarment {
+    /// The draped one if its file is there, else the generated one.
     Draped,
     Generated,
     File(PathBuf),
+}
+
+impl LabGarment {
+    fn parse(args: &Args, flag: &str) -> Result<Self, String> {
+        Ok(match args.value(flag)? {
+            None | Some("draped") => Self::Draped,
+            Some("generated") => Self::Generated,
+            Some(path) => Self::File(path.into()),
+        })
+    }
+
+    /// The draped garment chosen, if any: `default` under the asset root unless given a file.
+    fn load(&self, flag: &str, default: PathBuf) -> Result<Option<Arc<engine::Garment>>, String> {
+        let path = match self {
+            Self::Generated => return Ok(None),
+            Self::Draped => default,
+            Self::File(path) => path.clone(),
+        };
+        match engine::Garment::load(&path) {
+            Ok(garment) => {
+                info!("CLOTH_LAB draped {}", path.display());
+                Ok(Some(Arc::new(garment)))
+            }
+            Err(error) if *self == Self::Draped => {
+                warn!("CLOTH_LAB the generated one instead of a draped one: {error}");
+                Ok(None)
+            }
+            Err(error) => Err(format!("{flag} {error}")),
+        }
+    }
 }
 
 impl ClothLabOptions {
@@ -102,11 +135,8 @@ impl ClothLabOptions {
             outfit,
             shots: args.path("--cloth-lab-shots"),
             video: args.path("--cloth-lab-video"),
-            cape: match args.value("--cloth-lab-cape")? {
-                None | Some("draped") => LabCape::Draped,
-                Some("generated") => LabCape::Generated,
-                Some(path) => LabCape::File(path.into()),
-            },
+            cape: LabGarment::parse(args, "--cloth-lab-cape")?,
+            skirt: LabGarment::parse(args, "--cloth-lab-skirt")?,
         }))
     }
 }
@@ -193,24 +223,15 @@ pub(crate) fn install(app: &mut App) -> Result<(), String> {
         )
         .add_systems(Update, drive_camera.after(GameplaySystems::CameraFollow));
     let root = crate::resolve_asset_root();
-    let mut garments = engine::ClothGarments::default();
-    let path = match &options.cape {
-        LabCape::Generated => None,
-        LabCape::Draped => Some(root.join(DRAPED_CAPE)),
-        LabCape::File(path) => Some(path.clone()),
+    let mut garments = engine::ClothGarments {
+        cloak: options
+            .cape
+            .load("--cloth-lab-cape", root.join(DRAPED_CAPE))?,
+        skirt: options
+            .skirt
+            .load("--cloth-lab-skirt", root.join(DRAPED_SKIRT))?,
+        ..default()
     };
-    if let Some(path) = path {
-        match engine::Garment::load(&path) {
-            Ok(cape) => {
-                info!("CLOTH_LAB draped cape {}", path.display());
-                garments.cloak = Some(Arc::new(cape));
-            }
-            Err(error) if options.cape == LabCape::Draped => {
-                warn!("CLOTH_LAB no draped cape, the generated one instead: {error}");
-            }
-            Err(error) => return Err(format!("--cloth-lab-cape {error}")),
-        }
-    }
     for (fabric, folder) in [
         (&mut garments.cloak_fabric, CAPE_FABRIC),
         (&mut garments.skirt_fabric, SKIRT_FABRIC),

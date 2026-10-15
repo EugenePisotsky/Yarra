@@ -516,6 +516,13 @@ const FLAGS: &[Flag] = &[
     )
     .needs(CLOTH),
     flag(
+        "--cloth-lab-skirt",
+        "draped|generated|FILE",
+        ClothLab,
+        "The skirt: draped in Blender (default, if authored), generated, or a .cloth.json",
+    )
+    .needs(CLOTH),
+    flag(
         "--grass-candidate-reference",
         "",
         GrassReference,

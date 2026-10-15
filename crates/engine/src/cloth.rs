@@ -65,6 +65,7 @@ pub struct TestOutfit(pub OutfitChoice);
 #[derive(Resource, Clone, Default)]
 pub struct ClothGarments {
     pub cloak: Option<Arc<Garment>>,
+    pub skirt: Option<Arc<Garment>>,
     pub cloak_fabric: Option<Fabric>,
     pub skirt_fabric: Option<Fabric>,
 }
@@ -364,7 +365,13 @@ fn build_rigs(
                     .iter()
                     .map(|(name, (_, ibm))| (name.clone(), ibm.inverse()))
                     .collect();
-                let plan = outfit::plan(outfit.0, &binds, &body, garments.cloak.as_deref());
+                let plan = outfit::plan(
+                    outfit.0,
+                    &binds,
+                    &body,
+                    garments.cloak.as_deref(),
+                    garments.skirt.as_deref(),
+                );
                 let built = Arc::new(upload(plan, skeleton, &mut meshes, &mut bindposes));
                 cache.outfits.insert(key, built.clone());
                 built

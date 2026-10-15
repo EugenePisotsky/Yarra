@@ -1,4 +1,4 @@
-//! Garments authored offline (`tools/cloth/author_test_cape.py`): a sheet draped over the body
+//! Garments authored offline (`tools/cloth/author_test_garments.py`): a sheet draped over the body
 //! in Blender, in a pose of its own (arms down: draped over the bind pose's raised arms a cape
 //! tents out from them). The solver moves its coarse grid of particles; the mesh drawn is the
 //! fine drape, each vertex skinned bilinearly to the four particles of its grid cell, so the
@@ -17,6 +17,9 @@ pub struct Garment {
     version: u32,
     pub(crate) columns: usize,
     pub(crate) rows: usize,
+    /// Rows close round the body (a skirt): the last column's neighbour is the first.
+    #[serde(default)]
+    pub(crate) wrap: bool,
     /// Each bone's skinning transform in the pose it was draped in, an affine's columns.
     #[serde(default)]
     pose: HashMap<String, [f32; 12]>,
@@ -144,14 +147,16 @@ impl Garment {
             indices: mesh.indices.clone(),
             ..MeshData::default()
         };
+        // Round a wrapped grid the cell after the last column is the first's.
+        let cells = if self.wrap { columns } else { columns - 1 };
         for &[u, v] in &mesh.grid {
-            let c0 = (u.max(0.0).floor() as usize).min(columns - 2);
+            let c0 = (u.max(0.0).floor() as usize).min(cells - 1);
             let r0 = (v.max(0.0).floor() as usize).min(rows - 2);
             let (fu, fv) = (
                 (u - c0 as f32).clamp(0.0, 1.0),
                 (v - r0 as f32).clamp(0.0, 1.0),
             );
-            let at = |r: usize, c: usize| (r * columns + c) as u16;
+            let at = |r: usize, c: usize| (r * columns + c % columns) as u16;
             data.joints.push([
                 at(r0, c0),
                 at(r0, c0 + 1),
@@ -187,6 +192,7 @@ mod tests {
             version: VERSION,
             columns: 3,
             rows: 3,
+            wrap: false,
             pose: HashMap::new(),
             particles: (0..9)
                 .map(|i| particle((i % 3) as f32, -((i / 3) as f32)))
@@ -212,6 +218,19 @@ mod tests {
         // The last corner falls in the last cell, wholly on its far corner.
         assert_eq!(mesh.joints[1], [4, 5, 7, 8]);
         assert_eq!(mesh.weights[1], [0.0, 0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn a_wrapped_grid_closes_its_last_cell_on_the_first_column() {
+        let mut garment = garment();
+        garment.wrap = true;
+        garment.mesh.grid = vec![[2.5, 0.5], [3.0, 1.0]];
+        let mesh = garment.mesh();
+        assert_eq!(mesh.joints[0], [2, 0, 5, 3]);
+        assert_eq!(mesh.weights[0], [0.25; 4]);
+        // The seam's own vertex: wholly on the first column.
+        assert_eq!(mesh.joints[1], [5, 3, 8, 6]);
+        assert_eq!(mesh.weights[1], [0.0, 1.0, 0.0, 0.0]);
     }
 
     #[test]

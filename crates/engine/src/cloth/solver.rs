@@ -171,6 +171,9 @@ pub(crate) struct PieceDef {
     pub shape: Vec<Vec3A>,
     /// Particles that rest closer to a collider than their radius, ordered by particle.
     pub sinks: Vec<Sink>,
+    /// How far outside inner layers each particle keeps, where it was draped over them closer
+    /// than its radius and [`LAYER_GAP`]. Empty: that for every particle.
+    pub layer_reach: Vec<f32>,
 }
 
 /// A particle's radius against one collider (its index among those the piece collides with)
@@ -255,7 +258,7 @@ impl Capsule {
         }
     }
 
-    fn closest(&self, p: Vec3A) -> Vec3A {
+    pub fn closest(&self, p: Vec3A) -> Vec3A {
         let axis = self.b - self.a;
         let length2 = axis.length_squared();
         if length2 <= f32::EPSILON {
@@ -315,7 +318,7 @@ pub(crate) struct Layer {
 const LAYER_BINS: usize = 48;
 /// Clearance kept beyond a particle's radius from the layer under it: the rendered surfaces
 /// of both garments sag a little between their particles.
-const LAYER_GAP: f32 = 0.035;
+pub(crate) const LAYER_GAP: f32 = 0.035;
 
 /// A monotonic stand-in for the angle of (x, z) from +Z towards +X, in [0, 4): cheaper than
 /// `atan2`, and lookups only need the same measure both ways.
@@ -412,7 +415,7 @@ impl Layer {
     }
 
     /// Where `x` must go to lie `reach` outside the garment, if it is inside.
-    fn push_out(&self, x: Vec3A, reach: f32) -> Option<Vec3A> {
+    pub fn push_out(&self, x: Vec3A, reach: f32) -> Option<Vec3A> {
         let local = self.inverse * (x - self.origin);
         if local.y > self.top || local.y < self.bottom {
             return None;
@@ -964,8 +967,7 @@ impl PieceSim {
                 continue;
             }
             if let Some((origin, up, reach)) = self.axis
-                && let Some(out) =
-                    radial_push(self.x[i], &capsule, particles[i].radius, origin, up, reach)
+                && let Some(out) = radial_push(self.x[i], &capsule, radius, origin, up, reach)
             {
                 self.x[i] += out * params.contact;
                 self.contacts[i] = out.normalize_or_zero();
@@ -1009,7 +1011,12 @@ impl PieceSim {
                 if p.pinned {
                     continue;
                 }
-                if let Some(outside) = layer.push_out(self.x[i], p.radius + LAYER_GAP) {
+                let reach = def
+                    .layer_reach
+                    .get(i)
+                    .copied()
+                    .unwrap_or(p.radius + LAYER_GAP);
+                if let Some(outside) = layer.push_out(self.x[i], reach) {
                     self.contacts[i] = (outside - self.x[i]).normalize_or_zero();
                     let push = outside - self.x[i];
                     self.x[i] += push * params.contact;
@@ -1113,7 +1120,7 @@ fn independent_batches(
 /// bulk capsule, that keeps the piece outside their convex hull: it spans the gap between the
 /// legs as cloth does, and a particle never hops from one side of a leg to the other. A leaning
 /// capsule's slice is an ellipse, longer along its lean.
-fn radial_push(
+pub(crate) fn radial_push(
     x: Vec3A,
     capsule: &Capsule,
     radius: f32,
@@ -1264,6 +1271,7 @@ mod tests {
             self_collide: false,
             shape: Vec::new(),
             sinks: Vec::new(),
+            layer_reach: Vec::new(),
         }
     }
 
@@ -1515,6 +1523,7 @@ mod tests {
             self_collide: false,
             shape: Vec::new(),
             sinks: Vec::new(),
+            layer_reach: Vec::new(),
         };
         let deforms = [Affine3A::IDENTITY];
         let mut sim = PieceSim::new(&def);
@@ -1604,6 +1613,7 @@ mod tests {
                 self_collide: false,
                 shape: Vec::new(),
                 sinks: Vec::new(),
+                layer_reach: Vec::new(),
             }
         }
         // The lab's skirt and cape; the cape stays outside the skirt.
