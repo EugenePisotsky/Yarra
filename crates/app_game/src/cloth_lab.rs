@@ -9,7 +9,8 @@
 //! films takes instead ([`video`]).
 //!
 //! The cloak is the one draped in Blender (`tools/cloth/author_test_cape.py`) when its file is
-//! there, else the generated one; `--cloth-lab-cape` chooses.
+//! there, else the generated one; `--cloth-lab-cape` chooses. The cloak and the skirt wear
+//! fabrics made by `tools/cloth/import_fabric.py` when those are there, else plain colours.
 mod panel;
 mod video;
 
@@ -25,6 +26,9 @@ use std::sync::Arc;
 
 /// The draped test cape, under the asset root.
 const DRAPED_CAPE: &str = "local/characters/female_main/test_cape.cloth.json";
+/// Fabrics for the cloak and the skirt, asset folders.
+const CAPE_FABRIC: &str = "local/fabrics/black_twill";
+const SKIRT_FABRIC: &str = "local/fabrics/gray_twill";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LabGait {
@@ -188,18 +192,18 @@ pub(crate) fn install(app: &mut App) -> Result<(), String> {
                 .before(GameplaySystems::CameraInput),
         )
         .add_systems(Update, drive_camera.after(GameplaySystems::CameraFollow));
+    let root = crate::resolve_asset_root();
+    let mut garments = engine::ClothGarments::default();
     let path = match &options.cape {
         LabCape::Generated => None,
-        LabCape::Draped => Some(crate::resolve_asset_root().join(DRAPED_CAPE)),
+        LabCape::Draped => Some(root.join(DRAPED_CAPE)),
         LabCape::File(path) => Some(path.clone()),
     };
     if let Some(path) = path {
         match engine::Garment::load(&path) {
             Ok(cape) => {
                 info!("CLOTH_LAB draped cape {}", path.display());
-                app.insert_resource(engine::ClothGarments {
-                    cloak: Some(Arc::new(cape)),
-                });
+                garments.cloak = Some(Arc::new(cape));
             }
             Err(error) if options.cape == LabCape::Draped => {
                 warn!("CLOTH_LAB no draped cape, the generated one instead: {error}");
@@ -207,6 +211,16 @@ pub(crate) fn install(app: &mut App) -> Result<(), String> {
             Err(error) => return Err(format!("--cloth-lab-cape {error}")),
         }
     }
+    for (fabric, folder) in [
+        (&mut garments.cloak_fabric, CAPE_FABRIC),
+        (&mut garments.skirt_fabric, SKIRT_FABRIC),
+    ] {
+        match engine::Fabric::load(&root, folder) {
+            Ok(loaded) => *fabric = Some(loaded),
+            Err(error) => info!("CLOTH_LAB a plain colour instead of a fabric: {error}"),
+        }
+    }
+    app.insert_resource(garments);
     if !unattended {
         panel::install(app);
         return Ok(());

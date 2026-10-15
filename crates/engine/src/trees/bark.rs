@@ -111,7 +111,7 @@ fn opt_in(
     }
 }
 
-pub(super) fn load_tiling(server: &AssetServer, path: &str, srgb: bool) -> Handle<Image> {
+pub(crate) fn load_tiling(server: &AssetServer, path: &str, srgb: bool) -> Handle<Image> {
     server
         .load_builder()
         .with_settings(move |settings: &mut ImageLoaderSettings| {

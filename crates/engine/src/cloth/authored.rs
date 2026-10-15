@@ -24,6 +24,41 @@ pub struct Garment {
     mesh: GarmentMesh,
 }
 
+/// A fabric made by `tools/cloth/import_fabric.py`: base colour, normal and roughness maps
+/// under an asset folder, and the size one tile covers. Garment texture coordinates are metres.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Fabric {
+    /// Asset path of the folder.
+    pub folder: String,
+    pub tile: f32,
+}
+
+impl Fabric {
+    /// Reads `folder/fabric.json` under `assets` (the asset root).
+    pub fn load(assets: &Path, folder: &str) -> Result<Self, String> {
+        #[derive(Deserialize)]
+        struct Info {
+            tile: f32,
+        }
+        let path = assets.join(folder).join("fabric.json");
+        let text =
+            std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let info: Info =
+            serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+        if !info.tile.is_finite() || info.tile <= 0.0 {
+            return Err(format!("{}: tile {}", path.display(), info.tile));
+        }
+        Ok(Self {
+            folder: folder.trim_end_matches('/').to_owned(),
+            tile: info.tile,
+        })
+    }
+
+    pub(crate) fn map(&self, name: &str) -> String {
+        format!("{}/{name}.ktx2", self.folder)
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub(crate) struct GarmentParticle {
     /// Bind space: where its bones carry it from.

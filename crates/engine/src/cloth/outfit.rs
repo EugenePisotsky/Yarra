@@ -1187,7 +1187,9 @@ impl MeshData {
 
     /// A sheet over a grid piece's particles, `per_cell` quads along each cell edge, each
     /// vertex carried bilinearly by its cell's four corner joints. Normals face away from the
-    /// vertical axis through `axis` (XZ), out from the body.
+    /// vertical axis through `axis` (XZ), out from the body. Texture coordinates are metres at
+    /// rest, along the rows and down the columns; round a wrapped sheet they are a whole number
+    /// of metres, so a fabric meets itself at the seam.
     fn add_sheet(&mut self, def: &PieceDef, per_cell: usize, axis: Vec2) {
         let Frames::Grid {
             columns,
@@ -1225,6 +1227,25 @@ impl MeshData {
             }
         }
         let at = |u: usize, v: usize| grid[v * width + u].0;
+        let mut along = vec![0.0f32; width * height];
+        let mut down = vec![0.0f32; width * height];
+        for v in 0..height {
+            for u in 1..width {
+                along[v * width + u] = along[v * width + u - 1] + at(u, v).distance(at(u - 1, v));
+            }
+            if wrap {
+                let round = along[v * width + width - 1];
+                let whole = round.round().max(1.0);
+                for u in 0..width {
+                    along[v * width + u] *= whole / round.max(1e-6);
+                }
+            }
+        }
+        for v in 1..height {
+            for u in 0..width {
+                down[v * width + u] = down[(v - 1) * width + u] + at(u, v).distance(at(u, v - 1));
+            }
+        }
         let first = self.positions.len() as u32;
         for v in 0..height {
             for u in 0..width {
@@ -1236,10 +1257,7 @@ impl MeshData {
                 if normal.dot(out) < 0.0 {
                     normal = -normal;
                 }
-                let uv = [
-                    u as f32 / (width - 1) as f32,
-                    v as f32 / (height - 1) as f32,
-                ];
+                let uv = [along[v * width + u], down[v * width + u]];
                 self.vertex(*position, normal, uv, influences);
             }
         }

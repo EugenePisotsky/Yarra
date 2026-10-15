@@ -13,7 +13,7 @@ mod body;
 mod outfit;
 mod solver;
 
-pub use authored::Garment;
+pub use authored::{Fabric, Garment};
 pub use outfit::OutfitChoice;
 
 use crate::{WorldViewCamera, character::CharacterPresentationReady};
@@ -60,10 +60,13 @@ impl Plugin for ClothPlugin {
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TestOutfit(pub OutfitChoice);
 
-/// Garments authored offline that replace the generated ones (see [`Garment`]).
+/// Garments authored offline that replace the generated ones (see [`Garment`]), and fabrics
+/// for the cloak and the skirt in place of plain colours.
 #[derive(Resource, Clone, Default)]
 pub struct ClothGarments {
     pub cloak: Option<Arc<Garment>>,
+    pub cloak_fabric: Option<Fabric>,
+    pub skirt_fabric: Option<Fabric>,
 }
 
 /// Added once an actor's outfit is built and simulating.
@@ -316,6 +319,7 @@ fn build_rigs(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut bindposes: ResMut<Assets<SkinnedMeshInverseBindposes>>,
+    server: Res<AssetServer>,
     garments: Res<ClothGarments>,
     mut actors: Query<(
         Entity,
@@ -327,6 +331,7 @@ fn build_rigs(
     // Other garments: every outfit is planned again.
     if garments.is_changed() && !garments.is_added() {
         cache.outfits.clear();
+        cache.looks.clear();
     }
     for (actor, outfit, skeleton, rig) in &mut actors {
         if rig.as_ref().is_some_and(|rig| rig.choice == outfit.0) && !garments.is_changed() {
@@ -374,7 +379,7 @@ fn build_rigs(
             cache
                 .looks
                 .entry(look)
-                .or_insert_with(|| materials.add(material(look)));
+                .or_insert_with(|| materials.add(material(look, &garments, &server)));
         }
 
         if let Some(rig) = &rig {
@@ -621,13 +626,52 @@ fn to_mesh(data: &MeshData) -> Mesh {
     )
     .with_inserted_attribute(Mesh::ATTRIBUTE_JOINT_WEIGHT, data.weights.clone())
     .with_inserted_indices(Indices::U32(data.indices.clone()));
+    // For fabrics' normal maps.
+    if let Err(error) = mesh.generate_tangents() {
+        warn!("Cloth: no tangents for a generated mesh: {error}");
+    }
     if let Err(error) = mesh.generate_skinned_mesh_bounds() {
         warn!("Cloth: no skinned bounds for a generated mesh: {error}");
     }
     mesh
 }
 
-fn material(look: Look) -> StandardMaterial {
+fn material(look: Look, garments: &ClothGarments, server: &AssetServer) -> StandardMaterial {
+    // The fabric's colour as it is for the cloak; the skirt's tinted towards undyed linen.
+    let fabric = match look {
+        Look::Wool => garments.cloak_fabric.as_ref().map(|f| (f, [1.0, 1.0, 1.0])),
+        Look::Linen => garments
+            .skirt_fabric
+            .as_ref()
+            .map(|f| (f, [0.85, 0.74, 0.58])),
+        _ => None,
+    };
+    if let Some((fabric, tint)) = fabric {
+        return StandardMaterial {
+            base_color: Color::srgb(tint[0], tint[1], tint[2]),
+            base_color_texture: Some(crate::trees::load_tiling(
+                server,
+                &fabric.map("color"),
+                true,
+            )),
+            normal_map_texture: Some(crate::trees::load_tiling(
+                server,
+                &fabric.map("normal"),
+                false,
+            )),
+            metallic_roughness_texture: Some(crate::trees::load_tiling(
+                server,
+                &fabric.map("roughness"),
+                false,
+            )),
+            perceptual_roughness: 1.0,
+            metallic: 0.0,
+            uv_transform: bevy::math::Affine2::from_scale(Vec2::splat(1.0 / fabric.tile)),
+            double_sided: true,
+            cull_mode: None,
+            ..default()
+        };
+    }
     let (rgb, roughness, metallic, sheet) = match look {
         Look::Wool => ([0.42, 0.10, 0.07], 0.95, 0.0, true),
         Look::Linen => ([0.36, 0.31, 0.22], 0.9, 0.0, true),

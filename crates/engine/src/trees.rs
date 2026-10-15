@@ -17,6 +17,7 @@ mod material;
 mod scene_tests;
 mod tuning;
 mod wind;
+pub(crate) use bark::load_tiling;
 pub use cards::tree_gltf_plugin;
 pub use instancing::TreeInstancing;
 pub use lab::{

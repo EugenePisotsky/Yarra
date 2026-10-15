@@ -18,13 +18,15 @@ Per particle the script writes:
 - where it lies as draped, and its bind-space rest position: the drape un-skinned through the
   bones that carry it, so those bones bring it back to the drape in that pose,
 - the bones that carry it when nothing else moves it: the body's skin weights where the cape
-  lies on the body (never the legs: a cape does not follow the thighs), else the chest blending
-  to the pelvis down the back,
+  lies on the body, else the chest blending to the pelvis down the back; never the legs' or the
+  arms' (a cape is not a sleeve: arms move it only by pushing into it, through their colliders),
+
 - how free it is: pinned at the collar, then a maximum distance from its carried position that
-  grows towards the hem,
+  grows towards the hem, and more where it lay on an arm (it falls in when the arm swings away),
 - how much wind reaches it: none at the collar, all at the hem.
 
-Coordinates are written as glTF/game bind space (Y up, the character facing +Z).
+Coordinates are written as glTF/game bind space (Y up, the character facing +Z); texture
+coordinates are metres on the flat cape, so a fabric tiles at its real size.
 """
 import argparse
 import json
@@ -122,6 +124,7 @@ slope_length = slope_out[0] / math.cos(droop)
 length = slope_length + (collar_y - slope_length * math.sin(droop) - hem_y)
 positions = []
 grid = []
+uvs = []
 for r in range(fine_rows):
     s = r / (fine_rows - 1) * length
     down = min(s, slope_length)
@@ -134,6 +137,10 @@ for r in range(fine_rows):
         y = collar_y - down * math.sin(droop) - max(s - slope_length, 0.0)
         positions.append(to_blender((sx * rx, y, neck[2] - kz * rz)))
         grid.append((c / k, r / k))
+    # The flat cape: metres along the row from its middle, and down from the collar.
+    row = np.array([to_game(v) for v in positions[-fine_columns:]])
+    along = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(row, axis=0), axis=1))])
+    uvs += [(float(a - along[fine_columns // 2]), s) for a in along]
 
 mesh = bpy.data.meshes.new("cape")
 faces = []
@@ -216,7 +223,7 @@ n = len(fine)
 out_positions = np.concatenate([outer, inner])
 out_normals = np.concatenate([normals, -normals])
 out_grid = grid + grid
-out_uvs = [(g[0] / (args.columns - 1) * 3.0, g[1] / (args.rows - 1) * 3.0) for g in out_grid]
+out_uvs = uvs + uvs
 indices = []
 for r in range(fine_rows - 1):
     for c in range(fine_columns - 1):
@@ -232,7 +239,7 @@ last = (fine_rows - 1) * fine_columns
 edge += [(last + c + 1, last + c) for c in range(fine_columns - 1)]  # hem
 edge += [((r + 1) * fine_columns, r * fine_columns) for r in range(fine_rows - 1)]  # one side
 edge += [(r * fine_columns + fine_columns - 1, (r + 1) * fine_columns + fine_columns - 1) for r in range(fine_rows - 1)]
-rim_positions, rim_normals, rim_grid = [], [], []
+rim_positions, rim_normals, rim_grid, rim_uvs = [], [], [], []
 for a, b in edge:
     side = np.cross(outer[b] - outer[a], normals[a] + normals[b])
     side /= np.linalg.norm(side) + 1e-12
@@ -241,30 +248,39 @@ for a, b in edge:
         rim_positions.append(v)
         rim_normals.append(side)
     rim_grid += [grid[a], grid[b], grid[b], grid[a]]
+    rim_uvs += [uvs[a], uvs[b], uvs[b], uvs[a]]
     indices += [base, base + 1, base + 2, base, base + 2, base + 3]
 out_positions = np.concatenate([out_positions, np.array(rim_positions)])
 out_normals = np.concatenate([out_normals, np.array(rim_normals)])
 out_grid = out_grid + rim_grid
-out_uvs += [(g[0] / (args.columns - 1) * 3.0, g[1] / (args.rows - 1) * 3.0) for g in rim_grid]
+out_uvs += rim_uvs
 
 # Particles: the coarse grid's vertices of the drape.
 bvh = BVHTree.FromObject(body, depsgraph)
 body_mesh = body.data
 group_names = {g.index: g.name for g in body.vertex_groups}
 legs = ("thigh", "leg_", "foot", "toes")
+arms = ("arm", "hand", "thumb", "index", "middle", "ring", "pinky")  # anywhere in the name
 
 
 def body_weights(polygon):
-    """The skin weights of a body face, averaged over its corners; the legs' go to the pelvis."""
+    """The skin weights of a body face, averaged over its corners, the legs' given to the pelvis
+    and the arms' to the chest; and the share that was the arms'."""
     total = {}
+    arm = 0.0
     corners = body_mesh.polygons[polygon].vertices
     for v in corners:
         for g in body_mesh.vertices[v].groups:
             name = group_names.get(g.group)
             if name and g.weight > 0.0:
-                name = "root.x" if name.startswith(legs) else name
-                total[name] = total.get(name, 0.0) + g.weight / len(corners)
-    return total
+                w = g.weight / len(corners)
+                if name.startswith(legs):
+                    name = "root.x"
+                elif any(part in name for part in arms):
+                    name = "spine_05.x"
+                    arm += w
+                total[name] = total.get(name, 0.0) + w
+    return total, arm
 
 
 def top(weights, count=4):
@@ -285,9 +301,12 @@ for r in range(args.rows):
         fallback = {"spine_05.x": 1.0 - 0.6 * t, "root.x": 0.6 * t}
         near = 1.0 - smoothstep(0.03, 0.08, distance if distance is not None else 1.0)
         weights = dict((name, w * (1.0 - near)) for name, w in fallback.items())
+        on_arm = 0.0
         if near > 0.0 and polygon is not None:
-            for name, w in body_weights(polygon).items():
+            surface, arm = body_weights(polygon)
+            for name, w in surface.items():
                 weights[name] = weights.get(name, 0.0) + w * near
+            on_arm = arm * near
         pinned = r == 0
         free = smoothstep(0.08, 1.0, t)
         bones = top(weights)
@@ -300,8 +319,8 @@ for r in range(args.rows):
                 "drape": [float(x) for x in p],
                 "bones": bones,
                 "pinned": pinned,
-                "max_distance": 0.0 if pinned else 0.02 + 0.55 * free**1.2,
-                "goal": 0.0 if pinned else 6.0 * (1.0 - free),
+                "max_distance": 0.0 if pinned else max(0.02 + 0.55 * free**1.2, 0.2 * on_arm),
+                "goal": 0.0 if pinned else 6.0 * (1.0 - free) * (1.0 - on_arm),
                 "exposure": 0.0 if pinned else max(0.1 + 0.9 * smoothstep(0.15, 1.0, t), 0.6 * edge_share),
             }
         )
