@@ -502,6 +502,20 @@ const FLAGS: &[Flag] = &[
     )
     .needs(CLOTH),
     flag(
+        "--cloth-lab-video",
+        "DIR",
+        ClothLab,
+        "Film takes at a fixed 1/60 s step into MP4s (needs ffmpeg) with shake stats, then exit",
+    )
+    .needs(CLOTH),
+    flag(
+        "--cloth-lab-cape",
+        "draped|generated|FILE",
+        ClothLab,
+        "The cloak: draped in Blender (default, if authored), generated, or a .cloth.json",
+    )
+    .needs(CLOTH),
+    flag(
         "--grass-candidate-reference",
         "",
         GrassReference,

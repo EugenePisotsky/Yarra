@@ -8,10 +8,12 @@
 //! the outfit planned ([`outfit`], cached per body mesh and choice) and its entities spawned
 //! under the actor. Each frame, after transform propagation, every rig steps in parallel and its
 //! joints' `GlobalTransform`s are written before bounds and skins are read.
+mod authored;
 mod body;
 mod outfit;
 mod solver;
 
+pub use authored::Garment;
 pub use outfit::OutfitChoice;
 
 use crate::{WorldViewCamera, character::CharacterPresentationReady};
@@ -39,6 +41,7 @@ impl Plugin for ClothPlugin {
         app.init_resource::<ClothSettings>()
             .init_resource::<ClothStats>()
             .init_resource::<ClothCache>()
+            .init_resource::<ClothGarments>()
             .add_systems(
                 Update,
                 (drop_stale_rigs, find_skeletons, build_rigs).chain(),
@@ -56,6 +59,12 @@ impl Plugin for ClothPlugin {
 /// The test pieces an actor wears; changing it rebuilds them.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TestOutfit(pub OutfitChoice);
+
+/// Garments authored offline that replace the generated ones (see [`Garment`]).
+#[derive(Resource, Clone, Default)]
+pub struct ClothGarments {
+    pub cloak: Option<Arc<Garment>>,
+}
 
 /// Added once an actor's outfit is built and simulating.
 #[derive(Component)]
@@ -307,6 +316,7 @@ fn build_rigs(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut bindposes: ResMut<Assets<SkinnedMeshInverseBindposes>>,
+    garments: Res<ClothGarments>,
     mut actors: Query<(
         Entity,
         &TestOutfit,
@@ -314,8 +324,12 @@ fn build_rigs(
         Option<&mut ClothRig>,
     )>,
 ) {
+    // Other garments: every outfit is planned again.
+    if garments.is_changed() && !garments.is_added() {
+        cache.outfits.clear();
+    }
     for (actor, outfit, skeleton, rig) in &mut actors {
-        if rig.as_ref().is_some_and(|rig| rig.choice == outfit.0) {
+        if rig.as_ref().is_some_and(|rig| rig.choice == outfit.0) && !garments.is_changed() {
             continue;
         }
         let mesh_id = skeleton.mesh.id();
@@ -345,7 +359,7 @@ fn build_rigs(
                     .iter()
                     .map(|(name, (_, ibm))| (name.clone(), ibm.inverse()))
                     .collect();
-                let plan = outfit::plan(outfit.0, &binds, &body);
+                let plan = outfit::plan(outfit.0, &binds, &body, garments.cloak.as_deref());
                 let built = Arc::new(upload(plan, skeleton, &mut meshes, &mut bindposes));
                 cache.outfits.insert(key, built.clone());
                 built
@@ -615,7 +629,7 @@ fn to_mesh(data: &MeshData) -> Mesh {
 
 fn material(look: Look) -> StandardMaterial {
     let (rgb, roughness, metallic, sheet) = match look {
-        Look::Wool => ([0.30, 0.055, 0.045], 0.95, 0.0, true),
+        Look::Wool => ([0.42, 0.10, 0.07], 0.95, 0.0, true),
         Look::Linen => ([0.36, 0.31, 0.22], 0.9, 0.0, true),
         Look::Hair => ([0.11, 0.065, 0.035], 0.5, 0.0, false),
         Look::Steel => ([0.62, 0.63, 0.65], 0.35, 0.9, false),

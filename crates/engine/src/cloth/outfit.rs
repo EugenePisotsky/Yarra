@@ -1,8 +1,12 @@
 //! The cloth lab's test outfit, generated from a skeleton's bind pose and its fitted body
 //! colliders: a cloak, a long skirt, a ponytail, a greatsword and a bow on the back and a sword
 //! at the hip. Shapes are plain on purpose; they exist to try the simulation and its colliders.
+//! A cloak draped in Blender ([`Garment`]) replaces the generated one when given.
+use super::authored::Garment;
 use super::body::{BodyCapsule, group};
-use super::solver::{Carrier, Frames, Link, PRESS_GAP, ParticleDef, PieceDef, Radial, Tether};
+use super::solver::{
+    Carrier, Frames, Link, PRESS_GAP, ParticleDef, PieceDef, Radial, Sink, Tether,
+};
 use bevy::math::{Affine3A, Vec2, Vec3A};
 use std::collections::HashMap;
 
@@ -103,11 +107,13 @@ pub(crate) struct OutfitPlan {
     pub items: Vec<ItemPlan>,
 }
 
-/// Plans the chosen outfit. `binds` holds each joint's bind pose by name.
+/// Plans the chosen outfit. `binds` holds each joint's bind pose by name; `draped` is a
+/// cloak authored for this body, used in place of the generated one.
 pub(crate) fn plan(
     choice: OutfitChoice,
     binds: &HashMap<String, Affine3A>,
     body: &[BodyCapsule],
+    draped: Option<&Garment>,
 ) -> OutfitPlan {
     let mut planner = Planner {
         binds,
@@ -155,7 +161,10 @@ pub(crate) fn plan(
         pieces.extend(planner.ponytail());
     }
     if choice.cloak {
-        pieces.extend(planner.cloak());
+        pieces.extend(match draped {
+            Some(garment) => planner.draped_cloak(garment),
+            None => planner.cloak(),
+        });
     }
     OutfitPlan {
         bones: planner.bones,
@@ -416,6 +425,8 @@ impl Planner<'_> {
             friction: 0.35,
             radial: None,
             self_collide: true,
+            shape: Vec::new(),
+            sinks: Vec::new(),
         };
         let mut mesh = MeshData::default();
         mesh.add_sheet(&def, 3, Vec2::new(0.0, neck.z));
@@ -431,6 +442,127 @@ impl Planner<'_> {
             provides: Vec::new(),
             layer: None,
             parts: vec![(Look::Wool, mesh)],
+        })
+    }
+
+    /// A cloak draped in Blender: its particles are the drape's coarse grid, carried by the
+    /// bones and as free as authored. Where it rests closer to a collider than a particle's
+    /// radius, or inside one (capsules are rounder than shoulders), that particle comes that
+    /// close to that collider and no closer ([`Sink`]): the body's colliders hold the drape
+    /// where it lies instead of pushing it off, and still keep it out of everything else.
+    fn draped_cloak(&mut self, garment: &Garment) -> Option<PiecePlan> {
+        const RADIUS: f32 = 0.02;
+        let chest = self.bone("spine_05.x")?;
+        let collides = group::TORSO
+            | group::ARMS
+            | group::LEGS
+            | group::PRESSERS
+            | group::HIP_ITEMS
+            | group::LAYERS;
+        let mut particles = Vec::with_capacity(garment.particles.len());
+        for (i, authored) in garment.particles.iter().enumerate() {
+            let bones: Vec<(u16, f32)> = authored
+                .bones
+                .iter()
+                .filter_map(|(name, weight)| Some((self.bone(name)?, *weight)))
+                .collect();
+            particles.push(ParticleDef {
+                rest: garment.rest(i),
+                carrier: if bones.is_empty() {
+                    Carrier::on(chest)
+                } else {
+                    Carrier::weighted(bones)
+                },
+                pinned: authored.pinned,
+                max_distance: authored.max_distance,
+                goal: authored.goal,
+                radius: RADIUS,
+                exposure: authored.exposure,
+            });
+        }
+        let shape: Vec<Vec3A> = (0..particles.len()).map(|i| garment.drape(i)).collect();
+        // The colliders the solver will give the piece, in its order, placed as in the pose
+        // draped in; pressers hold the cloak wherever it rests.
+        let colliders: Vec<Option<(Vec3A, Vec3A, f32)>> = self
+            .capsules
+            .iter()
+            .filter(|c| c.group & collides != 0)
+            .map(|c| {
+                let pose = garment.pose(&self.bones[c.bone as usize]);
+                c.press.is_none().then(|| {
+                    (
+                        pose.transform_point3a(c.a),
+                        pose.transform_point3a(c.b),
+                        c.radius,
+                    )
+                })
+            })
+            .collect();
+        let mut sinks = Vec::new();
+        for (i, &p) in shape.iter().enumerate() {
+            for (k, collider) in colliders.iter().enumerate() {
+                let Some((a, b, radius)) = *collider else {
+                    continue;
+                };
+                let axis = b - a;
+                let t = ((p - a).dot(axis) / axis.length_squared().max(1e-9)).clamp(0.0, 1.0);
+                let room = p.distance(a + axis * t) - radius;
+                if room < RADIUS {
+                    sinks.push(Sink {
+                        particle: i as u16,
+                        collider: k as u16,
+                        radius: (room - 0.003).max(-0.08),
+                    });
+                }
+            }
+        }
+        bevy::log::info!(
+            "Cloth: the draped cloak rests close to colliders at {} of its {} particles, inside \
+             them at {}",
+            sinks
+                .iter()
+                .map(|s| s.particle)
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            particles.len(),
+            sinks.iter().filter(|s| s.radius < -0.003).count()
+        );
+        let (columns, rows) = (garment.columns, garment.rows);
+        // Lengths and folds as draped.
+        let draped: Vec<ParticleDef> = particles
+            .iter()
+            .zip(&shape)
+            .map(|(p, &rest)| ParticleDef { rest, ..p.clone() })
+            .collect();
+        let (links, tethers) = sheet_constraints(&draped, columns, rows, false);
+        let def = PieceDef {
+            particles,
+            links,
+            tethers,
+            cones: Vec::new(),
+            frames: Frames::Grid {
+                columns,
+                rows,
+                wrap: false,
+            },
+            anchor: chest,
+            inertia: 0.7,
+            damping: 0.4,
+            drag: 0.8,
+            lift: 2.0,
+            friction: 0.35,
+            radial: None,
+            self_collide: true,
+            shape,
+            sinks,
+        };
+        Some(PiecePlan {
+            name: "cloak",
+            def,
+            collides,
+            provides: Vec::new(),
+            layer: None,
+            parts: vec![(Look::Wool, garment.mesh())],
         })
     }
 
@@ -500,6 +632,8 @@ impl Planner<'_> {
                 reach: (top - bottom) / (rows - 1) as f32 * 0.5,
             }),
             self_collide: false,
+            shape: Vec::new(),
+            sinks: Vec::new(),
         };
         let mut mesh = MeshData::default();
         mesh.add_sheet(&def, 3, Vec2::new(0.0, centre));
@@ -583,6 +717,8 @@ impl Planner<'_> {
             friction: 0.2,
             radial: None,
             self_collide: false,
+            shape: Vec::new(),
+            sinks: Vec::new(),
         };
         let rings: Vec<Ring> = strand_rings(&def, 3, |s| 0.032 + (0.01 - 0.032) * s);
         let mut mesh = MeshData::default();
@@ -635,6 +771,8 @@ impl Planner<'_> {
             friction: 0.0,
             radial: None,
             self_collide: false,
+            shape: Vec::new(),
+            sinks: Vec::new(),
         };
         // Flat against the leg: the blade's width lies fore and aft.
         let width = d.cross(Vec3A::X).normalize();
@@ -1164,6 +1302,8 @@ mod tests {
             friction: 0.0,
             radial: None,
             self_collide: false,
+            shape: Vec::new(),
+            sinks: Vec::new(),
         };
         let mut mesh = MeshData::default();
         mesh.add_sheet(&def, 2, Vec2::ZERO);

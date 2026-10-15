@@ -23,8 +23,8 @@ const MAX_SPEED: f32 = 25.0;
 /// The bones that carry a particle, weighted.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Carrier {
-    bones: [u16; 3],
-    weights: [f32; 3],
+    bones: [u16; 4],
+    weights: [f32; 4],
 }
 
 impl Carrier {
@@ -38,20 +38,19 @@ impl Carrier {
         Self::weighted([(bone, 1.0 - blend), (other, blend)])
     }
 
-    /// Up to three bones; the weights are normalised.
-    pub fn weighted<const N: usize>(bones: [(u16, f32); N]) -> Self {
+    /// Up to four bones; the weights are normalised.
+    pub fn weighted(bones: impl IntoIterator<Item = (u16, f32)>) -> Self {
         let mut carrier = Self {
-            bones: [0; 3],
-            weights: [0.0; 3],
+            bones: [0; 4],
+            weights: [0.0; 4],
         };
-        let total: f32 = bones.iter().map(|(_, w)| w.max(0.0)).sum();
-        for (k, (bone, weight)) in bones.into_iter().take(3).enumerate() {
+        for (k, (bone, weight)) in bones.into_iter().take(4).enumerate() {
             carrier.bones[k] = bone;
-            carrier.weights[k] = if total > 0.0 {
-                weight.max(0.0) / total
-            } else {
-                0.0
-            };
+            carrier.weights[k] = weight.max(0.0);
+        }
+        let total: f32 = carrier.weights.iter().sum();
+        for weight in &mut carrier.weights {
+            *weight = if total > 0.0 { *weight / total } else { 0.0 };
         }
         carrier
     }
@@ -89,7 +88,7 @@ pub(crate) struct ParticleDef {
     pub max_distance: f32,
     /// Pull back towards the target, per second.
     pub goal: f32,
-    /// Collision radius.
+    /// Collision radius (see also [`PieceDef::sinks`]).
     pub radius: f32,
     /// How much of the wind reaches it, 0–1: where the cloth lies against the body the air
     /// between moves with the body.
@@ -166,6 +165,22 @@ pub(crate) struct PieceDef {
     /// Particles that are not neighbours on the sheet keep apart, so folds do not pass
     /// through each other.
     pub self_collide: bool,
+    /// The cloth's own rest shape where it differs from the particles' bind-space `rest`: a
+    /// garment draped in another pose than the bind pose (arms down) is carried from bind space
+    /// but drawn, and its folds kept, as draped. Empty: the rest positions.
+    pub shape: Vec<Vec3A>,
+    /// Particles that rest closer to a collider than their radius, ordered by particle.
+    pub sinks: Vec<Sink>,
+}
+
+/// A particle's radius against one collider (its index among those the piece collides with)
+/// where it rests closer to it than its own radius, or inside it: a garment draped on the body
+/// where a capsule is rounder than the body is held where it lies, not pushed off.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Sink {
+    pub particle: u16,
+    pub collider: u16,
+    pub radius: f32,
 }
 
 impl PieceDef {
@@ -177,11 +192,27 @@ impl PieceDef {
         }
     }
 
-    /// Bind-space joint positions; a joint's inverse bind pose is a translation by minus this.
+    /// Particle `i`'s radius against collider `k`.
+    fn contact_radius(&self, i: usize, k: usize) -> f32 {
+        let first = self.sinks.partition_point(|s| (s.particle as usize) < i);
+        self.sinks[first..]
+            .iter()
+            .take_while(|s| s.particle as usize == i)
+            .find(|s| s.collider as usize == k)
+            .map_or(self.particles[i].radius, |s| s.radius)
+    }
+
+    /// Particle `i` in the cloth's own rest shape (see [`Self::shape`]).
+    pub fn shape(&self, i: usize) -> Vec3A {
+        self.shape.get(i).copied().unwrap_or(self.particles[i].rest)
+    }
+
+    /// Joint positions in the space the piece's mesh is in; a joint's inverse bind pose is a
+    /// translation by minus this.
     pub fn joint_rests(&self) -> Vec<Vec3A> {
         match self.frames {
             Frames::Rigid { .. } => vec![self.particles[0].rest],
-            _ => self.particles.iter().map(|p| p.rest).collect(),
+            _ => (0..self.particles.len()).map(|i| self.shape(i)).collect(),
         }
     }
 }
@@ -433,8 +464,9 @@ pub(crate) struct PieceSim {
     normals: Vec<Vec3A>,
     contacts: Vec<Vec3A>,
     anchor_prev: Option<Affine3A>,
-    /// Colliders that may touch each particle this frame, as (particle, collider) pairs.
-    pairs: Vec<(u16, u16)>,
+    /// Colliders that may touch each particle this frame, as (particle, collider) pairs with
+    /// the particle's radius against that collider.
+    pairs: Vec<(u16, u16, f32)>,
     /// Sheets: each particle's frame at rest, transposed.
     rest_frames: Vec<Mat3A>,
     /// The piece's links with their particles' inverse masses; links between two pinned
@@ -446,8 +478,9 @@ pub(crate) struct PieceSim {
     reach: Vec<f32>,
     /// Bounding spheres of runs of eight particles, grown by their reach.
     chunks: Vec<(Vec3A, f32)>,
-    /// Pairs of particles, not neighbours on the sheet, that could meet this frame.
-    self_pairs: Vec<(u16, u16)>,
+    /// Pairs of particles, not neighbours on the sheet, that could meet this frame, and how far
+    /// apart each keeps.
+    self_pairs: Vec<(u16, u16, f32)>,
     /// Each particle's wind this frame.
     gusts: Vec<Vec3A>,
     /// A wrap-around piece's axis this frame: origin, up and the height each particle covers.
@@ -526,7 +559,8 @@ impl PieceSim {
                     rows,
                     wrap,
                 } => {
-                    let rests: Vec<Vec3A> = def.particles.iter().map(|p| p.rest).collect();
+                    let rests: Vec<Vec3A> =
+                        (0..def.particles.len()).map(|i| def.shape(i)).collect();
                     (0..rows * columns)
                         .map(|i| {
                             grid_frame(&rests, columns, rows, wrap, i / columns, i % columns)
@@ -707,7 +741,10 @@ impl PieceSim {
                     for j in from..((b + 1) * 8).min(n) {
                         let near = self.reach[i].max(0.0) + self.reach[j].max(0.0) + SELF_GAP;
                         if apart(i, j) && self.x[i].distance_squared(self.x[j]) < near * near {
-                            self.self_pairs.push((i as u16, j as u16));
+                            // A draped fold rests closer than the gap: keep it as draped.
+                            let rest = def.shape(i).distance(def.shape(j));
+                            let gap = SELF_GAP.min(0.9 * rest);
+                            self.self_pairs.push((i as u16, j as u16, gap));
                         }
                     }
                 }
@@ -804,7 +841,8 @@ impl PieceSim {
                         x.distance(after.closest(x)) - after.radius
                     };
                     if gap < reach + travel {
-                        self.pairs.push((i as u16, k as u16));
+                        let radius = def.contact_radius(i, k);
+                        self.pairs.push((i as u16, k as u16, radius));
                     }
                 }
             }
@@ -902,13 +940,13 @@ impl PieceSim {
         }
         // Colliders last: being outside the body matters more than staying near the pose.
         self.contacts.fill(Vec3A::ZERO);
-        for &(i, k) in &self.pairs {
+        for &(i, k, radius) in &self.pairs {
             let i = i as usize;
             let (before, after) = capsules[k as usize];
             let capsule = before.lerp(after, t);
             let closest = capsule.closest(self.x[i]);
             let d = self.x[i] - closest;
-            let reach = capsule.radius + particles[i].radius;
+            let reach = capsule.radius + radius;
             if capsule.press != Vec3A::ZERO {
                 let under = d.dot(capsule.press);
                 let across = d - capsule.press * under;
@@ -951,7 +989,7 @@ impl PieceSim {
             self.contacts[i] = normal;
         }
 
-        for &(i, j) in &self.self_pairs {
+        for &(i, j, gap) in &self.self_pairs {
             let (i, j) = (i as usize, j as usize);
             let (wi, wj) = (weight(&particles[i]), weight(&particles[j]));
             if wi + wj == 0.0 {
@@ -959,10 +997,10 @@ impl PieceSim {
             }
             let d = self.x[j] - self.x[i];
             let distance = d.length();
-            if distance >= SELF_GAP || distance <= 1e-6 {
+            if distance >= gap || distance <= 1e-6 {
                 continue;
             }
-            let correction = d * ((SELF_GAP - distance) / (distance * (wi + wj)));
+            let correction = d * ((gap - distance) / (distance * (wi + wj)));
             self.x[i] -= correction * wi;
             self.x[j] += correction * wj;
         }
@@ -1224,6 +1262,8 @@ mod tests {
             friction: 0.0,
             radial: None,
             self_collide: false,
+            shape: Vec::new(),
+            sinks: Vec::new(),
         }
     }
 
@@ -1473,6 +1513,8 @@ mod tests {
             friction: 0.0,
             radial: None,
             self_collide: false,
+            shape: Vec::new(),
+            sinks: Vec::new(),
         };
         let deforms = [Affine3A::IDENTITY];
         let mut sim = PieceSim::new(&def);
@@ -1560,6 +1602,8 @@ mod tests {
                 friction: 0.35,
                 radial: None,
                 self_collide: false,
+                shape: Vec::new(),
+                sinks: Vec::new(),
             }
         }
         // The lab's skirt and cape; the cape stays outside the skirt.

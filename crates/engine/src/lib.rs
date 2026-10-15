@@ -6,7 +6,8 @@ pub use terrain_raycast::raycast_resident_terrain;
 mod character;
 mod cloth;
 pub use cloth::{
-    ClothPlugin, ClothSettings, ClothStats, ClothWorn, OutfitChoice, PieceShake, TestOutfit,
+    ClothGarments, ClothPlugin, ClothSettings, ClothStats, ClothWorn, Garment, OutfitChoice,
+    PieceShake, TestOutfit,
 };
 mod character_catalog;
 mod msaa_store;

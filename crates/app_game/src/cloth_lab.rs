@@ -5,8 +5,13 @@
 //! clones, gait and camera, tunes the simulation and shows what it costs.
 //!
 //! `--cloth-lab-shots DIR` instead walks the player too, saves close views from several sides
-//! (one with the colliders drawn) and the cloth timings, then exits.
+//! (one with the colliders drawn) and the cloth timings, then exits; `--cloth-lab-video DIR`
+//! films takes instead ([`video`]).
+//!
+//! The cloak is the one draped in Blender (`tools/cloth/author_test_cape.py`) when its file is
+//! there, else the generated one; `--cloth-lab-cape` chooses.
 mod panel;
+mod video;
 
 use crate::launch::{Args, LaunchOptions};
 use crate::runtime_settings::{RuntimeSettings, RuntimeSettingsApply};
@@ -16,6 +21,10 @@ use engine::{
     OutfitChoice, PlayerControlled, TestOutfit, WorldViewCamera,
 };
 use std::path::PathBuf;
+use std::sync::Arc;
+
+/// The draped test cape, under the asset root.
+const DRAPED_CAPE: &str = "local/characters/female_main/test_cape.cloth.json";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LabGait {
@@ -33,6 +42,16 @@ pub(crate) struct ClothLabOptions {
     pub gait: LabGait,
     pub outfit: OutfitChoice,
     pub shots: Option<PathBuf>,
+    pub video: Option<PathBuf>,
+    pub cape: LabCape,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum LabCape {
+    /// The draped cape if its file is there, else the generated one.
+    Draped,
+    Generated,
+    File(PathBuf),
 }
 
 impl ClothLabOptions {
@@ -78,6 +97,12 @@ impl ClothLabOptions {
             )?,
             outfit,
             shots: args.path("--cloth-lab-shots"),
+            video: args.path("--cloth-lab-video"),
+            cape: match args.value("--cloth-lab-cape")? {
+                None | Some("draped") => LabCape::Draped,
+                Some("generated") => LabCape::Generated,
+                Some(path) => LabCape::File(path.into()),
+            },
         }))
     }
 }
@@ -131,14 +156,16 @@ pub(crate) fn install(app: &mut App) -> Result<(), String> {
         return Ok(());
     };
     let shots = options.shots.clone();
+    let video = options.video.clone();
+    let unattended = shots.is_some() || video.is_some();
     app.add_plugins(engine::ClothPlugin)
         .init_resource::<PanelHasPointer>()
         .insert_resource(ClothLab {
             outfit: options.outfit,
             gait: options.gait,
             clones: options.clones,
-            player_walks: shots.is_some(),
-            camera: shots.is_some().then_some(LabCamera {
+            player_walks: unattended,
+            camera: unattended.then_some(LabCamera {
                 bearing: 180.0,
                 distance: 3.4,
                 pitch: 12.0,
@@ -161,42 +188,66 @@ pub(crate) fn install(app: &mut App) -> Result<(), String> {
                 .before(GameplaySystems::CameraInput),
         )
         .add_systems(Update, drive_camera.after(GameplaySystems::CameraFollow));
-    match shots {
-        Some(dir) => {
-            std::fs::create_dir_all(&dir)
-                .map_err(|e| format!("--cloth-lab-shots {}: {e}", dir.display()))?;
-            // Controls stay unlocked: locked controls also stop every motor, and the walk is
-            // the point.
-            app.world_mut().resource_mut::<RuntimeSettings>().show_ui = false;
-            // Unattended tuning runs, e.g. CLOTH_LAB_TUNE="damping=2,lift=0.5,flutter=0,
-            // inertia=0.6,substeps=240,wind=0,contact=0.6,self=1".
-            if let Ok(tune) = std::env::var("CLOTH_LAB_TUNE") {
-                let mut settings = engine::ClothSettings::default();
-                for pair in tune.split(',') {
-                    let Some((key, value)) = pair.split_once('=') else {
-                        continue;
-                    };
-                    let value: f32 = value
-                        .parse()
-                        .map_err(|_| format!("CLOTH_LAB_TUNE {pair}"))?;
-                    match key {
-                        "damping" => settings.damping = value,
-                        "lift" => settings.lift = value,
-                        "flutter" => settings.flutter = value,
-                        "inertia" => settings.inertia = Some(value),
-                        "substeps" => settings.substep_hz = value,
-                        "wind" => settings.wind_override = Some((0.0, value)),
-                        "contact" => settings.contact = value,
-                        "self" => settings.self_collide = value > 0.5,
-                        _ => return Err(format!("CLOTH_LAB_TUNE: unknown {key}")),
-                    }
-                }
-                app.insert_resource(settings);
+    let path = match &options.cape {
+        LabCape::Generated => None,
+        LabCape::Draped => Some(crate::resolve_asset_root().join(DRAPED_CAPE)),
+        LabCape::File(path) => Some(path.clone()),
+    };
+    if let Some(path) = path {
+        match engine::Garment::load(&path) {
+            Ok(cape) => {
+                info!("CLOTH_LAB draped cape {}", path.display());
+                app.insert_resource(engine::ClothGarments {
+                    cloak: Some(Arc::new(cape)),
+                });
             }
-            app.insert_resource(Shots::new(dir))
-                .add_systems(Update, shoot.after(drive_camera));
+            Err(error) if options.cape == LabCape::Draped => {
+                warn!("CLOTH_LAB no draped cape, the generated one instead: {error}");
+            }
+            Err(error) => return Err(format!("--cloth-lab-cape {error}")),
         }
-        None => panel::install(app),
+    }
+    if !unattended {
+        panel::install(app);
+        return Ok(());
+    }
+    // Controls stay unlocked: locked controls also stop every motor, and the walk is the point.
+    app.world_mut().resource_mut::<RuntimeSettings>().show_ui = false;
+    // Unattended tuning runs, e.g. CLOTH_LAB_TUNE="damping=2,lift=0.5,flutter=0,
+    // inertia=0.6,substeps=240,wind=0,contact=0.6,self=1".
+    if let Ok(tune) = std::env::var("CLOTH_LAB_TUNE") {
+        let mut settings = engine::ClothSettings::default();
+        for pair in tune.split(',') {
+            let Some((key, value)) = pair.split_once('=') else {
+                continue;
+            };
+            let value: f32 = value
+                .parse()
+                .map_err(|_| format!("CLOTH_LAB_TUNE {pair}"))?;
+            match key {
+                "damping" => settings.damping = value,
+                "lift" => settings.lift = value,
+                "flutter" => settings.flutter = value,
+                "inertia" => settings.inertia = Some(value),
+                "substeps" => settings.substep_hz = value,
+                "wind" => settings.wind_override = Some((0.0, value)),
+                "contact" => settings.contact = value,
+                "self" => settings.self_collide = value > 0.5,
+                _ => return Err(format!("CLOTH_LAB_TUNE: unknown {key}")),
+            }
+        }
+        app.insert_resource(settings);
+    }
+    for (flag, dir) in [("--cloth-lab-shots", &shots), ("--cloth-lab-video", &video)] {
+        if let Some(dir) = dir {
+            std::fs::create_dir_all(dir).map_err(|e| format!("{flag} {}: {e}", dir.display()))?;
+        }
+    }
+    if let Some(dir) = video {
+        video::install(app, dir);
+    } else if let Some(dir) = shots {
+        app.insert_resource(Shots::new(dir))
+            .add_systems(Update, shoot.after(drive_camera));
     }
     Ok(())
 }

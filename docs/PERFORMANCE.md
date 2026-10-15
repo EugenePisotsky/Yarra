@@ -121,7 +121,7 @@ One mode holds the camera and ends the run: play, a repro route (`--render-repro
 | Timed profile | `--profile-seconds 2..3600`, `--profile-warmup 1..600`, `--profile-size game\|WIDTHxHEIGHT`, `--profile-surface WIDTHxHEIGHT`, `--profile-window fullscreen\|windowed`, `--profile-fps 0\|15..240`, `--profile-native-pacing`, `--profile-msaa 1\|2\|4`, `--profile-grass full\|off`, `--profile-objects on\|off`, `--profile-terrain on\|off`, `--profile-bloom on\|off`, `--profile-auto-exposure on\|off`, `--profile-fog on\|off`, `--profile-particles on\|off`, `--profile-shafts on\|off`, `--profile-temporal-bypass`, `--profile-diagnostic` |
 | Look captures | `--look-capture DIR`, `--look-variants LIST`, `--look-settle SECONDS` |
 | LOD lab | `--lod-lab PACK/ASSET`, `--lod-lab-stand ASSET`, `--lod-lab-stand-count N`, `--lod-lab-spacing METRES`, `--lod-lab-capture DIR`, `--lod-lab-screenshot FILE`, `--lod-lab-yaws DEGREES,...`, `--lod-lab-scale 0.25..4`, `--lod-lab-pitch DEGREES`, `--lod-lab-distances METRES,...`, `--lod-lab-settle FRAMES` |
-| Cloth lab | `--cloth-lab`, `--cloth-lab-clones 0..63`, `--cloth-lab-gait idle\|walk\|jog\|mixed`, `--cloth-lab-outfit all\|none\|LIST`, `--cloth-lab-shots DIR` |
+| Cloth lab | `--cloth-lab`, `--cloth-lab-clones 0..63`, `--cloth-lab-gait idle\|walk\|jog\|mixed`, `--cloth-lab-outfit all\|none\|LIST`, `--cloth-lab-shots DIR`, `--cloth-lab-video DIR`, `--cloth-lab-cape draped\|generated\|FILE` |
 | Grass references | `--grass-candidate-reference` |
 | Terrain, output and pacing references | `--terrain-near-off`, `--msaa-store-reference`, `--temporal-standard-output`, `--frame-pacing-timer` |
 | Input and demo controls | `--trace-camera-input`, `--debug-world-switch` |
