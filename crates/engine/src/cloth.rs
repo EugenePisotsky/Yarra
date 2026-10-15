@@ -710,6 +710,8 @@ fn simulate_cloth(
                 press: c.press.map_or(Vec3A::ZERO, |p| {
                     deform.matrix3.mul_vec3a(p).normalize_or_zero()
                 }),
+                width: c.width,
+                bulk: c.group & (body::group::TORSO | body::group::LEGS) != 0,
             };
             let before = if jumped { now } else { rig.capsules[k].1 };
             rig.capsules[k] = (before, now);
@@ -757,8 +759,15 @@ fn simulate_cloth(
                 );
             }
             let x = state.sim.positions();
+            let turn = rig.deforms[piece.def.anchor as usize].matrix3;
             for p in &piece.provides {
-                let now = Capsule::new(x[p.a as usize], x[p.b as usize], p.radius);
+                let now = Capsule {
+                    press: p
+                        .press
+                        .map_or(Vec3A::ZERO, |d| turn.mul_vec3a(d).normalize_or_zero()),
+                    width: p.width,
+                    ..Capsule::new(x[p.a as usize], x[p.b as usize], p.radius)
+                };
                 let before = if jumped {
                     now
                 } else {
