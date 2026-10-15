@@ -131,7 +131,7 @@ pub(crate) fn plan(
     let mut pieces = Vec::new();
     // Inner layers first: weapons and the cloak go over the skirt, the cloak over the scabbard.
     if choice.skirt {
-        pieces.extend(planner.skirt());
+        pieces.extend(planner.skirt(choice.cloak));
     }
     let mut items = Vec::new();
     let mut back_depth = None;
@@ -374,11 +374,13 @@ impl Planner<'_> {
                     let dir = towards.normalize_or(out);
                     // Behind, it lies on whatever reaches out furthest from here down (the
                     // shoulder blades, then the buttocks): cloth bridges a hollow back.
-                    let groups = group::TORSO | group::LEGS | group::LAYERS;
+                    // (Not out to a skirt's hem: the layer keeps the hanging cape off it.)
+                    let bulk = group::TORSO | group::LEGS;
                     let body = (h..=HANGING)
-                        .map(|k| self.support(axis, hanging_y(end.y, k), dir, groups))
+                        .map(|k| self.support(axis, hanging_y(end.y, k), dir, bulk))
                         .fold(0.0f32, f32::max)
                         + 0.035;
+                    let groups = bulk | group::LAYERS | group::HIP_ITEMS;
                     let radius = body + (from_end - body) * side + 0.03 * f;
                     let p = Vec3A::new(axis.x, hanging_y(end.y, h), axis.z) + dir * radius;
                     particle.rest = self.push_out(p, groups, 0.03);
@@ -413,6 +415,7 @@ impl Planner<'_> {
             lift: 2.0,
             friction: 0.35,
             radial: None,
+            self_collide: true,
         };
         let mut mesh = MeshData::default();
         mesh.add_sheet(&def, 3, Vec2::new(0.0, neck.z));
@@ -433,7 +436,7 @@ impl Planner<'_> {
 
     /// A skirt laid round the hips and thighs (their convex hull) with a little ease, flaring to
     /// the hem; it follows the pelvis at the waistband and both thighs, smoothly blended, below.
-    fn skirt(&mut self) -> Option<PiecePlan> {
+    fn skirt(&mut self, under_cloak: bool) -> Option<PiecePlan> {
         let hips = self.bone("root.x")?;
         let left = self.bone("thigh_stretch.l")?;
         let right = self.bone("thigh_stretch.r")?;
@@ -453,7 +456,7 @@ impl Planner<'_> {
                 let (s, k) = phi.sin_cos();
                 let out = Vec3A::new(s, 0.0, k);
                 let radius =
-                    self.support(axis, y, out, group::TORSO | group::LEGS) + 0.02 + 0.1 * f;
+                    self.support(axis, y, out, group::TORSO | group::LEGS) + 0.02 + 0.05 * f;
                 let p = Vec3A::new(axis.x, y, axis.z) + out * radius;
                 let p = self.push_out(p, group::TORSO | group::LEGS, 0.03);
                 let toward_left = smoothstep(-0.12, 0.12, p.x);
@@ -469,7 +472,8 @@ impl Planner<'_> {
                     max_distance: 0.02 + 0.32 * f,
                     goal: 0.0,
                     radius: 0.03,
-                    exposure: 1.0,
+                    // A cloak over it keeps the wind off its back.
+                    exposure: if under_cloak && k < 0.0 { 0.25 } else { 0.6 },
                 });
             }
         }
@@ -493,7 +497,9 @@ impl Planner<'_> {
             radial: Some(Radial {
                 bone: hips,
                 origin: Vec3A::new(0.0, pelvis.y, centre),
+                reach: (top - bottom) / (rows - 1) as f32 * 0.5,
             }),
+            self_collide: false,
         };
         let mut mesh = MeshData::default();
         mesh.add_sheet(&def, 3, Vec2::new(0.0, centre));
@@ -576,6 +582,7 @@ impl Planner<'_> {
             lift: 0.0,
             friction: 0.2,
             radial: None,
+            self_collide: false,
         };
         let rings: Vec<Ring> = strand_rings(&def, 3, |s| 0.032 + (0.01 - 0.032) * s);
         let mut mesh = MeshData::default();
@@ -590,24 +597,23 @@ impl Planner<'_> {
         })
     }
 
-    /// Worn, not simulated: it hangs from the hip and swings a third of the way with the thigh,
-    /// so the leg does not pass through it. The cloak collides with it.
+    /// Worn, not simulated: it hangs from the hip, carried by the pelvis alone (swinging with the
+    /// thigh, it swept the cloak at every step). The cloak stays outside it.
     fn side_sword(&mut self) -> Option<PiecePlan> {
         let hips = self.bone("root.x")?;
-        let thigh = self.bone("thigh_stretch.l")?;
         let pelvis = self.joint("root.x")?;
         let pivot = self.push_out(
             pelvis + Vec3A::new(0.17, 0.0, 0.03),
             group::TORSO | group::LAYERS,
             0.04,
         );
-        let d = Vec3A::new(0.22, -0.8, -0.55).normalize();
+        // Angled back and a little out, clear of the thigh as it swings back.
+        let d = Vec3A::new(0.3, -0.8, -0.6).normalize();
         let particles: Vec<ParticleDef> = [0.0, 0.42, 0.84]
             .iter()
-            .enumerate()
-            .map(|(i, &at)| ParticleDef {
+            .map(|&at| ParticleDef {
                 rest: pivot + d * at,
-                carrier: Carrier::blended(hips, thigh, [0.0, 0.17, 0.33][i]),
+                carrier: Carrier::on(hips),
                 pinned: true,
                 max_distance: 0.0,
                 goal: 0.0,
@@ -628,17 +634,20 @@ impl Planner<'_> {
             lift: 0.0,
             friction: 0.0,
             radial: None,
+            self_collide: false,
         };
         // Flat against the leg: the blade's width lies fore and aft.
         let width = d.cross(Vec3A::X).normalize();
         let thickness = d.cross(width).normalize();
-        let middle = pivot + d * 0.42;
-        let away = Vec3A::new(middle.x, 0.0, middle.z - pelvis.z);
-        let outward = if thickness.dot(away) >= 0.0 {
-            thickness
-        } else {
-            -thickness
-        };
+        // For planning the cloak over it.
+        self.body.push(BodyCapsule {
+            name: "scabbard".into(),
+            bone: "root.x".into(),
+            a: pivot,
+            b: pivot + d * 0.84,
+            radius: 0.035,
+            group: group::HIP_ITEMS,
+        });
         // Scabbard, its chape and throat, then the hilt: guard, grip and pommel.
         let boxes = [
             (Look::Leather, 0.44, 0.43, 0.028, 0.014),
@@ -653,26 +662,17 @@ impl Planner<'_> {
             def,
             collides: 0,
             layer: None,
-            // Round for the skirt; for the cloak, a presser keeping it over the scabbard, on the
-            // side away from the body.
-            provides: vec![
-                Provided {
-                    a: 0,
-                    b: 2,
-                    radius: 0.03,
-                    group: group::HIP_ITEMS,
-                    press: None,
-                    width: 0.0,
-                },
-                Provided {
-                    a: 0,
-                    b: 2,
-                    radius: 0.017,
-                    group: group::PRESSERS,
-                    press: Some(outward),
-                    width: 0.03,
-                },
-            ],
+            // Round, for the skirt and the cloak. A presser holding the cloak outside it swept
+            // the cloak at every step (cape jitter 10.1 mm against 6.6); the cloak's rest
+            // shape starts outside it instead.
+            provides: vec![Provided {
+                a: 0,
+                b: 2,
+                radius: 0.03,
+                group: group::HIP_ITEMS,
+                press: None,
+                width: 0.0,
+            }],
             parts: boxes_by_look(boxes.map(|(look, at, half, w, t)| {
                 (look, pivot + d * at, [d * half, width * w, thickness * t])
             })),
@@ -1163,6 +1163,7 @@ mod tests {
             lift: 0.0,
             friction: 0.0,
             radial: None,
+            self_collide: false,
         };
         let mut mesh = MeshData::default();
         mesh.add_sheet(&def, 2, Vec2::ZERO);

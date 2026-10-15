@@ -675,6 +675,20 @@ First character work: cloth that leaves the frame alone, and capes worn with bac
 | Cape shape and wind | **Retained.** Behind, the mantle runs steeply down the shoulder blades and the hanging rows lie on the back, out to the buttocks (cloth bridges the hollow back); the sides still drape over the arms. Particles take `exposure` of the wind: 0 at the collar, rising to 1 at the hem, more at the outer columns; the rest feel the air moving with the body. Wind from the front lifts the lower cape back and leaves the top on the shoulders. Cape alone jitters 7.1 mm against its animation's 4.6 (was 10.7). |
 | Full outfit | 4 characters, walking: cape 12.8 mm (its animation 6.2), skirt 10.0 (5.8); 101 µs per character. |
 
+
+**User review 3 (October 15, later).** From the user's screenshots and a 97 s screen recording: the greatsword passed under the cape mid-back and the scabbard pierced it; the cape folded through itself; a knee came through the skirt; a hump remained on the back and the skirt flapped against the cape in the wind; jitter "crazy even when the character stays".
+
+| Change | Decision / observation |
+| --- | --- |
+| Jitter standing still | **Fixed: fixed-length substeps.** Standing, the animation moved the cape's targets 0.1–0.15 mm (third difference) while the cape shook 2.8 mm and the skirt 1 mm, with or without wind, flutter, self-collision or soft contacts; the per-particle jitter was the same from collar to hem. Substeps were a whole number per frame (`ceil(dt × 240)`), so frames either side of 16.67 ms ran 4 or 5 of different length, and where cloth settles depends on the substep length: the whole piece bounced with the frame pacing. Fixed 1/240 s substeps, the remainder carried: cape alone 0.96 → 0.25 mm, full outfit cape 3.09 → 0.54, skirt 1.04 → 0.14, ponytail 0.46 → 0.17. Cloth is shown at the frame's time (extrapolated over the remainder), since 3–5 substeps a frame would otherwise move it 12.5–20.8 ms against the body's one frame. |
+| 30 fps animation keys | **Rejected as a cause.** Resampled at 60 fps along Catmull-Rom curves (`female_main_locomotion_smooth60.glb`, local, not adopted), the targets' walking jitter fell only 6.0 → 5.6 mm; walking jitter is mostly frame-time variation (2 mm of the root's alone). |
+| Scabbard | **Retained: round, on the pelvis.** Its presser swept the cape at every step (cape jitter with only the hip sword 15.1 mm; on the pelvis alone 10.1; round collider only 6.6, the cape alone 5.4). The cape's rest shape starts outside it. |
+| Blade under the cape | **Fixed.** Particles straddled the blade with none within the presser's width, and the surface between them passed over it; the band now reaches 2.4 particle radii beyond the item. Presser pushes stay whole (softened, they fought the back's push: standing cape 2.5 mm). |
+| Cape through itself | **Retained: self-collision.** Particles not within two rows or columns of each other keep 4 cm apart; about 30 µs a character. |
+| Knee through the skirt | **Fixed.** Each skirt particle covers half the height to the next row, and leaning legs are sliced as ellipses (to 60° from upright). |
+| Hump and skirt in the wind | The cape's back no longer bridges out to the skirt's hem (the layer keeps it off the skirt); the skirt flares 5 cm, not 10, and takes 25% of the wind where a cloak covers it, 60% elsewhere. |
+| Now | Standing, full outfit, no wind: cape 0.52 mm (its animation 0.13), skirt 0.17 (0.11), ponytail 0.18 (0.19). Walking: cape 10.3 (5.8), skirt 12.6 (5.3; the legs keep pushing it), ponytail 6.6 (4.8). 149 µs a character. |
+
 ## Open gates and maintenance
 
 The remaining gates are sustained terrain/whole-game power, Temporal cost and motion quality, field-scale grass lighting, target-PC acceptance, and physical-phone heat/60-FPS delivery. Keep correctness references until their replacements pass the relevant gate. Existing counters often identify less work without demonstrating better delivered frames or lower power.

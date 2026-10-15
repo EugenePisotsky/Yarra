@@ -195,8 +195,8 @@ October 14, 2026, after the user turned from the environment to the character: c
 3. **One real garment through the pipeline**: from a bought pack, re-weighted to the body in Blender, regions painted, cloth sections exported as particle layouts. Waits on choosing assets (bodies sharing a skeleton and ideally topology; per-slot pieces fitted to a body we have).
 4. **Hair**: the same strands on hair cards.
 5. **Cost**: skip off-screen characters, a 30 Hz band before the frozen one, and merge a character's pieces into one mesh only if crowds show it in a profile.
-6. **Smoother animation input**: clips are keyed at 30 fps and interpolated linearly, so bones change velocity every other frame at 60 fps and every piece hung on them inherits about 5 mm of jitter a frame. Re-export at 60 fps from smooth curves (or resample the GLB's channels with a spline at load); the body's own motion gains too. The validated export is the user's call.
-7. **Open in the lab**: fingers poke through the cape (hand capsules end at the middle finger's second joint); a startup event occasionally takes every actor's bones away (refitted, logged); a fitted skirt jitters more than a loose one where it touches the legs.
+6. **Animation input**: the clips' 30 fps linear keys were suspected of passing jitter to the cloth; resampling them smoothly at 60 fps changed little (see [Experiments](EXPERIMENTS.md)). Not needed.
+7. **Open in the lab**: fingers poke through the cape (hand capsules end at the middle finger's second joint); a startup event occasionally takes every actor's bones away (refitted, logged); the skirt jitters about twice its animation while walking, pushed by the legs; cost is up to 149 µs a character (self-collision, the denser cape), to win back.
 
 ## Roads roadmap
 

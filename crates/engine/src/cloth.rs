@@ -78,6 +78,9 @@ pub struct ClothSettings {
     /// Scale every piece's damping and its lift (drag along its surface normal).
     pub damping: f32,
     pub lift: f32,
+    /// Share of a collider's push applied each substep.
+    pub contact: f32,
+    pub self_collide: bool,
     pub gravity: f32,
     /// Farther from the camera, pieces hang where the animation puts them.
     pub simulate_within: f32,
@@ -96,6 +99,8 @@ impl Default for ClothSettings {
             flutter: 0.45,
             damping: 1.0,
             lift: 1.0,
+            contact: 0.6,
+            self_collide: true,
             gravity: 9.81,
             simulate_within: 40.0,
             show_colliders: false,
@@ -699,6 +704,8 @@ fn simulate_cloth(
             inertia: settings.inertia,
             damping: settings.damping,
             lift: settings.lift,
+            contact: settings.contact,
+            self_collide: settings.self_collide,
         };
         let plan = &rig.outfit.plan;
         for (k, c) in plan.capsules.iter().enumerate() {

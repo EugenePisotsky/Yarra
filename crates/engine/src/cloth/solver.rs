@@ -14,8 +14,9 @@ pub(crate) const PRESS_GAP: f32 = 0.008;
 /// How far on its wrong side a presser reaches: cloth that has just slipped under is put back,
 /// cloth far away is left until it comes near (a scabbard does not yank the cloak off a leg).
 const PRESS_DEPTH: f32 = 0.12;
-/// Share of a collider's push applied each substep.
-const CONTACT_STIFFNESS: f32 = 0.6;
+/// How far apart self-colliding particles that are not neighbours keep: about the cloth's
+/// thickness in folds, with room for the surface sagging between particles.
+const SELF_GAP: f32 = 0.04;
 /// Faster than this (m/s) is a solver blow-up, not cloth.
 const MAX_SPEED: f32 = 25.0;
 
@@ -72,6 +73,9 @@ impl Carrier {
 pub(crate) struct Radial {
     pub bone: u16,
     pub origin: Vec3A,
+    /// Half the height between rows: each particle stands for the cloth that far above and
+    /// below it, so a knee between two rows still pushes it.
+    pub reach: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -159,6 +163,9 @@ pub(crate) struct PieceDef {
     pub friction: f32,
     /// Wraps round the body about this axis.
     pub radial: Option<Radial>,
+    /// Particles that are not neighbours on the sheet keep apart, so folds do not pass
+    /// through each other.
+    pub self_collide: bool,
 }
 
 impl PieceDef {
@@ -245,6 +252,10 @@ pub(crate) struct StepParams {
     /// Scale every piece's damping and lift.
     pub damping: f32,
     pub lift: f32,
+    /// Share of a collider's push applied each substep.
+    pub contact: f32,
+    /// Whether pieces that ask for self-collision get it.
+    pub self_collide: bool,
 }
 
 /// An inner garment as the pieces over it see it: its radius around a bone-carried upright
@@ -435,10 +446,16 @@ pub(crate) struct PieceSim {
     reach: Vec<f32>,
     /// Bounding spheres of runs of eight particles, grown by their reach.
     chunks: Vec<(Vec3A, f32)>,
+    /// Pairs of particles, not neighbours on the sheet, that could meet this frame.
+    self_pairs: Vec<(u16, u16)>,
     /// Each particle's wind this frame.
     gusts: Vec<Vec3A>,
-    /// A wrap-around piece's axis this frame: origin and up.
-    axis: Option<(Vec3A, Vec3A)>,
+    /// A wrap-around piece's axis this frame: origin, up and the height each particle covers.
+    axis: Option<(Vec3A, Vec3A, f32)>,
+    /// Simulated time owed from earlier frames, under one substep.
+    carry: f32,
+    /// Positions as shown this frame (see [`Self::step`]).
+    shown: Vec<Vec3A>,
     /// Each particle's position the last three frames, for [`Self::shake`].
     history: [Vec<Vec3A>; 3],
     target_history: [Vec<Vec3A>; 3],
@@ -486,7 +503,10 @@ impl PieceSim {
             bounds: Vec::new(),
             reach: Vec::new(),
             chunks: Vec::new(),
+            self_pairs: Vec::new(),
             axis: None,
+            carry: 0.0,
+            shown: def.particles.iter().map(|p| p.rest).collect(),
             history: [
                 vec![Vec3A::ZERO; n],
                 vec![Vec3A::ZERO; n],
@@ -528,6 +548,7 @@ impl PieceSim {
         for (i, p) in def.particles.iter().enumerate() {
             let target = p.carrier.place(p.rest, deforms);
             self.x[i] = target;
+            self.shown[i] = target;
             self.targets[i] = target;
             self.targets_prev[i] = target;
             self.v[i] = Vec3A::ZERO;
@@ -579,16 +600,42 @@ impl PieceSim {
             (
                 deform.transform_point3a(radial.origin),
                 deform.matrix3.mul_vec3a(Vec3A::Y).normalize_or(Vec3A::Y),
+                radial.reach,
             )
         });
         self.gather_pairs(capsules, def, params.dt);
+        self.gather_self_pairs(def, params.self_collide);
         self.gust(def, params);
 
-        let substeps = ((params.dt * params.substep_hz).ceil() as usize).clamp(1, MAX_SUBSTEPS);
-        let h = params.dt.min(MAX_SUBSTEPS as f32 / params.substep_hz) / substeps as f32;
+        // Substeps of a fixed length, the time left over carried to the next frame. Fitting a
+        // whole number of substeps to each frame changed their length with the frame time (4 or
+        // 5 for frames either side of 16.67 ms), and where cloth settles depends a little on it:
+        // the whole piece bounced with the frame pacing, standing still.
+        let h = 1.0 / params.substep_hz;
+        self.carry = (self.carry + params.dt).min(MAX_SUBSTEPS as f32 * h);
+        let substeps = (self.carry / h) as usize;
+        self.carry -= substeps as f32 * h;
         for s in 1..=substeps {
             let t = s as f32 / substeps as f32;
             self.substep(def, deforms, capsules, layers, params, h, t);
+        }
+        if substeps == 0 {
+            // No substep this frame: the targets still move on, so pinned particles do.
+            for (i, p) in def.particles.iter().enumerate() {
+                if p.pinned {
+                    self.x[i] = self.targets[i];
+                }
+            }
+        }
+        // Shown at the frame's own time: the simulation lags it by `carry`, so free particles
+        // move on by their velocity that long. Shown as simulated, a frame of 3, 4 or 5
+        // substeps moved cloth 12.5, 16.7 or 20.8 ms while the body moved one frame.
+        for (i, p) in def.particles.iter().enumerate() {
+            self.shown[i] = if p.pinned {
+                self.x[i]
+            } else {
+                self.x[i] + self.v[i] * self.carry
+            };
         }
         self.measure_shake(def);
     }
@@ -615,13 +662,13 @@ impl PieceSim {
                 self.target_history[2][i],
             ];
             if !p.pinned {
-                sum += (self.x[i] - 3.0 * a + 3.0 * b - c).length();
+                sum += (self.shown[i] - 3.0 * a + 3.0 * b - c).length();
                 driven += (self.targets[i] - 3.0 * ta + 3.0 * tb - tc).length();
                 count += 1;
             }
             self.history[2][i] = b;
             self.history[1][i] = a;
-            self.history[0][i] = self.x[i];
+            self.history[0][i] = self.shown[i];
             self.target_history[2][i] = tb;
             self.target_history[1][i] = ta;
             self.target_history[0][i] = self.targets[i];
@@ -629,6 +676,43 @@ impl PieceSim {
         let count = count.max(1) as f32;
         self.shake = sum / count;
         self.target_shake = driven / count;
+    }
+
+    /// Pairs for self-collision, from the chunk spheres [`Self::gather_pairs`] made: only runs
+    /// of particles near each other are compared.
+    fn gather_self_pairs(&mut self, def: &PieceDef, enabled: bool) {
+        self.self_pairs.clear();
+        let Frames::Grid { columns, wrap, .. } = def.frames else {
+            return;
+        };
+        if !def.self_collide || !enabled {
+            return;
+        }
+        let apart = |i: usize, j: usize| {
+            let (ri, ci, rj, cj) = (i / columns, i % columns, j / columns, j % columns);
+            let dc = ci.abs_diff(cj);
+            let dc = if wrap { dc.min(columns - dc) } else { dc };
+            ri.abs_diff(rj) > 2 || dc > 2
+        };
+        let n = self.x.len();
+        for a in 0..self.chunks.len() {
+            for b in a..self.chunks.len() {
+                let ((ca, ra), (cb, rb)) = (self.chunks[a], self.chunks[b]);
+                let limit = ra.max(0.0) + rb.max(0.0) + SELF_GAP;
+                if ca.distance_squared(cb) > limit * limit {
+                    continue;
+                }
+                for i in a * 8..((a + 1) * 8).min(n) {
+                    let from = if a == b { i + 1 } else { b * 8 };
+                    for j in from..((b + 1) * 8).min(n) {
+                        let near = self.reach[i].max(0.0) + self.reach[j].max(0.0) + SELF_GAP;
+                        if apart(i, j) && self.x[i].distance_squared(self.x[j]) < near * near {
+                            self.self_pairs.push((i as u16, j as u16));
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Each particle's wind this frame: the wind, stronger and weaker in waves that run across
@@ -711,11 +795,11 @@ impl PieceSim {
                     let gap = if after.press != Vec3A::ZERO {
                         // A presser holds back particles however far out they have swung.
                         f32::NEG_INFINITY
-                    } else if let Some((origin, up)) = self.axis
+                    } else if let Some((origin, up, band)) = self.axis
                         && after.bulk
                     {
                         // Clear of the hull by this much, as the substeps will test it.
-                        radial_push(x, &after, reach, origin, up).map_or(f32::MAX, |_| 0.0)
+                        radial_push(x, &after, reach, origin, up, band).map_or(f32::MAX, |_| 0.0)
                     } else {
                         x.distance(after.closest(x)) - after.radius
                     };
@@ -829,20 +913,23 @@ impl PieceSim {
                 let under = d.dot(capsule.press);
                 let across = d - capsule.press * under;
                 let held = capsule.radius + PRESS_GAP;
-                let band = capsule.width + particles[i].radius;
+                // Wider than the gaps between particles, so cloth cannot straddle the item.
+                let band = capsule.width + 2.4 * particles[i].radius;
                 if under < held
                     && under > held - PRESS_DEPTH
                     && across.length_squared() < band * band
                 {
+                    // All the way: a presser is worn over the cloth, it does not strike it.
                     self.x[i] += capsule.press * (held - under);
                     self.contacts[i] = capsule.press;
                 }
                 continue;
             }
-            if let Some((origin, up)) = self.axis
-                && let Some(out) = radial_push(self.x[i], &capsule, particles[i].radius, origin, up)
+            if let Some((origin, up, reach)) = self.axis
+                && let Some(out) =
+                    radial_push(self.x[i], &capsule, particles[i].radius, origin, up, reach)
             {
-                self.x[i] += out * CONTACT_STIFFNESS;
+                self.x[i] += out * params.contact;
                 self.contacts[i] = out.normalize_or_zero();
                 continue;
             }
@@ -860,10 +947,25 @@ impl PieceSim {
             // Part of the way each substep: a collider meets cloth over a few milliseconds
             // rather than kicking it in one.
             let push = closest + normal * reach - self.x[i];
-            self.x[i] += push * CONTACT_STIFFNESS;
+            self.x[i] += push * params.contact;
             self.contacts[i] = normal;
         }
 
+        for &(i, j) in &self.self_pairs {
+            let (i, j) = (i as usize, j as usize);
+            let (wi, wj) = (weight(&particles[i]), weight(&particles[j]));
+            if wi + wj == 0.0 {
+                continue;
+            }
+            let d = self.x[j] - self.x[i];
+            let distance = d.length();
+            if distance >= SELF_GAP || distance <= 1e-6 {
+                continue;
+            }
+            let correction = d * ((SELF_GAP - distance) / (distance * (wi + wj)));
+            self.x[i] -= correction * wi;
+            self.x[j] += correction * wj;
+        }
         for layer in layers {
             for (i, p) in particles.iter().enumerate() {
                 if p.pinned {
@@ -872,7 +974,7 @@ impl PieceSim {
                 if let Some(outside) = layer.push_out(self.x[i], p.radius + LAYER_GAP) {
                     self.contacts[i] = (outside - self.x[i]).normalize_or_zero();
                     let push = outside - self.x[i];
-                    self.x[i] += push * CONTACT_STIFFNESS;
+                    self.x[i] += push * params.contact;
                 }
             }
         }
@@ -915,29 +1017,29 @@ impl PieceSim {
                 for r in 0..rows {
                     for c in 0..columns {
                         let i = r * columns + c;
-                        let now = grid_frame(&self.x, columns, rows, wrap, r, c);
+                        let now = grid_frame(&self.shown, columns, rows, wrap, r, c);
                         self.normals[i] = now.z_axis;
                         let rotation = Quat::from_mat3a(&(now * self.rest_frames[i]));
-                        out.push((rotation.normalize(), self.x[i]));
+                        out.push((rotation.normalize(), self.shown[i]));
                     }
                 }
             }
             Frames::Chain { bone } => {
                 let turn = bone_rotation(deforms, bone);
-                let n = self.x.len();
+                let n = self.shown.len();
                 for i in 0..n {
                     let (a, b) = if i + 1 < n { (i, i + 1) } else { (i - 1, i) };
                     let rest = def.particles[b].rest - def.particles[a].rest;
-                    let now = self.x[b] - self.x[a];
-                    out.push((carried_turn(turn, rest, now), self.x[i]));
+                    let now = self.shown[b] - self.shown[a];
+                    out.push((carried_turn(turn, rest, now), self.shown[i]));
                 }
             }
             Frames::Rigid { bone } => {
                 let turn = bone_rotation(deforms, bone);
-                let last = self.x.len() - 1;
+                let last = self.shown.len() - 1;
                 let rest = def.particles[last].rest - def.particles[0].rest;
-                let now = self.x[last] - self.x[0];
-                out.push((carried_turn(turn, rest, now), self.x[0]));
+                let now = self.shown[last] - self.shown[0];
+                out.push((carried_turn(turn, rest, now), self.shown[0]));
             }
         }
     }
@@ -968,21 +1070,23 @@ fn independent_batches(
 }
 
 /// For a wrap-around piece: how far to move `x` outward from the axis to lie outside an upright
-/// bulk `capsule`'s support along its direction (`None` if it already does, or the capsule
-/// leans or is not bulk). Taken over every bulk capsule, that keeps the piece outside their
-/// convex hull: it spans the gap between the legs as cloth does, and a particle never hops from
-/// one side of a leg to the other. The capsule's slice at the particle's height is taken as a
-/// circle, close enough for limbs within 45° of upright.
+/// bulk `capsule`'s support along its direction, over the heights `reach` either side of it
+/// (`None` if it already does, or the capsule is not bulk or leans past 60°). Taken over every
+/// bulk capsule, that keeps the piece outside their convex hull: it spans the gap between the
+/// legs as cloth does, and a particle never hops from one side of a leg to the other. A leaning
+/// capsule's slice is an ellipse, longer along its lean.
 fn radial_push(
     x: Vec3A,
     capsule: &Capsule,
     radius: f32,
     origin: Vec3A,
     up: Vec3A,
+    reach: f32,
 ) -> Option<Vec3A> {
     let along = capsule.b - capsule.a;
     let length = along.length();
-    if !capsule.bulk || length <= 1e-5 || along.dot(up).abs() < 0.7 * length {
+    let rise = along.dot(up);
+    if !capsule.bulk || length <= 1e-5 || rise.abs() < 0.5 * length {
         return None;
     }
     let rel = x - origin;
@@ -990,17 +1094,27 @@ fn radial_push(
     let flat = rel - up * height;
     let r = flat.length();
     let out = if r > 1e-4 { flat / r } else { return None };
+    let lean = along - up * rise;
+    let stretch = length / rise.abs();
+    let (u, v) = match lean.try_normalize() {
+        Some(u) => (u, u.cross(up)),
+        None => (out, out.cross(up)),
+    };
     let (ha, hb) = ((capsule.a - origin).dot(up), (capsule.b - origin).dot(up));
-    let t = ((height - ha) / (hb - ha)).clamp(0.0, 1.0);
-    let centre = capsule.a + along * t;
-    // Past either end the slice narrows over the end cap.
-    let beyond = height - (centre - origin).dot(up);
-    if beyond.abs() >= capsule.radius {
-        return None;
+    let mut wall = f32::MIN;
+    for h in [height - reach, height, height + reach] {
+        let t = ((h - ha) / (hb - ha)).clamp(0.0, 1.0);
+        let centre = capsule.a + along * t;
+        // Past either end the slice narrows over the end cap.
+        let beyond = h - (centre - origin).dot(up);
+        if beyond.abs() >= capsule.radius {
+            continue;
+        }
+        let slice = (capsule.radius * capsule.radius - beyond * beyond).sqrt();
+        let c = (centre - origin) - up * (centre - origin).dot(up);
+        let (along_lean, across) = (out.dot(u) * slice * stretch, out.dot(v) * slice);
+        wall = wall.max(c.dot(out) + along_lean.hypot(across) + radius);
     }
-    let slice = (capsule.radius * capsule.radius - beyond * beyond).sqrt();
-    let c = (centre - origin) - up * (centre - origin).dot(up);
-    let wall = c.dot(out) + slice + radius;
     (r < wall).then(|| out * (wall - r))
 }
 
@@ -1064,6 +1178,8 @@ mod tests {
         inertia: None,
         damping: 1.0,
         lift: 1.0,
+        contact: 0.6,
+        self_collide: true,
     };
 
     /// A vertical strand of `n` particles 0.1 m apart hanging from a pinned top one.
@@ -1107,6 +1223,7 @@ mod tests {
             lift: 0.0,
             friction: 0.0,
             radial: None,
+            self_collide: false,
         }
     }
 
@@ -1239,13 +1356,13 @@ mod tests {
         let (left, right) = (leg(0.1), leg(-0.1));
         // Inside the left leg, on the axis side: out past its far side, not between the legs.
         let x = Vec3A::new(0.06, 0.5, 0.0);
-        let out = radial_push(x, &left, 0.02, origin, Vec3A::Y).expect("inside the hull");
+        let out = radial_push(x, &left, 0.02, origin, Vec3A::Y, 0.0).expect("inside the hull");
         assert!(((x + out).x - (0.1 + 0.09)).abs() < 1e-4, "{:?}", x + out);
         // In front of the gap between the legs: held at the hull's front, the legs' radius.
         let front = Vec3A::new(0.0, 0.5, 0.05);
         let pushed = [left, right]
             .iter()
-            .filter_map(|c| radial_push(front, c, 0.02, origin, Vec3A::Y))
+            .filter_map(|c| radial_push(front, c, 0.02, origin, Vec3A::Y, 0.0))
             .fold(
                 Vec3A::ZERO,
                 |a, b| if b.length() > a.length() { b } else { a },
@@ -1260,9 +1377,9 @@ mod tests {
             bulk: true,
             ..Capsule::new(Vec3A::new(-0.3, 0.5, 0.0), Vec3A::new(0.3, 0.5, 0.0), 0.05)
         };
-        assert!(radial_push(x, &arm, 0.02, origin, Vec3A::Y).is_none());
+        assert!(radial_push(x, &arm, 0.02, origin, Vec3A::Y, 0.0).is_none());
         let item = Capsule::new(Vec3A::new(0.1, 1.0, 0.0), Vec3A::new(0.1, 0.0, 0.0), 0.07);
-        assert!(radial_push(x, &item, 0.02, origin, Vec3A::Y).is_none());
+        assert!(radial_push(x, &item, 0.02, origin, Vec3A::Y, 0.0).is_none());
     }
 
     #[test]
@@ -1355,6 +1472,7 @@ mod tests {
             lift: 0.0,
             friction: 0.0,
             radial: None,
+            self_collide: false,
         };
         let deforms = [Affine3A::IDENTITY];
         let mut sim = PieceSim::new(&def);
@@ -1441,6 +1559,7 @@ mod tests {
                 lift: 2.5,
                 friction: 0.35,
                 radial: None,
+                self_collide: false,
             }
         }
         // The lab's skirt and cape; the cape stays outside the skirt.
