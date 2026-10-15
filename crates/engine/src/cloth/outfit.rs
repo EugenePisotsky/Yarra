@@ -6,7 +6,7 @@ use super::authored::Garment;
 use super::body::{BodyCapsule, group};
 use super::solver::{
     Capsule, Carrier, Frames, LAYER_GAP, Layer, Link, PRESS_GAP, ParticleDef, PieceDef, Radial,
-    Sink, Tether, radial_push,
+    Sink, Tether, grid_cells, radial_push,
 };
 use bevy::math::{Affine3A, Mat3A, Vec2, Vec3A};
 use std::collections::HashMap;
@@ -90,7 +90,26 @@ pub(crate) struct PiecePlan {
     pub layer: Option<LayerPlan>,
     /// Skinned to the piece's render joints.
     pub parts: Vec<(Look, MeshData)>,
+    /// For a draped garment, how to tell its drawn surface going through things (a lab
+    /// measure).
+    pub pierce: Option<PierceCheck>,
 }
+
+/// A draped garment's drawn vertices (drape space, skinned to the render joints) and, per
+/// vertex, how near it rests to each collider (in the piece's order) it rests within
+/// [`PIERCE_NEAR`] of, and how deep inside the draped inner layer under it. A vertex pierces
+/// something when it goes [`PIERCE_DEPTH`] deeper than that, or than the surface where it
+/// rested clear of it.
+pub(crate) struct PierceCheck {
+    pub positions: Vec<Vec3A>,
+    pub joints: Vec<[u16; 4]>,
+    pub weights: Vec<[f32; 4]>,
+    pub rests: Vec<Vec<(u16, f32)>>,
+    pub layer_rests: Vec<f32>,
+}
+
+pub(crate) const PIERCE_NEAR: f32 = 0.03;
+pub(crate) const PIERCE_DEPTH: f32 = 0.01;
 
 /// A rigid item skinned to one bone; its vertices are in bind space.
 pub(crate) struct ItemPlan {
@@ -126,12 +145,25 @@ pub(crate) fn plan(
     };
     for capsule in body {
         if let Some(bone) = planner.bone(&capsule.bone) {
+            // Cloth sees forearms and hands fuller than they are, and hands out to the
+            // fingertips: thinner than the gaps between its collision points, they passed through
+            // it. (Upper arms are full enough, and fuller they squeezed the cloth on the
+            // shoulders against the torso.)
+            let ends = ["forearm", "hand", "calf", "foot"];
+            let end = ends.iter().any(|e| capsule.name.starts_with(e));
+            let (mut b, mut radius) = (capsule.b, capsule.radius);
+            if end && capsule.group & group::ARMS != 0 {
+                radius += ARM_MARGIN;
+                if capsule.name.starts_with("hand") {
+                    b += (capsule.b - capsule.a).normalize_or_zero() * FINGERS;
+                }
+            }
             planner.capsules.push(CapsuleDef {
                 bone,
                 a: capsule.a,
-                b: capsule.b,
-                radius: capsule.radius,
-                group: capsule.group,
+                b,
+                radius,
+                group: capsule.group | if end { group::LIMB_ENDS } else { 0 },
                 press: None,
                 width: 0.0,
             });
@@ -205,6 +237,10 @@ struct Planner<'a> {
 
 /// A draped garment's particles' radius.
 const DRAPED_RADIUS: f32 = 0.02;
+/// How much fuller cloth sees the arms than they are, and how far past the hand capsule's end
+/// (at the middle finger's second joint) the fingertips reach.
+const ARM_MARGIN: f32 = 0.01;
+const FINGERS: f32 = 0.035;
 
 impl Planner<'_> {
     fn bone(&mut self, name: &str) -> Option<u16> {
@@ -443,6 +479,7 @@ impl Planner<'_> {
         let mut mesh = MeshData::default();
         mesh.add_sheet(&def, 3, Vec2::new(0.0, neck.z));
         Some(PiecePlan {
+            pierce: None,
             name: "cloak",
             def,
             collides: group::TORSO
@@ -488,40 +525,52 @@ impl Planner<'_> {
     /// (capsules are rounder than shoulders and hips), that particle comes that close to that
     /// collider and no closer ([`Sink`]): the body's colliders hold the drape where it lies
     /// instead of pushing it off, and still keep it out of everything else. Colliders are those
-    /// the solver will give the piece, in its order, placed as in the pose draped in; a wrapped
-    /// piece meets the body's bulk by its hull about `radial` (origin, up, reach), as the
-    /// solver does. Pressers hold the cloth wherever it rests.
+    /// the solver will give the piece, in its order, placed as in the pose draped in; a piece
+    /// with an axis meets its groups by their hull about it (`radial`: the axis placed so, and
+    /// its [`Radial`]), as the solver does. Pressers hold the cloth wherever it rests.
     fn drape_sinks(
         &self,
         garment: &Garment,
         shape: &[Vec3A],
         collides: u32,
-        radial: Option<(Vec3A, Vec3A, f32)>,
+        radial: Option<(Vec3A, Vec3A, Radial)>,
     ) -> Vec<Sink> {
-        let colliders: Vec<Option<Capsule>> = self
+        // Each with whether cloth may rest inside it: not a forearm, hand, calf or foot, which
+        // swing about under the cloth, so resting inside one in one pose would let it through
+        // the cloth in every other.
+        let colliders: Vec<Option<(Capsule, bool)>> = self
             .capsules
             .iter()
             .filter(|c| c.group & collides != 0)
             .map(|c| {
                 let pose = garment.pose(&self.bones[c.bone as usize]);
-                c.press.is_none().then(|| Capsule {
-                    bulk: c.group & (group::TORSO | group::LEGS) != 0,
+                let capsule = Capsule {
+                    bulk: radial.is_some_and(|(_, _, r)| c.group & r.groups != 0),
                     ..Capsule::new(
                         pose.transform_point3a(c.a),
                         pose.transform_point3a(c.b),
                         c.radius,
                     )
-                })
+                };
+                let limb = c.group & group::LIMB_ENDS != 0;
+                c.press.is_none().then_some((capsule, !limb))
             })
             .collect();
+        // The particles, then the cells' centres, as the solver numbers its collision points.
+        let mut points = shape.to_vec();
+        points.extend(
+            grid_cells(garment.columns, garment.rows, garment.wrap)
+                .into_iter()
+                .map(|cell| cell.iter().map(|&i| shape[i]).sum::<Vec3A>() * 0.25),
+        );
         let mut sinks = Vec::new();
-        for (i, &p) in shape.iter().enumerate() {
+        for (i, &p) in points.iter().enumerate() {
             for (k, capsule) in colliders.iter().enumerate() {
-                let Some(capsule) = capsule else {
+                let Some((capsule, inside)) = capsule else {
                     continue;
                 };
-                let hull = radial.and_then(|(origin, up, reach)| {
-                    radial_push(p, capsule, DRAPED_RADIUS, origin, up, reach)
+                let hull = radial.and_then(|(origin, up, axis)| {
+                    radial_push(p, capsule, DRAPED_RADIUS, origin, up, axis.reach)
                         .map(|out| DRAPED_RADIUS - out.length())
                 });
                 let room = hull.unwrap_or_else(|| p.distance(capsule.closest(p)) - capsule.radius);
@@ -529,7 +578,7 @@ impl Planner<'_> {
                     sinks.push(Sink {
                         particle: i as u16,
                         collider: k as u16,
-                        radius: (room - 0.003).max(-0.08),
+                        radius: (room - 0.003).max(if *inside { -0.08 } else { 0.0 }),
                     });
                 }
             }
@@ -546,6 +595,59 @@ impl Planner<'_> {
             sinks.iter().filter(|s| s.radius < -0.003).count()
         );
         sinks
+    }
+
+    /// [`PierceCheck`] for a draped garment's drawn mesh against the colliders in `collides`
+    /// (pressers aside) and the draped layer under it, placed as in the pose draped in.
+    fn pierce_check(&self, garment: &Garment, mesh: &MeshData, collides: u32) -> PierceCheck {
+        let colliders: Vec<Option<Capsule>> = self
+            .capsules
+            .iter()
+            .filter(|c| c.group & collides != 0)
+            .map(|c| {
+                let pose = garment.pose(&self.bones[c.bone as usize]);
+                c.press.is_none().then(|| {
+                    Capsule::new(
+                        pose.transform_point3a(c.a),
+                        pose.transform_point3a(c.b),
+                        c.radius,
+                    )
+                })
+            })
+            .collect();
+        let positions: Vec<Vec3A> = mesh
+            .positions
+            .iter()
+            .map(|p| Vec3A::from_array(*p))
+            .collect();
+        let rests = positions
+            .iter()
+            .map(|&p| {
+                colliders
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(k, c)| {
+                        let c = c.as_ref()?;
+                        let room = p.distance(c.closest(p)) - c.radius;
+                        (room < PIERCE_NEAR).then_some((k as u16, room))
+                    })
+                    .collect()
+            })
+            .collect();
+        let layer_rests = match &self.draped_layer {
+            Some(layer) if collides & group::LAYERS != 0 => positions
+                .iter()
+                .map(|&p| layer.push_out(p, 0.0).map_or(0.0, |out| out.distance(p)))
+                .collect(),
+            _ => Vec::new(),
+        };
+        PierceCheck {
+            positions,
+            joints: mesh.joints.clone(),
+            weights: mesh.weights.clone(),
+            rests,
+            layer_rests,
+        }
     }
 
     /// Links and tethers with the lengths and folds as draped.
@@ -573,9 +675,29 @@ impl Planner<'_> {
             | group::PRESSERS
             | group::HIP_ITEMS
             | group::LAYERS;
+        let hips = self.bone("root.x")?;
+        let pelvis = self.joint("root.x")?;
         let particles = self.draped_particles(garment, chest);
         let shape: Vec<Vec3A> = (0..particles.len()).map(|i| garment.drape(i)).collect();
-        let sinks = self.drape_sinks(garment, &shape, collides, None);
+        // It does not fall in towards the body's axis where an arm swung away from under it, so
+        // the arm meets it from inside when it swings back.
+        let (columns, rows) = (garment.columns, garment.rows);
+        let row_height = |r: usize| (0..columns).map(|c| shape[r * columns + c].y).sum::<f32>();
+        let radial = Radial {
+            bone: hips,
+            origin: pelvis,
+            reach: (row_height(0) - row_height(rows - 1)) / columns as f32 / (rows - 1) as f32
+                * 0.5,
+            groups: 0,
+            inward: Some(0.03),
+        };
+        let pose = garment.pose("root.x");
+        let axis = (
+            pose.transform_point3a(radial.origin),
+            pose.matrix3.mul_vec3a(Vec3A::Y).normalize_or(Vec3A::Y),
+            radial,
+        );
+        let sinks = self.drape_sinks(garment, &shape, collides, Some(axis));
         let layer_reach = match &self.draped_layer {
             Some(layer) => {
                 let gap = DRAPED_RADIUS + LAYER_GAP;
@@ -608,19 +730,22 @@ impl Planner<'_> {
             drag: 0.8,
             lift: 2.0,
             friction: 0.35,
-            radial: None,
+            radial: Some(radial),
             self_collide: true,
             shape,
             sinks,
             layer_reach,
         };
+        let mesh = garment.mesh();
+        let pierce = self.pierce_check(garment, &mesh, collides);
         Some(PiecePlan {
+            pierce: Some(pierce),
             name: "cloak",
             def,
             collides,
             provides: Vec::new(),
             layer: None,
-            parts: vec![(Look::Wool, garment.mesh())],
+            parts: vec![(Look::Wool, mesh)],
         })
     }
 
@@ -652,10 +777,17 @@ impl Planner<'_> {
         }
         let pose = garment.pose("root.x");
         let (_, turn, _) = pose.to_scale_rotation_translation();
+        let radial = Radial {
+            bone: hips,
+            origin,
+            reach,
+            groups: group::TORSO | group::LEGS,
+            inward: None,
+        };
         let axis = (
             pose.transform_point3a(origin),
             pose.matrix3.mul_vec3a(Vec3A::Y).normalize_or(Vec3A::Y),
-            reach,
+            radial,
         );
         let sinks = self.drape_sinks(garment, &shape, collides, Some(axis));
         // Its surface as draped, for a draped cloak over it.
@@ -665,7 +797,6 @@ impl Planner<'_> {
             .collect();
         let mut layer = Layer::new(rows, &angles);
         layer.update(&shape, axis.0, Mat3A::from_quat(turn));
-        self.draped_layer = Some(layer);
         // For planning what goes over it, every column stands in for the skirt at rest.
         for c in 0..columns {
             self.body.push(BodyCapsule {
@@ -694,23 +825,25 @@ impl Planner<'_> {
             drag: 0.8,
             lift: 2.0,
             friction: 0.4,
-            radial: Some(Radial {
-                bone: hips,
-                origin,
-                reach,
-            }),
+            radial: Some(radial),
             self_collide: false,
             shape,
             sinks,
             layer_reach: Vec::new(),
         };
+        let mesh = garment.mesh();
+        let pierce = self.pierce_check(garment, &mesh, collides);
+        // Its surface as draped, for a draped cloak over it (after its own check: it is not
+        // over itself).
+        self.draped_layer = Some(layer);
         Some(PiecePlan {
+            pierce: Some(pierce),
             name: "skirt",
             def,
             collides,
             provides: Vec::new(),
             layer: Some(LayerPlan { bone: hips, origin }),
-            parts: vec![(Look::Linen, garment.mesh())],
+            parts: vec![(Look::Linen, mesh)],
         })
     }
 
@@ -778,6 +911,8 @@ impl Planner<'_> {
                 bone: hips,
                 origin: Vec3A::new(0.0, pelvis.y, centre),
                 reach: (top - bottom) / (rows - 1) as f32 * 0.5,
+                groups: group::TORSO | group::LEGS,
+                inward: None,
             }),
             self_collide: false,
             shape: Vec::new(),
@@ -802,6 +937,7 @@ impl Planner<'_> {
             });
         }
         Some(PiecePlan {
+            pierce: None,
             name: "skirt",
             def,
             collides: group::TORSO
@@ -874,6 +1010,7 @@ impl Planner<'_> {
         let mut mesh = MeshData::default();
         mesh.add_tube(&rings, 8, Vec3A::X, false, true);
         Some(PiecePlan {
+            pierce: None,
             name: "ponytail",
             def,
             collides: group::HEAD | group::TORSO | group::BACK_ITEMS,
@@ -947,6 +1084,7 @@ impl Planner<'_> {
             (Look::Steel, -0.23, 0.02, 0.025, 0.025),
         ];
         Some(PiecePlan {
+            pierce: None,
             name: "hip sword",
             def,
             collides: 0,

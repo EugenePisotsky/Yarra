@@ -66,8 +66,7 @@ impl Carrier {
     }
 }
 
-/// A wrap-around piece's upright axis: `origin` (bind space) carried by `bone`. Its particles
-/// leave upright colliders outward from the axis, never between them (a skirt between the legs).
+/// A piece's upright axis: `origin` (bind space) carried by `bone`.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Radial {
     pub bone: u16,
@@ -75,6 +74,13 @@ pub(crate) struct Radial {
     /// Half the height between rows: each particle stands for the cloth that far above and
     /// below it, so a knee between two rows still pushes it.
     pub reach: f32,
+    /// Upright colliders the piece stays outside the convex hull of, pushed only outward from
+    /// the axis, never between them: a skirt spans the gap between the legs.
+    pub groups: u32,
+    /// How much nearer the axis than its target a particle may come: a cape over an arm that
+    /// swings forward stays outside the arm's way, not falling in behind it to be met from
+    /// outside (and pushed further in) when the arm swings back.
+    pub inward: Option<f32>,
 }
 
 #[derive(Clone, Debug)]
@@ -169,7 +175,8 @@ pub(crate) struct PieceDef {
     /// garment draped in another pose than the bind pose (arms down) is carried from bind space
     /// but drawn, and its folds kept, as draped. Empty: the rest positions.
     pub shape: Vec<Vec3A>,
-    /// Particles that rest closer to a collider than their radius, ordered by particle.
+    /// Collision points (particles, then a sheet's cell centres) that rest closer to a
+    /// collider than their radius, ordered by point.
     pub sinks: Vec<Sink>,
     /// How far outside inner layers each particle keeps, where it was draped over them closer
     /// than its radius and [`LAYER_GAP`]. Empty: that for every particle.
@@ -196,13 +203,15 @@ impl PieceDef {
     }
 
     /// Particle `i`'s radius against collider `k`.
-    fn contact_radius(&self, i: usize, k: usize) -> f32 {
+    /// Collision point `i`'s radius against collider `k`: a particle's, or past the particles
+    /// a cell's centre ([`grid_cells`]), `radius` unless sunk.
+    fn contact_radius(&self, i: usize, k: usize, radius: f32) -> f32 {
         let first = self.sinks.partition_point(|s| (s.particle as usize) < i);
         self.sinks[first..]
             .iter()
             .take_while(|s| s.particle as usize == i)
             .find(|s| s.collider as usize == k)
-            .map_or(self.particles[i].radius, |s| s.radius)
+            .map_or(radius, |s| s.radius)
     }
 
     /// Particle `i` in the cloth's own rest shape (see [`Self::shape`]).
@@ -230,8 +239,8 @@ pub(crate) struct Capsule {
     /// of it, `radius` (its thickness) plus [`PRESS_GAP`] from the axis.
     pub press: Vec3A,
     pub width: f32,
-    /// Part of the body's bulk (torso, legs): wrap-around pieces stay outside the convex hull
-    /// of these rather than each one ([`Radial`]).
+    /// Of the groups the piece meets by its axis ([`Radial::groups`]): it stays outside their
+    /// convex hull about the axis rather than each one.
     pub bulk: bool,
 }
 
@@ -479,6 +488,10 @@ pub(crate) struct PieceSim {
     bounds: Vec<(Vec3A, f32)>,
     /// How far each particle can get this frame.
     reach: Vec<f32>,
+    /// A sheet's cells, corner particles each ([`grid_cells`]): their centres collide too, so
+    /// a collider narrower than the gaps between particles (a scabbard, a hand) cannot pass
+    /// between them through the cloth drawn there.
+    cells: Vec<[u16; 4]>,
     /// Bounding spheres of runs of eight particles, grown by their reach.
     chunks: Vec<(Vec3A, f32)>,
     /// Pairs of particles, not neighbours on the sheet, that could meet this frame, and how far
@@ -538,6 +551,17 @@ impl PieceSim {
             ),
             bounds: Vec::new(),
             reach: Vec::new(),
+            cells: match def.frames {
+                Frames::Grid {
+                    columns,
+                    rows,
+                    wrap,
+                } => grid_cells(columns, rows, wrap)
+                    .into_iter()
+                    .map(|cell| cell.map(|i| i as u16))
+                    .collect(),
+                _ => Vec::new(),
+            },
             chunks: Vec::new(),
             self_pairs: Vec::new(),
             axis: None,
@@ -844,10 +868,74 @@ impl PieceSim {
                         x.distance(after.closest(x)) - after.radius
                     };
                     if gap < reach + travel {
-                        let radius = def.contact_radius(i, k);
+                        let radius = def.contact_radius(i, k, def.particles[i].radius);
                         self.pairs.push((i as u16, k as u16, radius));
                     }
                 }
+            }
+        }
+        // Cell centres: a few hundred, each against every collider's sphere.
+        let n = self.x.len();
+        for (c, corners) in self.cells.iter().enumerate() {
+            let reach = corners
+                .iter()
+                .map(|&i| self.reach[i as usize])
+                .fold(f32::NEG_INFINITY, f32::max);
+            let x = self.cell_centre(c);
+            let own = corners
+                .iter()
+                .map(|&i| def.particles[i as usize].radius)
+                .sum::<f32>()
+                * 0.25;
+            for (k, &(centre, bound)) in self.bounds.iter().enumerate() {
+                let limit = bound + reach;
+                if x.distance_squared(centre) > limit * limit {
+                    continue;
+                }
+                let (before, after) = capsules[k];
+                let travel = before.a.distance(after.a).max(before.b.distance(after.b));
+                let gap = if after.press != Vec3A::ZERO {
+                    f32::NEG_INFINITY
+                } else if let Some((origin, up, band)) = self.axis
+                    && after.bulk
+                {
+                    radial_push(x, &after, reach, origin, up, band).map_or(f32::MAX, |_| 0.0)
+                } else {
+                    x.distance(after.closest(x)) - after.radius
+                };
+                if gap < reach + travel {
+                    let radius = def.contact_radius(n + c, k, own);
+                    self.pairs.push(((n + c) as u16, k as u16, radius));
+                }
+            }
+        }
+    }
+
+    /// Where a cell's centre is: its corners' mean.
+    fn cell_centre(&self, cell: usize) -> Vec3A {
+        self.cells[cell]
+            .iter()
+            .map(|&i| self.x[i as usize])
+            .sum::<Vec3A>()
+            * 0.25
+    }
+
+    /// Moves collision point `i` by `delta`: a particle itself, or a cell centre's free corners
+    /// each by `delta`. That moves the centre all the way where no corner is pinned, part of the
+    /// way where some are (all of it there would land, doubled or more, on the free ones).
+    fn displace(&mut self, particles: &[ParticleDef], i: usize, delta: Vec3A, normal: Vec3A) {
+        let n = self.x.len();
+        if i < n {
+            self.x[i] += delta;
+            self.contacts[i] = normal;
+            return;
+        }
+        let corners = self.cells[i - n];
+        for &c in &corners {
+            let c = c as usize;
+            if !particles[c].pinned {
+                self.x[c] += delta;
+                self.contacts[c] = normal;
             }
         }
     }
@@ -940,37 +1028,65 @@ impl PieceSim {
             if distance > p.max_distance {
                 self.x[i] = target + d * (p.max_distance / distance);
             }
+            if let (Some((origin, up, _)), Some(margin)) =
+                (self.axis, def.radial.and_then(|r| r.inward))
+            {
+                let flat = |at: Vec3A| (at - origin) - up * (at - origin).dot(up);
+                let (now, aim) = (flat(self.x[i]), flat(target));
+                let floor = aim.length() - margin;
+                let r = now.length();
+                if r < floor && r > 1e-5 {
+                    self.x[i] += now * (floor / r - 1.0);
+                }
+            }
         }
         // Colliders last: being outside the body matters more than staying near the pose.
         self.contacts.fill(Vec3A::ZERO);
-        for &(i, k, radius) in &self.pairs {
+        let n = self.x.len();
+        for p in 0..self.pairs.len() {
+            let (i, k, radius) = self.pairs[p];
             let i = i as usize;
+            let (x, own, target) = if i < n {
+                (self.x[i], particles[i].radius, self.targets[i])
+            } else {
+                let corners = self.cells[i - n];
+                let mean = |of: &dyn Fn(usize) -> Vec3A| {
+                    corners.iter().map(|&c| of(c as usize)).sum::<Vec3A>() * 0.25
+                };
+                (
+                    self.cell_centre(i - n),
+                    corners
+                        .iter()
+                        .map(|&c| particles[c as usize].radius)
+                        .sum::<f32>()
+                        * 0.25,
+                    mean(&|c| self.targets[c]),
+                )
+            };
             let (before, after) = capsules[k as usize];
             let capsule = before.lerp(after, t);
-            let closest = capsule.closest(self.x[i]);
-            let d = self.x[i] - closest;
+            let closest = capsule.closest(x);
+            let d = x - closest;
             let reach = capsule.radius + radius;
             if capsule.press != Vec3A::ZERO {
                 let under = d.dot(capsule.press);
                 let across = d - capsule.press * under;
                 let held = capsule.radius + PRESS_GAP;
                 // Wider than the gaps between particles, so cloth cannot straddle the item.
-                let band = capsule.width + 2.4 * particles[i].radius;
+                let band = capsule.width + 2.4 * own;
                 if under < held
                     && under > held - PRESS_DEPTH
                     && across.length_squared() < band * band
                 {
                     // All the way: a presser is worn over the cloth, it does not strike it.
-                    self.x[i] += capsule.press * (held - under);
-                    self.contacts[i] = capsule.press;
+                    self.displace(particles, i, capsule.press * (held - under), capsule.press);
                 }
                 continue;
             }
             if let Some((origin, up, reach)) = self.axis
-                && let Some(out) = radial_push(self.x[i], &capsule, radius, origin, up, reach)
+                && let Some(out) = radial_push(x, &capsule, radius, origin, up, reach)
             {
-                self.x[i] += out * params.contact;
-                self.contacts[i] = out.normalize_or_zero();
+                self.displace(particles, i, out * params.contact, out.normalize_or_zero());
                 continue;
             }
             let distance2 = d.length_squared();
@@ -982,13 +1098,12 @@ impl PieceSim {
             let normal = if distance > 1e-6 {
                 d / distance
             } else {
-                (self.targets[i] - closest).normalize_or(Vec3A::Y)
+                (target - closest).normalize_or(Vec3A::Y)
             };
             // Part of the way each substep: a collider meets cloth over a few milliseconds
             // rather than kicking it in one.
-            let push = closest + normal * reach - self.x[i];
-            self.x[i] += push * params.contact;
-            self.contacts[i] = normal;
+            let push = closest + normal * reach - x;
+            self.displace(particles, i, push * params.contact, normal);
         }
 
         for &(i, j, gap) in &self.self_pairs {
@@ -1020,6 +1135,33 @@ impl PieceSim {
                     self.contacts[i] = (outside - self.x[i]).normalize_or_zero();
                     let push = outside - self.x[i];
                     self.x[i] += push * params.contact;
+                }
+            }
+            for c in 0..self.cells.len() {
+                let corners = self.cells[c];
+                if corners.iter().all(|&i| particles[i as usize].pinned) {
+                    continue;
+                }
+                let reach = corners
+                    .iter()
+                    .map(|&i| {
+                        let i = i as usize;
+                        def.layer_reach
+                            .get(i)
+                            .copied()
+                            .unwrap_or(particles[i].radius + LAYER_GAP)
+                    })
+                    .sum::<f32>()
+                    * 0.25;
+                let x = self.cell_centre(c);
+                if let Some(outside) = layer.push_out(x, reach) {
+                    let push = outside - x;
+                    self.displace(
+                        particles,
+                        n + c,
+                        push * params.contact,
+                        push.normalize_or_zero(),
+                    );
                 }
             }
         }
@@ -1188,6 +1330,20 @@ fn carried_turn(turn: Quat, rest: Vec3A, now: Vec3A) -> Quat {
     (Quat::from_rotation_arc(from.into(), to.into()) * turn).normalize()
 }
 
+/// A sheet's cells as their corner particles: (row, column), the next column, the next row,
+/// both; a wrapped sheet's last column closes on its first.
+pub(crate) fn grid_cells(columns: usize, rows: usize, wrap: bool) -> Vec<[usize; 4]> {
+    let across = if wrap { columns } else { columns - 1 };
+    let mut cells = Vec::with_capacity(across * rows.saturating_sub(1));
+    for r in 0..rows.saturating_sub(1) {
+        for c in 0..across {
+            let at = |r: usize, c: usize| r * columns + c % columns;
+            cells.push([at(r, c), at(r, c + 1), at(r + 1, c), at(r + 1, c + 1)]);
+        }
+    }
+    cells
+}
+
 fn grid_index(columns: usize, wrap: bool, r: usize, c: isize) -> usize {
     let c = if wrap {
         c.rem_euclid(columns as isize) as usize
@@ -1323,6 +1479,62 @@ mod tests {
         for (i, x) in sim.positions().iter().enumerate().skip(1) {
             let gap = x.distance(bar.closest(*x)) - bar.radius - 0.02;
             assert!(gap > -2e-3, "particle {i} at {x:?} is {gap} inside the bar");
+        }
+    }
+
+    #[test]
+    fn a_rod_between_rows_of_particles_is_caught_by_the_cells() {
+        // A sheet hanging in the plane z = 0, particles 0.2 m apart, the top row pinned.
+        let (columns, rows) = (3, 4);
+        let particles: Vec<ParticleDef> = (0..columns * rows)
+            .map(|i| ParticleDef {
+                rest: Vec3A::new(0.2 * (i % columns) as f32, -0.2 * (i / columns) as f32, 0.0),
+                carrier: Carrier::on(0),
+                pinned: i < columns,
+                max_distance: 10.0,
+                goal: 0.0,
+                radius: 0.02,
+                exposure: 1.0,
+            })
+            .collect();
+        let mut links = Vec::new();
+        for i in 0..columns * rows {
+            let mut link = |j: usize| {
+                links.push(Link {
+                    a: i as u16,
+                    b: j as u16,
+                    rest: particles[i].rest.distance(particles[j].rest),
+                    compliance: 0.0,
+                })
+            };
+            if i % columns + 1 < columns {
+                link(i + 1);
+            }
+            if i + columns < columns * rows {
+                link(i + columns);
+            }
+        }
+        let def = PieceDef {
+            particles,
+            links,
+            frames: Frames::Grid {
+                columns,
+                rows,
+                wrap: false,
+            },
+            ..strand(2)
+        };
+        let deforms = [Affine3A::IDENTITY];
+        let mut sim = PieceSim::new(&def);
+        sim.reset(&def, &deforms);
+        // A thin rod across the sheet halfway between its second and third rows, just in front:
+        // 0.1 m from every particle, out of their reach, but through the cloth between them.
+        let rod = Capsule::new(Vec3A::new(-0.5, -0.3, 0.01), Vec3A::new(0.9, -0.3, 0.01), 0.01);
+        run(&def, &mut sim, &deforms, &[rod], 300);
+        for cell in columns - 1..2 * (columns - 1) {
+            let centre = sim.cell_centre(cell);
+            let gap = centre.distance(rod.closest(centre)) - rod.radius - 0.02;
+            assert!(gap > -3e-3, "cell {cell} centre {centre:?} is {gap} inside the rod");
         }
     }
 

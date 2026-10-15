@@ -16,6 +16,9 @@ pub(crate) mod group {
     pub const LAYERS: u32 = 1 << 6;
     /// Back items as the cloak sees them: keeping it on one side of them.
     pub const PRESSERS: u32 = 1 << 7;
+    /// Also set on forearms, hands, calves and feet: the ends of limbs, which swing out past a
+    /// cape's edges and back.
+    pub const LIMB_ENDS: u32 = 1 << 8;
 }
 
 /// A collider in bind space, carried by one bone.

@@ -249,7 +249,8 @@ pub(crate) fn install(app: &mut App) -> Result<(), String> {
     // Controls stay unlocked: locked controls also stop every motor, and the walk is the point.
     app.world_mut().resource_mut::<RuntimeSettings>().show_ui = false;
     // Unattended tuning runs, e.g. CLOTH_LAB_TUNE="damping=2,lift=0.5,flutter=0,
-    // inertia=0.6,substeps=240,wind=0,contact=0.6,self=1".
+    // inertia=0.6,substeps=240,wind=0,contact=0.6,self=1,draw=1" (`draw` shows colliders and
+    // particles).
     if let Ok(tune) = std::env::var("CLOTH_LAB_TUNE") {
         let mut settings = engine::ClothSettings::default();
         for pair in tune.split(',') {
@@ -268,6 +269,10 @@ pub(crate) fn install(app: &mut App) -> Result<(), String> {
                 "wind" => settings.wind_override = Some((0.0, value)),
                 "contact" => settings.contact = value,
                 "self" => settings.self_collide = value > 0.5,
+                "draw" => {
+                    settings.show_colliders = value > 0.5;
+                    settings.show_particles = value > 0.5;
+                }
                 _ => return Err(format!("CLOTH_LAB_TUNE: unknown {key}")),
             }
         }

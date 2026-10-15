@@ -145,8 +145,8 @@ impl Garment {
         let mut indices = mesh.indices.clone();
         let at = |i: u32| Vec3A::from_array(mesh.positions[i as usize]);
         let normal = |i: u32| Vec3A::from_array(mesh.normals[i as usize]);
-        for triangle in indices.chunks_exact_mut(3) {
-            let [a, b, c] = [triangle[0], triangle[1], triangle[2]];
+        for triangle in indices.as_chunks_mut::<3>().0 {
+            let [a, b, c] = *triangle;
             let face = (at(b) - at(a)).cross(at(c) - at(a));
             if face.dot(normal(a) + normal(b) + normal(c)) < 0.0 {
                 triangle.swap(1, 2);

@@ -7,7 +7,7 @@ mod character;
 mod cloth;
 pub use cloth::{
     ClothGarments, ClothPlugin, ClothSettings, ClothStats, ClothWorn, Fabric, Garment,
-    OutfitChoice, PieceShake, TestOutfit,
+    OutfitChoice, PIERCED_BY, PieceShake, TestOutfit,
 };
 mod character_catalog;
 mod msaa_store;

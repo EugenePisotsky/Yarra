@@ -99,6 +99,9 @@ pub struct ClothSettings {
     pub simulate_within: f32,
     pub show_colliders: bool,
     pub show_particles: bool,
+    /// Count draped garments' drawn vertices that go through things ([`PieceShake::pierced`]):
+    /// a lab measure, about a millisecond a garment.
+    pub measure_pierce: bool,
 }
 
 impl Default for ClothSettings {
@@ -118,6 +121,7 @@ impl Default for ClothSettings {
             simulate_within: 40.0,
             show_colliders: false,
             show_particles: false,
+            measure_pierce: false,
         }
     }
 }
@@ -149,7 +153,25 @@ pub struct PieceShake {
     pub name: &'static str,
     pub cloth: f32,
     pub animation: f32,
+    /// Drawn vertices of a draped garment more than 1 cm deeper inside a collider or the
+    /// garment under it than they rest, when measured ([`ClothSettings::measure_pierce`]).
+    pub pierced: f32,
+    /// The same by what they went into: [`PIERCED_BY`].
+    pub pierced_by: [f32; PIERCED_BY.len()],
 }
+
+/// What [`PieceShake::pierced_by`] counts, in order: collider groups, then inner layers.
+pub const PIERCED_BY: [&str; 9] = [
+    "torso",
+    "arms",
+    "legs",
+    "head",
+    "back items",
+    "hip items",
+    "layers",
+    "pressers",
+    "garment under",
+];
 
 /// An actor's bones by name: each joint entity and its inverse bind pose.
 #[derive(Component)]
@@ -205,7 +227,7 @@ struct ClothRig {
     /// Sum of its simulated pieces' shake, metres, and how many.
     shake: (f32, usize),
     /// Each piece's shake this frame and its targets', metres.
-    piece_shake: Vec<(f32, f32)>,
+    piece_shake: Vec<(f32, f32, [f32; PIERCED_BY.len()])>,
 }
 
 struct RigPiece {
@@ -783,7 +805,8 @@ fn simulate_cloth(
                     deform.matrix3.mul_vec3a(p).normalize_or_zero()
                 }),
                 width: c.width,
-                bulk: c.group & (body::group::TORSO | body::group::LEGS) != 0,
+                // Set per piece, from its axis's groups.
+                bulk: false,
             };
             let before = if jumped { now } else { rig.capsules[k].1 };
             rig.capsules[k] = (before, now);
@@ -796,12 +819,16 @@ fn simulate_cloth(
             let state = &mut rest[0];
             if simulate {
                 state.near.clear();
+                let hull = piece.def.radial.map_or(0, |r| r.groups);
                 state.near.extend(
                     rig.capsules
                         .iter()
                         .zip(&rig.groups)
                         .filter(|(_, g)| *g & piece.collides != 0)
-                        .map(|(c, _)| *c),
+                        .map(|(&(before, after), g)| {
+                            let bulk = g & hull != 0;
+                            (Capsule { bulk, ..before }, Capsule { bulk, ..after })
+                        }),
                 );
                 let layers: Vec<&Layer> = if piece.collides & body::group::LAYERS != 0 {
                     inner.iter().filter_map(|p| p.layer.as_ref()).collect()
@@ -815,12 +842,34 @@ fn simulate_cloth(
                     rig.shake.0 += state.sim.shake();
                     rig.shake.1 += 1;
                 }
-                rig.piece_shake
-                    .push((state.sim.shake(), state.sim.target_shake()));
+                rig.piece_shake.push((
+                    state.sim.shake(),
+                    state.sim.target_shake(),
+                    [0.0; PIERCED_BY.len()],
+                ));
             } else {
                 state.sim.reset(&piece.def, &rig.deforms);
             }
             state.sim.joints(&piece.def, &rig.deforms, &mut state.poses);
+            if simulate
+                && settings.measure_pierce
+                && let Some(check) = &piece.pierce
+                && let Some(entry) = rig.piece_shake.last_mut()
+            {
+                let layers: Vec<&Layer> = if piece.collides & body::group::LAYERS != 0 {
+                    inner.iter().filter_map(|p| p.layer.as_ref()).collect()
+                } else {
+                    Vec::new()
+                };
+                let rests = piece.def.joint_rests();
+                let groups: Vec<u32> = rig
+                    .groups
+                    .iter()
+                    .copied()
+                    .filter(|g| g & piece.collides != 0)
+                    .collect();
+                entry.2 = pierced(check, &rests, &state.poses, &state.near, &groups, &layers);
+            }
             if let (Some(layer), Some(at)) = (state.layer.as_mut(), piece.layer) {
                 let deform = rig.deforms[at.bone as usize];
                 let (_, turn, _) = deform.to_scale_rotation_translation();
@@ -860,11 +909,18 @@ fn simulate_cloth(
         characters += 1;
         shake.0 += rig.shake.0;
         shake.1 += rig.shake.1;
-        for (plan, &(cloth, animation)) in rig.outfit.plan.pieces.iter().zip(&rig.piece_shake) {
+        for (plan, &(cloth, animation, pierced_by)) in
+            rig.outfit.plan.pieces.iter().zip(&rig.piece_shake)
+        {
+            let pierced = pierced_by.iter().sum::<f32>();
             match by_piece.iter_mut().find(|(p, _)| p.name == plan.name) {
                 Some((entry, n)) => {
                     entry.cloth += cloth;
                     entry.animation += animation;
+                    entry.pierced += pierced;
+                    for (sum, by) in entry.pierced_by.iter_mut().zip(pierced_by) {
+                        *sum += by;
+                    }
                     *n += 1;
                 }
                 None => by_piece.push((
@@ -872,6 +928,8 @@ fn simulate_cloth(
                         name: plan.name,
                         cloth,
                         animation,
+                        pierced,
+                        pierced_by,
                     },
                     1,
                 )),
@@ -914,6 +972,54 @@ fn simulate_cloth(
             })
             .collect(),
     };
+}
+
+/// A draped piece's drawn vertices that are deeper inside a collider or an inner layer than
+/// they rest, by more than [`outfit::PIERCE_DEPTH`] ([`outfit::PierceCheck`]); `rests` are the
+/// render joints' rest positions, `poses` their poses now.
+/// Counted by what they went into first ([`PIERCED_BY`]); `groups` are `near`'s.
+fn pierced(
+    check: &outfit::PierceCheck,
+    rests: &[Vec3A],
+    poses: &[(Quat, Vec3A)],
+    near: &[(Capsule, Capsule)],
+    groups: &[u32],
+    layers: &[&Layer],
+) -> [f32; PIERCED_BY.len()] {
+    let mut count = [0.0; PIERCED_BY.len()];
+    for (i, &p) in check.positions.iter().enumerate() {
+        let mut x = Vec3A::ZERO;
+        for (&joint, &weight) in check.joints[i].iter().zip(&check.weights[i]) {
+            if weight > 0.0 {
+                let (turn, at) = poses[joint as usize];
+                x += (turn.mul_vec3a(p - rests[joint as usize]) + at) * weight;
+            }
+        }
+        let rested = |k: usize| {
+            check.rests[i]
+                .iter()
+                .find(|(c, _)| *c as usize == k)
+                .map_or(0.0, |&(_, room)| room.min(0.0))
+        };
+        let through = near.iter().enumerate().find(|(k, (_, now))| {
+            now.press == Vec3A::ZERO
+                && x.distance(now.closest(x)) - now.radius < rested(*k) - outfit::PIERCE_DEPTH
+        });
+        if let Some((k, _)) = through {
+            let bit = groups.get(k).map_or(0, |g| g.trailing_zeros() as usize);
+            count[bit.min(PIERCED_BY.len() - 2)] += 1.0;
+            continue;
+        }
+        let under = check.layer_rests.get(i).copied().unwrap_or(0.0);
+        if layers.iter().any(|layer| {
+            layer
+                .push_out(x, 0.0)
+                .is_some_and(|out| out.distance(x) > under + outfit::PIERCE_DEPTH)
+        }) {
+            count[PIERCED_BY.len() - 1] += 1.0;
+        }
+    }
+    count
 }
 
 fn draw_cloth_debug(settings: Res<ClothSettings>, rigs: Query<&ClothRig>, mut gizmos: Gizmos) {

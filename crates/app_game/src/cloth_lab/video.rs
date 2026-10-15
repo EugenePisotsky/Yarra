@@ -2,8 +2,9 @@
 //! and in the wind, from fixed bearings) and exits. Time steps exactly 1/60 s a frame however
 //! long a frame takes, so the motion filmed is the motion played and every run is the same, and
 //! each frame's screenshot is piped to ffmpeg, one MP4 per take and `all.mp4` of them in order.
-//! `stats.txt` holds each take's shake per piece: with no frame-time noise, standing and walking
-//! numbers compare across runs.
+//! `stats.txt` holds each take's shake per piece (with no frame-time noise, standing and walking
+//! numbers compare across runs) and, for draped garments, how many of their drawn vertices went
+//! through something ([`engine::PieceShake::pierced`]), on average and at worst.
 use super::{ClothLab, LabCamera, LabGait, drive_camera};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
@@ -62,7 +63,7 @@ const fn take(
     }
 }
 
-const TAKES: [Take; 8] = [
+const TAKES: [Take; 9] = [
     take("walk_back", 180.0, 2.8, LabGait::Walk, Wind::World, 6.0),
     take("walk_side", 90.0, 2.6, LabGait::Walk, Wind::World, 4.0),
     take(
@@ -74,6 +75,7 @@ const TAKES: [Take; 8] = [
         4.0,
     ),
     take("jog_back", 180.0, 3.2, LabGait::Jog, Wind::World, 5.0),
+    take("jog_side", 90.0, 3.0, LabGait::Jog, Wind::World, 4.0),
     take(
         "stand_calm_back",
         180.0,
@@ -120,6 +122,9 @@ pub(super) fn install(app: &mut App, dir: PathBuf) {
         pass_us: (0.0, 0),
     })
     .add_systems(Update, film.after(drive_camera));
+    app.world_mut()
+        .resource_mut::<ClothSettings>()
+        .measure_pierce = true;
 }
 
 #[derive(Resource)]
@@ -134,9 +139,21 @@ struct Video {
     take: Option<usize>,
     /// Frames asked for in the current take.
     frames: u32,
-    /// Per take and piece: summed shake (mm) of the cloth and of its animation, and frames.
-    shake: Vec<(&'static str, &'static str, f32, f32, u32)>,
+    shake: Vec<TakeShake>,
     pass_us: (f32, u32),
+}
+
+/// A piece's sums over a take: shake (mm) of the cloth and of its animation, pierced drawn
+/// vertices, and frames; and the most vertices pierced in one frame.
+struct TakeShake {
+    take: &'static str,
+    piece: &'static str,
+    cloth: f32,
+    animation: f32,
+    pierced: f32,
+    pierced_by: [f32; engine::PIERCED_BY.len()],
+    worst: f32,
+    frames: u32,
 }
 
 /// The take's ffmpeg, fed frames in order however the screenshots arrive.
@@ -346,16 +363,28 @@ fn film(
         match video
             .shake
             .iter_mut()
-            .find(|s| s.0 == take.name && s.1 == piece.name)
+            .find(|s| s.take == take.name && s.piece == piece.name)
         {
             Some(sum) => {
-                sum.2 += piece.cloth;
-                sum.3 += piece.animation;
-                sum.4 += 1;
+                sum.cloth += piece.cloth;
+                sum.animation += piece.animation;
+                sum.pierced += piece.pierced;
+                for (total, by) in sum.pierced_by.iter_mut().zip(piece.pierced_by) {
+                    *total += by;
+                }
+                sum.worst = sum.worst.max(piece.pierced);
+                sum.frames += 1;
             }
-            None => video
-                .shake
-                .push((take.name, piece.name, piece.cloth, piece.animation, 1)),
+            None => video.shake.push(TakeShake {
+                take: take.name,
+                piece: piece.name,
+                cloth: piece.cloth,
+                animation: piece.animation,
+                pierced: piece.pierced,
+                pierced_by: piece.pierced_by,
+                worst: piece.pierced,
+                frames: 1,
+            }),
         }
     }
     video.pass_us.0 += stats.frame_us;
@@ -419,12 +448,24 @@ fn write_stats(video: &Video) {
         1000.0 / FPS,
         video.pass_us.0 / video.pass_us.1.max(1) as f32
     );
-    for (take, piece, cloth, animation, frames) in &video.shake {
-        let n = (*frames).max(1) as f32;
+    for s in &video.shake {
+        let n = s.frames.max(1) as f32;
+        let by: Vec<String> = engine::PIERCED_BY
+            .iter()
+            .zip(s.pierced_by)
+            .filter(|(_, count)| *count / n >= 0.05)
+            .map(|(what, count)| format!("{what} {:.1}", count / n))
+            .collect();
         report.push_str(&format!(
-            "{take} shake {piece} mm {:.3} (its animation {:.3})\n",
-            cloth / n,
-            animation / n
+            "{} shake {} mm {:.3} (its animation {:.3}) pierced {:.1} (worst {:.0}{}{})\n",
+            s.take,
+            s.piece,
+            s.cloth / n,
+            s.animation / n,
+            s.pierced / n,
+            s.worst,
+            if by.is_empty() { "" } else { "; " },
+            by.join(", ")
         ));
     }
     info!("CLOTH_LAB video stats:\n{report}");
