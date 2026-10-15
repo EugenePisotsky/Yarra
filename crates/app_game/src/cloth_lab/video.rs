@@ -43,6 +43,9 @@ struct Take {
     gait: LabGait,
     wind: Wind,
     seconds: f32,
+    /// Take the cloak off and put it on again as the take is set up: garments start at rest,
+    /// wherever things they are worn with are.
+    redress: bool,
 }
 
 const fn take(
@@ -60,10 +63,18 @@ const fn take(
         gait,
         wind,
         seconds,
+        redress: false,
     }
 }
 
-const TAKES: [Take; 9] = [
+const fn redress(name: &'static str, bearing: f32) -> Take {
+    Take {
+        redress: true,
+        ..take(name, bearing, 2.6, LabGait::Idle, Wind::Calm, 3.0)
+    }
+}
+
+const TAKES: [Take; 11] = [
     take("walk_back", 180.0, 2.8, LabGait::Walk, Wind::World, 6.0),
     take("walk_side", 90.0, 2.6, LabGait::Walk, Wind::World, 4.0),
     take(
@@ -85,6 +96,8 @@ const TAKES: [Take; 9] = [
         4.0,
     ),
     take("stand_calm_side", 90.0, 2.4, LabGait::Idle, Wind::Calm, 3.0),
+    redress("redress_back", 180.0),
+    redress("redress_back_left", 140.0),
     take(
         "wind_from_left",
         180.0,
@@ -117,8 +130,10 @@ pub(super) fn install(app: &mut App, dir: PathBuf) {
         dressed: None,
         started: None,
         take: None,
+        redressing: false,
         frames: 0,
         shake: Vec::new(),
+        rows: vec!["take,frame,piece,shake_mm,pierced,folds".into()],
         pass_us: (0.0, 0),
     })
     .add_systems(Update, film.after(drive_camera));
@@ -137,9 +152,13 @@ struct Video {
     started: Option<f32>,
     /// The take being set up or filmed.
     take: Option<usize>,
+    /// Put the cloak back on next frame (see [`Take::redress`]).
+    redressing: bool,
     /// Frames asked for in the current take.
     frames: u32,
     shake: Vec<TakeShake>,
+    /// Each filmed frame's measures per piece, for `frames.csv`.
+    rows: Vec<String>,
     pass_us: (f32, u32),
 }
 
@@ -153,6 +172,8 @@ struct TakeShake {
     pierced: f32,
     pierced_by: [f32; engine::PIERCED_BY.len()],
     worst: f32,
+    folds: f32,
+    worst_folds: f32,
     frames: u32,
 }
 
@@ -336,7 +357,15 @@ fn film(
         return;
     };
     let take = &TAKES[k];
+    if video.redressing {
+        video.redressing = false;
+        lab.outfit.cloak = true;
+    }
     if video.take != Some(k) {
+        if take.redress && lab.outfit.cloak {
+            lab.outfit.cloak = false;
+            video.redressing = true;
+        }
         video.take = Some(k);
         video.frames = 0;
         info!("CLOTH_LAB video take {} {}", k, take.name);
@@ -359,7 +388,12 @@ fn film(
     if !filming {
         return;
     }
+    let frame = video.frames;
     for piece in &stats.shake_by_piece {
+        video.rows.push(format!(
+            "{},{frame},{},{:.3},{},{}",
+            take.name, piece.name, piece.cloth, piece.pierced, piece.folds
+        ));
         match video
             .shake
             .iter_mut()
@@ -373,6 +407,8 @@ fn film(
                     *total += by;
                 }
                 sum.worst = sum.worst.max(piece.pierced);
+                sum.folds += piece.folds;
+                sum.worst_folds = sum.worst_folds.max(piece.folds);
                 sum.frames += 1;
             }
             None => video.shake.push(TakeShake {
@@ -383,6 +419,8 @@ fn film(
                 pierced: piece.pierced,
                 pierced_by: piece.pierced_by,
                 worst: piece.pierced,
+                folds: piece.folds,
+                worst_folds: piece.folds,
                 frames: 1,
             }),
         }
@@ -457,7 +495,8 @@ fn write_stats(video: &Video) {
             .map(|(what, count)| format!("{what} {:.1}", count / n))
             .collect();
         report.push_str(&format!(
-            "{} shake {} mm {:.3} (its animation {:.3}) pierced {:.1} (worst {:.0}{}{})\n",
+            "{} shake {} mm {:.3} (its animation {:.3}) pierced {:.1} (worst {:.0}{}{}) \
+             folds {:.2} (worst {:.0})\n",
             s.take,
             s.piece,
             s.cloth / n,
@@ -465,8 +504,13 @@ fn write_stats(video: &Video) {
             s.pierced / n,
             s.worst,
             if by.is_empty() { "" } else { "; " },
-            by.join(", ")
+            by.join(", "),
+            s.folds / n,
+            s.worst_folds
         ));
+    }
+    if let Err(error) = std::fs::write(video.dir.join("frames.csv"), video.rows.join("\n")) {
+        error!("CLOTH_LAB could not write frames: {error}");
     }
     info!("CLOTH_LAB video stats:\n{report}");
     if let Err(error) = std::fs::write(video.dir.join("stats.txt"), report) {

@@ -689,6 +689,7 @@ impl Planner<'_> {
             reach: (row_height(0) - row_height(rows - 1)) / columns as f32 / (rows - 1) as f32
                 * 0.5,
             groups: 0,
+            outward: group::HIP_ITEMS,
             inward: Some(0.03),
         };
         let pose = garment.pose("root.x");
@@ -782,6 +783,7 @@ impl Planner<'_> {
             origin,
             reach,
             groups: group::TORSO | group::LEGS,
+            outward: 0,
             inward: None,
         };
         let axis = (
@@ -912,6 +914,7 @@ impl Planner<'_> {
                 origin: Vec3A::new(0.0, pelvis.y, centre),
                 reach: (top - bottom) / (rows - 1) as f32 * 0.5,
                 groups: group::TORSO | group::LEGS,
+                outward: 0,
                 inward: None,
             }),
             self_collide: false,
@@ -1089,9 +1092,9 @@ impl Planner<'_> {
             def,
             collides: 0,
             layer: None,
-            // Round, for the skirt and the cloak. A presser holding the cloak outside it swept
-            // the cloak at every step (cape jitter 10.1 mm against 6.6); the cloak's rest
-            // shape starts outside it instead.
+            // Round, for the skirt and the cloak; a cloak goes over it when put on where it
+            // hangs (`Radial::outward`), it being worn at its first end. A presser holding the
+            // cloak outside it fought the cloak's other limits (jitter standing 10 mm).
             provides: vec![Provided {
                 a: 0,
                 b: 2,

@@ -158,6 +158,8 @@ pub struct PieceShake {
     pub pierced: f32,
     /// The same by what they went into: [`PIERCED_BY`].
     pub pierced_by: [f32; PIERCED_BY.len()],
+    /// A sheet's folds over ([`solver::PieceSim::folds`]), when measured.
+    pub folds: f32,
 }
 
 /// What [`PieceShake::pierced_by`] counts, in order: collider groups, then inner layers.
@@ -227,7 +229,7 @@ struct ClothRig {
     /// Sum of its simulated pieces' shake, metres, and how many.
     shake: (f32, usize),
     /// Each piece's shake this frame and its targets', metres.
-    piece_shake: Vec<(f32, f32, [f32; PIERCED_BY.len()])>,
+    piece_shake: Vec<(f32, f32, [f32; PIERCED_BY.len()], f32)>,
 }
 
 struct RigPiece {
@@ -807,6 +809,7 @@ fn simulate_cloth(
                 width: c.width,
                 // Set per piece, from its axis's groups.
                 bulk: false,
+                outward: false,
             };
             let before = if jumped { now } else { rig.capsules[k].1 };
             rig.capsules[k] = (before, now);
@@ -819,15 +822,16 @@ fn simulate_cloth(
             let state = &mut rest[0];
             if simulate {
                 state.near.clear();
-                let hull = piece.def.radial.map_or(0, |r| r.groups);
+                let (hull, out) = piece.def.radial.map_or((0, 0), |r| (r.groups, r.outward));
                 state.near.extend(
                     rig.capsules
                         .iter()
                         .zip(&rig.groups)
                         .filter(|(_, g)| *g & piece.collides != 0)
                         .map(|(&(before, after), g)| {
-                            let bulk = g & hull != 0;
-                            (Capsule { bulk, ..before }, Capsule { bulk, ..after })
+                            let (bulk, outward) = (g & hull != 0, g & out != 0);
+                            let at = |c: Capsule| Capsule { bulk, outward, ..c };
+                            (at(before), at(after))
                         }),
                 );
                 let layers: Vec<&Layer> = if piece.collides & body::group::LAYERS != 0 {
@@ -846,6 +850,7 @@ fn simulate_cloth(
                     state.sim.shake(),
                     state.sim.target_shake(),
                     [0.0; PIERCED_BY.len()],
+                    0.0,
                 ));
             } else {
                 state.sim.reset(&piece.def, &rig.deforms);
@@ -869,6 +874,7 @@ fn simulate_cloth(
                     .filter(|g| g & piece.collides != 0)
                     .collect();
                 entry.2 = pierced(check, &rests, &state.poses, &state.near, &groups, &layers);
+                entry.3 = state.sim.folds(&piece.def) as f32;
             }
             if let (Some(layer), Some(at)) = (state.layer.as_mut(), piece.layer) {
                 let deform = rig.deforms[at.bone as usize];
@@ -909,7 +915,7 @@ fn simulate_cloth(
         characters += 1;
         shake.0 += rig.shake.0;
         shake.1 += rig.shake.1;
-        for (plan, &(cloth, animation, pierced_by)) in
+        for (plan, &(cloth, animation, pierced_by, folds)) in
             rig.outfit.plan.pieces.iter().zip(&rig.piece_shake)
         {
             let pierced = pierced_by.iter().sum::<f32>();
@@ -918,6 +924,7 @@ fn simulate_cloth(
                     entry.cloth += cloth;
                     entry.animation += animation;
                     entry.pierced += pierced;
+                    entry.folds += folds;
                     for (sum, by) in entry.pierced_by.iter_mut().zip(pierced_by) {
                         *sum += by;
                     }
@@ -930,6 +937,7 @@ fn simulate_cloth(
                         animation,
                         pierced,
                         pierced_by,
+                        folds,
                     },
                     1,
                 )),

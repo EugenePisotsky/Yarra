@@ -7,6 +7,16 @@
 //! transform (its pose times its inverse bind pose) and `rest` the particle's bind-space position.
 use bevy::math::{Affine3A, Mat3A, Quat, Vec3A};
 
+/// How far along an item from where it is worn ([`Radial::outward`]) cloth is left to go
+/// round it the nearest way.
+const WORN_END: f32 = 0.3;
+/// How long after a piece is put on (or reset) it is settling: it starts at rest wherever
+/// things worn with it are, and [`Radial::outward`] colliders send it round to their far
+/// side only then. Moving on, cloth stays on the side it is on by ordinary pushes; sent round
+/// all the time, the cloth at an item's sides was flipped back and forth (jogging jitter 5.9 →
+/// 8.8 mm).
+const SETTLE: f32 = 0.5;
+
 /// More substeps than this in one frame means a hitch: the frame's time is cut instead.
 const MAX_SUBSTEPS: usize = 12;
 /// How far beyond a presser's thickness the cloth under it is held: about the cloth's own.
@@ -77,6 +87,12 @@ pub(crate) struct Radial {
     /// Upright colliders the piece stays outside the convex hull of, pushed only outward from
     /// the axis, never between them: a skirt spans the gap between the legs.
     pub groups: u32,
+    /// Colliders the piece leaves, while it settles after being put on ([`SETTLE`]), by the
+    /// nearest way out unless that leads in towards the axis, then by their far side, past
+    /// [`WORN_END`] of their length from their first end (where they are worn): a cape put on
+    /// where a scabbard at the hip hangs ends up over it. (Not limbs: cloth on the upper back
+    /// lies between the upper arm and the body, and sent round the arm it fought the body.)
+    pub outward: u32,
     /// How much nearer the axis than its target a particle may come: a cape over an arm that
     /// swings forward stays outside the arm's way, not falling in behind it to be met from
     /// outside (and pushed further in) when the arm swings back.
@@ -242,6 +258,8 @@ pub(crate) struct Capsule {
     /// Of the groups the piece meets by its axis ([`Radial::groups`]): it stays outside their
     /// convex hull about the axis rather than each one.
     pub bulk: bool,
+    /// Of the groups the piece leaves only outward from its axis ([`Radial::outward`]).
+    pub outward: bool,
 }
 
 impl Capsule {
@@ -253,6 +271,7 @@ impl Capsule {
             press: Vec3A::ZERO,
             width: 0.0,
             bulk: false,
+            outward: false,
         }
     }
 
@@ -264,7 +283,14 @@ impl Capsule {
             press: self.press.lerp(other.press, t).normalize_or_zero(),
             width: self.width + (other.width - self.width) * t,
             bulk: self.bulk,
+            outward: self.outward,
         }
+    }
+
+    /// How far along the axis from `a` to `b` the point nearest `p` is, 0–1.
+    pub fn along(&self, p: Vec3A) -> f32 {
+        let axis = self.b - self.a;
+        ((p - self.a).dot(axis) / axis.length_squared().max(1e-12)).clamp(0.0, 1.0)
     }
 
     pub fn closest(&self, p: Vec3A) -> Vec3A {
@@ -503,6 +529,11 @@ pub(crate) struct PieceSim {
     axis: Option<(Vec3A, Vec3A, f32)>,
     /// Simulated time owed from earlier frames, under one substep.
     carry: f32,
+    /// Seconds since the piece was put on (or reset) still to count as settling ([`SETTLE`]).
+    settling: f32,
+    /// Particles a presser held last substep: [`Radial::inward`] leaves them to it (it holds a
+    /// cape in against the back, under a weapon).
+    pressed: Vec<bool>,
     /// Positions as shown this frame (see [`Self::step`]).
     shown: Vec<Vec3A>,
     /// Each particle's position the last three frames, for [`Self::shake`].
@@ -566,6 +597,8 @@ impl PieceSim {
             self_pairs: Vec::new(),
             axis: None,
             carry: 0.0,
+            settling: SETTLE,
+            pressed: vec![false; def.particles.len()],
             shown: def.particles.iter().map(|p| p.rest).collect(),
             history: [
                 vec![Vec3A::ZERO; n],
@@ -615,6 +648,7 @@ impl PieceSim {
             self.v[i] = Vec3A::ZERO;
         }
         self.anchor_prev = Some(deforms[def.anchor as usize]);
+        self.settling = SETTLE;
     }
 
     /// Advances one frame. `capsules` holds each collider at the start and end of the frame.
@@ -634,6 +668,7 @@ impl PieceSim {
         if params.dt <= 0.0 {
             return;
         }
+        self.settling = (self.settling - params.dt).max(0.0);
         for (i, p) in def.particles.iter().enumerate() {
             self.targets_prev[i] = self.targets[i];
             self.targets[i] = p.carrier.place(p.rest, deforms);
@@ -706,6 +741,31 @@ impl PieceSim {
     /// gradually); flicker from frame to frame does not.
     pub fn shake(&self) -> f32 {
         self.shake
+    }
+
+    /// A sheet's folds over: neighbouring particles across a row whose sides face more than
+    /// about 110° apart (an edge turned back on the cloth beside it), from the last joints,
+    /// where they faced within about 70° of each other at rest (a draped pleat is no fold over).
+    pub fn folds(&self, def: &PieceDef) -> usize {
+        let Frames::Grid {
+            columns,
+            rows,
+            wrap,
+        } = def.frames
+        else {
+            return 0;
+        };
+        let across = if wrap { columns } else { columns - 1 };
+        (0..rows)
+            .flat_map(|r| {
+                (0..across).map(move |c| (r * columns + c, r * columns + (c + 1) % columns))
+            })
+            .filter(|&(a, b)| {
+                // A rest frame is stored transposed: its third row is the side it faced.
+                let rest = |i: usize| self.rest_frames[i].row(2);
+                self.normals[a].dot(self.normals[b]) < -0.35 && rest(a).dot(rest(b)) > 0.35
+            })
+            .count()
     }
 
     /// The same for the targets the animation gives them, for comparison.
@@ -911,6 +971,18 @@ impl PieceSim {
         }
     }
 
+    /// Records collision point `i` (a particle, or a cell centre's corners) as held by a presser.
+    fn mark_pressed(&mut self, i: usize) {
+        let n = self.x.len();
+        if i < n {
+            self.pressed[i] = true;
+        } else {
+            for c in self.cells[i - n] {
+                self.pressed[c as usize] = true;
+            }
+        }
+    }
+
     /// Where a cell's centre is: its corners' mean.
     fn cell_centre(&self, cell: usize) -> Vec3A {
         self.cells[cell]
@@ -1030,6 +1102,7 @@ impl PieceSim {
             }
             if let (Some((origin, up, _)), Some(margin)) =
                 (self.axis, def.radial.and_then(|r| r.inward))
+                && !self.pressed[i]
             {
                 let flat = |at: Vec3A| (at - origin) - up * (at - origin).dot(up);
                 let (now, aim) = (flat(self.x[i]), flat(target));
@@ -1042,6 +1115,7 @@ impl PieceSim {
         }
         // Colliders last: being outside the body matters more than staying near the pose.
         self.contacts.fill(Vec3A::ZERO);
+        self.pressed.fill(false);
         let n = self.x.len();
         for p in 0..self.pairs.len() {
             let (i, k, radius) = self.pairs[p];
@@ -1080,6 +1154,7 @@ impl PieceSim {
                 {
                     // All the way: a presser is worn over the cloth, it does not strike it.
                     self.displace(particles, i, capsule.press * (held - under), capsule.press);
+                    self.mark_pressed(i);
                 }
                 continue;
             }
@@ -1095,11 +1170,26 @@ impl PieceSim {
             }
             let distance = distance2.sqrt();
             // On the axis itself, leave the way the target lies.
-            let normal = if distance > 1e-6 {
+            let mut normal = if distance > 1e-6 {
                 d / distance
             } else {
                 (target - closest).normalize_or(Vec3A::Y)
             };
+            // Out only away from the body: cloth between the collider and the body goes round to
+            // its far side. Not near the end it is worn by (a scabbard's hilt sits on the hip, the
+            // cloth there under it).
+            if capsule.outward
+                && self.settling > 0.0
+                && capsule.along(x) > WORN_END
+                && let Some((origin, up, _)) = self.axis
+            {
+                let flat = (x - origin) - up * (x - origin).dot(up);
+                let away = flat.normalize_or_zero();
+                let inward = normal.dot(away);
+                if inward < 0.0 {
+                    normal = (normal - away * (2.0 * inward)).normalize_or(away);
+                }
+            }
             // Part of the way each substep: a collider meets cloth over a few milliseconds
             // rather than kicking it in one.
             let push = closest + normal * reach - x;
@@ -1529,12 +1619,19 @@ mod tests {
         sim.reset(&def, &deforms);
         // A thin rod across the sheet halfway between its second and third rows, just in front:
         // 0.1 m from every particle, out of their reach, but through the cloth between them.
-        let rod = Capsule::new(Vec3A::new(-0.5, -0.3, 0.01), Vec3A::new(0.9, -0.3, 0.01), 0.01);
+        let rod = Capsule::new(
+            Vec3A::new(-0.5, -0.3, 0.01),
+            Vec3A::new(0.9, -0.3, 0.01),
+            0.01,
+        );
         run(&def, &mut sim, &deforms, &[rod], 300);
         for cell in columns - 1..2 * (columns - 1) {
             let centre = sim.cell_centre(cell);
             let gap = centre.distance(rod.closest(centre)) - rod.radius - 0.02;
-            assert!(gap > -3e-3, "cell {cell} centre {centre:?} is {gap} inside the rod");
+            assert!(
+                gap > -3e-3,
+                "cell {cell} centre {centre:?} is {gap} inside the rod"
+            );
         }
     }
 
