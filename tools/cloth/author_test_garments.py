@@ -61,9 +61,7 @@ parser.add_argument("--thickness", type=float, default=0.004)
 parser.add_argument("--standoff", type=float, default=0.012, help="how far a drape keeps off what it lies on")
 parser.add_argument("--cape-columns", type=int, default=15)
 parser.add_argument("--cape-rows", type=int, default=13)
-# 95°: the cape hangs behind the arms. Wider (110°) it lay over them, and an arm swinging back
-# came out over its edge and folded it under.
-parser.add_argument("--spread", type=float, default=95.0, help="half the cape's span round the neck, degrees")
+parser.add_argument("--spread", type=float, default=110.0, help="half the cape's span round the neck, degrees")
 parser.add_argument("--skirt-columns", type=int, default=20)
 parser.add_argument("--skirt-rows", type=int, default=7)
 parser.add_argument("--skirt-gather", type=float, default=1.5, help="cloth round the skirt per waist round")
