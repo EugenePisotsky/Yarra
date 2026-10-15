@@ -261,11 +261,15 @@ def thick_mesh(fine, rows, columns, wrap, grid, uvs, seam_u):
     dv = np.gradient(shape, axis=0)
     normals = np.cross(du, dv)
     normals /= np.linalg.norm(normals, axis=2, keepdims=True) + 1e-12
+    # The sheet is one surface: turn it as a whole to face away from the body's axis. (Turned
+    # vertex by vertex, fold walls edge-on to that direction came out facing either way, and
+    # the inner shell crossed the outer one there.)
     away = shape.copy()
     away[..., 0] -= pelvis[0]
     away[..., 1] = 0.0
     away[..., 2] -= pelvis[2]
-    normals[np.sum(normals * away, axis=2) < 0.0] *= -1.0
+    if np.sum(normals * away) < 0.0:
+        normals = -normals
     grid = np.array(grid).reshape(rows, columns, 2)
     uvs = np.array(uvs).reshape(rows, columns, 2)
     if wrap:

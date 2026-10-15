@@ -136,15 +136,27 @@ impl Garment {
         Vec3A::from_array(self.particles[i].drape.unwrap_or(self.particles[i].rest))
     }
 
-    /// The drawn mesh, its joints the grid's particles.
+    /// The drawn mesh, its joints the grid's particles. Each triangle is wound to face the way
+    /// its vertices' normals point: a double-sided material turns a back face's normal-mapped
+    /// normal round, so a sheet wound the other way showed its outside lit as if from within.
     pub(crate) fn mesh(&self) -> MeshData {
         let mesh = &self.mesh;
         let (columns, rows) = (self.columns, self.rows);
+        let mut indices = mesh.indices.clone();
+        let at = |i: u32| Vec3A::from_array(mesh.positions[i as usize]);
+        let normal = |i: u32| Vec3A::from_array(mesh.normals[i as usize]);
+        for triangle in indices.chunks_exact_mut(3) {
+            let [a, b, c] = [triangle[0], triangle[1], triangle[2]];
+            let face = (at(b) - at(a)).cross(at(c) - at(a));
+            if face.dot(normal(a) + normal(b) + normal(c)) < 0.0 {
+                triangle.swap(1, 2);
+            }
+        }
         let mut data = MeshData {
             positions: mesh.positions.clone(),
             normals: mesh.normals.clone(),
             uvs: mesh.uvs.clone(),
-            indices: mesh.indices.clone(),
+            indices,
             ..MeshData::default()
         };
         // Round a wrapped grid the cell after the last column is the first's.
@@ -231,6 +243,20 @@ mod tests {
         // The seam's own vertex: wholly on the first column.
         assert_eq!(mesh.joints[1], [5, 3, 8, 6]);
         assert_eq!(mesh.weights[1], [0.0, 1.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn triangles_are_wound_to_face_their_normals() {
+        let mut garment = garment();
+        garment.mesh.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+        garment.mesh.normals = vec![[0.0, 0.0, -1.0]; 3];
+        garment.mesh.uvs = vec![[0.0, 0.0]; 3];
+        garment.mesh.grid = vec![[0.0, 0.0]; 3];
+        // Counter-clockwise from +Z: it faces +Z, against its normals.
+        garment.mesh.indices = vec![0, 1, 2];
+        assert_eq!(garment.mesh().indices, vec![0, 2, 1]);
+        garment.mesh.normals = vec![[0.0, 0.0, 1.0]; 3];
+        assert_eq!(garment.mesh().indices, vec![0, 1, 2]);
     }
 
     #[test]
