@@ -17,6 +17,19 @@ const WORN_END: f32 = 0.3;
 /// 8.8 mm).
 const SETTLE: f32 = 0.5;
 
+/// How long a presser takes to bring cloth back under it (a time constant). All at once, it
+/// fought every substep a hand pushing the cloth out from under it: a bow's lower end at the
+/// hip, where the arm swings back.
+const PRESS_TIME: f32 = 0.08;
+/// The same for a particle past its `max_distance`: a hand swinging back under a cape holds it
+/// out past its leash, and pulled back at once it fought the hand every substep and snapped
+/// back when let go.
+const LEASH_TIME: f32 = 0.04;
+/// The outer part of a particle's margin outside a hull ([`radial_push`]), met softly, over
+/// [`HULL_SOFT_TIME`]: legs swinging into a skirt ease it out rather than kick it.
+const HULL_SOFT: f32 = 0.015;
+const HULL_SOFT_TIME: f32 = 0.025;
+
 /// More substeps than this in one frame means a hitch: the frame's time is cut instead.
 const MAX_SUBSTEPS: usize = 12;
 /// How far beyond a presser's thickness the cloth under it is held: about the cloth's own.
@@ -260,6 +273,9 @@ pub(crate) struct Capsule {
     pub bulk: bool,
     /// Of the groups the piece leaves only outward from its axis ([`Radial::outward`]).
     pub outward: bool,
+    /// Worn over the body (a weapon, a strap): where cloth is caught between it and the body,
+    /// it gives way, the body does not.
+    pub worn: bool,
 }
 
 impl Capsule {
@@ -272,6 +288,7 @@ impl Capsule {
             width: 0.0,
             bulk: false,
             outward: false,
+            worn: false,
         }
     }
 
@@ -284,6 +301,7 @@ impl Capsule {
             width: self.width + (other.width - self.width) * t,
             bulk: self.bulk,
             outward: self.outward,
+            worn: self.worn,
         }
     }
 
@@ -501,6 +519,10 @@ pub(crate) struct PieceSim {
     targets: Vec<Vec3A>,
     normals: Vec<Vec3A>,
     contacts: Vec<Vec3A>,
+    /// Each substep, where particles were before colliders pushed them, and the velocity of
+    /// what last pushed each: a push moves cloth but adds no speed beyond its pusher's.
+    free: Vec<Vec3A>,
+    pushed_by: Vec<Vec3A>,
     anchor_prev: Option<Affine3A>,
     /// Colliders that may touch each particle this frame, as (particle, collider) pairs with
     /// the particle's radius against that collider.
@@ -564,6 +586,8 @@ impl PieceSim {
             targets: vec![Vec3A::ZERO; n],
             normals: vec![Vec3A::ZERO; n],
             contacts: vec![Vec3A::ZERO; n],
+            free: vec![Vec3A::ZERO; n],
+            pushed_by: vec![Vec3A::ZERO; n],
             anchor_prev: None,
             pairs: Vec::new(),
             links: independent_batches(
@@ -700,6 +724,7 @@ impl PieceSim {
             )
         });
         self.gather_pairs(capsules, def, params.dt);
+        self.worn_first(capsules);
         self.gather_self_pairs(def, params.self_collide);
         self.gust(def, params);
 
@@ -971,6 +996,17 @@ impl PieceSim {
         }
     }
 
+    /// Pressers first, then other things worn, the body last: where cloth is caught between
+    /// them, what comes last wins, and the body does not give way. (A cape caught between a
+    /// hand swinging back and a bow's lower end at the hip was flung about, half a metre's
+    /// jolt in a frame; a presser last pushed it into the arms standing still.)
+    fn worn_first(&mut self, capsules: &[(Capsule, Capsule)]) {
+        self.pairs.sort_by_key(|&(_, k, _)| {
+            let c = capsules[k as usize].1;
+            (c.press == Vec3A::ZERO, !c.worn)
+        });
+    }
+
     /// Records collision point `i` (a particle, or a cell centre's corners) as held by a presser.
     fn mark_pressed(&mut self, i: usize) {
         let n = self.x.len();
@@ -995,11 +1031,20 @@ impl PieceSim {
     /// Moves collision point `i` by `delta`: a particle itself, or a cell centre's free corners
     /// each by `delta`. That moves the centre all the way where no corner is pinned, part of the
     /// way where some are (all of it there would land, doubled or more, on the free ones).
-    fn displace(&mut self, particles: &[ParticleDef], i: usize, delta: Vec3A, normal: Vec3A) {
+    /// `velocity` is the pusher's, there.
+    fn displace(
+        &mut self,
+        particles: &[ParticleDef],
+        i: usize,
+        delta: Vec3A,
+        normal: Vec3A,
+        velocity: Vec3A,
+    ) {
         let n = self.x.len();
         if i < n {
             self.x[i] += delta;
             self.contacts[i] = normal;
+            self.pushed_by[i] = velocity;
             return;
         }
         let corners = self.cells[i - n];
@@ -1008,6 +1053,7 @@ impl PieceSim {
             if !particles[c].pinned {
                 self.x[c] += delta;
                 self.contacts[c] = normal;
+                self.pushed_by[c] = velocity;
             }
         }
     }
@@ -1025,6 +1071,8 @@ impl PieceSim {
     ) {
         let particles = &def.particles;
         let frame = 1.0 / params.dt.max(1e-4);
+        let rate = |time: f32| 1.0 - (-h / time).exp();
+        let (leash, press, hull_soft) = (rate(LEASH_TIME), rate(PRESS_TIME), rate(HULL_SOFT_TIME));
         for (i, p) in particles.iter().enumerate() {
             let target = self.targets_prev[i].lerp(self.targets[i], t);
             self.start[i] = self.x[i];
@@ -1098,7 +1146,9 @@ impl PieceSim {
             let d = self.x[i] - target;
             let distance = d.length();
             if distance > p.max_distance {
-                self.x[i] = target + d * (p.max_distance / distance);
+                // Back over [`LEASH_TIME`].
+                let limit = target + d * (p.max_distance / distance);
+                self.x[i] = self.x[i].lerp(limit, leash);
             }
             if let (Some((origin, up, _)), Some(margin)) =
                 (self.axis, def.radial.and_then(|r| r.inward))
@@ -1114,6 +1164,7 @@ impl PieceSim {
             }
         }
         // Colliders last: being outside the body matters more than staying near the pose.
+        self.free.copy_from_slice(&self.x);
         self.contacts.fill(Vec3A::ZERO);
         self.pressed.fill(false);
         let n = self.x.len();
@@ -1152,8 +1203,10 @@ impl PieceSim {
                     && under > held - PRESS_DEPTH
                     && across.length_squared() < band * band
                 {
-                    // All the way: a presser is worn over the cloth, it does not strike it.
-                    self.displace(particles, i, capsule.press * (held - under), capsule.press);
+                    // Back under it over [`PRESS_TIME`].
+                    let velocity = surface_velocity(before, after, x, frame);
+                    let push = capsule.press * ((held - under) * press);
+                    self.displace(particles, i, push, capsule.press, velocity);
                     self.mark_pressed(i);
                 }
                 continue;
@@ -1161,7 +1214,10 @@ impl PieceSim {
             if let Some((origin, up, reach)) = self.axis
                 && let Some(out) = radial_push(x, &capsule, radius, origin, up, reach)
             {
-                self.displace(particles, i, out * params.contact, out.normalize_or_zero());
+                let velocity = surface_velocity(before, after, x, frame);
+                let normal = out.normalize_or_zero();
+                let out = soften(out, radius, hull_soft);
+                self.displace(particles, i, out * params.contact, normal, velocity);
                 continue;
             }
             let distance2 = d.length_squared();
@@ -1190,10 +1246,11 @@ impl PieceSim {
                     normal = (normal - away * (2.0 * inward)).normalize_or(away);
                 }
             }
-            // Part of the way each substep: a collider meets cloth over a few milliseconds
-            // rather than kicking it in one.
+            // `params.contact` of the way: all of it but in tuning. (Part of the way left cloth
+            // inside colliders for substeps on end, through the cloth drawn there.)
             let push = closest + normal * reach - x;
-            self.displace(particles, i, push * params.contact, normal);
+            let velocity = surface_velocity(before, after, x, frame);
+            self.displace(particles, i, push * params.contact, normal, velocity);
         }
 
         for &(i, j, gap) in &self.self_pairs {
@@ -1223,6 +1280,8 @@ impl PieceSim {
                     .unwrap_or(p.radius + LAYER_GAP);
                 if let Some(outside) = layer.push_out(self.x[i], reach) {
                     self.contacts[i] = (outside - self.x[i]).normalize_or_zero();
+                    // The garment under moves about as the body carries this one.
+                    self.pushed_by[i] = (self.targets[i] - self.targets_prev[i]) * frame;
                     let push = outside - self.x[i];
                     self.x[i] += push * params.contact;
                 }
@@ -1246,11 +1305,17 @@ impl PieceSim {
                 let x = self.cell_centre(c);
                 if let Some(outside) = layer.push_out(x, reach) {
                     let push = outside - x;
+                    let carried = corners
+                        .iter()
+                        .map(|&i| self.targets[i as usize] - self.targets_prev[i as usize])
+                        .sum::<Vec3A>()
+                        * (0.25 * frame);
                     self.displace(
                         particles,
                         n + c,
                         push * params.contact,
                         push.normalize_or_zero(),
+                        carried,
                     );
                 }
             }
@@ -1267,6 +1332,19 @@ impl PieceSim {
             let mut v = (self.x[i] - self.start[i]) / h;
             let n = self.contacts[i];
             if n != Vec3A::ZERO {
+                // Pushed out, no faster than what pushed it (or than it was going anyway): the
+                // whole push taken as speed, a centimetre's in a substep sent it off at 2.4 m/s,
+                // to fall back and be pushed again.
+                let pushed = self.x[i] - self.free[i];
+                let out = pushed.normalize_or_zero();
+                let free = (self.free[i] - self.start[i]) / h;
+                let allowed = free.dot(out).max(self.pushed_by[i].dot(out));
+                let excess = v.dot(out) - allowed;
+                if excess > 0.0 {
+                    v -= out * excess;
+                }
+                // Sliding slowed in the world, not against the collider: slowed against the
+                // collider, cloth was dragged about by the legs (skirt jogging 7.4 → 8.6 mm).
                 let sliding = v - n * v.dot(n);
                 v -= sliding * def.friction;
             }
@@ -1346,12 +1424,33 @@ fn independent_batches(
     batches.into_iter().flat_map(|(_, links)| links).collect()
 }
 
-/// For a wrap-around piece: how far to move `x` outward from the axis to lie outside an upright
-/// bulk `capsule`'s support along its direction, over the heights `reach` either side of it
-/// (`None` if it already does, or the capsule is not bulk or leans past 60°). Taken over every
-/// bulk capsule, that keeps the piece outside their convex hull: it spans the gap between the
-/// legs as cloth does, and a particle never hops from one side of a leg to the other. A leaning
-/// capsule's slice is an ellipse, longer along its lean.
+/// How fast `before`'s surface near `x` moves to `after`'s over the frame (`frame` is 1/dt).
+fn surface_velocity(before: Capsule, after: Capsule, x: Vec3A, frame: f32) -> Vec3A {
+    let s = after.along(x);
+    (after.a.lerp(after.b, s) - before.a.lerp(before.b, s)) * frame
+}
+
+/// `push`, the part of its depth within `margin` and [`HULL_SOFT`] of the start taken at `rate`.
+fn soften(push: Vec3A, margin: f32, rate: f32) -> Vec3A {
+    let depth = push.length();
+    if depth <= 1e-9 {
+        return push;
+    }
+    let zone = HULL_SOFT.min(margin.max(0.0));
+    let hard = (depth - zone).max(0.0);
+    push * ((hard + depth.min(zone) * rate) / depth)
+}
+
+/// For a wrap-around piece: how far to move `x` outward from the axis to lie outside a bulk
+/// `capsule`'s support along its direction, over the heights `reach` either side of it (`None`
+/// if it already does, or the capsule is not bulk). Taken over every bulk capsule, that keeps
+/// the piece outside their convex hull: it spans the gap between the legs as cloth does, and a
+/// particle never hops from one side of a leg to the other.
+///
+/// A capsule is spheres along its axis, so its slice at a height reaches out as far as the
+/// farthest of theirs: at any lean, a raised knee or a shin swung back included. (Leaning past
+/// 60° a capsule used to be left out: a jogging shin dropped out of the hull and back in each
+/// stride, and the skirt's hem was kicked out from inside it.)
 pub(crate) fn radial_push(
     x: Vec3A,
     capsule: &Capsule,
@@ -1360,10 +1459,7 @@ pub(crate) fn radial_push(
     up: Vec3A,
     reach: f32,
 ) -> Option<Vec3A> {
-    let along = capsule.b - capsule.a;
-    let length = along.length();
-    let rise = along.dot(up);
-    if !capsule.bulk || length <= 1e-5 || rise.abs() < 0.5 * length {
+    if !capsule.bulk {
         return None;
     }
     let rel = x - origin;
@@ -1371,26 +1467,35 @@ pub(crate) fn radial_push(
     let flat = rel - up * height;
     let r = flat.length();
     let out = if r > 1e-4 { flat / r } else { return None };
-    let lean = along - up * rise;
-    let stretch = length / rise.abs();
-    let (u, v) = match lean.try_normalize() {
-        Some(u) => (u, u.cross(up)),
-        None => (out, out.cross(up)),
-    };
-    let (ha, hb) = ((capsule.a - origin).dot(up), (capsule.b - origin).dot(up));
+    // The capsule's axis, from `a`: out along `out`, and up.
+    let along = capsule.b - capsule.a;
+    let (out_a, up_a) = ((capsule.a - origin).dot(out), (capsule.a - origin).dot(up));
+    let (outward, rise) = (along.dot(out), along.dot(up));
+    let round = capsule.radius;
     let mut wall = f32::MIN;
     for h in [height - reach, height, height + reach] {
-        let t = ((h - ha) / (hb - ha)).clamp(0.0, 1.0);
-        let centre = capsule.a + along * t;
-        // Past either end the slice narrows over the end cap.
-        let beyond = h - (centre - origin).dot(up);
-        if beyond.abs() >= capsule.radius {
+        // How far out the sphere at `t` along the axis reaches at height `h` is
+        // out_a + outward·t + √(round² − (above − rise·t)²): concave in `t`, so the farthest
+        // lies where its slope is zero, or at the nearest end of the axis within `round` of `h`.
+        let above = h - up_a;
+        let t = if rise.abs() > 1e-6 {
+            let (low, high) = ((above - round) / rise, (above + round) / rise);
+            let (low, high) = (low.min(high).max(0.0), low.max(high).min(1.0));
+            if low > high {
+                continue;
+            }
+            let level = -outward * round * rise.signum() / outward.hypot(rise).max(1e-9);
+            ((above - level) / rise).clamp(low, high)
+        } else if outward > 0.0 {
+            1.0
+        } else {
+            0.0
+        };
+        let off = above - rise * t;
+        if off.abs() >= round {
             continue;
         }
-        let slice = (capsule.radius * capsule.radius - beyond * beyond).sqrt();
-        let c = (centre - origin) - up * (centre - origin).dot(up);
-        let (along_lean, across) = (out.dot(u) * slice * stretch, out.dot(v) * slice);
-        wall = wall.max(c.dot(out) + along_lean.hypot(across) + radius);
+        wall = wall.max(out_a + outward * t + (round * round - off * off).sqrt() + radius);
     }
     (r < wall).then(|| out * (wall - r))
 }
@@ -1469,7 +1574,7 @@ mod tests {
         inertia: None,
         damping: 1.0,
         lift: 1.0,
-        contact: 0.6,
+        contact: 1.0,
         self_collide: true,
     };
 
@@ -1729,24 +1834,54 @@ mod tests {
             "{:?}",
             front + pushed
         );
-        // A lying capsule, or one not of the bulk, is left to the ordinary push.
-        let arm = Capsule {
+        // A lying capsule reaches out as far as its end: a thigh raised level lifts the skirt
+        // to the knee.
+        let thigh = Capsule {
             bulk: true,
-            ..Capsule::new(Vec3A::new(-0.3, 0.5, 0.0), Vec3A::new(0.3, 0.5, 0.0), 0.05)
+            ..Capsule::new(Vec3A::new(0.1, 0.5, 0.0), Vec3A::new(0.1, 0.5, 0.4), 0.06)
         };
-        assert!(radial_push(x, &arm, 0.02, origin, Vec3A::Y, 0.0).is_none());
+        let ahead = Vec3A::new(0.0, 0.5, 0.2);
+        let out = radial_push(ahead, &thigh, 0.02, origin, Vec3A::Y, 0.0).expect("under the knee");
+        assert!(((ahead + out).z - 0.48).abs() < 1e-4, "{:?}", ahead + out);
+        // Leaning, the same reach as the spheres along it give, whatever the lean.
+        for lean in [0.2f32, 0.8, 1.2, 1.5] {
+            let (s, c) = lean.sin_cos();
+            let leg = Capsule {
+                bulk: true,
+                ..Capsule::new(origin, origin + Vec3A::new(0.0, -c, s) * 0.5, 0.06)
+            };
+            let probe = origin + Vec3A::new(0.0, -0.02, 0.01);
+            let wall = (0..=1000)
+                .map(|k| {
+                    let at = leg.a.lerp(leg.b, k as f32 / 1000.0);
+                    let off = probe.y - at.y;
+                    if off.abs() < 0.06 {
+                        at.z + (0.06 * 0.06 - off * off).sqrt()
+                    } else {
+                        f32::MIN
+                    }
+                })
+                .fold(f32::MIN, f32::max);
+            let out = radial_push(probe, &leg, 0.0, origin, Vec3A::Y, 0.0).expect("inside");
+            assert!(
+                ((probe + out).z - wall).abs() < 1e-3,
+                "{lean}: {:?} {wall}",
+                probe + out
+            );
+        }
+        // One not of the bulk is left to the ordinary push.
         let item = Capsule::new(Vec3A::new(0.1, 1.0, 0.0), Vec3A::new(0.1, 0.0, 0.0), 0.07);
         assert!(radial_push(x, &item, 0.02, origin, Vec3A::Y, 0.0).is_none());
     }
 
     #[test]
-    fn a_presser_holds_particles_on_its_inner_side() {
+    fn a_presser_brings_particles_back_under_it() {
         let def = strand(6);
         let deforms = [Affine3A::IDENTITY];
         let mut sim = PieceSim::new(&def);
         sim.reset(&def, &deforms);
-        // A vertical strap just behind the strand, pressing towards +Z; the strand is pushed
-        // out towards -Z and must stay in front of the strap anyway.
+        // A vertical strap just behind the strand, pressing towards +Z; the strand is flung
+        // out towards -Z, past it, and is back in front of it well within half a second.
         let mut strap = Capsule::new(
             Vec3A::new(0.0, 0.0, -0.05),
             Vec3A::new(0.0, -0.6, -0.05),
@@ -1754,12 +1889,10 @@ mod tests {
         );
         strap.press = Vec3A::Z;
         strap.width = 0.03;
-        for _ in 0..120 {
-            for i in 1..6 {
-                sim.v[i] = Vec3A::new(0.0, 0.0, -1.0);
-            }
-            run(&def, &mut sim, &deforms, &[strap], 1);
+        for i in 1..6 {
+            sim.v[i] = Vec3A::new(0.0, 0.0, -1.0);
         }
+        run(&def, &mut sim, &deforms, &[strap], 30);
         for (i, x) in sim.positions().iter().enumerate().skip(1) {
             let held = -0.05 + 0.012 + PRESS_GAP;
             assert!(
@@ -1767,6 +1900,29 @@ mod tests {
                 "particle {i} at {x:?} got past the strap"
             );
         }
+    }
+
+    #[test]
+    fn a_push_out_of_a_collider_adds_no_speed_of_its_own() {
+        let def = strand(2);
+        let deforms = [Affine3A::IDENTITY];
+        let mut sim = PieceSim::new(&def);
+        sim.reset(&def, &deforms);
+        // A still bar across the hanging particle, 2 cm into it: put outside, and left there.
+        let bar = Capsule::new(
+            Vec3A::new(-0.2, -0.1, 0.07),
+            Vec3A::new(0.2, -0.1, 0.07),
+            0.07 + 0.02 - def.particles[1].radius,
+        );
+        run(&def, &mut sim, &deforms, &[bar], 1);
+        let outside = (sim.x[1] - bar.closest(sim.x[1])).length();
+        assert!(
+            outside >= bar.radius + def.particles[1].radius - 1e-4,
+            "{:?}",
+            sim.x[1]
+        );
+        // Taken as speed, the push sent it off at 4 m/s.
+        assert!(sim.v[1].length() < 0.2, "{:?}", sim.v[1]);
     }
 
     #[test]

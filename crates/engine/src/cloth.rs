@@ -91,7 +91,7 @@ pub struct ClothSettings {
     /// Scale every piece's damping and its lift (drag along its surface normal).
     pub damping: f32,
     pub lift: f32,
-    /// Share of a collider's push applied each substep.
+    /// Share of a collider's push applied each substep: all of it but in tuning.
     pub contact: f32,
     pub self_collide: bool,
     pub gravity: f32,
@@ -115,7 +115,7 @@ impl Default for ClothSettings {
             flutter: 0.45,
             damping: 1.0,
             lift: 1.0,
-            contact: 0.6,
+            contact: 1.0,
             self_collide: true,
             gravity: 9.81,
             simulate_within: 40.0,
@@ -810,6 +810,7 @@ fn simulate_cloth(
                 // Set per piece, from its axis's groups.
                 bulk: false,
                 outward: false,
+                worn: false,
             };
             let before = if jumped { now } else { rig.capsules[k].1 };
             rig.capsules[k] = (before, now);
@@ -830,7 +831,17 @@ fn simulate_cloth(
                         .filter(|(_, g)| *g & piece.collides != 0)
                         .map(|(&(before, after), g)| {
                             let (bulk, outward) = (g & hull != 0, g & out != 0);
-                            let at = |c: Capsule| Capsule { bulk, outward, ..c };
+                            let worn = g
+                                & (body::group::BACK_ITEMS
+                                    | body::group::HIP_ITEMS
+                                    | body::group::PRESSERS)
+                                != 0;
+                            let at = |c: Capsule| Capsule {
+                                bulk,
+                                outward,
+                                worn,
+                                ..c
+                            };
                             (at(before), at(after))
                         }),
                 );
