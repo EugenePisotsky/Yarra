@@ -5,6 +5,7 @@
 //! `stats.txt` holds each take's shake per piece (with no frame-time noise, standing and walking
 //! numbers compare across runs) and, for draped garments, how many of their drawn vertices went
 //! through something ([`engine::PieceShake::pierced`]), on average and at worst.
+//! `CLOTH_LAB_TAKES=walk_back,gale_from_right` films only the takes named.
 use super::{ClothLab, LabCamera, LabGait, drive_camera};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
@@ -25,15 +26,18 @@ const WALKED: f32 = 1.0;
 /// Before each take: the camera, the gait and the wind change, then settle unfilmed.
 const SETTLE_SECONDS: f32 = 1.5;
 const WIND_MPS: f32 = 10.0;
+/// A gale, strong enough to lift the cape off the back and across the weapons strapped over
+/// it.
+const GALE_MPS: f32 = 18.0;
 
 #[derive(Clone, Copy)]
 enum Wind {
     /// The weather's own wind.
     World,
     Calm,
-    /// Blowing this way relative to the player's facing at `WIND_MPS` (0 blows the way they
-    /// face, so it comes from behind).
-    Towards(f32),
+    /// Blowing this way relative to the player's facing (0 blows the way they face, so it
+    /// comes from behind), this fast.
+    Towards(f32, f32),
 }
 
 struct Take {
@@ -74,7 +78,7 @@ const fn redress(name: &'static str, bearing: f32) -> Take {
     }
 }
 
-const TAKES: [Take; 11] = [
+const TAKES: [Take; 13] = [
     take("walk_back", 180.0, 2.8, LabGait::Walk, Wind::World, 6.0),
     take("walk_side", 90.0, 2.6, LabGait::Walk, Wind::World, 4.0),
     take(
@@ -103,7 +107,7 @@ const TAKES: [Take; 11] = [
         180.0,
         2.8,
         LabGait::Idle,
-        Wind::Towards(-90.0),
+        Wind::Towards(-90.0, WIND_MPS),
         4.0,
     ),
     take(
@@ -111,10 +115,47 @@ const TAKES: [Take; 11] = [
         90.0,
         2.8,
         LabGait::Idle,
-        Wind::Towards(180.0),
+        Wind::Towards(180.0, WIND_MPS),
         4.0,
     ),
+    gale("gale_from_right", 90.0),
+    gale("gale_from_left", -90.0),
 ];
+
+/// A gale across the back, the cloak put on again first so each run starts it at rest. Even
+/// so, run to run, the cape either catches it and blows out across the back or lies along it
+/// and hangs: compare the frames, not only the numbers.
+const fn gale(name: &'static str, towards: f32) -> Take {
+    Take {
+        redress: true,
+        ..take(
+            name,
+            180.0,
+            3.0,
+            LabGait::Idle,
+            Wind::Towards(towards, GALE_MPS),
+            5.0,
+        )
+    }
+}
+
+/// The takes to film, by index: those `CLOTH_LAB_TAKES` names, or all.
+fn chosen_takes() -> Vec<usize> {
+    let names = std::env::var("CLOTH_LAB_TAKES").unwrap_or_default();
+    let names: Vec<&str> = names
+        .split(',')
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .collect();
+    for name in &names {
+        if !TAKES.iter().any(|t| t.name == *name) {
+            warn!("CLOTH_LAB_TAKES: no take {name}");
+        }
+    }
+    (0..TAKES.len())
+        .filter(|&k| names.is_empty() || names.contains(&TAKES[k].name))
+        .collect()
+}
 
 pub(super) fn install(app: &mut App, dir: PathBuf) {
     app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(
@@ -127,6 +168,7 @@ pub(super) fn install(app: &mut App, dir: PathBuf) {
             files: Vec::new(),
         })),
         dir,
+        takes: chosen_takes(),
         dressed: None,
         started: None,
         take: None,
@@ -146,6 +188,8 @@ pub(super) fn install(app: &mut App, dir: PathBuf) {
 struct Video {
     dir: PathBuf,
     encoder: Arc<Mutex<Encoder>>,
+    /// Indices into [`TAKES`] of those filmed, in order.
+    takes: Vec<usize>,
     /// Where the player stood when everyone was dressed, and when (stepped seconds).
     dressed: Option<(Vec3, f32)>,
     /// When the player had walked away from there: the takes' clock starts.
@@ -327,7 +371,8 @@ fn film(
     // Where on the timeline this frame is: which take, and whether it is being filmed.
     let mut at = now - started - LEAD_SECONDS;
     let mut current = None;
-    for (k, take) in TAKES.iter().enumerate() {
+    for &k in &video.takes {
+        let take = &TAKES[k];
         if at < 0.0 {
             break;
         }
@@ -342,7 +387,7 @@ fn film(
             return;
         }
         // After the last take: wait for its frames, then write everything out.
-        let last = TAKES.len() - 1;
+        let last = video.takes.last().copied().unwrap_or(0);
         let mut encoder = video.encoder.lock().expect("encoder lock");
         if encoder.received(last) < video.frames && at < 5.0 {
             return;
@@ -380,7 +425,7 @@ fn film(
     let wind = match take.wind {
         Wind::World => None,
         Wind::Calm => Some((0.0, 0.0)),
-        Wind::Towards(towards) => Some((facing + towards, WIND_MPS)),
+        Wind::Towards(towards, speed) => Some((facing + towards, speed)),
     };
     if settings.wind_override != wind {
         settings.wind_override = wind;

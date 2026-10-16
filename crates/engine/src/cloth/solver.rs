@@ -248,8 +248,8 @@ impl PieceDef {
         self.shape.get(i).copied().unwrap_or(self.particles[i].rest)
     }
 
-    /// Joint positions in the space the piece's mesh is in; a joint's inverse bind pose is a
-    /// translation by minus this.
+    /// Joint positions in the space the piece's mesh is in. The mesh is drawn as offsets from
+    /// where its vertices' joints blend to (see `to_mesh` in the cloth module).
     pub fn joint_rests(&self) -> Vec<Vec3A> {
         match self.frames {
             Frames::Rigid { .. } => vec![self.particles[0].rest],
@@ -1203,10 +1203,25 @@ impl PieceSim {
                     && under > held - PRESS_DEPTH
                     && across.length_squared() < band * band
                 {
-                    // Back under it over [`PRESS_TIME`].
-                    let velocity = surface_velocity(before, after, x, frame);
-                    let push = capsule.press * ((held - under) * press);
-                    self.displace(particles, i, push, capsule.press, velocity);
+                    // No farther out than it was: the wind does not blow it out through the
+                    // item. Pushed out by something else (a hand, which comes later and wins),
+                    // back under over [`PRESS_TIME`].
+                    let x0 = if i < n {
+                        self.start[i]
+                    } else {
+                        self.cells[i - n]
+                            .iter()
+                            .map(|&c| self.start[c as usize])
+                            .sum::<Vec3A>()
+                            * 0.25
+                    };
+                    let was = (x0 - capsule.closest(x0)).dot(capsule.press);
+                    let limit = held.min(was + (held - was) * press);
+                    if under < limit {
+                        let velocity = surface_velocity(before, after, x, frame);
+                        let push = capsule.press * (limit - under);
+                        self.displace(particles, i, push, capsule.press, velocity);
+                    }
                     self.mark_pressed(i);
                 }
                 continue;
@@ -1358,8 +1373,8 @@ impl PieceSim {
         }
     }
 
-    /// The render joints' world poses (rotation and position); each joint's inverse bind pose
-    /// is a translation by minus its rest position ([`PieceDef::joint_rests`]).
+    /// The render joints' world poses: each joint's turn from its rest
+    /// ([`PieceDef::joint_rests`]) and where it is.
     /// Sheets also keep each frame's normals for the next frame's wind.
     pub fn joints(&mut self, def: &PieceDef, deforms: &[Affine3A], out: &mut Vec<(Quat, Vec3A)>) {
         out.clear();
@@ -1880,8 +1895,25 @@ mod tests {
         let deforms = [Affine3A::IDENTITY];
         let mut sim = PieceSim::new(&def);
         sim.reset(&def, &deforms);
-        // A vertical strap just behind the strand, pressing towards +Z; the strand is flung
-        // out towards -Z, past it, and is back in front of it well within half a second.
+        // A vertical strap just behind the strand, pressing towards +Z; the strand pushed out
+        // past it (as a hand does, from under a bow), and let go, is back in front of it well
+        // within half a second.
+        let strap = strap();
+        for i in 1..6 {
+            sim.x[i].z = -0.06;
+        }
+        run(&def, &mut sim, &deforms, &[strap], 30);
+        for (i, x) in sim.positions().iter().enumerate().skip(1) {
+            assert!(
+                x.z > STRAP_HELD - 2e-3,
+                "particle {i} at {x:?} got past the strap"
+            );
+        }
+    }
+
+    const STRAP_HELD: f32 = -0.05 + 0.012 + PRESS_GAP;
+
+    fn strap() -> Capsule {
         let mut strap = Capsule::new(
             Vec3A::new(0.0, 0.0, -0.05),
             Vec3A::new(0.0, -0.6, -0.05),
@@ -1889,15 +1921,30 @@ mod tests {
         );
         strap.press = Vec3A::Z;
         strap.width = 0.03;
-        for i in 1..6 {
-            sim.v[i] = Vec3A::new(0.0, 0.0, -1.0);
+        strap
+    }
+
+    #[test]
+    fn the_wind_does_not_blow_cloth_out_through_a_presser() {
+        let mut def = strand(6);
+        def.drag = 5.0;
+        let deforms = [Affine3A::IDENTITY];
+        let mut sim = PieceSim::new(&def);
+        sim.reset(&def, &deforms);
+        // A gale towards -Z, through the strap: the strand stays in front of it. Brought back
+        // only gradually, it was blown 3 cm out through it.
+        let strap = strap();
+        let params = StepParams {
+            wind: Vec3A::new(0.0, 0.0, -18.0),
+            ..PARAMS
+        };
+        for _ in 0..60 {
+            sim.step(&def, &deforms, &[(strap, strap)], &[], &params);
         }
-        run(&def, &mut sim, &deforms, &[strap], 30);
         for (i, x) in sim.positions().iter().enumerate().skip(1) {
-            let held = -0.05 + 0.012 + PRESS_GAP;
             assert!(
-                x.z > held - 2e-3,
-                "particle {i} at {x:?} got past the strap"
+                x.z > STRAP_HELD - 1e-3,
+                "particle {i} at {x:?} was blown through the strap"
             );
         }
     }

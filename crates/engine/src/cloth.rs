@@ -548,6 +548,16 @@ fn spawn_skinned(
         .id()
 }
 
+/// Where a vertex's joints' positions blend to by its weights.
+fn blended(at: &[Vec3A], joints: &[u16; 4], weights: &[f32; 4]) -> Vec3A {
+    joints
+        .iter()
+        .zip(weights)
+        .filter(|(_, w)| **w > 0.0)
+        .map(|(&j, &w)| at[j as usize] * w)
+        .sum()
+}
+
 /// The body's colliders from its mesh in bind pose, or from bone positions alone when the mesh
 /// keeps no vertex data.
 fn fit_body(mesh: &Mesh, skeleton: &CharacterSkeleton) -> Vec<BodyCapsule> {
@@ -605,20 +615,19 @@ fn upload(
     let pieces = plan
         .pieces
         .iter()
-        .map(|piece| BuiltMeshes {
-            meshes: piece
-                .parts
-                .iter()
-                .map(|(look, data)| (meshes.add(to_mesh(data)), *look))
-                .collect(),
-            bindposes: bindposes.add(SkinnedMeshInverseBindposes::from(
-                piece
-                    .def
-                    .joint_rests()
-                    .into_iter()
-                    .map(|rest| Mat4::from_translation(-Vec3::from(rest)))
-                    .collect::<Vec<_>>(),
-            )),
+        .map(|piece| {
+            let rests = piece.def.joint_rests();
+            BuiltMeshes {
+                meshes: piece
+                    .parts
+                    .iter()
+                    .map(|(look, data)| (meshes.add(to_mesh(data, Some(&rests))), *look))
+                    .collect(),
+                bindposes: bindposes.add(SkinnedMeshInverseBindposes::from(vec![
+                    Mat4::IDENTITY;
+                    rests.len()
+                ])),
+            }
         })
         .collect();
     let items = plan
@@ -630,7 +639,7 @@ fn upload(
                 meshes: item
                     .parts
                     .iter()
-                    .map(|(look, data)| (meshes.add(to_mesh(data)), *look))
+                    .map(|(look, data)| (meshes.add(to_mesh(data, None)), *look))
                     .collect(),
                 bindposes: bindposes.add(SkinnedMeshInverseBindposes::from(vec![Mat4::from(ibm)])),
             }
@@ -643,7 +652,13 @@ fn upload(
     }
 }
 
-fn to_mesh(data: &MeshData) -> Mesh {
+/// A piece's mesh is skinned to its joints at `rests` (cloth: the particles, which the solver
+/// turns and moves): each vertex is kept as its offset from where its joints' rests blend to,
+/// and the joints' inverse bind poses are the identity, so skinning puts it where its joints
+/// blend to now plus that offset, turned as they blend. Skinned as positions themselves, from
+/// each joint, every joint's turn swung the vertex about that joint, a cell's width away:
+/// where a sheet folded, drawn vertices strayed several centimetres off the cloth.
+fn to_mesh(data: &MeshData, rests: Option<&[Vec3A]>) -> Mesh {
     let mut mesh = Mesh::new(
         PrimitiveTopology::TriangleList,
         RenderAssetUsages::default(),
@@ -660,6 +675,19 @@ fn to_mesh(data: &MeshData) -> Mesh {
     // For fabrics' normal maps.
     if let Err(error) = mesh.generate_tangents() {
         warn!("Cloth: no tangents for a generated mesh: {error}");
+    }
+    // Tangents from the positions as drawn, before they become offsets.
+    if let Some(rests) = rests {
+        mesh.insert_attribute(
+            Mesh::ATTRIBUTE_POSITION,
+            data.positions
+                .iter()
+                .zip(data.joints.iter().zip(&data.weights))
+                .map(|(&p, (joints, weights))| {
+                    (Vec3A::from_array(p) - blended(rests, joints, weights)).to_array()
+                })
+                .collect::<Vec<_>>(),
+        );
     }
     if let Err(error) = mesh.generate_skinned_mesh_bounds() {
         warn!("Cloth: no skinned bounds for a generated mesh: {error}");
@@ -1007,11 +1035,14 @@ fn pierced(
 ) -> [f32; PIERCED_BY.len()] {
     let mut count = [0.0; PIERCED_BY.len()];
     for (i, &p) in check.positions.iter().enumerate() {
+        // As the mesh is skinned ([`to_mesh`]).
+        let (joints, weights) = (&check.joints[i], &check.weights[i]);
+        let offset = p - blended(rests, joints, weights);
         let mut x = Vec3A::ZERO;
-        for (&joint, &weight) in check.joints[i].iter().zip(&check.weights[i]) {
+        for (&joint, &weight) in joints.iter().zip(weights) {
             if weight > 0.0 {
                 let (turn, at) = poses[joint as usize];
-                x += (turn.mul_vec3a(p - rests[joint as usize]) + at) * weight;
+                x += (turn.mul_vec3a(offset) + at) * weight;
             }
         }
         let rested = |k: usize| {
@@ -1088,5 +1119,73 @@ fn draw_cloth_debug(settings: Res<ClothSettings>, rigs: Query<&ClothRig>, mut gi
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Skins `p` as the GPU does: each joint's matrix (its pose, the bind pose the identity)
+    /// applied to the vertex as kept in the mesh, blended by weight.
+    fn skin(o: Vec3A, joints: &[u16; 4], weights: &[f32; 4], poses: &[(Quat, Vec3A)]) -> Vec3A {
+        joints
+            .iter()
+            .zip(weights)
+            .map(|(&j, &w)| (poses[j as usize].0.mul_vec3a(o) + poses[j as usize].1) * w)
+            .sum()
+    }
+
+    #[test]
+    fn a_vertex_stays_on_its_cell_however_its_corners_turn() {
+        // A 10 cm cell, a triangle in it standing a centimetre off the sheet.
+        let rests = vec![
+            Vec3A::new(0.0, 0.0, 0.0),
+            Vec3A::new(0.1, 0.0, 0.0),
+            Vec3A::new(0.0, -0.1, 0.0),
+            Vec3A::new(0.1, -0.1, 0.0),
+        ];
+        let at = |u: f32, v: f32| {
+            let w = [(1.0 - u) * (1.0 - v), u * (1.0 - v), (1.0 - u) * v, u * v];
+            (Vec3A::new(0.1 * u, -0.1 * v, 0.01), w)
+        };
+        let corners = [at(0.5, 0.5), at(0.8, 0.5), at(0.5, 0.8)];
+        let data = MeshData {
+            positions: corners.iter().map(|(p, _)| p.to_array()).collect(),
+            normals: vec![[0.0, 0.0, 1.0]; 3],
+            uvs: vec![[0.0, 0.0], [0.08, 0.0], [0.0, 0.08]],
+            joints: vec![[0, 1, 2, 3]; 3],
+            weights: corners.iter().map(|(_, w)| *w).collect(),
+            indices: vec![0, 1, 2],
+        };
+        let mesh = to_mesh(&data, Some(&rests));
+        let Some(VertexAttributeValues::Float32x3(kept)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+        else {
+            panic!("no positions");
+        };
+        // Kept as offsets from where the joints' rests blend to: the centimetre off the sheet.
+        assert!(Vec3A::from_array(kept[0]).distance(Vec3A::new(0.0, 0.0, 0.01)) < 1e-6);
+        // Folded across its middle: the lower corners swung up through a right angle about the
+        // upper edge's line, turned with it.
+        let fold = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
+        let poses: Vec<(Quat, Vec3A)> = vec![
+            (Quat::IDENTITY, rests[0]),
+            (Quat::IDENTITY, rests[1]),
+            (fold, Vec3A::new(0.0, 0.0, 0.1)),
+            (fold, Vec3A::new(0.1, 0.0, 0.1)),
+        ];
+        let middle = (poses[0].1 + poses[1].1 + poses[2].1 + poses[3].1) * 0.25;
+        let o = Vec3A::from_array(kept[0]);
+        let x = skin(o, &data.joints[0], &data.weights[0], &poses);
+        assert!(
+            x.distance(middle) <= 0.01 + 1e-5,
+            "{x:?} strays from {middle:?}"
+        );
+        // Skinned as its own position from each joint, it strayed nearly 3 cm.
+        let p = corners[0].0;
+        let strayed: Vec3A = (0..4)
+            .map(|j| (poses[j].0.mul_vec3a(p - rests[j]) + poses[j].1) * 0.25)
+            .sum();
+        assert!(strayed.distance(middle) > 0.025, "{strayed:?}");
     }
 }
