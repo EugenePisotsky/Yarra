@@ -787,6 +787,8 @@ fn simulate_cloth(
     let last_wind = std::sync::Mutex::new(Vec3A::ZERO);
     rigs.par_iter_mut().for_each(|(mut rig, root)| {
         let begun = Instant::now();
+        // Measuring for the lab is left out of the cost.
+        let mut measuring = std::time::Duration::ZERO;
         let rig = &mut *rig;
         let root = root.translation();
         for (k, bone) in rig.bones.iter().enumerate() {
@@ -912,6 +914,7 @@ fn simulate_cloth(
                 && let Some(check) = &piece.pierce
                 && let Some(entry) = rig.piece_shake.last_mut()
             {
+                let measured = Instant::now();
                 let layers: Vec<&Layer> = if piece.collides & body::group::LAYERS != 0 {
                     inner.iter().filter_map(|p| p.layer.as_ref()).collect()
                 } else {
@@ -926,6 +929,7 @@ fn simulate_cloth(
                     .collect();
                 entry.2 = pierced(check, &rests, &state.poses, &state.near, &groups, &layers);
                 entry.3 = state.sim.folds(&piece.def) as f32;
+                measuring += measured.elapsed();
             }
             if let (Some(layer), Some(at)) = (state.layer.as_mut(), piece.layer) {
                 let deform = rig.deforms[at.bone as usize];
@@ -956,7 +960,7 @@ fn simulate_cloth(
             }
         }
         rig.simulated = simulate;
-        rig.time_us = begun.elapsed().as_secs_f32() * 1e6;
+        rig.time_us = (begun.elapsed() - measuring).as_secs_f32() * 1e6;
     });
 
     let (mut characters, mut simulated, mut particles, mut work, mut worst) = (0, 0, 0, 0.0, 0f32);

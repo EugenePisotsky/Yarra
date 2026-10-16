@@ -196,7 +196,7 @@ October 14, 2026, after the user turned from the environment to the character: c
 4. **Hair**: the same strands on hair cards.
 5. **Cost**: skip off-screen characters, a 30 Hz band before the frozen one, and merge a character's pieces into one mesh only if crowds show it in a profile.
 6. **Animation input**: the clips' 30 fps linear keys were suspected of passing jitter to the cloth; resampling them smoothly at 60 fps changed little (see [Experiments](EXPERIMENTS.md)). Not needed.
-7. **Open in the lab**: fingers poke through the cape (hand capsules end at the middle finger's second joint); the draped cape shakes about twice its animation while walking, kept near the legs; its folds show the sun's shadow-cascade stair steps; a startup event occasionally takes every actor's bones away (refitted, logged); the skirt jitters about twice its animation while walking, pushed by the legs; cost is up to 149 µs a character (self-collision, the denser cape), to win back.
+7. **Open in the lab**: fingers poke through the cape (hand capsules end at the middle finger's second joint); the draped cape shakes about twice its animation while walking, kept near the legs; its folds show the sun's shadow-cascade stair steps; a startup event occasionally takes every actor's bones away (refitted, logged); the skirt jitters about twice its animation while walking, pushed by the legs; cost is about 400 µs a character with the draped cape and skirt, mostly collisions (exact savings took it from 450; [Experiments](EXPERIMENTS.md), October 16).
 
 ## Roads roadmap
 

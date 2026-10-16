@@ -231,18 +231,6 @@ impl PieceDef {
         }
     }
 
-    /// Particle `i`'s radius against collider `k`.
-    /// Collision point `i`'s radius against collider `k`: a particle's, or past the particles
-    /// a cell's centre ([`grid_cells`]), `radius` unless sunk.
-    fn contact_radius(&self, i: usize, k: usize, radius: f32) -> f32 {
-        let first = self.sinks.partition_point(|s| (s.particle as usize) < i);
-        self.sinks[first..]
-            .iter()
-            .take_while(|s| s.particle as usize == i)
-            .find(|s| s.collider as usize == k)
-            .map_or(radius, |s| s.radius)
-    }
-
     /// Particle `i` in the cloth's own rest shape (see [`Self::shape`]).
     pub fn shape(&self, i: usize) -> Vec3A {
         self.shape.get(i).copied().unwrap_or(self.particles[i].rest)
@@ -527,6 +515,12 @@ pub(crate) struct PieceSim {
     /// Colliders that may touch each particle this frame, as (particle, collider) pairs with
     /// the particle's radius against that collider.
     pairs: Vec<(u16, u16, f32)>,
+    /// Room to put `pairs` in order ([`Self::worn_first`]).
+    ordered: Vec<(u16, u16, f32)>,
+    /// Each collider where it is this substep.
+    now: Vec<Capsule>,
+    /// Where each collision point's sinks start in [`PieceDef::sinks`], and where the last ends.
+    sinks_from: Vec<u32>,
     /// Sheets: each particle's frame at rest, transposed.
     rest_frames: Vec<Mat3A>,
     /// The piece's links with their particles' inverse masses; links between two pinned
@@ -545,6 +539,11 @@ pub(crate) struct PieceSim {
     /// Pairs of particles, not neighbours on the sheet, that could meet this frame, and how far
     /// apart each keeps.
     self_pairs: Vec<(u16, u16, f32)>,
+    /// A sheet's particles' rows and columns.
+    grid_at: Vec<(u16, u16)>,
+    /// Each cell's radius (its corners' mean) and, this frame, its corners' mean target.
+    cell_radius: Vec<f32>,
+    cell_targets: Vec<Vec3A>,
     /// Each particle's wind this frame.
     gusts: Vec<Vec3A>,
     /// A wrap-around piece's axis this frame: origin, up and the height each particle covers.
@@ -590,6 +589,14 @@ impl PieceSim {
             pushed_by: vec![Vec3A::ZERO; n],
             anchor_prev: None,
             pairs: Vec::new(),
+            ordered: Vec::new(),
+            now: Vec::new(),
+            sinks_from: {
+                let points = n + grid_cell_count(&def.frames);
+                (0..=points)
+                    .map(|i| def.sinks.partition_point(|s| (s.particle as usize) < i) as u32)
+                    .collect()
+            },
             links: independent_batches(
                 def.links
                     .iter()
@@ -619,6 +626,9 @@ impl PieceSim {
             },
             chunks: Vec::new(),
             self_pairs: Vec::new(),
+            grid_at: Vec::new(),
+            cell_radius: Vec::new(),
+            cell_targets: Vec::new(),
             axis: None,
             carry: 0.0,
             settling: SETTLE,
@@ -728,6 +738,29 @@ impl PieceSim {
         self.gather_self_pairs(def, params.self_collide);
         self.gust(def, params);
 
+        // What the substeps' cell collisions need, once a frame, not once a pair.
+        if self.cell_radius.len() != self.cells.len() {
+            self.cell_radius = self
+                .cells
+                .iter()
+                .map(|corners| {
+                    corners
+                        .iter()
+                        .map(|&c| def.particles[c as usize].radius)
+                        .sum::<f32>()
+                        * 0.25
+                })
+                .collect();
+        }
+        self.cell_targets.clear();
+        self.cell_targets.extend(self.cells.iter().map(|corners| {
+            corners
+                .iter()
+                .map(|&c| self.targets[c as usize])
+                .sum::<Vec3A>()
+                * 0.25
+        }));
+
         // Substeps of a fixed length, the time left over carried to the next frame. Fitting a
         // whole number of substeps to each frame changed their length with the frame time (4 or
         // 5 for frames either side of 16.67 ms), and where cloth settles depends a little on it:
@@ -834,13 +867,19 @@ impl PieceSim {
         if !def.self_collide || !enabled {
             return;
         }
+        let n = self.x.len();
+        if self.grid_at.len() != n {
+            self.grid_at = (0..n)
+                .map(|i| ((i / columns) as u16, (i % columns) as u16))
+                .collect();
+        }
+        let at = &self.grid_at;
         let apart = |i: usize, j: usize| {
-            let (ri, ci, rj, cj) = (i / columns, i % columns, j / columns, j % columns);
-            let dc = ci.abs_diff(cj);
+            let ((ri, ci), (rj, cj)) = (at[i], at[j]);
+            let dc = ci.abs_diff(cj) as usize;
             let dc = if wrap { dc.min(columns - dc) } else { dc };
             ri.abs_diff(rj) > 2 || dc > 2
         };
-        let n = self.x.len();
         for a in 0..self.chunks.len() {
             for b in a..self.chunks.len() {
                 let ((ca, ra), (cb, rb)) = (self.chunks[a], self.chunks[b]);
@@ -852,7 +891,7 @@ impl PieceSim {
                     let from = if a == b { i + 1 } else { b * 8 };
                     for j in from..((b + 1) * 8).min(n) {
                         let near = self.reach[i].max(0.0) + self.reach[j].max(0.0) + SELF_GAP;
-                        if apart(i, j) && self.x[i].distance_squared(self.x[j]) < near * near {
+                        if self.x[i].distance_squared(self.x[j]) < near * near && apart(i, j) {
                             // A draped fold rests closer than the gap: keep it as draped.
                             let rest = def.shape(i).distance(def.shape(j));
                             let gap = SELF_GAP.min(0.9 * rest);
@@ -953,7 +992,7 @@ impl PieceSim {
                         x.distance(after.closest(x)) - after.radius
                     };
                     if gap < reach + travel {
-                        let radius = def.contact_radius(i, k, def.particles[i].radius);
+                        let radius = self.contact_radius(def, i, k, def.particles[i].radius);
                         self.pairs.push((i as u16, k as u16, radius));
                     }
                 }
@@ -989,22 +1028,41 @@ impl PieceSim {
                     x.distance(after.closest(x)) - after.radius
                 };
                 if gap < reach + travel {
-                    let radius = def.contact_radius(n + c, k, own);
+                    let radius = self.contact_radius(def, n + c, k, own);
                     self.pairs.push(((n + c) as u16, k as u16, radius));
                 }
             }
         }
     }
 
+    /// Collision point `i`'s radius against collider `k`: a particle's, or past the particles
+    /// a cell's centre ([`grid_cells`]), `radius` unless sunk ([`PieceDef::sinks`]).
+    fn contact_radius(&self, def: &PieceDef, i: usize, k: usize, radius: f32) -> f32 {
+        let (from, to) = (self.sinks_from[i] as usize, self.sinks_from[i + 1] as usize);
+        def.sinks[from..to]
+            .iter()
+            .find(|s| s.collider as usize == k)
+            .map_or(radius, |s| s.radius)
+    }
+
     /// Pressers first, then other things worn, the body last: where cloth is caught between
     /// them, what comes last wins, and the body does not give way. (A cape caught between a
     /// hand swinging back and a bow's lower end at the hip was flung about, half a metre's
     /// jolt in a frame; a presser last pushed it into the arms standing still.)
+    ///
+    /// Otherwise in the order gathered: a pass for each, not a sort (sorting a cape's
+    /// thousand-odd pairs took about 20 µs a character).
     fn worn_first(&mut self, capsules: &[(Capsule, Capsule)]) {
-        self.pairs.sort_by_key(|&(_, k, _)| {
+        let rank = |&(_, k, _): &(u16, u16, f32)| {
             let c = capsules[k as usize].1;
-            (c.press == Vec3A::ZERO, !c.worn)
-        });
+            usize::from(c.press == Vec3A::ZERO) * 2 + usize::from(!c.worn)
+        };
+        self.ordered.clear();
+        for want in 0..4 {
+            self.ordered
+                .extend(self.pairs.iter().filter(|pair| rank(pair) == want));
+        }
+        std::mem::swap(&mut self.pairs, &mut self.ordered);
     }
 
     /// Records collision point `i` (a particle, or a cell centre's corners) as held by a presser.
@@ -1168,28 +1226,27 @@ impl PieceSim {
         self.contacts.fill(Vec3A::ZERO);
         self.pressed.fill(false);
         let n = self.x.len();
+        // Once a substep for each collider, not for each of its pairs.
+        self.now.clear();
+        self.now.extend(
+            capsules
+                .iter()
+                .map(|&(before, after)| before.lerp(after, t)),
+        );
         for p in 0..self.pairs.len() {
             let (i, k, radius) = self.pairs[p];
             let i = i as usize;
             let (x, own, target) = if i < n {
                 (self.x[i], particles[i].radius, self.targets[i])
             } else {
-                let corners = self.cells[i - n];
-                let mean = |of: &dyn Fn(usize) -> Vec3A| {
-                    corners.iter().map(|&c| of(c as usize)).sum::<Vec3A>() * 0.25
-                };
                 (
                     self.cell_centre(i - n),
-                    corners
-                        .iter()
-                        .map(|&c| particles[c as usize].radius)
-                        .sum::<f32>()
-                        * 0.25,
-                    mean(&|c| self.targets[c]),
+                    self.cell_radius[i - n],
+                    self.cell_targets[i - n],
                 )
             };
             let (before, after) = capsules[k as usize];
-            let capsule = before.lerp(after, t);
+            let capsule = self.now[k as usize];
             let closest = capsule.closest(x);
             let d = x - closest;
             let reach = capsule.radius + radius;
@@ -1538,6 +1595,18 @@ fn carried_turn(turn: Quat, rest: Vec3A, now: Vec3A) -> Quat {
         return turn;
     };
     (Quat::from_rotation_arc(from.into(), to.into()) * turn).normalize()
+}
+
+/// How many cells [`grid_cells`] makes of a piece.
+fn grid_cell_count(frames: &Frames) -> usize {
+    match *frames {
+        Frames::Grid {
+            columns,
+            rows,
+            wrap,
+        } => (if wrap { columns } else { columns - 1 }) * rows.saturating_sub(1),
+        _ => 0,
+    }
 }
 
 /// A sheet's cells as their corner particles: (row, column), the next column, the next row,

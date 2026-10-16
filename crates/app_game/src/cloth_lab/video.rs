@@ -187,6 +187,7 @@ pub(super) fn install(app: &mut App, dir: PathBuf) {
         shake: Vec::new(),
         rows: vec!["take,frame,piece,shake_mm,pierced,folds".into()],
         pass_us: (0.0, 0),
+        work_us: 0.0,
     })
     .add_systems(Update, film.after(drive_camera));
     let mut settings = app.world_mut().resource_mut::<ClothSettings>();
@@ -221,6 +222,8 @@ struct Video {
     /// Each filmed frame's measures per piece, for `frames.csv`.
     rows: Vec<String>,
     pass_us: (f32, u32),
+    /// Summed over filmed frames: each character's cloth work, all cores, without measuring.
+    work_us: f32,
 }
 
 /// A piece's sums over a take: shake (mm) of the cloth and of its animation, pierced drawn
@@ -494,6 +497,7 @@ fn film(
     }
     video.pass_us.0 += stats.frame_us;
     video.pass_us.1 += 1;
+    video.work_us += stats.work_us / stats.characters.max(1) as f32;
     let index = video.frames;
     video.frames += 1;
     let encoder = video.encoder.clone();
@@ -548,10 +552,13 @@ fn join_takes(dir: &Path, files: &[PathBuf]) {
 }
 
 fn write_stats(video: &Video) {
+    let frames = video.pass_us.1.max(1) as f32;
     let mut report = format!(
-        "frame step ms {:.2}\nmean cloth pass us {:.0}\n",
+        "frame step ms {:.2}\nmean cloth pass us {:.0}\nmean work per character us {:.0} \
+         (all cores, without measuring)\n",
         1000.0 / FPS,
-        video.pass_us.0 / video.pass_us.1.max(1) as f32
+        video.pass_us.0 / frames,
+        video.work_us / frames
     );
     for s in &video.shake {
         let n = s.frames.max(1) as f32;
