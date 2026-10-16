@@ -5,7 +5,10 @@
 //! `stats.txt` holds each take's shake per piece (with no frame-time noise, standing and walking
 //! numbers compare across runs) and, for draped garments, how many of their drawn vertices went
 //! through something ([`engine::PieceShake::pierced`]), on average and at worst.
-//! `CLOTH_LAB_TAKES=walk_back,gale_from_right` films only the takes named.
+//! `CLOTH_LAB_TAKES=walk_back,gale_from_right` films only the takes named;
+//! `CLOTH_LAB_ORBIT=72` circles the camera that many degrees a second through each take, to see
+//! it from every side; `CLOTH_LAB_CLOCK=6` starts outfits' flutter clocks there
+//! ([`ClothSettings::flutter_clock`]), filming another run of the same takes.
 use super::{ClothLab, LabCamera, LabGait, drive_camera};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
@@ -78,7 +81,7 @@ const fn redress(name: &'static str, bearing: f32) -> Take {
     }
 }
 
-const TAKES: [Take; 13] = [
+const TAKES: [Take; 16] = [
     take("walk_back", 180.0, 2.8, LabGait::Walk, Wind::World, 6.0),
     take("walk_side", 90.0, 2.6, LabGait::Walk, Wind::World, 4.0),
     take(
@@ -120,11 +123,14 @@ const TAKES: [Take; 13] = [
     ),
     gale("gale_from_right", 90.0),
     gale("gale_from_left", -90.0),
+    gale("gale_from_behind", 0.0),
+    gale("gale_from_behind_left", -60.0),
+    gale("gale_from_behind_right", 60.0),
 ];
 
-/// A gale across the back, the cloak put on again first so each run starts it at rest. Even
-/// so, run to run, the cape either catches it and blows out across the back or lies along it
-/// and hangs: compare the frames, not only the numbers.
+/// A gale, the cloak put on again first so each run starts it at rest. The cape either catches
+/// it and blows out or lies along it and hangs, by the gusts' timing: compare runs with other
+/// `CLOTH_LAB_CLOCK`s, and their frames, not only the numbers.
 const fn gale(name: &'static str, towards: f32) -> Take {
     Take {
         redress: true,
@@ -169,6 +175,10 @@ pub(super) fn install(app: &mut App, dir: PathBuf) {
         })),
         dir,
         takes: chosen_takes(),
+        orbit: std::env::var("CLOTH_LAB_ORBIT")
+            .ok()
+            .and_then(|o| o.parse().ok())
+            .unwrap_or(0.0),
         dressed: None,
         started: None,
         take: None,
@@ -179,9 +189,14 @@ pub(super) fn install(app: &mut App, dir: PathBuf) {
         pass_us: (0.0, 0),
     })
     .add_systems(Update, film.after(drive_camera));
-    app.world_mut()
-        .resource_mut::<ClothSettings>()
-        .measure_pierce = true;
+    let mut settings = app.world_mut().resource_mut::<ClothSettings>();
+    settings.measure_pierce = true;
+    if let Some(clock) = std::env::var("CLOTH_LAB_CLOCK")
+        .ok()
+        .and_then(|c| c.parse().ok())
+    {
+        settings.flutter_clock = clock;
+    }
 }
 
 #[derive(Resource)]
@@ -190,6 +205,8 @@ struct Video {
     encoder: Arc<Mutex<Encoder>>,
     /// Indices into [`TAKES`] of those filmed, in order.
     takes: Vec<usize>,
+    /// Degrees a second the camera circles through each take.
+    orbit: f32,
     /// Where the player stood when everyone was dressed, and when (stepped seconds).
     dressed: Option<(Vec3, f32)>,
     /// When the player had walked away from there: the takes' clock starts.
@@ -434,6 +451,11 @@ fn film(
         return;
     }
     let frame = video.frames;
+    if video.orbit != 0.0
+        && let Some(camera) = lab.camera.as_mut()
+    {
+        camera.bearing = take.bearing + video.orbit * frame as f32 / FPS as f32;
+    }
     for piece in &stats.shake_by_piece {
         video.rows.push(format!(
             "{},{frame},{},{:.3},{},{}",

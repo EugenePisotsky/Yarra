@@ -88,6 +88,9 @@ pub struct ClothSettings {
     pub wind_override: Option<(f32, f32)>,
     /// How much the wind varies across a piece, 0–1.
     pub flutter: f32,
+    /// Where an outfit's flutter clock starts when it is put on, seconds: the lab sets it to
+    /// film other runs of the same take.
+    pub flutter_clock: f32,
     /// Scale every piece's damping and its lift (drag along its surface normal).
     pub damping: f32,
     pub lift: f32,
@@ -113,6 +116,7 @@ impl Default for ClothSettings {
             wind_speed: 7.0,
             wind_override: None,
             flutter: 0.45,
+            flutter_clock: 0.0,
             damping: 1.0,
             lift: 1.0,
             contact: 1.0,
@@ -224,6 +228,10 @@ struct ClothRig {
     pieces: Vec<RigPiece>,
     spawned: Vec<Entity>,
     last_root: Option<Vec3>,
+    /// Seconds since it was put on (from [`ClothSettings::flutter_clock`]), wrapped hourly:
+    /// the wind's flutter runs on it, not on the game's clock, so an outfit moves the same way
+    /// whenever it is put on, and characters dressed at different times flutter apart.
+    clock: Option<f32>,
     simulated: bool,
     time_us: f32,
     /// Sum of its simulated pieces' shake, metres, and how many.
@@ -511,6 +519,7 @@ fn build_rigs(
                 pieces,
                 spawned,
                 last_root: None,
+                clock: None,
                 simulated: false,
                 time_us: 0.0,
                 shake: (0.0, 0),
@@ -770,7 +779,6 @@ fn simulate_cloth(
     let started = Instant::now();
     let camera = cameras.iter().next().map(|c| c.translation());
     let dt = time.delta_secs();
-    let seconds = time.elapsed_secs_wrapped();
     let wind_direction = wind
         .as_ref()
         .map_or(Vec2::ZERO, |w| w.direction.normalize_or_zero());
@@ -792,6 +800,10 @@ fn simulate_cloth(
             .is_none_or(|last| last.distance(root) > (8.0 * dt).max(1.0));
         rig.last_root = Some(root);
         let simulate = settings.enabled && !far && !jumped;
+        let clock = rig
+            .clock
+            .map_or(settings.flutter_clock, |c| (c + dt) % 3600.0);
+        rig.clock = Some(clock);
         let blowing = match settings.wind_override {
             Some((bearing, speed)) => {
                 let (s, c) = bearing.to_radians().sin_cos();
@@ -817,7 +829,7 @@ fn simulate_cloth(
             gravity: Vec3A::new(0.0, -settings.gravity, 0.0),
             wind: blowing,
             flutter: settings.flutter,
-            time: seconds,
+            time: clock,
             inertia: settings.inertia,
             damping: settings.damping,
             lift: settings.lift,
