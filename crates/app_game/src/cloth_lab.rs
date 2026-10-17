@@ -148,6 +148,8 @@ pub(crate) struct LabCamera {
     pub bearing: f32,
     pub distance: f32,
     pub pitch: f32,
+    /// Looks the other way from where it stands, the player out of view.
+    pub away: bool,
 }
 
 #[derive(Resource)]
@@ -203,6 +205,7 @@ pub(crate) fn install(app: &mut App) -> Result<(), String> {
                 bearing: 180.0,
                 distance: 3.4,
                 pitch: 12.0,
+                away: false,
             }),
             spawned: Vec::new(),
             facing: None,
@@ -249,8 +252,9 @@ pub(crate) fn install(app: &mut App) -> Result<(), String> {
     // Controls stay unlocked: locked controls also stop every motor, and the walk is the point.
     app.world_mut().resource_mut::<RuntimeSettings>().show_ui = false;
     // Unattended tuning runs, e.g. CLOTH_LAB_TUNE="damping=2,lift=0.5,flutter=0,
-    // inertia=0.6,substeps=240,wind=0,contact=0.6,self=1,draw=1" (`draw` shows colliders and
-    // particles).
+    // inertia=0.6,substeps=240,wind=0,contact=0.6,self=1,draw=1,full_within=20,distant_hz=120,
+    // view=20" (`draw` shows colliders and particles; `view` is the out-of-view margin in
+    // degrees, negative to simulate characters wherever they are).
     if let Ok(tune) = std::env::var("CLOTH_LAB_TUNE") {
         let mut settings = engine::ClothSettings::default();
         for pair in tune.split(',') {
@@ -269,6 +273,9 @@ pub(crate) fn install(app: &mut App) -> Result<(), String> {
                 "wind" => settings.wind_override = Some((0.0, value)),
                 "contact" => settings.contact = value,
                 "self" => settings.self_collide = value > 0.5,
+                "full_within" => settings.full_rate_within = value,
+                "distant_hz" => settings.distant_substep_hz = value,
+                "view" => settings.out_of_view = (value >= 0.0).then_some(value),
                 "draw" => {
                     settings.show_colliders = value > 0.5;
                     settings.show_particles = value > 0.5;
@@ -427,17 +434,21 @@ fn drive_camera(
         pitch.sin(),
         bearing.cos() * pitch.cos(),
     );
-    **camera =
-        Transform::from_translation(focus + direction * view.distance).looking_at(focus, Vec3::Y);
+    let at = focus + direction * view.distance;
+    let look = if view.away { 2.0 * at - focus } else { focus };
+    **camera = Transform::from_translation(at).looking_at(look, Vec3::Y);
 }
 
 fn log_stats(time: Res<Time<Real>>, mut lab: ResMut<ClothLab>, stats: Res<ClothStats>) {
     if lab.log_timer.tick(time.delta()).just_finished() && stats.characters > 0 {
         info!(
-            "CLOTH_LAB characters={} simulated={} particles={} colliders={} pass_us={:.0} \
-             mean_pass_us={:.0} work_us={:.0} worst_character_us={:.0} wind_mps={:.1}",
+            "CLOTH_LAB characters={} simulated={} distant={} out_of_view={} \
+             particles={} colliders={} pass_us={:.0} mean_pass_us={:.0} work_us={:.0} \
+             worst_character_us={:.0} wind_mps={:.1}",
             stats.characters,
             stats.simulated,
+            stats.distant,
+            stats.out_of_view,
             stats.particles,
             stats.colliders,
             stats.frame_us,
@@ -647,6 +658,7 @@ fn shoot(
             bearing: view.bearing,
             distance: view.distance,
             pitch: 12.0,
+            away: false,
         });
         settings.show_colliders = view.colliders;
         let facing = lab.facing.unwrap_or(0.0).to_degrees();

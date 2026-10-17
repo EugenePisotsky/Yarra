@@ -685,6 +685,34 @@ impl PieceSim {
         self.settling = SETTLE;
     }
 
+    /// Carries the piece along with its targets instead of simulating it, for frames nobody
+    /// sees: each particle keeps its offset from its target, turned as the anchor turns, and
+    /// moves at its target's speed. Stepping again goes on from the shape it rode in.
+    pub fn ride(&mut self, def: &PieceDef, deforms: &[Affine3A], dt: f32) {
+        let anchor = deforms[def.anchor as usize];
+        let Some(anchor_prev) = self.anchor_prev else {
+            self.reset(def, deforms);
+            return;
+        };
+        let turn = (anchor * anchor_prev.inverse()).matrix3;
+        for (i, p) in def.particles.iter().enumerate() {
+            let (from, target) = (self.targets[i], p.carrier.place(p.rest, deforms));
+            self.x[i] = if p.pinned {
+                target
+            } else {
+                target + turn.mul_vec3a(self.x[i] - from)
+            };
+            if dt > 0.0 {
+                self.v[i] = (target - from) / dt;
+            }
+            self.shown[i] = self.x[i];
+            self.targets_prev[i] = from;
+            self.targets[i] = target;
+        }
+        self.anchor_prev = Some(anchor);
+        self.measure_shake(def);
+    }
+
     /// Advances one frame. `capsules` holds each collider at the start and end of the frame.
     pub fn step(
         &mut self,
@@ -1843,6 +1871,38 @@ mod tests {
         }
         assert!((sims[0].positions()[3].x - 0.5).abs() < 1e-3);
         assert!(sims[1].positions()[3].x < 0.4, "free tip followed at once");
+    }
+
+    /// A strand swinging after its anchor moved half a metre sideways.
+    fn swinging(def: &PieceDef) -> (PieceSim, Affine3A) {
+        let mut sim = PieceSim::new(def);
+        sim.reset(def, &[Affine3A::IDENTITY]);
+        let aside = Affine3A::from_translation(bevy::math::Vec3::X * 0.5);
+        sim.step(def, &[aside], &[], &[], &PARAMS);
+        (sim, aside)
+    }
+
+    #[test]
+    fn a_riding_piece_keeps_its_shape_on_the_body_and_its_speed() {
+        let def = strand(4);
+        let (mut sim, aside) = swinging(&def);
+        let before = sim.positions().to_vec();
+        // The body carries it 2 cm on and turns 5°.
+        let carried = Affine3A::from_rotation_translation(
+            Quat::from_rotation_y(5f32.to_radians()),
+            bevy::math::Vec3::Z * 0.02,
+        );
+        sim.ride(&def, &[carried * aside], PARAMS.dt);
+        for (i, (now, was)) in sim.positions().iter().zip(&before).enumerate() {
+            assert!(
+                now.distance(carried.transform_point3a(*was)) < 1e-5,
+                "particle {i} left its shape"
+            );
+            let target = def.particles[i].rest;
+            let speed =
+                (carried * aside).transform_point3a(target) - aside.transform_point3a(target);
+            assert!((sim.v[i] - speed / PARAMS.dt).length() < 1e-3);
+        }
     }
 
     #[test]

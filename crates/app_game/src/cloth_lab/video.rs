@@ -1,5 +1,6 @@
 //! `--cloth-lab-video DIR`: films the player in a set of takes (walking, jogging, standing calm
-//! and in the wind, from fixed bearings) and exits. Time steps exactly 1/60 s a frame however
+//! and in the wind, from fixed bearings, and two in which the camera looks away and back) and
+//! exits. Time steps exactly 1/60 s a frame however
 //! long a frame takes, so the motion filmed is the motion played and every run is the same, and
 //! each frame's screenshot is piped to ffmpeg, one MP4 per take and `all.mp4` of them in order.
 //! `stats.txt` holds each take's shake per piece (with no frame-time noise, standing and walking
@@ -53,7 +54,13 @@ struct Take {
     /// Take the cloak off and put it on again as the take is set up: garments start at rest,
     /// wherever things they are worn with are.
     redress: bool,
+    /// The camera looks away over [`AWAY`] and cuts back: the cloth rides along unseen
+    /// meanwhile ([`ClothSettings::out_of_view`]), and the frames after show how it goes on.
+    away: bool,
 }
+
+/// When in a take the camera looks away, seconds filmed.
+const AWAY: std::ops::Range<f32> = 2.0..3.5;
 
 const fn take(
     name: &'static str,
@@ -71,6 +78,7 @@ const fn take(
         wind,
         seconds,
         redress: false,
+        away: false,
     }
 }
 
@@ -81,7 +89,7 @@ const fn redress(name: &'static str, bearing: f32) -> Take {
     }
 }
 
-const TAKES: [Take; 16] = [
+const TAKES: [Take; 18] = [
     take("walk_back", 180.0, 2.8, LabGait::Walk, Wind::World, 6.0),
     take("walk_side", 90.0, 2.6, LabGait::Walk, Wind::World, 4.0),
     take(
@@ -126,6 +134,21 @@ const TAKES: [Take; 16] = [
     gale("gale_from_behind", 0.0),
     gale("gale_from_behind_left", -60.0),
     gale("gale_from_behind_right", 60.0),
+    Take {
+        away: true,
+        ..take(
+            "look_away_walk",
+            180.0,
+            2.8,
+            LabGait::Walk,
+            Wind::World,
+            6.0,
+        )
+    },
+    Take {
+        away: true,
+        ..gale("look_away_gale", 90.0)
+    },
 ];
 
 /// A gale, the cloak put on again first so each run starts it at rest. The cape either catches
@@ -188,6 +211,7 @@ pub(super) fn install(app: &mut App, dir: PathBuf) {
         rows: vec!["take,frame,piece,shake_mm,pierced,folds".into()],
         pass_us: (0.0, 0),
         work_us: 0.0,
+        bands: [0.0; 4],
     })
     .add_systems(Update, film.after(drive_camera));
     let mut settings = app.world_mut().resource_mut::<ClothSettings>();
@@ -224,6 +248,9 @@ struct Video {
     pass_us: (f32, u32),
     /// Summed over filmed frames: each character's cloth work, all cores, without measuring.
     work_us: f32,
+    /// Summed over filmed frames: characters whose cloth stepped at the full rate, at the
+    /// distant rate, rode along out of view and hung far away.
+    bands: [f32; 4],
 }
 
 /// A piece's sums over a take: shake (mm) of the cloth and of its animation, pierced drawn
@@ -438,6 +465,7 @@ fn film(
             bearing: take.bearing,
             distance: take.distance,
             pitch: 12.0,
+            away: false,
         });
         lab.gait = take.gait;
     }
@@ -454,10 +482,10 @@ fn film(
         return;
     }
     let frame = video.frames;
-    if video.orbit != 0.0
-        && let Some(camera) = lab.camera.as_mut()
-    {
-        camera.bearing = take.bearing + video.orbit * frame as f32 / FPS as f32;
+    if let Some(camera) = lab.camera.as_mut() {
+        let seconds = frame as f32 / FPS as f32;
+        camera.bearing = take.bearing + video.orbit * seconds;
+        camera.away = take.away && AWAY.contains(&seconds);
     }
     for piece in &stats.shake_by_piece {
         video.rows.push(format!(
@@ -498,6 +526,15 @@ fn film(
     video.pass_us.0 += stats.frame_us;
     video.pass_us.1 += 1;
     video.work_us += stats.work_us / stats.characters.max(1) as f32;
+    let near = stats.simulated + stats.distant + stats.out_of_view;
+    for (sum, count) in video.bands.iter_mut().zip([
+        stats.simulated,
+        stats.distant,
+        stats.out_of_view,
+        stats.characters - near,
+    ]) {
+        *sum += count as f32;
+    }
     let index = video.frames;
     video.frames += 1;
     let encoder = video.encoder.clone();
@@ -553,9 +590,11 @@ fn join_takes(dir: &Path, files: &[PathBuf]) {
 
 fn write_stats(video: &Video) {
     let frames = video.pass_us.1.max(1) as f32;
+    let [full, distant, out, far] = video.bands.map(|sum| sum / frames);
     let mut report = format!(
         "frame step ms {:.2}\nmean cloth pass us {:.0}\nmean work per character us {:.0} \
-         (all cores, without measuring)\n",
+         (all cores, without measuring)\ncharacters a frame: {full:.1} at full rate, \
+         {distant:.1} distant, {out:.1} out of view, {far:.1} far\n",
         1000.0 / FPS,
         video.pass_us.0 / frames,
         video.work_us / frames

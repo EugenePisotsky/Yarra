@@ -92,6 +92,7 @@ fn panel(
                 bearing: 180.0,
                 distance: 3.4,
                 pitch: 12.0,
+                away: false,
             });
             ui.add_enabled_ui(follow, |ui| {
                 ui.add(
@@ -176,6 +177,18 @@ fn panel(
                     .suffix(" m")
                     .text("Simulate within"),
             );
+            ui.add(
+                egui::Slider::new(&mut tuned.full_rate_within, 0.0..=120.0)
+                    .suffix(" m")
+                    .text("Full rate within"),
+            );
+            ui.horizontal(|ui| {
+                let mut skip = tuned.out_of_view.is_some();
+                let mut margin = tuned.out_of_view.unwrap_or(20.0);
+                ui.checkbox(&mut skip, "Skip out of view by");
+                ui.add_enabled(skip, egui::Slider::new(&mut margin, 0.0..=60.0).suffix("°"));
+                tuned.out_of_view = skip.then_some(margin);
+            });
             ui.horizontal(|ui| {
                 ui.checkbox(&mut tuned.show_colliders, "Colliders");
                 ui.checkbox(&mut tuned.show_particles, "Particles");
@@ -187,8 +200,14 @@ fn panel(
             ui.separator();
             ui.heading("Cost");
             ui.label(format!(
-                "{} characters ({} simulated), {} particles, {} colliders",
-                stats.characters, stats.simulated, stats.particles, stats.colliders
+                "{} characters ({} at full rate, {} distant, {} out of view), {} particles, \
+                 {} colliders",
+                stats.characters,
+                stats.simulated,
+                stats.distant,
+                stats.out_of_view,
+                stats.particles,
+                stats.colliders
             ));
             ui.label(format!(
                 "Cloth pass {:.3} ms (mean {:.3} ms)",

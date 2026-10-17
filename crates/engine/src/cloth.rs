@@ -7,7 +7,9 @@
 //! An actor opts in with a [`TestOutfit`]. Once its presentation is ready its skeleton is found,
 //! the outfit planned ([`outfit`], cached per body mesh and choice) and its entities spawned
 //! under the actor. Each frame, after transform propagation, every rig steps in parallel and its
-//! joints' `GlobalTransform`s are written before bounds and skins are read.
+//! joints' `GlobalTransform`s are written before bounds and skins are read. Rigs farther from the
+//! camera step with fewer substeps, and those out of its view or far away not at all: their
+//! cloth rides along with the body or hangs as the animation puts it.
 mod authored;
 mod body;
 mod outfit;
@@ -19,7 +21,10 @@ pub use outfit::OutfitChoice;
 use crate::{WorldViewCamera, character::CharacterPresentationReady};
 use bevy::{
     asset::RenderAssetUsages,
-    camera::visibility::{DynamicSkinnedMeshBounds, VisibilitySystems},
+    camera::{
+        primitives::{Frustum, Sphere},
+        visibility::{DynamicSkinnedMeshBounds, VisibilitySystems},
+    },
     math::{Affine3A, Vec3A},
     mesh::{
         Indices, VertexAttributeValues,
@@ -51,6 +56,7 @@ impl Plugin for ClothPlugin {
                 (simulate_cloth, draw_cloth_debug)
                     .chain()
                     .after(TransformSystems::Propagate)
+                    .after(VisibilitySystems::UpdateFrusta)
                     .before(VisibilitySystems::CalculateBounds),
             );
     }
@@ -100,6 +106,14 @@ pub struct ClothSettings {
     pub gravity: f32,
     /// Farther from the camera, pieces hang where the animation puts them.
     pub simulate_within: f32,
+    /// Farther than this (and within [`Self::simulate_within`]), pieces step with substeps at
+    /// [`Self::distant_substep_hz`].
+    pub full_rate_within: f32,
+    pub distant_substep_hz: f32,
+    /// Characters farther outside the camera's view than this many degrees are not simulated:
+    /// their pieces ride along with the body in the shape they had ([`solver::PieceSim::ride`])
+    /// and go on from it as they come back. `None` simulates them wherever they are.
+    pub out_of_view: Option<f32>,
     pub show_colliders: bool,
     pub show_particles: bool,
     /// Count draped garments' drawn vertices that go through things ([`PieceShake::pierced`]):
@@ -123,6 +137,9 @@ impl Default for ClothSettings {
             self_collide: true,
             gravity: 9.81,
             simulate_within: 40.0,
+            full_rate_within: 20.0,
+            distant_substep_hz: 120.0,
+            out_of_view: Some(20.0),
             show_colliders: false,
             show_particles: false,
             measure_pierce: false,
@@ -133,7 +150,11 @@ impl Default for ClothSettings {
 #[derive(Resource, Clone, Debug, Default)]
 pub struct ClothStats {
     pub characters: usize,
+    /// Characters whose cloth steps at the full rate; the others step at the distant rate, ride
+    /// along out of view or hang far away ([`ClothSettings::full_rate_within`] and on).
     pub simulated: usize,
+    pub distant: usize,
+    pub out_of_view: usize,
     pub particles: usize,
     pub colliders: usize,
     /// The whole cloth pass last frame, wall clock.
@@ -232,13 +253,29 @@ struct ClothRig {
     /// the wind's flutter runs on it, not on the game's clock, so an outfit moves the same way
     /// whenever it is put on, and characters dressed at different times flutter apart.
     clock: Option<f32>,
-    simulated: bool,
+    lod: Lod,
     time_us: f32,
     /// Sum of its simulated pieces' shake, metres, and how many.
     shake: (f32, usize),
     /// Each piece's shake this frame and its targets', metres.
     piece_shake: Vec<(f32, f32, [f32; PIERCED_BY.len()], f32)>,
 }
+
+/// How a character's cloth moves this frame, by how far it is and whether the camera sees it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Lod {
+    Full,
+    /// Substeps at [`ClothSettings::distant_substep_hz`].
+    Distant,
+    /// Out of view: rides along with the body.
+    Riding,
+    /// Far away, switched off or just moved a long way: hangs as the animation puts it.
+    Hanging,
+}
+
+/// How far round a character's middle its cloth can be, metres: a cape blown out, a skirt
+/// kicked up. Characters are out of view when a sphere this big is.
+const CLOTH_REACH: f32 = 1.5;
 
 struct RigPiece {
     sim: PieceSim,
@@ -520,7 +557,7 @@ fn build_rigs(
                 spawned,
                 last_root: None,
                 clock: None,
-                simulated: false,
+                lod: Lod::Hanging,
                 time_us: 0.0,
                 shake: (0.0, 0),
                 piece_shake: Vec::new(),
@@ -764,6 +801,14 @@ fn material(look: Look, garments: &ClothGarments, server: &AssetServer) -> Stand
     }
 }
 
+/// The world view's cameras, and what each sees.
+type ViewCameras<'w, 's> = Query<
+    'w,
+    's,
+    (&'static Camera, &'static GlobalTransform, &'static Frustum),
+    (With<WorldViewCamera>, Without<ClothJoint>),
+>;
+
 #[allow(clippy::too_many_arguments)]
 fn simulate_cloth(
     time: Res<Time>,
@@ -771,13 +816,17 @@ fn simulate_cloth(
     wind: Option<Res<vegetation_render::VegetationWind>>,
     wind_origin: Option<Res<vegetation_render::VegetationRenderOrigin>>,
     mut stats: ResMut<ClothStats>,
-    cameras: Query<&GlobalTransform, (With<WorldViewCamera>, Without<ClothJoint>)>,
+    cameras: ViewCameras,
     poses: Query<&GlobalTransform, Without<ClothJoint>>,
     mut rigs: Query<(&mut ClothRig, &GlobalTransform), Without<ClothJoint>>,
     mut joints: Query<&mut GlobalTransform, With<ClothJoint>>,
 ) {
     let started = Instant::now();
-    let camera = cameras.iter().next().map(|c| c.translation());
+    let view = cameras
+        .iter()
+        .find(|(camera, ..)| camera.is_active)
+        .or_else(|| cameras.iter().next());
+    let camera = view.map(|(_, at, _)| at.translation());
     let dt = time.delta_secs();
     let wind_direction = wind
         .as_ref()
@@ -796,12 +845,35 @@ fn simulate_cloth(
                 rig.deforms[k] = pose.affine() * rig.inverse_binds[k];
             }
         }
-        let far = camera.is_some_and(|c| c.distance(root) > settings.simulate_within);
+        let distance = camera.map_or(0.0, |c| c.distance(root));
         let jumped = rig
             .last_root
             .is_none_or(|last| last.distance(root) > (8.0 * dt).max(1.0));
         rig.last_root = Some(root);
-        let simulate = settings.enabled && !far && !jumped;
+        // Out of view by an angle: the sphere grows with distance.
+        let unseen = settings
+            .out_of_view
+            .zip(view)
+            .is_some_and(|(margin, (_, _, frustum))| {
+                let sphere = Sphere {
+                    center: Vec3A::from(root) + Vec3A::Y,
+                    radius: CLOTH_REACH + distance * margin.to_radians().sin(),
+                };
+                !frustum.intersects_sphere(&sphere, false)
+            });
+        // A metre's give either way, so a character walking along the line keeps its rate.
+        let give = if rig.lod == Lod::Distant { -1.0 } else { 1.0 };
+        rig.lod = if !settings.enabled || distance > settings.simulate_within || jumped {
+            Lod::Hanging
+        } else if unseen {
+            Lod::Riding
+        } else if distance > settings.full_rate_within + give {
+            Lod::Distant
+        } else {
+            Lod::Full
+        };
+        let lod = rig.lod;
+        let simulate = matches!(lod, Lod::Full | Lod::Distant);
         let clock = rig
             .clock
             .map_or(settings.flutter_clock, |c| (c + dt) % 3600.0);
@@ -827,7 +899,11 @@ fn simulate_cloth(
         }
         let params = StepParams {
             dt,
-            substep_hz: settings.substep_hz,
+            substep_hz: if lod == Lod::Distant {
+                settings.distant_substep_hz
+            } else {
+                settings.substep_hz
+            },
             gravity: Vec3A::new(0.0, -settings.gravity, 0.0),
             wind: blowing,
             flutter: settings.flutter,
@@ -905,6 +981,8 @@ fn simulate_cloth(
                     [0.0; PIERCED_BY.len()],
                     0.0,
                 ));
+            } else if lod == Lod::Riding {
+                state.sim.ride(&piece.def, &rig.deforms, dt);
             } else {
                 state.sim.reset(&piece.def, &rig.deforms);
             }
@@ -959,11 +1037,11 @@ fn simulate_cloth(
                 provided += 1;
             }
         }
-        rig.simulated = simulate;
         rig.time_us = (begun.elapsed() - measuring).as_secs_f32() * 1e6;
     });
 
-    let (mut characters, mut simulated, mut particles, mut work, mut worst) = (0, 0, 0, 0.0, 0f32);
+    let (mut characters, mut particles, mut work, mut worst) = (0, 0, 0.0, 0f32);
+    let (mut simulated, mut distant, mut out_of_view) = (0, 0, 0);
     let mut shake = (0.0, 0);
     let mut by_piece: Vec<(PieceShake, usize)> = Vec::new();
     for (rig, _) in &rigs {
@@ -998,7 +1076,12 @@ fn simulate_cloth(
                 )),
             }
         }
-        simulated += usize::from(rig.simulated);
+        match rig.lod {
+            Lod::Full => simulated += 1,
+            Lod::Distant => distant += 1,
+            Lod::Riding => out_of_view += 1,
+            Lod::Hanging => {}
+        }
         work += rig.time_us;
         worst = worst.max(rig.time_us);
         for (plan, piece) in rig.outfit.plan.pieces.iter().zip(&rig.pieces) {
@@ -1018,6 +1101,8 @@ fn simulate_cloth(
     *stats = ClothStats {
         characters,
         simulated,
+        distant,
+        out_of_view,
         particles,
         colliders,
         frame_us,
