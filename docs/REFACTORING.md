@@ -215,17 +215,15 @@ Native and Spatial looked as bad as Temporal, and the trees nearest the camera w
 2. **Light at stand scale.** Deep rows were lit like the edge; the floor inside a stand as bright as outside.
 3. **Representation per distance at the target resolution.** Impostors took over at 200 logical px (a fifth of the screen's height) with 0.55–0.65 texels per screen pixel; meshes stop at 166 m because objects are resident only within 192 m; grass stops dead at 96 m and the ground beyond is lit from an authored colour, 2–4× brighter than the grass in front of it.
 
-Species: keep birch and spruce; replace longleaf, oak, maple, tall broadleaf and bay with Eastern European trees — Scots pine first, then linden (the broadleaf template), oak, apple and pear, black alder, willow, and hazel, rowan and young trees for edges and understory.
+Trees come from **one pipeline**, the vegetation kit (YarraVegetation: card builder, scan-based atlas bakes, LOD and impostor export), for every species; no bought assets and no parallel pipelines. An attempt to replace the longleaf pines with a Scots pine built on a separate path (a growth generator, full needle geometry and Karma-baked cards) was rejected in the game the same day: the longleaf stands read as a pine forest, the new trees as a shapeless mess ([Experiments](EXPERIMENTS.md#trees-v2-scots-pine-and-impostor-views--october-17)). It was removed; its code is kept only as the tags `archive/scots-pine-2026-10-17` (YarraVegetation) and `archive/trees-v2-scots-pine-2026-10-17` (here).
 
 | Step | Deliverable | Status |
 | --- | --- | --- |
-| 1. References | LOD lab captures of the current trees at 50% + Temporal at 10/40/120/300 m (`tmp/trees-v2/baseline`) beside the KCD screenshots | Done for the longleaf stand |
-| 2. Scots pine | Twig library (needle brushes baked from the pine scans) and a growth generator in YarraVegetation (`grown.py`, pine profile 2): irregular whorls, forked limbs, a split top, a cloud of twigs per limb that lights as one volume; forms forest, broad, tall, old and young; impostors baked from LOD2 | In progress |
-| 3. Planting | `tools/forest_plan.py` plants the Scots pine forms (young stands get the young form at its own size) | In progress |
-| 4. LOD from LOD0 | LOD1 and LOD2 as cluster cards rendered from the LOD0 twigs, so coverage and colour match by construction; impostor hand-off where a texel covers at most an output pixel | Next |
-| 5. GPU-side LOD | [GPU-driven trees](#gpu-driven-trees) step 2, so mesh LODs are not limited by the 192 m residency | After 4 |
-| 6. Linden, oak, apple | The generator's broadleaf profile; then edges and understory in `forest_plan` v2 | Later |
-| 7. Grass to the distance | A fade band instead of the 96 m line; ground beyond shaded with the grass field's measured appearance and its patch pattern; a cheaper far tier, its range chosen by measurement | Later |
+| 1. References | LOD lab captures of the current trees at 50% + Temporal at 10/40/120/300 m (`tmp/trees-v2/baseline`) and the day views of the island (`tmp/trees-v2/views-before`) | Done |
+| 2. Impostor views | Each of the four blended views read where the fragment's ray meets it | Done (`4586161`) |
+| 3. LOD and distance in the kit's trees | Impostor timing and sharpness, LOD transitions, the distant forest; for every species at once | Next |
+| 4. Grass to the distance | A fade band instead of the 96 m line; ground beyond shaded with the grass field's measured appearance and its patch pattern; a cheaper far tier, its range chosen by measurement | Later |
+| 5. Pines in the kit | Small steps from the longleaf forms toward Scots pine (shorter upturned needle tufts, brighter yellow-green, more clumps), each judged by the user in the game against photos | Later |
 
 Costs are counted in work that does not depend on the GPU clock (triangles, cards and instances in view, overdraw, texture memory) and timed only with Metal System Trace per pass against a reference pass in the same trace, alternating A/B: macOS clocks the GPU to the load, so the performance HUD's GPU time says little.
 
