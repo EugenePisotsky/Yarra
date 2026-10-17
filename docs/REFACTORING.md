@@ -205,6 +205,30 @@ Authored: routes, which roads connect, traffic level and width, per-junction ove
 4. **Authoring**: traffic level per road done: `Road::traffic` replaces the styles' wear and grass-retention knobs (`RoadWear::at`; medium traffic reproduces the tuned cart track), styles keep the kind of way, the road inspector has a traffic slider and the style preview a preview traffic; the island's Beach road is the main road (0.85, 4 m wide). Still to come: the wear brush, per-junction toggles.
 5. **Performance**, once the look holds.
 
+## Trees and distance roadmap
+
+October 17, 2026, agreed with the user after screenshots of the forest and meadows (impostors read as blobs and still showed close up; grass ended in a line that moved with the player) and Kingdom Come: Deliverance II references (`~/Desktop/Screenshot 2026-10-17 at 13.30.08`, `13.30.31`, `13.57.10`). The look target is **50% render scale with MetalFX Temporal** (later other upscalers); MSAA is off there, so anti-aliasing ideas that need it do not apply. Native resolution is for faster machines. No small fixes that only make things slightly better: choose the proper approach first.
+
+Native and Spatial looked as bad as Temporal, and the trees nearest the camera were meshes, so the problem is in three layers, not only in LOD:
+
+1. **What is planted.** The pine stands were the longleaf forms: flat needle pads on long bare limbs, sky through every crown; young stands were shrunken adults; no edge mantle or understory. The vegetation kit's budgets were set for PS4-class hardware and iPhones (2–4k triangles at LOD0).
+2. **Light at stand scale.** Deep rows were lit like the edge; the floor inside a stand as bright as outside.
+3. **Representation per distance at the target resolution.** Impostors took over at 200 logical px (a fifth of the screen's height) with 0.55–0.65 texels per screen pixel; meshes stop at 166 m because objects are resident only within 192 m; grass stops dead at 96 m and the ground beyond is lit from an authored colour, 2–4× brighter than the grass in front of it.
+
+Species: keep birch and spruce; replace longleaf, oak, maple, tall broadleaf and bay with Eastern European trees — Scots pine first, then linden (the broadleaf template), oak, apple and pear, black alder, willow, and hazel, rowan and young trees for edges and understory.
+
+| Step | Deliverable | Status |
+| --- | --- | --- |
+| 1. References | LOD lab captures of the current trees at 50% + Temporal at 10/40/120/300 m (`tmp/trees-v2/baseline`) beside the KCD screenshots | Done for the longleaf stand |
+| 2. Scots pine | Twig library (needle brushes baked from the pine scans) and a growth generator in YarraVegetation (`grown.py`, pine profile 2): irregular whorls, forked limbs, a split top, a cloud of twigs per limb that lights as one volume; forms forest, broad, tall, old and young; impostors baked from LOD2 | In progress |
+| 3. Planting | `tools/forest_plan.py` plants the Scots pine forms (young stands get the young form at its own size) | In progress |
+| 4. LOD from LOD0 | LOD1 and LOD2 as cluster cards rendered from the LOD0 twigs, so coverage and colour match by construction; impostor hand-off where a texel covers at most an output pixel | Next |
+| 5. GPU-side LOD | [GPU-driven trees](#gpu-driven-trees) step 2, so mesh LODs are not limited by the 192 m residency | After 4 |
+| 6. Linden, oak, apple | The generator's broadleaf profile; then edges and understory in `forest_plan` v2 | Later |
+| 7. Grass to the distance | A fade band instead of the 96 m line; ground beyond shaded with the grass field's measured appearance and its patch pattern; a cheaper far tier, its range chosen by measurement | Later |
+
+Costs are counted in work that does not depend on the GPU clock (triangles, cards and instances in view, overdraw, texture memory) and timed only with Metal System Trace per pass against a reference pass in the same trace, alternating A/B: macOS clocks the GPU to the load, so the performance HUD's GPU time says little.
+
 ## Performance roadmap
 
 October 9, 2026. At native resolution the forest ran at about 43 fps uncapped on a cool M2 Max and lower once it heats (the user saw 35). Measurements and the fixes so far are in [Experiments](EXPERIMENTS.md#native-resolution--october-9). What remains, largest first:

@@ -1,7 +1,8 @@
 // Impostor LOD (crates/engine/src/tree_impostor.rs): each instance is six vertices at its
 // root, spread here into a quad facing the camera. The baked views lie on a hemi-octahedral
 // grid (YarraVegetation scripts/bake_impostor.py), each stored as the tile of its crop: the
-// four views nearest the camera's direction are blended, then lit with the trees' crown
+// four views nearest the camera's direction are blended, each read where the fragment's ray
+// meets that view's plane, then lit with the trees' crown
 // shading where the baked depth puts the crown's surface, not on the quad. Near the camera
 // the quad bends in the wind as its mesh LODs' trunk does.
 import bevy_pbr::{render::mesh_functions, render::mesh_view_bindings::view, render::view_transformations::position_world_to_clip};
@@ -75,6 +76,11 @@ struct Varyings {
     @location(6) @interpolate(flat) dither: i32,
     // The views' half size in metres, which the baked depth is a share of.
     @location(7) @interpolate(flat) radius: f32,
+    // The views' centre and the instance's yaw, and this point of the quad before it sways:
+    // each view's image is found where the ray through it meets that view's plane.
+    @location(8) @interpolate(flat) centre: vec3<f32>,
+    @location(9) @interpolate(flat) yaw: f32,
+    @location(10) rest: vec3<f32>,
 }
 
 // Bevy's Quat::from_rotation_y.
@@ -136,6 +142,9 @@ fn vertex(v: Vertex) -> Varyings {
     let offset = right * ((corner.x * 2.0 - 1.0) * radius) + up * ((1.0 - corner.y * 2.0) * radius);
     let rest = centre + offset;
     out.world_position = vec4(rest, 1.0);
+    out.centre = centre;
+    out.yaw = yaw;
+    out.rest = rest;
     // Leaning as the mesh LODs' trunk does where it takes over from them (the LOD
     // projection's switch distance, within the hand-off), less beyond.
     let handoff = min(v.instance.z * impostor.settings.y, impostor.settings.w);
@@ -181,27 +190,56 @@ fn decode_normal(e: vec2<f32>) -> vec3<f32> {
     return n;
 }
 
-// Coverage-weighted blend of the four nearest views; discards outside the crown before
-// reading any normal, since most of a quad lies outside it. The quad's gradients pick each
-// view's mip for its on-screen size.
+// The view a cell of the grid was baked from: its direction toward the viewer and its
+// image's right and up, in world space (bake_impostor.py `view_direction`, `basis`).
+fn view_frame(cell: vec2<f32>, yaw: f32) -> mat3x3<f32> {
+    let p = (cell + 0.5) / impostor.settings.x * 2.0 - 1.0;
+    let x = (p.x + p.y) * 0.5;
+    let z = (p.x - p.y) * 0.5;
+    let d = rotate_y(normalize(vec3(x, max(1.0 - abs(x) - abs(z), 0.0), z)), yaw);
+    var right = cross(vec3(0.0, 1.0, 0.0), d);
+    if dot(right, right) < 1e-6 {
+        right = rotate_y(vec3(1.0, 0.0, 0.0), yaw);
+    }
+    right = normalize(right);
+    return mat3x3(right, cross(d, right), d);
+}
+
+// Where the ray through this fragment meets a view's image, across the view (0-1, v down):
+// on the plane through the centre facing that view. Blending views at the quad's own
+// position instead lays four different projections of the crown over each other.
+fn view_position(in: Varyings, frame: mat3x3<f32>, ray: vec3<f32>) -> vec2<f32> {
+    let d = frame[2];
+    let t = dot(in.centre - in.rest, d) / min(dot(ray, d), -0.1);
+    let local = in.rest + ray * t - in.centre;
+    return vec2(dot(local, frame[0]), -dot(local, frame[1])) / (2.0 * in.radius) + 0.5;
+}
+
+// Coverage-weighted blend of the four nearest views, each read where the fragment's ray
+// meets it; discards outside the crown before reading any normal, since most of a quad
+// lies outside it. The quad's gradients pick each view's mip for its on-screen size.
 fn surface(in: Varyings, ddx_uv: vec2<f32>, ddy_uv: vec2<f32>) -> Surface {
-    // Across the view's tile, which holds only its crop.
-    let corner = clamp(
-        (in.corner - impostor.crop.xy) / (impostor.crop.zw - impostor.crop.xy),
-        vec2(0.0),
-        vec2(1.0),
-    );
+    var ray = -in.toward_view;
+    if view.clip_from_view[3].w != 1.0 {
+        ray = normalize(in.rest - view.world_position);
+    }
     let count = impostor.settings.x;
     var uvs: array<vec2<f32>, 4>;
+    var frames: array<mat3x3<f32>, 4>;
     var weights: vec4<f32>;
     var colour = vec3(0.0);
     var alpha = 0.0;
     for (var i = 0u; i < 4u; i += 1u) {
         let step = vec2(f32(i & 1u), f32(i >> 1u));
+        let cell = in.frame.xy + step;
+        frames[i] = view_frame(cell, in.yaw);
+        // Across the view's tile, which holds only its crop; a ray outside it meets nothing.
+        let crop = (view_position(in, frames[i], ray) - impostor.crop.xy) / (impostor.crop.zw - impostor.crop.xy);
+        let inside = all(crop >= vec2(0.0)) && all(crop <= vec2(1.0));
         let weight = mix(1.0 - in.frame.z, in.frame.z, step.x) * mix(1.0 - in.frame.w, in.frame.w, step.y);
-        uvs[i] = (in.frame.xy + step + corner) / count;
+        uvs[i] = (cell + clamp(crop, vec2(0.0), vec2(1.0))) / count;
         let a = textureSampleGrad(albedo_texture, impostor_sampler, uvs[i], ddx_uv, ddy_uv);
-        weights[i] = a.a * weight;
+        weights[i] = select(0.0, a.a * weight, inside);
         colour += a.rgb * weights[i];
         alpha += weights[i];
     }
@@ -213,7 +251,8 @@ fn surface(in: Varyings, ddx_uv: vec2<f32>, ddy_uv: vec2<f32>) -> Surface {
     var depth = 0.0;
     for (var i = 0u; i < 4u; i += 1u) {
         let n = textureSampleGrad(normal_texture, impostor_sampler, uvs[i], ddx_uv, ddy_uv);
-        normal += normalize(decode_normal(n.xy * 2.0 - 1.0)) * weights[i];
+        // Each view's normal is in its own frame.
+        normal += (frames[i] * normalize(decode_normal(n.xy * 2.0 - 1.0))) * weights[i];
         depth += (n.z * 2.0 - 1.0) * weights[i];
         occlusion += n.w * weights[i];
     }
@@ -221,8 +260,7 @@ fn surface(in: Varyings, ddx_uv: vec2<f32>, ddy_uv: vec2<f32>) -> Surface {
     out.colour = clamp(colour / alpha, vec3(0.0), vec3(1.0));
     // Opposed views can cancel; a zero normal must never reach lighting as NaN.
     let length_n = length(normal);
-    let n = select(vec3(0.0, 0.0, 1.0), normal / length_n, length_n > 1e-4);
-    out.normal = normalize(in.right * n.x + in.up * n.y + in.toward_view * n.z);
+    out.normal = select(in.toward_view, normal / length_n, length_n > 1e-4);
     out.occlusion = clamp(occlusion / alpha, 0.0, 1.0);
     out.depth = depth / alpha * in.radius;
     return out;
