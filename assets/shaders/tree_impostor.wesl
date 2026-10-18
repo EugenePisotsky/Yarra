@@ -31,8 +31,9 @@ struct ImpostorParams {
     // Views per side, pixels per metre of the LOD projection, orthographic flag, and the
     // farthest hand-off from the mesh LODs in metres.
     settings: vec4<f32>,
-    // The far mesh LOD's wind profile (tree_wind.wesl tree_profile), its stem height in
-    // object metres (x) and the form's switch at unit scale (y, height over threshold).
+    // The far mesh LOD's wind profile (tree_wind.wesl tree_profile); its stem height in
+    // object metres (x), the views' texels per metre (y) and the LOD projection's output
+    // pixels per pixel (z): z over y is the hand-off at unit scale (trees/impostor.rs).
     wind_profile: vec4<f32>,
     wind_height: vec4<f32>,
 }
@@ -129,7 +130,7 @@ fn placement(v: Vertex) -> Placement {
         tree_origins[instance.origin].xyz + instance.position_yaw.xyz,
         instance.position_yaw.w,
         instance.scale,
-        impostor.wind_height.y * instance.scale,
+        impostor.wind_height.z / impostor.wind_height.y * instance.scale,
         u32(v.position.x),
         i32((record >> 24u) & 63u) - 16,
     );

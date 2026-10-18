@@ -51,6 +51,9 @@ struct Camera {
     planes: array<vec4<f32>, 6>,
     // Each shadow view's, MAX_SHADOW_VIEWS of them.
     shadow_planes: array<vec4<f32>, 48>,
+    // Per shadow view, where the main view samples it: the depths that do, as near and far
+    // half-spaces, and the direction its light travels (xyz).
+    shadow_receivers: array<vec4<f32>, 24>,
     // Pool length, shadow views, shadow LOD bias, records per view.
     counts: vec4<u32>,
     // Buckets per view, unused, hidden (1 draws nothing), unused.
@@ -175,6 +178,38 @@ fn in_shadow_view(view: u32, bounds: Bounds) -> bool {
         }
     }
     return true;
+}
+
+// Room round a receiver for the shadow filter and normal bias, in metres.
+const RECEIVER_MARGIN: f32 = 1.0;
+
+// Whether the shadow of a sphere can fall where the main view samples a shadow view: swept
+// away from its light, it meets the main view's sides and the depths that sample that
+// cascade. A cascade's frustum is a square round its whole slice, open toward the light, and
+// holds many casters whose shadows land off screen or under the ground in view.
+fn shades_receivers(view: u32, centre: vec3<f32>, radius: f32) -> bool {
+    let sweep = camera.shadow_receivers[view * 3u + 2u].xyz;
+    // The stretch of the sweep inside every half-space so far.
+    var along = vec2(0.0, 3.0e38);
+    for (var p = 0u; p < 6u; p++) {
+        // The main view's four sides (Bevy's order puts near and far last), then the depths.
+        var plane = camera.planes[p];
+        if p >= NEAR_PLANE {
+            plane = camera.shadow_receivers[view * 3u + p - NEAR_PLANE];
+        }
+        let inside = dot(plane.xyz, centre) + plane.w + radius + RECEIVER_MARGIN;
+        let rate = dot(plane.xyz, sweep);
+        if abs(rate) < 1e-6 {
+            if inside < 0.0 {
+                return false;
+            }
+        } else if rate > 0.0 {
+            along.x = max(along.x, -inside / rate);
+        } else {
+            along.y = min(along.y, -inside / rate);
+        }
+    }
+    return along.x <= along.y;
 }
 
 fn append(view: u32, index: u32, bucket: Bucket, record: u32) {
@@ -319,11 +354,13 @@ fn lod(@builtin(global_invocation_id) id: vec3<u32>) {
         }
     }
     // A sphere round the whole tree, as wide as it is tall, picks the cascades it may shade
-    // (as entities' shadows were gathered); each primitive's bounds then must touch them too.
+    // (as entities' shadows were gathered) and whose part of the view its shadow can reach;
+    // each primitive's bounds then must touch the cascade too.
     let height = form.height * scale;
-    let tree = sphere_bounds(root + vec3(0.0, height * 0.5, 0.0), height);
+    let middle = root + vec3(0.0, height * 0.5, 0.0);
+    let tree = sphere_bounds(middle, height);
     for (var view = 0u; view < views; view++) {
-        if !in_shadow_view(view, tree) {
+        if !in_shadow_view(view, tree) || !shades_receivers(view, middle, height) {
             continue;
         }
         for (var i = 0u; i < 2u; i++) {

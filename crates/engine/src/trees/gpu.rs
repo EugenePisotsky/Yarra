@@ -125,6 +125,9 @@ pub(super) struct GpuCamera {
     eye_dt: [f32; 4],
     planes: [[f32; 4]; 6],
     shadow_planes: [[f32; 4]; 6 * MAX_SHADOW_VIEWS],
+    /// Per shadow view, where the main view samples it: the depths that do, as two planes
+    /// (near, far: normal and distance), and the direction its light travels (xyz).
+    shadow_receivers: [[f32; 4]; 3 * MAX_SHADOW_VIEWS],
     /// Pool length, shadow views, shadow LOD bias, records per view.
     counts: [u32; 4],
     /// Buckets (draw entries) per view, unused, hidden, unused.

@@ -94,6 +94,8 @@ pub struct ImpostorDescriptor {
     pub centre: Vec3,
     pub radius: f32,
     pub crop: Vec4,
+    /// Texels per object metre in every view: a view's `cell` texels span `2 * radius`.
+    pub texels_per_metre: f32,
     /// The foliage, for distant forest shadows (`super::forest_shadow`).
     pub crown: ImpostorCrown,
     /// The far mesh LOD's structural wind profile and stem height (object metres), so the
@@ -151,6 +153,7 @@ struct WindFile {
 struct DescriptorFile {
     version: u32,
     views: u32,
+    cell: u32,
     centre: [f32; 3],
     radius: f32,
     crop: [f32; 4],
@@ -181,6 +184,7 @@ impl AssetLoader for ImpostorLoader {
             serde_json::from_slice(&bytes).map_err(|e| invalid(e.to_string()))?;
         if file.version != 3
             || !(2..=32).contains(&file.views)
+            || file.cell == 0
             || !file.radius.is_finite()
             || file.radius <= 0.0
             || file.centre.iter().any(|v| !v.is_finite())
@@ -195,7 +199,7 @@ impl AssetLoader for ImpostorLoader {
             || !(file.wind.height.is_finite() && file.wind.height > 0.0)
         {
             return Err(invalid(
-                "invalid impostor descriptor (version 3, 2-32 views, positive radius, crop within a view, 0.5 cut-out, wind)".into(),
+                "invalid impostor descriptor (version 3, 2-32 views, a view's size, positive radius, crop within a view, 0.5 cut-out, wind)".into(),
             ));
         }
         let c = &file.crown;
@@ -220,6 +224,7 @@ impl AssetLoader for ImpostorLoader {
             centre: Vec3::from(file.centre),
             radius: file.radius,
             crop: Vec4::from(file.crop),
+            texels_per_metre: file.cell as f32 / (2.0 * file.radius),
             crown,
             wind_profile: Vec4::from(file.wind.profile),
             wind_height: file.wind.height,
@@ -270,12 +275,24 @@ pub(crate) struct TreeFormSpec {
 }
 
 impl TreeFormSpec {
-    /// Object height over the last mesh LOD's threshold: times scale and pixels per metre,
-    /// the impostor's hand-off distance.
-    pub(crate) fn switch(&self) -> f32 {
+    /// Each representation's minimum projected height, nearest first, the impostor's 0
+    /// last. The impostor takes over at `handoff` ([`LodProjection::impostor_threshold`]),
+    /// in place of the last mesh LOD's own threshold, which only the cells' entities use; a
+    /// mesh LOD whose threshold lies below it gets no band.
+    pub(crate) fn thresholds(&self, handoff: f32) -> Vec<f32> {
+        let last = self.meshes.len().saturating_sub(1);
         self.meshes
-            .last()
-            .map_or(f32::INFINITY, |(_, threshold)| self.height / threshold)
+            .iter()
+            .enumerate()
+            .map(|(lod, &(_, threshold))| {
+                if lod == last {
+                    handoff
+                } else {
+                    threshold.max(handoff)
+                }
+            })
+            .chain([0.0])
+            .collect()
     }
 }
 
@@ -471,8 +488,10 @@ struct ImpostorParams {
     settings: Vec4,
     /// The far mesh LOD's wind profile ([`ImpostorDescriptor::wind_profile`]).
     wind_profile: Vec4,
-    /// Its stem height in object metres, and the form's switch ([`TreeFormSpec::switch`]),
-    /// which instanced quads take from here rather than from their vertices.
+    /// Its stem height in object metres, the views' texels per metre and the LOD
+    /// projection's output pixels per pixel: instanced quads take their hand-off at unit
+    /// scale (output pixels over texels, [`LodProjection::impostor_threshold`]) from here
+    /// rather than from their vertices.
     wind_height: Vec4,
 }
 
@@ -535,6 +554,7 @@ pub(crate) struct ImpostorMaterials {
     by_descriptor: HashMap<AssetId<ImpostorDescriptor>, Handle<ImpostorMaterial>>,
     pixels_per_metre: f32,
     orthographic: bool,
+    output_scale: f32,
 }
 
 /// What every impostor material is made with.
@@ -554,10 +574,10 @@ impl ImpostorMaterials {
         materials: &mut Assets<ImpostorMaterial>,
         handle: &Handle<ImpostorDescriptor>,
         descriptor: &ImpostorDescriptor,
-        form: &TreeFormSpec,
         inputs: &ImpostorMaterialInputs,
     ) -> Handle<ImpostorMaterial> {
-        let (ppm, orthographic) = (self.pixels_per_metre, self.orthographic);
+        let (ppm, orthographic, output_scale) =
+            (self.pixels_per_metre, self.orthographic, self.output_scale);
         self.by_descriptor
             .entry(handle.id())
             .or_insert_with(|| {
@@ -588,7 +608,12 @@ impl ImpostorMaterials {
                                 inputs.handoff,
                             ),
                             wind_profile: descriptor.wind_profile,
-                            wind_height: Vec4::new(descriptor.wind_height, form.switch(), 0.0, 0.0),
+                            wind_height: Vec4::new(
+                                descriptor.wind_height,
+                                descriptor.texels_per_metre,
+                                output_scale,
+                                0.0,
+                            ),
                         },
                         albedo: descriptor.albedo.clone(),
                         normal: descriptor.normal.clone(),
@@ -601,24 +626,33 @@ impl ImpostorMaterials {
     }
 }
 
-/// Keeps impostor switch distances equal to the mesh LODs' as window, field of view or
-/// object detail change.
+/// Keeps impostor switch distances equal to the mesh LODs' as window, display, field of
+/// view or object detail change.
 fn follow_projection(
     projection: Res<LodProjection>,
     mut cache: ResMut<ImpostorMaterials>,
     mut materials: ResMut<Assets<ImpostorMaterial>>,
 ) {
-    let (ppm, orthographic) = (projection.pixels_per_metre(), projection.orthographic());
-    if ppm == cache.pixels_per_metre && orthographic == cache.orthographic {
+    let (ppm, orthographic, output_scale) = (
+        projection.pixels_per_metre(),
+        projection.orthographic(),
+        projection.output_scale(),
+    );
+    if ppm == cache.pixels_per_metre
+        && orthographic == cache.orthographic
+        && output_scale == cache.output_scale
+    {
         return;
     }
     cache.pixels_per_metre = ppm;
     cache.orthographic = orthographic;
+    cache.output_scale = output_scale;
     for handle in cache.by_descriptor.values() {
         if let Some(mut material) = materials.get_mut(handle) {
-            let settings = &mut material.extension.params.settings;
-            settings.y = ppm;
-            settings.z = f32::from(u8::from(orthographic));
+            let params = &mut material.extension.params;
+            params.settings.y = ppm;
+            params.settings.z = f32::from(u8::from(orthographic));
+            params.wind_height.z = output_scale;
         }
     }
 }
@@ -672,7 +706,6 @@ fn complete_batches(
             &mut materials,
             &batch.descriptor,
             descriptor,
-            &batch.form,
             &ImpostorMaterialInputs {
                 environment: &environment,
                 wind: &wind,

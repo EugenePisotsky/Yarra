@@ -22,7 +22,7 @@ const PIXELS_PER_METRE: f32 = 1308.5;
 
 #[test]
 fn bands_skip_crowded_lods_and_are_not_limited_by_residency() {
-    let projection = LodProjection::perspective(PIXELS_PER_METRE);
+    let projection = LodProjection::perspective(PIXELS_PER_METRE, 2.0);
     let (start, end) = bands(&projection, &SPRUCE, SPRUCE_HEIGHT);
     let switch = |threshold: f32| SPRUCE_HEIGHT * PIXELS_PER_METRE / threshold;
     assert_eq!(start[0], 0.0);
@@ -35,6 +35,71 @@ fn bands_skip_crowded_lods_and_are_not_limited_by_residency() {
     // A tall tree's meshes reach past the cells' 166 m hand-off.
     let (start, _) = bands(&projection, &SPRUCE, 30.0);
     assert!(start[3] > 190.0);
+}
+
+#[test]
+fn impostors_take_over_at_a_texel_per_output_pixel() {
+    // Retina: two output pixels per logical pixel. The spruce's views hold 256 texels
+    // across 16.78 m.
+    let projection = LodProjection::perspective(PIXELS_PER_METRE, 2.0);
+    let texels_per_metre = 256.0 / 16.78;
+    let spruce = super::super::impostor::TreeFormSpec {
+        impostor: "spruce.impostor.json".into(),
+        height: SPRUCE_HEIGHT,
+        meshes: vec![
+            ("lod0".into(), 480.0),
+            ("lod1".into(), 240.0),
+            ("lod2".into(), 200.0),
+        ],
+    };
+    let handoff = projection.impostor_threshold(SPRUCE_HEIGHT, texels_per_metre);
+    let thresholds = spruce.thresholds(handoff);
+    assert_eq!(thresholds[..2], [480.0, 240.0]);
+    assert_eq!(thresholds[3], 0.0);
+    let (start, end) = bands(&projection, &thresholds, SPRUCE_HEIGHT);
+    // At the switch, a metre of the spruce covers as many output pixels as its views hold
+    // texels; LOD2 draws from LOD1's switch to there.
+    let output_pixels_per_metre = |d: f32| PIXELS_PER_METRE * 2.0 / d;
+    assert!((output_pixels_per_metre(end[2]) - texels_per_metre).abs() < 1e-3);
+    assert!((end[2] - 171.6).abs() < 0.5, "{}", end[2]);
+    assert!((start[2] - SPRUCE_HEIGHT * PIXELS_PER_METRE / 240.0).abs() < 1e-3);
+    assert_eq!(start[3], end[2]);
+    // Twice the texels: the impostor is sharp enough too soon after LOD1's switch for LOD2
+    // to fit a band, and LOD1 reaches it.
+    let handoff = projection.impostor_threshold(SPRUCE_HEIGHT, 2.0 * texels_per_metre);
+    let (start, end) = bands(&projection, &spruce.thresholds(handoff), SPRUCE_HEIGHT);
+    assert_eq!((start[2], end[2]), (-1.0, -1.0));
+    assert_eq!(start[3], end[1]);
+}
+
+#[test]
+#[ignore = "requires native GPU access; runs the trees' LOD and fade pass"]
+fn gpu_casters_shadowing_nothing_in_view_are_not_drawn() {
+    let (form, buckets) = spruce_form(1);
+    let harness = Harness::new(&[instance(Vec3::ZERO, None)], form, &buckets);
+    let casts = |camera: &GpuCamera| {
+        let drawn = harness.frame(camera);
+        drawn.views[1].iter().any(|r| !r.is_empty())
+    };
+    // 30 m ahead under a high sun, its shadow is in view.
+    let ahead = Vec3::new(0.0, 7.0, 30.0);
+    assert!(casts(&camera(ahead, 0.016, 0, 1, &form, 1)));
+    // 30 m behind, its shadow falls behind too.
+    let behind = Vec3::new(0.0, 7.0, -30.0);
+    assert!(!casts(&camera(behind, 0.016, 0, 1, &form, 1)));
+    // 45 m ahead, past the 20 m this cascade covers: a high sun keeps its shadow out there...
+    let far = Vec3::new(0.0, 7.0, 45.0);
+    let mut high = camera(far, 0.016, 0, 1, &form, 1);
+    receive(&mut high, far, 0.0..20.0, Vec3::NEG_Y);
+    assert!(!casts(&high));
+    // ...and a low sun behind it, shining toward the camera, draws it into the cascade's depths.
+    let mut low = high;
+    receive(&mut low, far, 0.0..20.0, Vec3::new(0.0, -0.25, 1.0));
+    assert!(casts(&low));
+    // A cascade's depths start where the one before blends into it: nearer is not its own.
+    let mut later = camera(ahead, 0.016, 0, 1, &form, 1);
+    receive(&mut later, ahead, 60.0..120.0, Vec3::NEG_Y);
+    assert!(!casts(&later));
 }
 
 /// The compute pass's buffers for a handful of instances of one form.
@@ -274,7 +339,7 @@ fn instance(position: Vec3, forced: Option<u32>) -> GpuInstance {
 }
 
 /// A camera at `eye` looking along -Z, and one orthographic shadow view 40 m wide round
-/// the origin.
+/// the origin, lit from straight above, which every depth up to 1 km samples.
 fn camera(
     eye: Vec3,
     dt: f32,
@@ -300,19 +365,31 @@ fn camera(
                 .inverse();
     let mut shadow_planes = [[0.0; 4]; 6 * MAX_SHADOW_VIEWS];
     shadow_planes[..6].copy_from_slice(&planes(ViewFrustum::from_clip_from_world(&shadow)));
-    GpuCamera {
+    let mut camera = GpuCamera {
         eye_dt: eye.extend(dt).to_array(),
         planes: planes(ViewFrustum::from_clip_from_world(&clip)),
         shadow_planes,
+        shadow_receivers: [[0.0; 4]; 3 * MAX_SHADOW_VIEWS],
         counts: [count, 1, shadow_lod, form.representations * capacity],
         sizes: [form.representations, 0, 0, 0],
-    }
+    };
+    receive(&mut camera, eye, 0.0..1000.0, Vec3::NEG_Y);
+    camera
+}
+
+/// Makes the depths `depths` from the camera at `eye` (looking along -Z) sample the shadow
+/// view, its light travelling along `sweep`.
+fn receive(camera: &mut GpuCamera, eye: Vec3, depths: std::ops::Range<f32>, sweep: Vec3) {
+    let depth = Vec3::NEG_Z.dot(eye);
+    camera.shadow_receivers[0] = Vec3::NEG_Z.extend(-depth - depths.start).to_array();
+    camera.shadow_receivers[1] = Vec3::Z.extend(depth + depths.end).to_array();
+    camera.shadow_receivers[2] = sweep.normalize().extend(0.0).to_array();
 }
 
 /// A spruce's form, one primitive per LOD (bucket n for representation n).
 fn spruce_form(capacity: u32) -> (GpuForm, Vec<GpuBucket>) {
     let (start, end) = bands(
-        &LodProjection::perspective(PIXELS_PER_METRE),
+        &LodProjection::perspective(PIXELS_PER_METRE, 2.0),
         &SPRUCE,
         SPRUCE_HEIGHT,
     );
@@ -357,7 +434,7 @@ fn gpu_fades_match_the_cpu_timed_lod() {
     let forced = instance(Vec3::new(5.0, 0.0, -30.0), Some(2));
     let (form, buckets) = spruce_form(3);
     let harness = Harness::new(&[spruce, behind, forced], form, &buckets);
-    let projection = LodProjection::perspective(PIXELS_PER_METRE);
+    let projection = LodProjection::perspective(PIXELS_PER_METRE, 2.0);
     let mut cpu = TimedLod::default();
     cpu.set_bands(&projection, &SPRUCE, SPRUCE_HEIGHT, f32::INFINITY);
 

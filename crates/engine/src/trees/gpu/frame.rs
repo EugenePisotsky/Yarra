@@ -6,6 +6,7 @@ use super::pool::TreePool;
 use super::{FORCED_MASK, FORCED_NOTHING, MAX_SHADOW_VIEWS, TreeInstancing};
 use bevy::{
     camera::primitives::{CascadesFrusta, Frustum},
+    light::CascadeShadowConfig,
     prelude::*,
     render::{extract_resource::ExtractResource, sync_world::MainEntity, view::RetainedViewEntity},
 };
@@ -30,12 +31,44 @@ const BAND_METRES: f32 = 20.0;
 pub(super) struct FrameView {
     pub(super) eye: Vec3,
     pub(super) planes: [Vec4; 6],
-    /// Shadow views by their retained entity, in the order the compute pass numbers them.
-    pub(super) cascades: Arc<Vec<(RetainedViewEntity, [Vec4; 6])>>,
+    /// Shadow views, in the order the compute pass numbers them.
+    pub(super) cascades: Arc<Vec<ShadowView>>,
     /// Per form, a bit for each representation some batch could draw in the main view.
     pub(super) drawn: Arc<Vec<u8>>,
     /// Per shadow view and form, a bit for each representation some batch could cast from.
     pub(super) cast: Arc<Vec<Vec<u8>>>,
+}
+
+/// One cascade of a light that casts.
+#[derive(Clone)]
+pub(super) struct ShadowView {
+    pub(super) retained: RetainedViewEntity,
+    /// Its frustum's half-spaces.
+    pub(super) planes: [Vec4; 6],
+    /// The main view's depths that sample it, as near and far half-spaces, and the
+    /// direction its light travels: a caster whose shadow cannot reach them is not drawn.
+    pub(super) receivers: [Vec4; 3],
+}
+
+/// The main view's depths whose fragments sample cascade `index` of `config`: from where
+/// the cascade before starts blending into it (Bevy's `fetch_directional_shadow`) to its
+/// far bound, as near and far half-spaces.
+fn receiver_depths(
+    config: &CascadeShadowConfig,
+    index: usize,
+    eye: Vec3,
+    forward: Vec3,
+) -> [Vec4; 2] {
+    let near = match index {
+        0 => 0.0,
+        _ => (1.0 - config.overlap_proportion) * config.bounds[index - 1],
+    };
+    let far = config.bounds.get(index).copied().unwrap_or(f32::MAX);
+    let depth = forward.dot(eye);
+    [
+        forward.extend(-depth - near),
+        (-forward).extend(depth + far),
+    ]
 }
 
 /// Whether a box is on the inner side of every half-space but `skip`.
@@ -54,7 +87,7 @@ fn representations(
     layout: &super::layout::Layout,
     eye: Vec3,
     planes: &[Vec4; 6],
-    cascades: &[(RetainedViewEntity, [Vec4; 6])],
+    cascades: &[ShadowView],
     shadow_lod: u32,
 ) -> (Vec<u8>, Vec<Vec<u8>>) {
     let forms = &layout.forms;
@@ -120,9 +153,9 @@ fn representations(
         if casters == 0 {
             continue;
         }
-        for (view, (_, cascade)) in cascades.iter().enumerate() {
+        for (view, cascade) in cascades.iter().enumerate() {
             if box_in(
-                cascade,
+                &cascade.planes,
                 outer_lo,
                 outer_hi,
                 bevy::shape::ViewFrustum::NEAR_PLANE_IDX,
@@ -146,12 +179,21 @@ pub(super) fn collect(
     pool: Res<TreePool>,
     layout: Res<TreeDrawLayout>,
     world_view: crate::ActiveWorldView,
-    lights: Query<(Entity, &DirectionalLight, &CascadesFrusta, &ViewVisibility)>,
+    lights: Query<(
+        Entity,
+        &DirectionalLight,
+        &CascadesFrusta,
+        &CascadeShadowConfig,
+        &GlobalTransform,
+        &ViewVisibility,
+    )>,
 ) {
     let view = world_view.active().map(|view| {
         let camera = view.entity;
+        let eye = view.transform.translation();
+        let forward = view.transform.forward().as_vec3();
         let mut cascades = Vec::new();
-        for (light, directional, frusta, visible) in &lights {
+        for (light, directional, frusta, config, transform, visible) in &lights {
             if !directional.shadow_maps_enabled || !visible.get() {
                 continue;
             }
@@ -160,17 +202,18 @@ pub(super) fn collect(
                     warn_once!("GPU trees: more than {MAX_SHADOW_VIEWS} shadow views; the rest get no tree shadows");
                     break;
                 }
-                cascades.push((
-                    RetainedViewEntity::new(
+                let [near, far] = receiver_depths(config, index, eye, forward);
+                cascades.push(ShadowView {
+                    retained: RetainedViewEntity::new(
                         MainEntity::from(light),
                         Some(MainEntity::from(camera)),
                         index as u32,
                     ),
-                    planes(frustum),
-                ));
+                    planes: planes(frustum),
+                    receivers: [near, far, transform.forward().extend(0.0)],
+                });
             }
         }
-        let eye = view.transform.translation();
         let planes = planes(view.frustum);
         let (drawn, cast) = representations(
             &pool,

@@ -37,6 +37,8 @@ pub(super) struct Form {
     /// The impostor quad's bounds at unit scale in object space, wind included: centre and
     /// radius. (Each primitive's are its part's.)
     pub(super) impostor_sphere: Vec4,
+    /// Its views' texels per metre, which place its hand-off.
+    pub(super) texels_per_metre: f32,
     pub(super) ready: bool,
     failed: bool,
 }
@@ -119,8 +121,8 @@ pub(super) fn register(
             lods: vec![None; spec.meshes.len()],
             templates,
             impostor: None,
-
             impostor_sphere: Vec4::ZERO,
+            texels_per_metre: 0.0,
             ready: false,
             failed: false,
         });
@@ -227,10 +229,12 @@ pub(super) fn harvest(
         };
 
         form.impostor_sphere = impostor_sphere(descriptor);
+        form.texels_per_metre = descriptor.texels_per_metre;
         debug!(
-            "TREE_GPU_FORM {} height={:.1} parts={:?} impostor_sphere={:?}",
+            "TREE_GPU_FORM {} height={:.1} texels_per_metre={:.2} parts={:?} impostor_sphere={:?}",
             form.spec.impostor,
             form.spec.height,
+            form.texels_per_metre,
             form.lods
                 .iter()
                 .map(|parts| parts.iter().flatten().map(|p| p.bounds).collect::<Vec<_>>())
@@ -241,7 +245,6 @@ pub(super) fn harvest(
             materials,
             &form.descriptor,
             descriptor,
-            &form.spec,
             &ImpostorMaterialInputs {
                 environment,
                 wind,

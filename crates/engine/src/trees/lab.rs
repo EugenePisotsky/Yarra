@@ -125,7 +125,8 @@ impl LabAsset {
             .filter(|v| world::is_impostor_uri(&v.uri))
     }
 
-    /// The last mesh LOD's threshold, where the impostor takes over (none without one).
+    /// The last mesh LOD's threshold, where the impostor takes over from entities (none
+    /// without one); the GPU trees place it by the impostor's texels instead.
     fn handoff_threshold(&self) -> Option<f32> {
         self.impostor()?;
         let threshold = self.variants[self.meshes() - 1].minimum_screen_height;
@@ -332,14 +333,22 @@ fn report(
     for (mut tree, forced, transform, lod, fades, children) in &mut trees {
         let scale = transform.to_scale_rotation_translation().0.y.abs();
         let height = tree.asset.bounds[1] * scale;
-        let thresholds: Vec<f32> = tree
-            .asset
-            .variants
-            .iter()
-            .map(|v| v.minimum_screen_height)
-            .collect();
-        // The GPU trees keep meshes as far as their thresholds say; entities stop at their
-        // own farthest switch.
+        let batch = tree.batch.and_then(|batch| batches.get(batch).ok());
+        let descriptor = batch.and_then(|batch| descriptors.get(&batch.descriptor));
+        // The GPU trees hand off where the impostor has a texel per output pixel and keep
+        // meshes as far as that says; entities follow the catalog to their own farthest
+        // switch.
+        let thresholds: Vec<f32> = match batch.zip(descriptor) {
+            Some((batch, descriptor)) => batch.form.thresholds(
+                projection.impostor_threshold(tree.asset.bounds[1], descriptor.texels_per_metre),
+            ),
+            None => tree
+                .asset
+                .variants
+                .iter()
+                .map(|v| v.minimum_screen_height)
+                .collect(),
+        };
         let farthest = lod.map_or(f32::INFINITY, ScreenSpaceLod::farthest_switch);
         let mut bands = Vec::new();
         if projection.pixels_per_metre() > 0.0 && !projection.orthographic() {
@@ -354,7 +363,8 @@ fn report(
                     fade_out: range.end_margin,
                 });
             }
-            if let Some(threshold) = tree.asset.handoff_threshold() {
+            if tree.asset.impostor().is_some() {
+                let threshold = thresholds[tree.asset.meshes() - 1];
                 bands.push(LabBand {
                     representation: LabRepresentation::Impostor,
                     fade_in: crossfade(projection.switch_distance(height, threshold, farthest)),
@@ -373,7 +383,8 @@ fn report(
                 (ready, lod.fading())
             }
             (None, Some(mut fades)) => {
-                if projection.pixels_per_metre() > 0.0 {
+                // Its bands need the impostor's texel density.
+                if projection.pixels_per_metre() > 0.0 && descriptor.is_some() {
                     let fades = &mut fades.0;
                     if projection.is_changed() || !fades.has_bands() {
                         fades.set_bands(&projection, &thresholds, height, f32::INFINITY);
@@ -391,8 +402,7 @@ fn report(
             (None, None) => (false, false),
         };
         // The atlas holds each view's crop: its tile width over the crop's share of the view.
-        let impostor_view = tree.batch.and_then(|batch| {
-            let descriptor = descriptors.get(&batches.get(batch).ok()?.descriptor)?;
+        let impostor_view = descriptor.and_then(|descriptor| {
             let width = images.get(&descriptor.albedo)?.width() as f32;
             let share = (descriptor.crop.z - descriptor.crop.x).max(1e-3);
             Some((

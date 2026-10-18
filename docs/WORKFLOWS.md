@@ -209,11 +209,15 @@ cargo run --release -p yarra-app-game -- --start-view content/world.project.view
   --lod-lab yarra_spruces/spruce_forest
 ```
 
-**Impostors.** Distant trees are drawn as hemi-octahedral impostors. Each is baked from the
-mesh LOD the game draws just before it, so the switch matches: LOD1 for trees (their LOD2 has
-no band of its own at 480/240/200 px), and LOD2 for shrubs and bay. Bake each bundle in
-YarraVegetation (no Houdini needed, about 40 s per form). Then import with an impostor
-threshold below the mesh ones. The descriptor and two KTX2 atlases are added as the last LOD:
+**Impostors.** Distant trees are drawn as hemi-octahedral impostors. The game hands each
+object to its impostor where the impostor's views hold a texel per output pixel (from `--cell`
+and the view's size), so a sharper bake moves the hand-off closer; the importer's impostor
+threshold only places the editor's hand-off. Each impostor should be baked from the mesh LOD
+drawn just before it, so the switch matches: LOD2 for shrubs and bay. Trees now draw LOD2
+before it too, but are still baked from LOD1 (when LOD2 had no band of its own at
+480/240/200 px); the impostor rework rebakes them. Bake each bundle in YarraVegetation (no
+Houdini needed, about 40 s per form). Then import with an impostor threshold below the mesh
+ones. The descriptor and two KTX2 atlases are added as the last LOD:
 
 ```sh
 uv run --with numpy --with pillow python scripts/bake_impostor.py outputs/spruce_forest/current \

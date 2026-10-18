@@ -4,6 +4,7 @@ use std::f32::consts::{FRAC_PI_4, FRAC_PI_8};
 const PERSPECTIVE: LodProjection = LodProjection {
     pixels_per_metre: 1000.0,
     orthographic: false,
+    output_scale: 1.0,
 };
 
 #[test]
@@ -58,6 +59,7 @@ fn orthographic_views_keep_the_one_matching_lod_at_any_distance() {
     let projection = LodProjection {
         pixels_per_metre: 100.0,
         orthographic: true,
+        output_scale: 1.0,
     };
     let thresholds = [160.0, 80.0, 0.0];
     // 1 m tall at 100 px/m: 100 px, which is LOD1.

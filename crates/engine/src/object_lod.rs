@@ -22,6 +22,7 @@ use bevy::{
     mesh::MeshTag,
     prelude::*,
     transform::TransformSystems,
+    window::PrimaryWindow,
     world_serialization::WorldInstanceReady,
 };
 use world::{CellCoord, StableObjectId, WorldSpaceId};
@@ -199,19 +200,33 @@ impl Default for VisualLodScale {
 
 /// Logical pixels per metre of object height at one metre from the camera (anywhere, for
 /// an orthographic camera), including [`VisualLodScale`]. Zero until the camera is known.
-#[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
 pub(crate) struct LodProjection {
     pixels_per_metre: f32,
     orthographic: bool,
+    /// Output pixels per logical pixel: the window's scale factor, whatever the render scale
+    /// (an upscaler resolves to the output).
+    output_scale: f32,
+}
+
+impl Default for LodProjection {
+    fn default() -> Self {
+        Self {
+            pixels_per_metre: 0.0,
+            orthographic: false,
+            output_scale: 1.0,
+        }
+    }
 }
 
 impl LodProjection {
     /// A perspective projection with `pixels_per_metre`, for tests outside this module.
     #[cfg(test)]
-    pub(crate) fn perspective(pixels_per_metre: f32) -> Self {
+    pub(crate) fn perspective(pixels_per_metre: f32, output_scale: f32) -> Self {
         Self {
             pixels_per_metre,
             orthographic: false,
+            output_scale,
         }
     }
 
@@ -220,6 +235,17 @@ impl LodProjection {
     }
     pub(crate) fn orthographic(&self) -> bool {
         self.orthographic
+    }
+    pub(crate) fn output_scale(&self) -> f32 {
+        self.output_scale
+    }
+
+    /// The projected height below which an impostor whose views hold `texels_per_metre`
+    /// texels per metre has one texel or more per output pixel, for an object `height`
+    /// metres tall. Independent of the object's scale and of distance; Object detail moves
+    /// it out with every other switch.
+    pub(crate) fn impostor_threshold(&self, height: f32, texels_per_metre: f32) -> f32 {
+        height * texels_per_metre / self.output_scale
     }
 
     /// Distance at which an object `height` metres tall projects to `threshold` pixels, at
@@ -344,6 +370,7 @@ fn update_object_lods(
     scenes: Query<(&LodScene, Option<&Children>)>,
     descendants: Query<&Children>,
     meshes: Query<(), With<Mesh3d>>,
+    window: Query<&Window, With<PrimaryWindow>>,
     (time, fades, origin, catalog): (
         Option<Res<Time>>,
         Option<ResMut<ImpostorFades>>,
@@ -363,10 +390,18 @@ fn update_object_lods(
     let next = LodProjection {
         pixels_per_metre: 0.5 * viewport.y * clip.y_axis.y * lod_scale.0.clamp(0.25, 4.0),
         orthographic: clip.w_axis.w == 1.0,
+        // The game renders into an image at its render scale; the window is the output.
+        output_scale: window
+            .single()
+            .map(Window::scale_factor)
+            .ok()
+            .or_else(|| camera.target_scaling_factor())
+            .unwrap_or(1.0),
     };
-    // Window size, field of view and Object detail change the switch distances; they
-    // change rarely, so only then are ranges rewritten.
+    // Window size, display, field of view and Object detail change the switch distances;
+    // they change rarely, so only then are ranges rewritten.
     let changed = next.orthographic != projection.orthographic
+        || next.output_scale != projection.output_scale
         || (next.pixels_per_metre - projection.pixels_per_metre).abs()
             > 0.005 * projection.pixels_per_metre.max(f32::EPSILON);
     if changed {

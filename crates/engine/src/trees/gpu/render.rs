@@ -259,7 +259,8 @@ fn entry_mesh(entry: &DrawEntry) -> AssetId<Mesh> {
 }
 
 /// Logs, per view, the instances the last readback's draws held: mesh primitives (as many as
-/// entity draws would be), impostors, and each shadow view's mesh primitives.
+/// entity draws would be) and their triangles, impostors, and each shadow view's mesh
+/// primitives and triangles.
 fn log_counts(gpu: &mut TreeGpu, layout: &super::layout::Layout) {
     let Some(buffer) = gpu.readback.buffer.as_ref() else {
         return;
@@ -275,7 +276,8 @@ fn log_counts(gpu: &mut TreeGpu, layout: &super::layout::Layout) {
         buffer.unmap();
         gpu.readback.mapped = None;
         let buckets = layout.buckets.len();
-        let per_view = |view: usize, impostors: bool| -> u32 {
+        // Instances and triangles.
+        let per_view = |view: usize, impostors: bool| -> (u32, u64) {
             layout
                 .entries
                 .iter()
@@ -283,21 +285,26 @@ fn log_counts(gpu: &mut TreeGpu, layout: &super::layout::Layout) {
                 .enumerate()
                 .filter(|(_, (e, _))| matches!(e.drawn, Drawn::Impostor { .. }) == impostors)
                 .map(|(i, (_, bucket))| {
-                    counts
+                    let count = counts
                         .get(view * buckets + i)
                         .copied()
                         .unwrap_or(0)
-                        .min(bucket.capacity)
+                        .min(bucket.capacity);
+                    let indices = gpu
+                        .args_written
+                        .get(view * buckets + i)
+                        .map_or(0, |args| args[0]);
+                    (count, u64::from(count) * u64::from(indices) / 3)
                 })
-                .sum()
+                .fold((0, 0), |a, b| (a.0 + b.0, a.1 + b.1))
         };
-        let cascades: Vec<u32> = (0..gpu.shadow_views.len())
+        let cascades: Vec<(u32, u64)> = (0..gpu.shadow_views.len())
             .map(|v| per_view(1 + v, false))
             .collect();
+        let (meshes, triangles) = per_view(0, false);
         debug!(
-            "TREE_GPU_COUNTS meshes={} impostors={} cascades={cascades:?}",
-            per_view(0, false),
-            per_view(0, true),
+            "TREE_GPU_COUNTS meshes={meshes} triangles={triangles} impostors={} cascades={cascades:?}",
+            per_view(0, true).0,
         );
     } else if gpu.readback.copied {
         gpu.readback.copied = false;
@@ -462,6 +469,7 @@ fn prepare(
         eye_dt: [0.0; 4],
         planes: [[0.0; 4]; 6],
         shadow_planes: [[0.0; 4]; 6 * MAX_SHADOW_VIEWS],
+        shadow_receivers: [[0.0; 4]; 3 * MAX_SHADOW_VIEWS],
         counts: [0, 0, frame.shadow_lod, next.records_per_view],
         sizes: [next.buckets.len() as u32, 0, u32::from(frame.hidden), 0],
     };
@@ -469,11 +477,14 @@ fn prepare(
     if let Some(view) = &frame.view {
         camera.eye_dt = view.eye.extend(frame.dt).to_array();
         camera.planes = view.planes.map(|p| p.to_array());
-        for (i, (retained, planes)) in view.cascades.iter().enumerate() {
-            for (p, plane) in planes.iter().enumerate() {
+        for (i, cascade) in view.cascades.iter().enumerate() {
+            for (p, plane) in cascade.planes.iter().enumerate() {
                 camera.shadow_planes[i * 6 + p] = plane.to_array();
             }
-            gpu.shadow_views.insert(*retained, i);
+            for (p, plane) in cascade.receivers.iter().enumerate() {
+                camera.shadow_receivers[i * 3 + p] = plane.to_array();
+            }
+            gpu.shadow_views.insert(cascade.retained, i);
         }
         camera.counts[0] = gpu.instances_len;
         camera.counts[1] = view.cascades.len() as u32;
@@ -911,7 +922,7 @@ fn queue_shadows(
             (
                 view.cascades
                     .iter()
-                    .map(|(retained, _)| *retained)
+                    .map(|cascade| cascade.retained)
                     .collect(),
                 view.cast.clone(),
             )

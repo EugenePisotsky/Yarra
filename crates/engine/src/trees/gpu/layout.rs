@@ -1,7 +1,7 @@
 //! The draw layout: each form's LOD bands under the current projection, and one bucket per
 //! draw entry (a mesh LOD's primitive, or the form's impostor), which the entry's indirect
 //! draw reads. Rebuilt when a form becomes ready, batches come or go, or the
-//! projection changes (window, field of view, Object detail).
+//! projection changes (window, display, field of view, Object detail).
 use super::super::impostor::ImpostorMaterial;
 use super::super::material::TreeWindMaterial;
 use super::forms::TreeForms;
@@ -54,7 +54,7 @@ pub(super) struct TreeDrawLayout {
 pub(super) struct Built {
     forms: u64,
     pool: u64,
-    projection: Option<(u32, bool)>,
+    projection: Option<LodProjection>,
 }
 
 pub(super) fn update(
@@ -89,10 +89,7 @@ pub(super) fn update(
     let now = Built {
         forms: forms.revision,
         pool: pool.revision,
-        projection: Some((
-            projection.pixels_per_metre().to_bits(),
-            projection.orthographic(),
-        )),
+        projection: Some(*projection),
     };
     if *built == now {
         return;
@@ -148,13 +145,9 @@ pub(super) fn build(forms: &TreeForms, counts: &[u32], projection: &LodProjectio
             height: form.spec.height,
             ..default()
         };
-        let thresholds: Vec<f32> = form
-            .spec
-            .meshes
-            .iter()
-            .map(|(_, threshold)| *threshold)
-            .chain([0.0])
-            .collect();
+        // The impostor takes over where its views have a texel per output pixel.
+        let handoff = projection.impostor_threshold(form.spec.height, form.texels_per_metre);
+        let thresholds = form.spec.thresholds(handoff);
         let (start, end) = bands(projection, &thresholds, form.spec.height);
         for r in 0..MAX_REPRESENTATIONS {
             gpu.band_start[r / 4][r % 4] = start[r];
