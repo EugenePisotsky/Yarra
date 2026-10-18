@@ -213,10 +213,11 @@ cargo run --release -p yarra-app-game -- --start-view content/world.project.view
 object to its impostor where the impostor's views hold a texel per output pixel (from `--cell`
 and the view's size), so a sharper bake moves the hand-off closer; the importer's impostor
 threshold only places the editor's hand-off. Each impostor is baked from LOD0, the whole
-tree: the kit's LOD1 and LOD2 drop cards without growing the rest (crown opacity at LOD2 is
-15–20% under LOD0), and impostors baked from LOD2 thinned the distant forest; from LOD2 the
-crown fills in over the switch's dissolve. Bake each bundle in YarraVegetation (no Houdini
-needed, about 15 s per form). Then import with an impostor threshold below the mesh ones. The
+tree. The kit's LOD1 and LOD2 drop cards and grow the leafy ones that remain by a scale
+fitted to cover what LOD0 covers, so the switch from LOD2 keeps the crown's density: after
+changing a form's foliage or LOD shares, run `hython scripts/fit_lod_coverage.py NAME` in
+YarraVegetation and rebuild the form before baking. Bake each bundle in YarraVegetation (no
+Houdini needed, about 15 s per form). Then import with an impostor threshold below the mesh ones. The
 descriptor and two KTX2 atlases are added as the last LOD. Each pack's `import.json` and each
 bundle's `impostor/impostor.json` record the settings they were made with:
 
