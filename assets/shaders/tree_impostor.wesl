@@ -326,10 +326,13 @@ fn surface(in: Varyings, ddx_uv: vec2<f32>, ddy_uv: vec2<f32>) -> Surface {
 
 @fragment
 fn fragment(in: Varyings) -> ForwardOutput {
-    // Derivatives before any discard, while every fragment of the quad is still running.
+    // Derivatives before any discard, while every fragment of the quad is still running,
+    // scaled by the view's mip bias as every mesh texture is (sharper under a temporal
+    // upscaler, which resolves to the output's pixels).
     let tile = impostor.settings.x * (impostor.crop.zw - impostor.crop.xy);
-    let ddx_uv = dpdx(in.corner) / tile;
-    let ddy_uv = dpdy(in.corner) / tile;
+    let mip_scale = exp2(view.mip_bias);
+    let ddx_uv = dpdx(in.corner) / tile * mip_scale;
+    let ddy_uv = dpdy(in.corner) / tile * mip_scale;
 @if(CROSSFADE_SAMPLE_MASK) {
     let crossfade_mask = crossfade_sample_mask(in.position, in.dither);
     if crossfade_mask == 0u {
