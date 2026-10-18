@@ -212,24 +212,32 @@ cargo run --release -p yarra-app-game -- --start-view content/world.project.view
 **Impostors.** Distant trees are drawn as hemi-octahedral impostors. The game hands each
 object to its impostor where the impostor's views hold a texel per output pixel (from `--cell`
 and the view's size), so a sharper bake moves the hand-off closer; the importer's impostor
-threshold only places the editor's hand-off. Each impostor should be baked from the mesh LOD
-drawn just before it, so the switch matches: LOD2 for shrubs and bay. Trees now draw LOD2
-before it too, but are still baked from LOD1 (when LOD2 had no band of its own at
-480/240/200 px); the impostor rework rebakes them. Bake each bundle in YarraVegetation (no
-Houdini needed, about 40 s per form). Then import with an impostor threshold below the mesh
-ones. The descriptor and two KTX2 atlases are added as the last LOD:
+threshold only places the editor's hand-off. Each impostor is baked from LOD0, the whole
+tree: the kit's LOD1 and LOD2 drop cards without growing the rest (crown opacity at LOD2 is
+15–20% under LOD0), and impostors baked from LOD2 thinned the distant forest; from LOD2 the
+crown fills in over the switch's dissolve. Bake each bundle in YarraVegetation (no Houdini
+needed, about 15 s per form). Then import with an impostor threshold below the mesh ones. The
+descriptor and two KTX2 atlases are added as the last LOD. Each pack's `import.json` and each
+bundle's `impostor/impostor.json` record the settings they were made with:
 
 ```sh
 uv run --with numpy --with pillow python scripts/bake_impostor.py outputs/spruce_forest/current \
-  --leaf-grow 0 --fill 0 --cell 256 --source lod1.glb
-# Shrubs and bay: --source lod2.glb --cell 160 (they hand off at 60 px, where 160 px views keep a texel per screen pixel).
+  --leaf-grow 0 --fill 0 --cell 256 --source lod0.glb
+# Shrubs and bay: --cell 160 (their 160 px views hold more than a texel per pixel at 60 px).
 python3 tools/import_vegetation_bundle.py ... --lod-screen-heights 480 240 --impostor-screen-height 200
 # Shrubs and bay: --lod-screen-heights 480 180 --impostor-screen-height 60
 ```
 
 The bake samples every texel 4×4 and rescales each view's alpha, so the game's 0.5 cut-out
 keeps the coverage the samples measured: thin needles stay thin. `--cell` is the resolution
-of a whole view. The atlases store only each view's crop, the part any view covers. The
+of a whole view. The atlases store only each view's crop, the part any view covers, rounded
+to whole blocks of 2^`--mip-levels` texels (default 3, which keeps a tree within a texel per
+pixel past the 2 km far-object range), so the bake's mip levels halve every view on its own:
+colour over coverage in linear light with each view keeping its cut-out coverage, normals
+averaged as vectors, depth and occlusion over coverage. The framing leaves an empty gutter of
+half a texel of the coarsest level (4 texels) round the tree in every view; the game treats a
+ray that near a tile's edge as missing the view, so no read filters in the next one. The
+importer packs the bake's levels for both atlases (a bake before version 4 is refused). The
 second atlas holds:
 - an octahedral normal;
 - the surface's depth toward the viewer, so the game lights each pixel where the crown is,

@@ -276,14 +276,14 @@ def main():
                 variants.append(f'(uri: "{pack}/runtime/{name}/{target.name}", bounds: ({bounds[0]:.4f}, {bounds[1]:.4f}, {bounds[2]:.4f}), gpu_bytes_estimate: {len(blob)}, minimum_screen_height: {threshold}),')
             if far > 0:
                 info = json.loads(impostor.read_text())
-                if info.get('version') != 3 or info.get('layout') != 'hemi_octahedral':
-                    raise ValueError(f'{name}: expected a version 3 hemi-octahedral impostor; rebake it with scripts/bake_impostor.py')
+                if info.get('version') != 4 or info.get('layout') != 'hemi_octahedral':
+                    raise ValueError(f'{name}: expected a version 4 hemi-octahedral impostor (mips per view); rebake it with scripts/bake_impostor.py')
                 folder = stage/'runtime'/name
                 maps = {}
                 for key, srgb in (('albedo', True), ('normal', False)):
+                    # The bake's own levels: no level mixes neighbouring views.
                     files = [impostor.parent/info['textures'][key]]
-                    if key == 'albedo':
-                        files += [impostor.parent/m for m in info['albedo_mips']]
+                    files += [impostor.parent/m for m in info[f'{key}_mips']]
                     maps[key] = f'{name}_impostor_{key}.ktx2'
                     print('Compressing', maps[key], flush=True)
                     texture(args.ktx, files, folder/maps[key], srgb, False)

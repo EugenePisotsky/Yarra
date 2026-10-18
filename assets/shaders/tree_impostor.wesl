@@ -282,6 +282,14 @@ fn surface(in: Varyings, ddx_uv: vec2<f32>, ddy_uv: vec2<f32>) -> Surface {
         ray = normalize(in.rest - view.world_position);
     }
     let count = impostor.settings.x;
+    // Half a texel of the coarser mip the gradients pick, across a view's tile. The bake
+    // leaves at least that much empty round the tree in every view (half a texel of its
+    // coarsest level) and builds every level view by view, so a ray that near the tile's edge
+    // meets nothing, and a read farther in never filters in the next view.
+    let size = vec2<f32>(textureDimensions(albedo_texture));
+    let texels = max(length(ddx_uv * size), length(ddy_uv * size));
+    let level = clamp(ceil(log2(max(texels, 1e-6))), 0.0, f32(textureNumLevels(albedo_texture)) - 1.0);
+    let inset = min(0.5 * exp2(level) * count / size, vec2(0.5));
     var uvs: array<vec2<f32>, 4>;
     var frames: array<mat3x3<f32>, 4>;
     var weights: vec4<f32>;
@@ -293,9 +301,9 @@ fn surface(in: Varyings, ddx_uv: vec2<f32>, ddy_uv: vec2<f32>) -> Surface {
         frames[i] = view_frame(cell, in.yaw);
         // Across the view's tile, which holds only its crop; a ray outside it meets nothing.
         let crop = (view_position(in, frames[i], ray) - impostor.crop.xy) / (impostor.crop.zw - impostor.crop.xy);
-        let inside = all(crop >= vec2(0.0)) && all(crop <= vec2(1.0));
+        let inside = all(crop >= inset) && all(crop <= vec2(1.0) - inset);
         let weight = mix(1.0 - in.frame.z, in.frame.z, step.x) * mix(1.0 - in.frame.w, in.frame.w, step.y);
-        uvs[i] = (cell + clamp(crop, vec2(0.0), vec2(1.0))) / count;
+        uvs[i] = (cell + clamp(crop, inset, vec2(1.0) - inset)) / count;
         let a = textureSampleGrad(albedo_texture, impostor_sampler, uvs[i], ddx_uv, ddy_uv);
         weights[i] = select(0.0, a.a * weight, inside);
         colour += a.rgb * weights[i];
