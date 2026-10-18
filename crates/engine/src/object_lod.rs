@@ -8,7 +8,7 @@
 //! shape at the band's ends. Objects whose last LOD is an impostor instead switch at a
 //! distance and dissolve over time, shadows included ([`timed`]).
 mod timed;
-pub(crate) use timed::{TAG_BIAS, TIMED_RANGE};
+pub(crate) use timed::TimedLod;
 
 use crate::trees::impostor::ImpostorFades;
 use crate::{ActiveWorldView, WorldCatalog, WorldOrigin, WorldViewCamera};
@@ -173,29 +173,6 @@ impl ScreenSpaceLod {
     pub(crate) fn variants(&self) -> &[ScreenSpaceLodVariant] {
         &self.variants
     }
-    /// For objects that fade over time, the dither level LOD `index` draws at now (0 whole);
-    /// `None` while it does not draw, and for every LOD of other objects.
-    pub(crate) fn timed_level(&self, index: usize) -> Option<i32> {
-        self.timed.as_ref().and_then(|timed| timed.level(index))
-    }
-    /// Height of the object's bounds at `scale`.
-    pub(crate) fn height(&self, scale: Vec3) -> f32 {
-        object_height(self, scale)
-    }
-    /// For tests of what draws: variant `index` of an object that fades over time drawn
-    /// whole, or dissolving into it from `from`, `progress` (0 to 1) of the way.
-    #[cfg(test)]
-    pub(crate) fn set_timed(&mut self, index: usize, from: Option<(usize, f32)>) {
-        assert!(
-            self.timed.is_some(),
-            "only objects ending in an impostor fade over time"
-        );
-        self.timed = Some(match from {
-            Some((from, progress)) => timed::TimedLod::dissolving(from, index, progress),
-            None => timed::TimedLod::showing(index),
-        });
-    }
-
     pub(crate) fn thresholds(&self) -> impl Iterator<Item = f32> + '_ {
         self.variants.iter().map(|v| v.minimum_screen_height)
     }
@@ -229,6 +206,15 @@ pub(crate) struct LodProjection {
 }
 
 impl LodProjection {
+    /// A perspective projection with `pixels_per_metre`, for tests outside this module.
+    #[cfg(test)]
+    pub(crate) fn perspective(pixels_per_metre: f32) -> Self {
+        Self {
+            pixels_per_metre,
+            orthographic: false,
+        }
+    }
+
     pub(crate) fn pixels_per_metre(&self) -> f32 {
         self.pixels_per_metre
     }

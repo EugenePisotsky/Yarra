@@ -1,14 +1,15 @@
-//! Far objects: the impostors of static objects, streamed by block of cells far beyond the
-//! cells' object residency (`world_db` far-object pages). Each block draws one batch per
-//! impostor, whose shader shows every instance from its mesh LOD's hand-off outward; the
-//! cells draw only meshes.
+//! Far objects: the static objects that end in an impostor, streamed by block of cells far
+//! beyond the cells' object residency (`world_db` far-object pages). Each block holds one
+//! batch per form. The game's GPU trees draw every representation of them from these batches
+//! (`crate::trees::gpu`); the editor draws only their impostors from here, from each mesh
+//! LOD's hand-off outward, and its cells draw the meshes.
 use super::database::{
     DatabaseRequest, FarObjectPayloads, NotSent, RequestId, WorldDatabaseWorker,
 };
 use super::{ActiveWorldSpace, StreamPhase, WorldCatalog, WorldOrigin, WorldStream};
-use crate::trees::impostor::{ImpostorBatch, ImpostorInstance};
+use crate::trees::impostor::{ImpostorBatch, ImpostorInstance, TreeFormSpec};
 use bevy::{math::DVec2, prelude::*};
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 use world::{CellCoord, FAR_OBJECT_BLOCK_CELLS, FarObjectsPage, WorldSpaceId};
 
 /// Blocks with any point within this distance of the camera are drawn...
@@ -253,6 +254,15 @@ fn spawn_block(
                         ImpostorBatch {
                             descriptor: server.load(form.uri.clone()),
                             instances,
+                            form: Arc::new(TreeFormSpec {
+                                impostor: form.uri.clone(),
+                                height: form.height,
+                                meshes: form
+                                    .meshes
+                                    .iter()
+                                    .map(|m| (m.uri.clone(), m.minimum_screen_height))
+                                    .collect(),
+                            }),
                         },
                     ));
                 }

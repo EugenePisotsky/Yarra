@@ -72,7 +72,7 @@ fn fragment(
 @elif(!TREE_INSTANCED)
         let mesh_flags = mesh[in.instance_index].flags;
 @if(TREE_INSTANCED && !MESHLET_MESH_MATERIAL_PASS)
-        // Trees drawn from the instance buffer (crates/engine/src/tree_wind/instancing.rs)
+        // Trees drawn by the GPU trees (crates/engine/src/trees/gpu.rs)
         // have no mesh uniform (instance_index is theirs): like every tree entity they are not
         // mirrored, so the raw facing stands.
         let is_logically_front = is_front;

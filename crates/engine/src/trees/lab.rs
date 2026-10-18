@@ -1,17 +1,19 @@
-//! LOD lab trees: spawned outside streaming with a cataloged asset's runtime LOD chain (its
-//! mesh scenes, and its impostor as a batch of one, as far-object blocks draw it), so each
-//! representation can be compared at any distance (`yarra-app-game --lod-lab`).
+//! LOD lab trees: spawned outside streaming with a cataloged asset's runtime LOD chain, so
+//! each representation can be compared at any distance (`yarra-app-game --lod-lab`). An
+//! asset ending in an impostor is a batch of one, drawn by the GPU trees as far-object
+//! blocks are ([`super::gpu`]); any other draws its mesh scenes as entities.
 //!
 //! A tree draws as the game would ([`LabRepresentation::Auto`], switching and dissolving
 //! over time as every tree with an impostor does) or with one representation forced at
 //! every distance. Its [`LabTree`] reports the distance band of each
 //! representation under the current LOD projection.
 use super::forest_shadow::NoForestShadow;
-use super::impostor::{ImpostorBatch, ImpostorBatchDone, ImpostorDescriptor, ImpostorInstance};
-use crate::WorldRenderRoot;
+use super::gpu::{TreeForms, TreeOverride};
+use super::impostor::{ImpostorBatch, ImpostorDescriptor, ImpostorInstance, TreeFormSpec};
 use crate::object_lod::{
-    ForcedLod, LodProjection, ScreenSpaceLod, ScreenSpaceLodVariant, crossfade,
+    ForcedLod, LodProjection, ScreenSpaceLod, ScreenSpaceLodVariant, TimedLod, crossfade,
 };
+use crate::{ActiveWorldView, WorldRenderRoot};
 use bevy::prelude::*;
 use std::{ops::Range, path::Path, sync::Arc};
 
@@ -167,7 +169,7 @@ pub struct LabTree {
     /// The representations the distance picks between, nearest first. Mesh LODs too close
     /// together for a band of their own are left out, as the game skips them.
     pub bands: Vec<LabBand>,
-    /// Every mesh scene has spawned and the impostor (if any) is drawn.
+    /// Every representation is ready to draw.
     pub ready: bool,
     /// Logical pixels per metre of object height at one metre.
     pub pixels_per_metre: f32,
@@ -178,6 +180,11 @@ pub struct LabTree {
     batch: Option<Entity>,
 }
 
+/// The fades of a lab tree drawn by the GPU trees, followed on the CPU with the same rules
+/// (`object_lod::timed`), so the lab knows when a dissolve has ended.
+#[derive(Component, Default)]
+struct LabFades(TimedLod);
+
 /// Spawns `asset` at `transform` (render space) drawing as the game would.
 pub fn spawn_lab_tree(
     commands: &mut Commands,
@@ -185,39 +192,6 @@ pub fn spawn_lab_tree(
     asset: Arc<LabAsset>,
     transform: Transform,
 ) -> Entity {
-    let variants = asset
-        .variants
-        .iter()
-        .enumerate()
-        .map(|(i, v)| ScreenSpaceLodVariant::load(server, i as u8, &v.uri, v.minimum_screen_height))
-        .collect();
-    let lod = ScreenSpaceLod::new(variants, asset.bounds[1]);
-    // The impostor batch sits at the root without its rotation or scale, which its instance
-    // applies, as in far-object blocks. The object's LODs fade it through its slot.
-    let batch = asset
-        .impostor()
-        .zip(asset.impostor_switch())
-        .map(|(impostor, switch)| {
-            let (scale, translation) = (transform.scale, transform.translation);
-            let (yaw, _, _) = transform.rotation.to_euler(EulerRot::YXZ);
-            commands
-                .spawn((
-                    Transform::from_translation(translation),
-                    Visibility::Inherited,
-                    WorldRenderRoot,
-                    ImpostorBatch {
-                        descriptor: server.load(impostor.uri.clone()),
-                        instances: vec![ImpostorInstance {
-                            translation: Vec3::ZERO,
-                            yaw,
-                            scale: scale.y,
-                            switch: switch * scale.y,
-                        }],
-                    },
-                    Name::new(format!("Lab impostor {}", asset.key)),
-                ))
-                .id()
-        });
     let mut entity = commands.spawn((
         transform,
         Visibility::Inherited,
@@ -226,21 +200,89 @@ pub fn spawn_lab_tree(
         LabRepresentation::Auto,
         Name::new(format!("Lab tree {}", asset.key)),
     ));
-    lod.spawn_scenes(&mut entity);
-    entity
-        .insert((
-            lod,
-            LabTree {
-                asset,
-                bands: Vec::new(),
-                ready: false,
-                pixels_per_metre: 0.0,
-                impostor_view: None,
-                fading: false,
-                batch,
+    let Some((impostor, switch)) = asset.impostor().zip(asset.impostor_switch()) else {
+        // No impostor: its mesh scenes draw as entities, ranged by distance.
+        let variants = asset
+            .variants
+            .iter()
+            .enumerate()
+            .map(|(i, v)| {
+                ScreenSpaceLodVariant::load(server, i as u8, &v.uri, v.minimum_screen_height)
+            })
+            .collect();
+        let lod = ScreenSpaceLod::new(variants, asset.bounds[1]);
+        lod.spawn_scenes(&mut entity);
+        let id = entity.insert(lod).id();
+        commands.entity(id).insert(LabTree {
+            asset,
+            bands: Vec::new(),
+            ready: false,
+            pixels_per_metre: 0.0,
+            impostor_view: None,
+            fading: false,
+            batch: None,
+        });
+        return id;
+    };
+    let tree = entity.id();
+    // The batch sits at the root without its rotation or scale, which its instance applies,
+    // as in far-object blocks.
+    let (scale, translation) = (transform.scale, transform.translation);
+    let (yaw, _, _) = transform.rotation.to_euler(EulerRot::YXZ);
+    let meshes = asset.meshes();
+    let batch = commands
+        .spawn((
+            Transform::from_translation(translation),
+            Visibility::Inherited,
+            WorldRenderRoot,
+            TreeOverride::default(),
+            ImpostorBatch {
+                descriptor: server.load(impostor.uri.clone()),
+                instances: vec![ImpostorInstance {
+                    translation: Vec3::ZERO,
+                    yaw,
+                    scale: scale.y,
+                    switch: switch * scale.y,
+                }],
+                form: Arc::new(TreeFormSpec {
+                    impostor: impostor.uri.clone(),
+                    height: asset.bounds[1],
+                    meshes: asset.variants[..meshes]
+                        .iter()
+                        .map(|v| (v.uri.clone(), v.minimum_screen_height))
+                        .collect(),
+                }),
             },
+            Name::new(format!("Lab batch {}", asset.key)),
         ))
-        .id()
+        .id();
+    commands.entity(tree).insert((
+        LabFades::default(),
+        LabTree {
+            asset,
+            bands: Vec::new(),
+            ready: false,
+            pixels_per_metre: 0.0,
+            impostor_view: None,
+            fading: false,
+            batch: Some(batch),
+        },
+    ));
+    tree
+}
+
+/// The representation forced on a lab tree's batch: its variant index (mesh LODs, then the
+/// impostor), `usize::MAX` for none, `None` when the distance picks.
+fn forced_index(representation: LabRepresentation, asset: &LabAsset) -> Option<usize> {
+    let impostor = asset.impostor().map(|_| asset.meshes());
+    match representation {
+        LabRepresentation::Auto => None,
+        LabRepresentation::Mesh(index) if index < asset.meshes() => Some(index),
+        LabRepresentation::Impostor if impostor.is_some() => impostor,
+        LabRepresentation::Mesh(_) | LabRepresentation::Impostor | LabRepresentation::Hidden => {
+            Some(usize::MAX)
+        }
+    }
 }
 
 fn apply_representation(
@@ -248,19 +290,16 @@ fn apply_representation(
     mut trees: Query<(&LabRepresentation, &LabTree, &mut ForcedLod), Changed<LabRepresentation>>,
 ) {
     for (representation, tree, mut forced) in &mut trees {
-        // The impostor is the last variant; its object's LODs show it through its slot.
-        let impostor = tree.asset.impostor().map(|_| tree.asset.variants.len() - 1);
-        *forced = match *representation {
-            LabRepresentation::Auto => ForcedLod::Auto,
-            LabRepresentation::Mesh(index) if index < tree.asset.meshes() => ForcedLod::Only(index),
-            LabRepresentation::Impostor if impostor.is_some() => ForcedLod::Only(impostor.unwrap()),
-            LabRepresentation::Mesh(_)
-            | LabRepresentation::Impostor
-            | LabRepresentation::Hidden => ForcedLod::Nothing,
+        let index = forced_index(*representation, &tree.asset);
+        *forced = match index {
+            None => ForcedLod::Auto,
+            Some(usize::MAX) => ForcedLod::Nothing,
+            Some(index) => ForcedLod::Only(index),
         };
-        // A hidden tree leaves the forest shadows too, so a frame without it is the scene
-        // without it.
         if let Some(batch) = tree.batch {
+            commands.entity(batch).insert(TreeOverride(index));
+            // A hidden tree leaves the forest shadows too, so a frame without it is the
+            // scene without it.
             if *representation == LabRepresentation::Hidden {
                 commands.entity(batch).insert(NoForestShadow);
             } else {
@@ -275,21 +314,33 @@ fn report(
     projection: Res<LodProjection>,
     descriptors: Res<Assets<ImpostorDescriptor>>,
     images: Res<Assets<Image>>,
+    forms: Option<Res<TreeForms>>,
+    time: Res<Time>,
+    view: ActiveWorldView,
     mut trees: Query<(
         &mut LabTree,
-        &ScreenSpaceLod,
+        &ForcedLod,
         &GlobalTransform,
+        Option<&ScreenSpaceLod>,
+        Option<&mut LabFades>,
         Option<&Children>,
     )>,
     scene_children: Query<(), With<Children>>,
-    done: Query<(), With<ImpostorBatchDone>>,
     batches: Query<&ImpostorBatch>,
 ) {
-    for (mut tree, lod, transform, children) in &mut trees {
+    let eye = view.active().map(|view| view.transform.translation());
+    for (mut tree, forced, transform, lod, fades, children) in &mut trees {
         let scale = transform.to_scale_rotation_translation().0.y.abs();
         let height = tree.asset.bounds[1] * scale;
-        let thresholds: Vec<f32> = lod.thresholds().collect();
-        let farthest = lod.farthest_switch();
+        let thresholds: Vec<f32> = tree
+            .asset
+            .variants
+            .iter()
+            .map(|v| v.minimum_screen_height)
+            .collect();
+        // The GPU trees keep meshes as far as their thresholds say; entities stop at their
+        // own farthest switch.
+        let farthest = lod.map_or(f32::INFINITY, ScreenSpaceLod::farthest_switch);
         let mut bands = Vec::new();
         if projection.pixels_per_metre() > 0.0 && !projection.orthographic() {
             for index in 0..tree.asset.meshes() {
@@ -311,14 +362,34 @@ fn report(
                 });
             }
         }
-        let scenes = children.map_or(0, |c| c.len());
-        let impostor_ready = tree.batch.is_none_or(|batch| done.contains(batch));
-        let ready = scenes == tree.asset.meshes()
-            && children
-                .into_iter()
-                .flatten()
-                .all(|&scene| scene_children.contains(scene))
-            && impostor_ready;
+        let (ready, fading) = match (lod, fades) {
+            (Some(lod), _) => {
+                let scenes = children.map_or(0, |c| c.len());
+                let ready = scenes == tree.asset.meshes()
+                    && children
+                        .into_iter()
+                        .flatten()
+                        .all(|&scene| scene_children.contains(scene));
+                (ready, lod.fading())
+            }
+            (None, Some(mut fades)) => {
+                if projection.pixels_per_metre() > 0.0 {
+                    let fades = &mut fades.0;
+                    if projection.is_changed() || !fades.has_bands() {
+                        fades.set_bands(&projection, &thresholds, height, f32::INFINITY);
+                    }
+                    let distance =
+                        eye.map_or(f32::MAX, |eye| eye.distance(transform.translation()));
+                    fades.step(*forced, distance, thresholds.len() - 1, time.delta_secs());
+                }
+                let ready = forms
+                    .as_ref()
+                    .zip(tree.asset.impostor())
+                    .is_some_and(|(forms, impostor)| forms.ready(&impostor.uri));
+                (ready, fades.0.fading())
+            }
+            (None, None) => (false, false),
+        };
         // The atlas holds each view's crop: its tile width over the crop's share of the view.
         let impostor_view = tree.batch.and_then(|batch| {
             let descriptor = descriptors.get(&batches.get(batch).ok()?.descriptor)?;
@@ -329,7 +400,6 @@ fn report(
                 descriptor.radius,
             ))
         });
-        let fading = lod.fading();
         if tree.bands != bands
             || tree.ready != ready
             || tree.pixels_per_metre != projection.pixels_per_metre()

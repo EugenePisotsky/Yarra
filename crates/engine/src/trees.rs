@@ -1,16 +1,16 @@
 //! Trees and shrubs: authored foliage weights deform on the GPU using the shared vegetation
 //! wind field ([`wind`]), composed with the environment-lit PBR material and identical colour,
 //! depth and shadow geometry, with two-layer bark ([`bark`]) and camera-facing cards
-//! ([`cards`]). The game draws them from one instance buffer ([`instancing`]); far away,
-//! impostors draw them ([`impostor`]) and give the forest shadows ([`forest_shadow`]). The LOD
-//! lab ([`lab`]) compares one tree's representations.
+//! ([`cards`]). The game draws every representation of them on the GPU, LOD choice and
+//! fades included ([`gpu`]); far away, impostors draw them ([`impostor`]) and give the forest
+//! shadows ([`forest_shadow`]). The LOD lab ([`lab`]) compares one tree's representations.
 mod bark;
 mod cards;
 #[cfg(test)]
 mod depth_tests;
 pub(crate) mod forest_shadow;
+mod gpu;
 pub(crate) mod impostor;
-mod instancing;
 mod lab;
 mod material;
 #[cfg(test)]
@@ -18,7 +18,7 @@ mod scene_tests;
 mod tuning;
 mod wind;
 pub use cards::tree_gltf_plugin;
-pub use instancing::TreeInstancing;
+pub use gpu::TreeInstancing;
 pub use lab::{
     LabAsset, LabBand, LabRepresentation, LabTree, LabVariant, LodLabPlugin, spawn_lab_tree,
 };
@@ -50,7 +50,7 @@ impl Plugin for TreeWindPlugin {
                     .in_set(TreeWindSystems)
                     .after(bevy::transform::TransformSystems::Propagate),
             );
-        instancing::plugin(app);
+        gpu::plugin(app);
         if app.get_sub_app(RenderApp).is_none() {
             return;
         }
@@ -65,5 +65,9 @@ impl Plugin for TreeWindPlugin {
             Render,
             wind::upload_wind.in_set(RenderSystems::PrepareResources),
         );
+    }
+
+    fn finish(&self, app: &mut App) {
+        gpu::finish(app);
     }
 }

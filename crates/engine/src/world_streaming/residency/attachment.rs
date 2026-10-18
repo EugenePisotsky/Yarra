@@ -29,13 +29,21 @@ pub(in crate::world_streaming) struct PageAttachment {
 pub(in crate::world_streaming) type AssetVariantKey = (world::AssetId, u8);
 
 /// The asset variants a page's attachment loads. Impostors are not among them: far-object
-/// blocks draw those, and their textures are not part of a page's residency.
+/// blocks draw those, and their textures are not part of a page's residency. With
+/// `gpu_trees`, neither are the mesh LODs of objects that end in one: the GPU trees load and
+/// draw them (`crate::trees`).
 pub(in crate::world_streaming) fn page_asset_variants(
     dependencies: &[PageDependency],
+    gpu_trees: bool,
 ) -> Vec<(AssetVariantKey, u64)> {
+    let with_impostor: Vec<AssetId> = dependencies
+        .iter()
+        .filter(|d| gpu_trees && world::is_impostor_uri(&d.uri))
+        .map(|d| d.asset)
+        .collect();
     dependencies
         .iter()
-        .filter(|d| !world::is_impostor_uri(&d.uri))
+        .filter(|d| !world::is_impostor_uri(&d.uri) && !with_impostor.contains(&d.asset))
         .map(|d| ((d.asset, d.asset_lod), d.gpu_bytes_estimate))
         .collect()
 }
@@ -47,13 +55,14 @@ pub(super) fn attach_page(
     vegetation_catalog: Option<&VegetationCatalog>,
     origin_cell: CellCoord,
     cell_size: f32,
+    gpu_trees: bool,
     prepared: PreparedPage,
 ) -> Result<PageAttachment, String> {
     let key = prepared.decoded.key;
     let mut attachment = PageAttachment {
         decoded_bytes: prepared.decoded.decoded_bytes,
         gpu_bytes_estimate: prepared.decoded.gpu_bytes_estimate,
-        asset_variants: page_asset_variants(&prepared.dependencies),
+        asset_variants: page_asset_variants(&prepared.dependencies, gpu_trees),
         ..default()
     };
     match prepared.decoded.payload {
@@ -74,6 +83,7 @@ pub(super) fn attach_page(
             key,
             objects,
             &prepared.dependencies,
+            gpu_trees,
         )?,
         PagePayload::Vegetation(data) => {
             let catalog = vegetation_catalog
@@ -105,7 +115,10 @@ pub(super) fn attach_page(
     Ok(attachment)
 }
 
-/// Placed objects, each a screen-space LOD whose mesh scenes load as it nears.
+/// Placed objects, each a screen-space LOD whose mesh scenes load as it nears. With
+/// `gpu_trees`, objects ending in an impostor get no LOD: the GPU trees draw them from their
+/// far-object block, and the entity stays for gameplay (rain shelter).
+#[allow(clippy::too_many_arguments)]
 fn attach_static_objects(
     attachment: &mut PageAttachment,
     commands: &mut Commands,
@@ -114,6 +127,7 @@ fn attach_static_objects(
     key: PageKey,
     objects: world::StaticObjectsPage,
     dependencies_of_page: &[PageDependency],
+    gpu_trees: bool,
 ) -> Result<(), String> {
     let mut dependencies: HashMap<AssetId, Vec<&PageDependency>> = HashMap::new();
     for dependency in dependencies_of_page {
@@ -167,22 +181,14 @@ fn attach_static_objects(
             instance.translation[1],
             cell_origin[1] as f32 + instance.translation[2],
         );
-        let variants: Vec<_> = dependencies
-            .iter()
-            .map(|dependency| {
-                ScreenSpaceLodVariant::load(
-                    asset_server,
-                    dependency.asset_lod,
-                    &dependency.uri,
-                    dependency.minimum_screen_height,
-                )
-            })
-            .collect();
         let bounds = dependencies.iter().fold([0.0_f32; 3], |b, dependency| {
             std::array::from_fn(|i| b[i].max(dependency.bounds[i]))
         });
         let bounds_height = bounds[1];
-        let lod = ScreenSpaceLod::new(variants, bounds_height);
+        let drawn_on_gpu = gpu_trees
+            && dependencies
+                .last()
+                .is_some_and(|last| world::is_impostor_uri(&last.uri));
         let mut object = commands.spawn((
             Transform::from_translation(translation)
                 .with_rotation(Quat::from_rotation_y(instance.yaw))
@@ -196,8 +202,23 @@ fn attach_static_objects(
             StreamedPageEntity(key),
             Name::new(format!("Streamed object {:?}", instance.id)),
         ));
-        lod.spawn_scenes(&mut object);
-        let entity = object.insert(lod).id();
+        if !drawn_on_gpu {
+            let variants: Vec<_> = dependencies
+                .iter()
+                .map(|dependency| {
+                    ScreenSpaceLodVariant::load(
+                        asset_server,
+                        dependency.asset_lod,
+                        &dependency.uri,
+                        dependency.minimum_screen_height,
+                    )
+                })
+                .collect();
+            let lod = ScreenSpaceLod::new(variants, bounds_height);
+            lod.spawn_scenes(&mut object);
+            object.insert(lod);
+        }
+        let entity = object.id();
         if instance.generated {
             commands.entity(entity).insert(GeneratedEnvironmentObject {
                 space: key.space,

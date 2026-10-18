@@ -85,7 +85,7 @@ fn fragment(
 @if(FORWARD_DECAL)
     in.uv = forward_decal_info.uv;
 
-    // Trees drawn from the instance buffer (crates/engine/src/tree_wind/instancing.rs) have no
+    // Trees drawn by the GPU trees (crates/engine/src/trees/gpu.rs) have no
     // mesh uniform: `in.instance_index` indexes the instance buffer, so the mesh flags Bevy reads
     // with it belong to some other mesh. Bevy corrects `is_front` by their winding sign
     // (`winding_corrected_front_facing`); undo that here, so double-sided cards keep facing as
@@ -100,7 +100,7 @@ fn fragment(
 
     // generate a PbrInput struct from the StandardMaterial bindings
     var pbr_input = pbr_input_from_standard_material(in, front);
-    // Trees drawn from the instance buffer (crates/engine/src/tree_wind/instancing.rs) have no
+    // Trees drawn by the GPU trees (crates/engine/src/trees/gpu.rs) have no
     // mesh uniform: like every tree entity they receive shadows and are not mirrored.
 @if(TREE_INSTANCED)
     pbr_input.flags = mesh_types::MESH_FLAGS_SHADOW_RECEIVER_BIT

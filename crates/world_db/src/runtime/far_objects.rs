@@ -4,8 +4,8 @@ use crate::{EncodedPage, WorldDbError};
 use rusqlite::{Connection, params};
 use std::collections::{BTreeMap, HashMap};
 use world::{
-    AssetId, CellCoord, FAR_OBJECT_BLOCK_CELLS, FarObjectForm, FarObjectInstance, FarObjectsPage,
-    PageCodec, PageDomain, PageKey, PagePayload, WorldSpaceId,
+    AssetId, CellCoord, FAR_OBJECT_BLOCK_CELLS, FarObjectForm, FarObjectInstance, FarObjectMesh,
+    FarObjectsPage, PageCodec, PageDomain, PageKey, PagePayload, WorldSpaceId,
 };
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -131,8 +131,8 @@ pub(crate) fn rebuild(connection: &Connection) -> Result<FarObjectStats, WorldDb
     Ok(stats)
 }
 
-/// Impostor forms by asset: the last variant is an impostor and the one before a mesh with a
-/// nonzero switch height.
+/// Impostor forms by asset: the last variant is an impostor after meshes, the last of which
+/// has a nonzero switch height.
 fn impostor_forms(
     connection: &Connection,
 ) -> Result<HashMap<AssetId, FarObjectForm>, WorldDbError> {
@@ -164,6 +164,10 @@ fn impostor_forms(
             {
                 return None;
             }
+            let meshes = &variants[..variants.len() - 1];
+            if meshes.iter().any(|(uri, ..)| world::is_impostor_uri(uri)) {
+                return None;
+            }
             let height = variants.iter().map(|v| v.1).fold(0.0_f32, f32::max);
             (height > 0.0).then(|| {
                 (
@@ -171,6 +175,14 @@ fn impostor_forms(
                     FarObjectForm {
                         uri: impostor.clone(),
                         switch: height / threshold,
+                        height,
+                        meshes: meshes
+                            .iter()
+                            .map(|(uri, _, threshold)| FarObjectMesh {
+                                uri: uri.clone(),
+                                minimum_screen_height: *threshold,
+                            })
+                            .collect(),
                     },
                 )
             })
@@ -329,6 +341,17 @@ mod tests {
             [FarObjectForm {
                 uri: "tree.impostor.json".into(),
                 switch: 20.0 / 200.0,
+                height: 20.0,
+                meshes: vec![
+                    FarObjectMesh {
+                        uri: "tree_lod0.gltf".into(),
+                        minimum_screen_height: 480.0,
+                    },
+                    FarObjectMesh {
+                        uri: "tree_lod1.gltf".into(),
+                        minimum_screen_height: 200.0,
+                    },
+                ],
             }]
         );
         // Cell -1 is the last of block -1's 16 cells of 8 m.

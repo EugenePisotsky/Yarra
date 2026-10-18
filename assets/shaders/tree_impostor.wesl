@@ -1,5 +1,7 @@
-// Impostor LOD (crates/engine/src/tree_impostor.rs): each instance is six vertices at its
-// root, spread here into a quad facing the camera. The baked views lie on a hemi-octahedral
+// Impostor LOD (crates/engine/src/trees/impostor.rs): each instance is six vertices at its
+// root, spread here into a quad facing the camera. The game's GPU trees (trees/gpu.rs,
+// IMPOSTOR_INSTANCED) draw one quad mesh per instance record; the editor draws a batch mesh
+// with all its instances' vertices. The baked views lie on a hemi-octahedral
 // grid (YarraVegetation scripts/bake_impostor.py), each stored as the tile of its crop: the
 // four views nearest the camera's direction are blended, each read where the fragment's ray
 // meets that view's plane, then lit with the trees' crown
@@ -29,8 +31,8 @@ struct ImpostorParams {
     // Views per side, pixels per metre of the LOD projection, orthographic flag, and the
     // farthest hand-off from the mesh LODs in metres.
     settings: vec4<f32>,
-    // The far mesh LOD's wind profile (tree_wind.wesl tree_profile) and stem height in
-    // object metres (x).
+    // The far mesh LOD's wind profile (tree_wind.wesl tree_profile), its stem height in
+    // object metres (x) and the form's switch at unit scale (y, height over threshold).
     wind_profile: vec4<f32>,
     wind_height: vec4<f32>,
 }
@@ -46,6 +48,22 @@ const MINIMUM_PIXELS: f32 = 1.0;
 // The mesh tag of a batch without fade slots.
 const NO_SLOTS: u32 = 0xffffffffu;
 
+// The GPU trees' records, instances and origins (trees/gpu.rs; tree_wind.wesl has the same).
+@if(IMPOSTOR_INSTANCED)
+struct TreeInstance {
+    position_yaw: vec4<f32>,
+    scale: f32,
+    form: u32,
+    origin: u32,
+    flags: u32,
+}
+@if(IMPOSTOR_INSTANCED)
+@group(4) @binding(0) var<storage, read> tree_records: array<u32>;
+@if(IMPOSTOR_INSTANCED)
+@group(4) @binding(1) var<storage, read> tree_instances: array<TreeInstance>;
+@if(IMPOSTOR_INSTANCED)
+@group(4) @binding(2) var<storage, read> tree_origins: array<vec4<f32>>;
+
 // The wind every tree shares (tree_wind.rs WindBuffer).
 @group(constants::MATERIAL_BIND_GROUP) @binding(135) var<storage, read> wind: WindFrames;
 // Impostors sway as fully as their mesh LODs where they take over from them, so the
@@ -56,10 +74,11 @@ const WIND_END: f32 = 450.0;
 
 struct Vertex {
     @builtin(instance_index) instance_index: u32,
+    // Instanced: the quad corner (0-5: bottom, middle and top rows, left then right) as x.
     @location(0) position: vec3<f32>,
-    // Yaw, uniform scale, switch (height over threshold), and the quad corner (0-5: bottom,
-    // middle and top rows, left then right) plus eight times the instance's index within
-    // the batch.
+    // Yaw, uniform scale, switch (height over threshold), and the quad corner plus eight
+    // times the instance's index within the batch.
+@if(!IMPOSTOR_INSTANCED)
     @location(10) instance: vec4<f32>,
 }
 
@@ -90,27 +109,66 @@ fn rotate_y(v: vec3<f32>, angle: f32) -> vec3<f32> {
     return vec3(c * v.x + s * v.z, v.y, -s * v.x + c * v.z);
 }
 
-@vertex
-fn vertex(v: Vertex) -> Varyings {
-    var out: Varyings;
-    let world_from_local = mesh_functions::get_world_from_local(v.instance_index);
-    let root = (world_from_local * vec4(v.position, 1.0)).xyz;
-    let yaw = v.instance.x;
-    let scale = v.instance.y;
-    let centre = root + rotate_y(impostor.centre_radius.xyz * scale, yaw);
-    let radius = impostor.centre_radius.w * scale;
-    let orthographic = impostor.settings.z > 0.5;
+// Where an instance stands, which corner of its quad a vertex is, and its dither level.
+struct Placement {
+    root: vec3<f32>,
+    yaw: f32,
+    scale: f32,
+    // Height over the hand-off threshold: times pixels per metre, the hand-off distance.
+    switch_distance: f32,
+    corner: u32,
+    dither: i32,
+}
 
+fn placement(v: Vertex) -> Placement {
+@if(IMPOSTOR_INSTANCED) {
+    // The GPU trees chose this instance and its dither level.
+    let record = tree_records[v.instance_index];
+    let instance = tree_instances[record & 0xffffffu];
+    return Placement(
+        tree_origins[instance.origin].xyz + instance.position_yaw.xyz,
+        instance.position_yaw.w,
+        instance.scale,
+        impostor.wind_height.y * instance.scale,
+        u32(v.position.x),
+        i32((record >> 24u) & 63u) - 16,
+    );
+}
+@else {
+    let world_from_local = mesh_functions::get_world_from_local(v.instance_index);
+    let packed = u32(v.instance.w);
     // The object's mesh LODs fade it in and out over time while its cell is resident
     // (object_lod.rs); otherwise it is drawn, so a tree is never missing while its cell
     // loads.
-    let packed = u32(v.instance.w);
     let base = mesh_functions::get_tag(v.instance_index);
     var fade = 0u;
     if base != NO_SLOTS {
         fade = fades[base + (packed >> 3u)];
     }
-    out.dither = select(i32(fade) - 64, 0, fade == 0u);
+    return Placement(
+        (world_from_local * vec4(v.position, 1.0)).xyz,
+        v.instance.x,
+        v.instance.y,
+        v.instance.z,
+        packed & 7u,
+        select(i32(fade) - 64, 0, fade == 0u),
+    );
+}
+}
+
+@vertex
+fn vertex(v: Vertex) -> Varyings {
+    var out: Varyings;
+    let placed = placement(v);
+    let root = placed.root;
+    let yaw = placed.yaw;
+    let scale = placed.scale;
+    let switch_distance = placed.switch_distance;
+    let index = placed.corner;
+    out.dither = placed.dither;
+    let centre = root + rotate_y(impostor.centre_radius.xyz * scale, yaw);
+    let radius = impostor.centre_radius.w * scale;
+    let orthographic = impostor.settings.z > 0.5;
     let distance = length(view.lod_view_world_position.xyz - root);
     if !orthographic && 2.0 * radius * impostor.settings.y < MINIMUM_PIXELS * distance {
         out.dither = -16;
@@ -136,7 +194,6 @@ fn vertex(v: Vertex) -> Varyings {
     }
     right = normalize(right);
     let up = cross(toward_view, right);
-    let index = packed & 7u;
     let quad = vec2(f32(index & 1u), 1.0 - 0.5 * f32(index >> 1u));
     let corner = mix(impostor.crop.xy, impostor.crop.zw, quad);
     let offset = right * ((corner.x * 2.0 - 1.0) * radius) + up * ((1.0 - corner.y * 2.0) * radius);
@@ -147,7 +204,7 @@ fn vertex(v: Vertex) -> Varyings {
     out.rest = rest;
     // Leaning as the mesh LODs' trunk does where it takes over from them (the LOD
     // projection's switch distance, within the hand-off), less beyond.
-    let handoff = min(v.instance.z * impostor.settings.y, impostor.settings.w);
+    let handoff = min(switch_distance * impostor.settings.y, impostor.settings.w);
     let calm = max(min(handoff * WIND_SPAN, WIND_END), handoff + 1.0);
     let sway = select(1.0 - smoothstep(handoff, calm, distance), 1.0, orthographic);
     let height = impostor.wind_height.x * scale;

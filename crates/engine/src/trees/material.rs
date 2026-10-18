@@ -94,7 +94,7 @@ impl MaterialExtension for TreeWindExtension {
             if let Some(fragment) = descriptor.fragment.as_mut() {
                 fragment.shader_defs.push("TREE_INSTANCED".into());
             }
-            descriptor.layout.push(super::instancing::instance_layout());
+            descriptor.layout.push(super::gpu::instance_layout());
         }
         // LODs faded over time (object_lod) dither by their mesh tag in every pass. Bevy
         // enables the dither only where visibility ranges crossfade, and never in shadows.
@@ -146,9 +146,9 @@ impl Plugin for TreeWindMaterialPlugin {
 }
 
 #[derive(Component)]
-struct WindChecked;
+pub(super) struct WindChecked;
 #[derive(Component)]
-struct WindBoundsPending;
+pub(super) struct WindBoundsPending;
 #[derive(Component)]
 struct SourceMaterial(Handle<EnvironmentMaterial>);
 

@@ -62,7 +62,7 @@ impl TimedLod {
     }
 
     /// Recomputes the bands, after the projection or the hand-off changed.
-    pub(super) fn set_bands(
+    pub(crate) fn set_bands(
         &mut self,
         projection: &LodProjection,
         thresholds: &[f32],
@@ -85,7 +85,7 @@ impl TimedLod {
             .collect();
     }
 
-    pub(super) fn has_bands(&self) -> bool {
+    pub(crate) fn has_bands(&self) -> bool {
         !self.bands.is_empty()
     }
 
@@ -110,7 +110,7 @@ impl TimedLod {
     }
 
     /// Advances by `dt` seconds towards the representation `forced` or the distance picks.
-    pub(super) fn step(&mut self, forced: ForcedLod, distance: f32, impostor: usize, dt: f32) {
+    pub(crate) fn step(&mut self, forced: ForcedLod, distance: f32, impostor: usize, dt: f32) {
         let target = match forced {
             ForcedLod::Auto => self.target(distance),
             ForcedLod::Only(index) => {
@@ -164,7 +164,7 @@ impl TimedLod {
 
     /// Bevy's dither level for variant `index`: from 0 to 16 while fading out, from -16 to
     /// 0 while fading in, 0 while shown, `None` while hidden.
-    pub(super) fn level(&self, index: usize) -> Option<i32> {
+    pub(crate) fn level(&self, index: usize) -> Option<i32> {
         match self.fade {
             Some(f) => {
                 let step = (f.progress.clamp(0.0, 1.0) * 16.0).round() as i32;
@@ -212,25 +212,6 @@ impl TimedLod {
 
     pub(super) fn slot(&self) -> Option<u32> {
         self.slot
-    }
-}
-
-#[cfg(test)]
-impl TimedLod {
-    /// Variant `index` drawn whole.
-    pub(super) fn showing(index: usize) -> Self {
-        Self {
-            shown: Some(index),
-            ..Self::default()
-        }
-    }
-
-    /// Dissolving from variant `from` into `to`, `progress` (0 to 1) of the way.
-    pub(super) fn dissolving(from: usize, to: usize, progress: f32) -> Self {
-        Self {
-            fade: Some(Fade { from, to, progress }),
-            ..Self::default()
-        }
     }
 }
 

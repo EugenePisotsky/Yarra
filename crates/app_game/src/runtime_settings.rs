@@ -80,7 +80,7 @@ impl Plugin for RuntimeSettingsPlugin {
             )
             .add_systems(
                 PostUpdate,
-                apply_meshes
+                (apply_meshes, apply_trees)
                     .before(terrain_render::TerrainMaterialPreparation)
                     .before(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate),
             );
@@ -324,6 +324,17 @@ fn apply_settings(
         commands.entity(*camera).insert(DepthPrepass);
     } else {
         commands.entity(*camera).remove::<DepthPrepass>();
+    }
+}
+
+/// Trees have no mesh entities to hide (`engine::TreeInstancing`): they hide with the other
+/// objects, and in every scene but the current one.
+fn apply_trees(s: Res<RuntimeSettings>, trees: Option<ResMut<engine::TreeInstancing>>) {
+    let hidden = s.hide_objects || s.scene != Scene::Current;
+    if let Some(mut trees) = trees
+        && trees.hidden != hidden
+    {
+        trees.hidden = hidden;
     }
 }
 

@@ -739,7 +739,7 @@ pub enum PagePayloadDecodeError {
 
 /// Cells per side of a far-object block.
 pub const FAR_OBJECT_BLOCK_CELLS: i32 = 16;
-pub const FAR_OBJECTS_PAGE_VERSION: u16 = 1;
+pub const FAR_OBJECTS_PAGE_VERSION: u16 = 2;
 pub const MAX_FAR_OBJECT_FORMS: usize = 256;
 pub const MAX_FAR_OBJECTS_PER_BLOCK: usize = 262_144;
 
@@ -753,8 +753,9 @@ pub fn far_object_block(cell: CellCoord) -> CellCoord {
 }
 
 /// Every impostor-drawn static object of one block, derived from its cells' static-object
-/// pages when a cook finishes. Streamed much further than cells, it draws those objects
-/// from their last mesh LOD's hand-off outward; the cells draw only meshes.
+/// pages when a cook finishes. Streamed much further than cells, it carries each object's
+/// whole LOD chain: the game draws every representation from it, the editor only the
+/// impostors (its cells draw the meshes).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FarObjectsPage {
     pub forms: Vec<FarObjectForm>,
@@ -768,6 +769,17 @@ pub struct FarObjectForm {
     /// Object height (the largest LOD bounds) over its last mesh LOD's minimum screen
     /// height, at unit scale: times scale and pixels per metre, the hand-off distance.
     pub switch: f32,
+    /// Object height at unit scale (the largest LOD bounds).
+    pub height: f32,
+    /// The mesh LODs before the impostor, nearest first.
+    pub meshes: Vec<FarObjectMesh>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FarObjectMesh {
+    pub uri: String,
+    /// Projected height in logical pixels below which the next LOD draws.
+    pub minimum_screen_height: f32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -801,6 +813,20 @@ impl FarObjectsPage {
             .any(|f| !is_impostor_uri(&f.uri) || !f.switch.is_finite() || f.switch <= 0.0)
         {
             return Err("far-object form is not an impostor with a hand-off".into());
+        }
+        // Mesh LODs nearest first with descending thresholds, the last one handing off.
+        if self.forms.iter().any(|f| {
+            !(f.height.is_finite() && f.height > 0.0)
+                || f.meshes.is_empty()
+                || f.meshes.iter().any(|m| {
+                    is_impostor_uri(&m.uri)
+                        || !(m.minimum_screen_height.is_finite() && m.minimum_screen_height > 0.0)
+                })
+                || f.meshes
+                    .windows(2)
+                    .any(|w| w[1].minimum_screen_height > w[0].minimum_screen_height)
+        }) {
+            return Err("far-object form has no valid mesh LOD chain".into());
         }
         if self.instances.iter().any(|i| {
             usize::from(i.form) >= self.forms.len()
@@ -915,6 +941,11 @@ mod tests {
             forms: vec![FarObjectForm {
                 uri: "packs/tree.impostor.json".into(),
                 switch: 0.1,
+                height: 20.0,
+                meshes: vec![FarObjectMesh {
+                    uri: "packs/tree_lod0.gltf".into(),
+                    minimum_screen_height: 200.0,
+                }],
             }],
             instances: vec![FarObjectInstance {
                 form: 0,
@@ -931,6 +962,10 @@ mod tests {
         page.instances[0].form = 1;
         assert!(page.validate().is_err());
         page.instances[0].form = 0;
+        page.forms[0].meshes[0].uri = "packs/tree.impostor.json".into();
+        assert!(page.validate().is_err());
+        page.forms[0].meshes.clear();
+        assert!(page.validate().is_err());
         page.forms[0].uri = "packs/tree.gltf".into();
         assert!(page.validate().is_err());
     }

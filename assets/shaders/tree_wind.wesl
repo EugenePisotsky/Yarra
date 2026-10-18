@@ -6,22 +6,18 @@ import bevy_pbr::{render::mesh_functions, render::view_transformations::position
 import bevy_pbr::render::mesh_view_bindings::view;
 import package::shaders::tree::wind::{TreeVertex, WindFrames, animated_position, animated_vector};
 
-// Trees drawn from one instance buffer (crates/engine/src/tree_wind/instancing.rs) rather than
-// one mesh entity each: their transform and fade come from here, not from the mesh uniforms.
+// Trees drawn by the GPU trees (crates/engine/src/trees/gpu.rs) rather than one mesh entity
+// each: `instance_index` picks this draw's record (the instance and its dither level), and
+// the instance's transform comes from the frame's transforms (shaders/tree/lod.wesl), not
+// from the mesh uniforms.
 @if(TREE_INSTANCED)
-struct TreeInstance {
-    // Rows of the world-from-local transform.
-    rows: array<vec4<f32>, 3>,
-    tag: u32,
-    flags: u32,
-    padding: vec2<u32>,
-}
+@group(4) @binding(0) var<storage, read> tree_records: array<u32>;
 @if(TREE_INSTANCED)
-@group(4) @binding(0) var<storage, read> tree_instances: array<TreeInstance>;
+@group(4) @binding(3) var<storage, read> tree_transforms: array<array<vec4<f32>, 3>>;
 
 fn world_from_local(instance_index: u32) -> mat4x4<f32> {
 @if(TREE_INSTANCED) {
-    let r = tree_instances[instance_index].rows;
+    let r = tree_transforms[tree_records[instance_index] & 0xffffffu];
     return transpose(mat4x4(r[0], r[1], r[2], vec4(0.0, 0.0, 0.0, 1.0)));
 }
 @else
@@ -55,7 +51,8 @@ fn tangent_to_world(tangent: vec4<f32>, model: mat4x4<f32>, instance_index: u32)
 
 fn mesh_tag(instance_index: u32) -> u32 {
 @if(TREE_INSTANCED)
-    return tree_instances[instance_index].tag;
+    // The record's dither level + 16 (bits 24-29), as the mesh tag's 64 + level.
+    return 48u + ((tree_records[instance_index] >> 24u) & 63u);
 @else
     return mesh_functions::get_tag(instance_index);
 }
