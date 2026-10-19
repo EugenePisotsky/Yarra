@@ -500,12 +500,14 @@ fn apply(
         view_commands.remove::<DistanceFog>();
         if let Some(adaptation) = &adaptation {
             match auto.as_deref_mut() {
-                Some(auto) if auto.compensation_curve != *adaptation.curve(adapt) => {
-                    auto.compensation_curve = adaptation.curve(adapt).clone();
+                Some(auto)
+                    if auto.compensation_curve != *adaptation.curve(adapt, value.adaptation) =>
+                {
+                    auto.compensation_curve = adaptation.curve(adapt, value.adaptation).clone();
                 }
                 Some(_) => {}
                 None if adapt => {
-                    view_commands.insert(adaptation.settings(adapt));
+                    view_commands.insert(adaptation.settings(adapt, value.adaptation));
                 }
                 None => {}
             }
