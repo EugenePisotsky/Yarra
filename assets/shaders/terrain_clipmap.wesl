@@ -11,7 +11,7 @@ import package::shaders::terrain_wear::{WEAR_TEXEL, bare_share, rut_at, rut_para
 import package::shaders::weather::ground_wetness::apply_rain_puddles;
 import package::shaders::lighting::surface::surface_weather;
 import package::shaders::terrain_stochastic::{quarter_turn, stochastic_vertex_turn, stochastic_vertex_offset};
-import package::shaders::terrain_blend::height_blend;
+import package::shaders::terrain_blend::{BLEND_DEPTH, BLEND_HEIGHT, height_blend};
 import bevy_pbr::render::mesh_view_bindings::{globals, view};
 import bevy_pbr::{
     render::forward_io::{FragmentOutput, VertexOutput},
@@ -378,15 +378,20 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
             top.weights = mix(top.weights * (total - wanted) / (total - bare), top.weights * wanted / bare, worn);
         }
     }
+    // A surface shows only where its score (weight share plus height) comes within the blend
+    // depth of the best; one that cannot, even at full height, is not sampled (as near detail).
+    let share = top.weights / max(dot(top.weights, vec3(1.0)), 0.000001);
     let a = surface(top.layers.x, sampled, world_dx, world_dy, far, under, side, plane);
     var b = a;
     var c = a;
     var heights = vec3(a.color.a, -1.0e3, -1.0e3);
-    if top.weights.y > 0.0 {
+    var cut = share.x + a.color.a * BLEND_HEIGHT - BLEND_DEPTH;
+    if top.weights.y > 0.0 && share.y + BLEND_HEIGHT > cut {
         b = surface(top.layers.y, sampled, world_dx, world_dy, far, under, side, plane);
         heights.y = b.color.a;
+        cut = max(cut, share.y + b.color.a * BLEND_HEIGHT - BLEND_DEPTH);
     }
-    if top.weights.z > 0.0 {
+    if top.weights.z > 0.0 && share.z + BLEND_HEIGHT > cut {
         c = surface(top.layers.z, sampled, world_dx, world_dy, far, under, side, plane);
         heights.z = c.color.a;
     }
