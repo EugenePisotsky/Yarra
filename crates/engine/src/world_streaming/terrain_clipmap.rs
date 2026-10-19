@@ -110,7 +110,9 @@ pub struct ClipmapTerrain {
     requested: HashSet<TerrainNodeKey>,
     absent: HashSet<TerrainNodeKey>,
     pending: HashMap<RequestId, TerrainQuery>,
-    received: Vec<Vec<EncodedTerrainNode>>,
+    /// The space's ground surfaces and textures, once read.
+    surfaces: Option<world_db::TerrainRenderResources>,
+    received: Vec<Vec<(EncodedTerrainNode, Option<Vec<u8>>)>>,
     decoding: Vec<Task<Result<Vec<Decoded>, String>>>,
     gpu: Option<ClipmapTextures>,
     mesh: Option<Handle<Mesh>>,
@@ -133,8 +135,11 @@ impl ClipmapTerrain {
         };
         match (query, reply) {
             (TerrainQuery::Roots(_), Ok(TerrainReply::Metadata(roots))) => self.adopt_roots(&roots),
+            (TerrainQuery::Surfaces(_), Ok(TerrainReply::Surfaces(resources))) => {
+                self.surfaces = Some(resources);
+            }
             (TerrainQuery::Nodes(keys), Ok(TerrainReply::Nodes(nodes))) => {
-                let found: HashSet<_> = nodes.iter().map(|n| n.descriptor.key).collect();
+                let found: HashSet<_> = nodes.iter().map(|(n, _)| n.descriptor.key).collect();
                 for key in keys.into_iter().filter(|k| !found.contains(k)) {
                     self.requested.remove(&key);
                     self.absent.insert(key);
@@ -354,12 +359,25 @@ impl ClipmapTerrain {
     }
 }
 
-/// Decodes a batch and lays each node out as its clipmap block.
-fn decode(nodes: Vec<EncodedTerrainNode>, intervals: u32) -> Result<Vec<Decoded>, String> {
+/// Decodes a batch and lays each node out as its clipmap block. A node without a control tile
+/// shows its world's first surface.
+fn decode(
+    nodes: Vec<(EncodedTerrainNode, Option<Vec<u8>>)>,
+    intervals: u32,
+) -> Result<Vec<Decoded>, String> {
     nodes
         .into_iter()
-        .map(|encoded| {
+        .map(|(encoded, control)| {
             let node = encoded.decode().map_err(|e| e.to_string())?;
+            let control = match control {
+                Some(payload) => {
+                    world_db::decode_terrain_control(&payload).map_err(|e| e.to_string())?
+                }
+                None => vec![
+                    world::pack_control([(0, 1.0), (0, 0.0), (0, 0.0)]);
+                    world::CONTROL_SAMPLES * world::CONTROL_SAMPLES
+                ],
+            };
             let field = node
                 .heightfield
                 .ok_or_else(|| format!("terrain node {:?} holds no heights", node.key))?;
@@ -371,7 +389,7 @@ fn decode(nodes: Vec<EncodedTerrainNode>, intervals: u32) -> Result<Vec<Decoded>
             }
             let n = usize::from(field.resolution);
             let normals: Vec<_> = (0..n * n).map(|i| field.normal_at(i % n, i / n)).collect();
-            let block = NodeBlock::new(node.key, field.heights.clone(), &normals);
+            let block = NodeBlock::new(node.key, field.heights.clone(), &normals, control);
             Ok(Decoded {
                 key: node.key,
                 bounds: node.height_bounds,
@@ -380,6 +398,42 @@ fn decode(nodes: Vec<EncodedTerrainNode>, intervals: u32) -> Result<Vec<Decoded>
             })
         })
         .collect()
+}
+
+/// The world's surfaces by texture layer, with the grass each carries, and its textures.
+fn ground(
+    asset_server: &AssetServer,
+    resources: &world_db::TerrainRenderResources,
+    grass: Option<&vegetation::VegetationCatalog>,
+) -> clipmap::ClipmapGround {
+    let layers: Vec<_> = resources
+        .surfaces
+        .iter()
+        .map(|s| terrain_render::TerrainSurfaceLayer {
+            surface: s.surface.clone(),
+            layer: s.layer,
+            grass: grass.map_or([0.0; 4], |g| g.cover(s.surface.id.0).rgba()),
+        })
+        .collect();
+    for l in &layers {
+        info!(
+            "terrain v2 surface {:>2} {:<18} grass cover {:.2}{}",
+            l.layer,
+            l.surface.key,
+            l.grass[3],
+            if l.grass[3] >= clipmap::COVERED_GROUND {
+                " (field colour, no textures)"
+            } else {
+                ""
+            }
+        );
+    }
+    clipmap::ClipmapGround::new(
+        asset_server,
+        &resources.profile,
+        &resources.texture_set,
+        &layers,
+    )
 }
 
 /// Mesh tag of a patch: its level and node, as `terrain_clipmap_vertex.wesl` unpacks them.
@@ -413,6 +467,10 @@ pub(super) fn update(
     mut meshes: ResMut<Assets<Mesh>>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<ClipmapTerrainMaterial>>,
+    (mut buffers, asset_server): (
+        ResMut<Assets<bevy::render::storage::ShaderBuffer>>,
+        Res<AssetServer>,
+    ),
 ) {
     let (Some(worker), Some(space)) = (worker, active_space.current()) else {
         return;
@@ -426,7 +484,10 @@ pub(super) fn update(
         terrain.identity = Some(identity);
         terrain.cell_size = info.cell_size;
         terrain.started = Some(time.elapsed_secs_f64());
-        if !terrain.request(&worker, TerrainQuery::Roots(space)) {
+        if !terrain.request(&worker, TerrainQuery::Roots(space))
+            || !terrain.request(&worker, TerrainQuery::Surfaces(space))
+        {
+            terrain.pending.clear();
             terrain.identity = None;
         }
         return;
@@ -438,7 +499,18 @@ pub(super) fn update(
         return;
     };
     if terrain.gpu.is_none() {
-        let textures = ClipmapTextures::new(layout, ranges, &mut images, &mut materials);
+        let Some(resources) = &terrain.surfaces else {
+            return;
+        };
+        let ground = ground(&asset_server, resources, catalog.vegetation());
+        let textures = ClipmapTextures::new(
+            layout,
+            ranges,
+            ground,
+            &mut images,
+            &mut buffers,
+            &mut materials,
+        );
         uploads.target(&textures);
         terrain.gpu = Some(textures);
         terrain.mesh = Some(meshes.add(clipmap::patch_mesh(&layout)));

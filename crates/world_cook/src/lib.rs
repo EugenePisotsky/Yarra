@@ -1,5 +1,6 @@
 #[cfg(test)]
 use world_db::write_runtime_database;
+mod control_cook;
 mod environment_cook;
 mod material_bake;
 mod parallel;
@@ -175,6 +176,7 @@ fn finish_runtime_publication_with_materials(
     } else {
         None
     };
+    control_cook::cook(temporary_path, spaces)?;
     let reader = world_db::RuntimeReader::open_immutable(temporary_path)
         .context("cooked runtime database did not pass validation")?;
     for space in &manifest.world_spaces {

@@ -174,7 +174,11 @@ pub(crate) fn make_weight_image(
     Ok(image)
 }
 
-fn load_repeat_image(asset_server: &AssetServer, uri: &str, is_srgb: bool) -> Handle<Image> {
+pub(crate) fn load_repeat_image(
+    asset_server: &AssetServer,
+    uri: &str,
+    is_srgb: bool,
+) -> Handle<Image> {
     asset_server
         .load_builder()
         .with_settings(move |settings: &mut ImageLoaderSettings| {

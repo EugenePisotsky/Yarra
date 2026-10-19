@@ -78,15 +78,19 @@ pub(in crate::world_streaming) enum TerrainQuery {
     Roots(WorldSpaceId),
     Metadata(Vec<TerrainNodeKey>),
     Node(TerrainNodeKey),
-    /// Several nodes at once; absent ones are left out of the reply.
+    /// Several nodes at once with their control tiles; absent nodes are left out of the reply.
     Nodes(Vec<TerrainNodeKey>),
+    /// A space's terrain profile, texture set and every surface of the set.
+    Surfaces(WorldSpaceId),
     Material(TerrainMaterialQuery),
 }
 #[derive(Debug)]
 pub(in crate::world_streaming) enum TerrainReply {
     Metadata(Vec<TerrainNodeDescriptor>),
     Node(EncodedTerrainNode),
-    Nodes(Vec<EncodedTerrainNode>),
+    /// Nodes and their compressed control tiles (`world_db::decode_terrain_control`).
+    Nodes(Vec<(EncodedTerrainNode, Option<Vec<u8>>)>),
+    Surfaces(world_db::TerrainRenderResources),
     Material(TerrainMaterialReply),
 }
 #[derive(Clone, Debug)]

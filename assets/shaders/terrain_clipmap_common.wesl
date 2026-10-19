@@ -8,6 +8,10 @@ struct ClipmapSettings {
     grid: vec4<f32>,
     // Leaf range, morph start and end as shares of a level's range, normal LOD bias.
     ranges: vec4<f32>,
+    // Macro variation's three scales in metres and its albedo strength.
+    macro_scales: vec4<f32>,
+    // Macro contrast, whether macro variation is on, control texels per side.
+    ground: vec4<f32>,
 }
 @group(constants::MATERIAL_BIND_GROUP) @binding(0) var<uniform> settings: ClipmapSettings;
 @group(constants::MATERIAL_BIND_GROUP) @binding(1) var heights: texture_2d_array<f32>;

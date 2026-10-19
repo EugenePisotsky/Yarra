@@ -1,8 +1,10 @@
 //! The clipmap's textures, its material and the uploads that fill them.
 //!
-//! Three textures, all written in place by the render world: heights (R32Float, one layer per
-//! level, read with `textureLoad`), normals (Rg16Float x and z, filtered) and a one-row state
-//! texture (Rgba32Uint) with the frame's eye, render origin, windows and node residency. The
+//! Four textures, all written in place by the render world: heights (R32Float, one layer per
+//! level, read with `textureLoad`), normals (Rg16Float x and z, filtered), control (R32Uint, the
+//! ground's three heaviest surfaces per sample at twice the heights' density,
+//! `world::terrain_control`) and a one-row state texture (Rgba32Uint) with the frame's eye,
+//! render origin, windows and node residency. The
 //! state is a texture rather than material data so the material, and every patch drawing it,
 //! stays unchanged from frame to frame. Uploads move to the render world during extraction, so
 //! the state a frame draws with is the one its patches were selected with.
@@ -35,6 +37,85 @@ pub struct ClipmapSettings {
     layout: Vec4,
     /// Leaf range, where morphing starts and ends as shares of a level's range, normal LOD bias.
     ranges: Vec4,
+    /// Macro variation's three scales in metres and its albedo strength.
+    macro_scales: Vec4,
+    /// Macro contrast, whether macro variation is on, control texels per side.
+    ground: Vec4,
+}
+
+/// One of the world's ground surfaces, by texture array layer.
+#[derive(Clone, Copy, Debug, Default, ShaderType)]
+pub struct ClipmapSurface {
+    /// Metres per repetition, anti-tiling (0/1), normal strength, normal Y sign.
+    pub texture: Vec4,
+    /// Roughness minimum and maximum; whether grass covers it so fully that it is shaded by its
+    /// field colour alone, without textures (0/1).
+    pub material: Vec4,
+    /// The grass field's linear colour and how fully it covers the surface.
+    pub grass: Vec4,
+}
+
+/// Grass covering this much of a surface hides its ground: it shades by the field colour.
+pub const COVERED_GROUND: f32 = 0.7;
+
+/// The world's ground surfaces and textures for the clipmap material.
+pub struct ClipmapGround {
+    pub surfaces: Vec<ClipmapSurface>,
+    pub base_color: Handle<Image>,
+    pub normal_material: Handle<Image>,
+    pub macro_variation: Handle<Image>,
+    pub macro_scales: [f32; 3],
+    pub macro_contrast: f32,
+    pub macro_albedo_strength: f32,
+}
+
+impl ClipmapGround {
+    /// From a texture set and its surfaces with their layers and grass.
+    pub fn new(
+        asset_server: &AssetServer,
+        profile: &world::TerrainProfile,
+        texture_set: &world::TerrainTextureSet,
+        surfaces: &[TerrainSurfaceLayer],
+    ) -> Self {
+        let layers = surfaces
+            .iter()
+            .map(|s| usize::from(s.layer) + 1)
+            .max()
+            .unwrap_or(1);
+        let mut table = vec![ClipmapSurface::default(); layers.max(1)];
+        for s in surfaces {
+            let surface = &s.surface;
+            table[usize::from(s.layer)] = ClipmapSurface {
+                texture: Vec4::new(
+                    surface.tile_size.max(0.001),
+                    f32::from(surface.anti_tiling),
+                    surface.normal_strength,
+                    surface.normal_y_sign,
+                ),
+                material: Vec4::new(
+                    surface.roughness_min,
+                    surface.roughness_max,
+                    f32::from(s.grass[3] >= COVERED_GROUND),
+                    0.0,
+                ),
+                grass: Vec4::from_array(s.grass),
+            };
+        }
+        let (base, normal, macro_uri) = texture_set.runtime_uris();
+        Self {
+            surfaces: table,
+            base_color: crate::page_material::load_repeat_image(asset_server, base, true),
+            normal_material: crate::page_material::load_repeat_image(asset_server, normal, false),
+            macro_variation: crate::page_material::load_repeat_image(
+                asset_server,
+                macro_uri,
+                false,
+            ),
+            macro_scales: profile.macro_scales,
+            macro_contrast: profile.macro_contrast,
+            macro_albedo_strength: profile.macro_albedo_strength,
+        }
+    }
 }
 
 #[derive(Asset, AsBindGroup, TypePath, Debug, Clone)]
@@ -62,6 +143,17 @@ pub struct ClipmapTerrainMaterial {
     normals: Option<Handle<Image>>,
     #[texture(4, sample_type = "u_int")]
     state: Option<Handle<Image>>,
+    #[texture(5, dimension = "2d_array", sample_type = "u_int")]
+    control: Option<Handle<Image>>,
+    #[storage(6, read_only, visibility(fragment))]
+    surfaces: Handle<ShaderBuffer>,
+    #[texture(7, dimension = "2d_array")]
+    #[sampler(8)]
+    base_color: Option<Handle<Image>>,
+    #[texture(9, dimension = "2d_array")]
+    normal_material: Option<Handle<Image>>,
+    #[texture(10)]
+    macro_variation: Option<Handle<Image>>,
 }
 
 impl Material for ClipmapTerrainMaterial {
@@ -87,6 +179,7 @@ pub struct ClipmapTextures {
     pub material: Handle<ClipmapTerrainMaterial>,
     heights: Handle<Image>,
     normals: Handle<Image>,
+    control: Handle<Image>,
     state: Handle<Image>,
 }
 
@@ -94,7 +187,9 @@ impl ClipmapTextures {
     pub fn new(
         layout: ClipmapLayout,
         ranges: LodRanges,
+        ground: ClipmapGround,
         images: &mut Assets<Image>,
+        buffers: &mut Assets<ShaderBuffer>,
         materials: &mut Assets<ClipmapTerrainMaterial>,
     ) -> Self {
         assert!(layout.levels <= MAX_LEVELS && layout.nodes_per_side() <= 32);
@@ -143,6 +238,14 @@ impl ClipmapTextures {
                 ..default()
             }),
         );
+        let control_side = control_layout(&layout).side;
+        let control = image(
+            control_side,
+            control_side,
+            layers,
+            TextureFormat::R32Uint,
+            ImageSampler::nearest(),
+        );
         let state = image(
             STATE_WIDTH,
             1,
@@ -167,18 +270,43 @@ impl ClipmapTextures {
                 // Morphing completes a little before the range so float error at a level's
                 // edge never leaves its outer vertices short of the coarser grid.
                 ranges: Vec4::new(ranges.leaf as f32, 1.0 - MORPH_SHARE as f32, 0.98, 0.0),
+                macro_scales: Vec4::new(
+                    ground.macro_scales[0],
+                    ground.macro_scales[1],
+                    ground.macro_scales[2],
+                    ground.macro_albedo_strength,
+                ),
+                ground: Vec4::new(ground.macro_contrast, 1.0, control_side as f32, 0.0),
             },
             heights: Some(heights.clone()),
             normals: Some(normals.clone()),
             state: Some(state.clone()),
+            control: Some(control.clone()),
+            surfaces: buffers.add(ShaderBuffer::new(
+                crate::storage_bytes(&ground.surfaces),
+                RenderAssetUsages::RENDER_WORLD,
+            )),
+            base_color: Some(ground.base_color),
+            normal_material: Some(ground.normal_material),
+            macro_variation: Some(ground.macro_variation),
         });
         Self {
             layout,
             material,
             heights,
             normals,
+            control,
             state,
         }
+    }
+}
+
+/// The control texture's layout: twice the samples of the heights' per node.
+fn control_layout(layout: &ClipmapLayout) -> ClipmapLayout {
+    ClipmapLayout {
+        side: layout.side * 2,
+        intervals: layout.intervals * 2,
+        ..*layout
     }
 }
 
@@ -189,10 +317,17 @@ pub struct NodeBlock {
     pub heights: Vec<f32>,
     /// Unit normals' x and z, as half floats.
     pub normals: Vec<[u16; 2]>,
+    /// Packed control samples, `2 × intervals + 1` per side (`world::CONTROL_SAMPLES`).
+    pub control: Vec<u32>,
 }
 
 impl NodeBlock {
-    pub fn new(key: TerrainNodeKey, heights: Vec<f32>, normals: &[[f32; 3]]) -> Self {
+    pub fn new(
+        key: TerrainNodeKey,
+        heights: Vec<f32>,
+        normals: &[[f32; 3]],
+        control: Vec<u32>,
+    ) -> Self {
         let normals = normals
             .iter()
             .map(|n| {
@@ -206,6 +341,7 @@ impl NodeBlock {
             key,
             heights,
             normals,
+            control,
         }
     }
 }
@@ -252,6 +388,7 @@ pub struct ClipmapUploads {
 struct Target {
     heights: AssetId<Image>,
     normals: AssetId<Image>,
+    control: AssetId<Image>,
     state: AssetId<Image>,
     layout: ClipmapLayout,
 }
@@ -262,6 +399,7 @@ impl ClipmapUploads {
         self.target = Some(Target {
             heights: textures.heights.id(),
             normals: textures.normals.id(),
+            control: textures.control.id(),
             state: textures.state.id(),
             layout: textures.layout,
         });
@@ -339,14 +477,16 @@ fn upload(
         return;
     };
     // Images appear a frame or more after they are added: keep everything until then.
-    let (Some(heights), Some(normals), Some(state)) = (
+    let (Some(heights), Some(normals), Some(control), Some(state)) = (
         images.get(target.heights),
         images.get(target.normals),
+        images.get(target.control),
         images.get(target.state),
     ) else {
         return;
     };
     let layout = target.layout;
+    let control_layout = control_layout(&layout);
     for block in uploads.blocks.drain(..) {
         let origin = layout.block_origin(block.key);
         let layer = u32::from(block.key.level);
@@ -365,6 +505,14 @@ fn upload(
             origin,
             layer,
             bytemuck_u16(&block.normals),
+        );
+        write_block(
+            &queue,
+            control,
+            &control_layout,
+            control_layout.block_origin(block.key),
+            layer,
+            block.control.iter().flat_map(|v| v.to_le_bytes()).collect(),
         );
     }
     if let Some(words) = uploads.state.take() {

@@ -198,11 +198,23 @@ fn read_terrain(reader: &RuntimeReader, query: TerrainQuery) -> Result<TerrainRe
             .map_err(|e| e.to_string())?
             .map(TerrainReply::Node)
             .ok_or("missing required terrain node".into()),
-        TerrainQuery::Nodes(keys) => keys
-            .into_iter()
-            .filter_map(|key| reader.read_terrain_node(key).transpose())
-            .collect::<Result<Vec<_>, _>>()
-            .map(TerrainReply::Nodes)
+        TerrainQuery::Nodes(keys) => {
+            let nodes = keys
+                .into_iter()
+                .filter_map(|key| reader.read_terrain_node(key).transpose())
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?;
+            let found: Vec<_> = nodes.iter().map(|n| n.descriptor.key).collect();
+            let controls = reader
+                .read_terrain_controls(&found)
+                .map_err(|e| e.to_string())?;
+            Ok(TerrainReply::Nodes(
+                nodes.into_iter().zip(controls).collect(),
+            ))
+        }
+        TerrainQuery::Surfaces(space) => reader
+            .read_space_terrain_resources(space)
+            .map(TerrainReply::Surfaces)
             .map_err(|e| e.to_string()),
     }
 }

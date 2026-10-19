@@ -4,8 +4,8 @@ mod gpu;
 mod select;
 pub(crate) use gpu::install;
 pub use gpu::{
-    ClipmapFrame, ClipmapTerrainMaterial, ClipmapTextures, ClipmapUploads, MAX_LEVELS, NodeBlock,
-    Residency, patch_mesh,
+    COVERED_GROUND, ClipmapFrame, ClipmapGround, ClipmapSurface, ClipmapTerrainMaterial,
+    ClipmapTextures, ClipmapUploads, MAX_LEVELS, NodeBlock, Residency, patch_mesh,
 };
 pub use select::{
     ClipmapLayout, LodRanges, MORPH_SHARE, NodeSource, NodeWindow, Patch, distance, select,

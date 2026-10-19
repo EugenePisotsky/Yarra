@@ -527,6 +527,14 @@ CREATE TABLE terrain_roots (
     PRIMARY KEY(world_space_id,level,node_x,node_z),
     FOREIGN KEY(world_space_id,level,node_x,node_z) REFERENCES terrain_nodes(world_space_id,level,node_x,node_z)
 ) STRICT, WITHOUT ROWID;
+-- Terrain v2's control tiles (world::terrain_control), one per node and level.
+CREATE TABLE terrain_controls (
+    world_space_id INTEGER NOT NULL REFERENCES world_spaces(id),
+    level INTEGER NOT NULL CHECK(level BETWEEN 0 AND 30),
+    node_x INTEGER NOT NULL, node_z INTEGER NOT NULL,
+    payload BLOB NOT NULL CHECK(length(payload) BETWEEN 1 AND 65536),
+    PRIMARY KEY(world_space_id,level,node_x,node_z)
+) STRICT, WITHOUT ROWID;
 CREATE TABLE terrain_hierarchy_spaces (
     world_space_id INTEGER PRIMARY KEY REFERENCES world_spaces(id),
     node_count INTEGER NOT NULL CHECK(node_count >= 0),

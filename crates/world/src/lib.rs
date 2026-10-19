@@ -17,6 +17,8 @@ mod terrain_road;
 pub use terrain_road::*;
 mod terrain_wear;
 pub use terrain_wear::*;
+mod terrain_control;
+pub use terrain_control::*;
 
 use std::{error::Error, fmt};
 
@@ -31,7 +33,7 @@ pub const DEFAULT_RUNTIME_DATABASE: &str = "generated/world.runtime.sqlite";
 pub const DEFAULT_CELL_SIZE: f32 = 32.0;
 pub const MAX_DECODED_PAGE_BYTES: u64 = 64 * 1024 * 1024;
 pub const PROJECT_SCHEMA_VERSION: i64 = 31;
-pub const RUNTIME_SCHEMA_VERSION: i64 = 30;
+pub const RUNTIME_SCHEMA_VERSION: i64 = 31;
 pub const PAGE_PAYLOAD_VERSION: u16 = 14;
 /// Surfaces a terrain page holds, four per RGBA weight page: natural ground and what roads wear
 /// it to, so varied ground along a road keeps both.
